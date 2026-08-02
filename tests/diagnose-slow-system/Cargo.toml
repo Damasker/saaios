@@ -1,0 +1,21 @@
+[package]
+name = "diagnose-slow-system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ai-runtime = { workspace = true }
+anyhow = { workspace = true }
+audit-log = { workspace = true }
+model-provider = { workspace = true }
+policy-engine = { workspace = true }
+protocol = { workspace = true }
+serde_json = { workspace = true }
+system-tools = { workspace = true }
+tokio = { workspace = true }
+tool-registry = { workspace = true }
+uuid = { workspace = true }
+event-bus = { workspace = true }
+tempfile = { workspace = true }

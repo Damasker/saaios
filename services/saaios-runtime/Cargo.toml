@@ -1,0 +1,28 @@
+[package]
+name = "saaios-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "saaios-runtime"
+path = "src/main.rs"
+
+[dependencies]
+ai-runtime = { workspace = true }
+anyhow = { workspace = true }
+audit-log = { workspace = true }
+clap = { workspace = true }
+event-bus = { workspace = true }
+model-provider = { workspace = true }
+policy-engine = { workspace = true }
+protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+system-tools = { workspace = true }
+tokio = { workspace = true }
+tool-registry = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+ciborium = { workspace = true }
