@@ -39,6 +39,10 @@ struct Args {
     /// Use real Linux /proc adapters instead of mock fixtures
     #[arg(long)]
     real_linux: bool,
+
+    /// Dry-run replay of an audit correlation id (no tool side effects)
+    #[arg(long)]
+    replay: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,6 +91,13 @@ async fn main() -> Result<()> {
     if std::env::var("SAAIOS_MODE").ok().as_deref() == Some("mock") {
         args.mock = true;
         args.mock_planner = true;
+    }
+
+    if let Some(correlation_id) = args.replay {
+        let audit = AuditLog::open(&args.audit)?;
+        let report = audit.replay(correlation_id)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
     }
 
     let tools_mode = if args.real_linux {

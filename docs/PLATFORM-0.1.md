@@ -25,3 +25,11 @@ just run-tui    # terminal 2
 
 Ask: `Почему система тормозит?`
 Confirm/cancel proposed kill with `y` / `n`.
+
+## Added after 0.1 bootstrap
+
+- Real Linux `/proc` adapter with sampled CPU% + VmRSS
+- Richer `network.status` (interface operstate)
+- Audit dry-run replay (`--replay` / `just audit-replay`)
+- systemd unit + `deploy/install.sh` for Pi/Linux appliance
+- `just run-linux` / `just e2e-linux`

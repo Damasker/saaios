@@ -63,3 +63,13 @@ Own kernel, shared-memory transport, local inference, voice, GUI desktop, app st
 - [ADR-001: Platform is not the kernel](docs/adr/ADR-001-platform-not-kernel.md)
 - [ADR-002: Hybrid IPC](docs/adr/ADR-002-hybrid-ipc.md)
 - [ADR-003: CBOR control protocol](docs/adr/ADR-003-cbor-control-protocol.md)
+- [Platform 0.1 status](docs/PLATFORM-0.1.md)
+- [Raspberry Pi / Linux appliance](docs/appliance.md)
+
+### Real Linux tools
+
+```bash
+just run-linux   # runtime with /proc adapters + mock model
+just e2e-linux   # smoke test against live /proc
+just audit-replay <correlation-id>
+```

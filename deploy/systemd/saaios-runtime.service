@@ -1,0 +1,28 @@
+[Unit]
+Description=SaaiOS Platform Runtime
+Documentation=https://github.com/Damasker/saaios
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=saaios
+Group=saaios
+WorkingDirectory=/var/lib/saaios
+ExecStart=/usr/local/bin/saaios-runtime --real-linux --sock /run/saaios/saaios.sock --audit /var/lib/saaios/audit.jsonl
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=saaios
+RuntimeDirectoryMode=0755
+StateDirectory=saaios
+Environment=RUST_LOG=info
+# Keep AI side effects conservative on appliance hosts.
+Environment=SAAIOS_MOCK=1
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/saaios /run/saaios
+
+[Install]
+WantedBy=multi-user.target
