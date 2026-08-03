@@ -111,6 +111,11 @@ struct Args {
 enum ClientRequest {
     Diagnose {
         text: String,
+        #[serde(default)]
+        session_id: Option<Uuid>,
+        /// When true, respond with NDJSON progress frames then a final `done` object.
+        #[serde(default)]
+        stream: bool,
     },
     Confirm {
         correlation_id: Uuid,
@@ -122,6 +127,11 @@ enum ClientRequest {
         /// Backward-compatible boolean confirm; ignored when `scope` is set explicitly.
         #[serde(default)]
         confirmed: Option<bool>,
+        #[serde(default)]
+        session_id: Option<Uuid>,
+    },
+    ChatReset {
+        session_id: Uuid,
     },
     AuditTail {
         #[serde(default = "default_tail")]
@@ -166,6 +176,8 @@ fn default_tail() -> usize {
 struct ClientResponse {
     ok: bool,
     correlation_id: Option<Uuid>,
+    #[serde(default)]
+    session_id: Option<Uuid>,
     diagnose: Option<protocol::DiagnoseResult>,
     pending: Option<PendingDto>,
     error: Option<String>,
@@ -180,6 +192,8 @@ struct ClientResponse {
     status: Option<RuntimeStatusDto>,
     #[serde(default)]
     events: Option<Vec<FeedItem>>,
+    #[serde(default)]
+    progress: Option<Vec<ai_runtime::RuntimeEvent>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -215,6 +229,8 @@ struct RuntimeStatusDto {
     config_path: Option<String>,
     #[serde(default)]
     auto_diagnose: bool,
+    #[serde(default)]
+    chat_sessions: usize,
 }
 
 struct RuntimeMeta {
@@ -260,6 +276,7 @@ impl RuntimeMeta {
             session_grants: runtime.session_grants(),
             config_path: self.config_path.as_ref().map(|p| p.display().to_string()),
             auto_diagnose: self.auto_diagnose,
+            chat_sessions: runtime.conversation_count(),
         }
     }
 }
@@ -626,6 +643,23 @@ async fn handle_client(
     }
     let req: ClientRequest = serde_json::from_slice(&buf[..n])?;
 
+    if let ClientRequest::Diagnose {
+        text,
+        session_id,
+        stream: true,
+    } = &req
+    {
+        handle_diagnose_stream(
+            &mut stream,
+            runtime,
+            last_pending,
+            text.clone(),
+            *session_id,
+        )
+        .await?;
+        return Ok(());
+    }
+
     let response = match req {
         ClientRequest::Ping => ClientResponse {
             ok: true,
@@ -641,7 +675,14 @@ async fn handle_client(
             events: Some(feed.tail(limit)),
             ..Default::default()
         },
-        ClientRequest::Diagnose { text } => match runtime.handle_user_text(&text).await {
+        ClientRequest::Diagnose {
+            text,
+            session_id,
+            stream: _,
+        } => match runtime
+            .handle_user_text_in_session(&text, session_id, None)
+            .await
+        {
             Ok(outcome) => {
                 let pending = outcome.pending_confirmation.as_ref().map(|p| PendingDto {
                     call_id: p.call_id,
@@ -652,9 +693,11 @@ async fn handle_client(
                 let resp = ClientResponse {
                     ok: true,
                     correlation_id: Some(outcome.correlation_id),
+                    session_id: Some(outcome.session_id),
                     diagnose: Some(outcome.diagnose.clone()),
                     pending,
                     session_grants: Some(runtime.session_grants()),
+                    progress: Some(outcome.events.clone()),
                     ..Default::default()
                 };
                 *last_pending.lock().await = Some(outcome);
@@ -662,10 +705,19 @@ async fn handle_client(
             }
             Err(e) => ClientResponse {
                 ok: false,
+                session_id,
                 error: Some(e.to_string()),
                 ..Default::default()
             },
         },
+        ClientRequest::ChatReset { session_id } => {
+            let _ = runtime.reset_chat_session(session_id);
+            ClientResponse {
+                ok: true,
+                session_id: Some(session_id),
+                ..Default::default()
+            }
+        }
         ClientRequest::Confirm {
             correlation_id,
             call_id,
@@ -673,6 +725,7 @@ async fn handle_client(
             arguments,
             scope,
             confirmed,
+            session_id,
         } => {
             let scope = match confirmed {
                 Some(false) => ConfirmScope::Cancel,
@@ -680,12 +733,13 @@ async fn handle_client(
                 _ => scope,
             };
             match runtime
-                .confirm(correlation_id, call_id, &tool, arguments, scope)
+                .confirm_in_session(correlation_id, session_id, call_id, &tool, arguments, scope)
                 .await
             {
                 Ok(result) => ClientResponse {
                     ok: true,
                     correlation_id: Some(correlation_id),
+                    session_id,
                     tool_result: Some(result),
                     session_grants: Some(runtime.session_grants()),
                     ..Default::default()
@@ -693,6 +747,7 @@ async fn handle_client(
                 Err(e) => ClientResponse {
                     ok: false,
                     correlation_id: Some(correlation_id),
+                    session_id,
                     error: Some(e.to_string()),
                     session_grants: Some(runtime.session_grants()),
                     ..Default::default()
@@ -814,6 +869,71 @@ async fn handle_client(
 
     let bytes = serde_json::to_vec(&response)?;
     stream.write_all(&bytes).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
+async fn handle_diagnose_stream(
+    stream: &mut UnixStream,
+    runtime: Arc<AiRuntime>,
+    last_pending: Arc<tokio::sync::Mutex<Option<HandleOutcome>>>,
+    text: String,
+    session_id: Option<Uuid>,
+) -> Result<()> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ai_runtime::RuntimeEvent>(64);
+    let runtime2 = runtime.clone();
+    let join = tokio::spawn(async move {
+        runtime2
+            .handle_user_text_in_session(&text, session_id, Some(tx))
+            .await
+    });
+
+    while let Some(event) = rx.recv().await {
+        let frame = json!({
+            "type": "progress",
+            "event": event,
+        });
+        let mut line = serde_json::to_vec(&frame)?;
+        line.push(b'\n');
+        stream.write_all(&line).await?;
+    }
+
+    let response = match join.await? {
+        Ok(outcome) => {
+            let pending = outcome.pending_confirmation.as_ref().map(|p| PendingDto {
+                call_id: p.call_id,
+                tool: p.tool.clone(),
+                arguments: p.arguments.clone(),
+                summary: p.summary.clone(),
+            });
+            let resp = ClientResponse {
+                ok: true,
+                correlation_id: Some(outcome.correlation_id),
+                session_id: Some(outcome.session_id),
+                diagnose: Some(outcome.diagnose.clone()),
+                pending,
+                session_grants: Some(runtime.session_grants()),
+                progress: Some(outcome.events.clone()),
+                ..Default::default()
+            };
+            *last_pending.lock().await = Some(outcome);
+            resp
+        }
+        Err(e) => ClientResponse {
+            ok: false,
+            session_id,
+            error: Some(e.to_string()),
+            ..Default::default()
+        },
+    };
+
+    let mut done = serde_json::to_value(&response)?;
+    if let Some(obj) = done.as_object_mut() {
+        obj.insert("type".into(), json!("done"));
+    }
+    let mut line = serde_json::to_vec(&done)?;
+    line.push(b'\n');
+    stream.write_all(&line).await?;
     stream.shutdown().await?;
     Ok(())
 }

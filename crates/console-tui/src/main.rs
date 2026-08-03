@@ -27,6 +27,10 @@ struct Args {
 enum ClientRequest {
     Diagnose {
         text: String,
+        #[serde(default)]
+        session_id: Option<Uuid>,
+        #[serde(default)]
+        stream: bool,
     },
     Confirm {
         correlation_id: Uuid,
@@ -34,6 +38,11 @@ enum ClientRequest {
         tool: String,
         arguments: serde_json::Value,
         scope: ConfirmScope,
+        #[serde(default)]
+        session_id: Option<Uuid>,
+    },
+    ChatReset {
+        session_id: Uuid,
     },
     AuditTail {
         limit: usize,
@@ -67,6 +76,8 @@ enum ClientRequest {
 struct ClientResponse {
     ok: bool,
     correlation_id: Option<Uuid>,
+    #[serde(default)]
+    session_id: Option<Uuid>,
     diagnose: Option<protocol::DiagnoseResult>,
     pending: Option<PendingDto>,
     error: Option<String>,
@@ -81,6 +92,8 @@ struct ClientResponse {
     status: Option<serde_json::Value>,
     #[serde(default)]
     events: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    progress: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +111,7 @@ struct App {
     pending: Option<(Uuid, PendingDto)>,
     status: String,
     last_correlation: Option<Uuid>,
+    chat_session: Option<Uuid>,
 }
 
 impl App {
@@ -110,11 +124,13 @@ impl App {
                 "Type a question and press Enter. Example: Почему система тормозит?".into(),
                 "Confirm: y=once, s=session, n=cancel | h=status | e=events | a=audit | m=memory | g=grants | c=clear | q=quit"
                     .into(),
-                "Memory: /remember key=value | /recall query | /forget key".into(),
+                "Chat: multi-turn session kept across prompts | /new resets | /remember key=value"
+                    .into(),
             ],
             pending: None,
             status: "disconnected".into(),
             last_correlation: None,
+            chat_session: None,
         }
     }
 }
@@ -213,25 +229,47 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
 }
 
 async fn diagnose(app: &mut App, text: &str) -> Result<()> {
-    match request(
+    match request_stream(
         &app.sock,
         &ClientRequest::Diagnose {
             text: text.to_string(),
+            session_id: app.chat_session,
+            stream: true,
+        },
+        |line| {
+            if let Some(kind) = line.get("type").and_then(|v| v.as_str()) {
+                if kind == "progress" {
+                    if let Some(ev) = line.get("event") {
+                        return Some(format_progress(ev));
+                    }
+                }
+            }
+            None
         },
     )
     .await
     {
-        Ok(resp) => {
+        Ok((resp, progress_lines)) => {
+            for line in progress_lines {
+                if !line.is_empty() {
+                    app.lines.push(line);
+                }
+            }
             if let Some(err) = resp.error {
                 app.lines.push(format!("error: {err}"));
                 return Ok(());
             }
+            if let Some(sid) = resp.session_id {
+                app.chat_session = Some(sid);
+            }
             if let Some(corr) = resp.correlation_id {
                 app.last_correlation = Some(corr);
-                app.lines.push(format!("correlation_id={corr}"));
             }
             if let Some(d) = resp.diagnose {
-                app.lines.push(d.summary);
+                // Avoid duplicating assistant text already shown via progress.
+                if app.lines.last().map(|l| l.as_str()) != Some(d.summary.as_str()) {
+                    app.lines.push(d.summary);
+                }
                 if let Some(action) = d.proposed_action {
                     app.lines
                         .push(format!("Предлагаемое действие: {}", action.summary));
@@ -244,15 +282,51 @@ async fn diagnose(app: &mut App, text: &str) -> Result<()> {
                 ));
                 app.pending = Some((corr, pending));
             }
+            let sid = app
+                .chat_session
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "-".into());
             if let Some(grants) = resp.session_grants {
-                app.status = format!("ok | grants={}", grants.join(","));
+                app.status = format!("ok | session={} | grants={}", &sid[..8.min(sid.len())], grants.join(","));
             } else {
-                app.status = "ok".into();
+                app.status = format!("ok | session={}", &sid[..8.min(sid.len())]);
             }
         }
         Err(e) => app.lines.push(format!("request failed: {e:#}")),
     }
     Ok(())
+}
+
+fn format_progress(ev: &serde_json::Value) -> String {
+    let kind = ev.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+    match kind {
+        "tool_call" => {
+            let tool = ev.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+            format!("… tool {tool}")
+        }
+        "tool_result" => {
+            let tool = ev.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+            let ok = ev.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            format!("… {tool} → {}", if ok { "ok" } else { "fail" })
+        }
+        "policy" => {
+            let tool = ev.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+            let verdict = ev.get("verdict").and_then(|v| v.as_str()).unwrap_or("?");
+            format!("… policy {tool}={verdict}")
+        }
+        "assistant" => ev
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "confirmation" => String::new(),
+        "completed" => String::new(),
+        "error" => format!(
+            "error: {}",
+            ev.get("message").and_then(|v| v.as_str()).unwrap_or("?")
+        ),
+        _ => format!("… {kind}"),
+    }
 }
 
 async fn confirm(app: &mut App, scope: ConfirmScope) -> Result<()> {
@@ -267,6 +341,7 @@ async fn confirm(app: &mut App, scope: ConfirmScope) -> Result<()> {
             tool: pending.tool,
             arguments: pending.arguments,
             scope,
+            session_id: app.chat_session,
         },
     )
     .await
@@ -407,6 +482,15 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
     let cmd = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("").trim();
     match cmd {
+        "/new" | "/reset" => {
+            if let Some(sid) = app.chat_session {
+                let _ = request(&app.sock, &ClientRequest::ChatReset { session_id: sid }).await;
+            }
+            app.chat_session = None;
+            app.pending = None;
+            app.lines.push("chat session reset".into());
+            app.status = "session=new".into();
+        }
         "/remember" => {
             let Some((key, value)) = rest.split_once('=') else {
                 app.lines.push("usage: /remember key=value".into());
@@ -528,6 +612,50 @@ async fn request(sock: &PathBuf, req: &ClientRequest) -> Result<ClientResponse> 
     stream.read_to_end(&mut buf).await?;
     let resp: ClientResponse = serde_json::from_slice(&buf)?;
     Ok(resp)
+}
+
+async fn request_stream<F>(
+    sock: &PathBuf,
+    req: &ClientRequest,
+    mut on_progress: F,
+) -> Result<(ClientResponse, Vec<String>)>
+where
+    F: FnMut(&serde_json::Value) -> Option<String>,
+{
+    let mut stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connect {}", sock.display()))?;
+    let bytes = serde_json::to_vec(req)?;
+    stream.write_all(&bytes).await?;
+    stream.shutdown().await?;
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut progress_lines = Vec::new();
+    let mut done: Option<ClientResponse> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line)
+            .with_context(|| format!("parse stream line: {line}"))?;
+        match value.get("type").and_then(|v| v.as_str()) {
+            Some("progress") => {
+                if let Some(s) = on_progress(&value) {
+                    progress_lines.push(s);
+                }
+            }
+            Some("done") | None => {
+                done = Some(serde_json::from_value(value)?);
+            }
+            Some(_) => {
+                // Unknown frame; ignore.
+            }
+        }
+    }
+    let resp = done.ok_or_else(|| anyhow::anyhow!("stream ended without done frame"))?;
+    Ok((resp, progress_lines))
 }
 
 fn ui(f: &mut Frame, app: &App) {

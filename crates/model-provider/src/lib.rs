@@ -115,6 +115,28 @@ impl ModelProvider for MockModelProvider {
             });
         }
 
+        // Multi-turn follow-ups that reuse prior diagnose context in the transcript.
+        let joined = messages
+            .iter()
+            .map(|m| m.content.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if joined.contains("runaway-worker")
+            && (last.contains("pid")
+                || last.contains("какой")
+                || last.contains("who")
+                || last.contains("which")
+                || last.contains("имя")
+                || last.contains("name"))
+        {
+            return Ok(ModelResponse {
+                assistant_text: Some(
+                    "Ранее найденный виновник — runaway-worker, pid 4312.".into(),
+                ),
+                tool_calls: vec![],
+            });
+        }
+
         if last.contains("тормоз") || last.contains("slow") || last.contains("cpu") {
             return Ok(ModelResponse {
                 assistant_text: None,
