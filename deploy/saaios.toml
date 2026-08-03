@@ -1,0 +1,30 @@
+# Appliance defaults for Raspberry Pi / Linux hosts.
+# Install to /etc/saaios/saaios.toml (see deploy/install.sh).
+
+[runtime]
+sock = "/run/saaios/saaios.sock"
+audit = "/var/lib/saaios/audit.jsonl"
+real_linux = true
+mock_planner = false
+
+[provider]
+kind = "auto"
+model = "gpt-4o-mini"
+local_base = "http://127.0.0.1:11434/v1"
+local_model = "llama3.2"
+
+[budgets]
+max_concurrent = 1
+request_timeout_secs = 30
+max_tool_iters = 6
+
+[memory]
+enabled = true
+path = "/var/lib/saaios/memory.jsonl"
+
+[automation]
+enabled = true
+
+[telemetry]
+mode = "auto"
+interval_secs = 30

@@ -3,6 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use audit_log::AuditLog;
 use automation_engine::AutomationEngine;
 use clap::Parser;
+use config::{resolve, CliOverrides};
 use event_bus::EventBus;
 use memory_store::{install_memory_tools, MemoryFact, MemoryStore};
 use model_provider::{build_provider, ProviderKind};
@@ -24,29 +25,33 @@ use uuid::Uuid;
 #[derive(Debug, Parser)]
 #[command(name = "saaios-runtime", about = "SaaiOS Platform runtime")]
 struct Args {
+    /// Path to saaios.toml (also: SAAIOS_CONFIG, ./saaios.toml, /etc/saaios/saaios.toml)
+    #[arg(long, env = "SAAIOS_CONFIG")]
+    config: Option<PathBuf>,
+
     /// Use mock tools + mock model provider (alias for --provider mock)
     #[arg(long, env = "SAAIOS_MOCK")]
     mock: bool,
 
     /// Model provider: mock | remote | local | auto
-    #[arg(long, env = "SAAIOS_PROVIDER", default_value = "auto")]
-    provider: String,
+    #[arg(long, env = "SAAIOS_PROVIDER")]
+    provider: Option<String>,
 
     /// Use deterministic mock planner (no model loop)
     #[arg(long)]
     mock_planner: bool,
 
     /// Unix domain socket path
-    #[arg(long, default_value = "/tmp/saaios.sock", env = "SAAIOS_SOCK")]
-    sock: PathBuf,
+    #[arg(long, env = "SAAIOS_SOCK")]
+    sock: Option<PathBuf>,
 
     /// Audit log path
-    #[arg(long, default_value = "saaios-audit.jsonl", env = "SAAIOS_AUDIT")]
-    audit: PathBuf,
+    #[arg(long, env = "SAAIOS_AUDIT")]
+    audit: Option<PathBuf>,
 
     /// Local memory / facts JSONL path
-    #[arg(long, default_value = "saaios-memory.jsonl", env = "SAAIOS_MEMORY")]
-    memory: PathBuf,
+    #[arg(long, env = "SAAIOS_MEMORY")]
+    memory: Option<PathBuf>,
 
     /// Disable memory store and memory.* tools
     #[arg(long)]
@@ -61,19 +66,23 @@ struct Args {
     replay: Option<Uuid>,
 
     /// Max concurrent AI requests
-    #[arg(long, default_value_t = 1, env = "SAAIOS_MAX_CONCURRENT")]
-    max_concurrent: usize,
+    #[arg(long, env = "SAAIOS_MAX_CONCURRENT")]
+    max_concurrent: Option<usize>,
 
     /// AI request timeout in seconds
-    #[arg(long, default_value_t = 30, env = "SAAIOS_REQUEST_TIMEOUT_SECS")]
-    request_timeout_secs: u64,
+    #[arg(long, env = "SAAIOS_REQUEST_TIMEOUT_SECS")]
+    request_timeout_secs: Option<u64>,
+
+    /// Max tool-loop iterations per request
+    #[arg(long, env = "SAAIOS_MAX_TOOL_ITERS")]
+    max_tool_iters: Option<usize>,
 
     /// Disable event-driven automation worker
     #[arg(long)]
     no_automation: bool,
 
-    /// Enable background telemetry sampler (also on by default with --real-linux)
-    #[arg(long, env = "SAAIOS_TELEMETRY")]
+    /// Enable background telemetry sampler
+    #[arg(long)]
     telemetry: bool,
 
     /// Disable background telemetry sampler
@@ -81,8 +90,8 @@ struct Args {
     no_telemetry: bool,
 
     /// Telemetry sample interval in seconds
-    #[arg(long, default_value_t = 30, env = "SAAIOS_TELEMETRY_INTERVAL_SECS")]
-    telemetry_interval_secs: u64,
+    #[arg(long, env = "SAAIOS_TELEMETRY_INTERVAL_SECS")]
+    telemetry_interval_secs: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -184,10 +193,13 @@ struct RuntimeStatusDto {
     max_concurrent: usize,
     request_timeout_secs: u64,
     session_grants: Vec<String>,
+    #[serde(default)]
+    config_path: Option<String>,
 }
 
 struct RuntimeMeta {
     started: Instant,
+    config_path: Option<PathBuf>,
     provider_name: String,
     provider_kind: String,
     tools_mode: String,
@@ -225,6 +237,7 @@ impl RuntimeMeta {
             max_concurrent: self.max_concurrent,
             request_timeout_secs: self.request_timeout_secs,
             session_grants: runtime.session_grants(),
+            config_path: self.config_path.as_ref().map(|p| p.display().to_string()),
         }
     }
 }
@@ -238,24 +251,38 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    let mut args = Args::parse();
-    if std::env::var("SAAIOS_MODE").ok().as_deref() == Some("mock") {
-        args.mock = true;
-        args.mock_planner = true;
-        args.provider = "mock".into();
-    }
-    if args.mock {
-        args.provider = "mock".into();
+    let args = Args::parse();
+    let settings = resolve(CliOverrides {
+        config: args.config.clone(),
+        mock: args.mock,
+        mock_planner: args.mock_planner,
+        provider: args.provider.clone(),
+        sock: args.sock.clone(),
+        audit: args.audit.clone(),
+        memory: args.memory.clone(),
+        no_memory: args.no_memory,
+        real_linux: args.real_linux,
+        max_concurrent: args.max_concurrent,
+        request_timeout_secs: args.request_timeout_secs,
+        max_tool_iters: args.max_tool_iters,
+        no_automation: args.no_automation,
+        telemetry: args.telemetry,
+        no_telemetry: args.no_telemetry,
+        telemetry_interval_secs: args.telemetry_interval_secs,
+    })?;
+
+    if let Some(path) = &settings.config_path {
+        info!(path = %path.display(), "loaded config");
     }
 
     if let Some(correlation_id) = args.replay {
-        let audit = AuditLog::open(&args.audit)?;
+        let audit = AuditLog::open(&settings.audit)?;
         let report = audit.replay(correlation_id)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    let tools_mode = if args.real_linux {
+    let tools_mode = if settings.real_linux {
         ToolsMode::RealLinux
     } else {
         ToolsMode::Mock
@@ -264,59 +291,60 @@ async fn main() -> Result<()> {
     let mut registry = ToolRegistry::new();
     install_system_tools(&mut registry, tools_mode);
 
-    let memory = if args.no_memory {
+    let memory = if !settings.memory_enabled {
         None
     } else {
-        let store = Arc::new(MemoryStore::open(&args.memory)?);
+        let store = Arc::new(MemoryStore::open(&settings.memory_path)?);
         install_memory_tools(&mut registry, store.clone());
-        info!(path = %args.memory.display(), "memory store ready");
+        info!(path = %settings.memory_path.display(), "memory store ready");
         Some(store)
     };
 
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
-    let audit = Arc::new(AuditLog::open(&args.audit)?);
+    let audit = Arc::new(AuditLog::open(&settings.audit)?);
     let bus = EventBus::new(64);
 
-    if args.mock_planner {
+    if settings.mock_planner {
         info!("running one-shot mock planner demo");
         let outcome =
             diagnose_slow_with_mock_planner(tools.clone(), policy.clone(), audit.clone()).await?;
         print_outcome(&outcome);
         info!(correlation_id = %outcome.correlation_id, "audit written");
-        info!(sock = %args.sock.display(), "starting UDS server");
+        info!(sock = %settings.sock.display(), "starting UDS server");
     }
 
-    let kind = if args.mock_planner {
+    let kind = if settings.mock_planner {
         ProviderKind::Mock
     } else {
-        ProviderKind::parse(&args.provider).ok_or_else(|| {
+        ProviderKind::parse(&settings.provider_kind).ok_or_else(|| {
             anyhow!(
                 "unknown provider {:?}; expected mock|remote|local|auto",
-                args.provider
+                settings.provider_kind
             )
         })?
     };
     let provider = build_provider(
         kind,
-        std::env::var("SAAIOS_API_BASE").ok(),
-        std::env::var("SAAIOS_API_KEY").ok(),
-        std::env::var("SAAIOS_MODEL").ok(),
-        std::env::var("SAAIOS_LOCAL_BASE").ok(),
-        std::env::var("SAAIOS_LOCAL_MODEL").ok(),
+        settings.api_base.clone(),
+        settings.api_key.clone(),
+        settings.model.clone(),
+        settings.local_base.clone(),
+        settings.local_model.clone(),
     )
     .await
     .context("build model provider")?;
     info!(provider = provider.name(), kind = ?kind, "model provider ready");
 
     let budgets = ResourceBudgets {
-        max_concurrent_requests: args.max_concurrent.max(1),
-        request_timeout: Duration::from_secs(args.request_timeout_secs.max(1)),
-        max_tool_iters: 6,
+        max_concurrent_requests: settings.max_concurrent,
+        request_timeout: Duration::from_secs(settings.request_timeout_secs),
+        max_tool_iters: settings.max_tool_iters,
     };
     info!(
         max_concurrent = budgets.max_concurrent_requests,
         timeout_secs = budgets.request_timeout.as_secs(),
+        max_tool_iters = budgets.max_tool_iters,
         "AI resource budgets"
     );
 
@@ -336,7 +364,7 @@ async fn main() -> Result<()> {
     }
     let runtime = Arc::new(runtime);
 
-    let automation_enabled = !args.no_automation;
+    let automation_enabled = settings.automation_enabled;
     if automation_enabled {
         let automation = Arc::new(AutomationEngine::new(
             bus.clone(),
@@ -347,18 +375,18 @@ async fn main() -> Result<()> {
         info!("automation engine started");
     }
 
-    let telemetry = if args.no_telemetry || !(args.telemetry || args.real_linux) {
+    let telemetry = if !settings.telemetry_enabled {
         None
     } else {
         let sampler = Arc::new(TelemetrySampler::new(
             tools.clone(),
             bus.clone(),
             audit.clone(),
-            Duration::from_secs(args.telemetry_interval_secs.max(1)),
+            Duration::from_secs(settings.telemetry_interval_secs),
         ));
         let _tel = sampler.clone().spawn();
         info!(
-            interval_secs = args.telemetry_interval_secs,
+            interval_secs = settings.telemetry_interval_secs,
             "telemetry sampler started"
         );
         Some(sampler)
@@ -369,18 +397,19 @@ async fn main() -> Result<()> {
 
     let meta = Arc::new(RuntimeMeta {
         started: Instant::now(),
+        config_path: settings.config_path.clone(),
         provider_name,
         provider_kind: format!("{kind:?}").to_lowercase(),
         tools_mode: format!("{tools_mode:?}").to_lowercase(),
         tool_names,
         memory_enabled: memory.is_some(),
         memory_path: if memory.is_some() {
-            Some(args.memory.clone())
+            Some(settings.memory_path.clone())
         } else {
             None
         },
-        audit_path: args.audit.clone(),
-        sock: args.sock.clone(),
+        audit_path: settings.audit.clone(),
+        sock: settings.sock.clone(),
         automation: automation_enabled,
         telemetry,
         max_concurrent,
@@ -389,12 +418,12 @@ async fn main() -> Result<()> {
 
     let last_pending = Arc::new(tokio::sync::Mutex::new(None::<HandleOutcome>));
 
-    if args.sock.exists() {
-        let _ = std::fs::remove_file(&args.sock);
+    if settings.sock.exists() {
+        let _ = std::fs::remove_file(&settings.sock);
     }
-    let listener =
-        UnixListener::bind(&args.sock).with_context(|| format!("bind {}", args.sock.display()))?;
-    info!(sock = %args.sock.display(), "SaaiOS runtime listening");
+    let listener = UnixListener::bind(&settings.sock)
+        .with_context(|| format!("bind {}", settings.sock.display()))?;
+    info!(sock = %settings.sock.display(), "SaaiOS runtime listening");
 
     loop {
         let (stream, _) = listener.accept().await?;

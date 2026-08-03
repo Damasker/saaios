@@ -12,6 +12,7 @@ members = [
     "crates/ai-runtime",
     "crates/automation-engine",
     "crates/telemetry",
+    "crates/config",
     "crates/console-tui",
     "services/saaios-runtime",
     "tests/diagnose-slow-system",
@@ -36,6 +37,7 @@ memory-store = { path = "crates/memory-store" }
 ai-runtime = { path = "crates/ai-runtime" }
 automation-engine = { path = "crates/automation-engine" }
 telemetry = { path = "crates/telemetry" }
+config = { path = "crates/config" }
 console-tui = { path = "crates/console-tui" }
 
 anyhow = "1"
@@ -54,3 +56,4 @@ ratatui = "0.29"
 crossterm = "0.28"
 clap = { version = "4", features = ["derive", "env"] }
 tempfile = "3"
+toml = "0.8"

@@ -29,6 +29,9 @@ run-auto:
 run-telemetry:
     cargo run -p saaios-runtime -- --real-linux --mock --telemetry --telemetry-interval-secs 5
 
+run-config:
+    cargo run -p saaios-runtime -- --config saaios.example.toml --mock
+
 run:
     cargo run -p saaios-runtime -- --real-linux --provider remote
 

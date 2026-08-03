@@ -51,6 +51,15 @@ export SAAIOS_MODEL=gpt-4o-mini
 just run
 ```
 
+### Config file (optional)
+
+```bash
+cp saaios.example.toml saaios.toml
+# edit provider / paths / telemetry
+just run-config
+# or: cargo run -p saaios-runtime -- --config saaios.toml
+```
+
 ## Workspace
 
 | Crate | Role |
@@ -65,6 +74,7 @@ just run
 | `ai-runtime` | Request orchestration |
 | `automation-engine` | Event-driven rules |
 | `telemetry` | Periodic metrics → event bus |
+| `config` | TOML settings + CLI/env merge |
 | `console-tui` | First UI |
 | `saaios-runtime` | Composition root / UDS server |
 
@@ -84,6 +94,7 @@ Local inference (via Ollama), A/B `BOOT_OK` updates, and local memory facts land
 - [Platform 0.3 local models & A/B](docs/platform-0.3.md)
 - [Platform 0.3 memory / facts](docs/platform-0.3-memory.md)
 - [Platform 0.4 telemetry & status](docs/platform-0.4.md)
+- [Platform 0.5 TOML config](docs/platform-0.5-config.md)
 - [Raspberry Pi / Linux appliance](docs/appliance.md)
 
 ### Real Linux tools

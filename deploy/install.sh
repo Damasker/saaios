@@ -36,6 +36,11 @@ if [[ "${SAAIOS_AB:-0}" == "1" ]]; then
   chown -R saaios:saaios /var/lib/saaios/ab
 fi
 
+install -d -m 0755 /etc/saaios
+if [[ ! -f /etc/saaios/saaios.toml ]]; then
+  install -m 0644 "$ROOT_DIR/deploy/saaios.toml" /etc/saaios/saaios.toml
+fi
+
 systemctl daemon-reload
 systemctl enable saaios-runtime.service
 systemctl enable saaios-boot-ok.service
@@ -45,6 +50,7 @@ systemctl --no-pager --full status saaios-runtime.service || true
 
 echo
 echo "Installed."
+echo "Config: /etc/saaios/saaios.toml"
 echo "Socket: /run/saaios/saaios.sock"
 echo "Audit:  /var/lib/saaios/audit.jsonl"
 echo "TUI:    SAAIOS_SOCK=/run/saaios/saaios.sock saaios-console"
