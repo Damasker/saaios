@@ -29,6 +29,7 @@ done
 
 RUNTIME="$BIN_DIR/saaios-runtime"
 CONSOLE="$BIN_DIR/saaios-console"
+STAGE_BIN="$BIN_DIR/saaios-stage"
 if [[ ! -x "$RUNTIME" ]]; then
   echo "missing $RUNTIME — build first (cargo build -p saaios-runtime --release)" >&2
   exit 1
@@ -46,6 +47,11 @@ if [[ -x "$CONSOLE" ]]; then
   install -m 0755 "$CONSOLE" "$DEST/bin/saaios-console"
 else
   echo "warning: saaios-console not found next to runtime; packaging runtime only" >&2
+fi
+if [[ -x "$STAGE_BIN" ]]; then
+  install -m 0755 "$STAGE_BIN" "$DEST/bin/saaios-stage"
+else
+  echo "warning: saaios-stage not found next to runtime (optional)" >&2
 fi
 
 install -m 0755 "$ROOT_DIR/deploy/install.sh" "$DEST/deploy/install.sh"

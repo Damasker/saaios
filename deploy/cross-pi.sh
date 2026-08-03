@@ -14,7 +14,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PROFILE="release"
-CARGO_ARGS=(build -p saaios-runtime -p console-tui --target aarch64-unknown-linux-gnu)
+CARGO_ARGS=(build -p saaios-runtime -p console-tui -p console-web --target aarch64-unknown-linux-gnu)
 for arg in "$@"; do
   case "$arg" in
     --debug) PROFILE="dev"; ;;
@@ -95,7 +95,7 @@ fi
 
 echo
 echo "Built:"
-ls -lh "$OUT/saaios-runtime" "$OUT/saaios-console"
+ls -lh "$OUT/saaios-runtime" "$OUT/saaios-console" "$OUT/saaios-stage" 2>/dev/null || ls -lh "$OUT/saaios-runtime" "$OUT/saaios-console"
 echo
 echo "Package:  ./deploy/package.sh $OUT"
 echo "Install:  sudo ./deploy/install.sh $OUT/saaios-runtime  (also installs console if adjacent)"

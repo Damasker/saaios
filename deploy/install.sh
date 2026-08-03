@@ -11,6 +11,8 @@ BIN_SRC="${1:-$ROOT_DIR/target/release/saaios-runtime}"
 BIN_DST="/usr/local/bin/saaios-runtime"
 CONSOLE_SRC="$(dirname "$BIN_SRC")/saaios-console"
 CONSOLE_DST="/usr/local/bin/saaios-console"
+STAGE_SRC="$(dirname "$BIN_SRC")/saaios-stage"
+STAGE_DST="/usr/local/bin/saaios-stage"
 UNIT_SRC="$ROOT_DIR/deploy/systemd/saaios-runtime.service"
 UNIT_DST="/etc/systemd/system/saaios-runtime.service"
 BOOT_OK_UNIT_SRC="$ROOT_DIR/deploy/systemd/saaios-boot-ok.service"
@@ -19,7 +21,7 @@ LIB_DST="/usr/local/lib/saaios"
 
 if [[ ! -f "$BIN_SRC" ]]; then
   echo "binary not found: $BIN_SRC" >&2
-  echo "Build first: cargo build -p saaios-runtime -p console-tui --release" >&2
+  echo "Build first: cargo build -p saaios-runtime -p console-tui -p console-web --release" >&2
   echo "Or cross:    ./deploy/cross-pi.sh && ./deploy/package.sh target/aarch64-unknown-linux-gnu/release" >&2
   exit 1
 fi
@@ -32,6 +34,12 @@ if [[ -x "$CONSOLE_SRC" ]]; then
   echo "installed console: $CONSOLE_DST"
 else
   echo "note: saaios-console not found at $CONSOLE_SRC (skipped)"
+fi
+if [[ -x "$STAGE_SRC" ]]; then
+  install -m 0755 "$STAGE_SRC" "$STAGE_DST"
+  echo "installed stage:   $STAGE_DST"
+else
+  echo "note: saaios-stage not found at $STAGE_SRC (skipped)"
 fi
 install -m 0644 "$UNIT_SRC" "$UNIT_DST"
 
