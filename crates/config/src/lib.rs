@@ -97,11 +97,16 @@ impl Default for MemoryConfig {
 #[serde(default)]
 pub struct AutomationConfig {
     pub enabled: bool,
+    /// When true, enable auto-diagnose rule + runtime worker.
+    pub auto_diagnose: bool,
 }
 
 impl Default for AutomationConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            auto_diagnose: false,
+        }
     }
 }
 
@@ -151,6 +156,7 @@ pub struct ResolvedSettings {
     pub memory_enabled: bool,
     pub memory_path: PathBuf,
     pub automation_enabled: bool,
+    pub auto_diagnose: bool,
     pub telemetry_enabled: bool,
     pub telemetry_interval_secs: u64,
 }
@@ -171,6 +177,8 @@ pub struct CliOverrides {
     pub request_timeout_secs: Option<u64>,
     pub max_tool_iters: Option<usize>,
     pub no_automation: bool,
+    pub auto_diagnose: bool,
+    pub no_auto_diagnose: bool,
     pub telemetry: bool,
     pub no_telemetry: bool,
     pub telemetry_interval_secs: Option<u64>,
@@ -263,6 +271,10 @@ pub fn resolve(overrides: CliOverrides) -> Result<ResolvedSettings> {
     let memory_path = overrides.memory.unwrap_or(cfg.memory.path);
     let memory_enabled = cfg.memory.enabled && !overrides.no_memory;
     let automation_enabled = cfg.automation.enabled && !overrides.no_automation;
+    let mut auto_diagnose = cfg.automation.auto_diagnose || overrides.auto_diagnose;
+    if overrides.no_auto_diagnose {
+        auto_diagnose = false;
+    }
 
     let mut telemetry_enabled = match cfg.telemetry.mode {
         TelemetryMode::On => true,
@@ -323,6 +335,7 @@ pub fn resolve(overrides: CliOverrides) -> Result<ResolvedSettings> {
         memory_enabled,
         memory_path,
         automation_enabled,
+        auto_diagnose,
         telemetry_enabled,
         telemetry_interval_secs,
     })
@@ -422,5 +435,17 @@ mode = "off"
         })
         .unwrap();
         assert!(!settings.memory_enabled);
+    }
+
+    #[test]
+    fn auto_diagnose_defaults_off() {
+        let settings = resolve(CliOverrides::default()).unwrap();
+        assert!(!settings.auto_diagnose);
+        let settings = resolve(CliOverrides {
+            auto_diagnose: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(settings.auto_diagnose);
     }
 }

@@ -26,9 +26,20 @@ pub enum TriggerKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AutomationAction {
-    Notify { message: String },
-    SuggestDiagnose { prompt: String },
-    EmitEvent { name: String, payload: Value },
+    Notify {
+        message: String,
+    },
+    SuggestDiagnose {
+        prompt: String,
+    },
+    /// Emit a request that the runtime may execute as a real diagnose.
+    AutoDiagnose {
+        prompt: String,
+    },
+    EmitEvent {
+        name: String,
+        payload: Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +85,21 @@ impl AutomationEngine {
         }
     }
 
+    /// Enable/disable the built-in `high-cpu-auto-diagnose` rule.
+    pub fn set_auto_diagnose_rule(&mut self, enabled: bool) {
+        if let Some(rule) = self
+            .rules
+            .iter_mut()
+            .find(|r| r.id == "high-cpu-auto-diagnose")
+        {
+            rule.enabled = enabled;
+        }
+    }
+
+    pub fn rules(&self) -> &[AutomationRule] {
+        &self.rules
+    }
+
     pub fn default_rules() -> Vec<AutomationRule> {
         vec![
             AutomationRule {
@@ -89,6 +115,22 @@ impl AutomationEngine {
                     prompt: "Почему система тормозит?".into(),
                 },
                 cooldown_secs: 30,
+            },
+            AutomationRule {
+                id: "high-cpu-auto-diagnose".into(),
+                name: "High CPU auto diagnose".into(),
+                // Enabled at runtime when config automation.auto_diagnose=true
+                // (see AutomationEngine::with_auto_diagnose_rule).
+                enabled: false,
+                trigger: TriggerKind::ToolResultThreshold {
+                    tool: "system.metrics".into(),
+                    field: "cpu_usage".into(),
+                    gte: 85.0,
+                },
+                action: AutomationAction::AutoDiagnose {
+                    prompt: "Почему система тормозит?".into(),
+                },
+                cooldown_secs: 120,
             },
             AutomationRule {
                 id: "high-cpu-notify".into(),
@@ -168,6 +210,13 @@ impl AutomationEngine {
             }),
             AutomationAction::SuggestDiagnose { prompt } => json!({
                 "event": "AutomationSuggestDiagnose",
+                "rule_id": fire.rule_id,
+                "rule_name": fire.rule_name,
+                "prompt": prompt,
+                "detail": fire.detail,
+            }),
+            AutomationAction::AutoDiagnose { prompt } => json!({
+                "event": "AutomationAutoDiagnose",
                 "rule_id": fire.rule_id,
                 "rule_name": fire.rule_name,
                 "prompt": prompt,
@@ -371,6 +420,7 @@ impl Matcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     #[test]
@@ -390,6 +440,58 @@ mod tests {
         let fires = evaluate_once(AutomationEngine::default_rules(), &env);
         assert!(fires.iter().any(|f| f.rule_id == "high-cpu-suggest"));
         assert!(fires.iter().any(|f| f.rule_id == "high-cpu-notify"));
+        assert!(!fires.iter().any(|f| f.rule_id == "high-cpu-auto-diagnose"));
+    }
+
+    #[test]
+    fn auto_diagnose_rule_can_be_enabled() {
+        let mut engine = AutomationEngine::new(
+            EventBus::new(8),
+            Arc::new(AuditLog::open(tempdir().unwrap().path().join("a.jsonl")).unwrap()),
+            AutomationEngine::default_rules(),
+        );
+        assert!(
+            !engine
+                .rules()
+                .iter()
+                .find(|r| r.id == "high-cpu-auto-diagnose")
+                .unwrap()
+                .enabled
+        );
+        engine.set_auto_diagnose_rule(true);
+        assert!(
+            engine
+                .rules()
+                .iter()
+                .find(|r| r.id == "high-cpu-auto-diagnose")
+                .unwrap()
+                .enabled
+        );
+
+        let env = Envelope::new(
+            MessageKind::ToolResult,
+            Uuid::new_v4(),
+            None,
+            json!({
+                "tool": "system.metrics",
+                "ok": true,
+                "output": {"cpu_usage": 97.0}
+            }),
+        );
+        let fires = engine.evaluate(&env);
+        assert!(fires.iter().any(|f| f.rule_id == "high-cpu-auto-diagnose"));
+        let applied = engine
+            .apply(
+                fires
+                    .iter()
+                    .find(|f| f.rule_id == "high-cpu-auto-diagnose")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            applied.payload.get("event").and_then(|v| v.as_str()),
+            Some("AutomationAutoDiagnose")
+        );
     }
 
     #[test]

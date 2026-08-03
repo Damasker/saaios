@@ -24,6 +24,7 @@ path = "/var/lib/saaios/memory.jsonl"
 
 [automation]
 enabled = true
+auto_diagnose = false
 
 [telemetry]
 mode = "auto"

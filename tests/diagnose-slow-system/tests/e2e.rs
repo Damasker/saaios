@@ -327,6 +327,59 @@ async fn telemetry_sample_triggers_high_cpu_automation() {
 }
 
 #[tokio::test]
+async fn auto_diagnose_action_emits_dedicated_event() {
+    use automation_engine::{AutomationAction, AutomationEngine, AutomationRule, TriggerKind};
+    use protocol::MessageKind;
+
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let bus = EventBus::new(32);
+    let mut rx = bus.subscribe();
+
+    let engine = AutomationEngine::new(
+        bus.clone(),
+        audit.clone(),
+        vec![AutomationRule {
+            id: "t".into(),
+            name: "t".into(),
+            enabled: true,
+            trigger: TriggerKind::ToolResultThreshold {
+                tool: "system.metrics".into(),
+                field: "cpu_usage".into(),
+                gte: 50.0,
+            },
+            action: AutomationAction::AutoDiagnose {
+                prompt: "why slow?".into(),
+            },
+            cooldown_secs: 1,
+        }],
+    );
+
+    let env = protocol::Envelope::new(
+        MessageKind::ToolResult,
+        uuid::Uuid::new_v4(),
+        None,
+        json!({
+            "tool": "system.metrics",
+            "ok": true,
+            "output": {"cpu_usage": 90.0}
+        }),
+    );
+    for fire in engine.evaluate(&env) {
+        engine.apply(&fire).unwrap();
+    }
+    let got = rx.recv().await.unwrap();
+    assert_eq!(
+        got.payload.get("event").and_then(|v| v.as_str()),
+        Some("AutomationAutoDiagnose")
+    );
+    assert_eq!(
+        got.payload.get("prompt").and_then(|v| v.as_str()),
+        Some("why slow?")
+    );
+}
+
+#[tokio::test]
 async fn memory_facts_injected_into_system_prompt() {
     use memory_store::{install_memory_tools, MemoryFact, MemoryStore};
     use std::sync::Mutex;
