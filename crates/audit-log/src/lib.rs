@@ -151,6 +151,11 @@ impl AuditLog {
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
                     let verdict = record.payload.get("verdict").cloned().unwrap_or_default();
+                    if verdict.as_str() == Some("ask_user") {
+                        side_effects.push(format!(
+                            "policy asked confirmation for `{tool}` (not auto-executed in this chain)"
+                        ));
+                    }
                     ReplayStep {
                         kind: record.kind.clone(),
                         description: format!("policy for `{tool}`: {verdict}"),
