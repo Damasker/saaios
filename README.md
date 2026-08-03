@@ -96,6 +96,7 @@ Local inference (via Ollama), A/B `BOOT_OK` updates, and local memory facts land
 - [Platform 0.4 telemetry & status](docs/platform-0.4.md)
 - [Platform 0.5 TOML config](docs/platform-0.5-config.md)
 - [Platform 0.5 auto-diagnose](docs/platform-0.5-auto-diagnose.md)
+- [Platform 0.5 richer tools](docs/platform-0.5-tools.md)
 - [Raspberry Pi / Linux appliance](docs/appliance.md)
 
 ### Real Linux tools

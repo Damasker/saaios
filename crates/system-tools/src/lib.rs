@@ -94,16 +94,52 @@ pub fn install_system_tools(registry: &mut ToolRegistry, mode: ToolsMode) {
         },
     }));
 
+    registry.register(Arc::new(TemperatureTool {
+        backend: backend.clone(),
+        spec: ToolSpec {
+            name: "system.temperature".into(),
+            description: "Read thermal sensors (CPU/SoC zones when available)".into(),
+            risk: RiskLevel::Low,
+            timeout_ms: 2000,
+            input_schema: json!({"type":"object","properties":{}}),
+            output_schema: json!({"type":"object"}),
+            requires_confirmation: false,
+        },
+    }));
+
+    registry.register(Arc::new(JournalTool {
+        backend: backend.clone(),
+        spec: ToolSpec {
+            name: "system.journal".into(),
+            description: "Tail recent system journal / log lines".into(),
+            risk: RiskLevel::Low,
+            timeout_ms: 4000,
+            input_schema: json!({
+                "type":"object",
+                "properties":{
+                    "lines":{"type":"integer","minimum":1,"maximum":200},
+                    "unit":{"type":"string"}
+                }
+            }),
+            output_schema: json!({"type":"object"}),
+            requires_confirmation: false,
+        },
+    }));
+
     registry.register(Arc::new(KillRequestTool {
         backend,
         spec: ToolSpec {
             name: "process.kill_request".into(),
-            description: "Request termination of a process".into(),
+            description: "Send a signal to a process (default SIGTERM). Requires confirmation."
+                .into(),
             risk: RiskLevel::High,
             timeout_ms: 2000,
             input_schema: json!({
                 "type":"object",
-                "properties":{"pid":{"type":"integer"}},
+                "properties":{
+                    "pid":{"type":"integer"},
+                    "signal":{"type":"string","description":"TERM|KILL|HUP|INT (default TERM)"}
+                },
                 "required":["pid"]
             }),
             output_schema: json!({"type":"object"}),
@@ -118,7 +154,9 @@ trait SystemBackend: Send + Sync {
     async fn processes(&self) -> Result<Vec<ProcessInfo>, ToolError>;
     async fn network_status(&self) -> Result<Value, ToolError>;
     async fn disk(&self) -> Result<Value, ToolError>;
-    async fn kill(&self, pid: u32) -> Result<Value, ToolError>;
+    async fn temperature(&self) -> Result<Value, ToolError>;
+    async fn journal(&self, lines: usize, unit: Option<String>) -> Result<Value, ToolError>;
+    async fn kill(&self, pid: u32, signal: &str) -> Result<Value, ToolError>;
 }
 
 struct MockBackend;
@@ -162,8 +200,15 @@ impl SystemBackend for MockBackend {
     async fn network_status(&self) -> Result<Value, ToolError> {
         Ok(json!({
             "online": true,
-            "interface": "eth0",
-            "ipv4": "192.168.1.50"
+            "source": "mock",
+            "interfaces": [{
+                "name": "eth0",
+                "operstate": "up",
+                "ipv4": ["192.168.1.50/24"],
+                "rx_bytes": 1_250_000,
+                "tx_bytes": 420_000
+            }],
+            "default_route": "192.168.1.1"
         }))
     }
 
@@ -181,10 +226,42 @@ impl SystemBackend for MockBackend {
         }))
     }
 
-    async fn kill(&self, pid: u32) -> Result<Value, ToolError> {
+    async fn temperature(&self) -> Result<Value, ToolError> {
+        Ok(json!({
+            "source": "mock",
+            "celsius": 62.5,
+            "zones": [{"name":"cpu-thermal","celsius":62.5}]
+        }))
+    }
+
+    async fn journal(&self, lines: usize, unit: Option<String>) -> Result<Value, ToolError> {
+        let mut entries = vec![
+            "2026-08-03T10:00:01 saaios-runtime[1]: listening on /tmp/saaios.sock".into(),
+            "2026-08-03T10:00:05 kernel: CPU soft lockup suspected on runaway-worker".into(),
+            "2026-08-03T10:00:08 systemd[1]: Started Session 42 of user pi".into(),
+        ];
+        if let Some(u) = unit {
+            entries.retain(|e: &String| e.contains(&u));
+            if entries.is_empty() {
+                entries.push(format!("(no mock lines for unit={u})"));
+            }
+        }
+        entries.truncate(lines.max(1));
+        Ok(json!({
+            "source": "mock",
+            "lines": entries,
+            "count": entries.len()
+        }))
+    }
+
+    async fn kill(&self, pid: u32, signal: &str) -> Result<Value, ToolError> {
+        if pid <= 1 {
+            return Err(ToolError::InvalidArgs("refusing to signal pid <= 1".into()));
+        }
         Ok(json!({
             "killed": true,
             "pid": pid,
+            "signal": signal,
             "mode": "mock"
         }))
     }
@@ -254,43 +331,23 @@ impl SystemBackend for LinuxBackend {
     }
 
     async fn network_status(&self) -> Result<Value, ToolError> {
-        let mut interfaces = Vec::new();
-        let net_dir = Path::new("/sys/class/net");
-        if net_dir.exists() {
-            if let Ok(read) = std::fs::read_dir(net_dir) {
-                for entry in read.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let oper = std::fs::read_to_string(entry.path().join("operstate"))
-                        .unwrap_or_else(|_| "unknown".into())
-                        .trim()
-                        .to_string();
-                    interfaces.push(json!({
-                        "name": name,
-                        "operstate": oper
-                    }));
-                }
-            }
-        }
-        let online = interfaces.iter().any(|i| i["operstate"] == "up");
-        Ok(json!({
-            "online": online,
-            "source": "linux",
-            "interfaces": interfaces
-        }))
+        Ok(read_network_status())
     }
 
     async fn disk(&self) -> Result<Value, ToolError> {
         Ok(read_disk_usage())
     }
 
-    async fn kill(&self, pid: u32) -> Result<Value, ToolError> {
-        // Platform 0.1: do not actually signal processes in real mode from AI path.
-        Ok(json!({
-            "killed": false,
-            "dry_run": true,
-            "pid": pid,
-            "mode": "linux"
-        }))
+    async fn temperature(&self) -> Result<Value, ToolError> {
+        Ok(read_temperature())
+    }
+
+    async fn journal(&self, lines: usize, unit: Option<String>) -> Result<Value, ToolError> {
+        Ok(read_journal(lines, unit.as_deref()))
+    }
+
+    async fn kill(&self, pid: u32, signal: &str) -> Result<Value, ToolError> {
+        real_kill(pid, signal)
     }
 }
 
@@ -364,6 +421,257 @@ fn read_disk_usage() -> Value {
         "mounts": mounts,
         "root_used_pct": root_used_pct
     })
+}
+
+fn read_network_status() -> Value {
+    let mut interfaces = Vec::new();
+    let net_dir = Path::new("/sys/class/net");
+    if net_dir.exists() {
+        if let Ok(read) = std::fs::read_dir(net_dir) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let path = entry.path();
+                let oper = std::fs::read_to_string(path.join("operstate"))
+                    .unwrap_or_else(|_| "unknown".into())
+                    .trim()
+                    .to_string();
+                let rx_bytes = std::fs::read_to_string(path.join("statistics/rx_bytes"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok());
+                let tx_bytes = std::fs::read_to_string(path.join("statistics/tx_bytes"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok());
+                let ipv4 = read_iface_ipv4(&name);
+                interfaces.push(json!({
+                    "name": name,
+                    "operstate": oper,
+                    "ipv4": ipv4,
+                    "rx_bytes": rx_bytes,
+                    "tx_bytes": tx_bytes
+                }));
+            }
+        }
+    }
+    let online = interfaces.iter().any(|i| i["operstate"] == "up");
+    let default_route = read_default_gateway();
+    json!({
+        "online": online,
+        "source": "linux",
+        "interfaces": interfaces,
+        "default_route": default_route
+    })
+}
+
+fn read_iface_ipv4(name: &str) -> Vec<String> {
+    let output = std::process::Command::new("ip")
+        .args(["-4", "-o", "addr", "show", "dev", name])
+        .output();
+    let Ok(out) = output else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut addrs = Vec::new();
+    for line in text.lines() {
+        // ... inet 192.168.1.10/24 ...
+        let mut parts = line.split_whitespace();
+        while let Some(tok) = parts.next() {
+            if tok == "inet" {
+                if let Some(addr) = parts.next() {
+                    addrs.push(addr.to_string());
+                }
+                break;
+            }
+        }
+    }
+    addrs
+}
+
+fn read_default_gateway() -> Option<String> {
+    let content = std::fs::read_to_string("/proc/net/route").ok()?;
+    for line in content.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        // Destination 00000000 means default route.
+        if cols[1] == "00000000" {
+            let gw = cols[2];
+            if let Ok(n) = u32::from_str_radix(gw, 16) {
+                let b = n.to_le_bytes();
+                return Some(format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3]));
+            }
+        }
+    }
+    None
+}
+
+fn read_temperature() -> Value {
+    let mut zones = Vec::new();
+    let thermal = Path::new("/sys/class/thermal");
+    if thermal.exists() {
+        if let Ok(read) = std::fs::read_dir(thermal) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !name.starts_with("thermal_zone") {
+                    continue;
+                }
+                let temp_path = entry.path().join("temp");
+                let type_path = entry.path().join("type");
+                let Some(raw) = std::fs::read_to_string(temp_path)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                else {
+                    continue;
+                };
+                // Usually millidegrees C.
+                let celsius = if raw > 1000.0 { raw / 1000.0 } else { raw };
+                let zname = std::fs::read_to_string(type_path)
+                    .unwrap_or(name)
+                    .trim()
+                    .to_string();
+                zones.push(json!({
+                    "name": zname,
+                    "celsius": (celsius * 10.0).round() / 10.0
+                }));
+            }
+        }
+    }
+    // Fallback: hwmon
+    if zones.is_empty() {
+        let hwmon = Path::new("/sys/class/hwmon");
+        if hwmon.exists() {
+            if let Ok(read) = std::fs::read_dir(hwmon) {
+                for entry in read.flatten() {
+                    let path = entry.path();
+                    let label = std::fs::read_to_string(path.join("name"))
+                        .unwrap_or_else(|_| "hwmon".into())
+                        .trim()
+                        .to_string();
+                    if let Ok(raw) = std::fs::read_to_string(path.join("temp1_input")) {
+                        if let Ok(v) = raw.trim().parse::<f64>() {
+                            let celsius = if v > 1000.0 { v / 1000.0 } else { v };
+                            zones.push(json!({
+                                "name": label,
+                                "celsius": (celsius * 10.0).round() / 10.0
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let max_c = zones
+        .iter()
+        .filter_map(|z| z.get("celsius").and_then(|v| v.as_f64()))
+        .fold(None, |acc: Option<f64>, v| {
+            Some(acc.map(|a| a.max(v)).unwrap_or(v))
+        });
+    json!({
+        "source": "linux",
+        "celsius": max_c,
+        "zones": zones
+    })
+}
+
+fn read_journal(lines: usize, unit: Option<&str>) -> Value {
+    let lines = lines.clamp(1, 200);
+    let mut cmd = std::process::Command::new("journalctl");
+    cmd.args(["-n", &lines.to_string(), "--no-pager", "-o", "short-iso"]);
+    if let Some(u) = unit {
+        if !u.is_empty() {
+            cmd.args(["-u", u]);
+        }
+    }
+    match cmd.output() {
+        Ok(out) if out.status.success() || !out.stdout.is_empty() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let entries: Vec<String> = text
+                .lines()
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            json!({
+                "source": "linux",
+                "lines": entries,
+                "count": entries.len(),
+                "unit": unit
+            })
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            // Fallback: dmesg tail
+            if let Ok(dmesg) = std::process::Command::new("dmesg").args(["-T"]).output() {
+                let text = String::from_utf8_lossy(&dmesg.stdout);
+                let mut entries: Vec<String> = text.lines().map(|s| s.to_string()).collect();
+                if entries.len() > lines {
+                    entries = entries.split_off(entries.len() - lines);
+                }
+                return json!({
+                    "source": "dmesg",
+                    "lines": entries,
+                    "count": entries.len(),
+                    "journalctl_error": err
+                });
+            }
+            json!({
+                "source": "linux",
+                "lines": [],
+                "count": 0,
+                "error": err
+            })
+        }
+        Err(e) => json!({
+            "source": "linux",
+            "lines": [],
+            "count": 0,
+            "error": e.to_string()
+        }),
+    }
+}
+
+fn normalize_signal(signal: &str) -> Result<String, ToolError> {
+    let s = signal.trim().trim_start_matches("SIG").to_uppercase();
+    match s.as_str() {
+        "TERM" | "KILL" | "HUP" | "INT" | "QUIT" | "USR1" | "USR2" => Ok(s),
+        "" => Ok("TERM".into()),
+        other => Err(ToolError::InvalidArgs(format!(
+            "unsupported signal {other}; allowed TERM|KILL|HUP|INT|QUIT|USR1|USR2"
+        ))),
+    }
+}
+
+fn real_kill(pid: u32, signal: &str) -> Result<Value, ToolError> {
+    if pid <= 1 {
+        return Err(ToolError::InvalidArgs("refusing to signal pid <= 1".into()));
+    }
+    if pid == std::process::id() {
+        return Err(ToolError::InvalidArgs(
+            "refusing to signal the saaios-runtime process".into(),
+        ));
+    }
+    let signal = normalize_signal(signal)?;
+    // Verify pid exists.
+    if !Path::new(&format!("/proc/{pid}")).exists() {
+        return Err(ToolError::Execution(format!("pid {pid} not found")));
+    }
+    let status = std::process::Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(pid.to_string())
+        .status()
+        .map_err(|e| ToolError::Execution(e.to_string()))?;
+    if status.success() {
+        Ok(json!({
+            "killed": true,
+            "dry_run": false,
+            "pid": pid,
+            "signal": signal,
+            "mode": "linux"
+        }))
+    } else {
+        Err(ToolError::Execution(format!(
+            "kill -{signal} {pid} failed with {status}"
+        )))
+    }
 }
 
 fn parse_kb(v: &str) -> Option<f64> {
@@ -548,6 +856,53 @@ impl ToolExecutor for DiskTool {
     }
 }
 
+struct TemperatureTool {
+    backend: Arc<dyn SystemBackend>,
+    spec: ToolSpec,
+}
+
+#[async_trait]
+impl ToolExecutor for TemperatureTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn execute(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        let temp = self.backend.temperature().await?;
+        Ok(ToolOutput {
+            ok: true,
+            value: temp,
+            error: None,
+        })
+    }
+}
+
+struct JournalTool {
+    backend: Arc<dyn SystemBackend>,
+    spec: ToolSpec,
+}
+
+#[async_trait]
+impl ToolExecutor for JournalTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn execute(&self, args: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        let lines = args.get("lines").and_then(|v| v.as_u64()).unwrap_or(40) as usize;
+        let unit = args
+            .get("unit")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let journal = self.backend.journal(lines, unit).await?;
+        Ok(ToolOutput {
+            ok: true,
+            value: journal,
+            error: None,
+        })
+    }
+}
+
 struct KillRequestTool {
     backend: Arc<dyn SystemBackend>,
     spec: ToolSpec,
@@ -564,7 +919,11 @@ impl ToolExecutor for KillRequestTool {
             .get("pid")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| ToolError::InvalidArgs("pid required".into()))? as u32;
-        let value = self.backend.kill(pid).await?;
+        let signal = args
+            .get("signal")
+            .and_then(|v| v.as_str())
+            .unwrap_or("TERM");
+        let value = self.backend.kill(pid, signal).await?;
         Ok(ToolOutput {
             ok: true,
             value,
@@ -614,6 +973,50 @@ mod tests {
             .unwrap();
         assert!(out.ok);
         assert_eq!(out.value["root_used_pct"], 70.0);
+    }
+
+    #[tokio::test]
+    async fn mock_temperature_and_journal() {
+        let mut reg = ToolRegistry::new();
+        install_system_tools(&mut reg, ToolsMode::Mock);
+        let ctx = ToolContext {
+            correlation_id: Uuid::new_v4(),
+            call_id: Uuid::new_v4(),
+        };
+        let temp = reg
+            .execute("system.temperature", json!({}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(temp.value["celsius"], 62.5);
+        let journal = reg
+            .execute("system.journal", json!({"lines": 2}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(journal.value["count"], 2);
+        let net = reg
+            .execute("network.status", json!({}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(net.value["source"], "mock");
+        assert!(!net.value["interfaces"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mock_kill_refuses_pid_one() {
+        let mut reg = ToolRegistry::new();
+        install_system_tools(&mut reg, ToolsMode::Mock);
+        let err = reg
+            .execute(
+                "process.kill_request",
+                json!({"pid": 1}),
+                &ToolContext {
+                    correlation_id: Uuid::new_v4(),
+                    call_id: Uuid::new_v4(),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("pid <= 1"));
     }
 
     #[tokio::test]

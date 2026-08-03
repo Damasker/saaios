@@ -42,6 +42,16 @@ impl PolicyEngine {
             };
         }
 
+        if spec.name == "process.kill_request" {
+            let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+            if pid <= 1 {
+                return PolicyDecision {
+                    verdict: PolicyVerdict::Deny,
+                    reason: "refusing process.kill_request for pid <= 1".into(),
+                };
+            }
+        }
+
         if let Ok(set) = self.session_allows.lock() {
             if set.contains(&spec.name) {
                 return PolicyDecision {
@@ -117,6 +127,15 @@ impl PolicyEngine {
                 reason: "rejected suspicious arguments".into(),
             };
         }
+        if tool == "process.kill_request" {
+            let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+            if pid <= 1 {
+                return PolicyDecision {
+                    verdict: PolicyVerdict::Deny,
+                    reason: "refusing process.kill_request for pid <= 1".into(),
+                };
+            }
+        }
         match spec {
             Some(spec) => PolicyEngine::new().decide(spec, args),
             None => PolicyDecision {
@@ -188,6 +207,13 @@ mod tests {
     }
 
     #[test]
+    fn denies_kill_pid_one() {
+        let engine = PolicyEngine::new();
+        let d = engine.decide(&kill_spec(), &json!({"pid": 1}));
+        assert_eq!(d.verdict, PolicyVerdict::Deny);
+    }
+
+    #[test]
     fn denies_format() {
         let d = PolicyEngine::decide_named("storage.format", None, &json!({}));
         assert_eq!(d.verdict, PolicyVerdict::Deny);
@@ -207,13 +233,18 @@ mod tests {
     fn session_grant_allows_without_ask() {
         let engine = PolicyEngine::new();
         assert_eq!(
-            engine.decide(&kill_spec(), &json!({"pid": 1})).verdict,
+            engine.decide(&kill_spec(), &json!({"pid": 4312})).verdict,
             PolicyVerdict::AskUser
         );
         engine.grant_session("process.kill_request");
-        let d = engine.decide(&kill_spec(), &json!({"pid": 1}));
+        let d = engine.decide(&kill_spec(), &json!({"pid": 4312}));
         assert_eq!(d.verdict, PolicyVerdict::Allow);
         assert!(d.reason.contains("session grant"));
         assert!(engine.has_session_grant("process.kill_request"));
+        // Session grant must never override the pid<=1 hard guard.
+        assert_eq!(
+            engine.decide(&kill_spec(), &json!({"pid": 1})).verdict,
+            PolicyVerdict::Deny
+        );
     }
 }

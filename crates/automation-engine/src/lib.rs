@@ -161,6 +161,20 @@ impl AutomationEngine {
                 cooldown_secs: 60,
             },
             AutomationRule {
+                id: "high-temp-notify".into(),
+                name: "High temperature notification".into(),
+                enabled: true,
+                trigger: TriggerKind::ToolResultThreshold {
+                    tool: "system.temperature".into(),
+                    field: "celsius".into(),
+                    gte: 80.0,
+                },
+                action: AutomationAction::Notify {
+                    message: "SoC/CPU temperature is high (>= 80C)".into(),
+                },
+                cooldown_secs: 60,
+            },
+            AutomationRule {
                 id: "named-temp-warning".into(),
                 name: "Temperature warning passthrough".into(),
                 enabled: true,
