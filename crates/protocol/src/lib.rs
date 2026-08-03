@@ -125,10 +125,24 @@ pub struct ConfirmationRequest {
     pub arguments: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmScope {
+    Once,
+    Session,
+    Cancel,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmationResponse {
     pub call_id: Uuid,
     pub confirmed: bool,
+    #[serde(default = "default_once_scope")]
+    pub scope: ConfirmScope,
+}
+
+fn default_once_scope() -> ConfirmScope {
+    ConfirmScope::Once
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

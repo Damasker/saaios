@@ -33,3 +33,10 @@ Confirm/cancel proposed kill with `y` / `n`.
 - Audit dry-run replay (`--replay` / `just audit-replay`)
 - systemd unit + `deploy/install.sh` for Pi/Linux appliance
 - `just run-linux` / `just e2e-linux`
+
+## Platform 0.2 increments
+
+- Confirm scopes: once (`y`) / session (`s`) / cancel (`n`)
+- Session grants persist for the runtime process until cleared
+- Tracing spans include `correlation_id`
+- TUI: `a` audit tail, `g` grants, `c` clear grants

@@ -5,7 +5,7 @@ use clap::Parser;
 use event_bus::EventBus;
 use model_provider::{MockModelProvider, OpenAiCompatConfig, OpenAiCompatProvider};
 use policy_engine::PolicyEngine;
-use protocol::{Envelope, MessageKind};
+use protocol::{ConfirmScope, Envelope, MessageKind};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -56,9 +56,27 @@ enum ClientRequest {
         call_id: Uuid,
         tool: String,
         arguments: serde_json::Value,
-        confirmed: bool,
+        #[serde(default = "default_once")]
+        scope: ConfirmScope,
+        /// Backward-compatible boolean confirm; ignored when `scope` is set explicitly.
+        #[serde(default)]
+        confirmed: Option<bool>,
     },
+    AuditTail {
+        #[serde(default = "default_tail")]
+        limit: usize,
+    },
+    SessionGrants,
+    ClearSessionGrants,
     Ping,
+}
+
+fn default_once() -> ConfirmScope {
+    ConfirmScope::Once
+}
+
+fn default_tail() -> usize {
+    20
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,6 +87,10 @@ struct ClientResponse {
     pending: Option<PendingDto>,
     error: Option<String>,
     tool_result: Option<protocol::ToolCallResult>,
+    #[serde(default)]
+    audit_tail: Option<Vec<audit_log::AuditRecord>>,
+    #[serde(default)]
+    session_grants: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,6 +107,7 @@ async fn main() -> Result<()> {
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
+        .with_target(false)
         .init();
 
     let mut args = Args::parse();
@@ -118,11 +141,8 @@ async fn main() -> Result<()> {
         let outcome =
             diagnose_slow_with_mock_planner(tools.clone(), policy.clone(), audit.clone()).await?;
         print_outcome(&outcome);
-        info!("audit written to {}", args.audit.display());
-        info!(
-            "starting UDS server for interactive confirms at {}",
-            args.sock.display()
-        );
+        info!(correlation_id = %outcome.correlation_id, "audit written");
+        info!(sock = %args.sock.display(), "starting UDS server");
     }
 
     let provider: Arc<dyn model_provider::ModelProvider> = if args.mock || args.mock_planner {
@@ -141,8 +161,6 @@ async fn main() -> Result<()> {
     };
 
     let runtime = Arc::new(AiRuntime::new(tools, policy, audit.clone(), bus, provider));
-
-    // Store last pending in a simple map for TUI confirmations.
     let last_pending = Arc::new(tokio::sync::Mutex::new(None::<HandleOutcome>));
 
     if args.sock.exists() {
@@ -150,7 +168,7 @@ async fn main() -> Result<()> {
     }
     let listener =
         UnixListener::bind(&args.sock).with_context(|| format!("bind {}", args.sock.display()))?;
-    info!("SaaiOS runtime listening on {}", args.sock.display());
+    info!(sock = %args.sock.display(), "SaaiOS runtime listening");
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -184,6 +202,8 @@ async fn handle_client(
             pending: None,
             error: None,
             tool_result: None,
+            audit_tail: None,
+            session_grants: None,
         },
         ClientRequest::Diagnose { text } => match runtime.handle_user_text(&text).await {
             Ok(outcome) => {
@@ -200,6 +220,8 @@ async fn handle_client(
                     pending,
                     error: None,
                     tool_result: None,
+                    audit_tail: None,
+                    session_grants: Some(runtime.session_grants()),
                 };
                 *last_pending.lock().await = Some(outcome);
                 resp
@@ -211,6 +233,8 @@ async fn handle_client(
                 pending: None,
                 error: Some(e.to_string()),
                 tool_result: None,
+                audit_tail: None,
+                session_grants: None,
             },
         },
         ClientRequest::Confirm {
@@ -218,28 +242,85 @@ async fn handle_client(
             call_id,
             tool,
             arguments,
+            scope,
             confirmed,
-        } => match runtime
-            .confirm(correlation_id, call_id, &tool, arguments, confirmed)
-            .await
-        {
-            Ok(result) => ClientResponse {
+        } => {
+            let scope = match confirmed {
+                Some(false) => ConfirmScope::Cancel,
+                Some(true) if matches!(scope, ConfirmScope::Once) => ConfirmScope::Once,
+                _ => scope,
+            };
+            match runtime
+                .confirm(correlation_id, call_id, &tool, arguments, scope)
+                .await
+            {
+                Ok(result) => ClientResponse {
+                    ok: true,
+                    correlation_id: Some(correlation_id),
+                    diagnose: None,
+                    pending: None,
+                    error: None,
+                    tool_result: Some(result),
+                    audit_tail: None,
+                    session_grants: Some(runtime.session_grants()),
+                },
+                Err(e) => ClientResponse {
+                    ok: false,
+                    correlation_id: Some(correlation_id),
+                    diagnose: None,
+                    pending: None,
+                    error: Some(e.to_string()),
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: Some(runtime.session_grants()),
+                },
+            }
+        }
+        ClientRequest::AuditTail { limit } => match runtime.audit_tail(limit) {
+            Ok(tail) => ClientResponse {
                 ok: true,
-                correlation_id: Some(correlation_id),
+                correlation_id: None,
                 diagnose: None,
                 pending: None,
                 error: None,
-                tool_result: Some(result),
+                tool_result: None,
+                audit_tail: Some(tail),
+                session_grants: None,
             },
             Err(e) => ClientResponse {
                 ok: false,
-                correlation_id: Some(correlation_id),
+                correlation_id: None,
                 diagnose: None,
                 pending: None,
                 error: Some(e.to_string()),
                 tool_result: None,
+                audit_tail: None,
+                session_grants: None,
             },
         },
+        ClientRequest::SessionGrants => ClientResponse {
+            ok: true,
+            correlation_id: None,
+            diagnose: None,
+            pending: None,
+            error: None,
+            tool_result: None,
+            audit_tail: None,
+            session_grants: Some(runtime.session_grants()),
+        },
+        ClientRequest::ClearSessionGrants => {
+            runtime.clear_session_grants();
+            ClientResponse {
+                ok: true,
+                correlation_id: None,
+                diagnose: None,
+                pending: None,
+                error: None,
+                tool_result: None,
+                audit_tail: None,
+                session_grants: Some(vec![]),
+            }
+        }
     };
 
     let bytes = serde_json::to_vec(&response)?;

@@ -5,6 +5,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
+use protocol::ConfirmScope;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use serde::{Deserialize, Serialize};
@@ -32,8 +33,13 @@ enum ClientRequest {
         call_id: Uuid,
         tool: String,
         arguments: serde_json::Value,
-        confirmed: bool,
+        scope: ConfirmScope,
     },
+    AuditTail {
+        limit: usize,
+    },
+    SessionGrants,
+    ClearSessionGrants,
     Ping,
 }
 
@@ -45,6 +51,10 @@ struct ClientResponse {
     pending: Option<PendingDto>,
     error: Option<String>,
     tool_result: Option<protocol::ToolCallResult>,
+    #[serde(default)]
+    audit_tail: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    session_grants: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +71,7 @@ struct App {
     lines: Vec<String>,
     pending: Option<(Uuid, PendingDto)>,
     status: String,
+    last_correlation: Option<Uuid>,
 }
 
 impl App {
@@ -69,12 +80,14 @@ impl App {
             sock,
             input: String::new(),
             lines: vec![
-                "SaaiOS Console 0.1".into(),
+                "SaaiOS Console 0.2".into(),
                 "Type a question and press Enter. Example: Почему система тормозит?".into(),
-                "Keys: Enter=send, y/n=confirm/cancel when asked, q=quit".into(),
+                "Confirm: y=once, s=session, n=cancel | a=audit tail | g=grants | c=clear grants | q=quit"
+                    .into(),
             ],
             pending: None,
             status: "disconnected".into(),
+            last_correlation: None,
         }
     }
 }
@@ -84,7 +97,6 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let mut app = App::new(args.sock.clone());
 
-    // Probe socket.
     match request(&args.sock, &ClientRequest::Ping).await {
         Ok(_) => app.status = format!("connected {}", args.sock.display()),
         Err(e) => {
@@ -115,14 +127,24 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
                     continue;
                 }
                 match key.code {
-                    KeyCode::Char('q') if app.pending.is_none() && app.input.is_empty() => {
-                        break;
-                    }
+                    KeyCode::Char('q') if app.pending.is_none() && app.input.is_empty() => break,
                     KeyCode::Char('y') | KeyCode::Char('Y') if app.pending.is_some() => {
-                        confirm(app, true).await?;
+                        confirm(app, ConfirmScope::Once).await?;
+                    }
+                    KeyCode::Char('s') | KeyCode::Char('S') if app.pending.is_some() => {
+                        confirm(app, ConfirmScope::Session).await?;
                     }
                     KeyCode::Char('n') | KeyCode::Char('N') if app.pending.is_some() => {
-                        confirm(app, false).await?;
+                        confirm(app, ConfirmScope::Cancel).await?;
+                    }
+                    KeyCode::Char('a') if app.pending.is_none() && app.input.is_empty() => {
+                        show_audit(app).await?;
+                    }
+                    KeyCode::Char('g') if app.pending.is_none() && app.input.is_empty() => {
+                        show_grants(app).await?;
+                    }
+                    KeyCode::Char('c') if app.pending.is_none() && app.input.is_empty() => {
+                        clear_grants(app).await?;
                     }
                     KeyCode::Enter => {
                         if app.pending.is_some() {
@@ -164,6 +186,10 @@ async fn diagnose(app: &mut App, text: &str) -> Result<()> {
                 app.lines.push(format!("error: {err}"));
                 return Ok(());
             }
+            if let Some(corr) = resp.correlation_id {
+                app.last_correlation = Some(corr);
+                app.lines.push(format!("correlation_id={corr}"));
+            }
             if let Some(d) = resp.diagnose {
                 app.lines.push(d.summary);
                 if let Some(action) = d.proposed_action {
@@ -172,18 +198,24 @@ async fn diagnose(app: &mut App, text: &str) -> Result<()> {
                 }
             }
             if let (Some(corr), Some(pending)) = (resp.correlation_id, resp.pending) {
-                app.lines
-                    .push(format!("[Confirm needed] {}  Press y/n", pending.summary));
+                app.lines.push(format!(
+                    "[Confirm] {}  y=once / s=session / n=cancel",
+                    pending.summary
+                ));
                 app.pending = Some((corr, pending));
             }
-            app.status = "ok".into();
+            if let Some(grants) = resp.session_grants {
+                app.status = format!("ok | grants={}", grants.join(","));
+            } else {
+                app.status = "ok".into();
+            }
         }
         Err(e) => app.lines.push(format!("request failed: {e:#}")),
     }
     Ok(())
 }
 
-async fn confirm(app: &mut App, confirmed: bool) -> Result<()> {
+async fn confirm(app: &mut App, scope: ConfirmScope) -> Result<()> {
     let Some((correlation_id, pending)) = app.pending.take() else {
         return Ok(());
     };
@@ -194,7 +226,7 @@ async fn confirm(app: &mut App, confirmed: bool) -> Result<()> {
             call_id: pending.call_id,
             tool: pending.tool,
             arguments: pending.arguments,
-            confirmed,
+            scope,
         },
     )
     .await
@@ -204,18 +236,66 @@ async fn confirm(app: &mut App, confirmed: bool) -> Result<()> {
                 app.lines.push(format!("confirm error: {err}"));
             } else if let Some(result) = resp.tool_result {
                 app.lines.push(format!(
-                    "tool {} ok={} output={}",
-                    result.tool, result.ok, result.output
+                    "tool {} scope={:?} ok={} output={}",
+                    result.tool, scope, result.ok, result.output
                 ));
             } else {
-                app.lines.push(if confirmed {
-                    "confirmed".into()
-                } else {
-                    "cancelled".into()
-                });
+                app.lines.push(format!("confirm scope={scope:?}"));
+            }
+            if let Some(grants) = resp.session_grants {
+                app.status = format!("ok | grants={}", grants.join(","));
             }
         }
         Err(e) => app.lines.push(format!("confirm failed: {e:#}")),
+    }
+    Ok(())
+}
+
+async fn show_audit(app: &mut App) -> Result<()> {
+    match request(&app.sock, &ClientRequest::AuditTail { limit: 12 }).await {
+        Ok(resp) => {
+            if let Some(err) = resp.error {
+                app.lines.push(format!("audit error: {err}"));
+            } else if let Some(tail) = resp.audit_tail {
+                app.lines.push("--- audit tail ---".into());
+                for item in tail {
+                    let kind = item.get("kind").cloned().unwrap_or_default();
+                    let corr = item.get("correlation_id").cloned().unwrap_or_default();
+                    app.lines.push(format!("{kind} corr={corr}"));
+                }
+            }
+        }
+        Err(e) => app.lines.push(format!("audit failed: {e:#}")),
+    }
+    Ok(())
+}
+
+async fn show_grants(app: &mut App) -> Result<()> {
+    match request(&app.sock, &ClientRequest::SessionGrants).await {
+        Ok(resp) => {
+            let grants = resp.session_grants.unwrap_or_default();
+            app.lines.push(format!(
+                "session grants: {}",
+                if grants.is_empty() {
+                    "(none)".into()
+                } else {
+                    grants.join(", ")
+                }
+            ));
+            app.status = format!("grants={}", grants.join(","));
+        }
+        Err(e) => app.lines.push(format!("grants failed: {e:#}")),
+    }
+    Ok(())
+}
+
+async fn clear_grants(app: &mut App) -> Result<()> {
+    match request(&app.sock, &ClientRequest::ClearSessionGrants).await {
+        Ok(_) => {
+            app.lines.push("session grants cleared".into());
+            app.status = "grants=".into();
+        }
+        Err(e) => app.lines.push(format!("clear grants failed: {e:#}")),
     }
     Ok(())
 }

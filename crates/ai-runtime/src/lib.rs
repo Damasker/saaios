@@ -4,14 +4,14 @@ use event_bus::EventBus;
 use model_provider::{ChatMessage, ModelProvider, ToolDefinition};
 use policy_engine::{PendingConfirmation, PolicyEngine};
 use protocol::{
-    ConfirmationRequest, DiagnoseResult, Envelope, MessageKind, PolicyDecisionRecord,
+    ConfirmScope, ConfirmationRequest, DiagnoseResult, Envelope, MessageKind, PolicyDecisionRecord,
     PolicyVerdict, ProposedAction, ToolCallRequest, ToolCallResult, UserRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tool_registry::{ToolContext, ToolRegistry};
-use tracing::{info, warn};
+use tracing::{info, info_span, warn, Instrument};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +52,21 @@ impl AiRuntime {
 
     pub async fn handle_user_text(&self, text: &str) -> Result<HandleOutcome> {
         let correlation_id = Uuid::new_v4();
+        let span = info_span!(
+            "handle_user_text",
+            correlation_id = %correlation_id,
+            request = %text
+        );
+        self.handle_user_text_inner(text, correlation_id)
+            .instrument(span)
+            .await
+    }
+
+    async fn handle_user_text_inner(
+        &self,
+        text: &str,
+        correlation_id: Uuid,
+    ) -> Result<HandleOutcome> {
         let req_env = Envelope::new(
             MessageKind::UserRequest,
             correlation_id,
@@ -62,6 +77,7 @@ impl AiRuntime {
         );
         self.audit.append_envelope(&req_env)?;
         self.bus.publish_envelope(req_env.clone());
+        info!(%correlation_id, "user request accepted");
 
         let mut messages = vec![
             ChatMessage {
@@ -86,8 +102,13 @@ impl AiRuntime {
         let mut called_metrics = false;
         let mut called_process_list = false;
 
-        for _ in 0..self.max_tool_iters {
-            let response = self.provider.complete(&messages, &tool_defs).await?;
+        for iter in 0..self.max_tool_iters {
+            let iter_span = info_span!("model_iter", correlation_id = %correlation_id, iter);
+            let response = self
+                .provider
+                .complete(&messages, &tool_defs)
+                .instrument(iter_span)
+                .await?;
 
             if let Some(text) = response.assistant_text.clone() {
                 let env = Envelope::new(
@@ -110,6 +131,7 @@ impl AiRuntime {
                 let tool_name = call.name.clone();
                 let args = call.arguments.clone();
                 let call_id = call.call_id;
+                info!(%correlation_id, %tool_name, %call_id, "model proposed tool");
 
                 let tool_env = Envelope::new(
                     MessageKind::ToolCall,
@@ -166,6 +188,13 @@ impl AiRuntime {
                 last_causation = decision_env.msg_id;
                 self.audit.append_envelope(&decision_env)?;
                 self.bus.publish_envelope(decision_env);
+                info!(
+                    %correlation_id,
+                    %tool_name,
+                    verdict = ?decision.verdict,
+                    reason = %decision.reason,
+                    "policy decision"
+                );
 
                 match decision.verdict {
                     PolicyVerdict::Deny => {
@@ -183,7 +212,7 @@ impl AiRuntime {
                         });
                     }
                     PolicyVerdict::AskUser => {
-                        let summary = format!("Выполнить `{}` с аргументами {}?", tool_name, args);
+                        let summary = format!("Выполнить `{tool_name}` с аргументами {args}?");
                         pending = Some(PendingConfirmation {
                             call_id,
                             tool: tool_name.clone(),
@@ -209,7 +238,6 @@ impl AiRuntime {
                         );
                         self.audit.append_envelope(&env)?;
                         self.bus.publish_envelope(env);
-                        // Stop loop; wait for confirmation via confirm().
                         self.fill_culprit_from_messages(&messages, &mut diagnose);
                         return Ok(HandleOutcome {
                             correlation_id,
@@ -304,59 +332,98 @@ impl AiRuntime {
         call_id: Uuid,
         tool: &str,
         arguments: Value,
-        confirmed: bool,
+        scope: ConfirmScope,
     ) -> Result<ToolCallResult> {
-        let conf_env = Envelope::new(
-            MessageKind::ConfirmationResponse,
-            correlation_id,
-            None,
-            json!({ "call_id": call_id, "confirmed": confirmed }),
+        let span = info_span!(
+            "confirm",
+            correlation_id = %correlation_id,
+            %tool,
+            ?scope,
+            %call_id
         );
-        let conf_msg_id = conf_env.msg_id;
-        self.audit.append_envelope(&conf_env)?;
-        self.bus.publish_envelope(conf_env);
+        async move {
+            let confirmed = !matches!(scope, ConfirmScope::Cancel);
+            let conf_env = Envelope::new(
+                MessageKind::ConfirmationResponse,
+                correlation_id,
+                None,
+                json!({
+                    "call_id": call_id,
+                    "confirmed": confirmed,
+                    "scope": scope
+                }),
+            );
+            let conf_msg_id = conf_env.msg_id;
+            self.audit.append_envelope(&conf_env)?;
+            self.bus.publish_envelope(conf_env);
 
-        if !confirmed {
-            return Ok(ToolCallResult {
+            if !confirmed {
+                info!(%correlation_id, %tool, "user cancelled confirmation");
+                return Ok(ToolCallResult {
+                    call_id,
+                    tool: tool.to_string(),
+                    ok: false,
+                    output: json!({}),
+                    error: Some("user cancelled".into()),
+                });
+            }
+
+            if matches!(scope, ConfirmScope::Session) {
+                self.policy.grant_session(tool);
+                info!(%correlation_id, %tool, "session grant recorded");
+            }
+
+            let spec = self
+                .tools
+                .get(tool)
+                .ok_or_else(|| anyhow!("unknown tool {tool}"))?;
+            let decision = self.policy.decide(spec.spec(), &arguments);
+            if decision.verdict == PolicyVerdict::Deny {
+                return Err(anyhow!("policy denied after confirmation"));
+            }
+
+            let output = self
+                .tools
+                .execute(
+                    tool,
+                    arguments,
+                    &ToolContext {
+                        correlation_id,
+                        call_id,
+                    },
+                )
+                .await
+                .map_err(|e| anyhow!(e))?;
+
+            let result = ToolCallResult {
                 call_id,
                 tool: tool.to_string(),
-                ok: false,
-                output: json!({}),
-                error: Some("user cancelled".into()),
-            });
+                ok: output.ok,
+                output: output.value,
+                error: output.error,
+            };
+            self.record_tool_result(correlation_id, conf_msg_id, &result)?;
+            info!(%correlation_id, %tool, ok = result.ok, "confirmed tool executed");
+            Ok(result)
         }
+        .instrument(span)
+        .await
+    }
 
-        let spec = self
-            .tools
-            .get(tool)
-            .ok_or_else(|| anyhow!("unknown tool {tool}"))?;
-        let decision = self.policy.decide(spec.spec(), &arguments);
-        if decision.verdict != PolicyVerdict::AskUser && decision.verdict != PolicyVerdict::Allow {
-            return Err(anyhow!("policy denied after confirmation"));
+    pub fn session_grants(&self) -> Vec<String> {
+        self.policy.session_grants()
+    }
+
+    pub fn clear_session_grants(&self) {
+        self.policy.clear_session_grants();
+    }
+
+    pub fn audit_tail(&self, limit: usize) -> Result<Vec<audit_log::AuditRecord>> {
+        let mut all = self.audit.read_all()?;
+        if all.len() > limit {
+            all = all.split_off(all.len() - limit);
         }
-        // After explicit confirm, allow once.
-        let output = self
-            .tools
-            .execute(
-                tool,
-                arguments,
-                &ToolContext {
-                    correlation_id,
-                    call_id,
-                },
-            )
-            .await
-            .map_err(|e| anyhow!(e))?;
-
-        let result = ToolCallResult {
-            call_id,
-            tool: tool.to_string(),
-            ok: output.ok,
-            output: output.value,
-            error: output.error,
-        };
-        self.record_tool_result(correlation_id, conf_msg_id, &result)?;
-        Ok(result)
+        Ok(all)
     }
 
     fn tool_definitions(&self) -> Vec<ToolDefinition> {
