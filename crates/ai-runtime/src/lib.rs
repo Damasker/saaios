@@ -1,3 +1,7 @@
+mod conversation;
+
+pub use conversation::ConversationStore;
+
 use anyhow::{anyhow, Result};
 use audit_log::AuditLog;
 use event_bus::EventBus;
@@ -12,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tool_registry::{ToolContext, ToolRegistry};
 use tracing::{info, info_span, warn, Instrument};
 use uuid::Uuid;
@@ -21,9 +25,32 @@ use uuid::Uuid;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeEvent {
     Assistant { text: String },
+    ToolCall {
+        call_id: Uuid,
+        tool: String,
+        arguments: Value,
+    },
+    ToolResult {
+        call_id: Uuid,
+        tool: String,
+        ok: bool,
+        error: Option<String>,
+    },
+    Policy {
+        call_id: Uuid,
+        tool: String,
+        verdict: String,
+        reason: String,
+    },
     Confirmation { request: ConfirmationRequest },
     Completed { diagnose: DiagnoseResult },
     Error { message: String },
+}
+
+fn emit_progress(tx: &Option<mpsc::Sender<RuntimeEvent>>, event: RuntimeEvent) {
+    if let Some(tx) = tx {
+        let _ = tx.try_send(event);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +70,9 @@ impl Default for ResourceBudgets {
     }
 }
 
+/// Defaults for conversation history retention (user/assistant/tool turns).
+pub const DEFAULT_MAX_CHAT_MESSAGES: usize = 40;
+
 pub struct AiRuntime {
     tools: Arc<ToolRegistry>,
     policy: Arc<PolicyEngine>,
@@ -52,6 +82,7 @@ pub struct AiRuntime {
     budgets: ResourceBudgets,
     request_slots: Arc<Semaphore>,
     memory: Option<Arc<MemoryStore>>,
+    conversations: ConversationStore,
 }
 
 impl AiRuntime {
@@ -90,6 +121,7 @@ impl AiRuntime {
             request_slots: Arc::new(slots),
             budgets,
             memory: None,
+            conversations: ConversationStore::new(DEFAULT_MAX_CHAT_MESSAGES),
         }
     }
 
@@ -106,18 +138,38 @@ impl AiRuntime {
         &self.budgets
     }
 
+    pub fn conversation_count(&self) -> usize {
+        self.conversations.session_count()
+    }
+
+    pub fn reset_chat_session(&self, session_id: Uuid) -> bool {
+        self.conversations.reset(session_id)
+    }
+
+    /// One-shot helper (no multi-turn session). Prefer [`Self::handle_user_text_in_session`].
     pub async fn handle_user_text(&self, text: &str) -> Result<HandleOutcome> {
+        self.handle_user_text_in_session(text, None, None).await
+    }
+
+    pub async fn handle_user_text_in_session(
+        &self,
+        text: &str,
+        session_id: Option<Uuid>,
+        progress: Option<mpsc::Sender<RuntimeEvent>>,
+    ) -> Result<HandleOutcome> {
         let correlation_id = Uuid::new_v4();
+        let session_id = session_id.unwrap_or_else(Uuid::new_v4);
         let span = info_span!(
             "handle_user_text",
             correlation_id = %correlation_id,
+            session_id = %session_id,
             request = %text
         );
         let permit = self
             .acquire_slot(correlation_id)
             .instrument(span.clone())
             .await?;
-        let fut = self.handle_user_text_inner(text, correlation_id);
+        let fut = self.handle_user_text_inner(text, correlation_id, session_id, progress);
         let result = tokio::time::timeout(self.budgets.request_timeout, fut)
             .instrument(span)
             .await;
@@ -145,6 +197,8 @@ impl AiRuntime {
         &self,
         text: &str,
         correlation_id: Uuid,
+        session_id: Uuid,
+        progress: Option<mpsc::Sender<RuntimeEvent>>,
     ) -> Result<HandleOutcome> {
         let req_env = Envelope::new(
             MessageKind::UserRequest,
@@ -156,7 +210,7 @@ impl AiRuntime {
         );
         self.audit.append_envelope(&req_env)?;
         self.bus.publish_envelope(req_env.clone());
-        info!(%correlation_id, "user request accepted");
+        info!(%correlation_id, %session_id, "user request accepted");
 
         let mut system = SYSTEM_PROMPT.to_string();
         if let Some(mem) = &self.memory {
@@ -167,16 +221,16 @@ impl AiRuntime {
             }
         }
 
-        let mut messages = vec![
-            ChatMessage {
-                role: "system".into(),
-                content: system,
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: text.to_string(),
-            },
-        ];
+        let history = self.conversations.get(session_id);
+        let mut messages = vec![ChatMessage {
+            role: "system".into(),
+            content: system,
+        }];
+        messages.extend(history);
+        messages.push(ChatMessage {
+            role: "user".into(),
+            content: text.to_string(),
+        });
 
         let tool_defs = self.tool_definitions();
         let mut diagnose = DiagnoseResult {
@@ -189,6 +243,7 @@ impl AiRuntime {
         let mut last_causation = req_env.msg_id;
         let mut called_metrics = false;
         let mut called_process_list = false;
+        let mut events: Vec<RuntimeEvent> = Vec::new();
 
         for iter in 0..self.budgets.max_tool_iters {
             let iter_span = info_span!("model_iter", correlation_id = %correlation_id, iter);
@@ -208,7 +263,14 @@ impl AiRuntime {
                 last_causation = env.msg_id;
                 self.audit.append_envelope(&env)?;
                 self.bus.publish_envelope(env);
-                diagnose.summary = text;
+                diagnose.summary = text.clone();
+                messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: text.clone(),
+                });
+                let ev = RuntimeEvent::Assistant { text };
+                emit_progress(&progress, ev.clone());
+                events.push(ev);
             }
 
             if response.tool_calls.is_empty() {
@@ -234,6 +296,13 @@ impl AiRuntime {
                 last_causation = tool_env.msg_id;
                 self.audit.append_envelope(&tool_env)?;
                 self.bus.publish_envelope(tool_env);
+                let ev = RuntimeEvent::ToolCall {
+                    call_id,
+                    tool: tool_name.clone(),
+                    arguments: args.clone(),
+                };
+                emit_progress(&progress, ev.clone());
+                events.push(ev);
 
                 let spec = self.tools.get(&tool_name).map(|t| t.spec().clone());
                 let decision = if let Some(spec) = spec.as_ref() {
@@ -283,6 +352,19 @@ impl AiRuntime {
                     reason = %decision.reason,
                     "policy decision"
                 );
+                let verdict_str = match decision.verdict {
+                    PolicyVerdict::Allow => "allow",
+                    PolicyVerdict::Deny => "deny",
+                    PolicyVerdict::AskUser => "ask_user",
+                };
+                let ev = RuntimeEvent::Policy {
+                    call_id,
+                    tool: tool_name.clone(),
+                    verdict: verdict_str.into(),
+                    reason: decision.reason.clone(),
+                };
+                emit_progress(&progress, ev.clone());
+                events.push(ev);
 
                 match decision.verdict {
                     PolicyVerdict::Deny => {
@@ -298,6 +380,14 @@ impl AiRuntime {
                             role: "user".into(),
                             content: format!("tool_result:{tool_name} DENIED: {}", decision.reason),
                         });
+                        let ev = RuntimeEvent::ToolResult {
+                            call_id,
+                            tool: tool_name.clone(),
+                            ok: false,
+                            error: Some(decision.reason.clone()),
+                        };
+                        emit_progress(&progress, ev.clone());
+                        events.push(ev);
                     }
                     PolicyVerdict::AskUser => {
                         let summary = format!("Выполнить `{tool_name}` с аргументами {args}?");
@@ -327,11 +417,18 @@ impl AiRuntime {
                         self.audit.append_envelope(&env)?;
                         self.bus.publish_envelope(env);
                         self.fill_culprit_from_messages(&messages, &mut diagnose);
+                        let ev = RuntimeEvent::Confirmation {
+                            request: conf.clone(),
+                        };
+                        emit_progress(&progress, ev.clone());
+                        events.push(ev);
+                        self.persist_history(session_id, &messages);
                         return Ok(HandleOutcome {
                             correlation_id,
+                            session_id,
                             diagnose,
                             pending_confirmation: pending,
-                            events: vec![],
+                            events,
                         });
                     }
                     PolicyVerdict::Allow => {
@@ -375,6 +472,14 @@ impl AiRuntime {
                                 serde_json::to_string(&output.value).unwrap_or_default()
                             ),
                         });
+                        let ev = RuntimeEvent::ToolResult {
+                            call_id,
+                            tool: tool_name.clone(),
+                            ok: output.ok,
+                            error: output.error.clone(),
+                        };
+                        emit_progress(&progress, ev.clone());
+                        events.push(ev);
                     }
                 }
             }
@@ -405,18 +510,49 @@ impl AiRuntime {
         self.audit.append_envelope(&done)?;
         self.bus.publish_envelope(done);
 
-        info!(%correlation_id, "request completed");
+        let ev = RuntimeEvent::Completed {
+            diagnose: diagnose.clone(),
+        };
+        emit_progress(&progress, ev.clone());
+        events.push(ev);
+
+        self.persist_history(session_id, &messages);
+        info!(%correlation_id, %session_id, "request completed");
         Ok(HandleOutcome {
             correlation_id,
+            session_id,
             diagnose,
             pending_confirmation: pending,
-            events: vec![],
+            events,
         })
+    }
+
+    fn persist_history(&self, session_id: Uuid, messages: &[ChatMessage]) {
+        // Drop the rebuilt system prompt; keep dialogue + tool turns.
+        let history: Vec<ChatMessage> = messages
+            .iter()
+            .skip(1)
+            .cloned()
+            .collect();
+        self.conversations.save(session_id, history);
     }
 
     pub async fn confirm(
         &self,
         correlation_id: Uuid,
+        call_id: Uuid,
+        tool: &str,
+        arguments: Value,
+        scope: ConfirmScope,
+    ) -> Result<ToolCallResult> {
+        self.confirm_in_session(correlation_id, None, call_id, tool, arguments, scope)
+            .await
+    }
+
+    pub async fn confirm_in_session(
+        &self,
+        correlation_id: Uuid,
+        session_id: Option<Uuid>,
         call_id: Uuid,
         tool: &str,
         arguments: Value,
@@ -447,6 +583,15 @@ impl AiRuntime {
 
             if !confirmed {
                 info!(%correlation_id, %tool, "user cancelled confirmation");
+                if let Some(sid) = session_id {
+                    self.conversations.append(
+                        sid,
+                        ChatMessage {
+                            role: "user".into(),
+                            content: format!("tool_result:{tool} CANCELLED by user"),
+                        },
+                    );
+                }
                 return Ok(ToolCallResult {
                     call_id,
                     tool: tool.to_string(),
@@ -491,6 +636,26 @@ impl AiRuntime {
                 error: output.error,
             };
             self.record_tool_result(correlation_id, conf_msg_id, &result)?;
+            if let Some(sid) = session_id {
+                let content = if result.ok {
+                    format!(
+                        "tool_result:{tool} {}",
+                        serde_json::to_string(&result.output).unwrap_or_default()
+                    )
+                } else {
+                    format!(
+                        "tool_result:{tool} ERROR: {}",
+                        result.error.as_deref().unwrap_or("failed")
+                    )
+                };
+                self.conversations.append(
+                    sid,
+                    ChatMessage {
+                        role: "user".into(),
+                        content,
+                    },
+                );
+            }
             info!(%correlation_id, %tool, ok = result.ok, "confirmed tool executed");
             Ok(result)
         }
@@ -571,6 +736,7 @@ impl AiRuntime {
 #[derive(Debug, Clone)]
 pub struct HandleOutcome {
     pub correlation_id: Uuid,
+    pub session_id: Uuid,
     pub diagnose: DiagnoseResult,
     pub pending_confirmation: Option<PendingConfirmation>,
     pub events: Vec<RuntimeEvent>,
@@ -728,6 +894,7 @@ pub async fn diagnose_slow_with_mock_planner(
     let _ = bus;
     Ok(HandleOutcome {
         correlation_id,
+        session_id: Uuid::new_v4(),
         diagnose,
         pending_confirmation: Some(PendingConfirmation {
             call_id,

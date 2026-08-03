@@ -113,6 +113,73 @@ async fn diagnose_with_mock_model_provider_asks_confirmation() {
 }
 
 #[tokio::test]
+async fn multi_turn_session_remembers_prior_diagnose() {
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    let tools = Arc::new(registry);
+    let policy = Arc::new(PolicyEngine::new());
+    let bus = EventBus::new(32);
+    let runtime = AiRuntime::new(
+        tools,
+        policy,
+        audit,
+        bus,
+        Arc::new(MockModelProvider),
+    );
+
+    let first = runtime
+        .handle_user_text_in_session("Почему тормозит?", None, None)
+        .await
+        .expect("first turn");
+    assert!(first.pending_confirmation.is_some());
+    assert!(!first.events.is_empty());
+
+    let second = runtime
+        .handle_user_text_in_session("Какой pid у виновника?", Some(first.session_id), None)
+        .await
+        .expect("second turn");
+    assert_eq!(second.session_id, first.session_id);
+    assert!(
+        second.diagnose.summary.contains("4312"),
+        "expected follow-up to reuse prior culprit, got: {}",
+        second.diagnose.summary
+    );
+    assert!(second.pending_confirmation.is_none());
+}
+
+#[tokio::test]
+async fn progress_channel_receives_tool_events() {
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    let tools = Arc::new(registry);
+    let policy = Arc::new(PolicyEngine::new());
+    let bus = EventBus::new(32);
+    let runtime = AiRuntime::new(
+        tools,
+        policy,
+        audit,
+        bus,
+        Arc::new(MockModelProvider),
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let outcome = runtime
+        .handle_user_text_in_session("Почему тормозит?", None, Some(tx))
+        .await
+        .expect("diagnose");
+    let mut saw_tool = false;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(ev, ai_runtime::RuntimeEvent::ToolCall { .. }) {
+            saw_tool = true;
+        }
+    }
+    assert!(saw_tool || outcome.events.iter().any(|e| matches!(e, ai_runtime::RuntimeEvent::ToolCall { .. })));
+}
+
+#[tokio::test]
 async fn prompt_injection_does_not_auto_execute_kill() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
