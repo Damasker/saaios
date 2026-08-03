@@ -41,6 +41,15 @@ run:
 run-tui:
     cargo run -p console-tui
 
+cross-pi:
+    bash deploy/cross-pi.sh
+
+package bin_dir="target/release":
+    bash deploy/package.sh "{{bin_dir}}"
+
+package-pi:
+    bash deploy/package.sh target/aarch64-unknown-linux-gnu/release
+
 e2e:
     cargo test -p diagnose-slow-system -- --nocapture
 

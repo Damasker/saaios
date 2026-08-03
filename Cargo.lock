@@ -1449,6 +1449,7 @@ dependencies = [
  "serde_json",
  "system-tools",
  "telemetry",
+ "tempfile",
  "tokio",
  "tool-registry",
  "tracing",

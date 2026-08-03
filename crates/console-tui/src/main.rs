@@ -419,12 +419,50 @@ async fn show_status(app: &mut App) -> Result<()> {
                     .get("auto_diagnose")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let chats = st
+                    .get("chat_sessions")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 app.lines.push(format!(
                     "provider={provider} ({kind}) uptime={uptime}s tools={tools}"
                 ));
                 app.lines.push(format!(
-                    "memory={mem} automation={auto} auto_diagnose={adiag} telemetry={tel} samples={samples}"
+                    "memory={mem} automation={auto} auto_diagnose={adiag} telemetry={tel} samples={samples} chat_sessions={chats}"
                 ));
+                if let Some(ab) = st.get("ab") {
+                    let enabled = ab.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                    if enabled {
+                        let current = ab
+                            .get("current")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        let mut slot_bits = Vec::new();
+                        if let Some(slots) = ab.get("slots").and_then(|v| v.as_array()) {
+                            for s in slots {
+                                let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                                let bin = s
+                                    .get("binary_present")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let ok = s
+                                    .get("boot_ok")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                slot_bits.push(format!(
+                                    "{name}[bin={},ok={}]",
+                                    if bin { "y" } else { "n" },
+                                    if ok { "y" } else { "n" }
+                                ));
+                            }
+                        }
+                        app.lines.push(format!(
+                            "ab current={current} {}",
+                            slot_bits.join(" ")
+                        ));
+                    } else {
+                        app.lines.push("ab=disabled (no layout)".into());
+                    }
+                }
                 app.status = format!("provider={provider} up={uptime}s");
             }
         }
