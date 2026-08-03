@@ -2,6 +2,7 @@ use ai_runtime::{diagnose_slow_with_mock_planner, AiRuntime, HandleOutcome, Reso
 use anyhow::{anyhow, Context, Result};
 use audit_log::AuditLog;
 use automation_engine::AutomationEngine;
+use chrono::Utc;
 use clap::Parser;
 use config::{resolve, CliOverrides};
 use event_bus::EventBus;
@@ -19,8 +20,11 @@ use telemetry::TelemetrySampler;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tool_registry::ToolRegistry;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
+
+mod event_feed;
+use event_feed::{EventFeed, FeedItem};
 
 #[derive(Debug, Parser)]
 #[command(name = "saaios-runtime", about = "SaaiOS Platform runtime")]
@@ -81,6 +85,14 @@ struct Args {
     #[arg(long)]
     no_automation: bool,
 
+    /// Enable auto-diagnose worker (runs diagnose on AutomationAutoDiagnose)
+    #[arg(long)]
+    auto_diagnose: bool,
+
+    /// Disable auto-diagnose even if enabled in config
+    #[arg(long)]
+    no_auto_diagnose: bool,
+
     /// Enable background telemetry sampler
     #[arg(long)]
     telemetry: bool,
@@ -133,6 +145,10 @@ enum ClientRequest {
         key: String,
     },
     Status,
+    EventsTail {
+        #[serde(default = "default_tail")]
+        limit: usize,
+    },
     SessionGrants,
     ClearSessionGrants,
     Ping,
@@ -162,6 +178,8 @@ struct ClientResponse {
     memory_facts: Option<Vec<MemoryFact>>,
     #[serde(default)]
     status: Option<RuntimeStatusDto>,
+    #[serde(default)]
+    events: Option<Vec<FeedItem>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,6 +213,8 @@ struct RuntimeStatusDto {
     session_grants: Vec<String>,
     #[serde(default)]
     config_path: Option<String>,
+    #[serde(default)]
+    auto_diagnose: bool,
 }
 
 struct RuntimeMeta {
@@ -209,6 +229,7 @@ struct RuntimeMeta {
     audit_path: PathBuf,
     sock: PathBuf,
     automation: bool,
+    auto_diagnose: bool,
     telemetry: Option<Arc<TelemetrySampler>>,
     max_concurrent: usize,
     request_timeout_secs: u64,
@@ -238,6 +259,7 @@ impl RuntimeMeta {
             request_timeout_secs: self.request_timeout_secs,
             session_grants: runtime.session_grants(),
             config_path: self.config_path.as_ref().map(|p| p.display().to_string()),
+            auto_diagnose: self.auto_diagnose,
         }
     }
 }
@@ -266,6 +288,8 @@ async fn main() -> Result<()> {
         request_timeout_secs: args.request_timeout_secs,
         max_tool_iters: args.max_tool_iters,
         no_automation: args.no_automation,
+        auto_diagnose: args.auto_diagnose,
+        no_auto_diagnose: args.no_auto_diagnose,
         telemetry: args.telemetry,
         no_telemetry: args.no_telemetry,
         telemetry_interval_secs: args.telemetry_interval_secs,
@@ -363,16 +387,30 @@ async fn main() -> Result<()> {
         runtime = runtime.with_memory(mem);
     }
     let runtime = Arc::new(runtime);
+    let feed = Arc::new(EventFeed::new(64));
 
     let automation_enabled = settings.automation_enabled;
     if automation_enabled {
-        let automation = Arc::new(AutomationEngine::new(
+        let mut engine = AutomationEngine::new(
             bus.clone(),
             audit.clone(),
             AutomationEngine::default_rules(),
-        ));
+        );
+        engine.set_auto_diagnose_rule(settings.auto_diagnose);
+        let automation = Arc::new(engine);
         let _automation_worker = automation.spawn();
-        info!("automation engine started");
+        info!(
+            auto_diagnose = settings.auto_diagnose,
+            "automation engine started"
+        );
+    }
+
+    let _feed_worker = spawn_event_feed_worker(bus.clone(), feed.clone());
+
+    if settings.auto_diagnose {
+        let _auto =
+            spawn_auto_diagnose_worker(runtime.clone(), bus.clone(), audit.clone(), feed.clone());
+        info!("auto-diagnose worker started");
     }
 
     let telemetry = if !settings.telemetry_enabled {
@@ -411,6 +449,7 @@ async fn main() -> Result<()> {
         audit_path: settings.audit.clone(),
         sock: settings.sock.clone(),
         automation: automation_enabled,
+        auto_diagnose: settings.auto_diagnose,
         telemetry,
         max_concurrent,
         request_timeout_secs,
@@ -430,12 +469,147 @@ async fn main() -> Result<()> {
         let runtime = runtime.clone();
         let last_pending = last_pending.clone();
         let meta = meta.clone();
+        let feed = feed.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, runtime, last_pending, meta).await {
+            if let Err(e) = handle_client(stream, runtime, last_pending, meta, feed).await {
                 error!("client error: {e:#}");
             }
         });
     }
+}
+
+fn spawn_event_feed_worker(bus: EventBus, feed: Arc<EventFeed>) -> tokio::task::JoinHandle<()> {
+    let mut rx = bus.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(env) => {
+                    if env.kind != MessageKind::Event {
+                        continue;
+                    }
+                    let Some(name) = env.payload.get("event").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    if !name.starts_with("Automation") {
+                        continue;
+                    }
+                    let summary = env
+                        .payload
+                        .get("message")
+                        .or_else(|| env.payload.get("prompt"))
+                        .or_else(|| env.payload.get("summary"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(name)
+                        .to_string();
+                    feed.push(FeedItem {
+                        ts: Utc::now().to_rfc3339(),
+                        event: name.to_string(),
+                        correlation_id: Some(env.correlation_id),
+                        summary,
+                        payload: env.payload.clone(),
+                    });
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
+fn spawn_auto_diagnose_worker(
+    runtime: Arc<AiRuntime>,
+    bus: EventBus,
+    audit: Arc<AuditLog>,
+    feed: Arc<EventFeed>,
+) -> tokio::task::JoinHandle<()> {
+    let mut rx = bus.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(env) => {
+                    if env.kind != MessageKind::Event {
+                        continue;
+                    }
+                    let Some(name) = env.payload.get("event").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    if name != "AutomationAutoDiagnose" {
+                        continue;
+                    }
+                    let prompt = env
+                        .payload
+                        .get("prompt")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Почему система тормозит?")
+                        .to_string();
+                    info!(%prompt, "auto-diagnose triggered");
+                    feed.push(FeedItem {
+                        ts: Utc::now().to_rfc3339(),
+                        event: "AutoDiagnoseStarted".into(),
+                        correlation_id: Some(env.correlation_id),
+                        summary: prompt.clone(),
+                        payload: env.payload.clone(),
+                    });
+                    match runtime.handle_user_text(&prompt).await {
+                        Ok(outcome) => {
+                            let summary = if outcome.diagnose.summary.is_empty() {
+                                "auto-diagnose completed".into()
+                            } else {
+                                outcome.diagnose.summary.clone()
+                            };
+                            let payload = json!({
+                                "event": "AutomationDiagnoseCompleted",
+                                "prompt": prompt,
+                                "summary": summary,
+                                "correlation_id": outcome.correlation_id,
+                                "pending": outcome.pending_confirmation.is_some(),
+                            });
+                            let out = Envelope::new(
+                                MessageKind::Event,
+                                outcome.correlation_id,
+                                Some(env.msg_id),
+                                payload.clone(),
+                            );
+                            let _ = audit.append_envelope(&out);
+                            bus.publish_envelope(out);
+                            feed.push(FeedItem {
+                                ts: Utc::now().to_rfc3339(),
+                                event: "AutomationDiagnoseCompleted".into(),
+                                correlation_id: Some(outcome.correlation_id),
+                                summary: outcome.diagnose.summary,
+                                payload,
+                            });
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "auto-diagnose failed");
+                            let payload = json!({
+                                "event": "AutomationDiagnoseFailed",
+                                "prompt": prompt,
+                                "error": e.to_string(),
+                            });
+                            let out = Envelope::new(
+                                MessageKind::Event,
+                                env.correlation_id,
+                                Some(env.msg_id),
+                                payload.clone(),
+                            );
+                            let _ = audit.append_envelope(&out);
+                            bus.publish_envelope(out);
+                            feed.push(FeedItem {
+                                ts: Utc::now().to_rfc3339(),
+                                event: "AutomationDiagnoseFailed".into(),
+                                correlation_id: Some(env.correlation_id),
+                                summary: e.to_string(),
+                                payload,
+                            });
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
 }
 
 async fn handle_client(
@@ -443,6 +617,7 @@ async fn handle_client(
     runtime: Arc<AiRuntime>,
     last_pending: Arc<tokio::sync::Mutex<Option<HandleOutcome>>>,
     meta: Arc<RuntimeMeta>,
+    feed: Arc<EventFeed>,
 ) -> Result<()> {
     let mut buf = vec![0u8; 64 * 1024];
     let n = stream.read(&mut buf).await?;
@@ -459,6 +634,11 @@ async fn handle_client(
         ClientRequest::Status => ClientResponse {
             ok: true,
             status: Some(meta.status(&runtime)),
+            ..Default::default()
+        },
+        ClientRequest::EventsTail { limit } => ClientResponse {
+            ok: true,
+            events: Some(feed.tail(limit)),
             ..Default::default()
         },
         ClientRequest::Diagnose { text } => match runtime.handle_user_text(&text).await {

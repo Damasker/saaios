@@ -32,6 +32,7 @@ path = "saaios-memory.jsonl"
 
 [automation]
 enabled = true
+auto_diagnose = false
 
 [telemetry]
 # auto = on when real_linux; on | off

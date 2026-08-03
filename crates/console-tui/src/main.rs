@@ -55,6 +55,9 @@ enum ClientRequest {
         key: String,
     },
     Status,
+    EventsTail {
+        limit: usize,
+    },
     SessionGrants,
     ClearSessionGrants,
     Ping,
@@ -76,6 +79,8 @@ struct ClientResponse {
     memory_facts: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     status: Option<serde_json::Value>,
+    #[serde(default)]
+    events: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,9 +106,9 @@ impl App {
             sock,
             input: String::new(),
             lines: vec![
-                "SaaiOS Console 0.4".into(),
+                "SaaiOS Console 0.5".into(),
                 "Type a question and press Enter. Example: Почему система тормозит?".into(),
-                "Confirm: y=once, s=session, n=cancel | h=status | a=audit | m=memory | g=grants | c=clear | q=quit"
+                "Confirm: y=once, s=session, n=cancel | h=status | e=events | a=audit | m=memory | g=grants | c=clear | q=quit"
                     .into(),
                 "Memory: /remember key=value | /recall query | /forget key".into(),
             ],
@@ -164,6 +169,9 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
                     }
                     KeyCode::Char('h') if app.pending.is_none() && app.input.is_empty() => {
                         show_status(app).await?;
+                    }
+                    KeyCode::Char('e') if app.pending.is_none() && app.input.is_empty() => {
+                        show_events(app).await?;
                     }
                     KeyCode::Char('m') if app.pending.is_none() && app.input.is_empty() => {
                         show_memory(app).await?;
@@ -332,16 +340,42 @@ async fn show_status(app: &mut App) -> Result<()> {
                     .get("telemetry_samples")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
+                let adiag = st
+                    .get("auto_diagnose")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 app.lines.push(format!(
                     "provider={provider} ({kind}) uptime={uptime}s tools={tools}"
                 ));
                 app.lines.push(format!(
-                    "memory={mem} automation={auto} telemetry={tel} samples={samples}"
+                    "memory={mem} automation={auto} auto_diagnose={adiag} telemetry={tel} samples={samples}"
                 ));
                 app.status = format!("provider={provider} up={uptime}s");
             }
         }
         Err(e) => app.lines.push(format!("status failed: {e:#}")),
+    }
+    Ok(())
+}
+
+async fn show_events(app: &mut App) -> Result<()> {
+    match request(&app.sock, &ClientRequest::EventsTail { limit: 16 }).await {
+        Ok(resp) => {
+            if let Some(err) = resp.error {
+                app.lines.push(format!("events error: {err}"));
+            } else if let Some(events) = resp.events {
+                app.lines.push("--- events ---".into());
+                if events.is_empty() {
+                    app.lines.push("(empty)".into());
+                }
+                for item in events {
+                    let ev = item.get("event").and_then(|v| v.as_str()).unwrap_or("?");
+                    let summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                    app.lines.push(format!("{ev}: {summary}"));
+                }
+            }
+        }
+        Err(e) => app.lines.push(format!("events failed: {e:#}")),
     }
     Ok(())
 }
