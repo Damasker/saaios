@@ -24,7 +24,9 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 mod event_feed;
+mod ab_status;
 use event_feed::{EventFeed, FeedItem};
+use ab_status::{ab_root_from_env, read_ab_status, AbStatus};
 
 #[derive(Debug, Parser)]
 #[command(name = "saaios-runtime", about = "SaaiOS Platform runtime")]
@@ -231,6 +233,8 @@ struct RuntimeStatusDto {
     auto_diagnose: bool,
     #[serde(default)]
     chat_sessions: usize,
+    #[serde(default)]
+    ab: Option<AbStatus>,
 }
 
 struct RuntimeMeta {
@@ -277,6 +281,7 @@ impl RuntimeMeta {
             config_path: self.config_path.as_ref().map(|p| p.display().to_string()),
             auto_diagnose: self.auto_diagnose,
             chat_sessions: runtime.conversation_count(),
+            ab: Some(read_ab_status(&ab_root_from_env())),
         }
     }
 }
