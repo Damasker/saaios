@@ -54,6 +54,7 @@ enum ClientRequest {
     MemoryForget {
         key: String,
     },
+    Status,
     SessionGrants,
     ClearSessionGrants,
     Ping,
@@ -73,6 +74,8 @@ struct ClientResponse {
     session_grants: Option<Vec<String>>,
     #[serde(default)]
     memory_facts: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    status: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,9 +101,9 @@ impl App {
             sock,
             input: String::new(),
             lines: vec![
-                "SaaiOS Console 0.3".into(),
+                "SaaiOS Console 0.4".into(),
                 "Type a question and press Enter. Example: Почему система тормозит?".into(),
-                "Confirm: y=once, s=session, n=cancel | a=audit | m=memory | g=grants | c=clear | q=quit"
+                "Confirm: y=once, s=session, n=cancel | h=status | a=audit | m=memory | g=grants | c=clear | q=quit"
                     .into(),
                 "Memory: /remember key=value | /recall query | /forget key".into(),
             ],
@@ -158,6 +161,9 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
                     }
                     KeyCode::Char('a') if app.pending.is_none() && app.input.is_empty() => {
                         show_audit(app).await?;
+                    }
+                    KeyCode::Char('h') if app.pending.is_none() && app.input.is_empty() => {
+                        show_status(app).await?;
                     }
                     KeyCode::Char('m') if app.pending.is_none() && app.input.is_empty() => {
                         show_memory(app).await?;
@@ -292,6 +298,50 @@ async fn show_audit(app: &mut App) -> Result<()> {
             }
         }
         Err(e) => app.lines.push(format!("audit failed: {e:#}")),
+    }
+    Ok(())
+}
+
+async fn show_status(app: &mut App) -> Result<()> {
+    match request(&app.sock, &ClientRequest::Status).await {
+        Ok(resp) => {
+            if let Some(err) = resp.error {
+                app.lines.push(format!("status error: {err}"));
+            } else if let Some(st) = resp.status {
+                app.lines.push("--- runtime status ---".into());
+                let provider = st.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
+                let kind = st
+                    .get("provider_kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let uptime = st.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+                let tools = st.get("tool_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                let mem = st
+                    .get("memory_enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let auto = st
+                    .get("automation")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let tel = st
+                    .get("telemetry")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let samples = st
+                    .get("telemetry_samples")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                app.lines.push(format!(
+                    "provider={provider} ({kind}) uptime={uptime}s tools={tools}"
+                ));
+                app.lines.push(format!(
+                    "memory={mem} automation={auto} telemetry={tel} samples={samples}"
+                ));
+                app.status = format!("provider={provider} up={uptime}s");
+            }
+        }
+        Err(e) => app.lines.push(format!("status failed: {e:#}")),
     }
     Ok(())
 }

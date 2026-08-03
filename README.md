@@ -64,6 +64,7 @@ just run
 | `memory-store` | Local JSONL facts + memory.* tools |
 | `ai-runtime` | Request orchestration |
 | `automation-engine` | Event-driven rules |
+| `telemetry` | Periodic metrics → event bus |
 | `console-tui` | First UI |
 | `saaios-runtime` | Composition root / UDS server |
 
@@ -82,6 +83,7 @@ Local inference (via Ollama), A/B `BOOT_OK` updates, and local memory facts land
 - [Platform 0.2 automation & budgets](docs/platform-0.2.md)
 - [Platform 0.3 local models & A/B](docs/platform-0.3.md)
 - [Platform 0.3 memory / facts](docs/platform-0.3-memory.md)
+- [Platform 0.4 telemetry & status](docs/platform-0.4.md)
 - [Raspberry Pi / Linux appliance](docs/appliance.md)
 
 ### Real Linux tools

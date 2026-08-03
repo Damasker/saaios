@@ -287,6 +287,46 @@ async fn resource_budget_rejects_second_concurrent_request() {
 }
 
 #[tokio::test]
+async fn telemetry_sample_triggers_high_cpu_automation() {
+    use automation_engine::AutomationEngine;
+    use protocol::MessageKind;
+    use std::time::Duration;
+    use telemetry::TelemetrySampler;
+
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let bus = EventBus::new(64);
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    let tools = Arc::new(registry);
+
+    let automation = Arc::new(AutomationEngine::new(
+        bus.clone(),
+        audit.clone(),
+        AutomationEngine::default_rules(),
+    ));
+    let _worker = automation.spawn();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let sampler = TelemetrySampler::new(tools, bus.clone(), audit.clone(), Duration::from_secs(60));
+    sampler.sample_once().await.unwrap();
+
+    // Wait for automation to process the tool result.
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    let all = audit.read_all().unwrap();
+    assert!(all
+        .iter()
+        .any(|r| { r.kind == MessageKind::ToolResult && r.payload["tool"] == "system.metrics" }));
+    assert!(
+        all.iter().any(|r| {
+            r.kind == MessageKind::Event
+                && r.payload.get("event").and_then(|v| v.as_str()) == Some("AutomationNotify")
+        }),
+        "expected AutomationNotify from high-cpu telemetry sample"
+    );
+}
+
+#[tokio::test]
 async fn memory_facts_injected_into_system_prompt() {
     use memory_store::{install_memory_tools, MemoryFact, MemoryStore};
     use std::sync::Mutex;

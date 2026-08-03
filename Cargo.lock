@@ -440,6 +440,7 @@ dependencies = [
  "protocol",
  "serde_json",
  "system-tools",
+ "telemetry",
  "tempfile",
  "tokio",
  "tool-registry",
@@ -1419,6 +1420,7 @@ dependencies = [
  "serde",
  "serde_json",
  "system-tools",
+ "telemetry",
  "tokio",
  "tool-registry",
  "tracing",
@@ -1653,6 +1655,24 @@ dependencies = [
  "serde_json",
  "tokio",
  "tool-registry",
+ "uuid",
+]
+
+[[package]]
+name = "telemetry"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "audit-log",
+ "event-bus",
+ "protocol",
+ "serde",
+ "serde_json",
+ "system-tools",
+ "tempfile",
+ "tokio",
+ "tool-registry",
+ "tracing",
  "uuid",
 ]
 
