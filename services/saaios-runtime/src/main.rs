@@ -4,7 +4,7 @@ use audit_log::AuditLog;
 use automation_engine::AutomationEngine;
 use clap::Parser;
 use event_bus::EventBus;
-use model_provider::{MockModelProvider, OpenAiCompatConfig, OpenAiCompatProvider};
+use model_provider::{build_provider, ProviderKind};
 use policy_engine::PolicyEngine;
 use protocol::{ConfirmScope, Envelope, MessageKind};
 use serde::{Deserialize, Serialize};
@@ -22,9 +22,13 @@ use uuid::Uuid;
 #[derive(Debug, Parser)]
 #[command(name = "saaios-runtime", about = "SaaiOS Platform runtime")]
 struct Args {
-    /// Use mock tools + mock model provider
+    /// Use mock tools + mock model provider (alias for --provider mock)
     #[arg(long, env = "SAAIOS_MOCK")]
     mock: bool,
+
+    /// Model provider: mock | remote | local | auto
+    #[arg(long, env = "SAAIOS_PROVIDER", default_value = "auto")]
+    provider: String,
 
     /// Use deterministic mock planner (no model loop)
     #[arg(long)]
@@ -128,6 +132,10 @@ async fn main() -> Result<()> {
     if std::env::var("SAAIOS_MODE").ok().as_deref() == Some("mock") {
         args.mock = true;
         args.mock_planner = true;
+        args.provider = "mock".into();
+    }
+    if args.mock {
+        args.provider = "mock".into();
     }
 
     if let Some(correlation_id) = args.replay {
@@ -159,20 +167,27 @@ async fn main() -> Result<()> {
         info!(sock = %args.sock.display(), "starting UDS server");
     }
 
-    let provider: Arc<dyn model_provider::ModelProvider> = if args.mock || args.mock_planner {
-        Arc::new(MockModelProvider)
+    let kind = if args.mock_planner {
+        ProviderKind::Mock
     } else {
-        let api_base =
-            std::env::var("SAAIOS_API_BASE").context("SAAIOS_API_BASE required unless --mock")?;
-        let api_key =
-            std::env::var("SAAIOS_API_KEY").context("SAAIOS_API_KEY required unless --mock")?;
-        let model = std::env::var("SAAIOS_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into());
-        Arc::new(OpenAiCompatProvider::new(OpenAiCompatConfig {
-            api_base,
-            api_key,
-            model,
-        }))
+        ProviderKind::parse(&args.provider).ok_or_else(|| {
+            anyhow!(
+                "unknown provider {:?}; expected mock|remote|local|auto",
+                args.provider
+            )
+        })?
     };
+    let provider = build_provider(
+        kind,
+        std::env::var("SAAIOS_API_BASE").ok(),
+        std::env::var("SAAIOS_API_KEY").ok(),
+        std::env::var("SAAIOS_MODEL").ok(),
+        std::env::var("SAAIOS_LOCAL_BASE").ok(),
+        std::env::var("SAAIOS_LOCAL_MODEL").ok(),
+    )
+    .await
+    .context("build model provider")?;
+    info!(provider = provider.name(), kind = ?kind, "model provider ready");
 
     let budgets = ResourceBudgets {
         max_concurrent_requests: args.max_concurrent.max(1),

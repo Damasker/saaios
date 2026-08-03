@@ -1,0 +1,16 @@
+[Unit]
+Description=SaaiOS A/B BOOT_OK marker
+Documentation=https://github.com/Damasker/saaios
+After=saaios-runtime.service
+Requires=saaios-runtime.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/saaios/boot-ok.sh
+Environment=SAAIOS_AB_ROOT=/var/lib/saaios/ab
+Environment=SAAIOS_SOCK=/run/saaios/saaios.sock
+Environment=SAAIOS_BOOT_OK_TIMEOUT=60
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
