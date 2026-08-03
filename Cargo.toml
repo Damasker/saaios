@@ -9,6 +9,7 @@ members = [
     "crates/system-tools",
     "crates/model-provider",
     "crates/ai-runtime",
+    "crates/automation-engine",
     "crates/console-tui",
     "services/saaios-runtime",
     "tests/diagnose-slow-system",
@@ -30,6 +31,7 @@ audit-log = { path = "crates/audit-log" }
 system-tools = { path = "crates/system-tools" }
 model-provider = { path = "crates/model-provider" }
 ai-runtime = { path = "crates/ai-runtime" }
+automation-engine = { path = "crates/automation-engine" }
 console-tui = { path = "crates/console-tui" }
 
 anyhow = "1"

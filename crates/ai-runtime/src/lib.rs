@@ -10,6 +10,8 @@ use protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tool_registry::{ToolContext, ToolRegistry};
 use tracing::{info, info_span, warn, Instrument};
 use uuid::Uuid;
@@ -23,13 +25,31 @@ pub enum RuntimeEvent {
     Error { message: String },
 }
 
+#[derive(Debug, Clone)]
+pub struct ResourceBudgets {
+    pub max_concurrent_requests: usize,
+    pub request_timeout: Duration,
+    pub max_tool_iters: usize,
+}
+
+impl Default for ResourceBudgets {
+    fn default() -> Self {
+        Self {
+            max_concurrent_requests: 1,
+            request_timeout: Duration::from_secs(30),
+            max_tool_iters: 6,
+        }
+    }
+}
+
 pub struct AiRuntime {
     tools: Arc<ToolRegistry>,
     policy: Arc<PolicyEngine>,
     audit: Arc<AuditLog>,
     bus: EventBus,
     provider: Arc<dyn ModelProvider>,
-    max_tool_iters: usize,
+    budgets: ResourceBudgets,
+    request_slots: Arc<Semaphore>,
 }
 
 impl AiRuntime {
@@ -40,14 +60,38 @@ impl AiRuntime {
         bus: EventBus,
         provider: Arc<dyn ModelProvider>,
     ) -> Self {
+        Self::with_budgets(
+            tools,
+            policy,
+            audit,
+            bus,
+            provider,
+            ResourceBudgets::default(),
+        )
+    }
+
+    pub fn with_budgets(
+        tools: Arc<ToolRegistry>,
+        policy: Arc<PolicyEngine>,
+        audit: Arc<AuditLog>,
+        bus: EventBus,
+        provider: Arc<dyn ModelProvider>,
+        budgets: ResourceBudgets,
+    ) -> Self {
+        let slots = Semaphore::new(budgets.max_concurrent_requests.max(1));
         Self {
             tools,
             policy,
             audit,
             bus,
             provider,
-            max_tool_iters: 6,
+            request_slots: Arc::new(slots),
+            budgets,
         }
+    }
+
+    pub fn budgets(&self) -> &ResourceBudgets {
+        &self.budgets
     }
 
     pub async fn handle_user_text(&self, text: &str) -> Result<HandleOutcome> {
@@ -57,9 +101,32 @@ impl AiRuntime {
             correlation_id = %correlation_id,
             request = %text
         );
-        self.handle_user_text_inner(text, correlation_id)
+        let permit = self
+            .acquire_slot(correlation_id)
+            .instrument(span.clone())
+            .await?;
+        let fut = self.handle_user_text_inner(text, correlation_id);
+        let result = tokio::time::timeout(self.budgets.request_timeout, fut)
             .instrument(span)
-            .await
+            .await;
+        drop(permit);
+        match result {
+            Ok(inner) => inner,
+            Err(_) => Err(anyhow!(
+                "request timed out after {}s (correlation_id={correlation_id})",
+                self.budgets.request_timeout.as_secs()
+            )),
+        }
+    }
+
+    async fn acquire_slot(&self, correlation_id: Uuid) -> Result<OwnedSemaphorePermit> {
+        match self.request_slots.clone().try_acquire_owned() {
+            Ok(permit) => Ok(permit),
+            Err(_) => Err(anyhow!(
+                "AI runtime busy: max_concurrent_requests={} (correlation_id={correlation_id})",
+                self.budgets.max_concurrent_requests
+            )),
+        }
     }
 
     async fn handle_user_text_inner(
@@ -102,7 +169,7 @@ impl AiRuntime {
         let mut called_metrics = false;
         let mut called_process_list = false;
 
-        for iter in 0..self.max_tool_iters {
+        for iter in 0..self.budgets.max_tool_iters {
             let iter_span = info_span!("model_iter", correlation_id = %correlation_id, iter);
             let response = self
                 .provider

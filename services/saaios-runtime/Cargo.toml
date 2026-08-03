@@ -12,6 +12,7 @@ path = "src/main.rs"
 ai-runtime = { workspace = true }
 anyhow = { workspace = true }
 audit-log = { workspace = true }
+automation-engine = { workspace = true }
 clap = { workspace = true }
 event-bus = { workspace = true }
 model-provider = { workspace = true }

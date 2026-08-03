@@ -186,3 +186,102 @@ async fn session_grant_skips_second_confirmation() {
             && r.payload["reason"] == "session grant"
     }));
 }
+
+#[tokio::test]
+async fn high_cpu_diagnose_emits_automation_events() {
+    use automation_engine::AutomationEngine;
+
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    let tools = Arc::new(registry);
+    let policy = Arc::new(PolicyEngine::new());
+    let bus = EventBus::new(64);
+    let automation = Arc::new(AutomationEngine::new(
+        bus.clone(),
+        audit.clone(),
+        AutomationEngine::default_rules(),
+    ));
+    // Subscribe before publishing diagnose events.
+    let _worker = automation.spawn();
+
+    let runtime = AiRuntime::new(
+        tools,
+        policy,
+        audit.clone(),
+        bus,
+        Arc::new(MockModelProvider),
+    );
+    let outcome = runtime
+        .handle_user_text("Почему тормозит?")
+        .await
+        .expect("diagnose");
+
+    // Allow automation task to flush applies.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let chain = audit.list_by_correlation(outcome.correlation_id).unwrap();
+    assert!(
+        chain.iter().any(|r| {
+            r.kind == MessageKind::Event
+                && r.payload.get("event").and_then(|v| v.as_str())
+                    == Some("AutomationSuggestDiagnose")
+        }),
+        "expected AutomationSuggestDiagnose event in audit"
+    );
+}
+
+#[tokio::test]
+async fn resource_budget_rejects_second_concurrent_request() {
+    use ai_runtime::ResourceBudgets;
+    use std::time::Duration;
+
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    let tools = Arc::new(registry);
+    let policy = Arc::new(PolicyEngine::new());
+    let bus = EventBus::new(8);
+
+    // Slow provider holds the only slot.
+    struct SlowProvider;
+    #[async_trait::async_trait]
+    impl model_provider::ModelProvider for SlowProvider {
+        async fn complete(
+            &self,
+            _messages: &[model_provider::ChatMessage],
+            _tools: &[model_provider::ToolDefinition],
+        ) -> anyhow::Result<model_provider::ModelResponse> {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok(model_provider::ModelResponse {
+                assistant_text: Some("ok".into()),
+                tool_calls: vec![],
+            })
+        }
+    }
+
+    let runtime = Arc::new(AiRuntime::with_budgets(
+        tools,
+        policy,
+        audit,
+        bus,
+        Arc::new(SlowProvider),
+        ResourceBudgets {
+            max_concurrent_requests: 1,
+            request_timeout: Duration::from_secs(5),
+            max_tool_iters: 2,
+        },
+    ));
+
+    let r1 = runtime.clone();
+    let h1 = tokio::spawn(async move { r1.handle_user_text("one").await });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let err = runtime.handle_user_text("two").await.unwrap_err();
+    assert!(
+        err.to_string().contains("busy"),
+        "expected busy error, got {err}"
+    );
+    h1.await.unwrap().unwrap();
+}
