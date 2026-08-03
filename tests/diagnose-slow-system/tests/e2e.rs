@@ -285,3 +285,58 @@ async fn resource_budget_rejects_second_concurrent_request() {
     );
     h1.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn memory_facts_injected_into_system_prompt() {
+    use memory_store::{install_memory_tools, MemoryFact, MemoryStore};
+    use std::sync::Mutex;
+
+    struct CaptureProvider {
+        system: Mutex<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl model_provider::ModelProvider for CaptureProvider {
+        async fn complete(
+            &self,
+            messages: &[model_provider::ChatMessage],
+            _tools: &[model_provider::ToolDefinition],
+        ) -> anyhow::Result<model_provider::ModelResponse> {
+            let sys = messages
+                .iter()
+                .find(|m| m.role == "system")
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            *self.system.lock().unwrap() = sys;
+            Ok(model_provider::ModelResponse {
+                assistant_text: Some("ok".into()),
+                tool_calls: vec![],
+            })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let memory = Arc::new(MemoryStore::open(dir.path().join("memory.jsonl")).unwrap());
+    memory
+        .remember(MemoryFact::new("host.role", "pi5 lab node"))
+        .unwrap();
+
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_memory_tools(&mut registry, memory.clone());
+    let tools = Arc::new(registry);
+    let policy = Arc::new(PolicyEngine::new());
+    let bus = EventBus::new(32);
+    let provider = Arc::new(CaptureProvider {
+        system: Mutex::new(String::new()),
+    });
+    let runtime = AiRuntime::new(tools, policy, audit, bus, provider.clone()).with_memory(memory);
+
+    runtime.handle_user_text("ping").await.unwrap();
+    let system = provider.system.lock().unwrap().clone();
+    assert!(
+        system.contains("host.role") && system.contains("pi5 lab node"),
+        "system prompt should include memory facts, got: {system}"
+    );
+}

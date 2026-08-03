@@ -1,5 +1,5 @@
 [package]
-name = "ai-runtime"
+name = "memory-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,15 +7,12 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-audit-log = { workspace = true }
-event-bus = { workspace = true }
-model-provider = { workspace = true }
-memory-store = { workspace = true }
-policy-engine = { workspace = true }
-protocol = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
 tool-registry = { workspace = true }
-tracing = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

@@ -4,6 +4,7 @@ use audit_log::AuditLog;
 use automation_engine::AutomationEngine;
 use clap::Parser;
 use event_bus::EventBus;
+use memory_store::{install_memory_tools, MemoryFact, MemoryStore};
 use model_provider::{build_provider, ProviderKind};
 use policy_engine::PolicyEngine;
 use protocol::{ConfirmScope, Envelope, MessageKind};
@@ -41,6 +42,14 @@ struct Args {
     /// Audit log path
     #[arg(long, default_value = "saaios-audit.jsonl", env = "SAAIOS_AUDIT")]
     audit: PathBuf,
+
+    /// Local memory / facts JSONL path
+    #[arg(long, default_value = "saaios-memory.jsonl", env = "SAAIOS_MEMORY")]
+    memory: PathBuf,
+
+    /// Disable memory store and memory.* tools
+    #[arg(long)]
+    no_memory: bool,
 
     /// Use real Linux /proc adapters instead of mock fixtures
     #[arg(long)]
@@ -84,6 +93,23 @@ enum ClientRequest {
         #[serde(default = "default_tail")]
         limit: usize,
     },
+    MemoryRemember {
+        key: String,
+        value: String,
+        #[serde(default)]
+        tags: Vec<String>,
+    },
+    MemoryRecall {
+        #[serde(default)]
+        query: String,
+    },
+    MemoryTail {
+        #[serde(default = "default_tail")]
+        limit: usize,
+    },
+    MemoryForget {
+        key: String,
+    },
     SessionGrants,
     ClearSessionGrants,
     Ping,
@@ -109,6 +135,8 @@ struct ClientResponse {
     audit_tail: Option<Vec<audit_log::AuditRecord>>,
     #[serde(default)]
     session_grants: Option<Vec<String>>,
+    #[serde(default)]
+    memory_facts: Option<Vec<MemoryFact>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +181,16 @@ async fn main() -> Result<()> {
 
     let mut registry = ToolRegistry::new();
     install_system_tools(&mut registry, tools_mode);
+
+    let memory = if args.no_memory {
+        None
+    } else {
+        let store = Arc::new(MemoryStore::open(&args.memory)?);
+        install_memory_tools(&mut registry, store.clone());
+        info!(path = %args.memory.display(), "memory store ready");
+        Some(store)
+    };
+
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let audit = Arc::new(AuditLog::open(&args.audit)?);
@@ -200,14 +238,12 @@ async fn main() -> Result<()> {
         "AI resource budgets"
     );
 
-    let runtime = Arc::new(AiRuntime::with_budgets(
-        tools,
-        policy,
-        audit.clone(),
-        bus.clone(),
-        provider,
-        budgets,
-    ));
+    let mut runtime =
+        AiRuntime::with_budgets(tools, policy, audit.clone(), bus.clone(), provider, budgets);
+    if let Some(mem) = memory.clone() {
+        runtime = runtime.with_memory(mem);
+    }
+    let runtime = Arc::new(runtime);
 
     if !args.no_automation {
         let automation = Arc::new(AutomationEngine::new(
@@ -262,6 +298,7 @@ async fn handle_client(
             tool_result: None,
             audit_tail: None,
             session_grants: None,
+            memory_facts: None,
         },
         ClientRequest::Diagnose { text } => match runtime.handle_user_text(&text).await {
             Ok(outcome) => {
@@ -280,6 +317,7 @@ async fn handle_client(
                     tool_result: None,
                     audit_tail: None,
                     session_grants: Some(runtime.session_grants()),
+                    memory_facts: None,
                 };
                 *last_pending.lock().await = Some(outcome);
                 resp
@@ -293,6 +331,7 @@ async fn handle_client(
                 tool_result: None,
                 audit_tail: None,
                 session_grants: None,
+                memory_facts: None,
             },
         },
         ClientRequest::Confirm {
@@ -321,6 +360,7 @@ async fn handle_client(
                     tool_result: Some(result),
                     audit_tail: None,
                     session_grants: Some(runtime.session_grants()),
+                    memory_facts: None,
                 },
                 Err(e) => ClientResponse {
                     ok: false,
@@ -331,6 +371,7 @@ async fn handle_client(
                     tool_result: None,
                     audit_tail: None,
                     session_grants: Some(runtime.session_grants()),
+                    memory_facts: None,
                 },
             }
         }
@@ -344,6 +385,7 @@ async fn handle_client(
                 tool_result: None,
                 audit_tail: Some(tail),
                 session_grants: None,
+                memory_facts: None,
             },
             Err(e) => ClientResponse {
                 ok: false,
@@ -354,6 +396,171 @@ async fn handle_client(
                 tool_result: None,
                 audit_tail: None,
                 session_grants: None,
+                memory_facts: None,
+            },
+        },
+        ClientRequest::MemoryRemember { key, value, tags } => match runtime.memory() {
+            Some(store) => {
+                let mut fact = MemoryFact::new(key, value);
+                fact.tags = tags;
+                fact.source = Some("console".into());
+                match store.remember(fact) {
+                    Ok(fact) => ClientResponse {
+                        ok: true,
+                        correlation_id: None,
+                        diagnose: None,
+                        pending: None,
+                        error: None,
+                        tool_result: None,
+                        audit_tail: None,
+                        session_grants: None,
+                        memory_facts: Some(vec![fact]),
+                    },
+                    Err(e) => ClientResponse {
+                        ok: false,
+                        correlation_id: None,
+                        diagnose: None,
+                        pending: None,
+                        error: Some(e.to_string()),
+                        tool_result: None,
+                        audit_tail: None,
+                        session_grants: None,
+                        memory_facts: None,
+                    },
+                }
+            }
+            None => ClientResponse {
+                ok: false,
+                correlation_id: None,
+                diagnose: None,
+                pending: None,
+                error: Some("memory disabled (--no-memory)".into()),
+                tool_result: None,
+                audit_tail: None,
+                session_grants: None,
+                memory_facts: None,
+            },
+        },
+        ClientRequest::MemoryRecall { query } => match runtime.memory() {
+            Some(store) => match store.recall(&query) {
+                Ok(facts) => ClientResponse {
+                    ok: true,
+                    correlation_id: None,
+                    diagnose: None,
+                    pending: None,
+                    error: None,
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: None,
+                    memory_facts: Some(facts),
+                },
+                Err(e) => ClientResponse {
+                    ok: false,
+                    correlation_id: None,
+                    diagnose: None,
+                    pending: None,
+                    error: Some(e.to_string()),
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: None,
+                    memory_facts: None,
+                },
+            },
+            None => ClientResponse {
+                ok: false,
+                correlation_id: None,
+                diagnose: None,
+                pending: None,
+                error: Some("memory disabled (--no-memory)".into()),
+                tool_result: None,
+                audit_tail: None,
+                session_grants: None,
+                memory_facts: None,
+            },
+        },
+        ClientRequest::MemoryTail { limit } => match runtime.memory() {
+            Some(store) => match store.list_recent(limit) {
+                Ok(facts) => ClientResponse {
+                    ok: true,
+                    correlation_id: None,
+                    diagnose: None,
+                    pending: None,
+                    error: None,
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: None,
+                    memory_facts: Some(facts),
+                },
+                Err(e) => ClientResponse {
+                    ok: false,
+                    correlation_id: None,
+                    diagnose: None,
+                    pending: None,
+                    error: Some(e.to_string()),
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: None,
+                    memory_facts: None,
+                },
+            },
+            None => ClientResponse {
+                ok: false,
+                correlation_id: None,
+                diagnose: None,
+                pending: None,
+                error: Some("memory disabled (--no-memory)".into()),
+                tool_result: None,
+                audit_tail: None,
+                session_grants: None,
+                memory_facts: None,
+            },
+        },
+        ClientRequest::MemoryForget { key } => match runtime.memory() {
+            Some(store) => match store.forget(&key) {
+                Ok(Some(_)) => ClientResponse {
+                    ok: true,
+                    correlation_id: None,
+                    diagnose: None,
+                    pending: None,
+                    error: None,
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: None,
+                    memory_facts: Some(vec![]),
+                },
+                Ok(None) => ClientResponse {
+                    ok: false,
+                    correlation_id: None,
+                    diagnose: None,
+                    pending: None,
+                    error: Some(format!("no fact for key={key}")),
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: None,
+                    memory_facts: None,
+                },
+                Err(e) => ClientResponse {
+                    ok: false,
+                    correlation_id: None,
+                    diagnose: None,
+                    pending: None,
+                    error: Some(e.to_string()),
+                    tool_result: None,
+                    audit_tail: None,
+                    session_grants: None,
+                    memory_facts: None,
+                },
+            },
+            None => ClientResponse {
+                ok: false,
+                correlation_id: None,
+                diagnose: None,
+                pending: None,
+                error: Some("memory disabled (--no-memory)".into()),
+                tool_result: None,
+                audit_tail: None,
+                session_grants: None,
+                memory_facts: None,
             },
         },
         ClientRequest::SessionGrants => ClientResponse {
@@ -365,6 +572,7 @@ async fn handle_client(
             tool_result: None,
             audit_tail: None,
             session_grants: Some(runtime.session_grants()),
+            memory_facts: None,
         },
         ClientRequest::ClearSessionGrants => {
             runtime.clear_session_grants();
@@ -377,6 +585,7 @@ async fn handle_client(
                 tool_result: None,
                 audit_tail: None,
                 session_grants: Some(vec![]),
+                memory_facts: None,
             }
         }
     };

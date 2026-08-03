@@ -38,6 +38,22 @@ enum ClientRequest {
     AuditTail {
         limit: usize,
     },
+    MemoryRemember {
+        key: String,
+        value: String,
+        #[serde(default)]
+        tags: Vec<String>,
+    },
+    MemoryRecall {
+        #[serde(default)]
+        query: String,
+    },
+    MemoryTail {
+        limit: usize,
+    },
+    MemoryForget {
+        key: String,
+    },
     SessionGrants,
     ClearSessionGrants,
     Ping,
@@ -55,6 +71,8 @@ struct ClientResponse {
     audit_tail: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     session_grants: Option<Vec<String>>,
+    #[serde(default)]
+    memory_facts: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,10 +98,11 @@ impl App {
             sock,
             input: String::new(),
             lines: vec![
-                "SaaiOS Console 0.2".into(),
+                "SaaiOS Console 0.3".into(),
                 "Type a question and press Enter. Example: Почему система тормозит?".into(),
-                "Confirm: y=once, s=session, n=cancel | a=audit tail | g=grants | c=clear grants | q=quit"
+                "Confirm: y=once, s=session, n=cancel | a=audit | m=memory | g=grants | c=clear | q=quit"
                     .into(),
+                "Memory: /remember key=value | /recall query | /forget key".into(),
             ],
             pending: None,
             status: "disconnected".into(),
@@ -140,6 +159,9 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
                     KeyCode::Char('a') if app.pending.is_none() && app.input.is_empty() => {
                         show_audit(app).await?;
                     }
+                    KeyCode::Char('m') if app.pending.is_none() && app.input.is_empty() => {
+                        show_memory(app).await?;
+                    }
                     KeyCode::Char('g') if app.pending.is_none() && app.input.is_empty() => {
                         show_grants(app).await?;
                     }
@@ -156,7 +178,11 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
                         }
                         app.input.clear();
                         app.lines.push(format!("> {text}"));
-                        diagnose(app, &text).await?;
+                        if text.starts_with('/') {
+                            handle_slash(app, &text).await?;
+                        } else {
+                            diagnose(app, &text).await?;
+                        }
                     }
                     KeyCode::Backspace => {
                         app.input.pop();
@@ -266,6 +292,113 @@ async fn show_audit(app: &mut App) -> Result<()> {
             }
         }
         Err(e) => app.lines.push(format!("audit failed: {e:#}")),
+    }
+    Ok(())
+}
+
+async fn show_memory(app: &mut App) -> Result<()> {
+    match request(&app.sock, &ClientRequest::MemoryTail { limit: 20 }).await {
+        Ok(resp) => {
+            if let Some(err) = resp.error {
+                app.lines.push(format!("memory error: {err}"));
+            } else if let Some(facts) = resp.memory_facts {
+                app.lines.push("--- memory ---".into());
+                if facts.is_empty() {
+                    app.lines.push("(empty)".into());
+                }
+                for item in facts {
+                    let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("?");
+                    let value = item.get("value").and_then(|v| v.as_str()).unwrap_or("?");
+                    app.lines.push(format!("{key} = {value}"));
+                }
+            }
+        }
+        Err(e) => app.lines.push(format!("memory failed: {e:#}")),
+    }
+    Ok(())
+}
+
+async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
+    let mut parts = text.splitn(2, char::is_whitespace);
+    let cmd = parts.next().unwrap_or("");
+    let rest = parts.next().unwrap_or("").trim();
+    match cmd {
+        "/remember" => {
+            let Some((key, value)) = rest.split_once('=') else {
+                app.lines.push("usage: /remember key=value".into());
+                return Ok(());
+            };
+            match request(
+                &app.sock,
+                &ClientRequest::MemoryRemember {
+                    key: key.trim().to_string(),
+                    value: value.trim().to_string(),
+                    tags: vec![],
+                },
+            )
+            .await
+            {
+                Ok(resp) => {
+                    if let Some(err) = resp.error {
+                        app.lines.push(format!("remember error: {err}"));
+                    } else {
+                        app.lines
+                            .push(format!("remembered {}={}", key.trim(), value.trim()));
+                    }
+                }
+                Err(e) => app.lines.push(format!("remember failed: {e:#}")),
+            }
+        }
+        "/recall" => {
+            match request(
+                &app.sock,
+                &ClientRequest::MemoryRecall {
+                    query: rest.to_string(),
+                },
+            )
+            .await
+            {
+                Ok(resp) => {
+                    if let Some(err) = resp.error {
+                        app.lines.push(format!("recall error: {err}"));
+                    } else if let Some(facts) = resp.memory_facts {
+                        if facts.is_empty() {
+                            app.lines.push("no matches".into());
+                        }
+                        for item in facts {
+                            let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("?");
+                            let value = item.get("value").and_then(|v| v.as_str()).unwrap_or("?");
+                            app.lines.push(format!("{key} = {value}"));
+                        }
+                    }
+                }
+                Err(e) => app.lines.push(format!("recall failed: {e:#}")),
+            }
+        }
+        "/forget" => {
+            if rest.is_empty() {
+                app.lines.push("usage: /forget key".into());
+                return Ok(());
+            }
+            match request(
+                &app.sock,
+                &ClientRequest::MemoryForget {
+                    key: rest.to_string(),
+                },
+            )
+            .await
+            {
+                Ok(resp) => {
+                    if let Some(err) = resp.error {
+                        app.lines.push(format!("forget error: {err}"));
+                    } else {
+                        app.lines.push(format!("forgot {rest}"));
+                    }
+                }
+                Err(e) => app.lines.push(format!("forget failed: {e:#}")),
+            }
+        }
+        _ => app.lines.push(format!("unknown command: {cmd}")),
     }
     Ok(())
 }

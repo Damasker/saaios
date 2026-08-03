@@ -15,6 +15,7 @@ audit-log = { workspace = true }
 automation-engine = { workspace = true }
 clap = { workspace = true }
 event-bus = { workspace = true }
+memory-store = { workspace = true }
 model-provider = { workspace = true }
 policy-engine = { workspace = true }
 protocol = { workspace = true }

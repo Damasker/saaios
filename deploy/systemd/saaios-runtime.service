@@ -18,6 +18,7 @@ StateDirectory=saaios
 Environment=RUST_LOG=info
 # Keep AI side effects conservative on appliance hosts.
 Environment=SAAIOS_MOCK=1
+Environment=SAAIOS_MEMORY=/var/lib/saaios/memory.jsonl
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
