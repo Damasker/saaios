@@ -31,9 +31,20 @@ In another terminal:
 just run-tui
 ```
 
-### Real remote model (optional)
+### Model providers
 
 ```bash
+# Mock (default demo)
+just run-mock
+
+# Local Ollama (OpenAI-compat on :11434)
+export SAAIOS_LOCAL_MODEL=llama3.2
+just run-local
+
+# Auto: local → remote → mock
+just run-auto
+
+# Remote only
 export SAAIOS_API_BASE=https://api.openai.com/v1
 export SAAIOS_API_KEY=...
 export SAAIOS_MODEL=gpt-4o-mini
@@ -49,14 +60,17 @@ just run
 | `tool-registry` | Typed tools |
 | `policy-engine` | Allow / Deny / AskUser |
 | `system-tools` | Linux + mock adapters |
-| `model-provider` | Mock + OpenAI-compatible |
+| `model-provider` | Mock + local (Ollama) + remote + auto fallback |
 | `ai-runtime` | Request orchestration |
+| `automation-engine` | Event-driven rules |
 | `console-tui` | First UI |
 | `saaios-runtime` | Composition root / UDS server |
 
 ## Non-goals for 0.1
 
-Own kernel, shared-memory transport, local inference, voice, GUI desktop, app store, personality memory.
+Own kernel, shared-memory transport, voice, GUI desktop, app store, personality memory.
+
+Local inference (via Ollama) and A/B `BOOT_OK` updates landed in Platform 0.3.
 
 ## Docs
 
@@ -65,6 +79,7 @@ Own kernel, shared-memory transport, local inference, voice, GUI desktop, app st
 - [ADR-003: CBOR control protocol](docs/adr/ADR-003-cbor-control-protocol.md)
 - [Platform 0.1 status](docs/PLATFORM-0.1.md)
 - [Platform 0.2 automation & budgets](docs/platform-0.2.md)
+- [Platform 0.3 local models & A/B](docs/platform-0.3.md)
 - [Raspberry Pi / Linux appliance](docs/appliance.md)
 
 ### Real Linux tools
