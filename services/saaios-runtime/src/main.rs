@@ -1,6 +1,7 @@
-use ai_runtime::{diagnose_slow_with_mock_planner, AiRuntime, HandleOutcome};
+use ai_runtime::{diagnose_slow_with_mock_planner, AiRuntime, HandleOutcome, ResourceBudgets};
 use anyhow::{anyhow, Context, Result};
 use audit_log::AuditLog;
+use automation_engine::AutomationEngine;
 use clap::Parser;
 use event_bus::EventBus;
 use model_provider::{MockModelProvider, OpenAiCompatConfig, OpenAiCompatProvider};
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use system_tools::{install_system_tools, ToolsMode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -43,6 +45,18 @@ struct Args {
     /// Dry-run replay of an audit correlation id (no tool side effects)
     #[arg(long)]
     replay: Option<Uuid>,
+
+    /// Max concurrent AI requests
+    #[arg(long, default_value_t = 1, env = "SAAIOS_MAX_CONCURRENT")]
+    max_concurrent: usize,
+
+    /// AI request timeout in seconds
+    #[arg(long, default_value_t = 30, env = "SAAIOS_REQUEST_TIMEOUT_SECS")]
+    request_timeout_secs: u64,
+
+    /// Disable event-driven automation worker
+    #[arg(long)]
+    no_automation: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -160,7 +174,36 @@ async fn main() -> Result<()> {
         }))
     };
 
-    let runtime = Arc::new(AiRuntime::new(tools, policy, audit.clone(), bus, provider));
+    let budgets = ResourceBudgets {
+        max_concurrent_requests: args.max_concurrent.max(1),
+        request_timeout: Duration::from_secs(args.request_timeout_secs.max(1)),
+        max_tool_iters: 6,
+    };
+    info!(
+        max_concurrent = budgets.max_concurrent_requests,
+        timeout_secs = budgets.request_timeout.as_secs(),
+        "AI resource budgets"
+    );
+
+    let runtime = Arc::new(AiRuntime::with_budgets(
+        tools,
+        policy,
+        audit.clone(),
+        bus.clone(),
+        provider,
+        budgets,
+    ));
+
+    if !args.no_automation {
+        let automation = Arc::new(AutomationEngine::new(
+            bus.clone(),
+            audit.clone(),
+            AutomationEngine::default_rules(),
+        ));
+        let _automation_worker = automation.spawn();
+        info!("automation engine started");
+    }
+
     let last_pending = Arc::new(tokio::sync::Mutex::new(None::<HandleOutcome>));
 
     if args.sock.exists() {
