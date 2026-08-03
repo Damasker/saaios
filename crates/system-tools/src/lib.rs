@@ -1,7 +1,11 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 use tool_registry::{
     RiskLevel, ToolContext, ToolError, ToolExecutor, ToolOutput, ToolRegistry, ToolSpec,
 };
@@ -167,7 +171,7 @@ impl SystemBackend for LinuxBackend {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.0);
         let mem = read_meminfo().unwrap_or((0.0, 0.0));
-        let cpu_usage = estimate_cpu_usage().unwrap_or(0.0);
+        let cpu_usage = sample_cpu_usage().await.unwrap_or(0.0);
         Ok(SystemMetrics {
             cpu_usage,
             load_average,
@@ -178,46 +182,67 @@ impl SystemBackend for LinuxBackend {
     }
 
     async fn processes(&self) -> Result<Vec<ProcessInfo>, ToolError> {
+        let total1 = read_total_jiffies().unwrap_or(0);
+        let sample1 = snapshot_process_cpu()?;
+        sleep(Duration::from_millis(120)).await;
+        let total2 = read_total_jiffies().unwrap_or(total1);
+        let sample2 = snapshot_process_cpu()?;
+        let total_delta = total2.saturating_sub(total1).max(1) as f64;
+        let ncpus = std::thread::available_parallelism()
+            .map(|n| n.get() as f64)
+            .unwrap_or(1.0);
+
         let mut procs = Vec::new();
-        let read = std::fs::read_dir("/proc").map_err(|e| ToolError::Execution(e.to_string()))?;
-        for entry in read.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !name.chars().all(|c| c.is_ascii_digit()) {
-                continue;
-            }
-            let pid: u32 = match name.parse() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let comm_path = format!("/proc/{pid}/comm");
-            let comm = std::fs::read_to_string(comm_path)
-                .unwrap_or_else(|_| "unknown".into())
-                .trim()
-                .to_string();
-            procs.push(ProcessInfo {
-                pid,
-                name: comm,
-                cpu: 0.0,
-                mem_mb: 0.0,
-            });
-            if procs.len() >= 64 {
-                break;
+        for (pid, (name, j1, mem_mb)) in sample1 {
+            if let Some((_, j2, mem2)) = sample2.get(&pid) {
+                let delta = j2.saturating_sub(j1) as f64;
+                // Share of total CPU time across all cores, scaled to percent of one core * ncpus.
+                let cpu = ((delta / total_delta) * ncpus * 100.0).clamp(0.0, 100.0 * ncpus);
+                procs.push(ProcessInfo {
+                    pid,
+                    name,
+                    cpu: (cpu * 10.0).round() / 10.0,
+                    mem_mb: (*mem2).max(mem_mb),
+                });
             }
         }
+        procs.sort_by(|a, b| {
+            b.cpu
+                .partial_cmp(&a.cpu)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        procs.truncate(32);
         Ok(procs)
     }
 
     async fn network_status(&self) -> Result<Value, ToolError> {
+        let mut interfaces = Vec::new();
+        let net_dir = Path::new("/sys/class/net");
+        if net_dir.exists() {
+            if let Ok(read) = std::fs::read_dir(net_dir) {
+                for entry in read.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let oper = std::fs::read_to_string(entry.path().join("operstate"))
+                        .unwrap_or_else(|_| "unknown".into())
+                        .trim()
+                        .to_string();
+                    interfaces.push(json!({
+                        "name": name,
+                        "operstate": oper
+                    }));
+                }
+            }
+        }
+        let online = interfaces.iter().any(|i| i["operstate"] == "up");
         Ok(json!({
-            "online": std::path::Path::new("/sys/class/net").exists(),
-            "source": "linux"
+            "online": online,
+            "source": "linux",
+            "interfaces": interfaces
         }))
     }
 
     async fn kill(&self, pid: u32) -> Result<Value, ToolError> {
         // Platform 0.1: do not actually signal processes in real mode from AI path.
-        // Return a dry-run style acknowledgement; dangerous side effects stay gated.
         Ok(json!({
             "killed": false,
             "dry_run": true,
@@ -246,14 +271,98 @@ fn parse_kb(v: &str) -> Option<f64> {
     v.split_whitespace().next()?.parse().ok()
 }
 
-fn estimate_cpu_usage() -> Option<f64> {
-    // Best-effort single snapshot; not a precise delta sampler.
-    let load = std::fs::read_to_string("/proc/loadavg").ok()?;
-    let one: f64 = load.split_whitespace().next()?.parse().ok()?;
-    let cpus = std::thread::available_parallelism()
-        .map(|n| n.get() as f64)
-        .unwrap_or(1.0);
-    Some(((one / cpus) * 100.0).clamp(0.0, 100.0))
+fn read_total_jiffies() -> Option<u64> {
+    let content = std::fs::read_to_string("/proc/stat").ok()?;
+    let line = content.lines().next()?;
+    // cpu user nice system idle iowait irq softirq steal ...
+    let mut sum = 0u64;
+    for (i, part) in line.split_whitespace().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        sum = sum.saturating_add(part.parse::<u64>().ok()?);
+    }
+    Some(sum)
+}
+
+async fn sample_cpu_usage() -> Option<f64> {
+    let a = read_cpu_times()?;
+    sleep(Duration::from_millis(100)).await;
+    let b = read_cpu_times()?;
+    let idle_delta = b.1.saturating_sub(a.1) as f64;
+    let total_delta = b.0.saturating_sub(a.0).max(1) as f64;
+    Some(((1.0 - idle_delta / total_delta) * 100.0).clamp(0.0, 100.0))
+}
+
+fn read_cpu_times() -> Option<(u64, u64)> {
+    let content = std::fs::read_to_string("/proc/stat").ok()?;
+    let line = content.lines().next()?;
+    let parts: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|p| p.parse().ok())
+        .collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let idle = parts[3] + parts.get(4).copied().unwrap_or(0);
+    let total: u64 = parts.iter().sum();
+    Some((total, idle))
+}
+
+fn snapshot_process_cpu() -> Result<HashMap<u32, (String, u64, f64)>, ToolError> {
+    let mut map = HashMap::new();
+    let read = std::fs::read_dir("/proc").map_err(|e| ToolError::Execution(e.to_string()))?;
+    for entry in read.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let pid: u32 = match name.parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let Some(jiffies) = parse_proc_stat_jiffies(&stat) else {
+            continue;
+        };
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .unwrap_or_else(|_| "unknown".into())
+            .trim()
+            .to_string();
+        let mem_mb = read_vm_rss_mb(pid).unwrap_or(0.0);
+        map.insert(pid, (comm, jiffies, mem_mb));
+        if map.len() >= 256 {
+            break;
+        }
+    }
+    Ok(map)
+}
+
+fn parse_proc_stat_jiffies(stat: &str) -> Option<u64> {
+    // Format: pid (comm) state ... utime(14) stime(15) — 1-indexed fields after comm.
+    let close = stat.rfind(')')?;
+    let after = stat.get(close + 2..)?;
+    let parts: Vec<&str> = after.split_whitespace().collect();
+    // After ") ": state is parts[0], utime is parts[11], stime parts[12]
+    let utime: u64 = parts.get(11)?.parse().ok()?;
+    let stime: u64 = parts.get(12)?.parse().ok()?;
+    Some(utime.saturating_add(stime))
+}
+
+fn read_vm_rss_mb(pid: u32) -> Option<f64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let kb: f64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb / 1024.0);
+        }
+    }
+    None
 }
 
 struct MetricsTool {
@@ -366,5 +475,61 @@ mod tests {
             .unwrap();
         assert_eq!(out.value["cpu_usage"], 97.0);
         assert_eq!(out.value["load_average"], 8.4);
+    }
+
+    #[tokio::test]
+    async fn real_linux_metrics_smoke() {
+        if !Path::new("/proc/stat").exists() {
+            return;
+        }
+        let mut reg = ToolRegistry::new();
+        install_system_tools(&mut reg, ToolsMode::RealLinux);
+        let metrics = reg
+            .execute(
+                "system.metrics",
+                json!({}),
+                &ToolContext {
+                    correlation_id: Uuid::new_v4(),
+                    call_id: Uuid::new_v4(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(metrics.ok);
+        assert!(metrics.value.get("cpu_usage").is_some());
+
+        let procs = reg
+            .execute(
+                "process.list",
+                json!({}),
+                &ToolContext {
+                    correlation_id: Uuid::new_v4(),
+                    call_id: Uuid::new_v4(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(procs.ok);
+        assert!(!procs.value["processes"].as_array().unwrap().is_empty());
+
+        let net = reg
+            .execute(
+                "network.status",
+                json!({}),
+                &ToolContext {
+                    correlation_id: Uuid::new_v4(),
+                    call_id: Uuid::new_v4(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(net.ok);
+        assert_eq!(net.value["source"], "linux");
+    }
+
+    #[test]
+    fn parse_stat_jiffies_basic() {
+        let sample = "1 (systemd) S 0 1 1 0 -1 4194560 123 0 0 0 10 20 0 0 20 0 1 0 12345 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0";
+        assert_eq!(parse_proc_stat_jiffies(sample), Some(30));
     }
 }

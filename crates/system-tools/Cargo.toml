@@ -11,7 +11,4 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true }
-
-[dev-dependencies]
 tokio = { workspace = true }
-
