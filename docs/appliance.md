@@ -107,6 +107,15 @@ SAAIOS_SOCK=/run/saaios/saaios.sock saaios-console
 SAAIOS_SOCK=/run/saaios/saaios.sock ./target/release/saaios-console
 ```
 
+## Stage GUI (browser)
+
+AI-native web console — conversation stage, not a dashboard. See [Platform 0.6 GUI](platform-0.6-gui.md).
+
+```bash
+SAAIOS_SOCK=/run/saaios/saaios.sock saaios-stage
+# open http://127.0.0.1:7420
+```
+
 ## Replay an audit chain (dry-run)
 
 ```bash

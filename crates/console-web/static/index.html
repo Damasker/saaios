@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SaaiOS Stage</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,700&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+
+    <main class="stage" id="stage">
+      <header class="mast">
+        <div class="brand-block">
+          <p class="brand">SaaiOS</p>
+          <p class="tagline">Сцена системы — спрашивайте, подтверждайте, не кликайте по меню.</p>
+        </div>
+        <div class="presence" id="presence" title="Состояние runtime">
+          <span class="orb" id="orb"></span>
+          <span class="presence-label" id="presenceLabel">ожидание</span>
+        </div>
+      </header>
+
+      <section class="transcript" id="transcript" aria-live="polite">
+        <article class="beat intro">
+          <p class="beat-role">Сцена</p>
+          <p>
+            Здесь нет панели процессов. Есть один разговор с хостом: инструменты появляются как
+            шаги, опасные действия — как решение.
+          </p>
+          <p class="hint">Попробуйте: <button type="button" class="chip" data-prompt="Почему система тормозит?">Почему система тормозит?</button></p>
+        </article>
+      </section>
+
+      <aside class="rail" id="rail" hidden>
+        <p class="rail-title">Что видит система</p>
+        <ul id="railList"></ul>
+      </aside>
+
+      <form class="composer" id="composer">
+        <label class="sr-only" for="prompt">Вопрос к системе</label>
+        <textarea
+          id="prompt"
+          name="prompt"
+          rows="2"
+          placeholder="Спросите систему…"
+          autocomplete="off"
+        ></textarea>
+        <div class="composer-actions">
+          <button type="button" class="ghost" id="btnNew" title="Новый разговор">Новый</button>
+          <button type="submit" class="primary" id="btnAsk">Спросить</button>
+        </div>
+      </form>
+    </main>
+
+    <div class="decision" id="decision" hidden>
+      <div class="decision-panel" role="dialog" aria-modal="true" aria-labelledby="decisionTitle">
+        <p class="decision-kicker">Решение</p>
+        <h2 id="decisionTitle">Подтверждение действия</h2>
+        <p class="decision-summary" id="decisionSummary"></p>
+        <p class="decision-meta" id="decisionMeta"></p>
+        <div class="decision-actions">
+          <button type="button" class="primary" data-scope="once">Один раз</button>
+          <button type="button" class="ghost" data-scope="session">На сессию</button>
+          <button type="button" class="danger" data-scope="cancel">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

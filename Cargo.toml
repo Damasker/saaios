@@ -14,6 +14,7 @@ members = [
     "crates/telemetry",
     "crates/config",
     "crates/console-tui",
+    "crates/console-web",
     "services/saaios-runtime",
     "tests/diagnose-slow-system",
 ]
@@ -39,6 +40,7 @@ automation-engine = { path = "crates/automation-engine" }
 telemetry = { path = "crates/telemetry" }
 config = { path = "crates/config" }
 console-tui = { path = "crates/console-tui" }
+console-web = { path = "crates/console-web" }
 
 anyhow = "1"
 thiserror = "2"
@@ -57,3 +59,8 @@ crossterm = "0.28"
 clap = { version = "4", features = ["derive", "env"] }
 tempfile = "3"
 toml = "0.8"
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+futures = "0.3"
+bytes = "1"

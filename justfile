@@ -41,6 +41,9 @@ run:
 run-tui:
     cargo run -p console-tui
 
+run-stage:
+    cargo run -p console-web
+
 cross-pi:
     bash deploy/cross-pi.sh
 
