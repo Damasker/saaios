@@ -26,6 +26,9 @@ run-local:
 run-auto:
     cargo run -p saaios-runtime -- --real-linux --provider auto
 
+run-telemetry:
+    cargo run -p saaios-runtime -- --real-linux --mock --telemetry --telemetry-interval-secs 5
+
 run:
     cargo run -p saaios-runtime -- --real-linux --provider remote
 

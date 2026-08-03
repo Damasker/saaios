@@ -24,6 +24,9 @@ pub struct SystemMetrics {
     pub load_average: f64,
     pub mem_used_mb: f64,
     pub mem_total_mb: f64,
+    /// Derived: used/total * 100
+    #[serde(default)]
+    pub mem_used_pct: f64,
     pub disk_read_mb_s: f64,
 }
 
@@ -78,6 +81,19 @@ pub fn install_system_tools(registry: &mut ToolRegistry, mode: ToolsMode) {
         },
     }));
 
+    registry.register(Arc::new(DiskTool {
+        backend: backend.clone(),
+        spec: ToolSpec {
+            name: "system.disk".into(),
+            description: "Disk usage for root and key mounts".into(),
+            risk: RiskLevel::Low,
+            timeout_ms: 2000,
+            input_schema: json!({"type":"object","properties":{}}),
+            output_schema: json!({"type":"object"}),
+            requires_confirmation: false,
+        },
+    }));
+
     registry.register(Arc::new(KillRequestTool {
         backend,
         spec: ToolSpec {
@@ -101,6 +117,7 @@ trait SystemBackend: Send + Sync {
     async fn metrics(&self) -> Result<SystemMetrics, ToolError>;
     async fn processes(&self) -> Result<Vec<ProcessInfo>, ToolError>;
     async fn network_status(&self) -> Result<Value, ToolError>;
+    async fn disk(&self) -> Result<Value, ToolError>;
     async fn kill(&self, pid: u32) -> Result<Value, ToolError>;
 }
 
@@ -114,6 +131,7 @@ impl SystemBackend for MockBackend {
             load_average: 8.4,
             mem_used_mb: 5200.0,
             mem_total_mb: 8192.0,
+            mem_used_pct: 63.5,
             disk_read_mb_s: 120.0,
         })
     }
@@ -149,6 +167,20 @@ impl SystemBackend for MockBackend {
         }))
     }
 
+    async fn disk(&self) -> Result<Value, ToolError> {
+        Ok(json!({
+            "source": "mock",
+            "mounts": [{
+                "path": "/",
+                "total_mb": 32000.0,
+                "used_mb": 22400.0,
+                "avail_mb": 9600.0,
+                "used_pct": 70.0
+            }],
+            "root_used_pct": 70.0
+        }))
+    }
+
     async fn kill(&self, pid: u32) -> Result<Value, ToolError> {
         Ok(json!({
             "killed": true,
@@ -172,11 +204,17 @@ impl SystemBackend for LinuxBackend {
             .unwrap_or(0.0);
         let mem = read_meminfo().unwrap_or((0.0, 0.0));
         let cpu_usage = sample_cpu_usage().await.unwrap_or(0.0);
+        let mem_used_pct = if mem.1 > 0.0 {
+            (mem.0 / mem.1) * 100.0
+        } else {
+            0.0
+        };
         Ok(SystemMetrics {
             cpu_usage,
             load_average,
             mem_used_mb: mem.0,
             mem_total_mb: mem.1,
+            mem_used_pct: (mem_used_pct * 10.0).round() / 10.0,
             disk_read_mb_s: 0.0,
         })
     }
@@ -241,6 +279,10 @@ impl SystemBackend for LinuxBackend {
         }))
     }
 
+    async fn disk(&self) -> Result<Value, ToolError> {
+        Ok(read_disk_usage())
+    }
+
     async fn kill(&self, pid: u32) -> Result<Value, ToolError> {
         // Platform 0.1: do not actually signal processes in real mode from AI path.
         Ok(json!({
@@ -265,6 +307,63 @@ fn read_meminfo() -> Option<(f64, f64)> {
     }
     let used = (total_kb - available_kb) / 1024.0;
     Some((used, total_kb / 1024.0))
+}
+
+fn read_disk_usage() -> Value {
+    // Prefer libc-free approach: parse `df -Bk` for / and a few common mounts.
+    let output = std::process::Command::new("df")
+        .args(["-Bk", "/", "/home", "/var", "/tmp"])
+        .output();
+    let Ok(out) = output else {
+        return json!({
+            "source": "linux",
+            "mounts": [],
+            "root_used_pct": null,
+            "error": "df unavailable"
+        });
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut mounts = Vec::new();
+    let mut root_used_pct = None;
+    let mut seen = std::collections::HashSet::new();
+    for line in text.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 6 {
+            continue;
+        }
+        let path = cols[5].to_string();
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let total_kb = cols[1].trim_end_matches('K').parse::<f64>().unwrap_or(0.0);
+        let used_kb = cols[2].trim_end_matches('K').parse::<f64>().unwrap_or(0.0);
+        let avail_kb = cols[3].trim_end_matches('K').parse::<f64>().unwrap_or(0.0);
+        let used_pct = cols[4]
+            .trim_end_matches('%')
+            .parse::<f64>()
+            .unwrap_or_else(|_| {
+                if total_kb > 0.0 {
+                    (used_kb / total_kb) * 100.0
+                } else {
+                    0.0
+                }
+            });
+        if path == "/" {
+            root_used_pct = Some(used_pct);
+        }
+        mounts.push(json!({
+            "path": path,
+            "total_mb": (total_kb / 1024.0 * 10.0).round() / 10.0,
+            "used_mb": (used_kb / 1024.0 * 10.0).round() / 10.0,
+            "avail_mb": (avail_kb / 1024.0 * 10.0).round() / 10.0,
+            "used_pct": used_pct
+        }));
+    }
+    json!({
+        "source": "linux",
+        "mounts": mounts,
+        "root_used_pct": root_used_pct
+    })
 }
 
 fn parse_kb(v: &str) -> Option<f64> {
@@ -428,6 +527,27 @@ impl ToolExecutor for NetworkStatusTool {
     }
 }
 
+struct DiskTool {
+    backend: Arc<dyn SystemBackend>,
+    spec: ToolSpec,
+}
+
+#[async_trait]
+impl ToolExecutor for DiskTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn execute(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        let disk = self.backend.disk().await?;
+        Ok(ToolOutput {
+            ok: true,
+            value: disk,
+            error: None,
+        })
+    }
+}
+
 struct KillRequestTool {
     backend: Arc<dyn SystemBackend>,
     spec: ToolSpec,
@@ -475,6 +595,25 @@ mod tests {
             .unwrap();
         assert_eq!(out.value["cpu_usage"], 97.0);
         assert_eq!(out.value["load_average"], 8.4);
+    }
+
+    #[tokio::test]
+    async fn mock_disk_fixture() {
+        let mut reg = ToolRegistry::new();
+        install_system_tools(&mut reg, ToolsMode::Mock);
+        let out = reg
+            .execute(
+                "system.disk",
+                json!({}),
+                &ToolContext {
+                    correlation_id: Uuid::new_v4(),
+                    call_id: Uuid::new_v4(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(out.ok);
+        assert_eq!(out.value["root_used_pct"], 70.0);
     }
 
     #[tokio::test]

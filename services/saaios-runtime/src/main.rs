@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use system_tools::{install_system_tools, ToolsMode};
+use telemetry::TelemetrySampler;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tool_registry::ToolRegistry;
@@ -70,6 +71,18 @@ struct Args {
     /// Disable event-driven automation worker
     #[arg(long)]
     no_automation: bool,
+
+    /// Enable background telemetry sampler (also on by default with --real-linux)
+    #[arg(long, env = "SAAIOS_TELEMETRY")]
+    telemetry: bool,
+
+    /// Disable background telemetry sampler
+    #[arg(long)]
+    no_telemetry: bool,
+
+    /// Telemetry sample interval in seconds
+    #[arg(long, default_value_t = 30, env = "SAAIOS_TELEMETRY_INTERVAL_SECS")]
+    telemetry_interval_secs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -110,6 +123,7 @@ enum ClientRequest {
     MemoryForget {
         key: String,
     },
+    Status,
     SessionGrants,
     ClearSessionGrants,
     Ping,
@@ -123,7 +137,7 @@ fn default_tail() -> usize {
     20
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 struct ClientResponse {
     ok: bool,
     correlation_id: Option<Uuid>,
@@ -137,6 +151,8 @@ struct ClientResponse {
     session_grants: Option<Vec<String>>,
     #[serde(default)]
     memory_facts: Option<Vec<MemoryFact>>,
+    #[serde(default)]
+    status: Option<RuntimeStatusDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -145,6 +161,72 @@ struct PendingDto {
     tool: String,
     arguments: serde_json::Value,
     summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuntimeStatusDto {
+    ok: bool,
+    version: String,
+    uptime_secs: u64,
+    sock: String,
+    provider: String,
+    provider_kind: String,
+    tools_mode: String,
+    tool_count: usize,
+    tools: Vec<String>,
+    memory_enabled: bool,
+    memory_path: Option<String>,
+    audit_path: String,
+    automation: bool,
+    telemetry: bool,
+    telemetry_samples: u64,
+    telemetry_interval_secs: u64,
+    max_concurrent: usize,
+    request_timeout_secs: u64,
+    session_grants: Vec<String>,
+}
+
+struct RuntimeMeta {
+    started: Instant,
+    provider_name: String,
+    provider_kind: String,
+    tools_mode: String,
+    tool_names: Vec<String>,
+    memory_enabled: bool,
+    memory_path: Option<PathBuf>,
+    audit_path: PathBuf,
+    sock: PathBuf,
+    automation: bool,
+    telemetry: Option<Arc<TelemetrySampler>>,
+    max_concurrent: usize,
+    request_timeout_secs: u64,
+}
+
+impl RuntimeMeta {
+    fn status(&self, runtime: &AiRuntime) -> RuntimeStatusDto {
+        let tel = self.telemetry.as_ref().map(|t| t.stats());
+        RuntimeStatusDto {
+            ok: true,
+            version: env!("CARGO_PKG_VERSION").into(),
+            uptime_secs: self.started.elapsed().as_secs(),
+            sock: self.sock.display().to_string(),
+            provider: self.provider_name.clone(),
+            provider_kind: self.provider_kind.clone(),
+            tools_mode: self.tools_mode.clone(),
+            tool_count: self.tool_names.len(),
+            tools: self.tool_names.clone(),
+            memory_enabled: self.memory_enabled,
+            memory_path: self.memory_path.as_ref().map(|p| p.display().to_string()),
+            audit_path: self.audit_path.display().to_string(),
+            automation: self.automation,
+            telemetry: self.telemetry.is_some(),
+            telemetry_samples: tel.as_ref().map(|t| t.samples).unwrap_or(0),
+            telemetry_interval_secs: tel.as_ref().map(|t| t.interval_secs).unwrap_or(0),
+            max_concurrent: self.max_concurrent,
+            request_timeout_secs: self.request_timeout_secs,
+            session_grants: runtime.session_grants(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -238,14 +320,24 @@ async fn main() -> Result<()> {
         "AI resource budgets"
     );
 
-    let mut runtime =
-        AiRuntime::with_budgets(tools, policy, audit.clone(), bus.clone(), provider, budgets);
+    let provider_name = provider.name().to_string();
+    let max_concurrent = budgets.max_concurrent_requests;
+    let request_timeout_secs = budgets.request_timeout.as_secs();
+    let mut runtime = AiRuntime::with_budgets(
+        tools.clone(),
+        policy,
+        audit.clone(),
+        bus.clone(),
+        provider,
+        budgets,
+    );
     if let Some(mem) = memory.clone() {
         runtime = runtime.with_memory(mem);
     }
     let runtime = Arc::new(runtime);
 
-    if !args.no_automation {
+    let automation_enabled = !args.no_automation;
+    if automation_enabled {
         let automation = Arc::new(AutomationEngine::new(
             bus.clone(),
             audit.clone(),
@@ -254,6 +346,46 @@ async fn main() -> Result<()> {
         let _automation_worker = automation.spawn();
         info!("automation engine started");
     }
+
+    let telemetry = if args.no_telemetry || !(args.telemetry || args.real_linux) {
+        None
+    } else {
+        let sampler = Arc::new(TelemetrySampler::new(
+            tools.clone(),
+            bus.clone(),
+            audit.clone(),
+            Duration::from_secs(args.telemetry_interval_secs.max(1)),
+        ));
+        let _tel = sampler.clone().spawn();
+        info!(
+            interval_secs = args.telemetry_interval_secs,
+            "telemetry sampler started"
+        );
+        Some(sampler)
+    };
+
+    let mut tool_names: Vec<_> = tools.list().into_iter().map(|t| t.name).collect();
+    tool_names.sort();
+
+    let meta = Arc::new(RuntimeMeta {
+        started: Instant::now(),
+        provider_name,
+        provider_kind: format!("{kind:?}").to_lowercase(),
+        tools_mode: format!("{tools_mode:?}").to_lowercase(),
+        tool_names,
+        memory_enabled: memory.is_some(),
+        memory_path: if memory.is_some() {
+            Some(args.memory.clone())
+        } else {
+            None
+        },
+        audit_path: args.audit.clone(),
+        sock: args.sock.clone(),
+        automation: automation_enabled,
+        telemetry,
+        max_concurrent,
+        request_timeout_secs,
+    });
 
     let last_pending = Arc::new(tokio::sync::Mutex::new(None::<HandleOutcome>));
 
@@ -268,8 +400,9 @@ async fn main() -> Result<()> {
         let (stream, _) = listener.accept().await?;
         let runtime = runtime.clone();
         let last_pending = last_pending.clone();
+        let meta = meta.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, runtime, last_pending).await {
+            if let Err(e) = handle_client(stream, runtime, last_pending, meta).await {
                 error!("client error: {e:#}");
             }
         });
@@ -280,6 +413,7 @@ async fn handle_client(
     mut stream: UnixStream,
     runtime: Arc<AiRuntime>,
     last_pending: Arc<tokio::sync::Mutex<Option<HandleOutcome>>>,
+    meta: Arc<RuntimeMeta>,
 ) -> Result<()> {
     let mut buf = vec![0u8; 64 * 1024];
     let n = stream.read(&mut buf).await?;
@@ -291,14 +425,12 @@ async fn handle_client(
     let response = match req {
         ClientRequest::Ping => ClientResponse {
             ok: true,
-            correlation_id: None,
-            diagnose: None,
-            pending: None,
-            error: None,
-            tool_result: None,
-            audit_tail: None,
-            session_grants: None,
-            memory_facts: None,
+            ..Default::default()
+        },
+        ClientRequest::Status => ClientResponse {
+            ok: true,
+            status: Some(meta.status(&runtime)),
+            ..Default::default()
         },
         ClientRequest::Diagnose { text } => match runtime.handle_user_text(&text).await {
             Ok(outcome) => {
@@ -313,25 +445,16 @@ async fn handle_client(
                     correlation_id: Some(outcome.correlation_id),
                     diagnose: Some(outcome.diagnose.clone()),
                     pending,
-                    error: None,
-                    tool_result: None,
-                    audit_tail: None,
                     session_grants: Some(runtime.session_grants()),
-                    memory_facts: None,
+                    ..Default::default()
                 };
                 *last_pending.lock().await = Some(outcome);
                 resp
             }
             Err(e) => ClientResponse {
                 ok: false,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
                 error: Some(e.to_string()),
-                tool_result: None,
-                audit_tail: None,
-                session_grants: None,
-                memory_facts: None,
+                ..Default::default()
             },
         },
         ClientRequest::Confirm {
@@ -354,49 +477,29 @@ async fn handle_client(
                 Ok(result) => ClientResponse {
                     ok: true,
                     correlation_id: Some(correlation_id),
-                    diagnose: None,
-                    pending: None,
-                    error: None,
                     tool_result: Some(result),
-                    audit_tail: None,
                     session_grants: Some(runtime.session_grants()),
-                    memory_facts: None,
+                    ..Default::default()
                 },
                 Err(e) => ClientResponse {
                     ok: false,
                     correlation_id: Some(correlation_id),
-                    diagnose: None,
-                    pending: None,
                     error: Some(e.to_string()),
-                    tool_result: None,
-                    audit_tail: None,
                     session_grants: Some(runtime.session_grants()),
-                    memory_facts: None,
+                    ..Default::default()
                 },
             }
         }
         ClientRequest::AuditTail { limit } => match runtime.audit_tail(limit) {
             Ok(tail) => ClientResponse {
                 ok: true,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
-                error: None,
-                tool_result: None,
                 audit_tail: Some(tail),
-                session_grants: None,
-                memory_facts: None,
+                ..Default::default()
             },
             Err(e) => ClientResponse {
                 ok: false,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
                 error: Some(e.to_string()),
-                tool_result: None,
-                audit_tail: None,
-                session_grants: None,
-                memory_facts: None,
+                ..Default::default()
             },
         },
         ClientRequest::MemoryRemember { key, value, tags } => match runtime.memory() {
@@ -407,185 +510,95 @@ async fn handle_client(
                 match store.remember(fact) {
                     Ok(fact) => ClientResponse {
                         ok: true,
-                        correlation_id: None,
-                        diagnose: None,
-                        pending: None,
-                        error: None,
-                        tool_result: None,
-                        audit_tail: None,
-                        session_grants: None,
                         memory_facts: Some(vec![fact]),
+                        ..Default::default()
                     },
                     Err(e) => ClientResponse {
                         ok: false,
-                        correlation_id: None,
-                        diagnose: None,
-                        pending: None,
                         error: Some(e.to_string()),
-                        tool_result: None,
-                        audit_tail: None,
-                        session_grants: None,
-                        memory_facts: None,
+                        ..Default::default()
                     },
                 }
             }
             None => ClientResponse {
                 ok: false,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
                 error: Some("memory disabled (--no-memory)".into()),
-                tool_result: None,
-                audit_tail: None,
-                session_grants: None,
-                memory_facts: None,
+                ..Default::default()
             },
         },
         ClientRequest::MemoryRecall { query } => match runtime.memory() {
             Some(store) => match store.recall(&query) {
                 Ok(facts) => ClientResponse {
                     ok: true,
-                    correlation_id: None,
-                    diagnose: None,
-                    pending: None,
-                    error: None,
-                    tool_result: None,
-                    audit_tail: None,
-                    session_grants: None,
                     memory_facts: Some(facts),
+                    ..Default::default()
                 },
                 Err(e) => ClientResponse {
                     ok: false,
-                    correlation_id: None,
-                    diagnose: None,
-                    pending: None,
                     error: Some(e.to_string()),
-                    tool_result: None,
-                    audit_tail: None,
-                    session_grants: None,
-                    memory_facts: None,
+                    ..Default::default()
                 },
             },
             None => ClientResponse {
                 ok: false,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
                 error: Some("memory disabled (--no-memory)".into()),
-                tool_result: None,
-                audit_tail: None,
-                session_grants: None,
-                memory_facts: None,
+                ..Default::default()
             },
         },
         ClientRequest::MemoryTail { limit } => match runtime.memory() {
             Some(store) => match store.list_recent(limit) {
                 Ok(facts) => ClientResponse {
                     ok: true,
-                    correlation_id: None,
-                    diagnose: None,
-                    pending: None,
-                    error: None,
-                    tool_result: None,
-                    audit_tail: None,
-                    session_grants: None,
                     memory_facts: Some(facts),
+                    ..Default::default()
                 },
                 Err(e) => ClientResponse {
                     ok: false,
-                    correlation_id: None,
-                    diagnose: None,
-                    pending: None,
                     error: Some(e.to_string()),
-                    tool_result: None,
-                    audit_tail: None,
-                    session_grants: None,
-                    memory_facts: None,
+                    ..Default::default()
                 },
             },
             None => ClientResponse {
                 ok: false,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
                 error: Some("memory disabled (--no-memory)".into()),
-                tool_result: None,
-                audit_tail: None,
-                session_grants: None,
-                memory_facts: None,
+                ..Default::default()
             },
         },
         ClientRequest::MemoryForget { key } => match runtime.memory() {
             Some(store) => match store.forget(&key) {
                 Ok(Some(_)) => ClientResponse {
                     ok: true,
-                    correlation_id: None,
-                    diagnose: None,
-                    pending: None,
-                    error: None,
-                    tool_result: None,
-                    audit_tail: None,
-                    session_grants: None,
                     memory_facts: Some(vec![]),
+                    ..Default::default()
                 },
                 Ok(None) => ClientResponse {
                     ok: false,
-                    correlation_id: None,
-                    diagnose: None,
-                    pending: None,
                     error: Some(format!("no fact for key={key}")),
-                    tool_result: None,
-                    audit_tail: None,
-                    session_grants: None,
-                    memory_facts: None,
+                    ..Default::default()
                 },
                 Err(e) => ClientResponse {
                     ok: false,
-                    correlation_id: None,
-                    diagnose: None,
-                    pending: None,
                     error: Some(e.to_string()),
-                    tool_result: None,
-                    audit_tail: None,
-                    session_grants: None,
-                    memory_facts: None,
+                    ..Default::default()
                 },
             },
             None => ClientResponse {
                 ok: false,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
                 error: Some("memory disabled (--no-memory)".into()),
-                tool_result: None,
-                audit_tail: None,
-                session_grants: None,
-                memory_facts: None,
+                ..Default::default()
             },
         },
         ClientRequest::SessionGrants => ClientResponse {
             ok: true,
-            correlation_id: None,
-            diagnose: None,
-            pending: None,
-            error: None,
-            tool_result: None,
-            audit_tail: None,
             session_grants: Some(runtime.session_grants()),
-            memory_facts: None,
+            ..Default::default()
         },
         ClientRequest::ClearSessionGrants => {
             runtime.clear_session_grants();
             ClientResponse {
                 ok: true,
-                correlation_id: None,
-                diagnose: None,
-                pending: None,
-                error: None,
-                tool_result: None,
-                audit_tail: None,
                 session_grants: Some(vec![]),
-                memory_facts: None,
+                ..Default::default()
             }
         }
     };

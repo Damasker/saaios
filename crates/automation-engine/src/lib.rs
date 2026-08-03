@@ -105,6 +105,20 @@ impl AutomationEngine {
                 cooldown_secs: 30,
             },
             AutomationRule {
+                id: "high-mem-notify".into(),
+                name: "High memory notification".into(),
+                enabled: true,
+                trigger: TriggerKind::ToolResultThreshold {
+                    tool: "system.metrics".into(),
+                    field: "mem_used_pct".into(),
+                    gte: 90.0,
+                },
+                action: AutomationAction::Notify {
+                    message: "Memory usage is critically high (>= 90%)".into(),
+                },
+                cooldown_secs: 60,
+            },
+            AutomationRule {
                 id: "named-temp-warning".into(),
                 name: "Temperature warning passthrough".into(),
                 enabled: true,

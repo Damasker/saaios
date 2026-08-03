@@ -13,6 +13,7 @@ audit-log = { workspace = true }
 automation-engine = { workspace = true }
 memory-store = { workspace = true }
 model-provider = { workspace = true }
+telemetry = { workspace = true }
 policy-engine = { workspace = true }
 protocol = { workspace = true }
 serde_json = { workspace = true }

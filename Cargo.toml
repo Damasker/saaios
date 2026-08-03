@@ -11,6 +11,7 @@ members = [
     "crates/memory-store",
     "crates/ai-runtime",
     "crates/automation-engine",
+    "crates/telemetry",
     "crates/console-tui",
     "services/saaios-runtime",
     "tests/diagnose-slow-system",
@@ -34,6 +35,7 @@ model-provider = { path = "crates/model-provider" }
 memory-store = { path = "crates/memory-store" }
 ai-runtime = { path = "crates/ai-runtime" }
 automation-engine = { path = "crates/automation-engine" }
+telemetry = { path = "crates/telemetry" }
 console-tui = { path = "crates/console-tui" }
 
 anyhow = "1"
