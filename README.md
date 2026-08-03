@@ -61,6 +61,7 @@ just run
 | `policy-engine` | Allow / Deny / AskUser |
 | `system-tools` | Linux + mock adapters |
 | `model-provider` | Mock + local (Ollama) + remote + auto fallback |
+| `memory-store` | Local JSONL facts + memory.* tools |
 | `ai-runtime` | Request orchestration |
 | `automation-engine` | Event-driven rules |
 | `console-tui` | First UI |
@@ -70,7 +71,7 @@ just run
 
 Own kernel, shared-memory transport, voice, GUI desktop, app store, personality memory.
 
-Local inference (via Ollama) and A/B `BOOT_OK` updates landed in Platform 0.3.
+Local inference (via Ollama), A/B `BOOT_OK` updates, and local memory facts landed in Platform 0.3.
 
 ## Docs
 
@@ -80,6 +81,7 @@ Local inference (via Ollama) and A/B `BOOT_OK` updates landed in Platform 0.3.
 - [Platform 0.1 status](docs/PLATFORM-0.1.md)
 - [Platform 0.2 automation & budgets](docs/platform-0.2.md)
 - [Platform 0.3 local models & A/B](docs/platform-0.3.md)
+- [Platform 0.3 memory / facts](docs/platform-0.3-memory.md)
 - [Raspberry Pi / Linux appliance](docs/appliance.md)
 
 ### Real Linux tools

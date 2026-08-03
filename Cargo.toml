@@ -8,6 +8,7 @@ members = [
     "crates/audit-log",
     "crates/system-tools",
     "crates/model-provider",
+    "crates/memory-store",
     "crates/ai-runtime",
     "crates/automation-engine",
     "crates/console-tui",
@@ -30,6 +31,7 @@ policy-engine = { path = "crates/policy-engine" }
 audit-log = { path = "crates/audit-log" }
 system-tools = { path = "crates/system-tools" }
 model-provider = { path = "crates/model-provider" }
+memory-store = { path = "crates/memory-store" }
 ai-runtime = { path = "crates/ai-runtime" }
 automation-engine = { path = "crates/automation-engine" }
 console-tui = { path = "crates/console-tui" }

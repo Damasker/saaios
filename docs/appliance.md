@@ -24,6 +24,12 @@ This installs:
 
 Default appliance mode uses `--real-linux` tools and `SAAIOS_MOCK=1` so the service starts without an API key.
 
+Memory defaults to `/var/lib/saaios/memory.jsonl` when you set:
+
+```ini
+Environment=SAAIOS_MEMORY=/var/lib/saaios/memory.jsonl
+```
+
 Providers (`SAAIOS_PROVIDER` / `--provider`): `mock` | `remote` | `local` | `auto`.
 
 ```ini
