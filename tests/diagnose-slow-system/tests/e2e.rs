@@ -129,3 +129,60 @@ async fn prompt_injection_does_not_auto_execute_kill() {
     assert_eq!(denied.verdict, PolicyVerdict::Deny);
     let _ = audit;
 }
+
+#[tokio::test]
+async fn session_grant_skips_second_confirmation() {
+    use protocol::ConfirmScope;
+
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    let tools = Arc::new(registry);
+    let policy = Arc::new(PolicyEngine::new());
+    let bus = EventBus::new(32);
+    let runtime = AiRuntime::new(
+        tools,
+        policy,
+        audit.clone(),
+        bus,
+        Arc::new(MockModelProvider),
+    );
+
+    let first = runtime
+        .handle_user_text("Почему тормозит?")
+        .await
+        .expect("first");
+    let pending = first.pending_confirmation.expect("pending");
+    let result = runtime
+        .confirm(
+            first.correlation_id,
+            pending.call_id,
+            &pending.tool,
+            pending.arguments,
+            ConfirmScope::Session,
+        )
+        .await
+        .expect("confirm session");
+    assert!(result.ok);
+    assert!(runtime
+        .session_grants()
+        .iter()
+        .any(|g| g == "process.kill_request"));
+
+    let second = runtime
+        .handle_user_text("Почему тормозит?")
+        .await
+        .expect("second");
+    // With session grant, kill should execute automatically (Allow), no pending confirm.
+    assert!(second.pending_confirmation.is_none());
+    let chain = audit.list_by_correlation(second.correlation_id).unwrap();
+    assert!(chain.iter().any(|r| {
+        r.kind == MessageKind::ToolResult && r.payload["tool"] == "process.kill_request"
+    }));
+    assert!(chain.iter().any(|r| {
+        r.kind == MessageKind::PolicyDecision
+            && r.payload["tool"] == "process.kill_request"
+            && r.payload["reason"] == "session grant"
+    }));
+}
