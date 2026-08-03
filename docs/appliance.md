@@ -18,30 +18,24 @@ sudo ./deploy/install.sh
 This installs:
 
 - `/usr/local/bin/saaios-runtime`
+- `/etc/saaios/saaios.toml` (from `deploy/saaios.toml`, if missing)
 - `/etc/systemd/system/saaios-runtime.service`
 - state dir `/var/lib/saaios`
 - runtime socket `/run/saaios/saaios.sock`
 
-Default appliance mode uses `--real-linux` tools and `SAAIOS_MOCK=1` so the service starts without an API key.
+Default unit: `--config /etc/saaios/saaios.toml` plus `SAAIOS_MOCK=1`.
 
-Memory defaults to `/var/lib/saaios/memory.jsonl` when you set:
+Edit `/etc/saaios/saaios.toml` for provider/telemetry/memory; see [Platform 0.5 config](platform-0.5-config.md).
 
-```ini
-Environment=SAAIOS_MEMORY=/var/lib/saaios/memory.jsonl
-```
+Providers (`SAAIOS_PROVIDER` / `--provider` / `[provider].kind`): `mock` | `remote` | `local` | `auto`.
 
-Providers (`SAAIOS_PROVIDER` / `--provider`): `mock` | `remote` | `local` | `auto`.
-
-```ini
-# Prefer local Ollama, fall back to remote/mock
-Environment=SAAIOS_PROVIDER=auto
-Environment=SAAIOS_LOCAL_BASE=http://127.0.0.1:11434/v1
-Environment=SAAIOS_LOCAL_MODEL=llama3.2
-# Optional remote fallback:
-# Environment=SAAIOS_API_BASE=https://api.openai.com/v1
-# Environment=SAAIOS_API_KEY=...
-# Environment=SAAIOS_MODEL=gpt-4o-mini
-# remove SAAIOS_MOCK=1
+```toml
+[provider]
+kind = "auto"
+local_base = "http://127.0.0.1:11434/v1"
+local_model = "llama3.2"
+# optional remote fallback via env:
+# SAAIOS_API_BASE / SAAIOS_API_KEY / SAAIOS_MODEL
 ```
 
 Then:

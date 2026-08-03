@@ -1,0 +1,39 @@
+# SaaiOS runtime configuration
+# Precedence: built-in defaults → this file → env → CLI flags
+#
+# Discover paths (first hit wins):
+#   --config / SAAIOS_CONFIG
+#   ./saaios.toml
+#   /etc/saaios/saaios.toml
+
+[runtime]
+sock = "/tmp/saaios.sock"
+audit = "saaios-audit.jsonl"
+real_linux = false
+mock_planner = false
+
+[provider]
+# mock | remote | local | auto
+kind = "auto"
+# api_base = "https://api.openai.com/v1"
+# api_key  — prefer SAAIOS_API_KEY env
+model = "gpt-4o-mini"
+local_base = "http://127.0.0.1:11434/v1"
+local_model = "llama3.2"
+
+[budgets]
+max_concurrent = 1
+request_timeout_secs = 30
+max_tool_iters = 6
+
+[memory]
+enabled = true
+path = "saaios-memory.jsonl"
+
+[automation]
+enabled = true
+
+[telemetry]
+# auto = on when real_linux; on | off
+mode = "auto"
+interval_secs = 30
