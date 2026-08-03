@@ -6,6 +6,7 @@
 *.swp
 .DS_Store
 saaios-audit.jsonl
+saaios-memory.jsonl
 /tmp/
 .env
 .saaios/
