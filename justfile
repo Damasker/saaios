@@ -44,6 +44,13 @@ run-tui:
 run-stage:
     cargo run -p console-web
 
+run-stage-kiosk:
+    cargo run -p console-web -- --kiosk
+
+run-stage-lan:
+    # Requires SAAIOS_STAGE_TOKEN (or pass --allow-open for lab only).
+    cargo run -p console-web -- --lan --kiosk --token "${SAAIOS_STAGE_TOKEN:?set SAAIOS_STAGE_TOKEN}"
+
 cross-pi:
     bash deploy/cross-pi.sh
 

@@ -114,7 +114,12 @@ AI-native web console — conversation stage, not a dashboard. See [Platform 0.6
 ```bash
 SAAIOS_SOCK=/run/saaios/saaios.sock saaios-stage
 # open http://127.0.0.1:7420
+
+# LAN kiosk (token required):
+SAAIOS_SOCK=/run/saaios/saaios.sock saaios-stage --lan --kiosk --token "$SAAIOS_STAGE_TOKEN"
 ```
+
+Optional systemd unit: `saaios-stage.service` (installed by `deploy/install.sh` when present).
 
 ## Replay an audit chain (dry-run)
 
