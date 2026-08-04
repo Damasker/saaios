@@ -1,11 +1,13 @@
 //! SaaiOS Stage — local web console (AI-native surface over the UDS runtime API).
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::body::Body;
-use axum::extract::State;
-use axum::http::{header, StatusCode};
+use axum::extract::{Query, Request, State};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
 use futures::stream;
 use protocol::ConfirmScope;
@@ -26,8 +28,37 @@ struct Args {
     #[arg(long, default_value = "/tmp/saaios.sock", env = "SAAIOS_SOCK")]
     sock: PathBuf,
 
+    /// Listen address (overridden by --lan).
     #[arg(long, default_value = "127.0.0.1:7420", env = "SAAIOS_STAGE_BIND")]
     bind: String,
+
+    /// Bind 0.0.0.0:7420 for LAN/kiosk access (requires --token unless --allow-open).
+    #[arg(long, env = "SAAIOS_STAGE_LAN")]
+    lan: bool,
+
+    /// Port used with --lan (default 7420).
+    #[arg(long, default_value_t = 7420, env = "SAAIOS_STAGE_PORT")]
+    port: u16,
+
+    /// Shared access token for LAN / remote browsers (Authorization: Bearer … or ?token=).
+    #[arg(long, env = "SAAIOS_STAGE_TOKEN")]
+    token: Option<String>,
+
+    /// Allow --lan without a token (insecure; for lab networks only).
+    #[arg(long, env = "SAAIOS_STAGE_ALLOW_OPEN")]
+    allow_open: bool,
+
+    /// TLS certificate PEM (enables HTTPS when paired with --tls-key).
+    #[arg(long, env = "SAAIOS_STAGE_TLS_CERT")]
+    tls_cert: Option<PathBuf>,
+
+    /// TLS private key PEM.
+    #[arg(long, env = "SAAIOS_STAGE_TLS_KEY")]
+    tls_key: Option<PathBuf>,
+
+    /// Serve the UI in kiosk layout by default (also available as /kiosk).
+    #[arg(long, env = "SAAIOS_STAGE_KIOSK")]
+    kiosk: bool,
 }
 
 #[derive(Clone)]
@@ -35,6 +66,8 @@ struct AppState {
     sock: PathBuf,
     /// Browser session → runtime chat session.
     chat_session: Arc<Mutex<Option<Uuid>>>,
+    token: Option<String>,
+    kiosk_default: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,6 +114,14 @@ struct ConfirmBody {
     scope: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct PageQuery {
+    #[serde(default)]
+    kiosk: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -91,9 +132,36 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+    let bind = resolve_bind(&args)?;
+    let tls = match (&args.tls_cert, &args.tls_key) {
+        (Some(cert), Some(key)) => Some((cert.clone(), key.clone())),
+        (None, None) => None,
+        _ => {
+            return Err(anyhow!(
+                "both --tls-cert and --tls-key are required for HTTPS"
+            ))
+        }
+    };
+
+    if args.lan {
+        if args.token.is_none() && !args.allow_open {
+            return Err(anyhow!(
+                "--lan requires --token (or SAAIOS_STAGE_TOKEN), or pass --allow-open for lab use"
+            ));
+        }
+        if args.token.is_none() {
+            warn!("LAN bind without token (--allow-open): anyone on the network can control SaaiOS");
+        }
+        if tls.is_none() {
+            warn!("LAN bind without TLS — prefer --tls-cert/--tls-key on untrusted networks");
+        }
+    }
+
     let state = AppState {
         sock: args.sock.clone(),
         chat_session: Arc::new(Mutex::new(None)),
+        token: args.token.clone(),
+        kiosk_default: args.kiosk,
     };
 
     match uds_request(&args.sock, &ClientRequest::Ping).await {
@@ -103,6 +171,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/kiosk", get(index_kiosk))
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route("/api/status", get(api_status))
@@ -112,18 +181,126 @@ async fn main() -> Result<()> {
         .route("/api/chat/reset", post(api_chat_reset))
         .route("/api/diagnose", post(api_diagnose_stream))
         .route("/api/confirm", post(api_confirm))
+        .layer(from_fn_with_state(state.clone(), require_token))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let addr: SocketAddr = args.bind.parse().context("parse bind address")?;
-    info!(%addr, "SaaiOS Stage listening");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    info!(%bind, %scheme, kiosk = args.kiosk, "SaaiOS Stage listening");
+
+    if let Some((cert, key)) = tls {
+        let config = RustlsConfig::from_pem_file(cert, key)
+            .await
+            .context("load TLS cert/key")?;
+        axum_server::bind_rustls(bind, config)
+            .serve(app.into_make_service())
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(bind).await?;
+        axum::serve(listener, app).await?;
+    }
     Ok(())
 }
 
-async fn index() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+fn resolve_bind(args: &Args) -> Result<SocketAddr> {
+    if args.lan {
+        return Ok(SocketAddr::from(([0, 0, 0, 0], args.port)));
+    }
+    args.bind.parse().context("parse --bind address")
+}
+
+async fn require_token(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let Some(expected) = state.token.as_deref() else {
+        return Ok(next.run(req).await);
+    };
+    if token_matches(expected, req.headers(), req.uri().query()) {
+        return Ok(next.run(req).await);
+    }
+    Err(StatusCode::UNAUTHORIZED)
+}
+
+fn token_matches(expected: &str, headers: &HeaderMap, query: Option<&str>) -> bool {
+    if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(rest) = auth.strip_prefix("Bearer ") {
+            if rest == expected {
+                return true;
+            }
+        }
+    }
+    if let Some(t) = headers
+        .get("x-saaios-token")
+        .and_then(|v| v.to_str().ok())
+    {
+        if t == expected {
+            return true;
+        }
+    }
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            if let Some(v) = pair.strip_prefix("token=") {
+                if v == expected {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+        for part in cookie.split(';') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("saaios_token=") {
+                if v == expected {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn render_index(kiosk: bool) -> Response {
+    let html = include_str!("../static/index.html");
+    let html = if kiosk {
+        html.replace("<body>", r#"<body class="kiosk">"#)
+    } else {
+        html.to_string()
+    };
+    let mut res = Html(html).into_response();
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    res
+}
+
+async fn index(State(state): State<AppState>, Query(q): Query<PageQuery>) -> Response {
+    let kiosk = state.kiosk_default || q.kiosk.as_deref().is_some_and(|v| v != "0" && v != "false");
+    let mut res = render_index(kiosk);
+    if let (Some(expected), Some(provided)) = (state.token.as_deref(), q.token.as_deref()) {
+        if provided == expected {
+            let cookie = format!("saaios_token={expected}; Path=/; SameSite=Strict; HttpOnly");
+            if let Ok(val) = header::HeaderValue::from_str(&cookie) {
+                res.headers_mut().append(header::SET_COOKIE, val);
+            }
+        }
+    }
+    res
+}
+
+async fn index_kiosk(State(state): State<AppState>, Query(q): Query<PageQuery>) -> Response {
+    let mut res = render_index(true);
+    if let (Some(expected), Some(provided)) = (state.token.as_deref(), q.token.as_deref()) {
+        if provided == expected {
+            let cookie = format!("saaios_token={expected}; Path=/; SameSite=Strict; HttpOnly");
+            if let Ok(val) = header::HeaderValue::from_str(&cookie) {
+                res.headers_mut().append(header::SET_COOKIE, val);
+            }
+        }
+    }
+    res
 }
 
 async fn app_css() -> impl IntoResponse {
@@ -209,7 +386,7 @@ async fn api_diagnose_stream(
 ) -> Response {
     let text = body.text.trim().to_string();
     if text.is_empty() {
-        return error_json(StatusCode::BAD_REQUEST, anyhow::anyhow!("empty text"));
+        return error_json(StatusCode::BAD_REQUEST, anyhow!("empty text"));
     }
     let sock = state.sock.clone();
     let session_slot = state.chat_session.clone();
@@ -241,7 +418,7 @@ async fn api_diagnose_stream(
         .unwrap_or_else(|_| {
             error_json(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                anyhow::anyhow!("failed to build stream body"),
+                anyhow!("failed to build stream body"),
             )
         })
 }
@@ -333,4 +510,39 @@ async fn forward_diagnose_stream(
         anyhow::bail!("empty stream from runtime");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn token_from_bearer_and_query() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret"),
+        );
+        assert!(token_matches("secret", &headers, None));
+        assert!(!token_matches("nope", &headers, None));
+        assert!(token_matches("q", &HeaderMap::new(), Some("token=q&x=1")));
+    }
+
+    #[test]
+    fn lan_bind_uses_all_interfaces() {
+        let args = Args {
+            sock: PathBuf::from("/tmp/x.sock"),
+            bind: "127.0.0.1:1".into(),
+            lan: true,
+            port: 7420,
+            token: Some("t".into()),
+            allow_open: false,
+            tls_cert: None,
+            tls_key: None,
+            kiosk: false,
+        };
+        let addr = resolve_bind(&args).unwrap();
+        assert_eq!(addr, SocketAddr::from(([0, 0, 0, 0], 7420)));
+    }
 }

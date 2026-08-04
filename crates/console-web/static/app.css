@@ -419,3 +419,41 @@ button:disabled {
     width: 100%;
   }
 }
+
+/* Kiosk: fuller stage, quieter chrome, larger type */
+body.kiosk {
+  cursor: default;
+  user-select: none;
+}
+
+body.kiosk .tagline {
+  max-width: 34rem;
+}
+
+body.kiosk .brand {
+  font-size: clamp(2.8rem, 9vw, 4.2rem);
+}
+
+body.kiosk .composer {
+  bottom: 1.25rem;
+  padding: 1rem;
+}
+
+body.kiosk .composer textarea {
+  min-height: 4rem;
+  font-size: 1.15rem;
+}
+
+body.kiosk .beat {
+  font-size: 1.05rem;
+}
+
+body.kiosk .hint {
+  display: none;
+}
+
+body.kiosk .composer textarea,
+body.kiosk button,
+body.kiosk .chip {
+  user-select: text;
+}

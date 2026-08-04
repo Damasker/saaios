@@ -1,0 +1,30 @@
+[Unit]
+Description=SaaiOS Stage web console
+Documentation=https://github.com/Damasker/saaios
+After=network.target saaios-runtime.service
+Wants=saaios-runtime.service
+
+[Service]
+Type=simple
+User=saaios
+Group=saaios
+WorkingDirectory=/var/lib/saaios
+ExecStart=/usr/local/bin/saaios-stage --sock /run/saaios/saaios.sock --bind 127.0.0.1:7420
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+# For LAN kiosk, use a drop-in:
+#   Environment=SAAIOS_STAGE_LAN=1
+#   Environment=SAAIOS_STAGE_TOKEN=...
+#   Environment=SAAIOS_STAGE_KIOSK=1
+#   Environment=SAAIOS_STAGE_TLS_CERT=/etc/saaios/stage.crt
+#   Environment=SAAIOS_STAGE_TLS_KEY=/etc/saaios/stage.key
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/saaios
+ReadOnlyPaths=/etc/saaios /run/saaios
+
+[Install]
+WantedBy=multi-user.target

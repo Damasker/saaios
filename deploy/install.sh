@@ -15,6 +15,8 @@ STAGE_SRC="$(dirname "$BIN_SRC")/saaios-stage"
 STAGE_DST="/usr/local/bin/saaios-stage"
 UNIT_SRC="$ROOT_DIR/deploy/systemd/saaios-runtime.service"
 UNIT_DST="/etc/systemd/system/saaios-runtime.service"
+STAGE_UNIT_SRC="$ROOT_DIR/deploy/systemd/saaios-stage.service"
+STAGE_UNIT_DST="/etc/systemd/system/saaios-stage.service"
 BOOT_OK_UNIT_SRC="$ROOT_DIR/deploy/systemd/saaios-boot-ok.service"
 BOOT_OK_UNIT_DST="/etc/systemd/system/saaios-boot-ok.service"
 LIB_DST="/usr/local/lib/saaios"
@@ -42,9 +44,9 @@ else
   echo "note: saaios-stage not found at $STAGE_SRC (skipped)"
 fi
 install -m 0644 "$UNIT_SRC" "$UNIT_DST"
-
-install -d -m 0755 "$LIB_DST"
-install -m 0755 "$ROOT_DIR/deploy/ab/"*.sh "$LIB_DST/"
+if [[ -f "$STAGE_UNIT_SRC" ]]; then
+  install -m 0644 "$STAGE_UNIT_SRC" "$STAGE_UNIT_DST"
+fi
 install -m 0644 "$BOOT_OK_UNIT_SRC" "$BOOT_OK_UNIT_DST"
 
 if [[ "${SAAIOS_AB:-0}" == "1" ]]; then

@@ -223,4 +223,12 @@
 
   refreshStatus();
   setInterval(refreshStatus, 8000);
+
+  if (document.body.classList.contains("kiosk")) {
+    promptEl.focus();
+    // Soft idle: keep prompt focused after decision closes / asks finish.
+    document.addEventListener("click", () => {
+      if (!busy && decision.hidden) promptEl.focus();
+    });
+  }
 })();
