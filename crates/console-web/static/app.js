@@ -122,25 +122,61 @@
     }
   }
 
+  let liveAssistant = { el: null };
+
+  function ensureLiveAssistant() {
+    if (liveAssistant.el) return liveAssistant.el;
+    const article = document.createElement("article");
+    article.className = "beat streaming";
+    const roleEl = document.createElement("p");
+    roleEl.className = "beat-role";
+    roleEl.textContent = "SaaiOS";
+    const body = document.createElement("p");
+    body.className = "live-text";
+    article.append(roleEl, body);
+    transcript.appendChild(article);
+    liveAssistant.el = body;
+    return body;
+  }
+
+  function finalizeLiveAssistant(fullText) {
+    if (liveAssistant.el) {
+      if (fullText) liveAssistant.el.textContent = fullText;
+      liveAssistant.el.parentElement.classList.remove("streaming");
+      liveAssistant.el = null;
+      return true;
+    }
+    return false;
+  }
+
   function handleFrame(frame) {
     if (frame.type === "progress" && frame.event) {
       const ev = frame.event;
       const kind = ev.type;
       if (kind === "tool_call") {
+        finalizeLiveAssistant(null);
         pushRail(`tool → ${ev.tool}`);
         addBeat("Шаг", `Вызов ${ev.tool}`, "tool");
       } else if (kind === "tool_result") {
         pushRail(`${ev.tool} → ${ev.ok ? "ok" : "fail"}`);
       } else if (kind === "policy") {
         pushRail(`policy ${ev.tool}=${ev.verdict}`);
+      } else if (kind === "assistant_delta" && ev.text) {
+        const el = ensureLiveAssistant();
+        el.textContent += ev.text;
+        lastSummaryShown = el.textContent;
+        el.parentElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
       } else if (kind === "assistant" && ev.text) {
         lastSummaryShown = ev.text;
-        addBeat("SaaiOS", ev.text);
+        if (!finalizeLiveAssistant(ev.text)) {
+          addBeat("SaaiOS", ev.text);
+        }
       }
       return;
     }
 
     if (frame.type === "done") {
+      finalizeLiveAssistant(null);
       if (frame.error) {
         addBeat("Ошибка", frame.error, "tool");
         return;

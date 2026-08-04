@@ -71,4 +71,3 @@ Enable LAN via drop-in env (`SAAIOS_STAGE_LAN=1`, `SAAIOS_STAGE_TOKEN=…`).
 - Full account auth / OAuth
 - Native toolkit (egui/iced)
 - Voice
-- Token-level LLM SSE (separate slice)

@@ -314,6 +314,7 @@ fn format_progress(ev: &serde_json::Value) -> String {
             let verdict = ev.get("verdict").and_then(|v| v.as_str()).unwrap_or("?");
             format!("… policy {tool}={verdict}")
         }
+        "assistant_delta" => String::new(),
         "assistant" => ev
             .get("text")
             .and_then(|v| v.as_str())

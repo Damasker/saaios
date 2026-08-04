@@ -173,8 +173,21 @@ body {
   margin: 0;
 }
 
-.beat.intro {
-  color: var(--muted);
+.beat.streaming .live-text::after {
+  content: "▍
+  display: inline-block;
+  width: 0.45em;
+  margin-left: 0.1em;
+  background: var(--copper);
+  animation: caret 0.9s steps(1) infinite;
+  vertical-align: baseline;
+  height: 1em;
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
 }
 
 .hint {

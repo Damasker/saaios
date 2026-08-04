@@ -47,6 +47,9 @@ install -m 0644 "$UNIT_SRC" "$UNIT_DST"
 if [[ -f "$STAGE_UNIT_SRC" ]]; then
   install -m 0644 "$STAGE_UNIT_SRC" "$STAGE_UNIT_DST"
 fi
+
+install -d -m 0755 "$LIB_DST"
+install -m 0755 "$ROOT_DIR/deploy/ab/"*.sh "$LIB_DST/"
 install -m 0644 "$BOOT_OK_UNIT_SRC" "$BOOT_OK_UNIT_DST"
 
 if [[ "${SAAIOS_AB:-0}" == "1" ]]; then
@@ -75,5 +78,8 @@ echo "Audit:   /var/lib/saaios/audit.jsonl"
 echo "Runtime: $BIN_DST"
 if [[ -x "$CONSOLE_DST" ]]; then
   echo "TUI:     SAAIOS_SOCK=/run/saaios/saaios.sock saaios-console"
+fi
+if [[ -x "$STAGE_DST" ]]; then
+  echo "Stage:   SAAIOS_SOCK=/run/saaios/saaios.sock saaios-stage  (http://127.0.0.1:7420)"
 fi
 echo "A/B:     SAAIOS_AB=1 ./deploy/install.sh  (status via TUI h or /usr/local/lib/saaios/status.sh)"
