@@ -33,6 +33,9 @@ pub struct ModelResponse {
     pub tool_calls: Vec<ProposedToolCall>,
 }
 
+/// Incremental text from a streaming completion (token / chunk deltas).
+pub type TextDeltaTx = tokio::sync::mpsc::UnboundedSender<String>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -69,6 +72,21 @@ pub trait ModelProvider: Send + Sync {
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
     ) -> Result<ModelResponse>;
+
+    /// Like [`complete`], optionally emitting text deltas via `delta_tx`.
+    /// Default implementation calls `complete` once, then forwards the full text.
+    async fn complete_with_progress(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        delta_tx: Option<&TextDeltaTx>,
+    ) -> Result<ModelResponse> {
+        let resp = self.complete(messages, tools).await?;
+        if let (Some(tx), Some(text)) = (delta_tx, resp.assistant_text.as_ref()) {
+            let _ = tx.send(text.clone());
+        }
+        Ok(resp)
+    }
 }
 
 /// Deterministic provider for e2e / `just run-mock`.
@@ -152,6 +170,25 @@ impl ModelProvider for MockModelProvider {
             assistant_text: Some("Уточните, что проверить в системе.".into()),
             tool_calls: vec![],
         })
+    }
+
+    async fn complete_with_progress(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        delta_tx: Option<&TextDeltaTx>,
+    ) -> Result<ModelResponse> {
+        let resp = self.complete(messages, tools).await?;
+        if let (Some(tx), Some(text)) = (delta_tx, resp.assistant_text.as_ref()) {
+            // Word-sized chunks so mock demos exercise the streaming path.
+            for (i, word) in text.split_inclusive(' ').enumerate() {
+                if i > 0 {
+                    tokio::time::sleep(Duration::from_millis(8)).await;
+                }
+                let _ = tx.send(word.to_string());
+            }
+        }
+        Ok(resp)
     }
 }
 
@@ -307,6 +344,135 @@ impl ModelProvider for OpenAiCompatProvider {
             tool_calls,
         })
     }
+
+    async fn complete_with_progress(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        delta_tx: Option<&TextDeltaTx>,
+    ) -> Result<ModelResponse> {
+        // No sink → non-streaming path.
+        let Some(tx) = delta_tx else {
+            return self.complete(messages, tools).await;
+        };
+
+        let url = format!(
+            "{}/chat/completions",
+            self.config.api_base.trim_end_matches('/')
+        );
+        let tool_defs: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters
+                    }
+                })
+            })
+            .collect();
+
+        let body = json!({
+            "model": self.config.model,
+            "messages": messages,
+            "tools": tool_defs,
+            "tool_choice": "auto",
+            "stream": true
+        });
+
+        let mut req = self.client.post(url).json(&body);
+        if !self.config.api_key.is_empty() {
+            req = req.bearer_auth(&self.config.api_key);
+        }
+        let resp = req.send().await?.error_for_status()?;
+
+        use futures::StreamExt;
+        let mut byte_stream = resp.bytes_stream();
+        let mut line_buf = String::new();
+        let mut assistant_text = String::new();
+        // index -> (name, arguments_json_fragments)
+        let mut tool_acc: Vec<(String, String)> = Vec::new();
+
+        while let Some(chunk) = byte_stream.next().await {
+            let chunk = chunk.map_err(|e| anyhow!("stream read: {e}"))?;
+            line_buf.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(pos) = line_buf.find('\n') {
+                let mut line = line_buf[..pos].to_string();
+                line_buf = line_buf[pos + 1..].to_string();
+                if line.ends_with('\r') {
+                    line.pop();
+                }
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data == "[DONE]" {
+                    continue;
+                }
+                let value: Value = match serde_json::from_str(data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let Some(delta) = value.pointer("/choices/0/delta") else {
+                    continue;
+                };
+                if let Some(piece) = delta.get("content").and_then(|c| c.as_str()) {
+                    if !piece.is_empty() {
+                        assistant_text.push_str(piece);
+                        let _ = tx.send(piece.to_string());
+                    }
+                }
+                if let Some(arr) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                    for item in arr {
+                        let idx = item.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                        while tool_acc.len() <= idx {
+                            tool_acc.push((String::new(), String::new()));
+                        }
+                        if let Some(name) = item.pointer("/function/name").and_then(|v| v.as_str())
+                        {
+                            if !name.is_empty() {
+                                tool_acc[idx].0 = name.to_string();
+                            }
+                        }
+                        if let Some(args) = item
+                            .pointer("/function/arguments")
+                            .and_then(|v| v.as_str())
+                        {
+                            tool_acc[idx].1.push_str(args);
+                        }
+                    }
+                }
+            }
+        }
+
+        let tool_calls = tool_acc
+            .into_iter()
+            .filter(|(name, _)| !name.is_empty())
+            .map(|(name, args_raw)| {
+                let arguments: Value = serde_json::from_str(&args_raw).unwrap_or(json!({}));
+                ProposedToolCall {
+                    call_id: Uuid::new_v4(),
+                    name,
+                    arguments,
+                }
+            })
+            .collect();
+
+        Ok(ModelResponse {
+            assistant_text: if assistant_text.is_empty() {
+                None
+            } else {
+                Some(assistant_text)
+            },
+            tool_calls,
+        })
+    }
 }
 
 /// Tries providers in order; first healthy/successful wins per call.
@@ -349,6 +515,28 @@ impl ModelProvider for FallbackProvider {
                 }
                 Err(e) => {
                     warn!(provider = p.name(), error = %e, "model complete failed; trying next");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow!("fallback provider chain empty")))
+    }
+
+    async fn complete_with_progress(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        delta_tx: Option<&TextDeltaTx>,
+    ) -> Result<ModelResponse> {
+        let mut last_err = None;
+        for p in &self.providers {
+            match p.complete_with_progress(messages, tools, delta_tx).await {
+                Ok(resp) => {
+                    info!(provider = p.name(), "model stream complete succeeded");
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    warn!(provider = p.name(), error = %e, "model stream failed; trying next");
                     last_err = Some(e);
                 }
             }
@@ -412,6 +600,31 @@ pub async fn build_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn mock_provider_streams_text_deltas() {
+        let p = MockModelProvider;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let resp = p
+            .complete_with_progress(
+                &[ChatMessage {
+                    role: "user".into(),
+                    content: "hello".into(),
+                }],
+                &[],
+                Some(&tx),
+            )
+            .await
+            .unwrap();
+        drop(tx);
+        let mut pieces = Vec::new();
+        while let Some(s) = rx.recv().await {
+            pieces.push(s);
+        }
+        assert!(resp.assistant_text.as_ref().unwrap().contains("Уточните"));
+        assert!(pieces.len() > 1, "expected chunked deltas, got {pieces:?}");
+        assert_eq!(pieces.concat(), resp.assistant_text.unwrap());
+    }
 
     #[tokio::test]
     async fn mock_provider_diagnose_path() {

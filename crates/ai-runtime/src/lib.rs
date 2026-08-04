@@ -24,6 +24,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeEvent {
+    AssistantDelta { text: String },
     Assistant { text: String },
     ToolCall {
         call_id: Uuid,
@@ -247,11 +248,31 @@ impl AiRuntime {
 
         for iter in 0..self.budgets.max_tool_iters {
             let iter_span = info_span!("model_iter", correlation_id = %correlation_id, iter);
+            let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let progress_for_deltas = progress.clone();
+            let forward_deltas = progress.is_some();
+            let pump = tokio::spawn(async move {
+                if !forward_deltas {
+                    return;
+                }
+                while let Some(piece) = delta_rx.recv().await {
+                    emit_progress(
+                        &progress_for_deltas,
+                        RuntimeEvent::AssistantDelta { text: piece },
+                    );
+                }
+            });
             let response = self
                 .provider
-                .complete(&messages, &tool_defs)
+                .complete_with_progress(
+                    &messages,
+                    &tool_defs,
+                    if forward_deltas { Some(&delta_tx) } else { None },
+                )
                 .instrument(iter_span)
                 .await?;
+            drop(delta_tx);
+            let _ = pump.await;
 
             if let Some(text) = response.assistant_text.clone() {
                 let env = Envelope::new(

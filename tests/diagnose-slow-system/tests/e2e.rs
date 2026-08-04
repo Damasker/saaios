@@ -171,12 +171,23 @@ async fn progress_channel_receives_tool_events() {
         .await
         .expect("diagnose");
     let mut saw_tool = false;
+    let mut saw_delta = false;
     while let Ok(ev) = rx.try_recv() {
-        if matches!(ev, ai_runtime::RuntimeEvent::ToolCall { .. }) {
-            saw_tool = true;
+        match &ev {
+            ai_runtime::RuntimeEvent::ToolCall { .. } => saw_tool = true,
+            ai_runtime::RuntimeEvent::AssistantDelta { .. } => saw_delta = true,
+            _ => {}
         }
     }
     assert!(saw_tool || outcome.events.iter().any(|e| matches!(e, ai_runtime::RuntimeEvent::ToolCall { .. })));
+    assert!(
+        saw_delta
+            || outcome
+                .events
+                .iter()
+                .any(|e| matches!(e, ai_runtime::RuntimeEvent::Assistant { .. })),
+        "expected assistant deltas or final assistant text"
+    );
 }
 
 #[tokio::test]
