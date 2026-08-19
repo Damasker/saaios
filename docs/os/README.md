@@ -34,6 +34,7 @@ Nothing destructive until:
 | [known-risks.md](targets/sm-a127f/known-risks.md) | Knox, AVB, binary fuse, DSN TWRP caveats |
 | [bringup-plan.md](targets/sm-a127f/bringup-plan.md) | Phases 0–12, first milestone, rollback |
 | [hardware-control-plan.md](targets/sm-a127f/hardware-control-plan.md) | Command the board (display / input / power); not Android, not AI |
+| [wifi-usb.md](targets/sm-a127f/wifi-usb.md) | RTL8188EUS USB dongle — not onboard `wlan`; not TSP |
 | [sources.md](targets/sm-a127f/sources.md) | Citations |
 
 ## First milestone (Phase 1)

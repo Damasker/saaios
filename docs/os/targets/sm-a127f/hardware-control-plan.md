@@ -137,10 +137,12 @@ One subsystem per tagged image. Order is preference, not a calendar:
 |---|-----------|-------------------------|---------------|
 | E1 | Audio | `AUD3004X` / `sma1303` ALSA nodes | `aplay` tone |
 | E2 | USB roles | gadget we already have (RNDIS) | host vs device if UDC allows |
-| E3 | Wi‑Fi | `wlan` / firmware path | `wpa_supplicant` or equivalent |
+| E3 | Wi‑Fi | onboard `wlan` / firmware path (Samsung/Exynos combo, not Realtek USB) | `wpa_supplicant` or equivalent |
 | E4 | Modem | `RADIO` partition exists; do not write it | later; EFS is forever off-limits |
 
 Do not start E+ until A–D have return-point images.
+
+**RTL8188EUS** ([aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus)) is a **USB** 802.11n dongle driver (monitor/injection). It is **not** onboard `wlan0` and **not** the TD4150/synaptics tree. An 8188 stick on this phone needs USB **host**/OTG; that conflicts with the current RNDIS gadget console (phone is device). Do not compile it into the a12s Image for Phase A. Detail: [wifi-usb.md](wifi-usb.md). R620 (2026-08-19) has no `0bda:8179` — no host-side clone.
 
 ---
 

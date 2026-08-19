@@ -119,7 +119,8 @@ kernel: kernel-patch
 			CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
 			PYTHON=python3 PYTHON2=python3 PYTHON3=python3 \
 			$(KERNEL_DEFCONFIG)
-	# Project-Xed rtl8188eus fails clang-9 fallthrough (-Werror); not needed for TSP.
+	# Project-Xed rtl8188eus fails clang-9 fallthrough (-Werror); USB dongle, not TSP.
+	# See docs/os/targets/sm-a127f/wifi-usb.md — do not enable for onboard wlan.
 	$(KERNEL_DIR)/scripts/config --file $(KERNEL_OUT)/.config -d CONFIG_RTL8188EU
 	cd $(KERNEL_DIR) && \
 		PATH="$(CURDIR)/$(CLANG_BIN):$$PATH" \

@@ -21,6 +21,7 @@ saaios-memory.jsonl
 /os/build/
 /os/third_party/busybox-aarch64
 /os/third_party/kernel_samsung_a12
+/os/third_party/rtl8188eus
 /os/third_party/clang-9
 /os/third_party/clang+llvm-*
 /os/third_party/llvm-*
