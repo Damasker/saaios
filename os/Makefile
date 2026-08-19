@@ -12,15 +12,19 @@ BUSYBOX ?= os/third_party/busybox-aarch64
 BUSYBOX_DEB_URL ?= https://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.37.0-6+b9_arm64.deb
 CROSS ?= aarch64-linux-gnu-
 KERNEL_DIR := os/third_party/kernel_samsung_a12
+KERNEL_OUT := $(BUILD)/kernel-out
 KERNEL_IMAGE ?= $(KERNEL_DIR)/arch/arm64/boot/Image
 KERNEL_PATCH := os/patches/syna-tcm-resume-hdl-idle.patch
+KERNEL_DEFCONFIG := exynos850-a12snsxx_defconfig
+# 4.19 wants clang 9 (AOSP r353983c family). clang-17 on R620 is too new.
+CLANG_BIN ?= os/third_party/clang-9/bin
 # BOOT partition on SM-A127F is 44 MiB; stock boot.img is padded to this with AVB.
 BOOT_PART_SIZE := 46137344
 BL_ZIP ?= /srv/media/BL_A127FXXSDDXJ2_QB86601342_REV00_user_low_ship_MULTI_CERT.tar.md5.zip
 MEDIA ?= /srv/media
 
 .PHONY: all unpack init ramdisk boot.img vbmeta odin-tar restore flash check-stock busybox \
-	up_param up_param-flash boot-v012
+	up_param up_param-flash boot-v012 kernel kernel-patch
 
 all: odin-tar
 
@@ -88,6 +92,49 @@ boot.img: unpack ramdisk
 		-o $(OUT)
 	sha256sum $(OUT) $(STOCK)/boot.img
 	@echo "built $(OUT) — not flashed"
+
+kernel-patch:
+	@test -f $(KERNEL_DIR)/Makefile || { echo "missing $(KERNEL_DIR) (gitignored clone)"; exit 1; }
+	@if patch -d $(KERNEL_DIR) -p1 --forward --dry-run --silent < $(KERNEL_PATCH); then \
+		patch -d $(KERNEL_DIR) -p1 --forward < $(KERNEL_PATCH); \
+	elif patch -d $(KERNEL_DIR) -p1 -R --dry-run --silent < $(KERNEL_PATCH); then \
+		echo "TD4150 resume patch already applied"; \
+	else \
+		echo "FAILED to apply $(KERNEL_PATCH)"; exit 1; \
+	fi
+
+# Out-of-tree build; copies Image to $(KERNEL_IMAGE) for boot-v012.
+# Exact cmdline (also in docs/os/targets/sm-a127f/kernel-touch.md):
+#   PATH=os/third_party/clang-9/bin:$$PATH PLATFORM_VERSION=13 ANDROID_MAJOR_VERSION=t ARCH=arm64 \
+#   make O=os/build/kernel-out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+#     CLANG_TRIPLE=aarch64-linux-gnu- PYTHON=python3 PYTHON2=python3 PYTHON3=python3 \
+#     exynos850-a12snsxx_defconfig && make O=... -j$$(nproc)
+kernel: kernel-patch
+	@test -x $(CLANG_BIN)/clang || { echo "missing $(CLANG_BIN)/clang — extract LLVM 9.0.1 into os/third_party/clang-9"; exit 1; }
+	mkdir -p $(KERNEL_OUT)
+	cd $(KERNEL_DIR) && \
+		PATH="$(CURDIR)/$(CLANG_BIN):$$PATH" \
+		PLATFORM_VERSION=13 ANDROID_MAJOR_VERSION=t ARCH=arm64 \
+		$(MAKE) O=$(CURDIR)/$(KERNEL_OUT) ARCH=arm64 \
+			CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
+			PYTHON=python3 PYTHON2=python3 PYTHON3=python3 \
+			$(KERNEL_DEFCONFIG)
+	# Project-Xed rtl8188eus fails clang-9 fallthrough (-Werror); not needed for TSP.
+	cd $(KERNEL_DIR) && \
+		PATH="$(CURDIR)/$(CLANG_BIN):$$PATH" \
+		$(MAKE) O=$(CURDIR)/$(KERNEL_OUT) ARCH=arm64 \
+			scripts/config --file $(CURDIR)/$(KERNEL_OUT)/.config -d CONFIG_RTL8188EU
+	cd $(KERNEL_DIR) && \
+		PATH="$(CURDIR)/$(CLANG_BIN):$$PATH" \
+		PLATFORM_VERSION=13 ANDROID_MAJOR_VERSION=t ARCH=arm64 \
+		$(MAKE) O=$(CURDIR)/$(KERNEL_OUT) ARCH=arm64 \
+			CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
+			PYTHON=python3 PYTHON2=python3 PYTHON3=python3 \
+			-j$$(nproc)
+	@test -f $(KERNEL_OUT)/arch/arm64/boot/Image || { echo "kernel build produced no Image"; exit 1; }
+	mkdir -p $(KERNEL_DIR)/arch/arm64/boot
+	cp -f $(KERNEL_OUT)/arch/arm64/boot/Image $(KERNEL_IMAGE)
+	@echo "built $(KERNEL_IMAGE) — not packed, not flashed. Run: make -f os/Makefile boot-v012"
 
 # boot-v012: stock DTB (from unpacked stock boot.img) + new Image if present.
 # Does not flash. Copies $(MEDIA)/saaios-boot-v012.tar only when Image exists.

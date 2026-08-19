@@ -71,30 +71,38 @@ make ARCH=arm64 exynos850-a12snsxx_defconfig
 make ARCH=arm64 -j64
 ```
 
-Exact cmdline once clang-9 (or AOSP clang for 4.19) is on disk:
+Exact cmdline (also `make -f os/Makefile kernel`):
 
 ```sh
-cd os/third_party/kernel_samsung_a12
-export PLATFORM_VERSION=13 ANDROID_MAJOR_VERSION=t ARCH=arm64
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
-  CC=/path/to/clang-9 exynos850-a12snsxx_defconfig
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
-  CC=/path/to/clang-9 -j"$(nproc)"
+make -f os/Makefile kernel
 ```
 
-Output Image: `os/third_party/kernel_samsung_a12/arch/arm64/boot/Image`.
+Which is:
+
+```sh
+export PATH="$PWD/os/third_party/clang-9/bin:$PATH"
+export PLATFORM_VERSION=13 ANDROID_MAJOR_VERSION=t ARCH=arm64
+cd os/third_party/kernel_samsung_a12
+make O=$PWD/../../build/kernel-out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+  CLANG_TRIPLE=aarch64-linux-gnu- PYTHON=python3 PYTHON2=python3 PYTHON3=python3 \
+  exynos850-a12snsxx_defconfig
+make O=$PWD/../../build/kernel-out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+  CLANG_TRIPLE=aarch64-linux-gnu- PYTHON=python3 PYTHON2=python3 PYTHON3=python3 \
+  -j"$(nproc)"
+```
+
+Kernel tree `Makefile` hardcodes `CC=clang`, so clang-9 must be first on `PATH`. Output Image is copied to `os/third_party/kernel_samsung_a12/arch/arm64/boot/Image` for `boot-v012`.
 
 Checked on **R620** this session:
 
 | Tool | State |
 |------|--------|
-| `aarch64-linux-gnu-gcc` | Debian 14.2.0 (present; kernel still wants clang) |
-| `os/third_party/clang-9` | **missing** |
-| `clang-9` package | **missing** |
-| `/usr/bin/clang-17` | present; **too new** for 4.19 — do not use |
-| LLVM tarball | **do not download** in the pack session |
+| `aarch64-linux-gnu-gcc` / as / ld | Debian 14.2.0 (binutils present) |
+| `os/third_party/clang-9` | LLVM **9.0.1** official tarball (gitignored) |
+| `/usr/bin/clang-17` | present; **too new** for 4.19 — not used |
+| Host `gcc-14` | not a substitute for `CC=clang` |
 
-No kernel compile until clang-9 (or matching AOSP clang) is installed. Host gcc-14 is not a substitute.
+KernelSU-prebuilt AnyKernel3 zip on GitHub exists (KernelSU+SUSFS, no HDL-idle resume patch). Not used: we need the two-site patch, not root hooks.
 
 ## Pack boot-v012
 
