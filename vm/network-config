@@ -1,0 +1,10 @@
+version: 2
+ethernets:
+  id0:
+    match:
+      name: "en*"
+    dhcp4: true
+  id1:
+    match:
+      name: "eth*"
+    dhcp4: true

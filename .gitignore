@@ -11,3 +11,20 @@ saaios-memory.jsonl
 .env
 .saaios/
 *.sock
+
+# OS-track firmware / dumps (never commit)
+/os/images/
+/docs/os/targets/*/artifacts/*.img
+/docs/os/targets/*/artifacts/*.tar
+/docs/os/targets/*/artifacts/*.tar.md5
+/docs/os/targets/*/artifacts/*.pit
+/os/build/
+/os/third_party/busybox-aarch64
+/saaios-boot-*.tar
+**/__pycache__/
+
+# Local libvirt disks (never commit)
+/vm/*.qcow2
+/vm/*.iso
+/vm/ip.txt
+/vm/ollama-ip.txt

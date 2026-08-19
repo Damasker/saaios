@@ -17,7 +17,7 @@ RuntimeDirectoryMode=0755
 StateDirectory=saaios
 Environment=RUST_LOG=info
 # Keep AI side effects conservative on appliance hosts (override provider in toml).
-Environment=SAAIOS_MOCK=1
+Environment=SAAIOS_MOCK=true
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

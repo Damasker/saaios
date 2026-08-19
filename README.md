@@ -89,6 +89,8 @@ Local inference (via Ollama), A/B `BOOT_OK` updates, and local memory facts land
 - [ADR-001: Platform is not the kernel](docs/adr/ADR-001-platform-not-kernel.md)
 - [ADR-002: Hybrid IPC](docs/adr/ADR-002-hybrid-ipc.md)
 - [ADR-003: CBOR control protocol](docs/adr/ADR-003-cbor-control-protocol.md)
+- [ADR-004: OS track vs Platform track](docs/adr/ADR-004-os-track.md)
+- [OS track (native boot, A12 first target)](docs/os/README.md)
 - [Platform 0.1 status](docs/PLATFORM-0.1.md)
 - [Platform 0.2 automation & budgets](docs/platform-0.2.md)
 - [Platform 0.3 local models & A/B](docs/platform-0.3.md)

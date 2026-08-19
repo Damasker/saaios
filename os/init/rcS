@@ -1,0 +1,41 @@
+#!/bin/busybox ash
+# USB net + listeners. telnetd needs devpts/ptmx; do not bind a single addr.
+BB=/bin/busybox
+$BB mkdir -p /dev/pts /tmp
+$BB mount -t devpts devpts /dev/pts 2>/dev/null
+if [ ! -e /dev/ptmx ]; then
+  $BB mknod /dev/ptmx c 5 2
+  $BB chmod 666 /dev/ptmx
+fi
+
+printf 'SaaiOS\n' > /tmp/index.html
+
+# TSP: PID 1 unblanks fb0 once, then writes input/enabled only if it still
+# reads 0. Do not echo cmd/probe_enable here — that re-enters syna_tcm_resume.
+
+i=0
+while [ "$i" -lt 20 ]; do
+  for n in usb0 rndis0 usb1 eth0; do
+    if [ -e "/sys/class/net/$n" ]; then
+      $BB ifconfig "$n" 192.168.42.1 netmask 255.255.255.0 up
+      {
+        echo "start 192.168.42.2"
+        echo "end 192.168.42.20"
+        echo "interface $n"
+        echo "option subnet 255.255.255.0"
+        echo "option lease 86400"
+      } > /tmp/udhcpd.conf
+      $BB udhcpd /tmp/udhcpd.conf
+      # Listen on all addresses. Port 2323: Windows often blocks outbound 23.
+      $BB telnetd -l /bin/ash -p 23
+      $BB telnetd -l /bin/ash -p 2323
+      $BB httpd -p 8080 -h /tmp
+      echo "net $n telnet :23 :2323 httpd :8080" > /tmp/net-ok
+      exit 0
+    fi
+  done
+  i=$((i + 1))
+  $BB sleep 1
+done
+echo "no usb net" > /tmp/net-ok
+exit 1

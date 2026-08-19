@@ -6,7 +6,7 @@
 
 | Kind | Flag / env | Behavior |
 |---|---|---|
-| `mock` | `--provider mock` / `SAAIOS_MOCK=1` | Deterministic diagnose path |
+| `mock` | `--provider mock` / `SAAIOS_MOCK=true` | Deterministic diagnose path |
 | `remote` | `--provider remote` | OpenAI-compatible HTTP (`SAAIOS_API_*`) |
 | `local` | `--provider local` | Ollama OpenAI-compat at `SAAIOS_LOCAL_BASE` |
 | `auto` | `--provider auto` (default) | Local if healthy → remote if configured → mock |

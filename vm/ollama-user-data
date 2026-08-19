@@ -1,0 +1,38 @@
+#cloud-config
+hostname: ollama-vm
+manage_etc_hosts: true
+users:
+  - name: mike
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    passwd: "$6$IlZd/WB1EVapjBQz$9qqNAwCgYgiWm9nnkmlB2U3ibpM8M4jwYCt3xRUZVdaQLHrGJMEu8zSrxeXDGFymgzx5IKDphDi5sZe3jTi4W."
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAJaKnZhRDK2GBlejqa9Sqw2xjHfvB9vYQzwH57OKmx ruta-cloud-deploy
+ssh_pwauth: false
+package_update: true
+packages:
+  - qemu-guest-agent
+  - curl
+  - ca-certificates
+write_files:
+  - path: /etc/systemd/system/ollama.service.d/override.conf
+    permissions: "0644"
+    content: |
+      [Service]
+      Environment="OLLAMA_HOST=0.0.0.0:11434"
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - systemctl enable --now ssh
+  - curl -fsSL https://ollama.com/install.sh | sh
+  - mkdir -p /etc/systemd/system/ollama.service.d
+  - |
+      printf '%s\n' '[Service]' 'Environment="OLLAMA_HOST=0.0.0.0:11434"' > /etc/systemd/system/ollama.service.d/override.conf
+  - systemctl daemon-reload
+  - systemctl enable --now ollama || true
+  - systemctl restart ollama || true
+  - |
+      # Pull small model in background so cloud-init can finish
+      nohup ollama pull llama3.2:1b >/var/log/ollama-pull.log 2>&1 &
+final_message: "ollama-vm cloud-init done"

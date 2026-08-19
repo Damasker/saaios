@@ -43,7 +43,7 @@ This installs:
 - state dir `/var/lib/saaios`
 - runtime socket `/run/saaios/saaios.sock`
 
-Default unit: `--config /etc/saaios/saaios.toml` plus `SAAIOS_MOCK=1`.
+Default unit: `--config /etc/saaios/saaios.toml` plus `SAAIOS_MOCK=true`.
 
 Edit `/etc/saaios/saaios.toml` for provider/telemetry/memory; see [Platform 0.5 config](platform-0.5-config.md).
 
