@@ -1,0 +1,50 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: reset on resume when HDL is idle
+
+Project-Xed (maazm7d/kernel_samsung_a12 HEAD 6d2c200) still has Samsung's
+stock HDL shortcut. On SM-A127F a12s the IC is on-chip FW: in_hdl_mode
+stays true after probe, host_downloading is already 0. Resume then:
+
+  wait_hdl (always 100ms) → goto mod_resume
+
+and never runs software CMD_RESET / identify / module reinit. IRQ 244
+sticks at 7; REPORT_TOUCH never arrives.
+
+RESET_ON_RESUME is commented out and only lives in the !in_hdl_mode
+branch, so uncommenting it is a no-op on this unit.
+
+Two sites in synaptics_tcm_core.c (td4150, not the unused generic
+synaptics_tcm/ copy):
+
+1. syna_tcm_resume: after wait_hdl succeeds, goto do_reset when
+   host_downloading==0. Keep mod_resume only while a download is in flight.
+2. syna_tcm_reset_and_reinit: do not skip identify + mod_cb->reinit when
+   HDL is idle.
+
+Applies with: patch -d os/third_party/kernel_samsung_a12 -p1 < this file
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -2306,7 +2306,7 @@ static int syna_tcm_reset_and_reinit(struct syna_tcm_hcd *tcm_hcd,
+ 
+ 	/* for hdl, the remaining re-init process will be done */
+ 	/* in the helper thread, so wait for the completion here */
+-	if (tcm_hcd->in_hdl_mode) {
++	if (tcm_hcd->in_hdl_mode && atomic_read(&tcm_hcd->host_downloading)) {
+ 		mutex_unlock(&tcm_hcd->reset_mutex);
+ 		kfree(resp_buf);
+ 
+@@ -2706,7 +2706,12 @@ static int syna_tcm_resume(struct device *dev)
+ 				"Failed to wait for completion of host download\n");
+ 			goto exit;
+ 		}
+-		goto mod_resume;
++		/* On-chip FW: in_hdl_mode stays set but download is idle.
++		 * Skip reset only while a host download is actually in flight.
++		 */
++		if (atomic_read(&tcm_hcd->host_downloading))
++			goto mod_resume;
++		goto do_reset;
+ 	} else {
+ 
+ #ifdef RESET_ON_RESUME

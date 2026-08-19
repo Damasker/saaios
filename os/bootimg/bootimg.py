@@ -170,8 +170,9 @@ def cmd_pack(args: argparse.Namespace) -> None:
     info["seandroid"] = bool(args.seandroid)
     info["pad_to"] = args.pad_to or 0
     ramdisk_path = Path(args.ramdisk) if args.ramdisk else src / "ramdisk.cpio.gz"
+    kernel_path = Path(args.kernel) if args.kernel else src / "kernel"
     parts = {
-        "kernel": (src / "kernel").read_bytes(),
+        "kernel": kernel_path.read_bytes(),
         "ramdisk": ramdisk_path.read_bytes(),
         "second": b"",
         "recovery_dtbo": b"",
@@ -194,6 +195,7 @@ def main() -> None:
     k.add_argument("src")
     k.add_argument("-o", "--out", required=True)
     k.add_argument("--ramdisk")
+    k.add_argument("--kernel", help="replace kernel Image; default is unpacked stock kernel")
     k.add_argument("--cmdline")
     k.add_argument("--seandroid", action="store_true", help="append SEANDROIDENFORCE (Samsung sboot)")
     k.add_argument("--pad-to", type=int, default=0, help="zero-pad to partition size so Odin does not leave old AVB tail")

@@ -110,6 +110,16 @@ printf 'get_fw_ver_ic' > "$TSP/cmd"; cat "$TSP/cmd_status"; cat "$TSP/cmd_result
 
 This unit has no `enabled` sysfs. Blind `echo 1` to a missing node is a no-op; do not invent a second resume. If `check_connection` is NG, next is IC mode / on-chip FW, not another unblank.
 
+**v011 live (tunnel, cable-on-glass + sysfs):**
+
+- LCD TSP rails are already on: `gpio_lcd_rst`, `vdd_ldo28`, `gpio_lcd_bl_en` = enabled. No dedicated `reset-gpio` in DT (only `irq-gpio`, `cs-gpio`; `irq-on-state=0`).
+- Cached factory reads: `get_chip_name:TD4150`, `get_fw_ver_ic:SY0104000E`, `get_x_num:15`, `get_y_num:34`, `get_threshold:120`. These do **not** increment IRQ.
+- `check_connection` → `FAIL` / `NG`: `Timed out waiting for response (command 0x2a)` / `Failed to write command CMD_PRODUCTION_TEST`.
+- IRQ `244 synaptics_tcm` stayed at **7** with a USB cable on the glass; kworker `tc:0 noise:0`; `hexdump event3` empty. IC is **deaf**, not “light touch”.
+- **Do not** `unbind`/`bind` `synaptics_tcm_spi`. Live rebind (2026-08-19): `syna_tcm_remove` then probe `Incorrect header code (0x01)` / `Failed to detect the sensor` / `probe of synaptics_tcm.0 failed with error -5`. `sec_touchscreen` **disappears** until reboot. Re-probe also picked `td4160_a12s_boe.bin` (`lcd id(5)`, ap lcdtype `0x1AF240` vs dt `0xBA6220`) vs first-boot `td4150_a12s_boe.bin`.
+
+Ramdisk cannot fix ATTN/`REPORT_TOUCH`. v011 resume log: `Interrupt already enabled` then **100 ms** then `mod_resume` (no `do_reset`) ⇒ `in_hdl_mode` + idle HDL, `USE_FLASH` off. `#define RESET_ON_RESUME` is in the `!in_hdl_mode` branch only — a no-op here. **Do not** unbind; **do not** `poweroff` (ramdisk `/sys/power/state` = `freeze mem`); **do not** re-run `check_connection` / cat `sensitivity_mode` (both CMD `0x2a`, timeout). Kernel source + patch: [kernel-touch.md](kernel-touch.md). **No v012 Image**; `make -f os/Makefile boot-v012` documents the missing Image and does not copy a tar.
+
 Optional later: `mkdir -p /lib/firmware /vendor/firmware` and `ln -s /lib/firmware /vendor/firmware` so `firmware_class.path=/vendor/firmware` works for grip/Wi‑Fi. Packing the `tsp_*` names above is a no-op until we obtain the actual files from somewhere other than this SUPER.
 
 Host SUPER unpack (already in gitignored `os/build/stock-super/`, do not flash): from AP zip member `super.img.lz4` (3.3 GiB) → `lz4 -d` → Android sparse → lpunpack `vendor` / `odm`. `dtbo.img.lz4` is in the same AP tar (before super).

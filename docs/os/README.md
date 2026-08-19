@@ -33,6 +33,7 @@ Nothing destructive until:
 | [recovery.md](targets/sm-a127f/recovery.md) | Download mode, stock restore, what is **not** BROM |
 | [known-risks.md](targets/sm-a127f/known-risks.md) | Knox, AVB, binary fuse, DSN TWRP caveats |
 | [bringup-plan.md](targets/sm-a127f/bringup-plan.md) | Phases 0–12, first milestone, rollback |
+| [hardware-control-plan.md](targets/sm-a127f/hardware-control-plan.md) | Command the board (display / input / power); not Android, not AI |
 | [sources.md](targets/sm-a127f/sources.md) | Citations |
 
 ## First milestone (Phase 1)

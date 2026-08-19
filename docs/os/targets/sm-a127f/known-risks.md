@@ -38,6 +38,12 @@ Replacing `system` without repacking SUPER bricks the Android userspace. Phase 1
 
 Novatek vs Synaptics; LCM id not unique. A “white screen” milestone can still have a dead digitizer. Don’t couple graphics and input in one experiment. This unit is **Synaptics TCM TD4150** (`tsp_synaptics/td4150_a12s_boe.bin` on `spi1.2`); `event3` = `sec_touchscreen`. PID 1 looping `FBIOBLANK` UNBLANK (~500ms) made `syna_tcm_early_resume` / `syna_tcm_resume` log **abnormal call** — v010 stopped that loop. v010 still unblanked twice at boot (ioctl `FBIOBLANK` + sysfs `fb0/blank`); the second resume did not finish and `event3` stayed silent. v011 unblanks once. `/sys/class/sec/tsp/input/enabled` store() is the same resume path — do not write it after a successful unblank, and do not send `probe_enable` on `cmd`.
 
+**Unbind is destructive.** `echo synaptics_tcm.0 > …/synaptics_tcm_spi/unbind` then bind: probe `Incorrect header code (0x01)` / `-5`, `sec_touchscreen` **gone until reboot**. Do not unbind/bind to “wake” touch.
+
+**Ramdisk cannot power off.** `/sys/power/state` is `freeze mem` only. No `poweroff`/`reboot` from this init.
+
+**IRQ 244 stuck at 7** after a correct single unblank: IC not scanning (`REPORT_TOUCH` never arrives). Factory `check_connection` / `sensitivity_mode` poke CMD `0x2a` and time out — do not retry. Fix is a vendor-kernel resume patch ([kernel-touch.md](kernel-touch.md)), not init.
+
 ## 10. Mainline kernel
 
 Exynos 850 mainline is early (A13-oriented). Booting mainline on A12s as step 1 is a trap. Vendor 4.19 first.

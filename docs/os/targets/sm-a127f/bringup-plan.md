@@ -2,7 +2,7 @@
 
 A12 is the first **target**, not the OS. HAL backends later: `samsung-a127f` | `raspberry-pi` | `x86`.
 
-Worker does software. Human does USB, Download mode, photos, logs.
+Worker does software. Human does USB, Download mode, photos, logs. Hardware command (fb0, TD4150, poweroff) after this ramdisk track: [hardware-control-plan.md](hardware-control-plan.md).
 
 **No flash until recovery gate is green** ([recovery.md](recovery.md)).
 

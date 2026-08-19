@@ -20,6 +20,10 @@ saaios-memory.jsonl
 /docs/os/targets/*/artifacts/*.pit
 /os/build/
 /os/third_party/busybox-aarch64
+/os/third_party/kernel_samsung_a12
+/os/third_party/clang-9
+/os/third_party/clang+llvm-*
+/os/third_party/llvm-*
 /saaios-boot-*.tar
 **/__pycache__/
 

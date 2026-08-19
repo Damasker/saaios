@@ -6,17 +6,21 @@ BUILD := os/build
 STOCK_UNPACK := $(BUILD)/stock-boot
 RAMDISK := $(BUILD)/ramdisk
 OUT := $(BUILD)/boot-v011.img
+OUT_V012 := $(BUILD)/boot-v012.img
 VBMETA_OUT := $(BUILD)/vbmeta-patched.img
 BUSYBOX ?= os/third_party/busybox-aarch64
 BUSYBOX_DEB_URL ?= https://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.37.0-6+b9_arm64.deb
 CROSS ?= aarch64-linux-gnu-
+KERNEL_DIR := os/third_party/kernel_samsung_a12
+KERNEL_IMAGE ?= $(KERNEL_DIR)/arch/arm64/boot/Image
+KERNEL_PATCH := os/patches/syna-tcm-resume-hdl-idle.patch
 # BOOT partition on SM-A127F is 44 MiB; stock boot.img is padded to this with AVB.
 BOOT_PART_SIZE := 46137344
 BL_ZIP ?= /srv/media/BL_A127FXXSDDXJ2_QB86601342_REV00_user_low_ship_MULTI_CERT.tar.md5.zip
 MEDIA ?= /srv/media
 
 .PHONY: all unpack init ramdisk boot.img vbmeta odin-tar restore flash check-stock busybox \
-	up_param up_param-flash
+	up_param up_param-flash boot-v012
 
 all: odin-tar
 
@@ -85,6 +89,36 @@ boot.img: unpack ramdisk
 	sha256sum $(OUT) $(STOCK)/boot.img
 	@echo "built $(OUT) — not flashed"
 
+# boot-v012: stock DTB (from unpacked stock boot.img) + new Image if present.
+# Does not flash. Copies $(MEDIA)/saaios-boot-v012.tar only when Image exists.
+ifeq ($(wildcard $(KERNEL_IMAGE)),)
+boot-v012:
+	@echo "boot-v012: Image missing at $(KERNEL_IMAGE)"
+	@echo "Apply $(KERNEL_PATCH), then build with exynos850-a12snsxx_defconfig."
+	@echo "See docs/os/targets/sm-a127f/kernel-touch.md."
+	@echo "Not packing. Not copying $(MEDIA)/saaios-boot-v012.tar."
+	@echo "Phone stays on v011. make flash still refuses."
+else
+boot-v012: unpack ramdisk vbmeta
+	python3 os/bootimg/bootimg.py pack $(STOCK_UNPACK) \
+		--kernel $(KERNEL_IMAGE) \
+		--ramdisk $(BUILD)/ramdisk.cpio.gz \
+		--cmdline "androidboot.hardware=exynos850 androidboot.selinux=permissive loop.max_part=7" \
+		--seandroid --pad-to $(BOOT_PART_SIZE) \
+		-o $(OUT_V012)
+	rm -rf $(BUILD)/odin-v012
+	mkdir -p $(BUILD)/odin-v012
+	cp $(OUT_V012) $(BUILD)/odin-v012/boot.img
+	cp $(VBMETA_OUT) $(BUILD)/odin-v012/vbmeta.img
+	tar -C $(BUILD)/odin-v012 -cf $(BUILD)/saaios-boot-v012.tar boot.img vbmeta.img
+	cp $(BUILD)/saaios-boot-v012.tar $(MEDIA)/saaios-boot-v012.tar
+	sha256sum $(OUT_V012) $(KERNEL_IMAGE)
+	@echo "Odin AP tar (not flashed):"
+	@echo "  $(BUILD)/saaios-boot-v012.tar"
+	@echo "  copied $(MEDIA)/saaios-boot-v012.tar"
+	tar -tvf $(BUILD)/saaios-boot-v012.tar
+endif
+
 vbmeta: check-stock
 	python3 os/bootimg/vbmeta.py --patch-stock $(STOCK)/vbmeta.img -o $(VBMETA_OUT)
 	sha256sum $(VBMETA_OUT) $(STOCK)/vbmeta.img
@@ -121,7 +155,9 @@ up_param-flash:
 
 flash: check-stock
 	@echo "REFUSING: will not flash from make."
-	@echo "Human: Download mode, flash only $(OUT) to BOOT after a photo of OEM LOCK=OFF."
+	@echo "Human: Download mode, flash only a packed boot.img to BOOT after a photo of OEM LOCK=OFF."
+	@echo "  v011: $(OUT)"
+	@echo "  v012: $(OUT_V012) (only if $(KERNEL_IMAGE) was packed)"
 	@echo "Rollback: make restore images in $(STOCK)"
 	@echo "PARAM nologo is a separate Odin BL tar; make up_param-flash also refuses."
 	@exit 2

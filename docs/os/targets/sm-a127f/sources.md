@@ -30,7 +30,8 @@ BOM differs. Do not freeze a single touch IC.
 
 ## Kernel source
 
-- [opensource.samsung.com](https://opensource.samsung.com/) search `SM-A127F` (region zips: RR/EUR/CIS; match binary).
+- [opensource.samsung.com](https://opensource.samsung.com/uploadSearch?searchValue=SM-A127F) — four Android 13 SWA zips. Closest to this unit’s **A127FXXSDDXJ2** is **A127FXXSDDXJ6** (`SM-A127F_SWA_13_Opensource.zip`, OSS id 12816). Same binary **D**.
+- Community tree used for TD4150 reading: [maazm7d/kernel_samsung_a12](https://github.com/maazm7d/kernel_samsung_a12) — **a12s / Exynos 850 / S5E3830**, defconfig `exynos850-a12snsxx`, **not** Helio A125F. KernelSU/SUSFS fork (`-Project-xed-Ksun-4.c11`), not a clean XJ2 dump. Full (shallow) clone: `os/third_party/kernel_samsung_a12`. Driver: `drivers/input/touchscreen/synaptics/td4150/`. Patch: `os/patches/syna-tcm-resume-hdl-idle.patch`. Plan: [kernel-touch.md](kernel-touch.md).
 - XDA: kernel source question for A127F/DSN Exynos 850.
 
 ## Mainline / pmOS
