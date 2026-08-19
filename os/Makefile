@@ -120,10 +120,7 @@ kernel: kernel-patch
 			PYTHON=python3 PYTHON2=python3 PYTHON3=python3 \
 			$(KERNEL_DEFCONFIG)
 	# Project-Xed rtl8188eus fails clang-9 fallthrough (-Werror); not needed for TSP.
-	cd $(KERNEL_DIR) && \
-		PATH="$(CURDIR)/$(CLANG_BIN):$$PATH" \
-		$(MAKE) O=$(CURDIR)/$(KERNEL_OUT) ARCH=arm64 \
-			scripts/config --file $(CURDIR)/$(KERNEL_OUT)/.config -d CONFIG_RTL8188EU
+	$(KERNEL_DIR)/scripts/config --file $(KERNEL_OUT)/.config -d CONFIG_RTL8188EU
 	cd $(KERNEL_DIR) && \
 		PATH="$(CURDIR)/$(CLANG_BIN):$$PATH" \
 		PLATFORM_VERSION=13 ANDROID_MAJOR_VERSION=t ARCH=arm64 \
