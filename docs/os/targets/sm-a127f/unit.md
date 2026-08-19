@@ -58,7 +58,7 @@ Live `/sys/class/input/event*/device/name` + hexdump. Volume/power confirmed; to
 | event0 | `meta_event` | kernel meta, ignore |
 | **event1** | **`gpio_keys`** | **volume** — `KEY_VOLUMEDOWN` `0x72`, `KEY_VOLUMEUP` `0x73` (hexdump **C**) |
 | **event2** | **`sec-pmic-key`** | **power** — `KEY_POWER` `0x74` (hexdump **C**) |
-| event3 | `sec_touchscreen` | Synaptics TCM TD4150 (`spi1.2`), fw `tsp_synaptics/td4150_a12s_boe.bin`. hexdump while touching = **no events** (v009/v010) |
+| event3 | `sec_touchscreen` | Synaptics TCM TD4150 (`spi1.2`), fw `tsp_synaptics/td4150_a12s_boe.bin`. hexdump while touching = **no events** (v009–v011) |
 | event4 | `sec_touchproximity` | ear/hover (same TSP IC, `support_ear_detect_mode`) |
 | event5 | `grip_sensor_sub` | SAR grip |
 | event6 | `grip_notifier` | grip helper |
@@ -66,12 +66,17 @@ Live `/sys/class/input/event*/device/name` + hexdump. Volume/power confirmed; to
 
 ### Why `sec_touchscreen` is silent (no Android init)
 
-Not a missing evdev node. The vendor 4.19 kernel already registered Samsung `sec_input` (`/dev/input/event3`). IRQ reports are gated by the **sysinput HAL**, which we do not run.
+Not a missing evdev node. The vendor 4.19 kernel already registered `sec_touchscreen` (`/dev/input/event3`). Opening evdev is only needed to *read* events; the kernel still `input_report_abs` without userspace holding the fd.
 
-Stock vendor `etc/init/vendor.samsung.hardware.sysinput@1.3-service.rc` chowns and the HAL writes:
+This TD4150 driver (`drivers/input/touchscreen/synaptics/td4150/`) has **no** `/sys/class/sec/tsp/enabled`, **no** `tsp/input/`, and **no** `tsp/power/control`. Stock sysinput HAL nodes from other Samsungs are absent here. Factory interface is `/sys/class/sec/tsp/cmd` (+ `cmd_status` / `cmd_result` / `cmd_list`). Extra attrs: `sensitivity_mode`, `support_feature`, `prox_power_off`, `virtual_prox`.
 
-- `/sys/class/sec/tsp/input/enabled`
-- `/sys/class/sec/tsp/enabled`
+**v011 live:** one `syna_tcm_resume` (`start(0) (1)` → `mod_resume` → `end`); no second resume; PID 1 logged `tsp skip (on or absent)`. `hexdump /dev/input/event3` still silent. `cmd_list` has `fw_update`, `get_fw_ver_{bin,ic}`, `check_connection`, `aot_enable`, `incell_power_control`, … — **no** `module_on_master`.
+
+`incell_power_control,<0|1>` only sets `tcm_hcd->lcdoff_test` (factory LCD-off tests). It does **not** power the TSP. `aot_enable,<0|1>` is DT2W only. `check_connection` is a live production-test SPI poke (`TEST_CHECK_CONNECT`); OK/NG, not an enable. No v012 packed.
+
+After `mod_resume`, finger reports are gated in `touch_report()` by `init_touch_ok`, `lp_state != PWR_OFF`, and `lp_state != LP_MODE` (LP only delivers AOT). `PWR_ON` is 0. Resume with `in_hdl_mode` skips `do_reset` / `CMD_REZERO` (`USE_FLASH` is off); `wait_hdl` is a no-op if `host_downloading` is already 0. IRQ must deliver `REPORT_TOUCH`.
+
+Stock vendor `etc/init/vendor.samsung.hardware.sysinput@1.3-service.rc` chowns TSP sysfs. On *other* Samsungs the HAL writes `tsp/input/enabled`; **this unit has no such node.**
 
 DTBO `dtbo.img` (AP) has three SPI TSP drivers on one bus, selected by LCD-id GPIOs (BOM split, same as [hardware.md](hardware.md)):
 
@@ -87,25 +92,23 @@ Kernel Image also has `syna_tcm_zeroflash` / “Failed to get firmware image”.
 
 Touch drivers also take `regulator_lcd_{vdd,reset,bl}` from the panel. `fb0` is already painting, so a regulator sysfs poke is the fallback, not the first step.
 
-### Confirm on the phone now (telnet)
+### Confirm on the phone now (telnet, v011 — do not re-unblank)
 
 ```sh
-ls /sys/class/sec/tsp /sys/class/sec/tsp/input /sys/class/input/event3/device 2>/dev/null
-cat /sys/class/sec/tsp/enabled 2>/dev/null
-cat /sys/class/sec/tsp/input/enabled 2>/dev/null
-cat /sys/class/input/event3/device/enabled 2>/dev/null
-# only if a cat above printed 0 — echo 1 is another syna_tcm_resume:
-# echo 1 > /sys/class/sec/tsp/input/enabled
-# hexdump -C /dev/input/event3
+TSP=/sys/class/sec/tsp
+printf 'check_connection' > "$TSP/cmd"; cat "$TSP/cmd_status"; cat "$TSP/cmd_result"
+# expect cmd_status OK and cmd_result check_connection:OK (NG = not in app FW / SPI fail)
+printf 'get_chip_name' > "$TSP/cmd"; cat "$TSP/cmd_status"; cat "$TSP/cmd_result"
+printf 'get_fw_ver_ic' > "$TSP/cmd"; cat "$TSP/cmd_status"; cat "$TSP/cmd_result"
+# get_fw_ver_ic:SY00000000 means app_info never filled
+# Do not: incell_power_control (lcdoff_test), aot_enable (DT2W), enabled (absent), FB unblank
 ```
 
 **v010:** 500 ms `FBIOBLANK` loop is gone. First `syna_tcm_resume` succeeded (`mod_resume` / `end`). ~100 ms later a second unblank (`ioctl FBIOBLANK` + sysfs `fb0/blank`) started `syna_tcm_early_resume start(0) (0) (0)` with no `end`; event3 stayed silent. A successful resume followed by a second resume likely leaves the TCM IC in a bad input state.
 
-**v011:** unblank **exactly once** (ioctl only; no sysfs blank). Writes `input/enabled` only if it still reads `0`. Does **not** send `probe_enable` on `cmd` (factory path). Also checks `/sys/class/input/event3/device/enabled`. On-screen `SaaiOS v011`. Not flashed from make.
+**v011:** unblank **exactly once** (ioctl only; no sysfs blank). Writes `input/enabled` only if it still reads `0` (on this unit the node is absent → `tsp skip`). Does **not** send `probe_enable` on `cmd`. Also checks `/sys/class/input/event3/device/enabled`. On-screen `SaaiOS v011`. Not flashed from make. **Do not pack `incell_power_control` into ramdisk** — it is `lcdoff_test`, not power-on.
 
-`/sys/class/sec/tsp/input/enabled` store() is the same resume path as FB unblank (stock sysinput HAL writes `1` on display on, `0` on off). Blind `echo 1` after a good unblank is another `syna_tcm_resume`. On live v010, only write enable if `cat` is `0`. Do not loop.
-
-If `enabled` was `0` and hexdump starts seeing `EV_ABS` after a single echo, that is the sysinput substitute. If dmesg then prints `Failed to get firmware image`, we still do not have blobs in this AP — next step is Samsung OSS extra-firmware or a live Android `/vendor/firmware/tsp_*` dump, not mounting SUPER.
+This unit has no `enabled` sysfs. Blind `echo 1` to a missing node is a no-op; do not invent a second resume. If `check_connection` is NG, next is IC mode / on-chip FW, not another unblank.
 
 Optional later: `mkdir -p /lib/firmware /vendor/firmware` and `ln -s /lib/firmware /vendor/firmware` so `firmware_class.path=/vendor/firmware` works for grip/Wi‑Fi. Packing the `tsp_*` names above is a no-op until we obtain the actual files from somewhere other than this SUPER.
 
