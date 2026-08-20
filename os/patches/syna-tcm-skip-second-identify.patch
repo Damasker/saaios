@@ -1,0 +1,125 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: after skip-on-0x02, do not send another 0x20
+
+v014 skip-on-0x02 called identify() after failed ROMBOOT 0x45. That
+GET_APPLICATION_INFO (0x20) succeeded (config 0104000E). Probe then
+called syna_tcm_identify again; the second 0x20 timed out, probe aborted
+-62 (ETIMEDOUT), enable_irq(false) dropped IRQ 244, event3 never
+registered.
+
+After skip-on-0x02, treat HDL as complete (host_downloading=0, TYPE_FLASH)
+and continue to touch init / ENABLE_REPORT without another identify.
+
+1. zeroflash: on failed 0x45, if identify-as-reset already set FW mode
+   0x02, skip HDL. Do not call identify() / 0x20.
+2. probe: if already IS_FW_MODE, skip syna_tcm_identify; still enable
+   IRQ and touch_init (event3).
+3. ENABLE_REPORT stays, but must not fail probe. Fallback 720x1600 if
+   app_info was never filled. GET_TOUCH_REPORT_CONFIG failure is
+   non-fatal so event3 still registers.
+
+Applies after syna-tcm-onchip-fw-touch.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -1207,16 +1207,17 @@ static void zeroflash_do_romboot_firmware_download(void)
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to write command ROMBOOT DOWNLOAD");
+-		/* Identify-as-reset makes 0x45 look like failure while the
+-		 * IC is already in HDL app FW (0x02). On-chip image is enough.
+-		 */
+-		if (tcm_hcd->identify(tcm_hcd, false) == 0 &&
+-				IS_FW_MODE(tcm_hcd->id_info.mode)) {
++		/* Identify-as-reset already set id_info.mode (0x02). Do not
++		 * send 0x20 / identify here — v014's extra GET_APPLICATION_INFO
++		 * succeeded, then probe sent 0x20 again and timed out (-62).
++		 */
++		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+ 			input_info(true, tcm_hcd->pdev->dev.parent,
+ 				"ROMBOOT DOWNLOAD skipped, firmware mode = 0x%02x (on-chip)\n",
+ 				tcm_hcd->id_info.mode);
++			tcm_hcd->sensor_type = TYPE_FLASH;
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
+ 			goto error_secure_memcpy;
+ 		}
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
+ 		goto error_secure_memcpy;
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -3388,12 +3388,23 @@ static int syna_tcm_probe(struct platform_device *pdev)
+ 		goto err_enable_irq;
+ 	}
+ 	input_dbg(true, tcm_hcd->pdev->dev.parent, "Interrupt is registered\n");
+ 
+-	/* ensure the app firmware is running */
+-	retval = syna_tcm_identify(tcm_hcd, false);
+-	if (retval < 0) {
+-		input_err(true, tcm_hcd->pdev->dev.parent, "Application firmware is not running\n");
+-		goto err_tcm_identify;
+-	}
++	/* On-chip HDL app FW: skip-on-0x02 already completed HDL. A second
++	 * CMD_GET_APPLICATION_INFO (0x20) timed out and aborted probe (-62),
++	 * which freed the IRQ and never registered event3.
++	 */
++	if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++		input_info(true, tcm_hcd->pdev->dev.parent,
++			"On-chip firmware, skip identify (mode = 0x%02x)\n",
++			tcm_hcd->id_info.mode);
++		tcm_hcd->sensor_type = TYPE_FLASH;
++	} else {
++		retval = syna_tcm_identify(tcm_hcd, false);
++		if (retval < 0) {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Application firmware is not running\n");
++			goto err_tcm_identify;
++		}
++	}
+ 
+ 	atomic_set(&tcm_hcd->host_downloading, 0);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
+@@ -953,7 +953,18 @@ static int touch_get_input_params(void)
+ 	touch_hcd->max_x = le2_to_uint(app_info->max_x);
+ 	touch_hcd->max_y = le2_to_uint(app_info->max_y);
+ 	touch_hcd->max_objects = le2_to_uint(app_info->max_objects);
+ 
++	if (touch_hcd->max_x == 0 || touch_hcd->max_y == 0) {
++		/* Skip-on-0x02 does not GET_APPLICATION_INFO. Panel is 720x1600. */
++		touch_hcd->max_x = 720;
++		touch_hcd->max_y = 1600;
++		if (touch_hcd->max_objects == 0)
++			touch_hcd->max_objects = 10;
++		input_info(true, tcm_hcd->pdev->dev.parent,
++			"On-chip FW, fallback input %ux%u objects=%u\n",
++			touch_hcd->max_x, touch_hcd->max_y, touch_hcd->max_objects);
++	}
++
+ 	if (bdata->swap_axes) {
+ 		temp = touch_hcd->max_x;
+ 		touch_hcd->max_x = touch_hcd->max_y;
+@@ -969,7 +981,8 @@ static int touch_get_input_params(void)
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to write command %s\n", STR(CMD_GET_TOUCH_REPORT_CONFIG));
+ 		UNLOCK_BUFFER(tcm_hcd->config);
+-		return retval;
++		/* Keep event3; report parse may still work after ENABLE_REPORT. */
++		return 0;
+ 	}
+ 
+ 	UNLOCK_BUFFER(tcm_hcd->config);
+@@ -1108,10 +1121,11 @@ static int touch_set_report_config(void)
+ 	struct syna_tcm_hcd *tcm_hcd = touch_hcd->tcm_hcd;
+ 
+ #ifdef USE_DEFAULT_TOUCH_REPORT_CONFIG
+-	/* Default format is fine; still enable REPORT_TOUCH. Production
+-	 * test 0x2a can leave reporting in a test frame.
++	/* Default format is fine; still enable REPORT_TOUCH. Do not fail
++	 * probe if ENABLE_REPORT times out — event3 must still register.
+ 	 */
+-	return syna_tcm_enable_touch_report(tcm_hcd);
++	syna_tcm_enable_touch_report(tcm_hcd);
++	return 0;
+ #endif
+ 
+ 	app_info = &tcm_hcd->app_info;

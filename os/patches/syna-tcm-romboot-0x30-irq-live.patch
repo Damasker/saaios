@@ -1,0 +1,16 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since43 0x30 with IRQ live
+
+since42: irq live after 0x02, gpio=1 held=0, but no REPORT_TOUCH (still
+mode 0x02). since41 0x30 ETIME was drain_attn masking IRQ.
+
+since43: 0x30 APP_CONFIG with IRQ unmasked; 0x1b and IDENTIFY complete
+the 0x30 waiter; IDENTIFY after 0x30 is STATUS_OK not CMD_ERROR.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since42 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since43 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

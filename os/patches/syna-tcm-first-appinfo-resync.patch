@@ -1,0 +1,88 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: restore first 0x20; SPI drain; one ENABLE_REPORT
+
+v015 skipped every identify/0x20 after failed ROMBOOT 0x45. Probe lived
+but ENABLE_REPORT (0x05) waited 1s on a desynced bus, GET_TOUCH_REPORT_CONFIG
+(0x25) saw padding 0xa0, IRQ 244 stuck at 5, event3 silent.
+
+v014's first GET_APPLICATION_INFO (0x20) after 0x45 succeeded (config
+0104000E). Only the second 0x20 timed out. Restore that first 0x20 in
+the HDL fail path, never send a second from probe, drain leftover SPI
+frames so ATTN can fall, issue 0x05 once while IRQ is hot, skip resume
+0x05.
+
+Applies after syna-tcm-skip-second-identify.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -1207,16 +1207,24 @@ static void zeroflash_do_romboot_firmware_download(void)
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to write command ROMBOOT DOWNLOAD");
+-		/* Identify-as-reset already set id_info.mode (0x02). Do not
+-		 * send 0x20 / identify here — v014's extra GET_APPLICATION_INFO
+-		 * succeeded, then probe sent 0x20 again and timed out (-62).
++		/* Identify-as-reset already set mode 0x02. Restore the first
++		 * GET_APPLICATION_INFO (0x20) that succeeded in v014; never
++		 * send a second blocking identify from probe.
+ 		 */
+ 		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+ 			input_info(true, tcm_hcd->pdev->dev.parent,
+ 				"ROMBOOT DOWNLOAD skipped, firmware mode = 0x%02x (on-chip)\n",
+ 				tcm_hcd->id_info.mode);
+ 			tcm_hcd->sensor_type = TYPE_FLASH;
++			if (tcm_hcd->identify(tcm_hcd, false) < 0)
++				input_err(true, tcm_hcd->pdev->dev.parent,
++					"on-chip GET_APPLICATION_INFO failed\n");
++			else
++				input_info(true, tcm_hcd->pdev->dev.parent,
++					"on-chip GET_APPLICATION_INFO ok\n");
++			syna_tcm_enable_touch_report(tcm_hcd);
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
+ 			goto error_secure_memcpy;
+ 		}
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -91,6 +91,40 @@ bool shutdown_is_on_going_tsp;
+ DECLARE_COMPLETION(response_complete);
+ 
+ static int syna_tcm_sensor_detection(struct syna_tcm_hcd *tcm_hcd);
+ static void syna_tcm_check_hdl(struct syna_tcm_hcd *tcm_hcd,
+ 							unsigned char id);
++
++/* Clock leftover bytes after a failed ROMBOOT 0x45 / identify-as-reset.
++ * 0xa0 padding is a shifted frame; ATTN stays asserted until the host
++ * reads. Must run with rw_ctrl_mutex held.
++ */
++static void syna_tcm_spi_drain_locked(struct syna_tcm_hcd *tcm_hcd)
++{
++	unsigned char buf[MIN_READ_LENGTH];
++	int i, n = 0;
++	unsigned char last = 0;
++
++	for (i = 0; i < 32; i++) {
++		if (syna_tcm_read(tcm_hcd, buf, sizeof(buf)) < 0)
++			break;
++		n++;
++		last = buf[0];
++		if (last == MESSAGE_MARKER || last == 0x00 || last == 0xff)
++			break;
++	}
++	if (n)
++		input_info(true, tcm_hcd->pdev->dev.parent,
++			"SPI drain %d reads, last marker=0x%02x\n", n, last);
++}
++
++int syna_tcm_spi_resync(struct syna_tcm_hcd *tcm_hcd)
++{
++	if (!tcm_hcd)
++		return 0;
++	mutex_lock(&tcm_hcd->rw_ctrl_mutex);
++	syna_tcm_spi_drain_locked(tcm_hcd);
++	mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
++	return 0;
++}
+ int syna_tcm_add_module(struct syna_tcm_module_cb *mod_cb, bool insert)
+ {
+ 	struct syna_tcm_module_handler *mod_handler;

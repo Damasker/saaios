@@ -40,11 +40,11 @@ Stock **DTB + kernel** in `boot.img` (`4.19.111-27127798`). Our ramdisk only. Vb
 |-------|--------|
 | PID 1 | our `/init` + BusyBox |
 | Display | `fb0` text splash (unblank **once**) |
-| USB | RNDIS `0525:A4A2`; telnet **23 / 2323**; httpd **8080** |
+| USB | RNDIS `0525:A4A2`; telnet **23 / 2323**; dropbear **22** |
 | Volume | `event1` `gpio_keys` — live |
 | Power key | `event2` `sec-pmic-key` — live |
-| Touch | `event3` `sec_touchscreen` TD4150 `spi1.2` — **node exists, silent** |
-| TSP IRQ | **244** stuck at **7**; IC not scanning (`REPORT_TOUCH` never arrives) |
+| Touch | **`event6`** `sec_touchscreen` TD4150 `spi1.2` — node exists after 0x45→0x02; **silent** (was event3 on stock/v011) |
+| TSP IRQ | **244** stuck at **3** after firmware start; `REPORT_TOUCH` never arrives. See [kernel-touch.md](kernel-touch.md) |
 | Resume | `in_hdl_mode` + idle HDL → skip `do_reset` / `CMD_REZERO` |
 | Poweroff | ramdisk `/sys/power/state` = **`freeze mem` only** |
 | Unbind TSP | **destructive** until reboot (`event3` gone) |

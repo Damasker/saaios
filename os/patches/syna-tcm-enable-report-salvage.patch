@@ -1,0 +1,154 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: salvage ENABLE_REPORT; no early 0x05; no 0x25 hammer
+
+v017 probe lived (0x20 ok, skip second identify, mod_resume end) but
+touch stayed deaf. Live sequence after on-chip 0x20:
+
+  Command = 0x05
+  Timed out waiting for response (command 0x05)
+  SPI drain 1 reads, last marker=0xa5   # MESSAGE_MARKER!
+  Command = 0x25 (timeout + drain + retry timeout)
+
+0xa5 is MESSAGE_MARKER — STATUS_OK for ENABLE_REPORT was sitting unread
+(IRQ miss). Partial SPI drain consumed only the marker byte and left the
+rest of the frame on the bus, so GET_TOUCH_REPORT_CONFIG (0x25) desynced.
+report_touch_cmd_sent was set even on failure, so resume never retried.
+
+v018:
+1. Do not ENABLE_REPORT in the HDL skip path (too early; burns 1s).
+2. On ENABLE_REPORT timeout: full read_message to salvage STATUS_OK;
+   never partial SPI drain. Only set report_touch_cmd_sent on success.
+3. Under USE_DEFAULT_TOUCH_REPORT_CONFIG: one 0x25 attempt, no retry/drain;
+   on fail install a synthetic default report config for parse.
+4. Resume can still ENABLE_REPORT if not yet successfully sent.
+
+Applies after syna-tcm-drain-not-at-probe.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -1222,7 +1222,8 @@ static void zeroflash_do_romboot_firmware_download(void)
+ 			else
+ 				input_info(true, tcm_hcd->pdev->dev.parent,
+ 					"on-chip GET_APPLICATION_INFO ok\n");
+-			syna_tcm_enable_touch_report(tcm_hcd);
++			/* v018: do not ENABLE_REPORT here — early 0x05 times
++			 * out, partial drain desyncs the bus before touch_init.
++			 */
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
+ 			goto error_secure_memcpy;
+ 		}
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -2186,19 +2186,33 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 	resp_buf = NULL;
+ 	resp_buf_size = 0;
+ 
+ 	retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
+ 			&report_id, 1, &resp_buf, &resp_buf_size,
+ 			&resp_length, NULL, 0);
+-	tcm_hcd->report_touch_cmd_sent = true;
+ 	if (retval < 0) {
+-		input_err(true, tcm_hcd->pdev->dev.parent,
+-			"Failed to enable REPORT_TOUCH\n");
+-		/* Command bytes went out; unread STATUS_OK holds ATTN. */
+-		syna_tcm_spi_resync(tcm_hcd);
+-		retval = 0;
+-	} else
++		/* Timeout often means STATUS_OK sat unread (IRQ miss).
++		 * Full read_message consumes the frame. Partial SPI drain
++		 * only clocks the 0xa5 marker and desyncs the next command.
++		 */
++		kfree(resp_buf);
++		resp_buf = NULL;
++		if (tcm_hcd->read_message(tcm_hcd, NULL, 0) == 0 &&
++				tcm_hcd->status_report_code == STATUS_OK) {
++			input_info(true, tcm_hcd->pdev->dev.parent,
++				"enabled REPORT_TOUCH (salvaged)\n");
++			tcm_hcd->report_touch_cmd_sent = true;
++			return 0;
++		}
++		input_err(true, tcm_hcd->pdev->dev.parent,
++			"Failed to enable REPORT_TOUCH\n");
++		/* One more full read to drop ATTN; do not SPI-drain. */
++		tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		return 0;
++	}
++
++	tcm_hcd->report_touch_cmd_sent = true;
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+ 			"enabled REPORT_TOUCH\n");
+ 
+ 	kfree(resp_buf);
+ 	return retval;
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
+@@ -971,25 +971,46 @@ static int touch_get_input_params(void)
+ 		touch_hcd->max_y = temp;
+ 	}
+ 
+ 	LOCK_BUFFER(tcm_hcd->config);
+ 
++#ifdef USE_DEFAULT_TOUCH_REPORT_CONFIG
++	/* One attempt only. Retry+SPI-drain after a failed 0x05 left the bus
++	 * desynced (marker 0xa5 partial read). On fail, install the same
++	 * layout touch_set_report_config would SET.
++	 */
+ 	retval = tcm_hcd->write_message(tcm_hcd, CMD_GET_TOUCH_REPORT_CONFIG,
+ 				NULL, 0, &tcm_hcd->config.buf, &tcm_hcd->config.buf_size,
+ 				&tcm_hcd->config.data_length, NULL, 0);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+-				"Failed to write command %s\n", STR(CMD_GET_TOUCH_REPORT_CONFIG));
+-		UNLOCK_BUFFER(tcm_hcd->config);
+-		syna_tcm_spi_resync(tcm_hcd);
+-		LOCK_BUFFER(tcm_hcd->config);
+-		retval = tcm_hcd->write_message(tcm_hcd, CMD_GET_TOUCH_REPORT_CONFIG,
+-					NULL, 0, &tcm_hcd->config.buf, &tcm_hcd->config.buf_size,
+-					&tcm_hcd->config.data_length, NULL, 0);
+-		if (retval < 0) {
+-			input_err(true, tcm_hcd->pdev->dev.parent,
+-				"CMD_GET_TOUCH_REPORT_CONFIG retry failed\n");
+-			UNLOCK_BUFFER(tcm_hcd->config);
+-			return 0;
++			"Failed to write command %s — using default config\n",
++			STR(CMD_GET_TOUCH_REPORT_CONFIG));
++		{
++			static const unsigned char def_cfg[] = {
++				TOUCH_FACE_DETECT, 8,
++				TOUCH_REPORT_DISPLAY_DEEP_SLEEP_STATE, 8,
++				TOUCH_FOREACH_ACTIVE_OBJECT,
++				TOUCH_OBJECT_N_INDEX, 4,
++				TOUCH_OBJECT_N_CLASSIFICATION, 4,
++				TOUCH_OBJECT_N_X_POSITION, 12,
++				TOUCH_OBJECT_N_Y_POSITION, 12,
++				TOUCH_FOREACH_END,
++				TOUCH_END,
++			};
++			retval = syna_tcm_alloc_mem(tcm_hcd, &tcm_hcd->config,
++						sizeof(def_cfg));
++			if (retval < 0) {
++				UNLOCK_BUFFER(tcm_hcd->config);
++				return 0;
++			}
++			memcpy(tcm_hcd->config.buf, def_cfg, sizeof(def_cfg));
++			tcm_hcd->config.data_length = sizeof(def_cfg);
++			input_info(true, tcm_hcd->pdev->dev.parent,
++				"default touch report config %u bytes\n",
++				(unsigned int)sizeof(def_cfg));
+ 		}
+ 	}
++#else
++	retval = tcm_hcd->write_message(tcm_hcd, CMD_GET_TOUCH_REPORT_CONFIG,
++				NULL, 0, &tcm_hcd->config.buf, &tcm_hcd->config.buf_size,
++				&tcm_hcd->config.data_length, NULL, 0);
++	if (retval < 0) {
++		input_err(true, tcm_hcd->pdev->dev.parent,
++				"Failed to write command %s\n", STR(CMD_GET_TOUCH_REPORT_CONFIG));
++		UNLOCK_BUFFER(tcm_hcd->config);
++		return 0;
++	}
++#endif
+ 
+ 	UNLOCK_BUFFER(tcm_hcd->config);
+ 
+ 	return 0;

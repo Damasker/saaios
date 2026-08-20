@@ -1,0 +1,409 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since30 stock 24-bit 0x45 + SPI CONTINUE
+
+since29 put tcm_u16=4080 on each 0x45/CONTINUE packet. IC treated that
+as the command length, IDENTIFYd after 4k, mode 0x02, and we stopped
+because RomBoot was gone (remaining=93214).
+
+u16=4080 is the SPI chunk size, not the TCM command length. Stock
+write_message sets buf[1/2] = length (image+14 = 97294) which wraps
+to 31758. reserved[0] = size>>16 (=0x01) makes a 24-bit length:
+(0x01<<16)|31758 = 97294.
+
+Chunking belongs inside one write_message(0x45, full_buf, image+14)
+via HDL_WR_CHUNK_SIZE / CMD_CONTINUE_WRITE: first frame keeps stock
+header, later SPI pages are CONTINUE with no new u16. Clock all
+97294 bytes. IDENTIFY/0x1b after a SPI page is not firmware-started
+unless remaining==0.
+
+Keep: first drain, no lcd_rst, no IRQ printk flood, no ENABLE_REPORT
+0x05, no do_polling, no IRQ unwind.
+
+Applies after syna-tcm-romboot-per-chunk-u16.patch.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 20:10:06.280012502 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 20:11:49.866607690 -0400
+@@ -929,18 +929,13 @@
+ 			case CMD_ENTER_PRODUCTION_TEST_MODE:
+ 			case CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE:
+ 			case CMD_ROMBOOT_DOWNLOAD:
+-				/* IDENTIFY completes this 0x45/CONTINUE
+-				 * packet. Abort only if mode left RomBoot
+-				 * (0x04) and we already sent a wrapped TCM
+-				 * u16 (the since23/28 class of bug).
++				/* IDENTIFY completes this wait. That can be a
++				 * SPI chunk, not the whole image. Firmware
++				 * started only after remaining==0 (all
++				 * image+14 bytes clocked). Never abort the
++				 * CONTINUE loop because mode left 0x04.
+ 				 */
+-				if (tcm_hcd->romboot_download_active &&
+-						tcm_hcd->romboot_remaining > 0 &&
+-						tcm_hcd->id_info.mode != MODE_ROMBOOTLOADER &&
+-						tcm_hcd->romboot_wrapped_u16)
+-					tcm_hcd->response_code = REPORT_IDENTIFY;
+-				else
+-					tcm_hcd->response_code = STATUS_OK;
++				tcm_hcd->response_code = STATUS_OK;
+ 				atomic_set(&tcm_hcd->command_status, CMD_IDLE);
+ 				complete(&response_complete);
+ 				break;
+@@ -982,11 +977,9 @@
+ 		}
+ 	}
+ 
+-	/* HDL-v2 / RomBoot: after each 0x45 chunk the IC signals with
+-	 * REPORT_STATUS 0x1b (or STATUS_OK). write_message waits for a
+-	 * matching command response and would ignore 0x1b. Treat 0x1b as
+-	 * chunk-complete, same as STATUS_OK. If chunks remain, that is
+-	 * not download-finished — do not skip-0x30 / helper / reinit.
++	/* HDL-v2 / RomBoot: 0x1b can complete a SPI CONTINUE chunk, not
++	 * the whole 0x45 image. Treat as STATUS_OK so write_message can
++	 * keep clocking until remaining==0. Do not skip-0x30 / helper.
+ 	 */
+ 	if (tcm_hcd->romboot_download_active &&
+ 			atomic_read(&tcm_hcd->command_status) == CMD_BUSY &&
+@@ -1618,9 +1611,6 @@
+ 	unsigned int command_status;
+ 	unsigned int response_timeout_ms;
+ 	unsigned char chunk_status;
+-	unsigned int tcm_u16;
+-	unsigned int payload_off;
+-	unsigned char pkt_cmd;
+ 	bool is_romboot_hdl = (command == CMD_ROMBOOT_DOWNLOAD) ? true : false;
+ 	bool is_hdl_reset = (command == CMD_RESET) && (tcm_hcd->in_hdl_mode);
+ 
+@@ -1698,12 +1688,12 @@
+ 		unsigned int cap = HDL_WR_CHUNK_SIZE;
+ 
+ 		/*
+-		 * TCM command length is u16. ROMBOOT_APP_CODE is 97280+14;
+-		 * HDL_WR_CHUNK_SIZE=0 sent one frame whose length bytes
+-		 * wrapped (97294 & 0xffff = 31758). Chunk to PAGE_SIZE,
+-		 * 16-byte aligned. Stock: chunk_space = cap-1 then align
+-		 * to ROMBOOT_DOWNLOAD_UNIT (16). SPI write is xfer+1
+-		 * (command byte); payload space stays 4080, not 4081.
++		 * Stock write_message: remaining = length+2 so the TCM u16
++		 * lives in the first SPI frame. buf[1/2] = length (image+14),
++		 * which wraps (97294 & 0xffff = 31758). reserved[0] = size>>16
++		 * makes a 24-bit length: (0x01<<16)|31758 = 97294. Chunking
++		 * is HDL_WR_CHUNK_SIZE / CONTINUE_WRITE for SPI only — do
++		 * not put this-chunk size in the TCM header.
+ 		 */
+ 		if (!cap)
+ 			cap = PAGE_SIZE;
+@@ -1715,22 +1705,10 @@
+ 			chunk_space = ROMBOOT_DOWNLOAD_UNIT;
+ 		tcm_hcd->romboot_download_active = true;
+ 		tcm_hcd->romboot_chunks_left = 0;
+-		/* Payload bytes only. Stock remaining=length+2 puts the TCM
+-		 * u16 in the stream and writes TOTAL (image+14) into that
+-		 * field, which wraps (97294 & 0xffff = 31758). Each packet
+-		 * is its own TCM message: u16 = this xfer.
+-		 */
+-		remaining_length = length;
+ 		tcm_hcd->romboot_remaining = remaining_length;
+ 		tcm_hcd->romboot_aborted_early = false;
+-		tcm_hcd->romboot_wrapped_u16 = false;
+-		tcm_u16 = remaining_length > chunk_space ?
+-			chunk_space : remaining_length;
+ 		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 chunk_space=%u remaining=%u\n",
+ 			chunk_space, remaining_length);
+-		pr_info("SAaiOS_TOUCH_DBG: 0x45 header total=%u tcm_u16=%u payload0=0x%02x chunk_space=%u\n",
+-			length, tcm_u16,
+-			payload ? payload[0] : 0, chunk_space);
+ 	}
+ 
+ 	chunks = ceil_div(remaining_length, chunk_space);
+@@ -1747,8 +1725,7 @@
+ 		else
+ 			xfer_length = remaining_length;
+ 
+-		retval = syna_tcm_alloc_mem(tcm_hcd, &tcm_hcd->out,
+-				is_romboot_hdl ? xfer_length + 3 : xfer_length + 1);
++		retval = syna_tcm_alloc_mem(tcm_hcd, &tcm_hcd->out, xfer_length + 1);
+ 		if (retval < 0) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to allocate memory for tcm_hcd->out.buf\n");
+@@ -1757,34 +1734,12 @@
+ 			goto exit;
+ 		}
+ 
+-		if (is_romboot_hdl) {
+-			/* Per-chunk TCM message: first CMD 0x45 + u16=xfer,
+-			 * later CMD_CONTINUE_WRITE 0x01 + u16=xfer. Image
+-			 * total lives in the 14-byte prefix, never here.
+-			 * Stock write_message puts image+14 in this u16 and
+-			 * wraps (97294 -> 31758) — do not copy that.
+-			 */
+-			tcm_u16 = xfer_length;
+-			payload_off = length - remaining_length;
+-			pkt_cmd = (idx == 0) ? command : CMD_CONTINUE_WRITE;
+-			tcm_hcd->out.buf[0] = pkt_cmd;
+-			tcm_hcd->out.buf[1] = (unsigned char)tcm_u16;
+-			tcm_hcd->out.buf[2] = (unsigned char)(tcm_u16 >> 8);
+-			if (xfer_length) {
+-				retval = secure_memcpy(&tcm_hcd->out.buf[3],
+-							tcm_hcd->out.buf_size - 3,
+-							&payload[payload_off],
+-							remaining_length, xfer_length);
+-				if (retval < 0) {
+-					input_err(true, tcm_hcd->pdev->dev.parent, "Failed to copy payload\n");
+-					UNLOCK_BUFFER(tcm_hcd->out);
+-					mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
+-					goto exit;
+-				}
+-			}
+-			pr_info("SAaiOS_TOUCH_DBG: 0x45 chunk %u/%u len=%u tcm_u16=%u cmd=0x%02x\n",
+-				idx, chunks, xfer_length, tcm_u16, pkt_cmd);
+-		} else if (idx == 0) {
++		/* Stock: first frame is command + u16 TOTAL payload length.
++		 * Later frames are CMD_CONTINUE_WRITE + payload only (no new
++		 * TCM u16). 0x45 uses this same loop; PAGE_SIZE/16-aligned
++		 * chunk_space only limits SPI xfer, not the header length.
++		 */
++		if (idx == 0) {
+ 			tcm_hcd->out.buf[0] = command;
+ 			tcm_hcd->out.buf[1] = (unsigned char)length;
+ 			tcm_hcd->out.buf[2] = (unsigned char)(length >> 8);
+@@ -1800,6 +1755,9 @@
+ 					goto exit;
+ 				}
+ 			}
++			if (is_romboot_hdl)
++				pr_info("SAaiOS_TOUCH_DBG: 0x45 tcm_u16=%u total=%u\n",
++					length & 0xffff, length);
+ 		} else {
+ 			tcm_hcd->out.buf[0] = CMD_CONTINUE_WRITE;
+ 
+@@ -1814,8 +1772,7 @@
+ 			}
+ 		}
+ 
+-		retval = syna_tcm_write(tcm_hcd, tcm_hcd->out.buf,
+-				is_romboot_hdl ? xfer_length + 3 : xfer_length + 1);
++		retval = syna_tcm_write(tcm_hcd, tcm_hcd->out.buf, xfer_length + 1);
+ 		if (retval < 0) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent, "Failed to write to device\n");
+ 			UNLOCK_BUFFER(tcm_hcd->out);
+@@ -1828,104 +1785,80 @@
+ 		if (is_romboot_hdl) {
+ 			tcm_hcd->romboot_chunks_left = chunks - idx - 1;
+ 			tcm_hcd->romboot_remaining = remaining_length;
+-
+-			UNLOCK_BUFFER(tcm_hcd->out);
+-			mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
+-
+-			/* Unmask so 0x1b / STATUS_OK / IDENTIFY can complete
+-			 * this chunk. Keep IRQ registered.
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 spi chunk %u remaining=%u\n",
++				idx, remaining_length);
++			/* IDENTIFY / 0x1b after this SPI page is not the end
++			 * of the image. Keep clocking CONTINUE until
++			 * remaining==0. Do not wait per page (stock).
+ 			 */
+-			syna_tcm_romboot_release_irq(tcm_hcd);
+-			if (!tcm_hcd->irq_enabled) {
+-				retval = tcm_hcd->enable_irq(tcm_hcd, true, NULL);
+-				if (retval < 0)
+-					pr_info("SAaiOS_TOUCH_DBG: 0x45 enable_irq retval=%d\n",
+-						retval);
+-			}
++		}
+ 
+-			response_timeout_ms = 3000;
+-			retval = wait_for_completion_timeout(&response_complete,
+-					msecs_to_jiffies(response_timeout_ms));
+-			if (retval == 0) {
+-				input_err(true, tcm_hcd->pdev->dev.parent,
+-					"Timed out waiting for response (command 0x%02x)\n",
+-					tcm_hcd->command);
+-				retval = -ETIME;
+-				goto exit;
+-			}
++		if (chunks > 1)
++			usleep_range(WRITE_DELAY_US_MIN, WRITE_DELAY_US_MAX);
++	}
+ 
+-			command_status = atomic_read(&tcm_hcd->command_status);
+-			chunk_status = tcm_hcd->status_report_code;
+-			pr_info("SAaiOS_TOUCH_DBG: 0x45 chunk %u/%u complete status=0x%02x remaining=%u\n",
+-				idx, chunks, chunk_status, remaining_length);
+-
+-			/* Do not abort on IDENTIFY unless mode left 0x04
+-			 * and we already sent a wrapped u16. 0x1b / 0x01
+-			 * with remaining>0 and mode still RomBoot: next
+-			 * chunk.
+-			 */
+-			if (remaining_length > 0 &&
+-					tcm_hcd->id_info.mode != MODE_ROMBOOTLOADER &&
+-					tcm_hcd->romboot_wrapped_u16) {
+-				pr_info("SAaiOS_TOUCH_DBG: 0x45 aborted early IDENTIFY remaining=%u mode=0x%02x\n",
+-					remaining_length, tcm_hcd->id_info.mode);
+-				tcm_hcd->romboot_aborted_early = true;
+-				retval = -EIO;
+-				goto exit;
+-			}
++	UNLOCK_BUFFER(tcm_hcd->out);
+ 
+-			if (remaining_length == 0)
+-				pr_info("SAaiOS_TOUCH_DBG: 0x45 all chunks done remaining=0\n");
++	mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
+ 
+-			if (command_status != CMD_IDLE) {
+-				input_err(true, tcm_hcd->pdev->dev.parent,
+-					"Failed to get valid response (command 0x%02x)\n",
+-					tcm_hcd->command);
+-				retval = -EIO;
+-				goto exit;
+-			}
++	if (is_romboot_hdl)
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 all bytes sent remaining=%u\n",
++			remaining_length);
+ 
+-			if (tcm_hcd->response_code != STATUS_OK) {
+-				retval = -EIO;
+-				goto exit;
+-			}
++	if (is_hdl_reset)
++		goto exit;
+ 
+-			if (remaining_length == 0)
+-				tcm_hcd->hdl_status_seen = true;
++	if (is_romboot_hdl) {
++		/* Unmask after the full payload is on the wire. IDENTIFY
++		 * is firmware-started only with remaining==0.
++		 */
++		syna_tcm_romboot_release_irq(tcm_hcd);
++		if (!tcm_hcd->irq_enabled) {
++			retval = tcm_hcd->enable_irq(tcm_hcd, true, NULL);
++			if (retval < 0)
++				pr_info("SAaiOS_TOUCH_DBG: 0x45 enable_irq retval=%d\n",
++					retval);
++		}
+ 
+-			if (idx + 1 < chunks) {
+-				if (tcm_hcd->id_info.mode != MODE_ROMBOOTLOADER) {
+-					pr_info("SAaiOS_TOUCH_DBG: 0x45 stop more chunks remaining=%u mode=0x%02x\n",
+-						remaining_length, tcm_hcd->id_info.mode);
+-					retval = -EIO;
+-					goto exit;
+-				}
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
+-				reinit_completion(&response_complete);
+-#else
+-				INIT_COMPLETION(response_complete);
+-#endif
+-				atomic_set(&tcm_hcd->command_status, CMD_BUSY);
+-				syna_tcm_romboot_hold_irq(tcm_hcd);
+-				mutex_lock(&tcm_hcd->rw_ctrl_mutex);
+-				LOCK_BUFFER(tcm_hcd->out);
+-				continue;
+-			}
+-			break;
++		if (remaining_length != 0) {
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 aborted early remaining=%u mode=0x%02x\n",
++				remaining_length, tcm_hcd->id_info.mode);
++			tcm_hcd->romboot_aborted_early = true;
++			retval = -EIO;
++			goto exit;
+ 		}
+ 
+-		if (chunks > 1)
+-			usleep_range(WRITE_DELAY_US_MIN, WRITE_DELAY_US_MAX);
+-	}
++		response_timeout_ms = 3000;
++		retval = wait_for_completion_timeout(&response_complete,
++				msecs_to_jiffies(response_timeout_ms));
++		if (retval == 0) {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Timed out waiting for response (command 0x%02x)\n",
++				tcm_hcd->command);
++			retval = -ETIME;
++			goto exit;
++		}
+ 
+-	if (!is_romboot_hdl) {
+-		UNLOCK_BUFFER(tcm_hcd->out);
++		command_status = atomic_read(&tcm_hcd->command_status);
++		chunk_status = tcm_hcd->status_report_code;
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 complete status=0x%02x remaining=%u mode=0x%02x\n",
++			chunk_status, remaining_length, tcm_hcd->id_info.mode);
+ 
+-		mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
++		if (command_status != CMD_IDLE) {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Failed to get valid response (command 0x%02x)\n",
++				tcm_hcd->command);
++			retval = -EIO;
++			goto exit;
++		}
+ 
+-		if (is_hdl_reset)
++		if (tcm_hcd->response_code != STATUS_OK) {
++			retval = -EIO;
+ 			goto exit;
++		}
+ 
++		tcm_hcd->hdl_status_seen = true;
++	} else {
+ 		if (tcm_hcd->do_polling && polling_delay_ms) {
+ 			queue_delayed_work(tcm_hcd->polling_workqueue, &tcm_hcd->polling_work,
+ 				msecs_to_jiffies(polling_delay_ms));
+@@ -1953,9 +1886,6 @@
+ 		}
+ 	}
+ 
+-	if (is_romboot_hdl && remaining_length == 0)
+-		tcm_hcd->hdl_status_seen = true;
+-
+ 	LOCK_BUFFER(tcm_hcd->resp);
+ 
+ 	if (tcm_hcd->response_code != STATUS_OK) {
+@@ -4230,6 +4160,7 @@
+ 	pr_info("SAaiOS_TOUCH_DBG: since27 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since28 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since29 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since30 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 20:10:06.280012502 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 20:11:49.866607690 -0400
+@@ -1294,17 +1294,13 @@
+ 
+ 	/* Stock 0x45 payload header is 14 reserved bytes:
+ 	 *   [0]     = image_size >> 16  (high byte of 24-bit TOTAL size)
+-	 *   [1]     = image_size >> 8
+-	 *   [2]     = image_size
+-	 *   [3..13] = 0
++	 *   [1..13] = 0
+ 	 *   [14..]  = firmware
+-	 * Image total lives here, not in the TCM u16 length. write_message
+-	 * must put this-chunk xfer in that u16 (never image+14, which
+-	 * wraps to 31758). First packet CMD 0x45, later CONTINUE 0x01.
++	 * 24-bit length is reserved[0]<<16 | TCM u16 (image+14).
++	 * write_message puts TOTAL payload in that u16 (31758), not
++	 * this-chunk size. CONTINUE_WRITE clocks the rest.
+ 	 */
+ 	out_buf[0] = (unsigned char)(image_size >> 16);
+-	out_buf[1] = (unsigned char)(image_size >> 8);
+-	out_buf[2] = (unsigned char)image_size;
+ 	pr_info("SAaiOS_TOUCH_DBG: 0x45 header size=%u blocks=%u reserved=14 [0]=0x%02x [1]=0x%02x [2]=0x%02x\n",
+ 		image_size, data_size_blocks, out_buf[0], out_buf[1], out_buf[2]);
+ 
+@@ -1347,6 +1343,12 @@
+ 	}
+ 
+ 	if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++		if (tcm_hcd->romboot_aborted_early) {
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 IDENTIFY not firmware started remaining>0 mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++			tcm_hcd->romboot_download_ok = false;
++			goto error_secure_memcpy;
++		}
+ 		tcm_hcd->romboot_download_ok = true;
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x45 complete IDENTIFY mode=0x%02x remaining=0 (firmware started)\n",
+ 			tcm_hcd->id_info.mode);

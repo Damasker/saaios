@@ -1,0 +1,508 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: REPORT_STATUS 0x1b copies fw_status and downloads config
+
+since18 discarded leftover REPORT_STATUS (0x1b payload 10 00) and then
+SPI-read while ATTN was already low, desyncing the bus. 10 00 is the HDL
+status frame: invalid=0 need_disp=0 need_app=0 hdl_version=2 osh=0.
+Stock zeroflash_syncbox copies fw_status and calls
+zeroflash_download_config() (CMD 0x30 APP_CONFIG), not ENABLE_REPORT 0x05
+and not another ROMBOOT 0x45.
+
+since19:
+- Fully-read 0x1b (IRQ or drain): copy fw_status + download_config.
+  Minimal zeroflash_hcd if skip-HDL never inited; never retry 0x45 when
+  already mode 0x02; do not set in_hdl_mode.
+- Drain stops immediately if ATTN is deasserted (same polarity as
+  attn=1 then 0 after the first good read). Never idle-bus SPI read.
+- If touch_init already ok, skip identify+touch_reinit (log skip). A
+  reinit timeout does not unwind IRQ.
+- No do_polling. No ENABLE_REPORT 0x05 as enable path.
+
+Applies after syna-tcm-onchip-clear-hdl-reinit.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -168,7 +168,8 @@
+ 
+ /* Drain leftover REPORT_STATUS (0x1b) / continued_read frames that hold
+  * level-ATTN. Full read_message (not marker-only). Max 8. Never start
+- * polling. Stop if the same plen>512 dump repeats.
++ * polling. Stop immediately if ATTN is already deasserted -- never SPI-read
++ * an idle bus. Stop if the same plen>512 dump repeats.
+  */
+ static int syna_tcm_drain_unread_reports(struct syna_tcm_hcd *tcm_hcd)
+ {
+@@ -188,8 +189,11 @@
+ 		unsigned char code;
+ 		unsigned int plen;
+ 
+-		if (i > 0 && !syna_tcm_attn_active(tcm_hcd))
++		if (!syna_tcm_attn_active(tcm_hcd)) {
++			pr_info("SAaiOS_TOUCH_DBG: drain unread stop idle bus i=%d attn=0 gpio=%d\n",
++				i, syna_tcm_attn_gpio_value(tcm_hcd));
+ 			break;
++		}
+ 
+ 		rc = tcm_hcd->read_message(tcm_hcd, NULL, 0);
+ 		code = tcm_hcd->status_report_code;
+@@ -202,7 +206,8 @@
+ 				syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
+ 				syna_tcm_attn_gpio_value(tcm_hcd));
+ 
+-		if (code == REPORT_STATUS && plen == 2) {
++		if (code == REPORT_STATUS && rc >= 0 &&
++				(plen == 2 || tcm_hcd->payload_fully_drained)) {
+ 			unsigned char b0 = 0, b1 = 0;
+ 
+ 			LOCK_BUFFER(tcm_hcd->in);
+@@ -214,6 +219,10 @@
+ 			UNLOCK_BUFFER(tcm_hcd->in);
+ 			pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS leftover payload %02x %02x\n",
+ 				b0, b1);
++			/* Stock: copy fw_status + zeroflash_download_config.
++			 * Flush here (probe context, mutex released).
++			 */
++			zeroflash_handle_report_status(tcm_hcd, true);
+ 		}
+ 
+ 		if (plen > 512) {
+@@ -262,9 +271,11 @@
+ 		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"identify timed out, continuing with on-chip FW\n");
++			pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail identify timeout (no IRQ unwind)\n");
+ 		} else {
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Application firmware is not running\n");
++			pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail (no IRQ unwind)\n");
+ 			return retval;
+ 		}
+ 	}
+@@ -273,6 +284,7 @@
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Failed to initialze touch reporting\n");
++		pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail (no IRQ unwind)\n");
+ 		return retval;
+ 	}
+ 
+@@ -579,13 +591,16 @@
+ 
+ 	tcm_hcd->report.id = tcm_hcd->status_report_code;
+ 
+-	/* report directly if touch report is received */
++		/* report directly if touch report is received */
+ 	if (tcm_hcd->report.id == REPORT_TOUCH) {
+ 		if (tcm_hcd->report_touch)
+ 			tcm_hcd->report_touch();
+ 
+ 	} else {
+ 
++		if (tcm_hcd->report.id == REPORT_STATUS)
++			zeroflash_handle_report_status(tcm_hcd, false);
++
+ 		/* once an identify report is received, */
+ 		/* reinitialize touch in case any changes */
+ 		if ((tcm_hcd->report.id == REPORT_IDENTIFY) &&
+@@ -3263,12 +3278,18 @@
+ 	}
+ 
+ 	if (IS_FW_MODE(tcm_hcd->id_info.mode) && !tcm_hcd->in_hdl_mode) {
+-		pr_info("SAaiOS_TOUCH_DBG: resume identify+touch_reinit (no ENABLE_REPORT) mode=0x%02x\n",
+-			tcm_hcd->id_info.mode);
+-		retval = syna_tcm_identify_touch_reinit(tcm_hcd);
+-		if (retval < 0)
+-			input_err(true, tcm_hcd->pdev->dev.parent,
+-				"Failed to reinit touch reporting\n");
++		if (tcm_hcd->report_touch_cmd_sent) {
++			pr_info("SAaiOS_TOUCH_DBG: resume touch_reinit skip (touch_init already ok)\n");
++		} else {
++			pr_info("SAaiOS_TOUCH_DBG: resume identify+touch_reinit (no ENABLE_REPORT) mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++			retval = syna_tcm_identify_touch_reinit(tcm_hcd);
++			if (retval < 0) {
++				input_err(true, tcm_hcd->pdev->dev.parent,
++					"Failed to reinit touch reporting\n");
++				pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail (no IRQ unwind)\n");
++			}
++		}
+ 		goto mod_resume;
+ 	}
+ 
+@@ -3957,12 +3978,19 @@
+ 		goto err_tcm_identify;
+ 	}
+ 
+-	/* Stock HDL-complete helper: identify + touch_reinit, not 0x05. */
+-	if (IS_FW_MODE(tcm_hcd->id_info.mode) && !tcm_hcd->in_hdl_mode) {
++	/* Stock HDL-complete helper is identify + touch_reinit. Skip if
++	 * touch_init already set init_touch_ok / report_touch_cmd_sent.
++	 * A redundant reinit timeout must not unwind IRQ.
++	 */
++	if (tcm_hcd->report_touch_cmd_sent) {
++		pr_info("SAaiOS_TOUCH_DBG: touch_reinit skip (touch_init already ok)\n");
++	} else if (IS_FW_MODE(tcm_hcd->id_info.mode) && !tcm_hcd->in_hdl_mode) {
+ 		retval = syna_tcm_identify_touch_reinit(tcm_hcd);
+-		if (retval < 0)
++		if (retval < 0) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"on-chip identify+touch_reinit failed\n");
++			pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail (no IRQ unwind)\n");
++		}
+ 	}
+ 
+ 	retval = sec_fn_init(tcm_hcd);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+@@ -663,6 +663,7 @@
+ void sec_run_rawdata(struct syna_tcm_hcd *tcm_hcd);
+ int zeroflash_init(struct syna_tcm_hcd *tcm_hcd);
+ int zeroflash_remove(struct syna_tcm_hcd *tcm_hcd);
++int zeroflash_handle_report_status(struct syna_tcm_hcd *tcm_hcd, bool wait);
+ int syna_tcm_power_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ int syna_tcm_reset_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ void touch_free_objects(void);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -201,6 +201,8 @@
+ 	struct syna_tcm_buffer out;
+ 	struct syna_tcm_buffer resp;
+ 	struct syna_tcm_hcd *tcm_hcd;
++	bool config_attempted;
++	int last_config_retval;
+ };
+ 
+ static void zeroflash_do_romboot_firmware_download(void);
+@@ -558,13 +560,14 @@
+ {
+ 	struct firmware_status *fw_status;
+ 	struct syna_tcm_hcd *tcm_hcd = zeroflash_hcd->tcm_hcd;
++	bool need_cfg;
+ 
+ 	fw_status = &zeroflash_hcd->fw_status;
++	need_cfg = fw_status->need_app_config || fw_status->need_disp_config
++			|| (fw_status->need_open_short_config
++			&& zeroflash_hcd->has_open_short_config);
+ 
+-	if (!fw_status->need_app_config && !fw_status->need_disp_config
+-			&& !(fw_status->need_open_short_config
+-			&& zeroflash_hcd->has_open_short_config)
+-			&& (atomic_read(&tcm_hcd->host_downloading))) {
++	if (!need_cfg && atomic_read(&tcm_hcd->host_downloading)) {
+ 
+ 		if (atomic_read(&tcm_hcd->helper.task) == HELP_NONE) {
+ 			atomic_set(&tcm_hcd->helper.task, HELP_SEND_REINIT_NOTIFICATION);
+@@ -574,6 +577,14 @@
+ 		return;
+ 	}
+ 
++	/* Config download does not require in_hdl_mode or host_downloading.
++	 * Skip-HDL on 0x02 clears those flags; the IC still asks via 0x1b.
++	 */
++	if (need_cfg) {
++		queue_work(zeroflash_hcd->workqueue, &zeroflash_hcd->config_work);
++		return;
++	}
++
+ 	if (atomic_read(&tcm_hcd->host_downloading))
+ 		queue_work(zeroflash_hcd->workqueue, &zeroflash_hcd->config_work);
+ 
+@@ -894,6 +905,7 @@
+ 
+ 	retval = zeroflash_get_fw_image();
+ 	if (retval < 0) {
++		zeroflash_hcd->last_config_retval = retval;
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to get firmware image\n");
+ 		return;
+@@ -903,6 +915,7 @@
+ 
+ 	if (zeroflash_hcd->fw_status.need_app_config) {
+ 		retval = zeroflash_download_app_config();
++		zeroflash_hcd->last_config_retval = retval;
+ 		if (retval < 0) {
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+@@ -914,6 +927,7 @@
+ 
+ 	if (zeroflash_hcd->fw_status.need_disp_config) {
+ 		retval = zeroflash_download_disp_config();
++		zeroflash_hcd->last_config_retval = retval;
+ 		if (retval < 0) {
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+@@ -927,6 +941,7 @@
+ 			zeroflash_hcd->has_open_short_config) {
+ 
+ 		retval = zeroflash_download_open_short_config();
++		zeroflash_hcd->last_config_retval = retval;
+ 		if (retval < 0) {
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+@@ -936,6 +951,8 @@
+ 		goto exit;
+ 	}
+ 
++	zeroflash_hcd->last_config_retval = 0;
++
+ exit:
+ 	input_info(true, tcm_hcd->pdev->dev.parent, "End of config download\n");
+ 
+@@ -1235,13 +1252,9 @@
+ 	return;
+ }
+ 
+-int zeroflash_init(struct syna_tcm_hcd *tcm_hcd)
++static int zeroflash_ensure_hcd(struct syna_tcm_hcd *tcm_hcd)
+ {
+-	int retval = 0;
+-	int idx;
+-
+-	zeroflash_hcd = NULL;
+-	if (!(tcm_hcd->in_hdl_mode))
++	if (zeroflash_hcd)
+ 		return 0;
+ 
+ 	zeroflash_hcd = kzalloc(sizeof(*zeroflash_hcd), GFP_KERNEL);
+@@ -1256,6 +1269,8 @@
+ 	zeroflash_hcd->has_hdl = false;
+ 	zeroflash_hcd->f35_ready = false;
+ 	zeroflash_hcd->has_open_short_config = false;
++	zeroflash_hcd->config_attempted = false;
++	zeroflash_hcd->last_config_retval = 0;
+ 
+ 	INIT_BUFFER(zeroflash_hcd->out, false);
+ 	INIT_BUFFER(zeroflash_hcd->resp, false);
+@@ -1265,21 +1280,161 @@
+ 	INIT_WORK(&zeroflash_hcd->config_work,
+ 			zeroflash_download_config_work);
+ 
++	return 0;
++}
++
++int zeroflash_handle_report_status(struct syna_tcm_hcd *tcm_hcd, bool wait)
++{
++	int retval;
++	unsigned char raw[2] = {0, 0};
++	unsigned char *src = NULL;
++	unsigned int src_size = 0;
++	struct firmware_status *st;
++	bool need_cfg;
++	unsigned char mode_before;
++	int ran = 0;
++
++	if (!tcm_hcd)
++		return 0;
++
++	{
++		int created = zeroflash_hcd ? 0 : 1;
++
++		retval = zeroflash_ensure_hcd(tcm_hcd);
++		if (retval < 0) {
++			pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 retval=%d mode=0x%02x\n",
++				retval, tcm_hcd->id_info.mode);
++			return retval;
++		}
++		if (created)
++			pr_info("SAaiOS_TOUCH_DBG: zeroflash config-only init (no ROMBOOT 0x45)\n");
++	}
++
++	if (zeroflash_hcd->config_attempted) {
++		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 already attempted retval=%d mode=0x%02x\n",
++			zeroflash_hcd->last_config_retval, tcm_hcd->id_info.mode);
++		if (wait && zeroflash_hcd->workqueue &&
++				current->pid != tcm_hcd->isr_pid)
++			flush_workqueue(zeroflash_hcd->workqueue);
++		return 0;
++	}
++
++	if (tcm_hcd->report.buffer.buf && tcm_hcd->report.buffer.buf_size >= 2) {
++		src = tcm_hcd->report.buffer.buf;
++		src_size = tcm_hcd->report.buffer.buf_size;
++		retval = secure_memcpy((unsigned char *)&zeroflash_hcd->fw_status,
++				sizeof(zeroflash_hcd->fw_status),
++				src, src_size,
++				sizeof(zeroflash_hcd->fw_status));
++	} else {
++		LOCK_BUFFER(tcm_hcd->in);
++		if (tcm_hcd->in.buf &&
++				tcm_hcd->in.buf_size >= MESSAGE_HEADER_SIZE + 2) {
++			src = &tcm_hcd->in.buf[MESSAGE_HEADER_SIZE];
++			src_size = tcm_hcd->in.buf_size - MESSAGE_HEADER_SIZE;
++			retval = secure_memcpy((unsigned char *)&zeroflash_hcd->fw_status,
++					sizeof(zeroflash_hcd->fw_status),
++					src, src_size,
++					sizeof(zeroflash_hcd->fw_status));
++		} else {
++			retval = -EINVAL;
++		}
++		UNLOCK_BUFFER(tcm_hcd->in);
++	}
++
++	if (retval < 0 || !src) {
++		pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS fw_status missing payload mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		if (retval < 0)
++			input_err(true, tcm_hcd->pdev->dev.parent,
++					"Failed to copy firmware status\n");
++		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 retval=%d mode=0x%02x\n",
++			retval < 0 ? retval : -EINVAL, tcm_hcd->id_info.mode);
++		return retval < 0 ? retval : -EINVAL;
++	}
++
++	{
++		unsigned char *fs = (unsigned char *)&zeroflash_hcd->fw_status;
++
++		raw[0] = fs[0];
++		raw[1] = fs[1];
++	}
++	st = &zeroflash_hcd->fw_status;
++	pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS fw_status %02x %02x inv=%u disp=%u app=%u hdlv=%u osh=%u\n",
++		raw[0], raw[1],
++		st->invalid_static_config, st->need_disp_config,
++		st->need_app_config, st->hdl_version,
++		st->need_open_short_config);
++
++	need_cfg = st->need_app_config || st->need_disp_config
++			|| (st->need_open_short_config
++			&& zeroflash_hcd->has_open_short_config);
++
++	/*
++	 * 10 00 = HDL v2, need_* bits clear. On-chip 0x02 after skipped 0x45
++	 * still needs APP_CONFIG via CMD_DOWNLOAD_CONFIG (0x30), not ROMBOOT.
++	 * Do not set in_hdl_mode; do not retry 0x45.
++	 */
++	if (!need_cfg && IS_FW_MODE(tcm_hcd->id_info.mode) && st->hdl_version
++			&& !zeroflash_hcd->config_attempted) {
++		st->need_app_config = 1;
++		need_cfg = 1;
++		pr_info("SAaiOS_TOUCH_DBG: on-chip 0x1b hdlv=%u force need_app_config\n",
++			st->hdl_version);
++	}
++
++	/* Keep in_hdl_mode as-is (since18 cleared it). Never set it here. */
++	mode_before = tcm_hcd->id_info.mode;
++	zeroflash_hcd->config_attempted = true;
++	zeroflash_hcd->last_config_retval = 0;
++	ran = 1;
++	zeroflash_download_config();
++
++	if (wait && need_cfg && zeroflash_hcd->workqueue &&
++			current->pid != tcm_hcd->isr_pid)
++		flush_workqueue(zeroflash_hcd->workqueue);
++
++	pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=%d need_cfg=%d wait=%d retval=%d mode=0x%02x->0x%02x in_hdl_mode=%d\n",
++		ran, need_cfg ? 1 : 0, wait ? 1 : 0,
++		zeroflash_hcd->last_config_retval,
++		mode_before, tcm_hcd->id_info.mode,
++		tcm_hcd->in_hdl_mode ? 1 : 0);
++
++	return zeroflash_hcd->last_config_retval;
++}
++
++int zeroflash_init(struct syna_tcm_hcd *tcm_hcd)
++{
++	int retval = 0;
++	int idx;
++
++	if (!zeroflash_hcd) {
++		if (!(tcm_hcd->in_hdl_mode))
++			return 0;
++		retval = zeroflash_ensure_hcd(tcm_hcd);
++		if (retval < 0)
++			return retval;
++	}
++
+ 	if (ENABLE_SYS_ZEROFLASH == false)
+ 		goto init_finished;
+ 
+-	zeroflash_hcd->sysfs_dir = kobject_create_and_add(SYSFS_DIR_NAME,
+-			tcm_hcd->sysfs_dir);
+ 	if (!zeroflash_hcd->sysfs_dir) {
+-		input_err(true, tcm_hcd->pdev->dev.parent,
+-				"Failed to create sysfs directory\n");
+-		return -EINVAL;
+-	}
++		zeroflash_hcd->sysfs_dir = kobject_create_and_add(SYSFS_DIR_NAME,
++				tcm_hcd->sysfs_dir);
++		if (!zeroflash_hcd->sysfs_dir) {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++					"Failed to create sysfs directory\n");
++			return -EINVAL;
++		}
+ 
+-	for (idx = 0; idx < ARRAY_SIZE(attrs); idx++) {
+-		retval = sysfs_create_file(zeroflash_hcd->sysfs_dir, &(*attrs[idx]).attr);
+-		if (retval < 0) {
+-			input_err(true, tcm_hcd->pdev->dev.parent, "Failed to create sysfs file\n");
++		for (idx = 0; idx < ARRAY_SIZE(attrs); idx++) {
++			retval = sysfs_create_file(zeroflash_hcd->sysfs_dir,
++					&(*attrs[idx]).attr);
++			if (retval < 0) {
++				input_err(true, tcm_hcd->pdev->dev.parent,
++					"Failed to create sysfs file\n");
++			}
+ 		}
+ 	}
+ 
+@@ -1291,6 +1446,14 @@
+ 			zeroflash_do_f35_firmware_download();
+ 			break;
+ 		case TYPE_ROMBOOT:
++			/* Do not retry failed ROMBOOT 0x45 if already in FW. */
++			if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++				tcm_hcd->sensor_type = TYPE_FLASH;
++				tcm_hcd->in_hdl_mode = false;
++				atomic_set(&tcm_hcd->host_downloading, 0);
++				pr_info("SAaiOS_TOUCH_DBG: on-chip 0x02, skip ROMBOOT 0x45 retry\n");
++				break;
++			}
+ 			zeroflash_do_romboot_firmware_download();
+ 			break;
+ 		default:
+@@ -1346,33 +1509,26 @@
+ 
+ static int zeroflash_syncbox(struct syna_tcm_hcd *tcm_hcd)
+ {
+-	int retval;
+-	unsigned char *fw_status;
+-
+-	if (!zeroflash_hcd)
++	if (!zeroflash_hcd && tcm_hcd->report.id != REPORT_STATUS)
+ 		return 0;
+ 
+ 	switch (tcm_hcd->report.id) {
+ 	case REPORT_STATUS:
+-		fw_status = (unsigned char *)&zeroflash_hcd->fw_status;
+-
+-		retval = secure_memcpy(fw_status,
+-				sizeof(zeroflash_hcd->fw_status),
+-				tcm_hcd->report.buffer.buf,
+-				tcm_hcd->report.buffer.buf_size,
+-				sizeof(zeroflash_hcd->fw_status));
+-
+-		if (retval < 0) {
+-			input_err(true, tcm_hcd->pdev->dev.parent,
+-					"Failed to copy firmware status\n");
+-			return retval;
+-		}
+-		zeroflash_download_config();
+-		break;
++		/* wait=false: may run in ISR thread; workqueue does CMD 0x30. */
++		return zeroflash_handle_report_status(tcm_hcd, false);
+ 	case REPORT_HDL_F35:
++		if (!zeroflash_hcd)
++			return 0;
+ 		zeroflash_do_f35_firmware_download();
+ 		break;
+ 	case REPORT_HDL_ROMBOOT:
++		if (!zeroflash_hcd)
++			return 0;
++		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++			pr_info("SAaiOS_TOUCH_DBG: skip ROMBOOT 0x45 retry already mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++			return 0;
++		}
+ 		zeroflash_do_romboot_firmware_download();
+ 		break;
+ 

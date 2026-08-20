@@ -1,0 +1,32 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: do not SPI-drain during probe read_message retry
+
+v016 added syna_tcm_spi_drain_locked() to read_message retry paths (bad
+marker / bad padding). On cold boot sensor_detection the first read often
+shows marker 0x00 (RomBoot). Draining before the stock usleep+retry shifts
+the bus and the second read returns report 0x03 → Failed to detect the
+sensor. IRQ never registers.
+
+Keep SPI drain only after probe: ISR failed read, ENABLE_REPORT timeout,
+GET_TOUCH_REPORT_CONFIG retry. Remove drain from read_message retry.
+
+Applies after syna-tcm-first-appinfo-resync.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -888,7 +888,6 @@ retry:
+ 		UNLOCK_BUFFER(tcm_hcd->in);
+ 		retval = -ENXIO;
+ 		if (retry) {
+-			syna_tcm_spi_drain_locked(tcm_hcd);
+ 			usleep_range(READ_RETRY_US_MIN, READ_RETRY_US_MAX);
+ 			retry = false;
+ 			goto retry;
+@@ -975,7 +974,6 @@ check_padding:
+ 			"Incorrect message padding byte (0x%02x)\n", tcm_hcd->in.buf[total_length - 1]);
+ 		UNLOCK_BUFFER(tcm_hcd->in);
+ 		if (retry) {
+-			syna_tcm_spi_drain_locked(tcm_hcd);
+ 			usleep_range(READ_RETRY_US_MIN, READ_RETRY_US_MAX);
+ 			retry = false;
+ 			goto retry;

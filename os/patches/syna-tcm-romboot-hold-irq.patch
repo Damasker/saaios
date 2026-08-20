@@ -1,0 +1,339 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since26 hold IRQ, first 0x45 drain, no LCD reset
+
+since25 first 0x45 still waited 3s (drain only on retry). Retry drain
+n=0 gpio=0 because IRQ owned the line, then skip-wait never sent 0x45.
+Pulse used gpio_lcd_rst (panel, not TSP). Reading 0x1b plen=2 does not
+drop ATTN; cap-8 drain cannot catch up; level IRQ storms ~10k/s.
+
+since26:
+- First 0x45: disable_irq (nosync from threaded ISR), force one
+  header+payload read of leftover ATTN, log once, chunked 0x45, then
+  enable_irq. If drain n=0 and gpio still 0, do not skip 0x45.
+- Never pulse gpio_lcd_rst. reset-gpio=-1 logs "no TSP reset".
+- First need_*=0 0x1b in RomBoot: idle flag + disable_irq until 0x45
+  finishes. Silent consume only. No printk per IRQ. No do_polling.
+- Keep: PAGE_SIZE 16-aligned 0x45 chunks, 0x30 only if need_*, skip-0x30
+  once, no ENABLE_REPORT 0x05, no IRQ unwind on timeout.
+- 0x45 success: IDENTIFY 0x02 = firmware started. Fail: romboot_ok=0,
+  IRQ stays registered, in_hdl_mode stock (RomBoot 0x04).
+
+Applies after syna-tcm-romboot-drain-attn.patch.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 18:30:54.678354383 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 18:32:56.585431664 -0400
+@@ -279,6 +279,84 @@
+ 	return n;
+ }
+ 
++/* since26: mask IRQ so process context owns SPI. Threaded ISR must use
++ * nosync (disable_irq waits for the running handler and would deadlock).
++ * irq_enabled stays true — IRQ remains registered. Never restore do_polling.
++ */
++void syna_tcm_romboot_hold_irq(struct syna_tcm_hcd *tcm_hcd)
++{
++	if (!tcm_hcd || tcm_hcd->romboot_irq_held)
++		return;
++	if (!tcm_hcd->irq_enabled || tcm_hcd->irq < 0)
++		return;
++	tcm_hcd->romboot_irq_held = true;
++	if (current->pid == tcm_hcd->isr_pid)
++		disable_irq_nosync(tcm_hcd->irq);
++	else
++		disable_irq(tcm_hcd->irq);
++}
++
++void syna_tcm_romboot_release_irq(struct syna_tcm_hcd *tcm_hcd)
++{
++	if (!tcm_hcd || !tcm_hcd->romboot_irq_held)
++		return;
++	tcm_hcd->romboot_irq_held = false;
++	if (tcm_hcd->irq_enabled && tcm_hcd->irq >= 0)
++		enable_irq(tcm_hcd->irq);
++}
++
++/* since26: first 0x45 (not only retry). Hold IRQ, force one header+payload
++ * read (continued_read inside read_message), log once. 0x1b re-asserts —
++ * do not skip 0x45 if gpio still 0. Stock romboot download must proceed.
++ */
++int syna_tcm_romboot_drain_attn(struct syna_tcm_hcd *tcm_hcd)
++{
++	int n = 0;
++	unsigned char code = 0;
++	unsigned int plen = 0;
++	unsigned char saved_task;
++	static bool logged;
++	bool blocked_helper = false;
++
++	if (!tcm_hcd)
++		return 0;
++
++	syna_tcm_romboot_hold_irq(tcm_hcd);
++
++	saved_task = atomic_read(&tcm_hcd->helper.task);
++	if (saved_task == HELP_NONE) {
++		atomic_set(&tcm_hcd->helper.task, HELP_SEND_ROMBOOT_HDL);
++		blocked_helper = true;
++	}
++
++	if (tcm_hcd->read_message && syna_tcm_attn_active(tcm_hcd)) {
++		tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		code = tcm_hcd->status_report_code;
++		plen = tcm_hcd->payload_length;
++		n = 1;
++		if (code != REPORT_STATUS && syna_tcm_attn_active(tcm_hcd))
++			n += syna_tcm_drain_unread_reports_quiet(tcm_hcd);
++	}
++
++	if (n == 0 && syna_tcm_attn_active(tcm_hcd) && tcm_hcd->read_message) {
++		tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		code = tcm_hcd->status_report_code;
++		plen = tcm_hcd->payload_length;
++		n = 1;
++	}
++
++	if (blocked_helper)
++		atomic_set(&tcm_hcd->helper.task, HELP_NONE);
++
++	if (!logged) {
++		logged = true;
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 first drain n=%d code=0x%02x plen=%u gpio=%d\n",
++			n, code, plen, syna_tcm_attn_gpio_value(tcm_hcd));
++	}
++
++	return n;
++}
++
+ /* Stock after HDL-complete: identify(true) then touch_reinit. Never 0x05.
+  * since23 path=A: 0x30 only if need_* bits ask for config. On-chip 0x02
+  * after a wrapped 0x45 is an HDL stub — pulse TSP reset, retry chunked
+@@ -1529,25 +1607,10 @@
+ 		}
+ 	}
+ 
+-	/* Leftover RomBoot IDENTIFY (gpio=0) is not a 0x45 complete.
+-	 * Drain before taking rw_ctrl_mutex. Fail fast — do not wait 3s.
++	/* since26: leftover ATTN is not a 0x45 complete. Caller already
++	 * drained with IRQ held. Do not skip the transfer if gpio stays 0
++	 * (0x1b re-asserts). Do not 3s-wait on leftover identify — send.
+ 	 */
+-	if (is_romboot_hdl && syna_tcm_attn_active(tcm_hcd)) {
+-		static bool logged_blocked;
+-
+-		if (!logged_blocked) {
+-			logged_blocked = true;
+-			pr_info("SAaiOS_TOUCH_DBG: 0x45 blocked leftover attn gpio=%d\n",
+-				syna_tcm_attn_gpio_value(tcm_hcd));
+-		}
+-		syna_tcm_drain_unread_reports_quiet(tcm_hcd);
+-		if (syna_tcm_attn_active(tcm_hcd)) {
+-			pr_info("SAaiOS_TOUCH_DBG: 0x45 leftover attn after drain gpio=%d, skip wait\n",
+-				syna_tcm_attn_gpio_value(tcm_hcd));
+-			mutex_unlock(&tcm_hcd->command_mutex);
+-			return -ETIME;
+-		}
+-	}
+ 
+ 	mutex_lock(&tcm_hcd->rw_ctrl_mutex);
+ 
+@@ -1685,6 +1748,19 @@
+ 
+ 	mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
+ 
++	if (is_romboot_hdl) {
++		/* Chunks done with IRQ masked. Unmask so IDENTIFY 0x02 can
++		 * complete the wait. Keep IRQ registered.
++		 */
++		syna_tcm_romboot_release_irq(tcm_hcd);
++		if (!tcm_hcd->irq_enabled) {
++			retval = tcm_hcd->enable_irq(tcm_hcd, true, NULL);
++			if (retval < 0)
++				pr_info("SAaiOS_TOUCH_DBG: 0x45 enable_irq retval=%d\n",
++					retval);
++		}
++	}
++
+ 	if (is_hdl_reset)
+ 		goto exit;
+ 
+@@ -1919,6 +1995,12 @@
+ 			input_err(true, tcm_hcd->pdev->dev.parent, "Failed to read message\n");
+ 		/* ATTN stays asserted until the host clocks leftover bytes. */
+ 		syna_tcm_spi_resync(tcm_hcd);
++	} else if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
++			tcm_hcd->hdl_status_idle) {
++		/* 0x1b re-asserts; cap-8 drain cannot catch up. Hold IRQ
++		 * until process-context 0x45. Silent consume only.
++		 */
++		syna_tcm_romboot_hold_irq(tcm_hcd);
+ 	} else if (tcm_hcd->hdl_status_idle && syna_tcm_attn_active(tcm_hcd)) {
+ 		/* Level ATTN still high after idle 0x1b: bounded drain.
+ 		 * Do not printk. Do not restore do_polling.
+@@ -3322,9 +3404,8 @@
+ 	if (bdata->reset_delay_ms)
+ 		delay_ms = bdata->reset_delay_ms;
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: since23 path=A TSP reset reset_gpio=%d lcd_rst=%s irq_en=%d gpio=%d\n",
++	pr_info("SAaiOS_TOUCH_DBG: TSP reset reset_gpio=%d irq_en=%d gpio=%d\n",
+ 		reset_gpio,
+-		bdata->regulator_lcd_reset ? bdata->regulator_lcd_reset : "none",
+ 		tcm_hcd->irq_enabled ? 1 : 0,
+ 		syna_tcm_attn_gpio_value(tcm_hcd));
+ 
+@@ -3336,16 +3417,8 @@
+ 		return 0;
+ 	}
+ 
+-	/* spi1.2 DT has no synaptics,reset-gpio; TSP shares gpio_lcd_rst. */
+-	if (!IS_ERR_OR_NULL(tcm_hcd->regulator_lcd_reset)) {
+-		regulator_force_disable(tcm_hcd->regulator_lcd_reset);
+-		msleep(active_ms);
+-		regulator_enable(tcm_hcd->regulator_lcd_reset);
+-		msleep(delay_ms);
+-		return 0;
+-	}
+-
+-	pr_info("SAaiOS_TOUCH_DBG: since23 path=A no TSP reset GPIO in DT\n");
++	/* spi1.2 has reset-gpio=-1. gpio_lcd_rst is the panel, not TSP. */
++	pr_info("SAaiOS_TOUCH_DBG: no TSP reset\n");
+ 	return -ENODEV;
+ }
+ 
+@@ -3972,6 +4045,7 @@
+ 	tcm_hcd->pdev = pdev;
+ 	pr_info("SAaiOS_TOUCH_DBG: since24 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since25 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since26 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 18:30:54.678354383 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 18:32:56.589431764 -0400
+@@ -571,6 +571,7 @@
+ 	bool payload_fully_drained;
+ 	bool hdl_status_seen;
+ 	bool hdl_status_idle;
++	bool romboot_irq_held;
+ 	bool hdl_reinit_done;
+ 	bool try_get_report_config;
+ 	bool identify_attempted;
+@@ -675,6 +676,9 @@
+ int zeroflash_retry_romboot_hdl(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_pulse_tsp_reset(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_drain_unread_reports_quiet(struct syna_tcm_hcd *tcm_hcd);
++void syna_tcm_romboot_hold_irq(struct syna_tcm_hcd *tcm_hcd);
++void syna_tcm_romboot_release_irq(struct syna_tcm_hcd *tcm_hcd);
++int syna_tcm_romboot_drain_attn(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_power_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ int syna_tcm_reset_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ void touch_free_objects(void);
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 18:30:54.682354484 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 18:32:56.589431764 -0400
+@@ -1232,13 +1232,12 @@
+ 	resp_buf = NULL;
+ 	resp_buf_size = 0;
+ 
+-	if (!tcm_hcd->irq_enabled) {
+-		retval = tcm_hcd->enable_irq(tcm_hcd, true, NULL);
+-		if (retval < 0) {
+-			input_err(true, tcm_hcd->pdev->dev.parent,
+-					"Failed to enable interrupt\n");
+-		}
+-	}
++	/* since26: do not enable IRQ before leftover ATTN drain + 0x45
++	 * chunks. Process context holds the bus. write_message unmasks
++	 * (or registers) IRQ after the chunks, before the wait.
++	 */
++	if (tcm_hcd->irq_enabled)
++		syna_tcm_romboot_hold_irq(tcm_hcd);
+ 
+ 	pm_stay_awake(&tcm_hcd->pdev->dev);
+ 
+@@ -1256,6 +1255,7 @@
+ 				tcm_hcd->id_info.mode);
+ 		}
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
++		syna_tcm_romboot_release_irq(tcm_hcd);
+ 		goto exit;
+ 	}
+ 
+@@ -1304,14 +1304,7 @@
+ 	input_dbg(true, tcm_hcd->pdev->dev.parent,
+ 			"data_size_blocks: %d\n", data_size_blocks);
+ 
+-	{
+-		int n = 0;
+-
+-		if (zeroflash_attn_active(tcm_hcd))
+-			n = syna_tcm_drain_unread_reports_quiet(tcm_hcd);
+-		pr_info("SAaiOS_TOUCH_DBG: 0x45 drain n=%d gpio=%d\n",
+-			n, zeroflash_attn_gpio_value(tcm_hcd));
+-	}
++	syna_tcm_romboot_drain_attn(tcm_hcd);
+ 
+ 	retval = tcm_hcd->write_message(tcm_hcd, CMD_ROMBOOT_DOWNLOAD,
+ 			out_buf, image_size + RESERVED_BYTES, &resp_buf,
+@@ -1327,6 +1320,8 @@
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x45 fail reason=ETIME/write mode=0x%02x gpio=%d (keep HDL, no skip)\n",
+ 			tcm_hcd->id_info.mode, zeroflash_attn_gpio_value(tcm_hcd));
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		goto error_secure_memcpy;
+ 	}
+ 
+@@ -1379,20 +1374,14 @@
+ 		return 0;
+ 	}
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: since23 path=A pulse reset then retry chunked 0x45 mode=0x%02x\n",
++	pr_info("SAaiOS_TOUCH_DBG: retry chunked 0x45 without LCD reset mode=0x%02x\n",
+ 		tcm_hcd->id_info.mode);
+ 
+ 	retval = syna_tcm_pulse_tsp_reset(tcm_hcd);
+-	if (retval < 0) {
+-		pr_info("SAaiOS_TOUCH_DBG: 0x45 retry skipped (no TSP reset) retval=%d\n",
+-			retval);
+-		return retval;
+-	}
+-
+-	if (zeroflash_attn_active(tcm_hcd) && tcm_hcd->read_message)
+-		tcm_hcd->read_message(tcm_hcd, NULL, 0);
++	if (retval < 0)
++		pr_info("SAaiOS_TOUCH_DBG: no TSP reset\n");
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: since23 path=A after reset mode=0x%02x attn=%d gpio=%d irq_en=%d\n",
++	pr_info("SAaiOS_TOUCH_DBG: 0x45 retry mode=0x%02x attn=%d gpio=%d irq_en=%d\n",
+ 		tcm_hcd->id_info.mode,
+ 		zeroflash_attn_active(tcm_hcd) ? 1 : 0,
+ 		zeroflash_attn_gpio_value(tcm_hcd),
+@@ -1538,6 +1527,8 @@
+ 		static bool logged_skip_sync;
+ 
+ 		tcm_hcd->hdl_status_idle = true;
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		if (!logged_skip_sync) {
+ 			logged_skip_sync = true;
+ 			pr_info("SAaiOS_TOUCH_DBG: since24 skip 0x30 need_*=0\n");
+@@ -1578,6 +1569,8 @@
+ 		zeroflash_hcd->config_attempted = true;
+ 		zeroflash_hcd->last_config_retval = 0;
+ 		tcm_hcd->hdl_status_idle = true;
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		if (!logged_skip_wait1) {
+ 			logged_skip_wait1 = true;
+ 			pr_info("SAaiOS_TOUCH_DBG: since24 skip 0x30 need_*=0 wait=1\n");
+@@ -1710,6 +1703,8 @@
+ 
+ 	if (!need_cfg) {
+ 		tcm_hcd->hdl_status_idle = true;
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		if (!logged_skip_030) {
+ 			logged_skip_030 = true;
+ 			pr_info("SAaiOS_TOUCH_DBG: since24 skip 0x30 need_*=0\n");

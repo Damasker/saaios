@@ -1,0 +1,498 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since23 path=A chunked 0x45 + TSP reset
+
+since22 sent 0x30 despite need_*=0; APP_CONFIG in td4150_a12s_boe.bin is
+really 4096 (not a PAGE_SIZE cap of 45568). firmware_status 10 00 has
+no need_app_code/need_firmware/need_reset bits.
+
+write_message does not disable_irq (irq_en=1 at timeout). SPI write
+returns success. Idle-ATTN commands time out because on-chip 0x02 after
+a wrapped 0x45 is an HDL stub: ROMBOOT_APP_CODE 97280+14 sent as one
+TCM frame whose u16 length wrapped (97294 & 0xffff = 31758).
+
+since23 path=A:
+- Chunk 0x45 to PAGE_SIZE, 16-byte aligned; log spi rc / irq_en / gpio
+  at command start.
+- Do not skip HDL when 0x45 completes via IDENTIFY 0x02.
+- If 0x45 failed: pulse TSP reset (DT reset-gpio, else gpio_lcd_rst)
+  once and retry. Do not blindly repeat the same unchunked 0x45.
+- 0x30 only when need_* bits ask for config. Log blob_len vs filesize.
+- Keep: no ENABLE_REPORT 0x05, no do_polling, no SPI read when ATTN idle,
+  no wait=0 0x30 from IRQ.
+
+Applies after syna-tcm-hdl-send-0x30.patch.
+
+diff --git a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 17:58:56.465998126 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 17:58:56.477998431 -0400
+@@ -254,9 +254,9 @@
+ }
+ 
+ /* Stock after HDL-complete: identify(true) then touch_reinit. Never 0x05.
+- * After REPORT_STATUS 0x1b the IC is in HDL-v2 waiting for
+- * CMD_DOWNLOAD_CONFIG 0x30, not CMD_RESET/IDENTIFY. Send 0x30 first
+- * (probe, blocking). Only then run this helper. Never RESET before 0x30.
++ * since23 path=A: 0x30 only if need_* bits ask for config. On-chip 0x02
++ * after a wrapped 0x45 is an HDL stub — pulse TSP reset, retry chunked
++ * 0x45. Do not send 0x30 when need_*=0.
+  */
+ static int syna_tcm_identify_touch_reinit(struct syna_tcm_hcd *tcm_hcd)
+ {
+@@ -276,9 +276,17 @@
+ 		return tcm_hcd->identify_timed_out ? -ETIME : 0;
+ 	}
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION mode=0x%02x in_hdl_mode=%d attn=%d\n",
++	pr_info("SAaiOS_TOUCH_DBG: since23 path=A HDL helper mode=0x%02x in_hdl_mode=%d attn=%d romboot_ok=%d\n",
+ 		tcm_hcd->id_info.mode, tcm_hcd->in_hdl_mode ? 1 : 0,
+-		syna_tcm_attn_active(tcm_hcd) ? 1 : 0);
++		syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
++		tcm_hcd->romboot_download_ok ? 1 : 0);
++
++	if (!tcm_hcd->romboot_download_ok) {
++		retval = zeroflash_retry_romboot_hdl(tcm_hcd);
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A retry 0x45 retval=%d mode=0x%02x romboot_ok=%d\n",
++			retval, tcm_hcd->id_info.mode,
++			tcm_hcd->romboot_download_ok ? 1 : 0);
++	}
+ 
+ 	atomic_set(&tcm_hcd->host_downloading, 0);
+ 
+@@ -1517,12 +1525,24 @@
+ 		chunk_space = tcm_hcd->wr_chunk_size - 1;
+ 
+ 	if (is_romboot_hdl) {
+-		if (HDL_WR_CHUNK_SIZE) {
+-			chunk_space = HDL_WR_CHUNK_SIZE - 1;
+-			chunk_space = chunk_space - (chunk_space % ROMBOOT_DOWNLOAD_UNIT);
+-		} else {
+-			chunk_space = remaining_length;
+-		}
++		unsigned int cap = HDL_WR_CHUNK_SIZE;
++
++		/*
++		 * TCM command length is u16. ROMBOOT_APP_CODE is 97280+14;
++		 * HDL_WR_CHUNK_SIZE=0 sent one frame whose length bytes
++		 * wrapped (97294 & 0xffff = 31758). Chunk to PAGE_SIZE,
++		 * 16-byte aligned. Do not send wait=0 0x45.
++		 */
++		if (!cap)
++			cap = PAGE_SIZE;
++		if (cap > 0xFFF0)
++			cap = 0xFFF0;
++		chunk_space = cap - 1;
++		chunk_space = chunk_space - (chunk_space % ROMBOOT_DOWNLOAD_UNIT);
++		if (!chunk_space)
++			chunk_space = ROMBOOT_DOWNLOAD_UNIT;
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 chunk_space=%u remaining=%u\n",
++			chunk_space, remaining_length);
+ 	}
+ 
+ 	chunks = ceil_div(remaining_length, chunk_space);
+@@ -1531,6 +1551,12 @@
+ 
+ 	input_info(true, tcm_hcd->pdev->dev.parent, "Command = 0x%02x\n", command);
+ 
++	pr_info("SAaiOS_TOUCH_DBG: write_message start cmd=0x%02x len=%u irq_en=%d gpio=%d attn=%d host_dl=%d\n",
++		command, length, tcm_hcd->irq_enabled ? 1 : 0,
++		syna_tcm_attn_gpio_value(tcm_hcd),
++		syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
++		atomic_read(&tcm_hcd->host_downloading));
++
+ 	LOCK_BUFFER(tcm_hcd->out);
+ 
+ 	for (idx = 0; idx < chunks; idx++) {
+@@ -1579,6 +1605,11 @@
+ 		}
+ 
+ 		retval = syna_tcm_write(tcm_hcd, tcm_hcd->out.buf, xfer_length + 1);
++		if (idx == 0 || idx + 1 == chunks || retval < 0)
++			pr_info("SAaiOS_TOUCH_DBG: write_message spi cmd=0x%02x idx=%u/%u xfer=%u rc=%d gpio=%d irq_en=%d\n",
++				command, idx, chunks, xfer_length + 1, retval,
++				syna_tcm_attn_gpio_value(tcm_hcd),
++				tcm_hcd->irq_enabled ? 1 : 0);
+ 		if (retval < 0) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent, "Failed to write to device\n");
+ 			UNLOCK_BUFFER(tcm_hcd->out);
+@@ -1607,6 +1638,8 @@
+ 	response_timeout_ms = RESPONSE_TIMEOUT_MS;
+ 	if (command == CMD_ENABLE_REPORT)
+ 		response_timeout_ms = 3000;
++	if (command == CMD_ROMBOOT_DOWNLOAD)
++		response_timeout_ms = 3000;
+ 
+ 	retval = wait_for_completion_timeout(&response_complete,
+ 					msecs_to_jiffies(response_timeout_ms));
+@@ -3209,6 +3242,50 @@
+ 	return 0;
+ }
+ 
++int syna_tcm_pulse_tsp_reset(struct syna_tcm_hcd *tcm_hcd)
++{
++	const struct syna_tcm_board_data *bdata;
++	int reset_gpio = -1;
++	int active_ms = 10;
++	int delay_ms = 50;
++
++	if (!tcm_hcd || !tcm_hcd->hw_if || !tcm_hcd->hw_if->bdata)
++		return -EINVAL;
++
++	bdata = tcm_hcd->hw_if->bdata;
++	reset_gpio = bdata->reset_gpio;
++	if (bdata->reset_active_ms)
++		active_ms = bdata->reset_active_ms;
++	if (bdata->reset_delay_ms)
++		delay_ms = bdata->reset_delay_ms;
++
++	pr_info("SAaiOS_TOUCH_DBG: since23 path=A TSP reset reset_gpio=%d lcd_rst=%s irq_en=%d gpio=%d\n",
++		reset_gpio,
++		bdata->regulator_lcd_reset ? bdata->regulator_lcd_reset : "none",
++		tcm_hcd->irq_enabled ? 1 : 0,
++		syna_tcm_attn_gpio_value(tcm_hcd));
++
++	if (reset_gpio >= 0) {
++		gpio_set_value(reset_gpio, bdata->reset_on_state);
++		msleep(active_ms);
++		gpio_set_value(reset_gpio, !bdata->reset_on_state);
++		msleep(delay_ms);
++		return 0;
++	}
++
++	/* spi1.2 DT has no synaptics,reset-gpio; TSP shares gpio_lcd_rst. */
++	if (!IS_ERR_OR_NULL(tcm_hcd->regulator_lcd_reset)) {
++		regulator_force_disable(tcm_hcd->regulator_lcd_reset);
++		msleep(active_ms);
++		regulator_enable(tcm_hcd->regulator_lcd_reset);
++		msleep(delay_ms);
++		return 0;
++	}
++
++	pr_info("SAaiOS_TOUCH_DBG: since23 path=A no TSP reset GPIO in DT\n");
++	return -ENODEV;
++}
++
+ static int pinctrl_configure(struct syna_tcm_hcd *tcm_hcd, bool enable)
+ {
+ 	struct pinctrl_state *state;
+@@ -4042,8 +4119,8 @@
+ 	}
+ 
+ 	/* Stock HDL-complete helper (HELP_SEND_REINIT_NOTIFICATION):
+-	 * 0x30 first (probe, blocking), then identify + touch_reinit.
+-	 * No CMD_RESET. If 0x30 times out, skip identify. Do not unwind IRQ.
++	 * since23 path=A: retry 0x45 if the first ROMBOOT DOWNLOAD failed,
++	 * 0x30 only if need_*, then identify + touch_reinit. No ENABLE_REPORT.
+ 	 */
+ 	if (tcm_hcd->hdl_status_seen) {
+ 		tcm_hcd->try_get_report_config = true;
+diff --git a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 17:58:56.469998228 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 17:58:56.477998431 -0400
+@@ -574,6 +574,7 @@
+ 	bool try_get_report_config;
+ 	bool identify_attempted;
+ 	bool identify_timed_out;
++	bool romboot_download_ok;
+ 	const struct syna_tcm_hw_interface *hw_if;
+ 	int (*reset)(struct syna_tcm_hcd *tcm_hcd);
+ 	int (*reset_n_reinit)(struct syna_tcm_hcd *tcm_hcd, bool hw, bool update_wd);
+@@ -670,6 +671,8 @@
+ int zeroflash_remove(struct syna_tcm_hcd *tcm_hcd);
+ int zeroflash_handle_report_status(struct syna_tcm_hcd *tcm_hcd, bool wait);
+ int zeroflash_run_pending_config(struct syna_tcm_hcd *tcm_hcd);
++int zeroflash_retry_romboot_hdl(struct syna_tcm_hcd *tcm_hcd);
++int syna_tcm_pulse_tsp_reset(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_power_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ int syna_tcm_reset_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ void touch_free_objects(void);
+diff --git a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 17:58:56.473998329 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 17:58:56.481998533 -0400
+@@ -203,9 +203,11 @@
+ 	struct syna_tcm_hcd *tcm_hcd;
+ 	bool config_attempted;
+ 	int last_config_retval;
++	bool romboot_retry_used;
+ };
+ 
+ static void zeroflash_do_romboot_firmware_download(void);
++static int zeroflash_ensure_hcd(struct syna_tcm_hcd *tcm_hcd);
+ 
+ DECLARE_COMPLETION(zeroflash_remove_complete);
+ 
+@@ -919,9 +921,11 @@
+ 	zeroflash_hcd->out.data_length = image_info->app_config.size + 2;
+ 	zeroflash_hcd->out.data_length += padding;
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: 0x30 payload source=fw_app_config blob_len=%u pkt_len=%u hdlv=%u type=%u\n",
++	pr_info("SAaiOS_TOUCH_DBG: 0x30 payload source=fw_app_config blob_len=%u pkt_len=%u fw_filesize=%u hdlv=%u type=%u\n",
+ 		image_info->app_config.size,
+ 		zeroflash_hcd->out.data_length,
++		zeroflash_hcd->fw_entry ?
++			(unsigned int)zeroflash_hcd->fw_entry->size : 0,
+ 		zeroflash_hcd->fw_status.hdl_version,
+ 		(unsigned int)HDL_TOUCH_CONFIG);
+ 
+@@ -1259,6 +1263,14 @@
+ 
+ 	image_size = (unsigned int)zeroflash_hcd->image_info.app_firmware.size;
+ 
++	pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 app_fw=%u reserved=%u fw_filesize=%u irq_en=%d gpio=%d attn=%d\n",
++		image_size, RESERVED_BYTES,
++		zeroflash_hcd->fw_entry ?
++			(unsigned int)zeroflash_hcd->fw_entry->size : 0,
++		tcm_hcd->irq_enabled ? 1 : 0,
++		zeroflash_attn_gpio_value(tcm_hcd),
++		zeroflash_attn_active(tcm_hcd) ? 1 : 0);
++
+ 	input_dbg(true, tcm_hcd->pdev->dev.parent, "image_size = %d\n", image_size);
+ 
+ 	data_size_blocks = image_size / 16;
+@@ -1290,29 +1302,33 @@
+ 	retval = tcm_hcd->write_message(tcm_hcd, CMD_ROMBOOT_DOWNLOAD,
+ 			out_buf, image_size + RESERVED_BYTES, &resp_buf,
+ 			&resp_buf_size, &resp_length, NULL, 20);
+-	if (retval < 0 || IS_FW_MODE(tcm_hcd->id_info.mode)) {
+-		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+-			input_info(true, tcm_hcd->pdev->dev.parent,
+-				"ROMBOOT DOWNLOAD skipped, firmware mode = 0x%02x (on-chip)\n",
+-				tcm_hcd->id_info.mode);
+-			tcm_hcd->sensor_type = TYPE_FLASH;
+-			tcm_hcd->in_hdl_mode = false;
+-			atomic_set(&tcm_hcd->host_downloading, 0);
+-			pr_info("SAaiOS_TOUCH_DBG: on-chip 0x02, in_hdl_mode=0 (stock clean-0x02)\n");
+-			goto error_secure_memcpy;
+-		}
++	pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 write retval=%d mode=0x%02x gpio=%d irq_en=%d\n",
++		retval, tcm_hcd->id_info.mode,
++		zeroflash_attn_gpio_value(tcm_hcd),
++		tcm_hcd->irq_enabled ? 1 : 0);
++	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to write command ROMBOOT DOWNLOAD");
++		tcm_hcd->romboot_download_ok = false;
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
+ 		goto error_secure_memcpy;
+ 	}
+ 
++	if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++		tcm_hcd->romboot_download_ok = true;
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 complete IDENTIFY mode=0x%02x (firmware started)\n",
++			tcm_hcd->id_info.mode);
++		goto error_secure_memcpy;
++	}
++
+ 	retval = tcm_hcd->switch_mode(tcm_hcd, FW_MODE_BOOTLOADER);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to switch to bootloader");
++		tcm_hcd->romboot_download_ok = false;
+ 		goto error_secure_memcpy;
+ 	}
++	tcm_hcd->romboot_download_ok = true;
+ 
+ error_secure_memcpy:
+ 	vfree(out_buf);
+@@ -1321,6 +1337,62 @@
+ 	return;
+ }
+ 
++int zeroflash_retry_romboot_hdl(struct syna_tcm_hcd *tcm_hcd)
++{
++	int retval;
++
++	if (!tcm_hcd)
++		return -EINVAL;
++
++	retval = zeroflash_ensure_hcd(tcm_hcd);
++	if (retval < 0)
++		return retval;
++
++	if (tcm_hcd->romboot_download_ok)
++		return 0;
++
++	if (zeroflash_hcd->romboot_retry_used) {
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 retry already used mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		return -EIO;
++	}
++	zeroflash_hcd->romboot_retry_used = true;
++
++	if (current->pid == tcm_hcd->isr_pid) {
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 retry deferred (not ISR-safe)\n");
++		return 0;
++	}
++
++	pr_info("SAaiOS_TOUCH_DBG: since23 path=A pulse reset then retry chunked 0x45 mode=0x%02x\n",
++		tcm_hcd->id_info.mode);
++
++	retval = syna_tcm_pulse_tsp_reset(tcm_hcd);
++	if (retval < 0)
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A TSP reset unavailable retval=%d, try 0x45 anyway\n",
++			retval);
++
++	if (zeroflash_attn_active(tcm_hcd) && tcm_hcd->read_message)
++		tcm_hcd->read_message(tcm_hcd, NULL, 0);
++
++	pr_info("SAaiOS_TOUCH_DBG: since23 path=A after reset mode=0x%02x attn=%d gpio=%d irq_en=%d\n",
++		tcm_hcd->id_info.mode,
++		zeroflash_attn_active(tcm_hcd) ? 1 : 0,
++		zeroflash_attn_gpio_value(tcm_hcd),
++		tcm_hcd->irq_enabled ? 1 : 0);
++
++	if (tcm_hcd->id_info.mode != MODE_ROMBOOTLOADER &&
++			!zeroflash_attn_active(tcm_hcd)) {
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A not RomBoot after reset, skip blind 0x45\n");
++		return -EIO;
++	}
++
++	tcm_hcd->in_hdl_mode = true;
++	tcm_hcd->sensor_type = TYPE_ROMBOOT;
++	zeroflash_do_romboot_firmware_download();
++
++	return tcm_hcd->romboot_download_ok ? 0 : -EIO;
++}
++
+ static int zeroflash_ensure_hcd(struct syna_tcm_hcd *tcm_hcd)
+ {
+ 	if (zeroflash_hcd)
+@@ -1340,6 +1412,7 @@
+ 	zeroflash_hcd->has_open_short_config = false;
+ 	zeroflash_hcd->config_attempted = false;
+ 	zeroflash_hcd->last_config_retval = 0;
++	zeroflash_hcd->romboot_retry_used = false;
+ 
+ 	INIT_BUFFER(zeroflash_hcd->out, false);
+ 	INIT_BUFFER(zeroflash_hcd->resp, false);
+@@ -1364,7 +1437,7 @@
+ /* Stock HDL v2 0x30 header: buf[0]=hdl_version (2), buf[1]=HDL_TOUCH_CONFIG.
+  * Used only if the firmware APP_CONFIG blob is missing.
+  */
+-static int zeroflash_download_hdl_v2_header(void)
++static int __maybe_unused zeroflash_download_hdl_v2_header(void)
+ {
+ 	int retval;
+ 	unsigned char response_code;
+@@ -1421,7 +1494,6 @@
+ 	int retval;
+ 	struct syna_tcm_hcd *tcm_hcd = zeroflash_hcd->tcm_hcd;
+ 	bool need_cfg = zeroflash_stock_need_cfg();
+-	unsigned int blob_len;
+ 
+ 	retval = zeroflash_get_fw_image();
+ 	if (retval < 0) {
+@@ -1429,18 +1501,14 @@
+ 				"Failed to get firmware image\n");
+ 		pr_info("SAaiOS_TOUCH_DBG: zeroflash_get_fw_image failed retval=%d\n",
+ 			retval);
+-		if (!need_cfg) {
+-			pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0 (header-only, fw parse failed)\n");
+-			retval = zeroflash_download_hdl_v2_header();
+-		}
++		if (!need_cfg)
++			retval = 0;
+ 		zeroflash_hcd->last_config_retval = retval;
+ 		return retval;
+ 	}
+ 
+ 	input_info(true, tcm_hcd->pdev->dev.parent, "Start of config download\n");
+ 
+-	blob_len = zeroflash_hcd->image_info.app_config.size;
+-
+ 	if (zeroflash_hcd->fw_status.need_app_config) {
+ 		retval = zeroflash_download_app_config();
+ 	} else if (zeroflash_hcd->fw_status.need_disp_config) {
+@@ -1449,13 +1517,8 @@
+ 			zeroflash_hcd->has_open_short_config) {
+ 		retval = zeroflash_download_open_short_config();
+ 	} else {
+-		pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0 (app config anyway)\n");
+-		if (blob_len) {
+-			retval = zeroflash_download_app_config();
+-		} else {
+-			pr_info("SAaiOS_TOUCH_DBG: no APP_CONFIG in fw image, HDL v2 header-only\n");
+-			retval = zeroflash_download_hdl_v2_header();
+-		}
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A skip 0x30 need_*=0\n");
++		retval = 0;
+ 	}
+ 
+ 	zeroflash_hcd->last_config_retval = retval;
+@@ -1484,10 +1547,17 @@
+ 	need_cfg = zeroflash_stock_need_cfg();
+ 	mode_before = tcm_hcd->id_info.mode;
+ 
+-	if (!need_cfg)
+-		pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0\n");
++	if (!need_cfg) {
++		zeroflash_hcd->config_attempted = true;
++		zeroflash_hcd->last_config_retval = 0;
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A skip 0x30 need_*=0 wait=1\n");
++		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 wait=1 retval=0 mode=0x%02x->0x%02x in_hdl_mode=%d\n",
++			mode_before, tcm_hcd->id_info.mode,
++			tcm_hcd->in_hdl_mode ? 1 : 0);
++		return 0;
++	}
+ 
+-	/* Keep in_hdl_mode as-is. Never set it here. Never ROMBOOT 0x45. */
++	/* Keep in_hdl_mode as-is. Never set it here. */
+ 	zeroflash_hcd->config_attempted = true;
+ 	retval = zeroflash_download_config_sync();
+ 
+@@ -1574,24 +1644,22 @@
+ 		raw[1] = fs[1];
+ 	}
+ 	st = &zeroflash_hcd->fw_status;
+-	pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS fw_status %02x %02x inv=%u disp=%u app=%u hdlv=%u osh=%u\n",
++	pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS fw_status %02x %02x invalid_static=%u need_disp=%u need_app=%u hdlv=%u need_osh=%u reserved=%u\n",
+ 		raw[0], raw[1],
+ 		st->invalid_static_config, st->need_disp_config,
+ 		st->need_app_config, st->hdl_version,
+-		st->need_open_short_config);
++		st->need_open_short_config, st->reserved);
++	pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS bits (no need_app_code/need_firmware/need_reset in this IC bitfield)\n");
+ 
+ 	tcm_hcd->hdl_status_seen = true;
+ 
+-	/* After 0x1b the IC waits for 0x30 even when need_*=0. Never send
+-	 * 0x30 from IRQ (wait=0). Probe sends it blocking. Do not mark
+-	 * config_attempted here or probe would skip the write.
+-	 */
++	/* 0x30 only when need_* bits ask for config. Never from IRQ. */
+ 	need_cfg = zeroflash_stock_need_cfg();
+ 	mode_before = tcm_hcd->id_info.mode;
+ 	in_isr = (current->pid == tcm_hcd->isr_pid);
+ 
+ 	if (!need_cfg)
+-		pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0\n");
++		pr_info("SAaiOS_TOUCH_DBG: since23 path=A skip 0x30 need_*=0\n");
+ 
+ 	if (!wait || in_isr) {
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x30 deferred (not ISR-safe) need_cfg=%d\n",
+@@ -1649,12 +1717,9 @@
+ 			zeroflash_do_f35_firmware_download();
+ 			break;
+ 		case TYPE_ROMBOOT:
+-			/* Do not retry failed ROMBOOT 0x45 if already in FW. */
+-			if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+-				tcm_hcd->sensor_type = TYPE_FLASH;
+-				tcm_hcd->in_hdl_mode = false;
+-				atomic_set(&tcm_hcd->host_downloading, 0);
+-				pr_info("SAaiOS_TOUCH_DBG: on-chip 0x02, skip ROMBOOT 0x45 retry\n");
++			/* Retry 0x45 after reset only from path=A helper, not here. */
++			if (tcm_hcd->romboot_download_ok) {
++				pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 already ok, skip\n");
+ 				break;
+ 			}
+ 			zeroflash_do_romboot_firmware_download();
+@@ -1727,8 +1792,8 @@
+ 	case REPORT_HDL_ROMBOOT:
+ 		if (!zeroflash_hcd)
+ 			return 0;
+-		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+-			pr_info("SAaiOS_TOUCH_DBG: skip ROMBOOT 0x45 retry already mode=0x%02x\n",
++		if (tcm_hcd->romboot_download_ok) {
++			pr_info("SAaiOS_TOUCH_DBG: since23 path=A skip ROMBOOT 0x45 already ok mode=0x%02x\n",
+ 				tcm_hcd->id_info.mode);
+ 			return 0;
+ 		}

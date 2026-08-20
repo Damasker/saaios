@@ -1,0 +1,59 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since40 bring-up after 0x45 IDENTIFY 0x02
+
+since39 one-shot 0x45 produced IDENTIFY mode=0x02 (firmware started)
+without 0x42. The success path then goto error_secure_memcpy: no
+touch_init (probe already skipped it), IRQ stayed held, IRQ count=3.
+
+since40: on 0x45 IDENTIFY in FW mode, unmask IRQ, identify, touch_init,
+run pending 0x30 only if need_*. Do not send 0x42.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -4571,6 +4571,7 @@
+ 	pr_info("SAaiOS_TOUCH_DBG: since38 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since39 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since40 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -1563,9 +1563,36 @@
+ 			tcm_hcd->romboot_download_ok = false;
+ 			goto error_secure_memcpy;
+ 		}
++		/* since39: one-shot 0x45 IDENTIFY 0x02 — firmware is running.
++		 * Do not skip to error without bring-up (probe already skipped
++		 * touch_init). Do not send 0x42. Unmask IRQ so 0x1b/touch
++		 * reports can arrive. 0x30 only if need_* (unchanged).
++		 */
+ 		tcm_hcd->romboot_download_ok = true;
++		tcm_hcd->hdl_status_idle = false;
++		tcm_hcd->in_hdl_mode = false;
++		tcm_hcd->sensor_type = TYPE_FLASH;
++		tcm_hcd->rd_chunk_size = RD_CHUNK_SIZE;
++		syna_tcm_romboot_release_irq(tcm_hcd);
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x45 complete IDENTIFY mode=0x%02x remaining=0 (firmware started)\n",
+ 			tcm_hcd->id_info.mode);
++		pr_info("SAaiOS_TOUCH_DBG: since40 bringup after 0x45 IDENTIFY mode=0x%02x gpio=%d irq_en=%d held=%d\n",
++			tcm_hcd->id_info.mode,
++			zeroflash_attn_gpio_value(tcm_hcd),
++			tcm_hcd->irq_enabled ? 1 : 0,
++			tcm_hcd->romboot_irq_held ? 1 : 0);
++		retval = tcm_hcd->identify(tcm_hcd, true);
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 identify after firmware started retval=%d mode=0x%02x\n",
++			retval, tcm_hcd->id_info.mode);
++		tcm_hcd->identify_attempted = true;
++		if (IS_FW_MODE(tcm_hcd->id_info.mode) &&
++				!tcm_hcd->report_touch_cmd_sent) {
++			retval = touch_init(tcm_hcd);
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 touch_init after IDENTIFY retval=%d mode=0x%02x\n",
++				retval, tcm_hcd->id_info.mode);
++		}
++		if (tcm_hcd->report_touch_cmd_sent)
++			tcm_hcd->hdl_reinit_done = true;
++		zeroflash_run_pending_config(tcm_hcd);
+ 		goto error_secure_memcpy;
+ 	}

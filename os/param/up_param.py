@@ -236,6 +236,12 @@ def pack_up_param_tar(members: list[tuple[tarfile.TarInfo, bytes]], dest: Path) 
 
 
 def assert_odin_tar_safe(tar_path: Path) -> None:
+    raw = tar_path.read_bytes()
+    # Python tarfile defaults to PAX (././@PaxHeader). Odin's parser is GNU/ustar
+    # only: it never sees up_param.bin.lz4 and refuses the package. Working
+    # saaios-boot-vNNN tars are GNU tar (`ustar  `), same as this packer.
+    if raw.startswith(b"././@PaxHeader") or b"PaxHeader" in raw[:512]:
+        raise RuntimeError(f"{tar_path} is PAX tar; Odin will reject it")
     with tarfile.open(tar_path, mode="r:") as t:
         names = [m.name for m in t.getmembers() if m.isfile()]
     bad = [n for n in names if Path(n).name in FORBIDDEN_ODIN_NAMES]
@@ -247,8 +253,21 @@ def assert_odin_tar_safe(tar_path: Path) -> None:
 
 def write_odin_tar(lz4_path: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(dest, mode="w:") as t:
-        t.add(lz4_path, arcname=UP_PARAM_LZ4)
+    if lz4_path.name != UP_PARAM_LZ4:
+        raise RuntimeError(f"Odin member must be named {UP_PARAM_LZ4}, got {lz4_path.name}")
+    # Same packing as Makefile boot tars (`tar -cf`). Do not use Python tarfile:
+    # DEFAULT_FORMAT is PAX and Odin rejects it (this unit: nologo 2026-08-18).
+    subprocess.check_call(
+        [
+            "tar",
+            "--format=gnu",
+            "-C",
+            str(lz4_path.parent),
+            "-cf",
+            str(dest),
+            UP_PARAM_LZ4,
+        ]
+    )
     assert_odin_tar_safe(dest)
 
 
@@ -365,23 +384,32 @@ def cmd_build(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "--stock",
         default="os/images/stock/A127FXXSDDXJ2",
         help="extracted stock dir (gitignored)",
     )
-    p.add_argument(
+    common.add_argument(
         "--bl-zip",
         default=f"/srv/media/{STOCK_BL_NAME}",
         help="stock BL zip on the media share",
     )
-    p.add_argument("--out", default="os/build", help="host build dir")
-    p.add_argument("--media", default="/srv/media", help="Samba copy dest; empty to skip")
+    common.add_argument("--out", default="os/build", help="host build dir")
+    common.add_argument(
+        "--media", default="/srv/media", help="Samba copy dest; empty to skip"
+    )
+    p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
-    e = sub.add_parser("extract", help="unpack stock up_param from BL zip")
+    e = sub.add_parser(
+        "extract", parents=[common], help="unpack stock up_param from BL zip"
+    )
     e.set_defaults(func=cmd_extract)
-    b = sub.add_parser("build", help="nologo + stock-restore Odin tars (no flash)")
+    b = sub.add_parser(
+        "build",
+        parents=[common],
+        help="nologo + stock-restore Odin tars (no flash)",
+    )
     b.set_defaults(func=cmd_build)
     f = sub.add_parser("flash", help="refuse to flash")
     f.set_defaults(func=cmd_flash)

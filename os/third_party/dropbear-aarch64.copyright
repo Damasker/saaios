@@ -1,0 +1,4 @@
+Dropbear SSH is MIT (Matt Johnston / mkj/dropbear).
+sftp-server is OpenSSH (BSD-style).
+These ramdisk copies are static aarch64 musl binaries from
+https://github.com/sagemathinc/dropbear (zig-built from upstream).

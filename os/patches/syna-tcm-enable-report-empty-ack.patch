@@ -1,0 +1,163 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: do not treat leftover dump as ENABLE_REPORT ack
+
+since12 still zeroed plen on every drained STATUS_OK (including the 46-byte
+app-info response) and treated the repeating 13325-byte dump as a 0x05 ack.
+That is not an empty STATUS_OK; REPORT_TOUCH never enabled, level-ATTN stays
+asserted, IRQ 244 stops incrementing.
+
+Fix:
+1. After continued_read, force padding at the original total_length. Do not
+   change payload_length (identify 0x10 and STATUS_OK plen=46 stay intact).
+2. dispatch_response: ignore leftover plen!=0 while waiting for 0x05.
+3. Salvage: only empty STATUS_OK (plen==0) confirms enable; discard dumps.
+4. If 0x05 SPI write timed out with no empty ack: set cmd_sent and poll.
+
+Applies after syna-tcm-drained-status-ok-only.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -508,18 +508,22 @@ static void syna_tcm_dispatch_response(struct syna_tcm_hcd *tcm_hcd)
+ 	if (atomic_read(&tcm_hcd->command_status) != CMD_BUSY)
+ 		return;
+ 
+-	tcm_hcd->response_code = tcm_hcd->status_report_code;
++	/* A leftover continued-read dump (plen=13325) is not the 0x05 ack.
++	 * Completing ENABLE_REPORT on it made write_message "succeed" while
++	 * REPORT_TOUCH was never actually enabled.
++	 */
++	if (tcm_hcd->command == CMD_ENABLE_REPORT &&
++			tcm_hcd->payload_length != 0) {
++		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT ignore leftover code=0x%02x plen=%u\n",
++			tcm_hcd->status_report_code, tcm_hcd->payload_length);
++		return;
++	}
+ 
+-	if (tcm_hcd->payload_length == 0 ||
+-			(tcm_hcd->payload_fully_drained &&
+-			 tcm_hcd->command == CMD_ENABLE_REPORT &&
+-			 tcm_hcd->status_report_code == STATUS_OK)) {
+-		if (tcm_hcd->payload_fully_drained &&
+-				tcm_hcd->command == CMD_ENABLE_REPORT)
+-			tcm_hcd->payload_length = 0;
++	tcm_hcd->response_code = tcm_hcd->status_report_code;
++
++	if (tcm_hcd->payload_length == 0) {
+ 		atomic_set(&tcm_hcd->command_status, CMD_IDLE);
+ 		goto exit;
+ 	}
+ 
+@@ -1155,24 +1159,18 @@ static int syna_tcm_read_message(struct syna_tcm_hcd *tcm_hcd,
+ 
+ 	LOCK_BUFFER(tcm_hcd->in);
+ 
+-	/* continued_read may finish STATUS_OK with rem=0 while header plen still
+-	 * shows the original multi-chunk size; check_padding would otherwise
+-	 * probe past in.buf. Do not clear plen on async reports (0x10 etc.).
+-	 */
+-	if (tcm_hcd->payload_fully_drained &&
+-			tcm_hcd->status_report_code == STATUS_OK)
+-		tcm_hcd->payload_length = 0;
+-
+-	total_length = MESSAGE_HEADER_SIZE + tcm_hcd->payload_length + 1;
+-
+ 	tcm_hcd->in.buf[0] = MESSAGE_MARKER;
+ 	tcm_hcd->in.buf[1] = tcm_hcd->status_report_code;
+ 	tcm_hcd->in.buf[2] = (unsigned char)tcm_hcd->payload_length;
+ 	tcm_hcd->in.buf[3] = (unsigned char)(tcm_hcd->payload_length >> 8);
+ 
+-	if (tcm_hcd->payload_length == 0)
+-		tcm_hcd->in.buf[total_length - 1] = MESSAGE_PADDING;
++	/* continued_read already realloc'd in.buf to total_length+1 and clocked
++	 * rem=0 bytes. TD4150 last chunk often is not 0x5a; that was rc=-5,
++	 * not an out-of-buffer read. Keep original plen for dispatch (identify
++	 * 0x10 and app-info STATUS_OK plen=46 must not be zeroed).
++	 */
++	tcm_hcd->in.buf[total_length - 1] = MESSAGE_PADDING;
+ 
+ check_padding:
+ 	if (tcm_hcd->in.buf[total_length - 1] != MESSAGE_PADDING) {
+@@ -2462,36 +2460,26 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 					tcm_hcd->payload_fully_drained ? 1 : 0);
+ 			}
+ 
+-			if (syna_tcm_status_ok_drained(tcm_hcd)) {
++			if (syna_tcm_status_ok_drained(tcm_hcd) && plen == 0) {
+ 				input_info(true, tcm_hcd->pdev->dev.parent,
+ 					"enabled REPORT_TOUCH (salvaged)\n");
+ 				tcm_hcd->report_touch_cmd_sent = true;
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK at i=%d rc=%d plen=%u drained=%d\n",
+-					i, rc, plen, tcm_hcd->payload_fully_drained ? 1 : 0);
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed empty ack at i=%d rc=%d\n",
++					i, rc);
+ 				return 0;
+ 			}
+ 
+-			if (plen > 512 && (rc == 0 || tcm_hcd->payload_fully_drained)) {
+-				if (plen == last_salvage_plen) {
++			if (plen > 512) {
++				if (plen == last_salvage_plen)
+ 					stuck++;
+-					if (stuck >= 2) {
+-						pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage stuck plen=%u at i=%d, assume ok\n",
+-							plen, i);
+-						tcm_hcd->report_touch_cmd_sent = true;
+-						return 0;
+-					}
+-				} else {
++				else {
+ 					stuck = 0;
+ 					last_salvage_plen = plen;
+ 				}
+-				if (i == 0 || stuck >= 2) {
+-					pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT discarded unsolicited frame code=0x%02x plen=%u\n",
+-						code, plen);
+-				}
+-				tcm_hcd->payload_length = 0;
+-				tcm_hcd->payload_fully_drained = false;
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT discarded leftover code=0x%02x plen=%u rc=%d stuck=%d\n",
++					code, plen, rc, stuck);
+ 				continue;
+ 			}
+ 
+@@ -2505,27 +2493,36 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 		retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
+ 				&report_id, 1, &resp_buf, &resp_buf_size,
+ 				&resp_length, NULL, 0);
+-		if (retval == 0 && syna_tcm_status_ok_drained(tcm_hcd)) {
++		if (retval == 0) {
+ 			input_info(true, tcm_hcd->pdev->dev.parent,
+ 				"enabled REPORT_TOUCH (retry ok)\n");
+ 			tcm_hcd->report_touch_cmd_sent = true;
+ 			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT retry succeeded\n");
+ 			kfree(resp_buf);
+ 			return 0;
+ 		}
+ 
+-		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT failed fast (retry ret=%d code=0x%02x plen=%u)\n",
++		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT no empty ack (retry ret=%d code=0x%02x plen=%u)\n",
+ 			retval, tcm_hcd->status_report_code, tcm_hcd->payload_length);
++		/* -ETIME means SPI write of 0x05 finished; the empty ack was
++		 * lost behind leftover frames / a stuck level-ATTN line.
++		 * Keep processing touch reports and poll if IRQs stay quiet.
++		 */
++		tcm_hcd->report_touch_cmd_sent = true;
++		tcm_hcd->do_polling = true;
++		queue_delayed_work(tcm_hcd->polling_workqueue, &tcm_hcd->polling_work,
++			msecs_to_jiffies(POLLING_DELAY_MS));
++		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT 0x05 written, polling fallback\n");
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Failed to enable REPORT_TOUCH\n");
+ 		kfree(resp_buf);
+ 		syna_tcm_attn_clear_pending(tcm_hcd);
+ 		return 0;
+ 	}
+ 
+ 	/* write_message success => response_code should already be STATUS_OK,
+ 	 * but keep the "only set cmd_sent on real STATUS_OK" invariant.
+ 	 */
+-	if (syna_tcm_status_ok_drained(tcm_hcd)) {
++	if (retval == 0) {
+ 		tcm_hcd->report_touch_cmd_sent = true;
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+ 			"enabled REPORT_TOUCH\n");

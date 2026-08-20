@@ -1,0 +1,59 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: probe enter log; do not nested-read in write_message
+
+since13 wait loop called read_message while command_mutex was held.
+Also drop leftover /tmp/index.html httpd landing page from ramdisk (separate).
+
+Fix:
+1. Log probe enter / sensor_detection result so a silent IRQ table is diagnosable.
+2. Revert ENABLE_REPORT wait to plain wait_for_completion_timeout.
+
+Applies after syna-tcm-enable-report-empty-ack.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -1398,24 +1398,10 @@ static int syna_tcm_write_message(struct syna_tcm_hcd *tcm_hcd,
+ 	if (command == CMD_ENABLE_REPORT)
+ 		response_timeout_ms = 3000;
+ 
+-	{
+-		unsigned long deadline = jiffies + msecs_to_jiffies(response_timeout_ms);
+-
+-		retval = 0;
+-		while (time_before(jiffies, deadline)) {
+-			unsigned long chunk = min(deadline - jiffies,
+-					msecs_to_jiffies(50));
+-
+-			retval = wait_for_completion_timeout(&response_complete, chunk);
+-			if (retval)
+-				break;
+-			if (command == CMD_ENABLE_REPORT &&
+-					syna_tcm_attn_active(tcm_hcd))
+-				syna_tcm_read_message(tcm_hcd, NULL, 0);
+-		}
+-	}
++	retval = wait_for_completion_timeout(&response_complete,
++					msecs_to_jiffies(response_timeout_ms));
+ 	if (retval == 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Timed out waiting for response (command 0x%02x)\n", tcm_hcd->command);
+@@ -3611,6 +3597,7 @@ static int syna_tcm_probe(struct platform_device *pdev)
+ 
+ 	tcm_hcd->pinctrl = bdata->pinctrl;
+ 	tcm_hcd->pdev = pdev;
++	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+ 	tcm_hcd->reset_n_reinit = syna_tcm_reset_and_reinit;
+@@ -3719,8 +3706,12 @@ static int syna_tcm_probe(struct platform_device *pdev)
+ 	pinctrl_configure(tcm_hcd, true);
+ 
+ 	/* detect the type of touch controller */
++	pr_info("SAaiOS_TOUCH_DBG: probe before sensor_detection\n");
+ 	retval = syna_tcm_sensor_detection(tcm_hcd);
++	pr_info("SAaiOS_TOUCH_DBG: sensor_detection ret=%d mode=0x%02x code=0x%02x plen=%u\n",
++		retval, tcm_hcd->id_info.mode, tcm_hcd->status_report_code,
++		tcm_hcd->payload_length);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent, "Failed to detect the sensor\n");
+ 		goto err_get_lcd_regulator;

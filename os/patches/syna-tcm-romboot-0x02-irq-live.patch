@@ -1,0 +1,19 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since42 keep IRQ live after 0x02
+
+since41: leftover 0x1b not locking skip (good), touch_init ok, gpio=1,
+then 0x30 and identify both -62. IRQ stuck at 3.
+
+Cause: syna_tcm_romboot_drain_attn() always disable_irq and never
+releases. Forced 0x30 waited on a masked line.
+
+since42: after 0x02 IDENTIFY, touch_init, release_irq, no drain, no 0x30,
+no blocking identify.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since41 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since42 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

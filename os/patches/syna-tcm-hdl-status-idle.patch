@@ -1,0 +1,229 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since24 idle 0x1b, no printk on IRQ skip
+
+since23 logged "skip 0x30 need_*=0" on every REPORT_STATUS 0x1b from
+irq/244-synapti (~140us). Level ATTN stayed asserted (payload not
+fully consumed and/or IC re-sent 0x1b because HDL never completed).
+printk in the handler livelocked dmesg (same class as since14 poll).
+
+since24:
+- Log skip 0x30 and HDL helper pending once per boot.
+- First 0x1b with need_*=0 sets hdl_status_idle. Later idle 0x1b:
+  consume the 2-byte payload if present, return immediately, no
+  zeroflash, no helper, no log.
+- If ATTN still asserted after that read: one bounded quiet drain
+  (cap 8, stop when attn=0 gpio=1). No printk per iteration. Never
+  restore do_polling.
+- Keep path A: chunked 0x45, no u16 wrap, 0x30 only if need_*, no
+  ENABLE_REPORT 0x05 enable path.
+- Early "since24 probe"; rate-limit continued_read logs.
+
+Applies after syna-tcm-romboot-chunk-0x45.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 18:10:12.707124349 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 18:10:12.707124349 -0400
+@@ -253,6 +253,30 @@
+ 	return n;
+ }
+ 
++/* IRQ-safe leftover drain after idle 0x1b. Same idle-bus stop as
++ * syna_tcm_drain_unread_reports (stop when attn=0 gpio=1). Cap 8.
++ * No printk per iteration. Never restore do_polling. Re-entrant
++ * read_message is OK: mutex was released by the ISR's first read.
++ */
++static int syna_tcm_drain_unread_reports_quiet(struct syna_tcm_hcd *tcm_hcd)
++{
++	int i, n = 0;
++	static bool in_quiet_drain;
++
++	if (!tcm_hcd || !tcm_hcd->read_message || in_quiet_drain)
++		return 0;
++
++	in_quiet_drain = true;
++	for (i = 0; i < 8; i++) {
++		if (!syna_tcm_attn_active(tcm_hcd))
++			break;
++		tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		n++;
++	}
++	in_quiet_drain = false;
++	return n;
++}
++
+ /* Stock after HDL-complete: identify(true) then touch_reinit. Never 0x05.
+  * since23 path=A: 0x30 only if need_* bits ask for config. On-chip 0x02
+  * after a wrapped 0x45 is an HDL stub — pulse TSP reset, retry chunked
+@@ -913,6 +937,18 @@
+ 	} else {
+ 		quiet_dump_plen = 0;
+ 	}
++	/* since24: 0x1b IRQ storms also spam small continued_read.
++	 * Keep the first few, then mute enter/chunk/exit.
++	 */
++	{
++		static unsigned int continued_read_logs;
++
++		if (continued_read_logs >= 8)
++			log_continued = false;
++		else if (log_continued)
++			continued_read_logs++;
++	}
++
+ 	if (log_continued)
+ 		pr_info("SAaiOS_TOUCH_DBG: continued_read enter status=0x%02x plen=%u read_length=%u rd_chunk_size=%u eff_rd=%u rem=%u chunks=%u\n",
+ 			tcm_hcd->status_report_code, tcm_hcd->payload_length,
+@@ -1860,6 +1896,12 @@
+ 			input_err(true, tcm_hcd->pdev->dev.parent, "Failed to read message\n");
+ 		/* ATTN stays asserted until the host clocks leftover bytes. */
+ 		syna_tcm_spi_resync(tcm_hcd);
++	} else if (tcm_hcd->hdl_status_idle && syna_tcm_attn_active(tcm_hcd)) {
++		/* Level ATTN still high after idle 0x1b: bounded drain.
++		 * Do not printk. Do not restore do_polling.
++		 */
++		syna_tcm_drain_unread_reports_quiet(tcm_hcd);
++	}
+ 
+ exit:
+ 	return IRQ_HANDLED;
+@@ -3905,6 +3947,7 @@
+ 	tcm_hcd->pinctrl = bdata->pinctrl;
+ 	tcm_hcd->pdev = pdev;
++	pr_info("SAaiOS_TOUCH_DBG: since24 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+ 	tcm_hcd->reset_n_reinit = syna_tcm_reset_and_reinit;
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 18:10:12.707124349 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 18:10:12.707124349 -0400
+@@ -570,6 +570,7 @@
+ 	bool report_touch_cmd_sent;
+ 	bool payload_fully_drained;
+ 	bool hdl_status_seen;
++	bool hdl_status_idle;
+ 	bool hdl_reinit_done;
+ 	bool try_get_report_config;
+ 	bool identify_attempted;
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 18:10:12.707124349 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 18:10:12.707124349 -0400
+@@ -1517,7 +1517,13 @@
+ 			zeroflash_hcd->has_open_short_config) {
+ 		retval = zeroflash_download_open_short_config();
+ 	} else {
+-		pr_info("SAaiOS_TOUCH_DBG: since23 path=A skip 0x30 need_*=0\n");
++		static bool logged_skip_sync;
++
++		tcm_hcd->hdl_status_idle = true;
++		if (!logged_skip_sync) {
++			logged_skip_sync = true;
++			pr_info("SAaiOS_TOUCH_DBG: since24 skip 0x30 need_*=0\n");
++		}
+ 		retval = 0;
+ 	}
+ 
+@@ -1548,9 +1554,20 @@
+ 	mode_before = tcm_hcd->id_info.mode;
+ 
+ 	if (!need_cfg) {
++		static bool logged_skip_wait1;
++		static bool logged_helper_wait1;
++
+ 		zeroflash_hcd->config_attempted = true;
+ 		zeroflash_hcd->last_config_retval = 0;
+-		pr_info("SAaiOS_TOUCH_DBG: since23 path=A skip 0x30 need_*=0 wait=1\n");
++		tcm_hcd->hdl_status_idle = true;
++		if (!logged_skip_wait1) {
++			logged_skip_wait1 = true;
++			pr_info("SAaiOS_TOUCH_DBG: since24 skip 0x30 need_*=0 wait=1\n");
++		}
++		if (!logged_helper_wait1) {
++			logged_helper_wait1 = true;
++			pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION pending\n");
++		}
+ 		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 wait=1 retval=0 mode=0x%02x->0x%02x in_hdl_mode=%d\n",
+ 			mode_before, tcm_hcd->id_info.mode,
+ 			tcm_hcd->in_hdl_mode ? 1 : 0);
+@@ -1578,6 +1595,8 @@
+ 	bool need_cfg;
+ 	unsigned char mode_before;
+ 	bool in_isr;
++	static bool logged_skip_030;
++	static bool logged_helper_pending;
+ 
+ 	if (!tcm_hcd)
+ 		return 0;
+@@ -1587,22 +1606,19 @@
+ 
+ 		retval = zeroflash_ensure_hcd(tcm_hcd);
+ 		if (retval < 0) {
+-			pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 retval=%d mode=0x%02x\n",
+-				retval, tcm_hcd->id_info.mode);
++			if (!tcm_hcd->hdl_status_idle)
++				pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 retval=%d mode=0x%02x\n",
++					retval, tcm_hcd->id_info.mode);
+ 			return retval;
+ 		}
+ 		if (created)
+ 			pr_info("SAaiOS_TOUCH_DBG: zeroflash config-only init (no ROMBOOT 0x45)\n");
+ 	}
+ 
+-	if (zeroflash_hcd->config_attempted) {
+-		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 already attempted retval=%d mode=0x%02x\n",
+-			zeroflash_hcd->last_config_retval, tcm_hcd->id_info.mode);
+-		if (wait && current->pid != tcm_hcd->isr_pid)
+-			return zeroflash_run_pending_config(tcm_hcd);
+-		return zeroflash_hcd->last_config_retval;
+-	}
+-
++	/* Consume the 2-byte 0x1b payload from the frame already clocked by
++	 * this read_message (report.buffer / in.buf). No extra SPI here:
++	 * rw_ctrl_mutex is held on the IRQ path.
++	 */
+ 	if (tcm_hcd->report.buffer.buf && tcm_hcd->report.buffer.buf_size >= 2) {
+ 		src = tcm_hcd->report.buffer.buf;
+ 		src_size = tcm_hcd->report.buffer.buf_size;
+@@ -1626,6 +1642,22 @@
+ 		UNLOCK_BUFFER(tcm_hcd->in);
+ 	}
+ 
++	need_cfg = (retval >= 0 && src) ? zeroflash_stock_need_cfg() : false;
++
++	/* Later 0x1b with need_*=0: already consumed, return immediately.
++	 * No zeroflash, no helper, no log. Prevents printk livelock.
++	 */
++	if (tcm_hcd->hdl_status_idle && !need_cfg)
++		return 0;
++
++	if (zeroflash_hcd->config_attempted) {
++		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 already attempted retval=%d mode=0x%02x\n",
++			zeroflash_hcd->last_config_retval, tcm_hcd->id_info.mode);
++		if (wait && current->pid != tcm_hcd->isr_pid)
++			return zeroflash_run_pending_config(tcm_hcd);
++		return zeroflash_hcd->last_config_retval;
++	}
++
+ 	if (retval < 0 || !src) {
+ 		pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS fw_status missing payload mode=0x%02x\n",
+ 			tcm_hcd->id_info.mode);
+@@ -1658,8 +1690,20 @@
+ 	mode_before = tcm_hcd->id_info.mode;
+ 	in_isr = (current->pid == tcm_hcd->isr_pid);
+ 
+-	if (!need_cfg)
+-		pr_info("SAaiOS_TOUCH_DBG: since23 path=A skip 0x30 need_*=0\n");
++	if (!need_cfg) {
++		tcm_hcd->hdl_status_idle = true;
++		if (!logged_skip_030) {
++			logged_skip_030 = true;
++			pr_info("SAaiOS_TOUCH_DBG: since24 skip 0x30 need_*=0\n");
++		}
++		if (!logged_helper_pending) {
++			logged_helper_pending = true;
++			pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION pending\n");
++		}
++		if (!wait || in_isr)
++			return 0;
++		return zeroflash_run_pending_config(tcm_hcd);
++	}
+ 
+ 	if (!wait || in_isr) {
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x30 deferred (not ISR-safe) need_cfg=%d\n",

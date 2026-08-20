@@ -1,0 +1,98 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: do not HDL 0x45 / second 0x20 when on-chip FW is 0x02
+
+since14 log: RomBoot detect, 0x45 ROMBOOT DOWNLOAD, IRQ identify mode=0x02,
+"Device has been reset" (CMD_ERROR on 0x45), GET_APPLICATION_INFO succeeds
+once (config 0104000E), probe sends a second 0x20 which times out, then
+err_tcm_identify disables IRQ 244. Touch node left without handler.
+
+Fix:
+1. Identify during CMD_ROMBOOT_DOWNLOAD completes as OK, not CMD_ERROR.
+2. After 0x45, if already IS_FW_MODE: skip HDL, do not call identify().
+3. Probe skips second identify whenever mode is already FW (not only if
+   app_info_cmd_sent). Timeouts no longer unwind the IRQ.
+
+Applies after syna-tcm-probe-enter-log.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -616,6 +616,7 @@ static void syna_tcm_dispatch_message(struct syna_tcm_hcd *tcm_hcd)
+ 			case CMD_RUN_APPLICATION_FIRMWARE:
+ 			case CMD_ENTER_PRODUCTION_TEST_MODE:
+ 			case CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE:
++			case CMD_ROMBOOT_DOWNLOAD:
+ 				tcm_hcd->response_code = STATUS_OK;
+ 				atomic_set(&tcm_hcd->command_status, CMD_IDLE);
+ 				complete(&response_complete);
+@@ -3773,16 +3774,24 @@ static int syna_tcm_probe(struct platform_device *pdev)
+ 	 * v014's extra probe identify timed out (-62) after a successful first
+ 	 * 0x20. v015 skipped both and 0x05/0x25 ran on a desynced bus.
+ 	 */
+-	if (IS_FW_MODE(tcm_hcd->id_info.mode) && tcm_hcd->app_info_cmd_sent) {
++	if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+-			"On-chip firmware, skip second identify (mode = 0x%02x)\n",
+-			tcm_hcd->id_info.mode);
++			"On-chip firmware, skip second identify (mode = 0x%02x app_info_sent=%d)\n",
++			tcm_hcd->id_info.mode, tcm_hcd->app_info_cmd_sent ? 1 : 0);
+ 		tcm_hcd->sensor_type = TYPE_FLASH;
+ 	} else {
+ 		retval = syna_tcm_identify(tcm_hcd, false);
+ 		if (retval < 0) {
+-			input_err(true, tcm_hcd->pdev->dev.parent,
+-				"Application firmware is not running\n");
+-			goto err_tcm_identify;
++			if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++				input_err(true, tcm_hcd->pdev->dev.parent,
++					"GET_APPLICATION_INFO timed out, continuing with on-chip FW\n");
++			} else {
++				input_err(true, tcm_hcd->pdev->dev.parent,
++					"Application firmware is not running\n");
++				goto err_tcm_identify;
++			}
+ 		}
+ 	}
+ 
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -1204,32 +1204,19 @@ static void zeroflash_do_romboot_firmware_download(void)
+ 	retval = tcm_hcd->write_message(tcm_hcd, CMD_ROMBOOT_DOWNLOAD,
+ 			out_buf, image_size + RESERVED_BYTES, &resp_buf,
+ 			&resp_buf_size, &resp_length, NULL, 20);
+-	if (retval < 0) {
++	if (retval < 0 || IS_FW_MODE(tcm_hcd->id_info.mode)) {
++		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++			input_info(true, tcm_hcd->pdev->dev.parent,
++				"ROMBOOT DOWNLOAD skipped, firmware mode = 0x%02x (on-chip)\n",
++				tcm_hcd->id_info.mode);
++			tcm_hcd->sensor_type = TYPE_FLASH;
++			atomic_set(&tcm_hcd->host_downloading, 0);
++			goto error_secure_memcpy;
++		}
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to write command ROMBOOT DOWNLOAD");
+-		/* Identify-as-reset already set mode 0x02. Restore the first
+-		 * GET_APPLICATION_INFO (0x20) that succeeded in v014; never
+-		 * send a second blocking identify from probe.
+-		 */
+-		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+-			input_info(true, tcm_hcd->pdev->dev.parent,
+-				"ROMBOOT DOWNLOAD skipped, firmware mode = 0x%02x (on-chip)\n",
+-				tcm_hcd->id_info.mode);
+-			tcm_hcd->sensor_type = TYPE_FLASH;
+-			if (tcm_hcd->identify(tcm_hcd, false) < 0)
+-				input_err(true, tcm_hcd->pdev->dev.parent,
+-					"on-chip GET_APPLICATION_INFO failed\n");
+-			else
+-				input_info(true, tcm_hcd->pdev->dev.parent,
+-					"on-chip GET_APPLICATION_INFO ok\n");
+-			/* v018: do not ENABLE_REPORT here — early 0x05 times
+-			 * out, partial drain desyncs the bus before touch_init.
+-			 */
+-			atomic_set(&tcm_hcd->host_downloading, 0);
+-			goto error_secure_memcpy;
+-		}
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
+ 		goto error_secure_memcpy;
+ 	}
+ 

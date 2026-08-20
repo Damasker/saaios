@@ -1,0 +1,325 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: send blocking CMD_DOWNLOAD_CONFIG 0x30 after 0x1b
+
+since21 skipped 0x30 when REPORT_STATUS 10 00 had need_*=0, then sent
+CMD_RESET 0x04 and identify. Both timed out with gpio staying 1 — the IC
+is in HDL-v2 waiting for CMD_DOWNLOAD_CONFIG, not RESET/IDENTIFY.
+
+since22:
+- After 0x1b with need_*=0 and 0x30 not yet sent this boot, send 0x30
+  from probe (process context, blocking write_message, IRQ enabled).
+  Payload is stock APP_CONFIG from td4150_a12s_boe.bin (hdlv=2,
+  HDL_TOUCH_CONFIG). Log if bits were 0. Never wait=0 from IRQ.
+- Do not CMD_RESET or extra identify before 0x30.
+- After a successful 0x30, run stock HDL-complete helper (identify +
+  touch_reinit). If 0x30 times out, log cmd/status/attn/gpio/irq and
+  skip RESET/identify.
+- Keep in_hdl_mode=0, no ENABLE_REPORT 0x05, no do_polling, no SPI
+  read when ATTN idle, no resume reinit after identify timeout.
+
+Applies after syna-tcm-hdl-complete-reinit.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -253,23 +253,14 @@
+ 	return n;
+ }
+ 
+-/* Stock after HDL-complete: identify(true) then touch_reinit. Never 0x05. */
+-/* Stock zeroflash_download_config() when need_*=0 && host_downloading:
+- * clear host_downloading, queue HELP_SEND_REINIT_NOTIFICATION
+- * (identify(true) = CMD_IDENTIFY 0x02 then GET_APPLICATION_INFO 0x20,
+- * then touch_reinit). Skip-HDL already cleared host_downloading, so
+- * that branch never ran. Do the same helper here, once.
+- * If ATTN is idle after REPORT_STATUS 0x1b, 0x20 will not complete —
+- * send CMD_RESET 0x04 first (leave HDL status), then one identify.
++/* Stock after HDL-complete: identify(true) then touch_reinit. Never 0x05.
++ * After REPORT_STATUS 0x1b the IC is in HDL-v2 waiting for
++ * CMD_DOWNLOAD_CONFIG 0x30, not CMD_RESET/IDENTIFY. Send 0x30 first
++ * (probe, blocking). Only then run this helper. Never RESET before 0x30.
+  */
+ static int syna_tcm_identify_touch_reinit(struct syna_tcm_hcd *tcm_hcd)
+ {
+ 	int retval = 0;
+-	unsigned char *resp_buf = NULL;
+-	unsigned int resp_buf_size = 0;
+-	unsigned int resp_length = 0;
+-	unsigned char response_code = 0;
+-	const struct syna_tcm_board_data *bdata;
+ 
+ 	if (!tcm_hcd)
+ 		return 0;
+@@ -292,24 +283,20 @@
+ 	atomic_set(&tcm_hcd->host_downloading, 0);
+ 
+ 	syna_tcm_drain_unread_reports(tcm_hcd);
+-	zeroflash_run_pending_config(tcm_hcd);
++	retval = zeroflash_run_pending_config(tcm_hcd);
+ 	if (syna_tcm_attn_active(tcm_hcd))
+ 		syna_tcm_drain_unread_reports(tcm_hcd);
+ 
+-	if (!syna_tcm_attn_active(tcm_hcd)) {
+-		bdata = (tcm_hcd->hw_if && tcm_hcd->hw_if->bdata) ?
+-			tcm_hcd->hw_if->bdata : NULL;
+-		pr_info("SAaiOS_TOUCH_DBG: ATTN idle after 0x1b, CMD_RESET 0x04 (leave HDL status) then one identify\n");
+-		retval = tcm_hcd->write_message(tcm_hcd, CMD_RESET, NULL, 0,
+-			&resp_buf, &resp_buf_size, &resp_length, &response_code,
+-			bdata ? bdata->reset_delay_ms : 0);
+-		pr_info("SAaiOS_TOUCH_DBG: write_message CMD_RESET 0x04 status=0x%02x plen=%u retval=%d mode=0x%02x attn=%d gpio=%d\n",
+-			tcm_hcd->status_report_code, tcm_hcd->payload_length, retval,
+-			tcm_hcd->id_info.mode,
++	if (tcm_hcd->hdl_status_seen && retval < 0) {
++		pr_info("SAaiOS_TOUCH_DBG: 0x30 failed retval=%d status=0x%02x attn=%d gpio=%d irq=%d, skip RESET/identify\n",
++			retval, tcm_hcd->status_report_code,
+ 			syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
+-			syna_tcm_attn_gpio_value(tcm_hcd));
+-		if (syna_tcm_attn_active(tcm_hcd))
+-			syna_tcm_drain_unread_reports(tcm_hcd);
++			syna_tcm_attn_gpio_value(tcm_hcd),
++			tcm_hcd->irq);
++		tcm_hcd->identify_attempted = true;
++		tcm_hcd->identify_timed_out = true;
++		wake_up_interruptible(&tcm_hcd->hdl_wq);
++		return retval;
+ 	}
+ 
+ 	tcm_hcd->identify_attempted = true;
+@@ -4055,8 +4042,8 @@
+ 	}
+ 
+ 	/* Stock HDL-complete helper (HELP_SEND_REINIT_NOTIFICATION):
+-	 * identify + touch_reinit after 0x1b when need_*=0. One identify
+-	 * max; CMD_RESET first if ATTN idle. Do not unwind IRQ on timeout.
++	 * 0x30 first (probe, blocking), then identify + touch_reinit.
++	 * No CMD_RESET. If 0x30 times out, skip identify. Do not unwind IRQ.
+ 	 */
+ 	if (tcm_hcd->hdl_status_seen) {
+ 		tcm_hcd->try_get_report_config = true;
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -635,11 +635,17 @@
+ static void zeroflash_log_cmd_download_config(struct syna_tcm_hcd *tcm_hcd,
+ 		unsigned char response_code, int retval)
+ {
+-	pr_info("SAaiOS_TOUCH_DBG: write_message CMD_DOWNLOAD_CONFIG 0x30 status=0x%02x plen=%u retval=%d\n",
+-		response_code, tcm_hcd->payload_length, retval);
++	pr_info("SAaiOS_TOUCH_DBG: write_message CMD_DOWNLOAD_CONFIG 0x30 status=0x%02x plen=%u retval=%d attn=%d gpio=%d irq=%d irq_en=%d\n",
++		response_code, tcm_hcd->payload_length, retval,
++		zeroflash_attn_active(tcm_hcd) ? 1 : 0,
++		zeroflash_attn_gpio_value(tcm_hcd),
++		tcm_hcd->irq, tcm_hcd->irq_enabled ? 1 : 0);
+ 	if (retval == -ETIME)
+-		pr_info("SAaiOS_TOUCH_DBG: CMD_DOWNLOAD_CONFIG timeout status=0x%02x plen=%u retval=%d\n",
+-			response_code, tcm_hcd->payload_length, retval);
++		pr_info("SAaiOS_TOUCH_DBG: CMD_DOWNLOAD_CONFIG timeout status=0x%02x plen=%u retval=%d attn=%d gpio=%d irq=%d irq_en=%d\n",
++			response_code, tcm_hcd->payload_length, retval,
++			zeroflash_attn_active(tcm_hcd) ? 1 : 0,
++			zeroflash_attn_gpio_value(tcm_hcd),
++			tcm_hcd->irq, tcm_hcd->irq_enabled ? 1 : 0);
+ 	pr_info("SAaiOS_TOUCH_DBG: after 0x30 attn=%d gpio=%d\n",
+ 		zeroflash_attn_active(tcm_hcd) ? 1 : 0,
+ 		zeroflash_attn_gpio_value(tcm_hcd));
+@@ -913,6 +919,12 @@
+ 	zeroflash_hcd->out.data_length = image_info->app_config.size + 2;
+ 	zeroflash_hcd->out.data_length += padding;
+ 
++	pr_info("SAaiOS_TOUCH_DBG: 0x30 payload source=fw_app_config blob_len=%u pkt_len=%u hdlv=%u type=%u\n",
++		image_info->app_config.size,
++		zeroflash_hcd->out.data_length,
++		zeroflash_hcd->fw_status.hdl_version,
++		(unsigned int)HDL_TOUCH_CONFIG);
++
+ 	LOCK_BUFFER(zeroflash_hcd->resp);
+ 
+ 	retval = tcm_hcd->write_message(tcm_hcd, CMD_DOWNLOAD_CONFIG,
+@@ -1349,33 +1361,102 @@
+ 			&& zeroflash_hcd->has_open_short_config);
+ }
+ 
+-/* Blocking CMD_DOWNLOAD_CONFIG (0x30). Never queue_work. Never fake retval=0. */
++/* Stock HDL v2 0x30 header: buf[0]=hdl_version (2), buf[1]=HDL_TOUCH_CONFIG.
++ * Used only if the firmware APP_CONFIG blob is missing.
++ */
++static int zeroflash_download_hdl_v2_header(void)
++{
++	int retval;
++	unsigned char response_code;
++	struct syna_tcm_hcd *tcm_hcd = zeroflash_hcd->tcm_hcd;
++
++	LOCK_BUFFER(zeroflash_hcd->out);
++
++	retval = syna_tcm_alloc_mem(tcm_hcd, &zeroflash_hcd->out, 2);
++	if (retval < 0) {
++		input_err(true, tcm_hcd->pdev->dev.parent,
++				"Failed to allocate memory for HDL v2 header\n");
++		goto unlock_out;
++	}
++
++	switch (zeroflash_hcd->fw_status.hdl_version) {
++	case 0:
++	case 1:
++		zeroflash_hcd->out.buf[0] = 1;
++		break;
++	case 2:
++		zeroflash_hcd->out.buf[0] = 2;
++		break;
++	default:
++		zeroflash_hcd->out.buf[0] = 2;
++		break;
++	}
++	zeroflash_hcd->out.buf[1] = HDL_TOUCH_CONFIG;
++	zeroflash_hcd->out.data_length = 2;
++
++	pr_info("SAaiOS_TOUCH_DBG: 0x30 payload source=hdl_v2_header_only pkt_len=%u hdr=%02x %02x\n",
++		zeroflash_hcd->out.data_length,
++		zeroflash_hcd->out.buf[0], zeroflash_hcd->out.buf[1]);
++
++	LOCK_BUFFER(zeroflash_hcd->resp);
++
++	retval = tcm_hcd->write_message(tcm_hcd, CMD_DOWNLOAD_CONFIG,
++			zeroflash_hcd->out.buf, zeroflash_hcd->out.data_length,
++			&zeroflash_hcd->resp.buf, &zeroflash_hcd->resp.buf_size,
++			&zeroflash_hcd->resp.data_length, &response_code, 0);
++	zeroflash_log_cmd_download_config(tcm_hcd, response_code, retval);
++	UNLOCK_BUFFER(zeroflash_hcd->resp);
++
++unlock_out:
++	UNLOCK_BUFFER(zeroflash_hcd->out);
++
++	return retval;
++}
++
++/* Blocking CMD_DOWNLOAD_CONFIG (0x30). Never queue_work. Never fake retval=0.
++ * After 0x1b with need_*=0 the IC still waits for 0x30 — send APP_CONFIG.
++ */
+ static int zeroflash_download_config_sync(void)
+ {
+ 	int retval;
+ 	struct syna_tcm_hcd *tcm_hcd = zeroflash_hcd->tcm_hcd;
++	bool need_cfg = zeroflash_stock_need_cfg();
++	unsigned int blob_len;
+ 
+ 	retval = zeroflash_get_fw_image();
+ 	if (retval < 0) {
+-		zeroflash_hcd->last_config_retval = retval;
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to get firmware image\n");
+ 		pr_info("SAaiOS_TOUCH_DBG: zeroflash_get_fw_image failed retval=%d\n",
+ 			retval);
++		if (!need_cfg) {
++			pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0 (header-only, fw parse failed)\n");
++			retval = zeroflash_download_hdl_v2_header();
++		}
++		zeroflash_hcd->last_config_retval = retval;
+ 		return retval;
+ 	}
+ 
+ 	input_info(true, tcm_hcd->pdev->dev.parent, "Start of config download\n");
+ 
+-	if (zeroflash_hcd->fw_status.need_app_config)
++	blob_len = zeroflash_hcd->image_info.app_config.size;
++
++	if (zeroflash_hcd->fw_status.need_app_config) {
+ 		retval = zeroflash_download_app_config();
+-	else if (zeroflash_hcd->fw_status.need_disp_config)
++	} else if (zeroflash_hcd->fw_status.need_disp_config) {
+ 		retval = zeroflash_download_disp_config();
+-	else if (zeroflash_hcd->fw_status.need_open_short_config &&
+-			zeroflash_hcd->has_open_short_config)
++	} else if (zeroflash_hcd->fw_status.need_open_short_config &&
++			zeroflash_hcd->has_open_short_config) {
+ 		retval = zeroflash_download_open_short_config();
+-	else
+-		retval = 0;
++	} else {
++		pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0 (app config anyway)\n");
++		if (blob_len) {
++			retval = zeroflash_download_app_config();
++		} else {
++			pr_info("SAaiOS_TOUCH_DBG: no APP_CONFIG in fw image, HDL v2 header-only\n");
++			retval = zeroflash_download_hdl_v2_header();
++		}
++	}
+ 
+ 	zeroflash_hcd->last_config_retval = retval;
+ 	input_info(true, tcm_hcd->pdev->dev.parent, "End of config download\n");
+@@ -1393,7 +1474,7 @@
+ 	if (!tcm_hcd->hdl_status_seen)
+ 		return 0;
+ 	if (zeroflash_hcd->config_attempted)
+-		return 0;
++		return zeroflash_hcd->last_config_retval;
+ 	if (current->pid == tcm_hcd->isr_pid) {
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x30 deferred (not ISR-safe) need_cfg=%d\n",
+ 			zeroflash_stock_need_cfg() ? 1 : 0);
+@@ -1403,25 +1484,15 @@
+ 	need_cfg = zeroflash_stock_need_cfg();
+ 	mode_before = tcm_hcd->id_info.mode;
+ 
+-	if (!need_cfg) {
+-		zeroflash_hcd->config_attempted = true;
+-		zeroflash_hcd->last_config_retval = 0;
+-		atomic_set(&tcm_hcd->host_downloading, 0);
+-		wake_up_interruptible(&tcm_hcd->hdl_wq);
+-		pr_info("SAaiOS_TOUCH_DBG: no need_* bits, skip 0x30\n");
+-		pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION pending (stock need_*=0)\n");
+-		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 wait=1 retval=0 mode=0x%02x->0x%02x in_hdl_mode=%d\n",
+-			mode_before, tcm_hcd->id_info.mode,
+-			tcm_hcd->in_hdl_mode ? 1 : 0);
+-		return 0;
+-	}
++	if (!need_cfg)
++		pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0\n");
+ 
+ 	/* Keep in_hdl_mode as-is. Never set it here. Never ROMBOOT 0x45. */
+ 	zeroflash_hcd->config_attempted = true;
+ 	retval = zeroflash_download_config_sync();
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=1 need_cfg=1 wait=1 retval=%d mode=0x%02x->0x%02x in_hdl_mode=%d\n",
+-		retval, mode_before, tcm_hcd->id_info.mode,
++	pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=1 need_cfg=%d wait=1 retval=%d mode=0x%02x->0x%02x in_hdl_mode=%d\n",
++		need_cfg ? 1 : 0, retval, mode_before, tcm_hcd->id_info.mode,
+ 		tcm_hcd->in_hdl_mode ? 1 : 0);
+ 
+ 	return retval;
+@@ -1511,30 +1582,22 @@
+ 
+ 	tcm_hcd->hdl_status_seen = true;
+ 
+-	/* Follow stock need_* bits. Do not fake need_app_config. */
++	/* After 0x1b the IC waits for 0x30 even when need_*=0. Never send
++	 * 0x30 from IRQ (wait=0). Probe sends it blocking. Do not mark
++	 * config_attempted here or probe would skip the write.
++	 */
+ 	need_cfg = zeroflash_stock_need_cfg();
+ 	mode_before = tcm_hcd->id_info.mode;
+ 	in_isr = (current->pid == tcm_hcd->isr_pid);
+ 
+-	if (!need_cfg) {
+-		pr_info("SAaiOS_TOUCH_DBG: no need_* bits, skip 0x30\n");
+-		atomic_set(&tcm_hcd->host_downloading, 0);
+-		wake_up_interruptible(&tcm_hcd->hdl_wq);
+-		pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION pending (stock need_*=0)\n");
+-		if (wait && !in_isr)
+-			return zeroflash_run_pending_config(tcm_hcd);
+-		zeroflash_hcd->config_attempted = true;
+-		zeroflash_hcd->last_config_retval = 0;
+-		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 wait=0 retval=0 mode=0x%02x->0x%02x in_hdl_mode=%d\n",
+-			mode_before, tcm_hcd->id_info.mode,
+-			tcm_hcd->in_hdl_mode ? 1 : 0);
+-		return 0;
+-	}
++	if (!need_cfg)
++		pr_info("SAaiOS_TOUCH_DBG: send 0x30 despite need_*=0\n");
+ 
+ 	if (!wait || in_isr) {
+-		pr_info("SAaiOS_TOUCH_DBG: 0x30 deferred (not ISR-safe) need_cfg=1\n");
+-		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=1 wait=0 retval=%d mode=0x%02x->0x%02x in_hdl_mode=%d\n",
+-			zeroflash_hcd->last_config_retval,
++		pr_info("SAaiOS_TOUCH_DBG: 0x30 deferred (not ISR-safe) need_cfg=%d\n",
++			need_cfg ? 1 : 0);
++		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=%d wait=0 retval=%d mode=0x%02x->0x%02x in_hdl_mode=%d\n",
++			need_cfg ? 1 : 0, zeroflash_hcd->last_config_retval,
+ 			mode_before, tcm_hcd->id_info.mode,
+ 			tcm_hcd->in_hdl_mode ? 1 : 0);
+ 		return 0;

@@ -1,0 +1,375 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since31 drain 0x1b after 0x45, no retry
+
+since30 clocked all 97k (retval=0, status 0x1b) but stayed RomBoot
+0x04 with gpio=0. Unread 0x1b held ATTN. switch_mode(BOOTLOADER)
+then waited 1s and retried the full image. Bug: retval was already 0.
+
+since31:
+- Set romboot_bytes_sent when remaining==0. Never retry 0x45 after
+  a full send.
+- After 0x45 complete: one drain of leftover ATTN. Log
+  0x45 after send drain n= code= mode=.
+- If IDENTIFY 0x10 or mode 0x01/0x02: firmware started.
+- If still 0x04: RUN_APPLICATION then identify once. Never
+  switch_mode BOOTLOADER. Never touch_init as app firmware.
+- Keep: stock 24-bit header, SPI CONTINUE, first drain, no lcd_rst,
+  no ENABLE_REPORT 0x05, no do_polling, no IRQ printk flood, no IRQ unwind.
+
+Applies after syna-tcm-romboot-stock-continue.patch.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 20:25:41.243480937 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 20:25:41.247481038 -0400
+@@ -394,11 +394,20 @@
+ 		syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
+ 		tcm_hcd->romboot_download_ok ? 1 : 0);
+ 
+-	if (!tcm_hcd->romboot_download_ok) {
++	if (tcm_hcd->romboot_bytes_sent &&
++			tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER) {
++		pr_info("SAaiOS_TOUCH_DBG: skip HDL helper still RomBoot after 0x45 sent mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		return 0;
++	}
++	if (!tcm_hcd->romboot_download_ok && !tcm_hcd->romboot_bytes_sent) {
+ 		retval = zeroflash_retry_romboot_hdl(tcm_hcd);
+ 		pr_info("SAaiOS_TOUCH_DBG: since23 path=A retry 0x45 retval=%d mode=0x%02x romboot_ok=%d\n",
+ 			retval, tcm_hcd->id_info.mode,
+ 			tcm_hcd->romboot_download_ok ? 1 : 0);
++	} else if (!tcm_hcd->romboot_download_ok && tcm_hcd->romboot_bytes_sent) {
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 skip retry bytes already sent mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
+ 	}
+ 
+ 	atomic_set(&tcm_hcd->host_downloading, 0);
+@@ -1707,6 +1716,7 @@
+ 		tcm_hcd->romboot_chunks_left = 0;
+ 		tcm_hcd->romboot_remaining = remaining_length;
+ 		tcm_hcd->romboot_aborted_early = false;
++		tcm_hcd->romboot_bytes_sent = false;
+ 		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 chunk_space=%u remaining=%u\n",
+ 			chunk_space, remaining_length);
+ 	}
+@@ -1809,6 +1819,9 @@
+ 		goto exit;
+ 
+ 	if (is_romboot_hdl) {
++		int drain_n = 0;
++		unsigned char drain_code = 0;
++
+ 		/* Unmask after the full payload is on the wire. IDENTIFY
+ 		 * is firmware-started only with remaining==0.
+ 		 */
+@@ -1828,6 +1841,8 @@
+ 			goto exit;
+ 		}
+ 
++		tcm_hcd->romboot_bytes_sent = true;
++
+ 		response_timeout_ms = 3000;
+ 		retval = wait_for_completion_timeout(&response_complete,
+ 				msecs_to_jiffies(response_timeout_ms));
+@@ -1835,29 +1850,41 @@
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Timed out waiting for response (command 0x%02x)\n",
+ 				tcm_hcd->command);
+-			retval = -ETIME;
+-			goto exit;
++		} else {
++			command_status = atomic_read(&tcm_hcd->command_status);
++			chunk_status = tcm_hcd->status_report_code;
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 complete status=0x%02x remaining=%u mode=0x%02x\n",
++				chunk_status, remaining_length, tcm_hcd->id_info.mode);
+ 		}
+ 
+-		command_status = atomic_read(&tcm_hcd->command_status);
+-		chunk_status = tcm_hcd->status_report_code;
+-		pr_info("SAaiOS_TOUCH_DBG: 0x45 complete status=0x%02x remaining=%u mode=0x%02x\n",
+-			chunk_status, remaining_length, tcm_hcd->id_info.mode);
++		/* Bytes are on the wire. Never ETIME/retry 97k. Drain leftover
++		 * ATTN so identify / RUN_APPLICATION are not blocked (gpio=0).
++		 */
++		retval = 0;
+ 
+-		if (command_status != CMD_IDLE) {
+-			input_err(true, tcm_hcd->pdev->dev.parent,
+-				"Failed to get valid response (command 0x%02x)\n",
+-				tcm_hcd->command);
+-			retval = -EIO;
+-			goto exit;
+-		}
++		tcm_hcd->hdl_status_seen = true;
++		atomic_set(&tcm_hcd->command_status, CMD_IDLE);
++		tcm_hcd->response_code = STATUS_OK;
+ 
+-		if (tcm_hcd->response_code != STATUS_OK) {
+-			retval = -EIO;
+-			goto exit;
++		/* Completing 0x1b can re-assert ATTN. Consume it here so
++		 * switch_mode / identify are not blocked (gpio=0).
++		 */
++		if (tcm_hcd->read_message && syna_tcm_attn_active(tcm_hcd)) {
++			tcm_hcd->read_message(tcm_hcd, NULL, 0);
++			drain_code = tcm_hcd->status_report_code;
++			drain_n = 1;
+ 		}
+-
+-		tcm_hcd->hdl_status_seen = true;
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 after send drain n=%d code=0x%02x mode=0x%02x\n",
++			drain_n, drain_code, tcm_hcd->id_info.mode);
++		if (drain_code == REPORT_IDENTIFY ||
++				IS_FW_MODE(tcm_hcd->id_info.mode))
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 firmware started mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++		else if (drain_n == 0 && !syna_tcm_attn_active(tcm_hcd))
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 sent no ATTN\n");
++		else if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 still RomBoot after drain mode=0x%02x code=0x%02x\n",
++				tcm_hcd->id_info.mode, drain_code);
+ 	} else {
+ 		if (tcm_hcd->do_polling && polling_delay_ms) {
+ 			queue_delayed_work(tcm_hcd->polling_workqueue, &tcm_hcd->polling_work,
+@@ -3350,6 +3377,13 @@
+ 			atomic_set(&helper->task, HELP_NONE);
+ 			break;
+ 		}
++		if (tcm_hcd->romboot_bytes_sent &&
++				tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER) {
++			pr_info("SAaiOS_TOUCH_DBG: skip HDL helper still RomBoot after 0x45 sent mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++			atomic_set(&helper->task, HELP_NONE);
++			break;
++		}
+ 		mutex_lock(&tcm_hcd->reset_mutex);
+ 
+ 		/* do identify to ensure application firmware is running */
+@@ -3384,7 +3418,9 @@
+ 	/* this helper is used to reinit the touch reporting */
+ 	case HELP_TOUCH_REINIT:
+ 		if (tcm_hcd->romboot_download_active ||
+-				tcm_hcd->romboot_aborted_early) {
++				tcm_hcd->romboot_aborted_early ||
++				(tcm_hcd->romboot_bytes_sent &&
++				 tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)) {
+ 			atomic_set(&helper->task, HELP_NONE);
+ 			break;
+ 		}
+@@ -4161,6 +4197,7 @@
+ 	pr_info("SAaiOS_TOUCH_DBG: since28 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since29 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since30 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since31 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+@@ -4343,6 +4380,10 @@
+ 			tcm_hcd->id_info.mode);
+ 		if (IS_FW_MODE(tcm_hcd->id_info.mode))
+ 			tcm_hcd->sensor_type = TYPE_FLASH;
++	} else if (tcm_hcd->romboot_bytes_sent &&
++			tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER) {
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 still RomBoot after send mode=0x%02x (no retry)\n",
++			tcm_hcd->id_info.mode);
+ 	} else if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x45 fail skip-HDL reason=already FW mode=0x%02x romboot_ok=0\n",
+ 			tcm_hcd->id_info.mode);
+@@ -4352,6 +4393,7 @@
+ 		tcm_hcd->sensor_type = TYPE_FLASH;
+ 	} else {
+ 		if (!tcm_hcd->romboot_download_ok &&
++				!tcm_hcd->romboot_bytes_sent &&
+ 				tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
+ 				tcm_hcd->sensor_type == TYPE_ROMBOOT) {
+ 			retval = zeroflash_retry_romboot_hdl(tcm_hcd);
+@@ -4394,6 +4436,12 @@
+ 		tcm_hcd->id_info.mode, tcm_hcd->app_info_cmd_sent ? 1 : 0,
+ 		tcm_hcd->in_hdl_mode ? 1 : 0);
+ 
++	if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER) {
++		pr_info("SAaiOS_TOUCH_DBG: skip touch_init still RomBoot mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		goto skip_touch_init;
++	}
++
+ 	/* initialize the touch reporting */
+ 	retval = touch_init(tcm_hcd);
+ 	if (retval < 0) {
+@@ -4426,12 +4474,18 @@
+ 		}
+ 	}
+ 
++skip_touch_init:
++	if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++		goto skip_sec_fn;
++
+ 	retval = sec_fn_init(tcm_hcd);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent, "Failed to sec_fn_init\n");
+ 		goto err_touch_init;
+ 	}
+ 
++skip_sec_fn:
++
+ /*prepare_modules:*/
+ 	/* prepare to add other modules */
+ 	mod_pool.workqueue = create_singlethread_workqueue("syna_tcm_module");
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 20:25:41.243480937 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 20:25:41.247481038 -0400
+@@ -576,6 +576,7 @@
+ 	unsigned int romboot_chunks_left;
+ 	unsigned int romboot_remaining;
+ 	bool romboot_aborted_early;
++	bool romboot_bytes_sent;
+ 	bool romboot_wrapped_u16;
+ 	bool hdl_reinit_done;
+ 	bool try_get_report_config;
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 20:25:41.243480937 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 20:25:41.247481038 -0400
+@@ -1337,7 +1337,8 @@
+ 		if (tcm_hcd->romboot_aborted_early)
+ 			pr_info("SAaiOS_TOUCH_DBG: 0x45 fail IDENTIFY not firmware started mode=0x%02x\n",
+ 				tcm_hcd->id_info.mode);
+-		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
++				!tcm_hcd->romboot_bytes_sent)
+ 			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		goto error_secure_memcpy;
+ 	}
+@@ -1355,6 +1356,67 @@
+ 		goto error_secure_memcpy;
+ 	}
+ 
++	/* since31: 0x45 clocked all bytes (retval=0) but IC still RomBoot.
++	 * Leftover 0x1b was drained in write_message. Do not switch_mode
++	 * BOOTLOADER (1s timeout, then retry 97k). Stock jump: RUN_APPLICATION
++	 * then IDENTIFY once. Never a second 0x45.
++	 */
++	if (tcm_hcd->romboot_bytes_sent) {
++		unsigned char *jump_resp = NULL;
++		unsigned int jump_resp_size = 0;
++		unsigned int jump_resp_len = 0;
++
++		syna_tcm_romboot_release_irq(tcm_hcd);
++		if (zeroflash_attn_active(tcm_hcd) && tcm_hcd->read_message) {
++			tcm_hcd->read_message(tcm_hcd, NULL, 0);
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 after send drain n=%d code=0x%02x mode=0x%02x\n",
++				1, tcm_hcd->status_report_code, tcm_hcd->id_info.mode);
++			if (tcm_hcd->status_report_code == REPORT_IDENTIFY ||
++					IS_FW_MODE(tcm_hcd->id_info.mode)) {
++				tcm_hcd->romboot_download_ok = true;
++				pr_info("SAaiOS_TOUCH_DBG: 0x45 firmware started mode=0x%02x\n",
++					tcm_hcd->id_info.mode);
++				goto error_secure_memcpy;
++			}
++		}
++
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 still RomBoot after drain mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 RUN_APPLICATION after send mode=0x%02x gpio=%d\n",
++			tcm_hcd->id_info.mode, zeroflash_attn_gpio_value(tcm_hcd));
++		retval = tcm_hcd->write_message(tcm_hcd, CMD_RUN_APPLICATION_FIRMWARE,
++				NULL, 0, &jump_resp, &jump_resp_size, &jump_resp_len,
++				NULL, 0);
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 RUN_APPLICATION retval=%d mode=0x%02x\n",
++			retval, tcm_hcd->id_info.mode);
++		kfree(jump_resp);
++		jump_resp = NULL;
++
++		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++			tcm_hcd->romboot_download_ok = true;
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 firmware started mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++			goto error_secure_memcpy;
++		}
++
++		retval = tcm_hcd->identify(tcm_hcd, true);
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 identify after send retval=%d mode=0x%02x\n",
++			retval, tcm_hcd->id_info.mode);
++
++		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++			tcm_hcd->romboot_download_ok = true;
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 firmware started mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++		} else {
++			tcm_hcd->romboot_download_ok = false;
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 still RomBoot mode=0x%02x (no retry, no touch_init)\n",
++				tcm_hcd->id_info.mode);
++		}
++		goto error_secure_memcpy;
++	}
++
+ 	retval = tcm_hcd->switch_mode(tcm_hcd, FW_MODE_BOOTLOADER);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+@@ -1385,6 +1447,12 @@
+ 	if (tcm_hcd->romboot_download_ok)
+ 		return 0;
+ 
++	if (tcm_hcd->romboot_bytes_sent) {
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 skip retry bytes already sent mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		return 0;
++	}
++
+ 	if (tcm_hcd->romboot_aborted_early) {
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x45 aborted early, skip retry mode=0x%02x\n",
+ 			tcm_hcd->id_info.mode);
+@@ -1556,7 +1624,8 @@
+ 		static bool logged_skip_sync;
+ 
+ 		tcm_hcd->hdl_status_idle = true;
+-		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
++				!tcm_hcd->romboot_bytes_sent)
+ 			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		if (!logged_skip_sync) {
+ 			logged_skip_sync = true;
+@@ -1598,7 +1667,8 @@
+ 		zeroflash_hcd->config_attempted = true;
+ 		zeroflash_hcd->last_config_retval = 0;
+ 		tcm_hcd->hdl_status_idle = true;
+-		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
++				!tcm_hcd->romboot_bytes_sent)
+ 			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		if (!logged_skip_wait1) {
+ 			logged_skip_wait1 = true;
+@@ -1737,7 +1807,8 @@
+ 
+ 	if (!need_cfg) {
+ 		tcm_hcd->hdl_status_idle = true;
+-		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER)
++		if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
++				!tcm_hcd->romboot_bytes_sent)
+ 			syna_tcm_romboot_hold_irq(tcm_hcd);
+ 		if (!logged_skip_030) {
+ 			logged_skip_030 = true;
+@@ -1813,6 +1884,11 @@
+ 				pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 already ok, skip\n");
+ 				break;
+ 			}
++			if (tcm_hcd->romboot_bytes_sent) {
++				pr_info("SAaiOS_TOUCH_DBG: 0x45 skip retry bytes already sent mode=0x%02x\n",
++					tcm_hcd->id_info.mode);
++				break;
++			}
+ 			if (tcm_hcd->romboot_aborted_early) {
+ 				pr_info("SAaiOS_TOUCH_DBG: 0x45 aborted early, skip more RomBoot 0x45 mode=0x%02x\n",
+ 					tcm_hcd->id_info.mode);
+@@ -1894,6 +1970,11 @@
+ 				tcm_hcd->id_info.mode);
+ 			return 0;
+ 		}
++		if (tcm_hcd->romboot_bytes_sent) {
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 skip retry bytes already sent mode=0x%02x\n",
++				tcm_hcd->id_info.mode);
++			return 0;
++		}
+ 		if (tcm_hcd->romboot_aborted_early) {
+ 			pr_info("SAaiOS_TOUCH_DBG: 0x45 aborted early, skip more RomBoot 0x45 mode=0x%02x\n",
+ 				tcm_hcd->id_info.mode);

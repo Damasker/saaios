@@ -1,0 +1,57 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: only clear stale plen on STATUS_OK drained frames
+
+v019 since11: payload_fully_drained was set for every continued_read with
+rem=0, including async REPORT_IDENTIFY (0x10) frames. read_message then
+zeroed plen on those reports, corrupting probe/identify and preventing
+ENABLE_REPORT from ever running (dmesg shows only one early continued_read).
+
+Fix:
+1. Set payload_fully_drained only when status_report_code == STATUS_OK.
+2. Zero stale plen in read_message only when drained && STATUS_OK.
+3. Log probe milestone before touch_init.
+
+Applies after syna-tcm-read-message-plen-zero.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -817,8 +817,11 @@ static int syna_tcm_continued_read(struct syna_tcm_hcd *tcm_hcd)
+ 			tcm_hcd->status_report_code == STATUS_CONTINUED_READ)
+ 		tcm_hcd->status_report_code = STATUS_OK;
+ 
+-	if (remaining_length == 0)
++	/* Only mark transport-complete for STATUS_OK chains. Async reports
++	 * (e.g. REPORT_IDENTIFY 0x10) also end with rem=0 but must keep plen.
++	 */
++	if (remaining_length == 0 &&
++			tcm_hcd->status_report_code == STATUS_OK)
+ 		tcm_hcd->payload_fully_drained = true;
+ 
+ 	pr_info("SAaiOS_TOUCH_DBG: continued_read exit status=0x%02x plen=%u bytes_read=%u rem=%u chunks=%u drained=%d\n",
+@@ -1152,11 +1155,12 @@ static int syna_tcm_read_message(struct syna_tcm_hcd *tcm_hcd,
+ 
+ 	LOCK_BUFFER(tcm_hcd->in);
+ 
+-	/* continued_read may finish with rem=0 while header plen is still the
+-	 * original multi-chunk size; check_padding uses total_length derived
+-	 * from plen and would otherwise probe past in.buf → -EIO (rc=-5).
++	/* continued_read may finish STATUS_OK with rem=0 while header plen still
++	 * shows the original multi-chunk size; check_padding would otherwise
++	 * probe past in.buf. Do not clear plen on async reports (0x10 etc.).
+ 	 */
+-	if (tcm_hcd->payload_fully_drained)
++	if (tcm_hcd->payload_fully_drained &&
++			tcm_hcd->status_report_code == STATUS_OK)
+ 		tcm_hcd->payload_length = 0;
+ 
+ 	total_length = MESSAGE_HEADER_SIZE + tcm_hcd->payload_length + 1;
+@@ -3794,6 +3798,9 @@ static int syna_tcm_probe(struct platform_device *pdev)
+ 
+ 	syna_tcm_attn_clear_pending(tcm_hcd);
+ 
++	pr_info("SAaiOS_TOUCH_DBG: probe before touch_init mode=0x%02x app_info_sent=%d\n",
++		tcm_hcd->id_info.mode, tcm_hcd->app_info_cmd_sent ? 1 : 0);
++
+ 	/* initialize the touch reporting */
+ 	retval = touch_init(tcm_hcd);
+ 	if (retval < 0) {

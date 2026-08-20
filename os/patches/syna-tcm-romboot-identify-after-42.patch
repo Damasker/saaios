@@ -1,0 +1,269 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since34 0x42 waits for IDENTIFY 0x10
+
+since33 completed any in-flight waiter on leftover 0x1b. 0x42 then
+returned retval=0 in ~225µs with mode still 0x04, and we skipped
+touch_init before IDENTIFY could arrive.
+
+Stock syna_tcm_run_bootloader_firmware: write_message(0x42) completes
+on REPORT_IDENTIFY 0x10 (dispatch), not 0x1b. It skips syna_tcm_identify
+after 0x42 because IDENTIFY is async.
+
+since34:
+- 0x1b completes waiter only for 0x45 / ROMBOOT DOWNLOAD.
+- Pending 0x42: 0x1b does not complete; IDENTIFY 0x10 does.
+- After 0x42: wait for IDENTIFY or mode 0x01/0x02 (MODE_SWITCH_DELAY_MS
+  chunks, RESPONSE_TIMEOUT_MS). Log each distinct report code once.
+  Success: after 0x42 identify code= mode=. Then identify + touch_init.
+  Timeout: 0x42 no IDENTIFY timeout mode= gpio= irq_en=. Skip retry.
+- Keep: no RUN_APPLICATION 0x14, no retry 97k, no ENABLE_REPORT, no
+  do_polling, no lcd_rst.
+
+Applies after syna-tcm-romboot-0x1b-complete-waiter.patch.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 21:00:17.759913415 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 21:00:17.763913516 -0400
+@@ -38,6 +38,7 @@
+ #include <linux/kthread.h>
+ #include <linux/interrupt.h>
+ #include <linux/string.h>
++#include <linux/bitmap.h>
+ #include <linux/regulator/consumer.h>
+ #include "synaptics_tcm_core.h"
+ 
+@@ -91,6 +92,8 @@
+ bool shutdown_is_on_going_tsp;
+ 
+ DECLARE_COMPLETION(response_complete);
++DECLARE_COMPLETION(identify_after_42_complete);
++static DECLARE_BITMAP(identify_42_seen, 256);
+ 
+ static int syna_tcm_sensor_detection(struct syna_tcm_hcd *tcm_hcd);
+ static void syna_tcm_check_hdl(struct syna_tcm_hcd *tcm_hcd,
+@@ -306,6 +309,87 @@
+ 		enable_irq(tcm_hcd->irq);
+ }
+ 
++/* Log each distinct report code once while 0x42 is in flight or while
++ * waiting for IDENTIFY afterwards. Do not printk a 0x1b storm.
++ */
++static void syna_tcm_log_42_wait_report(struct syna_tcm_hcd *tcm_hcd)
++{
++	unsigned char code;
++
++	if (!tcm_hcd)
++		return;
++	if (!tcm_hcd->wait_identify_after_42 &&
++			!(atomic_read(&tcm_hcd->command_status) == CMD_BUSY &&
++			  tcm_hcd->command == CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE))
++		return;
++
++	code = tcm_hcd->status_report_code;
++	if (test_and_set_bit(code, identify_42_seen))
++		return;
++	pr_info("SAaiOS_TOUCH_DBG: 0x42 wait report code=0x%02x mode=0x%02x\n",
++		code, tcm_hcd->id_info.mode);
++}
++
++/* Stock syna_tcm_run_bootloader_firmware: write_message(0x42) completes
++ * on REPORT_IDENTIFY 0x10, then skips syna_tcm_identify (async). Wait
++ * MODE_SWITCH_DELAY_MS chunks up to RESPONSE_TIMEOUT_MS. Read held ATTN
++ * without setting do_polling. Do not treat leftover 0x1b as success.
++ */
++int syna_tcm_wait_identify_after_42(struct syna_tcm_hcd *tcm_hcd)
++{
++	unsigned long deadline;
++	int retval = 0;
++
++	if (!tcm_hcd)
++		return -EINVAL;
++
++	tcm_hcd->wait_identify_after_42 = true;
++
++	if (tcm_hcd->status_report_code == REPORT_IDENTIFY ||
++			IS_FW_MODE(tcm_hcd->id_info.mode))
++		goto got_identify;
++
++	reinit_completion(&identify_after_42_complete);
++
++	if (tcm_hcd->status_report_code == REPORT_IDENTIFY ||
++			IS_FW_MODE(tcm_hcd->id_info.mode))
++		goto got_identify;
++
++	deadline = jiffies + msecs_to_jiffies(RESPONSE_TIMEOUT_MS);
++	while (time_before(jiffies, deadline)) {
++		unsigned long chunk = min(deadline - jiffies,
++				msecs_to_jiffies(MODE_SWITCH_DELAY_MS));
++
++		retval = wait_for_completion_timeout(&identify_after_42_complete,
++				chunk);
++		if (tcm_hcd->status_report_code == REPORT_IDENTIFY ||
++				IS_FW_MODE(tcm_hcd->id_info.mode))
++			goto got_identify;
++		if (retval)
++			break;
++		if (syna_tcm_attn_active(tcm_hcd) && tcm_hcd->read_message)
++			tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		if (tcm_hcd->status_report_code == REPORT_IDENTIFY ||
++				IS_FW_MODE(tcm_hcd->id_info.mode))
++			goto got_identify;
++	}
++
++	tcm_hcd->wait_identify_after_42 = false;
++	if (tcm_hcd->romboot_irq_held)
++		syna_tcm_romboot_release_irq(tcm_hcd);
++	pr_info("SAaiOS_TOUCH_DBG: 0x42 no IDENTIFY timeout mode=0x%02x gpio=%d irq_en=%d\n",
++		tcm_hcd->id_info.mode,
++		syna_tcm_attn_gpio_value(tcm_hcd),
++		tcm_hcd->irq_enabled ? 1 : 0);
++	return -ETIME;
++
++got_identify:
++	tcm_hcd->wait_identify_after_42 = false;
++	pr_info("SAaiOS_TOUCH_DBG: after 0x42 identify code=0x%02x mode=0x%02x\n",
++		tcm_hcd->status_report_code, tcm_hcd->id_info.mode);
++	return 0;
++}
++
+ /* since26: first 0x45 (not only retry). Hold IRQ, force one header+payload
+  * read (continued_read inside read_message), log once. 0x1b re-asserts —
+  * do not skip 0x45 if gpio still 0. Stock romboot download must proceed.
+@@ -999,6 +1083,8 @@
+ 	unsigned int payload_length;
+ 	unsigned int max_write_size;
+ 
++	syna_tcm_log_42_wait_report(tcm_hcd);
++
+ 	if (tcm_hcd->status_report_code == REPORT_IDENTIFY) {
+ 		payload_length = tcm_hcd->payload_length;
+ 
+@@ -1066,6 +1152,10 @@
+ 			}
+ 		}
+ 
++		if (tcm_hcd->wait_identify_after_42 ||
++				tcm_hcd->command == CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE)
++			complete(&identify_after_42_complete);
++
+ #ifdef FORCE_RUN_APPLICATION_FIRMWARE
+ 		if (IS_NOT_FW_MODE(tcm_hcd->id_info.mode) && !mutex_is_locked(&tcm_hcd->reset_mutex)) {
+ 			if (atomic_read(&tcm_hcd->helper.task) == HELP_NONE) {
+@@ -1084,13 +1174,14 @@
+ 		}
+ 	}
+ 
+-	/* Stock: 0x1b is a report (>= REPORT_IDENTIFY), but this IC uses
+-	 * REPORT_STATUS as the command response for 0x45/0x42. since24
+-	 * skip-0x30 must not swallow it without waking write_message.
+-	 * Complete any in-flight waiter, then dispatch (still skip 0x30).
++	/* Stock: 0x1b is a report (>= REPORT_IDENTIFY). This IC uses it as
++	 * the HDL ack for 0x45 / ROMBOOT DOWNLOAD only. Do not complete a
++	 * pending 0x42 waiter — stock waits for REPORT_IDENTIFY 0x10.
+ 	 */
+ 	if (tcm_hcd->status_report_code == REPORT_STATUS &&
+-			atomic_read(&tcm_hcd->command_status) == CMD_BUSY) {
++			atomic_read(&tcm_hcd->command_status) == CMD_BUSY &&
++			(tcm_hcd->command == CMD_ROMBOOT_DOWNLOAD ||
++			 tcm_hcd->romboot_download_active)) {
+ 		static bool logged_1b_waiter;
+ 		unsigned char pending = tcm_hcd->command;
+ 
+@@ -1792,6 +1883,11 @@
+ 
+ 	tcm_hcd->command = command;
+ 
++	if (command == CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE) {
++		bitmap_zero(identify_42_seen, 256);
++		reinit_completion(&identify_after_42_complete);
++	}
++
+ 	LOCK_BUFFER(tcm_hcd->resp);
+ 
+ 	tcm_hcd->resp.buf = *resp_buf;
+@@ -4303,6 +4399,7 @@
+ 	pr_info("SAaiOS_TOUCH_DBG: since31 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since32 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since33 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since34 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+@@ -4542,8 +4639,11 @@
+ 		tcm_hcd->in_hdl_mode ? 1 : 0);
+ 
+ 	if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER) {
+-		pr_info("SAaiOS_TOUCH_DBG: skip touch_init still RomBoot mode=0x%02x\n",
+-			tcm_hcd->id_info.mode);
++		pr_info("SAaiOS_TOUCH_DBG: skip touch_init still RomBoot mode=0x%02x gpio=%d irq_en=%d held=%d\n",
++			tcm_hcd->id_info.mode,
++			syna_tcm_attn_gpio_value(tcm_hcd),
++			tcm_hcd->irq_enabled ? 1 : 0,
++			tcm_hcd->romboot_irq_held ? 1 : 0);
+ 		goto skip_touch_init;
+ 	}
+ 
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 21:00:17.759913415 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 21:00:17.763913516 -0400
+@@ -577,6 +577,7 @@
+ 	unsigned int romboot_remaining;
+ 	bool romboot_aborted_early;
+ 	bool romboot_bytes_sent;
++	bool wait_identify_after_42;
+ 	bool romboot_wrapped_u16;
+ 	bool hdl_reinit_done;
+ 	bool try_get_report_config;
+@@ -686,6 +687,7 @@
+ void syna_tcm_romboot_release_irq(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_romboot_drain_attn(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_romboot_drain_after_send(struct syna_tcm_hcd *tcm_hcd);
++int syna_tcm_wait_identify_after_42(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_power_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ int syna_tcm_reset_ctrl(struct syna_tcm_hcd *tcm_hcd, bool on);
+ void touch_free_objects(void);
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 21:00:17.759913415 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 21:00:17.763913516 -0400
+@@ -1360,10 +1360,11 @@
+ 		goto error_secure_memcpy;
+ 	}
+ 
+-	/* since33: stock after write_message(0x45)==0 is immediately
++	/* since34: stock after write_message(0x45)==0 is immediately
+ 	 * switch_mode(FW_MODE_BOOTLOADER) = CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE
+ 	 * 0x42 from RomBoot — not RUN_APPLICATION 0x14, no drain-until-idle.
+-	 * Never a second 0x45.
++	 * Never a second 0x45. 0x1b does not complete 0x42; wait for
++	 * REPORT_IDENTIFY 0x10 (or mode 0x01/0x02) before skip touch_init.
+ 	 */
+ 	if (tcm_hcd->romboot_bytes_sent) {
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x45 stock post-download switch_mode BOOTLOADER cmd=0x42 gpio=%d (not RUN_APPLICATION 0x14)\n",
+@@ -1374,6 +1375,11 @@
+ 			zeroflash_attn_gpio_value(tcm_hcd),
+ 			tcm_hcd->irq_enabled ? 1 : 0);
+ 
++		/* Do not trust waiter retval=0: leftover 0x1b is not
++		 * firmware-running. Wait for IDENTIFY before RomBoot skip.
++		 */
++		syna_tcm_wait_identify_after_42(tcm_hcd);
++
+ 		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+ 			tcm_hcd->romboot_download_ok = true;
+ 			pr_info("SAaiOS_TOUCH_DBG: 0x45 firmware started mode=0x%02x\n",
+@@ -1393,8 +1399,13 @@
+ 				tcm_hcd->hdl_reinit_done = true;
+ 		} else {
+ 			tcm_hcd->romboot_download_ok = false;
+-			pr_info("SAaiOS_TOUCH_DBG: 0x45 still RomBoot mode=0x%02x (no retry, no touch_init)\n",
+-				tcm_hcd->id_info.mode);
++			if (tcm_hcd->romboot_irq_held)
++				syna_tcm_romboot_release_irq(tcm_hcd);
++			pr_info("SAaiOS_TOUCH_DBG: 0x45 still RomBoot mode=0x%02x gpio=%d irq_en=%d held=%d (no retry, no touch_init)\n",
++				tcm_hcd->id_info.mode,
++				zeroflash_attn_gpio_value(tcm_hcd),
++				tcm_hcd->irq_enabled ? 1 : 0,
++				tcm_hcd->romboot_irq_held ? 1 : 0);
+ 		}
+ 		goto error_secure_memcpy;
+ 	}

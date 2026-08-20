@@ -1,0 +1,344 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since27 0x1b completes 0x45 chunk
+
+since26: chunk 0 went out, IC answered REPORT_STATUS 0x1b ~195ms later.
+write_message waited for TCM command STATUS 0x01, ignored 0x1b, timed
+out 3s. skip-0x30 / HELP_SEND_REINIT ran in the middle of HDL.
+
+HDL-v2 / RomBoot handshake: after each 0x45 chunk the IC signals with
+0x1b (or STATUS_OK). Host treats that as chunk complete and sends the
+next chunk. Do not skip-0x30, do not HELP_SEND_REINIT, do not
+touch_reinit while romboot_download_active. need_*=0 after chunk 0 is
+not download-finished if chunks remain.
+
+Stock: 0x1b is a report (>= REPORT_IDENTIFY), not a command response.
+IDENTIFY 0x10 already completes CMD_ROMBOOT_DOWNLOAD as STATUS_OK.
+since27: 0x1b during in-progress 0x45 completes write_message the same
+way. Chunk length: stock chunk_space = (PAGE_SIZE-1) 16-aligned = 4080;
+SPI write is still xfer+1. Log len as payload space 4080.
+
+Applies after syna-tcm-romboot-hold-irq.patch.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 18:50:36.647830186 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 18:50:36.643830088 -0400
+@@ -369,6 +369,10 @@
+ 	if (!tcm_hcd)
+ 		return 0;
+ 
++	if (tcm_hcd->romboot_download_active) {
++		pr_info("SAaiOS_TOUCH_DBG: skip HDL helper (romboot_download_active)\n");
++		return 0;
++	}
+ 	if (tcm_hcd->hdl_reinit_done) {
+ 		pr_info("SAaiOS_TOUCH_DBG: HDL complete skip (reinit already ok)\n");
+ 		return 0;
+@@ -755,13 +759,15 @@
+ 
+ 	} else {
+ 
+-		if (tcm_hcd->report.id == REPORT_STATUS)
++		if (tcm_hcd->report.id == REPORT_STATUS &&
++				!tcm_hcd->romboot_download_active)
+ 			zeroflash_handle_report_status(tcm_hcd, false);
+ 
+ 		/* once an identify report is received, */
+ 		/* reinitialize touch in case any changes */
+ 		if ((tcm_hcd->report.id == REPORT_IDENTIFY) &&
+-				IS_FW_MODE(tcm_hcd->id_info.mode)) {
++				IS_FW_MODE(tcm_hcd->id_info.mode) &&
++				!tcm_hcd->romboot_download_active) {
+ 
+ 			if (atomic_read(&tcm_hcd->helper.task) == HELP_NONE) {
+ 				atomic_set(&tcm_hcd->helper.task, HELP_TOUCH_REINIT);
+@@ -960,6 +966,21 @@
+ 		}
+ 	}
+ 
++	/* HDL-v2 / RomBoot: after each 0x45 chunk the IC signals with
++	 * REPORT_STATUS 0x1b (or STATUS_OK). write_message waits for a
++	 * matching command response and would ignore 0x1b. Treat 0x1b as
++	 * chunk-complete, same as STATUS_OK. If chunks remain, that is
++	 * not download-finished — do not skip-0x30 / helper / reinit.
++	 */
++	if (tcm_hcd->romboot_download_active &&
++			atomic_read(&tcm_hcd->command_status) == CMD_BUSY &&
++			tcm_hcd->command == CMD_ROMBOOT_DOWNLOAD &&
++			tcm_hcd->status_report_code == REPORT_STATUS) {
++		tcm_hcd->response_code = STATUS_OK;
++		atomic_set(&tcm_hcd->command_status, CMD_IDLE);
++		complete(&response_complete);
++		return;
++	}
+ 
+ 	if (tcm_hcd->status_report_code >= REPORT_IDENTIFY)
+ 		syna_tcm_dispatch_report(tcm_hcd);
+@@ -1660,7 +1681,9 @@
+ 		 * TCM command length is u16. ROMBOOT_APP_CODE is 97280+14;
+ 		 * HDL_WR_CHUNK_SIZE=0 sent one frame whose length bytes
+ 		 * wrapped (97294 & 0xffff = 31758). Chunk to PAGE_SIZE,
+-		 * 16-byte aligned. Do not send wait=0 0x45.
++		 * 16-byte aligned. Stock: chunk_space = cap-1 then align
++		 * to ROMBOOT_DOWNLOAD_UNIT (16). SPI write is xfer+1
++		 * (command byte); payload space stays 4080, not 4081.
+ 		 */
+ 		if (!cap)
+ 			cap = PAGE_SIZE;
+@@ -1670,6 +1693,8 @@
+ 		chunk_space = chunk_space - (chunk_space % ROMBOOT_DOWNLOAD_UNIT);
+ 		if (!chunk_space)
+ 			chunk_space = ROMBOOT_DOWNLOAD_UNIT;
++		tcm_hcd->romboot_download_active = true;
++		tcm_hcd->romboot_chunks_left = 0;
+ 		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 chunk_space=%u remaining=%u\n",
+ 			chunk_space, remaining_length);
+ 	}
+@@ -1730,7 +1755,7 @@
+ 		retval = syna_tcm_write(tcm_hcd, tcm_hcd->out.buf, xfer_length + 1);
+ 		if (is_romboot_hdl && idx == 0)
+ 			pr_info("SAaiOS_TOUCH_DBG: 0x45 chunk 0/%u len=%u\n",
+-				chunks, xfer_length + 1);
++				chunks, xfer_length);
+ 		if (retval < 0) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent, "Failed to write to device\n");
+ 			UNLOCK_BUFFER(tcm_hcd->out);
+@@ -1740,57 +1765,114 @@
+ 
+ 		remaining_length -= xfer_length;
+ 
++		if (is_romboot_hdl) {
++			tcm_hcd->romboot_chunks_left = chunks - idx - 1;
++
++			UNLOCK_BUFFER(tcm_hcd->out);
++			mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
++
++			/* Unmask so 0x1b / STATUS_OK / IDENTIFY can complete
++			 * this chunk. Keep IRQ registered.
++			 */
++			syna_tcm_romboot_release_irq(tcm_hcd);
++			if (!tcm_hcd->irq_enabled) {
++				retval = tcm_hcd->enable_irq(tcm_hcd, true, NULL);
++				if (retval < 0)
++					pr_info("SAaiOS_TOUCH_DBG: 0x45 enable_irq retval=%d\n",
++						retval);
++			}
++
++			response_timeout_ms = 3000;
++			retval = wait_for_completion_timeout(&response_complete,
++					msecs_to_jiffies(response_timeout_ms));
++			if (retval == 0) {
++				input_err(true, tcm_hcd->pdev->dev.parent,
++					"Timed out waiting for response (command 0x%02x)\n",
++					tcm_hcd->command);
++				retval = -ETIME;
++				goto exit;
++			}
++
++			command_status = atomic_read(&tcm_hcd->command_status);
++			if (command_status != CMD_IDLE) {
++				input_err(true, tcm_hcd->pdev->dev.parent,
++					"Failed to get valid response (command 0x%02x)\n",
++					tcm_hcd->command);
++				retval = -EIO;
++				goto exit;
++			}
++
++			if (tcm_hcd->response_code != STATUS_OK) {
++				retval = -EIO;
++				goto exit;
++			}
++
++			if (idx == 0 || ((idx + 1) % 8) == 0 || idx + 1 == chunks)
++				pr_info("SAaiOS_TOUCH_DBG: 0x45 chunk %u/%u 0x1b complete\n",
++					idx, chunks);
++
++			if (idx + 1 == chunks)
++				tcm_hcd->hdl_status_seen = true;
++
++			if (IS_FW_MODE(tcm_hcd->id_info.mode))
++				break;
++
++			if (idx + 1 < chunks) {
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
++				reinit_completion(&response_complete);
++#else
++				INIT_COMPLETION(response_complete);
++#endif
++				atomic_set(&tcm_hcd->command_status, CMD_BUSY);
++				syna_tcm_romboot_hold_irq(tcm_hcd);
++				mutex_lock(&tcm_hcd->rw_ctrl_mutex);
++				LOCK_BUFFER(tcm_hcd->out);
++				continue;
++			}
++			break;
++		}
++
+ 		if (chunks > 1)
+ 			usleep_range(WRITE_DELAY_US_MIN, WRITE_DELAY_US_MAX);
+ 	}
+ 
+-	UNLOCK_BUFFER(tcm_hcd->out);
++	if (!is_romboot_hdl) {
++		UNLOCK_BUFFER(tcm_hcd->out);
+ 
+-	mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
++		mutex_unlock(&tcm_hcd->rw_ctrl_mutex);
+ 
+-	if (is_romboot_hdl) {
+-		/* Chunks done with IRQ masked. Unmask so IDENTIFY 0x02 can
+-		 * complete the wait. Keep IRQ registered.
+-		 */
+-		syna_tcm_romboot_release_irq(tcm_hcd);
+-		if (!tcm_hcd->irq_enabled) {
+-			retval = tcm_hcd->enable_irq(tcm_hcd, true, NULL);
+-			if (retval < 0)
+-				pr_info("SAaiOS_TOUCH_DBG: 0x45 enable_irq retval=%d\n",
+-					retval);
+-		}
+-	}
++		if (is_hdl_reset)
++			goto exit;
+ 
+-	if (is_hdl_reset)
+-		goto exit;
++		if (tcm_hcd->do_polling && polling_delay_ms) {
++			queue_delayed_work(tcm_hcd->polling_workqueue, &tcm_hcd->polling_work,
++				msecs_to_jiffies(polling_delay_ms));
++		}
+ 
+-	if (tcm_hcd->do_polling && polling_delay_ms) {
+-		queue_delayed_work(tcm_hcd->polling_workqueue, &tcm_hcd->polling_work,
+-			msecs_to_jiffies(polling_delay_ms));
+-	}
++		response_timeout_ms = RESPONSE_TIMEOUT_MS;
++		if (command == CMD_ENABLE_REPORT)
++			response_timeout_ms = 3000;
+ 
+-	response_timeout_ms = RESPONSE_TIMEOUT_MS;
+-	if (command == CMD_ENABLE_REPORT)
+-		response_timeout_ms = 3000;
+-	if (command == CMD_ROMBOOT_DOWNLOAD)
+-		response_timeout_ms = 3000;
++		retval = wait_for_completion_timeout(&response_complete,
++						msecs_to_jiffies(response_timeout_ms));
++		if (retval == 0) {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Timed out waiting for response (command 0x%02x)\n", tcm_hcd->command);
++			retval = -ETIME;
++			goto exit;
++		}
+ 
+-	retval = wait_for_completion_timeout(&response_complete,
+-					msecs_to_jiffies(response_timeout_ms));
+-	if (retval == 0) {
+-		input_err(true, tcm_hcd->pdev->dev.parent,
+-			"Timed out waiting for response (command 0x%02x)\n", tcm_hcd->command);
+-		retval = -ETIME;
+-		goto exit;
++		command_status = atomic_read(&tcm_hcd->command_status);
++		if (command_status != CMD_IDLE) {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Failed to get valid response (command 0x%02x)\n", tcm_hcd->command);
++			retval = -EIO;
++			goto exit;
++		}
+ 	}
+ 
+-	command_status = atomic_read(&tcm_hcd->command_status);
+-	if (command_status != CMD_IDLE) {
+-		input_err(true, tcm_hcd->pdev->dev.parent,
+-			"Failed to get valid response (command 0x%02x)\n", tcm_hcd->command);
+-		retval = -EIO;
+-		goto exit;
+-	}
++	if (is_romboot_hdl)
++		tcm_hcd->hdl_status_seen = true;
+ 
+ 	LOCK_BUFFER(tcm_hcd->resp);
+ 
+@@ -1815,6 +1897,11 @@
+ 	UNLOCK_BUFFER(tcm_hcd->resp);
+ 
+ exit:
++	if (is_romboot_hdl) {
++		tcm_hcd->romboot_download_active = false;
++		tcm_hcd->romboot_chunks_left = 0;
++	}
++
+ 	tcm_hcd->command = CMD_NONE;
+ 
+ 	atomic_set(&tcm_hcd->command_status, CMD_IDLE);
+@@ -1995,7 +2082,8 @@
+ 			input_err(true, tcm_hcd->pdev->dev.parent, "Failed to read message\n");
+ 		/* ATTN stays asserted until the host clocks leftover bytes. */
+ 		syna_tcm_spi_resync(tcm_hcd);
+-	} else if (tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
++	} else if (!tcm_hcd->romboot_download_active &&
++			tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
+ 			tcm_hcd->hdl_status_idle) {
+ 		/* 0x1b re-asserts; cap-8 drain cannot catch up. Hold IRQ
+ 		 * until process-context 0x45. Silent consume only.
+@@ -3244,6 +3332,10 @@
+ 	/* the reinit helper is used to notify all installed modules to */
+ 	/* do the re-initialization process, since the HDL is completed */
+ 	case HELP_SEND_REINIT_NOTIFICATION:
++		if (tcm_hcd->romboot_download_active) {
++			atomic_set(&helper->task, HELP_NONE);
++			break;
++		}
+ 		mutex_lock(&tcm_hcd->reset_mutex);
+ 
+ 		/* do identify to ensure application firmware is running */
+@@ -3277,6 +3369,10 @@
+ 
+ 	/* this helper is used to reinit the touch reporting */
+ 	case HELP_TOUCH_REINIT:
++		if (tcm_hcd->romboot_download_active) {
++			atomic_set(&helper->task, HELP_NONE);
++			break;
++		}
+ 		retval = touch_reinit(tcm_hcd);
+ 		if (retval < 0) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+@@ -4046,6 +4142,7 @@
+ 	pr_info("SAaiOS_TOUCH_DBG: since24 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since25 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since26 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since27 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 18:50:36.647830186 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 18:50:36.643830088 -0400
+@@ -572,6 +572,8 @@
+ 	bool hdl_status_seen;
+ 	bool hdl_status_idle;
+ 	bool romboot_irq_held;
++	bool romboot_download_active;
++	unsigned int romboot_chunks_left;
+ 	bool hdl_reinit_done;
+ 	bool try_get_report_config;
+ 	bool identify_attempted;
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 18:50:36.647830186 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 18:50:36.643830088 -0400
+@@ -570,6 +570,8 @@
+ 			&& zeroflash_hcd->has_open_short_config);
+ 
+ 	if (!need_cfg && atomic_read(&tcm_hcd->host_downloading)) {
++		if (tcm_hcd->romboot_download_active)
++			return;
+ 
+ 		if (atomic_read(&tcm_hcd->helper.task) == HELP_NONE) {
+ 			atomic_set(&tcm_hcd->helper.task, HELP_SEND_REINIT_NOTIFICATION);
+@@ -1612,6 +1614,9 @@
+ 	if (!tcm_hcd)
+ 		return 0;
+ 
++	if (tcm_hcd->romboot_download_active)
++		return 0;
++
+ 	{
+ 		int created = zeroflash_hcd ? 0 : 1;
+ 

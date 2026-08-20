@@ -1,0 +1,315 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since38 probe zero 0x45, hold idle 0x1b
+
+since37 deferred 0x45 in zeroflash_init (fb_ready==0), but probe then
+called zeroflash_retry_romboot_hdl because romboot_bytes_sent was still
+false. Timeline: HDL at ~5.35s then panel_enabled at 5.867. Defer
+printk was either skipped by that retry or lost in the IRQ storm.
+Panel path then took 0x42-only because bytes had already gone out.
+
+since37 also unmasked IRQ during 0x42 wait / after idle 0x1b
+(need_*=0). gpio=0 + LEVEL + ONESHOT restored the ~8k/s livelock.
+
+since38:
+- Probe: no 0x45, no 0x42, no identify wait. Log defer 0x45 until panel
+  and since38 probe. sensor_detection / IDENTIFY-24 stay.
+- First panel_enabled with vdd on and lcd rst=1: full stock 0x45 then
+  0x42 then wait IDENTIFY. Log panel up, run deferred 0x45.
+- Idle 0x1b need_*=0: mask/hold IRQ (pre-since37). Silent ISR.
+  IDENTIFY 0x10 already left RomBoot — do not mask, go to touch_init.
+- No ENABLE_REPORT, do_polling, lcd_rst pulse, 97k retry, 0x30,
+  touch_init in 0x04, completing 0x42/0x40 on 0x1b.
+
+Applies after syna-tcm-romboot-panel-defer.patch.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 21:50:31.188261892 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 21:52:53.991847797 -0400
+@@ -299,11 +299,6 @@
+ 		disable_irq_nosync(tcm_hcd->irq);
+ 	else
+ 		disable_irq(tcm_hcd->irq);
+-	pr_info("SAaiOS_TOUCH_DBG: irq hold gpio=%d irq=%d flags=0x%lx irq_en=%d (irq_en stays 1 while line masked)\n",
+-		syna_tcm_attn_gpio_value(tcm_hcd), tcm_hcd->irq,
+-		tcm_hcd->hw_if && tcm_hcd->hw_if->bdata ?
+-			tcm_hcd->hw_if->bdata->irq_flags : 0,
+-		tcm_hcd->irq_enabled ? 1 : 0);
+ }
+ 
+ void syna_tcm_romboot_release_irq(struct syna_tcm_hcd *tcm_hcd)
+@@ -313,9 +308,6 @@
+ 	tcm_hcd->romboot_irq_held = false;
+ 	if (tcm_hcd->irq_enabled && tcm_hcd->irq >= 0)
+ 		enable_irq(tcm_hcd->irq);
+-	pr_info("SAaiOS_TOUCH_DBG: irq release gpio=%d irq=%d irq_en=%d\n",
+-		syna_tcm_attn_gpio_value(tcm_hcd), tcm_hcd->irq,
+-		tcm_hcd->irq_enabled ? 1 : 0);
+ }
+ 
+ /* Log each distinct report code once while 0x42 is in flight or while
+@@ -373,14 +365,9 @@
+ 	if (!tcm_hcd)
+ 		return -EINVAL;
+ 
+-	/* since37: IDENTIFY 0x10 cannot arrive if the 0x1b ISR held/masked
+-	 * the line. irq_enabled stays 1 across disable_irq, so irq_en=1 in
+-	 * the timeout log is not "IRQ live". Unmask and keep handling
+-	 * reports while waiting for 0x10.
++	/* since38: do not unmask for idle 0x1b. Process-context ATTN
++	 * reads below can still see IDENTIFY 0x10. ISR hold is silent.
+ 	 */
+-	if (tcm_hcd->romboot_irq_held)
+-		syna_tcm_romboot_release_irq(tcm_hcd);
+-
+ 	tcm_hcd->wait_identify_after_42 = true;
+ 
+ 	if (tcm_hcd->status_report_code == REPORT_IDENTIFY ||
+@@ -413,8 +400,6 @@
+ 	}
+ 
+ 	tcm_hcd->wait_identify_after_42 = false;
+-	if (tcm_hcd->romboot_irq_held)
+-		syna_tcm_romboot_release_irq(tcm_hcd);
+ 	pr_info("SAaiOS_TOUCH_DBG: 0x42 no IDENTIFY timeout mode=0x%02x gpio=%d irq_en=%d\n",
+ 		tcm_hcd->id_info.mode,
+ 		syna_tcm_attn_gpio_value(tcm_hcd),
+@@ -423,6 +408,8 @@
+ 
+ got_identify:
+ 	tcm_hcd->wait_identify_after_42 = false;
++	if (tcm_hcd->romboot_irq_held)
++		syna_tcm_romboot_release_irq(tcm_hcd);
+ 	pr_info("SAaiOS_TOUCH_DBG: after 0x42 identify code=0x%02x mode=0x%02x\n",
+ 		tcm_hcd->status_report_code, tcm_hcd->id_info.mode);
+ 	return 0;
+@@ -614,6 +601,11 @@
+ 		syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
+ 		tcm_hcd->romboot_download_ok ? 1 : 0);
+ 
++	if (tcm_hcd->romboot_download_deferred) {
++		pr_info("SAaiOS_TOUCH_DBG: defer 0x45 until panel (skip HDL helper) mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		return 0;
++	}
+ 	if (tcm_hcd->romboot_bytes_sent &&
+ 			tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER) {
+ 		pr_info("SAaiOS_TOUCH_DBG: skip HDL helper still RomBoot after 0x45 sent mode=0x%02x\n",
+@@ -2416,15 +2408,10 @@
+ 		syna_tcm_spi_resync(tcm_hcd);
+ 	} else if (!tcm_hcd->romboot_download_active &&
+ 			tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
+-			tcm_hcd->hdl_status_idle &&
+-			!tcm_hcd->romboot_bytes_sent &&
+-			!tcm_hcd->wait_identify_after_42 &&
+-			!(atomic_read(&tcm_hcd->command_status) == CMD_BUSY &&
+-			  (tcm_hcd->command == CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE ||
+-			   tcm_hcd->command == CMD_GET_ROMBOOT_INFO))) {
+-		/* 0x1b re-asserts before 0x45. Hold IRQ until process-
+-		 * context download. After 0x45 / during 0x42 wait, keep
+-		 * IRQ live so IDENTIFY 0x10 can arrive.
++			tcm_hcd->hdl_status_idle) {
++		/* Idle 0x1b need_*=0: mask/hold. gpio=0 + LEVEL + ONESHOT
++		 * storms if left unmasked. Silent — no printk in ISR.
++		 * IDENTIFY 0x10 already left RomBoot, so do not mask then.
+ 		 */
+ 		syna_tcm_romboot_hold_irq(tcm_hcd);
+ 	} else if (tcm_hcd->hdl_status_idle && syna_tcm_attn_active(tcm_hcd)) {
+@@ -3865,6 +3852,19 @@
+ 		tcm_hcd->id_info.mode, syna_tcm_attn_gpio_value(tcm_hcd));
+ }
+ 
++bool syna_tcm_panel_rails_ready(struct syna_tcm_hcd *tcm_hcd)
++{
++	int vdd = 1, rst = 1;
++
++	if (!tcm_hcd)
++		return false;
++	if (tcm_hcd->regulator_vdd && !IS_ERR(tcm_hcd->regulator_vdd))
++		vdd = regulator_is_enabled(tcm_hcd->regulator_vdd);
++	if (tcm_hcd->regulator_lcd_reset && !IS_ERR(tcm_hcd->regulator_lcd_reset))
++		rst = regulator_is_enabled(tcm_hcd->regulator_lcd_reset);
++	return vdd == 1 && rst == 1;
++}
++
+ int syna_tcm_pulse_tsp_reset(struct syna_tcm_hcd *tcm_hcd)
+ {
+ 	const struct syna_tcm_board_data *bdata;
+@@ -3976,12 +3976,12 @@
+ 		tcm_hcd->boot_resume = false;
+ 
+ 	/* First unblank: panel/MIPI is up (decon late_initcall already
+-	 * ran). Run deferred 0x45 or one 0x42 retry. Do not pulse lcd_rst.
++	 * ran). Run deferred full stock 0x45 then 0x42. Do not pulse lcd_rst.
+ 	 */
+ 	if (tcm_hcd->romboot_download_deferred ||
+-			(tcm_hcd->romboot_bytes_sent &&
+-			 tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
+-			 !tcm_hcd->romboot_42_after_panel))
++			(tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
++			 !tcm_hcd->romboot_42_after_panel &&
++			 !tcm_hcd->romboot_download_ok))
+ 		zeroflash_on_panel_enabled(tcm_hcd);
+ 
+ 	mutex_lock(&tcm_hcd->mode_change_mutex);
+@@ -4570,6 +4570,7 @@
+ 	pr_info("SAaiOS_TOUCH_DBG: since35 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since36 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since37 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since38 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
+ 	tcm_hcd->hw_if = hw_if;
+ 	tcm_hcd->reset = syna_tcm_reset;
+@@ -4764,6 +4765,12 @@
+ 			"On-chip firmware, skip second identify (mode = 0x%02x app_info_sent=%d)\n",
+ 			tcm_hcd->id_info.mode, tcm_hcd->app_info_cmd_sent ? 1 : 0);
+ 		tcm_hcd->sensor_type = TYPE_FLASH;
++	} else if (tcm_hcd->romboot_download_deferred) {
++		pr_info("SAaiOS_TOUCH_DBG: defer 0x45 until panel (skip probe 0x45/0x42/identify wait) mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		if (tcm_hcd->irq_enabled)
++			syna_tcm_romboot_hold_irq(tcm_hcd);
++		goto skip_probe_identify;
+ 	} else {
+ 		if (!tcm_hcd->romboot_download_ok &&
+ 				!tcm_hcd->romboot_bytes_sent &&
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 21:50:31.188261892 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 21:52:53.991847797 -0400
+@@ -685,6 +685,7 @@
+ int zeroflash_retry_romboot_hdl(struct syna_tcm_hcd *tcm_hcd);
+ int zeroflash_on_panel_enabled(struct syna_tcm_hcd *tcm_hcd);
+ void syna_tcm_log_panel_env(struct syna_tcm_hcd *tcm_hcd, const char *where);
++bool syna_tcm_panel_rails_ready(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_pulse_tsp_reset(struct syna_tcm_hcd *tcm_hcd);
+ int syna_tcm_drain_unread_reports_quiet(struct syna_tcm_hcd *tcm_hcd);
+ void syna_tcm_romboot_hold_irq(struct syna_tcm_hcd *tcm_hcd);
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 21:50:31.188261892 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 21:52:53.991847797 -0400
+@@ -1607,8 +1607,6 @@
+ 				tcm_hcd->hdl_reinit_done = true;
+ 		} else {
+ 			tcm_hcd->romboot_download_ok = false;
+-			if (tcm_hcd->romboot_irq_held)
+-				syna_tcm_romboot_release_irq(tcm_hcd);
+ 			pr_info("SAaiOS_TOUCH_DBG: 0x45 still RomBoot mode=0x%02x gpio=%d irq_en=%d held=%d (no retry, no touch_init)\n",
+ 				tcm_hcd->id_info.mode,
+ 				zeroflash_attn_gpio_value(tcm_hcd),
+@@ -1670,6 +1668,13 @@
+ 	if (tcm_hcd->romboot_download_ok)
+ 		return 0;
+ 
++	if (tcm_hcd->romboot_download_deferred || tcm_hcd->fb_ready == 0) {
++		tcm_hcd->romboot_download_deferred = true;
++		pr_info("SAaiOS_TOUCH_DBG: defer 0x45 until panel (retry helper) fb_ready=%u mode=0x%02x\n",
++			tcm_hcd->fb_ready, tcm_hcd->id_info.mode);
++		return 0;
++	}
++
+ 	if (tcm_hcd->romboot_bytes_sent) {
+ 		pr_info("SAaiOS_TOUCH_DBG: 0x45 skip retry bytes already sent mode=0x%02x\n",
+ 			tcm_hcd->id_info.mode);
+@@ -1720,13 +1725,11 @@
+ 	return tcm_hcd->romboot_download_ok ? 0 : -EIO;
+ }
+ 
+-/* First unblank / decon already on: run 0x45 if probe deferred it.
+- * If 0x45 already went out before panel, retry 0x42 once — not 97k.
++/* First unblank / decon already on: full stock 0x45 then 0x42 then wait
++ * IDENTIFY. Never a 0x42-only retry. Do not pulse lcd_rst.
+  */
+ int zeroflash_on_panel_enabled(struct syna_tcm_hcd *tcm_hcd)
+ {
+-	int retval;
+-
+ 	if (!tcm_hcd)
+ 		return -EINVAL;
+ 
+@@ -1735,45 +1738,25 @@
+ 	if (IS_FW_MODE(tcm_hcd->id_info.mode) || tcm_hcd->romboot_download_ok)
+ 		return 0;
+ 
+-	retval = zeroflash_ensure_hcd(tcm_hcd);
+-	if (retval < 0)
+-		return retval;
++	if (tcm_hcd->romboot_42_after_panel)
++		return 0;
+ 
+-	if (tcm_hcd->romboot_download_deferred && !tcm_hcd->romboot_bytes_sent) {
+-		tcm_hcd->romboot_download_deferred = false;
+-		pr_info("SAaiOS_TOUCH_DBG: panel up, run deferred 0x45 mode=0x%02x\n",
++	if (!syna_tcm_panel_rails_ready(tcm_hcd)) {
++		tcm_hcd->romboot_download_deferred = true;
++		pr_info("SAaiOS_TOUCH_DBG: defer 0x45 until panel (rails not ready) mode=0x%02x\n",
+ 			tcm_hcd->id_info.mode);
+-		zeroflash_do_romboot_firmware_download();
+-		tcm_hcd->romboot_42_after_panel = true;
+-		return tcm_hcd->romboot_download_ok ? 0 : -EIO;
++		return 0;
+ 	}
+ 
+-	if (tcm_hcd->romboot_bytes_sent &&
+-			tcm_hcd->id_info.mode == MODE_ROMBOOTLOADER &&
+-			!tcm_hcd->romboot_42_after_panel) {
+-		tcm_hcd->romboot_42_after_panel = true;
+-		if (tcm_hcd->romboot_irq_held)
+-			syna_tcm_romboot_release_irq(tcm_hcd);
+-		pr_info("SAaiOS_TOUCH_DBG: panel up, retry 0x42 once (0x45 already sent)\n");
+-		retval = tcm_hcd->switch_mode(tcm_hcd, FW_MODE_BOOTLOADER);
+-		pr_info("SAaiOS_TOUCH_DBG: 0x42 after panel retval=%d mode=0x%02x gpio=%d irq_en=%d held=%d\n",
+-			retval, tcm_hcd->id_info.mode,
+-			zeroflash_attn_gpio_value(tcm_hcd),
+-			tcm_hcd->irq_enabled ? 1 : 0,
+-			tcm_hcd->romboot_irq_held ? 1 : 0);
+-		syna_tcm_wait_identify_after_42(tcm_hcd);
+-		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+-			tcm_hcd->romboot_download_ok = true;
+-			pr_info("SAaiOS_TOUCH_DBG: 0x42 after panel firmware started mode=0x%02x\n",
+-				tcm_hcd->id_info.mode);
+-		} else {
+-			pr_info("SAaiOS_TOUCH_DBG: 0x42 after panel still RomBoot mode=0x%02x\n",
+-				tcm_hcd->id_info.mode);
+-		}
+-		return tcm_hcd->romboot_download_ok ? 0 : -ETIME;
+-	}
++	if (zeroflash_ensure_hcd(tcm_hcd) < 0)
++		return -EINVAL;
+ 
+-	return 0;
++	tcm_hcd->romboot_download_deferred = false;
++	tcm_hcd->romboot_42_after_panel = true;
++	pr_info("SAaiOS_TOUCH_DBG: panel up, run deferred 0x45 mode=0x%02x\n",
++		tcm_hcd->id_info.mode);
++	zeroflash_do_romboot_firmware_download();
++	return tcm_hcd->romboot_download_ok ? 0 : -EIO;
+ }
+ 
+ static int zeroflash_ensure_hcd(struct syna_tcm_hcd *tcm_hcd)
+@@ -2178,10 +2161,10 @@
+ 			 * before DDI/MIPI is up: ROM acks 0x45/0x1b and
+ 			 * never IDENTIFY. Defer until panel enabled.
+ 			 */
+-			if (tcm_hcd->fb_ready == 0) {
++			if (tcm_hcd->romboot_download_deferred || tcm_hcd->fb_ready == 0) {
+ 				tcm_hcd->romboot_download_deferred = true;
+-				pr_info("SAaiOS_TOUCH_DBG: defer 0x45 until panel enabled fb_ready=0 mode=0x%02x\n",
+-					tcm_hcd->id_info.mode);
++				pr_info("SAaiOS_TOUCH_DBG: defer 0x45 until panel fb_ready=%u mode=0x%02x\n",
++					tcm_hcd->fb_ready, tcm_hcd->id_info.mode);
+ 				break;
+ 			}
+ 			/* since16 marker kept: ROMBOOT DOWNLOAD skipped, firmware mode */
+@@ -2270,10 +2253,10 @@
+ 				tcm_hcd->id_info.mode);
+ 			return 0;
+ 		}
+-		if (tcm_hcd->fb_ready == 0) {
++		if (tcm_hcd->romboot_download_deferred || tcm_hcd->fb_ready == 0) {
+ 			tcm_hcd->romboot_download_deferred = true;
+-			pr_info("SAaiOS_TOUCH_DBG: defer 0x45 HDL_ROMBOOT until panel enabled mode=0x%02x\n",
+-				tcm_hcd->id_info.mode);
++			pr_info("SAaiOS_TOUCH_DBG: defer 0x45 until panel HDL_ROMBOOT fb_ready=%u mode=0x%02x\n",
++				tcm_hcd->fb_ready, tcm_hcd->id_info.mode);
+ 			return 0;
+ 		}
+ 		zeroflash_do_romboot_firmware_download();

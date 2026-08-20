@@ -1,0 +1,244 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: HDL complete helper when need_*=0 after 0x1b
+
+Stock zeroflash_download_config() when need_disp=need_app=need_osh=0
+and host_downloading: clear host_downloading, queue
+HELP_SEND_REINIT_NOTIFICATION (identify 0x02 then GET_APPLICATION_INFO
+0x20, then touch_reinit), not a silent return. Skip-HDL already cleared
+host_downloading, so since20 skipped 0x30 and then looped timeout-0x20
+while the IC stayed in HDL-v2 "status reported, waiting for host".
+
+since21:
+- Keep skip 0x30 when need_*=0 (stock-correct). Ack HDL complete
+  (host_downloading=0, wake hdl_wq). Run the completion helper after
+  touch_init: if ATTN idle, CMD_RESET 0x04 first, then one identify.
+- Do not call identify/0x20 again if the last attempt timed out.
+  Stock helper stops on identify failure (no touch_reinit 0x20).
+- Resume does not retry after one failure (no FB-unblank spam).
+- Keep in_hdl_mode=0, no ENABLE_REPORT 0x05, no do_polling, no SPI
+  read when ATTN idle.
+
+Applies after syna-tcm-sync-download-config.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+@@ -572,6 +572,8 @@
+ 	bool hdl_status_seen;
+ 	bool hdl_reinit_done;
+ 	bool try_get_report_config;
++	bool identify_attempted;
++	bool identify_timed_out;
+ 	const struct syna_tcm_hw_interface *hw_if;
+ 	int (*reset)(struct syna_tcm_hcd *tcm_hcd);
+ 	int (*reset_n_reinit)(struct syna_tcm_hcd *tcm_hcd, bool hw, bool update_wd);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -254,40 +254,92 @@
+ }
+ 
+ /* Stock after HDL-complete: identify(true) then touch_reinit. Never 0x05. */
++/* Stock zeroflash_download_config() when need_*=0 && host_downloading:
++ * clear host_downloading, queue HELP_SEND_REINIT_NOTIFICATION
++ * (identify(true) = CMD_IDENTIFY 0x02 then GET_APPLICATION_INFO 0x20,
++ * then touch_reinit). Skip-HDL already cleared host_downloading, so
++ * that branch never ran. Do the same helper here, once.
++ * If ATTN is idle after REPORT_STATUS 0x1b, 0x20 will not complete —
++ * send CMD_RESET 0x04 first (leave HDL status), then one identify.
++ */
+ static int syna_tcm_identify_touch_reinit(struct syna_tcm_hcd *tcm_hcd)
+ {
+-	int retval;
++	int retval = 0;
++	unsigned char *resp_buf = NULL;
++	unsigned int resp_buf_size = 0;
++	unsigned int resp_length = 0;
++	unsigned char response_code = 0;
++	const struct syna_tcm_board_data *bdata;
+ 
+ 	if (!tcm_hcd)
+ 		return 0;
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: identify+touch_reinit (no ENABLE_REPORT) mode=0x%02x in_hdl_mode=%d\n",
+-		tcm_hcd->id_info.mode, tcm_hcd->in_hdl_mode ? 1 : 0);
++	if (tcm_hcd->hdl_reinit_done) {
++		pr_info("SAaiOS_TOUCH_DBG: HDL complete skip (reinit already ok)\n");
++		return 0;
++	}
++	if (tcm_hcd->identify_attempted) {
++		pr_info("SAaiOS_TOUCH_DBG: skip identify (already attempted timed_out=%d attn=%d)\n",
++			tcm_hcd->identify_timed_out ? 1 : 0,
++			syna_tcm_attn_active(tcm_hcd) ? 1 : 0);
++		return tcm_hcd->identify_timed_out ? -ETIME : 0;
++	}
++
++	pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION mode=0x%02x in_hdl_mode=%d attn=%d\n",
++		tcm_hcd->id_info.mode, tcm_hcd->in_hdl_mode ? 1 : 0,
++		syna_tcm_attn_active(tcm_hcd) ? 1 : 0);
++
++	atomic_set(&tcm_hcd->host_downloading, 0);
+ 
+ 	syna_tcm_drain_unread_reports(tcm_hcd);
+ 	zeroflash_run_pending_config(tcm_hcd);
+ 	if (syna_tcm_attn_active(tcm_hcd))
+ 		syna_tcm_drain_unread_reports(tcm_hcd);
+ 
++	if (!syna_tcm_attn_active(tcm_hcd)) {
++		bdata = (tcm_hcd->hw_if && tcm_hcd->hw_if->bdata) ?
++			tcm_hcd->hw_if->bdata : NULL;
++		pr_info("SAaiOS_TOUCH_DBG: ATTN idle after 0x1b, CMD_RESET 0x04 (leave HDL status) then one identify\n");
++		retval = tcm_hcd->write_message(tcm_hcd, CMD_RESET, NULL, 0,
++			&resp_buf, &resp_buf_size, &resp_length, &response_code,
++			bdata ? bdata->reset_delay_ms : 0);
++		pr_info("SAaiOS_TOUCH_DBG: write_message CMD_RESET 0x04 status=0x%02x plen=%u retval=%d mode=0x%02x attn=%d gpio=%d\n",
++			tcm_hcd->status_report_code, tcm_hcd->payload_length, retval,
++			tcm_hcd->id_info.mode,
++			syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
++			syna_tcm_attn_gpio_value(tcm_hcd));
++		if (syna_tcm_attn_active(tcm_hcd))
++			syna_tcm_drain_unread_reports(tcm_hcd);
++	}
++
++	tcm_hcd->identify_attempted = true;
++	pr_info("SAaiOS_TOUCH_DBG: HDL complete identify CMD_IDENTIFY 0x02 then GET_APPLICATION_INFO 0x20 (one attempt)\n");
+ 	retval = tcm_hcd->identify(tcm_hcd, true);
++	pr_info("SAaiOS_TOUCH_DBG: HDL complete identify retval=%d mode=0x%02x attn=%d\n",
++		retval, tcm_hcd->id_info.mode,
++		syna_tcm_attn_active(tcm_hcd) ? 1 : 0);
+ 	if (retval < 0) {
++		tcm_hcd->identify_timed_out = true;
+ 		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"identify timed out, continuing with on-chip FW\n");
+-			pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail identify timeout (no IRQ unwind)\n");
+ 		} else {
+ 			input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Application firmware is not running\n");
+-			pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail (no IRQ unwind)\n");
+-			return retval;
+ 		}
++		pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail identify timeout (no IRQ unwind)\n");
++		/* Stock helper stops on identify failure. Do not 0x20 again. */
++		wake_up_interruptible(&tcm_hcd->hdl_wq);
++		return retval;
+ 	}
+ 
++	tcm_hcd->try_get_report_config = true;
+ 	retval = touch_reinit(tcm_hcd);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Failed to initialze touch reporting\n");
+ 		pr_info("SAaiOS_TOUCH_DBG: touch_reinit fail (no IRQ unwind)\n");
++		wake_up_interruptible(&tcm_hcd->hdl_wq);
+ 		return retval;
+ 	}
+ 
+@@ -295,6 +349,7 @@
+ 	if (tcm_hcd->hdl_status_seen)
+ 		tcm_hcd->hdl_reinit_done = true;
+ 	pr_info("SAaiOS_TOUCH_DBG: touch_reinit ok init_touch_ok path (no 0x05)\n");
++	wake_up_interruptible(&tcm_hcd->hdl_wq);
+ 	return 0;
+ }
+ 
+@@ -3283,9 +3338,14 @@
+ 	}
+ 
+ 	if (IS_FW_MODE(tcm_hcd->id_info.mode) && !tcm_hcd->in_hdl_mode) {
+-		if (tcm_hcd->hdl_status_seen && !tcm_hcd->hdl_reinit_done) {
++		if (tcm_hcd->hdl_reinit_done || tcm_hcd->identify_timed_out) {
++			pr_info("SAaiOS_TOUCH_DBG: resume skip reinit hdl_reinit_done=%d identify_timed_out=%d report_touch_cmd_sent=%d\n",
++				tcm_hcd->hdl_reinit_done ? 1 : 0,
++				tcm_hcd->identify_timed_out ? 1 : 0,
++				tcm_hcd->report_touch_cmd_sent ? 1 : 0);
++		} else if (tcm_hcd->hdl_status_seen && !tcm_hcd->hdl_reinit_done) {
+ 			tcm_hcd->try_get_report_config = true;
+-			pr_info("SAaiOS_TOUCH_DBG: resume identify+touch_reinit after 0x1b mode=0x%02x\n",
++			pr_info("SAaiOS_TOUCH_DBG: resume HDL complete helper after 0x1b mode=0x%02x\n",
+ 				tcm_hcd->id_info.mode);
+ 			retval = syna_tcm_identify_touch_reinit(tcm_hcd);
+ 			if (retval < 0) {
+@@ -3296,7 +3356,7 @@
+ 		} else if (tcm_hcd->report_touch_cmd_sent) {
+ 			pr_info("SAaiOS_TOUCH_DBG: resume touch_reinit skip (touch_init already ok)\n");
+ 		} else {
+-			pr_info("SAaiOS_TOUCH_DBG: resume identify+touch_reinit (no ENABLE_REPORT) mode=0x%02x\n",
++			pr_info("SAaiOS_TOUCH_DBG: resume HDL complete helper (no ENABLE_REPORT) mode=0x%02x\n",
+ 				tcm_hcd->id_info.mode);
+ 			retval = syna_tcm_identify_touch_reinit(tcm_hcd);
+ 			if (retval < 0) {
+@@ -3996,14 +4056,13 @@
+ 		goto err_tcm_identify;
+ 	}
+ 
+-	/* Stock HDL-complete helper is identify + touch_reinit after config.
+-	 * After 0x1b this boot, always reinit even if touch_init already ok
+-	 * (early touch_init used default report config, no 0x25).
+-	 * A reinit timeout must not unwind IRQ.
++	/* Stock HDL-complete helper (HELP_SEND_REINIT_NOTIFICATION):
++	 * identify + touch_reinit after 0x1b when need_*=0. One identify
++	 * max; CMD_RESET first if ATTN idle. Do not unwind IRQ on timeout.
+ 	 */
+ 	if (tcm_hcd->hdl_status_seen) {
+ 		tcm_hcd->try_get_report_config = true;
+-		pr_info("SAaiOS_TOUCH_DBG: touch_reinit after 0x1b (no ENABLE_REPORT) mode=0x%02x\n",
++		pr_info("SAaiOS_TOUCH_DBG: touch_reinit after 0x1b (HDL complete helper) mode=0x%02x\n",
+ 			tcm_hcd->id_info.mode);
+ 		retval = syna_tcm_identify_touch_reinit(tcm_hcd);
+ 		if (retval < 0) {
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
+@@ -1451,6 +1451,11 @@
+ 
+ 	touch_free_objects();
+ 
++	if (tcm_hcd->identify_timed_out) {
++		pr_info("SAaiOS_TOUCH_DBG: touch_reinit skip identify (last 0x20 timed out)\n");
++		return -ETIME;
++	}
++
+ 	if (IS_NOT_FW_MODE(tcm_hcd->id_info.mode)) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Application mode is not running (firmware mode = %d)\n",
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -574,6 +574,19 @@
+ 			queue_work(tcm_hcd->helper.workqueue, &tcm_hcd->helper.work);
+ 		}
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
++		wake_up_interruptible(&tcm_hcd->hdl_wq);
++		pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION queued host_downloading=0\n");
++		return;
++	}
++
++	if (!need_cfg) {
++		/* Skip-HDL already cleared host_downloading; stock's
++		 * need_*=0 branch never ran. Ack completion here; probe
++		 * runs HELP_SEND_REINIT_NOTIFICATION after touch_init.
++		 */
++		atomic_set(&tcm_hcd->host_downloading, 0);
++		wake_up_interruptible(&tcm_hcd->hdl_wq);
++		pr_info("SAaiOS_TOUCH_DBG: HDL complete ack need_cfg=0 host_downloading=0 (helper after touch_init)\n");
+ 		return;
+ 	}
+ 
+@@ -1393,7 +1406,10 @@
+ 	if (!need_cfg) {
+ 		zeroflash_hcd->config_attempted = true;
+ 		zeroflash_hcd->last_config_retval = 0;
++		atomic_set(&tcm_hcd->host_downloading, 0);
++		wake_up_interruptible(&tcm_hcd->hdl_wq);
+ 		pr_info("SAaiOS_TOUCH_DBG: no need_* bits, skip 0x30\n");
++		pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION pending (stock need_*=0)\n");
+ 		pr_info("SAaiOS_TOUCH_DBG: zeroflash_download_config ran=0 need_cfg=0 wait=1 retval=0 mode=0x%02x->0x%02x in_hdl_mode=%d\n",
+ 			mode_before, tcm_hcd->id_info.mode,
+ 			tcm_hcd->in_hdl_mode ? 1 : 0);
+@@ -1502,6 +1518,9 @@
+ 
+ 	if (!need_cfg) {
+ 		pr_info("SAaiOS_TOUCH_DBG: no need_* bits, skip 0x30\n");
++		atomic_set(&tcm_hcd->host_downloading, 0);
++		wake_up_interruptible(&tcm_hcd->hdl_wq);
++		pr_info("SAaiOS_TOUCH_DBG: HDL complete helper HELP_SEND_REINIT_NOTIFICATION pending (stock need_*=0)\n");
+ 		if (wait && !in_isr)
+ 			return zeroflash_run_pending_config(tcm_hcd);
+ 		zeroflash_hcd->config_attempted = true;

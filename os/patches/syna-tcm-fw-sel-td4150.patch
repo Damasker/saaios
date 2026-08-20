@@ -1,0 +1,88 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: pick td4150 blob on lcdtype mismatch; skip resume reset in FW mode
+
+v012 packed stock boot.img DTB (no TSP fw names; those live in DTBO).
+Project-Xed Image has no appended FDT. parse_dt still saw fw_name_cnt(6)
+from the live overlay table:
+
+  lcdtype[] = 0x7A6220, 0, 0, 0, 0x3A6220, 0xBA6220
+  fw_name[] = td4375, empty, empty, empty, td4150, td4160
+
+GPIO id3/id2/id1 = 1/0/1 → idx 5 → td4160 (164236-byte builtin blob).
+AP lcdtype 0x1AF240 != dt 0xBA6220, but the multi-name path never rejects.
+ROMBOOT HDL of the wrong image failed (CMD 0x45), then resume do_reset
+fired CMD_RESET (no IRQ wait in HDL mode) and identify timed out 1s on
+CMD 0x20. Stock first-boot used td4150 (GPIO luck / no builtin blob).
+
+1. parse_dt: on lcdtype mismatch, search the table, else td4150_a12s_boe.bin
+   (in-tree firmware/tsp_synaptics/, 147456 bytes).
+2. syna_tcm_resume: if probe already identified FW mode, skip do_reset.
+
+Applies after syna-tcm-resume-hdl-idle.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_spi.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_spi.c
+@@ -147,6 +147,44 @@ static int parse_dt(struct device *dev, struct syna_tcm_board_data *bdata)
+ 		input_info(true, dev, "%s: lcd id(%d), ap lcdtype=0x%06X & dt lcdtype=0x%06X\n",
+ 						__func__, fw_sel_idx, lcdtype, dt_lcdtype);
+ 
++		/* GPIO bits are a BOM hint, not ground truth. This unit's AP
++		 * lcdtype (0x1AF240) does not match dt[5]=0xBA6220 (td4160).
++		 * Prefer a lcdtype hit, else the known TD4150 blob — never HDL
++		 * a mismatched in-tree image (v012 downloaded td4160, 164236).
++		 */
++		if (lcdtype && dt_lcdtype && lcdtype != dt_lcdtype) {
++			int i;
++			u32 t = 0;
++			const char *n = NULL;
++			int picked = -1;
++
++			for (i = 0; i < lcdtype_cnt; i++) {
++				of_property_read_u32_index(np, "synaptics,lcdtype", i, &t);
++				if (t && t == lcdtype) {
++					picked = i;
++					break;
++				}
++			}
++			if (picked < 0) {
++				for (i = 0; i < fw_name_cnt; i++) {
++					n = NULL;
++					of_property_read_string_index(np, "synaptics,fw_name", i, &n);
++					if (n && strstr(n, "td4150_a12s_boe.bin")) {
++						picked = i;
++						break;
++					}
++				}
++			}
++			if (picked >= 0) {
++				fw_sel_idx = picked;
++				of_property_read_u32_index(np, "synaptics,lcdtype",
++							fw_sel_idx, &dt_lcdtype);
++				input_info(true, dev,
++					"%s: lcdtype mismatch, using idx(%d) dt=0x%06X\n",
++					__func__, fw_sel_idx, dt_lcdtype);
++			}
++		}
++
+ 	}
+ 
+ 	of_property_read_string_index(np, "synaptics,fw_name", fw_sel_idx, &bdata->fw_name);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -2706,11 +2706,14 @@ static int syna_tcm_resume(struct device *dev)
+ 				"Failed to wait for completion of host download\n");
+ 			goto exit;
+ 		}
+-		/* On-chip FW: in_hdl_mode stays set but download is idle.
+-		 * Skip reset only while a host download is actually in flight.
++		/* Skip reset while HDL is in flight, or if probe already
++		 * identified app/HDL firmware. CMD_RESET is fire-and-forget
++		 * in HDL mode; identify then waits ~1s on 0x20 with IRQ stuck.
+ 		 */
+ 		if (atomic_read(&tcm_hcd->host_downloading))
+ 			goto mod_resume;
++		if (IS_FW_MODE(tcm_hcd->id_info.mode))
++			goto mod_resume;
+ 		goto do_reset;
+ 	} else {
+ 

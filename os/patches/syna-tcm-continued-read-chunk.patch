@@ -1,0 +1,64 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: fix continued_read chunk drain after RomBoot
+
+v019 since7: ENABLE_REPORT salvage poll loops forever with
+status=0x03 plen=13325, rd_chunk_size=0, read_length=51.
+continued_read exits without draining payload or reaching STATUS_OK.
+
+Root cause: RomBoot/HDL sets rd_chunk_size=HDL_RD_CHUNK_SIZE (0).
+After on-chip FW transition identify() never restored RD_CHUNK_SIZE (256),
+so continued_read attempted one giant SPI read instead of 256-byte chunks.
+
+Fix:
+1. syna_tcm_effective_rd_chunk_size(): use RD_CHUNK_SIZE in firmware mode
+   when rd_chunk_size is still zero.
+2. syna_tcm_apply_fw_chunk_sizes(): restore rd/wr chunk sizes on app FW.
+3. Call apply_fw_chunk_sizes from sensor_detection and identify paths.
+4. Tighter SAaiOS_TOUCH_DBG on each continued_read chunk iteration.
+
+Applies after syna-tcm-attn-before-enable-report.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -186,6 +186,42 @@ static int syna_tcm_attn_clear_pending(struct syna_tcm_hcd *tcm_hcd)
+ 		syna_tcm_attn_active(tcm_hcd) ? 1 : 0, n);
+ 	return n;
+ }
++
++static unsigned int syna_tcm_effective_rd_chunk_size(struct syna_tcm_hcd *tcm_hcd)
++{
++	if (tcm_hcd->rd_chunk_size != 0)
++		return tcm_hcd->rd_chunk_size;
++	if (IS_FW_MODE(tcm_hcd->id_info.mode))
++		return RD_CHUNK_SIZE;
++	return 0;
++}
++
++static unsigned int syna_tcm_rd_chunk_space(struct syna_tcm_hcd *tcm_hcd,
++		unsigned int remaining_length)
++{
++	unsigned int chunk_size = syna_tcm_effective_rd_chunk_size(tcm_hcd);
++
++	if (chunk_size == 0)
++		return remaining_length;
++	return chunk_size - 2;
++}
++
++static void syna_tcm_apply_fw_chunk_sizes(struct syna_tcm_hcd *tcm_hcd)
++{
++	unsigned int max_write_size;
++
++	tcm_hcd->rd_chunk_size = RD_CHUNK_SIZE;
++	max_write_size = le2_to_uint(tcm_hcd->id_info.max_write_size);
++	if (max_write_size) {
++		tcm_hcd->wr_chunk_size = MIN(max_write_size, WR_CHUNK_SIZE);
++		if (tcm_hcd->wr_chunk_size == 0)
++			tcm_hcd->wr_chunk_size = max_write_size;
++	} else {
++		tcm_hcd->wr_chunk_size = WR_CHUNK_SIZE;
++	}
++}
++
+ int syna_tcm_add_module(struct syna_tcm_module_cb *mod_cb, bool insert)
+ {
+ 	struct syna_tcm_module_handler *mod_handler;

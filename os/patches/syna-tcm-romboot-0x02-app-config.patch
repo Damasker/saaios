@@ -1,0 +1,18 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since41 0x02 APP_CONFIG after leftover 0x1b
+
+since40: firmware started mode=0x02, touch_init ok, input event6.
+identify GET_APPLICATION_INFO -62 (gpio=0). Leftover ROM 0x1b 10 00
+locked skip 0x30 / config_attempted. IRQ stayed 3. User probed event3
+(wrong node).
+
+since41: do not lock skip-0x30 on MODE_HOSTDOWNLOAD leftover 0x1b;
+touch_init first; drain; send APP_CONFIG 0x30; identify only if ATTN idle.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since40 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since41 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

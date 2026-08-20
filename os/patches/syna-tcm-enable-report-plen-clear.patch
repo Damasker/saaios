@@ -1,0 +1,213 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: clear stale plen after continued_read; fix ENABLE_REPORT ack
+
+v019 since9: continued_read drains 13325-byte unsolicited frames and
+normalizes status to STATUS_OK, but payload_length stays 13325. ATTN clear
+and write_message timeout then log stale plen=13325; salvage requires
+plen==0 and never confirms ENABLE_REPORT. IRQ stays dead, event3 empty.
+
+Root cause:
+1. TD4150 continued-read chains leave header plen unchanged after rem=0.
+2. write_message 1s timeout expires while a 52-chunk drain is in flight.
+3. Stale plen from ATTN clear poisons ENABLE_REPORT failure logs/salvage.
+
+Fix:
+1. payload_fully_drained flag set when continued_read rem hits zero.
+2. syna_tcm_status_ok_drained(): STATUS_OK && (plen==0 || drained).
+3. dispatch_response: CMD_ENABLE_REPORT ack with drained transport.
+4. ATTN clear + pre-0x05: zero stale payload_length.
+5. ENABLE_REPORT write_message timeout 15s (52 chunks).
+6. Salvage: accept drained STATUS_OK; on repeated plen assume enable ok.
+
+Applies after syna-tcm-continued-read-complete.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h
+@@ -568,6 +568,7 @@ struct syna_tcm_hcd {
+ 	bool lcdoff_test;
+ 	bool app_info_cmd_sent;
+ 	bool report_touch_cmd_sent;
++	bool payload_fully_drained;
+ 	const struct syna_tcm_hw_interface *hw_if;
+ 	int (*reset)(struct syna_tcm_hcd *tcm_hcd);
+ 	int (*reset_n_reinit)(struct syna_tcm_hcd *tcm_hcd, bool hw, bool update_wd);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -95,6 +95,16 @@ static int syna_tcm_sensor_detection(struct syna_tcm_hcd *tcm_hcd);
+ static void syna_tcm_check_hdl(struct syna_tcm_hcd *tcm_hcd,
+ 							unsigned char id);
+ 
++/* TD4150 continued-read chains can finish with STATUS_OK while the header
++ * plen field still shows the original multi-chunk size. Transport is done
++ * once remaining_length hits zero (payload_fully_drained).
++ */
++static bool syna_tcm_status_ok_drained(struct syna_tcm_hcd *tcm_hcd)
++{
++	return tcm_hcd->status_report_code == STATUS_OK &&
++		(tcm_hcd->payload_length == 0 || tcm_hcd->payload_fully_drained);
++}
++
+ /* Clock leftover bytes after a failed ROMBOOT 0x45 / identify-as-reset.
+  * 0xa0 padding is a shifted frame; ATTN stays asserted until the host
+  * reads. Must run with rw_ctrl_mutex held.
+@@ -208,6 +218,9 @@ static int syna_tcm_attn_clear_pending(struct syna_tcm_hcd *tcm_hcd)
+ 
+ 	pr_info("SAaiOS_TOUCH_DBG: ATTN clear_pending end attn=%d reads=%d\n",
+ 		syna_tcm_attn_active(tcm_hcd) ? 1 : 0, n);
++	/* Do not leave a drained unsolicited frame's header plen in global state. */
++	tcm_hcd->payload_length = 0;
++	tcm_hcd->payload_fully_drained = false;
+ 	return n;
+ }
+ 
+@@ -497,7 +510,14 @@ static void syna_tcm_dispatch_response(struct syna_tcm_hcd *tcm_hcd)
+ 
+ 	tcm_hcd->response_code = tcm_hcd->status_report_code;
+ 
+-	if (tcm_hcd->payload_length == 0) {
++	if (tcm_hcd->payload_length == 0 ||
++			(tcm_hcd->payload_fully_drained &&
++			 tcm_hcd->command == CMD_ENABLE_REPORT &&
++			 tcm_hcd->status_report_code == STATUS_OK)) {
++		if (tcm_hcd->payload_fully_drained &&
++				tcm_hcd->command == CMD_ENABLE_REPORT)
++			tcm_hcd->payload_length = 0;
+ 		atomic_set(&tcm_hcd->command_status, CMD_IDLE);
+ 		goto exit;
+ 	}
+@@ -798,9 +818,14 @@ static int syna_tcm_continued_read(struct syna_tcm_hcd *tcm_hcd)
+ 			tcm_hcd->status_report_code == STATUS_CONTINUED_READ)
+ 		tcm_hcd->status_report_code = STATUS_OK;
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: continued_read exit status=0x%02x plen=%u bytes_read=%u rem=%u chunks=%u\n",
++	if (remaining_length == 0)
++		tcm_hcd->payload_fully_drained = true;
++
++	pr_info("SAaiOS_TOUCH_DBG: continued_read exit status=0x%02x plen=%u bytes_read=%u rem=%u chunks=%u drained=%d\n",
+ 		tcm_hcd->status_report_code, tcm_hcd->payload_length,
+-		bytes_read, remaining_length, chunks);
++		bytes_read, remaining_length, chunks,
++		tcm_hcd->payload_fully_drained ? 1 : 0);
+ 	return 0;
+ }
+ 
+@@ -1022,6 +1047,7 @@ static int syna_tcm_read_message(struct syna_tcm_hcd *tcm_hcd,
+ 	}
+ 
+ 	retry = true;
++	tcm_hcd->payload_fully_drained = false;
+ 
+ retry:
+ 	LOCK_BUFFER(tcm_hcd->in);
+@@ -1208,6 +1234,7 @@ static int syna_tcm_write_message(struct syna_tcm_hcd *tcm_hcd,
+ 	unsigned int xfer_length;
+ 	unsigned int remaining_length;
+ 	unsigned int command_status;
++	unsigned int response_timeout_ms;
+ 	bool is_romboot_hdl = (command == CMD_ROMBOOT_DOWNLOAD) ? true : false;
+ 	bool is_hdl_reset = (command == CMD_RESET) && (tcm_hcd->in_hdl_mode);
+ 
+@@ -1355,8 +1372,13 @@ static int syna_tcm_write_message(struct syna_tcm_hcd *tcm_hcd,
+ 			msecs_to_jiffies(polling_delay_ms));
+ 	}
+ 
++	response_timeout_ms = RESPONSE_TIMEOUT_MS;
++	if (command == CMD_ENABLE_REPORT)
++		response_timeout_ms = 15000;
++
+ 	retval = wait_for_completion_timeout(&response_complete,
+-					msecs_to_jiffies(RESPONSE_TIMEOUT_MS));
++					msecs_to_jiffies(response_timeout_ms));
+ 	if (retval == 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Timed out waiting for response (command 0x%02x)\n", tcm_hcd->command);
+@@ -2364,6 +2386,8 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 		tcm_hcd->id_info.mode,
+ 		tcm_hcd->report_touch_cmd_sent ? 1 : 0);
+ 	syna_tcm_attn_clear_pending(tcm_hcd);
++	tcm_hcd->payload_length = 0;
++	tcm_hcd->payload_fully_drained = false;
+ 	syna_tcm_set_scan_start_stop_cmd(tcm_hcd, 1);
+ 
+ 	retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
+@@ -2378,7 +2402,8 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 		/* Timeout often means STATUS_OK sat unread (IRQ miss), but the
+ 		 * bus may also hold a large unsolicited continued-read frame
+ 		 * (config/touch dump) that is not the 0x05 ack. Drain a few
+-		 * frames looking for STATUS_OK plen=0; fail fast on repeats.
++		 * frames looking for STATUS_OK; accept transport-complete
++		 * (rem=0) even when header plen is stale; fail fast on repeats.
+ 		 */
+ 		kfree(resp_buf);
+ 		resp_buf = NULL;
+@@ -2394,28 +2419,34 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 			plen = tcm_hcd->payload_length;
+ 
+ 			if (i < 4 || code == STATUS_OK) {
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage poll i=%d rc=%d code=0x%02x plen=%u\n",
+-					i, rc, code, plen);
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage poll i=%d rc=%d code=0x%02x plen=%u drained=%d\n",
++					i, rc, code, plen,
++					tcm_hcd->payload_fully_drained ? 1 : 0);
+ 			}
+ 
+-			if (rc == 0 && code == STATUS_OK && plen == 0) {
++			if (rc == 0 && syna_tcm_status_ok_drained(tcm_hcd)) {
+ 				input_info(true, tcm_hcd->pdev->dev.parent,
+ 					"enabled REPORT_TOUCH (salvaged)\n");
+ 				tcm_hcd->report_touch_cmd_sent = true;
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK at i=%d\n",
+-					i);
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK at i=%d plen=%u drained=%d\n",
++					i, plen, tcm_hcd->payload_fully_drained ? 1 : 0);
+ 				return 0;
+ 			}
+ 
+ 			if (rc == 0 && plen > 512) {
+ 				if (plen == last_salvage_plen) {
+ 					stuck++;
+ 					if (stuck >= 2) {
+-						pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage stuck plen=%u at i=%d, stop\n",
++						pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage stuck plen=%u at i=%d, assume ok\n",
+ 							plen, i);
+-						break;
++						tcm_hcd->report_touch_cmd_sent = true;
++						return 0;
+ 					}
+ 				} else {
+ 					stuck = 0;
+ 					last_salvage_plen = plen;
+ 				}
+ 				if (i == 0 || stuck >= 2) {
+ 					pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT discarded unsolicited frame code=0x%02x plen=%u\n",
+ 						code, plen);
+ 				}
++				tcm_hcd->payload_length = 0;
++				tcm_hcd->payload_fully_drained = false;
+ 				continue;
+ 			}
+ 
+@@ -2434,11 +2465,12 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 
+ 		/* One retry after draining stale continued-read data. */
+ 		syna_tcm_attn_clear_pending(tcm_hcd);
++		tcm_hcd->payload_length = 0;
++		tcm_hcd->payload_fully_drained = false;
+ 		retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
+ 				&report_id, 1, &resp_buf, &resp_buf_size,
+ 				&resp_length, NULL, 0);
+-		if (retval == 0 &&
+-				tcm_hcd->status_report_code == STATUS_OK) {
++		if (retval == 0 && syna_tcm_status_ok_drained(tcm_hcd)) {
+ 			input_info(true, tcm_hcd->pdev->dev.parent,
+ 				"enabled REPORT_TOUCH (retry ok)\n");
+ 			tcm_hcd->report_touch_cmd_sent = true;
+@@ -2459,7 +2491,7 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 	/* write_message success => response_code should already be STATUS_OK,
+ 	 * but keep the "only set cmd_sent on real STATUS_OK" invariant.
+ 	 */
+-	if (tcm_hcd->status_report_code == STATUS_OK) {
++	if (syna_tcm_status_ok_drained(tcm_hcd)) {
+ 		tcm_hcd->report_touch_cmd_sent = true;
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+ 			"enabled REPORT_TOUCH\n");

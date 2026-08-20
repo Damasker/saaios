@@ -1,0 +1,218 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: complete continued_read; fail-fast ENABLE_REPORT salvage
+
+v019 since8: ENABLE_REPORT salvage poll loops forever reading plen=13325
+with code=0x03 on every chunk. since7/8 fixed chunk sizing (rd_chunk_size=256)
+so all 52 chunks drain, but TD4150 never sends terminal STATUS_OK on the
+last chunk — every chunk header stays STATUS_CONTINUED_READ (0x03).
+
+Root cause:
+1. continued_read returned success but left status_report_code=0x03, so
+   salvage never saw STATUS_OK plen=0 for the 0x05 ack.
+2. The 13325-byte frame is unsolicited continued-read data (config/report
+   dump) queued before 0x05, not the ENABLE_REPORT response.
+3. Salvage poll ran 200 iterations x 52 chunks (~30s boot delay).
+
+Fix:
+1. After payload fully consumed, normalize STATUS_CONTINUED_READ -> STATUS_OK
+   (TD4150 transport-complete quirk).
+2. Salvage: max 12 reads, stuck detection on repeated large plen, one 0x05
+   retry after drain, then fail fast.
+3. ATTN clear: stuck detection, cap at 4 reads.
+4. Log continued_read first/last chunk only (not all 52).
+
+Applies after syna-tcm-continued-read-chunk.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -145,6 +145,9 @@ static int syna_tcm_attn_clear_pending(struct syna_tcm_hcd *tcm_hcd)
+ {
+ 	int i, n = 0;
+ 	unsigned char code;
++	unsigned int plen;
++	unsigned int last_plen;
++	int stuck;
+ 	int rc;
+ 
+ 	if (!tcm_hcd || !tcm_hcd->read_message)
+@@ -158,7 +161,10 @@ static int syna_tcm_attn_clear_pending(struct syna_tcm_hcd *tcm_hcd)
+ 	input_info(true, tcm_hcd->pdev->dev.parent,
+ 		"ATTN before clear: %d\n", syna_tcm_attn_active(tcm_hcd) ? 1 : 0);
+ 
+-	for (i = 0; i < 8; i++) {
++	last_plen = 0;
++	stuck = 0;
++
++	for (i = 0; i < 4; i++) {
+ 		if (i > 0 && !syna_tcm_attn_active(tcm_hcd))
+ 			break;
+ 		rc = tcm_hcd->read_message(tcm_hcd, NULL, 0);
+@@ -169,11 +175,28 @@ static int syna_tcm_attn_clear_pending(struct syna_tcm_hcd *tcm_hcd)
+ 			break;
+ 		}
+ 		code = tcm_hcd->status_report_code;
++		plen = tcm_hcd->payload_length;
+ 		n++;
+ 		pr_info("SAaiOS_TOUCH_DBG: ATTN clear read i=%d rc=%d code=0x%02x plen=%u\n",
+-			i, rc, code, tcm_hcd->payload_length);
++			i, rc, code, plen);
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+-			"ATTN clear read %d code 0x%02x\n", n, code);
++			"ATTN clear read %d code 0x%02x plen %u\n", n, code, plen);
++
++		if (code == STATUS_CONTINUED_READ && plen > 512) {
++			if (plen == last_plen) {
++				stuck++;
++				if (stuck >= 2) {
++					pr_info("SAaiOS_TOUCH_DBG: ATTN clear stuck on plen=%u, stop\n",
++						plen);
++					break;
++				}
++			} else {
++				stuck = 0;
++				last_plen = plen;
++			}
++		} else {
++			last_plen = 0;
++			stuck = 0;
++		}
+ 	}
+ 
+ 	input_info(true, tcm_hcd->pdev->dev.parent,
+@@ -708,9 +731,11 @@ static int syna_tcm_continued_read(struct syna_tcm_hcd *tcm_hcd)
+ 		marker = tcm_hcd->temp.buf[0];
+ 		code = tcm_hcd->temp.buf[1];
+ 
+-		pr_info("SAaiOS_TOUCH_DBG: continued_read chunk idx=%u/%u xfer=%u bytes_read=%u rem_before=%u marker=0x%02x code=0x%02x spi_rc=%d\n",
+-			idx, chunks, xfer_length, bytes_read, remaining_length,
+-			marker, code, spi_rc);
++		if (idx == 0 || idx == chunks - 1) {
++			pr_info("SAaiOS_TOUCH_DBG: continued_read chunk idx=%u/%u xfer=%u bytes_read=%u rem_before=%u marker=0x%02x code=0x%02x spi_rc=%d\n",
++				idx, chunks, xfer_length, bytes_read, remaining_length,
++				marker, code, spi_rc);
++		}
+ 
+ 		if (marker != MESSAGE_MARKER) {
+ 			pr_info("SAaiOS_TOUCH_DBG: continued_read bad_marker idx=%u marker=0x%02x status=0x%02x plen=%u rem=%u last_spi_rc=%d\n",
+@@ -765,6 +790,12 @@ static int syna_tcm_continued_read(struct syna_tcm_hcd *tcm_hcd)
+ 	UNLOCK_BUFFER(tcm_hcd->temp);
+ 	UNLOCK_BUFFER(tcm_hcd->in);
+ 
++	/* TD4150 sends STATUS_CONTINUED_READ (0x03) on every chunk including
++	 * the last; payload is complete once remaining_length hits zero.
++	 */
++	if (remaining_length == 0 &&
++			tcm_hcd->status_report_code == STATUS_CONTINUED_READ)
++		tcm_hcd->status_report_code = STATUS_OK;
++
+ 	pr_info("SAaiOS_TOUCH_DBG: continued_read exit status=0x%02x plen=%u bytes_read=%u rem=%u chunks=%u\n",
+ 		tcm_hcd->status_report_code, tcm_hcd->payload_length,
+ 		bytes_read, remaining_length, chunks);
+@@ -2313,6 +2344,8 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ {
+ 	int retval;
+ 	int i;
++	int stuck;
++	unsigned int last_salvage_plen;
+ 	unsigned char report_id = REPORT_TOUCH;
+ 	unsigned char *resp_buf;
+ 	unsigned int resp_buf_size;
+@@ -2340,54 +2373,66 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 			tcm_hcd->status_report_code,
+ 			tcm_hcd->payload_length);
+ 
+-		/* Timeout often means STATUS_OK sat unread (IRQ miss).
+-		 * Poll read_message while ATTN is active; never SPI-drain.
+-		 */
++		/* Timeout often means STATUS_OK sat unread (IRQ miss), but the
++		 * bus may also hold a large unsolicited continued-read frame
++		 * (config/touch dump) that is not the 0x05 ack. Drain a few
++		 * frames looking for STATUS_OK plen=0; fail fast on repeats.
++		 */
+ 		kfree(resp_buf);
+ 		resp_buf = NULL;
+-		for (i = 0; i < 200; i++) {
++		last_salvage_plen = 0;
++		stuck = 0;
++		for (i = 0; i < 12; i++) {
+ 			int rc;
+ 			unsigned char code;
+ 			unsigned int plen;
+ 
+ 			rc = tcm_hcd->read_message(tcm_hcd, NULL, 0);
+ 			code = tcm_hcd->status_report_code;
+ 			plen = tcm_hcd->payload_length;
+ 
+-			if (i < 10 || code == STATUS_OK || code == STATUS_CONTINUED_READ) {
++			if (i < 4 || code == STATUS_OK) {
+ 				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage poll i=%d rc=%d code=0x%02x plen=%u\n",
+ 					i, rc, code, plen);
+ 			}
+ 
+ 			if (rc == 0 && code == STATUS_OK && plen == 0) {
+ 				input_info(true, tcm_hcd->pdev->dev.parent,
+ 					"enabled REPORT_TOUCH (salvaged)\n");
+ 				tcm_hcd->report_touch_cmd_sent = true;
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK at i=%d plen=%u\n",
+-					i, plen);
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK at i=%d\n",
++					i);
+ 				return 0;
+ 			}
+ 
+-			if (code == STATUS_CONTINUED_READ)
+-				msleep(1);
+-			else
+-				msleep(5);
++			if (rc == 0 && plen > 512) {
++				if (plen == last_salvage_plen) {
++					stuck++;
++					if (stuck >= 2) {
++						pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage stuck plen=%u at i=%d, stop\n",
++							plen, i);
++						break;
++					}
++				} else {
++					stuck = 0;
++					last_salvage_plen = plen;
++				}
++				if (i == 0 || stuck >= 2) {
++					pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT discarded unsolicited frame code=0x%02x plen=%u\n",
++						code, plen);
++				}
++				continue;
++			}
++
++			if (!syna_tcm_attn_active(tcm_hcd))
++				msleep(10);
++			else
++				msleep(2);
+ 		}
++
++		/* One retry after draining stale continued-read data. */
+ 		syna_tcm_attn_clear_pending(tcm_hcd);
+-		retval = tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
++				&report_id, 1, &resp_buf, &resp_buf_size,
++				&resp_length, NULL, 0);
+ 		if (retval == 0 &&
+ 				tcm_hcd->status_report_code == STATUS_OK) {
+ 			input_info(true, tcm_hcd->pdev->dev.parent,
+-				"enabled REPORT_TOUCH (salvaged)\n");
++				"enabled REPORT_TOUCH (retry ok)\n");
+ 			tcm_hcd->report_touch_cmd_sent = true;
+-			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK after final read\n");
++			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT retry succeeded\n");
++			kfree(resp_buf);
+ 			return 0;
+ 		}
++
++		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT failed fast (retry ret=%d code=0x%02x plen=%u)\n",
++			retval, tcm_hcd->status_report_code, tcm_hcd->payload_length);
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Failed to enable REPORT_TOUCH\n");
+-		tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		kfree(resp_buf);
++		syna_tcm_attn_clear_pending(tcm_hcd);
+ 		return 0;
+ 	}

@@ -1,0 +1,132 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: stop polling leftover continued_read dump
+
+since13 ENABLE_REPORT timeout set do_polling and queued polling_work.
+kworker then drained the same 13325-byte STATUS_CONTINUED_READ dump
+every ~5-40ms; ATTN stayed high so IRQ 244 never re-fired and
+dmesg flooded until the phone was unusable.
+
+since15 (skip extra 0x20) does not fix this.
+
+Fix:
+1. Do not start polling on ENABLE_REPORT timeout.
+2. syna_tcm_polling_work: stop if the same plen>512 dump is drained twice.
+3. Rate-limit continued_read enter/chunk/exit after the first large dump.
+
+Applies after syna-tcm-skip-hdl-identify.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -691,6 +691,8 @@
+ 	unsigned int remaining_length;
+ 	unsigned int eff_rd_chunk;
+ 	unsigned int bytes_read;
++	bool log_continued;
++	static unsigned int quiet_dump_plen;
+ 
+ 	total_length = MESSAGE_HEADER_SIZE + tcm_hcd->payload_length + 1;
+ 
+@@ -701,10 +703,25 @@
+ 	chunks = chunks == 0 ? 1 : chunks;
+ 	bytes_read = 0;
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: continued_read enter status=0x%02x plen=%u read_length=%u rd_chunk_size=%u eff_rd=%u rem=%u chunks=%u\n",
+-		tcm_hcd->status_report_code, tcm_hcd->payload_length,
+-		tcm_hcd->read_length, tcm_hcd->rd_chunk_size, eff_rd_chunk,
+-		remaining_length, chunks);
++	/* Leftover 13325-byte dumps repeat while ATTN stays high. Log the first
++	 * dump of a given large plen; mute enter/chunk/exit after that so dmesg
++	 * stays usable.
++	 */
++	log_continued = true;
++	if (tcm_hcd->payload_length > 512) {
++		if (quiet_dump_plen == tcm_hcd->payload_length)
++			log_continued = false;
++		else
++			quiet_dump_plen = tcm_hcd->payload_length;
++	} else {
++		quiet_dump_plen = 0;
++	}
++
++	if (log_continued)
++		pr_info("SAaiOS_TOUCH_DBG: continued_read enter status=0x%02x plen=%u read_length=%u rd_chunk_size=%u eff_rd=%u rem=%u chunks=%u\n",
++			tcm_hcd->status_report_code, tcm_hcd->payload_length,
++			tcm_hcd->read_length, tcm_hcd->rd_chunk_size, eff_rd_chunk,
++			remaining_length, chunks);
+ 
+ 	LOCK_BUFFER(tcm_hcd->in);
+ 
+@@ -757,7 +774,7 @@
+ 		marker = tcm_hcd->temp.buf[0];
+ 		code = tcm_hcd->temp.buf[1];
+ 
+-		if (idx == 0 || idx == chunks - 1) {
++		if (log_continued && (idx == 0 || idx == chunks - 1)) {
+ 			pr_info("SAaiOS_TOUCH_DBG: continued_read chunk idx=%u/%u xfer=%u bytes_read=%u rem_before=%u marker=0x%02x code=0x%02x spi_rc=%d\n",
+ 				idx, chunks, xfer_length, bytes_read, remaining_length,
+ 				marker, code, spi_rc);
+@@ -830,10 +847,11 @@
+ 			tcm_hcd->status_report_code == STATUS_OK)
+ 		tcm_hcd->payload_fully_drained = true;
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: continued_read exit status=0x%02x plen=%u bytes_read=%u rem=%u chunks=%u drained=%d\n",
+-		tcm_hcd->status_report_code, tcm_hcd->payload_length,
+-		bytes_read, remaining_length, chunks,
+-		tcm_hcd->payload_fully_drained ? 1 : 0);
++	if (log_continued)
++		pr_info("SAaiOS_TOUCH_DBG: continued_read exit status=0x%02x plen=%u bytes_read=%u rem=%u chunks=%u drained=%d\n",
++			tcm_hcd->status_report_code, tcm_hcd->payload_length,
++			bytes_read, remaining_length, chunks,
++			tcm_hcd->payload_fully_drained ? 1 : 0);
+ 	return 0;
+ }
+ 
+@@ -1564,6 +1582,8 @@
+ static void syna_tcm_polling_work(struct work_struct *work)
+ {
+ 	int retval;
++	unsigned int plen;
++	static unsigned int last_dump_plen;
+ 	struct delayed_work *delayed_work = container_of(work, struct delayed_work, work);
+ 	struct syna_tcm_hcd *tcm_hcd =
+ 						container_of(delayed_work, struct syna_tcm_hcd, polling_work);
+@@ -1578,6 +1598,20 @@
+ 			syna_tcm_check_hdl(tcm_hcd, REPORT_HDL_F35);
+ 	}
+ 
++	plen = tcm_hcd->payload_length;
++	if (retval >= 0 && plen > 512) {
++		if (plen == last_dump_plen) {
++			pr_info("SAaiOS_TOUCH_DBG: polling stop repeated leftover dump plen=%u\n",
++				plen);
++			tcm_hcd->do_polling = false;
++			last_dump_plen = 0;
++			return;
++		}
++		last_dump_plen = plen;
++	} else {
++		last_dump_plen = 0;
++	}
++
+ 	if ((tcm_hcd->lp_state == PWR_ON) || (retval >= 0)) {
+ 		queue_delayed_work(tcm_hcd->polling_workqueue, &tcm_hcd->polling_work,
+ 				msecs_to_jiffies(POLLING_DELAY_MS));
+@@ -2493,15 +2527,11 @@
+ 
+ 		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT no empty ack (retry ret=%d code=0x%02x plen=%u)\n",
+ 			retval, tcm_hcd->status_report_code, tcm_hcd->payload_length);
+-		/* -ETIME means SPI write of 0x05 finished; the empty ack was
+-		 * lost behind leftover frames / a stuck level-ATTN line.
+-		 * Keep processing touch reports and poll if IRQs stay quiet.
++		/* Do not start polling here: leftover 13325-byte dumps keep ATTN
++		 * high and syna_tcm_polling_work livelocks the SPI bus.
+ 		 */
+ 		tcm_hcd->report_touch_cmd_sent = true;
+-		tcm_hcd->do_polling = true;
+-		queue_delayed_work(tcm_hcd->polling_workqueue, &tcm_hcd->polling_work,
+-			msecs_to_jiffies(POLLING_DELAY_MS));
+-		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT 0x05 written, polling fallback\n");
++		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT timeout: no polling fallback\n");
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Failed to enable REPORT_TOUCH\n");
+ 		kfree(resp_buf);

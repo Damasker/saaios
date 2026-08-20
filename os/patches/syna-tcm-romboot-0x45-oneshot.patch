@@ -1,0 +1,80 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since39 stock one-shot 0x45
+
+since38: defer after panel and IRQ hold work (IRQ=5). IDENTIFY-24 is
+td4150_rom-10.0 mode=0x04 max_write=1024. 0x42 still no IDENTIFY.
+
+Unpatched RomBoot sets wr_chunk_size = HDL_WR_CHUNK_SIZE (0 = unlimited)
+and write_message uses chunk_space = remaining_length: one TCM message
+(cmd + u16 total + full APP_CODE). IDENTIFY max_write is intentionally
+overwritten. SaaiOS PAGE_SIZE CONTINUE_WRITE (~4080) was not stock;
+s3c64xx already splits DMA at PACKET_CNT_MAX with CS held.
+
+since39 restores that one-shot. Keep panel defer, idle-0x1b IRQ hold,
+0x1b completing 0x45 only.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -1954,32 +1954,33 @@
+ 	else
+ 		chunk_space = tcm_hcd->wr_chunk_size - 1;
+ 
+ 	if (is_romboot_hdl) {
+-		unsigned int cap = HDL_WR_CHUNK_SIZE;
+-
+ 		/*
+-		 * Stock write_message: remaining = length+2 so the TCM u16
+-		 * lives in the first SPI frame. buf[1/2] = length (image+14),
+-		 * which wraps (97294 & 0xffff = 31758). reserved[0] = size>>16
+-		 * makes a 24-bit length: (0x01<<16)|31758 = 97294. Chunking
+-		 * is HDL_WR_CHUNK_SIZE / CONTINUE_WRITE for SPI only — do
+-		 * not put this-chunk size in the TCM header.
++		 * Unpatched write_message: HDL_WR_CHUNK_SIZE==0 → one TCM
++		 * message (cmd + u16 total + full payload). IDENTIFY
++		 * max_write=1024 is overwritten for RomBoot with
++		 * HDL_WR_CHUNK_SIZE (unlimited). PAGE_SIZE CONTINUE_WRITE
++		 * was a SaaiOS split; s3c64xx already splits DMA at
++		 * PACKET_CNT_MAX with CS held. Restore stock one-shot.
+ 		 */
+-		if (!cap)
+-			cap = PAGE_SIZE;
+-		if (cap > 0xFFF0)
+-			cap = 0xFFF0;
+-		chunk_space = cap - 1;
+-		chunk_space = chunk_space - (chunk_space % ROMBOOT_DOWNLOAD_UNIT);
+-		if (!chunk_space)
+-			chunk_space = ROMBOOT_DOWNLOAD_UNIT;
++		if (HDL_WR_CHUNK_SIZE) {
++			chunk_space = HDL_WR_CHUNK_SIZE - 1;
++			chunk_space = chunk_space - (chunk_space % ROMBOOT_DOWNLOAD_UNIT);
++		} else {
++			chunk_space = remaining_length;
++		}
+ 		tcm_hcd->romboot_download_active = true;
+ 		tcm_hcd->romboot_chunks_left = 0;
+ 		tcm_hcd->romboot_remaining = remaining_length;
+ 		tcm_hcd->romboot_aborted_early = false;
+ 		tcm_hcd->romboot_bytes_sent = false;
+-		pr_info("SAaiOS_TOUCH_DBG: since23 path=A 0x45 chunk_space=%u remaining=%u\n",
+-			chunk_space, remaining_length);
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 stock one-shot chunk_space=%u remaining=%u wr_chunk=%u max_write=%u\n",
++			chunk_space, remaining_length, tcm_hcd->wr_chunk_size,
++			le2_to_uint(tcm_hcd->id_info.max_write_size));
+ 	}
+ 
+ 	chunks = ceil_div(remaining_length, chunk_space);
+ 
+ 	chunks = chunks == 0 ? 1 : chunks;
+ 
++	if (is_romboot_hdl)
++		pr_info("SAaiOS_TOUCH_DBG: 0x45 stock one-shot chunks=%u xfer0=%u\n",
++			chunks, remaining_length > chunk_space ? chunk_space : remaining_length);
++
+ 	input_info(true, tcm_hcd->pdev->dev.parent, "Command = 0x%02x\n", command);
+@@ -4570,6 +4571,7 @@
+ 	pr_info("SAaiOS_TOUCH_DBG: since36 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since37 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: since38 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since39 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

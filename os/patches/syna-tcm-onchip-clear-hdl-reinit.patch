@@ -1,0 +1,305 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: clear in_hdl_mode on on-chip 0x02, identify+touch_reinit
+
+Stock never sends CMD_ENABLE_REPORT 0x05. After HDL it runs
+HELP_SEND_REINIT_NOTIFICATION (identify + touch_reinit). This unit
+boots RomBoot 0x04, 0x45 fails, on-chip mode 0x02 — skip HDL is
+correct, but sensor_detection left in_hdl_mode=true so resume took
+wait_hdl + goto mod_resume and skipped touch_reinit.
+
+0x1b plen=2 is REPORT_STATUS leftover holding level-ATTN. Drain it
+fully (max 8, no polling, stop repeating plen>512) before identify
+and touch_reinit. Do not treat it as an ENABLE_REPORT ack.
+
+Keep skip-second-identify, no IRQ unwind on app-info timeout in FW
+mode, no do_polling, do not zero identify plen.
+
+Applies after syna-tcm-enable-report-oneshot-drain.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -150,6 +150,136 @@ static bool syna_tcm_attn_active(struct syna_tcm_hcd *tcm_hcd)
+ 
+ 	return gpio_get_value(bdata->irq_gpio) == bdata->irq_on_state;
+ }
++
++static int syna_tcm_attn_gpio_value(struct syna_tcm_hcd *tcm_hcd)
++{
++	const struct syna_tcm_board_data *bdata;
++
++	if (!tcm_hcd || !tcm_hcd->hw_if || !tcm_hcd->hw_if->bdata)
++		return -1;
++
++	bdata = tcm_hcd->hw_if->bdata;
++	if (bdata->irq_gpio < 0)
++		return -1;
++
++	return gpio_get_value(bdata->irq_gpio);
++}
++
++/* Drain leftover REPORT_STATUS (0x1b) / continued_read frames that hold
++ * level-ATTN. Full read_message (not marker-only). Max 8. Never start
++ * polling. Stop if the same plen>512 dump repeats.
++ */
++static int syna_tcm_drain_unread_reports(struct syna_tcm_hcd *tcm_hcd)
++{
++	int i, n = 0;
++	unsigned int last_large = 0;
++	int stuck = 0;
++
++	if (!tcm_hcd || !tcm_hcd->read_message)
++		return 0;
++
++	pr_info("SAaiOS_TOUCH_DBG: drain unread begin attn=%d gpio=%d\n",
++		syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
++		syna_tcm_attn_gpio_value(tcm_hcd));
++
++	for (i = 0; i < 8; i++) {
++		int rc;
++		unsigned char code;
++		unsigned int plen;
++
++		if (i > 0 && !syna_tcm_attn_active(tcm_hcd))
++			break;
++
++		rc = tcm_hcd->read_message(tcm_hcd, NULL, 0);
++		code = tcm_hcd->status_report_code;
++		plen = tcm_hcd->payload_length;
++		n++;
++
++		if (i < 4 || code == REPORT_STATUS)
++			pr_info("SAaiOS_TOUCH_DBG: drain unread i=%d rc=%d code=0x%02x plen=%u attn=%d gpio=%d\n",
++				i, rc, code, plen,
++				syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
++				syna_tcm_attn_gpio_value(tcm_hcd));
++
++		if (code == REPORT_STATUS && plen == 2) {
++			unsigned char b0 = 0, b1 = 0;
++
++			LOCK_BUFFER(tcm_hcd->in);
++			if (tcm_hcd->in.buf &&
++					tcm_hcd->in.buf_size >= MESSAGE_HEADER_SIZE + 2) {
++				b0 = tcm_hcd->in.buf[MESSAGE_HEADER_SIZE];
++				b1 = tcm_hcd->in.buf[MESSAGE_HEADER_SIZE + 1];
++			}
++			UNLOCK_BUFFER(tcm_hcd->in);
++			pr_info("SAaiOS_TOUCH_DBG: REPORT_STATUS leftover payload %02x %02x\n",
++				b0, b1);
++		}
++
++		if (plen > 512) {
++			if (plen == last_large) {
++				stuck++;
++				if (stuck >= 1) {
++					pr_info("SAaiOS_TOUCH_DBG: drain unread stop large plen=%u\n",
++						plen);
++					break;
++				}
++			} else {
++				stuck = 0;
++				last_large = plen;
++			}
++			continue;
++		}
++
++		if ((syna_tcm_status_ok_drained(tcm_hcd) && plen == 0) ||
++				(plen == 0 && !syna_tcm_attn_active(tcm_hcd)))
++			break;
++	}
++
++	tcm_hcd->payload_length = 0;
++	tcm_hcd->payload_fully_drained = false;
++	pr_info("SAaiOS_TOUCH_DBG: drain unread end n=%d attn=%d gpio=%d\n",
++		n, syna_tcm_attn_active(tcm_hcd) ? 1 : 0,
++		syna_tcm_attn_gpio_value(tcm_hcd));
++	return n;
++}
++
++/* Stock after HDL-complete: identify(true) then touch_reinit. Never 0x05. */
++static int syna_tcm_identify_touch_reinit(struct syna_tcm_hcd *tcm_hcd)
++{
++	int retval;
++
++	if (!tcm_hcd)
++		return 0;
++
++	pr_info("SAaiOS_TOUCH_DBG: identify+touch_reinit (no ENABLE_REPORT) mode=0x%02x in_hdl_mode=%d\n",
++		tcm_hcd->id_info.mode, tcm_hcd->in_hdl_mode ? 1 : 0);
++
++	syna_tcm_drain_unread_reports(tcm_hcd);
++
++	retval = tcm_hcd->identify(tcm_hcd, true);
++	if (retval < 0) {
++		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"identify timed out, continuing with on-chip FW\n");
++		} else {
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Application firmware is not running\n");
++			return retval;
++		}
++	}
++
++	retval = touch_reinit(tcm_hcd);
++	if (retval < 0) {
++		input_err(true, tcm_hcd->pdev->dev.parent,
++			"Failed to initialze touch reporting\n");
++		return retval;
++	}
++
++	tcm_hcd->report_touch_cmd_sent = true;
++	pr_info("SAaiOS_TOUCH_DBG: touch_reinit ok init_touch_ok path (no 0x05)\n");
++	return 0;
++}
+ 
+ static int syna_tcm_attn_clear_pending(struct syna_tcm_hcd *tcm_hcd)
+ {
+@@ -3133,6 +3263,16 @@
+ #endif
+ 	}
+ 
++	if (IS_FW_MODE(tcm_hcd->id_info.mode) && !tcm_hcd->in_hdl_mode) {
++		pr_info("SAaiOS_TOUCH_DBG: resume identify+touch_reinit (no ENABLE_REPORT) mode=0x%02x\n",
++			tcm_hcd->id_info.mode);
++		retval = syna_tcm_identify_touch_reinit(tcm_hcd);
++		if (retval < 0)
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Failed to reinit touch reporting\n");
++		goto mod_resume;
++	}
++
+ 	if (IS_NOT_FW_MODE(tcm_hcd->id_info.mode) || tcm_hcd->app_status != APP_STATUS_OK) {
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+ 			"Identifying mode = 0x%02x\n", tcm_hcd->id_info.mode);
+@@ -3191,13 +3331,11 @@
+ 		input_info(true, tcm_hcd->pdev->dev.parent, "enable edge reject\n");
+ #endif
+ 
+-	if (!tcm_hcd->report_touch_cmd_sent) {
+-		syna_tcm_attn_clear_pending(tcm_hcd);
+-		syna_tcm_enable_touch_report(tcm_hcd);
+-	} else {
+-		input_info(true, tcm_hcd->pdev->dev.parent,
+-			"REPORT_TOUCH already requested, skip ENABLE_REPORT\n");
+-	}
++	/* Stock never sends CMD_ENABLE_REPORT 0x05 here. Touch is enabled
++	 * via identify + touch_reinit (init_touch_ok). Do not fake-success
++	 * 0x05 timeouts.
++	 */
++	pr_info("SAaiOS_TOUCH_DBG: mod_resume skip ENABLE_REPORT report_touch_cmd_sent=%d\n",
++		tcm_hcd->report_touch_cmd_sent ? 1 : 0);
+ 
+ 	if (tcm_hcd->wakeup_gesture_enabled || tcm_hcd->ear_detect_enable)
+ 		syna_tcm_lcd_power_ctrl(tcm_hcd, false);
+@@ -3563,15 +3701,17 @@
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+ 			"Application mode (build id = %d)\n", tcm_hcd->packrat_number);
+ 	} else if (tcm_hcd->id_info.mode == MODE_HOSTDOWNLOAD_FIRMWARE) {
+-		/* On-chip HDL app FW. Keep in_hdl_mode so resume skips
+-		 * do_reset, but do not mark TYPE_ROMBOOT (no CMD 0x45).
++		/* Stock clean-0x02 boot does not set in_hdl_mode. Leaving it
++		 * true made resume wait_hdl + goto mod_resume and skip
++		 * touch_reinit (vendor uses identify + touch_reinit, not 0x05).
+ 		 */
+ 		syna_tcm_apply_fw_chunk_sizes(tcm_hcd);
+-		tcm_hcd->in_hdl_mode = true;
++		tcm_hcd->in_hdl_mode = false;
+ 		tcm_hcd->sensor_type = TYPE_FLASH;
++		pr_info("SAaiOS_TOUCH_DBG: on-chip 0x02, in_hdl_mode=0 (stock clean-0x02)\n");
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+-			"Host-download firmware already running (build id = %d)\n",
++			"Host-download firmware already running (build id = %d), in_hdl_mode cleared\n",
+ 			tcm_hcd->packrat_number);
+ 	} else {
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+@@ -3804,18 +3944,27 @@
+ 
+ 	atomic_set(&tcm_hcd->host_downloading, 0);
+ 
+-	syna_tcm_attn_clear_pending(tcm_hcd);
++	syna_tcm_drain_unread_reports(tcm_hcd);
+ 
+-	pr_info("SAaiOS_TOUCH_DBG: probe before touch_init mode=0x%02x app_info_sent=%d\n",
+-		tcm_hcd->id_info.mode, tcm_hcd->app_info_cmd_sent ? 1 : 0);
++	pr_info("SAaiOS_TOUCH_DBG: probe before touch_init mode=0x%02x app_info_sent=%d in_hdl_mode=%d\n",
++		tcm_hcd->id_info.mode, tcm_hcd->app_info_cmd_sent ? 1 : 0,
++		tcm_hcd->in_hdl_mode ? 1 : 0);
+ 
+ 	/* initialize the touch reporting */
+ 	retval = touch_init(tcm_hcd);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent, "Failed to initialze touch reporting\n");
+ 		goto err_tcm_identify;
+ 	}
+ 
++	/* Stock HDL-complete helper: identify + touch_reinit, not 0x05. */
++	if (IS_FW_MODE(tcm_hcd->id_info.mode) && !tcm_hcd->in_hdl_mode) {
++		retval = syna_tcm_identify_touch_reinit(tcm_hcd);
++		if (retval < 0)
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"on-chip identify+touch_reinit failed\n");
++	}
++
+ 	retval = sec_fn_init(tcm_hcd);
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent, "Failed to sec_fn_init\n");
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c
+@@ -1210,8 +1210,10 @@ static void zeroflash_do_romboot_firmware_download(void)
+ 				"ROMBOOT DOWNLOAD skipped, firmware mode = 0x%02x (on-chip)\n",
+ 				tcm_hcd->id_info.mode);
+ 			tcm_hcd->sensor_type = TYPE_FLASH;
++			tcm_hcd->in_hdl_mode = false;
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
++			pr_info("SAaiOS_TOUCH_DBG: on-chip 0x02, in_hdl_mode=0 (stock clean-0x02)\n");
+ 			goto error_secure_memcpy;
+ 		}
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+@@ -1296,7 +1298,9 @@ init_finished:
+ 			input_info(true, tcm_hcd->pdev->dev.parent,
+ 					"On-chip HDL firmware, skip download (sensor_type=%d)\n",
+ 					tcm_hcd->sensor_type);
++			tcm_hcd->in_hdl_mode = false;
+ 			atomic_set(&tcm_hcd->host_downloading, 0);
++			pr_info("SAaiOS_TOUCH_DBG: on-chip 0x02, in_hdl_mode=0 (stock clean-0x02)\n");
+ 			break;
+ 
+ 		}
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c
+@@ -1148,10 +1148,12 @@ static int touch_set_report_config(void)
+ 	struct syna_tcm_hcd *tcm_hcd = touch_hcd->tcm_hcd;
+ 
+ #ifdef USE_DEFAULT_TOUCH_REPORT_CONFIG
+-	/* Skip if skip-on-0x02 already issued 0x05 while IRQ was hot. */
+-	if (!tcm_hcd->report_touch_cmd_sent)
+-		syna_tcm_enable_touch_report(tcm_hcd);
++	/* Stock never sends CMD_ENABLE_REPORT 0x05. IC emits REPORT_TOUCH
++	 * after touch_init/touch_reinit (init_touch_ok). Do not gate on
++	 * report_touch_cmd_sent.
++	 */
++	pr_info("SAaiOS_TOUCH_DBG: touch_set_report_config default (no ENABLE_REPORT) mode=0x%02x\n",
++		tcm_hcd->id_info.mode);
+ 	return 0;
+ #endif
+ 
+@@ -1350,6 +1352,8 @@ int touch_init(struct syna_tcm_hcd *tcm_hcd)
+ 		goto err_set_input_reporting;
+ 	}
+ 	tcm_hcd->touch_count = 0;
++	tcm_hcd->report_touch_cmd_sent = true;
++	pr_info("SAaiOS_TOUCH_DBG: touch_init ok (no ENABLE_REPORT)\n");
+ 
+ #ifdef CONFIG_SEC_FACTORY
+ 	retval = tcm_hcd->set_dynamic_config(tcm_hcd, DC_ENABLE_EDGE_REJECT, 1);
+@@ -1429,7 +1433,11 @@ int touch_reinit(struct syna_tcm_hcd *tcm_hcd)
+ 	retval = touch_set_input_reporting();
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent, "Failed to set up input reporting\n");
++	} else {
++		tcm_hcd->report_touch_cmd_sent = true;
++		pr_info("SAaiOS_TOUCH_DBG: touch_reinit ok (no ENABLE_REPORT)\n");
+ 	}
+ 
+ 	return retval;
+ }

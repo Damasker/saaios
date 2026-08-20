@@ -1,0 +1,162 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: one-shot leftover drain after ENABLE_REPORT timeout
+
+since16 stopped polling on ENABLE_REPORT timeout, so the leftover
+continued_read dump (plen=13325) was never read. Level-ATTN stays
+asserted; IRQ 244 does not re-fire; wait_for_completion times out.
+
+Fix: after write_message returns -ETIME (command_mutex already
+released), read_message once to drain the leftover, discard it, retry
+ENABLE_REPORT once. Never set do_polling or queue polling_work.
+
+If retry also times out, set report_touch_cmd_sent without polling so
+IRQ-delivered REPORT_TOUCH can still be processed after ATTN drops.
+
+Applies after syna-tcm-stop-poll-dump.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -2426,9 +2426,6 @@
+ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ {
+ 	int retval;
+-	int i;
+-	int stuck;
+-	unsigned int last_salvage_plen;
+ 	unsigned char report_id = REPORT_TOUCH;
+ 	unsigned char *resp_buf;
+ 	unsigned int resp_buf_size;
+@@ -2457,86 +2454,69 @@
+ 			tcm_hcd->status_report_code,
+ 			tcm_hcd->payload_length);
+ 
+-		/* Timeout often means STATUS_OK sat unread (IRQ miss), but the
+-		 * bus may also hold a large unsolicited continued-read frame
+-		 * (config/touch dump) that is not the 0x05 ack. Drain a few
+-		 * frames looking for STATUS_OK; accept transport-complete
+-		 * (rem=0) even when header plen is stale; fail fast on repeats.
+-		 */
+ 		kfree(resp_buf);
+ 		resp_buf = NULL;
+-		last_salvage_plen = 0;
+-		stuck = 0;
+-		for (i = 0; i < 12; i++) {
+-			int rc;
+-			unsigned char code;
+-			unsigned int plen;
+-
+-			rc = tcm_hcd->read_message(tcm_hcd, NULL, 0);
+-			code = tcm_hcd->status_report_code;
+-			plen = tcm_hcd->payload_length;
+-
+-			if (i < 4 || code == STATUS_OK) {
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT salvage poll i=%d rc=%d code=0x%02x plen=%u drained=%d\n",
+-					i, rc, code, plen,
+-					tcm_hcd->payload_fully_drained ? 1 : 0);
+-			}
+ 
+-			if (syna_tcm_status_ok_drained(tcm_hcd) && plen == 0) {
++		/* write_message already unlocked command_mutex before
++		 * returning -ETIME. Nested read_message while that mutex
++		 * was held was a since11 bug. One SPI read so a leftover
++		 * frame can deassert level-ATTN; then retry 0x05 once.
++		 * Never start polling from this path.
++		 * Replaces the salvage loop that logged
++		 * "enabled REPORT_TOUCH (salvaged)".
++		 */
++		if (retval == -ETIME) {
++			int drain_rc;
++			unsigned char drain_code;
++			unsigned int drain_plen;
++
++			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT timeout: one-shot leftover drain\n");
++			drain_rc = syna_tcm_read_message(tcm_hcd, NULL, 0);
++			drain_code = tcm_hcd->status_report_code;
++			drain_plen = tcm_hcd->payload_length;
++			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT drain rc=%d code=0x%02x plen=%u drained=%d\n",
++				drain_rc, drain_code, drain_plen,
++				tcm_hcd->payload_fully_drained ? 1 : 0);
++
++			/* Leftover STATUS_OK / CONTINUED_READ (plen != 0, or a
++			 * large dump) is not the empty ENABLE_REPORT ack.
++			 * Do not treat an empty ack here as success either;
++			 * always retry 0x05 once after the one-shot drain.
++			 */
++			if (!(syna_tcm_status_ok_drained(tcm_hcd) && drain_plen == 0) &&
++					drain_plen != 0)
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT discarded leftover after drain code=0x%02x plen=%u\n",
++					drain_code, drain_plen);
++
++			syna_tcm_attn_clear_pending(tcm_hcd);
++			tcm_hcd->payload_length = 0;
++			tcm_hcd->payload_fully_drained = false;
++			retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
++					&report_id, 1, &resp_buf, &resp_buf_size,
++					&resp_length, NULL, 0);
++			if (retval == 0) {
+ 				input_info(true, tcm_hcd->pdev->dev.parent,
+-					"enabled REPORT_TOUCH (salvaged)\n");
++					"enabled REPORT_TOUCH (retry ok)\n");
+ 				tcm_hcd->report_touch_cmd_sent = true;
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed empty ack at i=%d rc=%d\n",
+-					i, rc);
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT retry succeeded\n");
++				kfree(resp_buf);
+ 				return 0;
+ 			}
+ 
+-			if (plen > 512) {
+-				if (plen == last_salvage_plen)
+-					stuck++;
+-				else {
+-					stuck = 0;
+-					last_salvage_plen = plen;
+-				}
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT discarded leftover code=0x%02x plen=%u rc=%d stuck=%d\n",
+-					code, plen, rc, stuck);
+-				continue;
+-			}
+-
+-			if (!syna_tcm_attn_active(tcm_hcd))
+-				msleep(10);
+-			else
+-				msleep(2);
+-		}
+-
+-		/* One retry after draining stale continued-read data. */
+-		syna_tcm_attn_clear_pending(tcm_hcd);
+-		tcm_hcd->payload_length = 0;
+-		tcm_hcd->payload_fully_drained = false;
+-		retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
+-				&report_id, 1, &resp_buf, &resp_buf_size,
+-				&resp_length, NULL, 0);
+-		if (retval == 0) {
+-			input_info(true, tcm_hcd->pdev->dev.parent,
+-				"enabled REPORT_TOUCH (retry ok)\n");
++			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT retry timeout: no polling fallback\n");
+ 			tcm_hcd->report_touch_cmd_sent = true;
+-			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT retry succeeded\n");
++			pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT giving up, report_touch_cmd_sent=1 after drain (no polling)\n");
++			input_err(true, tcm_hcd->pdev->dev.parent,
++				"Failed to enable REPORT_TOUCH\n");
+ 			kfree(resp_buf);
++			syna_tcm_attn_clear_pending(tcm_hcd);
+ 			return 0;
+ 		}
+ 
+-		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT no empty ack (retry ret=%d code=0x%02x plen=%u)\n",
+-			retval, tcm_hcd->status_report_code, tcm_hcd->payload_length);
+-		/* Do not start polling here: leftover 13325-byte dumps keep ATTN
+-		 * high and syna_tcm_polling_work livelocks the SPI bus.
+-		 */
+-		tcm_hcd->report_touch_cmd_sent = true;
+-		pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT timeout: no polling fallback\n");
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Failed to enable REPORT_TOUCH\n");
+-		kfree(resp_buf);
+ 		syna_tcm_attn_clear_pending(tcm_hcd);
+-		return 0;
++		return retval;
+ 	}
+ 
+ 	/* write_message success => response_code should already be STATUS_OK,

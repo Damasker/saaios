@@ -577,7 +577,7 @@ void _start(void) {
     write_file("/proc/sys/kernel/panic", "0\n");
 
     if (setup_fb() == 0) {
-        log_line("SaaiOS v011");
+        log_line("SaaiOS v019 since44");
         scopy(line, sizeof(line), "fb ");
         append_uint(line, sizeof(line), fb.xres);
         append(line, sizeof(line), "x");
@@ -601,7 +601,7 @@ void _start(void) {
     spawn_rcs();
     spawn_shell();
     log_line("telnet :23 :2323");
-    log_line("httpd :8080");
+    log_line("ssh :22");
 
     for (;;) {
         pet_watchdog();

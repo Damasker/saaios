@@ -1,0 +1,179 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: skip boot 0x2a; treat 0x02 as on-chip FW; enable REPORT_TOUCH
+
+v013 picked td4150_a12s_boe.bin (147456) and resume ended at mod_resume.
+Live still: ROMBOOT DOWNLOAD (0x45) fails then identify mode 0x02; first
+factory CMD 0x2a (PT7 rawdata) prints a 15x34 frame; second 0x2a (PT11)
+races resume and times out (sec_run_rawdata cp short). IRQ 244 stuck at 7,
+event3 empty, kworker tc:0 noise:0.
+
+1. Do not schedule sec_run_rawdata at probe. Touch must not depend on
+   production test. Factory cmd still calls it.
+2. After failed 0x45, if identify is already firmware mode 0x02 (or 0x01),
+   clear host_downloading — on-chip HDL app FW, do not leave HDL half-done.
+   Detect 0x02 at sensor_detection as TYPE_FLASH, not TYPE_ROMBOOT.
+3. CMD_ENABLE_REPORT REPORT_TOUCH after touch_set_report_config (default
+   config was a no-op) and again on resume.
+
+Applies after syna-tcm-fw-sel-td4150.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 00:28:31.688381728 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c	2026-08-19 00:28:31.656380919 -0400
+@@ -202,8 +202,12 @@
+ 	struct syna_tcm_hcd *tcm_hcd = container_of(work, struct syna_tcm_hcd, 
+ 			work_read_info.work);
+ 
+-	input_log_fix();
+-	sec_run_rawdata(tcm_hcd);
++	/* Factory 0x2a is optional. Boot must not run it: PT7 can succeed,
++	 * then PT11 races fb unblank / resume and times out (cp short),
++	 * leaving the IC off REPORT_TOUCH. cmd/check_connection still works.
++	 */
++	input_info(true, tcm_hcd->pdev->dev.parent,
++		"%s: skip boot factory rawdata\n", __func__);
+ }
+ 
+ #ifdef REPORT_NOTIFIER
+@@ -2126,6 +2130,34 @@
+ 
+ 	return retval;
+ }
++int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
++{
++	int retval;
++	unsigned char report_id = REPORT_TOUCH;
++	unsigned char *resp_buf;
++	unsigned int resp_buf_size;
++	unsigned int resp_length;
++
++	if (!tcm_hcd || IS_NOT_FW_MODE(tcm_hcd->id_info.mode))
++		return 0;
++
++	resp_buf = NULL;
++	resp_buf_size = 0;
++
++	retval = tcm_hcd->write_message(tcm_hcd, CMD_ENABLE_REPORT,
++			&report_id, 1, &resp_buf, &resp_buf_size,
++			&resp_length, NULL, 0);
++	if (retval < 0)
++		input_err(true, tcm_hcd->pdev->dev.parent,
++			"Failed to enable REPORT_TOUCH\n");
++	else
++		input_info(true, tcm_hcd->pdev->dev.parent,
++			"enabled REPORT_TOUCH\n");
++
++	kfree(resp_buf);
++	return retval;
++}
++
+ int syna_tcm_set_scan_start_stop_cmd(struct syna_tcm_hcd *tcm_hcd, unsigned char value)
+ {
+ 	int retval;
+@@ -2781,6 +2813,8 @@
+ 		input_info(true, tcm_hcd->pdev->dev.parent, "enable edge reject\n");
+ #endif
+ 
++	syna_tcm_enable_touch_report(tcm_hcd);
++
+ 	if (tcm_hcd->wakeup_gesture_enabled || tcm_hcd->ear_detect_enable)
+ 		syna_tcm_lcd_power_ctrl(tcm_hcd, false);
+ 	if(tcm_hcd->ear_detect_enable)
+@@ -3143,6 +3177,15 @@
+ 		tcm_hcd->sensor_type = TYPE_FLASH;
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+ 			"Application mode (build id = %d)\n", tcm_hcd->packrat_number);
++	} else if (tcm_hcd->id_info.mode == MODE_HOSTDOWNLOAD_FIRMWARE) {
++		/* On-chip HDL app FW. Keep in_hdl_mode so resume skips
++		 * do_reset, but do not mark TYPE_ROMBOOT (no CMD 0x45).
++		 */
++		tcm_hcd->in_hdl_mode = true;
++		tcm_hcd->sensor_type = TYPE_FLASH;
++		input_info(true, tcm_hcd->pdev->dev.parent,
++			"Host-download firmware already running (build id = %d)\n",
++			tcm_hcd->packrat_number);
+ 	} else {
+ 		input_info(true, tcm_hcd->pdev->dev.parent,
+ 			"TCM is detected, but mode is 0x%02x\n", tcm_hcd->id_info.mode);
+@@ -3376,8 +3419,7 @@
+ 	queue_work(mod_pool.workqueue, &mod_pool.work);
+ 
+ 	INIT_DELAYED_WORK(&tcm_hcd->work_read_info, sec_read_info_work);
+-	if (!shutdown_is_on_going_tsp)
+-		schedule_delayed_work(&tcm_hcd->work_read_info, msecs_to_jiffies(50));
++	/* Do not schedule factory rawdata at boot. */
+ 
+ 	init_completion(&tcm_hcd->resume_done);
+ 	complete_all(&tcm_hcd->resume_done);
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 00:28:31.664381121 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.h	2026-08-19 00:28:31.660381020 -0400
+@@ -810,6 +810,7 @@
+ 	return (dividend + divisor - 1) / divisor;
+ }
+ 
++extern int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd);
+ extern int syna_tcm_set_scan_start_stop_cmd(struct syna_tcm_hcd *tcm_hcd, unsigned char value);
+ 
+ #if defined(CONFIG_EXYNOS_DPU30)
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c	2026-08-19 00:28:31.672381324 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_touch.c	2026-08-19 00:28:31.668381223 -0400
+@@ -1107,7 +1107,10 @@
+ 	struct syna_tcm_hcd *tcm_hcd = touch_hcd->tcm_hcd;
+ 
+ #ifdef USE_DEFAULT_TOUCH_REPORT_CONFIG
+-	return 0;
++	/* Default format is fine; still enable REPORT_TOUCH. Production
++	 * test 0x2a can leave reporting in a test frame.
++	 */
++	return syna_tcm_enable_touch_report(tcm_hcd);
+ #endif
+ 
+ 	app_info = &tcm_hcd->app_info;
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 00:28:31.676381425 -0400
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_zeroflash.c	2026-08-19 00:28:31.672381324 -0400
+@@ -1153,7 +1153,13 @@
+ 	pm_stay_awake(&tcm_hcd->pdev->dev);
+ 
+ 	if (tcm_hcd->id_info.mode != MODE_ROMBOOTLOADER) {
+-		input_err(true, tcm_hcd->pdev->dev.parent, "Not in romboot mode\n");
++		if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
++			input_info(true, tcm_hcd->pdev->dev.parent,
++				"Already in firmware mode 0x%02x, skip ROMBOOT HDL\n",
++				tcm_hcd->id_info.mode);
++		} else {
++			input_err(true, tcm_hcd->pdev->dev.parent, "Not in romboot mode\n");
++		}
+ 		atomic_set(&tcm_hcd->host_downloading, 0);
+ 		goto exit;
+ 	}
+@@ -1201,6 +1207,18 @@
+ 	if (retval < 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 				"Failed to write command ROMBOOT DOWNLOAD");
++		/* Identify-as-reset makes 0x45 look like failure while the
++		 * IC is already in HDL app FW (0x02). On-chip image is enough.
++		 */
++		if (tcm_hcd->identify(tcm_hcd, false) == 0 &&
++				IS_FW_MODE(tcm_hcd->id_info.mode)) {
++			input_info(true, tcm_hcd->pdev->dev.parent,
++				"ROMBOOT DOWNLOAD skipped, firmware mode = 0x%02x (on-chip)\n",
++				tcm_hcd->id_info.mode);
++			atomic_set(&tcm_hcd->host_downloading, 0);
++			goto error_secure_memcpy;
++		}
++		atomic_set(&tcm_hcd->host_downloading, 0);
+ 		goto error_secure_memcpy;
+ 	}
+ 
+@@ -1277,8 +1295,10 @@
+ 			zeroflash_do_romboot_firmware_download();
+ 			break;
+ 		default:
+-			input_err(true, tcm_hcd->pdev->dev.parent,
+-					"Failed to find valid HDL state (%d)\n", tcm_hcd->sensor_type);
++			input_info(true, tcm_hcd->pdev->dev.parent,
++					"On-chip HDL firmware, skip download (sensor_type=%d)\n",
++					tcm_hcd->sensor_type);
++			atomic_set(&tcm_hcd->host_downloading, 0);
+ 			break;
+ 
+ 		}

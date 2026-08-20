@@ -1,0 +1,99 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: zero plen after continued_read; poll ATTN during 0x05
+
+v019 since10: continued_read drains 13325-byte frames (drained=1) but
+read_message still uses stale plen for check_padding → -EIO (rc=-5).
+Salvage and stuck-assume-ok never fire; write_message times out 15s with
+no IRQ reads during wait.
+
+Root cause:
+    After continued_read rem=0, payload_length stays 13325. total_length
+    is computed before continued_read and check_padding indexes in.buf[13328]
+    which is out of buffer → Incorrect message padding byte → -EIO.
+
+Fix:
+1. After continued_read with payload_fully_drained, set plen=0, recompute
+   total_length, synthesize padding byte (same as plen==0 short path).
+2. Salvage: accept syna_tcm_status_ok_drained() without requiring rc==0.
+3. Stuck large-frame path: also trigger when payload_fully_drained.
+4. ENABLE_REPORT wait: poll ATTN every 50ms and read_message proactively;
+   reduce timeout 15s → 3s (salvage covers remainder).
+
+Applies after syna-tcm-enable-report-plen-clear.patch.
+
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@ -1150,12 +1150,23 @@ static int syna_tcm_read_message(struct syna_tcm_hcd *tcm_hcd,
+ 
+ 	LOCK_BUFFER(tcm_hcd->in);
+ 
++	/* continued_read may finish with rem=0 while header plen is still the
++	 * original multi-chunk size; check_padding uses total_length derived
++	 * from plen and would otherwise probe past in.buf → -EIO (rc=-5).
++	 */
++	if (tcm_hcd->payload_fully_drained)
++		tcm_hcd->payload_length = 0;
++
++	total_length = MESSAGE_HEADER_SIZE + tcm_hcd->payload_length + 1;
++
+ 	tcm_hcd->in.buf[0] = MESSAGE_MARKER;
+ 	tcm_hcd->in.buf[1] = tcm_hcd->status_report_code;
+ 	tcm_hcd->in.buf[2] = (unsigned char)tcm_hcd->payload_length;
+ 	tcm_hcd->in.buf[3] = (unsigned char)(tcm_hcd->payload_length >> 8);
+ 
++	if (tcm_hcd->payload_length == 0)
++		tcm_hcd->in.buf[total_length - 1] = MESSAGE_PADDING;
++
+ check_padding:
+ 	if (tcm_hcd->in.buf[total_length - 1] != MESSAGE_PADDING) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+@@ -1382,10 +1393,24 @@ static int syna_tcm_write_message(struct syna_tcm_hcd *tcm_hcd,
+ 
+ 	response_timeout_ms = RESPONSE_TIMEOUT_MS;
+ 	if (command == CMD_ENABLE_REPORT)
+-		response_timeout_ms = 15000;
++		response_timeout_ms = 3000;
++
++	{
++		unsigned long deadline = jiffies + msecs_to_jiffies(response_timeout_ms);
++
++		retval = 0;
++		while (time_before(jiffies, deadline)) {
++			unsigned long chunk = min(deadline - jiffies,
++					msecs_to_jiffies(50));
++
++			retval = wait_for_completion_timeout(&response_complete, chunk);
++			if (retval)
++				break;
++			if (command == CMD_ENABLE_REPORT &&
++					syna_tcm_attn_active(tcm_hcd))
++				syna_tcm_read_message(tcm_hcd, NULL, 0);
++		}
++	}
+ 
+-	retval = wait_for_completion_timeout(&response_complete,
+-					msecs_to_jiffies(response_timeout_ms));
+ 	if (retval == 0) {
+ 		input_err(true, tcm_hcd->pdev->dev.parent,
+ 			"Timed out waiting for response (command 0x%02x)\n", tcm_hcd->command);
+@@ -2431,17 +2456,17 @@ int syna_tcm_enable_touch_report(struct syna_tcm_hcd *tcm_hcd)
+ 					tcm_hcd->payload_fully_drained ? 1 : 0);
+ 			}
+ 
+-			if (rc == 0 && syna_tcm_status_ok_drained(tcm_hcd)) {
++			if (syna_tcm_status_ok_drained(tcm_hcd)) {
+ 				input_info(true, tcm_hcd->pdev->dev.parent,
+ 					"enabled REPORT_TOUCH (salvaged)\n");
+ 				tcm_hcd->report_touch_cmd_sent = true;
+-				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK at i=%d plen=%u drained=%d\n",
+-					i, plen, tcm_hcd->payload_fully_drained ? 1 : 0);
++				pr_info("SAaiOS_TOUCH_DBG: ENABLE_REPORT confirmed STATUS_OK at i=%d rc=%d plen=%u drained=%d\n",
++					i, rc, plen, tcm_hcd->payload_fully_drained ? 1 : 0);
+ 				return 0;
+ 			}
+ 
+-			if (rc == 0 && plen > 512) {
++			if (plen > 512 && (rc == 0 || tcm_hcd->payload_fully_drained)) {
+ 				if (plen == last_salvage_plen) {
+ 					stuck++;
+ 					if (stuck >= 2) {

@@ -1,0 +1,17 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since44 0x30 one-shot (no CONTINUE_WRITE)
+
+since43: 0x30 APP_CONFIG with IRQ live still ETIME (~1s), gpio=1,
+IRQ stuck at 3. IDENTIFY 0x02 applied WR_CHUNK_SIZE=512, so ~4098-byte
+0x30 became CONTINUE_WRITE — same split that kept 0x45 in RomBoot.
+
+since44: 0x30 is one TCM message (HDL_WR_CHUNK_SIZE=0). s3c64xx splits
+DMA at PACKET_CNT_MAX with CS held.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since43 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since44 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
