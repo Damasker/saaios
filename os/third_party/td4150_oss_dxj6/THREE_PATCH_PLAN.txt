@@ -1,0 +1,37 @@
+3-patch plan on clean OSS td4150 (do NOT port the 50-patch HDL maze).
+
+Canonical: docs/os/targets/sm-a127f/kernel-touch.md
+These notes are NOT applied. Do not patch, build, flash, or overwrite
+/srv/media/saaios-boot-v019-since54.tar from this file.
+
+Allowed extras on OSS td4150 only, then leave OSS HDL alone:
+
+1. fw-sel td4150 (from os/patches/syna-tcm-fw-sel-td4150.patch, parse_dt only)
+   GPIO idx can pick td4160. AP lcdtype 0x1AF240 matches neither overlay.
+   On lcdtype mismatch, search table else force idx 4 td4150_a12s_boe.bin
+   (0x3A6220, 147456, stock DXJ2 byte-match). Skip the resume-reset half
+   of that patch unless probe still resets in FW mode.
+
+2. defer 0x45 until panel (from syna-tcm-romboot-panel-defer.patch, slim)
+   Touch probe is device_initcall; decon is late_initcall. Stock
+   zeroflash_init() fires 0x45 immediately. Defer
+   zeroflash_do_romboot_firmware_download() until first unblank, then
+   run the OSS function unchanged (0x45 + switch_mode(BOOTLOADER)).
+
+3. diagnostic logs only
+   Log fw_name, lcdtype, 0x45 start/end, switch_mode retval, 0x1b
+   fw_status need_* / hdl_version, HELP_SEND_REINIT. No opcode changes.
+   Future names: HDL_STATUS_COMPLETE / HDL_OBSERVE (not HDL_READY while
+   touch_hcd=NULL).
+
+OSS already: after CMD_ROMBOOT_DOWNLOAD (0x45) → switch_mode(BOOTLOADER)
+(= 0x42 if still MODE_ROMBOOTLOADER; from mode 0x02 that is 0x1f) →
+IRQ REPORT_STATUS 0x1b → zeroflash_download_config → need_*=0 →
+HELP_SEND_REINIT. since54 skipped that on purpose (passive baseline).
+
+Do not chunk 0x45, do not send extra 0x30/0x40/0x42/0x1f/IDENTIFY/0x05,
+do not pulse gpio_lcd_rst, do not apply maze.
+
+Next after docs: apply these three on OSS, then a new boot Image from
+the OSS driver. since54 stays the control image. Optional: stock Android
+dmesg on this unit/DTBO (still missing on the host).

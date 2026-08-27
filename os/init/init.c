@@ -5,6 +5,7 @@
 #include <linux/mman.h>
 #include <linux/stat.h>
 #include <linux/time.h>
+#include <linux/input-event-codes.h>
 #include "font8x8.h"
 
 #ifndef AT_FDCWD
@@ -12,6 +13,9 @@
 #endif
 #ifndef O_RDONLY
 #define O_RDONLY 0
+#endif
+#ifndef O_WRONLY
+#define O_WRONLY 1
 #endif
 #ifndef O_CREAT
 #define O_CREAT 00000100
@@ -126,6 +130,8 @@ static int mkdir1(const char *path) {
 static int exists_path(const char *path) {
     long fd = sys(__NR_openat, AT_FDCWD, (long)path, O_RDONLY | O_CLOEXEC, 0, 0, 0);
     if (is_err(fd))
+        fd = sys(__NR_openat, AT_FDCWD, (long)path, O_WRONLY | O_CLOEXEC, 0, 0, 0);
+    if (is_err(fd))
         return 0;
     sys(__NR_close, fd, 0, 0, 0, 0, 0);
     return 1;
@@ -162,6 +168,9 @@ static int sysfs_reads_zero(const char *path) {
  * store() calls the same resume as FB unblank. Writing 1 after a successful
  * unblank is another syna_tcm_resume. Only enable if the node still reads 0.
  * Never write cmd (probe_enable is a factory path). Once, not a loop.
+ * Stock/v011: sec_touchscreen is event3. After HDL 0x45 (v019) it is event6.
+ * These sysfs nodes are absent on this unit (tsp skip). Never unbind
+ * synaptics_tcm_spi. Never pulse gpio_lcd_rst.
  */
 static void tsp_enable_once(void) {
     static const char *nodes[] = {
@@ -241,6 +250,84 @@ static void put_pixel(unsigned x, unsigned y, unsigned pix) {
         *(unsigned *)p = pix;
 }
 
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 04000
+#endif
+#ifndef O_WRONLY
+#define O_WRONLY 1
+#endif
+#ifndef __NR_ppoll
+#define __NR_ppoll 73
+#endif
+#ifndef POLLIN
+#define POLLIN 0x0001
+#endif
+#define CLOCK_MONOTONIC 1
+#define LINUX_REBOOT_MAGIC1 0xfee1dead
+#define LINUX_REBOOT_MAGIC2 672274793
+#define LINUX_REBOOT_CMD_RESTART 0x01234567
+#ifndef __NR_clock_gettime
+#define __NR_clock_gettime 113
+#endif
+#ifndef __NR_reboot
+#define __NR_reboot 142
+#endif
+#ifndef __NR_sync
+#define __NR_sync 81
+#endif
+
+struct input_event {
+    long sec;
+    long usec;
+    unsigned short type;
+    unsigned short code;
+    int value;
+};
+
+struct pollfd {
+    int fd;
+    short events;
+    short revents;
+};
+
+static void draw_char(unsigned x, unsigned y, char ch, unsigned fg, unsigned bg);
+
+static void fill_rect(unsigned x0, unsigned y0, unsigned x1, unsigned y1, unsigned pix) {
+    unsigned x, y;
+    if (!fb.ok)
+        return;
+    if (x1 > fb.xres)
+        x1 = fb.xres;
+    if (y1 > fb.yres)
+        y1 = fb.yres;
+    for (y = y0; y < y1; y++)
+        for (x = x0; x < x1; x++)
+            put_pixel(x, y, pix);
+}
+
+static void draw_str(unsigned x, unsigned y, const char *s, unsigned fg, unsigned bg) {
+    unsigned i;
+    if (!fb.ok)
+        return;
+    for (i = 0; s[i]; i++) {
+        draw_char(x, y, s[i], fg, bg);
+        x += 16;
+        if (x + 16 >= fb.xres)
+            break;
+    }
+}
+
+static unsigned menu_y0(void) {
+    if (!fb.ok)
+        return 0;
+    if (fb.yres > 320)
+        return fb.yres - 300;
+    return fb.yres / 2;
+}
+
 static void fill_screen(unsigned pix) {
     unsigned y, x;
     if (!fb.ok)
@@ -274,7 +361,7 @@ static void log_line(const char *s) {
     kmsg("\n");
     if (!fb.ok)
         return;
-    if (fb.log_y + 20 >= fb.yres)
+    if (fb.log_y + 20 >= menu_y0())
         fb.log_y = 8;
     for (i = 0; s[i]; i++) {
         draw_char(x, fb.log_y, s[i], fb.pix_fg, fb.pix_bg);
@@ -547,6 +634,385 @@ static void refresh_net_status(void) {
     }
 }
 
+static const char *menu_tokens[] = { "live20", "run_app", "enable_report", "no_doze" };
+static const char *menu_labels[] = {
+    "LIVE20 0x20",
+    "RUN_APP 0x14",
+    "ENABLE_REPORT 0x05",
+    "NO_DOZE 0x24",
+};
+#define MENU_N 4
+
+static int menu_sel;
+static int fd_vol = -1;
+static int fd_pwr = -1;
+static int power_down;
+static unsigned long power_t0_ms;
+static unsigned long last_vol_ms;
+static char st_state[24];
+static char st_response[8];
+static int st_seq, st_retval, st_live20, st_mode, st_attn, st_irq, st_rx, st_rt;
+static int st_action;
+static int st_ok;
+
+static unsigned long now_ms(void) {
+    struct timespec ts;
+    if (is_err(sys(__NR_clock_gettime, CLOCK_MONOTONIC, (long)&ts, 0, 0, 0, 0)))
+        return 0;
+    return (unsigned long)ts.tv_sec * 1000ul + (unsigned long)ts.tv_nsec / 1000000ul;
+}
+
+static int strncmp_local(const char *a, const char *b, unsigned n) {
+    unsigned i;
+    for (i = 0; i < n; i++) {
+        if (a[i] != b[i])
+            return (unsigned char)a[i] - (unsigned char)b[i];
+        if (!a[i])
+            return 0;
+    }
+    return 0;
+}
+
+static const char *find_key(const char *s, const char *key) {
+    unsigned klen = slen(key), i;
+    for (i = 0; s[i]; i++) {
+        if (!strncmp_local(s + i, key, klen))
+            return s + i + klen;
+    }
+    return 0;
+}
+
+static int parse_int(const char *s, int hex) {
+    int sign = 1, n = 0;
+    if (!s)
+        return 0;
+    if (*s == '-') {
+        sign = -1;
+        s++;
+    }
+    if (hex && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+        s += 2;
+    if (hex) {
+        while ((*s >= '0' && *s <= '9') || (*s >= 'a' && *s <= 'f') ||
+               (*s >= 'A' && *s <= 'F')) {
+            int d = (*s >= 'a') ? *s - 'a' + 10 :
+                    (*s >= 'A') ? *s - 'A' + 10 : *s - '0';
+            n = (n << 4) + d;
+            s++;
+        }
+        return sign * n;
+    }
+    while (*s >= '0' && *s <= '9') {
+        n = n * 10 + (*s - '0');
+        s++;
+    }
+    return sign * n;
+}
+
+static void copy_tok(char *d, unsigned cap, const char *s) {
+    unsigned i = 0;
+    if (!cap)
+        return;
+    while (s[i] && s[i] != ' ' && s[i] != '\n' && s[i] != '\t' && i + 1 < cap) {
+        d[i] = s[i];
+        i++;
+    }
+    d[i] = 0;
+}
+
+static int open_event_n(unsigned n) {
+    char path[64];
+    long fd;
+    scopy(path, sizeof(path), "/dev/input/event");
+    append_uint(path, sizeof(path), n);
+    fd = sys(__NR_openat, AT_FDCWD, (long)path,
+        O_RDONLY | O_NONBLOCK | O_CLOEXEC, 0, 0, 0);
+    if (!is_err(fd))
+        return (int)fd;
+    return -1;
+}
+
+static int open_named_event(const char *want) {
+    unsigned i;
+    char path[80], name[64];
+    for (i = 0; i < 12; i++) {
+        scopy(path, sizeof(path), "/sys/class/input/event");
+        append_uint(path, sizeof(path), i);
+        append(path, sizeof(path), "/device/name");
+        if (read_file(path, name, sizeof(name)) <= 0)
+            continue;
+        if (name[0] && slen(want) && !strncmp_local(name, want, slen(want)))
+            return open_event_n(i);
+    }
+    return -1;
+}
+
+static const char *pick_touch_path(int want_status) {
+    static const char *st;
+    static const char *ac;
+    const char *p;
+    char line[96];
+
+    if (want_status && st)
+        return st;
+    if (!want_status && ac)
+        return ac;
+    if (want_status) {
+        if (exists_path("/sys/kernel/saaios_touch/status"))
+            p = "/sys/kernel/saaios_touch/status";
+        else if (exists_path("/sys/class/sec/tsp/saaios_touch/status"))
+            p = "/sys/class/sec/tsp/saaios_touch/status";
+        else
+            p = "/sys/class/sec/tsp/saaios_status";
+        st = p;
+        scopy(line, sizeof(line), "status_path ");
+    } else {
+        if (exists_path("/sys/kernel/saaios_touch/action"))
+            p = "/sys/kernel/saaios_touch/action";
+        else if (exists_path("/sys/class/sec/tsp/saaios_touch/action"))
+            p = "/sys/class/sec/tsp/saaios_touch/action";
+        else
+            p = "/sys/class/sec/tsp/saaios_action";
+        ac = p;
+        scopy(line, sizeof(line), "action_path ");
+    }
+    append(line, sizeof(line), p);
+    log_line(line);
+    return p;
+}
+
+static const char *status_path(void) {
+    return pick_touch_path(1);
+}
+
+static const char *action_path(void) {
+    return pick_touch_path(0);
+}
+
+static void refresh_status(void) {
+    char buf[192];
+    const char *v;
+    if (read_file(status_path(), buf, sizeof(buf)) <= 0) {
+        st_ok = 0;
+        return;
+    }
+    st_ok = 1;
+    v = find_key(buf, "seq=");
+    st_seq = parse_int(v, 0);
+    v = find_key(buf, "state=");
+    if (v)
+        copy_tok(st_state, sizeof(st_state), v);
+    else
+        scopy(st_state, sizeof(st_state), "?");
+    v = find_key(buf, "action=0x");
+    st_action = parse_int(v, 1);
+    v = find_key(buf, "retval=");
+    st_retval = parse_int(v, 0);
+    v = find_key(buf, "response=");
+    if (v)
+        copy_tok(st_response, sizeof(st_response), v);
+    else
+        scopy(st_response, sizeof(st_response), "?");
+    v = find_key(buf, "live20=");
+    st_live20 = parse_int(v, 0);
+    v = find_key(buf, "mode=");
+    st_mode = parse_int(v, 1);
+    v = find_key(buf, "attn=");
+    st_attn = parse_int(v, 0);
+    v = find_key(buf, "irq=");
+    st_irq = parse_int(v, 0);
+    v = find_key(buf, "rx=");
+    st_rx = parse_int(v, 0);
+    v = find_key(buf, "report_touch=");
+    st_rt = parse_int(v, 0);
+}
+
+static const char *ui_state(void) {
+    if (!st_ok)
+        return "waiting tsp";
+    if (!strncmp_local(st_state, "dead", 4))
+        return "DEAD";
+    if (!strncmp_local(st_state, "busy", 4))
+        return "BUSY";
+    if (st_retval == -62)
+        return "TIMEOUT";
+    if (st_seq && st_retval == 0)
+        return "OK";
+    return st_state;
+}
+
+static void draw_menu(void) {
+    unsigned y, i;
+    unsigned fg, bg, hi;
+    char line[80];
+
+    if (!fb.ok)
+        return;
+    fg = fb.pix_fg;
+    bg = fb.pix_bg;
+    hi = pack_rgb(&fb.v, 0x40, 0xC0, 0x80);
+    y = menu_y0();
+    fill_rect(0, y, fb.xres, fb.yres, bg);
+    draw_str(8, y, "SaaiOS TOUCH LAB", fg, bg);
+    y += 20;
+    for (i = 0; i < MENU_N; i++) {
+        scopy(line, sizeof(line), i == (unsigned)menu_sel ? "> " : "  ");
+        append(line, sizeof(line), menu_labels[i]);
+        draw_str(8, y, line, i == (unsigned)menu_sel ? hi : fg, bg);
+        y += 20;
+    }
+    scopy(line, sizeof(line), "state: ");
+    append(line, sizeof(line), ui_state());
+    draw_str(8, y, line, fg, bg);
+    y += 20;
+    scopy(line, sizeof(line), "retval: ");
+    if (st_retval < 0) {
+        append(line, sizeof(line), "-");
+        append_uint(line, sizeof(line), (unsigned)(-st_retval));
+    } else {
+        append_uint(line, sizeof(line), (unsigned)st_retval);
+    }
+    append(line, sizeof(line), "  response: ");
+    append(line, sizeof(line), st_ok ? st_response : "?");
+    draw_str(8, y, line, fg, bg);
+    y += 20;
+    scopy(line, sizeof(line), "live 0x20: ");
+    if (st_live20 < 0) {
+        append(line, sizeof(line), "-");
+        append_uint(line, sizeof(line), (unsigned)(-st_live20));
+    } else {
+        append_uint(line, sizeof(line), (unsigned)st_live20);
+    }
+    draw_str(8, y, line, fg, bg);
+    y += 20;
+    scopy(line, sizeof(line), "mode: ");
+    append_uint(line, sizeof(line), (unsigned)st_mode);
+    append(line, sizeof(line), "  ATTN: ");
+    if (st_attn < 0) {
+        append(line, sizeof(line), "-");
+        append_uint(line, sizeof(line), (unsigned)(-st_attn));
+    } else {
+        append_uint(line, sizeof(line), (unsigned)st_attn);
+    }
+    draw_str(8, y, line, fg, bg);
+    y += 20;
+    scopy(line, sizeof(line), "IRQ: ");
+    append_uint(line, sizeof(line), (unsigned)st_irq);
+    append(line, sizeof(line), "  RX: ");
+    append_uint(line, sizeof(line), (unsigned)st_rx);
+    append(line, sizeof(line), "  RT: ");
+    append_uint(line, sizeof(line), (unsigned)st_rt);
+    draw_str(8, y, line, fg, bg);
+    y += 20;
+    draw_str(8, y, "LONG POWER: REBOOT", fg, bg);
+}
+
+static void do_reboot(void) {
+    log_line("reboot");
+    sys(__NR_sync, 0, 0, 0, 0, 0, 0);
+    sys(__NR_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
+        LINUX_REBOOT_CMD_RESTART, 0, 0, 0);
+}
+
+static void run_selected(void) {
+    char line[80];
+    scopy(line, sizeof(line), "run ");
+    append(line, sizeof(line), menu_tokens[menu_sel]);
+    log_line(line);
+    write_file(action_path(), menu_tokens[menu_sel]);
+    refresh_status();
+    draw_menu();
+}
+
+static void handle_key(unsigned short code, int value) {
+    unsigned long t = now_ms();
+    if (value == 2)
+        return;
+    if (code == KEY_VOLUMEUP && value == 1) {
+        if (last_vol_ms && t - last_vol_ms < 150)
+            return;
+        last_vol_ms = t;
+        menu_sel++;
+        if (menu_sel >= MENU_N)
+            menu_sel = 0;
+        draw_menu();
+    } else if (code == KEY_VOLUMEDOWN && value == 1) {
+        if (last_vol_ms && t - last_vol_ms < 150)
+            return;
+        last_vol_ms = t;
+        menu_sel--;
+        if (menu_sel < 0)
+            menu_sel = MENU_N - 1;
+        draw_menu();
+    } else if (code == KEY_POWER) {
+        if (value == 1) {
+            power_down = 1;
+            power_t0_ms = t;
+        } else if (value == 0 && power_down) {
+            unsigned long dt = t - power_t0_ms;
+            power_down = 0;
+            if (dt < 2000)
+                run_selected();
+        }
+    }
+}
+
+static void drain_evdev(int fd) {
+    struct input_event ev;
+    long n;
+    if (fd < 0)
+        return;
+    for (;;) {
+        n = sys(__NR_read, fd, (long)&ev, sizeof(ev), 0, 0, 0);
+        if (is_err(n) || n != (long)sizeof(ev))
+            break;
+        if (ev.type != EV_KEY)
+            continue;
+        handle_key(ev.code, ev.value);
+    }
+}
+
+static void menu_poll_keys(void) {
+    struct pollfd pfd[2];
+    struct timespec ts;
+    int n = 0;
+    if (fd_vol >= 0) {
+        pfd[n].fd = fd_vol;
+        pfd[n].events = POLLIN;
+        pfd[n].revents = 0;
+        n++;
+    }
+    if (fd_pwr >= 0) {
+        pfd[n].fd = fd_pwr;
+        pfd[n].events = POLLIN;
+        pfd[n].revents = 0;
+        n++;
+    }
+    ts.tv_sec = 0;
+    ts.tv_nsec = 150000000L;
+    if (n)
+        sys(__NR_ppoll, (long)pfd, n, (long)&ts, 0, 0, 0);
+    else
+        sleep_ms(80);
+    drain_evdev(fd_vol);
+    drain_evdev(fd_pwr);
+    if (power_down && now_ms() - power_t0_ms >= 2000)
+        do_reboot();
+}
+
+static void menu_open_keys(void) {
+    if (fd_vol < 0) {
+        fd_vol = open_named_event("gpio_keys");
+        if (fd_vol < 0)
+            fd_vol = open_event_n(1);
+    }
+    if (fd_pwr < 0) {
+        fd_pwr = open_named_event("sec-pmic-key");
+        if (fd_pwr < 0)
+            fd_pwr = open_event_n(2);
+    }
+}
+
 void _start(void) {
     char line[96];
 
@@ -577,7 +1043,7 @@ void _start(void) {
     write_file("/proc/sys/kernel/panic", "0\n");
 
     if (setup_fb() == 0) {
-        log_line("SaaiOS v019 since44");
+        log_line("SaaiOS v019 since76");
         scopy(line, sizeof(line), "fb ");
         append_uint(line, sizeof(line), fb.xres);
         append(line, sizeof(line), "x");
@@ -602,6 +1068,8 @@ void _start(void) {
     spawn_shell();
     log_line("telnet :23 :2323");
     log_line("ssh :22");
+    log_line("Vol+/- menu  Power run  2s reboot");
+    draw_menu();
 
     for (;;) {
         pet_watchdog();
@@ -612,7 +1080,15 @@ void _start(void) {
         }
         spawn_shell();
         refresh_net_status();
-        /* Unblank once in setup_fb. Do not repeat FBIOBLANK or sysfs blank. */
-        sleep_ms(500);
+        menu_open_keys();
+        menu_poll_keys();
+        {
+            static unsigned tick;
+            tick++;
+            if ((tick & 3) == 0) {
+                refresh_status();
+                draw_menu();
+            }
+        }
     }
 }

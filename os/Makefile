@@ -15,8 +15,10 @@ OUT_V017 := $(BUILD)/boot-v017.img
 OUT_V018 := $(BUILD)/boot-v018.img
 OUT_V019 := $(BUILD)/boot-v019.img
 # Subversion suffix embedded into ramdisk console + used for Odin/AP tar naming.
-# Example: since6 → saaios-boot-v019-since6.tar
-SUBVERSION_V019 ?= since44
+# since76 = live20 ladder 0/10/100/500ms after REINIT; retval<0→dead response=ff.
+# Late 0x05/0x24/0x30 LIVE -62. No app_config in post-boot menu. Do not overwrite since54–since75.
+# See docs/os/targets/sm-a127f/kernel-touch.md.
+SUBVERSION_V019 ?= since76
 VBMETA_OUT := $(BUILD)/vbmeta-patched.img
 BUSYBOX ?= os/third_party/busybox-aarch64
 BUSYBOX_DEB_URL ?= https://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.37.0-6+b9_arm64.deb
@@ -74,7 +76,17 @@ KERNEL_PATCH_SINCE41 := os/patches/syna-tcm-romboot-0x02-app-config.patch
 KERNEL_PATCH_SINCE42 := os/patches/syna-tcm-romboot-0x02-irq-live.patch
 KERNEL_PATCH_SINCE43 := os/patches/syna-tcm-romboot-0x30-irq-live.patch
 KERNEL_PATCH_SINCE44 := os/patches/syna-tcm-romboot-0x30-oneshot.patch
-KERNEL_PATCHES := $(KERNEL_PATCH) $(KERNEL_PATCH_V013) $(KERNEL_PATCH_V014) $(KERNEL_PATCH_V015) $(KERNEL_PATCH_V016) $(KERNEL_PATCH_V017) $(KERNEL_PATCH_V018) $(KERNEL_PATCH_V019) $(KERNEL_PATCH_SINCE8) $(KERNEL_PATCH_SINCE9) $(KERNEL_PATCH_SINCE10) $(KERNEL_PATCH_SINCE11) $(KERNEL_PATCH_SINCE12) $(KERNEL_PATCH_SINCE13) $(KERNEL_PATCH_SINCE14) $(KERNEL_PATCH_SINCE15) $(KERNEL_PATCH_SINCE16) $(KERNEL_PATCH_SINCE17) $(KERNEL_PATCH_SINCE18) $(KERNEL_PATCH_SINCE19) $(KERNEL_PATCH_SINCE20) $(KERNEL_PATCH_SINCE21) $(KERNEL_PATCH_SINCE22) $(KERNEL_PATCH_SINCE23) $(KERNEL_PATCH_SINCE24) $(KERNEL_PATCH_SINCE25) $(KERNEL_PATCH_SINCE26) $(KERNEL_PATCH_SINCE27) $(KERNEL_PATCH_SINCE28) $(KERNEL_PATCH_SINCE29) $(KERNEL_PATCH_SINCE30) $(KERNEL_PATCH_SINCE31) $(KERNEL_PATCH_SINCE32) $(KERNEL_PATCH_SINCE33) $(KERNEL_PATCH_SINCE34) $(KERNEL_PATCH_SINCE35) $(KERNEL_PATCH_SINCE36) $(KERNEL_PATCH_SINCE37) $(KERNEL_PATCH_SINCE38) $(KERNEL_PATCH_SINCE39) $(KERNEL_PATCH_SINCE40) $(KERNEL_PATCH_SINCE41) $(KERNEL_PATCH_SINCE42) $(KERNEL_PATCH_SINCE43) $(KERNEL_PATCH_SINCE44)
+KERNEL_PATCH_SINCE45 := os/patches/syna-tcm-romboot-skip-0x30-reinit.patch
+KERNEL_PATCH_SINCE46 := os/patches/syna-tcm-romboot-identify-dump.patch
+KERNEL_PATCH_SINCE47 := os/patches/syna-tcm-romboot-app-code-id.patch
+KERNEL_PATCH_SINCE48 := os/patches/syna-tcm-romboot-0x42-after-02.patch
+KERNEL_PATCH_SINCE49 := os/patches/syna-tcm-romboot-identify-before-after.patch
+KERNEL_PATCH_SINCE50 := os/patches/syna-tcm-romboot-hdl-1b-trace.patch
+KERNEL_PATCH_SINCE51 := os/patches/syna-tcm-romboot-hdl-serialize.patch
+KERNEL_PATCH_SINCE52 := os/patches/syna-tcm-romboot-hdl-switch-bootloader.patch
+KERNEL_PATCH_SINCE53 := os/patches/syna-tcm-romboot-hdl-0x42-from-02.patch
+KERNEL_PATCH_SINCE54 := os/patches/syna-tcm-romboot-hdl-no-post-cmd.patch
+KERNEL_PATCHES := $(KERNEL_PATCH) $(KERNEL_PATCH_V013) $(KERNEL_PATCH_V014) $(KERNEL_PATCH_V015) $(KERNEL_PATCH_V016) $(KERNEL_PATCH_V017) $(KERNEL_PATCH_V018) $(KERNEL_PATCH_V019) $(KERNEL_PATCH_SINCE8) $(KERNEL_PATCH_SINCE9) $(KERNEL_PATCH_SINCE10) $(KERNEL_PATCH_SINCE11) $(KERNEL_PATCH_SINCE12) $(KERNEL_PATCH_SINCE13) $(KERNEL_PATCH_SINCE14) $(KERNEL_PATCH_SINCE15) $(KERNEL_PATCH_SINCE16) $(KERNEL_PATCH_SINCE17) $(KERNEL_PATCH_SINCE18) $(KERNEL_PATCH_SINCE19) $(KERNEL_PATCH_SINCE20) $(KERNEL_PATCH_SINCE21) $(KERNEL_PATCH_SINCE22) $(KERNEL_PATCH_SINCE23) $(KERNEL_PATCH_SINCE24) $(KERNEL_PATCH_SINCE25) $(KERNEL_PATCH_SINCE26) $(KERNEL_PATCH_SINCE27) $(KERNEL_PATCH_SINCE28) $(KERNEL_PATCH_SINCE29) $(KERNEL_PATCH_SINCE30) $(KERNEL_PATCH_SINCE31) $(KERNEL_PATCH_SINCE32) $(KERNEL_PATCH_SINCE33) $(KERNEL_PATCH_SINCE34) $(KERNEL_PATCH_SINCE35) $(KERNEL_PATCH_SINCE36) $(KERNEL_PATCH_SINCE37) $(KERNEL_PATCH_SINCE38) $(KERNEL_PATCH_SINCE39) $(KERNEL_PATCH_SINCE40) $(KERNEL_PATCH_SINCE41) $(KERNEL_PATCH_SINCE42) $(KERNEL_PATCH_SINCE43) $(KERNEL_PATCH_SINCE44) $(KERNEL_PATCH_SINCE45) $(KERNEL_PATCH_SINCE46) $(KERNEL_PATCH_SINCE47) $(KERNEL_PATCH_SINCE48) $(KERNEL_PATCH_SINCE49) $(KERNEL_PATCH_SINCE50) $(KERNEL_PATCH_SINCE51) $(KERNEL_PATCH_SINCE52) $(KERNEL_PATCH_SINCE53) $(KERNEL_PATCH_SINCE54)
 KERNEL_DEFCONFIG := exynos850-a12snsxx_defconfig
 # 4.19 wants clang 9 (AOSP r353983c family). clang-17 on R620 is too new.
 CLANG_BIN ?= os/third_party/clang-9/bin
@@ -84,7 +96,7 @@ BL_ZIP ?= /srv/media/BL_A127FXXSDDXJ2_QB86601342_REV00_user_low_ship_MULTI_CERT.
 MEDIA ?= /srv/media
 
 .PHONY: all unpack init ramdisk boot.img vbmeta odin-tar restore flash check-stock busybox dropbear \
-	up_param up_param-flash boot-v012 boot-v013 boot-v014 boot-v015 boot-v016 boot-v017 boot-v018 boot-v019 kernel kernel-patch
+	up_param up_param-flash boot-v012 boot-v013 boot-v014 boot-v015 boot-v016 boot-v017 boot-v018 boot-v019 kernel kernel-patch touchlab
 
 all: odin-tar
 
@@ -100,6 +112,12 @@ $(BUILD)/init: os/init/init.c
 	$(CROSS)gcc -ffreestanding -nostdlib -static -Os \
 		-fno-stack-protector -fno-asynchronous-unwind-tables \
 		-Wl,-e,_start -Wl,--build-id=none -s -o $@ os/init/init.c
+
+$(BUILD)/touchlab: os/init/touchlab.c
+	mkdir -p $(BUILD)
+	$(CROSS)gcc -static -Os -s -o $@ os/init/touchlab.c
+
+touchlab: $(BUILD)/touchlab
 
 $(BUSYBOX):
 	mkdir -p os/third_party $(BUILD)/busybox-deb
@@ -129,13 +147,15 @@ dropbear: $(DROPBEAR) $(DROPBEAR_SCP) $(SFTP_SERVER)
 
 init: $(BUILD)/init
 
-ramdisk: $(BUILD)/init $(BUSYBOX) $(DROPBEAR) $(DROPBEAR_SCP) $(SFTP_SERVER) $(DROPBEAR_AUTH_KEYS)
+ramdisk: $(BUILD)/init $(BUILD)/touchlab $(BUSYBOX) $(DROPBEAR) $(DROPBEAR_SCP) $(SFTP_SERVER) $(DROPBEAR_AUTH_KEYS)
 	rm -rf $(RAMDISK)
 	mkdir -p $(RAMDISK)/dev $(RAMDISK)/proc $(RAMDISK)/sys $(RAMDISK)/tmp $(RAMDISK)/run \
 		$(RAMDISK)/bin $(RAMDISK)/sbin $(RAMDISK)/etc/dropbear $(RAMDISK)/root \
 		$(RAMDISK)/usr/libexec $(RAMDISK)/dev/pts
 	cp $(BUILD)/init $(RAMDISK)/init
 	chmod 0755 $(RAMDISK)/init
+	cp $(BUILD)/touchlab $(RAMDISK)/sbin/touchlab
+	chmod 0755 $(RAMDISK)/sbin/touchlab
 	cp $(BUSYBOX) $(RAMDISK)/bin/busybox
 	chmod 0755 $(RAMDISK)/bin/busybox
 	ln -s busybox $(RAMDISK)/bin/sh
@@ -189,7 +209,17 @@ boot.img: unpack ramdisk
 
 kernel-patch:
 	@test -f $(KERNEL_DIR)/Makefile || { echo "missing $(KERNEL_DIR) (gitignored clone)"; exit 1; }
-	@for p in $(KERNEL_PATCHES); do \
+	@test -f os/third_party/td4150_oss_dxj6/synaptics_tcm_core.c || { echo "missing OSS td4150"; exit 1; }
+	mkdir -p $(KERNEL_DIR)/drivers/input/touchscreen/synaptics/td4150
+	cp -f os/third_party/td4150_oss_dxj6/synaptics_tcm_*.c \
+		os/third_party/td4150_oss_dxj6/synaptics_tcm_*.h \
+		os/third_party/td4150_oss_dxj6/Makefile \
+		os/third_party/td4150_oss_dxj6/Kconfig \
+		$(KERNEL_DIR)/drivers/input/touchscreen/synaptics/td4150/
+	@echo "copied OSS td4150 (since76 skip 0x25 after 0x20 + oneshot 0x30) into gitignored kernel tree"
+	@if grep -qlE 'read-floor 256 \+ touchlab|since76 touch lab: sysfs saaios_touch|since76 button menu: sysfs saaios_exp|since75 0x05 ENABLE_REPORT 0x11 after 0x25 then live identify\(false\)/0x20|since74 0x23 GET_DYNAMIC_CONFIG DC_NO_DOZE then 0x05 ENABLE_REPORT 0x11 after 0x25|since73 0x05 ENABLE_REPORT payload 0x11 after 0x25|since72 0x26 SET_TOUCH_REPORT_CONFIG kmemdup of 0x25 before unlock|since71 0x26 SET_TOUCH_REPORT_CONFIG echo of 0x25|since70 one-shot late touch_resume after REINIT|since69 leftover REINIT after skip switch_mode|since68 skip switch_mode already HDL 0x02 after 0x45|since67 oneshot 0x45 HDL_WR_CHUNK_SIZE=0|since66 0x1b STATUS_OK completes 0x45 waiter|since65 leftover 0x1b storm guard|since64 chunked 0x45 wr_chunk=1024 good APP_CODE|since64 early zero 0x45 after cold Identify|since63 APP_CODE memset 0 all 97280|since62 APP_CODE\[0\] 0x55->0x54 magic|since61 FORCE RAM corrupt|since60 delayed 0x45 corrupt APP_CODE|since59 delayed 0x45 after panel|since58 delayed 0x45 after panel callback|since57 probe clean OSS|defer 0x45 until panel enabled' $(KERNEL_DIR)/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c 2>/dev/null || grep -qlE 'since69 leftover REINIT after skip switch_mode|since68 skip switch_mode already HDL 0x02 after 0x45|since67 oneshot 0x45 HDL_WR_CHUNK_SIZE=0|since66 0x1b STATUS_OK completes 0x45 waiter|since65 leftover 0x1b storm guard|since64 chunked 0x45|since64 early zero 0x45|since63 APP_CODE memset|since62 APP_CODE\[0\]|since61 FORCE RAM corrupt|since60 delayed 0x45|since59 delayed 0x45|since58 delayed 0x45' $(KERNEL_DIR)/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c 2>/dev/null; then \
+		echo "OSS td4150 overlay (since76 skip 0x25 after 0x20 + oneshot 0x30): skipping maze KERNEL_PATCHES"; \
+	else for p in $(KERNEL_PATCHES); do \
 		case $$p in \
 			*hdl-idle*) m='in_hdl_mode && atomic_read(&tcm_hcd->host_downloading)' ;; \
 			*fw-sel*) m='lcdtype mismatch, using idx' ;; \
@@ -236,6 +266,16 @@ kernel-patch:
 			*romboot-0x02-irq-live*) m='SAaiOS_TOUCH_DBG: since42 probe' ;; \
 			*romboot-0x30-irq-live*) m='SAaiOS_TOUCH_DBG: since43 probe' ;; \
 			*romboot-0x30-oneshot*) m='SAaiOS_TOUCH_DBG: since44 probe' ;; \
+			*romboot-skip-0x30-reinit*) m='SAaiOS_TOUCH_DBG: since45 probe' ;; \
+			*romboot-identify-dump*) m='SAaiOS_TOUCH_DBG: since46 probe' ;; \
+			*romboot-app-code-id*) m='SAaiOS_TOUCH_DBG: since47 probe' ;; \
+			*romboot-0x42-after-02*) m='SAaiOS_TOUCH_DBG: since48 probe' ;; \
+			*romboot-identify-before-after*) m='SAaiOS_TOUCH_DBG: since49 probe' ;; \
+			*romboot-hdl-1b-trace*) m='SAaiOS_TOUCH_DBG: since50 probe' ;; \
+			*romboot-hdl-serialize*) m='SAaiOS_TOUCH_DBG: since51 probe' ;; \
+			*romboot-hdl-switch-bootloader*) m='SAaiOS_TOUCH_DBG: since52 switch_mode after 0x1b' ;; \
+			*romboot-hdl-0x42-from-02*) m='SAaiOS_TOUCH_DBG: since53 probe' ;; \
+			*romboot-hdl-no-post-cmd*) m='SAaiOS_TOUCH_DBG: since54 probe' ;; \
 			*) m='' ;; \
 		esac; \
 		if [ -n "$$m" ] && grep -Rql -- "$$m" $(KERNEL_DIR)/drivers/input/touchscreen/synaptics/td4150/; then \
@@ -245,7 +285,7 @@ kernel-patch:
 		else \
 			echo "FAILED to apply $$p"; exit 1; \
 		fi; \
-	done
+	done; fi
 
 # Out-of-tree build; copies Image to $(KERNEL_IMAGE) for boot-v012.
 # Exact cmdline (also in docs/os/targets/sm-a127f/kernel-touch.md):
@@ -511,7 +551,8 @@ boot-v018: unpack ramdisk vbmeta
 	tar -tvf $(BUILD)/saaios-boot-v018.tar
 endif
 
-# boot-v019: stock DTB + v019 kernel (ATTN clear, skip 0x25) + v019 ramdisk.
+# boot-v019: stock DTB + Image. since76 = skip 0x25 after 0x20 OK + oneshot 0x30 + /sbin/touchlab (queued enable_report/app_config/no_doze).
+# Do not overwrite since54–since75 tars. Only since76 may be overwritten. See docs/os/targets/sm-a127f/kernel-touch.md.
 ifeq ($(wildcard $(KERNEL_IMAGE)),)
 boot-v019:
 	@echo "boot-v019: Image missing at $(KERNEL_IMAGE)"
@@ -521,11 +562,12 @@ boot-v019:
 	@echo "Phone stays on current boot. make flash still refuses."
 else
 boot-v019: unpack ramdisk vbmeta
+	@case "$(SUBVERSION_V019)" in since54|since55|since56|since57|since58|since59|since60|since61|since62|since63|since64|since65|since66|since67|since68|since69|since70|since71|since72|since73|since74|since75) echo "REFUSING to overwrite saaios-boot-v019-$(SUBVERSION_V019).tar"; exit 1;; esac
 	@test -f $(STOCK_UNPACK)/dtb || { echo "missing stock dtb at $(STOCK_UNPACK)/dtb"; exit 1; }
 	python3 os/bootimg/bootimg.py pack $(STOCK_UNPACK) \
 		--kernel $(KERNEL_IMAGE) \
 		--ramdisk $(BUILD)/ramdisk.cpio.gz \
-		--cmdline "androidboot.hardware=exynos850 androidboot.selinux=permissive loop.max_part=7" \
+		--cmdline "androidboot.hardware=exynos850 androidboot.selinux=permissive loop.max_part=7 syna_corrupt_app=1" \
 		--seandroid --pad-to $(BOOT_PART_SIZE) \
 		-o $(OUT_V019)
 	python3 os/bootimg/bootimg.py unpack $(OUT_V019) -o $(BUILD)/boot-v019-check
