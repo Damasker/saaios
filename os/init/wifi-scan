@@ -1,0 +1,22 @@
+#!/bin/busybox ash
+# Scan 2.4 GHz SSIDs on onboard Maxwell wlan0. Never called from init/rcS.
+# Does not join a network. Does not switch USB host.
+BB=/bin/busybox
+IW=/sbin/iw
+
+if [ ! -e /sys/class/net/wlan0 ]; then
+  echo "wifi-scan: no wlan0"
+  exit 1
+fi
+
+if [ ! -x "$IW" ]; then
+  echo "wifi-scan: missing $IW"
+  exit 1
+fi
+
+if [ -x /sbin/wifi-up ]; then
+  /sbin/wifi-up
+fi
+
+echo "wifi-scan: $IW dev wlan0 scan"
+exec "$IW" dev wlan0 scan

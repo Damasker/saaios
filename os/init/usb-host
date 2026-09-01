@@ -1,0 +1,35 @@
+#!/bin/busybox ash
+# Explicit USB host. Drops RNDIS. Never called from init/rcS.
+# Way back: Power 2s reboot (always boots device), or /sbin/usb-device if a shell remains.
+BB=/bin/busybox
+DWC3=/sys/devices/platform/13600000.usb/13600000.dwc3
+
+# Flag first so PID 1 retry_gadget does not rebind UDC.
+echo host > /tmp/usb-role-host
+
+if [ -e /config/usb_gadget/g1/UDC ]; then
+  echo "" > /config/usb_gadget/g1/UDC
+fi
+if [ -e /sys/class/android_usb/android0/enable ]; then
+  echo 0 > /sys/class/android_usb/android0/enable
+fi
+
+# LIVE v027: typec port0 data_role=host [device] (bracket = current device), rw.
+if [ -w /sys/class/typec/port0/data_role ]; then
+  echo host > /sys/class/typec/port0/data_role
+fi
+
+# Samsung dwc3 otg.c: id=0 A-host, id=1 B-device. Runs dwc3_otg_run_sm.
+if [ -w "$DWC3/id" ]; then
+  echo 0 > "$DWC3/id"
+fi
+if [ -w "$DWC3/b_sess" ]; then
+  echo 0 > "$DWC3/b_sess"
+fi
+if [ -w /sys/class/host_notify/usb_otg/mode ]; then
+  echo HOST > /sys/class/host_notify/usb_otg/mode
+fi
+
+echo "usb-host: gadget unbound; typec/dwc3 asked for host."
+echo "RNDIS/telnet will drop. Power 2s reboot returns to device."
+exit 0

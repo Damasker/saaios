@@ -70,7 +70,7 @@ Phase 6 must detect `/dev/input/event*` and map ABS_MT_*, not hardcode an IC.
 |--|---------|------|
 | USB | Type-C 2.0 | C |
 | Wi-Fi / BT | onboard combo (need DTS from Samsung kernel) | N |
-| Modem | Exynos baseband; partition `RADIO` | C |
+| Modem | Exynos **S5000AP** Shannon **SS310**; CPIF SHMEM; partition `RADIO` (`mmcblk0p22`). Live: CP **OFFLINE** until `cbd`. [modem.md](modem.md) | C |
 | Audio | `aud3004x`, amp `sma1303` | L |
 | IMU | ST `LIS2DLC12` | L |
 | Fingerprint | Goodix or `gw36t1` | L |

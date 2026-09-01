@@ -1,0 +1,35 @@
+#!/bin/busybox ash
+# Tiny BusyBox udhcpc hook. Packed as /usr/share/udhcpc/default.script.
+# LIVE join needed this; ramdisk had no default. No secrets.
+BB=/bin/busybox
+
+case "$1" in
+  deconfig)
+    $BB ifconfig "$interface" 0.0.0.0
+    ;;
+  bound|renew)
+    $BB ifconfig "$interface" "$ip" netmask "$subnet"
+    if [ -n "$broadcast" ]; then
+      $BB ifconfig "$interface" broadcast "$broadcast"
+    fi
+    if [ -n "$router" ]; then
+      for gw in $router; do
+        $BB route add default gw "$gw" dev "$interface" 2>/dev/null || true
+        break
+      done
+    fi
+    if [ -n "$dns" ]; then
+      {
+        for d in $dns; do
+          echo "nameserver $d"
+        done
+      } > /tmp/resolv.conf
+      $BB cp /tmp/resolv.conf /etc/resolv.conf 2>/dev/null || true
+    fi
+    echo "udhcpc: $interface $ip mask=$subnet gw=$router"
+    ;;
+  nak)
+    echo "udhcpc: nak"
+    ;;
+esac
+exit 0

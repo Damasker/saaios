@@ -14,14 +14,14 @@ Out-of-tree **USB** 802.11n driver for Realtek **RTL8188EUS / RTL8188EU / RTL818
 | Build | `make && sudo make install`; blacklist `r8188eu` and `rtl8xxxu`; `modprobe 8188eu` |
 | Monitor | `airmon-ng check kill`; `ip link set <if> down`; `iw dev <if> set type monitor`; injection test `aireplay-ng -9 <if>` |
 
-This is a **host USB stick** driver. SM-A127F onboard radio is Samsung/Exynos `wlan0` (Phase E3 firmware / `wpa_supplicant`), not this chip.
+This is a **host USB stick** driver. SM-A127F onboard radio is Samsung/Exynos SCSC Maxwell `wlan0` (`119c0000.scsc_wifibt`, `mx140.bin` in `/vendor/etc/wifi`). Phase E3 is that path — **v031 LIVE** (`/sbin/wifi-join` by args; Wallbox `192.168.168.8`). No PSK in the image. See [hardware-control-plan.md](hardware-control-plan.md). Not this chip. Cellular is E4 ([modem.md](modem.md)) — CP OFFLINE, no write.
 
 ## Where it belongs in SaaiOS
 
 | Place | Verdict |
 |-------|---------|
 | **R620 / saaios-vm USB Wi‑Fi** | Right home **if** `lsusb` shows `0bda:8179` (or a rebrand above). Clone gitignored `os/third_party/rtl8188eus`, out-of-tree `make` against the **running host** kernel. Do not commit the tree. |
-| **Phone (Phase E radios)** | Only if USB **host**/OTG is the path. Current ramdisk is USB **gadget**/RNDIS (`0525:A4A2`) — phone is device, not host. An 8188 stick on the Type-C port needs host mode and drops the telnet/RNDIS console. See [hardware-control-plan.md](hardware-control-plan.md) E2 then E3. |
+| **Phone (Phase E radios)** | Onboard Wi‑Fi = Maxwell / `wifi-up` / `wifi-join` (E3, v031 LIVE join). Cellular = CPIF / `cbd` (E4 mapped, CP OFFLINE). An 8188 stick needs USB **host**/OTG and drops RNDIS. Stock DXJ2 has `CONFIG_USB_DWC3_DUAL_ROLE`. v028 `/sbin/usb-host` is explicit; boot stays gadget. See [hardware-control-plan.md](hardware-control-plan.md). |
 | **a12s vendor Image** | Do **not** turn `CONFIG_RTL8188EU` back on for TSP. Project-Xed already ships an in-tree copy; `os/Makefile` `kernel` disables it (`clang-9` `-Werror=implicit-fallthrough`). Not onboard `wlan`. |
 | **TD4150 / touch** | Unrelated. Synaptics is SPI. This tree does not replace `synaptics/td4150`. |
 

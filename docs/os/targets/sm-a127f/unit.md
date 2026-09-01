@@ -44,6 +44,86 @@ On-device: vendor 4.19 kernel + our ramdisk `/init` (no Android). Samsung splash
 
 `boot-v007`: pack pixels via `fb_var` RGB offsets (true cyan/navy + on-screen log: `fn rndis=/acm=/udc`). Prefer RNDIS + `telnet 192.168.42.1` (USB tethering is in stock kernels). Photo the text if COM still missing.
 
+## boot-v020 — board console (TSP parked)
+
+Ramdisk-only on **stock** DXJ2 kernel+DTB. Banner `SaaiOS v020`. Odin AP: `\\192.168.168.110\media\saaios-boot-v020.tar`. Rollback: `saaios-boot-stock-restore.tar`.
+
+On-screen: battery `%` + status, backlight `cur/max`, USB, MemAvailable. Vol± writes sysfs brightness (never 0, never a second `FBIOBLANK`). Power 2s reboots. Telnet `:23`/`:2323` and dropbear `:22` unchanged. Init does not run the TSP lab.
+
+**LIVE 2026-08-29:** human flashed AP; banner, brightness, battery, USB/telnet all accepted. Phase C return point. TSP still parked.
+
+## boot-v021 — speaker beep (Phase E1)
+
+Ramdisk-only on **stock** DXJ2 kernel+DTB. Banner `SaaiOS v021`. Odin AP: `\\192.168.168.110\media\saaios-boot-v021.tar`. Does not overwrite v020. Rollback: `saaios-boot-v020.tar` or `saaios-boot-stock-restore.tar`. Path: [audio.md](audio.md).
+
+On-screen: same v020 lines plus `aud` (`/proc/asound/cards`). Short Power runs `/sbin/beep` (SMA1303 / `pcmC0D3p`). 2 s Power still reboots. ABOX firmware is in the ramdisk under `/vendor/firmware`. No maze Image. No auto-beep at boot.
+
+**LIVE 2026-08-29 (kernel path):** human flashed AP. Telnet `:23`/`:2323`. Cards `Exynos3830-Madera` / `abox_vdma` / `abox_dump`. `pcmC0D3p` present. `/sbin/beep` opened RDMA3: Calliope `NFB0`, SMA1303 UNMUTE, UAIF1 48 kHz / 16-bit / 2ch, `abox_rdma_trigger[3](1)` then stop ~1 s later. **Inaudible:** idle mixer `Speaker Mode=Off`, mute On, `ABOX SPUS ASRC3=On`, volume 118/167. Tar SHA256 `30869d39f024af5e75a143fb55a6631889be3b2af48f9c44f1b869b57ae505da`.
+
+## boot-v022 — audible speaker (Phase E1)
+
+Same stock Image as v021. `/sbin/beep` sets volume **160** (TLV invert; stock 118 = hardware `0x31`), Power Up, Mono after PCM open, 800 ms louder square. Does **not** turn `ABOX SPUS ASRC3` Off. rcS dropbear `-R`. Odin AP: `\\192.168.168.110\media\saaios-boot-v022.tar`. Rollback: v021 tar. Path: [audio.md](audio.md).
+
+**Flashed 2026-08-29, still silent.** Windows RNDIS appeared as Ethernet 5 but **Network cable unplugged** (gadget bound, no carrier). Cause: packed `rcS` had **CRLF**; BusyBox ash died at `do\r` so `ifconfig up` / telnetd never ran.
+
+## boot-v023 — ABOX Sound Type SPEAKER
+
+Jack does not mute SMA1303 (AUD3004X evdev only). Live v021 mixer: `ABOX Sound Type` = **VOICE**. v023 sets **SPEAKER**, keeps HP/EP off, logs `event7` hp/mic bits. Odin AP: `\\192.168.168.110\media\saaios-boot-v023.tar`. Rollback: v022. Path: [audio.md](audio.md).
+
+Same CRLF `rcS` as v022 (not LIVE). Tar SHA256 `fcbbe633789aa02247effb81e21b866ed029e0763a848fcde6a124a343d34090`.
+
+## boot-v024 — USB listeners + carrier
+
+Same stock Image as v023. Banner `SaaiOS v024`. `rcS` is LF; telnetd `:23`/`:2323` and dropbear `-R` `:22` start **before** waiting on usb0. Background `ifconfig` + udhcpd when the iface appears (Windows carrier). Init retries empty configfs UDC. Keeps v023 `ABOX Sound Type=SPEAKER`. Odin AP: `\\192.168.168.110\media\saaios-boot-v024.tar`. Tar SHA256 `bbd04ddd02c7b284d1dd82b8959c1e9f6b7e1e9b978454d13ce87bf5179f834c`. Does not overwrite v021/v022/v023. Rollback: `saaios-boot-v021.tar` (last USB-good LIVE). Path: [audio.md](audio.md).
+
+## boot-v025 — TONEGEN on RDMA3_A
+
+GitHub: no one published a tinyalsa-without-HAL speaker recipe for SMA1303 / Exynos ABOX. Vendor `mixer_paths.xml` `media-speaker` always sets `ABOX RDMA3_A=BD_MIXER` (needs VPCM). Live idle is `None` — Calliope has no source on that slot. v025 keeps v024 USB + SPEAKER and routes `TONEGEN_1KHZ` into `RDMA3_A` (1 kHz from ABOX, not our 880 Hz PCM). Hold Power Up during write. Odin AP: `\\192.168.168.110\media\saaios-boot-v025.tar`. Tar SHA256 `4fffa8373264eb5196e68cffdb4293130ccc7dcf724af9c216f73cfdb227d2ec`. Does not overwrite v021–v024. Path: [audio.md](audio.md).
+
+**LIVE 2026-08-29:** banner `SaaiOS v025`. `rndis0` 192.168.42.1 UP. Cards + `pcmC0D3p` present. First Power beep: DAPM `ABOX TONEGEN_1KHZ` / `RDMA3_A` / `RDMA3`, Calliope `NFB0`, SMA UNMUTE, `abox_rdma_trigger[3](1)`. Idle mixer: `RDMA3_A=TONEGEN_1KHZ`, `UAIF1=SIFS0`, `SPUS OUT3=SIFS0`, volume 160, Mode Mono. Telnet beep `pcm_writei` EIO. **Ear silent.** Mux-None hypothesis falsified — next is UAIF/SIFS1 or amp analog.
+
+## boot-v031 — wpa_supplicant + wifi-join (Phase E3 closed)
+
+Same stock Image as v030 (Maxwell fw + `/sbin/iw` + D1/SIFS1 play + gadget boot unchanged). Adds static aarch64 `/sbin/wpa_supplicant` 2.11 (nl80211, internal TLS, libnl-3.11), `/sbin/wpa_cli`, `/sbin/wifi-join` (args SSID + PSK, or `WIFI_SSID`/`WIFI_PSK`; conf only under `/tmp`; `udhcpc` + `/usr/share/udhcpc/default.script`). **Telnet-only — not at boot. No PSK in the image.** Does not run `usb-host`. Odin AP: `\\192.168.168.110\media\saaios-boot-v031.tar`. Tar SHA256 `dfd2fcafc898dced5ac4b90ea3e3ea6d14ebca63dd929bea277a67aa59dc819e`. Does not overwrite v021–v030. Rollback: `saaios-boot-v030.tar` or `saaios-boot-v029.tar`. Path: [hardware-control-plan.md](hardware-control-plan.md) E3. Next is E4 ([modem.md](modem.md)).
+
+After flash: `/sbin/wifi-join 'SSID' 'PSK'`. Join is **not at boot**.
+
+**LIVE 2026-08-29:** human flashed AP; banner `SaaiOS v031`. `/sbin/wifi-join` Wallbox; `wlan0` **192.168.168.8/24**. RNDIS `192.168.42.1`. PSK never packed.
+
+**E4 dump 2026-08-29 (same v031, read-only):** `modem_state=OFFLINE`, GNSS OFFLINE, `ds_detect=2`. `rmnet0–7` + `umts_dm0` exist and down. `/dev/umts_boot0` `umts_ipc0` `umts_rfs0` present. dmesg: CPIF-200511N220408, **s5000ap**, **s318ap** shmem. RADIO `mmcblk0p22` (259:14). No `/dev/block` nodes. No `cbd`/`rild` started. No EFS/RADIO write. After a mid-dump RNDIS drop, reconnect showed `wlan0` cold (zero MAC) — join is telnet-only. Path: [modem.md](modem.md).
+
+## boot-v030 — static iw scan (Phase E3 scan)
+
+Same stock Image as v029 (Maxwell fw + D1/SIFS1 play + gadget boot unchanged). Adds static aarch64 `/sbin/iw` 6.9 (nl80211 + libnl-3.11) and `/sbin/wifi-scan` (`wifi-up` then `iw dev wlan0 scan`). **Telnet-only — not at boot.** No join, no `wpa_supplicant`, no network config. Does not run `usb-host`. Odin AP: `\\192.168.168.110\media\saaios-boot-v030.tar`. Tar SHA256 `8eff38986a11fdc348fe1f6941f3aec3d8f2c9b7f108c2d3a70a9c13ab396bc3`. Does not overwrite v021–v029. Rollback: `saaios-boot-v029.tar`. Path: [hardware-control-plan.md](hardware-control-plan.md) E3.
+
+**LIVE 2026-08-29 (still on v029):** banner `SaaiOS v029`; dropbear `:22` dead; `wget` of `/tmp/iw` from Windows RNDIS `192.168.42.15:8765`; `iw version 6.9`; `iw dev wlan0 scan` → 12 BSS / 11 named 2.4 GHz SSIDs. v030 packs that binary so the next flash does not need the HTTP push.
+
+## boot-v029 — Maxwell firmware + wifi-up (Phase E3)
+
+Same stock Image as v028 (D1/SIFS1 play + gadget boot unchanged). Packs vendor `/etc/wifi` production files into ramdisk `/vendor/etc/wifi` (`mx140.bin`, hcf, `hydra_config.sdb`, `slsi_reg_database.bin`, `platform.txt`). Skips `mx140_t.bin` / `mx140_t_*` / `mx140/debug`. `/etc/wifi` and `/system/etc/wifi` symlink to `/vendor/etc/wifi`. `/sbin/wifi-up` is **telnet-only** (`ifconfig wlan0 up` + operstate/MAC/dmesg tail) — **not at boot**. Does not run `usb-host`. Odin AP: `\\192.168.168.110\media\saaios-boot-v029.tar`. Tar SHA256 `a9e743caa02da38f6dcc5bc7adbf4ddd81dcb31b6d06eccc8deb49fe01bb2cf7`. Does not overwrite v021–v028. Rollback: `saaios-boot-v028.tar`. Path: [hardware-control-plan.md](hardware-control-plan.md) E3.
+
+**LIVE 2026-08-29:** banner `SaaiOS v029`; kernel `4.19.111-27127798` stock DXJ2; `/sbin/wifi-up` → `wlan0` MAC `00:00:0f:08:0e:af`, UP, `operstate=down`. `mx140.bin` + hcf loaded. 2.4 GHz Y, 5 GHz N. MIB `NACHO_S612_A127F`. Scan is v030 / LIVE `iw` (above).
+
+## boot-v028 — USB host/device scripts (Phase E2)
+
+Same stock Image as v027 (D1/SIFS1 play unchanged). Adds `/sbin/usb-host` and `/sbin/usb-device`. Boot stays RNDIS device. `usb-host` unbinds gadget, writes typec `data_role=host` and dwc3 `id=0`, plants `/tmp/usb-role-host` so init does not rebind. **Never host at boot.** Way back: Power 2s reboot (or `usb-device` if a shell remains). Odin AP: `\\192.168.168.110\media\saaios-boot-v028.tar`. Does not overwrite v021–v027. Rollback: `saaios-boot-v027.tar`. Path: [hardware-control-plan.md](hardware-control-plan.md) E2.
+
+**LIVE 2026-08-29 (device):** human flashed AP; banner `SaaiOS v028`; `rndis0` UP; telnet `:23`. UDC `configured`, `is_otg=1`. `/sbin/usb-host` and `/sbin/usb-device` present.
+
+**LIVE 2026-08-29 (`usb-host` then reboot):** human ran `/sbin/usb-host`; RNDIS dropped. Photo after Power 2s: banner `SaaiOS v028`, `rndis0`, telnet `:23`/`:2323`, play `test.wav` still in log. Host/OTG stick not confirmed. Tar SHA256 `673c9b0ad6dd5be76ec4b4f5f9edc0f7218270b3389e5117b9612cc476fe28c8`.
+
+## boot-v027 — WAV play on D1/SIFS1
+
+Same stock Image + v026 speaker route (`pcmC0D1p` → SIFS1 → UAIF1 → SMA1303). `/sbin/play FILE.wav` (16-bit PCM). Packed `/usr/share/sounds/test.wav` (Ode to Joy). No auto-play; Power tap still beep. Odin AP: `\\192.168.168.110\media\saaios-boot-v027.tar`. Tar SHA256 `4fce1292e80bb7153c9113466a1f01ba34a8eef61c4de1e5dca9bbe6150b1101`. Does not overwrite v021–v026. Rollback: `saaios-boot-v026.tar`. Path: [audio.md](audio.md).
+
+**LIVE 2026-08-29:** user said **работает**. `/sbin/play` WAV on D1/SIFS1. First heard via `/tmp` on still-running v026; then confirmed (likely after flashing v027, or still live `/tmp`). Replay: `/sbin/play /usr/share/sounds/test.wav`. Do not regress to `pcmC0D3p` / SIFS0.
+
+## boot-v026 — pcmC0D1p / UAIF1=SIFS1
+
+S10 GSI speaker used `pcmC0D1p` + `UAIF1 SPK=SIFS1`. This vendor XML has `route-rdma3-to-sifs1` (`SPUS OUT3=SIFS1`, `SIFS1=SPUS OUT3`) and `route-sifs1-to-uaif1`. v026 opens RDMA1, `SPUS OUT1=SIFS1`, `SIFS1=SPUS OUT1`, `UAIF1=SIFS1`, TONEGEN on `RDMA1_A`. Same LF `rcS` / USB. Stock kernel+DTB. Odin AP: `\\192.168.168.110\media\saaios-boot-v026.tar`. Tar SHA256 `094a8c06e4794f1094c36cbfb6ee0ee528449444f96f602048af289ba9c0baa1`. Does not overwrite v021–v025. Rollback: v025. Path: [audio.md](audio.md).
+
+**LIVE 2026-08-29:** banner `SaaiOS v026`. Ear heard the tone. Telnet `:23`/`:2323`. Cards + `pcmC0D1p` present. Beep dmesg: DAPM `TONEGEN_1KHZ` / `RDMA1_A` / `SPUS OUT1` / `SIFS1` / `UAIF1 SPK`, `reset sifs1_cnt_val`, Calliope `NFB0`, SMA UNMUTE, `abox_rdma_trigger[1](1)`. Mixer after beep: `Sound Type=SPEAKER`, `UAIF1 SPK=SIFS1`, `SPUS OUT1=SIFS1`, `SIFS1=SPUS OUT1`, `RDMA1_A=TONEGEN_1KHZ`, `RDMA3_A=None`, `OUT3=RESERVED`, volume 160, Mode Mono, Power Up On. Working PCM is **D1 / SIFS1 / UAIF1**, not vendor `media-speaker` RDMA3/SIFS0 — that is why v021–v025 were silent (wrong FE/SIFS, not missing firmware). USB fix was CRLF `rcS` (v024). TONEGEN on RDMA3 proved the digital path. Dropbear `:22` empty until host keys written.
+
 ## Display / partitions (live)
 
 - Graphics: **fb0** only, no `/sys/class/drm`
