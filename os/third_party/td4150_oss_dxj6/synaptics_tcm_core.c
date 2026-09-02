@@ -1549,16 +1549,27 @@ static int syna_tcm_read_message(struct syna_tcm_hcd *tcm_hcd,
 retry:
 	LOCK_BUFFER(tcm_hcd->in);
 
-	/* 0x25-only floor: force the first read of a GET_TOUCH_REPORT_CONFIG
-	 * response to at least SAAIOS_TRC_READ_LEN (4+128+1=133) so it is not
-	 * left at a short read_length carried over from the prior message
-	 * (e.g. 51 after a 0x20). A short first read here desyncs SPI and
-	 * syna_tcm_continued_read() sees marker 0x25 instead of 0xA5. Do not
-	 * reintroduce the old global per-message clamp (broke plain 0x20).
+	/* Per-command floor, sized exactly to that command's own known
+	 * response (never a blanket clamp like the old global 256 — that
+	 * over-read and broke a plain follow-up 0x20). A short read_length
+	 * carried over from the PRIOR message (e.g. MIN_READ_LENGTH=9 after
+	 * a 2-byte leftover 0x1b, or 51 after an earlier 0x20) otherwise
+	 * desyncs syna_tcm_continued_read(), which then sees this command's
+	 * own opcode byte as the marker instead of 0xA5.
+	 * since76 LIVE: this exact desync hit 0x20 (GET_APPLICATION_INFO,
+	 * needs 4+46+1=51) when the leftover 0x1b before REINIT clamped
+	 * read_length to 9 first — the same failure 0x25 had, different
+	 * trigger. since77 floors 0x20 at its own size too.
 	 */
 	if (tcm_hcd->command == CMD_GET_TOUCH_REPORT_CONFIG &&
 			tcm_hcd->read_length < SAAIOS_TRC_READ_LEN)
 		tcm_hcd->read_length = SAAIOS_TRC_READ_LEN;
+	else if (tcm_hcd->command == CMD_GET_APPLICATION_INFO &&
+			tcm_hcd->read_length < SAAIOS_APP_INFO_READ_LEN) {
+		pr_info("SAaiOS_TOUCH_DBG: since77 0x20 read-floor bumped %u->%u\n",
+			tcm_hcd->read_length, SAAIOS_APP_INFO_READ_LEN);
+		tcm_hcd->read_length = SAAIOS_APP_INFO_READ_LEN;
+	}
 
 	/* Grow in.buf before a floor-sized first-read. Probe used to alloc
 	 * MIN_READ_LENGTH+1=10; a 256-byte syna_tcm_read would overflow.

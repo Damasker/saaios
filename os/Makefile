@@ -30,10 +30,12 @@ OUT_V032 := $(BUILD)/boot-v032.img
 OUT_V033 := $(BUILD)/boot-v033.img
 OUT_V034 := $(BUILD)/boot-v034.img
 # Subversion suffix embedded into ramdisk console + used for Odin/AP tar naming.
-# since76 = live20 ladder 0/10/100/500ms after REINIT; retval<0→dead response=ff.
-# Late 0x05/0x24/0x30 LIVE -62. No app_config in post-boot menu. Do not overwrite since54–since75.
+# since77 = per-command read-floor (0x20 GET_APPLICATION_INFO too, not just
+# 0x25) after since76 LIVE showed a leftover 0x1b before REINIT's 0x20
+# clamps read_length to MIN_READ_LENGTH(9), desyncing continued_read the
+# same way 0x25 used to. Do not overwrite since54–since76.
 # See docs/os/targets/sm-a127f/kernel-touch.md.
-SUBVERSION_V019 ?= since76
+SUBVERSION_V019 ?= since77
 VBMETA_OUT := $(BUILD)/vbmeta-patched.img
 BUSYBOX ?= os/third_party/busybox-aarch64
 BUSYBOX_DEB_URL ?= https://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.37.0-6+b9_arm64.deb
@@ -697,7 +699,7 @@ boot-v019:
 	@echo "Phone stays on current boot. make flash still refuses."
 else
 boot-v019: unpack ramdisk vbmeta
-	@case "$(SUBVERSION_V019)" in since54|since55|since56|since57|since58|since59|since60|since61|since62|since63|since64|since65|since66|since67|since68|since69|since70|since71|since72|since73|since74|since75) echo "REFUSING to overwrite saaios-boot-v019-$(SUBVERSION_V019).tar"; exit 1;; esac
+	@case "$(SUBVERSION_V019)" in since54|since55|since56|since57|since58|since59|since60|since61|since62|since63|since64|since65|since66|since67|since68|since69|since70|since71|since72|since73|since74|since75|since76) echo "REFUSING to overwrite saaios-boot-v019-$(SUBVERSION_V019).tar"; exit 1;; esac
 	@test -f $(STOCK_UNPACK)/dtb || { echo "missing stock dtb at $(STOCK_UNPACK)/dtb"; exit 1; }
 	python3 os/bootimg/bootimg.py pack $(STOCK_UNPACK) \
 		--kernel $(KERNEL_IMAGE) \

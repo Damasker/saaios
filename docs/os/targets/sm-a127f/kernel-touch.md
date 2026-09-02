@@ -570,9 +570,9 @@ Banner `SaaiOS v019 since75`. Probe: `since75 0x05 ENABLE_REPORT 0x11 after 0x25
 
 ---
 
-## Current flash target: since76 (live20 ladder + dead-on-timeout)
+## since76 design (superseded by since77 — read the section below first)
 
-Banner `SaaiOS v019 since76`. Probe: `auto live20 ladder 0/10/100/500ms` + `retval<0→dead response=ff`. Sysfs `/sys/kernel/saaios_touch/{action,status}`. Tokens: `live20` `run_app` `enable_report` `no_doze` (`app_config` optional, **not** in menu). Tar `/srv/media/saaios-boot-v019-since76.tar` (overwrite OK). Do **not** overwrite since54–since75.
+Banner `SaaiOS v019 since76`. Probe: `auto live20 ladder 0/10/100/500ms` + `retval<0→dead response=ff`. Sysfs `/sys/kernel/saaios_touch/{action,status}`. Tokens: `live20` `run_app` `enable_report` `no_doze` (`app_config` optional, **not** in menu). Tar `/srv/media/saaios-boot-v019-since76.tar` (flashed and characterized — **do not overwrite**, joins since54–since75). since77 changes only the `0x20` read-floor (see below); everything in this section (HDL path, sysfs, tokens, ladder delays 10/100/500/1000) still applies unchanged.
 
 HDL unchanged: oneshot 0x45, skip 0x1f when HDL 0x02, skip 0x25 after REINIT 0x20 OK, fallback input, **no auto 0x05/0x23/0x26/0x30**.
 
@@ -703,30 +703,46 @@ Never flash DTBO.
 
 ---
 
-## since76 read-floor regression + fixes (PR #18, code-reviewed, not yet flashed)
+## since76 read-floor regression + fixes (PR #18, code-reviewed, LIVE 2026-09-02)
 
-The global `SAAIOS_RD_FLOOR=256` clamp documented above under "Why read-floor 256" was flashed once, found to kill ATTN on the next plain empty `0x20`, and removed. Three fixes landed on top of the since76 build already described in this file, none yet LIVE on the device:
+The global `SAAIOS_RD_FLOOR=256` clamp documented above under "Why read-floor 256" was flashed once, found to kill ATTN on the next plain empty `0x20`, and removed. Three fixes landed on top of the since76 build already described in this file:
 
-1. **Scoped read floor.** `SAAIOS_TRC_READ_LEN=133` forced only for `CMD_GET_TOUCH_REPORT_CONFIG` (0x25), at the top of the `retry:` loop in `syna_tcm_read_message`, before the first SPI read — not after every message. Currently dormant: `HELP_SEND_REINIT` still skips 0x25 entirely (`skip touch_reinit/0x25 after 0x20 OK`), so this only matters the next time something manually issues 0x25.
+1. **Scoped read floor.** `SAAIOS_TRC_READ_LEN=133` forced only for `CMD_GET_TOUCH_REPORT_CONFIG` (0x25), at the top of the `retry:` loop in `syna_tcm_read_message`, before the first SPI read — not after every message. Dormant on since76: `HELP_SEND_REINIT` skips 0x25 entirely (`skip touch_reinit/0x25 after 0x20 OK`).
 2. **Ladder race.** `saaios_start_live20_ladder()` now starts after `mutex_unlock(&tcm_hcd->reset_mutex)` instead of under it — `delay=0` used to fire while still holding the mutex and race the REINIT that had just succeeded, timing out and aborting the whole ladder before the 10/100/500 steps ran. `IS_FW_MODE(tcm_hcd->id_info.mode)` is snapshotted into `saaios_reinit_fw_mode` *before* the unlock so an IRQ landing in that window can't change the ladder-start decision underneath it.
 3. **Stale sticky latch.** `saaios_reinit_ok` is set once and never cleared, so a *later* `HELP_SEND_REINIT` whose `identify()` fails (`saaios_mark_dead()` just set `state=dead`) could still fall through and restart the ladder on the strength of an earlier success. Ladder-start now also requires `saaios_state != SAAIOS_ST_DEAD`.
 
-Full ladder is `10, 100, 500, 1000` ms (not the original `0, 10, 100, 500`). Rebuilt and repacked `saaios-boot-v019-since76.tar` after each fix; still needs a human Odin flash + the grep sequence above to go LIVE.
+Full ladder is `10, 100, 500, 1000` ms (not the original `0, 10, 100, 500`).
+
+**LIVE 2026-09-02 (human Odin AP):** flashed. Banner `SaaiOS v019 since76`. `0x45`→`0x42`→leftover `0x1b` all clean, `HELP_SEND_REINIT` entered — then a **new** failure: `identify(false)/0x20 retval=-5`, `state=dead` immediately (`TOUCH_EXP[0]: state=dead retval=-5 response=ff (REINIT 0x20 failed; block until reboot)`). Never reached the live20 ladder. Root cause below (since77).
+
+---
+
+## since77 LIVE-diagnosed: 0x1b leftover clamps read_length, desyncs the next 0x20
+
+Full trace (device 2026-09-02): after `0x45` (`write_message retval=0 resp_len=3 response_code=0x01`, **not** an IDENTIFY — mode stayed `0x04`), stock `switch_mode` correctly sent `0x42` (RomBoot), IRQ answered with the familiar `IDENTIFY` (`TD4150-12.0.12` / mode `0x02` / packrat `2100027192`, `read_length=29` from that 24-byte payload). Next IRQ was the leftover `0x1b` `REPORT_STATUS` (`raw=a5 1b 02 00 10 00 5a 5a`, 2-byte payload) — and **that** message's `read_length=9` (stock `PREDICTIVE_READING`: `total_length = MAX(total_length, MIN_READ_LENGTH)` = `MAX(7, 9)` = `9`). `HELP_SEND_REINIT` then ran `identify(false)` / `CMD_GET_APPLICATION_INFO` (`0x20`), whose response needs `4+46+1=51` bytes — but `read_length` was still `9` from the leftover `0x1b`. First SPI read grabbed only 9 bytes; `syna_tcm_continued_read` then read the remaining bytes and hit `Incorrect header marker (0x80)` (`0x20 continued-read fail marker=0x80 plen=46 first_read=9`) → `read_retval=-5` → `0x20 GET_APPLICATION_INFO retval=-5` → `HELP_SEND_REINIT identify(false)/0x20 retval=-5` → `saaios_mark_dead`.
+
+This is **the same desync class since76's `SAAIOS_TRC_READ_LEN` fix targeted for 0x25** — a short `read_length` carried over from the *prior* message breaking the *next* command's continued-read — just triggered by a different prior message (the 2-byte leftover `0x1b`, clamped to `MIN_READ_LENGTH=9` by stock `PREDICTIVE_READING`) landing in front of a different next command (`0x20`, not `0x25`). `SAAIOS_TRC_READ_LEN` only guarded `0x25`; it never touched `0x20`.
+
+**Fix:** extend the same per-command-exact-size floor to `0x20`. New `SAAIOS_APP_INFO_READ_LEN=51` (4+46+1), forced at the same `retry:` guard, **only** for `CMD_GET_APPLICATION_INFO` and only when `read_length` is currently smaller — sized to exactly what `0x20` needs, not a round/generous number. This deliberately avoids the original global-256-clamp regression (over-read jamming a plain follow-up `0x20`): the floor is per-command and exact, never a blanket value. Logs `since77 0x20 read-floor bumped %u->%u` when it fires, so the next flash can confirm from dmesg whether this branch actually engaged.
+
+`SUBVERSION_V019` bumped to `since77`; `since76` tar added to the do-not-overwrite list (it is now flashed/characterized history, same as since54–75).
 
 ---
 
 ## Next (logical order — do not skip ahead)
 
-1. Flash **since76** AP tar (boot+vbmeta only). **Do not flash since66, since73, or since75.** **Grep immediately** (before wrap). Banner must be `SaaiOS v019 since76`. Confirm HDL path (oneshot 0x45, skip 0x1f, REINIT 0x20, **no** 0x25) and **no** auto 0x05/0x23/0x26/0x30. Confirm **`start live20 ladder delays_ms=10,100,500,1000`**.
-2. Watch auto `live20` steps. On any timeout → `state=dead` `response=ff` (never stale `01`); further writes **EBUSY** until reboot.
-3. If all four delays OK: optional manual experiments; long-press Power 2s to reboot when dead.
-4. Do **not** flash since66, since73, or since75. Do **not** rewind 0x45 oneshot / skip 0x1f / leftover REINIT 0x20. Do **not** retry 0x26 / auto 0x05/0x25/0x30.
-5. **Optional:** stock Android dmesg on this unit / same DTBO. Still **missing** on the host.
+1. Flash **since77** AP tar (boot+vbmeta only). **Do not flash since66, since73, since75, or since76.** **Grep immediately** (before wrap). Banner must be `SaaiOS v019 since77`. Confirm HDL path (oneshot 0x45, skip 0x1f, REINIT 0x20, **no** 0x25) same as since76.
+2. Grep `since77 0x20 read-floor bumped` — confirms the new floor engaged (or didn't; absence would mean this run's `0x1b` payload/timing differed and the desync has another shape).
+3. Confirm `HELP_SEND_REINIT identify(false)/0x20 retval=` is now `>=0` (`app_status=OK`), not `-5`. If it is, expect `start live20 ladder delays_ms=10,100,500,1000` same as before.
+4. Watch auto `live20` steps. On any timeout → `state=dead` `response=ff` (never stale `01`); further writes **EBUSY** until reboot.
+5. If all four delays OK: optional manual experiments; long-press Power 2s to reboot when dead.
+6. Do **not** flash since66, since73, since75, or since76. Do **not** rewind 0x45 oneshot / skip 0x1f / leftover REINIT 0x20. Do **not** retry 0x26 / auto 0x05/0x25/0x30.
+7. **Optional:** stock Android dmesg on this unit / same DTBO. Still **missing** on the host.
 
 Constraints that stay in force:
 
 - Do not flash from the agent. Do not commit unless asked.
-- Do not overwrite `/srv/media/saaios-boot-v019-since54.tar`, `...-since55.tar`, `...-since56.tar`, `...-since57.tar`, `...-since58.tar`, `...-since59.tar`, `...-since60.tar`, `...-since61.tar`, `...-since62.tar`, `...-since63.tar`, `...-since64.tar`, `...-since65.tar`, `...-since66.tar`, `...-since67.tar`, `...-since68.tar`, `...-since69.tar`, `...-since70.tar`, `...-since71.tar`, `...-since72.tar`, `...-since73.tar`, `...-since74.tar`, or `...-since75.tar`.
+- Do not overwrite `/srv/media/saaios-boot-v019-since54.tar`, `...-since55.tar`, `...-since56.tar`, `...-since57.tar`, `...-since58.tar`, `...-since59.tar`, `...-since60.tar`, `...-since61.tar`, `...-since62.tar`, `...-since63.tar`, `...-since64.tar`, `...-since65.tar`, `...-since66.tar`, `...-since67.tar`, `...-since68.tar`, `...-since69.tar`, `...-since70.tar`, `...-since71.tar`, `...-since72.tar`, `...-since73.tar`, `...-since74.tar`, `...-since75.tar`, or `...-since76.tar`.
 - Do not add IDENTIFY / `0x1f` / `0x42-from-0x02` / retry-0x26 / constructed-0x26 / `lcd_rst` experiments on the maze.
 - Never pulse `gpio_lcd_rst`. Never unbind `synaptics_tcm_spi`.
 - Do not treat leftover `0x1b` as 0x45 STATUS_OK. IDENTIFY mode 0x02 after oneshot 0x45 is waiter success only — not proof APP_CODE launched.
