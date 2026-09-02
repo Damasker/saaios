@@ -264,6 +264,7 @@ static struct workqueue_struct *saaios_touch_wq;
 static struct work_struct saaios_touch_work;
 static struct kobject *saaios_touch_kobj;
 static int saaios_reinit_ok;
+static int saaios_reinit_fw_mode;
 static ktime_t saaios_reinit_ok_kt;
 static unsigned int saaios_ladder_i;
 static int saaios_ladder_active;
@@ -1547,6 +1548,17 @@ static int syna_tcm_read_message(struct syna_tcm_hcd *tcm_hcd,
 
 retry:
 	LOCK_BUFFER(tcm_hcd->in);
+
+	/* 0x25-only floor: force the first read of a GET_TOUCH_REPORT_CONFIG
+	 * response to at least SAAIOS_TRC_READ_LEN (4+128+1=133) so it is not
+	 * left at a short read_length carried over from the prior message
+	 * (e.g. 51 after a 0x20). A short first read here desyncs SPI and
+	 * syna_tcm_continued_read() sees marker 0x25 instead of 0xA5. Do not
+	 * reintroduce the old global per-message clamp (broke plain 0x20).
+	 */
+	if (tcm_hcd->command == CMD_GET_TOUCH_REPORT_CONFIG &&
+			tcm_hcd->read_length < SAAIOS_TRC_READ_LEN)
+		tcm_hcd->read_length = SAAIOS_TRC_READ_LEN;
 
 	/* Grow in.buf before a floor-sized first-read. Probe used to alloc
 	 * MIN_READ_LENGTH+1=10; a 256-byte syna_tcm_read would overflow.
@@ -3470,11 +3482,16 @@ static void syna_tcm_helper_work(struct work_struct *work)
 #ifdef WATCHDOG_SW
 		tcm_hcd->update_watchdog(tcm_hcd, true);
 #endif
+		/* Snapshot mode under reset_mutex: an IRQ between unlock and
+		 * the ladder-start check could otherwise mutate id_info.mode
+		 * out from under this decision.
+		 */
+		saaios_reinit_fw_mode = IS_FW_MODE(tcm_hcd->id_info.mode);
 		mutex_unlock(&tcm_hcd->reset_mutex);
 		/* Ladder AFTER unlock: delay=0 under reset_mutex raced the
 		 * successful REINIT 0x20 and timed out, aborting 10/100/500.
 		 */
-		if (saaios_reinit_ok && IS_FW_MODE(tcm_hcd->id_info.mode))
+		if (saaios_reinit_ok && saaios_reinit_fw_mode)
 			saaios_start_live20_ladder(tcm_hcd);
 		syna_tcm_since58_observe(tcm_hcd, "after stock REINIT");
 		wake_up_interruptible(&tcm_hcd->hdl_wq);
