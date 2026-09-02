@@ -8,7 +8,7 @@
 #include <linux/input-event-codes.h>
 #include "font8x8.h"
 
-#define SAAIOS_BANNER "SaaiOS v033"
+#define SAAIOS_BANNER "SaaiOS v034"
 
 #ifndef AT_FDCWD
 #define AT_FDCWD -100
@@ -271,6 +271,7 @@ static void put_pixel(unsigned x, unsigned y, unsigned pix) {
 #define LINUX_REBOOT_MAGIC1 0xfee1dead
 #define LINUX_REBOOT_MAGIC2 672274793
 #define LINUX_REBOOT_CMD_RESTART 0x01234567
+#define LINUX_REBOOT_CMD_POWER_OFF 0x4321fedc
 #ifndef __NR_clock_gettime
 #define __NR_clock_gettime 113
 #endif
@@ -743,6 +744,7 @@ static int fd_vol = -1;
 static int fd_pwr = -1;
 static int power_down;
 static unsigned long power_t0_ms;
+static int voldown_held;
 static unsigned long last_vol_ms;
 static char bl_brightness[192];
 static int bl_ok;
@@ -1087,7 +1089,7 @@ static void draw_console(void) {
         append_uint(line, sizeof(line), fb.bpp);
         draw_str(8, 32, line, fg, bg);
         draw_str(8, 164, "Vol+/- brightness", fg, bg);
-        draw_str(8, 184, "Power tap beep  2s reboot", fg, bg);
+        draw_str(8, 184, "Pwr tap beep 2s reboot Vol-+Pwr off", fg, bg);
         draw_str(8, 204, "telnet usb-host/usb-device", fg, bg);
         static_drawn = 1;
     }
@@ -1138,6 +1140,19 @@ static void do_reboot(void) {
         LINUX_REBOOT_CMD_RESTART, 0, 0, 0);
 }
 
+/* Phase D gesture: Vol- + Power held 2s -> real hardware poweroff
+ * (reboot(2) RB_POWER_OFF, confirmed LIVE on v033 via telnet). Power
+ * alone held 2s stays do_reboot() exactly as before, unconditionally
+ * — kernel-touch.md's state=dead recovery flow depends on that exact
+ * gesture and timing, so it must never be delayed or reinterpreted.
+ */
+static void do_poweroff(void) {
+    log_line("poweroff (Vol- + Power 2s)");
+    sys(__NR_sync, 0, 0, 0, 0, 0, 0);
+    sys(__NR_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
+        LINUX_REBOOT_CMD_POWER_OFF, 0, 0, 0);
+}
+
 static void handle_key(unsigned short code, int value) {
     unsigned long t = now_ms();
     if (value == 2)
@@ -1148,12 +1163,17 @@ static void handle_key(unsigned short code, int value) {
         last_vol_ms = t;
         bump_brightness(1);
         draw_console();
-    } else if (code == KEY_VOLUMEDOWN && value == 1) {
-        if (last_vol_ms && t - last_vol_ms < 150)
-            return;
-        last_vol_ms = t;
-        bump_brightness(0);
-        draw_console();
+    } else if (code == KEY_VOLUMEDOWN) {
+        if (value == 1) {
+            voldown_held = 1;
+            if (!last_vol_ms || t - last_vol_ms >= 150) {
+                last_vol_ms = t;
+                bump_brightness(0);
+                draw_console();
+            }
+        } else if (value == 0) {
+            voldown_held = 0;
+        }
     } else if (code == KEY_POWER) {
         if (value == 1) {
             power_down = 1;
@@ -1206,8 +1226,12 @@ static void menu_poll_keys(void) {
         sleep_ms(80);
     drain_evdev(fd_vol);
     drain_evdev(fd_pwr);
-    if (power_down && now_ms() - power_t0_ms >= 2000)
-        do_reboot();
+    if (power_down && now_ms() - power_t0_ms >= 2000) {
+        if (voldown_held)
+            do_poweroff();
+        else
+            do_reboot();
+    }
 }
 
 static void menu_open_keys(void) {
@@ -1283,7 +1307,7 @@ void _start(void) {
     refresh_audio();
     log_line("telnet :23 :2323");
     log_line("ssh :22");
-    log_line("Vol+/- brightness  Power tap beep  2s reboot");
+    log_line("Vol+/- brightness  Power tap beep  2s reboot  Vol-+Power 2s poweroff");
     log_line("play /usr/share/sounds/test.wav");
     log_line("usb-host is telnet-only; boot stays device");
     draw_console();
