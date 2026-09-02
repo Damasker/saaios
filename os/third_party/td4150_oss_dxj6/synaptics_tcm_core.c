@@ -3490,8 +3490,13 @@ static void syna_tcm_helper_work(struct work_struct *work)
 		mutex_unlock(&tcm_hcd->reset_mutex);
 		/* Ladder AFTER unlock: delay=0 under reset_mutex raced the
 		 * successful REINIT 0x20 and timed out, aborting 10/100/500.
+		 * saaios_reinit_ok is a sticky "has ever succeeded" latch and
+		 * is never cleared, so on a later REINIT that fails in THIS
+		 * call (retval<0, saaios_mark_dead() just ran above) it must
+		 * not resurrect the ladder saaios_mark_dead() just stopped.
 		 */
-		if (saaios_reinit_ok && saaios_reinit_fw_mode)
+		if (saaios_reinit_ok && saaios_reinit_fw_mode &&
+				saaios_state != SAAIOS_ST_DEAD)
 			saaios_start_live20_ladder(tcm_hcd);
 		syna_tcm_since58_observe(tcm_hcd, "after stock REINIT");
 		wake_up_interruptible(&tcm_hcd->hdl_wq);

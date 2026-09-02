@@ -327,6 +327,13 @@ static unsigned log_floor(void) {
         return 8;
     if (fb.yres > 400)
         return 240;
+    /* draw_console()'s header runs to ~220px regardless of screen size;
+     * on a panel too short for the fixed 240 reserve half the screen
+     * (matches the old menu_y0() small-panel fallback) instead of 8,
+     * which let scrolling log text overwrite the still-visible header.
+     */
+    if (fb.yres > 16)
+        return fb.yres / 2;
     return 8;
 }
 
@@ -866,8 +873,8 @@ static int try_bl_dir(const char *dir) {
         maxv = 255;
     if (curv < 0)
         return 0;
-    if (!exists_path(bright))
-        return 0;
+    /* read_int_file(bright) already succeeded above, so bright is known
+     * to exist here; a separate exists_path() check was always true. */
     scopy(bl_brightness, sizeof(bl_brightness), bright);
     bl_max = maxv;
     bl_cur = curv;
