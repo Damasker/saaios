@@ -55,7 +55,7 @@ They prove the bootloader can run non-stock `boot`/`recovery`/`super`:
 
 - TWRP / OrangeFox: physwizz (a12s). Some reports: **a127f/DSN** flaky with older afaneh92 images — match binary U.
 - GSI: Magisk-patched AP, or Linux **super.img repack** (uluruman) keeping VB on other partitions.
-- Custom kernels from Samsung source: uluruman (touch/MTP), Project-Xed (KernelSU).
+- Custom kernels from Samsung source: uluruman (touch/MTP), Project-Xed (KernelSU). Project-Xed is the **maze** currently in SaaiOS Images — not stock. Clean DXJ6 td4150 is `os/third_party/td4150_oss_dxj6/`. See [kernel-touch.md](kernel-touch.md).
 
 Useful as **existence proofs**. Not our userspace.
 

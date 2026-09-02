@@ -1,0 +1,16 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since49 IDENTIFY before vs after 0x45
+
+since47: APP_CODE transfer is correct; running packrat still mismatches.
+since48 0x42-from-0x02 is postponed until we know what code runs after 0x45.
+
+since49: log cached IDENTIFY before 0x45 and after 0x45 in the same boot.
+No extra CMD_IDENTIFY, no 0x42, no touch_init.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since48 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since49 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

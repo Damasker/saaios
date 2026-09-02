@@ -53,8 +53,8 @@
 
 #define MIN_READ_LENGTH 9
 
-#ifndef SAAIOS_RD_FLOOR
-#define SAAIOS_RD_FLOOR 256
+#ifndef SAAIOS_TRC_READ_LEN
+#define SAAIOS_TRC_READ_LEN 133
 #endif
 
 /* #define FORCE_RUN_APPLICATION_FIRMWARE */
@@ -277,8 +277,12 @@ enum saaios_exp_state {
 
 static int saaios_state = SAAIOS_ST_READY;
 
-/* Auto live20 (empty GET 0x20) after REINIT. Do NOT auto-send 0x05/0x24/0x30. */
-static const unsigned int saaios_live20_delays_ms[] = { 0, 10, 100, 500 };
+/* Auto live20 (empty GET 0x20) after REINIT unlock (no global read-floor).
+ * Ladder starts AFTER mutex_unlock(&reset_mutex): delay=0 under the mutex
+ * raced the successful REINIT 0x20 and timed out, aborting 10/100/500.
+ * Do NOT auto-send 0x05/0x24/0x30.
+ */
+static const unsigned int saaios_live20_delays_ms[] = { 10, 100, 500, 1000 };
 #define SAAIOS_LIVE20_LADDER_N ARRAY_SIZE(saaios_live20_delays_ms)
 
 unsigned int syna_tcm_saaios_exp_seq(void)
@@ -605,8 +609,9 @@ static void saaios_start_live20_ladder(struct syna_tcm_hcd *tcm_hcd)
 	saaios_reinit_ok_kt = ktime_get();
 	saaios_ladder_i = 0;
 	saaios_ladder_active = 1;
-	pr_info("SAaiOS_TOUCH_DBG: start live20 ladder delays_ms=0,10,100,500 after REINIT 0x20 OK (no auto 0x05/0x24/0x30)\n");
-	schedule_delayed_work(&saaios_ladder_dwork, 0);
+	pr_info("SAaiOS_TOUCH_DBG: start live20 ladder delays_ms=10,100,500,1000 after REINIT unlock (no auto 0x05/0x24/0x30; no delay=0 under reset_mutex)\n");
+	schedule_delayed_work(&saaios_ladder_dwork,
+			msecs_to_jiffies(saaios_live20_delays_ms[0]));
 }
 
 ssize_t syna_tcm_saaios_action_store(struct syna_tcm_hcd *tcm_hcd,
@@ -1628,17 +1633,9 @@ retry:
 
 #ifdef PREDICTIVE_READING
 	if (total_length <= tcm_hcd->read_length) {
-		if (tcm_hcd->command == CMD_GET_TOUCH_REPORT_CONFIG)
-			pr_info("SAaiOS_TOUCH_DBG: read-floor=%u first_read=%u plen=%u total=%u continued=%d\n",
-				SAAIOS_RD_FLOOR, tcm_hcd->read_length,
-				tcm_hcd->payload_length, total_length, 0);
 		goto check_padding;
 	} else if (total_length - 1 == tcm_hcd->read_length) {
 		tcm_hcd->in.buf[total_length - 1] = MESSAGE_PADDING;
-		if (tcm_hcd->command == CMD_GET_TOUCH_REPORT_CONFIG)
-			pr_info("SAaiOS_TOUCH_DBG: read-floor=%u first_read=%u plen=%u total=%u continued=%d\n",
-				SAAIOS_RD_FLOOR, tcm_hcd->read_length,
-				tcm_hcd->payload_length, total_length, 0);
 		goto check_padding;
 	}
 #else
@@ -1648,9 +1645,9 @@ retry:
 	}
 #endif
 	if (tcm_hcd->command == CMD_GET_TOUCH_REPORT_CONFIG)
-		pr_info("SAaiOS_TOUCH_DBG: read-floor=%u first_read=%u plen=%u total=%u continued=%d\n",
-			SAAIOS_RD_FLOOR, tcm_hcd->read_length,
-			tcm_hcd->payload_length, total_length, 1);
+		pr_info("SAaiOS_TOUCH_DBG: 0x25 need continued-read first_read=%u plen=%u total=%u\n",
+			tcm_hcd->read_length, tcm_hcd->payload_length,
+			total_length);
 
 	UNLOCK_BUFFER(tcm_hcd->in);
 
@@ -1688,9 +1685,7 @@ check_padding:
 	if (tcm_hcd->rd_chunk_size == 0)
 		tcm_hcd->read_length = total_length;
 #endif
-	/* Clamp even when rd_chunk_size==0 (HDL_RD_CHUNK_SIZE). */
-	if (tcm_hcd->read_length < SAAIOS_RD_FLOOR)
-		tcm_hcd->read_length = SAAIOS_RD_FLOOR;
+	/* No global SAAIOS_RD_FLOOR — over-read after 0x20 jammed later cmds. */
 	if (tcm_hcd->is_detected)
 		syna_tcm_dispatch_message(tcm_hcd);
 
@@ -3468,8 +3463,6 @@ static void syna_tcm_helper_work(struct work_struct *work)
 		} else if (IS_FW_MODE(tcm_hcd->id_info.mode)) {
 			pr_info("SAaiOS_TOUCH_DBG: skip touch_reinit/0x25 after 0x20 OK (0x25 -5 desync discriminator)\n");
 			touch_register_fallback_input(tcm_hcd);
-			if (saaios_reinit_ok)
-				saaios_start_live20_ladder(tcm_hcd);
 		} else {
 			pr_info("SAaiOS_TOUCH_DBG: HELP_SEND_REINIT skip touch_reinit (not FW mode 0x%02x)\n",
 				tcm_hcd->id_info.mode);
@@ -3478,6 +3471,11 @@ static void syna_tcm_helper_work(struct work_struct *work)
 		tcm_hcd->update_watchdog(tcm_hcd, true);
 #endif
 		mutex_unlock(&tcm_hcd->reset_mutex);
+		/* Ladder AFTER unlock: delay=0 under reset_mutex raced the
+		 * successful REINIT 0x20 and timed out, aborting 10/100/500.
+		 */
+		if (saaios_reinit_ok && IS_FW_MODE(tcm_hcd->id_info.mode))
+			saaios_start_live20_ladder(tcm_hcd);
 		syna_tcm_since58_observe(tcm_hcd, "after stock REINIT");
 		wake_up_interruptible(&tcm_hcd->hdl_wq);
 		break;
@@ -4153,7 +4151,7 @@ static int syna_tcm_probe(struct platform_device *pdev)
 	const struct syna_tcm_board_data *bdata;
 	const struct syna_tcm_hw_interface *hw_if;
 
-	pr_info("SAaiOS_TOUCH_DBG: since76 touch lab: read-floor 256 + touchlab, skip 0x25 after 0x20 OK, auto live20 ladder 0/10/100/500ms (empty GET only; no auto 0x05/0x24/0x30), retval<0→dead response=ff, tokens live20/run_app/enable_report/no_doze (app_config optional not menu), oneshot 0x45, IDENTIFY 0x02 STATUS_OK, skip 0x1f HDL firmware running, no 0x40\n");
+	pr_info("SAaiOS_TOUCH_DBG: since76 touch lab: read-floor 256 + touchlab, skip 0x25 after 0x20 OK, auto live20 ladder 10/100/500/1000ms after REINIT unlock (empty GET only; no delay=0 race; no auto 0x05/0x24/0x30), retval<0→dead response=ff, tokens live20/run_app/enable_report/no_doze (app_config optional not menu), oneshot 0x45, IDENTIFY 0x02 STATUS_OK, skip 0x1f HDL firmware running, no 0x40\n");
 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
 
 	hw_if = pdev->dev.platform_data;
@@ -4200,7 +4198,8 @@ static int syna_tcm_probe(struct platform_device *pdev)
 /*	tcm_hcd->wakeup_gesture_enabled = WAKEUP_GESTURE; */
 
 #ifdef PREDICTIVE_READING
-	tcm_hcd->read_length = SAAIOS_RD_FLOOR;
+	/* Probe-only initial floor (not the removed global per-message clamp). */
+	tcm_hcd->read_length = 256;
 #else
 	tcm_hcd->read_length = MESSAGE_HEADER_SIZE;
 #endif

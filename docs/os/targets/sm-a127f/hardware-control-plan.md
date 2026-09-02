@@ -32,22 +32,26 @@ Userspace we own (PID 1 now; a small compositor later) can **command**:
 
 ---
 
-## Now (boot-v011, 2026-08-19)
+## Now (boot-v031 packed, not flashed; v029 LIVE Maxwell + Wallbox join; TSP parked)
 
 Stock **DTB + kernel** in `boot.img` (`4.19.111-27127798`). Our ramdisk only. Vbmeta patched Magisk-style (flags OR 3). Pack: `SEANDROIDENFORCE` + pad **44 MiB**. Odin **AP**, human-only.
+
+TD4150 bring-up is **parked** ([kernel-touch.md](kernel-touch.md)). Do not flash sinceN opcode images for product work. Return to TSP only with a stock-Android dmesg or a new discriminator, not another 0x05/0x30.
 
 | Piece | State |
 |-------|--------|
 | PID 1 | our `/init` + BusyBox |
-| Display | `fb0` text splash (unblank **once**) |
-| USB | RNDIS `0525:A4A2`; telnet **23 / 2323**; dropbear **22** |
-| Volume | `event1` `gpio_keys` — live |
-| Power key | `event2` `sec-pmic-key` — live |
-| Touch | **`event6`** `sec_touchscreen` TD4150 `spi1.2` — node exists after 0x45→0x02; **silent** (was event3 on stock/v011) |
-| TSP IRQ | **244** stuck at **3** after firmware start; `REPORT_TOUCH` never arrives. See [kernel-touch.md](kernel-touch.md) |
-| Resume | `in_hdl_mode` + idle HDL → skip `do_reset` / `CMD_REZERO` |
-| Poweroff | ramdisk `/sys/power/state` = **`freeze mem` only** |
-| Unbind TSP | **destructive** until reboot (`event3` gone) |
+| Display | `fb0` console: banner, battery, backlight, USB, mem, `aud` |
+| Backlight | sysfs `/sys/class/backlight` or `leds` (panel/lcd preferred). Vol±. Never a second `FBIOBLANK` |
+| USB | RNDIS `0525:A4A2`; telnet **23 / 2323**; dropbear **22**. v028 `/sbin/usb-host` / `/sbin/usb-device` — **never host at boot**. v029 does not change USB |
+| Volume | `event1` `gpio_keys` — brightness |
+| Power key | `event2` `sec-pmic-key` — tap `/sbin/beep`; 2s reboot (kernel `poweroff` still missing) |
+| Audio | SMA1303 / ABOX **pcmC0D1p** → SIFS1 → UAIF1. `/sbin/play` WAV **LIVE 2026-08-29**. [audio.md](audio.md). Vendor RDMA3/SIFS0 is silent |
+| Wi‑Fi | **v029 LIVE join.** Maxwell fw + scan + **Wallbox WPA2** via `/tmp/wpa_supplicant` only. `wlan0` **192.168.168.8**. **v031 packed** (`/sbin/wpa_supplicant` + `/sbin/wpa_cli` + `/sbin/wifi-join` by args) — not flashed. No PSK in image. Telnet-only — not at boot |
+| Touch | parked. Node may exist; do not unbind; do not send TSP opcodes from init |
+| Poweroff | ramdisk `/sys/power/state` = `freeze mem` only; long-press reboots |
+
+Pack: `make -f os/Makefile boot-v031` (stock Image, no maze). Tar `$(MEDIA)/saaios-boot-v031.tar`. Does not overwrite v021–v030. `make flash` refuses. Rollback: `saaios-boot-v029.tar` (LIVE) or `saaios-boot-v030.tar`.
 
 Already visible in sysfs (read-only until a phase owns it): `fb0`, gpio volume, PMIC power key, battery, `/sys/class/sec/tsp/cmd`, USB gadget.
 
@@ -56,17 +60,14 @@ Kernel tree to **reuse** (a12s / Exynos 850, not Helio): [maazm7d/kernel_samsung
 ## Endpoint vs now
 
 ```text
-now:      splash + RNDIS + keys; TSP deaf; no poweroff
-          ↓  Phase A  (kernel Image + resume patch)
-touch:    IRQ 244 moves; event3 packets
-          ↓  Phase B
-input:    init reads evdev (log, then on-screen cursor)
-          ↓  Phase C
-display:  backlight / brightness; blank once if needed
-          ↓  Phase D
-power:    long-press policy; kernel poweroff; suspend
-          ↓  Phase E+
-radios / audio / USB roles — listed, not scheduled
+now:      v031 packed — wpa_supplicant + wifi-join by args (human Odin AP; not flashed)
+          v030 packed — /sbin/iw + /sbin/wifi-scan
+          v029 LIVE — Maxwell + Wallbox join (wlan0 192.168.168.8; PSK only in /tmp)
+          v028 LIVE device — RNDIS/telnet; usb-host opt-in (not run)
+          v027 LIVE play — /sbin/play WAV on pcmC0D1p / SIFS1 / UAIF1 / SMA1303
+          ↓  Phase D  (kernel poweroff — later)
+          ↓  Phase E4 modem — next
+          ─  Phase A (TSP) parked; see kernel-touch.md
 ```
 
 ---
@@ -75,50 +76,32 @@ radios / audio / USB roles — listed, not scheduled
 
 Each phase is one ENGINEERING.md loop: Goal / Current / Change / Test / Acceptance / Rollback. Smallest verifiable step. Tagged `boot-vNNN.img` is the return point. Human flashes Odin AP; `make flash` **refuses**.
 
-### Phase A — vendor Image + TSP `do_reset`
+### Phase A — vendor Image + TSP `do_reset` — **PARKED**
 
-**Depends on:** v011 ramdisk kept as-is; a12s tree built once. Pack path: `bootimg.py pack --kernel` and `make -f os/Makefile boot-v012` (stock DTB; copies `/srv/media/saaios-boot-v012.tar` only if `arch/arm64/boot/Image` exists).
+Do not schedule. Last packed discriminator is v019 since76. Init no longer drives `/sys/kernel/saaios_touch`. Details: [kernel-touch.md](kernel-touch.md).
+
+### Phase B — input into our userspace — **keys on v020 / v021**
+
+Touch packets are not a dependency for the console. Volume and power are live. Finger cursor waits on Phase A.
+
+### Phase C — display control — **v020 LIVE**
+
+**Depends on:** none of Phase A.
 
 | | |
 |--|--|
-| Goal | TD4150 scans after resume; `event3` delivers ABS_MT |
-| Current | Stock Image; `syna_tcm_resume` `goto mod_resume`; IRQ=7 |
-| Change | Build `Image` from a12s tree. Two-site patch in `synaptics_tcm_core.c` only ([kernel-touch.md](kernel-touch.md)): HDL idle → `do_reset`; `reset_and_reinit` fall-through when `host_downloading==0`. Pack boot-v012 = **new Image + v011 ramdisk** + stock DTB, 44 MiB pad, patched vbmeta |
-| Test | Human Odin AP. Telnet: `grep synaptics /proc/interrupts`; `hexdump -C /dev/input/event3` while touching |
-| Acceptance | IRQ 244 **increments**; finger packets on `event3`; `do_reset` in dmesg. No unbind. No `check_connection` retry |
+| Goal | Command brightness / backlight; status overlay |
+| Current | v011 painted `fb0`; backlight sysfs unused; v019 was a TSP lab |
+| Change | Ramdisk console on **stock** Image. Probe `/sys/class/backlight` (prefer panel/lcd). Vol± writes `brightness` (min ~1/16 of max, never 0). Battery + mem + USB on `fb0`. Unblank **once**. No TSP opcodes |
+| Test | Human Odin AP `saaios-boot-v020.tar`. Banner `SaaiOS v020`. Vol± visibly changes backlight. Battery % updates. Telnet still works |
+| Acceptance | **LIVE 2026-08-29.** Banner `SaaiOS v020`. Vol± brightness. Battery on screen. Telnet/RNDIS. No maze Image. No second unblank |
 | Rollback | `saaios-boot-stock-restore.tar` or last good v011 tar |
 
-Do **not** `#define RESET_ON_RESUME` alone (wrong branch). Do **not** write a new driver. Prefer Samsung OSS zip **A127FXXSDDXJ6** (binary D, same as this unit’s **DXJ2**) if Project-Xed `LOCALVERSION` misbehaves — same two-site patch.
-
-### Phase B — input into our userspace
-
-**Depends on:** Phase A acceptance (packets exist).
-
-| | |
-|--|--|
-| Goal | PID 1 (or a tiny `inputd`) consumes real coordinates |
-| Current | Keys work; `event3` unread / was empty |
-| Change | Read evdev. First: log `ABS_MT_POSITION_*` over telnet. Then: a 1-pixel or box cursor on `fb0` |
-| Test | Finger move → log lines and/or cursor tracks |
-| Acceptance | Touch, vol±, power all visible to **our** userspace. UI still must not own raw evdev long-term (`inputd` later) |
-| Rollback | Previous boot-vNNN (ramdisk-only if Image is good) |
-
-### Phase C — display control
-
-**Depends on:** Phase B not required, but do **not** couple a new blank path with a TSP experiment. v011 unblanks **once**.
-
-| | |
-|--|--|
-| Goal | Command brightness / backlight; optional overlay |
-| Current | We paint `fb0`; backlight sysfs unused |
-| Change | Find and drive the panel backlight node (sysfs). Optional: one extra layer / status line. Blank **only** if a dedicated boot proves resume still delivers touch |
-| Test | Brightness steps visible; screen still paints; IRQ 244 still moves after any blank |
-| Acceptance | Userspace sets brightness without a second accidental `syna_tcm_resume`. No DRM required |
-| Rollback | Previous boot-vNNN |
+Do **not** couple a new blank path with a TSP experiment.
 
 ### Phase D — power policy
 
-**Depends on:** keys (already true); kernel Image we can change (Phase A).
+**Depends on:** keys (already true). Real `poweroff` needs a kernel change later; not bundled with TSP.
 
 | | |
 |--|--|
@@ -129,20 +112,60 @@ Do **not** `#define RESET_ON_RESUME` alone (wrong branch). Do **not** write a ne
 | Acceptance | Off is a kernel shutdown, not a hang. Resume does not re-deaf the TSP |
 | Rollback | Previous Image; do not iterate power and TSP in one flash |
 
-### Phase E+ — listed, not scheduled
+### Phase E1 — speaker beep + WAV play — **v027 LIVE**
 
-One subsystem per tagged image. Order is preference, not a calendar:
+**Depends on:** Phase C return point (v020 LIVE). Detail: [audio.md](audio.md).
+
+| | |
+|--|--|
+| Goal | Hear a tone, then a short melody, from the loudspeaker from our ramdisk |
+| Current | **LIVE 2026-08-29.** `/sbin/play` WAV on `pcmC0D1p` / SIFS1 / UAIF1 / SMA1303. User said **работает**. First `/tmp` on v026, then confirmed |
+| Change | v027: `/sbin/play FILE.wav` on that same route. Packed `/usr/share/sounds/test.wav` (Ode to Joy). No auto-play. Power tap stays beep. Stock Image |
+| Test | Human Odin AP `saaios-boot-v027.tar`. Banner `SaaiOS v027`. Telnet `/sbin/play /usr/share/sounds/test.wav` |
+| Acceptance | **LIVE 2026-08-29.** Melody from the speaker. Replay `/sbin/play /usr/share/sounds/test.wav`. Do not use `pcmC0D3p` / SIFS0 |
+| Rollback | `saaios-boot-v026.tar` |
+
+Do **not** toggle `Codec Enable`, SMA1303 `I2C Reg Reset`, or `Force AMP Power Down`. Leave `HP`/`EP`/codec `SPK` off.
+
+### Phase E2 — USB roles — **v028 LIVE device (host untested)**
+
+**Depends on:** Phase E1 return point (v027 LIVE). Stock DXJ2 Image — no maze.
+
+| | |
+|--|--|
+| Goal | Explicit host vs device on the Type-C DWC3 without losing the RNDIS console at boot |
+| Current | **LIVE 2026-08-29 probe on v027.** UDC `13600000.dwc3` **configured** / high-speed / `is_otg=1` / `state=b_peripheral` / `id=1` `b_sess=1`. configfs `g1` bound (`rndis.usb0` + `acm.gs0`). `android_usb` CONFIGURED. **No** `/sys/class/usb_role` (`CONFIG_USB_ROLE_SWITCH` is not set). `/sys/bus/usb/devices` **empty**; `xhci-hcd` driver present but unbound. Type-C `port0` (SM5714 `i2c-0/0-0033`): `data_role=host [device]`, `port_type=[dual]`, `power_role=source [sink]`, files **rw**. `host_notify/usb_otg/mode=PERIPHER`. Stock `/proc/config.gz`: `CONFIG_USB=y` `CONFIG_USB_DWC3_DUAL_ROLE=y` `CONFIG_USB_XHCI_HCD=y` `CONFIG_USB_GADGET=y` `CONFIG_USB_CONFIGFS_RNDIS=y` `CONFIG_TYPEC=y` `CONFIG_PHY_EXYNOS_USBDRD=y`. `# CONFIG_USB_OTG` `# CONFIG_USB_DWC2` `# CONFIG_USB_ROLE_SWITCH`. **Stock kernel can host.** No new Image. |
+| Change | Ramdisk v028: `/sbin/usb-host` unbinds RNDIS then writes typec `host` + dwc3 `id=0`; `/sbin/usb-device` reverses. Flag `/tmp/usb-role-host` stops init `retry_gadget`. Boot still forces device (`typec data_role=device`, dwc3 `id=1`) then binds gadget. No host key combo. Power 2s reboot = device. Stock Image. Same D1/SIFS1 play. Tar SHA256 `673c9b0ad6dd5be76ec4b4f5f9edc0f7218270b3389e5117b9612cc476fe28c8`. |
+| Test | Human Odin AP `saaios-boot-v028.tar`. Banner `SaaiOS v028`. Telnet **before** any host switch. Confirm `usb-device` is a no-op while still gadget. Then, with Power 2s in mind: `/sbin/usb-host` — expect RNDIS drop. Reboot. Telnet back. Optional later: OTG adapter + stick, then `lsusb` / `/sys/bus/usb/devices`. |
+| Acceptance | **LIVE device + switch 2026-08-29.** Banner `SaaiOS v028`. `usb-host` drops RNDIS. Power 2s reboot returns device (photo: `rndis0`, telnet, play). Host/stick not confirmed. |
+| Rollback | `saaios-boot-v027.tar` |
+
+Do **not** run `usb-host` from init or `rcS`. Do **not** write typec/`id` from a live v027 debug session (this probe did not).
+
+### Phase E3 — onboard Maxwell Wi‑Fi — **LIVE join (v029); v031 packed (not flashed)**
+
+**Depends on:** Phase E2 return point (v028 LIVE device). Stock DXJ2 Image — no maze. Not RTL8188EUS.
+
+| | |
+|--|--|
+| Goal | Start the SCSC Maxwell radio so `wlan0` has a real MAC (firmware load + `slsi_start`), scan 2.4 GHz SSIDs, then join a WPA2 AP from telnet |
+| Current | **LIVE v029 2026-08-29.** Banner `SaaiOS v029`. `/sbin/wifi-up` → `wlan0` MAC `00:00:0f:08:0e:af`. `mx140.bin` + hcf. 2.4 GHz Y, 5 GHz N. MIB `NACHO_S612_A127F`. **LIVE scan:** static `iw` 6.9 at `/tmp/iw` (12 BSS / 11 named SSIDs). **LIVE join** the same day: static `wpa_supplicant` 2.11 + `wpa_cli` on `/tmp` only; **Wallbox** WPA2-PSK; `wlan0` **192.168.168.8/24**. RNDIS kept. PSK never left `/tmp`. |
+| Change | v029: vendor `/etc/wifi` production files in ramdisk `/vendor/etc/wifi`. `/sbin/wifi-up`. Tar SHA256 `a9e743caa02da38f6dcc5bc7adbf4ddd81dcb31b6d06eccc8deb49fe01bb2cf7`. v030: `/sbin/iw` + `/sbin/wifi-scan`. Tar SHA256 `8eff38986a11fdc348fe1f6941f3aec3d8f2c9b7f108c2d3a70a9c13ab396bc3`. v031: same stock Image + static `/sbin/wpa_supplicant` 2.11 (nl80211, internal TLS, libnl-3.11) + `/sbin/wpa_cli` + `/sbin/wifi-join SSID PSK` (writes `/tmp/wpa_supplicant.conf` only, `-B -D nl80211`, `udhcpc` + `/usr/share/udhcpc/default.script`). **No PSK in image.** **Not at boot.** No `wpa_passphrase`. Tar SHA256 `dfd2fcafc898dced5ac4b90ea3e3ea6d14ebca63dd929bea277a67aa59dc819e`. |
+| Test | Human already joined Wallbox on live v029. Pack v031; human Odin AP when they choose. Banner `SaaiOS v031`. Telnet `/sbin/wifi-join 'SSID' 'PSK'`. Do not run `usb-host`. |
+| Acceptance | **LIVE join 2026-08-29 (v029 + /tmp wpa).** Wallbox; `192.168.168.8`. v031 packed, not flashed. E3 closed in the product ramdisk. |
+| Rollback | `saaios-boot-v030.tar` or `saaios-boot-v029.tar` |
+
+Do **not** auto-run `wifi-up`, `wifi-scan`, or `wifi-join` from init or `rcS`. Do **not** write EFS/RADIO. Do **not** start `wpa_supplicant` at boot. Do **not** embed any PSK.
+
+### Phase E4 — next (listed, not started this turn)
 
 | # | Subsystem | First probe (read-only) | Command later |
 |---|-----------|-------------------------|---------------|
-| E1 | Audio | `AUD3004X` / `sma1303` ALSA nodes | `aplay` tone |
-| E2 | USB roles | gadget we already have (RNDIS) | host vs device if UDC allows |
-| E3 | Wi‑Fi | onboard `wlan` / firmware path (Samsung/Exynos combo, not Realtek USB) | `wpa_supplicant` or equivalent |
 | E4 | Modem | `RADIO` partition exists; do not write it | later; EFS is forever off-limits |
 
-Do not start E+ until A–D have return-point images.
+Phase A (TSP) is parked.
 
-**RTL8188EUS** ([aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus)) is a **USB** 802.11n dongle driver (monitor/injection). It is **not** onboard `wlan0` and **not** the TD4150/synaptics tree. An 8188 stick on this phone needs USB **host**/OTG; that conflicts with the current RNDIS gadget console (phone is device). Do not compile it into the a12s Image for Phase A. Detail: [wifi-usb.md](wifi-usb.md). R620 (2026-08-19) has no `0bda:8179` — no host-side clone.
+**RTL8188EUS** ([aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus)) is a **USB** 802.11n dongle driver (monitor/injection). It is **not** onboard `wlan0` and **not** the TD4150/synaptics tree. An 8188 stick on this phone needs USB **host**/OTG; wait until E2 host is LIVE with a stick, then see [wifi-usb.md](wifi-usb.md). R620 (2026-08-19) has no `0bda:8179` — no host-side clone.
 
 ---
 

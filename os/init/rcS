@@ -1,76 +1,55 @@
 #!/bin/busybox ash
-# USB net + listeners. telnetd needs devpts/ptmx; do not bind a single addr.
+# Listeners first. USB net iface may be late or missing; do not gate telnet on it.
 BB=/bin/busybox
-$BB mkdir -p /dev/pts /tmp
+$BB mkdir -p /dev/pts /tmp /var/run /run
 $BB mount -t devpts devpts /dev/pts 2>/dev/null
 if [ ! -e /dev/ptmx ]; then
   $BB mknod /dev/ptmx c 5 2
   $BB chmod 666 /dev/ptmx
 fi
+[ -e /dev/null ] || $BB mknod /dev/null c 1 3
+[ -e /dev/urandom ] || $BB mknod /dev/urandom c 1 9
 
-$BB mkdir -p /var/run 2>/dev/null
+# telnetd immediately — v022 CRLF made ash die before this (do\r).
+$BB telnetd -l /bin/ash -p 23
+$BB telnetd -l /bin/ash -p 2323
 
-# TSP: PID 1 unblanks fb0 once, then writes input/enabled only if it still
-# reads 0. Do not echo cmd/probe_enable here — that re-enters syna_tcm_resume.
+# dropbear -R: generate host keys on first start. Background only; never wait/kill.
+if [ -x /sbin/dropbear ]; then
+  $BB mkdir -p /etc/dropbear /root/.ssh
+  chown root:root /etc /root /etc/dropbear /root/.ssh 2>/dev/null
+  chmod 755 /etc 2>/dev/null
+  chmod 700 /root /etc/dropbear /root/.ssh 2>/dev/null
+  if [ -f /etc/dropbear/authorized_keys ]; then
+    cp /etc/dropbear/authorized_keys /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys /etc/dropbear/authorized_keys
+  fi
+  /sbin/dropbear -R -s -p 22 -P /run/dropbear.pid &
+fi
 
-i=0
-while [ "$i" -lt 20 ]; do
-  for n in usb0 rndis0 usb1 eth0; do
-    if [ -e "/sys/class/net/$n" ]; then
-      $BB ifconfig "$n" 192.168.42.1 netmask 255.255.255.0 up
-      {
-        echo "start 192.168.42.2"
-        echo "end 192.168.42.20"
-        echo "interface $n"
-        echo "option subnet 255.255.255.0"
-        echo "option lease 86400"
-      } > /tmp/udhcpd.conf
-      $BB udhcpd /tmp/udhcpd.conf
-      # Listen on all addresses. Port 2323: Windows often blocks outbound 23.
-      $BB telnetd -l /bin/ash -p 23
-      $BB telnetd -l /bin/ash -p 2323
-      # dropbear: host keys on first start (-R); pubkey only (-s).
-      # Prefer /root/.ssh/authorized_keys (OpenSSH-style). -D broke auth on
-      # this dropbear build; keep host keys under /etc/dropbear via -r after -R.
-      if [ -x /sbin/dropbear ]; then
-        $BB mkdir -p /etc/dropbear /root/.ssh
-        [ -e /dev/null ] || $BB mknod /dev/null c 1 3
-        [ -e /dev/urandom ] || $BB mknod /dev/urandom c 1 9
-        chown root:root /etc /root /etc/dropbear /root/.ssh 2>/dev/null
-        chmod 755 /etc 2>/dev/null
-        chmod 700 /root /etc/dropbear /root/.ssh 2>/dev/null
-        if [ -f /etc/dropbear/authorized_keys ]; then
-          cp /etc/dropbear/authorized_keys /root/.ssh/authorized_keys
-          chmod 600 /root/.ssh/authorized_keys /etc/dropbear/authorized_keys
+echo "listeners :23 :2323 :22; usb net pending" > /tmp/net-ok
+
+# Configure USB net when it appears. Keep retrying in the background.
+(
+  while :; do
+    for n in usb0 rndis0 usb1 eth0; do
+      if [ -e "/sys/class/net/$n" ]; then
+        $BB ifconfig "$n" 192.168.42.1 netmask 255.255.255.0 up
+        if [ ! -f /tmp/udhcpd.conf ]; then
+          {
+            echo "start 192.168.42.2"
+            echo "end 192.168.42.20"
+            echo "interface $n"
+            echo "option subnet 255.255.255.0"
+            echo "option lease 86400"
+          } > /tmp/udhcpd.conf
+          $BB udhcpd /tmp/udhcpd.conf
         fi
-        # Generate host keys once, then start daemon for :22.
-        # Important: set pidfile under /run so dropbear doesn't depend on /var/run.
-        if [ ! -f /etc/dropbear/dropbear_rsa_host_key ] && \
-           [ ! -f /etc/dropbear/dropbear_ecdsa_host_key ] && \
-           [ ! -f /etc/dropbear/dropbear_ed25519_host_key ]; then
-          /sbin/dropbear -R -s -p 22 -F -P /run/dropbear.pid &
-          DBPID=$!
-          j=0
-          while [ "$j" -lt 10 ]; do
-            if [ -f /etc/dropbear/dropbear_rsa_host_key ] || \
-               [ -f /etc/dropbear/dropbear_ecdsa_host_key ] || \
-               [ -f /etc/dropbear/dropbear_ed25519_host_key ]; then
-              break
-            fi
-            j=$((j + 1))
-            $BB sleep 1
-          done
-          kill $DBPID 2>/dev/null
-          wait $DBPID 2>/dev/null
-        fi
-        /sbin/dropbear -s -p 22 -P /run/dropbear.pid &
+        echo "net $n telnet :23 :2323 ssh :22" > /tmp/net-ok
+        exit 0
       fi
-      echo "net $n telnet :23 :2323 ssh :22" > /tmp/net-ok
-      exit 0
-    fi
+    done
+    $BB sleep 2
   done
-  i=$((i + 1))
-  $BB sleep 1
-done
-echo "no usb net" > /tmp/net-ok
-exit 1
+) &
+exit 0

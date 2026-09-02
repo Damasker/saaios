@@ -55,14 +55,15 @@ Mainline DRM on this DPU is **not** a Phase 1 requirement. First graphics = fill
 
 ## Touch
 
-**BOM variance — do not assume one driver.**
+**BOM variance across A127F units — do not assume one driver for the model.** This unit is **Synaptics TCM TD4150** on `spi1.2`. Canonical bring-up: [kernel-touch.md](kernel-touch.md). Live map: [unit.md](unit.md).
 
 | Sample | Driver |
 |--------|--------|
+| **This unit (A127FXXSDDXJ2)** | **synaptics_tcm** TD4150, fw `tsp_synaptics/td4150_a12s_boe.bin` (kernel-builtin) |
 | Device Info HW #99921 | **NVT-ts** (Novatek) |
 | Device Info HW #78967 | **synaptics_tcm** |
 
-Phase 6 must detect `/dev/input/event*` and map ABS_MT_*, not hardcode an IC.
+After firmware start on SaaiOS v019, input is **`/dev/input/event6`** (`sec_touchscreen`), not event3. Phase 6 must still detect `/dev/input/event*` and map ABS_MT_*.
 
 ## Other I/O (for later services)
 
@@ -89,16 +90,4 @@ Phase 1 console target: **USB serial gadget** or **stock Download mode + known-g
 
 ## What this unit still must report
 
-From the phone, no flashing:
-
-```text
-getprop ro.product.model
-getprop ro.boot.hardware
-getprop ro.bootloader
-uname -a
-cat /proc/cpuinfo | head
-ls /dev/input
-ls /sys/class/drm  /sys/class/graphics
-```
-
-Paste that into `targets/sm-a127f/unit.md` when captured.
+Identity, input map, and stock blobs are in [unit.md](unit.md). **Still missing on the host:** stock Android `dmesg` (probe → first touch) on this unit / same DTBO. Do not invent it. See [kernel-touch.md](kernel-touch.md).

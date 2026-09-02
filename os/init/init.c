@@ -8,6 +8,8 @@
 #include <linux/input-event-codes.h>
 #include "font8x8.h"
 
+#define SAAIOS_BANNER "SaaiOS v031"
+
 #ifndef AT_FDCWD
 #define AT_FDCWD -100
 #endif
@@ -320,12 +322,12 @@ static void draw_str(unsigned x, unsigned y, const char *s, unsigned fg, unsigne
     }
 }
 
-static unsigned menu_y0(void) {
+static unsigned log_floor(void) {
     if (!fb.ok)
-        return 0;
-    if (fb.yres > 320)
-        return fb.yres - 300;
-    return fb.yres / 2;
+        return 8;
+    if (fb.yres > 400)
+        return 240;
+    return 8;
 }
 
 static void fill_screen(unsigned pix) {
@@ -361,8 +363,8 @@ static void log_line(const char *s) {
     kmsg("\n");
     if (!fb.ok)
         return;
-    if (fb.log_y + 20 >= menu_y0())
-        fb.log_y = 8;
+    if (fb.log_y + 20 >= fb.yres - 24)
+        fb.log_y = log_floor();
     for (i = 0; s[i]; i++) {
         draw_char(x, fb.log_y, s[i], fb.pix_fg, fb.pix_bg);
         x += 16;
@@ -411,7 +413,7 @@ static int setup_fb(void) {
     fb.len = len;
     fb.fd = fd;
     fb.ok = 1;
-    fb.log_y = 8;
+    fb.log_y = log_floor();
     fb.pix_bg = pack_rgb(&fb.v, 0x10, 0x18, 0x28);
     fb.pix_fg = pack_rgb(&fb.v, 0xE8, 0xF0, 0xFF);
     fill_screen(fb.pix_bg);
@@ -451,10 +453,14 @@ static int first_named(const char *dir, char *out, unsigned cap) {
 
 static void set_usb_device_role(void) {
     char name[64], path[160];
-    long fd = sys(__NR_openat, AT_FDCWD, (long)"/sys/class/usb_role", O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0, 0, 0);
+    long fd;
     char buf[1024];
     long n;
     unsigned pos;
+    /* Boot is always gadget/RNDIS. Host is /sbin/usb-host only — never here. */
+    write_file("/sys/class/typec/port0/data_role", "device\n");
+    write_file("/sys/devices/platform/13600000.usb/13600000.dwc3/id", "1\n");
+    fd = sys(__NR_openat, AT_FDCWD, (long)"/sys/class/usb_role", O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0, 0, 0);
     if (is_err(fd))
         return;
     n = sys(__NR_getdents64, fd, (long)buf, sizeof(buf), 0, 0, 0);
@@ -487,8 +493,10 @@ static void setup_android_usb(void) {
     write_file("/sys/class/android_usb/android0/enable", "1\n");
 }
 
+static void bind_configfs_udc(void);
+
 static void setup_configfs_gadget(void) {
-    char udc[64], line[96];
+    char line[96];
     int have_rndis, have_acm, have_ecm;
 
     mkdir_p("/config");
@@ -531,6 +539,19 @@ static void setup_configfs_gadget(void) {
         sys(__NR_symlinkat, (long)"/config/usb_gadget/g1/functions/acm.gs0", AT_FDCWD,
             (long)"/config/usb_gadget/g1/configs/c.1/acm.gs0", 0, 0, 0);
 
+    bind_configfs_udc();
+}
+
+static unsigned gadget_retry_n;
+
+static int net_iface_up(void) {
+    return exists_path("/sys/class/net/usb0") ||
+           exists_path("/sys/class/net/rndis0") ||
+           exists_path("/sys/class/net/usb1");
+}
+
+static void bind_configfs_udc(void) {
+    char udc[64], line[96];
     if (first_named("/sys/class/udc", udc, sizeof(udc)) == 0) {
         scopy(line, sizeof(line), "udc ");
         append(line, sizeof(line), udc);
@@ -539,6 +560,32 @@ static void setup_configfs_gadget(void) {
     } else {
         log_line("udc none");
     }
+}
+
+/* UDC can appear after first bind. Do not flap a live gadget.
+ * /sbin/usb-host plants /tmp/usb-role-host so we do not steal the UDC back. */
+static void retry_gadget(void) {
+    char cur[64];
+    int n, empty, i;
+    if (exists_path("/tmp/usb-role-host"))
+        return;
+    if (net_iface_up())
+        return;
+    if (gadget_retry_n >= 20)
+        return;
+    gadget_retry_n++;
+    n = read_file("/config/usb_gadget/g1/UDC", cur, sizeof(cur));
+    empty = 1;
+    if (n > 0) {
+        for (i = 0; i < n; i++) {
+            if (cur[i] != '\n' && cur[i] != ' ' && cur[i] != '\t' && cur[i] != 0)
+                empty = 0;
+        }
+    }
+    if (empty)
+        bind_configfs_udc();
+    if (gadget_retry_n <= 4 && exists_path("/sys/class/android_usb/android0/enable"))
+        setup_android_usb();
 }
 
 static void pet_watchdog(void) {
@@ -552,6 +599,7 @@ static void pet_watchdog(void) {
 }
 
 static int shell_running;
+static long shell_pid;
 
 static void run_shell(void) {
     long fd = -1;
@@ -594,6 +642,7 @@ static void spawn_shell(void) {
         return;
     if (pid == 0)
         run_shell();
+    shell_pid = pid;
     shell_running = 1;
     log_line("ash on ttyGS");
 }
@@ -610,6 +659,54 @@ static void spawn_rcs(void) {
         sys(__NR_execve, (long)"/bin/busybox", (long)argv, (long)envp, 0, 0, 0);
         sys(__NR_exit_group, 1, 0, 0, 0, 0, 0);
     }
+}
+
+static char audio_line[80];
+static char net_line[80];
+
+static void refresh_audio(void) {
+    char buf[192];
+    unsigned i;
+    if (read_file("/proc/asound/cards", buf, sizeof(buf)) > 0) {
+        for (i = 0; buf[i]; i++)
+            if (buf[i] == '\n') {
+                buf[i] = 0;
+                break;
+            }
+        while (buf[0] == ' ') {
+            unsigned k = 0;
+            while (buf[k]) {
+                buf[k] = buf[k + 1];
+                k++;
+            }
+        }
+        scopy(audio_line, sizeof(audio_line), buf[0] ? buf : "cards");
+        return;
+    }
+    if (exists_path("/dev/snd/pcmC0D3p"))
+        scopy(audio_line, sizeof(audio_line), "pcmC0D3p");
+    else
+        scopy(audio_line, sizeof(audio_line), "none");
+}
+
+static void spawn_beep(void) {
+    long pid;
+    char *argv[] = {"beep", 0};
+    char *envp[] = {"PATH=/bin:/sbin", 0};
+    if (!exists_path("/sbin/beep")) {
+        log_line("beep missing");
+        return;
+    }
+    pid = sys(__NR_clone, SIGCHLD, 0, 0, 0, 0, 0);
+    if (is_err(pid)) {
+        log_line("beep clone fail");
+        return;
+    }
+    if (pid == 0) {
+        sys(__NR_execve, (long)"/sbin/beep", (long)argv, (long)envp, 0, 0, 0);
+        sys(__NR_exit_group, 1, 0, 0, 0, 0, 0);
+    }
+    log_line("beep");
 }
 
 static void refresh_net_status(void) {
@@ -629,31 +726,25 @@ static void refresh_net_status(void) {
                 if (buf[i] == '\n')
                     buf[i] = 0;
             log_line(buf);
+            scopy(net_line, sizeof(net_line), buf);
             sys(__NR_unlinkat, AT_FDCWD, (long)"/tmp/net-ok", 0, 0, 0, 0);
         }
     }
 }
 
-static const char *menu_tokens[] = { "live20", "run_app", "enable_report", "no_doze" };
-static const char *menu_labels[] = {
-    "LIVE20 0x20",
-    "RUN_APP 0x14",
-    "ENABLE_REPORT 0x05",
-    "NO_DOZE 0x24",
-};
-#define MENU_N 4
-
-static int menu_sel;
 static int fd_vol = -1;
 static int fd_pwr = -1;
 static int power_down;
 static unsigned long power_t0_ms;
 static unsigned long last_vol_ms;
-static char st_state[24];
-static char st_response[8];
-static int st_seq, st_retval, st_live20, st_mode, st_attn, st_irq, st_rx, st_rt;
-static int st_action;
-static int st_ok;
+static char bl_brightness[192];
+static int bl_ok;
+static int bl_max;
+static int bl_cur;
+static int bat_pct = -1;
+static int mem_avail_mb = -1;
+static char bat_status[24];
+static int bl_probed;
 
 static unsigned long now_ms(void) {
     struct timespec ts;
@@ -747,103 +838,197 @@ static int open_named_event(const char *want) {
     return -1;
 }
 
-static const char *pick_touch_path(int want_status) {
-    static const char *st;
-    static const char *ac;
-    const char *p;
-    char line[96];
-
-    if (want_status && st)
-        return st;
-    if (!want_status && ac)
-        return ac;
-    if (want_status) {
-        if (exists_path("/sys/kernel/saaios_touch/status"))
-            p = "/sys/kernel/saaios_touch/status";
-        else if (exists_path("/sys/class/sec/tsp/saaios_touch/status"))
-            p = "/sys/class/sec/tsp/saaios_touch/status";
-        else
-            p = "/sys/class/sec/tsp/saaios_status";
-        st = p;
-        scopy(line, sizeof(line), "status_path ");
-    } else {
-        if (exists_path("/sys/kernel/saaios_touch/action"))
-            p = "/sys/kernel/saaios_touch/action";
-        else if (exists_path("/sys/class/sec/tsp/saaios_touch/action"))
-            p = "/sys/class/sec/tsp/saaios_touch/action";
-        else
-            p = "/sys/class/sec/tsp/saaios_action";
-        ac = p;
-        scopy(line, sizeof(line), "action_path ");
-    }
-    append(line, sizeof(line), p);
-    log_line(line);
-    return p;
+static int read_int_file(const char *path) {
+    char buf[32];
+    if (read_file(path, buf, sizeof(buf)) <= 0)
+        return -1;
+    return parse_int(buf, 0);
 }
 
-static const char *status_path(void) {
-    return pick_touch_path(1);
+static void write_uint_file(const char *path, unsigned v) {
+    char buf[24];
+    buf[0] = 0;
+    append_uint(buf, sizeof(buf), v);
+    append(buf, sizeof(buf), "\n");
+    write_file(path, buf);
 }
 
-static const char *action_path(void) {
-    return pick_touch_path(0);
+static int try_bl_dir(const char *dir) {
+    char bright[192], maxp[192];
+    int maxv, curv;
+    scopy(bright, sizeof(bright), dir);
+    append(bright, sizeof(bright), "/brightness");
+    scopy(maxp, sizeof(maxp), dir);
+    append(maxp, sizeof(maxp), "/max_brightness");
+    maxv = read_int_file(maxp);
+    curv = read_int_file(bright);
+    if (maxv <= 0)
+        maxv = 255;
+    if (curv < 0)
+        return 0;
+    if (!exists_path(bright))
+        return 0;
+    scopy(bl_brightness, sizeof(bl_brightness), bright);
+    bl_max = maxv;
+    bl_cur = curv;
+    if (bl_cur > bl_max)
+        bl_cur = bl_max;
+    bl_ok = 1;
+    return 1;
 }
 
-static void refresh_status(void) {
-    char buf[192];
-    const char *v;
-    if (read_file(status_path(), buf, sizeof(buf)) <= 0) {
-        st_ok = 0;
+static int has_sub(const char *s, const char *sub) {
+    unsigned n = slen(sub), i;
+    if (!n)
+        return 1;
+    for (i = 0; s[i]; i++)
+        if (!strncmp_local(s + i, sub, n))
+            return 1;
+    return 0;
+}
+
+static int bl_name_rank(const char *nm) {
+    if (has_sub(nm, "kbd") || has_sub(nm, "button") || has_sub(nm, "mute") ||
+        has_sub(nm, "camera") || has_sub(nm, "torch") || has_sub(nm, "flash"))
+        return 0;
+    if (has_sub(nm, "panel") || has_sub(nm, "lcd") || has_sub(nm, "display"))
+        return 3;
+    if (has_sub(nm, "backlight"))
+        return 2;
+    return 1;
+}
+
+static void scan_class_for_bl(const char *class_dir, int min_rank) {
+    long fd;
+    char buf[2048], path[192];
+    long n;
+    unsigned pos;
+    if (bl_ok)
         return;
+    fd = sys(__NR_openat, AT_FDCWD, (long)class_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0, 0, 0);
+    if (is_err(fd))
+        return;
+    n = sys(__NR_getdents64, fd, (long)buf, sizeof(buf), 0, 0, 0);
+    sys(__NR_close, fd, 0, 0, 0, 0, 0);
+    if (is_err(n) || n <= 0)
+        return;
+    pos = 0;
+    while (pos < (unsigned)n) {
+        unsigned short reclen = *(unsigned short *)(buf + pos + 16);
+        char *nm = buf + pos + 19;
+        if (nm[0] != '.' && bl_name_rank(nm) >= min_rank) {
+            scopy(path, sizeof(path), class_dir);
+            append(path, sizeof(path), "/");
+            append(path, sizeof(path), nm);
+            if (try_bl_dir(path))
+                break;
+        }
+        if (!reclen)
+            break;
+        pos += reclen;
     }
-    st_ok = 1;
-    v = find_key(buf, "seq=");
-    st_seq = parse_int(v, 0);
-    v = find_key(buf, "state=");
-    if (v)
-        copy_tok(st_state, sizeof(st_state), v);
-    else
-        scopy(st_state, sizeof(st_state), "?");
-    v = find_key(buf, "action=0x");
-    st_action = parse_int(v, 1);
-    v = find_key(buf, "retval=");
-    st_retval = parse_int(v, 0);
-    v = find_key(buf, "response=");
-    if (v)
-        copy_tok(st_response, sizeof(st_response), v);
-    else
-        scopy(st_response, sizeof(st_response), "?");
-    v = find_key(buf, "live20=");
-    st_live20 = parse_int(v, 0);
-    v = find_key(buf, "mode=");
-    st_mode = parse_int(v, 1);
-    v = find_key(buf, "attn=");
-    st_attn = parse_int(v, 0);
-    v = find_key(buf, "irq=");
-    st_irq = parse_int(v, 0);
-    v = find_key(buf, "rx=");
-    st_rx = parse_int(v, 0);
-    v = find_key(buf, "report_touch=");
-    st_rt = parse_int(v, 0);
 }
 
-static const char *ui_state(void) {
-    if (!st_ok)
-        return "waiting tsp";
-    if (!strncmp_local(st_state, "dead", 4))
-        return "DEAD";
-    if (!strncmp_local(st_state, "busy", 4))
-        return "BUSY";
-    if (st_retval == -62)
-        return "TIMEOUT";
-    if (st_seq && st_retval == 0)
-        return "OK";
-    return st_state;
+static void probe_backlight(void) {
+    static const char *prefer[] = {
+        "/sys/class/backlight/panel",
+        "/sys/class/backlight/panel0-backlight",
+        "/sys/class/leds/lcd-backlight",
+        0
+    };
+    int i;
+    char line[96];
+    if (bl_probed)
+        return;
+    bl_probed = 1;
+    for (i = 0; prefer[i]; i++) {
+        if (try_bl_dir(prefer[i]))
+            break;
+    }
+    if (!bl_ok)
+        scan_class_for_bl("/sys/class/backlight", 2);
+    if (!bl_ok)
+        scan_class_for_bl("/sys/class/leds", 2);
+    if (!bl_ok)
+        scan_class_for_bl("/sys/class/backlight", 1);
+    if (!bl_ok)
+        scan_class_for_bl("/sys/class/leds", 3);
+    if (bl_ok) {
+        scopy(line, sizeof(line), "bl ");
+        append(line, sizeof(line), bl_brightness);
+        log_line(line);
+    } else {
+        log_line("bl none");
+    }
 }
 
-static void draw_menu(void) {
-    unsigned y, i;
-    unsigned fg, bg, hi;
+static void set_brightness(int next) {
+    int minv;
+    if (!bl_ok)
+        return;
+    minv = bl_max / 16;
+    if (minv < 8)
+        minv = (bl_max > 8) ? 8 : 1;
+    if (next < minv)
+        next = minv;
+    if (next > bl_max)
+        next = bl_max;
+    if (next == bl_cur)
+        return;
+    bl_cur = next;
+    write_uint_file(bl_brightness, (unsigned)bl_cur);
+}
+
+static void bump_brightness(int up) {
+    int step;
+    if (!bl_ok)
+        return;
+    step = bl_max / 8;
+    if (step < 1)
+        step = 1;
+    set_brightness(up ? bl_cur + step : bl_cur - step);
+}
+
+static void refresh_battery(void) {
+    char buf[32];
+    int n;
+    n = read_int_file("/sys/class/power_supply/battery/capacity");
+    if (n < 0)
+        n = read_int_file("/sys/class/power_supply/batt/capacity");
+    bat_pct = n;
+    if (read_file("/sys/class/power_supply/battery/status", buf, sizeof(buf)) > 0 ||
+        read_file("/sys/class/power_supply/batt/status", buf, sizeof(buf)) > 0)
+        copy_tok(bat_status, sizeof(bat_status), buf);
+    else
+        scopy(bat_status, sizeof(bat_status), "?");
+}
+
+static void refresh_mem(void) {
+    char buf[512];
+    const char *v;
+    if (read_file("/proc/meminfo", buf, sizeof(buf)) <= 0)
+        return;
+    v = find_key(buf, "MemAvailable:");
+    if (!v)
+        v = find_key(buf, "MemFree:");
+    if (!v)
+        return;
+    while (*v == ' ' || *v == '\t')
+        v++;
+    mem_avail_mb = parse_int(v, 0) / 1024;
+}
+
+static void refresh_usb_line(void) {
+    if (exists_path("/tmp/usb-role-host"))
+        scopy(net_line, sizeof(net_line), "HOST 2s Power=device");
+    else if (exists_path("/sys/class/net/usb0") || exists_path("/sys/class/net/rndis0"))
+        scopy(net_line, sizeof(net_line), "usb0 192.168.42.1");
+    else
+        scopy(net_line, sizeof(net_line), "waiting");
+}
+
+static void draw_console(void) {
+    unsigned y, fg, bg, hi;
     char line[80];
 
     if (!fb.ok)
@@ -851,60 +1036,61 @@ static void draw_menu(void) {
     fg = fb.pix_fg;
     bg = fb.pix_bg;
     hi = pack_rgb(&fb.v, 0x40, 0xC0, 0x80);
-    y = menu_y0();
-    fill_rect(0, y, fb.xres, fb.yres, bg);
-    draw_str(8, y, "SaaiOS TOUCH LAB", fg, bg);
-    y += 20;
-    for (i = 0; i < MENU_N; i++) {
-        scopy(line, sizeof(line), i == (unsigned)menu_sel ? "> " : "  ");
-        append(line, sizeof(line), menu_labels[i]);
-        draw_str(8, y, line, i == (unsigned)menu_sel ? hi : fg, bg);
-        y += 20;
+    y = 8;
+    fill_rect(0, 0, fb.xres, log_floor(), bg);
+    draw_str(8, y, SAAIOS_BANNER, hi, bg);
+    y += 24;
+    scopy(line, sizeof(line), "");
+    append_uint(line, sizeof(line), fb.xres);
+    append(line, sizeof(line), "x");
+    append_uint(line, sizeof(line), fb.yres);
+    append(line, sizeof(line), " bpp");
+    append_uint(line, sizeof(line), fb.bpp);
+    draw_str(8, y, line, fg, bg);
+    y += 24;
+    scopy(line, sizeof(line), "bat  ");
+    if (bat_pct < 0)
+        append(line, sizeof(line), "?");
+    else {
+        append_uint(line, sizeof(line), (unsigned)bat_pct);
+        append(line, sizeof(line), "%");
     }
-    scopy(line, sizeof(line), "state: ");
-    append(line, sizeof(line), ui_state());
+    append(line, sizeof(line), "  ");
+    append(line, sizeof(line), bat_status[0] ? bat_status : "?");
     draw_str(8, y, line, fg, bg);
     y += 20;
-    scopy(line, sizeof(line), "retval: ");
-    if (st_retval < 0) {
-        append(line, sizeof(line), "-");
-        append_uint(line, sizeof(line), (unsigned)(-st_retval));
-    } else {
-        append_uint(line, sizeof(line), (unsigned)st_retval);
-    }
-    append(line, sizeof(line), "  response: ");
-    append(line, sizeof(line), st_ok ? st_response : "?");
-    draw_str(8, y, line, fg, bg);
-    y += 20;
-    scopy(line, sizeof(line), "live 0x20: ");
-    if (st_live20 < 0) {
-        append(line, sizeof(line), "-");
-        append_uint(line, sizeof(line), (unsigned)(-st_live20));
-    } else {
-        append_uint(line, sizeof(line), (unsigned)st_live20);
-    }
-    draw_str(8, y, line, fg, bg);
-    y += 20;
-    scopy(line, sizeof(line), "mode: ");
-    append_uint(line, sizeof(line), (unsigned)st_mode);
-    append(line, sizeof(line), "  ATTN: ");
-    if (st_attn < 0) {
-        append(line, sizeof(line), "-");
-        append_uint(line, sizeof(line), (unsigned)(-st_attn));
-    } else {
-        append_uint(line, sizeof(line), (unsigned)st_attn);
+    scopy(line, sizeof(line), "bl   ");
+    if (!bl_ok)
+        append(line, sizeof(line), "none");
+    else {
+        append_uint(line, sizeof(line), (unsigned)bl_cur);
+        append(line, sizeof(line), "/");
+        append_uint(line, sizeof(line), (unsigned)bl_max);
     }
     draw_str(8, y, line, fg, bg);
     y += 20;
-    scopy(line, sizeof(line), "IRQ: ");
-    append_uint(line, sizeof(line), (unsigned)st_irq);
-    append(line, sizeof(line), "  RX: ");
-    append_uint(line, sizeof(line), (unsigned)st_rx);
-    append(line, sizeof(line), "  RT: ");
-    append_uint(line, sizeof(line), (unsigned)st_rt);
+    scopy(line, sizeof(line), "usb  ");
+    append(line, sizeof(line), net_line[0] ? net_line : "waiting");
     draw_str(8, y, line, fg, bg);
     y += 20;
-    draw_str(8, y, "LONG POWER: REBOOT", fg, bg);
+    scopy(line, sizeof(line), "mem  ");
+    if (mem_avail_mb < 0)
+        append(line, sizeof(line), "?");
+    else {
+        append_uint(line, sizeof(line), (unsigned)mem_avail_mb);
+        append(line, sizeof(line), " MB free");
+    }
+    draw_str(8, y, line, fg, bg);
+    y += 20;
+    scopy(line, sizeof(line), "aud  ");
+    append(line, sizeof(line), audio_line[0] ? audio_line : "none");
+    draw_str(8, y, line, fg, bg);
+    y += 28;
+    draw_str(8, y, "Vol+/- brightness", fg, bg);
+    y += 20;
+    draw_str(8, y, "Power tap beep  2s reboot", fg, bg);
+    y += 20;
+    draw_str(8, y, "telnet usb-host/usb-device", fg, bg);
 }
 
 static void do_reboot(void) {
@@ -912,16 +1098,6 @@ static void do_reboot(void) {
     sys(__NR_sync, 0, 0, 0, 0, 0, 0);
     sys(__NR_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
         LINUX_REBOOT_CMD_RESTART, 0, 0, 0);
-}
-
-static void run_selected(void) {
-    char line[80];
-    scopy(line, sizeof(line), "run ");
-    append(line, sizeof(line), menu_tokens[menu_sel]);
-    log_line(line);
-    write_file(action_path(), menu_tokens[menu_sel]);
-    refresh_status();
-    draw_menu();
 }
 
 static void handle_key(unsigned short code, int value) {
@@ -932,18 +1108,14 @@ static void handle_key(unsigned short code, int value) {
         if (last_vol_ms && t - last_vol_ms < 150)
             return;
         last_vol_ms = t;
-        menu_sel++;
-        if (menu_sel >= MENU_N)
-            menu_sel = 0;
-        draw_menu();
+        bump_brightness(1);
+        draw_console();
     } else if (code == KEY_VOLUMEDOWN && value == 1) {
         if (last_vol_ms && t - last_vol_ms < 150)
             return;
         last_vol_ms = t;
-        menu_sel--;
-        if (menu_sel < 0)
-            menu_sel = MENU_N - 1;
-        draw_menu();
+        bump_brightness(0);
+        draw_console();
     } else if (code == KEY_POWER) {
         if (value == 1) {
             power_down = 1;
@@ -952,7 +1124,7 @@ static void handle_key(unsigned short code, int value) {
             unsigned long dt = t - power_t0_ms;
             power_down = 0;
             if (dt < 2000)
-                run_selected();
+                spawn_beep();
         }
     }
 }
@@ -1043,7 +1215,7 @@ void _start(void) {
     write_file("/proc/sys/kernel/panic", "0\n");
 
     if (setup_fb() == 0) {
-        log_line("SaaiOS v019 since76");
+        log_line(SAAIOS_BANNER);
         scopy(line, sizeof(line), "fb ");
         append_uint(line, sizeof(line), fb.xres);
         append(line, sizeof(line), "x");
@@ -1066,28 +1238,44 @@ void _start(void) {
     setup_configfs_gadget();
     spawn_rcs();
     spawn_shell();
+    probe_backlight();
+    refresh_battery();
+    refresh_mem();
+    refresh_usb_line();
+    refresh_audio();
     log_line("telnet :23 :2323");
     log_line("ssh :22");
-    log_line("Vol+/- menu  Power run  2s reboot");
-    draw_menu();
+    log_line("Vol+/- brightness  Power tap beep  2s reboot");
+    log_line("play /usr/share/sounds/test.wav");
+    log_line("usb-host is telnet-only; boot stays device");
+    draw_console();
 
     for (;;) {
         pet_watchdog();
         {
             long w = sys(__NR_wait4, -1, 0, WNOHANG, 0, 0, 0);
-            if (w > 0)
+            if (w > 0 && w == shell_pid)
                 shell_running = 0;
         }
         spawn_shell();
+        retry_gadget();
         refresh_net_status();
         menu_open_keys();
         menu_poll_keys();
         {
             static unsigned tick;
             tick++;
-            if ((tick & 3) == 0) {
-                refresh_status();
-                draw_menu();
+            if ((tick & 7) == 0) {
+                refresh_battery();
+                refresh_mem();
+                refresh_usb_line();
+                refresh_audio();
+                if (bl_ok) {
+                    int n = read_int_file(bl_brightness);
+                    if (n >= 0)
+                        bl_cur = n;
+                }
+                draw_console();
             }
         }
     }

@@ -1,0 +1,107 @@
+#!/bin/busybox ash
+# Join a WPA2-PSK AP on onboard Maxwell wlan0. Never called from init/rcS.
+# Conf is written under /tmp only. SSID/PSK come from args or env — never baked in.
+# Does not switch USB host. Does not touch EFS/RADIO.
+BB=/bin/busybox
+WPA=/sbin/wpa_supplicant
+CLI=/sbin/wpa_cli
+CONF=/tmp/wpa_supplicant.conf
+CTRL=/tmp/wpa_ctrl
+SCRIPT=/usr/share/udhcpc/default.script
+IFACE=wlan0
+
+SSID=${1:-$WIFI_SSID}
+PSK=${2:-$WIFI_PSK}
+
+if [ -z "$SSID" ] || [ -z "$PSK" ]; then
+  echo "usage: wifi-join SSID PSK"
+  echo "   or: WIFI_SSID=... WIFI_PSK=... wifi-join"
+  exit 1
+fi
+
+if [ ! -e "/sys/class/net/$IFACE" ]; then
+  echo "wifi-join: no $IFACE"
+  exit 1
+fi
+
+if [ ! -x "$WPA" ]; then
+  echo "wifi-join: missing $WPA"
+  exit 1
+fi
+
+if [ -x /sbin/wifi-up ]; then
+  /sbin/wifi-up
+fi
+
+# Escape \ and " for a wpa_supplicant quoted string. Do not echo PSK.
+esc() {
+  printf '%s' "$1" | $BB sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+SSID_ESC=$(esc "$SSID")
+PSK_ESC=$(esc "$PSK")
+
+$BB mkdir -p "$CTRL"
+$BB rm -f "$CONF"
+{
+  echo "ctrl_interface=$CTRL"
+  echo "update_config=0"
+  echo "ap_scan=1"
+  echo "network={"
+  printf '	ssid="%s"\n' "$SSID_ESC"
+  printf '	psk="%s"\n' "$PSK_ESC"
+  echo "	key_mgmt=WPA-PSK"
+  echo "}"
+} > "$CONF"
+$BB chmod 600 "$CONF"
+
+if [ -x "$CLI" ] && [ -S "$CTRL/$IFACE" ]; then
+  "$CLI" -p "$CTRL" -i "$IFACE" terminate >/dev/null 2>&1 || true
+  $BB sleep 1
+fi
+for p in $($BB pidof wpa_supplicant 2>/dev/null); do
+  $BB kill "$p" 2>/dev/null || true
+done
+$BB sleep 1
+
+echo "wifi-join: $WPA -B -D nl80211 -i $IFACE (ssid=$SSID)"
+"$WPA" -B -i "$IFACE" -c "$CONF" -D nl80211
+if [ $? -ne 0 ]; then
+  echo "wifi-join: wpa_supplicant failed"
+  exit 1
+fi
+
+st=""
+i=0
+while [ "$i" -lt 20 ]; do
+  if [ -x "$CLI" ]; then
+    st=$("$CLI" -p "$CTRL" -i "$IFACE" status 2>/dev/null | $BB grep '^wpa_state=' | $BB head -1)
+    echo "$st"
+    case "$st" in
+      wpa_state=COMPLETED) break ;;
+    esac
+  fi
+  $BB sleep 1
+  i=$((i + 1))
+done
+
+if [ "$st" != "wpa_state=COMPLETED" ]; then
+  echo "wifi-join: not associated"
+  exit 1
+fi
+
+if [ ! -x "$SCRIPT" ]; then
+  echo "wifi-join: missing $SCRIPT"
+  exit 1
+fi
+
+echo "wifi-join: udhcpc -i $IFACE"
+$BB udhcpc -i "$IFACE" -s "$SCRIPT" -n -q -t 8 -T 3
+if [ $? -ne 0 ]; then
+  echo "wifi-join: dhcp failed"
+  exit 1
+fi
+
+echo "wifi-join: $IFACE"
+$BB ifconfig "$IFACE"
+exit 0

@@ -96,6 +96,8 @@ Constraints: no animation unless requested, no transparency/blur/gradients by de
 
 `/dev/input/event*` → `inputd` → `TouchDown/Move/Up/Tap/LongPress/Swipe`. UI never sees evdev.
 
+This unit: TD4150. After firmware start the node is **event6** (`sec_touchscreen`). Bring-up status and next Image: [kernel-touch.md](kernel-touch.md). Do not revive maze opcode experiments.
+
 ---
 
 ## Phase 7 — event bus
