@@ -8,7 +8,7 @@
 #include <linux/input-event-codes.h>
 #include "font8x8.h"
 
-#define SAAIOS_BANNER "SaaiOS v032"
+#define SAAIOS_BANNER "SaaiOS v033"
 
 #ifndef AT_FDCWD
 #define AT_FDCWD -100

@@ -27,6 +27,7 @@ OUT_V029 := $(BUILD)/boot-v029.img
 OUT_V030 := $(BUILD)/boot-v030.img
 OUT_V031 := $(BUILD)/boot-v031.img
 OUT_V032 := $(BUILD)/boot-v032.img
+OUT_V033 := $(BUILD)/boot-v033.img
 # Subversion suffix embedded into ramdisk console + used for Odin/AP tar naming.
 # since76 = live20 ladder 0/10/100/500ms after REINIT; retval<0→dead response=ff.
 # Late 0x05/0x24/0x30 LIVE -62. No app_config in post-boot menu. Do not overwrite since54–since75.
@@ -125,7 +126,7 @@ BL_ZIP ?= /srv/media/BL_A127FXXSDDXJ2_QB86601342_REV00_user_low_ship_MULTI_CERT.
 MEDIA ?= /srv/media
 
 .PHONY: all unpack init ramdisk boot.img vbmeta odin-tar restore flash check-stock busybox dropbear \
-	up_param up_param-flash boot-v012 boot-v013 boot-v014 boot-v015 boot-v016 boot-v017 boot-v018 boot-v019 boot-v020 boot-v021 boot-v022 boot-v023 boot-v024 boot-v025 boot-v026 boot-v027 boot-v028 boot-v029 boot-v030 boot-v031 kernel kernel-patch touchlab beep play abox-fw wifi-fw iw wpa
+	up_param up_param-flash boot-v012 boot-v013 boot-v014 boot-v015 boot-v016 boot-v017 boot-v018 boot-v019 boot-v020 boot-v021 boot-v022 boot-v023 boot-v024 boot-v025 boot-v026 boot-v027 boot-v028 boot-v029 boot-v030 boot-v031 boot-v032 boot-v033 kernel kernel-patch touchlab poweroff beep play abox-fw wifi-fw iw wpa
 
 all: odin-tar
 
@@ -147,6 +148,12 @@ $(BUILD)/touchlab: os/init/touchlab.c
 	$(CROSS)gcc -static -Os -s -o $@ os/init/touchlab.c
 
 touchlab: $(BUILD)/touchlab
+
+$(BUILD)/poweroff: os/init/poweroff.c
+	mkdir -p $(BUILD)
+	$(CROSS)gcc -static -Os -s -o $@ os/init/poweroff.c
+
+poweroff: $(BUILD)/poweroff
 
 $(BUILD)/beep: os/init/beep.c
 	@test -f $(TINYALSA)/include/tinyalsa/asoundlib.h || { echo "missing $(TINYALSA) — git clone --depth 1 https://github.com/tinyalsa/tinyalsa $(TINYALSA)"; exit 1; }
@@ -239,7 +246,7 @@ wpa: $(WPA_SUPPLICANT) $(WPA_CLI)
 
 init: $(BUILD)/init
 
-ramdisk: $(BUILD)/init $(BUILD)/touchlab $(BUILD)/beep $(BUILD)/play $(BUILD)/sounds/test.wav $(BUSYBOX) $(DROPBEAR) $(DROPBEAR_SCP) $(SFTP_SERVER) $(IW) $(WPA_SUPPLICANT) $(WPA_CLI) $(DROPBEAR_AUTH_KEYS) abox-fw wifi-fw
+ramdisk: $(BUILD)/init $(BUILD)/touchlab $(BUILD)/poweroff $(BUILD)/beep $(BUILD)/play $(BUILD)/sounds/test.wav $(BUSYBOX) $(DROPBEAR) $(DROPBEAR_SCP) $(SFTP_SERVER) $(IW) $(WPA_SUPPLICANT) $(WPA_CLI) $(DROPBEAR_AUTH_KEYS) abox-fw wifi-fw
 	rm -rf $(RAMDISK)
 	mkdir -p $(RAMDISK)/dev $(RAMDISK)/proc $(RAMDISK)/sys $(RAMDISK)/tmp $(RAMDISK)/run \
 		$(RAMDISK)/bin $(RAMDISK)/sbin $(RAMDISK)/etc/dropbear $(RAMDISK)/root \
@@ -249,6 +256,8 @@ ramdisk: $(BUILD)/init $(BUILD)/touchlab $(BUILD)/beep $(BUILD)/play $(BUILD)/so
 	chmod 0755 $(RAMDISK)/init
 	cp $(BUILD)/touchlab $(RAMDISK)/sbin/touchlab
 	chmod 0755 $(RAMDISK)/sbin/touchlab
+	cp $(BUILD)/poweroff $(RAMDISK)/sbin/poweroff
+	chmod 0755 $(RAMDISK)/sbin/poweroff
 	cp $(BUILD)/beep $(RAMDISK)/sbin/beep
 	chmod 0755 $(RAMDISK)/sbin/beep
 	cp $(BUILD)/play $(RAMDISK)/sbin/play
@@ -1127,6 +1136,44 @@ boot-v032: unpack ramdisk vbmeta
 	@echo "  $(BUILD)/saaios-boot-v032.tar"
 	tar -tvf $(BUILD)/saaios-boot-v032.tar
 
+# boot-v033: v032 + Phase D probe /sbin/poweroff (bringup-plan.md Phase D,
+# hardware-control-plan.md). reboot(RB_POWER_OFF) is a separate kernel path
+# from /sys/power/state (freeze-mem only); telnet-only, NOT wired to the
+# Power key — the existing 2s long-press -> reboot stays exactly as-is
+# (kernel-touch.md's dead-lab recovery depends on it). Confirm this stock
+# kernel actually powers off before binding any gesture to it. Stock
+# kernel+DTB, no maze. Does not overwrite v021–v032.
+boot-v033: unpack ramdisk vbmeta
+	@test ! -f $(MEDIA)/saaios-boot-v032.tar || test -s $(MEDIA)/saaios-boot-v032.tar
+	@test -f $(STOCK_UNPACK)/dtb || { echo "missing stock dtb at $(STOCK_UNPACK)/dtb"; exit 1; }
+	python3 os/bootimg/bootimg.py pack $(STOCK_UNPACK) \
+		--ramdisk $(BUILD)/ramdisk.cpio.gz \
+		--cmdline "androidboot.hardware=exynos850 androidboot.selinux=permissive loop.max_part=7" \
+		--seandroid --pad-to $(BOOT_PART_SIZE) \
+		-o $(OUT_V033)
+	python3 os/bootimg/bootimg.py unpack $(OUT_V033) -o $(BUILD)/boot-v033-check
+	cmp $(STOCK_UNPACK)/dtb $(BUILD)/boot-v033-check/dtb
+	cmp $(STOCK_UNPACK)/kernel $(BUILD)/boot-v033-check/kernel
+	@echo "packed stock DXJ2 kernel+DTB (not Project-Xed Image)"
+	rm -rf $(BUILD)/odin-v033
+	mkdir -p $(BUILD)/odin-v033
+	cp $(OUT_V033) $(BUILD)/odin-v033/boot.img
+	cp $(VBMETA_OUT) $(BUILD)/odin-v033/vbmeta.img
+	tar -C $(BUILD)/odin-v033 -cf $(BUILD)/saaios-boot-v033.tar boot.img vbmeta.img
+	@if [ -e $(MEDIA)/saaios-boot-v032.tar ]; then \
+		cmp -s $(BUILD)/saaios-boot-v033.tar $(MEDIA)/saaios-boot-v032.tar && { echo "REFUSING: v033 tar matches v032"; exit 1; } || true; \
+	fi
+	@if [ -d $(MEDIA) ]; then \
+		cp $(BUILD)/saaios-boot-v033.tar $(MEDIA)/saaios-boot-v033.tar; \
+		chmod 664 $(MEDIA)/saaios-boot-v033.tar; \
+		chown mike:media $(MEDIA)/saaios-boot-v033.tar 2>/dev/null || true; \
+		echo "copied $(MEDIA)/saaios-boot-v033.tar"; \
+	fi
+	sha256sum $(OUT_V033) $(MEDIA)/saaios-boot-v033.tar $(MEDIA)/saaios-boot-v032.tar
+	@echo "Odin AP tar (not flashed):"
+	@echo "  $(BUILD)/saaios-boot-v033.tar"
+	tar -tvf $(BUILD)/saaios-boot-v033.tar
+
 vbmeta: check-stock
 	python3 os/bootimg/vbmeta.py --patch-stock $(STOCK)/vbmeta.img -o $(VBMETA_OUT)
 	sha256sum $(VBMETA_OUT) $(STOCK)/vbmeta.img
@@ -1185,6 +1232,7 @@ flash: check-stock
 	@echo "  v030: $(OUT_V030) (v029 + static /sbin/iw + /sbin/wifi-scan; not at boot)"
 	@echo "  v031: $(OUT_V031) (v030 + wpa_supplicant + wifi-join by args; not at boot)"
 	@echo "  v032: $(OUT_V032) (v031 + Phase 4 dirty-rect console: repaint only changed status lines)"
+	@echo "  v033: $(OUT_V033) (v032 + telnet-only /sbin/poweroff probe; Power key unchanged)"
 	@echo "Rollback: make restore images in $(STOCK)"
 	@echo "PARAM nologo is a separate Odin BL tar; make up_param-flash also refuses."
 	@exit 2
