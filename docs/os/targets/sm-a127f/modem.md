@@ -8,12 +8,12 @@ Detail: live v031 dump 2026-08-29 + `debugfs` of `os/build/stock-super/vendor.im
 
 | | |
 |--|--|
-| CP state | **`ONLINE`** (2026-09-01, probe 22). Holder **428** ipc0+rfs0 still open. Vendor `rild` **exec'd then exit 1** (did not keep ipc). SIM1 Kyivstar CS EMERGENCY HLR#2 / PS GMM#7; SIM2 HOME GMM#7 (probe 16–21). `rmnet0–7` rx=tx=0 (uptime **8221 s**). **Data-plane goal not complete.** |
+| CP state | **`CRASH_EXIT`** (2026-09-02, probe 48 — leftover, **no AP reboot**). Uptime **43739** s (same v031 as probe 47). Last **ONLINE** was probe 44. Holder **428** left alive. `rmnet*` rx=tx=**0**. GET-only `ps-p48` **staged, not run**. **`IOCTL_POWER_OFF` not used.** **`loadnv` not run.** **Data-plane goal not complete.** |
 | GNSS | **`OFFLINE`** (no BCMD this pass). `READ_FIRMWARE` vs `/tmp/kepler-fw.bin` **byte-identical** (64B K102 + full SHA). See GNSS boot LIVE |
 | SIM detect | `ds_detect=2` (`cpif/sim/ds_detect` and `modem_ctrl_s5000ap` param) |
 | Driver | `cpif_probe` **CPIF-200511N220408** `eur_open`; **s5000ap** modemctl; **s318ap** shmem link |
 | DT | `samsung,exynos-cp`. LIVE `cpif/mif,protocol` = **0** (`PROTOCOL_SIPC`). gnssif has no protocol/sit cell |
-| Firmware | BOOT+MAIN+**VSS** + real NV (userdata copy) via `/mnt/userdata/radio-boot loadnv`. Helper **1314320**. Bind-mount copy → `/mnt/vendor/efs`. Vendor `rild` exec'd this pass (exit 1; no Shannon attach). `cbd` not executed |
+| Firmware | BOOT+MAIN+**VSS** + real NV (userdata copy) via `/mnt/userdata/radio-boot loadnv`. Helper **1314320**. Bind-mount copy → `/mnt/vendor/efs`. Vendor `rild` **stayed up** (probe 23). `cbd` not executed |
 
 Kernel already created the netdevs and char nodes. They are empty until CP boots.
 
@@ -1166,9 +1166,1308 @@ Not watched (daemon never stayed up). Spot check uptime **8221 s**: `modem_state
 
 **Data-plane goal not complete.** `rild` cannot run as a radio daemon on this BusyBox ramdisk (needs Android property service + logd + HIDL). Both SIMs already rejected PS. **rmnet needs a PS-capable SIM.** Do not fake loopback counters. Do not pack v032.
 
+## Probe 23 — property_service + stub logd + rild vs leftover ONLINE (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Keep vendor `rild` alive (it may send attach replicant missed). **No** original efs write. **No** `POWER_OFF`. **No** flash. **No** commit. **No** `usb-host`. GNSS left **OFFLINE**. Did **not** fake rmnet counters.
+
+### Stubs
+
+No in-tree mini-propdaemon. Static musl `/tmp/minird` (Zig 0.13 `aarch64-linux-musl`, 1058344). **ContextsPreSplit** file `/dev/__properties__` (128 KiB, magic `PROP`, version `0xfc6ed0ab`) with `ro.property_service.version=2`. Unix `/dev/socket/property_service` (old SETPROP + SETPROP2). Stub `/dev/socket/logdw` (dgram, dump, no abort). Real `/system/bin/logd` **not** used.
+
+`getprop ro.property_service.version` → **2**.
+
+### `rild` (same vendor bind / APEX linker as probe 22)
+
+Did **not** kill holder **428**. `/mnt/vendor/efs` is userdata **p38** copy (not original efs p1).
+
+1. First exec: `dlopen` `libsec-ril.so` → `libsqlite.so` → **`libandroidicu.so` not found**. Mounted `com.android.i18n.apex` (loop13).
+2. With i18n on `LD_LIBRARY_PATH`: `RIL_Init` completed, opened **ipc0+ipc1+rfs0**, then ~30 s **`Init process for SecRilProxy is stucked`** waiting `hwservicemanager.ready`.
+3. Real `hwservicemanager`: bind `plat_hwservice_contexts` / `vendor_hwservice_contexts`, mount selinuxfs. **Alive** (PID 2243).
+4. `rild` **2245** stayed up: `RIL_Init` / `RIL_register` (v15) / `RIL_register_socket` completed. HIDL `registerAsService` **fails** (`must be in VINTF manifest`). `ril.hasisim=0,0`, `ril.ICC_TYPE0/1=0`, `ril.phone.connected.*=false`.
+
+### 90 s rmnet (rild alive 30 s+)
+
+Nine samples, 10 s apart, uptime **9178–9259**, modem **ONLINE**, rild **alive** every sample:
+
+`rmnet0–7` rx=tx=**0**. `ip -4` only `rndis0` `192.168.42.1/24`. No IPv4 on rmnet.
+
+**Data-plane goal not complete.** rild is a live radio daemon now; Shannon attach still produced **no** rmnet. SIMs still not `hasisim`. Next hole is **VINTF manifest** (HIDL IRadio), not property_service/logd. Do not pack v032.
+
+## Probe 24 — libsec-ril IpcTxPsAttach + vendor 3-byte GPRS_PS (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Pulled `/vendor/lib64/libsec-ril.so` **4541576** via TCP `192.168.42.7:8830` (`busybox nc`; size match). Disassembled dynsym on the host (no invented opcodes). **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808/0x0809 SET. **No** 0x0D14 SET. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Did **not** commit the `.so`.
+
+### Binary (this DXJ2 `libsec-ril.so`)
+
+| Symbol | VA | What it actually sends |
+|--|--|--|
+| `IpcProtocol41Data::IpcTxPsAttach(uchar,bool,bool,DataDetachReason)` | `0x36a388` | FMT **len=10** cmd uint16 **0x030D** LE → group **0x0D** index **0x03** (`GPRS_PS`), type **SET 0x03**, payload **3 B** `{attach, flag, reason}` — **no cid**. Attach path: `01 00 00`. |
+| `IpcTxSetLteAttachProfile` | `0x36b040` | **0x0D14** SET, FMT len **0x151** (337). GET only this pass. |
+| `IpcTxSetMobileDataSetting(bool,bool)` | `0x36c5cc` | **0x0D1D** SET, len 9, payload **2 B** bools. |
+| `IpcTxNetGetServiceDomain` | `0x3892b8` | **0x0808** GET, empty (len 7). |
+| `IpcTxNetSetServiceDomain` | `0x3891ec` | **0x0808** SET, len 8, **1-byte** payload (enum maps to 0/2/3). **Not SET.** |
+| `IpcTxGetDualStandbyPref` | `0x389a30` | **0x0816** GET empty. |
+
+`GPRS_SUB_CMD_UNDEFINED` is a **printf** `GPRS_SUB_CMD_UNDEFINED(0x%x)`, not a name table (no RELA pointer run).
+
+### Live ipc1 (SIM2 Vodafone 25501)
+
+Static `/tmp/ps-vnd` (`os/build/e4-ps-vnd.c`, Zig musl **1022608**). wget `192.168.42.7:8831` (size match). mseq from **0xC0**.
+
+| TX | result |
+|--|--|
+| GET `MODE_SEL` | **0x0b** (late RESP) |
+| GET `NET_REGIST` CS/PS | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| SET `GPRS_PS` vendor **`01 00 00`** (mseq **0xC9**) | **no** matching `GEN_PHONE_RES` aseq=0xC9. Follow-up GET **cid=0 attached=0** |
+| SET `0x0D1D` `01 01` | no matching RESP |
+| GET `0x0D14` / `0x0816` | no matching RESP this drain |
+| leftover `GEN_PHONE_RES` aseq=**9** `0x0D03` **0x8000** | **stale** (not this SET) |
+| delayed GET RESP aseq **0xC0–0xC3** | **0x0808** body **`01`**; **0x0809** body **`01`**; `MODE_SEL` **0x0b**; `GPRS_PS` **00 00** — these match the **previous** GET-only sequence that had “no RESP in 5s” |
+
+Replicant `IPC_CALL_OUTGOING` **0x0201** SET (voice, identity default, prefix international) then `CALL_LIST` GET then `CALL_RELEASE` **0x0203**. **No** `CALL_STATUS` / `CALL_LIST` body / `GEN_PHONE_RES` for those mseqs. Drain saw only `DISP` **0x0706** / **0x0701**. CS REGIST stayed HOME. **Did not** ACK STK (none). CP stayed **ONLINE**.
+
+### rmnet
+
+| | modem | rmnet0 |
+|--|--|--|
+| pre / post / final | ONLINE | rx=tx=**0** |
+
+Holder **428** CONT, still alive. **Data-plane goal not complete.** Vendor 3-byte attach is ACK-ambiguous (ipc1 race vs PID **416** + delayed aseq). GMM **#7** unchanged. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808** (GET body **0x01** is not in the SET enum 0/2/3 map). Next discriminator: 0x0D14 GET with long wait / ipc1 vs 416, or GMM#7 as subscription. Do not pack v032.
+
+## Probe 25 — 0x0D14 layout from `IpcTxSetLteAttachProfile` (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Decoded `IpcTxSetLteAttachProfile` @ **0x36b040** in pulled `libsec-ril.so` **4541576** (host `e4-lte-profile.c` + `e4-ril-disasm.c`). **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0D14 SET. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **16800** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8834** `/tmp/ps-p25` **1026448**.
+
+### Prior GET 0x0D14 (probe 24 drain fix — do not redo)
+
+20 s GET on ipc1 after wall-clock drain fix: TX GET `GPRS_LTE_ATTACH_APN_INFO` **0x0D14** → **GEN_PHONE_RES 0x8001** (unsupported), no body. Real CP answer (not ipc1/416 steal). GET **0x0D1D** also **8001**. GET **0x0D03** RESP plen=2 **cid=0 attached=0**.
+
+### Binary: `IpcProtocol41Data::IpcTxSetLteAttachProfile`
+
+Mangled: `(uchar, char const*, char const*, char const*, DataAuth, DataProtocol, DataProtocol, PcscfViaPco, uchar*, uchar*, bool)`. **No** BL xrefs (vtable). **No** default APN / user / pass / CID / P-CSCF bytes in this function. NULL APN → return **-1**, **no send**. `internet` / `lte_internet` / `lte_ia` live in `IpcTxSetDataProfile` (**0x0D1B**), not here. `IpcModemImplData::SetLteAttachProfile` @ **0x34deec** passes caller `DataCallSetup` (factory / KDI props only).
+
+FMT send: `w2=0x151`, buffer at SP (memset 0 via `movi v0.16b` + STP Q).
+
+| FMT off | field |
+|--|--|
+| 0–1 | length **0x0151** |
+| 2–3 | mseq / aseq (send path) |
+| 4–5 | **0x0D 0x14** |
+| 6 | type **SET 0x03** |
+| 7 | `(bool & 1) ? 3 : 0` |
+| 8 | **CID** (arg1) |
+| 9 | mapped **DataProtocol1** (table `0x00040605` after `proto-2`; default **2** if out of range) |
+| 10–110 | **APN[101]** (strlen ≤ 100) |
+| 111–126 | 16 B from `uchar*` arg B if non-NULL (P-CSCF) |
+| 127–130 | 4 B from `uchar*` arg A if non-NULL |
+| 131–132 | **0** |
+| 133 | remapped proto **2 or 3** only if `PcscfViaPco==1` |
+| 134–233 | **USER[100]** (strlen ≤ 100; NULL skips) |
+| 234–333 | **PASS** memcpy 100 B from ptr; strlen must be ≤ **32**; NULL skips |
+| 334 | mapped **DataAuth** (table `0x00010201` after `auth-1`; else 0) |
+| 335 | mapped **DataProtocol2** |
+| 336 | remapped proto2 only if `PcscfViaPco==1` |
+
+Layout is field-complete. **Exact 337-byte blob is argument-filled.** Did **not** guess-fill. **0x0D14 SET not sent.**
+
+Legacy twin `IpcTxSetLteAttachProfileLegacy` @ **0x36add4**: same cmd **0x0D14 SET**, FMT len **0xC9** (201). Also APN-arg.
+
+### Related SET-only GPRS (GET is 8001)
+
+| Symbol | VA | FMT |
+|--|--|--|
+| `IpcTxPsAttach` | `0x36a388` | **0x0D03 SET** len 10, **3 B** `{attach,flag,reason}` = `01 00 00` (no cid) |
+| `IpcTxSetMobileDataSetting` | `0x36c5cc` | **0x0D1D SET** len 9, **2 B** bools (already sent `01 01`) |
+| `IpcTxSetAlwaysOnPdn` | `0x36c714` | **0x0D22 SET** len 9, `{bool, MapDataProfile(enum)}`. Map @ **0x36a9c0** is a VZW/USC switch (returns 1/2/3/4/5/11) — **not fully recovered**, **0x0D22 SET not sent** |
+| `IpcTxSetDataProfile` | `0x36aae4` | **0x0D1B SET** len **0xCB** (APN/profile names) |
+| `IpcTxDefinePdpContext` | `0x369744` | len **0x95** (vendor; not replicant 134) |
+| `IpcTxSetPdpContext` | `0x369ec8` | **0x0D04 SET** len **0xF8** |
+| `IpcTxSetPdpContextLegacy` | `0x369c84` | **0x0D04 SET** len **0x70** |
+
+### Live ipc1 (SIM2 25501) after killing sleep 16800
+
+Static `/tmp/ps-p25` (`os/build/e4-ps-p25.c`, Zig musl **1026448**). mseq from **0xF0**. Wall-clock drain. **No SET 0x0D14.**
+
+| TX | result |
+|--|--|
+| leftover NOTI | CS **HOME** UMTS fail=0; PS **NONE fail=0x07**; SERVING **25501** |
+| GET `MODE_SEL` aseq **0xF0** | **0x0b** |
+| GET `GPRS_PS` aseq **0xF3** | **cid=0 attached=0** |
+| GET `0x0D22` aseq **0xF4** | **GEN_PHONE_RES 0x8001** (unsupported, no body) |
+| GET `NET_REGIST` CS/PS | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| SET `GPRS_PS` `01 00 00` aseq **0xF5** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** (real; sleep thief gone) |
+| SET `0x0D1D` `01 01` aseq **0xF6** | **GEN_PHONE_RES 0x0D1D 0x8003** |
+| GET `GPRS_PS` after | **cid=0 attached=0** |
+| GET `NET_REGIST` PS after | **NONE fail=0x07** |
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post | ONLINE | rx=tx=**0** |
+
+Holder **428** CONT, still alive. PID **416** still holds ipc1. **Data-plane goal not complete.** CP accepted vendor 3-byte attach (**8000**) but GMM **#7** unchanged — not an ipc1-steal miss. GET attach-profile / always-on are **unsupported**; SET 0x0D14 still needs a caller APN (none in this .so). **Do not SET MODE_SEL 0x04/0x07.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 26 — 0x0D1B / 0x0D14 SET + vendor PDP (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Decoded `IpcTxSetDataProfile` @ **0x36aae4** and sent vendor 0x0D14 / 0x0D1B / 0x0D01 / 0x0D04 blobs (APN **`internet`** is an exact cstring in this `.so`, not an operator guess). **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **16907** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8835** `/tmp/ps-p26` **1093152**.
+
+### Binary: `IpcProtocol41Data::IpcTxSetDataProfile` (0x0D1B SET len **0xCB**)
+
+Mangled: `(char const*, char const*, char const*, DataAuth, DataProtocol, DataProfile, bool, PcscfViaPco, int, int, int)`. NULL APN → return **-1**, no send. `MapDataProfile` @ **0x36a9c0** writes byte[7] (VZW/USC / invalid → **1** for out-of-range enum). Profile **name** (not APN) is a 20-byte field from a switch on `DataProfile`:
+
+| enum | name at [8..27] |
+|--|--|
+| 1–6 jump | `lte_tethered` / `lte_ims` (table) |
+| 1001–1006 | `lte_emergency` `lte_embms` `lte_bip` `lte_cas` **`lte_ia`** `lte_mms` |
+| else (e.g. 7) | **`lte_internet`** |
+
+Exact cstring **`internet`** @ `0x10483d` (xrefs `0x243aa8` / `0x243b2c` in DataCallManager). `lte_ia` / `lte_internet` are profile-name strings inside this function.
+
+| FMT off | field |
+|--|--|
+| 0–1 | length **0x00CB** |
+| 2–3 | mseq / aseq |
+| 4–5 | **0x0D 0x1B** |
+| 6 | type **SET 0x03** |
+| 7 | `MapDataProfile` (**1** for out-of-range) |
+| 8–27 | profile name[20] |
+| 28 | mapped **DataProtocol** (table `0x00040605` after `proto-2`; default **2**) |
+| 29–129 | **APN[101]** |
+| 130–161 | USER[32] (NULL skips) |
+| 162–193 | PASS[32] (NULL skips) |
+| 194 | mapped DataAuth (else 0) |
+| 195–196 | proto remap if `PcscfViaPco==1` |
+| 197–202 | three int16 stack args |
+
+This pass: name **`lte_internet`**, APN **`internet`**, proto **2**, user/pass/auth/pcscf **0**.
+
+### 0x0D14 SET (Probe 25 layout, APN now from `.so`)
+
+CID=**1**, proto1 default **2**, APN **`internet`**, empty user/pass, auth **0**, no P-CSCF, last bool **0** so byte[7]=**0**. Layout check passed before send.
+
+### Vendor PDP (not Replicant 134)
+
+`IpcTxDefinePdpContext` @ **0x369744**: FMT **0x0D01 SET len 0x95**. Packet @ SP+0x60: `[7]=0x01` (from `0x0103010D`), CID @ **8**, proto default **2** @ **9**, APN[101] @ **10**, unconditional last-1 byte **0x01** @ **147**.
+
+`IpcTxSetPdpContext` @ **0x369ec8**: FMT **0x0D04 SET len 0xF8**. byte[7]=**1** is the APN-copy path; CID @ **8**; present-flag **1** @ **9**; APN[101] @ **13**; auth @ **0xF5**. No separate `IpcTxActivatePdpContext` symbol — `ActivatePdpContext` has no dedicated IpcTx; **0x0D04** is the vendor SET.
+
+### Live ipc1 (SIM2 25501) after killing sleep 16907
+
+Static `/tmp/ps-p26` (`os/build/e4-ps-p26.c`, Zig musl **1093152**). mseq from **0x20**. Wall-clock drain.
+
+| TX | result |
+|--|--|
+| leftover NOTI | CS **HOME** UMTS fail=0; PS **NONE fail=0x07**; SERVING **25501**; MODE_SEL **0x0b** |
+| GET `MODE_SEL` aseq **0x20** | **0x0b** |
+| GET `GPRS_PS` aseq **0x23** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| SET `0x0D1B` aseq **0x24** 0xCB `lte_internet`+`internet` | **GEN_PHONE_RES 0x0D1B 0x8000 SUCCESS** |
+| SET `0x0D14` aseq **0x25** 0x151 APN `internet` | **GEN_PHONE_RES 0x0D14 0x8001** (unsupported) |
+| SET `GPRS_PS` `01 00 00` aseq **0x26** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** |
+| GET `GPRS_PS` / `NET_REGIST` PS | **attached=0**; PS **NONE fail=0x07** |
+| SET `0x0D01` aseq **0x29** 0x95 | **GEN_PHONE_RES 0x0D01 0x8000 SUCCESS** |
+| SET `0x0D04` aseq **0x2A** 0xF8 | **GEN_PHONE_RES 0x0D04 0x8000 SUCCESS**; leftover NOTI **0x0D10** `01 03` + zeros |
+| SET `GPRS_PS` `01 00 00` aseq **0x2B** | **0x8000 SUCCESS** |
+| GET final | **attached=0**; PS **NONE fail=0x07** |
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / mid / post | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0**. IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`). PID **416** still holds ipc1. **Data-plane goal not complete.** CP accepted vendor data-profile / define / set-PDP (**8000**) but **0x0D14 is unimplemented** on this CP (SET=GET=**8001**). GMM **#7** unchanged — not an ipc1-steal miss and not a 0x0D14 layout miss. **Do not SET MODE_SEL 0x04/0x07.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 27 — `NetServiceDomainType` map + GET 0x0808/0x0809 (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Decoded `IpcTxNetSetServiceDomain` / `IpcRxNetServiceDomain` / `GetSubCommandName` in pulled `libsec-ril.so` **4541576** (host `e4-svc-dom-decode.c`). **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET (names ambiguous). **No** 0x0809 SET (no IpcTx). **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **16943** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8836** `/tmp/ps-p27` **1088192**.
+
+### Binary: `IpcTxNetSetServiceDomain(NetServiceDomainType)` @ 0x3891ec
+
+Mangled: `_ZN16IpcProtocol41Net24IpcTxNetSetServiceDomainE20NetServiceDomainType`. FMT **0x0808 SET** len **8**, 1-byte payload. Twin pack in `BuildIpcNetSetServiceDomain` @ **0x3af1a4**. Prior note “maps to 0/2/3” treated `1a9f0529` as CSEL — it is **CSINC**.
+
+```text
+w9 = 3
+cmp enum, #1
+csinc w9, w9, wzr, eq    ; enum==1 → 3 ; else → 1
+cmp enum, #2
+csel  w9, enum, w9, eq   ; enum==2 → 2 ; else keep
+strb w9, [pkt+7]
+```
+
+| `NetServiceDomainType` | SET byte |
+|--|--|
+| 1 | **0x03** |
+| 2 | **0x02** |
+| else (0, 3, …) | **0x01** |
+
+`IpcRxNetServiceDomain` @ **0x38facc**: payload ∉ {1,2,3} → enum **-1**. Else table @ **0x153254** (3×u32):
+
+| GET/SET byte | RX enum |
+|--|--|
+| 0x01 | **0** |
+| 0x02 | **2** |
+| 0x03 | **1** |
+
+Bijection is recovered. **No** `CS_ONLY` / `PS_ONLY` / `CS_PS` / `COMBINED` strings. **No** BL callers with a constant enum (vtable only). `DoOemSetServiceDomain` passes the raw OEM byte. Two namings stay open (Replicant IPC 1/2/3 = CS/PS/COMBINED vs AOSP-style enum 0/1/2 = CS/PS/CS_PS, which would swap which of **2** or **3** is combined). **Did not SET 0x0808.**
+
+`IpcModemImplNet::SetServiceDomain` @ **0x359c64** is a vtable hop to this IpcTx (w2 = enum). No IpcTx symbol for **0x0809**.
+
+### 0x0809 POWERON_ATTACH
+
+`IpcProtocol::GetSubCommandName` 12-byte NET cases (adjacent to known cmds):
+
+| index | name |
+|--|--|
+| 0x08 | `NET_SERVICE_DOMAIN_CONFIG` |
+| **0x09** | **`NET_POWERON_ATTACH`** |
+| 0x0A | `NET_MODE_SEL` |
+
+No `IpcTxNet*Poweron*` / no `MOVZ #0x0908` send path. **0x0809 SET payload not recovered. Not SET.**
+
+### Leftover 0x0D10 `01 03` (probe 26)
+
+String **`GPRS_CALL_STATUS`**. Handler **`IpcRxGprsCallStatus`** @ **0x36d29c** (CID + status; logs “CDMA Data call disconnected” / “Invalid CID” / “throttle timer from cp”). **`GPRS_IP_CONFIGURATION`** is a different cmd (`IpcRxIpConfiguration` @ **0x36cbf8**). So **0x0D10 NOTI is call/PDP status**, not IP config. Probe 26 body `01 03` after SET 0x0D04 CID **1** = cid=1 status=0x03 (not the 1 / 0x0A / 0x0B specials in this RX).
+
+### Live ipc1 (SIM2 25501) after killing sleep 16943
+
+Static `/tmp/ps-p27` (`os/build/e4-ps-p27.c`, Zig musl **1088192**). mseq from **0x40**. Wall-clock drain. **GET only.**
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | CS **HOME** UMTS fail=0; PS **NONE fail=0x07**; SERVING **25501** |
+| GET `PHONE_STATE` **0x40** | **0x40** | **0x02** |
+| GET `MODE_SEL` **0x41** | **0x41** | **0x0b** |
+| GET `0x0808` **0x42** | **0x42** | body **`01`** (enum **0**) |
+| GET `0x0809` **0x43** | **0x43** | body **`01`** |
+| GET `GPRS_PS` **0x44** | **0x44** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | **0x46** (both) | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+
+No `GEN_PHONE_RES` on these GETs (type-2 RESP with body). **No SET.**
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post | ONLINE | rx=tx=**0** |
+
+Holder **428** CONT, still alive (`radio-boot`). PID **416** still holds ipc1. **Data-plane goal not complete.** GET domain still **0x01** (RX enum 0). Combined vs PS-only SET byte is **not named** in this `.so` — next pass needs a caller constant or OEM doc before SET 0x02/0x03. **Do not SET MODE_SEL.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 28 — SET 0x0808 CS_PS byte 0x02 (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 27 RX table is **0-based** (`0x01→enum 0`, `0x02→enum 2`, `0x03→enum 1`) matching Samsung `NetServiceDomainType` **CS=0, PS=1, CS_PS=2**, not Replicant IPC 1/2/3. AOSP `android.hardware.radio.network.Domain` is a **different** bitflag enum (`CS=1`, `PS=2`). Current GET **0x01** = CS-only explains ACK’d attach + GMM **#7**. Combined **CS_PS = enum 2 = SET byte 0x02**. **Never SET 0x03** (PS-only, can drop CS HOME). **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET **0x03** / **0x01** (0x01 only if restore). **No** 0x0D14 SET. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **16963** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8837** `/tmp/ps-p28` **1106976**.
+
+Static `/tmp/ps-p28` (`os/build/e4-ps-p28.c`, Zig musl). mseq from **0x50**. FMT SET len **8**, 1-byte payload.
+
+### Live ipc1 (SIM2 25501)
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | DISP **0x0706** only (no STK) |
+| GET `PHONE_STATE` **0x50** | **0x50** | **0x02** |
+| GET `MODE_SEL` **0x51** | **0x51** | **0x0b** |
+| GET `0x0808` **0x52** | **0x52** | body **`01`** (enum **0** CS) |
+| GET `0x0809` **0x53** | **0x53** | body **`01`** |
+| GET `GPRS_PS` **0x56** | **0x56** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | **0x55** (both) | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| SET `0x0808` **`02`** **0x58** | **0x58** | **GEN_PHONE_RES 0x0808 0x8000 SUCCESS** |
+| GET `0x0808` **0x59** | **0x59** | body **`02`** (enum **2** CS_PS) |
+| GET CS/PS / GPRS_PS | **0x5b** / **0x5c** | CS **HOME** UMTS fail=0; PS **NONE fail=0x07**; **attached=0** |
+| SET `GPRS_PS` `01 00 00` **0x5d** | **0x5d** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** |
+| GET CS/PS / GPRS_PS | **0x5f** / **0x60** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** after the 0x02 SET → **restore to 0x01 did not run**. Vendor **0x0D1B / 0x0D01 / 0x0D04** skipped (GMM still **#7**). Domain left at **0x02** (CS_PS).
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post-SET / post-attach / final | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0**. No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** Combined domain is ACK’d and GET-confirmed; GMM **#7** is not a CS-only domain miss. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 29 — vendor PDP under CS_PS (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 28 left **0x0808 = 0x02** (CS_PS) and skipped vendor PDP because GMM was still **#7**. This pass sends **0x0D1B / 0x0D01 / 0x0D04** then `IpcTxPsAttach` under that domain. **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET **0x03** / **0x01** (0x01 only if restore). **No** 0x0D14 SET. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **16976** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8838** `/tmp/ps-p29` **1109144**.
+
+### Binary: `GPRS_IP_CONFIGURATION` cmd id
+
+`IpcRxIpConfiguration` @ **0x36cbf8** (size 832) has no packed FMT cmd (dispatcher RX). Twin TX **`IpcTxIpv6Configuration`** @ **0x36b31c** packs MOVZ **`0x090d`** → group **0x0D** index **0x09**. String **`GPRS_IP_CONFIGURATION`** @ `0x124490`. Host `e4-ip-cfg-decode.c`. Same id as Replicant `IPC_GPRS_IP_CONFIGURATION` **0x0D09**. GET **0x0816** (`IpcTxGetDualStandbyPref` @ **0x389a30**) is empty GET; SET layout not recovered — GET only.
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/ps-p29` (`os/build/e4-ps-p29.c`, Zig musl). mseq from **0x60**. Probe 26 layouts (`lte_internet` + APN `internet`, proto **2**).
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | DISP **0x0706** / **0x0838** / **0x0F36** (no STK) |
+| GET `PHONE_STATE` **0x60** | **0x60** | **0x02** |
+| GET `MODE_SEL` **0x61** | **0x61** | **0x0b** |
+| GET `0x0808` **0x62** | **0x62** | body **`02`** (enum **2** CS_PS) |
+| GET `0x0809` **0x63** | **0x63** | body **`01`** |
+| GET `GPRS_PS` **0x66** | **0x66** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | **0x65** (both) | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| SET `0x0808` | — | **not sent** (already **0x02**) |
+| SET `0x0D1B` **0x68** 0xCB `lte_internet`+`internet` | **0x68** | **GEN_PHONE_RES 0x0D1B 0x8000 SUCCESS** |
+| SET `0x0D01` **0x69** 0x95 CID=1 | **0x69** | **GEN_PHONE_RES 0x0D01 0x8000 SUCCESS** |
+| SET `0x0D04` **0x6A** 0xF8 APN-copy | **0x6A** | **GEN_PHONE_RES 0x0D04 0x8000 SUCCESS**; NOTI **0x0D10** cid=**1** st=**0x03** |
+| SET `GPRS_PS` `01 00 00` **0x6B** | **0x6B** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** |
+| GET CS/PS / GPRS_PS | **0x6d** / **0x6e** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+| **0x0D09** IP config | — | **none** |
+| GET `0x0816` **0x6F** | **0x6F** | RESP plen=2 body **`00 00`** |
+
+CS stayed **HOME** → **restore to 0x01 did not run**. Domain left at **0x02** (CS_PS).
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post-PDP / final | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0**. No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** Vendor PDP under combined domain is ACK’d the same as Probe 26 under CS-only: **0x0D10** `01 03`, no **0x0D09**. GMM **#7** is not a “PDP skipped while CS-only” miss. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 30 — SET DualStandbyPref SIM2 (v031, 2026-09-01)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 29 left GET **0x0816** **`00 00`** (possible “no data SIM”). This pass recovers **SET** from `libsec-ril.so` and selects **SIM2 / ipc1**. **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET (0x01 only if restore). **No** 0x0D14. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17002** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8839** `/tmp/ps-p30` **1107816**.
+
+### Binary: `IpcTxSetDualStandbyPref` / `IpcTxSetDualStandbyPrefModem`
+
+Host `e4-dsds-decode.c`. String **`NET_DUAL_STANDBY_PREF`** @ `0x117669`. No invented opcodes.
+
+| Symbol | VA | size |
+|--|--|--|
+| `IpcProtocol41Net::IpcTxGetDualStandbyPref()` | **0x389a30** | 176 |
+| `IpcProtocol41Net::IpcTxSetDualStandbyPref(DdsSwitchParam)` | **0x389ae0** | 272 |
+| `IpcProtocol41Net::IpcTxSetDualStandbyPrefModem(int, DdsSwitchParam)` | **0x389bf0** | 268 |
+| `IpcProtocol41Net::IpcRxDualStandbyPref` | **0x3905e8** | 96 |
+| `DataCallManager::DoSetPreferredDataModem` | **0x23dc24** | 616 |
+
+GET: MOVZ **`0x1608`** → cmd **0x0816**, type **GET 0x02**, FMT **len=7** (empty). Live RESP plen=2.
+
+SET (both TX): MOVZ **`0x1608`**, type **SET 0x03**, FMT **len=9**, payload **2 B**:
+
+| byte | meaning |
+|--|--|
+| 0 | **DDS slot / standbyPref**. `csinc` after `cmp modemId, #0`: **0** = modemId 0 / ipc0 / SIM1; **1** = modemId ≠ 0 / ipc1 / SIM2. `IpcRx` stores this byte as `currentDds`. |
+| 1 | **cause**. `DdsSwitchParam==1` path (`OnGetDualStandbyPrefDone` `movz w22, #1` + string **SWITCH_PARAM_TEMPORARY**) always sends **1** (no `ril.dds.datacross.slotid`). `!=1` reads that property and **skips send** if unset (−1). |
+
+Log `standbyPref=%d, cause=%d`. SIM2 SET used vendor **`01 01`**.
+
+### Leftover NOTI names (Probe 29)
+
+| cmd | name |
+|--|--|
+| **0x0838** | No `NET_*` string. Packed MOVZ **`0x3808`** in `NetworkRespBuilder::BuildSignalBarInfosResponse` and `BuildUnsolicited`. Type **`SignalBarInfos`** exists. |
+| **0x0F36** | No MOVZ, no name string. Group **0x0F** is **IMEI** (`IMEI_CMD`, `IMEI_SUB_CMD_UNDEFINED`). Index **0x36** unnamed. |
+
+This drain: leftover only DISP **0x0706** (no 0x0838 / 0x0F36).
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/ps-p30` (`os/build/e4-ps-p30.c`, Zig musl). mseq from **0x70**.
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | DISP **0x0706** only (no STK) |
+| GET `PHONE_STATE` **0x70** | **0x70** | **0x02** |
+| GET `MODE_SEL` **0x71** | **0x71** | **0x0b** |
+| GET `0x0808` **0x72** | **0x72** | body **`02`** (CS_PS) |
+| GET `0x0809` **0x73** | **0x73** | body **`01`** |
+| GET `GPRS_PS` **0x76** | **0x76** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | **0x75** (both) | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| GET `0x0816` **0x78** | **0x78** | RESP plen=2 body **`00 00`** (slot=0 cause=0) |
+| SET `0x0816` **0x79** `01 01` | **0x79** | **GEN_PHONE_RES 0x0816 0x8000 SUCCESS** |
+| GET `0x0816` **0x7a** | **0x7a** | RESP plen=2 body **`01 00`** (slot=**1** cause=0) |
+| GET CS/PS / GPRS_PS | **0x7c** / **0x7d** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+| SET `GPRS_PS` `01 00 00` **0x7e** | **0x7e** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** |
+| GET CS/PS / GPRS_PS | **0x80** / **0x81** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **restore to 0x01 did not run**. Domain left at **0x02** (CS_PS). GET after SET does **not** echo cause=1 (RESP cause=0; slot stuck at **1**).
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post-SET / post-attach / final | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** DDS slot **0→1** is ACK’d and GET-confirmed; GMM **#7** is not “no data SIM selected”. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 31 — vendor PLMN_SEL SET AUTO then PsAttach (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Hypothesis: stored GMM **#7** needs a new CS/PS registration under current CS_PS + DDS SIM2. Recovered SET from `libsec-ril.so` **4541576** (host `e4-plmn-decode.c`). **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET (0x01 only if restore). **No** 0x0816 SET. **No** 0x0D14. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17019** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8840** `/tmp/ps-p31` **1102808**.
+
+### Binary: `IpcTxNetSetNetSelectionAuto` / `Manual` / `GetNetSelectionMode`
+
+Host `e4-plmn-decode.c`. String **`NET_PLMN_SEL`** @ `0x10c391`. No invented opcodes. No direct BL (vtable). `SetNetworkSelectionAutoHandler::DoEvent` @ **0x2cc0cc** passes **NetSelectModeType 0** (w2=xzr). `IpcModemImplNet::SetNetSelectionAuto` @ **0x35971c** forwards that enum unchanged.
+
+| Symbol | VA | size |
+|--|--|--|
+| `IpcProtocol41Net::IpcTxNetGetNetSelectionMode()` | **0x388050** | 176 |
+| `IpcProtocol41Net::IpcTxNetSetNetSelectionAuto(NetSelectModeType)` | **0x388100** | 220 |
+| `IpcProtocol41Net::IpcTxNetSetNetSelectionManual(char*, RadioTechnology)` | **0x388200** | 328 |
+| `IpcProtocol41Net::IpcRxNetPlmnSelect` | **0x38ec4c** | 104 |
+| `DataCallManager::DoGprsDetach` | **0x240548** | 224 |
+
+GET: MOVZ **`0x0208`** → cmd **0x0802**, type **GET 0x02**, FMT **len=7** (empty). Live RESP plen=1 mode byte.
+
+SET AUTO: MOVZ **`0x0208`**, type **SET 0x03**, FMT **len=15**, payload **8 B** (STUR XZR then two STRB):
+
+| byte | meaning |
+|--|--|
+| 0 | **mode**. `csel` after `cmp enum, #3`: **0x02** if enum ≠ 3 (AutoHandler **0**); **0x05** if enum == 3 (no RIL caller recovered — **not sent**). |
+| 1–6 | **PLMN** ASCII zeros |
+| 7 | **act 0xFF** |
+
+This is the vendor AUTO path, not the Replicant 8-byte guess. Same bytes happen to match Replicant AUTO; SIM1 previously got **0x0064**, this SIM2 SET got **0x8000**.
+
+SET MANUAL (not sent): mode **0x03**, act from RadioTechnology table else **0xFF**, PLMN via memcpy of caller string (pad `#` / `0x23` at [5] if strlen==6).
+
+`IpcTxNetGetAvailableNetworks` @ **0x388348** is empty GET **0x0804** (scan). **Not sent.**
+
+### Detach IpcTx
+
+**No** `IpcTxGprs*Detach*` / `IpcTxPsDetach` / `IpcTxGmm*`. The only FMT detach is **`IpcTxPsAttach`** @ **0x36a388** with attach=0 (3 B `{0, flag, reason}`), same cmd **0x0D03** already used as attach `01 00 00`. `DoGprsDetach` is a `DataCallManager` wrapper (RIL req **0x9d**, then vtable) — not a new IPC. JSON `IpcTxPsAttach` has `detach_reason` / `reattach_flag` strings; this CP is **PROTOCOL_SIPC**. **No detach SET this pass.**
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/ps-p31` (`os/build/e4-ps-p31.c`, Zig musl). mseq from **0x82**. Uptime **35279 s**.
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | DISP **0x0706** / **0x0701** only (no STK) |
+| GET `PHONE_STATE` **0x82** | **0x82** | **0x02** |
+| GET `MODE_SEL` **0x83** | **0x83** | **0x0b** |
+| GET `0x0808` **0x84** | **0x84** | body **`01`** (enum **0** CS) — **reverted** since Probe 30 **`02`** |
+| GET `0x0809` **0x85** | **0x85** | body **`01`** |
+| GET `0x0816` **0x86** | **0x86** | RESP plen=2 body **`01 00`** (slot=1) |
+| GET `PLMN_SEL` **0x87** | **0x87** | body **`02`** AUTO |
+| GET `GPRS_PS` **0x8a** | **0x8a** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | **0x89** | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| SET `PLMN_SEL` **0x8c** `02 00 00 00 00 00 00 FF` | **0x8c** | **GEN_PHONE_RES 0x0802 0x8000 SUCCESS** |
+| 25 s drain | — | DISP **0x0706** only (no CS/PS status change NOTI) |
+| GET `PLMN_SEL` / `0x0808` / `0x0816` | **0x8d** / **0x8e** / **0x8f** | mode **`02`**; domain **`01`**; slot **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x91** / **0x92** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+| SET `GPRS_PS` `01 00 00` **0x93** | **0x93** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** |
+| NOTI `NET_REGIST` | — | CS **HOME**; PS **NONE GMM#7** (same) |
+| GET CS/PS / GPRS_PS | **0x95** / **0x96** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **restore to 0x01 did not run**. Domain left at GET **`01`** (did **not** SET 0x0808 back to 0x02; that SET is a closed lever). Hypothesis precondition “current CS_PS” was **not** live — CP had already reverted to CS-only.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post-SET / post-attach / final | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** Vendor PLMN AUTO is ACK’d **8000** (not SIM1’s **0x0064**) but does **not** clear stored GMM **#7** or produce a new PS registration. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 32 — CS_PS then same-fd PLMN AUTO (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 31 SET PLMN AUTO while GET **0x0808** was already **`01`** (CP had reverted Probe 30’s **`02`**); the “reselect with CS_PS + DDS SIM2” hypothesis was not tested. This pass re-SETs **0x0808 `02`** (Probe 28 layout), confirms GET **`02`**, leaves DDS unless drifted, then **same fd** SET PLMN AUTO + drain + GET domain + `IpcTxPsAttach`. **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET **0x03**. **No** 0x0D14. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17035** (had `/dev/umts_ipc1`; not 416). RNDIS host **192.168.42.7**. wget **8841** `/tmp/ps-p32` **1107592**.
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/ps-p32` (`os/build/e4-ps-p32.c`, Zig musl). mseq from **0xA0**. Uptime **35729 s**. One ipc1 open.
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | DISP **0x0706** / **0x0701** only (no STK) |
+| GET `PHONE_STATE` **0xA0** | **0xA0** | **0x02** |
+| GET `MODE_SEL` **0xA1** | **0xA1** | **0x0b** |
+| GET `0x0808` **0xA2** | **0xA2** | body **`01`** (enum **0** CS) — still reverted vs Probe 30 |
+| GET `0x0809` **0xA3** | **0xA3** | body **`01`** |
+| GET `0x0816` **0xA4** | **0xA4** | RESP plen=2 body **`01 00`** (slot=1) — no drift |
+| GET `PLMN_SEL` **0xA5** | **0xA5** | body **`02`** AUTO |
+| GET `GPRS_PS` **0xA8** | **0xA8** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | **0xA7** | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+| SET `0x0808` **`02`** **0xAA** | **0xAA** | **GEN_PHONE_RES 0x0808 0x8000 SUCCESS** |
+| GET `0x0808` **0xAB** | **0xAB** | body **`02`** (enum **2** CS_PS) |
+| GET `0x0816` / CS/PS / GPRS_PS | **0xAC** | slot **`01 00`**; CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+| SET `0x0816` | — | **not sent** (still **`01 xx`**) |
+| SET `PLMN_SEL` **0xB0** `02 00 00 00 00 00 00 FF` | **0xB0** | **GEN_PHONE_RES 0x0802 0x8000 SUCCESS** |
+| 20 s drain | — | GEN only (no CS/PS status-change NOTI) |
+| GET `PLMN_SEL` / `0x0808` / `0x0816` | **0xB1** / **0xB2** / **0xB3** | mode **`02`**; domain **`02`** (**stayed CS_PS**); slot **`01 00`** |
+| GET CS/PS / GPRS_PS | **0xB5** / **0xB6** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+| SET `GPRS_PS` `01 00 00` **0xB7** | **0xB7** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** |
+| NOTI `NET_REGIST` | — | CS **HOME**; PS **NONE GMM#7** (same) |
+| GET CS/PS / GPRS_PS | **0xB9** / **0xBA** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **restore to 0x01 did not run**. Domain left at GET **`02`** (CS_PS). **0x0808 stayed `02` across PLMN SET** (did not revert on this fd).
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post-SET / post-PLMN / post-attach / final | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** CS_PS + DDS SIM2 + vendor PLMN AUTO on one fd is ACK’d and GET-confirmed; GMM **#7** is not “PLMN AUTO while CS-only”. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 33 — vendor MO Originate (v031, 2026-09-02)
+
+Not the rmnet goal. Dest number is **not recorded here**. Probe 32 already finished (CS_PS stayed `02` across PLMN; GMM **#7**; rmnet 0). This pass recovered vendor TX from `libsec-ril.so` **4541576** (host `e4-call-decode.c` / `e4-call-args.c`). **No** `IpcTxCallOutgoing` / `IpcTxSetCallOutgoing` symbol — the packer is **`IpcProtocol41Call::IpcTxCallOriginate(char*, ClirType, CallType, int)`** @ **0x3601e4** size **400**. Replicant 90-byte **SET** `0x0201` was the wrong type and length.
+
+| Symbol | VA | size | FMT |
+|--|--|--|--|
+| `IpcTxCallOriginate` | **0x3601e4** | 400 | len **99** (`0x63`), cmd packed **`0x0102`** → **0x0201**, type **EXEC 0x01** (not SET). Payload: LE u16 CallType map (voice `CallType=1` → table[0] **`0x0100`** @ `0x151a30`), Clir byte, strlen (cap **0x52**), prefix **0x11** if number[0] is `+` else **0x21**, number, last byte 4th int. |
+| `IpcTxCallRelease` | **0x360a9c** | 176 | len **7**, cmd **`0x0302`** → **0x0203**, type **EXEC 0x01** |
+| `IpcTxCallGetCallList` | **0x360374** | 176 | len **7**, cmd **`0x0602`** → **0x0206**, type **GET 0x02** |
+| `IpcRxCallStatus` | **0x361fb4** | 268 | live NOTI **0x0205** |
+
+No invented opcodes. No dest digits in this file. **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET **0x03**. **No** STK ACK (`0x0E0A` NOTI seen, not `0x0E03`). Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17052**. RNDIS host **192.168.42.7**. wget **8842** `/tmp/call-mo` **1102920**.
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/call-mo` (`os/build/e4-call-mo.c`, Zig musl). mseq from **0xC0**. International prefix path (`0x11`), voice **0x0100**, Clir **0**. Ring drain **25 s**, then vendor RELEASE.
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | DISP **0x0706** / **0x0701** / SERVING / CS **HOME** (no STK **0x0E03**) |
+| GET `PHONE_STATE` **0xC0** | **0xC0** | **0x02** |
+| GET `MODE_SEL` **0xC1** | **0xC1** | **0x0b** |
+| GET `NET_REGIST` CS/PS | **0xC3** | CS **HOME** UMTS fail=0; PS **NONE GMM#7** |
+| GET `CALL_LIST` **0xC5** | **0xC5** | RESP plen=1 body **`00`** |
+| EXEC `0x0201` **0xC6** len 99 | **0xC6** | **GEN_PHONE_RES 0x0201 0x8000 SUCCESS** |
+| NOTI `0x0205` (CALL_STATUS) | — | three during ring: `00 01 …` (b1=**1**) |
+| GET `CALL_LIST` mid **0xC7** | **0xC7** | still plen=1 **`00`** |
+| EXEC `0x0203` **0xC8** | **0xC8** | **GEN_PHONE_RES 0x0203 0x8005** |
+| NOTI `0x0205` | — | `00 00 …` (b1=**0**) |
+| GET CS / `CALL_LIST` | **0xCA** / **0xCC** | CS **HOME**; LIST **`00`** |
+
+CS stayed **HOME**. CP **ONLINE**. Other NOTI while ringing: **0x0E0A**, **0x0908** / **0x0909**, **0x0B0D** JSON (PLMN **25501**, no dest digits logged here). **Do not ACK STK.**
+
+### rmnet
+
+Still **0**. This pass is CS identity only. Holder **428** CONT. Check the **other phone** for a missed call or operator SMS (that is how the Samsung SIM’s own MSISDN is learned). **Do not write that number here.**
+
+## Probe 34 — live GET after MO + unused IpcTxGetPdpContext / IpcTxGetImsi (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 33 (vendor MO) left CS **HOME**; this pass is GET-first, then the next unused recovered IpcTx. **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET (already **`02`**; 0x01 only if restore). **No** 0x0D14. **No** 0x0D22 (MapDataProfile still VZW/USC-only). **No** STK ACK. **No** PIN. **No** second MO. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17296** (GET) then **17331** (unused IpcTx). RNDIS host **192.168.42.7**. wget **8844** `/tmp/ps-p34` **1100552**; wget **8845** `/tmp/ps-p35` **1109416**.
+
+### Binary: unused IpcTx (host `e4-p33-decode.c`)
+
+`libsec-ril.so` **4541576**. No invented opcodes. **No** `IpcTxGetMsisdn` / `IpcTxSimGetMsisdn`. String **`NET_SUBSCRIBER_NUM`** exists; no MOVZ **`0x0608`** send path. **MSISDN IpcTx not recovered.** `IpcTxSetAlwaysOnPdn` still **0x0D22 SET** len 9 with `MapDataProfile` VZW/USC — **not fully recovered, not SET.** No attach IpcTx besides **`IpcTxPsAttach` 0x0D03** (closed).
+
+| Symbol | VA | size | FMT |
+|--|--|--|--|
+| `IpcProtocol41Data::IpcTxGetPdpContext()` | **0x36a1f4** | 116 | len **7**, packed **`0x040d`** → **0x0D04**, type **GET 0x02**, empty. Twin IilData @ **0x3b1640**. |
+| `IpcProtocol41Misc::IpcTxGetImsi()` | **0x37b04c** | 176 | len **7**, packed **`0x020a`** → **0x0A02**, type **GET 0x02**, empty. String **`MISC_ME_IMSI`**. |
+| `IpcTxGetPsiQueryInfo` | **0x36a268** | 288 | empty GET **0x0D26** (packed **`0x260d`**). **Not sent** (picked 0x0D04). |
+
+### Live ipc1 (SIM2 25501) — GET first (`/tmp/ps-p34`, mseq **0xE0**)
+
+Uptime **37052 s**. One ipc1 open.
+
+| TX | aseq | result |
+|--|--|--|
+| leftover NOTI | — | DISP **0x0706** / **0x0701** only (no STK) |
+| GET `PHONE_STATE` **0xE0** | **0xE0** | **0x02** |
+| GET `MODE_SEL` **0xE1** | **0xE1** | **0x0b** |
+| GET `0x0808` **0xE2** | **0xE2** | body **`02`** (enum **2** CS_PS) — **stayed** since Probe 32 / MO |
+| GET `0x0809` **0xE3** | **0xE3** | body **`01`** |
+| GET `0x0816` **0xE4** | **0xE4** | RESP plen=2 body **`01 00`** (slot=1) |
+| GET `GPRS_PS` **0xE7** | **0xE7** | **cid=0 attached=0** |
+| GET `NET_REGIST` CS/PS | **0xE6** | CS **HOME** act=UMTS fail=0; PS **NONE fail=0x07** |
+
+GMM still **#7**, rmnet **0** — not a win. **No SET.**
+
+### Live unused IpcTx (`/tmp/ps-p35`, mseq **0xF0**)
+
+Baseline GET same as above (CS_PS **`02`**, DDS **`01 00`**, CS **HOME**, PS **NONE GMM#7**, attached=0). **0x0808 SET skipped** (still **`02`**).
+
+| TX | aseq | result |
+|--|--|--|
+| GET `0x0D04` **0xF9** | **0xF9** | type-2 RESP plen=3 body **`01 18 00`** (no IPv4; no GEN) |
+| GET `0x0A02` **0xFA** | **0xFA** | type-2 RESP plen=16 (length-prefixed ASCII IMSI; MCC/MNC **25501** matches SERVING; **digits not recorded**) |
+| GET CS/PS / GPRS_PS | **0xFC** / **0xFD** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **restore to 0x01 did not run**. Domain left at **`02`**. No GEN on these GETs.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre GET / post unused GET | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** Vendor PDP GET after the MO is a 3-byte stub, not IP config. GMM **#7** is not “PDP context unread”. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 35 — IpcRx 0x0D04 `01 18 00` / CALL_STATUS 0x03 + AlwaysOn SET (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Decode GET **0x0D04** body **`01 18 00`**, name **0x0D10** st=**0x03**, finish `MapDataProfile` / AlwaysOn, list `IpcTxNetSetPreferredNetType` SET bytes (do not send 0x04/0x07). **No** original efs. **No** `POWER_OFF`. **No** `MODE_SEL` SET. **No** 0x0808 SET (already **`02`**). **No** 0x0D14. **No** STK ACK. **No** PIN. **No** second MO. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17340**. RNDIS host **192.168.42.7**. wget **8846** `/tmp/ps-p36` **1102504**.
+
+### Binary: `IpcRxPdpContext` @ 0x36dc08 (GET 0x0D04 `01 18 00`)
+
+Host `e4-p35-decode.c`. `libsec-ril.so` **4541576**. Type byte `[6]==SET 0x03` skips parse. GET/NOTI: **`[7]` = count**. Records are **2 B** starting at `[8]`: loop `x23=[9]`, `ldurb [x23,#-1]` + `ldrb [x23]`, step +2.
+
+| body | IpcRx field |
+|--|--|
+| `01` | count **1** |
+| `18` | record[0] raw (stored; **not** the 1 / 0x0A / 0x0B status map) |
+| `00` | record[1] status → **not** {1, 0x0A, 0x0B} → mapped **0** (inactive) |
+
+Status remap (same constants as CALL_STATUS): **0x01→4**, **0x0A→5**, **0x0B→6**, else **0**. Live **0x00** = inactive — no IP. **0x18 is not a 3GPP SM/ESM cause** (those skip #24 / reserved between #8 and #25). If read as a NAS/GMM cause it would be **#24 Not authorized for this CSG**; this RX does **not** run the CallStatus fail mapper on that byte. After SET CID **1**, GET count=1 + raw **0x18** + status **0** = one inactive context with CP reason **0x18**, not an IPv4 stub.
+
+### Binary: `IpcRxGprsCallStatus` @ 0x36d29c (st=**0x03**)
+
+`[7]` CID, `[8]` status, `[9]` end-reason (mapped @ **0x36d5c0** “Data call end reason” when not connected), `[0xa]`/`[0xb]` extras, `[0xc]` throttle.
+
+| `[8]` | map | flags | log |
+|--|--|--|--|
+| **0x01** | 4 | connected (w23=1) | `CDMA Data call(%d)` |
+| **0x0A** | 5 | — | (no disconnected) |
+| **0x0B** | 6 | — | (no disconnected) |
+| **else (incl. 0x03)** | 0 | disconnected (w24=1) | **`CDMA Data call(%d) disconnected`** |
+
+**st=0x03 = disconnected** (default/else; not a named 1 / 0x0A / 0x0B special). Probe 26/29 NOTI `01 03` = cid **1** disconnected.
+
+### Binary: `MapDataProfile` @ 0x36a9c0 (size 292) — recovered
+
+Byte jump table @ **0x151cdb**. Non-VZW/USC (this SIM) path:
+
+| `DataProfile` | return |
+|--|--|
+| 0 | VZW/USC → **3**, else **1** |
+| 1 | **1** (Invalid Profile) |
+| 2 | VZW/USC → **3**, else **1** |
+| 3 | **2** |
+| 4, 5 | **4** |
+| 1003 (`0x3eb`) | **0x0B** |
+| 1004 (`0x3ec`) | **5** |
+| 1006 (`0x3ee`) | VZW/USC → **3**, else **1** |
+| else | **1** + log `Invalid Profile(%d)` |
+
+`IpcTxSetAlwaysOnPdn` @ **0x36c714**: **0x0D22 SET** len **9**, `{bool, MapDataProfile}`. `DoAlwaysOnPdn` default profile **1** → map **1**. Layout complete. Twin `IpcTxSetDataCallEstablish` @ **0x36b93c** is **`CDMA_DATA_CALL_ESTABLISH`** packed **0x0203** → cmd **0x0302** SET 1-byte (1=on, 2=off) — **not sent** (CDMA, not EPS).
+
+No vendor **EPS / LTE attach** IpcTx besides closed **0x0D03** and unimplemented **0x0D14**. String **`GPRS_LTE_ATTACH_APN_INFO`** only. **`EPS_ATTACH`** none. **0x0809** SET still not recovered.
+
+### Binary: `IpcTxNetSetPreferredNetType` SET bytes (do not send)
+
+`ConvertPreferredNetTypeToIpcWithBitmask` @ **0x387db4**. Lookup @ **0x153e9c** enum **0..0x21** (default **0x2f** if enum>0x21). Optional OR **0x04** / **0x24** for enum 0–9. Bytes the binary can emit:
+
+`01 02 03 04 08 0a 0b 10 11 12 13 18 19 1a 1b 20 24 27 2c 2f 37 3f 40 48 4a 4b 58 59 5a 5b 6c 6f 7f`
+
+**0x07** is **not** in the table; it is **0x03|0x04** from the LTE-bit OR (Probe 18). Live GET **0x0b** = table[9]. **Never SET 0x04 or 0x07.** Prefer GET-only.
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/ps-p36` (`os/build/e4-ps-p36.c`, Zig musl **1102504**). mseq from **0x10**. Leftover NOTI: DISP **0x0706** / **0x0701**, CS **HOME**, PS **NONE GMM#7**, SERVING **25501**, act **0x04→0x03** (UMTS→GSM; cid changed). No STK.
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x10** | **0x10** | **0x02** |
+| GET `MODE_SEL` **0x11** | **0x11** | **0x0b** |
+| GET `0x0808` **0x12** | **0x12** | body **`02`** (CS_PS) — **stayed** |
+| GET `0x0809` **0x13** | **0x13** | **`01`** |
+| GET `0x0816` **0x14** | **0x14** | **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x16** / **0x17** | CS **HOME** act=**GSM 0x03** fail=0; PS **NONE GMM#7**; **attached=0** |
+| SET `0x0808` | — | **not sent** (already **`02`**) |
+| SET `0x0D22` **`01 01`** **0x19** | **0x19** | **GEN_PHONE_RES 0x0D22 0x8000 SUCCESS** |
+| GET `0x0D26` **0x1a** | **0x1a** | **GEN_PHONE_RES 0x0D26 0x8001** |
+| GET CS/PS / GPRS_PS | **0x1c** / **0x1d** | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **restore to 0x01 did not run**. Domain left at **`02`**. No **0x0D09** / **0x0D10** after AlwaysOn.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post-SET | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** AlwaysOn SET is ACK’d (**8000**) but does not clear GMM **#7**. GET 0x0D22 was **8001** (probe 25); SET-only on this CP. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 36 — MODE_SEL SET 0x0a LTE_WCDMA (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Confirm `0x0a` in `IpcTxNetSetPreferredNetType` from **this** `libsec-ril.so`, then SET if safe. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL **0x04/0x07**. **No** 0x0808 SET **0x03**. **No** 0x0D14. **No** STK ACK. **No** PIN. **No** second MO. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17353**. RNDIS host **192.168.42.7**. wget **8847** `/tmp/ps-p37` **1111104**.
+
+### Binary: `0x0a` is LTE_WCDMA, not AOSP 10 global
+
+Host `e4-p36-decode.c`. `ConvertPreferredNetTypeToIpcWithBitmask` @ **0x387db4** loads `table[enum]` @ **0x153e9c**. IPC bits on this .so: GSM **0x01**, UMTS **0x02**, CDMA **0x04**, LTE **0x08**, TD-SCDMA **0x10**, EvDo **0x20**, NR **0x40**. No `LTE_ONLY` / `LTE_WCDMA` cstrings (enum names from AOSP `RIL_PreferredNetworkType` vs table).
+
+| AOSP enum | name | IPC emit | bits |
+|--|--|--|--|
+| 9 | LTE_GSM_WCDMA | **0x0b** | GSM\|UMTS\|LTE (live GET before this pass) |
+| 10 | LTE_CDMA_EVDO_GSM_WCDMA (global) | **0x2f** | GSM\|UMTS\|CDMA\|LTE\|EvDo |
+| 11 | LTE_ONLY | **0x08** | LTE |
+| 12 | LTE_WCDMA | **0x0a** | **UMTS\|LTE** (no GSM, no CDMA) |
+| 5 | CDMA_ONLY | **0x04** | CDMA (forbidden SET) |
+
+**0x0a is not AOSP 10.** AOSP 10 emits **0x2f**. **0x0b** was already GSM+UMTS+LTE (not LTE_ONLY). **0x0a** is UMTS+LTE — valid for this Exynos UMTS/LTE unit, not CDMA-only. SET **0x0a** to leave GSM camp (Probe 35 act=GSM under 0x0b). Restore **0x0b** only if CS leaves HOME/ROAMING.
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/ps-p37` (`os/build/e4-ps-p37.c`, Zig musl **1111104**). mseq from **0x30**. Leftover NOTI: DISP **0x0706** only (no STK **0x0E03**).
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x30** | **0x30** | **0x02** |
+| GET `MODE_SEL` **0x31** | **0x31** | **0x0b** |
+| GET `0x0808` **0x32** | **0x32** | **`02`** CS_PS |
+| GET `0x0809` **0x33** | **0x33** | **`01`** |
+| GET `0x0816` **0x34** | **0x34** | **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x36** / **0x37** | CS **HOME** act=**GSM 0x03** fail=0; PS **NONE GMM#7**; **attached=0** |
+| SET `MODE_SEL` **0x0a** **0x39** | **0x39** | **GEN_PHONE_RES 0x080A 0x8000 SUCCESS**. FMT `08 00 39 ff 08 0a 03 0a` |
+| GET `MODE_SEL` **0x3a** | **0x3a** | **0x0a** |
+| 20 s drain | — | LTE NOTI act=**0x21** PS st=**0x07** fail=0; then CS **HOME UMTS 0x04**; PS **NONE** fail=0 then **GMM#7**. SERVING **25501**. No STK. |
+| GET `0x0808` **0x3e** | **0x3e** | **`01`** (CS-only; drifted after MODE_SEL) |
+| SET `0x0808` **`02`** **0x3f** | **0x3f** | **GEN 0x0808 0x8000**. GET **`02`**. CS **HOME UMTS** |
+| SET `GPRS_PS` `01 00 00` **0x44** | **0x44** | **GEN_PHONE_RES 0x0D03 0x8000 SUCCESS** |
+| GET CS/PS / GPRS_PS | **0x46** / **0x47** | CS **HOME** UMTS fail=0; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **restore MODE_SEL 0x0b did not run**. **0x0808 restore 0x01 did not run.** Domain left at **`02`**. MODE_SEL left at **0x0a**.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post-SET / post-attach | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** SET **0x0a** retuned CS GSM→UMTS and produced an LTE NOTI, but GMM **#7** returned. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 37 — LTE-window GMM + MODE_SEL SET 0x2f (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Sample GMM **while** LTE (act=**0x21**) is indicated — Probe 36 saw an LTE NOTI then sampled after UMTS fallback. Same ipc1 fd; MODE_SEL already **0x0a**. Immediate GET `NET_REGIST` PS + `GPRS_PS` + rmnet on any NOTI/RESP act=**0x21**. If no LTE in ~25s and GET still **0x0a**, SET **0x2f** (this `.so` table[10] **LTE_CDMA_EVDO_GSM_WCDMA** = GSM\|UMTS\|CDMA\|LTE\|EvDo, AOSP-10 global — **not** CDMA-only **0x04**). Keep **0x0808 `02`**. Restore **0x0a**/**0x0b** only if CS drops. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL **0x04/0x07**. **No** 0x0808 SET **0x03**. **No** 0x0D14. **No** STK ACK. **No** PIN. **No** second MO. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17367**. RNDIS host **192.168.42.7**. wget **8848** `/tmp/ps-p38` **1115704**.
+
+### Binary: `0x2f` is AOSP-10 global, not CDMA-only
+
+Re-ran host `e4-p36-decode.c` on `libsec-ril.so` **4541576** before SET. `ConvertPreferredNetTypeToIpcWithBitmask` @ **0x387db4** table @ **0x153e9c**:
+
+| AOSP enum | name | IPC emit | bits |
+|--|--|--|--|
+| 9 | LTE_GSM_WCDMA | **0x0b** | GSM\|UMTS\|LTE |
+| 10 | LTE_CDMA_EVDO_GSM_WCDMA (global) | **0x2f** | GSM\|UMTS\|CDMA\|LTE\|EvDo |
+| 12 | LTE_WCDMA | **0x0a** | UMTS\|LTE (Probe 36 SET) |
+| 5 | CDMA_ONLY | **0x04** | CDMA (**forbidden SET**) |
+
+**0x2f includes GSM+UMTS+LTE** (plus CDMA+EvDo). Not CDMA-only. Unused emit, not 0x04/0x07. SET allowed after no LTE under 0x0a.
+
+### Live ipc1 (SIM2 25501)
+
+Static `/tmp/ps-p38` (`os/build/e4-ps-p38.c`, Zig musl **1115704**). mseq from **0x50**. Leftover NOTI: DISP **0x0706** / **0x0701**, CS **HOME UMTS**, PS **NONE GMM#7**, SERVING **25501**. No STK.
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x50** | **0x50** | **0x02** |
+| GET `MODE_SEL` **0x51** | **0x51** | **0x0a** |
+| GET `0x0808` **0x52** | **0x52** | **`02`** CS_PS |
+| GET `0x0809` **0x53** | **0x53** | **`01`** |
+| GET `0x0816` **0x54** | **0x54** | **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x55** / **0x56** / **0x57** | CS **HOME** UMTS fail=0; PS **NONE GMM#7**; **attached=0** |
+| 25 s drain under **0x0a** | — | **no** act=**0x21**. No LTE-window GET. |
+| SET `MODE_SEL` **0x2f** | — | **GEN_PHONE_RES 0x080A 0x8000 SUCCESS** |
+| GET `MODE_SEL` | — | **0x0b** (CP folded global → GSM\|UMTS\|LTE; not stored as 0x2f) |
+| SET `0x0808` **`02`** | — | **GEN 0x0808 0x8000** (drifted after MODE_SEL; `set0808=1`) |
+| 25 s drain after 0x2f | — | **no** act=**0x21**. No LTE-window GET. |
+| GET `0x0808` **0x63** | **0x63** | **`02`** |
+| GET CS/PS / GPRS_PS | **0x64** / **0x65** / **0x66** | CS **HOME** UMTS fail=0; PS **NONE fail=0**; **attached=0** |
+
+**GMM#7 during LTE: not sampled** (`lte_seen=0`). No NOTI/RESP with act=**0x21** in either 25 s wall-clock drain, so the immediate PS/GPRS GET never fired. Baseline still had GMM **#7**; final PS fail=**0** (still **NONE**, not attached). CS stayed **HOME** → **restore MODE_SEL 0x0a/0x0b did not run**. Domain left at **`02`**. MODE_SEL left at **0x0b**.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / mid / post | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet (ioctl empty). IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** SET **0x2f** is ACK’d (**8000**) but this CP reports **0x0b**; no LTE window this pass. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 38 — raw PS regist hex + fail=0 wait (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 37 final GET was PS **NONE fail=0** (baseline still GMM#7). This pass dumps **raw NET_REGIST PS** so fail=0 is not a parse miss, then waits **50 s** with GET every ~5 s. If still NONE: SET `PsAttach` `01 00 00`. Vendor PDP only if PS HOME/ROAMING. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL SET (left **0x0b**). **No** 0x0808 SET (already **`02`**). **No** 0x0D14. **No** STK ACK. **No** PIN. **No** second MO. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17382**. RNDIS host **192.168.42.7**. wget **8849** `/tmp/ps-p39` **1138320**.
+
+### Raw NET_REGIST PS (fail=0 is real)
+
+FMT **n=27** plen=**20**, fail at byte **[17]** **present** (`fail_missing=0`). Same layout as Probe 16 GMM#7 sample; only the fail nibble differs.
+
+| when | act | st | body (20 B) | fail |
+|--|--|--|--|--|
+| leftover | — | (no PS NOTI; DISP **0x0706** only) | — | — |
+| baseline GET | **UMTS 0x04** | **NONE 0x01** | `04 03 01 b5 c3 8d 01 13 1d 05 **00** c3 8d 02 02 01 ff ff 00 00` | **0x00** |
+| T+0 … T+50 s (10 GET) | **0x04** | **NONE** | same body, fail **00** every sample | **0** |
+| NOTI after PsAttach | **0x04** then **GSM 0x03** | **NONE** | `04 03 01 … **07** …` then `03 03 01 b5 c3 8d c7 d8 00 00 **07** …` | **0x07** |
+| final GET | **GSM 0x03** | **NONE** | `03 03 01 b5 c3 8d c7 d8 00 00 **07** c3 8d 02 02 00 ff ff 00 00` | **0x07** |
+
+CS body stayed HOME fail=0 (`04 02 02 … 00 …` then `03 02 02 … 00 …`). GMM **#7** was **cleared** for ~50 s (searching, still NONE), then **re-asserted** by `IpcTxPsAttach`. Not a short-packet parse of fail=0.
+
+### Live ipc1 (SIM2)
+
+Static `/tmp/ps-p39` (`os/build/e4-ps-p39.c`, Zig musl **1138320**). mseq from **0x70**.
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x70** | **0x70** | **0x02** |
+| GET `MODE_SEL` **0x71** | **0x71** | **0x0b** |
+| GET `0x0808` **0x72** | **0x72** | **`02`** CS_PS — **no SET** |
+| GET `0x0809` / `0x0816` | **0x73** / **0x74** | **`01`** / **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x75** / **0x76** / **0x77** | CS **HOME UMTS** fail=0; PS **NONE fail=0**; **attached=0** |
+| 50 s poll (~5 s) | **0x79…** | 11× PS **NONE fail=0** act=UMTS. **lte_seen=0**. No HOME/ROAMING |
+| SET `GPRS_PS` `01 00 00` **0x97** | **0x97** | **GEN 0x0D03 0x8000**. NOTI PS **GMM#7**. CS **HOME** UMTS→GSM |
+| GET final | **0x9b** / **0x9c** / **0x9d** | CS **HOME GSM**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **0x0808 restore 0x01 did not run**. MODE_SEL restore did **not** run. Domain left at **`02`**. Vendor **0x0D1B / 0x0D01 / 0x0D04** skipped (PS never camped).
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / wait / post-attach | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet. IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** fail=0 was a quiet window, not attach. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 39 — speaker tone + vendor MO 40 s (v031, 2026-09-02)
+
+Not the rmnet goal. Dest number is **not recorded here**. Probe 38 already finished (fail=0 was real for 50 s; attach brought GMM#7 back; rmnet 0). User heard nothing on the other phone after Probe 33 (CALL_LIST stayed `00`). This pass: verify originate packing, ring **40 s**, play **local** `/sbin/beep` on the LIVE v026 speaker path so the Samsung itself is audible. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL SET. **No** 0x0808 SET **0x03**. **No** STK ACK. **No** PIN. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17397**. RNDIS host **192.168.42.7**. wget **8850** `/tmp/call-p39` **1145176**.
+
+### Originate packing (not BCD)
+
+`IpcTxCallOriginate` @ **0x3601e4** `memcpy`s the `char*` after prefix. Live pack: nlen=**13**, prefix=**0x11** (first byte `+` / **0x2b**), CallType **0x0100**, Clir **0**, ASCII digits after `+`. **digits_ok=1**. Same layout as Probe 33 — packing was already correct. Not GSM 7-bit BCD.
+
+### Speaker (local, not CP downlink)
+
+No CP voice PCM path recovered this pass (no ABOX call FE / `IpcTx` audio). Forked **`/sbin/beep`** five times during the ring (pcmC0D1p / RDMA1 / SIFS1 / UAIF1 / SMA1303). Each child printed **`beep: ok rdma1 sifs1 tonegen 57600 frames`** and exit **0**. **spk_ok=1**. Did **not** toggle Codec Enable, SMA I2C reset, Force AMP Power Down, or `ABOX SPUS ASRC3`. This is an 880 Hz local square, not network ringtone / in-call audio.
+
+### Live ipc1 (SIM2)
+
+Static `/tmp/call-p39` (`os/build/e4-call-p39.c`, Zig musl). mseq from **0xE0**. Leftover: CS **HOME UMTS** fail=0; PS **NONE GMM#7**; SERVING **25501**. No STK **0x0E03**.
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0xE0** | **0xE0** | **0x02** |
+| GET `MODE_SEL` **0xE1** | **0xE1** | **0x0b** |
+| GET CS/PS / GPRS_PS | **0xE2** / **0xE3** / **0xE4** | CS **HOME UMTS** fail=0; PS **NONE GMM#7**; **attached=0** |
+| GET `CALL_LIST` **0xE5** | **0xE5** | plen=1 **`00`** |
+| EXEC `0x0201` **0xE6** len 99 | **0xE6** | **GEN 0x0201 0x8000**. NOTI **0x0205** b1=**1** (several) |
+| GET `CALL_LIST` mid-ring **0xE7** | **0xE7** | plen=**22** count=**1** — prefix **0x11** nlen=**13** first=**0x2b** (ASCII international; dest **not** logged). **Not empty.** |
+| GET CS/PS mid | — | CS **HOME**; PS **NONE GMM#7**; **attached=0** |
+| GET `CALL_LIST` end-of-40s | **0xF3** / **0xF7** | plen=1 **`00`** again |
+| EXEC `0x0203` **0xF8** | **0xF8** | **GEN 0x0203 0x8005**. NOTI **0x0205** b1=**0** |
+| GET CS / LIST after | **0xF9** / **0xFC** | CS **HOME**; LIST **`00`** |
+
+Mid-ring CALL_LIST had one entry (unlike Probe 33). It was gone by T+40 s before RELEASE. That is a CP call object, still **not** proof the other phone rang. **SMS skipped**: CALL_LIST was not empty; `IpcTxSendSms` @ **0x39c538** size **324** named but FMT/PDU **not** recovered — no guessed PDU.
+
+### rmnet
+
+Still **0**. Holder **428** CONT. CP **ONLINE**. **Do not ACK STK.** Dest number stays out of this file.
+
+## Probe 40 — GET-only GMM#7 timeline, no attach (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 38 hypothesis: local `PsAttach` **caused** GMM#7 after a real fail=0 window. This pass is **GET-only** until PS HOME/ROAMING. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL SET (left **0x0b**). **No** 0x0808 SET (already **`02`**). **No** 0x0D14. **No** `PsAttach` while NONE. **No** PDP (PS never HOME). **No** STK ACK. **No** PIN. **No** MO. **No** `/sbin/beep`. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17416**. RNDIS host **192.168.42.7**. wget **8851** `/tmp/ps-p40` **1138560**.
+
+### Live ipc1 (SIM2)
+
+Static `/tmp/ps-p40` (`os/build/e4-ps-p40.c`, Zig musl **1138560**). mseq from **0x10**. Leftover: DISP **0x0706** only (no PS NOTI).
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x10** | **0x10** | **0x02** |
+| GET `MODE_SEL` **0x11** | **0x11** | **0x0b** |
+| GET `0x0808` **0x12** | **0x12** | **`02`** CS_PS — **no SET** |
+| GET `0x0809` / `0x0816` | **0x13** / **0x14** | **`01`** / **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x15** / **0x16** / **0x17** | CS **HOME UMTS** fail=0; PS **NONE fail=0x07**; **attached=0** |
+| 100 s poll (~8 s) | **0x19…0x3f** | **13** GET + baseline + final = **15**× PS **NONE fail=0x07** act=UMTS. **lte_seen=0**. **No HOME/ROAMING**. **No attach.** |
+| GET final | **0x40** / **0x41** / **0x42** | CS **HOME UMTS**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **0x0808 restore 0x01 did not run**. MODE_SEL restore did **not** run. Domain left at **`02`**. Vendor **0x0D1B / 0x0D01 / 0x0D04** skipped (PS never camped). `did_attach=0` `did_pdp=0` `fail7_no_att=0` `saw_fail0=0`.
+
+### Raw NET_REGIST PS (GMM#7 sticky)
+
+FMT **n=27** plen=**20**, fail at byte **[17]** **present** (`fail_missing=0`). Same layout as Probe 38; fail nibble stayed **07**.
+
+| when | act | st | body (20 B) | fail |
+|--|--|--|--|--|
+| leftover | — | (no PS NOTI; DISP **0x0706** only) | — | — |
+| baseline GET | **UMTS 0x04** | **NONE 0x01** | `04 03 01 b5 c3 8d fe 12 1d 05 **07** c3 8d 02 02 01 ff ff 00 00` | **0x07** |
+| T+0 … T+100 s (13 GET) | **0x04** | **NONE** | same body, fail **07** every sample | **7** |
+| final GET | **0x04** | **NONE** | same | **0x07** |
+
+CS body stayed HOME fail=0 (`04 02 02 … 00 …`) UMTS the whole window (did **not** drop to GSM — that drop in Probe 38 was after attach). GMM **#7** did **not** clear in 100 s without attach, and fail **never** returned to 0 (`saw_fail0=0`). The Probe 38 fail=0 window was **not** reproduced after the earlier attach.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / wait / post | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet. IPv4 only on **rndis0**. Holder **428** CONT, still alive (`radio-boot`, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** GET-only does not lift GMM#7. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 41 — vendor SMS EXEC 0x0401 (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. User: second phone saw **no** missed call / SMS from Probe 39 MO. Probe 40 GET-only already showed GMM#7 sticky — this pass **snapshots PS once** (no 100 s wait, **no PsAttach**), then SMS from SIM2/ipc1. Dest number is **not** logged here. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL SET. **No** 0x0808 SET (already **`02`**). **No** 0x0D14. **No** STK ACK. **No** PIN. **No** MO. **No** `/sbin/beep`. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17473**. RNDIS host **192.168.42.7**. wget **8852** `/tmp/sms-p41` **1130240**.
+
+### IpcTxSendSms @ 0x39c538 (324 B)
+
+`libsec-ril.so` 4541576. Mangled `_ZN16IpcProtocol41Sms12IpcTxSendSmsEhiihhPcm`. FMT **recovered from stores**, not guessed:
+
+| store | meaning |
+|--|--|
+| `movz w8, #0x104` + `strh [sp,#4]` | packed cmd **0x0104** → group **0x04** index **0x01** = **`0x0401` SMS_SEND_MSG** |
+| `strb 0x01 [sp,#6]` | type **EXEC 0x01** (not SET) |
+| `strb` arg1 / arg4 → `[sp,#7]` / `[sp,#8]` | prefix; `DoSendSms` defaults both **0x01** |
+| BLR vtable+0x78 → `[sp,#9]` | converter result; default **0x01** (GSM `IpcRxSendMsg` network_type **1 or 2**) |
+| `strb` pdulen `[sp,#0xa]` | n = SCA+TPDU |
+| `bl 0x409ab0` dest=`sp+0xb` n=`ulong` cap **0x100** | memcpy body |
+| `strh` length = pdulen + **0x0b** | FMT length |
+
+String `SMS_SEND_MSG` @ `0x135c1a`. `ConvertToIpcCmd` RIL **0x191** → group **0x4**. `IpcRxSendMsg` @ `0x39e0ac`: payload `[7]` = network_type (1 or 2). `DoSendSms` requires TP-DA EXT=1 (**TOA 0x91**); `"Use default SMSC"` → SCA first byte **0x00**. TPDU is 23.040 SMS-SUBMIT (FO **0x11**, VP relative).
+
+### Live ipc1 (SIM2)
+
+Static `/tmp/sms-p41` (`os/build/e4-sms-p41.c`, Zig musl **1130240**). mseq from **0x50**. Leftover: DISP **0x0706** / **0x0701** only (no PS NOTI).
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x50** | **0x50** | **0x02** |
+| GET `MODE_SEL` **0x51** | **0x51** | **0x0b** |
+| GET `0x0808` **0x52** | **0x52** | **`02`** CS_PS — **no SET** |
+| GET `0x0809` / `0x0816` | **0x53** / **0x54** | **`01`** / **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x55** / **0x56** / **0x57** | CS **HOME UMTS** fail=0; PS **NONE fail=0x07**; **attached=0** |
+| EXEC `SMS_SEND_MSG` **0x59** | **0x59** | GEN **0x0004** (not 0x8000). **No 0x0401 RX / no RP.** |
+| GET after SMS / final | **0x5a…0x5f** | CS **HOME UMTS**; PS **NONE GMM#7**; **attached=0** |
+
+SMS EXEC **was sent** (`sms_sent=1`). Type **EXEC**, not SET. flen=**32**, prefix `01 01 01`, lenb=`15`, SCA `00`, FO `11`, DA digits=12, TOA **0x91**. Header only: `20 00 59 ff 04 01 01 01 01 01 15 00 11 00 0c 91` (DA BCD omitted). 15 s drain after EXEC: only GEN + DISP **0x0701**. `sms_rx=0` `net=-1`. CS stayed **HOME** → **0x0808 restore 0x01 did not run**. MODE_SEL restore did **not** run. Domain left at **`02`**. **No PDP. No PsAttach.**
+
+### Raw NET_REGIST PS (GET-only snapshot)
+
+FMT **n=27** plen=**20**, fail at byte **[17]** **present**. Same body as Probe 40. Fail **never** 0 this pass (`saw_fail0=0`).
+
+| when | act | st | body (20 B) | fail |
+|--|--|--|--|--|
+| leftover | — | (no PS NOTI) | — | — |
+| baseline GET | **UMTS 0x04** | **NONE 0x01** | `04 03 01 b5 c3 8d fe 12 1d 05 **07** c3 8d 02 02 01 ff ff 00 00` | **0x07** |
+| after SMS EXEC | **0x04** | **NONE** | same | **0x07** |
+| final GET | **0x04** | **NONE** | same | **0x07** |
+
+FAIL HIST **n=3**, all **NONE fail=7** act=UMTS. CS body stayed HOME fail=0 UMTS. SMS EXEC did **not** change PS/GMM.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / post | ONLINE | rx=tx=**0** |
+
+No IPv4 on rmnet. IPv4 only on **rndis0**. Holder **428** CONT (`radio-boot`, post **R** then **S**, ipc0+rfs0). PID **416** still holds ipc1. **Data-plane goal not complete.** GEN **0x0004** means CP did not accept SMS_SEND_MSG (no RP). **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 42 — SET 0x2f then GET-only 120 s, no attach (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 37: SET **0x2f** from MODE_SEL **0x0a** → GET folded **0x0b**, then PS **NONE fail=0**. Probe 38 attached during that window and **reintroduced GMM#7**. Probe 40 GET-only while already #7 never returned fail=0. This pass re-SET **0x2f** (same FMT as Probe 37) from already-folded **0x0b**, then GET-only **120 s** — **no PsAttach, no 0x0D03, no PDP** unless PS HOME/ROAMING. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL **0x04/0x07**. **No** 0x0808 SET **0x03**. **No** 0x0D14. **No** STK ACK. **No** PIN. **No** MO. **No** SMS. **No** `/sbin/beep`. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17496**. RNDIS host **192.168.42.7**. wget **8853** `/tmp/ps-p42` **1134040**.
+
+### Live ipc1 (SIM2)
+
+Static `/tmp/ps-p42` (`os/build/e4-ps-p42.c`, Zig musl **1134040**). mseq from **0x20**. Leftover: DISP **0x0706** / **0x0701** only (no PS NOTI).
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x20** | **0x20** | **0x02** |
+| GET `MODE_SEL` **0x21** | **0x21** | **0x0b** |
+| GET `0x0808` **0x22** | **0x22** | **`02`** CS_PS — **no SET** |
+| GET `0x0809` / `0x0816` | **0x23** / **0x24** | **`01`** / **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x25** / **0x26** / **0x27** | CS **HOME UMTS** fail=0; PS **NONE fail=0x07**; **attached=0** |
+| SET `MODE_SEL` **0x2f** **0x29** | **0x29** | **GEN 0x080A 0x8000 SUCCESS**. FMT `08 00 29 ff 08 0a 03 2f` |
+| GET `MODE_SEL` **0x2a** | **0x2a** | **0x0b** (CP folded again; not stored as 0x2f) |
+| GET `0x0808` **0x2b** | **0x2b** | **`02`** — no re-SET |
+| 120 s poll (~8 s) | **0x2c…** | **15** GET + baseline + final = **17**× PS **NONE fail=0x07** act=UMTS. **lte_seen=0**. **No HOME/ROAMING**. **No attach. No PDP.** |
+| GET final | — | CS **HOME UMTS**; PS **NONE GMM#7**; **attached=0** |
+
+CS stayed **HOME** → **0x0808 restore 0x01 did not run**. MODE_SEL restore did **not** run. Domain left at **`02`**. Vendor **0x0D1B / 0x0D01 / 0x0D04** skipped (PS never camped). `did_attach=0` `did_pdp=0` `fail7_no_att=0` `saw_fail0=0` `set2f=1`.
+
+### Raw NET_REGIST PS (fail=0 not reproduced)
+
+FMT **n=27** plen=**20**, fail at byte **[17]** **present** (`fail_missing=0`). Same body as Probe 40/41. Fail nibble stayed **07** through SET 0x2f and the whole 120 s.
+
+| when | act | st | body (20 B) | fail |
+|--|--|--|--|--|
+| leftover | — | (no PS NOTI; DISP **0x0706** / **0x0701**) | — | — |
+| baseline GET | **UMTS 0x04** | **NONE 0x01** | `04 03 01 b5 c3 8d fe 12 1d 05 **07** c3 8d 02 02 01 ff ff 00 00` | **0x07** |
+| T+0 … T+120 s (15 GET) | **0x04** | **NONE** | same body, fail **07** every sample | **7** |
+| final GET | **0x04** | **NONE** | same | **0x07** |
+
+CS body stayed HOME fail=0 (`04 02 02 … 00 …`) UMTS the whole window. GMM **#7** did **not** clear after re-SET **0x2f** from already-folded **0x0b**. The Probe 37 fail=0 window was after SET **0x2f** from **0x0a**, not from **0x0b**. Re-SET does not recreate it.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / wait / post | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet. IPv4 only on **rndis0**. Holder **428** CONT (`radio-boot`, post **R**). PID **416** still holds ipc1. **Data-plane goal not complete.** SET **0x2f** is ACK’d (**8000**) but this CP still reports **0x0b**; GET-only 120 s after that SET never saw fail=0. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 43 — SET 0x0a then 0x2f, GET-only fail=0 wait (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 42 hole: SET **0x2f** from already-folded **0x0b** left GMM#7 (`saw_fail0=0`). Probe 37 fail=0 was after SET **0x2f** when GET-before was **0x0a**. This pass recreates **0x0a then 0x2f**, GET PS immediately, then GET-only — **no PsAttach, no 0x0D03, no PDP** unless PS HOME/ROAMING. fail=0 → **110 s**; fail stays 0x07 → 30 s then stop. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL **0x04/0x07**. **No** 0x0808 SET **0x03**. **No** 0x0D14. **No** STK ACK. **No** PIN. **No** MO. **No** SMS. **No** `/sbin/beep`. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17516**. RNDIS host **192.168.42.7**. wget **8854** `/tmp/ps-p43` **1145008**.
+
+### Live ipc1 (SIM2)
+
+Static `/tmp/ps-p43` (`os/build/e4-ps-p43.c`, Zig musl **1145008**). mseq from **0x60**. Leftover: DISP **0x0706** only (no PS NOTI).
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x60** | **0x60** | **0x02** |
+| GET `MODE_SEL` **0x61** | **0x61** | **0x0b** |
+| GET `0x0808` **0x62** | **0x62** | **`02`** CS_PS |
+| GET `0x0809` / `0x0816` | **0x63** / **0x64** | **`01`** / **`01 00`** |
+| GET CS/PS / GPRS_PS | **0x65** / **0x66** / **0x67** | CS **HOME UMTS** fail=0; PS **NONE fail=0x07**; **attached=0** |
+| SET `MODE_SEL` **0x0a** **0x69** | **0x69** | **GEN 0x080A 0x8000 SUCCESS**. FMT `08 00 69 ff 08 0a 03 0a` |
+| GET `MODE_SEL` **0x6a** | **0x6a** | **0x0a** |
+| 5 s drain + GET `0x0808` | — | LTE NOTI act=**0x21** PS st=**0x07** fail=0. **0x0808 drifted `01`** |
+| SET `0x0808` **`02`** **0x6c** | **0x6c** | **GEN 0x0808 0x8000**. GET **`02`**. CS **HOME UMTS**. PS **NONE fail=0** |
+| SET `MODE_SEL` **0x2f** **0x71** | **0x71** | **GEN 0x080A 0x8000 SUCCESS**. FMT `08 00 71 ff 08 0a 03 2f`. GET-before was **0x0a** |
+| GET `MODE_SEL` **0x72** | **0x72** | **0x0b** (CP folded again) |
+| GET PS immediately | **0x74** | UMTS PS st=**0x07** fail=**0** (not GMM#7). `fail_after_2f=0` `saw_fail0=1` |
+| GET `0x0808` **0x76** | **0x76** | **`01`** again — re-SET **`02`** **0x77** GEN **8000** |
+| 110 s poll (~8 s) | — | **14** GET PS **NONE fail=0** act=UMTS. **lte_seen=1** (NOTI after both SETs; **lte_gets=0** during wait). **No HOME/ROAMING**. **No attach. No PDP.** |
+| GET final | — | CS **HOME UMTS**; PS **NONE fail=0**; **attached=0** |
+
+CS stayed **HOME** → **0x0808 restore 0x01 did not run**. MODE_SEL restore did **not** run. Domain left at **`02`**. Vendor **0x0D1B / 0x0D01 / 0x0D04** skipped (PS never camped). `did_attach=0` `did_pdp=0` `fail7_no_att=0` `saw_fail0=1` `set0a=1` `set2f=1`.
+
+### Raw NET_REGIST PS (Probe 37 fail=0 reproduced)
+
+FMT **n=27** plen=**20**, fail at byte **[17]** **present** (`fail_missing=0`). Baseline fail nibble **07**; after SET **0x0a** it cleared and stayed **00**.
+
+| when | act | st | body (20 B) | fail |
+|--|--|--|--|--|
+| leftover | — | (no PS NOTI; DISP **0x0706**) | — | — |
+| baseline GET | **UMTS 0x04** | **NONE 0x01** | `04 03 01 b5 c3 8d fe 12 1d 05 **07** c3 8d 02 02 01 ff ff 00 00` | **0x07** |
+| NOTI after SET 0x0a | **LTE 0x21** | **0x07** | `21 03 07 00 00 00 48 37 42 06 **00** …` | **0** |
+| GET after re-SET 0x0808 | **0x04** | **NONE** | `04 03 01 b5 c3 8d fe 12 1d 05 **00** c3 8d 02 02 01 ff ff 00 00` | **0** |
+| NOTI after SET 0x2f | **LTE 0x21** | **0x07** | same LTE body, fail **00** | **0** |
+| GET PS after 0x2f | **0x04** | **0x07** | `04 03 07 00 00 00 fe 12 1d 05 **00** …` | **0** |
+| T+0 … T+110 s (14 GET) | **0x04** | **NONE** | `04 03 01 b5 c3 8d fe 12 1d 05 **00** c3 8d 02 02 01 ff ff 00 00` | **0** |
+| final GET | **0x04** | **NONE** | same | **0** |
+
+CS body stayed HOME fail=0 (`04 02 02 … 00 …`) UMTS the whole window. GMM **#7** **cleared** after SET **0x0a** (same path as Probe 36/37) and did **not** return during 110 s GET-only. PS stayed **NONE** — fail=0 is searching, not camp. **Did not attach** (Probe 38: attach reintroduced #7).
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / wait / post | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet. IPv4 only on **rndis0**. Holder **428** CONT (`radio-boot`, post **R**). PID **416** still holds ipc1. **Data-plane goal not complete.** SET **0x0a** sticks; SET **0x2f** still folds to **0x0b**; fail=0 window is real again but GET-only does not camp PS. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 44 — vendor PDP in fail=0 window (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 43 holes: (1) PS may not have been GET during LTE; (2) vendor PDP never ran in the fail=0 window (only under GMM#7). This pass recreates **0x0a then 0x2f**, arms LTE GET on act=**0x21**, then SET **0x0D1B / 0x0D01 / 0x0D04** as soon as fail=**0** (LTE or UMTS) — **no PsAttach, no 0x0D03**. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL **0x04/0x07**. **No** 0x0808 SET **0x03**. **No** 0x0D14. **No** STK ACK. **No** PIN. **No** MO. **No** SMS. **No** `/sbin/beep`. Holder **428** STOP/CONT only (did **not** STOP 416). Killed leftover **sleep** PID **17533**. RNDIS host **192.168.42.7**. wget **8855** `/tmp/ps-p44` **1146752**.
+
+### Live ipc1 (SIM2)
+
+Static `/tmp/ps-p44` (`os/build/e4-ps-p44.c`, Zig musl **1146752**). mseq from **0x80**. `g_win` armed before leftover so act=**0x21** fires GET.
+
+| TX | aseq | result |
+|--|--|--|
+| GET `PHONE_STATE` **0x80** | **0x80** | (baseline; CS later HOME) |
+| GET `MODE_SEL` **0x81** | **0x81** | **0x0b** |
+| GET `0x0808` **0x82** | **0x82** | **`02`** CS_PS |
+| GET CS/PS / GPRS_PS | **0x85** / **0x86** / **0x87** | CS **HOME UMTS** fail=0; PS **NONE fail=0**; **attached=0** |
+| SET `MODE_SEL` **0x0a** **0x89** | **0x89** | **GEN 0x080A 0x8000 SUCCESS** |
+| GET `MODE_SEL` **0x8d** | **0x8d** | **0x0a** |
+| LTE NOTI + **8×** LTE-window GET | — | act=**0x21** fail=**0**; PS st=**0x07** then **NONE**; **attached=0**; rmnet **0**. **0x0808 drifted `01`** |
+| SET `0x0808` **`02`** **0xa4** | **0xa4** | **GEN 0x0808 0x8000**. GET **`02`**. CS **HOME UMTS**. PS **NONE fail=0** |
+| SET `MODE_SEL` **0x2f** **0xa9** | **0xa9** | **GEN 0x080A 0x8000 SUCCESS**. GET-before was **0x0a** |
+| GET `MODE_SEL` **0xaa** | **0xaa** | **0x0b** (CP folded again) |
+| GET PS immediately | **0xac** | UMTS PS st=**0x07** fail=**0**. `fail_after_2f=0` `saw_fail0=1` |
+| LTE NOTI after 0x2f | — | act=**0x21** st=**0x07** fail=**0**. `lte_gets` already **8** — no 9th GET |
+| GET `0x0808` **0xae** | **0xae** | **`01`** again — re-SET **`02`** **0xaf** GEN **8000** |
+| SET `0x0D1B` **0xb4** 0xCB `lte_internet`+`internet` | **0xb4** | **GEN 0x0D1B 0x8000 SUCCESS** |
+| SET `0x0D01` **0xb5** 0x95 CID=1 APN `internet` | **0xb5** | **GEN 0x0D01 0x8000 SUCCESS** |
+| SET `0x0D04` **0xb6** 0xF8 | **0xb6** | **GEN 0x0D04 0x8000 SUCCESS**. NOTI **0x0D10** cid=**1** st=**0x03**. **No 0x0D09** |
+| GET final | — | CS **HOME UMTS**; PS **NONE fail=0**; **attached=0** |
+
+CS stayed **HOME** → **0x0808 restore 0x01 did not run**. MODE_SEL restore did **not** run. Domain left at **`02`**. `did_attach=0` `did_pdp=1` `fail7_no_att=0` `saw_fail0=1` `set0a=1` `set2f=1`. **GEN_0D03=0xffff** (GET only).
+
+### LTE-window PS (hole 1)
+
+Immediate GET on act=**0x21** (`lte_gets=8`). GMM/fail **during LTE**:
+
+| when | act | st | fail | attached | rmnet |
+|--|--|--|--|--|--|
+| NOTI after SET 0x0a | **LTE 0x21** | **0x07** | **0** | — | — |
+| LTE GET #1 | UMTS then more LTE | **0x07** / **NONE** | **0** | **0** | 0 |
+| LTE GET #2–8 (after GET 0x0a / 0x0808 drain) | **LTE 0x21** CS+PS | **NONE** | **0** | **0** | 0 |
+| NOTI after SET 0x2f | **LTE 0x21** | **0x07** | **0** | — | (GET cap exhausted) |
+| GET after 0x2f | **UMTS 0x04** | **0x07** | **0** | **0** | 0 |
+
+`lte_fail=0` `lte_st=7` `lte_att=0`. Fail stayed **0** on every LTE sample. PS never HOME. No IPv4.
+
+### Vendor PDP in fail=0 (hole 2)
+
+Fired after 0x0a+0x2f + re-SET **0x0808 `02`**, current GET **UMTS NONE fail=0** (`pdp_act=0x04` `pdp_fail=0` `pdp_st=1`). Probe 26/29 layouts.
+
+| cmd | GEN | follow-up |
+|--|--|--|
+| **0x0D1B** | **0x8000** | — |
+| **0x0D01** | **0x8000** | — |
+| **0x0D04** | **0x8000** | **0x0D10** cid=**1** st=**0x03** (**disconnected**, Probe 36 map). **0x0D09 absent** (`ipcfg=0`) |
+
+After PDP: PS still **NONE fail=0**, **attached=0**, rmnet **0**, no IPv4. ACK’d profile/define/set does not bring a bearer without camp or attach.
+
+### rmnet
+
+| | modem | rmnet0–7 |
+|--|--|--|
+| pre / LTE GET / post PDP | ONLINE | rx=tx=**0** |
+
+`/proc/net/dev`: all `rmnet*` bytes=packets=**0** (`rmnet0/1/2` tx drop=1 only). No IPv4 on rmnet. IPv4 only on **rndis0**. Holder **428** CONT (`radio-boot`, post **R**). PID **416** still holds ipc1. **Data-plane goal not complete.** SET **0x0a** sticks; SET **0x2f** still folds to **0x0b**; fail=0 window is real and vendor PDP **ACKs** but **0x0D10=disconnected** and no IP. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not SET 0x0D03.** **Do not ACK STK.** Do not pack v032.
+
+## Probe 45 — vendor PDP APN `www.vodafone.net.ua` aborted (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. Probe 44: `.so` APN **`internet`** GEN **8000** then **0x0D10 st=0x03** / no **0x0D09**. This pass: same vendor **0x0D1B / 0x0D01 / 0x0D04** layouts, APN **`www.vodafone.net.ua`** (SIM2 PLMN **25501** operator APN; not a binary guess). Profile name still **`lte_internet`**. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL **0x04/0x07**. **No** 0x0808 SET **0x03**. **No** 0x0D14. **No** 0x0D03. **No** STK ACK. **No** PIN. **No** MO. **No** SMS. **No** `/sbin/beep`. RNDIS host **192.168.42.7** (Ethernet 6). Binary built: wget **8856** `/tmp/ps-p45` **1147256** (`os/build/e4-ps-p45.c`, Zig musl). **Not pushed. Not run.**
+
+### Abort
+
+Telnet `192.168.42.1:23` before wget: `modem_state` = **`CRASH_EXIT`** (re-read twice). Uptime **43163 s**. Holder **428** `radio-boot` state **D**, fds **ipc0 + rfs0** still open, `/tmp/sipc-holder.pid` **428**. PID **416** still `sh`. GNSS **OFFLINE**. `rmnet0` rx=tx=**0**. **Did not** STOP 428. **Did not** open ipc1. **Did not** SET MODE_SEL / 0x0808 / 0x0D1B / 0x0D01 / 0x0D04. **Did not** wget. **Did not** `POWER_OFF` / reload.
+
+| | result |
+|--|--|
+| fail / LTE | **not sampled** (no ipc1) |
+| PDP GEN 0x0D1B/0x0D01/0x0D04 | **not sent** |
+| 0x0D10 / 0x0D09 | **not sent** |
+| attached | **not sampled** |
+| rmnet | rx=tx=**0** |
+| CP | **`CRASH_EXIT`** |
+| holder 428 | alive **D**, ipc0+rfs0, CONT (not T) |
+
+CS/PS/0x0808/MODE_SEL unknown after the crash. Last live sample remains Probe 44: fail=**0**, LTE fail=**0**, PDP **8000**, **0x0D10** cid=1 st=**0x03**, no **0x0D09**, **attached=0**. Crash happened **after** Probe 44 returned ONLINE and **before** this pass opened ipc1. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not SET 0x0D03.** **Do not ACK STK.** Do not pack v032. **Do not write `do_cp_crash`.**
+
+## Probe 46 — CRASH_EXIT recover blocked (v031, 2026-09-02)
+
+Goal: restore **`ONLINE`** (this pass). Overall `rmnet*` rx/tx ≠ 0 still **not** the pass goal. Probe 45 aborted at **`CRASH_EXIT`** before wget. **No** original efs. **No** `POWER_OFF`. **No** MODE_SEL SET. **No** PDP SET. **No** `PsAttach`. **No** MO. **No** SMS. **No** `/sbin/beep`. **No** GNSS. Did **not** STOP 428. Did **not** STOP 416. RNDIS host **192.168.42.7** (Ethernet 6, `ipconfig` confirmed). Telnet `192.168.42.1:23`. HTTP **8857** unused (no binary).
+
+### Live (re-read)
+
+| | |
+|--|--|
+| uptime | **43324** s then **43455** s (same v031, not a fresh boot) |
+| `modem_state` | **`CRASH_EXIT`** (twice + `radio-boot status`) |
+| `GET_CP_STATUS` | **2** (`CPIF-200511N220408`) |
+| GNSS | **`OFFLINE`** |
+| holder **428** | `radio-boot` **D**, `/tmp/sipc-holder.pid` **428**. fds **5=`umts_ipc0`** **6=`umts_rfs0`** **7=`/tmp/rfs.log`** + copy `err/csdiag_callfail_count.dat`. wchan **`msleep`**. stack **`ipc_poll`** (`s318ap.state == CRASH_EXIT`) |
+| PID **416** | `sh` **S**, fd **3=`umts_ipc1`**. Left running |
+| `rmnet0`/`rmnet1` | rx=tx=**0** |
+| userdata | ext2 `/mnt/userdata`. NV copy 1 MiB. `/tmp/radio-boot` **1314320** (same as userdata) |
+| efs | **not** original p1/p2/p4. Bind is userdata copy → `/mnt/vendor/efs` |
+
+### Crash reason
+
+dmesg ring **wrapped**. `/tmp/dm46.txt` **1828627** B. Earliest remaining line **t=43237.82** — already holder **428** `ipc_poll: umts_ipc0/rfs0: s318ap.state == CRASH_EXIT` + WDT keepalive. **8296** `CRASH_EXIT` lines (poll flood). **0** `CP_CRASH`. **0** `INIT_END`. **0** `PHONE_START`. **0** `nv_rebuild`. **0** `forced`. Probe 45 already saw `CRASH_EXIT` at **43163** s — that window is **gone**. **Reason not in dmesg.** sysfs `cpif/` has `modem_state` + **`do_cp_crash`** (WO; **not written**).
+
+### Recovery — not run
+
+Proven **ONLINE** on this unit is only **fresh AP `OFFLINE`** (`sysrq-b` / Power 2s, `First init`) then `/mnt/userdata/cp-boot.sh` → `radio-boot loadnv` BOOT+MAIN+**VSS**+NV userdata copy, UDL, hold ipc0+rfs0, COMPLETE. That **kills holder 428**. **Not done.**
+
+`radio-boot loadnv` **from leftover `CRASH_EXIT`** was already tried (VSS load LIVE, 2026-09-01): `POWER_ON` forces software `OFFLINE`, `POWER_RESET` does **not** `cal_cp_init()`, `START` **EPERM** `cp_status error:0`, UDL **timeout**, `COMPLETE` **EAGAIN**, stayed **`BOOTING`**. **Not a proven ONLINE path.** **Not re-run** (would also `POWER_ON` and, on fail, DROP a new ipc0/rfs0 pair).
+
+`IOCTL_POWER_OFF` is the other PMU path and is **forbidden**. **Not used.**
+
+| attempted | |
+|--|--|
+| live GET sysfs / `radio-boot status` | yes (read-only) |
+| `loadnv` / VSS reload / `POWER_RESET` | **no** (not proven from `CRASH_EXIT`) |
+| `IOCTL_POWER_OFF` | **no** (**avoided**) |
+| sysrq-b / Power 2s | **no** (would kill 428) |
+| MODE_SEL / PDP / PsAttach / MO / SMS | **no** |
+| write `do_cp_crash` | **no** |
+| ipc1 GET | **no** (not ONLINE) |
+| wget / HTTP 8857 | **no** |
+
+### rmnet
+
+Still **0**. CP **`CRASH_EXIT`**. Holder **428** left **D**, ipc0+rfs0 open. **POWER_OFF avoided: yes.** **Data-plane goal not complete.** Blocker: no userspace CP PMU re-init after first boot except **`IOCTL_POWER_OFF`** (forbidden) or **AP reboot** (kills 428). **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not SET 0x0D03.** **Do not ACK STK.** Do not pack v032. **Do not write `do_cp_crash`.**
+
+## Probe 47 — leftover CRASH_EXIT, still waiting on AP reboot (v031, 2026-09-02)
+
+Goal: restore **`ONLINE`** then GET-only ipc1 (PHONE_STATE / MODE_SEL / 0x0808 / NET_REGIST CS/PS / GPRS_PS / rmnet). **No SET** this pass. Probe 46 left **`CRASH_EXIT`** and asked for a human AP reboot. **No** original efs. **No** `POWER_OFF`. **No** `loadnv`. **No** MODE_SEL SET. **No** PDP SET. **No** `do_cp_crash`. Did **not** STOP 428. Did **not** STOP 416. RNDIS host **192.168.42.7** (Ethernet 6, `ipconfig` confirmed). Telnet `192.168.42.1:23`. HTTP **8858** unused (no binary).
+
+### Live
+
+| | |
+|--|--|
+| uptime | **43576** s (same v031 boot as probe 46 at 43324–43455; **not** a fresh AP reboot) |
+| `modem_state` | **`CRASH_EXIT`** |
+| `GET_CP_STATUS` | **2** (`CPIF-200511N220408`) |
+| GNSS | **`OFFLINE`** (`gnss_status`) |
+| holder **428** | `radio-boot`, `/tmp/sipc-holder.pid` **428**. fds **5=`umts_ipc0`** **6=`umts_rfs0`** **7=`/tmp/rfs.log`**. wchan **`msleep`**. Left running |
+| PID **416** | `sh` fd **3=`umts_ipc1`**. Left running |
+| `rmnet0` | **down**, rx=tx=**0**. `rmnet1` rx=tx=**0** |
+| userdata | ext2 `/mnt/userdata`. `cp-boot.sh` + `radio-boot` + NV copy present. Bind copy → `/mnt/vendor/efs` (same p38; **not** original p1/p2/p4) |
+
+### Leftover-crash path (read-only, not tried)
+
+`/mnt/userdata/cp-boot.sh` is the proven ONLINE path: after a **fresh** AP `OFFLINE` (`First init`), `radio-boot loadnv` BOOT+MAIN+**VSS**+NV userdata copy, UDL, hold ipc0+rfs0, COMPLETE, fork never-close holder + rfs loop, also hold ipc1. **Not run** on this leftover `CRASH_EXIT` (probe 46 already recorded: `POWER_ON` → software `OFFLINE`, no `cal_cp_init`, START EPERM, UDL timeout).
+
+cpif sysfs re-listed: `modem_state` (RO), **`do_cp_crash`** (WO; **not written**), `sim/ds_detect`, `shmem/` (`force_use_memcpy`, `tx_period_ms`, `rb_info`, …), `napi/`, `power/` (Linux runtime PM). **No** unused sysfs that calls `cal_cp_init` / PMU re-init. `power/control` is **not** CP `IOCTL_POWER_OFF` and is **not** a leftover-crash recovery. **Did not write any of them.**
+
+### Recovery — not run
+
+| attempted | |
+|--|--|
+| live GET sysfs / `radio-boot status` | yes (read-only) |
+| `loadnv` / VSS reload / `POWER_RESET` | **no** |
+| `IOCTL_POWER_OFF` | **no** (**avoided**) |
+| sysrq-b / Power 2s | **no** (human still has not rebooted) |
+| write `do_cp_crash` / `power/control` / shmem | **no** |
+| MODE_SEL / PDP / ipc1 GET | **no** (not ONLINE) |
+| wget / HTTP 8858 | **no** |
+
+### rmnet
+
+Still **0**. CP **`CRASH_EXIT`**. Holder **428** left open. **POWER_OFF avoided: yes.** **Data-plane goal not complete.** Still waiting on **human AP reboot**. After Power 2s / sysrq-b wait for RNDIS + telnet, then exactly:
+
+```
+sh /mnt/userdata/cp-boot.sh
+```
+
+If userdata is not mounted yet (seen on prior fresh boots), wait a few seconds and run the same line again. Confirm `modem_state=OFFLINE` before that line. **Not** `POWER_OFF`. **Not** `loadnv` on leftover `CRASH_EXIT`. **Do not SET MODE_SEL 0x04/0x07.** **Do not SET 0x0808 0x03.** **Do not SET 0x0D03.** **Do not ACK STK.** Do not pack v032. **Do not write `do_cp_crash`.**
+
+## Probe 48 — GET-only helper staged, not run — waiting AP reboot (v031, 2026-09-02)
+
+Goal: `rmnet*` rx/tx ≠ 0 or IPv4 on rmnet. **No SET** this pass (no MODE_SEL **0x0a/0x2f**, no PDP, no PsAttach, no MO, no SMS). Probe 47 left **`CRASH_EXIT`** waiting on a human AP reboot. **No** original efs. **No** `POWER_OFF`. **No** `loadnv`. Did **not** STOP 428. Did **not** open ipc1. RNDIS host **192.168.42.7** (Ethernet 6). Telnet `192.168.42.1:23`.
+
+### Live (one telnet)
+
+| | |
+|--|--|
+| uptime | **43739.60** s (same v031 boot as probe 47 at 43576; **not** a fresh AP reboot) |
+| `modem_state` | **`CRASH_EXIT`** |
+| ipc1 GET | **not run** (not ONLINE) |
+| wget | **not run** |
+
+### Host staging (not pushed)
+
+Static GET-only helper **`os/build/e4-ps-p48.c` → `os/build/ps-p48`** Zig musl **1100032**. Refuses unless `modem_state=ONLINE`. STOP/CONT holder 428 only. Dumps PHONE_STATE, MODE_SEL, 0x0808, 0x0816, NET_REGIST CS+PS hex, GPRS_PS, all `rmnet*` rx/tx. **Zero SETs** (`send_small` refuses non-GET). Leftover drain **5 s**. Serving **`http://192.168.42.7:8858/ps-p48`**. **Staged, not run — waiting AP reboot.**
+
+### Recovery — not run
+
+| attempted | |
+|--|--|
+| live GET `modem_state` + `/proc/uptime` | yes (one telnet) |
+| `loadnv` / VSS reload / `POWER_RESET` | **no** |
+| `IOCTL_POWER_OFF` | **no** (**avoided**) |
+| sysrq-b / Power 2s | **no** (human still has not rebooted) |
+| write `do_cp_crash` | **no** |
+| MODE_SEL / 0x0808 / PDP / PsAttach / ipc1 GET | **no** (not ONLINE) |
+| wget / run `ps-p48` | **no** |
+
+### rmnet
+
+Still **0**. CP **`CRASH_EXIT`**. Holder **428** left open. **POWER_OFF avoided: yes.** **Data-plane goal not complete.** After Power 2s / sysrq-b wait for RNDIS + telnet, then:
+
+```
+sh /mnt/userdata/cp-boot.sh
+```
+
+Then wget the staged helper (host already listening):
+
+```
+busybox wget -O /tmp/ps-p48 http://192.168.42.7:8858/ps-p48
+```
+
+Confirm `modem_state=ONLINE` before running `/tmp/ps-p48`. **Not** `POWER_OFF`. **Not** `loadnv` on leftover `CRASH_EXIT`. **Do not SET MODE_SEL 0x04/0x07/0x0a/0x2f.** **Do not SET 0x0808 0x03.** **Do not SET 0x0D03.** **Do not ACK STK.** Do not pack v032. **Do not write `do_cp_crash`.**
+
 ## Next
 
-- CP **`ONLINE`** through **8221 s** (holder 428). Probe 22: vendor `rild` linked then **exit 1**; **rmnet 0**. Probe 21 SIM1 Kyivstar CS **EMERGENCY fail=0x02**; PS GMM#7. SIM2 GMM#7. **No PDP.** Goal **not complete**. **Do not SET MODE_SEL.** **Do not ACK STK.** **Do not brute PIN.**
+- CP **`CRASH_EXIT`**. Holder **428** alive. **rmnet 0**. Goal **not complete**.
+- Still waiting on **human AP reboot** (Power 2s / sysrq-b), then `sh /mnt/userdata/cp-boot.sh`. **Not** `POWER_OFF`. **Not** `loadnv` on this leftover `CRASH_EXIT`.
+- Probe 48 GET-only `ps-p48` is **staged** on **8858** (`/tmp/ps-p48` after wget). Run only after CP is **ONLINE**.
+- Probe 45 binary (`ps-p45` APN `www.vodafone.net.ua`) still waits for a later **ONLINE** window that allows SET. This pass: **no SET**.
 - GNSS: leave **OFFLINE**. Do not pack `linker64`/`gpsd`.
 - Do not pack v032.
 
