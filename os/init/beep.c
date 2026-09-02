@@ -202,10 +202,21 @@ int main(void)
 			buf[k * 2 + 1] = s;
 		}
 		{
-			int w, tries = 0;
-			while ((w = pcm_writei(pcm, buf, chunk)) != (int)chunk) {
+			/* Advance by frames actually written; a partial
+			 * pcm_writei must not resend already-played frames
+			 * from the start of buf.
+			 */
+			unsigned off = 0;
+			int stalls = 0;
+			while (off < chunk) {
+				int w = pcm_writei(pcm, buf + off * 2, chunk - off);
+				if (w > 0) {
+					off += (unsigned)w;
+					stalls = 0;
+					continue;
+				}
 				fprintf(stderr, "beep: pcm_writei: %s\n", pcm_get_error(pcm));
-				if (++tries >= 3)
+				if (++stalls >= 3)
 					goto out_buf;
 				set_int(m, "Power Up(1:Up_0:Down)", 1);
 			}

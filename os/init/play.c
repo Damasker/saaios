@@ -269,13 +269,23 @@ static int write_pcm(struct pcm *pcm, struct mixer *m, const short *stereo, unsi
 
 	while (n < frames) {
 		unsigned chunk = PERIOD_SIZE;
-		int w, tries = 0;
+		unsigned off = 0;
+		int stalls = 0;
 
 		if (chunk > frames - n)
 			chunk = frames - n;
-		while ((w = pcm_writei(pcm, stereo + n * 2, chunk)) != (int)chunk) {
+		/* Advance by frames actually written; a partial pcm_writei
+		 * must not resend already-played frames from offset 0.
+		 */
+		while (off < chunk) {
+			int w = pcm_writei(pcm, stereo + (n + off) * 2, chunk - off);
+			if (w > 0) {
+				off += (unsigned)w;
+				stalls = 0;
+				continue;
+			}
 			fprintf(stderr, "play: pcm_writei: %s\n", pcm_get_error(pcm));
-			if (++tries >= 3)
+			if (++stalls >= 3)
 				return -1;
 			set_int(m, "Power Up(1:Up_0:Down)", 1);
 		}
