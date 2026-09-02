@@ -8,7 +8,7 @@
 #include <linux/input-event-codes.h>
 #include "font8x8.h"
 
-#define SAAIOS_BANNER "SaaiOS v031"
+#define SAAIOS_BANNER "SaaiOS v032"
 
 #ifndef AT_FDCWD
 #define AT_FDCWD -100
@@ -1034,8 +1034,40 @@ static void refresh_usb_line(void) {
         scopy(net_line, sizeof(net_line), "waiting");
 }
 
+static int streq(const char *a, const char *b) {
+    unsigned i;
+    for (i = 0; a[i] || b[i]; i++)
+        if (a[i] != b[i])
+            return 0;
+    return 1;
+}
+
+/* Phase 4 (retained-mode / e-ink rules): each dynamic line remembers
+ * the text it last painted and is repainted only when that text has
+ * actually changed — "state changed -> dirty -> blit", not a fixed-
+ * interval full-panel clear. Static lines (banner, resolution, the
+ * three help lines) never change after boot and are painted once.
+ */
+struct console_field {
+    char text[80];
+    int init;
+};
+enum { CF_BAT, CF_BL, CF_USB, CF_MEM, CF_AUD, CF_COUNT };
+static struct console_field cf[CF_COUNT];
+
+static void set_field(unsigned idx, unsigned y, const char *text, unsigned fg, unsigned bg) {
+    struct console_field *f = &cf[idx];
+    if (f->init && streq(f->text, text))
+        return;
+    fill_rect(0, y, fb.xres, y + 20, bg);
+    draw_str(8, y, text, fg, bg);
+    scopy(f->text, sizeof(f->text), text);
+    f->init = 1;
+}
+
 static void draw_console(void) {
-    unsigned y, fg, bg, hi;
+    static int static_drawn;
+    unsigned fg, bg, hi;
     char line[80];
 
     if (!fb.ok)
@@ -1043,18 +1075,23 @@ static void draw_console(void) {
     fg = fb.pix_fg;
     bg = fb.pix_bg;
     hi = pack_rgb(&fb.v, 0x40, 0xC0, 0x80);
-    y = 8;
-    fill_rect(0, 0, fb.xres, log_floor(), bg);
-    draw_str(8, y, SAAIOS_BANNER, hi, bg);
-    y += 24;
-    scopy(line, sizeof(line), "");
-    append_uint(line, sizeof(line), fb.xres);
-    append(line, sizeof(line), "x");
-    append_uint(line, sizeof(line), fb.yres);
-    append(line, sizeof(line), " bpp");
-    append_uint(line, sizeof(line), fb.bpp);
-    draw_str(8, y, line, fg, bg);
-    y += 24;
+
+    if (!static_drawn) {
+        fill_rect(0, 0, fb.xres, log_floor(), bg);
+        draw_str(8, 8, SAAIOS_BANNER, hi, bg);
+        scopy(line, sizeof(line), "");
+        append_uint(line, sizeof(line), fb.xres);
+        append(line, sizeof(line), "x");
+        append_uint(line, sizeof(line), fb.yres);
+        append(line, sizeof(line), " bpp");
+        append_uint(line, sizeof(line), fb.bpp);
+        draw_str(8, 32, line, fg, bg);
+        draw_str(8, 164, "Vol+/- brightness", fg, bg);
+        draw_str(8, 184, "Power tap beep  2s reboot", fg, bg);
+        draw_str(8, 204, "telnet usb-host/usb-device", fg, bg);
+        static_drawn = 1;
+    }
+
     scopy(line, sizeof(line), "bat  ");
     if (bat_pct < 0)
         append(line, sizeof(line), "?");
@@ -1064,8 +1101,8 @@ static void draw_console(void) {
     }
     append(line, sizeof(line), "  ");
     append(line, sizeof(line), bat_status[0] ? bat_status : "?");
-    draw_str(8, y, line, fg, bg);
-    y += 20;
+    set_field(CF_BAT, 56, line, fg, bg);
+
     scopy(line, sizeof(line), "bl   ");
     if (!bl_ok)
         append(line, sizeof(line), "none");
@@ -1074,12 +1111,12 @@ static void draw_console(void) {
         append(line, sizeof(line), "/");
         append_uint(line, sizeof(line), (unsigned)bl_max);
     }
-    draw_str(8, y, line, fg, bg);
-    y += 20;
+    set_field(CF_BL, 76, line, fg, bg);
+
     scopy(line, sizeof(line), "usb  ");
     append(line, sizeof(line), net_line[0] ? net_line : "waiting");
-    draw_str(8, y, line, fg, bg);
-    y += 20;
+    set_field(CF_USB, 96, line, fg, bg);
+
     scopy(line, sizeof(line), "mem  ");
     if (mem_avail_mb < 0)
         append(line, sizeof(line), "?");
@@ -1087,17 +1124,11 @@ static void draw_console(void) {
         append_uint(line, sizeof(line), (unsigned)mem_avail_mb);
         append(line, sizeof(line), " MB free");
     }
-    draw_str(8, y, line, fg, bg);
-    y += 20;
+    set_field(CF_MEM, 116, line, fg, bg);
+
     scopy(line, sizeof(line), "aud  ");
     append(line, sizeof(line), audio_line[0] ? audio_line : "none");
-    draw_str(8, y, line, fg, bg);
-    y += 28;
-    draw_str(8, y, "Vol+/- brightness", fg, bg);
-    y += 20;
-    draw_str(8, y, "Power tap beep  2s reboot", fg, bg);
-    y += 20;
-    draw_str(8, y, "telnet usb-host/usb-device", fg, bg);
+    set_field(CF_AUD, 136, line, fg, bg);
 }
 
 static void do_reboot(void) {

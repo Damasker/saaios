@@ -84,11 +84,13 @@ GitHub: no one published a tinyalsa-without-HAL speaker recipe for SMA1303 / Exy
 
 ## boot-v031 — wpa_supplicant + wifi-join (Phase E3 closed)
 
-Same stock Image as v030 (Maxwell fw + `/sbin/iw` + D1/SIFS1 play + gadget boot unchanged). Adds static aarch64 `/sbin/wpa_supplicant` 2.11 (nl80211, internal TLS, libnl-3.11), `/sbin/wpa_cli`, `/sbin/wifi-join` (args SSID + PSK, or `WIFI_SSID`/`WIFI_PSK`; conf only under `/tmp`; `udhcpc` + `/usr/share/udhcpc/default.script`). **Telnet-only — not at boot. No PSK in the image.** Does not run `usb-host`. Odin AP: `\\192.168.168.110\media\saaios-boot-v031.tar`. Tar SHA256 `dfd2fcafc898dced5ac4b90ea3e3ea6d14ebca63dd929bea277a67aa59dc819e`. Does not overwrite v021–v030. Rollback: `saaios-boot-v030.tar` or `saaios-boot-v029.tar`. Path: [hardware-control-plan.md](hardware-control-plan.md) E3. Next is E4.
+Same stock Image as v030 (Maxwell fw + `/sbin/iw` + D1/SIFS1 play + gadget boot unchanged). Adds static aarch64 `/sbin/wpa_supplicant` 2.11 (nl80211, internal TLS, libnl-3.11), `/sbin/wpa_cli`, `/sbin/wifi-join` (args SSID + PSK, or `WIFI_SSID`/`WIFI_PSK`; conf only under `/tmp`; `udhcpc` + `/usr/share/udhcpc/default.script`). **Telnet-only — not at boot. No PSK in the image.** Does not run `usb-host`. Odin AP: `\\192.168.168.110\media\saaios-boot-v031.tar`. Tar SHA256 `dfd2fcafc898dced5ac4b90ea3e3ea6d14ebca63dd929bea277a67aa59dc819e`. Does not overwrite v021–v030. Rollback: `saaios-boot-v030.tar` or `saaios-boot-v029.tar`. Path: [hardware-control-plan.md](hardware-control-plan.md) E3. Next is E4 ([modem.md](modem.md)).
 
-After flash: `/sbin/wifi-join 'SSID' 'PSK'`. Phone can stay on v029 until then.
+After flash: `/sbin/wifi-join 'SSID' 'PSK'`. Join is **not at boot**.
 
-**LIVE 2026-08-29 (still on v029):** Wallbox WPA2 join via `/tmp/wpa_supplicant` only; `wlan0` **192.168.168.8/24**. RNDIS kept. PSK never packed.
+**LIVE 2026-08-29:** human flashed AP; banner `SaaiOS v031`. `/sbin/wifi-join` Wallbox; `wlan0` **192.168.168.8/24**. RNDIS `192.168.42.1`. PSK never packed.
+
+**E4 dump 2026-08-29 (same v031, read-only):** `modem_state=OFFLINE`, GNSS OFFLINE, `ds_detect=2`. `rmnet0–7` + `umts_dm0` exist and down. `/dev/umts_boot0` `umts_ipc0` `umts_rfs0` present. dmesg: CPIF-200511N220408, **s5000ap**, **s318ap** shmem. RADIO `mmcblk0p22` (259:14). No `/dev/block` nodes. No `cbd`/`rild` started. No EFS/RADIO write. After a mid-dump RNDIS drop, reconnect showed `wlan0` cold (zero MAC) — join is telnet-only. Path: [modem.md](modem.md).
 
 ## boot-v030 — static iw scan (Phase E3 scan)
 

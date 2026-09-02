@@ -32,7 +32,7 @@ Userspace we own (PID 1 now; a small compositor later) can **command**:
 
 ---
 
-## Now (boot-v031 packed, not flashed; v029 LIVE Maxwell + Wallbox join; TSP parked)
+## Now (boot-v031 LIVE wifi-join + E4 CP BOOTING; TSP parked)
 
 Stock **DTB + kernel** in `boot.img` (`4.19.111-27127798`). Our ramdisk only. Vbmeta patched Magisk-style (flags OR 3). Pack: `SEANDROIDENFORCE` + pad **44 MiB**. Odin **AP**, human-only.
 
@@ -47,11 +47,12 @@ TD4150 bring-up is **parked** ([kernel-touch.md](kernel-touch.md)). Do not flash
 | Volume | `event1` `gpio_keys` — brightness |
 | Power key | `event2` `sec-pmic-key` — tap `/sbin/beep`; 2s reboot (kernel `poweroff` still missing) |
 | Audio | SMA1303 / ABOX **pcmC0D1p** → SIFS1 → UAIF1. `/sbin/play` WAV **LIVE 2026-08-29**. [audio.md](audio.md). Vendor RDMA3/SIFS0 is silent |
-| Wi‑Fi | **v029 LIVE join.** Maxwell fw + scan + **Wallbox WPA2** via `/tmp/wpa_supplicant` only. `wlan0` **192.168.168.8**. **v031 packed** (`/sbin/wpa_supplicant` + `/sbin/wpa_cli` + `/sbin/wifi-join` by args) — not flashed. No PSK in image. Telnet-only — not at boot |
+| Wi‑Fi | **v031 LIVE join.** Maxwell fw + `/sbin/wifi-join` by args. Wallbox WPA2; `wlan0` **192.168.168.8** (telnet-only — not at boot; after reboot run join again). No PSK in image |
+| Modem | **E4 TOC + load LIVE.** Full 5 TOC records; `MAIN` is 37 MiB on RADIO; `NV` is `b_off=0` (EFS, not RADIO). Vendor `cbd` wget’d but cannot run (no `linker64`). Static `/tmp/radio-boot` loaded BOOT+MAIN+**real NV from userdata copy**; **`modem_state` OFFLINE→BOOTING**, not ONLINE. Complete ioctl timed out. EFS listed `ro,noload` then umounted; NV copied to userdata `saaios-efs-copy` (userdata **formatted** — Android data gone). Original efs never written. No `cbd`. No v032. [modem.md](modem.md) |
 | Touch | parked. Node may exist; do not unbind; do not send TSP opcodes from init |
 | Poweroff | ramdisk `/sys/power/state` = `freeze mem` only; long-press reboots |
 
-Pack: `make -f os/Makefile boot-v031` (stock Image, no maze). Tar `$(MEDIA)/saaios-boot-v031.tar`. Does not overwrite v021–v030. `make flash` refuses. Rollback: `saaios-boot-v029.tar` (LIVE) or `saaios-boot-v030.tar`.
+Pack: `make -f os/Makefile boot-v031` (stock Image, no maze). Tar `$(MEDIA)/saaios-boot-v031.tar`. Does not overwrite v021–v030. `make flash` refuses. Rollback: `saaios-boot-v030.tar` or `saaios-boot-v029.tar`.
 
 Already visible in sysfs (read-only until a phase owns it): `fb0`, gpio volume, PMIC power key, battery, `/sys/class/sec/tsp/cmd`, USB gadget.
 
@@ -60,13 +61,13 @@ Kernel tree to **reuse** (a12s / Exynos 850, not Helio): [maazm7d/kernel_samsung
 ## Endpoint vs now
 
 ```text
-now:      v031 packed — wpa_supplicant + wifi-join by args (human Odin AP; not flashed)
+now:      v031 LIVE — wifi-join by args; Wallbox 192.168.168.8
           v030 packed — /sbin/iw + /sbin/wifi-scan
-          v029 LIVE — Maxwell + Wallbox join (wlan0 192.168.168.8; PSK only in /tmp)
+          v029 LIVE — Maxwell + first Wallbox join (PSK only in /tmp)
           v028 LIVE device — RNDIS/telnet; usb-host opt-in (not run)
           v027 LIVE play — /sbin/play WAV on pcmC0D1p / SIFS1 / UAIF1 / SMA1303
+          ↓  Phase E4 modem — TOC LIVE; CP BOOTING (not ONLINE); EFS/rild blocked
           ↓  Phase D  (kernel poweroff — later)
-          ↓  Phase E4 modem — next
           ─  Phase A (TSP) parked; see kernel-touch.md
 ```
 
@@ -142,7 +143,7 @@ Do **not** toggle `Codec Enable`, SMA1303 `I2C Reg Reset`, or `Force AMP Power D
 
 Do **not** run `usb-host` from init or `rcS`. Do **not** write typec/`id` from a live v027 debug session (this probe did not).
 
-### Phase E3 — onboard Maxwell Wi‑Fi — **LIVE join (v029); v031 packed (not flashed)**
+### Phase E3 — onboard Maxwell Wi‑Fi — **LIVE join (v031)**
 
 **Depends on:** Phase E2 return point (v028 LIVE device). Stock DXJ2 Image — no maze. Not RTL8188EUS.
 
@@ -151,17 +152,26 @@ Do **not** run `usb-host` from init or `rcS`. Do **not** write typec/`id` from a
 | Goal | Start the SCSC Maxwell radio so `wlan0` has a real MAC (firmware load + `slsi_start`), scan 2.4 GHz SSIDs, then join a WPA2 AP from telnet |
 | Current | **LIVE v029 2026-08-29.** Banner `SaaiOS v029`. `/sbin/wifi-up` → `wlan0` MAC `00:00:0f:08:0e:af`. `mx140.bin` + hcf. 2.4 GHz Y, 5 GHz N. MIB `NACHO_S612_A127F`. **LIVE scan:** static `iw` 6.9 at `/tmp/iw` (12 BSS / 11 named SSIDs). **LIVE join** the same day: static `wpa_supplicant` 2.11 + `wpa_cli` on `/tmp` only; **Wallbox** WPA2-PSK; `wlan0` **192.168.168.8/24**. RNDIS kept. PSK never left `/tmp`. |
 | Change | v029: vendor `/etc/wifi` production files in ramdisk `/vendor/etc/wifi`. `/sbin/wifi-up`. Tar SHA256 `a9e743caa02da38f6dcc5bc7adbf4ddd81dcb31b6d06eccc8deb49fe01bb2cf7`. v030: `/sbin/iw` + `/sbin/wifi-scan`. Tar SHA256 `8eff38986a11fdc348fe1f6941f3aec3d8f2c9b7f108c2d3a70a9c13ab396bc3`. v031: same stock Image + static `/sbin/wpa_supplicant` 2.11 (nl80211, internal TLS, libnl-3.11) + `/sbin/wpa_cli` + `/sbin/wifi-join SSID PSK` (writes `/tmp/wpa_supplicant.conf` only, `-B -D nl80211`, `udhcpc` + `/usr/share/udhcpc/default.script`). **No PSK in image.** **Not at boot.** No `wpa_passphrase`. Tar SHA256 `dfd2fcafc898dced5ac4b90ea3e3ea6d14ebca63dd929bea277a67aa59dc819e`. |
-| Test | Human already joined Wallbox on live v029. Pack v031; human Odin AP when they choose. Banner `SaaiOS v031`. Telnet `/sbin/wifi-join 'SSID' 'PSK'`. Do not run `usb-host`. |
-| Acceptance | **LIVE join 2026-08-29 (v029 + /tmp wpa).** Wallbox; `192.168.168.8`. v031 packed, not flashed. E3 closed in the product ramdisk. |
+| Test | Human flashed v031. Banner `SaaiOS v031`. Telnet `/sbin/wifi-join 'SSID' 'PSK'`. Do not run `usb-host`. |
+| Acceptance | **LIVE join 2026-08-29.** v029 `/tmp` wpa then **v031** `/sbin/wifi-join`. Wallbox; `192.168.168.8`. E3 closed in the product ramdisk. |
 | Rollback | `saaios-boot-v030.tar` or `saaios-boot-v029.tar` |
 
 Do **not** auto-run `wifi-up`, `wifi-scan`, or `wifi-join` from init or `rcS`. Do **not** write EFS/RADIO. Do **not** start `wpa_supplicant` at boot. Do **not** embed any PSK.
 
-### Phase E4 — next (listed, not started this turn)
+### Phase E4 — modem map (read-only; CP OFFLINE)
 
-| # | Subsystem | First probe (read-only) | Command later |
-|---|-----------|-------------------------|---------------|
-| E4 | Modem | `RADIO` partition exists; do not write it | later; EFS is forever off-limits |
+**Depends on:** Phase E3 return point (v031 LIVE join). Stock DXJ2 Image — no maze. Detail: [modem.md](modem.md).
+
+| | |
+|--|--|
+| Goal | Map CPIF / RADIO / how Android boots the Shannon CP, without writing EFS or RADIO |
+| Current | **LIVE 2026-08-29 on v031.** Full TOC (TOC/BOOT/MAIN/VSS/NV). Vendor `cbd` on `/tmp` cannot execute. Static `/tmp/radio-boot` loaded BOOT+MAIN; CP **BOOTING**, `COMPLETE` timed out. Zero-NV retry did not reach ONLINE. **2026-08-31:** efs `mmcblk0p1` **ro,noload** list; `nv_data.bin` 1 MiB copied to userdata `saaios-efs-copy` (userdata **formatted**); `loadnv` with that copy still **BOOTING**; original efs never written; no `cbd`. No v032. |
+| Change | Docs + `/tmp` helper only. No pack. No `rild`. No EFS mount |
+| Test | Telnet: `hexdump -C -n 160` p22; wget `cbd` (expect no linker); `/tmp/radio-boot status` then `load`. Watch `modem_state`. Keep RNDIS |
+| Acceptance | **TOC + BOOTING 2026-08-29.** All 5 names documented. CP left OFFLINE without EFS write. ONLINE blocked on real NV / vendor `cbd`+linker. |
+| Rollback | n/a (no image change) |
+
+Do **not** start `cbd`, `rild`, or `secril_config_svc`. Do **not** remount EFS RW or feed `cbd`. Do **not** `dd` to RADIO. EFS writes stay off-limits.
 
 Phase A (TSP) is parked.
 

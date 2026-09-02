@@ -26,6 +26,7 @@ OUT_V028 := $(BUILD)/boot-v028.img
 OUT_V029 := $(BUILD)/boot-v029.img
 OUT_V030 := $(BUILD)/boot-v030.img
 OUT_V031 := $(BUILD)/boot-v031.img
+OUT_V032 := $(BUILD)/boot-v032.img
 # Subversion suffix embedded into ramdisk console + used for Odin/AP tar naming.
 # since76 = live20 ladder 0/10/100/500ms after REINIT; retval<0→dead response=ff.
 # Late 0x05/0x24/0x30 LIVE -62. No app_config in post-boot menu. Do not overwrite since54–since75.
@@ -1088,6 +1089,44 @@ boot-v031: unpack ramdisk vbmeta
 	@echo "  $(BUILD)/saaios-boot-v031.tar"
 	tar -tvf $(BUILD)/saaios-boot-v031.tar
 
+# boot-v032: v031 + Phase 4 dirty-rect console (bringup-plan.md Phase 4-5).
+# draw_console() repaints a status line only when its text changed since
+# the last draw (fill_rect just that line's rect), instead of clearing and
+# redrawing the whole panel on every tick. Static lines (banner, resolution,
+# help text) paint once. No layout change, no new Makefile boilerplate
+# beyond the established per-version boot-vNNN pattern. Stock kernel+DTB.
+# Does not overwrite v021–v031.
+boot-v032: unpack ramdisk vbmeta
+	@test ! -f $(MEDIA)/saaios-boot-v031.tar || test -s $(MEDIA)/saaios-boot-v031.tar
+	@test -f $(STOCK_UNPACK)/dtb || { echo "missing stock dtb at $(STOCK_UNPACK)/dtb"; exit 1; }
+	python3 os/bootimg/bootimg.py pack $(STOCK_UNPACK) \
+		--ramdisk $(BUILD)/ramdisk.cpio.gz \
+		--cmdline "androidboot.hardware=exynos850 androidboot.selinux=permissive loop.max_part=7" \
+		--seandroid --pad-to $(BOOT_PART_SIZE) \
+		-o $(OUT_V032)
+	python3 os/bootimg/bootimg.py unpack $(OUT_V032) -o $(BUILD)/boot-v032-check
+	cmp $(STOCK_UNPACK)/dtb $(BUILD)/boot-v032-check/dtb
+	cmp $(STOCK_UNPACK)/kernel $(BUILD)/boot-v032-check/kernel
+	@echo "packed stock DXJ2 kernel+DTB (not Project-Xed Image)"
+	rm -rf $(BUILD)/odin-v032
+	mkdir -p $(BUILD)/odin-v032
+	cp $(OUT_V032) $(BUILD)/odin-v032/boot.img
+	cp $(VBMETA_OUT) $(BUILD)/odin-v032/vbmeta.img
+	tar -C $(BUILD)/odin-v032 -cf $(BUILD)/saaios-boot-v032.tar boot.img vbmeta.img
+	@if [ -e $(MEDIA)/saaios-boot-v031.tar ]; then \
+		cmp -s $(BUILD)/saaios-boot-v032.tar $(MEDIA)/saaios-boot-v031.tar && { echo "REFUSING: v032 tar matches v031"; exit 1; } || true; \
+	fi
+	@if [ -d $(MEDIA) ]; then \
+		cp $(BUILD)/saaios-boot-v032.tar $(MEDIA)/saaios-boot-v032.tar; \
+		chmod 664 $(MEDIA)/saaios-boot-v032.tar; \
+		chown mike:media $(MEDIA)/saaios-boot-v032.tar 2>/dev/null || true; \
+		echo "copied $(MEDIA)/saaios-boot-v032.tar"; \
+	fi
+	sha256sum $(OUT_V032) $(MEDIA)/saaios-boot-v032.tar $(MEDIA)/saaios-boot-v031.tar
+	@echo "Odin AP tar (not flashed):"
+	@echo "  $(BUILD)/saaios-boot-v032.tar"
+	tar -tvf $(BUILD)/saaios-boot-v032.tar
+
 vbmeta: check-stock
 	python3 os/bootimg/vbmeta.py --patch-stock $(STOCK)/vbmeta.img -o $(VBMETA_OUT)
 	sha256sum $(VBMETA_OUT) $(STOCK)/vbmeta.img
@@ -1145,6 +1184,7 @@ flash: check-stock
 	@echo "  v029: $(OUT_V029) (v028 + Maxwell mx140 fw + /sbin/wifi-up; not at boot)"
 	@echo "  v030: $(OUT_V030) (v029 + static /sbin/iw + /sbin/wifi-scan; not at boot)"
 	@echo "  v031: $(OUT_V031) (v030 + wpa_supplicant + wifi-join by args; not at boot)"
+	@echo "  v032: $(OUT_V032) (v031 + Phase 4 dirty-rect console: repaint only changed status lines)"
 	@echo "Rollback: make restore images in $(STOCK)"
 	@echo "PARAM nologo is a separate Odin BL tar; make up_param-flash also refuses."
 	@exit 2

@@ -86,6 +86,8 @@ adb shell su -c "ls -l /dev/block/by-name"   # if rooted; else skip
 
 Save PIT as `targets/sm-a127f/artifacts/unit.pit` (not in git if huge; checksum in unit.md).
 
+**This unit GPT `PARTNAME` (v031 sysfs, 2026-08-29):** `efs` p1, `sec_efs` p2, `cpefs` p4, `param` p6, `up_param` p13, `boot` p18, `radio` p22 (50 MiB, 259:14), `cp_debug` p36, `super` p31. Sizes match the table above. Ramdisk has **no** `/dev/block` nodes — list via `/sys/block/mmcblk0/mmcblk0p*/uevent` only. Never write EFS/RADIO.
+
 ## Policy
 
 Phase 1 writes, if any: `BOOT` ± `VBMETA`.  
