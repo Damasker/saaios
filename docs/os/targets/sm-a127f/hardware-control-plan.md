@@ -32,7 +32,7 @@ Userspace we own (PID 1 now; a small compositor later) can **command**:
 
 ---
 
-## Now (boot-v032 LIVE dirty-rect console; v033 packed Phase D poweroff probe; E4 CP BOOTING; TSP parked)
+## Now (boot-v033 LIVE — real hardware poweroff confirmed; E4 CP BOOTING; TSP parked)
 
 Stock **DTB + kernel** in `boot.img` (`4.19.111-27127798`). Our ramdisk only. Vbmeta patched Magisk-style (flags OR 3). Pack: `SEANDROIDENFORCE` + pad **44 MiB**. Odin **AP**, human-only.
 
@@ -61,7 +61,7 @@ Kernel tree to **reuse** (a12s / Exynos 850, not Helio): [maazm7d/kernel_samsung
 ## Endpoint vs now
 
 ```text
-now:      v033 packed — telnet-only /sbin/poweroff probe (Phase D; Power key unchanged; not flashed)
+now:      v033 LIVE — /sbin/poweroff confirmed real hardware shutdown (Power key still unchanged)
           v032 LIVE — Phase 4 dirty-rect console (no full-panel repaint flash)
           v031 LIVE — wifi-join by args; Wallbox 192.168.168.8
           v030 packed — /sbin/iw + /sbin/wifi-scan
@@ -101,7 +101,7 @@ Touch packets are not a dependency for the console. Volume and power are live. F
 
 Do **not** couple a new blank path with a TSP experiment.
 
-### Phase D — power policy — **v033 packed (not flashed): telnet-only `/sbin/poweroff` probe**
+### Phase D — power policy — **v033 LIVE: reboot(RB_POWER_OFF) is a real hardware shutdown**
 
 **Depends on:** keys (already true). Real `poweroff` needs a kernel change later; not bundled with TSP.
 
@@ -117,6 +117,8 @@ Do **not** couple a new blank path with a TSP experiment.
 **First probe (v033, packed, not flashed):** `/sys/power/state=freeze mem` only limits *suspend* states; it says nothing about `reboot(2)` `RB_POWER_OFF`, a separate path (`kernel_power_off()` → board `pm_power_off` hook) that stock Samsung kernels normally wire for a real hardware shutdown. `do_reboot()` in `os/init/init.c` only ever called `LINUX_REBOOT_CMD_RESTART` — `RB_POWER_OFF` was never tried. Added static `/sbin/poweroff` (`sync()` then `reboot(RB_POWER_OFF)`, logs to stderr if it returns instead of powering off) as a **telnet-only** probe, same style as `touchlab`/`beep`/`play`. **Deliberately not wired to the Power key** — the existing 2s long-press → `do_reboot()` is unchanged, because [kernel-touch.md](kernel-touch.md)'s `state=dead` recovery flow depends on that exact gesture. Confirm the stock kernel actually powers off (not a hang, not a silent return) via telnet before binding any gesture to it. Pack: `make -f os/Makefile boot-v033`. Tar `$(MEDIA)/saaios-boot-v033.tar`. Does not overwrite v021–v032. Rollback: `saaios-boot-v032.tar`.
 
 **Test when flashed:** telnet in, `/sbin/poweroff`. If the screen goes dark and the device stays off (needs the physical power button or a charger to wake), the path works and the next step is wiring a gesture. If `reboot()` returns, the stderr line names the `errno`; if it hangs, that's the discriminator this probe exists to find.
+
+**LIVE 2026-09-02 (v033, human Odin AP):** telnet `/sbin/poweroff` — telnet session aborted mid-command (not a timeout), RNDIS USB adapter disappeared entirely from the Windows host (not just unreachable), device screen off. Human confirmed: **device powered off, then auto-powered back on when a charger was connected** (standard PMIC behavior, not ramdisk code). `reboot(2) RB_POWER_OFF` reaches a real `pm_power_off` on this stock kernel — confirms the discriminator this probe was built to answer. Long-press → `do_reboot()` (2s, `LINUX_REBOOT_CMD_RESTART`) is still unchanged and still owns that gesture. Next: decide a Power-key binding for poweroff that does not collide with the existing 2s-reboot recovery gesture (kernel-touch.md depends on it), then suspend/resume (`echo mem`) with a TSP-survives-resume check.
 
 ### Phase E1 — speaker beep + WAV play — **v027 LIVE**
 
