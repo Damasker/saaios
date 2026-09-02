@@ -79,14 +79,11 @@
 #define WR_CHUNK_SIZE 512 /* write length limit in bytes, 0 = unlimited */
 #define HDL_RD_CHUNK_SIZE 0 /* For HDL, 0 = unlimited */
 #define HDL_WR_CHUNK_SIZE 0 /* For 0x45, 0 = one-shot / unlimited */
-/* Predictive reading must not shrink the next IRQ first-read below this.
- * HDL sets rd_chunk_size=HDL_RD_CHUNK_SIZE (0) then PREDICTIVE_READING
- * assigns read_length=total_length of the *last* message (0x20 → 51).
- * A 51-byte first-read of 0x25 (plen=128, total=133) then continued-read
- * sees MOSI leftover 0x25 instead of marker 0xA5. Apply even when
- * rd_chunk_size==0. Do not change 0x45 oneshot (HDL_WR_CHUNK_SIZE).
+/* Global read-floor 256 LIVE-falsified: after 0x20 plen=46 with first_read=256,
+ * a second empty 0x20 got no ATTN. Keep stock PREDICTIVE_READING (0x20→51).
+ * For 0x25 only: oneshot read_length=SAAIOS_TRC_READ_LEN (4+128+1=133).
  */
-#define SAAIOS_RD_FLOOR 256
+#define SAAIOS_TRC_READ_LEN 133
 
 #define MESSAGE_HEADER_SIZE 4
 #define MESSAGE_MARKER 0xa5

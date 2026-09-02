@@ -1,0 +1,19 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since52 switch_mode(BOOTLOADER) after HDL 0x1b
+
+since51: HDL 0x1b / helper / resume serialization is correct.
+Helper identify(true) = CMD_IDENTIFY 0x02 still -62.
+
+since52: after 0x1b handler exit, helper calls
+switch_mode(FW_MODE_BOOTLOADER). From mode 0x02 that selects
+CMD_RUN_BOOTLOADER_FIRMWARE 0x1f (not hardcoded 0x42).
+Leftover 0x1b must not complete the waiter. HDL_FAILED skips
+mod_resume. No ATTN drain, no IDENTIFY 0x02 as the first helper cmd.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since52 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since52 switch_mode after 0x1b\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

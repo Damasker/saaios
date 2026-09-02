@@ -586,7 +586,7 @@ Clean boot: `0x45 → 0x42 → 0x20`, skip 0x25, irq=3. From separate clean rebo
 
 SPI TX works; HDL 0x02 ignores late experiment cmds. Not a menu/shell bug.
 
-Policy: any experiment `retval<0` → `state=dead`, status shows `response=ff` (never stale `01`), queue `-EBUSY` until reboot. Auto after REINIT: **only** empty `live20` (0x20) at 0/10/100/500 ms; stop ladder on first failure.
+Policy: any experiment `retval<0` → `state=dead`, status shows `response=ff` (never stale `01`), queue `-EBUSY` until reboot. Auto after REINIT: **only** empty `live20` (0x20) at 10/100/500/1000 ms (starts **after** `mutex_unlock(&reset_mutex)`, not the original 0/10/100/500 — see "read-floor regression" below); stop ladder on first failure.
 
 ### Flash + first grep
 
@@ -603,7 +603,9 @@ Expect: no auto `0x05`/`0x25`/`0x30`; `start live20 ladder`; four `live20 delay_
 
 `PREDICTIVE_READING` is on. After successful 0x20 (`plen=46`, `total=51`) `read_length` becomes **51**. HDL sets `rd_chunk_size=HDL_RD_CHUNK_SIZE` (**0**), so predictive assigns `read_length=total_length` of the *last* message even when `RD_CHUNK_SIZE` would have capped at 256. Next command 0x25 first SPI read is only 51 bytes. Header is valid `a5 01 80 00` (`plen=128`, needs 4+128+1=133). Then `syna_tcm_continued_read` expects marker `0xA5` + `STATUS_CONTINUED_READ`; it got **marker 0x25**. Host continued-read protocol, not IC mute.
 
-Fix: never shrink the next IRQ first-read below **`SAAIOS_RD_FLOOR` 256** (`RD_CHUNK_SIZE`). Clamp **after** the PREDICTIVE_READING assignment, **including when `rd_chunk_size==0`**. Probe initial `read_length` is 256 (not `MIN_READ_LENGTH=9`). Before `syna_tcm_read` in `syna_tcm_read_message`, `syna_tcm_realloc_mem` `in.buf` to at least `read_length+1`. Log once per 0x25: `SAaiOS_TOUCH_DBG: read-floor=%u first_read=%u plen=%u total=%u continued=%d`. Expect **`continued=0`** (first_read 256 ≥ total 133). Do **not** change oneshot 0x45 TX. Do **not** send 0x1f. Do **not** auto 0x05/0x23/0x26.
+Fix (as first tried): never shrink the next IRQ first-read below **`SAAIOS_RD_FLOOR` 256** (`RD_CHUNK_SIZE`). Clamp **after** the PREDICTIVE_READING assignment, **including when `rd_chunk_size==0`**. Probe initial `read_length` is 256 (not `MIN_READ_LENGTH=9`). Before `syna_tcm_read` in `syna_tcm_read_message`, `syna_tcm_realloc_mem` `in.buf` to at least `read_length+1`. Log once per 0x25: `SAaiOS_TOUCH_DBG: read-floor=%u first_read=%u plen=%u total=%u continued=%d`. Expect **`continued=0`** (first_read 256 ≥ total 133). Do **not** change oneshot 0x45 TX. Do **not** send 0x1f. Do **not** auto 0x05/0x23/0x26.
+
+**LIVE-falsified, superseded (PR #18):** the global `SAAIOS_RD_FLOOR=256` clamp above was flashed and killed ATTN on the very next plain empty `0x20` (over-read jammed the next command). Removed. Replaced by a floor scoped to `CMD_GET_TOUCH_REPORT_CONFIG` only — `SAAIOS_TRC_READ_LEN=133` (4+128+1), forced at the top of the `retry:` read loop in `syna_tcm_read_message` right before the first physical SPI read of a 0x25 response, never touching `read_length` for any other command. Probe keeps its original hardcoded `256` initial `read_length` (unrelated to this clamp; do not remove it — code review caught a build break from conflating the two). See "read-floor regression + fixes" below.
 
 ### LIVE (first since76 flash — dead lab)
 
@@ -644,7 +646,7 @@ Boot cmds: `0x45`, `0x42`, `0x20`, `0x25`. No auto 0x05.
 
 Chunking is **not** why 0x30 fails. IC silent on full DOWNLOAD_CONFIG. Same jam of later 0x20 as after 0x05.
 
-**This pack's discriminator:** after successful REINIT 0x20, auto-run **only** empty `live20` (GET 0x20) at delays **0 / 10 / 100 / 500 ms**. Measure whether empty GET stays alive over time. **Do not** auto-send 0x05/0x24/0x30 (those jam). Any experiment `retval<0` → `state=dead`, status `response=ff` (never stale `01`), queue `-EBUSY` until reboot. Stop the ladder on first failure. Removed the old `skip live 0x20 after timeout → state=ready` path.
+**This pack's discriminator:** after successful REINIT 0x20, auto-run **only** empty `live20` (GET 0x20) at delays **10 / 100 / 500 / 1000 ms** (was 0/10/100/500 — `delay=0` fired while still under `reset_mutex` and raced the REINIT that had just succeeded, timing out and aborting the rest of the ladder before it ever ran; ladder start moved to after `mutex_unlock`, see below). Measure whether empty GET stays alive over time. **Do not** auto-send 0x05/0x24/0x30 (those jam). Any experiment `retval<0` → `state=dead`, status `response=ff` (never stale `01`), queue `-EBUSY` until reboot. Stop the ladder on first failure. Removed the old `skip live 0x20 after timeout → state=ready` path.
 
 Keep oneshot 0x45. Skip 0x1f when HDL 0x02. Skip 0x25 after 0x20 OK. No auto 0x05/0x23/0x26/0x30. Optional manual `app_config` (oneshot 0x30) still accepted via sysfs but **not** in menu/run-all.
 
@@ -682,7 +684,9 @@ Sequences (workqueue):
 
 SPI TX dumps for 0x05/0x24/0x30 are tagged `SAaiOS_TOUCH_DBG TOUCH_EXP[seq]:`.
 
-On-screen menu (`fb0`): Vol+ next, Vol− previous, short Power (&lt;2s, fire on **release**) writes the action token, long Power **2s** reboots immediately (does not wait for release). Ignore `EV_KEY value=2`. Debounce ~150 ms. `ppoll` + `sizeof(struct input_event)`. Keys by name `gpio_keys` / `sec-pmic-key`, fallback event1/event2.
+**Superseded (PR #18):** the on-screen action menu described below was removed from `os/init/init.c` (`draw_console()` rewrite dropped `status_path`/`action_path`/`refresh_status`/`ui_state`/`run_selected`); short Power tap now calls `spawn_beep()` instead of writing an action token. Drive `/sys/kernel/saaios_touch/action` via `/sbin/touchlab` over telnet/ssh (dropbear comes up on USB net) instead of the on-screen menu.
+
+~~On-screen menu (`fb0`): Vol+ next, Vol− previous, short Power (&lt;2s, fire on **release**) writes the action token, long Power **2s** reboots immediately (does not wait for release). Ignore `EV_KEY value=2`. Debounce ~150 ms. `ppoll` + `sizeof(struct input_event)`. Keys by name `gpio_keys` / `sec-pmic-key`, fallback event1/event2.~~
 
 **Grep immediately** (first 10 s, while `SaaiOS v019 since76` is still in the buffer). Init pings WDT ~2×/s; dmesg wraps after ~16 min. A later empty `Command = 0x` grep is wrap, not a missing opcode.
 
@@ -693,15 +697,27 @@ dmesg | grep SAaiOS_TOUCH_DBG | grep -E 'live20 ladder|saaios_reinit_ok|skip tou
 cat /sys/kernel/saaios_touch/status
 ```
 
-Expect: no auto `0x05`/`0x25`/`0x30`; `start live20 ladder`; four `live20 delay_ms=` steps (0/10/100/500) or `state=dead` / `response=ff` on first timeout. If autos pass, optional manual `echo live20` / `run_app` / `enable_report` / `no_doze` — **do not** send 0x05/0x30 first if you still care about the ladder.
+Expect: no auto `0x05`/`0x25`/`0x30`; `start live20 ladder`; four `live20 delay_ms=` steps (10/100/500/1000) or `state=dead` / `response=ff` on first timeout. If autos pass, optional manual `echo live20` / `run_app` / `enable_report` / `no_doze` — **do not** send 0x05/0x30 first if you still care about the ladder.
 
 Never flash DTBO.
 
 ---
 
+## since76 read-floor regression + fixes (PR #18, code-reviewed, not yet flashed)
+
+The global `SAAIOS_RD_FLOOR=256` clamp documented above under "Why read-floor 256" was flashed once, found to kill ATTN on the next plain empty `0x20`, and removed. Three fixes landed on top of the since76 build already described in this file, none yet LIVE on the device:
+
+1. **Scoped read floor.** `SAAIOS_TRC_READ_LEN=133` forced only for `CMD_GET_TOUCH_REPORT_CONFIG` (0x25), at the top of the `retry:` loop in `syna_tcm_read_message`, before the first SPI read — not after every message. Currently dormant: `HELP_SEND_REINIT` still skips 0x25 entirely (`skip touch_reinit/0x25 after 0x20 OK`), so this only matters the next time something manually issues 0x25.
+2. **Ladder race.** `saaios_start_live20_ladder()` now starts after `mutex_unlock(&tcm_hcd->reset_mutex)` instead of under it — `delay=0` used to fire while still holding the mutex and race the REINIT that had just succeeded, timing out and aborting the whole ladder before the 10/100/500 steps ran. `IS_FW_MODE(tcm_hcd->id_info.mode)` is snapshotted into `saaios_reinit_fw_mode` *before* the unlock so an IRQ landing in that window can't change the ladder-start decision underneath it.
+3. **Stale sticky latch.** `saaios_reinit_ok` is set once and never cleared, so a *later* `HELP_SEND_REINIT` whose `identify()` fails (`saaios_mark_dead()` just set `state=dead`) could still fall through and restart the ladder on the strength of an earlier success. Ladder-start now also requires `saaios_state != SAAIOS_ST_DEAD`.
+
+Full ladder is `10, 100, 500, 1000` ms (not the original `0, 10, 100, 500`). Rebuilt and repacked `saaios-boot-v019-since76.tar` after each fix; still needs a human Odin flash + the grep sequence above to go LIVE.
+
+---
+
 ## Next (logical order — do not skip ahead)
 
-1. Flash **since76** AP tar (boot+vbmeta only). **Do not flash since66, since73, or since75.** **Grep immediately** (before wrap). Banner must be `SaaiOS v019 since76`. Confirm HDL path (oneshot 0x45, skip 0x1f, REINIT 0x20, **no** 0x25) and **no** auto 0x05/0x23/0x26/0x30. Confirm **`start live20 ladder delays_ms=0,10,100,500`**.
+1. Flash **since76** AP tar (boot+vbmeta only). **Do not flash since66, since73, or since75.** **Grep immediately** (before wrap). Banner must be `SaaiOS v019 since76`. Confirm HDL path (oneshot 0x45, skip 0x1f, REINIT 0x20, **no** 0x25) and **no** auto 0x05/0x23/0x26/0x30. Confirm **`start live20 ladder delays_ms=10,100,500,1000`**.
 2. Watch auto `live20` steps. On any timeout → `state=dead` `response=ff` (never stale `01`); further writes **EBUSY** until reboot.
 3. If all four delays OK: optional manual experiments; long-press Power 2s to reboot when dead.
 4. Do **not** flash since66, since73, or since75. Do **not** rewind 0x45 oneshot / skip 0x1f / leftover REINIT 0x20. Do **not** retry 0x26 / auto 0x05/0x25/0x30.

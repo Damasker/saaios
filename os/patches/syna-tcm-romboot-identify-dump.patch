@@ -1,0 +1,16 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since46 300ms settle then one CMD_IDENTIFY
+
+since45: IDENTIFY/0x20 -62 <1ms after leftover 0x1b. Packrat of
+startup IDENTIFY is not in the bin.
+
+since46: dump part_number; wait 300ms; one CMD_IDENTIFY (not 0x20);
+SPI TX/RX + gpio/irq_cnt logs; touch_reinit only if IDENTIFY ok.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since45 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since46 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

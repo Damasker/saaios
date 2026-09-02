@@ -36,13 +36,15 @@ Replacing `system` without repacking SUPER bricks the Android userspace. Phase 1
 
 ## 9. Display / touch BOM
 
-Novatek vs Synaptics; LCM id not unique. A “white screen” milestone can still have a dead digitizer. Don’t couple graphics and input in one experiment. This unit is **Synaptics TCM TD4150** (`tsp_synaptics/td4150_a12s_boe.bin` on `spi1.2`); `event3` = `sec_touchscreen`. PID 1 looping `FBIOBLANK` UNBLANK (~500ms) made `syna_tcm_early_resume` / `syna_tcm_resume` log **abnormal call** — v010 stopped that loop. v010 still unblanked twice at boot (ioctl `FBIOBLANK` + sysfs `fb0/blank`); the second resume did not finish and `event3` stayed silent. v011 unblanks once. `/sys/class/sec/tsp/input/enabled` store() is the same resume path — do not write it after a successful unblank, and do not send `probe_enable` on `cmd`.
+Novatek vs Synaptics; LCM id not unique. A “white screen” milestone can still have a dead digitizer. Don’t couple graphics and input in one experiment. This unit is **Synaptics TCM TD4150** (`tsp_synaptics/td4150_a12s_boe.bin` on `spi1.2`). After firmware start, `sec_touchscreen` is **`/dev/input/event6`** (stock/v011 used event3). Canonical facts and next steps: [kernel-touch.md](kernel-touch.md).
 
-**Unbind is destructive.** `echo synaptics_tcm.0 > …/synaptics_tcm_spi/unbind` then bind: probe `Incorrect header code (0x01)` / `-5`, `sec_touchscreen` **gone until reboot**. Do not unbind/bind to “wake” touch.
+PID 1 looping `FBIOBLANK` UNBLANK (~500ms) made `syna_tcm_early_resume` / `syna_tcm_resume` log **abnormal call** — v010 stopped that loop. v010 still unblanked twice at boot (ioctl `FBIOBLANK` + sysfs `fb0/blank`); the second resume did not finish and event3 stayed silent. v011 unblanks once. `/sys/class/sec/tsp/input/enabled` store() is the same resume path — do not write it after a successful unblank, and do not send `probe_enable` on `cmd`.
+
+**Unbind is destructive.** `echo synaptics_tcm.0 > …/synaptics_tcm_spi/unbind` then bind: probe `Incorrect header code (0x01)` / `-5`, `sec_touchscreen` **gone until reboot**. Never unbind. Never pulse `gpio_lcd_rst`.
 
 **Ramdisk cannot power off.** `/sys/power/state` is `freeze mem` only. No `poweroff`/`reboot` from this init.
 
-**IRQ 244 stuck at 7** after a correct single unblank: IC not scanning (`REPORT_TOUCH` never arrives). Factory `check_connection` / `sensitivity_mode` poke CMD `0x2a` and time out — do not retry. Fix is a vendor-kernel resume patch ([kernel-touch.md](kernel-touch.md)), not init.
+**IRQ 244 stuck after HDL:** since54 control image sticks at **3** (gpio=1 idle on LEVEL_LOW; IC never re-asserts ATTN). v011 on the stock kernel stuck at **7**. Factory `check_connection` / `sensitivity_mode` poke CMD `0x2a` and time out — do not retry. Opcode experiments on the maze are **stopped**. Next is three small patches on clean OSS td4150, not a resume/`do_reset`/0x05 patch and not init.
 
 ## 10. Mainline kernel
 

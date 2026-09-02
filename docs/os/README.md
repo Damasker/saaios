@@ -13,21 +13,17 @@ Native bootable OS. Not Android. Not a Debian install. Platform Track (`crates/`
 
 On-device splash string: `SaaiOS`.
 
-## Phase 0 gate (now)
+## Phase 0 gate
 
-Nothing destructive until:
-
-1. This dossier exists for the **exact** model (`SM-A127F/DSN`).
-2. Matching **stock firmware** is downloaded and checksummed (human).
-3. Recovery procedure in [`targets/sm-a127f/recovery.md`](targets/sm-a127f/recovery.md) is understood.
-
-**Do not flash yet.**
+Phase 0 is green on this unit (stock firmware on disk, recovery understood). `make` still **refuses** to flash. Current TD4150 work: [kernel-touch.md](targets/sm-a127f/kernel-touch.md).
 
 ## Target dossier (A12 Nacho)
 
 | File | What |
 |------|------|
 | [hardware.md](targets/sm-a127f/hardware.md) | SoC, GPU, PMIC, display, touch, BOM variance |
+| [unit.md](targets/sm-a127f/unit.md) | This phone (PDA, input map, stock blobs) |
+| [kernel-touch.md](targets/sm-a127f/kernel-touch.md) | **Canonical TD4150 bring-up** (protocol, blob, since54, OSS vs maze, next) |
 | [boot-chain.md](targets/sm-a127f/boot-chain.md) | BootROM → sboot → kernel |
 | [partitions.md](targets/sm-a127f/partitions.md) | eMMC GPT (reference dump + what we still need) |
 | [recovery.md](targets/sm-a127f/recovery.md) | Download mode, stock restore, what is **not** BROM |

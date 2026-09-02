@@ -1,0 +1,18 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since50 one 0x42 after HDL IDENTIFY 0x02
+
+since49: 0x45 changes ROM td4150_rom-10.0 / 0x04 / packrat 2893283
+into TD4150-12.0.12 / 0x02 / packrat 2100027192. Not on-chip fallback.
+Running packrat still != img 2100042344. Mode is HDL 0x02, not app 0x01.
+
+since50: one CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE 0x42 from 0x02.
+Not switch_mode (that would send 0x1f). 0x1b is not a 0x42 ack.
+touch_init only after a new IDENTIFY.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since49 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since50 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

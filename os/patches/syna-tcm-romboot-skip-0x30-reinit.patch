@@ -1,0 +1,16 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since45 skip 0x30, HDL complete reinit
+
+since44: 0x30 one-shot chunks=1 xfer0=4100 still ETIME, gpio=1 held=0,
+IRQ stuck at 3. IC ignores APP_CONFIG. leftover 0x1b is need_*=0.
+
+since45: do not send 0x30. host_downloading=0, identify + touch_reinit
+with IRQ live (stock HDL complete).
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since44 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since45 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

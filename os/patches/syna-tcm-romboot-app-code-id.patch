@@ -1,0 +1,17 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since47 APP_CODE identity dump, no post-HDL cmds
+
+since46: 300ms settle then CMD_IDENTIFY still -62, no SPI RX, IRQ=3.
+Running packrat 2100027192 is not in td4150_a12s_boe.bin (img 2100042344).
+
+since47: dump APP_CODE offset/size/crc32/sha256, 14-byte 0x45 header,
+payload memcmp, SPI req vs controller actual_length. No IDENTIFY after
+0x45.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since46 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since47 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

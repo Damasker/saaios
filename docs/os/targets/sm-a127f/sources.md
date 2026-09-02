@@ -30,8 +30,8 @@ BOM differs. Do not freeze a single touch IC.
 
 ## Kernel source
 
-- [opensource.samsung.com](https://opensource.samsung.com/uploadSearch?searchValue=SM-A127F) — four Android 13 SWA zips. Closest to this unit’s **A127FXXSDDXJ2** is **A127FXXSDDXJ6** (`SM-A127F_SWA_13_Opensource.zip`, OSS id 12816). Same binary **D**.
-- Community tree used for TD4150 reading: [maazm7d/kernel_samsung_a12](https://github.com/maazm7d/kernel_samsung_a12) — **a12s / Exynos 850 / S5E3830**, defconfig `exynos850-a12snsxx`, **not** Helio A125F. KernelSU/SUSFS fork (`-Project-xed-Ksun-4.c11`), not a clean XJ2 dump. Full (shallow) clone: `os/third_party/kernel_samsung_a12`. Driver: `drivers/input/touchscreen/synaptics/td4150/`. Patch: `os/patches/syna-tcm-resume-hdl-idle.patch`. Plan: [kernel-touch.md](kernel-touch.md).
+- [opensource.samsung.com](https://opensource.samsung.com/uploadSearch?searchValue=SM-A127F) — four Android 13 SWA zips. Closest to this unit’s **A127FXXSDDXJ2** is **A127FXXSDDXJ6**. Host zip: `/srv/media/SM-A127F_SWA_13_Opensource.zip` (242026746 bytes). Clean td4150 extract: `os/third_party/td4150_oss_dxj6/` (17 source files, `CONFIG_LOCALVERSION=""`, no KernelSU). Plan: [kernel-touch.md](kernel-touch.md).
+- Community **maze** currently built into SaaiOS Images: [maazm7d/kernel_samsung_a12](https://github.com/maazm7d/kernel_samsung_a12) — **a12s / Exynos 850 / S5E3830**, defconfig `exynos850-a12snsxx`, **not** Helio A125F. KernelSU/SUSFS fork (`-Project-xed-Ksun-4.c11`), **not** a clean XJ2 dump. Clone: `os/third_party/kernel_samsung_a12`. Driver: `drivers/input/touchscreen/synaptics/td4150/`. Opcode patches in `os/patches/syna-tcm-*.patch` are **history** — do not port the maze onto OSS. Canonical: [kernel-touch.md](kernel-touch.md).
 - USB Wi‑Fi dongle (not this phone’s onboard combo): [aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus) — RTL8188EUS/EU/ETV, monitor/injection. Deprecated; prefer [lwfinger/rtw88](https://github.com/lwfinger/rtw88). Does **not** replace synaptics. Notes: [wifi-usb.md](wifi-usb.md).
 - XDA: kernel source question for A127F/DSN Exynos 850.
 
@@ -45,10 +45,12 @@ BOM differs. Do not freeze a single touch IC.
 
 - [MizProject/android-device-samsung_a12s](https://github.com/MizProject/android-device-samsung_a12s) — Lineage-oriented DT, not our OS.
 
-## Gaps (fill from the unit)
+## Gaps
 
-- Exact `ro.bootloader` / CSC / U-number.
-- PIT from Heimdall vs this GPT dump.
-- `/sys/class/drm` vs fbdev on stock kernel.
-- Touch IC on this board.
+Filled in [unit.md](unit.md) / [kernel-touch.md](kernel-touch.md): bootloader **A127FXXSDDXJ2**, CSC **XID** / OLE, binary **D**, fb0 (no DRM), touch IC **TD4150**.
+
+Still missing (do not invent):
+
+- Stock Android `dmesg` on **this** unit / same DTBO (probe → first touch).
+- PIT from Heimdall vs the public GPT dump.
 - UART presence.

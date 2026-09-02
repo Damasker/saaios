@@ -1,0 +1,22 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since54 30s passive baseline, no host SPI after 0x45
+
+since53 LIVE: freeze routing 0x04 worked; 0x42 actually TX'd after
+successful 0x45 IDENTIFY 0x02. Leftover 0x1b did not complete the
+waiter. 0x42 timed out -62. Missing-0x42 is CLOSED.
+
+since54 (stricter): after one-shot 0x45 IDENTIFY 0x02 + 0x1b 10 00
+via IRQ only, send nothing. No drain/read_message loop, no
+touch_init, no helper/reinit/config, no mod_resume even on READY.
+IRQ live held=0. Observe 30s (GPIO every 5s + on IRQ). Assert if
+any SPI TX after 0x45. Stop: irq_cnt=3, ATTN not toggling, event6
+empty -> passively hung HDL.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since53 0x42 immediately after 0x45 routing stays 0x04\n");
++	pr_info("SAaiOS_TOUCH_DBG: since54 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since54 no post-HDL 30s passive baseline IRQ live\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

@@ -1,0 +1,26 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since53 0x42 immediately after 0x45, routing stays 0x04
+
+since52 LIVE: switch_mode(BOOTLOADER) after HDL 0x1b selected 0x1f
+because dispatch already stored IDENTIFY mode=0x02. SPI TX 1f 00 00,
+retval=-62, no RX, IRQ=3, HDL_FAILED skip mod_resume. 0x1f is as deaf
+as helper IDENTIFY. Samsung 0x42 is only selected from RomBoot 0x04.
+
+Stock uses the 0x45 IDENTIFY as command completion without treating
+host routing as already HDL. Next command is still 0x42 from 0x04.
+
+since53: freeze routing_mode=0x04 during 0x45 IDENTIFY. After
+write_message(0x45) returns, send CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE
+0x42 immediately in zeroflash_do_romboot_firmware_download (not the
+delayed helper, not wait for 0x1b). Leftover 0x1b does not complete
+the 0x42 waiter. No parallel HELP_SEND_REINIT until 0x42 settles.
+No IDENTIFY as first post-0x45 command, no 0x1f, no ATTN drain.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since52 switch_mode after 0x1b\n");
++	pr_info("SAaiOS_TOUCH_DBG: since53 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since53 0x42 immediately after 0x45 routing stays 0x04\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");

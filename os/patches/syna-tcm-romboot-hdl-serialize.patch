@@ -1,0 +1,17 @@
+From: SaaiOS <os@saaios>
+Subject: synaptics td4150: since51 serialize HDL 0x1b / helper / resume
+
+since50: init-thread download_config on leftover-during-0x45 with
+fw_status 00 00 cleared host_downloading and queued helper before the
+IRQ 0x1b copied 10 00. Resume saw already-idle. Helper identify -62.
+
+since51: only IRQ 0x1b after full fw_status copy may download_config.
+hdl_phase READY/FAILED gates wait_hdl and mod_resume. Helper delayed 50ms.
+
+diff -ruN a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+--- a/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
++++ b/drivers/input/touchscreen/synaptics/td4150/synaptics_tcm_core.c
+@@
+ 	pr_info("SAaiOS_TOUCH_DBG: since50 probe\n");
++	pr_info("SAaiOS_TOUCH_DBG: since51 probe\n");
+ 	pr_info("SAaiOS_TOUCH_DBG: probe enter\n");
