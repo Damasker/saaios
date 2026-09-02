@@ -84,11 +84,13 @@ No Chromium, no animation.
 
 ---
 
-## Phase 4–5 — retained-mode renderer, e-ink rules
+## Phase 4–5 — retained-mode renderer, e-ink rules — **console: v032 LIVE**
 
 Dirty-rect UI. No 60 fps loop. Update on `state changed → event → dirty → blit`.
 
 Constraints: no animation unless requested, no transparency/blur/gradients by default, no polling loop.
+
+**LIVE 2026-09-02 (`boot-v032`, human Odin AP, human confirmed):** `os/init/init.c` `draw_console()` converted from a full-panel clear+redraw on every call to a retained per-line field cache (`struct console_field` / `set_field()`) — banner, resolution, and the three help lines paint once; the five dynamic lines (bat/bl/usb/mem/aud) repaint only when their formatted text differs from what was last painted. Same layout, same call sites/frequency (periodic tick + Vol± key handler), just no more whole-panel flash on every redraw. Human: **"экран не мигает теперь."** This closes the console piece of Phase 4-5; a general reusable retained-mode/dirty-rect renderer for future non-console UI is still open.
 
 ---
 
