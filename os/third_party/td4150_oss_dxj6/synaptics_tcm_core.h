@@ -80,10 +80,17 @@
 #define HDL_RD_CHUNK_SIZE 0 /* For HDL, 0 = unlimited */
 #define HDL_WR_CHUNK_SIZE 0 /* For 0x45, 0 = one-shot / unlimited */
 /* Global read-floor 256 LIVE-falsified: after 0x20 plen=46 with first_read=256,
- * a second empty 0x20 got no ATTN. Keep stock PREDICTIVE_READING (0x20→51).
- * For 0x25 only: oneshot read_length=SAAIOS_TRC_READ_LEN (4+128+1=133).
+ * a second empty 0x20 got no ATTN. Keep stock PREDICTIVE_READING (0x20->51)
+ * for the common case; only force a floor per-command, sized exactly to
+ * that command's known response (never a blanket 256 — that's what over-
+ * read jammed the next empty 0x20 before). since77: a leftover 0x1b
+ * (2B payload) ahead of REINIT's 0x20 clamps read_length down to
+ * MIN_READ_LENGTH(9) via stock PREDICTIVE_READING; a 9-byte first read of
+ * 0x20's 51-byte response (4+46+1) then desyncs continued_read the same
+ * way 0x25 did. Floor 0x20 at its own exact size too.
  */
 #define SAAIOS_TRC_READ_LEN 133
+#define SAAIOS_APP_INFO_READ_LEN 51
 
 #define MESSAGE_HEADER_SIZE 4
 #define MESSAGE_MARKER 0xa5

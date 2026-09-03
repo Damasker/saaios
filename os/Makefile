@@ -28,11 +28,14 @@ OUT_V030 := $(BUILD)/boot-v030.img
 OUT_V031 := $(BUILD)/boot-v031.img
 OUT_V032 := $(BUILD)/boot-v032.img
 OUT_V033 := $(BUILD)/boot-v033.img
+OUT_V034 := $(BUILD)/boot-v034.img
 # Subversion suffix embedded into ramdisk console + used for Odin/AP tar naming.
-# since76 = live20 ladder 0/10/100/500ms after REINIT; retval<0→dead response=ff.
-# Late 0x05/0x24/0x30 LIVE -62. No app_config in post-boot menu. Do not overwrite since54–since75.
+# since77 = per-command read-floor (0x20 GET_APPLICATION_INFO too, not just
+# 0x25) after since76 LIVE showed a leftover 0x1b before REINIT's 0x20
+# clamps read_length to MIN_READ_LENGTH(9), desyncing continued_read the
+# same way 0x25 used to. Do not overwrite since54–since76.
 # See docs/os/targets/sm-a127f/kernel-touch.md.
-SUBVERSION_V019 ?= since76
+SUBVERSION_V019 ?= since77
 VBMETA_OUT := $(BUILD)/vbmeta-patched.img
 BUSYBOX ?= os/third_party/busybox-aarch64
 BUSYBOX_DEB_URL ?= https://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.37.0-6+b9_arm64.deb
@@ -126,7 +129,7 @@ BL_ZIP ?= /srv/media/BL_A127FXXSDDXJ2_QB86601342_REV00_user_low_ship_MULTI_CERT.
 MEDIA ?= /srv/media
 
 .PHONY: all unpack init ramdisk boot.img vbmeta odin-tar restore flash check-stock busybox dropbear \
-	up_param up_param-flash boot-v012 boot-v013 boot-v014 boot-v015 boot-v016 boot-v017 boot-v018 boot-v019 boot-v020 boot-v021 boot-v022 boot-v023 boot-v024 boot-v025 boot-v026 boot-v027 boot-v028 boot-v029 boot-v030 boot-v031 boot-v032 boot-v033 kernel kernel-patch touchlab poweroff beep play abox-fw wifi-fw iw wpa
+	up_param up_param-flash boot-v012 boot-v013 boot-v014 boot-v015 boot-v016 boot-v017 boot-v018 boot-v019 boot-v020 boot-v021 boot-v022 boot-v023 boot-v024 boot-v025 boot-v026 boot-v027 boot-v028 boot-v029 boot-v030 boot-v031 boot-v032 boot-v033 boot-v034 kernel kernel-patch touchlab poweroff beep play abox-fw wifi-fw iw wpa
 
 all: odin-tar
 
@@ -696,7 +699,7 @@ boot-v019:
 	@echo "Phone stays on current boot. make flash still refuses."
 else
 boot-v019: unpack ramdisk vbmeta
-	@case "$(SUBVERSION_V019)" in since54|since55|since56|since57|since58|since59|since60|since61|since62|since63|since64|since65|since66|since67|since68|since69|since70|since71|since72|since73|since74|since75) echo "REFUSING to overwrite saaios-boot-v019-$(SUBVERSION_V019).tar"; exit 1;; esac
+	@case "$(SUBVERSION_V019)" in since54|since55|since56|since57|since58|since59|since60|since61|since62|since63|since64|since65|since66|since67|since68|since69|since70|since71|since72|since73|since74|since75|since76) echo "REFUSING to overwrite saaios-boot-v019-$(SUBVERSION_V019).tar"; exit 1;; esac
 	@test -f $(STOCK_UNPACK)/dtb || { echo "missing stock dtb at $(STOCK_UNPACK)/dtb"; exit 1; }
 	python3 os/bootimg/bootimg.py pack $(STOCK_UNPACK) \
 		--kernel $(KERNEL_IMAGE) \
@@ -1174,6 +1177,42 @@ boot-v033: unpack ramdisk vbmeta
 	@echo "  $(BUILD)/saaios-boot-v033.tar"
 	tar -tvf $(BUILD)/saaios-boot-v033.tar
 
+# boot-v034: v033 + Power-key gesture for Phase D poweroff. Vol- + Power
+# held 2s -> do_poweroff() (reboot RB_POWER_OFF, confirmed LIVE on v033).
+# Power alone held 2s is UNCHANGED (do_reboot(), LINUX_REBOOT_CMD_RESTART) —
+# kernel-touch.md's state=dead recovery depends on that exact gesture and
+# timing. Stock kernel+DTB, no maze. Does not overwrite v021–v033.
+boot-v034: unpack ramdisk vbmeta
+	@test ! -f $(MEDIA)/saaios-boot-v033.tar || test -s $(MEDIA)/saaios-boot-v033.tar
+	@test -f $(STOCK_UNPACK)/dtb || { echo "missing stock dtb at $(STOCK_UNPACK)/dtb"; exit 1; }
+	python3 os/bootimg/bootimg.py pack $(STOCK_UNPACK) \
+		--ramdisk $(BUILD)/ramdisk.cpio.gz \
+		--cmdline "androidboot.hardware=exynos850 androidboot.selinux=permissive loop.max_part=7" \
+		--seandroid --pad-to $(BOOT_PART_SIZE) \
+		-o $(OUT_V034)
+	python3 os/bootimg/bootimg.py unpack $(OUT_V034) -o $(BUILD)/boot-v034-check
+	cmp $(STOCK_UNPACK)/dtb $(BUILD)/boot-v034-check/dtb
+	cmp $(STOCK_UNPACK)/kernel $(BUILD)/boot-v034-check/kernel
+	@echo "packed stock DXJ2 kernel+DTB (not Project-Xed Image)"
+	rm -rf $(BUILD)/odin-v034
+	mkdir -p $(BUILD)/odin-v034
+	cp $(OUT_V034) $(BUILD)/odin-v034/boot.img
+	cp $(VBMETA_OUT) $(BUILD)/odin-v034/vbmeta.img
+	tar -C $(BUILD)/odin-v034 -cf $(BUILD)/saaios-boot-v034.tar boot.img vbmeta.img
+	@if [ -e $(MEDIA)/saaios-boot-v033.tar ]; then \
+		cmp -s $(BUILD)/saaios-boot-v034.tar $(MEDIA)/saaios-boot-v033.tar && { echo "REFUSING: v034 tar matches v033"; exit 1; } || true; \
+	fi
+	@if [ -d $(MEDIA) ]; then \
+		cp $(BUILD)/saaios-boot-v034.tar $(MEDIA)/saaios-boot-v034.tar; \
+		chmod 664 $(MEDIA)/saaios-boot-v034.tar; \
+		chown mike:media $(MEDIA)/saaios-boot-v034.tar 2>/dev/null || true; \
+		echo "copied $(MEDIA)/saaios-boot-v034.tar"; \
+	fi
+	sha256sum $(OUT_V034) $(MEDIA)/saaios-boot-v034.tar $(MEDIA)/saaios-boot-v033.tar
+	@echo "Odin AP tar (not flashed):"
+	@echo "  $(BUILD)/saaios-boot-v034.tar"
+	tar -tvf $(BUILD)/saaios-boot-v034.tar
+
 vbmeta: check-stock
 	python3 os/bootimg/vbmeta.py --patch-stock $(STOCK)/vbmeta.img -o $(VBMETA_OUT)
 	sha256sum $(VBMETA_OUT) $(STOCK)/vbmeta.img
@@ -1233,6 +1272,7 @@ flash: check-stock
 	@echo "  v031: $(OUT_V031) (v030 + wpa_supplicant + wifi-join by args; not at boot)"
 	@echo "  v032: $(OUT_V032) (v031 + Phase 4 dirty-rect console: repaint only changed status lines)"
 	@echo "  v033: $(OUT_V033) (v032 + telnet-only /sbin/poweroff probe; Power key unchanged)"
+	@echo "  v034: $(OUT_V034) (v033 + Vol-+Power 2s = poweroff gesture; Power-alone 2s = reboot unchanged)"
 	@echo "Rollback: make restore images in $(STOCK)"
 	@echo "PARAM nologo is a separate Odin BL tar; make up_param-flash also refuses."
 	@exit 2

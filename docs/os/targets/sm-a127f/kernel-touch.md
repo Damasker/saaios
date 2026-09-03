@@ -21,7 +21,7 @@ Samsung **SM-A127F** (a12s / Exynos 850), SaaiOS. Unit PDA **A127FXXSDDXJ2**. Pa
 | Controller | Synaptics **TD4150** over SPI **`spi1.2`**, 7 MHz mode 3 |
 | IRQ | **244** (`exynos7_wkup_irq_chip`, **LEVEL_LOW** + **ONESHOT**, `synaptics_tcm`) |
 | ATTN GPIO | **gpio=0 active**, **gpio=1 idle** (LEVEL_LOW). After leftover `0x1b`, gpio=1 is idle, not an ATTN request |
-| Input after firmware start | **`sec_touchscreen`** sysfs `input8`, evdev **`/dev/input/event6`** (Handlers=event6). Same SPI also has input9→event7. Stock/v011 used event3. |
+| Input after firmware start | **CORRECTED 2026-09-02 (stock reference, see below): `sec_touchscreen` is `/dev/input/event3`** (`location=synaptics_tcm/touch_input`, real ABS_MT coords, max_x=719 max_y=1599, `INPUT_PROP_DIRECT`), **not event6.** `event4` = `sec_touchproximity` (`touch_input1`). `event6` is `"grip_notifier"`, an unrelated virtual input — our builds' `input8`/`event6` fallback target was wrong this whole time. ~~sysfs `input8`, evdev `/dev/input/event6` (Handlers=event6). Same SPI also has input9→event7. Stock/v011 used event3.~~ |
 | Firmware | `tsp_synaptics/td4150_a12s_boe.bin` (**147456**), kernel-builtin `=y` |
 | Driver in use today | OSS td4150 overlay in `os/third_party/kernel_samsung_a12/.../td4150/` (synced with `td4150_oss_dxj6/`) |
 | Clean Samsung sources | `os/third_party/td4150_oss_dxj6/` (DXJ6 extract + since76 lab extras) |
@@ -570,9 +570,9 @@ Banner `SaaiOS v019 since75`. Probe: `since75 0x05 ENABLE_REPORT 0x11 after 0x25
 
 ---
 
-## Current flash target: since76 (live20 ladder + dead-on-timeout)
+## since76 design (superseded by since77 — read the section below first)
 
-Banner `SaaiOS v019 since76`. Probe: `auto live20 ladder 0/10/100/500ms` + `retval<0→dead response=ff`. Sysfs `/sys/kernel/saaios_touch/{action,status}`. Tokens: `live20` `run_app` `enable_report` `no_doze` (`app_config` optional, **not** in menu). Tar `/srv/media/saaios-boot-v019-since76.tar` (overwrite OK). Do **not** overwrite since54–since75.
+Banner `SaaiOS v019 since76`. Probe: `auto live20 ladder 0/10/100/500ms` + `retval<0→dead response=ff`. Sysfs `/sys/kernel/saaios_touch/{action,status}`. Tokens: `live20` `run_app` `enable_report` `no_doze` (`app_config` optional, **not** in menu). Tar `/srv/media/saaios-boot-v019-since76.tar` (flashed and characterized — **do not overwrite**, joins since54–since75). since77 changes only the `0x20` read-floor (see below); everything in this section (HDL path, sysfs, tokens, ladder delays 10/100/500/1000) still applies unchanged.
 
 HDL unchanged: oneshot 0x45, skip 0x1f when HDL 0x02, skip 0x25 after REINIT 0x20 OK, fallback input, **no auto 0x05/0x23/0x26/0x30**.
 
@@ -703,30 +703,64 @@ Never flash DTBO.
 
 ---
 
-## since76 read-floor regression + fixes (PR #18, code-reviewed, not yet flashed)
+## since76 read-floor regression + fixes (PR #18, code-reviewed, LIVE 2026-09-02)
 
-The global `SAAIOS_RD_FLOOR=256` clamp documented above under "Why read-floor 256" was flashed once, found to kill ATTN on the next plain empty `0x20`, and removed. Three fixes landed on top of the since76 build already described in this file, none yet LIVE on the device:
+The global `SAAIOS_RD_FLOOR=256` clamp documented above under "Why read-floor 256" was flashed once, found to kill ATTN on the next plain empty `0x20`, and removed. Three fixes landed on top of the since76 build already described in this file:
 
-1. **Scoped read floor.** `SAAIOS_TRC_READ_LEN=133` forced only for `CMD_GET_TOUCH_REPORT_CONFIG` (0x25), at the top of the `retry:` loop in `syna_tcm_read_message`, before the first SPI read — not after every message. Currently dormant: `HELP_SEND_REINIT` still skips 0x25 entirely (`skip touch_reinit/0x25 after 0x20 OK`), so this only matters the next time something manually issues 0x25.
+1. **Scoped read floor.** `SAAIOS_TRC_READ_LEN=133` forced only for `CMD_GET_TOUCH_REPORT_CONFIG` (0x25), at the top of the `retry:` loop in `syna_tcm_read_message`, before the first SPI read — not after every message. Dormant on since76: `HELP_SEND_REINIT` skips 0x25 entirely (`skip touch_reinit/0x25 after 0x20 OK`).
 2. **Ladder race.** `saaios_start_live20_ladder()` now starts after `mutex_unlock(&tcm_hcd->reset_mutex)` instead of under it — `delay=0` used to fire while still holding the mutex and race the REINIT that had just succeeded, timing out and aborting the whole ladder before the 10/100/500 steps ran. `IS_FW_MODE(tcm_hcd->id_info.mode)` is snapshotted into `saaios_reinit_fw_mode` *before* the unlock so an IRQ landing in that window can't change the ladder-start decision underneath it.
 3. **Stale sticky latch.** `saaios_reinit_ok` is set once and never cleared, so a *later* `HELP_SEND_REINIT` whose `identify()` fails (`saaios_mark_dead()` just set `state=dead`) could still fall through and restart the ladder on the strength of an earlier success. Ladder-start now also requires `saaios_state != SAAIOS_ST_DEAD`.
 
-Full ladder is `10, 100, 500, 1000` ms (not the original `0, 10, 100, 500`). Rebuilt and repacked `saaios-boot-v019-since76.tar` after each fix; still needs a human Odin flash + the grep sequence above to go LIVE.
+Full ladder is `10, 100, 500, 1000` ms (not the original `0, 10, 100, 500`).
+
+**LIVE 2026-09-02 (human Odin AP):** flashed. Banner `SaaiOS v019 since76`. `0x45`→`0x42`→leftover `0x1b` all clean, `HELP_SEND_REINIT` entered — then a **new** failure: `identify(false)/0x20 retval=-5`, `state=dead` immediately (`TOUCH_EXP[0]: state=dead retval=-5 response=ff (REINIT 0x20 failed; block until reboot)`). Never reached the live20 ladder. Root cause below (since77).
+
+---
+
+## since77 LIVE-diagnosed: 0x1b leftover clamps read_length, desyncs the next 0x20
+
+Full trace (device 2026-09-02): after `0x45` (`write_message retval=0 resp_len=3 response_code=0x01`, **not** an IDENTIFY — mode stayed `0x04`), stock `switch_mode` correctly sent `0x42` (RomBoot), IRQ answered with the familiar `IDENTIFY` (`TD4150-12.0.12` / mode `0x02` / packrat `2100027192`, `read_length=29` from that 24-byte payload). Next IRQ was the leftover `0x1b` `REPORT_STATUS` (`raw=a5 1b 02 00 10 00 5a 5a`, 2-byte payload) — and **that** message's `read_length=9` (stock `PREDICTIVE_READING`: `total_length = MAX(total_length, MIN_READ_LENGTH)` = `MAX(7, 9)` = `9`). `HELP_SEND_REINIT` then ran `identify(false)` / `CMD_GET_APPLICATION_INFO` (`0x20`), whose response needs `4+46+1=51` bytes — but `read_length` was still `9` from the leftover `0x1b`. First SPI read grabbed only 9 bytes; `syna_tcm_continued_read` then read the remaining bytes and hit `Incorrect header marker (0x80)` (`0x20 continued-read fail marker=0x80 plen=46 first_read=9`) → `read_retval=-5` → `0x20 GET_APPLICATION_INFO retval=-5` → `HELP_SEND_REINIT identify(false)/0x20 retval=-5` → `saaios_mark_dead`.
+
+This is **the same desync class since76's `SAAIOS_TRC_READ_LEN` fix targeted for 0x25** — a short `read_length` carried over from the *prior* message breaking the *next* command's continued-read — just triggered by a different prior message (the 2-byte leftover `0x1b`, clamped to `MIN_READ_LENGTH=9` by stock `PREDICTIVE_READING`) landing in front of a different next command (`0x20`, not `0x25`). `SAAIOS_TRC_READ_LEN` only guarded `0x25`; it never touched `0x20`.
+
+**Fix:** extend the same per-command-exact-size floor to `0x20`. New `SAAIOS_APP_INFO_READ_LEN=51` (4+46+1), forced at the same `retry:` guard, **only** for `CMD_GET_APPLICATION_INFO` and only when `read_length` is currently smaller — sized to exactly what `0x20` needs, not a round/generous number. This deliberately avoids the original global-256-clamp regression (over-read jamming a plain follow-up `0x20`): the floor is per-command and exact, never a blanket value. Logs `since77 0x20 read-floor bumped %u->%u` when it fires, so the next flash can confirm from dmesg whether this branch actually engaged.
+
+`SUBVERSION_V019` bumped to `since77`; `since76` tar added to the do-not-overwrite list (it is now flashed/characterized history, same as since54–75).
+
+**LIVE 2026-09-02 (human Odin AP):** flashed. `since77 0x20 read-floor bumped 9->51` fired — the fix engaged. `identify(false)/0x20 retval=0 app_status=OK resp_len=46` — **REINIT succeeded for the first time since this failure mode appeared.** `saaios_reinit_ok=1`, `skip touch_reinit/0x25`, `start live20 ladder delays_ms=10,100,500,1000`.
+
+**New failure, one step later:** ladder step 1 (`delay_ms=10`) sent the identical `identify(false)`/`0x20` call (same function, same `write_message` path as the REINIT call 15 ms earlier — verified in source, no code difference) and got **no response at all**: `Command 0x20 timeout -ETIME RESPONSE_TIMEOUT_MS=1000` → `retval=-62` → `state=dead`. `irq_cnt` was `3` going in (REINIT's own `0x20` was `irq_n=3`) and **stayed frozen at 3** for 2+ minutes after (`since59 observe print_info` at t=33s/64s/95s/125s, unchanged). `ATTN=1` (idle) confirmed by direct GPIO read at the timeout, not just a missed IRQ. This falsifies the live20 ladder's own premise ("measure whether empty GET stays alive over time") — it does not survive even 10 ms, let alone the intended 100/500/1000 ms steps. Same class as `since54`/`since69`'s "IRQ 244 stuck after HDL" (`known-risks.md` #9): the IC answers exactly one post-HDL command, then never asserts ATTN again for anything, regardless of opcode or delay. `known-risks.md` already flags this as unresolved after ~30 targeted opcode/timing variants (`since40`–`since76`) and says to stop guessing opcodes.
+
+---
+
+## Stock reference (2026-09-02, adb, no root — production build)
+
+Flashed `saaios-boot-stock-restore.tar` (stock `boot.img` + `vbmeta.img`, same DTBO) to get a real working reference. `ro.build.type=user` `ro.debuggable=0` — `dmesg`/`adb root`/`logcat -b kernel` all refused (`klogctl: Permission denied`, `adbd cannot run as root in production builds`). No kernel log capture possible without rooting (Magisk or similar) — **still missing**. What *is* readable unprivileged and turned out to correct a standing error in this file:
+
+- **`sec_touchscreen` is `/dev/input/event3`**, not `event6`. `getevent -i /dev/input/event3`: `name: "sec_touchscreen"`, `location: "synaptics_tcm/touch_input"`, `ABS_MT_POSITION_X` max **719**, `ABS_MT_POSITION_Y` max **1599**, `INPUT_PROP_DIRECT`. This driver-under-test registers **two** input devices on `spi1.2`, not one: `event3` (`touch_input`, the real touchscreen) and `event4` = `"sec_touchproximity"` (`location: "synaptics_tcm/touch_input1"`). `event6` is `"grip_notifier"` — an unrelated virtual input, never touch. Every prior sinceN note about `input8`/`event6`/"Handlers=event6" in this file was chasing the wrong node; the "Stock/v011 used event3" aside buried in that same old table entry was the correct one all along.
+- **`/proc/interrupts` IRQ 244 (`synaptics_tcm`) is not stuck on stock.** Baseline **4066**, then **6565** after ~15 s of live screen taps (**+2499**, dense continuous reporting, not one-shot per tap) — confirmed with a live `getevent -lt /dev/input/event3` capture during the same window: real `ABS_MT_POSITION_X/Y`, `ABS_MT_PRESSURE`, `ABS_MT_TRACKING_ID`, `BTN_TOUCH`, ~8 ms between samples. **The IC itself is not deaf or faulty** — it happily asserts ATTN thousands of times a minute once actually in its normal scanning/reporting firmware mode. The "IRQ 244 stuck after HDL" wall every sinceN build hits is this driver's own bring-up sequence never reaching that mode, not a hardware limitation. Whatever stock does after (or instead of) our `0x45→0x42→leftover 0x1b→REINIT 0x20` sequence to get there is still unknown — still no dmesg to show it.
+- `/sys/class/sec/tsp/` factory interface exists and matches this file's assumptions (`cmd`, `cmd_list`, `cmd_status`, `cmd_result`, `sensitivity_mode`, `support_feature`). `cmd_list` includes `check_connection`, `get_chip_name`, `run_open_short_test_read(_all)`, `run_noise_test_read(_all)`, `fw_update`, `get_fw_ver_ic`/`get_fw_ver_bin` — none run this session (`cmd_status=NOT_APPLICABLE`, `cmd_result=singletap_enable,0:NA` was already cached from a prior boot/self-check, not something we triggered).
+
+**Implication:** stop assuming this unit's TD4150/firmware is bad or that the HDL protocol reconstruction has a framing bug per se — since77 proved the framing/read-floor class of bug is real and fixable, but the *deeper* wall (chip stops answering after one command) is not explained by anything in the opcode/timing space this file has already covered ~30 times. The next real lead is whatever stock does that this reconstruction doesn't — and that requires either a rooted/eng dmesg capture on this exact unit (not available: `ro.debuggable=0`), or inferring it from behavioral probes like this one (unprivileged `/proc/interrupts`, `getevent`, `/sys/class/sec/tsp/*`) rather than guessing another opcode.
+
+**Root attempt (2026-09-02): vanilla Magisk — 2/2 boot hangs, abandoned for now.** Patched the pristine stock `boot.img` with Magisk v30.7 (`magisk_patched-30700_y3iB7.img`; `bootimg.py unpack` confirmed kernel/DTB byte-identical to stock, only ramdisk changed — same AVB-tail-diff-from-stock pattern as every other custom image here, e.g. since77's boot.img, so the packaging itself was not the problem). Flashed via Odin AP (paired with the same known-good Magisk-style `vbmeta-patched.img` used everywhere else). **Both attempts**: black screen, zero USB re-enumeration, no adb, no RNDIS, for 10+ minutes — recovered clean both times via force-restart (Vol-down+Power) into Download mode and reflashing `saaios-boot-stock-restore.tar`. sboot/Download mode survived both hangs with no lasting damage, as designed. Suspect Samsung's **DEFEX** LSM (`security/samsung/defex_lsm` — present in the `kernel_samsung_a12` source tree used by the touch-lab track) rejecting the Magisk-modified ramdisk/init early in boot, though unconfirmed (no way to get a log from inside the hang). **Do not retry plain Magisk-patch-and-flash on this unit** without a Samsung/Knox/DEFEX-aware method researched first (e.g. Magisk's Samsung-specific install notes, or KernelSU-Next — already present in the touch-lab `kernel_samsung_a12` tree's `LOCALVERSION`, though that is a *different* kernel than stock and would not give a stock-driver dmesg reference). dmesg on this unit stays **unavailable**; rely on the unprivileged behavioral probes above until a safer rooting path is found.
 
 ---
 
 ## Next (logical order — do not skip ahead)
 
-1. Flash **since76** AP tar (boot+vbmeta only). **Do not flash since66, since73, or since75.** **Grep immediately** (before wrap). Banner must be `SaaiOS v019 since76`. Confirm HDL path (oneshot 0x45, skip 0x1f, REINIT 0x20, **no** 0x25) and **no** auto 0x05/0x23/0x26/0x30. Confirm **`start live20 ladder delays_ms=10,100,500,1000`**.
-2. Watch auto `live20` steps. On any timeout → `state=dead` `response=ff` (never stale `01`); further writes **EBUSY** until reboot.
-3. If all four delays OK: optional manual experiments; long-press Power 2s to reboot when dead.
-4. Do **not** flash since66, since73, or since75. Do **not** rewind 0x45 oneshot / skip 0x1f / leftover REINIT 0x20. Do **not** retry 0x26 / auto 0x05/0x25/0x30.
-5. **Optional:** stock Android dmesg on this unit / same DTBO. Still **missing** on the host.
+since77 is LIVE and settled: read-floor fix confirmed engaged, REINIT's `0x20` now succeeds, ladder starts — then dies at step 1 (`-62` timeout, IRQ 244 frozen). Stock reference gathered (event3, IRQ 244 not stuck on stock). No dmesg capture possible on this unit without root (`ro.debuggable=0`).
+
+1. **Root/eng dmesg is the highest-value missing piece.** Either root this unit's current stock boot (Magisk patch of the stock boot.img, or an eng/userdebug boot if one becomes available for this exact `A127FXXSDDXJ2` build) to finally capture `dmesg | grep -iE 'synaptics|td4150|tsp|touch'` from cold boot through first touch, or find another way to see what commands stock sends after its own REINIT-equivalent that keeps the IC answering. Without this, further sinceN opcode guesses repeat the same ~30-attempt dead end `known-risks.md` already flags.
+2. **Do not repeat blind opcode/timing experiments** on the maze (`0x05`/`0x24`/`0x30`/`0x26` immediately after REINIT are already proven to jam at `-62`, same as the ladder's own step 1). Any new hypothesis needs a reason beyond "try a different delay or command," since delay is now proven irrelevant (10 ms is already fatal) and command choice already spans GET_APPLICATION_INFO too (not just the payload commands).
+3. If a dmesg reference becomes available: diff it against the `since77` LIVE trace at the exact point after REINIT's `0x20` succeeds — what, if anything, stock sends before its own IRQ 244 starts free-running.
+4. Do **not** flash since66, since73, since75, or since76. Do **not** rewind 0x45 oneshot / skip 0x1f / leftover REINIT 0x20 / the since77 read-floor. Do **not** retry 0x26 / auto 0x05/0x25/0x30.
+5. Fix the `event3`-not-`event6` error wherever downstream code assumes `event6`/`input8` for `sec_touchscreen` (none yet on the touch-lab kernel track since it never reaches `touch_init`; relevant if/when a fallback input path is revisited).
 
 Constraints that stay in force:
 
 - Do not flash from the agent. Do not commit unless asked.
-- Do not overwrite `/srv/media/saaios-boot-v019-since54.tar`, `...-since55.tar`, `...-since56.tar`, `...-since57.tar`, `...-since58.tar`, `...-since59.tar`, `...-since60.tar`, `...-since61.tar`, `...-since62.tar`, `...-since63.tar`, `...-since64.tar`, `...-since65.tar`, `...-since66.tar`, `...-since67.tar`, `...-since68.tar`, `...-since69.tar`, `...-since70.tar`, `...-since71.tar`, `...-since72.tar`, `...-since73.tar`, `...-since74.tar`, or `...-since75.tar`.
+- Do not overwrite `/srv/media/saaios-boot-v019-since54.tar`, `...-since55.tar`, `...-since56.tar`, `...-since57.tar`, `...-since58.tar`, `...-since59.tar`, `...-since60.tar`, `...-since61.tar`, `...-since62.tar`, `...-since63.tar`, `...-since64.tar`, `...-since65.tar`, `...-since66.tar`, `...-since67.tar`, `...-since68.tar`, `...-since69.tar`, `...-since70.tar`, `...-since71.tar`, `...-since72.tar`, `...-since73.tar`, `...-since74.tar`, `...-since75.tar`, or `...-since76.tar`.
 - Do not add IDENTIFY / `0x1f` / `0x42-from-0x02` / retry-0x26 / constructed-0x26 / `lcd_rst` experiments on the maze.
 - Never pulse `gpio_lcd_rst`. Never unbind `synaptics_tcm_spi`.
 - Do not treat leftover `0x1b` as 0x45 STATUS_OK. IDENTIFY mode 0x02 after oneshot 0x45 is waiter success only — not proof APP_CODE launched.
