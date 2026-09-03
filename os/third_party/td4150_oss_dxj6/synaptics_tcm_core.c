@@ -477,6 +477,41 @@ static void saaios_touch_work_fn(struct work_struct *work)
 		saaios_last_response = (live20 < 0) ? 0xff : 0x00;
 		retval = live20;
 		break;
+	case CMD_EXIT_DEEP_SLEEP:
+		/* since81: reference driver's syna_tcm_resume() calls
+		 * sleep(false) (CMD_EXIT_DEEP_SLEEP 0x2d) then rezero()
+		 * (CMD_REZERO 0x27) before touch_resume() -- never tried
+		 * here. Empty payload, same shape as the already-working
+		 * 0x20. Never auto-run; manual only.
+		 */
+		pr_info("SAaiOS_TOUCH_DBG TOUCH_EXP[%u]: 0x2d EXIT_DEEP_SLEEP empty payload ATTN=%d irq=%u\n",
+			saaios_exp_seq, saaios_attn_gpio(tcm_hcd),
+			since58_irq_cnt);
+		retval = tcm_hcd->sleep(tcm_hcd, false);
+		saaios_last_retval = retval;
+		saaios_last_response = (retval < 0) ? 0xff : 0x00;
+		pr_info("SAaiOS_TOUCH_DBG TOUCH_EXP[%u]: done 0x2d retval=%d ATTN=%d irq=%u\n",
+			saaios_exp_seq, retval, saaios_attn_gpio(tcm_hcd),
+			since58_irq_cnt);
+		break;
+	case CMD_REZERO:
+		/* syna_tcm_rezero() itself is #ifdef USE_FLASH (not our
+		 * zeroflash/HDL build) -- send the opcode directly, same
+		 * empty-payload shape as CMD_ENABLE_REPORT above.
+		 */
+		pr_info("SAaiOS_TOUCH_DBG TOUCH_EXP[%u]: 0x27 REZERO empty payload ATTN=%d irq=%u\n",
+			saaios_exp_seq, saaios_attn_gpio(tcm_hcd),
+			since58_irq_cnt);
+		retval = tcm_hcd->write_message(tcm_hcd, CMD_REZERO,
+				NULL, 0, &resp_buf, &resp_size, &resp_len,
+				&response_code, 0);
+		saaios_last_retval = retval;
+		saaios_last_response = (retval < 0) ? 0xff : response_code;
+		pr_info("SAaiOS_TOUCH_DBG TOUCH_EXP[%u]: done 0x27 retval=%d response=%02x resp_len=%u ATTN=%d irq=%u\n",
+			saaios_exp_seq, retval, saaios_last_response, resp_len,
+			saaios_attn_gpio(tcm_hcd), since58_irq_cnt);
+		kfree(resp_buf);
+		break;
 	default:
 		saaios_last_retval = -EINVAL;
 		saaios_last_response = 0xff;
@@ -638,6 +673,12 @@ ssize_t syna_tcm_saaios_action_store(struct syna_tcm_hcd *tcm_hcd,
 	else if (saaios_token_is(p, "app_config"))
 		/* Optional / diagnostic only — not in post-boot menu. */
 		cmd = CMD_DOWNLOAD_CONFIG;
+	else if (saaios_token_is(p, "exit_sleep"))
+		/* since81: reference driver's resume() sequence, never
+		 * auto-run — not in post-boot menu. */
+		cmd = CMD_EXIT_DEEP_SLEEP;
+	else if (saaios_token_is(p, "rezero"))
+		cmd = CMD_REZERO;
 	else {
 		pr_info("SAaiOS_TOUCH_DBG: saaios action unknown '%s'\n", p);
 		return -EINVAL;
