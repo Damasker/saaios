@@ -3466,6 +3466,12 @@ static void syna_tcm_helper_work(struct work_struct *work)
 		 * and may desync SPI so the IC never sees a coherent
 		 * DOWNLOAD_CONFIG. Keep 0x20; do not send 0x25.
 		 */
+		/* since79 tried identify(true) here (real reference driver
+		 * calls it) -- LIVE-falsified: CMD_IDENTIFY got zero response
+		 * as the first command after the leftover 0x1b, worse than
+		 * identify(false)'s 0x20 (since77 succeeded). Reverted. Do
+		 * not retry identify(true) at this call site.
+		 */
 		pr_info("SAaiOS_TOUCH_DBG: HELP_SEND_REINIT identify(false)/0x20 start\n");
 		retval = tcm_hcd->identify(tcm_hcd, false);
 		pr_info("SAaiOS_TOUCH_DBG: HELP_SEND_REINIT identify(false)/0x20 retval=%d app_status=%s (0x%04x) mode=0x%02x\n",
@@ -3506,9 +3512,11 @@ static void syna_tcm_helper_work(struct work_struct *work)
 		 * call (retval<0, saaios_mark_dead() just ran above) it must
 		 * not resurrect the ladder saaios_mark_dead() just stopped.
 		 */
-		if (saaios_reinit_ok && saaios_reinit_fw_mode &&
+		if (SAAIOS_AUTO_LADDER && saaios_reinit_ok && saaios_reinit_fw_mode &&
 				saaios_state != SAAIOS_ST_DEAD)
 			saaios_start_live20_ladder(tcm_hcd);
+		else if (!SAAIOS_AUTO_LADDER && saaios_reinit_ok && saaios_reinit_fw_mode)
+			pr_info("SAaiOS_TOUCH_DBG: since78 auto ladder skipped, state=ready for manual touchlab action\n");
 		syna_tcm_since58_observe(tcm_hcd, "after stock REINIT");
 		wake_up_interruptible(&tcm_hcd->hdl_wq);
 		break;

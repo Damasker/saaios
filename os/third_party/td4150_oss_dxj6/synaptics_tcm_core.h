@@ -92,6 +92,17 @@
 #define SAAIOS_TRC_READ_LEN 133
 #define SAAIOS_APP_INFO_READ_LEN 51
 
+/* since78: since77 proved the auto live20 ladder always dies at step 1
+ * (10ms) with the IC never answering again, so it never leaves a window
+ * to try a manual touchlab action (enable_report/no_doze/run_app) on a
+ * freshly-succeeded REINIT before state=dead locks the sysfs store.
+ * since78 set this to 0 to confirm that window exists (it did: enable_report
+ * also -62'd, same wall regardless of opcode). Back to 1 for since79 --
+ * the real test there is whether identify(true)'s extra CMD_IDENTIFY 0x02
+ * changes whether the ladder's own 0x20 gets an answer at all.
+ */
+#define SAAIOS_AUTO_LADDER 1
+
 #define MESSAGE_HEADER_SIZE 4
 #define MESSAGE_MARKER 0xa5
 #define MESSAGE_PADDING 0x5a
