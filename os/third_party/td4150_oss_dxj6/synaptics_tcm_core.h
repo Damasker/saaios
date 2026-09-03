@@ -97,11 +97,11 @@
  * to try a manual touchlab action (enable_report/no_doze/run_app) on a
  * freshly-succeeded REINIT before state=dead locks the sysfs store.
  * since78 set this to 0 to confirm that window exists (it did: enable_report
- * also -62'd, same wall regardless of opcode). Back to 1 for since79 --
- * the real test there is whether identify(true)'s extra CMD_IDENTIFY 0x02
- * changes whether the ladder's own 0x20 gets an answer at all.
+ * also -62'd, same wall regardless of opcode). since79/80 needed it back at
+ * 1 to test the ladder itself. since81 needs the manual window again to
+ * try the new exit_sleep/rezero tokens fresh after REINIT.
  */
-#define SAAIOS_AUTO_LADDER 1
+#define SAAIOS_AUTO_LADDER 0
 
 #define MESSAGE_HEADER_SIZE 4
 #define MESSAGE_MARKER 0xa5
