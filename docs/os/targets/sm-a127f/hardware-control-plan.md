@@ -32,7 +32,7 @@ Userspace we own (PID 1 now; a small compositor later) can **command**:
 
 ---
 
-## Now (boot-v034 packed — Vol-+Power poweroff gesture; E4 CP BOOTING; TSP parked)
+## Now (boot-v034 LIVE — Vol-+Power poweroff gesture confirmed; E4 CP BOOTING; TSP parked)
 
 Stock **DTB + kernel** in `boot.img` (`4.19.111-27127798`). Our ramdisk only. Vbmeta patched Magisk-style (flags OR 3). Pack: `SEANDROIDENFORCE` + pad **44 MiB**. Odin **AP**, human-only.
 
@@ -61,7 +61,7 @@ Kernel tree to **reuse** (a12s / Exynos 850, not Helio): [maazm7d/kernel_samsung
 ## Endpoint vs now
 
 ```text
-now:      v034 packed — Vol-+Power 2s = poweroff gesture; Power-alone 2s = reboot unchanged (not flashed)
+now:      v034 LIVE — Vol-+Power 2s = poweroff gesture confirmed; Power-alone 2s = reboot confirmed unchanged
           v033 LIVE — /sbin/poweroff confirmed real hardware shutdown
           v032 LIVE — Phase 4 dirty-rect console (no full-panel repaint flash)
           v031 LIVE — wifi-join by args; Wallbox 192.168.168.8
@@ -102,7 +102,7 @@ Touch packets are not a dependency for the console. Volume and power are live. F
 
 Do **not** couple a new blank path with a TSP experiment.
 
-### Phase D — power policy — **v034 packed (not flashed): Vol-+Power gesture**
+### Phase D — power policy — **v034 LIVE: Vol-+Power gesture confirmed**
 
 **Depends on:** keys (already true). Real `poweroff` needs a kernel change later; not bundled with TSP.
 
@@ -121,9 +121,11 @@ Do **not** couple a new blank path with a TSP experiment.
 
 **LIVE 2026-09-02 (v033, human Odin AP):** telnet `/sbin/poweroff` — telnet session aborted mid-command (not a timeout), RNDIS USB adapter disappeared entirely from the Windows host (not just unreachable), device screen off. Human confirmed: **device powered off, then auto-powered back on when a charger was connected** (standard PMIC behavior, not ramdisk code). `reboot(2) RB_POWER_OFF` reaches a real `pm_power_off` on this stock kernel — confirms the discriminator this probe was built to answer. Long-press → `do_reboot()` (2s, `LINUX_REBOOT_CMD_RESTART`) is still unchanged and still owns that gesture.
 
-**Gesture (v034, packed, not flashed):** `Vol- + Power` held **2s** → `do_poweroff()` (same `RB_POWER_OFF` path confirmed above). `handle_key()` now tracks `voldown_held` (set on `KEY_VOLUMEDOWN` press, cleared on release) alongside the existing brightness debounce, unchanged. The 2s poll-loop trigger branches on it: `voldown_held` → `do_poweroff()`, otherwise → `do_reboot()` — **identical timing and code path to before** when Vol- is not held, so the state=dead recovery gesture in [kernel-touch.md](kernel-touch.md) is untouched. On-screen help line and boot log updated to mention `Vol-+Pwr off`. Pack: `make -f os/Makefile boot-v034`. Tar `$(MEDIA)/saaios-boot-v034.tar`. Does not overwrite v021–v033. Rollback: `saaios-boot-v033.tar`.
+**Gesture (v034):** `Vol- + Power` held **2s** → `do_poweroff()` (same `RB_POWER_OFF` path confirmed above). `handle_key()` now tracks `voldown_held` (set on `KEY_VOLUMEDOWN` press, cleared on release) alongside the existing brightness debounce, unchanged. The 2s poll-loop trigger branches on it: `voldown_held` → `do_poweroff()`, otherwise → `do_reboot()` — **identical timing and code path to before** when Vol- is not held, so the state=dead recovery gesture in [kernel-touch.md](kernel-touch.md) is untouched. On-screen help line and boot log updated to mention `Vol-+Pwr off`. Pack: `make -f os/Makefile boot-v034`. Tar `$(MEDIA)/saaios-boot-v034.tar`. Does not overwrite v021–v033. Rollback: `saaios-boot-v033.tar`.
 
-**Test when flashed:** hold Power alone 2s → confirm it still reboots (regression check on the untouched path). Hold Vol- + Power together 2s → confirm real poweroff (screen dark, stays off, charger wakes it) same as the telnet probe. Next after this: suspend/resume (`echo mem > /sys/power/state`) — note the product ramdisk currently ships with TSP parked (no touch driver active), so the Phase D acceptance line "resume does not re-deaf the TSP" isn't testable in this image until touch (Phase 6, since76 track) and this product track converge; suspend/resume/wake will be verified without a touch check for now.
+**LIVE 2026-09-03 (human Odin AP):** both halves of the gesture confirmed on device. Power held alone 2s → reboot, unchanged (regression check passed). Vol- + Power held together 2s → real poweroff, same as the v033 telnet probe. Phase D's gesture-binding step is closed.
+
+**Next:** suspend/resume (`echo mem > /sys/power/state`) — note the product ramdisk currently ships with TSP parked (no touch driver active), so the Phase D acceptance line "resume does not re-deaf the TSP" isn't testable in this image until touch (Phase 6, since76+ track) and this product track converge; suspend/resume/wake will be verified without a touch check for now.
 
 ### Phase E1 — speaker beep + WAV play — **v027 LIVE**
 
