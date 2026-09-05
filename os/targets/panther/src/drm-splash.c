@@ -161,17 +161,34 @@ static const char *glyph(char character) {
         case '-': return "00000" "00000" "00000" "11111" "00000" "00000" "00000";
         case ':': return "00000" "00100" "00100" "00000" "00100" "00100" "00000";
         case '%': return "11001" "11010" "00100" "01000" "10110" "00110" "00000";
+        case '<': return "00001" "00010" "00100" "01000" "00100" "00010" "00001";
         default:  return "00000" "00000" "00000" "00000" "00000" "00000" "00000";
     }
 }
 
-static void draw_word(uint32_t *pixels, uint32_t stride_pixels,
-                      uint32_t width, uint32_t height,
-                      const char *word, int scale, int center_y,
-                      uint32_t color) {
+static int ui_x(uint32_t width, int value) {
+    return (int)((int64_t)value * width / 1080);
+}
+
+static int ui_y(uint32_t height, int value) {
+    return (int)((int64_t)value * height / 2400);
+}
+
+static int ui_scale(uint32_t width, int value) {
+    int scaled = ui_x(width, value);
+    return scaled > 0 ? scaled : 1;
+}
+
+static int text_width(const char *word, int scale) {
     size_t length = strlen(word);
-    int total_width = ((int)length * 5 + (int)length - 1) * scale;
-    int origin_x = ((int)width - total_width) / 2;
+    return length == 0 ? 0 : ((int)length * 6 - 1) * scale;
+}
+
+static void draw_text(uint32_t *pixels, uint32_t stride_pixels,
+                      uint32_t width, uint32_t height,
+                      const char *word, int scale, int origin_x,
+                      int center_y, uint32_t color) {
+    size_t length = strlen(word);
     int origin_y = center_y - (7 * scale) / 2;
     for (size_t letter = 0; letter < length; ++letter) {
         const char *bits = glyph(word[letter]);
@@ -187,6 +204,70 @@ static void draw_word(uint32_t *pixels, uint32_t stride_pixels,
             }
         }
     }
+}
+
+static void draw_word(uint32_t *pixels, uint32_t stride_pixels,
+                      uint32_t width, uint32_t height,
+                      const char *word, int scale, int center_y,
+                      uint32_t color) {
+    draw_text(pixels, stride_pixels, width, height, word, scale,
+              ((int)width - text_width(word, scale)) / 2,
+              center_y, color);
+}
+
+static void fill_soft_rect(uint32_t *pixels, uint32_t stride_pixels,
+                           uint32_t width, uint32_t height,
+                           int x, int y, int w, int h, int radius,
+                           uint32_t color) {
+    if (radius < 1) {
+        fill_rect(pixels, stride_pixels, width, height, x, y, w, h, color);
+        return;
+    }
+    fill_rect(pixels, stride_pixels, width, height,
+              x + radius, y, w - radius * 2, h, color);
+    fill_rect(pixels, stride_pixels, width, height,
+              x, y + radius, w, h - radius * 2, color);
+    fill_rect(pixels, stride_pixels, width, height,
+              x + radius / 2, y + radius / 3,
+              w - radius, h - radius * 2 / 3, color);
+}
+
+static bool read_first_line(const char *path, char *value, size_t value_size);
+static bool read_wifi_address(char *address, size_t address_size);
+
+static void render_status_bar(uint32_t *pixels, uint32_t stride_pixels,
+                              uint32_t width, uint32_t height) {
+    char clock_text[8] = "--:--";
+    char capacity[8] = {0};
+    char battery_text[12] = "--%";
+    char address[INET_ADDRSTRLEN] = {0};
+    time_t now = time(NULL);
+    if (now > 1700000000) {
+        struct tm utc = {0};
+        if (gmtime_r(&now, &utc)) {
+            (void)strftime(clock_text, sizeof(clock_text), "%H:%M", &utc);
+        }
+    }
+    if (read_first_line("/sys/class/power_supply/maxfg/capacity",
+                        capacity, sizeof(capacity))) {
+        snprintf(battery_text, sizeof(battery_text), "%.3s%%", capacity);
+    }
+    int scale = ui_scale(width, 6);
+    draw_text(pixels, stride_pixels, width, height,
+              clock_text, scale, ui_x(width, 54), ui_y(height, 82),
+              0x00E8F0FA);
+    if (read_wifi_address(address, sizeof(address))) {
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, 748), ui_y(height, 59),
+                       ui_x(width, 54), ui_y(height, 38),
+                       ui_x(width, 12), 0x0000CFA0);
+    }
+    int battery_scale = ui_scale(width, 6);
+    draw_text(pixels, stride_pixels, width, height,
+              battery_text, battery_scale,
+              (int)width - ui_x(width, 54) -
+                  text_width(battery_text, battery_scale),
+              ui_y(height, 82), 0x00E8F0FA);
 }
 
 static void render_splash(uint32_t *pixels, uint32_t stride_pixels,
@@ -212,21 +293,27 @@ static void render_splash(uint32_t *pixels, uint32_t stride_pixels,
         }
     }
 
-    int scale = (int)width / 42;
-    if (scale < 8) { scale = 8; }
-    draw_word(pixels, stride_pixels, width, height,
-              "SAAIOS", scale, (int)height / 6, 0x00F4F7FF);
+    render_status_bar(pixels, stride_pixels, width, height);
+}
 
-    int line_width = (int)width * 3 / 5;
-    int line_y = (int)height / 6 + 5 * scale;
-    fill_rect(pixels, stride_pixels, width, height,
-              ((int)width - line_width) / 2, line_y,
-              line_width, scale / 5 + 2, 0x004F8CFF);
-
-    int dot = scale / 2;
-    int dot_y = line_y + scale * 2;
-    fill_rect(pixels, stride_pixels, width, height,
-              (int)width / 2 - dot / 2, dot_y, dot, dot, 0x006EE7FF);
+static void render_page_chrome(uint32_t *pixels, uint32_t stride_pixels,
+                               uint32_t width, uint32_t height,
+                               const char *title) {
+    render_splash(pixels, stride_pixels, width, height);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 48), ui_y(height, 170),
+                   ui_x(width, 170), ui_y(height, 96),
+                   ui_x(width, 28), 0x001A2B46);
+    draw_text(pixels, stride_pixels, width, height,
+              "< BACK", ui_scale(width, 6), ui_x(width, 72),
+              ui_y(height, 218), 0x00AFC3DA);
+    draw_text(pixels, stride_pixels, width, height,
+              title, ui_scale(width, 12), ui_x(width, 54),
+              ui_y(height, 355), 0x00F5F8FC);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 390), ui_y(height, 2320),
+                   ui_x(width, 300), ui_y(height, 18),
+                   ui_x(width, 9), 0x007B91AA);
 }
 
 static void render_launcher(uint32_t *pixels, uint32_t stride_pixels,
@@ -235,23 +322,60 @@ static void render_launcher(uint32_t *pixels, uint32_t stride_pixels,
     static const char *const labels[] = {
         "STATUS", "NETWORK", "SOUND", "BLUETOOTH", "CONSOLE"
     };
+    static const uint32_t accents[] = {
+        0x004F8CFF, 0x0000CFA0, 0x00D786FF, 0x008779FF, 0x006C63FF
+    };
     render_splash(pixels, stride_pixels, width, height);
-    draw_word(pixels, stride_pixels, width, height,
-              "MENU", 13, 590, 0x008CA9C8);
-    for (int index = 0; index < 5; ++index) {
-        int top = 680 + index * 275;
+    draw_text(pixels, stride_pixels, width, height,
+              "SAAIOS", ui_scale(width, 14), ui_x(width, 54),
+              ui_y(height, 280), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "YOUR PRIVATE PHONE", ui_scale(width, 6), ui_x(width, 58),
+              ui_y(height, 405), 0x008EA8C6);
+    for (int index = 0; index < 4; ++index) {
+        int column = index % 2;
+        int row = index / 2;
+        int left = 54 + column * 501;
+        int top = 520 + row * 445;
         uint32_t color = index == selection
-            ? (active ? 0x0000A0C8 : 0x00285F98)
-            : 0x00131F35;
-        fill_rect(pixels, stride_pixels, width, height,
-                  90, top, (int)width - 180, 195, color);
-        draw_word(pixels, stride_pixels, width, height,
-                  labels[index], 12, top + 98,
-                  index == selection ? 0x00FFFFFF : 0x0092A6BE);
+            ? (active ? 0x002D5E85 : 0x00213E60)
+            : 0x00152238;
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, left), ui_y(height, top),
+                       ui_x(width, 471), ui_y(height, 405),
+                       ui_x(width, 42), color);
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, left + 34), ui_y(height, top + 34),
+                       ui_x(width, 104), ui_y(height, 104),
+                       ui_x(width, 28), accents[index]);
+        draw_text(pixels, stride_pixels, width, height,
+                  labels[index], ui_scale(width, index == 3 ? 7 : 9),
+                  ui_x(width, left + 34), ui_y(height, top + 300),
+                  0x00F4F7FB);
     }
+    uint32_t ai_color = selection == 4
+        ? (active ? 0x004B4AC4 : 0x003A397F) : 0x00232158;
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 1450),
+                   ui_x(width, 972), ui_y(height, 360),
+                   ui_x(width, 48), ai_color);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 88), ui_y(height, 1490),
+                   ui_x(width, 112), ui_y(height, 112),
+                   ui_x(width, 32), accents[4]);
+    draw_text(pixels, stride_pixels, width, height,
+              "AI ASSISTANT", ui_scale(width, 11), ui_x(width, 88),
+              ui_y(height, 1680), 0x00FFFFFF);
+    draw_text(pixels, stride_pixels, width, height,
+              "LOCAL AND PRIVATE", ui_scale(width, 6), ui_x(width, 91),
+              ui_y(height, 1755), 0x00BDBEFF);
     draw_word(pixels, stride_pixels, width, height,
-              active ? "READY" : "TOUCH", 11, 2150,
-              active ? 0x0000E7FF : 0x005B789A);
+              "TAP AN APP", ui_scale(width, 7), ui_y(height, 2110),
+              0x006E87A5);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 390), ui_y(height, 2320),
+                   ui_x(width, 300), ui_y(height, 18),
+                   ui_x(width, 9), 0x007B91AA);
 }
 
 static void uppercase_label(char *text) {
@@ -430,32 +554,54 @@ static void render_networks(uint32_t *pixels, uint32_t stride_pixels,
     char address[INET_ADDRSTRLEN] = {0};
     int count = read_network_names(names, 3);
     bool online = read_wifi_address(address, sizeof(address));
-    render_splash(pixels, stride_pixels, width, height);
-    draw_word(pixels, stride_pixels, width, height,
-              "NETWORKS", 12, 560, 0x00FFFFFF);
-    draw_word(pixels, stride_pixels, width, height,
-              online ? "ONLINE" : "WIFI READY", 10, 715,
-              online ? 0x0000E7A8 : 0x008CA9C8);
+    render_page_chrome(pixels, stride_pixels, width, height, "NETWORK");
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 470),
+                   ui_x(width, 972), ui_y(height, 290),
+                   ui_x(width, 44), 0x0015253B);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 92), ui_y(height, 520),
+                   ui_x(width, 72), ui_y(height, 72),
+                   ui_x(width, 24),
+                   online ? 0x0000CFA0 : 0x005F7691);
+    draw_text(pixels, stride_pixels, width, height,
+              online ? "WIFI CONNECTED" : "WIFI READY",
+              ui_scale(width, 9), ui_x(width, 200),
+              ui_y(height, 565), 0x00F5F8FC);
     if (online) {
-        draw_word(pixels, stride_pixels, width, height,
-                  address, 9, 840, 0x00B7CBE2);
+        draw_text(pixels, stride_pixels, width, height,
+                  address, ui_scale(width, 8), ui_x(width, 92),
+                  ui_y(height, 685), 0x009CB1C9);
     }
+    draw_text(pixels, stride_pixels, width, height,
+              "NEARBY NETWORKS", ui_scale(width, 7), ui_x(width, 58),
+              ui_y(height, 865), 0x008EA8C6);
     if (count == 0) {
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, 54), ui_y(height, 930),
+                       ui_x(width, 972), ui_y(height, 230),
+                       ui_x(width, 36), 0x00152238);
         draw_word(pixels, stride_pixels, width, height,
-                  "SCANNING", 11, 1260, 0x008CA9C8);
+                  "SCANNING", ui_scale(width, 9), ui_y(height, 1045),
+                  0x008EA8C6);
     } else {
         for (int index = 0; index < count; ++index) {
-            int top = 980 + index * 285;
-            fill_rect(pixels, stride_pixels, width, height,
-                      70, top, (int)width - 140, 200, 0x001D426B);
+            int top = 930 + index * 260;
+            fill_soft_rect(pixels, stride_pixels, width, height,
+                           ui_x(width, 54), ui_y(height, top),
+                           ui_x(width, 972), ui_y(height, 220),
+                           ui_x(width, 36), 0x00152238);
+            fill_soft_rect(pixels, stride_pixels, width, height,
+                           ui_x(width, 90), ui_y(height, top + 72),
+                           ui_x(width, 54), ui_y(height, 54),
+                           ui_x(width, 18), 0x004F8CFF);
             int length = (int)strlen(names[index]);
-            int scale = length > 13 ? 8 : (length > 9 ? 10 : 12);
-            draw_word(pixels, stride_pixels, width, height,
-                      names[index], scale, top + 100, 0x00FFFFFF);
+            int scale = length > 15 ? 7 : (length > 11 ? 8 : 9);
+            draw_text(pixels, stride_pixels, width, height,
+                      names[index], ui_scale(width, scale), ui_x(width, 185),
+                      ui_y(height, top + 110), 0x00F5F8FC);
         }
     }
-    draw_word(pixels, stride_pixels, width, height,
-              "TOUCH TO GO BACK", 7, 2040, 0x005B789A);
 }
 
 static int read_bluetooth_names(char names[][32], int maximum,
@@ -553,9 +699,21 @@ static void render_bluetooth(uint32_t *pixels, uint32_t stride_pixels,
         : read_bluetooth_names(names, 4, &scanning, &finished, &failed);
     char pair_name[32] = {0};
     int pair_state = read_bluetooth_pair_state(pair_name);
-    render_splash(pixels, stride_pixels, width, height);
-    draw_word(pixels, stride_pixels, width, height,
-              "BLUETOOTH", 12, 545, 0x00FFFFFF);
+    render_page_chrome(pixels, stride_pixels, width, height, "BLUETOOTH");
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 455),
+                   ui_x(width, 972), ui_y(height, 126),
+                   ui_x(width, 34), 0x00152238);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, bluetooth_saved_view ? 540 : 54),
+                   ui_y(height, 455), ui_x(width, 486), ui_y(height, 126),
+                   ui_x(width, 34), 0x0037567D);
+    draw_text(pixels, stride_pixels, width, height,
+              "NEARBY", ui_scale(width, 7), ui_x(width, 190),
+              ui_y(height, 518), bluetooth_saved_view ? 0x007E96B2 : 0x00FFFFFF);
+    draw_text(pixels, stride_pixels, width, height,
+              "SAVED", ui_scale(width, 7), ui_x(width, 710),
+              ui_y(height, 518), bluetooth_saved_view ? 0x00FFFFFF : 0x007E96B2);
     const char *status = NULL;
     uint32_t status_color = 0x0000E7A8;
     if (bluetooth_saved_view) {
@@ -582,17 +740,17 @@ static void render_bluetooth(uint32_t *pixels, uint32_t stride_pixels,
         else if (scanning || pair_state == 1) status_color = 0x0000E7FF;
     }
     draw_word(pixels, stride_pixels, width, height,
-              status, 8, 710, status_color);
+              status, ui_scale(width, 7), ui_y(height, 665), status_color);
     if (count == 0) {
         draw_word(pixels, stride_pixels, width, height,
                   bluetooth_saved_view ? "NO SAVED DEVICES" :
                   (scanning ? "LOOKING FOR DEVICES" :
                   (finished ? "NO NAMED DEVICES" : "BLUETOOTH READY")),
-                  8, 1240, 0x008CA9C8);
+                  ui_scale(width, 8), ui_y(height, 1230), 0x008CA9C8);
     } else {
         for (int index = 0; index < count; ++index) {
-            int top = 850 + index * 270;
-            uint32_t card_color = 0x001D426B;
+            int top = 760 + index * 245;
+            uint32_t card_color = 0x00152238;
             if (bluetooth_saved_view &&
                 bluetooth_forget_candidate == index) {
                 card_color = 0x00804343;
@@ -600,23 +758,24 @@ static void render_bluetooth(uint32_t *pixels, uint32_t stride_pixels,
                        !strcmp(pair_name, names[index])) {
                 card_color = 0x00006F5A;
             }
-            fill_rect(pixels, stride_pixels, width, height,
-                      70, top, (int)width - 140, 190, card_color);
+            fill_soft_rect(pixels, stride_pixels, width, height,
+                           ui_x(width, 54), ui_y(height, top),
+                           ui_x(width, 972), ui_y(height, 195),
+                           ui_x(width, 36), card_color);
+            fill_soft_rect(pixels, stride_pixels, width, height,
+                           ui_x(width, 88), ui_y(height, top + 54),
+                           ui_x(width, 72), ui_y(height, 72),
+                           ui_x(width, 22), 0x008779FF);
             int length = (int)strlen(names[index]);
-            int scale = length > 15 ? 7 : (length > 11 ? 9 : 11);
-            draw_word(pixels, stride_pixels, width, height,
-                      names[index], scale, top + 95, 0x00FFFFFF);
+            int scale = length > 15 ? 7 : (length > 11 ? 8 : 9);
+            draw_text(pixels, stride_pixels, width, height,
+                      names[index], ui_scale(width, scale), ui_x(width, 205),
+                      ui_y(height, top + 98), 0x00FFFFFF);
         }
     }
-    draw_word(pixels, stride_pixels, width, height,
-              bluetooth_saved_view ? "VOLUME FOR NEARBY" :
-                                     "VOLUME FOR SAVED",
-              7, 1960, 0x005B789A);
-    draw_word(pixels, stride_pixels, width, height,
-              "TOUCH EMPTY TO BACK", 7, 2080, 0x005B789A);
 }
 
-static int bluetooth_item_at(int y) {
+static int bluetooth_item_at(int y, uint32_t height) {
     char names[4][32] = {{0}};
     int count = 0;
     if (bluetooth_saved_view) {
@@ -629,40 +788,48 @@ static int bluetooth_item_at(int y) {
                                      &scanning, &finished, &failed);
         if (!finished || scanning || failed) return -1;
     }
+    int design_y = (int)((int64_t)y * 2400 / height);
     for (int index = 0; index < count; ++index) {
-        int top = 850 + index * 270;
-        if (y >= top && y < top + 190) {
+        int top = 760 + index * 245;
+        if (design_y >= top && design_y < top + 195) {
             return index;
         }
     }
     return -1;
 }
 
+static void render_dashboard_card(uint32_t *pixels, uint32_t stride_pixels,
+                                  uint32_t width, uint32_t height,
+                                  int left, int top, const char *label,
+                                  const char *value, uint32_t accent) {
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, left), ui_y(height, top),
+                   ui_x(width, 471), ui_y(height, 350),
+                   ui_x(width, 42), 0x00152238);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, left + 32), ui_y(height, top + 32),
+                   ui_x(width, 68), ui_y(height, 68),
+                   ui_x(width, 22), accent);
+    draw_text(pixels, stride_pixels, width, height,
+              label, ui_scale(width, 6), ui_x(width, left + 32),
+              ui_y(height, top + 150), 0x008EA8C6);
+    int value_scale = strlen(value) > 10 ? 6 : 9;
+    draw_text(pixels, stride_pixels, width, height,
+              value, ui_scale(width, value_scale), ui_x(width, left + 32),
+              ui_y(height, top + 255), 0x00F5F8FC);
+}
+
 static void render_status(uint32_t *pixels, uint32_t stride_pixels,
                           uint32_t width, uint32_t height) {
     char address[INET_ADDRSTRLEN] = {0};
     char capacity[8] = {0};
-    char battery[24] = "BATTERY READY";
-    char charge_state[24] = "POWER UNKNOWN";
-    char utc_time[32] = "TIME SYNCING";
+    char battery[12] = "--%";
     char raw_brightness[16] = {0};
-    char brightness[24] = "BRIGHTNESS 25";
+    char brightness[12] = "25%";
     bool online = read_wifi_address(address, sizeof(address));
-    time_t now = time(NULL);
-    if (now > 1700000000) {
-        struct tm utc = {0};
-        if (gmtime_r(&now, &utc)) {
-            (void)strftime(utc_time, sizeof(utc_time),
-                           "UTC %Y-%m-%d %H-%M", &utc);
-        }
-    }
     if (read_first_line("/sys/class/power_supply/maxfg/capacity",
                         capacity, sizeof(capacity))) {
-        snprintf(battery, sizeof(battery), "BATTERY %.3s", capacity);
-    }
-    if (read_first_line("/sys/class/power_supply/maxfg/status",
-                        charge_state, sizeof(charge_state))) {
-        uppercase_label(charge_state);
+        snprintf(battery, sizeof(battery), "%.3s%%", capacity);
     }
     if (read_first_line(
             "/sys/devices/platform/1c2c0000.drmdsim/"
@@ -671,54 +838,40 @@ static void render_status(uint32_t *pixels, uint32_t stride_pixels,
         int percent = atoi(raw_brightness) * 100 / 4095;
         if (percent < 0) { percent = 0; }
         if (percent > 100) { percent = 100; }
-        snprintf(brightness, sizeof(brightness),
-                 "BRIGHTNESS %d", percent);
+        snprintf(brightness, sizeof(brightness), "%d%%", percent);
     }
-    render_splash(pixels, stride_pixels, width, height);
-    draw_word(pixels, stride_pixels, width, height,
-              "STATUS", 13, 540, 0x00FFFFFF);
-    draw_word(pixels, stride_pixels, width, height,
-              utc_time, 8, 680, 0x00B7CBE2);
-    draw_word(pixels, stride_pixels, width, height,
-              battery, 10, 810, 0x00B7CBE2);
-    draw_word(pixels, stride_pixels, width, height,
-              charge_state, 8, 925,
-              (!strcmp(charge_state, "CHARGING") ||
-               !strcmp(charge_state, "FULL"))
-                  ? 0x0000E7A8 : 0x00B7CBE2);
-    draw_word(pixels, stride_pixels, width, height,
-              brightness, 9, 1040, 0x00FFFFFF);
-    draw_word(pixels, stride_pixels, width, height,
-              "SYSTEM READY", 10, 1170, 0x0000E7A8);
-    draw_word(pixels, stride_pixels, width, height,
-              access("/data/saaios/.layout", R_OK) == 0
-                  ? "DATA READY" : "DATA OFFLINE",
-              10, 1300,
-              access("/data/saaios/.layout", R_OK) == 0
-                  ? 0x0000E7A8 : 0x00E78A68);
-    draw_word(pixels, stride_pixels, width, height,
-              "TOUCH READY", 10, 1430, 0x0000E7A8);
-    draw_word(pixels, stride_pixels, width, height,
-              access("/run/audio-ready", R_OK) == 0
-                  ? "AUDIO READY" : "AUDIO STARTING",
-              10, 1560,
-              access("/run/audio-ready", R_OK) == 0
-                  ? 0x0000E7A8 : 0x008CA9C8);
-    draw_word(pixels, stride_pixels, width, height,
-              online ? "WIFI ONLINE" : "WIFI READY", 10, 1690,
-              online ? 0x0000E7A8 : 0x008CA9C8);
-    if (online) {
-        draw_word(pixels, stride_pixels, width, height,
-                  address, 9, 1820, 0x00B7CBE2);
-    }
+    bool data_ready = access("/data/saaios/.layout", R_OK) == 0;
+    bool audio_ready = access("/run/audio-ready", R_OK) == 0;
     bool bluetooth_ready =
         access("/sys/class/bluetooth/hci0", R_OK) == 0;
-    draw_word(pixels, stride_pixels, width, height,
-              bluetooth_ready ? "BLUETOOTH READY" : "BLUETOOTH STARTING",
-              8, 1950,
-              bluetooth_ready ? 0x0000E7A8 : 0x008CA9C8);
-    draw_word(pixels, stride_pixels, width, height,
-              "TOUCH TO GO BACK", 7, 2090, 0x005B789A);
+    render_page_chrome(pixels, stride_pixels, width, height, "OVERVIEW");
+    draw_text(pixels, stride_pixels, width, height,
+              "SYSTEM READY", ui_scale(width, 7), ui_x(width, 58),
+              ui_y(height, 460), 0x0000D6A3);
+    render_dashboard_card(pixels, stride_pixels, width, height,
+                          54, 540, "BATTERY", battery, 0x0000CFA0);
+    render_dashboard_card(pixels, stride_pixels, width, height,
+                          555, 540, "DISPLAY", brightness, 0x00D786FF);
+    render_dashboard_card(pixels, stride_pixels, width, height,
+                          54, 925, "NETWORK",
+                          online ? "ONLINE" : "OFFLINE", 0x004F8CFF);
+    render_dashboard_card(pixels, stride_pixels, width, height,
+                          555, 925, "STORAGE",
+                          data_ready ? "READY" : "OFFLINE", 0x006C63FF);
+    render_dashboard_card(pixels, stride_pixels, width, height,
+                          54, 1310, "AUDIO",
+                          audio_ready ? "READY" : "STARTING", 0x00D786FF);
+    render_dashboard_card(pixels, stride_pixels, width, height,
+                          555, 1310, "BLUETOOTH",
+                          bluetooth_ready ? "READY" : "STARTING", 0x008779FF);
+    draw_text(pixels, stride_pixels, width, height,
+              "VOLUME KEYS CONTROL BRIGHTNESS", ui_scale(width, 5),
+              ui_x(width, 58), ui_y(height, 1775), 0x006E87A5);
+    if (online) {
+        draw_text(pixels, stride_pixels, width, height,
+                  address, ui_scale(width, 7), ui_x(width, 58),
+                  ui_y(height, 1880), 0x009CB1C9);
+    }
 }
 
 static void render_console(uint32_t *pixels, uint32_t stride_pixels,
@@ -729,40 +882,60 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
     bool running = ai_query_running();
     char lines[4][AI_LINE_CHARS + 1] = {{0}};
     int line_count = running ? 0 : read_ai_lines(lines, 4);
-    render_splash(pixels, stride_pixels, width, height);
-    draw_word(pixels, stride_pixels, width, height,
-              "AI CONSOLE", 11, 430, 0x00FFFFFF);
-    draw_word(pixels, stride_pixels, width, height,
-              access("/tmp/saaios.sock", R_OK) == 0
-                  ? "LOCAL AI READY" : "RUNTIME OFFLINE",
-              8, 565,
-              access("/tmp/saaios.sock", R_OK) == 0
-                  ? 0x0000E7A8 : 0x00E78A68);
+    render_page_chrome(pixels, stride_pixels, width, height, "ASSISTANT");
+    bool runtime_ready = access("/tmp/saaios.sock", F_OK) == 0;
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 455),
+                   ui_x(width, 972), ui_y(height, 110),
+                   ui_x(width, 32), 0x00152238);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 88), ui_y(height, 488),
+                   ui_x(width, 44), ui_y(height, 44),
+                   ui_x(width, 14), runtime_ready ? 0x0000CFA0 : 0x00D56D6D);
+    draw_text(pixels, stride_pixels, width, height,
+              runtime_ready ? "LOCAL AI READY" : "RUNTIME OFFLINE",
+              ui_scale(width, 7), ui_x(width, 170), ui_y(height, 510),
+              runtime_ready ? 0x00C8F7EA : 0x00FFD0D0);
     for (int index = 0; index < 3; ++index) {
-        int top = 680 + index * 260;
+        int top = 630 + index * 225;
         uint32_t color = index == ai_last_action
-            ? 0x00285F98 : 0x001D426B;
-        fill_rect(pixels, stride_pixels, width, height,
-                  70, top, (int)width - 140, 185, color);
-        draw_word(pixels, stride_pixels, width, height,
-                  labels[index], 9, top + 93, 0x00FFFFFF);
+            ? 0x003A397F : 0x00152238;
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, 54), ui_y(height, top),
+                       ui_x(width, 972), ui_y(height, 180),
+                       ui_x(width, 36), color);
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, 88), ui_y(height, top + 54),
+                       ui_x(width, 72), ui_y(height, 72),
+                       ui_x(width, 22), 0x006C63FF);
+        draw_text(pixels, stride_pixels, width, height,
+                  labels[index], ui_scale(width, 8), ui_x(width, 205),
+                  ui_y(height, top + 90), 0x00FFFFFF);
     }
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 1345),
+                   ui_x(width, 972), ui_y(height, 670),
+                   ui_x(width, 44), 0x00101C2E);
+    draw_text(pixels, stride_pixels, width, height,
+              "AI RESPONSE", ui_scale(width, 6), ui_x(width, 92),
+              ui_y(height, 1420), 0x007E96B2);
     if (running) {
         draw_word(pixels, stride_pixels, width, height,
-                  "AI THINKING", 10, 1560, 0x0000E7FF);
+                  "AI THINKING", ui_scale(width, 9), ui_y(height, 1680),
+                  0x008C86FF);
     } else if (line_count > 0) {
         for (int index = 0; index < line_count; ++index) {
             int scale = strlen(lines[index]) > 22 ? 6 : 7;
-            draw_word(pixels, stride_pixels, width, height,
-                      lines[index], scale, 1510 + index * 125,
+            draw_text(pixels, stride_pixels, width, height,
+                      lines[index], ui_scale(width, scale), ui_x(width, 92),
+                      ui_y(height, 1535 + index * 125),
                       0x00B7CBE2);
         }
     } else {
         draw_word(pixels, stride_pixels, width, height,
-                  "TOUCH A CHECK", 9, 1620, 0x008CA9C8);
+                  "CHOOSE A QUICK CHECK", ui_scale(width, 7),
+                  ui_y(height, 1680), 0x008CA9C8);
     }
-    draw_word(pixels, stride_pixels, width, height,
-              "TOUCH EMPTY TO BACK", 7, 2110, 0x005B789A);
 }
 
 static void render_sound(uint32_t *pixels, uint32_t stride_pixels,
@@ -771,30 +944,45 @@ static void render_sound(uint32_t *pixels, uint32_t stride_pixels,
     bool playing = access("/run/audio-playing", R_OK) == 0;
     char raw_volume[16] = {0};
     char volume_label[24] = "VOLUME 50";
+    int volume_percent = 50;
     if (read_first_line("/run/audio-volume",
                         raw_volume, sizeof(raw_volume))) {
         int value = atoi(raw_volume);
-        int percent = (value - 400) * 100 / 417;
-        if (percent < 0) { percent = 0; }
-        if (percent > 100) { percent = 100; }
+        volume_percent = (value - 400) * 100 / 417;
+        if (volume_percent < 0) { volume_percent = 0; }
+        if (volume_percent > 100) { volume_percent = 100; }
         snprintf(volume_label, sizeof(volume_label),
-                 "VOLUME %d", percent);
+                 "VOLUME %d", volume_percent);
     }
-    render_splash(pixels, stride_pixels, width, height);
+    render_page_chrome(pixels, stride_pixels, width, height, "SOUND");
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 485),
+                   ui_x(width, 972), ui_y(height, 980),
+                   ui_x(width, 54), 0x00152238);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 390), ui_y(height, 620),
+                   ui_x(width, 300), ui_y(height, 300),
+                   ui_x(width, 74), playing ? 0x006C63FF : 0x002D5E85);
     draw_word(pixels, stride_pixels, width, height,
-              "SOUND", 13, 700, 0x00FFFFFF);
+              playing ? "PLAYING" : "TEST", ui_scale(width, 10),
+              ui_y(height, 770), 0x00FFFFFF);
     draw_word(pixels, stride_pixels, width, height,
-              ready ? "AUDIO READY" : "AUDIO STARTING", 10, 1060,
-              ready ? 0x0000E7A8 : 0x008CA9C8);
+              ready ? "AUDIO READY" : "AUDIO STARTING", ui_scale(width, 7),
+              ui_y(height, 1040), ready ? 0x0000D6A3 : 0x008EA8C6);
     draw_word(pixels, stride_pixels, width, height,
-              playing ? "PLAYING" : "TEST TONE", 12, 1330,
-              playing ? 0x0000E7FF : 0x00B7CBE2);
+              volume_label, ui_scale(width, 11), ui_y(height, 1190),
+              0x00F5F8FC);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 180), ui_y(height, 1300),
+                   ui_x(width, 720), ui_y(height, 28),
+                   ui_x(width, 14), 0x00263A55);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 180), ui_y(height, 1300),
+                   ui_x(width, 720 * volume_percent / 100), ui_y(height, 28),
+                   ui_x(width, 14), 0x00D786FF);
     draw_word(pixels, stride_pixels, width, height,
-              volume_label, 11, 1570, 0x00FFFFFF);
-    draw_word(pixels, stride_pixels, width, height,
-              "USE VOLUME KEYS", 8, 1740, 0x005B789A);
-    draw_word(pixels, stride_pixels, width, height,
-              "TOUCH TO GO BACK", 7, 2040, 0x005B789A);
+              "VOLUME KEYS", ui_scale(width, 7), ui_y(height, 1600),
+              0x008EA8C6);
 }
 
 static void start_bluetooth_scan(void) {
@@ -927,8 +1115,8 @@ static void render_page(uint32_t *pixels, uint32_t stride_pixels,
 
 static void draw_touch_marker(uint32_t *pixels, uint32_t stride_pixels,
                               uint32_t width, uint32_t height, int x, int y) {
-    const int outer = 54;
-    const int inner = 22;
+    const int outer = ui_scale(width, 54);
+    const int inner = ui_scale(width, 22);
     fill_rect(pixels, stride_pixels, width, height,
               x - outer / 2, y - outer / 2, outer, outer, 0x0000E7FF);
     fill_rect(pixels, stride_pixels, width, height,
@@ -964,24 +1152,61 @@ static void disable_display(int drm_fd) {
     }
 }
 
-static int menu_item_at(int y) {
-    for (int index = 0; index < 5; ++index) {
-        int top = 680 + index * 275;
-        if (y >= top && y < top + 195) {
+static int menu_item_at(int x, int y, uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    for (int index = 0; index < 4; ++index) {
+        int left = 54 + (index % 2) * 501;
+        int top = 520 + (index / 2) * 445;
+        if (design_x >= left && design_x < left + 471 &&
+            design_y >= top && design_y < top + 405) {
+            return index;
+        }
+    }
+    if (design_x >= 54 && design_x < 1026 &&
+        design_y >= 1450 && design_y < 1810) {
+        return 4;
+    }
+    return -1;
+}
+
+static int console_item_at(int y, uint32_t height) {
+    int design_y = (int)((int64_t)y * 2400 / height);
+    for (int index = 0; index < 3; ++index) {
+        int top = 630 + index * 225;
+        if (design_y >= top && design_y < top + 180) {
             return index;
         }
     }
     return -1;
 }
 
-static int console_item_at(int y) {
-    for (int index = 0; index < 3; ++index) {
-        int top = 680 + index * 260;
-        if (y >= top && y < top + 185) {
-            return index;
-        }
+static int bluetooth_tab_at(int x, int y,
+                            uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    if (design_y < 455 || design_y >= 581 ||
+        design_x < 54 || design_x >= 1026) {
+        return -1;
     }
-    return -1;
+    return design_x < 540 ? 0 : 1;
+}
+
+static bool sound_action_at(int x, int y,
+                            uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    return design_x >= 54 && design_x < 1026 &&
+           design_y >= 485 && design_y < 1465;
+}
+
+static bool page_back_at(int x, int y,
+                         uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    return (design_x >= 38 && design_x < 240 &&
+            design_y >= 150 && design_y < 310) ||
+           design_y >= 2260;
 }
 
 int main(void) {
@@ -1202,8 +1427,11 @@ int main(void) {
     int tracking_id = -1;
     int touch_x = 0;
     int touch_y = 0;
+    int launcher_touch_item = -1;
     int bluetooth_touch_item = -1;
+    int bluetooth_touch_tab = -1;
     int console_touch_item = -1;
+    bool sound_touch_action = false;
     bool position_changed = false;
     bool touch_released = false;
     for (;;) {
@@ -1284,8 +1512,15 @@ int main(void) {
                 } else if (event.type == EV_SYN && event.code == SYN_REPORT) {
                     if (tracking_id >= 0 && position_changed) {
                         int touched_item = -1;
+                        launcher_touch_item = -1;
+                        bluetooth_touch_item = -1;
+                        bluetooth_touch_tab = -1;
+                        console_touch_item = -1;
+                        sound_touch_action = false;
                         if (page == 0) {
-                            touched_item = menu_item_at(touch_y);
+                            launcher_touch_item = menu_item_at(
+                                touch_x, touch_y, create.width, create.height);
+                            touched_item = launcher_touch_item;
                             if (touched_item >= 0 && touched_item != selection) {
                                 selection = touched_item;
                                 active = false;
@@ -1293,11 +1528,23 @@ int main(void) {
                                     create.pitch / sizeof(uint32_t),
                                     create.width, create.height, selection, active);
                             }
+                        } else if (page == 3) {
+                            sound_touch_action = sound_action_at(
+                                touch_x, touch_y, create.width, create.height);
+                            touched_item = sound_touch_action ? 0 : -1;
                         } else if (page == 4) {
-                            bluetooth_touch_item = bluetooth_item_at(touch_y);
-                            touched_item = bluetooth_touch_item;
+                            bluetooth_touch_tab = bluetooth_tab_at(
+                                touch_x, touch_y, create.width, create.height);
+                            if (bluetooth_touch_tab >= 0) {
+                                touched_item = 100 + bluetooth_touch_tab;
+                            } else {
+                                bluetooth_touch_item = bluetooth_item_at(
+                                    touch_y, create.height);
+                                touched_item = bluetooth_touch_item;
+                            }
                         } else if (page == 5) {
-                            console_touch_item = console_item_at(touch_y);
+                            console_touch_item = console_item_at(
+                                touch_y, create.height);
                             touched_item = console_touch_item;
                         }
                         draw_touch_marker(pixels,
@@ -1309,7 +1556,17 @@ int main(void) {
                         position_changed = false;
                     } else if (touch_released) {
                         play_haptic();
-                        if (page == 4 && bluetooth_touch_item >= 0) {
+                        if (page == 3 && sound_touch_action) {
+                            start_audio_test();
+                            active = true;
+                        } else if (page == 4 && bluetooth_touch_tab >= 0) {
+                            bluetooth_saved_view = bluetooth_touch_tab == 1;
+                            bluetooth_forget_candidate = -1;
+                            if (!bluetooth_saved_view) {
+                                start_bluetooth_scan();
+                            }
+                            active = true;
+                        } else if (page == 4 && bluetooth_touch_item >= 0) {
                             if (bluetooth_saved_view) {
                                 if (bluetooth_forget_candidate ==
                                     bluetooth_touch_item) {
@@ -1327,16 +1584,17 @@ int main(void) {
                         } else if (page == 5 && console_touch_item >= 0) {
                             start_ai_query(console_touch_item);
                             active = true;
-                        } else if (page != 0) {
+                        } else if (page != 0 && page_back_at(
+                                       touch_x, touch_y,
+                                       create.width, create.height)) {
                             page = 0;
                             active = false;
                             bluetooth_forget_candidate = -1;
-                        } else {
+                        } else if (page == 0 && launcher_touch_item >= 0) {
+                            selection = launcher_touch_item;
                             active = true;
                             page = selection + 1;
-                            if (page == 3) {
-                                start_audio_test();
-                            } else if (page == 4) {
+                            if (page == 4) {
                                 bluetooth_saved_view = false;
                                 bluetooth_forget_candidate = -1;
                                 start_bluetooth_scan();
@@ -1347,8 +1605,11 @@ int main(void) {
                         publish_frame(fd, framebuffer.fb_id, pixels, create.size);
                         fprintf(stderr, "drm-splash: activated item=%d\n",
                                 selection);
+                        launcher_touch_item = -1;
                         bluetooth_touch_item = -1;
+                        bluetooth_touch_tab = -1;
                         console_touch_item = -1;
+                        sound_touch_action = false;
                         touch_released = false;
                     }
                 }
