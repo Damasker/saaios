@@ -88,6 +88,7 @@ set -- ramdisk.cpio \
     "mkdir 0755 saaios" \
     "add 0755 saaios/busybox $artifacts/busybox-arm64" \
     "add 0755 saaios/saaios-runtime $artifacts/saaios-runtime-panther-tcp" \
+    "add 0755 saaios/saaios-console $artifacts/saaios-console-panther-tcp" \
     "add 0755 saaios/drm-splash $drm_splash" \
     "add 0755 saaios/touch-monitor $touch_monitor" \
     "add 0755 saaios/wifi-scan $wifi_scan" \

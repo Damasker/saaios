@@ -13,13 +13,49 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+use tokio::net::{TcpStream, UnixStream};
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
 struct Args {
-    #[arg(long, default_value = "/tmp/saaios.sock", env = "SAAIOS_SOCK")]
-    sock: PathBuf,
+    #[arg(long, env = "SAAIOS_SOCK", conflicts_with = "tcp")]
+    sock: Option<PathBuf>,
+
+    /// Connect to a TCP runtime instead of a Unix socket.
+    #[arg(long, env = "SAAIOS_TCP")]
+    tcp: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeEndpoint {
+    Unix(PathBuf),
+    Tcp(String),
+}
+
+impl RuntimeEndpoint {
+    fn from_args(args: &Args) -> Self {
+        match &args.tcp {
+            Some(address) => Self::Tcp(address.clone()),
+            None => Self::Unix(
+                args.sock
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("/tmp/saaios.sock")),
+            ),
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Unix(path) => path.display().to_string(),
+            Self::Tcp(address) => format!("tcp://{address}"),
+        }
+    }
+}
+
+trait RuntimeStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T> RuntimeStream for T where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send
+{
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -105,7 +141,7 @@ struct PendingDto {
 }
 
 struct App {
-    sock: PathBuf,
+    endpoint: RuntimeEndpoint,
     input: String,
     lines: Vec<String>,
     pending: Option<(Uuid, PendingDto)>,
@@ -115,9 +151,9 @@ struct App {
 }
 
 impl App {
-    fn new(sock: PathBuf) -> Self {
+    fn new(endpoint: RuntimeEndpoint) -> Self {
         Self {
-            sock,
+            endpoint,
             input: String::new(),
             lines: vec![
                 "SaaiOS Console 0.5".into(),
@@ -138,12 +174,13 @@ impl App {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let mut app = App::new(args.sock.clone());
+    let endpoint = RuntimeEndpoint::from_args(&args);
+    let mut app = App::new(endpoint.clone());
 
-    match request(&args.sock, &ClientRequest::Ping).await {
-        Ok(_) => app.status = format!("connected {}", args.sock.display()),
+    match request(&endpoint, &ClientRequest::Ping).await {
+        Ok(_) => app.status = format!("connected {}", endpoint.label()),
         Err(e) => {
-            app.status = format!("runtime unavailable at {}: {e}", args.sock.display());
+            app.status = format!("runtime unavailable at {}: {e}", endpoint.label());
             app.lines
                 .push("Start runtime first: `just run-mock` (keeps server listening).".into());
         }
@@ -230,7 +267,7 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
 
 async fn diagnose(app: &mut App, text: &str) -> Result<()> {
     match request_stream(
-        &app.sock,
+        &app.endpoint,
         &ClientRequest::Diagnose {
             text: text.to_string(),
             session_id: app.chat_session,
@@ -335,7 +372,7 @@ async fn confirm(app: &mut App, scope: ConfirmScope) -> Result<()> {
         return Ok(());
     };
     match request(
-        &app.sock,
+        &app.endpoint,
         &ClientRequest::Confirm {
             correlation_id,
             call_id: pending.call_id,
@@ -368,7 +405,7 @@ async fn confirm(app: &mut App, scope: ConfirmScope) -> Result<()> {
 }
 
 async fn show_audit(app: &mut App) -> Result<()> {
-    match request(&app.sock, &ClientRequest::AuditTail { limit: 12 }).await {
+    match request(&app.endpoint, &ClientRequest::AuditTail { limit: 12 }).await {
         Ok(resp) => {
             if let Some(err) = resp.error {
                 app.lines.push(format!("audit error: {err}"));
@@ -387,7 +424,7 @@ async fn show_audit(app: &mut App) -> Result<()> {
 }
 
 async fn show_status(app: &mut App) -> Result<()> {
-    match request(&app.sock, &ClientRequest::Status).await {
+    match request(&app.endpoint, &ClientRequest::Status).await {
         Ok(resp) => {
             if let Some(err) = resp.error {
                 app.lines.push(format!("status error: {err}"));
@@ -473,7 +510,7 @@ async fn show_status(app: &mut App) -> Result<()> {
 }
 
 async fn show_events(app: &mut App) -> Result<()> {
-    match request(&app.sock, &ClientRequest::EventsTail { limit: 16 }).await {
+    match request(&app.endpoint, &ClientRequest::EventsTail { limit: 16 }).await {
         Ok(resp) => {
             if let Some(err) = resp.error {
                 app.lines.push(format!("events error: {err}"));
@@ -495,7 +532,7 @@ async fn show_events(app: &mut App) -> Result<()> {
 }
 
 async fn show_memory(app: &mut App) -> Result<()> {
-    match request(&app.sock, &ClientRequest::MemoryTail { limit: 20 }).await {
+    match request(&app.endpoint, &ClientRequest::MemoryTail { limit: 20 }).await {
         Ok(resp) => {
             if let Some(err) = resp.error {
                 app.lines.push(format!("memory error: {err}"));
@@ -523,7 +560,7 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
     match cmd {
         "/new" | "/reset" => {
             if let Some(sid) = app.chat_session {
-                let _ = request(&app.sock, &ClientRequest::ChatReset { session_id: sid }).await;
+                let _ = request(&app.endpoint, &ClientRequest::ChatReset { session_id: sid }).await;
             }
             app.chat_session = None;
             app.pending = None;
@@ -536,7 +573,7 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
                 return Ok(());
             };
             match request(
-                &app.sock,
+                &app.endpoint,
                 &ClientRequest::MemoryRemember {
                     key: key.trim().to_string(),
                     value: value.trim().to_string(),
@@ -558,7 +595,7 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
         }
         "/recall" => {
             match request(
-                &app.sock,
+                &app.endpoint,
                 &ClientRequest::MemoryRecall {
                     query: rest.to_string(),
                 },
@@ -588,7 +625,7 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
                 return Ok(());
             }
             match request(
-                &app.sock,
+                &app.endpoint,
                 &ClientRequest::MemoryForget {
                     key: rest.to_string(),
                 },
@@ -611,7 +648,7 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
 }
 
 async fn show_grants(app: &mut App) -> Result<()> {
-    match request(&app.sock, &ClientRequest::SessionGrants).await {
+    match request(&app.endpoint, &ClientRequest::SessionGrants).await {
         Ok(resp) => {
             let grants = resp.session_grants.unwrap_or_default();
             app.lines.push(format!(
@@ -630,7 +667,7 @@ async fn show_grants(app: &mut App) -> Result<()> {
 }
 
 async fn clear_grants(app: &mut App) -> Result<()> {
-    match request(&app.sock, &ClientRequest::ClearSessionGrants).await {
+    match request(&app.endpoint, &ClientRequest::ClearSessionGrants).await {
         Ok(_) => {
             app.lines.push("session grants cleared".into());
             app.status = "grants=".into();
@@ -640,10 +677,23 @@ async fn clear_grants(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-async fn request(sock: &PathBuf, req: &ClientRequest) -> Result<ClientResponse> {
-    let mut stream = UnixStream::connect(sock)
-        .await
-        .with_context(|| format!("connect {}", sock.display()))?;
+async fn connect(endpoint: &RuntimeEndpoint) -> Result<Box<dyn RuntimeStream>> {
+    match endpoint {
+        RuntimeEndpoint::Unix(path) => Ok(Box::new(
+            UnixStream::connect(path)
+                .await
+                .with_context(|| format!("connect {}", path.display()))?,
+        )),
+        RuntimeEndpoint::Tcp(address) => Ok(Box::new(
+            TcpStream::connect(address)
+                .await
+                .with_context(|| format!("connect tcp://{address}"))?,
+        )),
+    }
+}
+
+async fn request(endpoint: &RuntimeEndpoint, req: &ClientRequest) -> Result<ClientResponse> {
+    let mut stream = connect(endpoint).await?;
     let bytes = serde_json::to_vec(req)?;
     stream.write_all(&bytes).await?;
     stream.shutdown().await?;
@@ -654,16 +704,14 @@ async fn request(sock: &PathBuf, req: &ClientRequest) -> Result<ClientResponse> 
 }
 
 async fn request_stream<F>(
-    sock: &PathBuf,
+    endpoint: &RuntimeEndpoint,
     req: &ClientRequest,
     mut on_progress: F,
 ) -> Result<(ClientResponse, Vec<String>)>
 where
     F: FnMut(&serde_json::Value) -> Option<String>,
 {
-    let mut stream = UnixStream::connect(sock)
-        .await
-        .with_context(|| format!("connect {}", sock.display()))?;
+    let mut stream = connect(endpoint).await?;
     let bytes = serde_json::to_vec(req)?;
     stream.write_all(&bytes).await?;
     stream.shutdown().await?;

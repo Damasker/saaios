@@ -37,6 +37,7 @@ R-cs35l41-dsp1-spk-cali.bin
 R-cs35l41-dsp1-spk-diag.bin
 R-cs35l41-dsp1-spk-prot.bin
 rfkill.ko
+saaios-console-panther-tcp
 saaios-runtime-panther-tcp
 saaios-test-tone.wav
 saaios-wpa_cli-arm64

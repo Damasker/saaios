@@ -35,6 +35,22 @@ the matching factory image/device into one local directory and point
   with `patches/tinyalsa-period-write.patch` applied.
 - The files listed in `artifacts.example.manifest`.
 
+Build the two Rust binaries for the phone with the included linker wrapper:
+
+```sh
+export ZIG=/path/to/zig
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
+export CC_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
+export AR_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-ar.sh"
+export CRATE_CC_NO_DEFAULTS=1
+export RUSTFLAGS="-C link-self-contained=no"
+cargo build --release --locked --target aarch64-unknown-linux-musl \
+  -p saaios-runtime -p console-tui
+```
+
+Copy `saaios-runtime` and `saaios-console` from the target directory into the
+private artifact directory using the names from `artifacts.example.manifest`.
+
 Example:
 
 ```sh
@@ -54,6 +70,9 @@ At runtime, the optional private model configuration is read from
 `/metadata/saaios/runtime.toml`. It is never baked into the image. Audit and
 memory data are persisted under `/data/saaios/var/runtime`; the unauthenticated
 bring-up API binds only to the USB gadget address `172.31.7.1:38127`.
+The packaged `saaios-console` accepts `--tcp 172.31.7.1:38127`, so the complete
+conversation, status, memory, audit and confirmation flow is available from the
+USB serial shell without a Unix socket.
 
 ## Flashing
 

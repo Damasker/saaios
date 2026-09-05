@@ -668,12 +668,9 @@ async fn handle_client<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut buf = vec![0u8; 64 * 1024];
-    let n = stream.read(&mut buf).await?;
-    if n == 0 {
+    let Some(req) = read_client_request(&mut stream).await? else {
         return Ok(());
-    }
-    let req: ClientRequest = serde_json::from_slice(&buf[..n])?;
+    };
 
     if let ClientRequest::Diagnose {
         text,
@@ -905,6 +902,43 @@ where
     Ok(())
 }
 
+const MAX_CLIENT_REQUEST_BYTES: usize = 64 * 1024;
+
+async fn read_client_request<S>(stream: &mut S) -> Result<Option<ClientRequest>>
+where
+    S: AsyncRead + Unpin,
+{
+    let mut request = Vec::with_capacity(4096);
+    let mut chunk = [0u8; 4096];
+
+    loop {
+        let remaining = MAX_CLIENT_REQUEST_BYTES.saturating_sub(request.len());
+        if remaining == 0 {
+            return Err(anyhow!(
+                "client request exceeds {MAX_CLIENT_REQUEST_BYTES} bytes"
+            ));
+        }
+
+        let read_size = remaining.min(chunk.len());
+        let count = stream.read(&mut chunk[..read_size]).await?;
+        if count == 0 {
+            if request.is_empty() {
+                return Ok(None);
+            }
+            return serde_json::from_slice(&request)
+                .map(Some)
+                .context("client closed before a complete JSON request arrived");
+        }
+        request.extend_from_slice(&chunk[..count]);
+
+        match serde_json::from_slice(&request) {
+            Ok(request) => return Ok(Some(request)),
+            Err(error) if error.classify() == serde_json::error::Category::Eof => continue,
+            Err(error) => return Err(error).context("invalid client JSON request"),
+        }
+    }
+}
+
 async fn handle_diagnose_stream<S>(
     stream: &mut S,
     runtime: Arc<AiRuntime>,
@@ -996,4 +1030,46 @@ fn demo_event(correlation_id: Uuid) -> Envelope {
         None,
         json!({"hello": "saaios"}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::duplex;
+
+    #[tokio::test]
+    async fn reads_a_fragmented_tcp_style_request() {
+        let (mut server, mut client) = duplex(128);
+        let writer = tokio::spawn(async move {
+            client.write_all(b"{\"op\":\"diag").await.unwrap();
+            tokio::task::yield_now().await;
+            client
+                .write_all(b"nose\",\"text\":\"hello\",\"stream\":true}")
+                .await
+                .unwrap();
+        });
+
+        let request = read_client_request(&mut server).await.unwrap().unwrap();
+        writer.await.unwrap();
+        assert!(matches!(
+            request,
+            ClientRequest::Diagnose {
+                text,
+                session_id: None,
+                stream: true,
+            } if text == "hello"
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_an_incomplete_request_after_disconnect() {
+        let (mut server, mut client) = duplex(64);
+        client.write_all(b"{\"op\":\"ping\"").await.unwrap();
+        client.shutdown().await.unwrap();
+
+        let error = read_client_request(&mut server).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("client closed before a complete JSON request arrived"));
+    }
 }
