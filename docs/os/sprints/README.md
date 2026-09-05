@@ -9,8 +9,8 @@ Roadmap описывает порядок доказуемых вертикал�
 
 | ID | Результат | Состояние | Зависит от |
 |---|---|---|---|
-| S00 | Архитектура и процесс | Verify | рабочий DRM UI |
-| S01 | Wayland vertical slice на host | Backlog | S00 |
+| S00 | Архитектура и процесс | Done | рабочий DRM UI |
+| S01 | Wayland vertical slice на host | Ready | S00 |
 | S02 | `saai-displayd` на Pixel 7 | Backlog | S01 |
 | S03 | Отдельный `saai-shell` и lock | Backlog | S02 |
 | S04 | Приложения, manifest и lifecycle | Backlog | S03 |
@@ -31,6 +31,12 @@ Roadmap описывает порядок доказуемых вертикал�
 rollback policy; документы связаны из основного индекса.
 
 **Rollback:** удалить документационный commit; рабочий phone image не меняется.
+
+**Evidence:** документация и индексы добавлены commit
+`407e5feb90979b1a6c6c02c1b0643d8c75950f29`; GitHub Actions run
+[`33984921594`](https://github.com/Damasker/saaios/actions/runs/33984921594)
+успешно выполнил format, clippy, workspace tests и e2e. Изменений phone image,
+разделов и userdata не было.
 
 ## S01 — Wayland vertical slice на host
 
