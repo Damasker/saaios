@@ -70,7 +70,9 @@ Outputs default to `dist/panther/`, which is ignored by Git.
 At runtime, the optional private model configuration is read from
 `/metadata/saaios/runtime.toml`. It is never baked into the image. Audit and
 memory data are persisted under `/data/saaios/var/runtime`; the unauthenticated
-bring-up API binds only to the USB gadget address `172.31.7.1:38127`.
+bring-up API binds only to the USB gadget address `172.31.7.1:38127`. The gadget
+uses CDC NCM and its built-in DHCP server leases `172.31.7.2` to the host, so a
+current Windows or Linux host needs no manual IPv4 configuration.
 The packaged `saaios-console` accepts `--tcp 172.31.7.1:38127`, so the complete
 conversation, status, memory, audit and confirmation flow is available from the
 USB serial shell without a Unix socket.

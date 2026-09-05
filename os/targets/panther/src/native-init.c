@@ -745,11 +745,11 @@ static int setup_gadget(const char *udc) {
     (void)write_value("/config/usb_gadget/saaios/configs/c.1/MaxPower", "250");
 
     mkdir_one("/config/usb_gadget/saaios/functions/acm.GS0", 0755);
-    mkdir_one("/config/usb_gadget/saaios/functions/ecm.usb0", 0755);
+    mkdir_one("/config/usb_gadget/saaios/functions/ncm.usb0", 0755);
     (void)symlink("/config/usb_gadget/saaios/functions/acm.GS0",
                   "/config/usb_gadget/saaios/configs/c.1/acm.GS0");
-    (void)symlink("/config/usb_gadget/saaios/functions/ecm.usb0",
-                  "/config/usb_gadget/saaios/configs/c.1/ecm.usb0");
+    (void)symlink("/config/usb_gadget/saaios/functions/ncm.usb0",
+                  "/config/usb_gadget/saaios/configs/c.1/ncm.usb0");
     return write_value("/config/usb_gadget/saaios/UDC", udc);
 }
 
@@ -885,7 +885,57 @@ static void configure_network(void) {
         "busybox", "ifconfig", "usb0", "172.31.7.1",
         "netmask", "255.255.255.0", "up", NULL,
     };
+    pid_t child = fork();
+    if (child == 0) {
+        execv("/saaios/busybox", argv);
+        _exit(127);
+    }
+    if (child > 0) {
+        int status = 0;
+        if (waitpid(child, &status, 0) < 0 ||
+            !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            log_message("USB network configuration failed");
+        }
+    }
+}
+
+static void start_usb_dhcp(void) {
+    static const char configuration[] =
+        "start 172.31.7.2\n"
+        "end 172.31.7.2\n"
+        "interface usb0\n"
+        "option subnet 255.255.255.0\n"
+        "option lease 86400\n"
+        "lease_file /run/udhcpd.leases\n"
+        "pidfile /run/udhcpd.pid\n";
+    int fd = open("/run/udhcpd.conf",
+                  O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                  0600);
+    if (fd < 0) {
+        log_message("USB DHCP configuration open failed: %s", strerror(errno));
+        return;
+    }
+    ssize_t expected = (ssize_t)strlen(configuration);
+    ssize_t written = write(fd, configuration, (size_t)expected);
+    int saved_errno = errno;
+    close(fd);
+    if (written != expected) {
+        log_message("USB DHCP configuration write failed: %s",
+                    strerror(saved_errno));
+        return;
+    }
+
+    int leases = open("/run/udhcpd.leases",
+                      O_WRONLY | O_CREAT | O_CLOEXEC,
+                      0600);
+    if (leases >= 0) {
+        close(leases);
+    }
+    char *const argv[] = {
+        "udhcpd", "/run/udhcpd.conf", NULL,
+    };
     run_child("/saaios/busybox", argv);
+    log_message("USB DHCP server started");
 }
 
 static int bring_interface_up(const char *interface_name) {
@@ -1361,6 +1411,7 @@ int main(void) {
     sleep(2);
     (void)create_tty_node();
     configure_network();
+    start_usb_dhcp();
     start_runtime();
     pid_t console_pid = start_console();
     mark_userspace_stable();
