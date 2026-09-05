@@ -44,11 +44,12 @@ export CC_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-aarch64-
 export AR_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-ar.sh"
 export CRATE_CC_NO_DEFAULTS=1
 export RUSTFLAGS="-C link-self-contained=no"
-cargo build --release --locked --target aarch64-unknown-linux-musl \
+cargo build --profile pixel7 --locked --target aarch64-unknown-linux-musl \
   -p saaios-runtime -p console-tui
 ```
 
-Copy `saaios-runtime` and `saaios-console` from the target directory into the
+Copy `saaios-runtime` and `saaios-console` from `target/aarch64-unknown-linux-musl/pixel7`
+into the
 private artifact directory using the names from `artifacts.example.manifest`.
 
 Example:
