@@ -50,6 +50,11 @@ export TINYALSA_DIR=/src/tinyalsa
 
 Outputs default to `dist/panther/`, which is ignored by Git.
 
+At runtime, the optional private model configuration is read from
+`/metadata/saaios/runtime.toml`. It is never baked into the image. Audit and
+memory data are persisted under `/data/saaios/var/runtime`; the unauthenticated
+bring-up API binds only to the USB gadget address `172.31.7.1:38127`.
+
 ## Flashing
 
 ```text

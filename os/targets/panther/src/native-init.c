@@ -675,6 +675,7 @@ static void setup_data_storage(void) {
     mkdir_one("/data/saaios/apps", 0755);
     mkdir_one("/data/saaios/home", 0700);
     mkdir_one("/data/saaios/var", 0755);
+    mkdir_one("/data/saaios/var/runtime", 0700);
     (void)setenv("HOME", "/data/saaios/home", 1);
     (void)setenv("SAAIOS_DATA", "/data/saaios", 1);
     log_message("SaaiOS data storage mounted");
@@ -1033,10 +1034,30 @@ static void setup_bluetooth(void) {
 }
 
 static void start_runtime(void) {
-    char *const argv[] = {
-        "saaios-runtime", "--real-linux", "--tcp", "0.0.0.0:38127", NULL,
+    char *const default_argv[] = {
+        "saaios-runtime",
+        "--real-linux",
+        "--tcp", "172.31.7.1:38127",
+        "--audit", "/data/saaios/var/runtime/audit.jsonl",
+        "--memory", "/data/saaios/var/runtime/memory.jsonl",
+        NULL,
     };
-    run_child("/saaios/saaios-runtime", argv);
+    char *const configured_argv[] = {
+        "saaios-runtime",
+        "--config", "/metadata/saaios/runtime.toml",
+        "--real-linux",
+        "--tcp", "172.31.7.1:38127",
+        "--audit", "/data/saaios/var/runtime/audit.jsonl",
+        "--memory", "/data/saaios/var/runtime/memory.jsonl",
+        NULL,
+    };
+    if (access("/metadata/saaios/runtime.toml", R_OK) == 0) {
+        log_message("SaaiOS runtime using persistent configuration");
+        run_child("/saaios/saaios-runtime", configured_argv);
+    } else {
+        log_message("SaaiOS runtime using safe default configuration");
+        run_child("/saaios/saaios-runtime", default_argv);
+    }
 }
 
 static int create_drm_card_node(void) {
