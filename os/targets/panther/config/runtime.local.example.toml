@@ -1,0 +1,7 @@
+[provider]
+kind = "local"
+local_base = "http://172.31.7.2:11434/v1"
+local_model = "qwen2.5:3b-instruct"
+
+[budgets]
+request_timeout_secs = 60

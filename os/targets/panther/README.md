@@ -78,6 +78,21 @@ The runtime keeps its local Unix socket active alongside USB TCP. The packaged
 host clients use `--tcp 172.31.7.1:38127`. Both transports expose the complete
 conversation, status, memory, audit and confirmation flow.
 
+For a local Ollama provider on the USB host, bind Ollama only to the host side
+of the gadget network, restart Ollama, and pull the tested compact model:
+
+```powershell
+setx OLLAMA_HOST 172.31.7.2:11434
+setx OLLAMA_KEEP_ALIVE 30m
+ollama pull qwen2.5:3b-instruct
+```
+
+Copy `config/runtime.local.example.toml` to
+`/metadata/saaios/runtime.toml` on the phone and set mode `0600`. The model
+stays on the host and uses its GPU; requests travel only over the USB gadget
+network. The configuration contains no API key and is not baked into the boot
+image.
+
 ## Flashing
 
 ```text
