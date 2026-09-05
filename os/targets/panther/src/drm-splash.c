@@ -45,6 +45,7 @@ static char ai_prompt[AI_PROMPT_MAX + 1] = {0};
 static size_t ai_prompt_length = 0;
 static bool bluetooth_saved_view = false;
 static int bluetooth_forget_candidate = -1;
+static bool panel_swap_red_blue = true;
 
 static bool ai_query_running(void);
 
@@ -116,6 +117,13 @@ static void play_haptic(void) {
     }
 }
 
+static uint32_t panel_color(uint32_t color) {
+    if (!panel_swap_red_blue) return color;
+    return ((color & 0x0000ffU) << 16) |
+           (color & 0x00ff00U) |
+           ((color & 0xff0000U) >> 16);
+}
+
 static void fill_rect(uint32_t *pixels, uint32_t stride_pixels,
                       uint32_t width, uint32_t height,
                       int x, int y, int w, int h, uint32_t color) {
@@ -124,6 +132,7 @@ static void fill_rect(uint32_t *pixels, uint32_t stride_pixels,
     if (x + w > (int)width) { w = (int)width - x; }
     if (y + h > (int)height) { h = (int)height - y; }
     if (w <= 0 || h <= 0) { return; }
+    color = panel_color(color);
     for (int row = y; row < y + h; ++row) {
         uint32_t *line = pixels + (size_t)row * stride_pixels + x;
         for (int column = 0; column < w; ++column) {
@@ -134,6 +143,7 @@ static void fill_rect(uint32_t *pixels, uint32_t stride_pixels,
 
 static void blend_pixel(uint32_t *pixel, uint32_t color,
                         unsigned int alpha) {
+    color = panel_color(color);
     if (alpha >= 255U) {
         *pixel = color;
         return;
@@ -553,13 +563,74 @@ static void render_splash(uint32_t *pixels, uint32_t stride_pixels,
             uint32_t g = green + glow / 2;
             uint32_t b = blue + glow;
             pixels[(size_t)y * stride_pixels + x] =
-                ((r > 255 ? 255 : r) << 16) |
-                ((g > 255 ? 255 : g) << 8) |
-                (b > 255 ? 255 : b);
+                panel_color(((r > 255 ? 255 : r) << 16) |
+                            ((g > 255 ? 255 : g) << 8) |
+                            (b > 255 ? 255 : b));
         }
     }
 
     render_status_bar(pixels, stride_pixels, width, height);
+}
+
+static void render_lock_screen(uint32_t *pixels, uint32_t stride_pixels,
+                               uint32_t width, uint32_t height) {
+    static const char *const months[] = {
+        "ЯНВАРЯ", "ФЕВРАЛЯ", "МАРТА", "АПРЕЛЯ", "МАЯ", "ИЮНЯ",
+        "ИЮЛЯ", "АВГУСТА", "СЕНТЯБРЯ", "ОКТЯБРЯ", "НОЯБРЯ", "ДЕКАБРЯ"
+    };
+    char clock_text[8] = "--:--";
+    char date_text[48] = "SAAIOS";
+    char capacity[8] = {0};
+    char battery_text[16] = "--%";
+    time_t now = time(NULL);
+    if (now > 1700000000) {
+        struct tm utc = {0};
+        if (gmtime_r(&now, &utc)) {
+            (void)strftime(clock_text, sizeof(clock_text), "%H:%M", &utc);
+            snprintf(date_text, sizeof(date_text), "%d %s",
+                     utc.tm_mday, months[utc.tm_mon]);
+        }
+    }
+    if (read_first_line("/sys/class/power_supply/maxfg/capacity",
+                        capacity, sizeof(capacity))) {
+        snprintf(battery_text, sizeof(battery_text), "Заряд %.3s%%", capacity);
+    }
+    bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
+    fill_rect(pixels, stride_pixels, width, height,
+              0, 0, (int)width, (int)height, 0x00070C11);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 110), ui_y(height, 250),
+                   ui_x(width, 860), ui_y(height, 620),
+                   ui_x(width, 100), 0x000D2830);
+    draw_word(pixels, stride_pixels, width, height,
+              date_text, ui_scale(width, 6), ui_y(height, 365), 0x008AA9B0);
+    draw_word(pixels, stride_pixels, width, height,
+              clock_text, ui_scale(width, 24), ui_y(height, 610), 0x00F4F7F8);
+    draw_word(pixels, stride_pixels, width, height,
+              "SaaiOS", ui_scale(width, 7), ui_y(height, 800), 0x006FCABD);
+
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 120), ui_y(height, 1450),
+                   ui_x(width, 840), ui_y(height, 270),
+                   ui_x(width, 52), 0x00151F26);
+    draw_word(pixels, stride_pixels, width, height,
+              "Экран заблокирован", ui_scale(width, 7),
+              ui_y(height, 1535), 0x00F4F7F8);
+    draw_word(pixels, stride_pixels, width, height,
+              ai_ready ? "Локальный ИИ готов" : "Службы запускаются",
+              ui_scale(width, 5), ui_y(height, 1625),
+              ai_ready ? 0x006FCABD : 0x00A9B4BA);
+    draw_word(pixels, stride_pixels, width, height,
+              battery_text, ui_scale(width, 5), ui_y(height, 1685),
+              0x008AA9B0);
+
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 120), ui_y(height, 2030),
+                   ui_x(width, 840), ui_y(height, 150),
+                   ui_x(width, 56), 0x00151F26);
+    draw_word(pixels, stride_pixels, width, height,
+              "Коснись экрана, чтобы открыть", ui_scale(width, 5),
+              ui_y(height, 2105), 0x00B9C9CE);
 }
 
 static void render_page_chrome(uint32_t *pixels, uint32_t stride_pixels,
@@ -2136,10 +2207,11 @@ int main(void) {
     int selection = 0;
     bool active = false;
     bool display_on = true;
+    bool locked = true;
     uint64_t last_activity_ms = monotonic_milliseconds();
     int page = 0;
-    render_launcher(pixels, create.pitch / sizeof(uint32_t),
-                    create.width, create.height, selection, active);
+    render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
+                       create.width, create.height);
     msync(pixels, create.size, MS_SYNC);
 
     struct drm_mode_crtc set_crtc = {0};
@@ -2198,6 +2270,7 @@ int main(void) {
     bool sound_touch_action = false;
     bool position_changed = false;
     bool touch_released = false;
+    bool touch_woke_display = false;
     for (;;) {
         if (input_count == 0) {
             pause();
@@ -2217,14 +2290,22 @@ int main(void) {
             if (display_on && now_ms != 0 && last_activity_ms != 0 &&
                 now_ms - last_activity_ms >= 60000U) {
                 fprintf(stderr, "drm-splash: idle timeout\n");
+                locked = true;
+                render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
+                                   create.width, create.height);
                 disable_display(fd);
                 display_on = false;
                 continue;
             }
             if (display_on) {
-                render_page(pixels, create.pitch / sizeof(uint32_t),
-                            create.width, create.height,
-                            page, selection, active);
+                if (locked) {
+                    render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
+                                       create.width, create.height);
+                } else {
+                    render_page(pixels, create.pitch / sizeof(uint32_t),
+                                create.width, create.height,
+                                page, selection, active);
+                }
                 publish_frame(fd, framebuffer.fb_id, pixels, create.size);
             }
             continue;
@@ -2243,9 +2324,17 @@ int main(void) {
                 last_activity_ms = monotonic_milliseconds();
                 play_haptic();
                 if (display_on) {
+                    locked = true;
+                    render_lock_screen(pixels,
+                                       create.pitch / sizeof(uint32_t),
+                                       create.width, create.height);
                     disable_display(fd);
                     display_on = false;
                 } else {
+                    locked = true;
+                    render_lock_screen(pixels,
+                                       create.pitch / sizeof(uint32_t),
+                                       create.width, create.height);
                     publish_frame(fd, framebuffer.fb_id,
                                   pixels, create.size);
                     display_on = true;
@@ -2253,7 +2342,33 @@ int main(void) {
                 }
                 continue;
             }
+            if (!display_on && input_kind[index] == 0 &&
+                event.type == EV_ABS &&
+                event.code == ABS_MT_TRACKING_ID && event.value >= 0) {
+                tracking_id = event.value;
+                touch_woke_display = true;
+                touch_released = false;
+                position_changed = false;
+                locked = true;
+                last_activity_ms = monotonic_milliseconds();
+                render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
+                                   create.width, create.height);
+                publish_frame(fd, framebuffer.fb_id, pixels, create.size);
+                display_on = true;
+                fprintf(stderr, "drm-splash: touch wake\n");
+                continue;
+            }
             if (!display_on) {
+                continue;
+            }
+            if (touch_woke_display && input_kind[index] == 0) {
+                if (event.type == EV_ABS &&
+                    event.code == ABS_MT_TRACKING_ID && event.value < 0) {
+                    tracking_id = -1;
+                    touch_woke_display = false;
+                    touch_released = false;
+                    position_changed = false;
+                }
                 continue;
             }
             if ((input_kind[index] == 0 &&
@@ -2274,7 +2389,22 @@ int main(void) {
                         position_changed = true;
                     }
                 } else if (event.type == EV_SYN && event.code == SYN_REPORT) {
-                    if (tracking_id >= 0 && position_changed) {
+                    if (locked && tracking_id >= 0) {
+                        position_changed = false;
+                    } else if (locked && touch_released) {
+                        play_haptic();
+                        locked = false;
+                        page = 0;
+                        selection = 0;
+                        active = false;
+                        touch_released = false;
+                        render_launcher(pixels,
+                            create.pitch / sizeof(uint32_t),
+                            create.width, create.height, selection, active);
+                        publish_frame(fd, framebuffer.fb_id,
+                                      pixels, create.size);
+                        fprintf(stderr, "drm-splash: unlocked by touch\n");
+                    } else if (tracking_id >= 0 && position_changed) {
                         int touched_item = -1;
                         root_touch_tab = -1;
                         root_touch_action = -1;
@@ -2444,6 +2574,7 @@ int main(void) {
                     }
                 }
             } else if (event.type == EV_KEY && event.value == 1) {
+                if (locked) continue;
                 if (!root_page(page)) {
                     if (page == 1 && event.code == KEY_VOLUMEUP) {
                         play_haptic();
