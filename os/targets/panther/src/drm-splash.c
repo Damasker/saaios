@@ -39,6 +39,8 @@ static size_t ai_prompt_length = 0;
 static bool bluetooth_saved_view = false;
 static int bluetooth_forget_candidate = -1;
 
+static bool ai_query_running(void);
+
 static int drm_ioctl(int fd, unsigned long request, void *argument) {
     int result;
     do {
@@ -320,66 +322,326 @@ static void render_page_chrome(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 9), 0x007B91AA);
 }
 
+static bool root_page(int page) {
+    return page == 0 || page == 6 || page == 7 || page == 8;
+}
+
+static void render_root_controls(uint32_t *pixels, uint32_t stride_pixels,
+                                 uint32_t width, uint32_t height,
+                                 int active_tab) {
+    static const char *const tabs[] = {"NOW", "INBOX", "SPACES", "ME"};
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 145),
+                   ui_x(width, 972), ui_y(height, 112),
+                   ui_x(width, 32), 0x00222D36);
+    draw_text(pixels, stride_pixels, width, height,
+              "HOME - LOCAL AI", ui_scale(width, 6), ui_x(width, 92),
+              ui_y(height, 201), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "V", ui_scale(width, 5), ui_x(width, 958),
+              ui_y(height, 201), 0x008EA8C6);
+
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 1900),
+                   ui_x(width, 972), ui_y(height, 150),
+                   ui_x(width, 40), 0x001B252D);
+    draw_text(pixels, stride_pixels, width, height,
+              "ASK OR TYPE WHAT YOU NEED", ui_scale(width, 5),
+              ui_x(width, 88), ui_y(height, 1975), 0x009CB1C9);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 892), ui_y(height, 1925),
+                   ui_x(width, 104), ui_y(height, 100),
+                   ui_x(width, 30), 0x0074CFC0);
+    draw_text(pixels, stride_pixels, width, height,
+              "A", ui_scale(width, 7), ui_x(width, 923),
+              ui_y(height, 1975), 0x00102022);
+
+    fill_rect(pixels, stride_pixels, width, height,
+              0, ui_y(height, 2100), (int)width, ui_y(height, 300),
+              0x000D151C);
+    for (int index = 0; index < 4; ++index) {
+        int left = index * 270;
+        int scale = ui_scale(width, index == 2 ? 4 : 5);
+        int x = ui_x(width, left);
+        int w = ui_x(width, 270);
+        uint32_t color = index == active_tab ? 0x0074CFC0 : 0x007E96B2;
+        if (index == active_tab) {
+            fill_soft_rect(pixels, stride_pixels, width, height,
+                           ui_x(width, left + 112), ui_y(height, 2140),
+                           ui_x(width, 46), ui_y(height, 46),
+                           ui_x(width, 14), color);
+        }
+        draw_text(pixels, stride_pixels, width, height,
+                  tabs[index], scale,
+                  x + (w - text_width(tabs[index], scale)) / 2,
+                  ui_y(height, 2260), color);
+    }
+}
+
 static void render_launcher(uint32_t *pixels, uint32_t stride_pixels,
                             uint32_t width, uint32_t height,
                             int selection, bool active) {
-    static const char *const labels[] = {
-        "STATUS", "NETWORK", "SOUND", "BLUETOOTH", "CONSOLE"
+    (void)selection;
+    (void)active;
+    bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
+    bool data_ready = access("/data/saaios/.layout", R_OK) == 0;
+    render_splash(pixels, stride_pixels, width, height);
+    draw_text(pixels, stride_pixels, width, height,
+              "NOW", ui_scale(width, 12), ui_x(width, 54),
+              ui_y(height, 345), 0x00F5F8FC);
+
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 420),
+                   ui_x(width, 972), ui_y(height, 390),
+                   ui_x(width, 48), 0x0013443C);
+    draw_text(pixels, stride_pixels, width, height,
+              "IMPORTANT NOW", ui_scale(width, 5), ui_x(width, 92),
+              ui_y(height, 485), 0x0074CFC0);
+    draw_text(pixels, stride_pixels, width, height,
+              ai_ready && data_ready ? "PHONE READY" : "PHONE STARTING",
+              ui_scale(width, ai_ready && data_ready ? 10 : 8), ui_x(width, 92),
+              ui_y(height, 585), 0x00FFFFFF);
+    draw_text(pixels, stride_pixels, width, height,
+              ai_ready ? "LOCAL AI AND SERVICES ONLINE" :
+              "CORE SERVICES ARE STARTING", ui_scale(width, 5),
+              ui_x(width, 92), ui_y(height, 665), 0x00A6C7C1);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 92), ui_y(height, 710),
+                   ui_x(width, 300), ui_y(height, 70),
+                   ui_x(width, 22), 0x0074CFC0);
+    draw_text(pixels, stride_pixels, width, height,
+              "CHECK", ui_scale(width, 5), ui_x(width, 170),
+              ui_y(height, 745), 0x00102022);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 420), ui_y(height, 710),
+                   ui_x(width, 300), ui_y(height, 70),
+                   ui_x(width, 22), 0x001B252D);
+    draw_text(pixels, stride_pixels, width, height,
+              "DETAILS", ui_scale(width, 5), ui_x(width, 475),
+              ui_y(height, 745), 0x00E8F0FA);
+
+    draw_text(pixels, stride_pixels, width, height,
+              "CONTINUE", ui_scale(width, 5), ui_x(width, 58),
+              ui_y(height, 875), 0x008EA8C6);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 920),
+                   ui_x(width, 972), ui_y(height, 300),
+                   ui_x(width, 40), 0x001B252D);
+    draw_text(pixels, stride_pixels, width, height,
+              "SYSTEM STATUS", ui_scale(width, 6), ui_x(width, 160),
+              ui_y(height, 995), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "PHONE HEALTH AND POWER", ui_scale(width, 4), ui_x(width, 160),
+              ui_y(height, 1050), 0x008EA8C6);
+    fill_rect(pixels, stride_pixels, width, height,
+              ui_x(width, 90), ui_y(height, 1070),
+              ui_x(width, 900), ui_y(height, 2), 0x0033414B);
+    draw_text(pixels, stride_pixels, width, height,
+              "AI ASSISTANT", ui_scale(width, 6), ui_x(width, 160),
+              ui_y(height, 1145), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "ASK OR CONTINUE A TASK", ui_scale(width, 4), ui_x(width, 160),
+              ui_y(height, 1195), 0x008EA8C6);
+
+    draw_text(pixels, stride_pixels, width, height,
+              "RECENT OBJECTS", ui_scale(width, 5), ui_x(width, 58),
+              ui_y(height, 1295), 0x008EA8C6);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 1340),
+                   ui_x(width, 972), ui_y(height, 480),
+                   ui_x(width, 40), 0x001B252D);
+    static const char *const recent[] = {"NETWORK", "SOUND", "BLUETOOTH"};
+    static const char *const notes[] = {"CONNECTED", "SPEAKERS READY", "DEVICES"};
+    for (int index = 0; index < 3; ++index) {
+        int center = 1420 + index * 150;
+        draw_text(pixels, stride_pixels, width, height,
+                  recent[index], ui_scale(width, 6), ui_x(width, 160),
+                  ui_y(height, center), 0x00F5F8FC);
+        draw_text(pixels, stride_pixels, width, height,
+                  notes[index], ui_scale(width, 4), ui_x(width, 620),
+                  ui_y(height, center), 0x008EA8C6);
+        if (index < 2) {
+            fill_rect(pixels, stride_pixels, width, height,
+                      ui_x(width, 90), ui_y(height, center + 72),
+                      ui_x(width, 900), ui_y(height, 2), 0x0033414B);
+        }
+    }
+    render_root_controls(pixels, stride_pixels, width, height, 0);
+}
+
+static void render_inbox(uint32_t *pixels, uint32_t stride_pixels,
+                         uint32_t width, uint32_t height) {
+    bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
+    bool ai_busy = ai_query_running();
+    render_splash(pixels, stride_pixels, width, height);
+    draw_text(pixels, stride_pixels, width, height,
+              "INBOX", ui_scale(width, 12), ui_x(width, 54),
+              ui_y(height, 345), 0x00F5F8FC);
+
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 420),
+                   ui_x(width, 972), ui_y(height, 300),
+                   ui_x(width, 44), 0x0013443C);
+    draw_text(pixels, stride_pixels, width, height,
+              "ALL CLEAR", ui_scale(width, 9), ui_x(width, 92),
+              ui_y(height, 520), 0x00FFFFFF);
+    draw_text(pixels, stride_pixels, width, height,
+              "NO PENDING APPROVALS", ui_scale(width, 5), ui_x(width, 92),
+              ui_y(height, 605), 0x00A6C7C1);
+    draw_text(pixels, stride_pixels, width, height,
+              "SAFETY DECISIONS WILL APPEAR HERE", ui_scale(width, 4),
+              ui_x(width, 92), ui_y(height, 670), 0x0074CFC0);
+
+    draw_text(pixels, stride_pixels, width, height,
+              "ACTIVITY", ui_scale(width, 5), ui_x(width, 58),
+              ui_y(height, 800), 0x008EA8C6);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 845),
+                   ui_x(width, 972), ui_y(height, 500),
+                   ui_x(width, 40), 0x001B252D);
+    draw_text(pixels, stride_pixels, width, height,
+              "LOCAL AI", ui_scale(width, 6), ui_x(width, 160),
+              ui_y(height, 950), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              ai_busy ? "ANSWER IN PROGRESS" :
+              (ai_ready ? "READY ON THIS PHONE" : "RUNTIME OFFLINE"),
+              ui_scale(width, 4), ui_x(width, 160),
+              ui_y(height, 1005), ai_ready ? 0x0074CFC0 : 0x00D58B80);
+    fill_rect(pixels, stride_pixels, width, height,
+              ui_x(width, 90), ui_y(height, 1090),
+              ui_x(width, 900), ui_y(height, 2), 0x0033414B);
+    draw_text(pixels, stride_pixels, width, height,
+              "SYSTEM EVENTS", ui_scale(width, 6), ui_x(width, 160),
+              ui_y(height, 1190), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "NO ACTION REQUIRED", ui_scale(width, 4), ui_x(width, 160),
+              ui_y(height, 1245), 0x008EA8C6);
+
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 1430),
+                   ui_x(width, 972), ui_y(height, 300),
+                   ui_x(width, 40), 0x00152238);
+    draw_text(pixels, stride_pixels, width, height,
+              "INBOX IS FOR ATTENTION", ui_scale(width, 7),
+              ui_x(width, 92), ui_y(height, 1535), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "APPROVALS - RESULTS - ALERTS", ui_scale(width, 5),
+              ui_x(width, 92), ui_y(height, 1630), 0x008EA8C6);
+    draw_text(pixels, stride_pixels, width, height,
+              "NOT A LIST OF APPS", ui_scale(width, 5),
+              ui_x(width, 92), ui_y(height, 1690), 0x0074CFC0);
+    render_root_controls(pixels, stride_pixels, width, height, 1);
+}
+
+static void render_spaces(uint32_t *pixels, uint32_t stride_pixels,
+                          uint32_t width, uint32_t height) {
+    static const char *const modules[] = {
+        "OVERVIEW", "NETWORK", "SOUND", "BLUETOOTH", "ASSISTANT"
     };
-    static const uint32_t accents[] = {
-        0x004F8CFF, 0x0000CFA0, 0x00D786FF, 0x008779FF, 0x006C63FF
+    static const char *const notes[] = {
+        "PHONE AND POWER", "WIFI AND ADDRESS", "VOLUME AND TEST",
+        "NEARBY AND SAVED", "LOCAL AI"
     };
     render_splash(pixels, stride_pixels, width, height);
     draw_text(pixels, stride_pixels, width, height,
-              "SAAIOS", ui_scale(width, 14), ui_x(width, 54),
-              ui_y(height, 280), 0x00F5F8FC);
-    draw_text(pixels, stride_pixels, width, height,
-              "YOUR PRIVATE PHONE", ui_scale(width, 6), ui_x(width, 58),
-              ui_y(height, 405), 0x008EA8C6);
-    for (int index = 0; index < 4; ++index) {
-        int column = index % 2;
-        int row = index / 2;
-        int left = 54 + column * 501;
-        int top = 520 + row * 445;
-        uint32_t color = index == selection
-            ? (active ? 0x002D5E85 : 0x00213E60)
-            : 0x00152238;
+              "SPACES", ui_scale(width, 12), ui_x(width, 54),
+              ui_y(height, 345), 0x00F5F8FC);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 420),
+                   ui_x(width, 972), ui_y(height, 1310),
+                   ui_x(width, 44), 0x001B252D);
+    for (int index = 0; index < 5; ++index) {
+        int center = 525 + index * 245;
         fill_soft_rect(pixels, stride_pixels, width, height,
-                       ui_x(width, left), ui_y(height, top),
-                       ui_x(width, 471), ui_y(height, 405),
-                       ui_x(width, 42), color);
-        fill_soft_rect(pixels, stride_pixels, width, height,
-                       ui_x(width, left + 34), ui_y(height, top + 34),
-                       ui_x(width, 104), ui_y(height, 104),
-                       ui_x(width, 28), accents[index]);
+                       ui_x(width, 92), ui_y(height, center - 55),
+                       ui_x(width, 78), ui_y(height, 78),
+                       ui_x(width, 24), index == 4 ? 0x006C63FF : 0x002D5E85);
         draw_text(pixels, stride_pixels, width, height,
-                  labels[index], ui_scale(width, index == 3 ? 7 : 9),
-                  ui_x(width, left + 34), ui_y(height, top + 300),
-                  0x00F4F7FB);
+                  modules[index], ui_scale(width, 6), ui_x(width, 210),
+                  ui_y(height, center), 0x00F5F8FC);
+        draw_text(pixels, stride_pixels, width, height,
+                  notes[index], ui_scale(width, 4), ui_x(width, 210),
+                  ui_y(height, center + 58), 0x008EA8C6);
+        draw_text(pixels, stride_pixels, width, height,
+                  ">", ui_scale(width, 7), ui_x(width, 950),
+                  ui_y(height, center + 15), 0x0074CFC0);
+        if (index < 4) {
+            fill_rect(pixels, stride_pixels, width, height,
+                      ui_x(width, 90), ui_y(height, center + 125),
+                      ui_x(width, 900), ui_y(height, 2), 0x0033414B);
+        }
     }
-    uint32_t ai_color = selection == 4
-        ? (active ? 0x004B4AC4 : 0x003A397F) : 0x00232158;
-    fill_soft_rect(pixels, stride_pixels, width, height,
-                   ui_x(width, 54), ui_y(height, 1450),
-                   ui_x(width, 972), ui_y(height, 360),
-                   ui_x(width, 48), ai_color);
-    fill_soft_rect(pixels, stride_pixels, width, height,
-                   ui_x(width, 88), ui_y(height, 1490),
-                   ui_x(width, 112), ui_y(height, 112),
-                   ui_x(width, 32), accents[4]);
     draw_text(pixels, stride_pixels, width, height,
-              "AI ASSISTANT", ui_scale(width, 11), ui_x(width, 88),
-              ui_y(height, 1680), 0x00FFFFFF);
+              "MODULES WORK WITHOUT AI", ui_scale(width, 5),
+              ui_x(width, 58), ui_y(height, 1835), 0x0074CFC0);
+    render_root_controls(pixels, stride_pixels, width, height, 2);
+}
+
+static void render_me(uint32_t *pixels, uint32_t stride_pixels,
+                      uint32_t width, uint32_t height) {
+    bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
+    render_splash(pixels, stride_pixels, width, height);
     draw_text(pixels, stride_pixels, width, height,
-              "LOCAL AND PRIVATE", ui_scale(width, 6), ui_x(width, 91),
-              ui_y(height, 1755), 0x00BDBEFF);
-    draw_word(pixels, stride_pixels, width, height,
-              "TAP AN APP", ui_scale(width, 7), ui_y(height, 2110),
-              0x006E87A5);
+              "ME", ui_scale(width, 12), ui_x(width, 54),
+              ui_y(height, 345), 0x00F5F8FC);
+
     fill_soft_rect(pixels, stride_pixels, width, height,
-                   ui_x(width, 390), ui_y(height, 2320),
-                   ui_x(width, 300), ui_y(height, 18),
-                   ui_x(width, 9), 0x007B91AA);
+                   ui_x(width, 54), ui_y(height, 420),
+                   ui_x(width, 972), ui_y(height, 390),
+                   ui_x(width, 48), 0x0013443C);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 92), ui_y(height, 475),
+                   ui_x(width, 118), ui_y(height, 118),
+                   ui_x(width, 38), 0x0074CFC0);
+    draw_text(pixels, stride_pixels, width, height,
+              "OWNER", ui_scale(width, 10), ui_x(width, 250),
+              ui_y(height, 535), 0x00FFFFFF);
+    draw_text(pixels, stride_pixels, width, height,
+              "PRIVATE LOCAL SESSION", ui_scale(width, 5),
+              ui_x(width, 92), ui_y(height, 680), 0x00A6C7C1);
+    draw_text(pixels, stride_pixels, width, height,
+              "DATA STAYS ON THIS PHONE", ui_scale(width, 5),
+              ui_x(width, 92), ui_y(height, 750), 0x0074CFC0);
+
+    draw_text(pixels, stride_pixels, width, height,
+              "PRIVACY AND CONTROL", ui_scale(width, 5), ui_x(width, 58),
+              ui_y(height, 885), 0x008EA8C6);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 930),
+                   ui_x(width, 972), ui_y(height, 620),
+                   ui_x(width, 40), 0x001B252D);
+    static const char *const labels[] = {
+        "LOCAL AI", "NETWORK ACCESS", "APPROVAL POLICY"
+    };
+    const char *values[] = {
+        ai_ready ? "READY" : "OFFLINE", "USB API ONLY", "CONFIRM RISKY ACTIONS"
+    };
+    for (int index = 0; index < 3; ++index) {
+        int center = 1020 + index * 190;
+        draw_text(pixels, stride_pixels, width, height,
+                  labels[index], ui_scale(width, 6), ui_x(width, 92),
+                  ui_y(height, center), 0x00F5F8FC);
+        draw_text(pixels, stride_pixels, width, height,
+                  values[index], ui_scale(width, 4), ui_x(width, 92),
+                  ui_y(height, center + 68), index == 0 && !ai_ready
+                  ? 0x00D58B80 : 0x0074CFC0);
+        if (index < 2) {
+            fill_rect(pixels, stride_pixels, width, height,
+                      ui_x(width, 90), ui_y(height, center + 115),
+                      ui_x(width, 900), ui_y(height, 2), 0x0033414B);
+        }
+    }
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 1630),
+                   ui_x(width, 972), ui_y(height, 180),
+                   ui_x(width, 40), 0x00152238);
+    draw_text(pixels, stride_pixels, width, height,
+              "SAAIOS NATIVE", ui_scale(width, 7), ui_x(width, 92),
+              ui_y(height, 1700), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "PIXEL 7 - PANTHER", ui_scale(width, 5), ui_x(width, 92),
+              ui_y(height, 1770), 0x008EA8C6);
+    render_root_controls(pixels, stride_pixels, width, height, 3);
 }
 
 static void uppercase_label(char *text) {
@@ -1226,6 +1488,12 @@ static void render_page(uint32_t *pixels, uint32_t stride_pixels,
         } else {
             render_console(pixels, stride_pixels, width, height);
         }
+    } else if (page == 6) {
+        render_inbox(pixels, stride_pixels, width, height);
+    } else if (page == 7) {
+        render_spaces(pixels, stride_pixels, width, height);
+    } else if (page == 8) {
+        render_me(pixels, stride_pixels, width, height);
     } else {
         render_launcher(pixels, stride_pixels, width, height,
                         selection, active);
@@ -1271,22 +1539,50 @@ static void disable_display(int drm_fd) {
     }
 }
 
-static int menu_item_at(int x, int y, uint32_t width, uint32_t height) {
+static int root_tab_at(int x, int y, uint32_t width, uint32_t height) {
     int design_x = (int)((int64_t)x * 1080 / width);
     int design_y = (int)((int64_t)y * 2400 / height);
-    for (int index = 0; index < 4; ++index) {
-        int left = 54 + (index % 2) * 501;
-        int top = 520 + (index / 2) * 445;
-        if (design_x >= left && design_x < left + 471 &&
-            design_y >= top && design_y < top + 405) {
-            return index;
-        }
+    if (design_y < 2100 || design_y >= 2400 ||
+        design_x < 0 || design_x >= 1080) {
+        return -1;
     }
+    return design_x / 270;
+}
+
+static bool root_intent_at(int x, int y,
+                           uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
     if (design_x >= 54 && design_x < 1026 &&
-        design_y >= 1450 && design_y < 1810) {
-        return 4;
+        design_y >= 1900 && design_y < 2050) return true;
+    return false;
+}
+
+static int now_action_at(int x, int y,
+                         uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    if (design_y >= 710 && design_y < 800) {
+        if (design_x >= 92 && design_x < 392) return 0;
+        if (design_x >= 420 && design_x < 720) return 1;
     }
+    if (design_x < 54 || design_x >= 1026) return -1;
+    if (design_y >= 920 && design_y < 1070) return 1;
+    if (design_y >= 1070 && design_y < 1220) return 5;
+    if (design_y >= 1340 && design_y < 1500) return 2;
+    if (design_y >= 1500 && design_y < 1660) return 3;
+    if (design_y >= 1660 && design_y < 1820) return 4;
     return -1;
+}
+
+static int space_action_at(int x, int y,
+                           uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    if (design_x < 54 || design_x >= 1026 ||
+        design_y < 420 || design_y >= 1730) return -1;
+    int item = (design_y - 420) / 245;
+    return item < 5 ? item + 1 : -1;
 }
 
 static int console_item_at(int y, uint32_t height) {
@@ -1630,7 +1926,9 @@ int main(void) {
     int tracking_id = -1;
     int touch_x = 0;
     int touch_y = 0;
-    int launcher_touch_item = -1;
+    int root_touch_tab = -1;
+    int root_touch_action = -1;
+    bool root_touch_intent = false;
     int bluetooth_touch_item = -1;
     int bluetooth_touch_tab = -1;
     int console_touch_item = -1;
@@ -1661,7 +1959,7 @@ int main(void) {
                 display_on = false;
                 continue;
             }
-            if (display_on && page != 0) {
+            if (display_on) {
                 render_page(pixels, create.pitch / sizeof(uint32_t),
                             create.width, create.height,
                             page, selection, active);
@@ -1716,22 +2014,33 @@ int main(void) {
                 } else if (event.type == EV_SYN && event.code == SYN_REPORT) {
                     if (tracking_id >= 0 && position_changed) {
                         int touched_item = -1;
-                        launcher_touch_item = -1;
+                        root_touch_tab = -1;
+                        root_touch_action = -1;
+                        root_touch_intent = false;
                         bluetooth_touch_item = -1;
                         bluetooth_touch_tab = -1;
                         console_touch_item = -1;
                         keyboard_touch_action = -1;
                         sound_touch_action = false;
-                        if (page == 0) {
-                            launcher_touch_item = menu_item_at(
+                        if (root_page(page)) {
+                            root_touch_tab = root_tab_at(
                                 touch_x, touch_y, create.width, create.height);
-                            touched_item = launcher_touch_item;
-                            if (touched_item >= 0 && touched_item != selection) {
-                                selection = touched_item;
-                                active = false;
-                                render_launcher(pixels,
-                                    create.pitch / sizeof(uint32_t),
-                                    create.width, create.height, selection, active);
+                            root_touch_intent = root_intent_at(
+                                touch_x, touch_y, create.width, create.height);
+                            if (root_touch_tab >= 0) {
+                                touched_item = 200 + root_touch_tab;
+                            } else if (root_touch_intent) {
+                                touched_item = 210;
+                            } else if (page == 0) {
+                                root_touch_action = now_action_at(
+                                    touch_x, touch_y,
+                                    create.width, create.height);
+                                touched_item = root_touch_action;
+                            } else if (page == 7) {
+                                root_touch_action = space_action_at(
+                                    touch_x, touch_y,
+                                    create.width, create.height);
+                                touched_item = root_touch_action;
                             }
                         } else if (page == 3) {
                             sound_touch_action = sound_action_at(
@@ -1768,7 +2077,38 @@ int main(void) {
                         position_changed = false;
                     } else if (touch_released) {
                         play_haptic();
-                        if (page == 3 && sound_touch_action) {
+                        if (root_page(page) && root_touch_tab >= 0) {
+                            static const int root_pages[] = {0, 6, 7, 8};
+                            selection = root_touch_tab;
+                            page = root_pages[root_touch_tab];
+                            active = false;
+                        } else if (root_page(page) && root_touch_intent) {
+                            clear_ai_prompt();
+                            ai_keyboard_open = true;
+                            page = 5;
+                            active = true;
+                        } else if (page == 0 && root_touch_action >= 0) {
+                            if (root_touch_action == 0) {
+                                start_ai_query(0);
+                                page = 5;
+                            } else {
+                                page = root_touch_action;
+                            }
+                            if (page == 4) {
+                                bluetooth_saved_view = false;
+                                bluetooth_forget_candidate = -1;
+                                start_bluetooth_scan();
+                            }
+                            active = true;
+                        } else if (page == 7 && root_touch_action >= 1) {
+                            page = root_touch_action;
+                            if (page == 4) {
+                                bluetooth_saved_view = false;
+                                bluetooth_forget_candidate = -1;
+                                start_bluetooth_scan();
+                            }
+                            active = true;
+                        } else if (page == 3 && sound_touch_action) {
                             start_audio_test();
                             active = true;
                         } else if (page == 4 && bluetooth_touch_tab >= 0) {
@@ -1814,7 +2154,7 @@ int main(void) {
                                 start_ai_query(console_touch_item);
                             }
                             active = true;
-                        } else if (page != 0 && page_back_at(
+                        } else if (!root_page(page) && page_back_at(
                                        touch_x, touch_y,
                                        create.width, create.height)) {
                             if (page == 5) {
@@ -1824,22 +2164,15 @@ int main(void) {
                             page = 0;
                             active = false;
                             bluetooth_forget_candidate = -1;
-                        } else if (page == 0 && launcher_touch_item >= 0) {
-                            selection = launcher_touch_item;
-                            active = true;
-                            page = selection + 1;
-                            if (page == 4) {
-                                bluetooth_saved_view = false;
-                                bluetooth_forget_candidate = -1;
-                                start_bluetooth_scan();
-                            }
                         }
                         render_page(pixels, create.pitch / sizeof(uint32_t),
                             create.width, create.height, page, selection, active);
                         publish_frame(fd, framebuffer.fb_id, pixels, create.size);
                         fprintf(stderr, "drm-splash: activated item=%d\n",
                                 selection);
-                        launcher_touch_item = -1;
+                        root_touch_tab = -1;
+                        root_touch_action = -1;
+                        root_touch_intent = false;
                         bluetooth_touch_item = -1;
                         bluetooth_touch_tab = -1;
                         console_touch_item = -1;
@@ -1849,7 +2182,7 @@ int main(void) {
                     }
                 }
             } else if (event.type == EV_KEY && event.value == 1) {
-                if (page != 0) {
+                if (!root_page(page)) {
                     if (page == 1 && event.code == KEY_VOLUMEUP) {
                         play_haptic();
                         adjust_display_brightness(true);
@@ -1886,11 +2219,15 @@ int main(void) {
                     continue;
                 } else if (event.code == KEY_VOLUMEUP) {
                     play_haptic();
-                    selection = (selection + 4) % 5;
+                    selection = (selection + 3) % 4;
+                    static const int root_pages[] = {0, 6, 7, 8};
+                    page = root_pages[selection];
                     active = false;
                 } else if (event.code == KEY_VOLUMEDOWN) {
                     play_haptic();
-                    selection = (selection + 1) % 5;
+                    selection = (selection + 1) % 4;
+                    static const int root_pages[] = {0, 6, 7, 8};
+                    page = root_pages[selection];
                     active = false;
                 } else {
                     continue;
