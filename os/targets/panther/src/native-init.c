@@ -1304,7 +1304,8 @@ static pid_t start_console(void) {
     setenv("PATH", "/saaios:/bin:/usr/bin", 1);
     dprintf(STDOUT_FILENO,
             "\r\nSaaiOS native console on Pixel 7\r\n"
-            "AI: saaios-console --tcp 172.31.7.1:38127\r\n"
+            "AI: saaios-console\r\n"
+            "Host API: 172.31.7.1:38127\r\n"
             "Shell keepalive: touch /run/saaios.keep\r\n\r\n");
     execl("/saaios/busybox", "sh", NULL);
     _exit(127);

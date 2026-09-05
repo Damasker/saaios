@@ -483,34 +483,50 @@ async fn main() -> Result<()> {
 
     let last_pending = Arc::new(tokio::sync::Mutex::new(None::<HandleOutcome>));
 
+    if settings.sock.exists() {
+        let _ = std::fs::remove_file(&settings.sock);
+    }
+    let unix_listener = UnixListener::bind(&settings.sock)
+        .with_context(|| format!("bind {}", settings.sock.display()))?;
+    info!(sock = %settings.sock.display(), "SaaiOS runtime listening");
+
     if let Some(addr) = args.tcp.as_deref() {
-        let listener = TcpListener::bind(addr)
+        let tcp_listener = TcpListener::bind(addr)
             .await
             .with_context(|| format!("bind TCP {addr}"))?;
         info!(addr, "SaaiOS runtime listening on TCP");
 
         loop {
-            let (stream, _) = listener.accept().await?;
-            let runtime = runtime.clone();
-            let last_pending = last_pending.clone();
-            let meta = meta.clone();
-            let feed = feed.clone();
-            tokio::spawn(async move {
-                if let Err(e) = handle_client(stream, runtime, last_pending, meta, feed).await {
-                    error!("client error: {e:#}");
+            tokio::select! {
+                accepted = tcp_listener.accept() => {
+                    let (stream, _) = accepted?;
+                    let runtime = runtime.clone();
+                    let last_pending = last_pending.clone();
+                    let meta = meta.clone();
+                    let feed = feed.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_client(stream, runtime, last_pending, meta, feed).await {
+                            error!("TCP client error: {e:#}");
+                        }
+                    });
                 }
-            });
+                accepted = unix_listener.accept() => {
+                    let (stream, _) = accepted?;
+                    let runtime = runtime.clone();
+                    let last_pending = last_pending.clone();
+                    let meta = meta.clone();
+                    let feed = feed.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_client(stream, runtime, last_pending, meta, feed).await {
+                            error!("Unix client error: {e:#}");
+                        }
+                    });
+                }
+            }
         }
     } else {
-        if settings.sock.exists() {
-            let _ = std::fs::remove_file(&settings.sock);
-        }
-        let listener = UnixListener::bind(&settings.sock)
-            .with_context(|| format!("bind {}", settings.sock.display()))?;
-        info!(sock = %settings.sock.display(), "SaaiOS runtime listening");
-
         loop {
-            let (stream, _) = listener.accept().await?;
+            let (stream, _) = unix_listener.accept().await?;
             let runtime = runtime.clone();
             let last_pending = last_pending.clone();
             let meta = meta.clone();

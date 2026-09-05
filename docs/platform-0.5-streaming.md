@@ -39,6 +39,8 @@ Non-stream diagnose still returns a single JSON object and may include a `progre
 - The default transport is the Unix socket from `--sock` / `SAAIOS_SOCK`.
 - `--tcp HOST:PORT` / `SAAIOS_TCP` connects the same console to a TCP runtime.
   Pixel 7 uses the USB-only endpoint `172.31.7.1:38127`.
+- A runtime started with `--tcp` keeps its Unix socket active in parallel, so
+  on-device clients do not depend on USB interface routing.
 
 ## Non-goals (this slice)
 
