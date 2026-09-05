@@ -32,6 +32,10 @@ static pid_t bluetooth_scan_pid = -1;
 static pid_t bluetooth_pair_pid = -1;
 static pid_t ai_query_pid = -1;
 static int ai_last_action = -1;
+static bool ai_keyboard_open = false;
+#define AI_PROMPT_MAX 72
+static char ai_prompt[AI_PROMPT_MAX + 1] = {0};
+static size_t ai_prompt_length = 0;
 static bool bluetooth_saved_view = false;
 static int bluetooth_forget_candidate = -1;
 
@@ -517,18 +521,12 @@ static int read_ai_lines(char lines[][AI_LINE_CHARS + 1], int maximum) {
     return count;
 }
 
-static void start_ai_query(int selected) {
-    static const char *const prompts[] = {
-        "Use system.metrics exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize CPU, free memory, and load. Do not call any other tool.",
-        "Use network.status exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize interfaces and connectivity. Do not call any other tool.",
-        "Use system.disk exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize total and free storage. Do not call any other tool."
-    };
-    if (selected < 0 || selected >= (int)(sizeof(prompts) / sizeof(prompts[0])) ||
-        ai_query_running()) {
+static void start_ai_request(const char *prompt, int action) {
+    if (!prompt || !prompt[0] || ai_query_running()) {
         return;
     }
     (void)unlink("/run/saaios-ai-ui.log");
-    ai_last_action = selected;
+    ai_last_action = action;
     pid_t child = fork();
     if (child == 0) {
         int log = open("/run/saaios-ai-ui.log",
@@ -539,13 +537,36 @@ static void start_ai_query(int selected) {
             close(log);
         }
         execl("/saaios/saaios-console", "saaios-console",
-              "--ask", prompts[selected], NULL);
+              "--ask", prompt, NULL);
         dprintf(STDOUT_FILENO, "MODEL OFFLINE\n");
         _exit(127);
     }
     if (child > 0) {
         ai_query_pid = child;
     }
+}
+
+static void start_ai_query(int selected) {
+    static const char *const prompts[] = {
+        "Use system.metrics exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize CPU, free memory, and load. Do not call any other tool.",
+        "Use network.status exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize interfaces and connectivity. Do not call any other tool.",
+        "Use system.disk exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize total and free storage. Do not call any other tool."
+    };
+    if (selected < 0 || selected >= (int)(sizeof(prompts) / sizeof(prompts[0]))) {
+        return;
+    }
+    start_ai_request(prompts[selected], selected);
+}
+
+static void start_ai_user_query(void) {
+    if (ai_prompt_length == 0 || ai_query_running()) {
+        return;
+    }
+    char request[320];
+    snprintf(request, sizeof(request),
+             "Reply in uppercase ASCII English using at most four short lines. "
+             "Answer this user question directly: %s", ai_prompt);
+    start_ai_request(request, 3);
 }
 
 static void render_networks(uint32_t *pixels, uint32_t stride_pixels,
@@ -874,6 +895,85 @@ static void render_status(uint32_t *pixels, uint32_t stride_pixels,
     }
 }
 
+static void draw_keyboard_key(uint32_t *pixels, uint32_t stride_pixels,
+                              uint32_t width, uint32_t height,
+                              int left, int top, int key_width, int key_height,
+                              const char *label, int label_scale,
+                              uint32_t color) {
+    int x = ui_x(width, left);
+    int w = ui_x(width, key_width);
+    int scale = ui_scale(width, label_scale);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   x, ui_y(height, top), w, ui_y(height, key_height),
+                   ui_x(width, 22), color);
+    draw_text(pixels, stride_pixels, width, height,
+              label, scale, x + (w - text_width(label, scale)) / 2,
+              ui_y(height, top + key_height / 2), 0x00F5F8FC);
+}
+
+static void render_keyboard(uint32_t *pixels, uint32_t stride_pixels,
+                            uint32_t width, uint32_t height) {
+    static const char *const rows[] = {
+        "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"
+    };
+    static const int row_left[] = {30, 79, 174};
+    static const int row_top[] = {950, 1130, 1310};
+    static const int row_gap[] = {8, 10, 12};
+    render_page_chrome(pixels, stride_pixels, width, height, "NEW QUESTION");
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 455),
+                   ui_x(width, 972), ui_y(height, 340),
+                   ui_x(width, 42), 0x00152238);
+    draw_text(pixels, stride_pixels, width, height,
+              "YOUR QUESTION", ui_scale(width, 6), ui_x(width, 88),
+              ui_y(height, 520), 0x008EA8C6);
+    if (ai_prompt_length == 0) {
+        draw_text(pixels, stride_pixels, width, height,
+                  "TYPE WITH THE KEYS BELOW", ui_scale(width, 6),
+                  ui_x(width, 88), ui_y(height, 650), 0x006E87A5);
+    } else {
+        for (int line = 0; line < 3; ++line) {
+            size_t offset = (size_t)line * 24;
+            if (offset >= ai_prompt_length) break;
+            char text[25] = {0};
+            size_t remaining = ai_prompt_length - offset;
+            size_t count = remaining > 24 ? 24 : remaining;
+            memcpy(text, ai_prompt + offset, count);
+            draw_text(pixels, stride_pixels, width, height,
+                      text, ui_scale(width, 6), ui_x(width, 88),
+                      ui_y(height, 615 + line * 88), 0x00F5F8FC);
+        }
+    }
+    static const char digits[] = "1234567890";
+    for (int column = 0; column < 10; ++column) {
+        char label[2] = {digits[column], '\0'};
+        draw_keyboard_key(pixels, stride_pixels, width, height,
+                          30 + column * 102, 820, 94, 100,
+                          label, 5, 0x001A2B46);
+    }
+    for (int row = 0; row < 3; ++row) {
+        size_t count = strlen(rows[row]);
+        for (size_t column = 0; column < count; ++column) {
+            char label[2] = {rows[row][column], '\0'};
+            draw_keyboard_key(pixels, stride_pixels, width, height,
+                              row_left[row] + (int)column * (94 + row_gap[row]),
+                              row_top[row], 94, 150, label, 7, 0x00213655);
+        }
+    }
+    draw_keyboard_key(pixels, stride_pixels, width, height,
+                      54, 1490, 650, 160, "SPACE", 7, 0x00213655);
+    draw_keyboard_key(pixels, stride_pixels, width, height,
+                      724, 1490, 302, 160, "DELETE", 6, 0x00334A67);
+    draw_keyboard_key(pixels, stride_pixels, width, height,
+                      54, 1710, 470, 170, "CANCEL", 7, 0x00213655);
+    draw_keyboard_key(pixels, stride_pixels, width, height,
+                      546, 1710, 480, 170, "SEND", 8,
+                      ai_prompt_length > 0 ? 0x006C63FF : 0x002B3154);
+    draw_word(pixels, stride_pixels, width, height,
+              "LATIN KEYBOARD", ui_scale(width, 6), ui_y(height, 1990),
+              0x006E87A5);
+}
+
 static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                            uint32_t width, uint32_t height) {
     static const char *const labels[] = {
@@ -896,45 +996,60 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
               runtime_ready ? "LOCAL AI READY" : "RUNTIME OFFLINE",
               ui_scale(width, 7), ui_x(width, 170), ui_y(height, 510),
               runtime_ready ? 0x00C8F7EA : 0x00FFD0D0);
+
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 620),
+                   ui_x(width, 972), ui_y(height, 220),
+                   ui_x(width, 40), ai_last_action == 3 ? 0x003A397F : 0x00232158);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 88), ui_y(height, 674),
+                   ui_x(width, 86), ui_y(height, 86),
+                   ui_x(width, 26), 0x006C63FF);
+    draw_text(pixels, stride_pixels, width, height,
+              "ASK A QUESTION", ui_scale(width, 9), ui_x(width, 215),
+              ui_y(height, 730), 0x00FFFFFF);
+
+    draw_text(pixels, stride_pixels, width, height,
+              "QUICK CHECKS", ui_scale(width, 6), ui_x(width, 58),
+              ui_y(height, 905), 0x008EA8C6);
     for (int index = 0; index < 3; ++index) {
-        int top = 630 + index * 225;
+        int top = 950 + index * 190;
         uint32_t color = index == ai_last_action
             ? 0x003A397F : 0x00152238;
         fill_soft_rect(pixels, stride_pixels, width, height,
                        ui_x(width, 54), ui_y(height, top),
-                       ui_x(width, 972), ui_y(height, 180),
-                       ui_x(width, 36), color);
+                       ui_x(width, 972), ui_y(height, 150),
+                       ui_x(width, 32), color);
         fill_soft_rect(pixels, stride_pixels, width, height,
-                       ui_x(width, 88), ui_y(height, top + 54),
-                       ui_x(width, 72), ui_y(height, 72),
-                       ui_x(width, 22), 0x006C63FF);
+                       ui_x(width, 88), ui_y(height, top + 42),
+                       ui_x(width, 66), ui_y(height, 66),
+                       ui_x(width, 20), 0x006C63FF);
         draw_text(pixels, stride_pixels, width, height,
-                  labels[index], ui_scale(width, 8), ui_x(width, 205),
-                  ui_y(height, top + 90), 0x00FFFFFF);
+                  labels[index], ui_scale(width, 7), ui_x(width, 195),
+                  ui_y(height, top + 75), 0x00FFFFFF);
     }
     fill_soft_rect(pixels, stride_pixels, width, height,
-                   ui_x(width, 54), ui_y(height, 1345),
-                   ui_x(width, 972), ui_y(height, 670),
+                   ui_x(width, 54), ui_y(height, 1540),
+                   ui_x(width, 972), ui_y(height, 570),
                    ui_x(width, 44), 0x00101C2E);
     draw_text(pixels, stride_pixels, width, height,
               "AI RESPONSE", ui_scale(width, 6), ui_x(width, 92),
-              ui_y(height, 1420), 0x007E96B2);
+              ui_y(height, 1610), 0x007E96B2);
     if (running) {
         draw_word(pixels, stride_pixels, width, height,
-                  "AI THINKING", ui_scale(width, 9), ui_y(height, 1680),
+                  "AI THINKING", ui_scale(width, 9), ui_y(height, 1810),
                   0x008C86FF);
     } else if (line_count > 0) {
         for (int index = 0; index < line_count; ++index) {
             int scale = strlen(lines[index]) > 22 ? 6 : 7;
             draw_text(pixels, stride_pixels, width, height,
                       lines[index], ui_scale(width, scale), ui_x(width, 92),
-                      ui_y(height, 1535 + index * 125),
-                      0x00B7CBE2);
+                      ui_y(height, 1725 + index * 105), 0x00B7CBE2);
         }
     } else {
         draw_word(pixels, stride_pixels, width, height,
-                  "CHOOSE A QUICK CHECK", ui_scale(width, 7),
-                  ui_y(height, 1680), 0x008CA9C8);
+                  "ASK ANYTHING", ui_scale(width, 7),
+                  ui_y(height, 1810), 0x008CA9C8);
     }
 }
 
@@ -1106,7 +1221,11 @@ static void render_page(uint32_t *pixels, uint32_t stride_pixels,
     } else if (page == 4) {
         render_bluetooth(pixels, stride_pixels, width, height);
     } else if (page == 5) {
-        render_console(pixels, stride_pixels, width, height);
+        if (ai_keyboard_open) {
+            render_keyboard(pixels, stride_pixels, width, height);
+        } else {
+            render_console(pixels, stride_pixels, width, height);
+        }
     } else {
         render_launcher(pixels, stride_pixels, width, height,
                         selection, active);
@@ -1172,9 +1291,12 @@ static int menu_item_at(int x, int y, uint32_t width, uint32_t height) {
 
 static int console_item_at(int y, uint32_t height) {
     int design_y = (int)((int64_t)y * 2400 / height);
+    if (design_y >= 620 && design_y < 840) {
+        return 3;
+    }
     for (int index = 0; index < 3; ++index) {
-        int top = 630 + index * 225;
-        if (design_y >= top && design_y < top + 180) {
+        int top = 950 + index * 190;
+        if (design_y >= top && design_y < top + 150) {
             return index;
         }
     }
@@ -1200,13 +1322,94 @@ static bool sound_action_at(int x, int y,
            design_y >= 485 && design_y < 1465;
 }
 
-static bool page_back_at(int x, int y,
-                         uint32_t width, uint32_t height) {
+static int keyboard_action_at(int x, int y,
+                              uint32_t width, uint32_t height) {
+    static const int row_left[] = {30, 79, 174};
+    static const int row_top[] = {950, 1130, 1310};
+    static const int row_gap[] = {8, 10, 12};
+    static const int row_count[] = {10, 9, 7};
+    static const int row_offset[] = {0, 10, 19};
     int design_x = (int)((int64_t)x * 1080 / width);
     int design_y = (int)((int64_t)y * 2400 / height);
-    return (design_x >= 38 && design_x < 240 &&
-            design_y >= 150 && design_y < 310) ||
-           design_y >= 2260;
+    if (design_y >= 820 && design_y < 920) {
+        for (int column = 0; column < 10; ++column) {
+            int left = 30 + column * 102;
+            if (design_x >= left && design_x < left + 94) {
+                return 30 + column;
+            }
+        }
+    }
+    for (int row = 0; row < 3; ++row) {
+        if (design_y < row_top[row] || design_y >= row_top[row] + 150) {
+            continue;
+        }
+        for (int column = 0; column < row_count[row]; ++column) {
+            int left = row_left[row] + column * (94 + row_gap[row]);
+            if (design_x >= left && design_x < left + 94) {
+                return row_offset[row] + column;
+            }
+        }
+    }
+    if (design_y >= 1490 && design_y < 1650) {
+        if (design_x >= 54 && design_x < 704) return 26;
+        if (design_x >= 724 && design_x < 1026) return 27;
+    }
+    if (design_y >= 1710 && design_y < 1880) {
+        if (design_x >= 54 && design_x < 524) return 28;
+        if (design_x >= 546 && design_x < 1026) return 29;
+    }
+    return -1;
+}
+
+static bool top_back_at(int x, int y,
+                        uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    return design_x >= 38 && design_x < 240 &&
+           design_y >= 150 && design_y < 310;
+}
+
+static bool home_at(int y, uint32_t height) {
+    int design_y = (int)((int64_t)y * 2400 / height);
+    return design_y >= 2260;
+}
+
+static bool page_back_at(int x, int y,
+                         uint32_t width, uint32_t height) {
+    return top_back_at(x, y, width, height) || home_at(y, height);
+}
+
+static void clear_ai_prompt(void) {
+    ai_prompt_length = 0;
+    ai_prompt[0] = '\0';
+}
+
+static void apply_keyboard_action(int action) {
+    static const char letters[] = "QWERTYUIOPASDFGHJKLZXCVBNM";
+    static const char digits[] = "1234567890";
+    if (action >= 0 && action < 26 && ai_prompt_length < AI_PROMPT_MAX) {
+        ai_prompt[ai_prompt_length++] = letters[action];
+        ai_prompt[ai_prompt_length] = '\0';
+    } else if (action >= 30 && action < 40 &&
+               ai_prompt_length < AI_PROMPT_MAX) {
+        ai_prompt[ai_prompt_length++] = digits[action - 30];
+        ai_prompt[ai_prompt_length] = '\0';
+    } else if (action == 26 && ai_prompt_length > 0 &&
+               ai_prompt_length < AI_PROMPT_MAX &&
+               ai_prompt[ai_prompt_length - 1] != ' ') {
+        ai_prompt[ai_prompt_length++] = ' ';
+        ai_prompt[ai_prompt_length] = '\0';
+    } else if (action == 27 && ai_prompt_length > 0) {
+        ai_prompt[--ai_prompt_length] = '\0';
+    } else if (action == 28) {
+        clear_ai_prompt();
+        ai_keyboard_open = false;
+    } else if (action == 29 && ai_prompt_length > 0 &&
+               !ai_query_running()) {
+        start_ai_user_query();
+        clear_ai_prompt();
+        ai_keyboard_open = false;
+    }
 }
 
 int main(void) {
@@ -1431,6 +1634,7 @@ int main(void) {
     int bluetooth_touch_item = -1;
     int bluetooth_touch_tab = -1;
     int console_touch_item = -1;
+    int keyboard_touch_action = -1;
     bool sound_touch_action = false;
     bool position_changed = false;
     bool touch_released = false;
@@ -1516,6 +1720,7 @@ int main(void) {
                         bluetooth_touch_item = -1;
                         bluetooth_touch_tab = -1;
                         console_touch_item = -1;
+                        keyboard_touch_action = -1;
                         sound_touch_action = false;
                         if (page == 0) {
                             launcher_touch_item = menu_item_at(
@@ -1543,9 +1748,16 @@ int main(void) {
                                 touched_item = bluetooth_touch_item;
                             }
                         } else if (page == 5) {
-                            console_touch_item = console_item_at(
-                                touch_y, create.height);
-                            touched_item = console_touch_item;
+                            if (ai_keyboard_open) {
+                                keyboard_touch_action = keyboard_action_at(
+                                    touch_x, touch_y,
+                                    create.width, create.height);
+                                touched_item = keyboard_touch_action;
+                            } else {
+                                console_touch_item = console_item_at(
+                                    touch_y, create.height);
+                                touched_item = console_touch_item;
+                            }
                         }
                         draw_touch_marker(pixels,
                             create.pitch / sizeof(uint32_t),
@@ -1581,12 +1793,34 @@ int main(void) {
                                 start_bluetooth_pair(bluetooth_touch_item);
                             }
                             active = true;
-                        } else if (page == 5 && console_touch_item >= 0) {
-                            start_ai_query(console_touch_item);
+                        } else if (page == 5 && ai_keyboard_open &&
+                                   keyboard_touch_action >= 0) {
+                            apply_keyboard_action(keyboard_touch_action);
+                            active = true;
+                        } else if (page == 5 && ai_keyboard_open &&
+                                   top_back_at(touch_x, touch_y,
+                                               create.width, create.height)) {
+                            clear_ai_prompt();
+                            ai_keyboard_open = false;
+                            active = true;
+                        } else if (page == 5 && !ai_keyboard_open &&
+                                   console_touch_item >= 0) {
+                            if (console_touch_item == 3) {
+                                if (!ai_query_running()) {
+                                    clear_ai_prompt();
+                                    ai_keyboard_open = true;
+                                }
+                            } else {
+                                start_ai_query(console_touch_item);
+                            }
                             active = true;
                         } else if (page != 0 && page_back_at(
                                        touch_x, touch_y,
                                        create.width, create.height)) {
+                            if (page == 5) {
+                                clear_ai_prompt();
+                                ai_keyboard_open = false;
+                            }
                             page = 0;
                             active = false;
                             bluetooth_forget_candidate = -1;
@@ -1609,6 +1843,7 @@ int main(void) {
                         bluetooth_touch_item = -1;
                         bluetooth_touch_tab = -1;
                         console_touch_item = -1;
+                        keyboard_touch_action = -1;
                         sound_touch_action = false;
                         touch_released = false;
                     }
