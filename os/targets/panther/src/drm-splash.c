@@ -21,6 +21,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#define STBTT_STATIC
+#define STB_TRUETYPE_IMPLEMENTATION
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "../third_party/stb/stb_truetype.h"
+#pragma GCC diagnostic pop
+
 #define SAAIOS_DRM_MODE_CONNECTED 1
 
 static uint32_t active_connector_id;
@@ -125,6 +132,24 @@ static void fill_rect(uint32_t *pixels, uint32_t stride_pixels,
     }
 }
 
+static void blend_pixel(uint32_t *pixel, uint32_t color,
+                        unsigned int alpha) {
+    if (alpha >= 255U) {
+        *pixel = color;
+        return;
+    }
+    if (alpha == 0U) return;
+    uint32_t background = *pixel;
+    unsigned int inverse = 255U - alpha;
+    unsigned int red = (((color >> 16) & 0xffU) * alpha +
+                        ((background >> 16) & 0xffU) * inverse + 127U) / 255U;
+    unsigned int green = (((color >> 8) & 0xffU) * alpha +
+                          ((background >> 8) & 0xffU) * inverse + 127U) / 255U;
+    unsigned int blue = ((color & 0xffU) * alpha +
+                         (background & 0xffU) * inverse + 127U) / 255U;
+    *pixel = (red << 16) | (green << 8) | blue;
+}
+
 static const char *glyph(char character) {
     switch (character) {
         case 'S': return "11111" "10000" "10000" "11111" "00001" "00001" "11111";
@@ -185,7 +210,169 @@ static int ui_scale(uint32_t width, int value) {
     return scaled > 0 ? scaled : 1;
 }
 
+typedef struct {
+    const char *filename;
+    unsigned char *data;
+    stbtt_fontinfo info;
+    bool attempted;
+    bool ready;
+} font_face;
+
+typedef struct {
+    font_face *face;
+    int codepoint;
+    int pixel_height;
+    int width;
+    int height;
+    int x_offset;
+    int y_offset;
+    int advance;
+    unsigned char *bitmap;
+    bool valid;
+} cached_glyph;
+
+static font_face regular_font = {.filename = "Inter-Regular.ttf"};
+static font_face semibold_font = {.filename = "Inter-SemiBold.ttf"};
+#define GLYPH_CACHE_CAPACITY 1024
+static cached_glyph glyph_cache[GLYPH_CACHE_CAPACITY];
+static size_t glyph_cache_count = 0;
+static cached_glyph temporary_glyph = {0};
+
+static bool load_font_face(font_face *face) {
+    if (face->attempted) return face->ready;
+    face->attempted = true;
+    const char *directory = getenv("SAAIOS_FONT_DIR");
+    if (!directory || !directory[0]) directory = "/saaios/fonts";
+    char path[512];
+    int written = snprintf(path, sizeof(path), "%s/%s",
+                           directory, face->filename);
+    if (written < 0 || (size_t)written >= sizeof(path)) return false;
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return false;
+    }
+    long length = ftell(file);
+    if (length <= 0 || length > 8 * 1024 * 1024 ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return false;
+    }
+    face->data = malloc((size_t)length);
+    if (!face->data ||
+        fread(face->data, 1, (size_t)length, file) != (size_t)length) {
+        free(face->data);
+        face->data = NULL;
+        fclose(file);
+        return false;
+    }
+    fclose(file);
+    int offset = stbtt_GetFontOffsetForIndex(face->data, 0);
+    if (offset < 0 || !stbtt_InitFont(&face->info, face->data, offset)) {
+        free(face->data);
+        face->data = NULL;
+        return false;
+    }
+    face->ready = true;
+    return true;
+}
+
+static font_face *font_for_scale(int scale) {
+    font_face *preferred = scale >= 7 ? &semibold_font : &regular_font;
+    font_face *fallback = scale >= 7 ? &regular_font : &semibold_font;
+    if (load_font_face(preferred)) return preferred;
+    return load_font_face(fallback) ? fallback : NULL;
+}
+
+static uint32_t next_codepoint(const char **cursor) {
+    const unsigned char *text = (const unsigned char *)*cursor;
+    uint32_t codepoint;
+    if (text[0] < 0x80U) {
+        codepoint = text[0];
+        *cursor += text[0] ? 1 : 0;
+    } else if ((text[0] & 0xe0U) == 0xc0U &&
+               (text[1] & 0xc0U) == 0x80U) {
+        codepoint = ((uint32_t)(text[0] & 0x1fU) << 6) |
+                    (uint32_t)(text[1] & 0x3fU);
+        *cursor += 2;
+    } else if ((text[0] & 0xf0U) == 0xe0U &&
+               (text[1] & 0xc0U) == 0x80U &&
+               (text[2] & 0xc0U) == 0x80U) {
+        codepoint = ((uint32_t)(text[0] & 0x0fU) << 12) |
+                    ((uint32_t)(text[1] & 0x3fU) << 6) |
+                    (uint32_t)(text[2] & 0x3fU);
+        *cursor += 3;
+    } else if ((text[0] & 0xf8U) == 0xf0U &&
+               (text[1] & 0xc0U) == 0x80U &&
+               (text[2] & 0xc0U) == 0x80U &&
+               (text[3] & 0xc0U) == 0x80U) {
+        codepoint = ((uint32_t)(text[0] & 0x07U) << 18) |
+                    ((uint32_t)(text[1] & 0x3fU) << 12) |
+                    ((uint32_t)(text[2] & 0x3fU) << 6) |
+                    (uint32_t)(text[3] & 0x3fU);
+        *cursor += 4;
+    } else {
+        codepoint = 0xfffdU;
+        *cursor += 1;
+    }
+    return codepoint;
+}
+
+static cached_glyph *font_glyph(font_face *face, int codepoint,
+                                int pixel_height) {
+    for (size_t index = 0; index < glyph_cache_count; ++index) {
+        cached_glyph *entry = &glyph_cache[index];
+        if (entry->face == face && entry->codepoint == codepoint &&
+            entry->pixel_height == pixel_height) return entry;
+    }
+    cached_glyph *entry;
+    if (glyph_cache_count < GLYPH_CACHE_CAPACITY) {
+        entry = &glyph_cache[glyph_cache_count++];
+    } else {
+        free(temporary_glyph.bitmap);
+        memset(&temporary_glyph, 0, sizeof(temporary_glyph));
+        entry = &temporary_glyph;
+    }
+    float font_scale = stbtt_ScaleForPixelHeight(&face->info,
+                                                 (float)pixel_height);
+    int advance_units = 0;
+    int bearing = 0;
+    stbtt_GetCodepointHMetrics(&face->info, codepoint,
+                               &advance_units, &bearing);
+    (void)bearing;
+    entry->face = face;
+    entry->codepoint = codepoint;
+    entry->pixel_height = pixel_height;
+    entry->advance = (int)(advance_units * font_scale + 0.5f);
+    entry->bitmap = stbtt_GetCodepointBitmap(
+        &face->info, font_scale, font_scale, codepoint,
+        &entry->width, &entry->height,
+        &entry->x_offset, &entry->y_offset);
+    entry->valid = true;
+    return entry;
+}
+
 static int text_width(const char *word, int scale) {
+    font_face *face = font_for_scale(scale);
+    if (face) {
+        int width = 0;
+        int previous = 0;
+        int pixel_height = scale * 7;
+        float font_scale = stbtt_ScaleForPixelHeight(&face->info,
+                                                     (float)pixel_height);
+        const char *cursor = word;
+        while (*cursor) {
+            int codepoint = (int)next_codepoint(&cursor);
+            if (previous) {
+                width += (int)(stbtt_GetCodepointKernAdvance(
+                    &face->info, previous, codepoint) * font_scale + 0.5f);
+            }
+            width += font_glyph(face, codepoint, pixel_height)->advance;
+            previous = codepoint;
+        }
+        return width;
+    }
     size_t length = strlen(word);
     return length == 0 ? 0 : ((int)length * 6 - 1) * scale;
 }
@@ -194,6 +381,45 @@ static void draw_text(uint32_t *pixels, uint32_t stride_pixels,
                       uint32_t width, uint32_t height,
                       const char *word, int scale, int origin_x,
                       int center_y, uint32_t color) {
+    font_face *face = font_for_scale(scale);
+    if (face) {
+        int pixel_height = scale * 7;
+        float font_scale = stbtt_ScaleForPixelHeight(&face->info,
+                                                     (float)pixel_height);
+        int ascent = 0;
+        int descent = 0;
+        int line_gap = 0;
+        stbtt_GetFontVMetrics(&face->info, &ascent, &descent, &line_gap);
+        (void)line_gap;
+        int baseline = center_y +
+            (int)((ascent + descent) * font_scale / 2.0f + 0.5f);
+        int pen_x = origin_x;
+        int previous = 0;
+        const char *cursor = word;
+        while (*cursor) {
+            int codepoint = (int)next_codepoint(&cursor);
+            if (previous) {
+                pen_x += (int)(stbtt_GetCodepointKernAdvance(
+                    &face->info, previous, codepoint) * font_scale + 0.5f);
+            }
+            cached_glyph *entry = font_glyph(face, codepoint, pixel_height);
+            for (int row = 0; row < entry->height; ++row) {
+                int target_y = baseline + entry->y_offset + row;
+                if (target_y < 0 || target_y >= (int)height) continue;
+                for (int column = 0; column < entry->width; ++column) {
+                    int target_x = pen_x + entry->x_offset + column;
+                    if (target_x < 0 || target_x >= (int)width) continue;
+                    unsigned int alpha =
+                        entry->bitmap[row * entry->width + column];
+                    blend_pixel(&pixels[(size_t)target_y * stride_pixels +
+                                target_x], color, alpha);
+                }
+            }
+            pen_x += entry->advance;
+            previous = codepoint;
+        }
+        return;
+    }
     size_t length = strlen(word);
     int origin_y = center_y - (7 * scale) / 2;
     for (size_t letter = 0; letter < length; ++letter) {
@@ -225,17 +451,51 @@ static void fill_soft_rect(uint32_t *pixels, uint32_t stride_pixels,
                            uint32_t width, uint32_t height,
                            int x, int y, int w, int h, int radius,
                            uint32_t color) {
-    if (radius < 1) {
+    if (radius < 1 || w < 2 || h < 2) {
         fill_rect(pixels, stride_pixels, width, height, x, y, w, h, color);
         return;
     }
+    int maximum_radius = (w < h ? w : h) / 2;
+    if (radius > maximum_radius) radius = maximum_radius;
     fill_rect(pixels, stride_pixels, width, height,
               x + radius, y, w - radius * 2, h, color);
     fill_rect(pixels, stride_pixels, width, height,
               x, y + radius, w, h - radius * 2, color);
-    fill_rect(pixels, stride_pixels, width, height,
-              x + radius / 2, y + radius / 3,
-              w - radius, h - radius * 2 / 3, color);
+    for (int row = 0; row < radius; ++row) {
+        float dy = (float)radius - (float)row - 0.5f;
+        for (int column = 0; column < radius; ++column) {
+            float dx = (float)radius - (float)column - 0.5f;
+            float distance = sqrtf(dx * dx + dy * dy);
+            float coverage = (float)radius + 0.5f - distance;
+            if (coverage <= 0.0f) continue;
+            unsigned int alpha = coverage >= 1.0f
+                ? 255U : (unsigned int)(coverage * 255.0f + 0.5f);
+            int left = x + column;
+            int right = x + w - 1 - column;
+            int top = y + row;
+            int bottom = y + h - 1 - row;
+            if (left >= 0 && left < (int)width &&
+                top >= 0 && top < (int)height) {
+                blend_pixel(&pixels[(size_t)top * stride_pixels + left],
+                            color, alpha);
+            }
+            if (right >= 0 && right < (int)width &&
+                top >= 0 && top < (int)height) {
+                blend_pixel(&pixels[(size_t)top * stride_pixels + right],
+                            color, alpha);
+            }
+            if (left >= 0 && left < (int)width &&
+                bottom >= 0 && bottom < (int)height) {
+                blend_pixel(&pixels[(size_t)bottom * stride_pixels + left],
+                            color, alpha);
+            }
+            if (right >= 0 && right < (int)width &&
+                bottom >= 0 && bottom < (int)height) {
+                blend_pixel(&pixels[(size_t)bottom * stride_pixels + right],
+                            color, alpha);
+            }
+        }
+    }
 }
 
 static bool read_first_line(const char *path, char *value, size_t value_size);
@@ -329,13 +589,15 @@ static bool root_page(int page) {
 static void render_root_controls(uint32_t *pixels, uint32_t stride_pixels,
                                  uint32_t width, uint32_t height,
                                  int active_tab) {
-    static const char *const tabs[] = {"NOW", "INBOX", "SPACES", "ME"};
+    static const char *const tabs[] = {
+        "Сейчас", "Входящие", "Пространства", "Я"
+    };
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 145),
                    ui_x(width, 972), ui_y(height, 112),
                    ui_x(width, 32), 0x00222D36);
     draw_text(pixels, stride_pixels, width, height,
-              "HOME - LOCAL AI", ui_scale(width, 6), ui_x(width, 92),
+              "Дом - локальный ИИ", ui_scale(width, 6), ui_x(width, 92),
               ui_y(height, 201), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
               "V", ui_scale(width, 5), ui_x(width, 958),
@@ -346,14 +608,14 @@ static void render_root_controls(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 150),
                    ui_x(width, 40), 0x001B252D);
     draw_text(pixels, stride_pixels, width, height,
-              "ASK OR TYPE WHAT YOU NEED", ui_scale(width, 5),
+              "Скажи или напиши, что нужно", ui_scale(width, 5),
               ui_x(width, 88), ui_y(height, 1975), 0x009CB1C9);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 892), ui_y(height, 1925),
                    ui_x(width, 104), ui_y(height, 100),
                    ui_x(width, 30), 0x0074CFC0);
     draw_text(pixels, stride_pixels, width, height,
-              "A", ui_scale(width, 7), ui_x(width, 923),
+              ">", ui_scale(width, 7), ui_x(width, 928),
               ui_y(height, 1975), 0x00102022);
 
     fill_rect(pixels, stride_pixels, width, height,
@@ -361,7 +623,7 @@ static void render_root_controls(uint32_t *pixels, uint32_t stride_pixels,
               0x000D151C);
     for (int index = 0; index < 4; ++index) {
         int left = index * 270;
-        int scale = ui_scale(width, index == 2 ? 4 : 5);
+        int scale = ui_scale(width, index == 2 ? 3 : 4);
         int x = ui_x(width, left);
         int w = ui_x(width, 270);
         uint32_t color = index == active_tab ? 0x0074CFC0 : 0x007E96B2;
@@ -387,7 +649,7 @@ static void render_launcher(uint32_t *pixels, uint32_t stride_pixels,
     bool data_ready = access("/data/saaios/.layout", R_OK) == 0;
     render_splash(pixels, stride_pixels, width, height);
     draw_text(pixels, stride_pixels, width, height,
-              "NOW", ui_scale(width, 12), ui_x(width, 54),
+              "Сейчас", ui_scale(width, 12), ui_x(width, 54),
               ui_y(height, 345), 0x00F5F8FC);
 
     fill_soft_rect(pixels, stride_pixels, width, height,
@@ -395,63 +657,63 @@ static void render_launcher(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 390),
                    ui_x(width, 48), 0x0013443C);
     draw_text(pixels, stride_pixels, width, height,
-              "IMPORTANT NOW", ui_scale(width, 5), ui_x(width, 92),
+              "Важно сейчас", ui_scale(width, 5), ui_x(width, 92),
               ui_y(height, 485), 0x0074CFC0);
     draw_text(pixels, stride_pixels, width, height,
-              ai_ready && data_ready ? "PHONE READY" : "PHONE STARTING",
+              ai_ready && data_ready ? "Телефон готов" : "Телефон запускается",
               ui_scale(width, ai_ready && data_ready ? 10 : 8), ui_x(width, 92),
               ui_y(height, 585), 0x00FFFFFF);
     draw_text(pixels, stride_pixels, width, height,
-              ai_ready ? "LOCAL AI AND SERVICES ONLINE" :
-              "CORE SERVICES ARE STARTING", ui_scale(width, 5),
+              ai_ready ? "Локальный ИИ и службы в сети" :
+              "Основные службы запускаются", ui_scale(width, 5),
               ui_x(width, 92), ui_y(height, 665), 0x00A6C7C1);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 92), ui_y(height, 710),
                    ui_x(width, 300), ui_y(height, 70),
                    ui_x(width, 22), 0x0074CFC0);
     draw_text(pixels, stride_pixels, width, height,
-              "CHECK", ui_scale(width, 5), ui_x(width, 170),
+              "Проверить", ui_scale(width, 5), ui_x(width, 150),
               ui_y(height, 745), 0x00102022);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 420), ui_y(height, 710),
                    ui_x(width, 300), ui_y(height, 70),
                    ui_x(width, 22), 0x001B252D);
     draw_text(pixels, stride_pixels, width, height,
-              "DETAILS", ui_scale(width, 5), ui_x(width, 475),
+              "Подробнее", ui_scale(width, 5), ui_x(width, 455),
               ui_y(height, 745), 0x00E8F0FA);
 
     draw_text(pixels, stride_pixels, width, height,
-              "CONTINUE", ui_scale(width, 5), ui_x(width, 58),
+              "Продолжить", ui_scale(width, 5), ui_x(width, 58),
               ui_y(height, 875), 0x008EA8C6);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 920),
                    ui_x(width, 972), ui_y(height, 300),
                    ui_x(width, 40), 0x001B252D);
     draw_text(pixels, stride_pixels, width, height,
-              "SYSTEM STATUS", ui_scale(width, 6), ui_x(width, 160),
+              "Состояние системы", ui_scale(width, 6), ui_x(width, 160),
               ui_y(height, 995), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
-              "PHONE HEALTH AND POWER", ui_scale(width, 4), ui_x(width, 160),
+              "Телефон, питание и дисплей", ui_scale(width, 4), ui_x(width, 160),
               ui_y(height, 1050), 0x008EA8C6);
     fill_rect(pixels, stride_pixels, width, height,
               ui_x(width, 90), ui_y(height, 1070),
               ui_x(width, 900), ui_y(height, 2), 0x0033414B);
     draw_text(pixels, stride_pixels, width, height,
-              "AI ASSISTANT", ui_scale(width, 6), ui_x(width, 160),
+              "ИИ-помощник", ui_scale(width, 6), ui_x(width, 160),
               ui_y(height, 1145), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
-              "ASK OR CONTINUE A TASK", ui_scale(width, 4), ui_x(width, 160),
+              "Спросить или продолжить задачу", ui_scale(width, 4), ui_x(width, 160),
               ui_y(height, 1195), 0x008EA8C6);
 
     draw_text(pixels, stride_pixels, width, height,
-              "RECENT OBJECTS", ui_scale(width, 5), ui_x(width, 58),
+              "Недавние объекты", ui_scale(width, 5), ui_x(width, 58),
               ui_y(height, 1295), 0x008EA8C6);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 1340),
                    ui_x(width, 972), ui_y(height, 480),
                    ui_x(width, 40), 0x001B252D);
-    static const char *const recent[] = {"NETWORK", "SOUND", "BLUETOOTH"};
-    static const char *const notes[] = {"CONNECTED", "SPEAKERS READY", "DEVICES"};
+    static const char *const recent[] = {"Сеть", "Звук", "Bluetooth"};
+    static const char *const notes[] = {"Подключена", "Динамики готовы", "Устройства"};
     for (int index = 0; index < 3; ++index) {
         int center = 1420 + index * 150;
         draw_text(pixels, stride_pixels, width, height,
@@ -475,7 +737,7 @@ static void render_inbox(uint32_t *pixels, uint32_t stride_pixels,
     bool ai_busy = ai_query_running();
     render_splash(pixels, stride_pixels, width, height);
     draw_text(pixels, stride_pixels, width, height,
-              "INBOX", ui_scale(width, 12), ui_x(width, 54),
+              "Входящие", ui_scale(width, 12), ui_x(width, 54),
               ui_y(height, 345), 0x00F5F8FC);
 
     fill_soft_rect(pixels, stride_pixels, width, height,
@@ -483,38 +745,38 @@ static void render_inbox(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 300),
                    ui_x(width, 44), 0x0013443C);
     draw_text(pixels, stride_pixels, width, height,
-              "ALL CLEAR", ui_scale(width, 9), ui_x(width, 92),
+              "Всё спокойно", ui_scale(width, 9), ui_x(width, 92),
               ui_y(height, 520), 0x00FFFFFF);
     draw_text(pixels, stride_pixels, width, height,
-              "NO PENDING APPROVALS", ui_scale(width, 5), ui_x(width, 92),
+              "Нет ожидающих подтверждений", ui_scale(width, 5), ui_x(width, 92),
               ui_y(height, 605), 0x00A6C7C1);
     draw_text(pixels, stride_pixels, width, height,
-              "SAFETY DECISIONS WILL APPEAR HERE", ui_scale(width, 4),
+              "Решения безопасности появятся здесь", ui_scale(width, 4),
               ui_x(width, 92), ui_y(height, 670), 0x0074CFC0);
 
     draw_text(pixels, stride_pixels, width, height,
-              "ACTIVITY", ui_scale(width, 5), ui_x(width, 58),
+              "Активность", ui_scale(width, 5), ui_x(width, 58),
               ui_y(height, 800), 0x008EA8C6);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 845),
                    ui_x(width, 972), ui_y(height, 500),
                    ui_x(width, 40), 0x001B252D);
     draw_text(pixels, stride_pixels, width, height,
-              "LOCAL AI", ui_scale(width, 6), ui_x(width, 160),
+              "Локальный ИИ", ui_scale(width, 6), ui_x(width, 160),
               ui_y(height, 950), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
-              ai_busy ? "ANSWER IN PROGRESS" :
-              (ai_ready ? "READY ON THIS PHONE" : "RUNTIME OFFLINE"),
+              ai_busy ? "Готовится ответ" :
+              (ai_ready ? "Готов на этом телефоне" : "Служба не запущена"),
               ui_scale(width, 4), ui_x(width, 160),
               ui_y(height, 1005), ai_ready ? 0x0074CFC0 : 0x00D58B80);
     fill_rect(pixels, stride_pixels, width, height,
               ui_x(width, 90), ui_y(height, 1090),
               ui_x(width, 900), ui_y(height, 2), 0x0033414B);
     draw_text(pixels, stride_pixels, width, height,
-              "SYSTEM EVENTS", ui_scale(width, 6), ui_x(width, 160),
+              "Системные события", ui_scale(width, 6), ui_x(width, 160),
               ui_y(height, 1190), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
-              "NO ACTION REQUIRED", ui_scale(width, 4), ui_x(width, 160),
+              "Действий не требуется", ui_scale(width, 4), ui_x(width, 160),
               ui_y(height, 1245), 0x008EA8C6);
 
     fill_soft_rect(pixels, stride_pixels, width, height,
@@ -522,13 +784,13 @@ static void render_inbox(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 300),
                    ui_x(width, 40), 0x00152238);
     draw_text(pixels, stride_pixels, width, height,
-              "INBOX IS FOR ATTENTION", ui_scale(width, 7),
+              "Здесь только важное", ui_scale(width, 7),
               ui_x(width, 92), ui_y(height, 1535), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
-              "APPROVALS - RESULTS - ALERTS", ui_scale(width, 5),
+              "Подтверждения - результаты - предупреждения", ui_scale(width, 4),
               ui_x(width, 92), ui_y(height, 1630), 0x008EA8C6);
     draw_text(pixels, stride_pixels, width, height,
-              "NOT A LIST OF APPS", ui_scale(width, 5),
+              "Не список приложений", ui_scale(width, 5),
               ui_x(width, 92), ui_y(height, 1690), 0x0074CFC0);
     render_root_controls(pixels, stride_pixels, width, height, 1);
 }
@@ -536,15 +798,15 @@ static void render_inbox(uint32_t *pixels, uint32_t stride_pixels,
 static void render_spaces(uint32_t *pixels, uint32_t stride_pixels,
                           uint32_t width, uint32_t height) {
     static const char *const modules[] = {
-        "OVERVIEW", "NETWORK", "SOUND", "BLUETOOTH", "ASSISTANT"
+        "Обзор", "Сеть", "Звук", "Bluetooth", "Помощник"
     };
     static const char *const notes[] = {
-        "PHONE AND POWER", "WIFI AND ADDRESS", "VOLUME AND TEST",
-        "NEARBY AND SAVED", "LOCAL AI"
+        "Телефон и питание", "Wi-Fi и адрес", "Громкость и тест",
+        "Рядом и сохранённые", "Локальный ИИ"
     };
     render_splash(pixels, stride_pixels, width, height);
     draw_text(pixels, stride_pixels, width, height,
-              "SPACES", ui_scale(width, 12), ui_x(width, 54),
+              "Пространства", ui_scale(width, 10), ui_x(width, 54),
               ui_y(height, 345), 0x00F5F8FC);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 420),
@@ -572,7 +834,7 @@ static void render_spaces(uint32_t *pixels, uint32_t stride_pixels,
         }
     }
     draw_text(pixels, stride_pixels, width, height,
-              "MODULES WORK WITHOUT AI", ui_scale(width, 5),
+              "Модули работают без ИИ", ui_scale(width, 5),
               ui_x(width, 58), ui_y(height, 1835), 0x0074CFC0);
     render_root_controls(pixels, stride_pixels, width, height, 2);
 }
@@ -582,7 +844,7 @@ static void render_me(uint32_t *pixels, uint32_t stride_pixels,
     bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
     render_splash(pixels, stride_pixels, width, height);
     draw_text(pixels, stride_pixels, width, height,
-              "ME", ui_scale(width, 12), ui_x(width, 54),
+              "Я", ui_scale(width, 12), ui_x(width, 54),
               ui_y(height, 345), 0x00F5F8FC);
 
     fill_soft_rect(pixels, stride_pixels, width, height,
@@ -594,27 +856,27 @@ static void render_me(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 118), ui_y(height, 118),
                    ui_x(width, 38), 0x0074CFC0);
     draw_text(pixels, stride_pixels, width, height,
-              "OWNER", ui_scale(width, 10), ui_x(width, 250),
+              "Владелец", ui_scale(width, 10), ui_x(width, 250),
               ui_y(height, 535), 0x00FFFFFF);
     draw_text(pixels, stride_pixels, width, height,
-              "PRIVATE LOCAL SESSION", ui_scale(width, 5),
+              "Приватная локальная сессия", ui_scale(width, 5),
               ui_x(width, 92), ui_y(height, 680), 0x00A6C7C1);
     draw_text(pixels, stride_pixels, width, height,
-              "DATA STAYS ON THIS PHONE", ui_scale(width, 5),
+              "Данные остаются на телефоне", ui_scale(width, 5),
               ui_x(width, 92), ui_y(height, 750), 0x0074CFC0);
 
     draw_text(pixels, stride_pixels, width, height,
-              "PRIVACY AND CONTROL", ui_scale(width, 5), ui_x(width, 58),
+              "Приватность и контроль", ui_scale(width, 5), ui_x(width, 58),
               ui_y(height, 885), 0x008EA8C6);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 930),
                    ui_x(width, 972), ui_y(height, 620),
                    ui_x(width, 40), 0x001B252D);
     static const char *const labels[] = {
-        "LOCAL AI", "NETWORK ACCESS", "APPROVAL POLICY"
+        "Локальный ИИ", "Доступ к сети", "Подтверждения"
     };
     const char *values[] = {
-        ai_ready ? "READY" : "OFFLINE", "USB API ONLY", "CONFIRM RISKY ACTIONS"
+        ai_ready ? "Готов" : "Не запущен", "Только USB API", "Для рискованных действий"
     };
     for (int index = 0; index < 3; ++index) {
         int center = 1020 + index * 190;
@@ -636,10 +898,10 @@ static void render_me(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 180),
                    ui_x(width, 40), 0x00152238);
     draw_text(pixels, stride_pixels, width, height,
-              "SAAIOS NATIVE", ui_scale(width, 7), ui_x(width, 92),
+              "SaaiOS Native", ui_scale(width, 7), ui_x(width, 92),
               ui_y(height, 1700), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
-              "PIXEL 7 - PANTHER", ui_scale(width, 5), ui_x(width, 92),
+              "Pixel 7 - panther", ui_scale(width, 5), ui_x(width, 92),
               ui_y(height, 1770), 0x008EA8C6);
     render_root_controls(pixels, stride_pixels, width, height, 3);
 }

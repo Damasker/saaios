@@ -11,6 +11,7 @@ tinyalsa_dir=${TINYALSA_DIR:?set TINYALSA_DIR}
 source_dir="$script_dir/src"
 scripts_dir="$script_dir/scripts"
 config_dir="$script_dir/config"
+assets_dir="$script_dir/assets"
 build_dir=${BUILD_DIR:-/var/tmp/saaios-panther/native-c}
 bin_dir=${BIN_DIR:-"$repo_root/dist/panther/bin"}
 output=${OUTPUT:-"$repo_root/dist/panther/saaios-panther-init_boot.img"}
@@ -36,7 +37,7 @@ mkdir -p "$bin_dir" "$(dirname -- "$output")"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     -I/usr/include/libdrm \
-    "$source_dir/drm-splash.c" -o "$drm_splash"
+    "$source_dir/drm-splash.c" -o "$drm_splash" -lm
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/touch-monitor.c" -o "$touch_monitor"
@@ -90,6 +91,10 @@ set -- ramdisk.cpio \
     "add 0755 saaios/saaios-runtime $artifacts/saaios-runtime-panther-tcp" \
     "add 0755 saaios/saaios-console $artifacts/saaios-console-panther-tcp" \
     "add 0755 saaios/drm-splash $drm_splash" \
+    "mkdir 0755 saaios/fonts" \
+    "add 0644 saaios/fonts/Inter-Regular.ttf $assets_dir/fonts/Inter-Regular.ttf" \
+    "add 0644 saaios/fonts/Inter-SemiBold.ttf $assets_dir/fonts/Inter-SemiBold.ttf" \
+    "add 0644 saaios/fonts/OFL-1.1.txt $assets_dir/fonts/OFL-1.1.txt" \
     "add 0755 saaios/touch-monitor $touch_monitor" \
     "add 0755 saaios/wifi-scan $wifi_scan" \
     "add 0755 saaios/sntp-sync $sntp_sync" \
