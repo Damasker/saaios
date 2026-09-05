@@ -101,6 +101,13 @@ separate from the direct system-module catalog for Wi-Fi, sound, Bluetooth,
 diagnostics, and the local assistant. Per-context entity and memory isolation
 remain a later service-layer milestone.
 
+The transition from this bring-up shell to independent applications is governed
+by [ADR-005](../../../docs/adr/ADR-005-owned-wayland-application-platform.md),
+the [application-platform architecture](../../../docs/os/architecture/application-platform.md),
+and the [sprint roadmap](../../../docs/os/sprints/README.md). The current DRM
+shell remains the verified boot/recovery fallback while `saai-displayd`,
+`saai-shell`, and `saai-appd` are delivered as separate vertical slices.
+
 Pixel colors are packed in the panel's native BGRX byte layout before
 scanout. Antialiased glyph blending decodes the same layout before mixing, so
 text and rounded surfaces preserve the intended RGB colors.

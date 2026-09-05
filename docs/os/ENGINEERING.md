@@ -1,5 +1,11 @@
 # Engineering rules (OS track)
 
+The sprint workflow, Definition of Ready/Done and quality gates are defined in
+[DEVELOPMENT_PROCESS.md](DEVELOPMENT_PROCESS.md),
+[QUALITY.md](QUALITY.md), and the [sprint roadmap](sprints/README.md). This file
+continues to define the mandatory shape and rollback discipline of every small
+OS-track change.
+
 Every task, including worker-only software steps:
 
 ```text

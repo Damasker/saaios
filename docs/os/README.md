@@ -2,6 +2,14 @@
 
 Native bootable OS. Not Android. Not a Debian install. Platform Track (`crates/`, `services/`) stays a Linux userspace AI runtime (ADR-001, ADR-004).
 
+Product and delivery sources of truth:
+
+- [Product principles](PRODUCT-PRINCIPLES.md)
+- [Wayland application-platform architecture](architecture/application-platform.md)
+- [Development process and Definition of Done](DEVELOPMENT_PROCESS.md)
+- [Quality strategy](QUALITY.md)
+- [Sprint roadmap](sprints/README.md)
+
 ```text
               SaaiOS OS
                  │
