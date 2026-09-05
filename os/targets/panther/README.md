@@ -83,6 +83,11 @@ request. The native CONSOLE page uses this mode for three touch actions:
 `SYSTEM HEALTH`, `NETWORK CHECK`, and `STORAGE CHECK`. Results from the local
 model are normalized and rendered directly on the phone display.
 
+The native shell uses a phone-oriented layout: a compact status bar, a 2x2 app
+launcher, a wide assistant card, rounded content cards, explicit back targets,
+a bottom home indicator, and touchable Bluetooth tabs. Rendering and hit regions
+share a 1080x2400 design coordinate system that scales to the active DRM mode.
+
 For a local Ollama provider on the USB host, bind Ollama only to the host side
 of the gadget network, restart Ollama, and pull the tested compact model:
 
