@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -47,6 +48,18 @@ static bool bluetooth_saved_view = false;
 static int bluetooth_forget_candidate = -1;
 static bool panel_native_bgrx = true;
 static bool display_calibration_mode = false;
+static int active_space = 0;
+
+static const char *const space_names[] = {
+    "Дом", "Работа", "Личное", "SaaiOS"
+};
+static const char *const space_notes[] = {
+    "Сеть, устройства и домашние задачи",
+    "Рабочие задачи и выбранные объекты",
+    "Личные задачи и выбранные объекты",
+    "Система, диагностика и разработка"
+};
+#define SPACE_COUNT ((int)(sizeof(space_names) / sizeof(space_names[0])))
 
 static bool ai_query_running(void);
 
@@ -762,12 +775,17 @@ static void render_root_controls(uint32_t *pixels, uint32_t stride_pixels,
     static const char *const tabs[] = {
         "Сейчас", "Входящие", "Пространства", "Я"
     };
+    bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
+    char context_label[64];
+    snprintf(context_label, sizeof(context_label), "%s - %s",
+             space_names[active_space],
+             ai_ready ? "локальный ИИ" : "без ИИ");
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 145),
                    ui_x(width, 972), ui_y(height, 112),
                    ui_x(width, 32), 0x00222D36);
     draw_text(pixels, stride_pixels, width, height,
-              "Дом - локальный ИИ", ui_scale(width, 6), ui_x(width, 92),
+              context_label, ui_scale(width, 6), ui_x(width, 92),
               ui_y(height, 201), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
               "V", ui_scale(width, 5), ui_x(width, 958),
@@ -817,6 +835,15 @@ static void render_launcher(uint32_t *pixels, uint32_t stride_pixels,
     (void)active;
     bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
     bool data_ready = access("/data/saaios/.layout", R_OK) == 0;
+    static const char *const ready_titles[] = {
+        "Дом готов", "Рабочий контекст", "Личное пространство", "SaaiOS готова"
+    };
+    static const char *const ready_notes[] = {
+        "Сеть, устройства и локальный ИИ",
+        "Рабочие задачи в одном месте",
+        "Личные задачи в одном месте",
+        "Диагностика и системные модули"
+    };
     render_splash(pixels, stride_pixels, width, height);
     draw_text(pixels, stride_pixels, width, height,
               "Сейчас", ui_scale(width, 12), ui_x(width, 54),
@@ -830,11 +857,12 @@ static void render_launcher(uint32_t *pixels, uint32_t stride_pixels,
               "Важно сейчас", ui_scale(width, 5), ui_x(width, 92),
               ui_y(height, 485), 0x0074CFC0);
     draw_text(pixels, stride_pixels, width, height,
-              ai_ready && data_ready ? "Телефон готов" : "Телефон запускается",
-              ui_scale(width, ai_ready && data_ready ? 10 : 8), ui_x(width, 92),
+              ai_ready && data_ready ? ready_titles[active_space] :
+              "Телефон запускается",
+              ui_scale(width, ai_ready && data_ready ? 9 : 8), ui_x(width, 92),
               ui_y(height, 585), 0x00FFFFFF);
     draw_text(pixels, stride_pixels, width, height,
-              ai_ready ? "Локальный ИИ и службы в сети" :
+              ai_ready ? ready_notes[active_space] :
               "Основные службы запускаются", ui_scale(width, 5),
               ui_x(width, 92), ui_y(height, 665), 0x00A6C7C1);
     fill_soft_rect(pixels, stride_pixels, width, height,
@@ -967,6 +995,52 @@ static void render_inbox(uint32_t *pixels, uint32_t stride_pixels,
 
 static void render_spaces(uint32_t *pixels, uint32_t stride_pixels,
                           uint32_t width, uint32_t height) {
+    render_splash(pixels, stride_pixels, width, height);
+    draw_text(pixels, stride_pixels, width, height,
+              "Пространства", ui_scale(width, 10), ui_x(width, 54),
+              ui_y(height, 345), 0x00F5F8FC);
+    for (int index = 0; index < SPACE_COUNT; ++index) {
+        int top = 420 + index * 235;
+        uint32_t card_color = index == active_space
+            ? 0x0013443C : 0x001B252D;
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, 54), ui_y(height, top),
+                       ui_x(width, 972), ui_y(height, 220),
+                       ui_x(width, 38), card_color);
+        fill_soft_rect(pixels, stride_pixels, width, height,
+                       ui_x(width, 92), ui_y(height, top + 55),
+                       ui_x(width, 78), ui_y(height, 78),
+                       ui_x(width, 24), index == active_space
+                       ? 0x0074CFC0 : 0x002D5E85);
+        draw_text(pixels, stride_pixels, width, height,
+                  space_names[index], ui_scale(width, 7), ui_x(width, 210),
+                  ui_y(height, top + 78), 0x00F5F8FC);
+        draw_text(pixels, stride_pixels, width, height,
+                  space_notes[index], ui_scale(width, 4), ui_x(width, 210),
+                  ui_y(height, top + 145), 0x008EA8C6);
+        draw_text(pixels, stride_pixels, width, height,
+                  index == active_space ? "OK" : ">", ui_scale(width, 6),
+                  ui_x(width, index == active_space ? 922 : 950),
+                  ui_y(height, top + 100), 0x0074CFC0);
+    }
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 54), ui_y(height, 1450),
+                   ui_x(width, 972), ui_y(height, 280),
+                   ui_x(width, 40), 0x00152238);
+    draw_text(pixels, stride_pixels, width, height,
+              "Системные модули", ui_scale(width, 7), ui_x(width, 92),
+              ui_y(height, 1545), 0x00F5F8FC);
+    draw_text(pixels, stride_pixels, width, height,
+              "Сеть, звук, Bluetooth и диагностика", ui_scale(width, 4),
+              ui_x(width, 92), ui_y(height, 1620), 0x008EA8C6);
+    draw_text(pixels, stride_pixels, width, height,
+              ">", ui_scale(width, 7), ui_x(width, 950),
+              ui_y(height, 1580), 0x0074CFC0);
+    render_root_controls(pixels, stride_pixels, width, height, 2);
+}
+
+static void render_modules(uint32_t *pixels, uint32_t stride_pixels,
+                           uint32_t width, uint32_t height) {
     static const char *const modules[] = {
         "Обзор", "Сеть", "Звук", "Bluetooth", "Помощник"
     };
@@ -974,16 +1048,14 @@ static void render_spaces(uint32_t *pixels, uint32_t stride_pixels,
         "Телефон и питание", "Wi-Fi и адрес", "Громкость и тест",
         "Рядом и сохранённые", "Локальный ИИ"
     };
-    render_splash(pixels, stride_pixels, width, height);
-    draw_text(pixels, stride_pixels, width, height,
-              "Пространства", ui_scale(width, 10), ui_x(width, 54),
-              ui_y(height, 345), 0x00F5F8FC);
+    render_page_chrome(pixels, stride_pixels, width, height,
+                       "Системные модули");
     fill_soft_rect(pixels, stride_pixels, width, height,
-                   ui_x(width, 54), ui_y(height, 420),
-                   ui_x(width, 972), ui_y(height, 1310),
+                   ui_x(width, 54), ui_y(height, 470),
+                   ui_x(width, 972), ui_y(height, 1260),
                    ui_x(width, 44), 0x001B252D);
     for (int index = 0; index < 5; ++index) {
-        int center = 525 + index * 245;
+        int center = 560 + index * 235;
         fill_soft_rect(pixels, stride_pixels, width, height,
                        ui_x(width, 92), ui_y(height, center - 55),
                        ui_x(width, 78), ui_y(height, 78),
@@ -999,14 +1071,13 @@ static void render_spaces(uint32_t *pixels, uint32_t stride_pixels,
                   ui_y(height, center + 15), 0x0074CFC0);
         if (index < 4) {
             fill_rect(pixels, stride_pixels, width, height,
-                      ui_x(width, 90), ui_y(height, center + 125),
+                      ui_x(width, 90), ui_y(height, center + 115),
                       ui_x(width, 900), ui_y(height, 2), 0x0033414B);
         }
     }
     draw_text(pixels, stride_pixels, width, height,
-              "Модули работают без ИИ", ui_scale(width, 5),
+              "Работают напрямую, даже без ИИ", ui_scale(width, 5),
               ui_x(width, 58), ui_y(height, 1835), 0x0074CFC0);
-    render_root_controls(pixels, stride_pixels, width, height, 2);
 }
 
 static void render_me(uint32_t *pixels, uint32_t stride_pixels,
@@ -1140,6 +1211,49 @@ static bool read_first_line(const char *path, char *value, size_t value_size) {
     }
     value[strcspn(value, "\r\n")] = '\0';
     return value[0] != '\0';
+}
+
+static void load_active_space(void) {
+    char value[16] = {0};
+    if (!read_first_line("/data/saaios/var/ui/active-space",
+                         value, sizeof(value))) {
+        return;
+    }
+    char *end = NULL;
+    long selected = strtol(value, &end, 10);
+    if (end != value && selected >= 0 && selected < SPACE_COUNT) {
+        active_space = (int)selected;
+    }
+}
+
+static bool save_active_space(void) {
+    static const char *const directory = "/data/saaios/var/ui";
+    static const char *const temporary =
+        "/data/saaios/var/ui/active-space.tmp";
+    static const char *const destination =
+        "/data/saaios/var/ui/active-space";
+    if (mkdir(directory, 0700) < 0 && errno != EEXIST) {
+        return false;
+    }
+    int file = open(temporary,
+                    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (file < 0) {
+        return false;
+    }
+    char value[16];
+    int length = snprintf(value, sizeof(value), "%d\n", active_space);
+    bool saved = length > 0 &&
+        write(file, value, (size_t)length) == (ssize_t)length &&
+        fsync(file) == 0;
+    if (close(file) < 0) {
+        saved = false;
+    }
+    if (!saved || chmod(temporary, 0600) < 0 ||
+        rename(temporary, destination) < 0) {
+        (void)unlink(temporary);
+        return false;
+    }
+    return true;
 }
 
 #define AI_LINE_CHARS 26
@@ -1926,6 +2040,8 @@ static void render_page(uint32_t *pixels, uint32_t stride_pixels,
         render_spaces(pixels, stride_pixels, width, height);
     } else if (page == 8) {
         render_me(pixels, stride_pixels, width, height);
+    } else if (page == 9) {
+        render_modules(pixels, stride_pixels, width, height);
     } else {
         render_launcher(pixels, stride_pixels, width, height,
                         selection, active);
@@ -1990,6 +2106,14 @@ static bool root_intent_at(int x, int y,
     return false;
 }
 
+static bool root_context_at(int x, int y,
+                            uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
+    return design_x >= 54 && design_x < 1026 &&
+           design_y >= 145 && design_y < 275;
+}
+
 static int now_action_at(int x, int y,
                          uint32_t width, uint32_t height) {
     int design_x = (int)((int64_t)x * 1080 / width);
@@ -2011,9 +2135,22 @@ static int space_action_at(int x, int y,
                            uint32_t width, uint32_t height) {
     int design_x = (int)((int64_t)x * 1080 / width);
     int design_y = (int)((int64_t)y * 2400 / height);
+    if (design_x < 54 || design_x >= 1026) return -1;
+    if (design_y >= 420 && design_y < 1360) {
+        int item = (design_y - 420) / 235;
+        return item < SPACE_COUNT ? item : -1;
+    }
+    if (design_y >= 1450 && design_y < 1730) return SPACE_COUNT;
+    return -1;
+}
+
+static int module_action_at(int x, int y,
+                            uint32_t width, uint32_t height) {
+    int design_x = (int)((int64_t)x * 1080 / width);
+    int design_y = (int)((int64_t)y * 2400 / height);
     if (design_x < 54 || design_x >= 1026 ||
-        design_y < 420 || design_y >= 1730) return -1;
-    int item = (design_y - 420) / 245;
+        design_y < 470 || design_y >= 1645) return -1;
+    int item = (design_y - 470) / 235;
     return item < 5 ? item + 1 : -1;
 }
 
@@ -2309,6 +2446,7 @@ int main(void) {
     bool locked = true;
     uint64_t last_activity_ms = monotonic_milliseconds();
     int page = 0;
+    load_active_space();
     render_locked_display(pixels, create.pitch / sizeof(uint32_t),
                           create.width, create.height);
     msync(pixels, create.size, MS_SYNC);
@@ -2362,6 +2500,8 @@ int main(void) {
     int root_touch_tab = -1;
     int root_touch_action = -1;
     bool root_touch_intent = false;
+    bool root_touch_context = false;
+    int module_touch_action = -1;
     int bluetooth_touch_item = -1;
     int bluetooth_touch_tab = -1;
     int console_touch_item = -1;
@@ -2518,6 +2658,8 @@ int main(void) {
                         root_touch_tab = -1;
                         root_touch_action = -1;
                         root_touch_intent = false;
+                        root_touch_context = false;
+                        module_touch_action = -1;
                         bluetooth_touch_item = -1;
                         bluetooth_touch_tab = -1;
                         console_touch_item = -1;
@@ -2528,10 +2670,14 @@ int main(void) {
                                 touch_x, touch_y, create.width, create.height);
                             root_touch_intent = root_intent_at(
                                 touch_x, touch_y, create.width, create.height);
+                            root_touch_context = root_context_at(
+                                touch_x, touch_y, create.width, create.height);
                             if (root_touch_tab >= 0) {
                                 touched_item = 200 + root_touch_tab;
                             } else if (root_touch_intent) {
                                 touched_item = 210;
+                            } else if (root_touch_context) {
+                                touched_item = 211;
                             } else if (page == 0) {
                                 root_touch_action = now_action_at(
                                     touch_x, touch_y,
@@ -2543,6 +2689,11 @@ int main(void) {
                                     create.width, create.height);
                                 touched_item = root_touch_action;
                             }
+                        } else if (page == 9) {
+                            module_touch_action = module_action_at(
+                                touch_x, touch_y,
+                                create.width, create.height);
+                            touched_item = module_touch_action;
                         } else if (page == 3) {
                             sound_touch_action = sound_action_at(
                                 touch_x, touch_y, create.width, create.height);
@@ -2588,6 +2739,10 @@ int main(void) {
                             ai_keyboard_open = true;
                             page = 5;
                             active = true;
+                        } else if (root_page(page) && root_touch_context) {
+                            selection = 2;
+                            page = 7;
+                            active = false;
                         } else if (page == 0 && root_touch_action >= 0) {
                             if (root_touch_action == 0) {
                                 start_ai_query(0);
@@ -2601,8 +2756,22 @@ int main(void) {
                                 start_bluetooth_scan();
                             }
                             active = true;
-                        } else if (page == 7 && root_touch_action >= 1) {
-                            page = root_touch_action;
+                        } else if (page == 7 && root_touch_action >= 0) {
+                            if (root_touch_action < SPACE_COUNT) {
+                                active_space = root_touch_action;
+                                if (!save_active_space()) {
+                                    fprintf(stderr,
+                                            "drm-splash: space save failed\n");
+                                }
+                                selection = 0;
+                                page = 0;
+                                active = false;
+                            } else {
+                                page = 9;
+                                active = true;
+                            }
+                        } else if (page == 9 && module_touch_action >= 1) {
+                            page = module_touch_action;
                             if (page == 4) {
                                 bluetooth_saved_view = false;
                                 bluetooth_forget_candidate = -1;
@@ -2662,7 +2831,13 @@ int main(void) {
                                 clear_ai_prompt();
                                 ai_keyboard_open = false;
                             }
-                            page = 0;
+                            if (page == 9) {
+                                page = 7;
+                                selection = 2;
+                            } else {
+                                page = 0;
+                                selection = 0;
+                            }
                             active = false;
                             bluetooth_forget_candidate = -1;
                         }
@@ -2674,6 +2849,8 @@ int main(void) {
                         root_touch_tab = -1;
                         root_touch_action = -1;
                         root_touch_intent = false;
+                        root_touch_context = false;
+                        module_touch_action = -1;
                         bluetooth_touch_item = -1;
                         bluetooth_touch_tab = -1;
                         console_touch_item = -1;

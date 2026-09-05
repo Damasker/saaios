@@ -94,6 +94,13 @@ intent field from any root destination opens the on-screen keyboard. Rendering
 and hit regions share a 1080x2400 design coordinate system that scales to the
 active DRM mode.
 
+The shell now provides persistent `Дом`, `Работа`, `Личное`, and `SaaiOS`
+context selection. The selected value changes the root header and current-state
+card, survives a cold reboot in a mode-`0600` local state file, and stays
+separate from the direct system-module catalog for Wi-Fi, sound, Bluetooth,
+diagnostics, and the local assistant. Per-context entity and memory isolation
+remain a later service-layer milestone.
+
 Pixel colors are packed in the panel's native BGRX byte layout before
 scanout. Antialiased glyph blending decodes the same layout before mixing, so
 text and rounded surfaces preserve the intended RGB colors.
