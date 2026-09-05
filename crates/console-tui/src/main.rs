@@ -24,6 +24,10 @@ struct Args {
     /// Connect to a TCP runtime instead of a Unix socket.
     #[arg(long, env = "SAAIOS_TCP")]
     tcp: Option<String>,
+
+    /// Ask one question, print the final answer, and exit without a TUI.
+    #[arg(long)]
+    ask: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +176,9 @@ impl App {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let endpoint = RuntimeEndpoint::from_args(&args);
+    if let Some(text) = args.ask.as_deref() {
+        return ask_once(&endpoint, text).await;
+    }
     let mut app = App::new(endpoint.clone());
 
     match request(&endpoint, &ClientRequest::Ping).await {
@@ -192,6 +199,30 @@ async fn main() -> Result<()> {
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     result
+}
+
+async fn ask_once(endpoint: &RuntimeEndpoint, text: &str) -> Result<()> {
+    let (resp, _) = request_stream(
+        endpoint,
+        &ClientRequest::Diagnose {
+            text: text.to_string(),
+            session_id: None,
+            stream: true,
+        },
+        |_| None,
+    )
+    .await?;
+    if let Some(error) = resp.error {
+        anyhow::bail!(error);
+    }
+    if resp.pending.is_some() {
+        anyhow::bail!("confirmation required");
+    }
+    let diagnose = resp
+        .diagnose
+        .context("runtime response did not contain a final answer")?;
+    println!("{}", diagnose.summary.trim());
+    Ok(())
 }
 
 async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Result<()> {

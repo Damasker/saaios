@@ -30,6 +30,8 @@ static int haptic_fd = -1;
 static int haptic_effect_id = -1;
 static pid_t bluetooth_scan_pid = -1;
 static pid_t bluetooth_pair_pid = -1;
+static pid_t ai_query_pid = -1;
+static int ai_last_action = -1;
 static bool bluetooth_saved_view = false;
 static int bluetooth_forget_candidate = -1;
 
@@ -129,12 +131,14 @@ static const char *glyph(char character) {
         case 'G': return "01111" "10000" "10000" "10111" "10001" "10001" "01111";
         case 'H': return "10001" "10001" "10001" "11111" "10001" "10001" "10001";
         case 'I': return "11111" "00100" "00100" "00100" "00100" "00100" "11111";
+        case 'J': return "00111" "00010" "00010" "00010" "10010" "10010" "01100";
         case 'K': return "10001" "10010" "10100" "11000" "10100" "10010" "10001";
         case 'L': return "10000" "10000" "10000" "10000" "10000" "10000" "11111";
         case 'M': return "10001" "11011" "10101" "10101" "10001" "10001" "10001";
         case 'N': return "10001" "11001" "10101" "10011" "10001" "10001" "10001";
         case 'O': return "01110" "10001" "10001" "10001" "10001" "10001" "01110";
         case 'P': return "11110" "10001" "10001" "11110" "10000" "10000" "10000";
+        case 'Q': return "01110" "10001" "10001" "10001" "10101" "10010" "01101";
         case 'R': return "11110" "10001" "10001" "11110" "10100" "10010" "10001";
         case 'T': return "11111" "00100" "00100" "00100" "00100" "00100" "00100";
         case 'U': return "10001" "10001" "10001" "10001" "10001" "10001" "01110";
@@ -155,6 +159,8 @@ static const char *glyph(char character) {
         case '9': return "01110" "10001" "10001" "01111" "00001" "00001" "01110";
         case '.': return "00000" "00000" "00000" "00000" "00000" "00100" "00100";
         case '-': return "00000" "00000" "00000" "11111" "00000" "00000" "00000";
+        case ':': return "00000" "00100" "00100" "00000" "00100" "00100" "00000";
+        case '%': return "11001" "11010" "00100" "01000" "10110" "00110" "00000";
         default:  return "00000" "00000" "00000" "00000" "00000" "00000" "00000";
     }
 }
@@ -189,7 +195,6 @@ static void render_splash(uint32_t *pixels, uint32_t stride_pixels,
         uint32_t blue = 22 + (42 * y) / (height ? height : 1);
         uint32_t green = 7 + (13 * y) / (height ? height : 1);
         uint32_t red = 5 + (8 * y) / (height ? height : 1);
-        uint32_t color = (red << 16) | (green << 8) | blue;
         for (uint32_t x = 0; x < width; ++x) {
             uint32_t glow_x = x > width / 2 ? x - width / 2 : width / 2 - x;
             uint32_t glow_y = y > height / 2 ? y - height / 2 : height / 2 - y;
@@ -313,6 +318,110 @@ static bool read_first_line(const char *path, char *value, size_t value_size) {
     }
     value[strcspn(value, "\r\n")] = '\0';
     return value[0] != '\0';
+}
+
+#define AI_LINE_CHARS 26
+
+static bool ai_query_running(void) {
+    if (ai_query_pid <= 0) {
+        return false;
+    }
+    if (kill(ai_query_pid, 0) == 0 || errno == EPERM) {
+        return true;
+    }
+    ai_query_pid = -1;
+    return false;
+}
+
+static int read_ai_lines(char lines[][AI_LINE_CHARS + 1], int maximum) {
+    FILE *file = fopen("/run/saaios-ai-ui.log", "r");
+    if (!file) {
+        return 0;
+    }
+    char flat[768] = {0};
+    size_t length = 0;
+    bool pending_space = false;
+    int value;
+    while (length + 1 < sizeof(flat) && (value = fgetc(file)) != EOF) {
+        unsigned char character = (unsigned char)value;
+        char mapped = '\0';
+        if (character >= 'a' && character <= 'z') {
+            mapped = (char)(character - 'a' + 'A');
+        } else if ((character >= 'A' && character <= 'Z') ||
+                   (character >= '0' && character <= '9') ||
+                   character == '.' || character == '-' ||
+                   character == ':' || character == '%') {
+            mapped = (char)character;
+        } else {
+            pending_space = length > 0;
+        }
+        if (mapped) {
+            if (pending_space && length + 1 < sizeof(flat) &&
+                flat[length - 1] != ' ') {
+                flat[length++] = ' ';
+            }
+            pending_space = false;
+            flat[length++] = mapped;
+        }
+    }
+    fclose(file);
+    flat[length] = '\0';
+    if (length == 0) {
+        return 0;
+    }
+
+    int count = 0;
+    char *save = NULL;
+    for (char *word = strtok_r(flat, " ", &save);
+         word && count < maximum;
+         word = strtok_r(NULL, " ", &save)) {
+        size_t word_length = strlen(word);
+        if (word_length > AI_LINE_CHARS) {
+            word[AI_LINE_CHARS] = '\0';
+            word_length = AI_LINE_CHARS;
+        }
+        size_t line_length = count > 0 ? strlen(lines[count - 1]) : 0;
+        if (count == 0 || line_length + 1 + word_length > AI_LINE_CHARS) {
+            snprintf(lines[count], AI_LINE_CHARS + 1, "%s", word);
+            ++count;
+        } else {
+            strncat(lines[count - 1], " ", AI_LINE_CHARS - line_length);
+            line_length = strlen(lines[count - 1]);
+            strncat(lines[count - 1], word, AI_LINE_CHARS - line_length);
+        }
+    }
+    return count;
+}
+
+static void start_ai_query(int selected) {
+    static const char *const prompts[] = {
+        "Use system.metrics exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize CPU, free memory, and load. Do not call any other tool.",
+        "Use network.status exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize interfaces and connectivity. Do not call any other tool.",
+        "Use system.disk exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize total and free storage. Do not call any other tool."
+    };
+    if (selected < 0 || selected >= (int)(sizeof(prompts) / sizeof(prompts[0])) ||
+        ai_query_running()) {
+        return;
+    }
+    (void)unlink("/run/saaios-ai-ui.log");
+    ai_last_action = selected;
+    pid_t child = fork();
+    if (child == 0) {
+        int log = open("/run/saaios-ai-ui.log",
+                       O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+        if (log >= 0) {
+            (void)dup2(log, STDOUT_FILENO);
+            (void)dup2(log, STDERR_FILENO);
+            close(log);
+        }
+        execl("/saaios/saaios-console", "saaios-console",
+              "--ask", prompts[selected], NULL);
+        dprintf(STDOUT_FILENO, "MODEL OFFLINE\n");
+        _exit(127);
+    }
+    if (child > 0) {
+        ai_query_pid = child;
+    }
 }
 
 static void render_networks(uint32_t *pixels, uint32_t stride_pixels,
@@ -614,15 +723,46 @@ static void render_status(uint32_t *pixels, uint32_t stride_pixels,
 
 static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                            uint32_t width, uint32_t height) {
+    static const char *const labels[] = {
+        "SYSTEM HEALTH", "NETWORK CHECK", "STORAGE CHECK"
+    };
+    bool running = ai_query_running();
+    char lines[4][AI_LINE_CHARS + 1] = {{0}};
+    int line_count = running ? 0 : read_ai_lines(lines, 4);
     render_splash(pixels, stride_pixels, width, height);
     draw_word(pixels, stride_pixels, width, height,
-              "CONSOLE", 13, 700, 0x00FFFFFF);
+              "AI CONSOLE", 11, 430, 0x00FFFFFF);
     draw_word(pixels, stride_pixels, width, height,
-              "USB CONSOLE", 10, 1120, 0x0000E7A8);
+              access("/tmp/saaios.sock", R_OK) == 0
+                  ? "LOCAL AI READY" : "RUNTIME OFFLINE",
+              8, 565,
+              access("/tmp/saaios.sock", R_OK) == 0
+                  ? 0x0000E7A8 : 0x00E78A68);
+    for (int index = 0; index < 3; ++index) {
+        int top = 680 + index * 260;
+        uint32_t color = index == ai_last_action
+            ? 0x00285F98 : 0x001D426B;
+        fill_rect(pixels, stride_pixels, width, height,
+                  70, top, (int)width - 140, 185, color);
+        draw_word(pixels, stride_pixels, width, height,
+                  labels[index], 9, top + 93, 0x00FFFFFF);
+    }
+    if (running) {
+        draw_word(pixels, stride_pixels, width, height,
+                  "AI THINKING", 10, 1560, 0x0000E7FF);
+    } else if (line_count > 0) {
+        for (int index = 0; index < line_count; ++index) {
+            int scale = strlen(lines[index]) > 22 ? 6 : 7;
+            draw_word(pixels, stride_pixels, width, height,
+                      lines[index], scale, 1510 + index * 125,
+                      0x00B7CBE2);
+        }
+    } else {
+        draw_word(pixels, stride_pixels, width, height,
+                  "TOUCH A CHECK", 9, 1620, 0x008CA9C8);
+    }
     draw_word(pixels, stride_pixels, width, height,
-              "READY", 12, 1360, 0x0000E7A8);
-    draw_word(pixels, stride_pixels, width, height,
-              "TOUCH TO GO BACK", 7, 2040, 0x005B789A);
+              "TOUCH EMPTY TO BACK", 7, 2110, 0x005B789A);
 }
 
 static void render_sound(uint32_t *pixels, uint32_t stride_pixels,
@@ -828,6 +968,16 @@ static int menu_item_at(int y) {
     for (int index = 0; index < 5; ++index) {
         int top = 680 + index * 275;
         if (y >= top && y < top + 195) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+static int console_item_at(int y) {
+    for (int index = 0; index < 3; ++index) {
+        int top = 680 + index * 260;
+        if (y >= top && y < top + 185) {
             return index;
         }
     }
@@ -1053,6 +1203,7 @@ int main(void) {
     int touch_x = 0;
     int touch_y = 0;
     int bluetooth_touch_item = -1;
+    int console_touch_item = -1;
     bool position_changed = false;
     bool touch_released = false;
     for (;;) {
@@ -1145,6 +1296,9 @@ int main(void) {
                         } else if (page == 4) {
                             bluetooth_touch_item = bluetooth_item_at(touch_y);
                             touched_item = bluetooth_touch_item;
+                        } else if (page == 5) {
+                            console_touch_item = console_item_at(touch_y);
+                            touched_item = console_touch_item;
                         }
                         draw_touch_marker(pixels,
                             create.pitch / sizeof(uint32_t),
@@ -1170,6 +1324,9 @@ int main(void) {
                                 start_bluetooth_pair(bluetooth_touch_item);
                             }
                             active = true;
+                        } else if (page == 5 && console_touch_item >= 0) {
+                            start_ai_query(console_touch_item);
+                            active = true;
                         } else if (page != 0) {
                             page = 0;
                             active = false;
@@ -1191,6 +1348,7 @@ int main(void) {
                         fprintf(stderr, "drm-splash: activated item=%d\n",
                                 selection);
                         bluetooth_touch_item = -1;
+                        console_touch_item = -1;
                         touch_released = false;
                     }
                 }
