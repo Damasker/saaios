@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -158,7 +158,7 @@ impl App {
             lines: vec![
                 "SaaiOS Console 0.5".into(),
                 "Type a question and press Enter. Example: Почему система тормозит?".into(),
-                "Confirm: y=once, s=session, n=cancel | h=status | e=events | a=audit | m=memory | g=grants | c=clear | q=quit"
+                "Confirm: y=once, s=session, n=cancel | Ctrl+H=status | Ctrl+E=events | Ctrl+A=audit | Ctrl+M=memory | Ctrl+G=grants | Ctrl+C=clear | Ctrl+Q=quit"
                     .into(),
                 "Chat: multi-turn session kept across prompts | /new resets | /remember key=value"
                     .into(),
@@ -206,8 +206,9 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                let control = key.modifiers.contains(KeyModifiers::CONTROL);
                 match key.code {
-                    KeyCode::Char('q') if app.pending.is_none() && app.input.is_empty() => break,
+                    KeyCode::Char('q') if control => break,
                     KeyCode::Char('y') | KeyCode::Char('Y') if app.pending.is_some() => {
                         confirm(app, ConfirmScope::Once).await?;
                     }
@@ -217,22 +218,22 @@ async fn run_loop(terminal: &mut Terminal<impl Backend>, app: &mut App) -> Resul
                     KeyCode::Char('n') | KeyCode::Char('N') if app.pending.is_some() => {
                         confirm(app, ConfirmScope::Cancel).await?;
                     }
-                    KeyCode::Char('a') if app.pending.is_none() && app.input.is_empty() => {
+                    KeyCode::Char('a') if control && app.pending.is_none() => {
                         show_audit(app).await?;
                     }
-                    KeyCode::Char('h') if app.pending.is_none() && app.input.is_empty() => {
+                    KeyCode::Char('h') if control && app.pending.is_none() => {
                         show_status(app).await?;
                     }
-                    KeyCode::Char('e') if app.pending.is_none() && app.input.is_empty() => {
+                    KeyCode::Char('e') if control && app.pending.is_none() => {
                         show_events(app).await?;
                     }
-                    KeyCode::Char('m') if app.pending.is_none() && app.input.is_empty() => {
+                    KeyCode::Char('m') if control && app.pending.is_none() => {
                         show_memory(app).await?;
                     }
-                    KeyCode::Char('g') if app.pending.is_none() && app.input.is_empty() => {
+                    KeyCode::Char('g') if control && app.pending.is_none() => {
                         show_grants(app).await?;
                     }
-                    KeyCode::Char('c') if app.pending.is_none() && app.input.is_empty() => {
+                    KeyCode::Char('c') if control && app.pending.is_none() => {
                         clear_grants(app).await?;
                     }
                     KeyCode::Enter => {
