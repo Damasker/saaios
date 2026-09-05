@@ -24,8 +24,12 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeEvent {
-    AssistantDelta { text: String },
-    Assistant { text: String },
+    AssistantDelta {
+        text: String,
+    },
+    Assistant {
+        text: String,
+    },
     ToolCall {
         call_id: Uuid,
         tool: String,
@@ -43,9 +47,15 @@ pub enum RuntimeEvent {
         verdict: String,
         reason: String,
     },
-    Confirmation { request: ConfirmationRequest },
-    Completed { diagnose: DiagnoseResult },
-    Error { message: String },
+    Confirmation {
+        request: ConfirmationRequest,
+    },
+    Completed {
+        diagnose: DiagnoseResult,
+    },
+    Error {
+        message: String,
+    },
 }
 
 fn emit_progress(tx: &Option<mpsc::Sender<RuntimeEvent>>, event: RuntimeEvent) {
@@ -223,15 +233,9 @@ impl AiRuntime {
         }
 
         let history = self.conversations.get(session_id);
-        let mut messages = vec![ChatMessage {
-            role: "system".into(),
-            content: system,
-        }];
+        let mut messages = vec![ChatMessage::text("system", system)];
         messages.extend(history);
-        messages.push(ChatMessage {
-            role: "user".into(),
-            content: text.to_string(),
-        });
+        messages.push(ChatMessage::text("user", text));
 
         let tool_defs = self.tool_definitions();
         let mut diagnose = DiagnoseResult {
@@ -267,12 +271,23 @@ impl AiRuntime {
                 .complete_with_progress(
                     &messages,
                     &tool_defs,
-                    if forward_deltas { Some(&delta_tx) } else { None },
+                    if forward_deltas {
+                        Some(&delta_tx)
+                    } else {
+                        None
+                    },
                 )
                 .instrument(iter_span)
                 .await?;
             drop(delta_tx);
             let _ = pump.await;
+
+            if response.assistant_text.is_some() || !response.tool_calls.is_empty() {
+                messages.push(ChatMessage::assistant_with_tools(
+                    response.assistant_text.clone(),
+                    &response.tool_calls,
+                ));
+            }
 
             if let Some(text) = response.assistant_text.clone() {
                 let env = Envelope::new(
@@ -285,10 +300,6 @@ impl AiRuntime {
                 self.audit.append_envelope(&env)?;
                 self.bus.publish_envelope(env);
                 diagnose.summary = text.clone();
-                messages.push(ChatMessage {
-                    role: "assistant".into(),
-                    content: text.clone(),
-                });
                 let ev = RuntimeEvent::Assistant { text };
                 emit_progress(&progress, ev.clone());
                 events.push(ev);
@@ -397,10 +408,10 @@ impl AiRuntime {
                             error: Some(decision.reason.clone()),
                         };
                         self.record_tool_result(correlation_id, last_causation, &result)?;
-                        messages.push(ChatMessage {
-                            role: "user".into(),
-                            content: format!("tool_result:{tool_name} DENIED: {}", decision.reason),
-                        });
+                        messages.push(ChatMessage::tool_result(
+                            call_id,
+                            format!("tool_result:{tool_name} DENIED: {}", decision.reason),
+                        ));
                         let ev = RuntimeEvent::ToolResult {
                             call_id,
                             tool: tool_name.clone(),
@@ -486,13 +497,13 @@ impl AiRuntime {
                                 diagnose.culprit_name = Some(top.1);
                             }
                         }
-                        messages.push(ChatMessage {
-                            role: "user".into(),
-                            content: format!(
+                        messages.push(ChatMessage::tool_result(
+                            call_id,
+                            format!(
                                 "tool_result:{tool_name} {}",
                                 serde_json::to_string(&output.value).unwrap_or_default()
                             ),
-                        });
+                        ));
                         let ev = RuntimeEvent::ToolResult {
                             call_id,
                             tool: tool_name.clone(),
@@ -550,11 +561,7 @@ impl AiRuntime {
 
     fn persist_history(&self, session_id: Uuid, messages: &[ChatMessage]) {
         // Drop the rebuilt system prompt; keep dialogue + tool turns.
-        let history: Vec<ChatMessage> = messages
-            .iter()
-            .skip(1)
-            .cloned()
-            .collect();
+        let history: Vec<ChatMessage> = messages.iter().skip(1).cloned().collect();
         self.conversations.save(session_id, history);
     }
 
@@ -607,10 +614,10 @@ impl AiRuntime {
                 if let Some(sid) = session_id {
                     self.conversations.append(
                         sid,
-                        ChatMessage {
-                            role: "user".into(),
-                            content: format!("tool_result:{tool} CANCELLED by user"),
-                        },
+                        ChatMessage::tool_result(
+                            call_id,
+                            format!("tool_result:{tool} CANCELLED by user"),
+                        ),
                     );
                 }
                 return Ok(ToolCallResult {
@@ -669,13 +676,8 @@ impl AiRuntime {
                         result.error.as_deref().unwrap_or("failed")
                     )
                 };
-                self.conversations.append(
-                    sid,
-                    ChatMessage {
-                        role: "user".into(),
-                        content,
-                    },
-                );
+                self.conversations
+                    .append(sid, ChatMessage::tool_result(call_id, content));
             }
             info!(%correlation_id, %tool, ok = result.ok, "confirmed tool executed");
             Ok(result)

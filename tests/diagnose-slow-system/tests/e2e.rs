@@ -121,13 +121,7 @@ async fn multi_turn_session_remembers_prior_diagnose() {
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(32);
-    let runtime = AiRuntime::new(
-        tools,
-        policy,
-        audit,
-        bus,
-        Arc::new(MockModelProvider),
-    );
+    let runtime = AiRuntime::new(tools, policy, audit, bus, Arc::new(MockModelProvider));
 
     let first = runtime
         .handle_user_text_in_session("Почему тормозит?", None, None)
@@ -158,13 +152,7 @@ async fn progress_channel_receives_tool_events() {
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(32);
-    let runtime = AiRuntime::new(
-        tools,
-        policy,
-        audit,
-        bus,
-        Arc::new(MockModelProvider),
-    );
+    let runtime = AiRuntime::new(tools, policy, audit, bus, Arc::new(MockModelProvider));
     let (tx, mut rx) = tokio::sync::mpsc::channel(64);
     let outcome = runtime
         .handle_user_text_in_session("Почему тормозит?", None, Some(tx))
@@ -179,7 +167,13 @@ async fn progress_channel_receives_tool_events() {
             _ => {}
         }
     }
-    assert!(saw_tool || outcome.events.iter().any(|e| matches!(e, ai_runtime::RuntimeEvent::ToolCall { .. })));
+    assert!(
+        saw_tool
+            || outcome
+                .events
+                .iter()
+                .any(|e| matches!(e, ai_runtime::RuntimeEvent::ToolCall { .. }))
+    );
     assert!(
         saw_delta
             || outcome

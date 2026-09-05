@@ -74,7 +74,7 @@ fn trim_messages(mut messages: Vec<ChatMessage>, max: usize) -> Vec<ChatMessage>
     // Avoid starting mid tool_result without prior assistant context when possible.
     while messages
         .first()
-        .is_some_and(|m| m.role == "user" && m.content.starts_with("tool_result:"))
+        .is_some_and(|m| m.role == "tool" && m.content.starts_with("tool_result:"))
     {
         messages.remove(0);
     }
@@ -90,9 +90,11 @@ mod tests {
         let store = ConversationStore::new(4);
         let sid = Uuid::new_v4();
         let msgs: Vec<_> = (0..6)
-            .map(|i| ChatMessage {
-                role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
-                content: format!("m{i}"),
+            .map(|i| {
+                ChatMessage::text(
+                    if i % 2 == 0 { "user" } else { "assistant" },
+                    format!("m{i}"),
+                )
             })
             .collect();
         store.save(sid, msgs);

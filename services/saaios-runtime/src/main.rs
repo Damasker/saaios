@@ -23,10 +23,10 @@ use tool_registry::ToolRegistry;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-mod event_feed;
 mod ab_status;
-use event_feed::{EventFeed, FeedItem};
+mod event_feed;
 use ab_status::{ab_root_from_env, read_ab_status, AbStatus};
+use event_feed::{EventFeed, FeedItem};
 
 #[derive(Debug, Parser)]
 #[command(name = "saaios-runtime", about = "SaaiOS Platform runtime")]

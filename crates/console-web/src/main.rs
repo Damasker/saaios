@@ -150,7 +150,9 @@ async fn main() -> Result<()> {
             ));
         }
         if args.token.is_none() {
-            warn!("LAN bind without token (--allow-open): anyone on the network can control SaaiOS");
+            warn!(
+                "LAN bind without token (--allow-open): anyone on the network can control SaaiOS"
+            );
         }
         if tls.is_none() {
             warn!("LAN bind without TLS — prefer --tls-cert/--tls-key on untrusted networks");
@@ -224,17 +226,17 @@ async fn require_token(
 }
 
 fn token_matches(expected: &str, headers: &HeaderMap, query: Option<&str>) -> bool {
-    if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+    if let Some(auth) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
         if let Some(rest) = auth.strip_prefix("Bearer ") {
             if rest == expected {
                 return true;
             }
         }
     }
-    if let Some(t) = headers
-        .get("x-saaios-token")
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(t) = headers.get("x-saaios-token").and_then(|v| v.to_str().ok()) {
         if t == expected {
             return true;
         }
@@ -312,7 +314,10 @@ async fn app_css() -> impl IntoResponse {
 
 async fn app_js() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
         include_str!("../static/app.js"),
     )
 }

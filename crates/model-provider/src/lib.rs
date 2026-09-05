@@ -11,6 +11,66 @@ use uuid::Uuid;
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ChatToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+impl ChatMessage {
+    pub fn text(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+
+    pub fn assistant_with_tools(content: Option<String>, calls: &[ProposedToolCall]) -> Self {
+        Self {
+            role: "assistant".into(),
+            content: content.unwrap_or_default(),
+            tool_calls: calls.iter().map(ChatToolCall::from).collect(),
+            tool_call_id: None,
+        }
+    }
+
+    pub fn tool_result(call_id: Uuid, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".into(),
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some(call_id.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ChatToolFunction,
+}
+
+impl From<&ProposedToolCall> for ChatToolCall {
+    fn from(call: &ProposedToolCall) -> Self {
+        Self {
+            id: call.call_id.to_string(),
+            kind: "function".into(),
+            function: ChatToolFunction {
+                name: call.name.clone(),
+                arguments: serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".into()),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatToolFunction {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,9 +208,7 @@ impl ModelProvider for MockModelProvider {
                 || last.contains("name"))
         {
             return Ok(ModelResponse {
-                assistant_text: Some(
-                    "Ранее найденный виновник — runaway-worker, pid 4312.".into(),
-                ),
+                assistant_text: Some("Ранее найденный виновник — runaway-worker, pid 4312.".into()),
                 tool_calls: vec![],
             });
         }
@@ -440,9 +498,8 @@ impl ModelProvider for OpenAiCompatProvider {
                                 tool_acc[idx].0 = name.to_string();
                             }
                         }
-                        if let Some(args) = item
-                            .pointer("/function/arguments")
-                            .and_then(|v| v.as_str())
+                        if let Some(args) =
+                            item.pointer("/function/arguments").and_then(|v| v.as_str())
                         {
                             tool_acc[idx].1.push_str(args);
                         }
@@ -606,14 +663,7 @@ mod tests {
         let p = MockModelProvider;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let resp = p
-            .complete_with_progress(
-                &[ChatMessage {
-                    role: "user".into(),
-                    content: "hello".into(),
-                }],
-                &[],
-                Some(&tx),
-            )
+            .complete_with_progress(&[ChatMessage::text("user", "hello")], &[], Some(&tx))
             .await
             .unwrap();
         drop(tx);
@@ -630,13 +680,7 @@ mod tests {
     async fn mock_provider_diagnose_path() {
         let p = MockModelProvider;
         let resp = p
-            .complete(
-                &[ChatMessage {
-                    role: "user".into(),
-                    content: "Почему тормозит?".into(),
-                }],
-                &[],
-            )
+            .complete(&[ChatMessage::text("user", "Почему тормозит?")], &[])
             .await
             .unwrap();
         assert_eq!(resp.tool_calls[0].name, "system.metrics");
@@ -661,13 +705,7 @@ mod tests {
 
         let fb = FallbackProvider::new(vec![Arc::new(Boom), Arc::new(MockModelProvider)]);
         let resp = fb
-            .complete(
-                &[ChatMessage {
-                    role: "user".into(),
-                    content: "hello".into(),
-                }],
-                &[],
-            )
+            .complete(&[ChatMessage::text("user", "hello")], &[])
             .await
             .unwrap();
         assert!(resp.assistant_text.is_some());
@@ -679,6 +717,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(p.name(), "mock");
+    }
+
+    #[test]
+    fn serializes_openai_tool_exchange() {
+        let call = ProposedToolCall {
+            call_id: Uuid::nil(),
+            name: "system.metrics".into(),
+            arguments: json!({}),
+        };
+        let assistant = serde_json::to_value(ChatMessage::assistant_with_tools(
+            None,
+            std::slice::from_ref(&call),
+        ))
+        .unwrap();
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["tool_calls"][0]["id"], Uuid::nil().to_string());
+        assert_eq!(
+            assistant["tool_calls"][0]["function"]["name"],
+            "system.metrics"
+        );
+
+        let result = serde_json::to_value(ChatMessage::tool_result(
+            call.call_id,
+            "tool_result:system.metrics {}",
+        ))
+        .unwrap();
+        assert_eq!(result["role"], "tool");
+        assert_eq!(result["tool_call_id"], Uuid::nil().to_string());
+        assert!(result.get("tool_calls").is_none());
     }
 
     #[test]

@@ -53,10 +53,7 @@ impl RuntimeEndpoint {
 }
 
 trait RuntimeStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
-impl<T> RuntimeStream for T where
-    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send
-{
-}
+impl<T> RuntimeStream for T where T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -325,7 +322,11 @@ async fn diagnose(app: &mut App, text: &str) -> Result<()> {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "-".into());
             if let Some(grants) = resp.session_grants {
-                app.status = format!("ok | session={} | grants={}", &sid[..8.min(sid.len())], grants.join(","));
+                app.status = format!(
+                    "ok | session={} | grants={}",
+                    &sid[..8.min(sid.len())],
+                    grants.join(",")
+                );
             } else {
                 app.status = format!("ok | session={}", &sid[..8.min(sid.len())]);
             }
@@ -471,10 +472,7 @@ async fn show_status(app: &mut App) -> Result<()> {
                 if let Some(ab) = st.get("ab") {
                     let enabled = ab.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
                     if enabled {
-                        let current = ab
-                            .get("current")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?");
+                        let current = ab.get("current").and_then(|v| v.as_str()).unwrap_or("?");
                         let mut slot_bits = Vec::new();
                         if let Some(slots) = ab.get("slots").and_then(|v| v.as_array()) {
                             for s in slots {
@@ -483,10 +481,8 @@ async fn show_status(app: &mut App) -> Result<()> {
                                     .get("binary_present")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false);
-                                let ok = s
-                                    .get("boot_ok")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
+                                let ok =
+                                    s.get("boot_ok").and_then(|v| v.as_bool()).unwrap_or(false);
                                 slot_bits.push(format!(
                                     "{name}[bin={},ok={}]",
                                     if bin { "y" } else { "n" },
@@ -494,10 +490,8 @@ async fn show_status(app: &mut App) -> Result<()> {
                                 ));
                             }
                         }
-                        app.lines.push(format!(
-                            "ab current={current} {}",
-                            slot_bits.join(" ")
-                        ));
+                        app.lines
+                            .push(format!("ab current={current} {}", slot_bits.join(" ")));
                     } else {
                         app.lines.push("ab=disabled (no layout)".into());
                     }
@@ -726,8 +720,8 @@ where
         if line.is_empty() {
             continue;
         }
-        let value: serde_json::Value = serde_json::from_str(line)
-            .with_context(|| format!("parse stream line: {line}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(line).with_context(|| format!("parse stream line: {line}"))?;
         match value.get("type").and_then(|v| v.as_str()) {
             Some("progress") => {
                 if let Some(s) = on_progress(&value) {
