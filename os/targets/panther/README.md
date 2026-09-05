@@ -78,6 +78,11 @@ The runtime keeps its local Unix socket active alongside USB TCP. The packaged
 host clients use `--tcp 172.31.7.1:38127`. Both transports expose the complete
 conversation, status, memory, audit and confirmation flow.
 
+The console client also supports `--ask "question"` for a single non-interactive
+request. The native CONSOLE page uses this mode for three touch actions:
+`SYSTEM HEALTH`, `NETWORK CHECK`, and `STORAGE CHECK`. Results from the local
+model are normalized and rendered directly on the phone display.
+
 For a local Ollama provider on the USB host, bind Ollama only to the host side
 of the gadget network, restart Ollama, and pull the tested compact model:
 
