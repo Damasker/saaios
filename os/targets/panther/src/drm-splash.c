@@ -639,7 +639,7 @@ static void render_lock_screen(uint32_t *pixels, uint32_t stride_pixels,
               "Экран заблокирован", ui_scale(width, 7),
               ui_y(height, 1535), 0x00F4F7F8);
     draw_word(pixels, stride_pixels, width, height,
-              ai_ready ? "Локальный ИИ готов" : "Службы запускаются",
+              ai_ready ? "Системный слой готов" : "Службы запускаются",
               ui_scale(width, 5), ui_y(height, 1625),
               ai_ready ? 0x006FCABD : 0x00A9B4BA);
     draw_word(pixels, stride_pixels, width, height,
@@ -960,11 +960,11 @@ static void render_inbox(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 500),
                    ui_x(width, 40), 0x001B252D);
     draw_text(pixels, stride_pixels, width, height,
-              "Локальный ИИ", ui_scale(width, 6), ui_x(width, 160),
+              "Системный интеллект", ui_scale(width, 6), ui_x(width, 160),
               ui_y(height, 950), 0x00F5F8FC);
     draw_text(pixels, stride_pixels, width, height,
-              ai_busy ? "Готовится ответ" :
-              (ai_ready ? "Готов на этом телефоне" : "Служба не запущена"),
+              ai_busy ? "Анализирует состояние" :
+              (ai_ready ? "Готов на устройстве" : "Служба не запущена"),
               ui_scale(width, 4), ui_x(width, 160),
               ui_y(height, 1005), ai_ready ? 0x0074CFC0 : 0x00D58B80);
     fill_rect(pixels, stride_pixels, width, height,
@@ -1042,11 +1042,11 @@ static void render_spaces(uint32_t *pixels, uint32_t stride_pixels,
 static void render_modules(uint32_t *pixels, uint32_t stride_pixels,
                            uint32_t width, uint32_t height) {
     static const char *const modules[] = {
-        "Обзор", "Сеть", "Звук", "Bluetooth", "Помощник"
+        "Обзор", "Сеть", "Звук", "Bluetooth", "Устройство"
     };
     static const char *const notes[] = {
         "Телефон и питание", "Wi-Fi и адрес", "Громкость и тест",
-        "Рядом и сохранённые", "Локальный ИИ"
+        "Рядом и сохранённые", "Состояние и действия"
     };
     render_page_chrome(pixels, stride_pixels, width, height,
                        "Системные модули");
@@ -1114,7 +1114,7 @@ static void render_me(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 620),
                    ui_x(width, 40), 0x001B252D);
     static const char *const labels[] = {
-        "Локальный ИИ", "Доступ к сети", "Подтверждения"
+        "Системный интеллект", "Доступ к сети", "Подтверждения"
     };
     const char *values[] = {
         ai_ready ? "Готов" : "Не запущен", "Только USB API", "Для рискованных действий"
@@ -1356,7 +1356,7 @@ static void start_ai_request(const char *prompt, int action) {
 
 static void start_ai_query(int selected) {
     static const char *const prompts[] = {
-        "Use system.metrics exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize CPU, free memory, and load. Do not call any other tool.",
+        "Use system.identity exactly once. Reply as the running operating system in at most three short lines in uppercase ASCII English. State SAAIOS, the observed device target or class, and boot slot when known. Do not claim anything absent from the tool result. Do not call any other tool.",
         "Use network.status exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize interfaces and connectivity. Do not call any other tool.",
         "Use system.disk exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize total and free storage. Do not call any other tool."
     };
@@ -1785,12 +1785,12 @@ static void render_keyboard(uint32_t *pixels, uint32_t stride_pixels,
 static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                            uint32_t width, uint32_t height) {
     static const char *const labels[] = {
-        "SYSTEM HEALTH", "NETWORK CHECK", "STORAGE CHECK"
+        "CHECK DEVICE", "CHECK NETWORK", "CHECK STORAGE"
     };
     bool running = ai_query_running();
     char lines[4][AI_LINE_CHARS + 1] = {{0}};
     int line_count = running ? 0 : read_ai_lines(lines, 4);
-    render_page_chrome(pixels, stride_pixels, width, height, "ASSISTANT");
+    render_page_chrome(pixels, stride_pixels, width, height, "DEVICE");
     bool runtime_ready = access("/tmp/saaios.sock", F_OK) == 0;
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 455),
@@ -1801,7 +1801,7 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 44), ui_y(height, 44),
                    ui_x(width, 14), runtime_ready ? 0x0000CFA0 : 0x00D56D6D);
     draw_text(pixels, stride_pixels, width, height,
-              runtime_ready ? "LOCAL AI READY" : "RUNTIME OFFLINE",
+              runtime_ready ? "SAAIOS CORE ACTIVE" : "SYSTEM CORE OFFLINE",
               ui_scale(width, 7), ui_x(width, 170), ui_y(height, 510),
               runtime_ready ? 0x00C8F7EA : 0x00FFD0D0);
 
@@ -1814,11 +1814,11 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 86), ui_y(height, 86),
                    ui_x(width, 26), 0x006C63FF);
     draw_text(pixels, stride_pixels, width, height,
-              "ASK A QUESTION", ui_scale(width, 9), ui_x(width, 215),
+              "SET AN INTENT", ui_scale(width, 9), ui_x(width, 215),
               ui_y(height, 730), 0x00FFFFFF);
 
     draw_text(pixels, stride_pixels, width, height,
-              "QUICK CHECKS", ui_scale(width, 6), ui_x(width, 58),
+              "DEVICE ACTIONS", ui_scale(width, 6), ui_x(width, 58),
               ui_y(height, 905), 0x008EA8C6);
     for (int index = 0; index < 3; ++index) {
         int top = 950 + index * 190;
@@ -1841,11 +1841,11 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 570),
                    ui_x(width, 44), 0x00101C2E);
     draw_text(pixels, stride_pixels, width, height,
-              "AI RESPONSE", ui_scale(width, 6), ui_x(width, 92),
+              "SYSTEM RESULT", ui_scale(width, 6), ui_x(width, 92),
               ui_y(height, 1610), 0x007E96B2);
     if (running) {
         draw_word(pixels, stride_pixels, width, height,
-                  "AI THINKING", ui_scale(width, 9), ui_y(height, 1810),
+                  "SYSTEM WORKING", ui_scale(width, 9), ui_y(height, 1810),
                   0x008C86FF);
     } else if (line_count > 0) {
         for (int index = 0; index < line_count; ++index) {
@@ -1856,7 +1856,7 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
         }
     } else {
         draw_word(pixels, stride_pixels, width, height,
-                  "ASK ANYTHING", ui_scale(width, 7),
+                  "READY FOR AN INTENT", ui_scale(width, 7),
                   ui_y(height, 1810), 0x008CA9C8);
     }
 }

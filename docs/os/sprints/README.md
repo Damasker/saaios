@@ -10,16 +10,17 @@ Roadmap описывает порядок доказуемых вертикал�
 | ID | Результат | Состояние | Зависит от |
 |---|---|---|---|
 | S00 | Архитектура и процесс | Done | рабочий DRM UI |
-| S01 | Wayland vertical slice на host | Ready | S00 |
-| S02 | `saai-displayd` на Pixel 7 | Backlog | S01 |
-| S03 | Отдельный `saai-shell` и lock | Backlog | S02 |
-| S04 | Приложения, manifest и lifecycle | Backlog | S03 |
-| S05 | Настоящие пространства и entity store | Backlog | S04 |
-| S06 | Capability, sandbox и portals | Backlog | S04, S05 |
-| S07 | GTK и Qt/Kirigami совместимость | Backlog | S06 |
-| S08 | Intent → Task → Action workflow | Backlog | S05, S06 |
-| S09 | Planner, automation и memory | Backlog | S08 |
-| S10 | GPU, power, update и release gate | Backlog | S03–S09 |
+| S01 | Системная идентичность | In progress | S00 |
+| S02 | Wayland vertical slice на host | Backlog | S01 |
+| S03 | `saai-displayd` на Pixel 7 | Backlog | S02 |
+| S04 | Отдельный `saai-shell` и lock | Backlog | S03 |
+| S05 | Приложения, manifest и lifecycle | Backlog | S04 |
+| S06 | Настоящие пространства и entity store | Backlog | S05 |
+| S07 | Capability, sandbox и portals | Backlog | S05, S06 |
+| S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
+| S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
+| S10 | Planner, automation и memory | Backlog | S09 |
+| S11 | GPU, power, update и release gate | Backlog | S04–S10 |
 
 ## S00 — Архитектура и процесс
 
@@ -38,9 +39,27 @@ rollback policy; документы связаны из основного ин�
 успешно выполнил format, clippy, workspace tests и e2e. Изменений phone image,
 разделов и userdata не было.
 
-## S01 — Wayland vertical slice на host
+## S01 — Системная идентичность
 
-Рабочий паспорт и декомпозиция: [S01-wayland-host-vertical-slice.md](S01-wayland-host-vertical-slice.md).
+Рабочий паспорт и декомпозиция: [S01-system-identity.md](S01-system-identity.md).
+
+**Goal:** система получает удостоверенный локальный DeviceContext и говорит о
+Pixel 7 как работающая SaaiOS, а не как внешний чат-помощник.
+
+**Scope:** `system.identity`, контекст planner, runtime status, target от PID 1,
+переименование системного экрана и физический тест двух запросов. Полный
+device-state service и новые изменяющие actions не входят.
+
+**Acceptance:** runtime и tool согласованно возвращают
+`SaaiOS / native_device / phone / panther`; UI использует модель намерения и
+системного результата; модель не отрицает установленную SaaiOS; контекст не
+содержит идентификаторов пользователя; image проходит rollback gate.
+
+**Rollback:** физически проверенный образ commit `7b29c62`; Android slot B.
+
+## S02 — Wayland vertical slice на host
+
+Рабочий паспорт и декомпозиция: [S02-wayland-host-vertical-slice.md](S02-wayland-host-vertical-slice.md).
 
 **Goal:** два независимых процесса показывают первую настоящую поверхность
 через прототип `saai-displayd` без телефона.
@@ -56,7 +75,7 @@ ADR о framework; CI воспроизводит сценарий.
 **Rollback:** workspace остаётся на текущем C DRM UI; новый сервис не входит в
 phone image.
 
-## S02 — `saai-displayd` на Pixel 7
+## S03 — `saai-displayd` на Pixel 7
 
 **Goal:** тот же тестовый Wayland-клиент выводится на реальный экран и получает
 касания.
@@ -72,7 +91,7 @@ DRM fallback и USB-консоль; холодная загрузка воспр
 **Rollback:** физически проверенный образ, предшествующий S02; слот B не
 изменяется.
 
-## S03 — Отдельный `saai-shell` и lock screen
+## S04 — Отдельный `saai-shell` и lock screen
 
 **Goal:** текущая мобильная оболочка становится независимым системным клиентом.
 
@@ -86,7 +105,7 @@ DRM fallback и USB-консоль; холодная загрузка воспр
 
 **Rollback:** `drm-splash` включается как boot/recovery UI.
 
-## S04 — Manifest и жизненный цикл приложений
+## S05 — Manifest и жизненный цикл приложений
 
 **Goal:** SaaiOS устанавливает и управляет первым отдельным приложением.
 
@@ -101,7 +120,7 @@ duplicate id отвергаются; crash loop ограничен.
 **Rollback:** отключить `saai-appd` и удалить только каталог demo-app, сохранив
 shell и recovery.
 
-## S05 — Пространства и entity store
+## S06 — Пространства и entity store
 
 **Goal:** `Дом`, `Работа`, `Личное` и `SaaiOS` становятся настоящими областями
 данных, а не только сохранённым UI-переключателем.
@@ -117,7 +136,7 @@ shell и recovery.
 **Rollback:** read-only возврат к предыдущей schema и восстановление backup;
 никакой молчаливой downgrade-записи.
 
-## S06 — Capability, sandbox и portals
+## S07 — Capability, sandbox и portals
 
 **Goal:** приложение получает только явно разрешённые действия и данные.
 
@@ -132,7 +151,7 @@ filesystem/network mediation, системный permission surface, portal дл
 **Rollback:** сторонние приложения отключаются целиком; системные приложения
 продолжают работать с минимальным статическим набором capability.
 
-## S07 — GTK и Qt/Kirigami совместимость
+## S08 — GTK и Qt/Kirigami совместимость
 
 **Goal:** по одному настоящему адаптивному приложению обоих toolkit работает
 как обычный клиент SaaiOS.
@@ -147,7 +166,7 @@ filesystem/network mediation, системный permission surface, portal дл
 
 **Rollback:** удалить соответствующий runtime bundle без изменения shell.
 
-## S08 — Intent → Task → Action
+## S09 — Intent → Task → Action
 
 **Goal:** строка намерения создаёт наблюдаемый рабочий процесс, а не только
 чатовый запрос.
@@ -162,7 +181,7 @@ filesystem/network mediation, системный permission surface, portal дл
 
 **Rollback:** workflow становится read-only; ручные модули продолжают работать.
 
-## S09 — Planner, automation и memory
+## S10 — Planner, automation и memory
 
 **Goal:** локальный ИИ предлагает планы и автоматизацию внутри видимых границ.
 
@@ -175,7 +194,7 @@ filesystem/network mediation, системный permission surface, portal дл
 
 **Rollback:** остановить planner/automation workers, сохранив объекты и аудит.
 
-## S10 — Производительность, питание и release gate
+## S11 — Производительность, питание и release gate
 
 **Goal:** новый стек становится стабильным основным UI для ежедневного
 использования на тестовом Pixel 7.

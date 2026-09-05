@@ -36,11 +36,118 @@ pub enum ToolsMode {
     RealLinux,
 }
 
+/// A bounded, non-secret identity snapshot for the running SaaiOS instance.
+/// Values come from the launch environment or local kernel interfaces only.
+pub fn system_identity(mode: ToolsMode) -> Value {
+    if mode == ToolsMode::Mock {
+        return json!({
+            "schema": 1,
+            "system": "SaaiOS",
+            "deployment": "test_fixture",
+            "device_class": "virtual",
+            "target": "mock",
+            "hardware_model": "SaaiOS deterministic test device",
+            "architecture": std::env::consts::ARCH,
+            "kernel_release": "mock",
+            "boot_slot": null,
+            "observed_by": "local_runtime"
+        });
+    }
+
+    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    let native_marker = Path::new("/saaios").exists() || Path::new("/data/saaios").exists();
+    let configured_target = bounded_fact(std::env::var("SAAIOS_DEVICE_TARGET").ok());
+    let configured_class = bounded_fact(std::env::var("SAAIOS_DEVICE_CLASS").ok());
+    let configured_deployment = bounded_fact(std::env::var("SAAIOS_DEPLOYMENT").ok());
+    let hardware_model = read_bounded_fact(&[
+        "/proc/device-tree/model",
+        "/sys/devices/virtual/dmi/id/product_name",
+    ]);
+    let kernel_release = read_bounded_fact(&["/proc/sys/kernel/osrelease"]);
+    let boot_hardware = bounded_fact(cmdline_value(&cmdline, "androidboot.hardware"));
+    let boot_slot = bounded_fact(cmdline_value(&cmdline, "androidboot.slot_suffix"))
+        .map(|slot| slot.trim_start_matches('_').to_string())
+        .filter(|slot| !slot.is_empty());
+    let target = configured_target.or(boot_hardware);
+    let device_class = configured_class.unwrap_or_else(|| {
+        let looks_like_phone = target.as_deref() == Some("panther")
+            || hardware_model
+                .as_deref()
+                .is_some_and(|model| model.to_ascii_lowercase().contains("pixel"));
+        if looks_like_phone {
+            "phone"
+        } else {
+            "computer"
+        }
+        .to_string()
+    });
+    let deployment = configured_deployment.unwrap_or_else(|| {
+        if native_marker {
+            "native_device"
+        } else {
+            "linux_host"
+        }
+        .to_string()
+    });
+
+    json!({
+        "schema": 1,
+        "system": "SaaiOS",
+        "deployment": deployment,
+        "device_class": device_class,
+        "target": target,
+        "hardware_model": hardware_model,
+        "architecture": std::env::consts::ARCH,
+        "kernel_release": kernel_release,
+        "boot_slot": boot_slot,
+        "observed_by": "local_runtime"
+    })
+}
+
+fn read_bounded_fact(paths: &[&str]) -> Option<String> {
+    paths.iter().find_map(|path| {
+        let bytes = std::fs::read(path).ok()?;
+        let raw = String::from_utf8_lossy(&bytes).replace('\0', " ");
+        bounded_fact(Some(raw))
+    })
+}
+
+fn bounded_fact(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let cleaned: String = value
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(160)
+        .collect();
+    let cleaned = cleaned.trim();
+    (!cleaned.is_empty()).then(|| cleaned.to_string())
+}
+
+fn cmdline_value(cmdline: &str, key: &str) -> Option<String> {
+    cmdline.split_whitespace().find_map(|part| {
+        let (candidate, value) = part.split_once('=')?;
+        (candidate == key).then(|| value.to_string())
+    })
+}
+
 pub fn install_system_tools(registry: &mut ToolRegistry, mode: ToolsMode) {
     let backend: Arc<dyn SystemBackend> = match mode {
         ToolsMode::Mock => Arc::new(MockBackend),
         ToolsMode::RealLinux => Arc::new(LinuxBackend),
     };
+
+    registry.register(Arc::new(IdentityTool {
+        identity: system_identity(mode),
+        spec: ToolSpec {
+            name: "system.identity".into(),
+            description: "Read the locally observed SaaiOS deployment and device identity".into(),
+            risk: RiskLevel::Low,
+            timeout_ms: 500,
+            input_schema: json!({"type":"object","properties":{}}),
+            output_schema: json!({"type":"object"}),
+            requires_confirmation: false,
+        },
+    }));
 
     registry.register(Arc::new(MetricsTool {
         backend: backend.clone(),
@@ -772,6 +879,26 @@ fn read_vm_rss_mb(pid: u32) -> Option<f64> {
     None
 }
 
+struct IdentityTool {
+    identity: Value,
+    spec: ToolSpec,
+}
+
+#[async_trait]
+impl ToolExecutor for IdentityTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn execute(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        Ok(ToolOutput {
+            ok: true,
+            value: self.identity.clone(),
+            error: None,
+        })
+    }
+}
+
 struct MetricsTool {
     backend: Arc<dyn SystemBackend>,
     spec: ToolSpec,
@@ -936,6 +1063,43 @@ impl ToolExecutor for KillRequestTool {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn identity_is_local_and_explicit() {
+        let mut reg = ToolRegistry::new();
+        install_system_tools(&mut reg, ToolsMode::Mock);
+        let out = reg
+            .execute(
+                "system.identity",
+                json!({}),
+                &ToolContext {
+                    correlation_id: Uuid::new_v4(),
+                    call_id: Uuid::new_v4(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.value["system"], "SaaiOS");
+        assert_eq!(out.value["deployment"], "test_fixture");
+        assert_eq!(out.value["observed_by"], "local_runtime");
+    }
+
+    #[test]
+    fn identity_facts_are_bounded_and_cmdline_is_selective() {
+        assert_eq!(
+            bounded_fact(Some("  Pixel\n7\0 ".into())).as_deref(),
+            Some("Pixel7")
+        );
+        assert_eq!(
+            cmdline_value(
+                "quiet androidboot.hardware=panther androidboot.slot_suffix=_a secret=nope",
+                "androidboot.slot_suffix"
+            )
+            .as_deref(),
+            Some("_a")
+        );
+        assert_eq!(cmdline_value("secret=value", "androidboot.hardware"), None);
+    }
 
     #[tokio::test]
     async fn mock_metrics_fixture() {

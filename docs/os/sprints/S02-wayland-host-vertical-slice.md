@@ -1,9 +1,9 @@
-# Sprint 01 — Wayland vertical slice на host
+# Sprint 02 — Wayland vertical slice на host
 
 ## Паспорт
 
-- Состояние: `Ready`.
-- Зависит от: S00.
+- Состояние: `Backlog`.
+- Зависит от: S01.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005.
 - Рабочий fallback: существующий `drm-splash`; phone image не меняется.
 
@@ -74,7 +74,7 @@ touch. Независимого display server, surface protocol и app lifecycl
 Спринт не читает пользовательские данные и не открывает сеть. Wayland socket
 создаётся в приватном временном runtime-каталоге. Проверяется, что второй
 процесс не может переиспользовать чужую роль/serial. Полная изоляция приложений
-не заявляется до S06.
+не заявляется до S07.
 
 ## Rollback
 

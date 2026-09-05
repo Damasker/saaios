@@ -15,7 +15,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use system_tools::{install_system_tools, ToolsMode};
+use system_tools::{install_system_tools, system_identity, ToolsMode};
 use telemetry::TelemetrySampler;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixListener};
@@ -221,6 +221,7 @@ struct RuntimeStatusDto {
     tools_mode: String,
     tool_count: usize,
     tools: Vec<String>,
+    device: serde_json::Value,
     memory_enabled: bool,
     memory_path: Option<String>,
     audit_path: String,
@@ -248,6 +249,7 @@ struct RuntimeMeta {
     provider_kind: String,
     tools_mode: String,
     tool_names: Vec<String>,
+    device: serde_json::Value,
     memory_enabled: bool,
     memory_path: Option<PathBuf>,
     audit_path: PathBuf,
@@ -272,6 +274,7 @@ impl RuntimeMeta {
             tools_mode: self.tools_mode.clone(),
             tool_count: self.tool_names.len(),
             tools: self.tool_names.clone(),
+            device: self.device.clone(),
             memory_enabled: self.memory_enabled,
             memory_path: self.memory_path.as_ref().map(|p| p.display().to_string()),
             audit_path: self.audit_path.display().to_string(),
@@ -337,6 +340,8 @@ async fn main() -> Result<()> {
     } else {
         ToolsMode::Mock
     };
+
+    let device = system_identity(tools_mode);
 
     let mut registry = ToolRegistry::new();
     install_system_tools(&mut registry, tools_mode);
@@ -408,7 +413,8 @@ async fn main() -> Result<()> {
         bus.clone(),
         provider,
         budgets,
-    );
+    )
+    .with_system_identity(device.clone());
     if let Some(mem) = memory.clone() {
         runtime = runtime.with_memory(mem);
     }
@@ -466,6 +472,7 @@ async fn main() -> Result<()> {
         provider_kind: format!("{kind:?}").to_lowercase(),
         tools_mode: format!("{tools_mode:?}").to_lowercase(),
         tool_names,
+        device,
         memory_enabled: memory.is_some(),
         memory_path: if memory.is_some() {
             Some(settings.memory_path.clone())

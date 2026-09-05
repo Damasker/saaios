@@ -496,12 +496,25 @@ async fn memory_facts_injected_into_system_prompt() {
     let provider = Arc::new(CaptureProvider {
         system: Mutex::new(String::new()),
     });
-    let runtime = AiRuntime::new(tools, policy, audit, bus, provider.clone()).with_memory(memory);
+    let runtime = AiRuntime::new(tools, policy, audit, bus, provider.clone())
+        .with_memory(memory)
+        .with_system_identity(json!({
+            "system": "SaaiOS",
+            "deployment": "native_device",
+            "device_class": "phone",
+            "target": "panther"
+        }));
 
     runtime.handle_user_text("ping").await.unwrap();
     let system = provider.system.lock().unwrap().clone();
     assert!(
         system.contains("host.role") && system.contains("pi5 lab node"),
         "system prompt should include memory facts, got: {system}"
+    );
+    assert!(
+        system.contains("device_context")
+            && system.contains("native_device")
+            && system.contains("panther"),
+        "system prompt should include local device identity, got: {system}"
     );
 }

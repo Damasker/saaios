@@ -678,6 +678,9 @@ static void setup_data_storage(void) {
     mkdir_one("/data/saaios/var/runtime", 0700);
     (void)setenv("HOME", "/data/saaios/home", 1);
     (void)setenv("SAAIOS_DATA", "/data/saaios", 1);
+    (void)setenv("SAAIOS_DEPLOYMENT", "native_device", 1);
+    (void)setenv("SAAIOS_DEVICE_CLASS", "phone", 1);
+    (void)setenv("SAAIOS_DEVICE_TARGET", "panther", 1);
     log_message("SaaiOS data storage mounted");
 }
 

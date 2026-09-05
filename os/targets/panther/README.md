@@ -108,6 +108,12 @@ and the [sprint roadmap](../../../docs/os/sprints/README.md). The current DRM
 shell remains the verified boot/recovery fallback while `saai-displayd`,
 `saai-shell`, and `saai-appd` are delivered as separate vertical slices.
 
+System identity and device self-management are governed by
+[ADR-006](../../../docs/adr/ADR-006-system-intelligence-not-chat.md) and the
+[system-intelligence architecture](../../../docs/os/architecture/system-intelligence.md).
+The model may interpret locally observed state and propose actions, but it is
+never the authority for device identity, capability, policy, or verification.
+
 Pixel colors are packed in the panel's native BGRX byte layout before
 scanout. Antialiased glyph blending decodes the same layout before mixing, so
 text and rounded surfaces preserve the intended RGB colors.

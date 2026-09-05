@@ -5,6 +5,7 @@ Native bootable OS. Not Android. Not a Debian install. Platform Track (`crates/`
 Product and delivery sources of truth:
 
 - [Product principles](PRODUCT-PRINCIPLES.md)
+- [System intelligence and self-management](architecture/system-intelligence.md)
 - [Wayland application-platform architecture](architecture/application-platform.md)
 - [Development process and Definition of Done](DEVELOPMENT_PROCESS.md)
 - [Quality strategy](QUALITY.md)
