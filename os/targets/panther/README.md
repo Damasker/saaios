@@ -94,6 +94,10 @@ intent field from any root destination opens the on-screen keyboard. Rendering
 and hit regions share a 1080x2400 design coordinate system that scales to the
 active DRM mode.
 
+Pixel colors are packed in the panel's native BGRX byte layout before
+scanout. Antialiased glyph blending decodes the same layout before mixing, so
+text and rounded surfaces preserve the intended RGB colors.
+
 Text is rendered from bundled, Cyrillic-capable subsets of Inter Regular and
 Inter Semibold. The native TrueType path supports UTF-8, proportional metrics,
 kerning, alpha-antialiased glyphs, and a bounded glyph cache. UI surfaces use

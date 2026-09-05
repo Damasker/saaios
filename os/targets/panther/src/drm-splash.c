@@ -45,7 +45,8 @@ static char ai_prompt[AI_PROMPT_MAX + 1] = {0};
 static size_t ai_prompt_length = 0;
 static bool bluetooth_saved_view = false;
 static int bluetooth_forget_candidate = -1;
-static bool panel_swap_red_blue = true;
+static bool panel_native_bgrx = true;
+static bool display_calibration_mode = false;
 
 static bool ai_query_running(void);
 
@@ -118,10 +119,19 @@ static void play_haptic(void) {
 }
 
 static uint32_t panel_color(uint32_t color) {
-    if (!panel_swap_red_blue) return color;
-    return ((color & 0x0000ffU) << 16) |
-           (color & 0x00ff00U) |
-           ((color & 0xff0000U) >> 16);
+    if (!panel_native_bgrx) return color;
+    unsigned int red = (color >> 16) & 0xffU;
+    unsigned int green = (color >> 8) & 0xffU;
+    unsigned int blue = color & 0xffU;
+    return (blue << 24) | (green << 16) | (red << 8);
+}
+
+static uint32_t logical_color(uint32_t color) {
+    if (!panel_native_bgrx) return color & 0x00ffffffU;
+    unsigned int red = (color >> 8) & 0xffU;
+    unsigned int green = (color >> 16) & 0xffU;
+    unsigned int blue = (color >> 24) & 0xffU;
+    return (red << 16) | (green << 8) | blue;
 }
 
 static void fill_rect(uint32_t *pixels, uint32_t stride_pixels,
@@ -143,13 +153,12 @@ static void fill_rect(uint32_t *pixels, uint32_t stride_pixels,
 
 static void blend_pixel(uint32_t *pixel, uint32_t color,
                         unsigned int alpha) {
-    color = panel_color(color);
     if (alpha >= 255U) {
-        *pixel = color;
+        *pixel = panel_color(color);
         return;
     }
     if (alpha == 0U) return;
-    uint32_t background = *pixel;
+    uint32_t background = logical_color(*pixel);
     unsigned int inverse = 255U - alpha;
     unsigned int red = (((color >> 16) & 0xffU) * alpha +
                         ((background >> 16) & 0xffU) * inverse + 127U) / 255U;
@@ -157,7 +166,7 @@ static void blend_pixel(uint32_t *pixel, uint32_t color,
                           ((background >> 8) & 0xffU) * inverse + 127U) / 255U;
     unsigned int blue = ((color & 0xffU) * alpha +
                          (background & 0xffU) * inverse + 127U) / 255U;
-    *pixel = (red << 16) | (green << 8) | blue;
+    *pixel = panel_color((red << 16) | (green << 8) | blue);
 }
 
 static const char *glyph(char character) {
@@ -631,6 +640,96 @@ static void render_lock_screen(uint32_t *pixels, uint32_t stride_pixels,
     draw_word(pixels, stride_pixels, width, height,
               "Коснись экрана, чтобы открыть", ui_scale(width, 5),
               ui_y(height, 2105), 0x00B9C9CE);
+}
+
+static void render_calibration_group(uint32_t *pixels,
+                                     uint32_t stride_pixels,
+                                     uint32_t width, uint32_t height,
+                                     int top, bool native_packing,
+                                     const char *label) {
+    bool previous_packing = panel_native_bgrx;
+    panel_native_bgrx = native_packing;
+    fill_rect(pixels, stride_pixels, width, height,
+              0, ui_y(height, top), (int)width, ui_y(height, 110),
+              0x00101820);
+    draw_text(pixels, stride_pixels, width, height,
+              label, ui_scale(width, 5), ui_x(width, 36),
+              ui_y(height, top + 55), 0x00FFFFFF);
+    static const uint32_t first_row[] = {
+        0x00FF0000, 0x0000FF00, 0x000000FF
+    };
+    static const uint32_t second_row[] = {
+        0x0000FFFF, 0x00FF00FF, 0x00FFFF00
+    };
+    static const char *const first_labels[] = {"RED", "GREEN", "BLUE"};
+    static const char *const second_labels[] = {"CYAN", "MAGENTA", "YELLOW"};
+    for (int index = 0; index < 3; ++index) {
+        int left = index * 360;
+        fill_rect(pixels, stride_pixels, width, height,
+                  ui_x(width, left), ui_y(height, top + 110),
+                  ui_x(width, 360), ui_y(height, 300), first_row[index]);
+        draw_word(pixels + (size_t)ui_y(height, top + 110) * stride_pixels +
+                  ui_x(width, left), stride_pixels, ui_x(width, 360),
+                  ui_y(height, 300), first_labels[index], ui_scale(width, 5),
+                  ui_y(height, 150), index == 1 ? 0x00000000 : 0x00FFFFFF);
+        fill_rect(pixels, stride_pixels, width, height,
+                  ui_x(width, left), ui_y(height, top + 410),
+                  ui_x(width, 360), ui_y(height, 300), second_row[index]);
+        draw_word(pixels + (size_t)ui_y(height, top + 410) * stride_pixels +
+                  ui_x(width, left), stride_pixels, ui_x(width, 360),
+                  ui_y(height, 300), second_labels[index], ui_scale(width, 4),
+                  ui_y(height, 150), 0x00000000);
+    }
+    fill_rect(pixels, stride_pixels, width, height,
+              0, ui_y(height, top + 710), ui_x(width, 540),
+              ui_y(height, 250), 0x00FFFFFF);
+    draw_word(pixels + (size_t)ui_y(height, top + 710) * stride_pixels,
+              stride_pixels, ui_x(width, 540), ui_y(height, 250),
+              "WHITE", ui_scale(width, 5), ui_y(height, 125), 0x00000000);
+    fill_rect(pixels, stride_pixels, width, height,
+              ui_x(width, 540), ui_y(height, top + 710), ui_x(width, 540),
+              ui_y(height, 250), 0x00808080);
+    draw_word(pixels + (size_t)ui_y(height, top + 710) * stride_pixels +
+              ui_x(width, 540), stride_pixels, ui_x(width, 540),
+              ui_y(height, 250), "GRAY 128", ui_scale(width, 5),
+              ui_y(height, 125), 0x00FFFFFF);
+    panel_native_bgrx = previous_packing;
+}
+
+static void render_color_calibration(uint32_t *pixels,
+                                     uint32_t stride_pixels,
+                                     uint32_t width, uint32_t height) {
+    fill_rect(pixels, stride_pixels, width, height,
+              0, 0, (int)width, (int)height, 0x00000000);
+    render_calibration_group(pixels, stride_pixels, width, height,
+                             0, true, "A - PIXEL 7 BGRX PACKING");
+    fill_rect(pixels, stride_pixels, width, height,
+              0, ui_y(height, 960), (int)width, ui_y(height, 60),
+              0x00000000);
+    render_calibration_group(pixels, stride_pixels, width, height,
+                             1020, false, "B - RAW RGB");
+    bool previous_packing = panel_native_bgrx;
+    panel_native_bgrx = true;
+    static const uint32_t gray_steps[] = {
+        0x00000000, 0x00404040, 0x00808080, 0x00BFBFBF, 0x00FFFFFF
+    };
+    for (int index = 0; index < 5; ++index) {
+        int left = index * 216;
+        fill_rect(pixels, stride_pixels, width, height,
+                  ui_x(width, left), ui_y(height, 1980),
+                  ui_x(width, 216), ui_y(height, 420), gray_steps[index]);
+    }
+    panel_native_bgrx = previous_packing;
+}
+
+static void render_locked_display(uint32_t *pixels,
+                                  uint32_t stride_pixels,
+                                  uint32_t width, uint32_t height) {
+    if (display_calibration_mode) {
+        render_color_calibration(pixels, stride_pixels, width, height);
+    } else {
+        render_lock_screen(pixels, stride_pixels, width, height);
+    }
 }
 
 static void render_page_chrome(uint32_t *pixels, uint32_t stride_pixels,
@@ -2210,8 +2309,8 @@ int main(void) {
     bool locked = true;
     uint64_t last_activity_ms = monotonic_milliseconds();
     int page = 0;
-    render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
-                       create.width, create.height);
+    render_locked_display(pixels, create.pitch / sizeof(uint32_t),
+                          create.width, create.height);
     msync(pixels, create.size, MS_SYNC);
 
     struct drm_mode_crtc set_crtc = {0};
@@ -2291,16 +2390,17 @@ int main(void) {
                 now_ms - last_activity_ms >= 60000U) {
                 fprintf(stderr, "drm-splash: idle timeout\n");
                 locked = true;
-                render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
-                                   create.width, create.height);
+                render_locked_display(pixels, create.pitch / sizeof(uint32_t),
+                                      create.width, create.height);
                 disable_display(fd);
                 display_on = false;
                 continue;
             }
             if (display_on) {
                 if (locked) {
-                    render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
-                                       create.width, create.height);
+                    render_locked_display(pixels,
+                                          create.pitch / sizeof(uint32_t),
+                                          create.width, create.height);
                 } else {
                     render_page(pixels, create.pitch / sizeof(uint32_t),
                                 create.width, create.height,
@@ -2325,16 +2425,16 @@ int main(void) {
                 play_haptic();
                 if (display_on) {
                     locked = true;
-                    render_lock_screen(pixels,
-                                       create.pitch / sizeof(uint32_t),
-                                       create.width, create.height);
+                    render_locked_display(pixels,
+                                          create.pitch / sizeof(uint32_t),
+                                          create.width, create.height);
                     disable_display(fd);
                     display_on = false;
                 } else {
                     locked = true;
-                    render_lock_screen(pixels,
-                                       create.pitch / sizeof(uint32_t),
-                                       create.width, create.height);
+                    render_locked_display(pixels,
+                                          create.pitch / sizeof(uint32_t),
+                                          create.width, create.height);
                     publish_frame(fd, framebuffer.fb_id,
                                   pixels, create.size);
                     display_on = true;
@@ -2351,8 +2451,8 @@ int main(void) {
                 position_changed = false;
                 locked = true;
                 last_activity_ms = monotonic_milliseconds();
-                render_lock_screen(pixels, create.pitch / sizeof(uint32_t),
-                                   create.width, create.height);
+                render_locked_display(pixels, create.pitch / sizeof(uint32_t),
+                                      create.width, create.height);
                 publish_frame(fd, framebuffer.fb_id, pixels, create.size);
                 display_on = true;
                 fprintf(stderr, "drm-splash: touch wake\n");
@@ -2391,6 +2491,15 @@ int main(void) {
                 } else if (event.type == EV_SYN && event.code == SYN_REPORT) {
                     if (locked && tracking_id >= 0) {
                         position_changed = false;
+                    } else if (locked && touch_released &&
+                               display_calibration_mode) {
+                        touch_released = false;
+                        position_changed = false;
+                        render_locked_display(
+                            pixels, create.pitch / sizeof(uint32_t),
+                            create.width, create.height);
+                        publish_frame(fd, framebuffer.fb_id,
+                                      pixels, create.size);
                     } else if (locked && touch_released) {
                         play_haptic();
                         locked = false;
