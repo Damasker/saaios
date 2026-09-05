@@ -83,10 +83,15 @@ request. The native CONSOLE page uses this mode for three touch actions:
 `SYSTEM HEALTH`, `NETWORK CHECK`, and `STORAGE CHECK`. Results from the local
 model are normalized and rendered directly on the phone display.
 
-The native shell uses a phone-oriented layout: a compact status bar, a 2x2 app
-launcher, a wide assistant card, rounded content cards, explicit back targets,
-a bottom home indicator, and touchable Bluetooth tabs. Rendering and hit regions
-share a 1080x2400 design coordinate system that scales to the active DRM mode.
+The native shell uses a contextual phone layout instead of an app grid or a
+chat-first home screen. Its stable root shell has a context selector, a central
+content area, a persistent intent field, and four bottom destinations: `NOW`,
+`INBOX`, `SPACES`, and `ME`. `NOW` prioritizes one current state plus continuations
+and recent objects; `INBOX` is reserved for approvals, results, and alerts;
+`SPACES` provides manual offline access to every working hardware module; and
+`ME` exposes local privacy and policy state. Touching the intent field from any
+root destination opens the on-screen keyboard. Rendering and hit regions share
+a 1080x2400 design coordinate system that scales to the active DRM mode.
 
 The assistant includes a native on-screen Latin QWERTY keyboard with a number
 row, space, delete, cancel, and send controls. It accepts prompts up to 72
