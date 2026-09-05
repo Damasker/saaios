@@ -83,15 +83,22 @@ request. The native CONSOLE page uses this mode for three touch actions:
 `SYSTEM HEALTH`, `NETWORK CHECK`, and `STORAGE CHECK`. Results from the local
 model are normalized and rendered directly on the phone display.
 
-The native shell uses a contextual phone layout instead of an app grid or a
-chat-first home screen. Its stable root shell has a context selector, a central
-content area, a persistent intent field, and four bottom destinations: `NOW`,
-`INBOX`, `SPACES`, and `ME`. `NOW` prioritizes one current state plus continuations
-and recent objects; `INBOX` is reserved for approvals, results, and alerts;
-`SPACES` provides manual offline access to every working hardware module; and
-`ME` exposes local privacy and policy state. Touching the intent field from any
-root destination opens the on-screen keyboard. Rendering and hit regions share
-a 1080x2400 design coordinate system that scales to the active DRM mode.
+The native shell uses a Russian contextual phone layout instead of an app grid
+or a chat-first home screen. Its stable root shell has a context selector, a
+central content area, a persistent intent field, and four bottom destinations:
+`Сейчас`, `Входящие`, `Пространства`, and `Я`. The first prioritizes one current
+state plus continuations and recent objects; Inbox is reserved for approvals,
+results, and alerts; Spaces provides manual offline access to every working
+hardware module; and Me exposes local privacy and policy state. Touching the
+intent field from any root destination opens the on-screen keyboard. Rendering
+and hit regions share a 1080x2400 design coordinate system that scales to the
+active DRM mode.
+
+Text is rendered from bundled, Cyrillic-capable subsets of Inter Regular and
+Inter Semibold. The native TrueType path supports UTF-8, proportional metrics,
+kerning, alpha-antialiased glyphs, and a bounded glyph cache. UI surfaces use
+true alpha-antialiased rounded corners. The font files are trusted build assets;
+the runtime does not load user-supplied fonts.
 
 The assistant includes a native on-screen Latin QWERTY keyboard with a number
 row, space, delete, cancel, and send controls. It accepts prompts up to 72
