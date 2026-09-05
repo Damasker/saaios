@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use system_tools::{install_system_tools, ToolsMode};
 use telemetry::TelemetrySampler;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, UnixListener};
 use tool_registry::ToolRegistry;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -50,6 +50,10 @@ struct Args {
     /// Unix domain socket path
     #[arg(long, env = "SAAIOS_SOCK")]
     sock: Option<PathBuf>,
+
+    /// TCP listen address (for hosts such as Android where filesystem UDS bind is denied)
+    #[arg(long, env = "SAAIOS_TCP")]
+    tcp: Option<String>,
 
     /// Audit log path
     #[arg(long, env = "SAAIOS_AUDIT")]
@@ -479,24 +483,44 @@ async fn main() -> Result<()> {
 
     let last_pending = Arc::new(tokio::sync::Mutex::new(None::<HandleOutcome>));
 
-    if settings.sock.exists() {
-        let _ = std::fs::remove_file(&settings.sock);
-    }
-    let listener = UnixListener::bind(&settings.sock)
-        .with_context(|| format!("bind {}", settings.sock.display()))?;
-    info!(sock = %settings.sock.display(), "SaaiOS runtime listening");
+    if let Some(addr) = args.tcp.as_deref() {
+        let listener = TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("bind TCP {addr}"))?;
+        info!(addr, "SaaiOS runtime listening on TCP");
 
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let runtime = runtime.clone();
-        let last_pending = last_pending.clone();
-        let meta = meta.clone();
-        let feed = feed.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, runtime, last_pending, meta, feed).await {
-                error!("client error: {e:#}");
-            }
-        });
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let runtime = runtime.clone();
+            let last_pending = last_pending.clone();
+            let meta = meta.clone();
+            let feed = feed.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_client(stream, runtime, last_pending, meta, feed).await {
+                    error!("client error: {e:#}");
+                }
+            });
+        }
+    } else {
+        if settings.sock.exists() {
+            let _ = std::fs::remove_file(&settings.sock);
+        }
+        let listener = UnixListener::bind(&settings.sock)
+            .with_context(|| format!("bind {}", settings.sock.display()))?;
+        info!(sock = %settings.sock.display(), "SaaiOS runtime listening");
+
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let runtime = runtime.clone();
+            let last_pending = last_pending.clone();
+            let meta = meta.clone();
+            let feed = feed.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_client(stream, runtime, last_pending, meta, feed).await {
+                    error!("client error: {e:#}");
+                }
+            });
+        }
     }
 }
 
@@ -634,13 +658,16 @@ fn spawn_auto_diagnose_worker(
     })
 }
 
-async fn handle_client(
-    mut stream: UnixStream,
+async fn handle_client<S>(
+    mut stream: S,
     runtime: Arc<AiRuntime>,
     last_pending: Arc<tokio::sync::Mutex<Option<HandleOutcome>>>,
     meta: Arc<RuntimeMeta>,
     feed: Arc<EventFeed>,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let mut buf = vec![0u8; 64 * 1024];
     let n = stream.read(&mut buf).await?;
     if n == 0 {
@@ -878,13 +905,16 @@ async fn handle_client(
     Ok(())
 }
 
-async fn handle_diagnose_stream(
-    stream: &mut UnixStream,
+async fn handle_diagnose_stream<S>(
+    stream: &mut S,
     runtime: Arc<AiRuntime>,
     last_pending: Arc<tokio::sync::Mutex<Option<HandleOutcome>>>,
     text: String,
     session_id: Option<Uuid>,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let (tx, mut rx) = tokio::sync::mpsc::channel::<ai_runtime::RuntimeEvent>(64);
     let runtime2 = runtime.clone();
     let join = tokio::spawn(async move {

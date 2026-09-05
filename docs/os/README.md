@@ -5,13 +5,21 @@ Native bootable OS. Not Android. Not a Debian install. Platform Track (`crates/`
 ```text
               SaaiOS OS
                  │
-       ┌─────────┼─────────┐
-       ↓         ↓         ↓
- SM-A127F      Pi 5       x86
- (first)     (later)    (dev)
+       ┌─────────┼─────────┬─────────┐
+       ↓         ↓         ↓         ↓
+ SM-A127F    Pixel 7      Pi 5      x86
+ (first)    (native)    (later)    (dev)
 ```
 
 On-device splash string: `SaaiOS`.
+
+## Pixel 7 target
+
+The native Pixel 7 (`panther`) target boots its own static PID 1 and brings
+up display, touch, buttons, F2FS userdata, Wi-Fi, Bluetooth, speakers,
+haptics, brightness, time sync and the SaaiOS runtime without Android
+userspace. See the [live bring-up record](targets/panther/README.md) and
+[reproducible source layout](../../os/targets/panther/README.md).
 
 ## Phase 0 gate
 

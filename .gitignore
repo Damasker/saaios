@@ -1,5 +1,8 @@
 /target/
 /dist/
+/os/targets/panther/artifacts/
+/os/targets/panther/*.img
+/os/targets/panther/*.zip
 **/*.rs.bk
 .idea/
 .vscode/

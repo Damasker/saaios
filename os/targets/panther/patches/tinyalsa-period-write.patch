@@ -1,0 +1,20 @@
+diff --git a/tinyplay.c b/tinyplay.c
+index c5bb71f..f9aea42 100644
+--- a/tinyplay.c
++++ b/tinyplay.c
+@@ -247,7 +247,14 @@ void play_sample(FILE *file, unsigned int card, unsigned int device, unsigned in
+         return;
+     }
+
+-    size = pcm_frames_to_bytes(pcm, pcm_get_buffer_size(pcm));
++    /*
++     * AoC keeps one period of its interrupt-driven ring buffer unavailable.
++     * Feeding the whole ALSA buffer at once therefore overruns that guard
++     * period.  Submit one period at a time, which is valid for other PCM
++     * devices too and matches the driver's normal streaming cadence.
++     */
++    size = pcm_frames_to_bytes(pcm,
++                               config.period_size > 512 ? 512 : config.period_size);
+     buffer = malloc(size);
+     if (!buffer) {
+         fprintf(stderr, "Unable to allocate %d bytes\n", size);

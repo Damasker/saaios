@@ -1,0 +1,22 @@
+#!/saaios/sh
+
+case "$1" in
+    deconfig)
+        /saaios/ip addr flush dev "$interface"
+        ;;
+    bound|renew)
+        /saaios/ip addr flush dev "$interface"
+        /saaios/ifconfig "$interface" "$ip" netmask "$subnet" up
+        while /saaios/busybox route del default dev "$interface" 2>/dev/null; do
+            :
+        done
+        for gateway in $router; do
+            /saaios/busybox route add default gw "$gateway" dev "$interface"
+            break
+        done
+        : > /run/resolv.conf
+        for server in $dns; do
+            echo "nameserver $server" >> /run/resolv.conf
+        done
+        ;;
+esac
