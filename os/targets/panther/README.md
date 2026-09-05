@@ -88,6 +88,11 @@ launcher, a wide assistant card, rounded content cards, explicit back targets,
 a bottom home indicator, and touchable Bluetooth tabs. Rendering and hit regions
 share a 1080x2400 design coordinate system that scales to the active DRM mode.
 
+The assistant includes a native on-screen Latin QWERTY keyboard with a number
+row, space, delete, cancel, and send controls. It accepts prompts up to 72
+characters and returns the local model response to the assistant screen without
+requiring the USB serial console.
+
 For a local Ollama provider on the USB host, bind Ollama only to the host side
 of the gadget network, restart Ollama, and pull the tested compact model:
 
