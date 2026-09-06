@@ -29,3 +29,6 @@ saaios-memory.jsonl
 /vm/*.iso
 /vm/ip.txt
 /vm/ollama-ip.txt
+
+# S02 framework spikes (throwaway, see ADR-007)
+/spikes/*/target/
