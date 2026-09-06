@@ -146,11 +146,13 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
   проверены read-only непосредственно в persistent JSONL.
 - `audit_tail` не читает весь старый журнал: до установки S01 в строке 1342
   уже находился блок NUL. Файл не изменялся и не очищался.
-- Свободный вопрос о системе завершился timeout configured local model
-  provider через 60 секунд. Правдивый model answer физически не подтверждён.
+- Первый свободный вопрос дошёл до `system.identity`, но второй model step не
+  уложился в оставшийся 60-секундный budget. После проверки USB endpoint и
+  прогрева установленной `qwen2.5:3b-instruct` короткий свободный вопрос
+  завершился ответом: `SaaiOS on a phone, specifically a GS201 PANTHER MP
+  based on GS201.` Ответ основан на planner `device_context`.
 - До полного physical acceptance остаются: визуально проверить CTA/UI,
-  повторить cold reboot и получить правдивый свободный ответ при доступном
-  provider.
+  выполнить `CHECK DEVICE` одним tap и повторить cold reboot.
 
 ### Physical verification checklist
 
