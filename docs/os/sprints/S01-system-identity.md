@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `Repo gate complete; physical acceptance pending`.
+- Состояние: `Done`.
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-006.
 - Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
@@ -151,8 +151,12 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
   прогрева установленной `qwen2.5:3b-instruct` короткий свободный вопрос
   завершился ответом: `SaaiOS on a phone, specifically a GS201 PANTHER MP
   based on GS201.` Ответ основан на planner `device_context`.
-- До полного physical acceptance остаются: визуально проверить CTA/UI,
-  выполнить `CHECK DEVICE` одним tap и повторить cold reboot.
+- На физическом экране подтверждены `DEVICE`, `SET AN INTENT`,
+  `DEVICE ACTIONS`, `SYSTEM RESULT`. Один tap `CHECK DEVICE` добавил ровно один
+  `system.identity` tool call относительно сохранённого baseline.
+- После physical cold reboot runtime поднялся с uptime 47 секунд. Status и
+  новый `system.identity` снова дали строго равные objects с
+  `boot_slot=a / native_device / phone / panther`.
 
 ### Physical verification checklist
 
