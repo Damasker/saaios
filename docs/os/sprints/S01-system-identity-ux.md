@@ -1,323 +1,251 @@
 # S01 — Pixel 7 system identity UX
 
-Статус: ready for implementation  
-Устройство: Pixel 7, 1080×2400, touch-first
+Статус: ready for implementation
+Экран: native `drm-splash`, Pixel 7, 1080×2400, touch-first
+Команда: один read-only вызов `system.identity`
 
 ## Scope
 
-Телефон воспринимается как SaAIOS на Pixel 7, а не как экран чат-ассистента.
-Модель остаётся одной из системных возможностей и не подменяет системные
-факты, действия или состояние устройства.
+`CHECK DEVICE` в S01 читает только системную идентичность. Один принятый tap
+создаёт ровно одну попытку `system.identity`. Проверка не вызывает модель, не
+проверяет здоровье компонентов, не меняет настройки и ничего не устанавливает.
 
-UX-gate S01 состоит из четырёх постоянных блоков:
+Существующий экран `DEVICE` сохраняет блоки `SET AN INTENT`,
+`DEVICE ACTIONS` и `SYSTEM RESULT`. Этот контракт меняет только строку
+`CHECK DEVICE` и содержимое `SYSTEM RESULT`; новая навигация и новые экраны не
+нужны.
 
-1. `DEVICE`
-2. `SET AN INTENT`
-3. `DEVICE ACTIONS`
-4. `SYSTEM RESULT`
+Вне scope: display/touch/battery/network/audio probes, пошаговый progress,
+частичные результаты, Inbox/persistence, device settings, action workflow,
+telemetry contract и reboot-resume.
 
-Сохраняются корневые разделы `Сейчас`, `Входящие`, `Пространства`, `Я`.
-Вне scope: новые приложения, Scheduler, многоагентность и полный редизайн
-оболочки.
+## Иерархия существующего экрана
 
-## DEVICE
+Порядок сверху вниз не меняется:
 
-Штатное состояние:
+1. заголовок `DEVICE`;
+2. индикатор runtime: `SAAIOS CORE ACTIVE` или `SYSTEM CORE OFFLINE`;
+3. `SET AN INTENT`;
+4. `DEVICE ACTIONS`, где первая строка — `CHECK DEVICE`;
+5. `SYSTEM RESULT`;
+6. существующая нижняя навигация.
 
-```text
-DEVICE
-SaAIOS READY
-Pixel 7 · LOCAL SYSTEM
+Состояние проверки определяется только последней попыткой в текущем процессе.
+Отдельный экран результата и сохранение истории не вводятся.
 
-[CHECK DEVICE]  [DEVICE DETAILS]
-```
+## State contract
 
-Запуск:
+### 1. Idle
 
-```text
-DEVICE
-SaAIOS STARTING
-4 OF 6 SYSTEM SERVICES READY
-
-[VIEW STARTUP]
-```
-
-Название модели не показывается в системной шапке. Статус устройства всегда
-основан на данных системных служб.
-
-## SET AN INTENT
-
-Строка присутствует во всех четырёх корневых разделах и не выглядит как чат.
-
-Точные строки:
-
-- метка: `SET AN INTENT`
-- placeholder: `What should SaAIOS do?`
-- модель недоступна: `Find a setting or device action`
-- подсказка клавиатуры: `Describe the result you want`
-- кнопки: `CANCEL`, `CONTINUE`
-- submit: `ACCEPTING INTENT…`
-- ошибка: `INTENT NOT ACCEPTED`
-- retry: `TRY AGAIN`
-
-Поведение:
-
-- Tap открывает клавиатуру с сохранением текущего Space.
-- Submit создаёт намерение, но не заявляет о выполненном действии.
-- Пустой submit ничего не делает.
-- Повторный tap во время submit не создаёт дубль.
-- Back сохраняет введённый текст в текущем сеансе.
-- При недоступной модели остаются доступны ручная навигация и поиск модулей.
-
-## DEVICE ACTIONS
-
-Минимальный набор S01:
+Используется до первого запуска и после входа на экран без результата.
 
 ```text
 DEVICE ACTIONS
-DISPLAY  ·  AUDIO
-NETWORK  ·  BLUETOOTH
-```
-
-Tap открывает системную панель выбранного модуля. Изменяющее состояние
-действие сначала показывается как предложение:
-
-```text
-ACTION PROPOSED
-SET BRIGHTNESS TO 35%
-CONFIRM TO CONTINUE
-
-[CONFIRM]  [CANCEL]
-```
-
-Только после подтверждения системной службой:
-
-```text
-ACTION COMPLETED
-BRIGHTNESS SET TO 35%
-SYSTEM SERVICE · NOW
-```
-
-Timeout, отказ или отмена не маркируются как выполненное действие. Повторное
-касание не создаёт вторую операцию с тем же `action_id`.
-
-## CHECK DEVICE
-
-В коде и telemetry действие называется `CHECK_DEVICE`. Видимая строка —
-`CHECK DEVICE`. Это системная проверка без обращения к модели и без изменения
-настроек.
-
-Минимальные наблюдения: display, touch, storage, battery, Wi‑Fi, Bluetooth,
-audio и runtime.
-
-### Waiting
-
-```text
 CHECK DEVICE
-WAITING FOR SYSTEM SERVICES
-CHECK WILL START AUTOMATICALLY
 
-[CANCEL]
+SYSTEM RESULT
+READY TO CHECK IDENTITY
 ```
 
-Через 2 секунды строка уточняется: `WAITING FOR: STORAGE`. Бесконечный spinner
-без текстового статуса запрещён.
+- `CHECK DEVICE` доступна для tap.
+- `SYSTEM RESULT` и строка состояния используют neutral/muted tokens:
+  `#7E96B2` для label и `#8CA9C8` для текста.
+- Tap принимается только при отсутствии in-flight попытки.
+- Принятый tap даёт один haptic acknowledgement, блокирует строку действия и
+  переводит UI в `running`.
 
-### Running
+### 2. Running
+
+Показывается, пока единственный вызов `system.identity` ожидает ответ.
 
 ```text
+DEVICE ACTIONS
+CHECKING…
+
+SYSTEM RESULT
 CHECKING DEVICE
-DISPLAY AND INPUT
-STEP 2 OF 6
-
-[STOP]
+READING SYSTEM IDENTITY
 ```
 
-Допустимые названия шагов:
+- Строка действия disabled; повторные tap, touch-up и key repeat игнорируются.
+- Новый процесс, запрос или fallback tool не запускается.
+- `CHECKING…` и `CHECKING DEVICE` явно передают состояние без зависимости от
+  animation.
+- Status token — active violet `#8C86FF`; основной текст — `#F5F8FC`.
+- Spinner допустим только как дополнительный признак.
+- Timeout: 10 секунд от принятого tap по monotonic clock.
+- Валидный ответ переводит в `success`. Timeout, недоступный runtime/tool,
+  non-zero exit или невалидный ответ переводят в `error`.
 
-- `DISPLAY AND INPUT`
-- `POWER`
-- `STORAGE`
-- `NETWORK`
-- `AUDIO AND BLUETOOTH`
-- `LOCAL SERVICES`
+### 3. Success
 
-Статусы шагов: `CHECKED`, `CHECKING`, `WAITING`. Искусственный процент
-запрещён.
+Показывает только нормализованные поля из успешного ответа `system.identity`.
 
-### Result
-
-Успех:
+Полный пример:
 
 ```text
 SYSTEM RESULT
-DEVICE READY
-8 OBSERVATIONS · NO ACTIONS
-
-[VIEW DETAILS]  [DONE]
+IDENTITY OBSERVED
+SAAIOS
+PIXEL 7 / PANTHER
+SLOT A
 ```
 
-Частичный результат:
+Пример с неизвестными полями:
 
 ```text
 SYSTEM RESULT
-NETWORK NEEDS ATTENTION
-7 OF 8 OBSERVATIONS RECEIVED
-
-[VIEW DETAILS]  [RETRY]
+IDENTITY OBSERVED
+SAAIOS
+DEVICE / TARGET UNKNOWN
+SLOT UNKNOWN
 ```
 
-Копия появляется во `Входящих` как `DEVICE CHECK RESULT`. Главная карточка не
-превращается в историю чата.
+- `IDENTITY OBSERVED` — semantic success label; token `#00CFA0`.
+- Факты используют primary text `#F5F8FC`; неизвестные значения — muted
+  `#8CA9C8`.
+- После завершения строка снова называется `CHECK DEVICE` и доступна для новой
+  независимой попытки.
+- Success означает только успешное чтение ответа. Он не утверждает исправность
+  устройства, доступность hardware или успешную установку SaAIOS.
+- Запрещены строки `DEVICE HEALTHY`, `ALL SYSTEMS READY`, `INSTALLED` и
+  `FIXED`, если таких фактов нет в ответе.
 
-### Error
+### 4. Error / retry
 
-Известный timeout:
+Runtime offline:
 
 ```text
 SYSTEM RESULT
-CHECK NOT COMPLETED
-NO RESPONSE FROM BLUETOOTH
+ERROR
+SYSTEM CORE OFFLINE
+IDENTITY NOT READ
 
-[RETRY BLUETOOTH]  [VIEW DETAILS]
+DEVICE ACTIONS
+RETRY
 ```
 
-Неизвестная ошибка:
+Tool unavailable:
 
 ```text
 SYSTEM RESULT
-CHECK NOT COMPLETED
-SYSTEM SERVICE STOPPED
+ERROR
+IDENTITY TOOL MISSING
+IDENTITY NOT READ
 
-[RETRY]  [CLOSE]
+DEVICE ACTIONS
+RETRY
 ```
 
-Безопасный код `DEVICE_CHECK_FAILED` доступен в деталях. Нельзя показывать
-`DEVICE BROKEN`, когда известен только timeout probe.
-
-### Retry и остановка
-
-- Retry запускает только неуспешный probe, сохраняя валидные наблюдения.
-- Полный retry получает новый `check_id`; один tap создаёт один запуск.
-- Во время retry кнопка блокируется до принятия команды.
-- `STOP` завершает активный probe и сохраняет частичные наблюдения.
-- Результат остановки: `CHECK STOPPED`; выполненных действий нет.
-- После reboot: `CHECK INTERRUPTED BY RESTART`; автоматического retry нет.
-
-## SYSTEM RESULT
-
-Тип каждой записи обозначается словом, а не только цветом.
-
-Наблюдаемый факт:
+Timeout:
 
 ```text
-OBSERVED
-WI-FI: NOT CONNECTED
-SOURCE: SYSTEM · NOW
+SYSTEM RESULT
+ERROR
+IDENTITY CHECK TIMED OUT
+IDENTITY NOT READ
+
+DEVICE ACTIONS
+RETRY
 ```
 
-Предположение модели:
+- `ERROR` и status marker используют error token `#D56D6D`; основной error
+  text — `#FFD0D0`.
+- Ошибка всегда обозначена словом и не выглядит как нормальный result.
+- Ошибка не сохраняет и не показывает данные от предыдущей попытки.
+- `RETRY` — единственное действие ошибки. Оно появляется только после
+  завершения или отмены предыдущей попытки.
+- Первый принятый tap по `RETRY` запускает одну новую попытку и немедленно
+  возвращает `running`; последующие tap игнорируются до terminal state.
+- При offline runtime dispatch завершается в `error` без model fallback и без
+  ложного success.
+
+## Переходы и guards
 
 ```text
-MODEL ASSUMPTION
-NETWORK MAY BE OUT OF RANGE
-NOT VERIFIED BY SYSTEM
+enter DEVICE ───────────────→ idle
+idle ── accepted tap ───────→ running
+running ── valid response ──→ success
+running ── timeout/failure ─→ error
+success ── accepted tap ────→ running
+error ── accepted RETRY ────→ running
 ```
 
-Предложение:
+Инварианты реализации:
 
-```text
-ACTION PROPOSED
-CONNECT TO HOME WI-FI
-CONFIRMATION REQUIRED
-```
+1. Одновременно существует максимум одна identity attempt.
+2. Guard проверяется до spawn/dispatch, а disabled state устанавливается в том
+   же event turn.
+3. Attempt получает внутренний monotonic generation number. Ответ от старой
+   generation после timeout игнорируется.
+4. Terminal transition выполняется один раз; exit и timeout одной attempt не
+   могут создать два результата.
+5. `system.identity` — единственный допустимый tool; model request и fallback
+   на другой tool запрещены.
 
-Подтверждённое действие:
+## Нормализация identity
 
-```text
-ACTION COMPLETED
-BRIGHTNESS SET TO 35%
-SYSTEM SERVICE · 04:14
-```
+Рендерер не показывает произвольные сырые строки:
 
-Без системного evidence запрещены формулировки `CAUSE FOUND`, `FIXED` и
-`DEVICE HEALTHY`. При конфликте системный факт показывается первым, а
-предположение получает подпись `CONFLICTS WITH CURRENT OBSERVATION`.
+- product: фиксированное `SAAIOS`, только если подтверждено ответом;
+- device: canonical `PIXEL 7` либо `DEVICE UNKNOWN`;
+- target: `[A-Z0-9_-]`, максимум 12 символов, иначе `TARGET UNKNOWN`;
+- slot: только `A` или `B`, иначе `SLOT UNKNOWN`.
 
-## Переходы
+Canonical Pixel 7 target отображается как `PIXEL 7 / PANTHER`. Длинные,
+отсутствующие, malformed или не-ASCII значения заменяются на соответствующий
+`UNKNOWN`, а не обрезаются в потенциально ложный факт. Сырые identity fields,
+серийные номера и hardware identifiers не попадают в UI или журнал.
 
-```text
-Сейчас
-  ├─ DEVICE / CHECK DEVICE → WAITING → RUNNING
-  │                                      ├─ SYSTEM RESULT
-  │                                      └─ ERROR RESULT
-  ├─ DEVICE / DEVICE DETAILS → Обзор устройства
-  ├─ DEVICE ACTIONS → PROPOSED → COMPLETED | ERROR
-  └─ SET AN INTENT → Клавиатура → ACCEPTED | ERROR
+## Text, touch и accessibility
 
-Входящие
-  └─ SYSTEM RESULT → Сведения → Назад во Входящие
-```
+- Все видимые runtime-строки выше являются точными и uppercase ASCII.
+- Максимум 24 символа в одной строке результата.
+- `SYSTEM RESULT` содержит не более четырёх строк под label.
+- Текст не уменьшается ниже текущего native body scale ради длинного значения.
+- Touch target `CHECK DEVICE`/`RETRY` сохраняет текущую геометрию
+  972×150 design px; visual bounds и hit bounds совпадают.
+- Контраст: минимум 4.5:1 для текста и 3:1 для крупного status marker.
+- Idle, running, success и error различимы в grayscale и без animation.
+- Focus/selected state не кодирует success или error.
+- Нижняя навигация остаётся доступной; возврат на `DEVICE` показывает текущее
+  состояние in-flight попытки.
 
-Lock не отменяет проверку. После unlock текущий статус остаётся видимым.
+## Error/retry rationale
 
-## Edge cases
+`SYSTEM CORE OFFLINE` находится внутри error state, потому что отсутствие
+runtime не является результатом identity. Старые данные скрываются, чтобы
+пользователь не принял их за ответ новой попытки. Retry разрешён только после
+terminal transition: это исключает duplicate spawn и сохраняет правило «один
+принятый tap — одна attempt».
 
-- Модель недоступна: `CHECK DEVICE` и ручная навигация работают.
-- Нет сети: `WI-FI: NOT CONNECTED` является наблюдением, а не общей ошибкой.
-- Probe timeout: показывается имя службы, частичные факты сохраняются.
-- Двойное касание: один `check_id`, один запуск.
-- Экран погас: проверка продолжается без принудительного wake.
-- Устаревший факт: `UPDATED 1 MIN AGO` и действие `REFRESH`.
-- Нет места для результата: `RESULT NOT SAVED`; UI не заявляет о записи.
-- Поворот или смена DRM mode: layout остаётся в design space 1080×2400,
-  hit-regions используют тот же transform.
+## Physical verification на Pixel 7
 
-## Text и touch constraints
+1. Открыть `DEVICE`: видны `CHECK DEVICE` и idle copy
+   `READY TO CHECK IDENTITY`.
+2. Нажать один раз: сразу видны disabled `CHECKING…`, `CHECKING DEVICE` и
+   `READING SYSTEM IDENTITY`.
+3. Дважды быстро нажать `CHECK DEVICE`: в runtime наблюдается ровно один
+   `system.identity`.
+4. На success сверить `SAAIOS`, `PIXEL 7`, `PANTHER` и slot с фактическим
+   ответом; неподтверждённое поле отображается как `UNKNOWN`.
+5. Остановить runtime и запустить проверку: `ERROR` и
+   `SYSTEM CORE OFFLINE` визуально красные и текстово отличимы от success.
+6. На error быстро дважды нажать `RETRY`: запускается одна attempt, UI
+   возвращается в running.
+7. Симулировать ответ дольше 10 секунд: появляется
+   `IDENTITY CHECK TIMED OUT`; поздний ответ не меняет error.
+8. Проверить четыре состояния без animation и в grayscale; тексты не
+   обрезаются, touch target срабатывает у всех четырёх краёв.
 
-- Заголовок: до 24 знаков, одна строка.
-- Основной вывод: до 32 знаков в строке, максимум две строки.
-- Одна карточка содержит одну главную мысль.
-- Не более двух действий в одной строке; primary слева.
-- Минимальная touch-цель: 120×120 design px.
-- Расстояние между соседними целями: минимум 24 design px.
-- Состояние не полагается только на цвет, анимацию или spinner.
-- IMEI, адреса устройств, ключи и prompt пользователя не выводятся в карточках
-  и журнале.
+## Implementation-facing decisions
 
-## Visual acceptance
-
-- За 5 секунд пользователь называет продукт `SaAIOS` и устройство `Pixel 7`,
-  а не «чат с ИИ».
-- На `Сейчас` последовательно читаются `DEVICE`, `SET AN INTENT`,
-  `DEVICE ACTIONS`, затем последний `SYSTEM RESULT`.
-- `OBSERVED`, `MODEL ASSUMPTION`, `ACTION PROPOSED` и `ACTION COMPLETED`
-  различимы в grayscale и без анимации.
-- Все строки помещаются на 1080×2400 без clipping.
-- Waiting, running, result и error сохраняют геометрию Back и навигации.
-
-## Physical acceptance на Pixel 7
-
-1. Cold boot без модели оставляет доступными разделы и `CHECK DEVICE`.
-2. На устройстве воспроизводятся waiting, running, result и error; error
-   вызывается контролируемым timeout test probe.
-3. Каждое `OBSERVED` сверяется с соответствующим sysfs или service source.
-4. Lock/wake во время проверки сохраняет состояние; input не утекает.
-5. Двойной tap по primary CTA создаёт один запуск.
-6. `STOP` не выполняет системных действий и сохраняет частичные наблюдения.
-7. `SYSTEM RESULT` появляется во `Входящих`; Details и Back работают.
-8. Проверяются крайние touch-цели, BGRX-цвета, кириллица и отсутствие tearing
-   на 1080×2400×60.
-9. После остановки shell доступны recovery UI и USB-консоль.
-10. Журнал содержит только `check_id`, переход состояния, source и безопасный
-    error code; prompt, секретов и Bluetooth identifiers в нём нет.
-
-## Definition of Done
-
-- UI-строки хранятся в одном наборе констант.
-- `CHECK_DEVICE` не вызывает модель и не изменяет настройки.
-- State machine: `idle → waiting → running → result | error | cancelled`.
-- Fact, assumption, proposal и action различаются на уровне данных.
-- Unit-тесты покрывают переходы, double submit, retry и stale result.
-- Deterministic previews содержат все четыре состояния `CHECK DEVICE`.
-- Все пункты physical acceptance записаны как evidence с физического Pixel 7.
+- Один request: `system.identity`; multi-probe orchestration отсутствует.
+- Четыре состояния: `idle`, `running`, `success`, `error`.
+- Timeout фиксирован на 10 секунд по monotonic clock.
+- Running не имеет cancel/stop; единственная recovery action — terminal
+  `RETRY`.
+- Success содержит только bounded normalized identity facts.
+- Offline, missing tool, malformed, non-zero exit и timeout являются error.
+- Existing `DEVICE`, `SET AN INTENT`, `DEVICE ACTIONS`, `SYSTEM RESULT` и
+  navigation сохраняются без нового service или persistence contract.
