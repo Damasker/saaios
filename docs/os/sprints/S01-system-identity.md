@@ -112,8 +112,17 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
   - `saaios-console`, 991,040 bytes,
     SHA-256 `6cb1845260ff70453e954bbfd6719b1f40bb517a51686fb8eff0f36101b47484`.
   Оба — stripped static AArch64 ELF.
-- Image не собран и устройство не изменялось: ожидается factory archive с
-  `CP2A.260705.006` artifacts. Прошивка и смена slot требуют отдельного явного
+- Factory archive
+  `panther-cp2a.260705.006-factory-ed94a24e.zip`, 3,890,506,966 bytes,
+  SHA-256 `ed94a24e693a28f236e87c9e03436871c2dd6b03b4b56c5839598115d0372b0b`.
+- Из него извлечён stock `init_boot.img`, 8,388,608 bytes,
+  SHA-256 `eb43f67c545f647b0aec709df5ddbe0f594d32ecaffe5d26c18ee82b22c5764d`.
+- Собран `dist/panther/saaios-panther-s01-init_boot.img`, 8,388,608 bytes,
+  SHA-256 `18987941ee7c41a98ea9a9471287933d75a27bf9417050253800d2e937829771`.
+  Повторный unpack подтвердил header v4, Android 17.0.0 / patch 2026-07,
+  static AArch64 `init`, runtime, console и DRM shell. Хэши embedded runtime и
+  console совпали с cross-built artifacts.
+- Image не установлен. Прошивка и смена slot требуют отдельного явного
   разрешения.
 
 ### Live preflight, 2026-09-06
