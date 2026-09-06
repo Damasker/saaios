@@ -115,6 +115,7 @@ struct Args {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum ClientRequest {
+    SystemIdentity,
     Diagnose {
         text: String,
         #[serde(default)]
@@ -713,6 +714,22 @@ where
     }
 
     let response = match req {
+        ClientRequest::SystemIdentity => match runtime
+            .execute_allowed_tool("system.identity", serde_json::json!({}))
+            .await
+        {
+            Ok(result) => ClientResponse {
+                ok: result.ok,
+                error: result.error.clone(),
+                tool_result: Some(result),
+                ..Default::default()
+            },
+            Err(error) => ClientResponse {
+                ok: false,
+                error: Some(error.to_string()),
+                ..Default::default()
+            },
+        },
         ClientRequest::Ping => ClientResponse {
             ok: true,
             ..Default::default()

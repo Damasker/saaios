@@ -1354,6 +1354,31 @@ static void start_ai_request(const char *prompt, int action) {
     }
 }
 
+static void start_identity_request(int action) {
+    if (ai_query_running()) {
+        return;
+    }
+    (void)unlink("/run/saaios-ai-ui.log");
+    ai_last_action = action;
+    pid_t child = fork();
+    if (child == 0) {
+        int log = open("/run/saaios-ai-ui.log",
+                       O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+        if (log >= 0) {
+            (void)dup2(log, STDOUT_FILENO);
+            (void)dup2(log, STDERR_FILENO);
+            close(log);
+        }
+        execl("/saaios/saaios-console", "saaios-console",
+              "--identity", NULL);
+        dprintf(STDOUT_FILENO, "SYSTEM CORE OFFLINE\n");
+        _exit(127);
+    }
+    if (child > 0) {
+        ai_query_pid = child;
+    }
+}
+
 static void start_ai_query(int selected) {
     static const char *const prompts[] = {
         "Use system.identity exactly once. Reply as the running operating system in at most three short lines in uppercase ASCII English. State SAAIOS, the observed device target or class, and boot slot when known. Do not claim anything absent from the tool result. Do not call any other tool.",
@@ -1361,6 +1386,10 @@ static void start_ai_query(int selected) {
         "Use system.disk exactly once. Reply with at most three short lines in uppercase ASCII English. Summarize total and free storage. Do not call any other tool."
     };
     if (selected < 0 || selected >= (int)(sizeof(prompts) / sizeof(prompts[0]))) {
+        return;
+    }
+    if (selected == 0) {
+        start_identity_request(selected);
         return;
     }
     start_ai_request(prompts[selected], selected);

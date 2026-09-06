@@ -211,6 +211,83 @@ impl AiRuntime {
         }
     }
 
+    /// Execute one tool without involving the probabilistic planner.
+    ///
+    /// The normal policy, audit and concurrency gates still apply. This is intended for
+    /// deterministic system controls whose tool name is chosen by trusted UI code.
+    pub async fn execute_allowed_tool(
+        &self,
+        tool: &str,
+        arguments: Value,
+    ) -> Result<ToolCallResult> {
+        let correlation_id = Uuid::new_v4();
+        let call_id = Uuid::new_v4();
+        let _permit = self.acquire_slot(correlation_id).await?;
+        let spec = self
+            .tools
+            .get(tool)
+            .ok_or_else(|| anyhow!("unknown tool {tool}"))?;
+        let decision = self.policy.decide(spec.spec(), &arguments);
+
+        let tool_env = Envelope::new(
+            MessageKind::ToolCall,
+            correlation_id,
+            None,
+            serde_json::to_value(ToolCallRequest {
+                call_id,
+                tool: tool.to_string(),
+                arguments: arguments.clone(),
+            })?,
+        );
+        let tool_event_id = tool_env.msg_id;
+        self.audit.append_envelope(&tool_env)?;
+        self.bus.publish_envelope(tool_env);
+
+        let decision_env = Envelope::new(
+            MessageKind::PolicyDecision,
+            correlation_id,
+            Some(tool_event_id),
+            serde_json::to_value(PolicyDecisionRecord {
+                call_id,
+                tool: tool.to_string(),
+                verdict: decision.verdict.clone(),
+                reason: decision.reason.clone(),
+            })?,
+        );
+        let decision_event_id = decision_env.msg_id;
+        self.audit.append_envelope(&decision_env)?;
+        self.bus.publish_envelope(decision_env);
+
+        if decision.verdict != PolicyVerdict::Allow {
+            return Err(anyhow!(
+                "direct tool `{tool}` was not allowed: {}",
+                decision.reason
+            ));
+        }
+
+        let output = self
+            .tools
+            .execute(
+                tool,
+                arguments,
+                &ToolContext {
+                    correlation_id,
+                    call_id,
+                },
+            )
+            .await
+            .map_err(|error| anyhow!(error))?;
+        let result = ToolCallResult {
+            call_id,
+            tool: tool.to_string(),
+            ok: output.ok,
+            output: output.value,
+            error: output.error,
+        };
+        self.record_tool_result(correlation_id, decision_event_id, &result)?;
+        Ok(result)
+    }
+
     async fn handle_user_text_inner(
         &self,
         text: &str,

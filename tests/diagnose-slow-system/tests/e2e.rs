@@ -113,6 +113,61 @@ async fn diagnose_with_mock_model_provider_asks_confirmation() {
 }
 
 #[tokio::test]
+async fn direct_system_identity_executes_once_with_policy_and_audit() {
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let mut registry = ToolRegistry::new();
+    install_system_tools(&mut registry, ToolsMode::Mock);
+    let runtime = AiRuntime::new(
+        Arc::new(registry),
+        Arc::new(PolicyEngine::new()),
+        audit.clone(),
+        EventBus::new(32),
+        Arc::new(MockModelProvider),
+    );
+
+    let result = runtime
+        .execute_allowed_tool("system.identity", json!({}))
+        .await
+        .expect("direct identity");
+    assert!(result.ok);
+    assert_eq!(result.output["system"], "SaaiOS");
+    assert_eq!(result.output["deployment"], "test_fixture");
+
+    let records = audit.read_all().expect("audit records");
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| {
+                record.kind == MessageKind::ToolCall && record.payload["tool"] == "system.identity"
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| {
+                record.kind == MessageKind::PolicyDecision
+                    && record.payload["tool"] == "system.identity"
+                    && record.payload["verdict"] == json!(PolicyVerdict::Allow)
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| {
+                record.kind == MessageKind::ToolResult
+                    && record.payload["tool"] == "system.identity"
+            })
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn multi_turn_session_remembers_prior_diagnose() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());

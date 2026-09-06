@@ -28,6 +28,10 @@ struct Args {
     /// Ask one question, print the final answer, and exit without a TUI.
     #[arg(long)]
     ask: Option<String>,
+
+    /// Read the local SaaiOS device identity without invoking the model.
+    #[arg(long, conflicts_with = "ask")]
+    identity: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +66,7 @@ impl<T> RuntimeStream for T where T: tokio::io::AsyncRead + tokio::io::AsyncWrit
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum ClientRequest {
+    SystemIdentity,
     Diagnose {
         text: String,
         #[serde(default)]
@@ -179,6 +184,9 @@ async fn main() -> Result<()> {
     if let Some(text) = args.ask.as_deref() {
         return ask_once(&endpoint, text).await;
     }
+    if args.identity {
+        return print_system_identity(&endpoint).await;
+    }
     let mut app = App::new(endpoint.clone());
 
     match request(&endpoint, &ClientRequest::Ping).await {
@@ -199,6 +207,42 @@ async fn main() -> Result<()> {
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     result
+}
+
+async fn print_system_identity(endpoint: &RuntimeEndpoint) -> Result<()> {
+    let response = request(endpoint, &ClientRequest::SystemIdentity).await?;
+    if let Some(error) = response.error {
+        anyhow::bail!(error);
+    }
+    let result = response
+        .tool_result
+        .context("runtime response did not contain system.identity result")?;
+    if !result.ok {
+        anyhow::bail!(result
+            .error
+            .unwrap_or_else(|| "system.identity failed".into()));
+    }
+    let output = result.output;
+    let system = output
+        .get("system")
+        .and_then(|value| value.as_str())
+        .unwrap_or("SAAIOS");
+    let class = output
+        .get("device_class")
+        .and_then(|value| value.as_str())
+        .unwrap_or("UNKNOWN");
+    let target = output
+        .get("target")
+        .and_then(|value| value.as_str())
+        .unwrap_or("UNKNOWN");
+    let slot = output
+        .get("boot_slot")
+        .and_then(|value| value.as_str())
+        .unwrap_or("UNKNOWN");
+    println!("{} {}", system.to_uppercase(), class.to_uppercase());
+    println!("TARGET {}", target.to_uppercase());
+    println!("BOOT SLOT {}", slot.to_uppercase());
+    Ok(())
 }
 
 async fn ask_once(endpoint: &RuntimeEndpoint, text: &str) -> Result<()> {
