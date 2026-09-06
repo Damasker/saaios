@@ -16,6 +16,7 @@ members = [
     "crates/console-tui",
     "crates/console-web",
     "services/saaios-runtime",
+    "services/saai-displayd",
     "tests/diagnose-slow-system",
 ]
 
@@ -66,6 +67,10 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 futures = "0.3"
 bytes = "1"
 http = "1"
+sha2 = "0.10"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "server"] }
+wayland-server = "0.31"
 
 [profile.pixel7]
 inherits = "release"

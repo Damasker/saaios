@@ -92,6 +92,7 @@ Local inference (via Ollama), A/B `BOOT_OK` updates, and local memory facts land
 - [ADR-004: OS track vs Platform track](docs/adr/ADR-004-os-track.md)
 - [ADR-005: owned Wayland application platform](docs/adr/ADR-005-owned-wayland-application-platform.md)
 - [ADR-006: system intelligence, not embedded chat](docs/adr/ADR-006-system-intelligence-not-chat.md)
+- [ADR-007: minimal Wayland compositor on wayland-rs](docs/adr/ADR-007-minimal-wayland-rs-compositor.md)
 - [OS track (native boot, A12 first target)](docs/os/README.md)
 - [SaaiOS product principles](docs/os/PRODUCT-PRINCIPLES.md)
 - [System intelligence and self-management](docs/os/architecture/system-intelligence.md)

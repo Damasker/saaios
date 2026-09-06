@@ -2,9 +2,9 @@
 
 ## Паспорт
 
-- Состояние: `Backlog`.
+- Состояние: `Verify`.
 - Зависит от: S01.
-- Архитектурные решения: ADR-002, ADR-004, ADR-005.
+- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007.
 - Рабочий fallback: существующий `drm-splash`; phone image не меняется.
 
 ## Goal
@@ -83,5 +83,28 @@ Pixel 7, установленный image и userdata не меняются.
 
 ## Evidence
 
-Заполняется при переходе в `Done`: commit, CI run, команды тестирования,
-benchmark framework, frame hash и известные ограничения.
+- Framework spike записан в
+  [ADR-007](../../adr/ADR-007-minimal-wayland-rs-compositor.md): Smithay
+  `wayland_frontend` — 84 packages, 92,24 с и обязательный
+  `libxkbcommon`; прямой `wayland-rs` — 27 packages, 57,62 с и без native
+  Wayland/XKB dependency.
+- Workspace содержит два исполняемых процесса: `saai-displayd` и
+  `saai-demo-surface`. Они общаются только через настоящий Wayland Unix socket
+  в приватном `XDG_RUNTIME_DIR`.
+- `cargo test -p saai-displayd --all-targets -- --nocapture` проверяет:
+  configure/ack/commit, точный `wl_shm` frame hash
+  `b71d8fd372b5947dd4bb9d23dde37f777ccc57547fa0fcd59a7e924ef69efc61`,
+  pointer только focused client, close, ранний client exit, повреждённый wire
+  header, buffer до configure ack и повторную xdg role. После каждого
+  ошибочного клиента исправный client завершает сценарий, уничтожает первый
+  toplevel и успешно проходит новый configure/ack с повторно созданной ролью.
+- Локально собраны static stripped AArch64 musl artifacts:
+  `saai-displayd` 1235072 bytes,
+  SHA-256 `63144a94825a850ff12bd71d2985c0c49d0d808b6a5a4f3146ff3a1ec19ba3ae`;
+  `saai-demo-surface` 1112440 bytes,
+  SHA-256 `93135bcdee42381cf893a11a2490adbcc2e31fdddb5c79b2403340e2d7fde292`.
+- CI имеет отдельный headless integration step и cross-build обоих binaries.
+  Финальные commit и CI run записываются после зелёной проверки.
+- Pixel 7 image, `drm-splash`, userdata и slots не изменялись. Ограничения:
+  это host proof без output backend; keyboard, touch protocol, popups,
+  shell, DRM/KMS и GPU остаются последующим scope.

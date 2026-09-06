@@ -1,0 +1,24 @@
+[package]
+name = "saai-displayd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+wayland-server.workspace = true
+
+[[bin]]
+name = "saai-displayd"
+path = "src/bin/saai-displayd.rs"
+
+[[bin]]
+name = "saai-demo-surface"
+path = "src/bin/saai-demo-surface.rs"

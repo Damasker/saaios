@@ -21,6 +21,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Wayland headless vertical slice
+        run: cargo test -p saai-displayd --all-targets -- --nocapture
       - name: test
         run: cargo test --workspace
       - name: PID 1 identity fallback
@@ -42,4 +44,4 @@ jobs:
         run: >-
           cargo build --profile pixel7 --locked
           --target aarch64-unknown-linux-musl
-          -p saaios-runtime -p console-tui
+          -p saaios-runtime -p console-tui -p saai-displayd
