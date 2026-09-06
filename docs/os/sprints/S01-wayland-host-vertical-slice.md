@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `Ready`.
+- Состояние: `Done`.
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005.
 - Рабочий fallback: существующий `drm-splash`; phone image не меняется.
@@ -83,5 +83,21 @@ Pixel 7, установленный image и userdata не меняются.
 
 ## Evidence
 
-Заполняется при переходе в `Done`: commit, CI run, команды тестирования,
-benchmark framework, frame hash и известные ограничения.
+Проверено локально 2026-09-06 на Ubuntu/WSL2, Rust 1.97.1:
+
+- `cargo fmt --all -- --check` — успешно;
+- `cargo clippy --workspace --all-targets -- -D warnings` — успешно;
+- `cargo test --workspace` — успешно, 62 passed, 0 failed;
+- `cargo test -p saai-displayd --all-targets -- --nocapture` — успешно,
+  4 unit + 1 multi-process integration tests;
+- integration запускает настоящий Wayland socket, три protocol-negative
+  клиента, принудительно завершённый клиент и затем исправный demo-client;
+- hash XRGB8888 frame:
+  `9b05ff34424f63e620a88baecc12950fe13e242ca1645ec9d8d57d939186f99d`;
+- framework benchmark и решение записаны в ADR-006: 44 уникальные строки
+  dependency tree у выбранного среза против 72 у минимального Smithay
+  `wayland_frontend` spike.
+
+Известные ограничения: только host/headless, один XRGB8888 toplevel,
+синтетическая клавиатура без keymap, без pointer/touch/output, DRM/KMS,
+Pixel 7 и GPU.

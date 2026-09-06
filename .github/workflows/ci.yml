@@ -19,5 +19,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+      - name: S01 headless Wayland vertical slice
+        run: cargo test -p saai-displayd --test wayland_slice -- --nocapture
       - name: e2e
         run: cargo test -p diagnose-slow-system -- --nocapture

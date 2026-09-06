@@ -1,0 +1,32 @@
+[package]
+name = "saai-displayd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless Wayland protocol vertical slice for SaaiOS"
+
+[lib]
+name = "saai_displayd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "saai-displayd"
+path = "src/bin/displayd.rs"
+
+[[bin]]
+name = "saai-demo-surface"
+path = "src/bin/demo_surface.rs"
+
+[dependencies]
+anyhow.workspace = true
+memmap2.workspace = true
+rustix.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+wayland-server.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
