@@ -36,9 +36,11 @@ pub enum ToolsMode {
     RealLinux,
 }
 
+pub type DeviceContext = Value;
+
 /// A bounded, non-secret identity snapshot for the running SaaiOS instance.
 /// Values come from the launch environment or local kernel interfaces only.
-pub fn system_identity(mode: ToolsMode) -> Value {
+pub fn system_identity(mode: ToolsMode) -> DeviceContext {
     if mode == ToolsMode::Mock {
         return json!({
             "schema": 1,
@@ -54,6 +56,7 @@ pub fn system_identity(mode: ToolsMode) -> Value {
         });
     }
 
+    let bootconfig = std::fs::read_to_string("/proc/bootconfig").unwrap_or_default();
     let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
     let native_marker = Path::new("/saaios").exists() || Path::new("/data/saaios").exists();
     let configured_target = bounded_fact(std::env::var("SAAIOS_DEVICE_TARGET").ok());
@@ -64,10 +67,8 @@ pub fn system_identity(mode: ToolsMode) -> Value {
         "/sys/devices/virtual/dmi/id/product_name",
     ]);
     let kernel_release = read_bounded_fact(&["/proc/sys/kernel/osrelease"]);
-    let boot_hardware = bounded_fact(cmdline_value(&cmdline, "androidboot.hardware"));
-    let boot_slot = bounded_fact(cmdline_value(&cmdline, "androidboot.slot_suffix"))
-        .map(|slot| slot.trim_start_matches('_').to_string())
-        .filter(|slot| !slot.is_empty());
+    let boot_hardware = boot_fact_from(&bootconfig, &cmdline, "androidboot.hardware");
+    let boot_slot = boot_slot_from(&bootconfig, &cmdline);
     let target = configured_target.or(boot_hardware);
     let device_class = configured_class.unwrap_or_else(|| {
         let looks_like_phone = target.as_deref() == Some("panther")
@@ -130,14 +131,35 @@ fn cmdline_value(cmdline: &str, key: &str) -> Option<String> {
     })
 }
 
-pub fn install_system_tools(registry: &mut ToolRegistry, mode: ToolsMode) {
+fn bootconfig_value(bootconfig: &str, key: &str) -> Option<String> {
+    bootconfig.lines().find_map(|line| {
+        let (candidate, value) = line.split_once('=')?;
+        if candidate.trim() != key {
+            return None;
+        }
+        let value = value.trim().trim_matches(['"', '\'']);
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+fn boot_fact_from(bootconfig: &str, cmdline: &str, key: &str) -> Option<String> {
+    bounded_fact(bootconfig_value(bootconfig, key).or_else(|| cmdline_value(cmdline, key)))
+}
+
+fn boot_slot_from(bootconfig: &str, cmdline: &str) -> Option<String> {
+    boot_fact_from(bootconfig, cmdline, "androidboot.slot_suffix")
+        .map(|slot| slot.trim_start_matches('_').to_string())
+        .filter(|slot| !slot.is_empty())
+}
+
+pub fn install_system_tools(registry: &mut ToolRegistry, mode: ToolsMode, device: DeviceContext) {
     let backend: Arc<dyn SystemBackend> = match mode {
         ToolsMode::Mock => Arc::new(MockBackend),
         ToolsMode::RealLinux => Arc::new(LinuxBackend),
     };
 
     registry.register(Arc::new(IdentityTool {
-        identity: system_identity(mode),
+        identity: device,
         spec: ToolSpec {
             name: "system.identity".into(),
             description: "Read the locally observed SaaiOS deployment and device identity".into(),
@@ -880,7 +902,7 @@ fn read_vm_rss_mb(pid: u32) -> Option<f64> {
 }
 
 struct IdentityTool {
-    identity: Value,
+    identity: DeviceContext,
     spec: ToolSpec,
 }
 
@@ -1067,7 +1089,8 @@ mod tests {
     #[tokio::test]
     async fn identity_is_local_and_explicit() {
         let mut reg = ToolRegistry::new();
-        install_system_tools(&mut reg, ToolsMode::Mock);
+        let device = system_identity(ToolsMode::Mock);
+        install_system_tools(&mut reg, ToolsMode::Mock, device.clone());
         let out = reg
             .execute(
                 "system.identity",
@@ -1079,6 +1102,7 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(out.value, device);
         assert_eq!(out.value["system"], "SaaiOS");
         assert_eq!(out.value["deployment"], "test_fixture");
         assert_eq!(out.value["observed_by"], "local_runtime");
@@ -1101,10 +1125,40 @@ mod tests {
         assert_eq!(cmdline_value("secret=value", "androidboot.hardware"), None);
     }
 
+    #[test]
+    fn bootconfig_slot_and_hardware_win_with_cmdline_fallback() {
+        assert_eq!(
+            boot_slot_from(
+                "androidboot.slot_suffix = \"_a\"\n",
+                "androidboot.slot_suffix=_b"
+            )
+            .as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            boot_slot_from("", "quiet androidboot.slot_suffix=_b").as_deref(),
+            Some("b")
+        );
+        assert_eq!(boot_slot_from("", "quiet"), None);
+        assert_eq!(
+            boot_fact_from(
+                "androidboot.hardware = \"panther\"\n",
+                "androidboot.hardware=oriole",
+                "androidboot.hardware"
+            )
+            .as_deref(),
+            Some("panther")
+        );
+        assert_eq!(
+            boot_fact_from("", "androidboot.hardware=panther", "androidboot.hardware").as_deref(),
+            Some("panther")
+        );
+    }
+
     #[tokio::test]
     async fn mock_metrics_fixture() {
         let mut reg = ToolRegistry::new();
-        install_system_tools(&mut reg, ToolsMode::Mock);
+        install_system_tools(&mut reg, ToolsMode::Mock, system_identity(ToolsMode::Mock));
         let out = reg
             .execute(
                 "system.metrics",
@@ -1123,7 +1177,7 @@ mod tests {
     #[tokio::test]
     async fn mock_disk_fixture() {
         let mut reg = ToolRegistry::new();
-        install_system_tools(&mut reg, ToolsMode::Mock);
+        install_system_tools(&mut reg, ToolsMode::Mock, system_identity(ToolsMode::Mock));
         let out = reg
             .execute(
                 "system.disk",
@@ -1142,7 +1196,7 @@ mod tests {
     #[tokio::test]
     async fn mock_temperature_and_journal() {
         let mut reg = ToolRegistry::new();
-        install_system_tools(&mut reg, ToolsMode::Mock);
+        install_system_tools(&mut reg, ToolsMode::Mock, system_identity(ToolsMode::Mock));
         let ctx = ToolContext {
             correlation_id: Uuid::new_v4(),
             call_id: Uuid::new_v4(),
@@ -1168,7 +1222,7 @@ mod tests {
     #[tokio::test]
     async fn mock_kill_refuses_pid_one() {
         let mut reg = ToolRegistry::new();
-        install_system_tools(&mut reg, ToolsMode::Mock);
+        install_system_tools(&mut reg, ToolsMode::Mock, system_identity(ToolsMode::Mock));
         let err = reg
             .execute(
                 "process.kill_request",
@@ -1189,7 +1243,11 @@ mod tests {
             return;
         }
         let mut reg = ToolRegistry::new();
-        install_system_tools(&mut reg, ToolsMode::RealLinux);
+        install_system_tools(
+            &mut reg,
+            ToolsMode::RealLinux,
+            system_identity(ToolsMode::RealLinux),
+        );
         let metrics = reg
             .execute(
                 "system.metrics",
