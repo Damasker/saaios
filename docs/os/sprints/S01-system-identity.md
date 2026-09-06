@@ -116,6 +116,14 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
   `CP2A.260705.006` artifacts. Прошивка и смена slot требуют отдельного явного
   разрешения.
 
+### Live preflight, 2026-09-06
+
+- Pixel 7 отвечает на `172.31.7.1`, runtime TCP `38127` доступен.
+- Установленный runtime имеет 10 tools без `system.identity`; status не
+  содержит `device`, запрос `system_identity` не поддерживается.
+- Это подтверждает старый baseline до S01, а не physical acceptance нового
+  image. Запись разделов и смена slot не выполнялись.
+
 ### Physical verification checklist
 
 После получения factory archive:
