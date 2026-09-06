@@ -1827,6 +1827,7 @@ dependencies = [
  "anyhow",
  "memmap2",
  "rustix 1.1.4",
+ "saai-shell",
  "serde",
  "serde_json",
  "sha2",
@@ -1834,6 +1835,18 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-server",
+]
+
+[[package]]
+name = "saai-shell"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "memmap2",
+ "sha2",
+ "tempfile",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

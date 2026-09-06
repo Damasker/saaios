@@ -28,5 +28,6 @@ wayland-protocols.workspace = true
 wayland-server.workspace = true
 
 [dev-dependencies]
+saai-shell = { path = "../saai-shell" }
 serde.workspace = true
 serde_json.workspace = true

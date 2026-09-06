@@ -1,8 +1,9 @@
 use anyhow::{bail, Context, Result};
 use memmap2::{Mmap, MmapOptions};
 use saai_displayd::{
-    frame_hash, FocusState, ProtocolFault, SurfaceLifecycle, FRAME_HEIGHT, FRAME_STRIDE,
-    FRAME_WIDTH,
+    BufferTransport, DmabufDescriptor, DmabufImportCheck, FocusState, ProtocolFault,
+    RuntimeBackendCapabilities, SoftwareCompositionBackend, SurfaceLifecycle, FRAME_HEIGHT,
+    FRAME_STRIDE, FRAME_WIDTH,
 };
 use std::{
     collections::HashSet,
@@ -70,6 +71,7 @@ struct CompositorState {
     next_serial: u32,
     focus: FocusState,
     keyboards: Vec<(ClientId, WlKeyboard)>,
+    backend: SoftwareCompositionBackend<UnavailableDmabufImport>,
 }
 
 impl CompositorState {
@@ -107,6 +109,16 @@ struct BufferData {
     height: u32,
     stride: u32,
     format: wl_shm::Format,
+}
+
+struct UnavailableDmabufImport;
+
+impl DmabufImportCheck for UnavailableDmabufImport {
+    type Error = &'static str;
+
+    fn check_import(&self, _descriptor: &DmabufDescriptor) -> Result<(), Self::Error> {
+        Err("headless software backend has no dmabuf importer")
+    }
 }
 
 macro_rules! simple_global {
@@ -448,10 +460,12 @@ impl Dispatch<WlSurface, SurfaceData> for CompositorState {
                 }
                 let length = (buffer_data.stride * buffer_data.height) as usize;
                 let bytes = &buffer_data.map[buffer_data.offset..buffer_data.offset + length];
-                let hash = frame_hash(bytes);
-                state
-                    .shared
-                    .record(format!("FRAME hash={hash} width=64 height=48"));
+                let composed = state.backend.compose_wl_shm(bytes);
+                debug_assert_eq!(composed.transport, BufferTransport::WlShm);
+                state.shared.record(format!(
+                    "FRAME hash={} width=64 height=48",
+                    composed.frame_hash
+                ));
                 buffer.release();
 
                 let surface_id = resource.id().protocol_id() as u64;
@@ -560,6 +574,18 @@ fn parse_args() -> Result<(String, usize, Option<PathBuf>)> {
 fn main() -> Result<()> {
     let (socket_name, expected, report_path) = parse_args()?;
     let shared = Arc::new(Shared::default());
+    let backend = SoftwareCompositionBackend::new(
+        RuntimeBackendCapabilities::software_only(),
+        UnavailableDmabufImport,
+    );
+    let backend_plan = backend.plan(None);
+    debug_assert_eq!(backend_plan.transport, BufferTransport::WlShm);
+    shared.record(format!(
+        "BACKEND wl_shm={} dmabuf_available={} fallback={:?}",
+        backend.capabilities().supports_wl_shm(),
+        backend_plan.dmabuf_available,
+        backend_plan.fallback
+    ));
     let mut display = Display::<CompositorState>::new().context("create Wayland display")?;
     let handle = display.handle();
     handle.create_global::<CompositorState, WlCompositor, _>(6, ());
@@ -572,6 +598,7 @@ fn main() -> Result<()> {
         next_serial: 40,
         focus: FocusState::default(),
         keyboards: Vec::new(),
+        backend,
     };
     shared.record(format!("READY socket={socket_name}"));
     let started = Instant::now();

@@ -8,6 +8,134 @@ pub const FRAME_HEIGHT: u32 = 48;
 pub const FRAME_STRIDE: u32 = FRAME_WIDTH * 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeBackendCapabilities {
+    dmabuf_import: bool,
+}
+
+impl RuntimeBackendCapabilities {
+    pub const fn software_only() -> Self {
+        Self {
+            dmabuf_import: false,
+        }
+    }
+
+    pub const fn with_dmabuf_import() -> Self {
+        Self {
+            dmabuf_import: true,
+        }
+    }
+
+    pub const fn supports_wl_shm(self) -> bool {
+        true
+    }
+
+    pub const fn supports_dmabuf_import(self) -> bool {
+        self.dmabuf_import
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DmabufDescriptor {
+    pub width: u32,
+    pub height: u32,
+    pub format: u32,
+    pub modifier: u64,
+}
+
+pub trait DmabufImportCheck {
+    type Error: std::fmt::Display;
+
+    fn check_import(&self, descriptor: &DmabufDescriptor) -> Result<(), Self::Error>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferTransport {
+    WlShm,
+    Dmabuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WlShmFallback {
+    DmabufCapabilityUnavailable,
+    NoDmabufCandidate,
+    DmabufImportRejected(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompositionPlan {
+    pub transport: BufferTransport,
+    pub dmabuf_available: bool,
+    pub fallback: Option<WlShmFallback>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoftwareComposedFrame {
+    pub transport: BufferTransport,
+    pub byte_len: usize,
+    pub frame_hash: String,
+}
+
+pub struct SoftwareCompositionBackend<C> {
+    capabilities: RuntimeBackendCapabilities,
+    import_check: C,
+}
+
+impl<C> SoftwareCompositionBackend<C>
+where
+    C: DmabufImportCheck,
+{
+    pub const fn new(capabilities: RuntimeBackendCapabilities, import_check: C) -> Self {
+        Self {
+            capabilities,
+            import_check,
+        }
+    }
+
+    pub const fn capabilities(&self) -> RuntimeBackendCapabilities {
+        self.capabilities
+    }
+
+    pub fn compose_wl_shm(&self, frame: &[u8]) -> SoftwareComposedFrame {
+        SoftwareComposedFrame {
+            transport: BufferTransport::WlShm,
+            byte_len: frame.len(),
+            frame_hash: frame_hash(frame),
+        }
+    }
+
+    pub fn plan(&self, candidate: Option<&DmabufDescriptor>) -> CompositionPlan {
+        if !self.capabilities.supports_dmabuf_import() {
+            return CompositionPlan {
+                transport: BufferTransport::WlShm,
+                dmabuf_available: false,
+                fallback: Some(WlShmFallback::DmabufCapabilityUnavailable),
+            };
+        }
+
+        let Some(candidate) = candidate else {
+            return CompositionPlan {
+                transport: BufferTransport::WlShm,
+                dmabuf_available: false,
+                fallback: Some(WlShmFallback::NoDmabufCandidate),
+            };
+        };
+
+        match self.import_check.check_import(candidate) {
+            Ok(()) => CompositionPlan {
+                transport: BufferTransport::Dmabuf,
+                dmabuf_available: true,
+                fallback: None,
+            },
+            Err(error) => CompositionPlan {
+                transport: BufferTransport::WlShm,
+                dmabuf_available: false,
+                fallback: Some(WlShmFallback::DmabufImportRejected(error.to_string())),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolFault {
     BufferBeforeConfigure,
     InvalidConfigureSerial,
@@ -95,6 +223,122 @@ pub fn frame_hash(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    struct ImportCheck<'a> {
+        called: &'a Cell<bool>,
+        result: Result<(), &'static str>,
+    }
+
+    impl DmabufImportCheck for ImportCheck<'_> {
+        type Error = &'static str;
+
+        fn check_import(&self, _descriptor: &DmabufDescriptor) -> Result<(), Self::Error> {
+            self.called.set(true);
+            self.result
+        }
+    }
+
+    fn dmabuf() -> DmabufDescriptor {
+        DmabufDescriptor {
+            width: FRAME_WIDTH,
+            height: FRAME_HEIGHT,
+            format: 0x3432_5258,
+            modifier: 0,
+        }
+    }
+
+    #[test]
+    fn wl_shm_is_always_available_and_dmabuf_needs_capability() {
+        let called = Cell::new(false);
+        let backend = SoftwareCompositionBackend::new(
+            RuntimeBackendCapabilities::software_only(),
+            ImportCheck {
+                called: &called,
+                result: Ok(()),
+            },
+        );
+
+        assert!(backend.capabilities().supports_wl_shm());
+        assert_eq!(
+            backend.plan(Some(&dmabuf())),
+            CompositionPlan {
+                transport: BufferTransport::WlShm,
+                dmabuf_available: false,
+                fallback: Some(WlShmFallback::DmabufCapabilityUnavailable),
+            }
+        );
+        assert!(!called.get(), "import must not run without capability");
+    }
+
+    #[test]
+    fn rejected_dmabuf_import_falls_back_without_error() {
+        let called = Cell::new(false);
+        let backend = SoftwareCompositionBackend::new(
+            RuntimeBackendCapabilities::with_dmabuf_import(),
+            ImportCheck {
+                called: &called,
+                result: Err("unsupported modifier"),
+            },
+        );
+
+        assert_eq!(
+            backend.plan(Some(&dmabuf())),
+            CompositionPlan {
+                transport: BufferTransport::WlShm,
+                dmabuf_available: false,
+                fallback: Some(WlShmFallback::DmabufImportRejected(
+                    "unsupported modifier".to_owned()
+                )),
+            }
+        );
+        assert!(called.get());
+    }
+
+    #[test]
+    fn dmabuf_is_available_only_after_successful_import_check() {
+        let called = Cell::new(false);
+        let backend = SoftwareCompositionBackend::new(
+            RuntimeBackendCapabilities::with_dmabuf_import(),
+            ImportCheck {
+                called: &called,
+                result: Ok(()),
+            },
+        );
+
+        assert_eq!(
+            backend.plan(Some(&dmabuf())),
+            CompositionPlan {
+                transport: BufferTransport::Dmabuf,
+                dmabuf_available: true,
+                fallback: None,
+            }
+        );
+        assert!(called.get());
+    }
+
+    #[test]
+    fn software_composition_accepts_wl_shm_without_dmabuf() {
+        let called = Cell::new(false);
+        let backend = SoftwareCompositionBackend::new(
+            RuntimeBackendCapabilities::software_only(),
+            ImportCheck {
+                called: &called,
+                result: Err("must not be called"),
+            },
+        );
+        let frame = demo_frame();
+
+        assert_eq!(
+            backend.compose_wl_shm(&frame),
+            SoftwareComposedFrame {
+                transport: BufferTransport::WlShm,
+                byte_len: frame.len(),
+                frame_hash: frame_hash(&frame),
+            }
+        );
+        assert!(!called.get());
+    }
 
     #[test]
     fn configure_ack_commit_is_ordered() {

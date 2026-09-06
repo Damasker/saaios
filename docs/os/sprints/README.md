@@ -21,6 +21,9 @@ Roadmap описывает порядок доказуемых вертикал�
 | S09 | Planner, automation и memory | Backlog | S08 |
 | S10 | GPU, power, update и release gate | Backlog | S03–S09 |
 
+Подготовительная host-работа, не закрывающая device acceptance S02/S03:
+[composition backend и отдельный `saai-shell`](S02-S03-host-composition-shell-slice.md).
+
 ## S00 — Архитектура и процесс
 
 **Goal:** зафиксировать собственную Wayland-платформу, продуктовые границы,
@@ -61,6 +64,10 @@ phone image.
 **Goal:** тот же тестовый Wayland-клиент выводится на реальный экран и получает
 касания.
 
+**Текущая оговорка:** подготовительный host-срез проверяет software composition,
+безопасный `wl_shm` fallback и отдельный shell-процесс. S02 остаётся `Backlog`:
+DRM/KMS и проверки на Pixel 7 отсутствуют.
+
 **Scope:** DRM/KMS backend, `1080x2400x60`, BGRX output transform, evdev touch,
 focus одного fullscreen-клиента, readiness и аппаратный watchdog. Shell ещё
 остаётся старым.
@@ -75,6 +82,10 @@ DRM fallback и USB-консоль; холодная загрузка воспр
 ## S03 — Отдельный `saai-shell` и lock screen
 
 **Goal:** текущая мобильная оболочка становится независимым системным клиентом.
+
+**Текущая оговорка:** host-прототип `saai-shell` рисует детерминированную
+поверхность и повторно запускается после выхода, но lock, системные слои,
+restart policy и device-регрессия ещё не реализованы.
 
 **Scope:** lock/status/navigation/system overlay, системный слой, список
 окон, перезапуск shell, touch wake и idle screen-off. Бизнес-данные остаются

@@ -17,6 +17,7 @@ members = [
     "crates/console-web",
     "services/saaios-runtime",
     "services/saai-displayd",
+    "services/saai-shell",
     "tests/diagnose-slow-system",
 ]
 
