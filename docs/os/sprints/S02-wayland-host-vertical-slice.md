@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `Verify`.
+- Состояние: `Done`.
 - Зависит от: S01.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007.
 - Рабочий fallback: существующий `drm-splash`; phone image не меняется.
@@ -103,8 +103,11 @@ Pixel 7, установленный image и userdata не меняются.
   SHA-256 `63144a94825a850ff12bd71d2985c0c49d0d808b6a5a4f3146ff3a1ec19ba3ae`;
   `saai-demo-surface` 1112440 bytes,
   SHA-256 `93135bcdee42381cf893a11a2490adbcc2e31fdddb5c79b2403340e2d7fde292`.
-- CI имеет отдельный headless integration step и cross-build обоих binaries.
-  Финальные commit и CI run записываются после зелёной проверки.
+- Реализация зафиксирована commit
+  `65b274007ce777572ba0e5b8074d3c2a1e5bef42`; GitHub Actions run
+  [`34035418665`](https://github.com/Damasker/saaios/actions/runs/34035418665)
+  успешно выполнил format, clippy, отдельный headless integration, workspace
+  tests, e2e и cross-build.
 - Pixel 7 image, `drm-splash`, userdata и slots не изменялись. Ограничения:
   это host proof без output backend; keyboard, touch protocol, popups,
   shell, DRM/KMS и GPU остаются последующим scope.
