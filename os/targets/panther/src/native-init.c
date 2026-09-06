@@ -657,17 +657,29 @@ static void restore_saved_time(void) {
     }
 }
 
-static void setup_data_storage(void) {
+static void setup_platform_identity(void) {
+    (void)setenv("SAAIOS_DEPLOYMENT", "native_device", 1);
+    (void)setenv("SAAIOS_DEVICE_CLASS", "phone", 1);
+    (void)setenv("SAAIOS_DEVICE_TARGET", "panther", 1);
+    (void)unsetenv("SAAIOS_DATA");
+}
+
+typedef int (*partition_node_fn)(const char *, const char *);
+typedef int (*mount_fn)(const char *, const char *, const char *,
+                        unsigned long, const void *);
+
+static void setup_data_storage_with(partition_node_fn find_partition,
+                                    mount_fn mount_partition) {
     mkdir_one("/data", 0755);
-    if (create_partition_node("userdata", "/dev/saaios-data") < 0) {
+    if (find_partition("userdata", "/dev/saaios-data") < 0) {
         log_message("userdata partition was not found");
         return;
     }
-    if (mount("/dev/saaios-data",
-              "/data",
-              "f2fs",
-              MS_NOSUID | MS_NODEV | MS_NOATIME,
-              "discard") < 0) {
+    if (mount_partition("/dev/saaios-data",
+                        "/data",
+                        "f2fs",
+                        MS_NOSUID | MS_NODEV | MS_NOATIME,
+                        "discard") < 0) {
         log_message("SaaiOS data mount failed: %s", strerror(errno));
         return;
     }
@@ -678,10 +690,11 @@ static void setup_data_storage(void) {
     mkdir_one("/data/saaios/var/runtime", 0700);
     (void)setenv("HOME", "/data/saaios/home", 1);
     (void)setenv("SAAIOS_DATA", "/data/saaios", 1);
-    (void)setenv("SAAIOS_DEPLOYMENT", "native_device", 1);
-    (void)setenv("SAAIOS_DEVICE_CLASS", "phone", 1);
-    (void)setenv("SAAIOS_DEVICE_TARGET", "panther", 1);
     log_message("SaaiOS data storage mounted");
+}
+
+static void setup_data_storage(void) {
+    setup_data_storage_with(create_partition_node, mount);
 }
 
 static void prepare_persistent_firmware(void) {
@@ -1316,6 +1329,7 @@ static pid_t start_console(void) {
 
 int main(void) {
     prepare_mounts();
+    setup_platform_identity();
     log_message("native static PID 1 started");
 
     for (size_t i = 0; i < ARRAY_SIZE(restart_modules); ++i) {

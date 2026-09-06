@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `In progress`.
+- Состояние: `Repo gate complete; physical acceptance pending`.
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-006.
 - Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
@@ -87,4 +87,61 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
 
 ## Evidence
 
-Заполняется после CI, установки и двух физических ответов.
+### Repo-side gate, 2026-09-06
+
+- Один `DeviceContext` создаётся в `saaios-runtime` при старте и клонируется в
+  `IdentityTool`, runtime status и planner context. Unit/e2e проверяют object
+  equality.
+- Slot читается из `/proc/bootconfig`; `/proc/cmdline` используется только как
+  fallback. Тест покрывает приоритет, fallback и отсутствие значения.
+- PID 1 выставляет `native_device / phone / panther` до storage setup.
+  `SAAIOS_DATA` очищен в раннем fallback и появляется только после успешного
+  mount userdata. Host C test исполняет сценарий без userdata.
+- `CHECK DEVICE` остаётся прямым read-only вызовом `system.identity`; e2e
+  подтверждает один policy/tool/audit cycle без обращения к модели.
+- Выполнены:
+  - `cargo fmt --all -- --check`;
+  - `cargo clippy --workspace --all-targets -- -D warnings`;
+  - `cargo test --workspace`;
+  - `cargo test -p diagnose-slow-system -- --nocapture` — 12 passed;
+  - host C fallback test;
+  - Pixel 7 cross-build для `aarch64-unknown-linux-musl`.
+- Cross-built ELF:
+  - `saaios-runtime`, 3,256,312 bytes,
+    SHA-256 `104dd4d61618f280166b2c5e4f2dd5b8678527fd0569bc90dda5a8b6c2524319`;
+  - `saaios-console`, 991,040 bytes,
+    SHA-256 `6cb1845260ff70453e954bbfd6719b1f40bb517a51686fb8eff0f36101b47484`.
+  Оба — stripped static AArch64 ELF.
+- Image не собран и устройство не изменялось: ожидается factory archive с
+  `CP2A.260705.006` artifacts. Прошивка и смена slot требуют отдельного явного
+  разрешения.
+
+### Physical verification checklist
+
+После получения factory archive:
+
+1. Проверить SHA-256 архива, извлечь matching stock `init_boot` и подтвердить
+   `panther / CP2A.260705.006`.
+2. На зафиксированном commit повторить CI-команды и cross-build; собрать
+   `saaios-panther-init_boot.img`, записать его размер и SHA-256.
+3. До записи выполнить `fastboot getvar product`, `fastboot getvar
+   current-slot` и сохранить рабочий fallback image. Остановиться, если product
+   не `panther`.
+4. Только после явного разрешения пользователя записать согласованный image в
+   slot A. Не трогать slot B.
+5. После cold boot проверить `/proc/bootconfig`, `/proc/cmdline` и runtime
+   status: `SaaiOS / native_device / phone / panther / boot_slot=a`.
+6. Нажать `CHECK DEVICE` один раз. Сверить один вызов `system.identity`, один
+   policy verdict и одну audit-запись с тем же JSON object.
+7. Задать «что ты за система?» и убедиться, что ответ называет SaaiOS на Pixel
+   7, не заявляет Android и неподтверждённые возможности.
+8. Повторить cold reboot и проверки identity/UI; убедиться, что audit и prompt
+   не содержат hostname, serial, MAC/IP, полного cmdline или credentials.
+9. Проверить fallback без userdata на отдельном test boot: platform identity
+   остаётся `native_device / phone / panther`, а `SAAIOS_DATA` отсутствует.
+
+### Physical rollback
+
+При неуспешной проверке прекратить тест. После отдельного явного разрешения
+либо вернуть сохранённый init_boot commit `7b29c62` в slot A, либо сделать
+активным нетронутый Android slot B. Userdata не форматировать и не мигрировать.

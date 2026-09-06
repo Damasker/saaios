@@ -12,6 +12,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy
+          targets: aarch64-unknown-linux-musl
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
 
       - name: fmt
         run: cargo fmt --all -- --check
@@ -19,5 +23,23 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+      - name: PID 1 identity fallback
+        run: >-
+          cc -std=c11 -Wall -Wextra -Werror
+          -Wno-unused-function -Wno-format-truncation
+          os/targets/panther/tests/native-init-identity-test.c
+          -o /tmp/native-init-identity-test &&
+          /tmp/native-init-identity-test
       - name: e2e
         run: cargo test -p diagnose-slow-system -- --nocapture
+      - name: Pixel 7 cross-build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ github.workspace }}/os/targets/panther/tools/zig-aarch64-musl.sh
+          CC_aarch64_unknown_linux_musl: ${{ github.workspace }}/os/targets/panther/tools/zig-aarch64-musl.sh
+          AR_aarch64_unknown_linux_musl: ${{ github.workspace }}/os/targets/panther/tools/zig-ar.sh
+          CRATE_CC_NO_DEFAULTS: "1"
+          RUSTFLAGS: -C link-self-contained=no
+        run: >-
+          cargo build --profile pixel7 --locked
+          --target aarch64-unknown-linux-musl
+          -p saaios-runtime -p console-tui

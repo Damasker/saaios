@@ -111,7 +111,7 @@ impl TelemetrySampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use system_tools::{install_system_tools, ToolsMode};
+    use system_tools::{install_system_tools, system_identity, ToolsMode};
     use tempfile::tempdir;
     use tool_registry::ToolRegistry;
 
@@ -122,7 +122,7 @@ mod tests {
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
         let mut reg = ToolRegistry::new();
-        install_system_tools(&mut reg, ToolsMode::Mock);
+        install_system_tools(&mut reg, ToolsMode::Mock, system_identity(ToolsMode::Mock));
         let sampler = Arc::new(TelemetrySampler::new(
             Arc::new(reg),
             bus,
