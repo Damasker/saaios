@@ -87,4 +87,26 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
 
 ## Evidence
 
-Заполняется после CI, установки и двух физических ответов.
+- CI: GitHub Actions run [`34020330689`](https://github.com/Damasker/saaios/actions/runs/34020330689)
+  на commit `1b36603` (merge PR #29) — success (format, clippy, workspace
+  tests, e2e).
+- Device: target `panther`, boot slot `a`, доступ через USB serial console;
+  проверено на устройстве, непрерывно работающем без перезагрузки.
+- Physical test 1 (`system.identity`): `saaios-console --identity` вернул
+  `SAAIOS PHONE / TARGET PANTHER / BOOT SLOT A`. Полный audit trail
+  (`/data/saaios/var/runtime/audit.jsonl`) подтверждает: `system.identity`
+  вызван ровно один раз на запрос, `policy_decision` — `allow` с причиной
+  `read-only / low-risk tool`, результат — `{system: SaaiOS, deployment:
+  native_device, device_class: phone, target: panther, boot_slot: a,
+  hardware_model: GS201 PANTHER MP based on GS201, schema: 1}`.
+- Physical test 2 (свободный вопрос): запрос "what system are you? are you
+  installed on this phone?" получил ответ "I am installed on this phone. The
+  system is SaaiOS..." — модель не отрицает установку и не утверждает
+  неподтверждённых возможностей.
+- UI: экран `DEVICE` подтверждён визуально на устройстве — присутствуют
+  `SET AN INTENT`, группа `DEVICE ACTIONS` (кнопки `CHECK DEVICE` /
+  `CHECK NETWORK` / `CHECK STORAGE`) и `SYSTEM RESULT`; заголовки
+  `ASSISTANT`, `ASK A QUESTION`, `AI RESPONSE` больше не используются.
+  Нажатие `CHECK DEVICE` на экране показывает тот же результат, что и
+  `system.identity`.
+- Cold reboot retention: не проверено — следующий шаг перед закрытием спринта.
