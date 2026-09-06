@@ -22,20 +22,6 @@ saaios-memory.jsonl
 /docs/os/targets/*/artifacts/*.tar.md5
 /docs/os/targets/*/artifacts/*.pit
 /os/build/
-/os/third_party/busybox-aarch64
-/os/third_party/dropbear-aarch64
-/os/third_party/dropbear-scp-aarch64
-/os/third_party/sftp-server-aarch64
-/os/third_party/iw-aarch64
-/os/third_party/wpa_supplicant-aarch64
-/os/third_party/wpa_cli-aarch64
-/os/third_party/kernel_samsung_a12
-/os/third_party/rtl8188eus
-/os/third_party/tinyalsa
-/os/third_party/clang-9
-/os/third_party/clang+llvm-*
-/os/third_party/llvm-*
-/saaios-boot-*.tar
 **/__pycache__/
 
 # Local libvirt disks (never commit)

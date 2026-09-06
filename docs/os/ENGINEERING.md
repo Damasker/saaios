@@ -24,9 +24,9 @@ One verifiable step. Forbidden as a single patch: "refactored entire graphics su
 Allowed:
 
 ```text
-Goal: Display solid framebuffer.
-Acceptance: Phone boots and screen becomes white.
-Rollback: Restore boot-v003.img from the unit backup.
+Goal: Display a verified framebuffer mode.
+Acceptance: Pixel 7 boots slot A and renders the expected color table.
+Rollback: Switch to the known-good slot or restore its recorded image.
 ```
 
 ## Working return points
@@ -35,11 +35,11 @@ Each phase ends with an artifact that restores the previous phase without archae
 
 | Phase end | Return point |
 |-----------|----------------|
-| 0 | Stock firmware tarball + this dossier |
-| 1 | `images/stock/` dump + `make restore` |
-| 2 | Known-good ramdisk that prints a shell |
-| 3 | Known-good splash framebuffer |
-| n | Tagged image `boot-vNNN.img` |
+| 0 | Verified factory archive and SHA-256 |
+| 1 | Stock Android preserved in slot B |
+| 2 | Known-good slot-A image with USB console |
+| 3 | Known-good native display and input image |
+| n | Image linked to source commit, hashes and Evidence |
 
 ## Hardware vs worker
 
@@ -47,11 +47,11 @@ Worker may: docs, ADR, code, tests, cross-compile, pack images, analyze logs.
 
 Human with the phone may: OEM unlock, Download mode, USB/UART, flash, photo of screen, `dmesg` / last_kmsg capture.
 
-## Forbidden until Phase 0 gate is green
+## Hardware safety gate
 
-- `heimdall flash`, Odin, `dd` to device
-- OEM unlock
-- Custom `vbmeta` / TWRP
-- Writing BL / sboot / EFS / PARAM
-
-Phase 0 is green on this unit. `make` still **refuses** to flash. Optional host artifact: PARAM-only Odin tar (`make -f os/Makefile up_param`) — human flashes **BL** slot, never sboot/TZ/EFS/boot/vbmeta. Rollback tar is mandatory.
+- Never write bootloader, radio, secure-element, calibration or identity
+  partitions as part of an ordinary sprint.
+- Never flash an image whose target, source commit and SHA-256 are unknown.
+- Keep the verified Android fallback slot and a known-good SaaiOS image.
+- Build scripts may produce images but must not flash hardware.
+- Human approval is required for every flash, active-slot change and rollback.

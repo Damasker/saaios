@@ -28,11 +28,13 @@ the matching factory image/device into one local directory and point
 
 ## Build prerequisites
 
-- Zig with an `aarch64-linux-musl` target, or set `ZIG`.
-- Magiskboot, provided through `MAGISKBOOT`.
+- Zig 0.13.0 with an `aarch64-linux-musl` target, or set `ZIG`.
+- Magiskboot from Magisk v30.7, provided through `MAGISKBOOT`.
 - Stock `init_boot` and `vendor_boot` from `CP2A.260705.006`.
-- TinyALSA checkout at `4e466e8f90e5c15c029a18461cc384c0f7777193`,
-  with `patches/tinyalsa-period-write.patch` applied.
+- AOSP TinyALSA checkout from
+  `https://android.googlesource.com/platform/external/tinyalsa` at
+  `4e466e8f90e5c15c029a18461cc384c0f7777193`, with
+  `patches/tinyalsa-period-write.patch` applied.
 - The files listed in `artifacts.example.manifest`.
 
 Build the two Rust binaries for the phone with the included linker wrapper:
