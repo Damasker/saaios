@@ -122,8 +122,9 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
   Повторный unpack подтвердил header v4, Android 17.0.0 / patch 2026-07,
   static AArch64 `init`, runtime, console и DRM shell. Хэши embedded runtime и
   console совпали с cross-built artifacts.
-- Image не установлен. Прошивка и смена slot требуют отдельного явного
-  разрешения.
+- После отдельного явного разрешения image установлен только в `init_boot_a`.
+  `fastboot` подтвердил `product=panther`, `unlocked=yes`, `current-slot=a`;
+  slot B, userdata и active-slot не изменялись.
 
 ### Live preflight, 2026-09-06
 
@@ -132,6 +133,24 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
   содержит `device`, запрос `system_identity` не поддерживается.
 - Это подтверждает старый baseline до S01, а не physical acceptance нового
   image. Запись разделов и смена slot не выполнялись.
+
+### Physical run after S01 image
+
+- `fastboot flash init_boot_a` и `fastboot reboot` завершились `OKAY`; SaaiOS
+  вернул USB `172.31.7.1` и runtime TCP `38127`.
+- Runtime status и `system.identity` вернули одинаковый JSON object:
+  `SaaiOS / native_device / phone / panther / boot_slot=a`, architecture
+  `aarch64`, `observed_by=local_runtime`.
+- Один запрос identity создал ровно один `tool_call`, один allow
+  `policy_decision` и один успешный `tool_result` с общим `call_id`. Записи
+  проверены read-only непосредственно в persistent JSONL.
+- `audit_tail` не читает весь старый журнал: до установки S01 в строке 1342
+  уже находился блок NUL. Файл не изменялся и не очищался.
+- Свободный вопрос о системе завершился timeout configured local model
+  provider через 60 секунд. Правдивый model answer физически не подтверждён.
+- До полного physical acceptance остаются: визуально проверить CTA/UI,
+  повторить cold reboot и получить правдивый свободный ответ при доступном
+  provider.
 
 ### Physical verification checklist
 
