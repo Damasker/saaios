@@ -17,6 +17,8 @@ members = [
     "crates/console-web",
     "services/saaios-runtime",
     "tests/diagnose-slow-system",
+    "services/saai-displayd",
+    "services/saai-demo-surface",
 ]
 
 [workspace.package]

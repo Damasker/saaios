@@ -1,0 +1,10 @@
+[package]
+name = "saai-displayd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop"] }
