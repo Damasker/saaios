@@ -109,4 +109,18 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
   `ASSISTANT`, `ASK A QUESTION`, `AI RESPONSE` больше не используются.
   Нажатие `CHECK DEVICE` на экране показывает тот же результат, что и
   `system.identity`.
-- Cold reboot retention: не проверено — следующий шаг перед закрытием спринта.
+- Cold reboot retention: проверено `reboot -f` на устройстве (busybox `reboot`
+  без `-f` не работает — наш `/init` не обрабатывает сигнал завершения,
+  которого ждёт стандартный path). После холодной перезагрузки
+  (`/proc/uptime` сброшен на ~28s) `drm-splash` и `saaios-runtime`
+  поднялись автоматически без ручного вмешательства, `--identity` вернул тот
+  же результат `SAAIOS PHONE / TARGET PANTHER / BOOT SLOT A`. Секретов не
+  обнаружено — схема identity ограничена нечувствительными полями
+  (architecture, boot_slot, deployment, device_class, hardware_model,
+  kernel_release, schema, system, target), как и требует threat/privacy
+  секция.
+- Открыто: SHA-256 установленного образа не зафиксирован — build-манифест
+  (`dist/panther/`) не найден на машине сборки, артефакт не сохранён после
+  прошивки. Нужно либо пересобрать и сохранить манифест, либо снять
+  SHA-256 прямо с устройства и связать с commit `1b36603` отдельным шагом
+  перед закрытием спринта.
