@@ -5,9 +5,8 @@
 - Состояние: `In progress`.
 - Зависит от: S02.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2).
-- Рабочий fallback: физически проверенный образ commit `1602a87`
-  (S02 закрыт), `drm-splash` как единственный владелец `/dev/dri/card0`;
-  Android slot B.
+- Рабочий fallback: физически проверенный образ commit `42a88e0`
+  (Change 3 закрыт, supervision для drm-splash физически проверен), Android slot B.
 
 ## Goal
 
@@ -124,9 +123,16 @@
    реапинга предыдущего) даёт handoff бесплатно, без явного протокола —
    DRM master освобождается ядром автоматически при закрытии fd.
    [ADR-009](../../adr/ADR-009-ui-supervision-and-drm-handoff.md).
-3. Добавить supervision `drm-splash` в reaper `native-init.c` изолированно
-   (без `saai-displayd`), физически проверить, что респавн работает и не
-   ломает существующее поведение — минимальный обратимый шаг.
+3. **Готово (2026-09-07).** Supervision `drm-splash` в reaper
+   `native-init.c` (commit `42a88e0`), физически проверено на устройстве
+   (Pixel 7, slot A): пять `kill -9` подряд -- каждый раз новый pid, новый
+   DRM master без EBUSY/EACCES, `dmesg` показывает `UI slot restarted
+   (N/5 in window)`; шестой kill в том же окне -- `UI slot exceeded restart
+   budget (6 in 60s), giving up until reboot`, респавн корректно
+   прекращается; холодная перезагрузка (`reboot -f`) -- бюджет сбрасывается
+   чисто, `drm-splash` стартует один раз без лишних записей в логе.
+   SHA-256 прошитого `init_boot_a` совпадает байт-в-байт с локальной
+   сборкой: `9d96f321133e6780738793730e3b06ead44218d31e95bf9c3a6bda6d84fbde5d`.
 4. Реализовать DRM/KMS backend в `saai-displayd` (Smithay
    `backend_drm`+`backend_session_libseat`+`backend_udev`), пока без
    touch и без интеграции в `native-init.c` — тестируется вручную через
