@@ -265,9 +265,9 @@ fn main() {
             let mut touch_state = touch::TouchState::new();
             let source = Generic::new(touch_file, Interest::READ, Mode::Level);
             if let Err(err) = handle.insert_source(source, move |_, file, state: &mut State| {
-                use std::io::Read;
                 use smithay::input::touch::{DownEvent, MotionEvent, UpEvent};
                 use smithay::utils::Point;
+                use std::io::Read;
 
                 let mut buf = [0u8; touch::RAW_EVENT_SIZE];
                 let touch = state.touch.clone();
@@ -301,7 +301,12 @@ fn main() {
                                     touch.down(
                                         state,
                                         focus,
-                                        &DownEvent { slot: (None::<u32>).into(), location, serial, time },
+                                        &DownEvent {
+                                            slot: (None::<u32>).into(),
+                                            location,
+                                            serial,
+                                            time,
+                                        },
                                     );
                                     touch.frame(state);
                                 }
@@ -310,13 +315,24 @@ fn main() {
                                     touch.motion(
                                         state,
                                         focus,
-                                        &MotionEvent { slot: (None::<u32>).into(), location, time },
+                                        &MotionEvent {
+                                            slot: (None::<u32>).into(),
+                                            location,
+                                            time,
+                                        },
                                     );
                                     touch.frame(state);
                                 }
                                 touch::TouchUpdate::Up => {
                                     println!("saai-displayd: touch up");
-                                    touch.up(state, &UpEvent { slot: (None::<u32>).into(), serial, time });
+                                    touch.up(
+                                        state,
+                                        &UpEvent {
+                                            slot: (None::<u32>).into(),
+                                            serial,
+                                            time,
+                                        },
+                                    );
                                     touch.frame(state);
                                 }
                             }

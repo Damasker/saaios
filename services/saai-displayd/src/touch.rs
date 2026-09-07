@@ -73,7 +73,13 @@ pub struct TouchState {
 
 impl TouchState {
     pub fn new() -> Self {
-        Self { tracking_id: -1, x: 0, y: 0, moved: false, was_active: false }
+        Self {
+            tracking_id: -1,
+            x: 0,
+            y: 0,
+            moved: false,
+            was_active: false,
+        }
     }
 
     /// Feeds one raw evdev event in; returns a synthesized update only on
@@ -101,9 +107,15 @@ impl TouchState {
                 self.was_active = now_active;
                 let moved = std::mem::take(&mut self.moved);
                 if now_active && !was_active {
-                    Some(TouchUpdate::Down { x: self.x, y: self.y })
+                    Some(TouchUpdate::Down {
+                        x: self.x,
+                        y: self.y,
+                    })
                 } else if now_active && moved {
-                    Some(TouchUpdate::Motion { x: self.x, y: self.y })
+                    Some(TouchUpdate::Motion {
+                        x: self.x,
+                        y: self.y,
+                    })
                 } else if !now_active && was_active {
                     Some(TouchUpdate::Up)
                 } else {

@@ -86,7 +86,10 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
             // drive, exactly like a normal DRM client does on first setup.
             let crtc_handle = match encoder.crtc() {
                 Some(crtc) => Some(crtc),
-                None => resources.filter_crtcs(encoder.possible_crtcs()).first().copied(),
+                None => resources
+                    .filter_crtcs(encoder.possible_crtcs())
+                    .first()
+                    .copied(),
             };
             if let Some(crtc_handle) = crtc_handle {
                 chosen = Some((conn_handle, crtc_handle, mode));
