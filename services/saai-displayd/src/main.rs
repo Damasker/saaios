@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::Arc;
 
+#[cfg(feature = "panther-hardware")]
+mod hardware;
+
 use sha2::{Digest, Sha256};
 use smithay::input::keyboard::Keycode;
 use smithay::{
@@ -55,6 +58,8 @@ struct State {
     /// ensure_configured() (S02 protocol-negative test: reject a buffer
     /// attached before the surface's first configure was acked).
     toplevels: HashMap<WlSurface, ToplevelSurface>,
+    #[cfg(feature = "panther-hardware")]
+    hardware: Option<hardware::HardwareOutput>,
 }
 
 impl CompositorHandler for State {
@@ -103,19 +108,40 @@ impl CompositorHandler for State {
             }
         }
 
-        let hash = with_buffer_contents(&buffer, |ptr, len, _data| {
+        let result = with_buffer_contents(&buffer, |ptr, len, data| {
             let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
             let mut hasher = Sha256::new();
             hasher.update(bytes);
-            hasher.finalize()
+            #[cfg(feature = "panther-hardware")]
+            let pixels = bytes.to_vec();
+            #[cfg(not(feature = "panther-hardware"))]
+            let pixels = ();
+            (
+                hasher.finalize(),
+                pixels,
+                data.width as u32,
+                data.height as u32,
+                data.stride as u32,
+            )
         });
 
-        match hash {
-            Ok(digest) => println!(
-                "saai-displayd: commit on surface {:?}, frame sha256={:x}",
-                surface.id(),
-                digest
-            ),
+        match result {
+            Ok((digest, _pixels, _width, _height, _stride)) => {
+                println!(
+                    "saai-displayd: commit on surface {:?}, frame sha256={:x}",
+                    surface.id(),
+                    digest
+                );
+                #[cfg(feature = "panther-hardware")]
+                if self.focused_surface.as_ref() == Some(surface) {
+                    if let Some(hw) = self.hardware.as_mut() {
+                        hw.blit(&_pixels, _width, _height, _stride);
+                        if let Err(err) = hw.present(false) {
+                            eprintln!("saai-displayd: hardware present failed: {err}");
+                        }
+                    }
+                }
+            }
             Err(err) => eprintln!("saai-displayd: failed to hash committed buffer: {err}"),
         }
 
@@ -203,6 +229,28 @@ fn main() {
         .add_keyboard(XkbConfig::default(), 200, 25)
         .expect("failed to add keyboard capability");
 
+    let mut event_loop: EventLoop<'static, State> =
+        EventLoop::try_new().expect("failed to create event loop");
+    let handle = event_loop.handle();
+
+    #[cfg(feature = "panther-hardware")]
+    let hardware = match hardware::init() {
+        Ok((output, drm_notifier, session_notifier)) => {
+            if let Err(err) = handle.insert_source(drm_notifier, |_event, _, _state| {}) {
+                eprintln!("saai-displayd: failed to register DRM notifier: {err}");
+            }
+            if let Err(err) = handle.insert_source(session_notifier, |_event, _, _state| {}) {
+                eprintln!("saai-displayd: failed to register session notifier: {err}");
+            }
+            println!("saai-displayd: hardware output initialized");
+            Some(output)
+        }
+        Err(err) => {
+            eprintln!("saai-displayd: hardware output unavailable: {err}");
+            None
+        }
+    };
+
     let mut state = State {
         compositor_state,
         shm_state,
@@ -212,14 +260,12 @@ fn main() {
         keyboard: keyboard.clone(),
         focused_surface: None,
         toplevels: HashMap::new(),
+        #[cfg(feature = "panther-hardware")]
+        hardware,
     };
 
     let socket = ListeningSocketSource::new_auto().expect("failed to create listening socket");
     let socket_name = socket.socket_name().to_string_lossy().into_owned();
-
-    let mut event_loop: EventLoop<'static, State> =
-        EventLoop::try_new().expect("failed to create event loop");
-    let handle = event_loop.handle();
 
     let mut dh_for_socket = dh.clone();
     handle
