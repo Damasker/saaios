@@ -9,9 +9,12 @@
 //! this one, so its binary path is derived from this crate's own
 //! CARGO_BIN_EXE_saai-displayd rather than a CARGO_BIN_EXE_saai-demo-surface
 //! that Cargo has no reason to set here; both land in the same target/
-//! directory. This means the demo binary must already be built -- true for
-//! `cargo test --workspace` (what CI runs), not guaranteed for
-//! `cargo test -p saai-displayd` run in isolation.
+//! directory. This means the demo binary must already exist as a plain
+//! executable -- `cargo test` alone does not guarantee that for a sibling
+//! package (it builds test harnesses, not necessarily runnable bins), so CI
+//! runs an explicit `cargo build --workspace` before `cargo test
+//! --workspace`. Run `cargo build --workspace` yourself first if running
+//! this test in isolation.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
