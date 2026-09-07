@@ -1,0 +1,19 @@
+--- a/meson.build
++++ b/meson.build
+@@ -408,15 +408,10 @@
+ 		configuration : libinput_version_h_config,
+ )
+ 
+-mapfile = dir_src / 'libinput.sym'
+-version_flag = '-Wl,--version-script,@0@'.format(mapfile)
+-lib_libinput = shared_library('input',
++lib_libinput = static_library('input',
+ 		src_libinput,
+ 		include_directories : [include_directories('.'), includes_include],
+ 		dependencies : deps_libinput,
+-		version : libinput_so_version,
+-		link_args : version_flag,
+-		link_depends : mapfile,
+ 		install : true
+ 		)
+ 

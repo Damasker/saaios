@@ -26,3 +26,56 @@ jobs:
         run: cargo test --workspace
       - name: e2e
         run: cargo test -p diagnose-slow-system -- --nocapture
+
+  cross-panther:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable deb-src
+        run: sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i '/^deb /p;s/^deb /deb-src /' /etc/apt/sources.list
+
+      - name: system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential curl ca-certificates xz-utils git patch dpkg-dev \
+            meson ninja-build autoconf automake libtool gperf pkg-config \
+            libseat-dev libudev-dev libinput-dev libxkbcommon-dev
+
+      - name: install rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: install rust target
+        run: rustup target add aarch64-unknown-linux-musl
+
+      - name: install zig
+        run: |
+          curl -sL -o /tmp/zig.tar.xz https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          mkdir -p /opt/zig
+          tar -C /opt/zig --strip-components=1 -xf /tmp/zig.tar.xz
+          echo "ZIG=/opt/zig/zig" >> "$GITHUB_ENV"
+
+      - name: build cross sysroot
+        run: os/targets/panther/build-cross-sysroot.sh
+
+      - name: cross-compile saai-displayd
+        run: |
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
+          export CC_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
+          export AR_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-ar.sh"
+          export CRATE_CC_NO_DEFAULTS=1
+          export RUSTFLAGS="-C link-self-contained=no"
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export PKG_CONFIG_SYSROOT_DIR="$PWD/os/targets/panther/artifacts/toolchain/sysroot-aarch64-musl"
+          export PKG_CONFIG_PATH="$PWD/os/targets/panther/artifacts/toolchain/sysroot-aarch64-musl/usr/local/lib/pkgconfig"
+          cargo build --profile pixel7 --target aarch64-unknown-linux-musl -p saai-displayd -p saai-demo-surface --features saai-displayd/panther-hardware
+
+      - name: verify binaries
+        run: |
+          file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'ARM aarch64'
+          file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'statically linked'
+          file target/aarch64-unknown-linux-musl/pixel7/saai-demo-surface | grep -q 'ARM aarch64'

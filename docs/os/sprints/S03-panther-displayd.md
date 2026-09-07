@@ -4,7 +4,7 @@
 
 - Состояние: `Ready`.
 - Зависит от: S02.
-- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007. Новое решение
+- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008. Новое решение
   о supervision/fallback механизме фиксируется отдельным ADR перед стадией
   "Change" ниже (см. Scope).
 - Рабочий fallback: физически проверенный образ commit `1602a87`
@@ -63,7 +63,9 @@
   `default-features = false, features = ["wayland_frontend", "desktop"]` —
   headless, без `backend_drm`/`backend_libinput`/`backend_udev`/
   `backend_session_libseat`, и никогда не собирался под
-  `aarch64-unknown-linux-musl`.
+  `aarch64-unknown-linux-musl`. **Обновлено (Change 1, см. ниже):** теперь
+  собирается под обе цели — headless по умолчанию, DRM-бэкенд через новую
+  cargo-фичу `panther-hardware`.
 
 ## Scope
 
@@ -108,11 +110,16 @@
 
 ## Change
 
-1. Кросс-компиляция spike: собрать `saai-displayd` под
-   `aarch64-unknown-linux-musl` с DRM/libinput/udev/libseat фичами,
-   зафиксировать зависимости, размер бинарника, реальные системные
-   библиотеки, нужные на телефоне (glibc/musl совместимость udev/libseat).
-   Ничего не устанавливается на телефон на этом шаге.
+1. **Готово (2026-09-07).** Кросс-компиляция spike: `saai-displayd`
+   собирается под `aarch64-unknown-linux-musl` с DRM/libinput/udev/libseat
+   фичами (новая cargo-фича `panther-hardware`, выключена по умолчанию —
+   headless-тесты S02 не задеты). Ни одна из четырёх C-библиотек
+   (`libseat`, `libudev`, `libinput`, и его же зависимости `mtdev`,
+   `libevdev`) не имела готового aarch64-musl sysroot — все собраны из
+   исходников (`os/targets/panther/build-cross-sysroot.sh`,
+   [ADR-008](../../adr/ADR-008-cross-compiling-drm-backend-c-deps.md)).
+   Итоговый `saai-displayd` — статический aarch64 ELF, 1.6MB. Ничего не
+   устанавливалось на телефон на этом шаге, только сборка на хосте.
 2. ADR: DRM-master handoff + supervision/fallback дизайн (объединяет два
    архитектурных вопроса, поскольку они взаимозависимы — fallback без
    handoff-протокола не имеет смысла).

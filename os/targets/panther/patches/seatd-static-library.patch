@@ -1,0 +1,21 @@
+--- a/meson.build
++++ b/meson.build
+@@ -175,17 +175,12 @@
+ 	c_args: libseat_c_args,
+ )
+ 
+-symbols_file = 'libseat/libseat.syms'
+-symbols_flag = '-Wl,--version-script,@0@/@1@'.format(meson.current_source_dir(), symbols_file)
+-lib = shared_library(
++lib = static_library(
+ 	'seat', # This results in the library being called 'libseat'
+ 	[ 'libseat/libseat.c', 'libseat/backend/noop.c' ],
+-	soversion: '@0@'.format(libseat_soversion),
+ 	link_with: private_lib,
+ 	include_directories: [include_directories('.', 'include')],
+ 	install: true,
+-	link_args: symbols_flag,
+-	link_depends: symbols_file,
+ 	c_args: libseat_c_args,
+ )
+ 
