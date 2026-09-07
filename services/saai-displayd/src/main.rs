@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 #[cfg(feature = "panther-hardware")]
 mod hardware;
+#[cfg(feature = "panther-hardware")]
+mod touch;
 
 use sha2::{Digest, Sha256};
 use smithay::input::keyboard::Keycode;
@@ -60,6 +62,8 @@ struct State {
     toplevels: HashMap<WlSurface, ToplevelSurface>,
     #[cfg(feature = "panther-hardware")]
     hardware: Option<hardware::HardwareOutput>,
+    #[cfg(feature = "panther-hardware")]
+    touch: smithay::input::touch::TouchHandle<State>,
 }
 
 impl CompositorHandler for State {
@@ -233,6 +237,8 @@ fn main() {
     let keyboard = seat
         .add_keyboard(XkbConfig::default(), 200, 25)
         .expect("failed to add keyboard capability");
+    #[cfg(feature = "panther-hardware")]
+    let touch = seat.add_touch();
 
     let mut event_loop: EventLoop<'static, State> =
         EventLoop::try_new().expect("failed to create event loop");
@@ -253,6 +259,81 @@ fn main() {
         }
     };
 
+    #[cfg(feature = "panther-hardware")]
+    match touch::open() {
+        Ok(touch_file) => {
+            let mut touch_state = touch::TouchState::new();
+            let source = Generic::new(touch_file, Interest::READ, Mode::Level);
+            if let Err(err) = handle.insert_source(source, move |_, file, state: &mut State| {
+                use std::io::Read;
+                use smithay::input::touch::{DownEvent, MotionEvent, UpEvent};
+                use smithay::utils::Point;
+
+                let mut buf = [0u8; touch::RAW_EVENT_SIZE];
+                let touch = state.touch.clone();
+                // `file`'s metadata type only derefs to `&File` (no
+                // `DerefMut`), but `std::fs::File` also implements `Read`
+                // for a shared reference (it's just an fd, no internal
+                // buffering state that would need exclusive access).
+                let mut f: &std::fs::File = file;
+                loop {
+                    match f.read(&mut buf) {
+                        Ok(n) if n == buf.len() => {
+                            let event = touch::parse(buf);
+                            let Some(update) = touch_state.feed(&event) else {
+                                continue;
+                            };
+                            let serial = SERIAL_COUNTER.next_serial();
+                            let time = 0;
+                            // Computed once as an owned value (not a
+                            // closure over `state`): `touch.down(state, ...)`
+                            // needs `state` by mutable reference, which
+                            // would conflict with a closure still borrowing
+                            // it for this same call's other argument.
+                            let focus = state
+                                .focused_surface
+                                .clone()
+                                .map(|s| (s, Point::from((0.0, 0.0))));
+                            match update {
+                                touch::TouchUpdate::Down { x, y } => {
+                                    println!("saai-displayd: touch down at ({x}, {y})");
+                                    let location = Point::from((x as f64, y as f64));
+                                    touch.down(
+                                        state,
+                                        focus,
+                                        &DownEvent { slot: (None::<u32>).into(), location, serial, time },
+                                    );
+                                    touch.frame(state);
+                                }
+                                touch::TouchUpdate::Motion { x, y } => {
+                                    let location = Point::from((x as f64, y as f64));
+                                    touch.motion(
+                                        state,
+                                        focus,
+                                        &MotionEvent { slot: (None::<u32>).into(), location, time },
+                                    );
+                                    touch.frame(state);
+                                }
+                                touch::TouchUpdate::Up => {
+                                    println!("saai-displayd: touch up");
+                                    touch.up(state, &UpEvent { slot: (None::<u32>).into(), serial, time });
+                                    touch.frame(state);
+                                }
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                Ok(PostAction::Continue)
+            }) {
+                eprintln!("saai-displayd: failed to register touch input source: {err}");
+            } else {
+                println!("saai-displayd: touch input initialized");
+            }
+        }
+        Err(err) => eprintln!("saai-displayd: touch input unavailable: {err}"),
+    }
+
     let mut state = State {
         compositor_state,
         shm_state,
@@ -262,6 +343,8 @@ fn main() {
         keyboard: keyboard.clone(),
         focused_surface: None,
         toplevels: HashMap::new(),
+        #[cfg(feature = "panther-hardware")]
+        touch,
         #[cfg(feature = "panther-hardware")]
         hardware,
     };

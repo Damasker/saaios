@@ -8,12 +8,15 @@ repository.workspace = true
 
 [features]
 default = []
-# Real DRM/KMS + evdev backend for the physical Pixel 7 (S03). Off by
-# default so the headless S02 tests keep building on a plain CI runner
-# without libudev/libinput/libdrm installed -- see
-# docs/adr/ADR-008-cross-compiling-drm-backend-c-deps.md for why these
-# need to be built from source for aarch64-unknown-linux-musl.
-panther-hardware = ["smithay/backend_drm", "smithay/backend_udev", "smithay/backend_libinput"]
+# Real DRM/KMS output + raw evdev touch input for the physical Pixel 7
+# (S03). Off by default so the headless S02 tests keep building on a plain
+# CI runner without libdrm installed -- see
+# docs/adr/ADR-008-cross-compiling-drm-backend-c-deps.md for why libdrm
+# needs to be built from source for aarch64-unknown-linux-musl, and
+# ADR-011-raw-evdev-touch.md for why touch input doesn't go through
+# libinput/libudev (backend_udev/backend_libinput are deliberately not
+# enabled here even though ADR-008 built those libraries too).
+panther-hardware = ["smithay/backend_drm"]
 
 [dependencies]
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop"] }
