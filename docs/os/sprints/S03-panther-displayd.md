@@ -4,11 +4,13 @@
 
 - Состояние: `In progress`.
 - Зависит от: S02.
-- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat).
+- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat), ADR-011 (touch через сырой evdev, без libinput/libudev).
 - Рабочий fallback: физически проверенный образ commit `42a88e0`
   (Change 3 закрыт, supervision для drm-splash физически проверен), Android slot B.
 - DRM/KMS backend `saai-displayd` (Change 4) физически проверен, реальные
   пиксели на экране подтверждены пользователем — см. commit `5fe5872`.
+- Touch input (Change 5) физически проверен, реальные координаты в логах
+  при касании экрана — см. commit `bd1e5e0`.
 
 ## Goal
 
@@ -161,7 +163,20 @@
    `HandleAliasDef`, см. commit `1d05260`); в текущем коммитнутом виде
    `saai-displayd` всё ещё падает на старте из-за этого при сборке с
    клавиатурой — отдельная, не входящая в это исправление задача.
-5. Реализовать evdev touch backend (`backend_libinput`).
+5. **Готово (2026-09-08).** Touch backend — не через `backend_libinput`,
+   как предполагалось в Scope, а через сырой evdev
+   ([ADR-011](../../adr/ADR-011-raw-evdev-touch.md), commit `bd1e5e0`):
+   libinput's path-based API всё равно требует udev-инициализированное
+   устройство, что требует работающего `udevd`, которого на этой системе
+   нет и не будет (противоречит ADR-009/ADR-010). `saai-displayd` читает
+   `/dev/input/touchscreen` напрямую, тем же способом, что уже работает в
+   `drm-splash.c`. Физически проверено на устройстве: касание экрана дало
+   чистую последовательность down/up с реальными координатами по всему
+   диапазону 1080×2400 (например `(816, 97)`, `(972, 1606)`,
+   `(264, 1936)`), без ошибок. `saai-demo-surface` не реагирует визуально
+   (это статический тестовый клиент из S02, к `wl_touch` не подключён) —
+   доказательство здесь в захваченном и корректно перенаправленном потоке
+   событий, не в визуальном отклике.
 6. Подключить handoff+supervision из шага 2/3 к реальному запуску
    `saai-displayd` вместо/вместе с `drm-splash` по спроектированному
    протоколу.
@@ -246,3 +261,27 @@ saai-displayd: blit wrote 800x480 px into fb (dst stride=4321, src stride=3200)
 scope этого спринта (нет физической клавиатуры), но блокирует запуск
 коммитнутого бинарника `saai-displayd` как есть без обхода. Остаётся
 отдельной задачей.
+
+Change 5 (2026-09-08), та же диагностическая сборка без клавиатуры, commit
+`bd1e5e0` для реальных изменений в `touch.rs`/`main.rs`/`Cargo.toml`:
+
+```
+saai-displayd: hardware output 1080x2400@60
+saai-displayd: hardware output initialized
+saai-displayd: touch input initialized
+saai-displayd: listening on WAYLAND_DISPLAY=wayland-1
+saai-displayd: client connected
+...
+saai-displayd: touch down at (816, 97)
+saai-displayd: touch up
+saai-displayd: touch down at (972, 1606)
+saai-displayd: touch up
+saai-displayd: touch down at (625, 965)
+saai-displayd: touch up
+[... 22 более касаний, координаты x∈[169,1016] y∈[79,1957] ...]
+```
+
+Первая попытка (через `libinput::Libinput::new_from_path` +
+`path_add_device`) физически провалилась на устройстве с ошибкой
+`libinput bug: udev device never initialized` — задокументировано и
+объяснено в ADR-011, приведшего к пивоту на сырой evdev.
