@@ -77,6 +77,8 @@ phone image.
 
 ## S03 — `saai-displayd` на Pixel 7
 
+Рабочий паспорт и декомпозиция: [S03-panther-displayd.md](S03-panther-displayd.md).
+
 **Goal:** тот же тестовый Wayland-клиент выводится на реальный экран и получает
 касания.
 
