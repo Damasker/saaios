@@ -7,6 +7,8 @@
 - Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat).
 - Рабочий fallback: физически проверенный образ commit `42a88e0`
   (Change 3 закрыт, supervision для drm-splash физически проверен), Android slot B.
+- DRM/KMS backend `saai-displayd` (Change 4) физически проверен, реальные
+  пиксели на экране подтверждены пользователем — см. commit `5fe5872`.
 
 ## Goal
 
@@ -133,10 +135,32 @@
    чисто, `drm-splash` стартует один раз без лишних записей в логе.
    SHA-256 прошитого `init_boot_a` совпадает байт-в-байт с локальной
    сборкой: `9d96f321133e6780738793730e3b06ead44218d31e95bf9c3a6bda6d84fbde5d`.
-4. Реализовать DRM/KMS backend в `saai-displayd` (Smithay
-   `backend_drm`+`backend_session_libseat`+`backend_udev`), пока без
-   touch и без интеграции в `native-init.c` — тестируется вручную через
+4. **Готово (2026-09-07).** DRM/KMS backend в `saai-displayd` (Smithay
+   `backend_drm`+`backend_udev`; `backend_session_libseat` заменён прямым
+   `open()` — [ADR-010](../../adr/ADR-010-drop-libseat.md)), пока без touch
+   и без интеграции в `native-init.c` — протестирован вручную через
    USB-консоль поверх уже работающей системы, `drm-splash` не трогается.
+   Физически проверено на устройстве: `saai-demo-surface` подключился к
+   `saai-displayd`, закоммитил кадр 800×480, `saai-displayd` отблитил его
+   в dumb buffer и вывел через `page_flip` на реальную панель. Пользователь
+   подтвердил на экране два прямоугольника (белый и серый, общая сторона),
+   занимающие примерно верхнюю пятую часть экрана — совпадает с позицией и
+   размером тестового буфера `saai-demo-surface` внутри панели 1080×2400.
+   По пути найдены и исправлены два реальных бага (commit `5fe5872`): (a)
+   выбор crtc принимал только уже активную связку encoder→crtc, что всегда
+   проваливалось после исчерпания restart-бюджета `drm-splash` (никто не
+   держит активный modeset) — добавлен fallback на `possible_crtcs`; (b)
+   `main.rs` проверял фокус до того, как выставлял его в первый раз, из-за
+   чего самый первый (и в этом тесте единственный) кадр с содержимым никогда
+   не блитился — виден был только начальный чёрный `fill()` из
+   `hardware::init()`, без единой ошибки в логах. Это и есть причина
+   "чёрного экрана", о котором сообщил пользователь в этом раунде.
+   Тестирование велось через временную сборку с отключённой инициализацией
+   клавиатуры (не коммитилась, восстановлена немедленно после каждой
+   пересборки) — обходит отдельно отслеживаемый баг libxkbcommon (SIGTRAP в
+   `HandleAliasDef`, см. commit `1d05260`); в текущем коммитнутом виде
+   `saai-displayd` всё ещё падает на старте из-за этого при сборке с
+   клавиатурой — отдельная, не входящая в это исправление задача.
 5. Реализовать evdev touch backend (`backend_libinput`).
 6. Подключить handoff+supervision из шага 2/3 к реальному запуску
    `saai-displayd` вместо/вместе с `drm-splash` по спроектированному
@@ -196,4 +220,29 @@ supervision-механизм из шага 3 сам по себе проблем
 
 ## Evidence
 
-Заполняется при закрытии.
+Change 4 (2026-09-07), сборка `saai-displayd` без клавиатуры (диагностика,
+не коммитилась), commit `5fe5872` для реальных исправлений в `hardware.rs`/
+`main.rs`:
+
+```
+saai-displayd: hardware output 1080x2400@60
+saai-displayd: hardware output initialized
+saai-displayd: listening on WAYLAND_DISPLAY=wayland-1
+saai-displayd: client connected
+saai-displayd: new xdg_toplevel
+saai-displayd: commit on surface ObjectId(wl_surface@7[0], 7) (no buffer)
+saai-displayd: focus set to surface ObjectId(wl_surface@7[0], 7)
+saai-displayd: commit on surface ObjectId(wl_surface@7[0], 7), frame sha256=0af993f6e268b9e74bea46a8f60d70071f7703aa74cb2634697a32152cf84306
+saai-displayd: blit wrote 800x480 px into fb (dst stride=4321, src stride=3200)
+```
+
+Пользователь, глядя на реальный экран: "на экране в верхней части два
+параллелепипеда белый и серый с общей стороной. занимает где-то пятую
+часть экрана" — совпадает с тестовым буфером `saai-demo-surface`
+(800×480 в панели 1080×2400, размещён в левом верхнем углу).
+
+Не закрыто в рамках Change 4: клавиатурный путь (`XkbConfig::default()`)
+всё ещё падает с SIGTRAP на этом устройстве (см. commit `1d05260`) — вне
+scope этого спринта (нет физической клавиатуры), но блокирует запуск
+коммитнутого бинарника `saai-displayd` как есть без обхода. Остаётся
+отдельной задачей.
