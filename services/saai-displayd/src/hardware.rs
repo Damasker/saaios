@@ -79,7 +79,16 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
             let encoder = drm_fd
                 .get_encoder(enc_handle)
                 .map_err(|e| format!("get_encoder failed: {e}"))?;
-            if let Some(crtc_handle) = encoder.crtc() {
+            // Prefer whatever crtc is already active on this encoder (e.g.
+            // still set up by drm-splash), but that link only exists while
+            // some process holds an active modeset -- after a hard kill
+            // it's gone, so fall back to any crtc this encoder can legally
+            // drive, exactly like a normal DRM client does on first setup.
+            let crtc_handle = match encoder.crtc() {
+                Some(crtc) => Some(crtc),
+                None => resources.filter_crtcs(encoder.possible_crtcs()).first().copied(),
+            };
+            if let Some(crtc_handle) = crtc_handle {
                 chosen = Some((conn_handle, crtc_handle, mode));
                 break;
             }
@@ -157,8 +166,12 @@ impl HardwareOutput {
     pub fn fill(&mut self, r: u8, g: u8, b: u8) {
         let pixel = u32::from_be_bytes([0x00, r, g, b]);
         let mut handle_copy = self.raw_handle;
-        let Ok(mut mapping) = self.drm_fd.map_dumb_buffer(&mut handle_copy) else {
-            return;
+        let mut mapping = match self.drm_fd.map_dumb_buffer(&mut handle_copy) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("saai-displayd: fill: map_dumb_buffer failed: {e}");
+                return;
+            }
         };
         let bytes = mapping.as_mut();
         for chunk in bytes.chunks_exact_mut(4) {
@@ -171,8 +184,12 @@ impl HardwareOutput {
     /// of this milestone. Rest of the screen keeps whatever `fill` set.
     pub fn blit(&mut self, src: &[u8], src_width: u32, src_height: u32, src_stride: u32) {
         let mut handle_copy = self.raw_handle;
-        let Ok(mut mapping) = self.drm_fd.map_dumb_buffer(&mut handle_copy) else {
-            return;
+        let mut mapping = match self.drm_fd.map_dumb_buffer(&mut handle_copy) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("saai-displayd: blit: map_dumb_buffer failed: {e}");
+                return;
+            }
         };
         let dst = mapping.as_mut();
         let copy_w = src_width.min(self.width) as usize;
@@ -183,11 +200,19 @@ impl HardwareOutput {
             let n = copy_w * 4;
             dst[dst_off..dst_off + n].copy_from_slice(&src[src_off..src_off + n]);
         }
+        eprintln!(
+            "saai-displayd: blit wrote {copy_w}x{copy_h} px into fb (dst stride={}, src stride={src_stride})",
+            self.stride
+        );
     }
 
     /// Pushes the current framebuffer contents to the panel. `modeset`
     /// forces a full `commit()` (needed once, at startup); afterwards a
-    /// `page_flip()` is enough since the mode never changes.
+    /// `page_flip()` is enough since the mode never changes. Same fb handle
+    /// every time (we mutate one dumb buffer in place rather than
+    /// double-buffering) -- confirmed fine on this hardware: the exynos
+    /// driver here doesn't implement dirty_framebuffer (ENOSYS) at all, so
+    /// a flip to an unchanged fb id is the only signal it needs or supports.
     pub fn present(&self, modeset: bool) -> Result<(), String> {
         let config = PlaneConfig {
             src: Rectangle::from_size(Size::from((self.width as f64, self.height as f64))),

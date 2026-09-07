@@ -125,6 +125,22 @@ impl CompositorHandler for State {
             )
         });
 
+        // Must run before the hardware-blit check below: on a surface's very
+        // first buffer-carrying commit, focus is still None, so checking
+        // focus first would skip blitting that frame -- the display would
+        // only ever show the initial fill from hardware::init() and never
+        // this (or any) client's actual content.
+        if self.focused_surface.is_none() {
+            self.focused_surface = Some(surface.clone());
+            let serial = SERIAL_COUNTER.next_serial();
+            let keyboard = self.keyboard.clone();
+            keyboard.set_focus(self, Some(surface.clone()), serial);
+            println!(
+                "saai-displayd: keyboard focus set to surface {:?}",
+                surface.id()
+            );
+        }
+
         match result {
             Ok((digest, _pixels, _width, _height, _stride)) => {
                 println!(
@@ -143,17 +159,6 @@ impl CompositorHandler for State {
                 }
             }
             Err(err) => eprintln!("saai-displayd: failed to hash committed buffer: {err}"),
-        }
-
-        if self.focused_surface.is_none() {
-            self.focused_surface = Some(surface.clone());
-            let serial = SERIAL_COUNTER.next_serial();
-            let keyboard = self.keyboard.clone();
-            keyboard.set_focus(self, Some(surface.clone()), serial);
-            println!(
-                "saai-displayd: keyboard focus set to surface {:?}",
-                surface.id()
-            );
         }
     }
 }
