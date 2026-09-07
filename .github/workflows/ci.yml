@@ -34,7 +34,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: enable deb-src
-        run: sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i '/^deb /p;s/^deb /deb-src /' /etc/apt/sources.list
+        run: |
+          sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i '/^deb /p;s/^deb /deb-src /' /etc/apt/sources.list
 
       - name: system dependencies
         run: |
