@@ -4,14 +4,22 @@
 //! drm-splash.c's own CPU-composited, no-GPU approach. Only compiled with
 //! the `panther-hardware` cargo feature.
 //!
-//! S03 Change step 4: prove the pipeline end to end (open device via
-//! libseat, modeset, blit a client buffer's pixels onto the real panel).
-//! Not wired into native-init.c yet (Change step 6) -- run standalone,
-//! after native-init.c's own supervision (Change step 3) has given up on
+//! S03 Change step 4: prove the pipeline end to end (open device, modeset,
+//! blit a client buffer's pixels onto the real panel). Not wired into
+//! native-init.c yet (Change step 6) -- run standalone, after
+//! native-init.c's own supervision (Change step 3) has given up on
 //! drm-splash so nothing else holds /dev/dri/card0 as DRM master.
+//!
+//! /dev/dri/card0 is opened directly rather than through libseat
+//! (ADR-010): this process is always root, is the only thing ever
+//! allowed to hold the UI slot (ADR-009's single-owner invariant), and
+//! never needs VT switching -- the three problems libseat exists to
+//! solve. In testing, libseat's builtin backend failed to open the
+//! device (EAGAIN), plausibly because this kernel's `console=ttynull`
+//! leaves it no VT to manage.
 
+use std::fs::OpenOptions;
 use std::os::fd::OwnedFd;
-use std::path::Path;
 
 use smithay::backend::allocator::dumb::DumbAllocator;
 use smithay::backend::allocator::{Allocator, Fourcc};
@@ -19,12 +27,9 @@ use smithay::backend::drm::dumb::{framebuffer_from_dumb_buffer, DumbFramebuffer}
 use smithay::backend::drm::{
     DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmSurface, PlaneConfig, PlaneState,
 };
-use smithay::backend::session::libseat::{LibSeatSession, LibSeatSessionNotifier};
-use smithay::backend::session::Session;
 use smithay::reexports::drm::control::{
     connector, dumbbuffer::DumbBuffer as RawDumbBuffer, Device as ControlDevice,
 };
-use smithay::reexports::rustix::fs::OFlags;
 use smithay::utils::{DeviceFd, Rectangle, Size, Transform};
 
 const CARD_PATH: &str = "/dev/dri/card0";
@@ -38,18 +43,18 @@ pub struct HardwareOutput {
     // Kept alive only for its Drop impl (destroys the kernel dumb buffer);
     // never read after allocation, writes go through `raw_handle` instead.
     _dumb: smithay::backend::allocator::dumb::DumbBuffer,
-    _session: LibSeatSession,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
 }
 
-pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier, LibSeatSessionNotifier), String> {
-    let (mut session, session_notifier) =
-        LibSeatSession::new().map_err(|e| format!("libseat session failed: {e}"))?;
-    let raw_fd: OwnedFd = session
-        .open(Path::new(CARD_PATH), OFlags::RDWR)
-        .map_err(|e| format!("failed to open {CARD_PATH} via libseat: {e}"))?;
+pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
+    let raw_fd: OwnedFd = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(CARD_PATH)
+        .map_err(|e| format!("failed to open {CARD_PATH}: {e}"))?
+        .into();
     let drm_fd = DrmDeviceFd::new(DeviceFd::from(raw_fd));
 
     let (mut device, notifier) =
@@ -137,7 +142,6 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier, LibSeatSessionNotifi
         framebuffer,
         raw_handle,
         _dumb: dumb_buffer,
-        _session: session,
         width: mode_w as u32,
         height: mode_h as u32,
         stride,
@@ -145,7 +149,7 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier, LibSeatSessionNotifi
     output.fill(0x00, 0x00, 0x00);
     output.present(true)?;
 
-    Ok((output, notifier, session_notifier))
+    Ok((output, notifier))
 }
 
 impl HardwareOutput {

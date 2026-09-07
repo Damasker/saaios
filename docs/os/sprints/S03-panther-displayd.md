@@ -4,7 +4,7 @@
 
 - Состояние: `In progress`.
 - Зависит от: S02.
-- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2).
+- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat).
 - Рабочий fallback: физически проверенный образ commit `42a88e0`
   (Change 3 закрыт, supervision для drm-splash физически проверен), Android slot B.
 

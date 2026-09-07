@@ -235,12 +235,9 @@ fn main() {
 
     #[cfg(feature = "panther-hardware")]
     let hardware = match hardware::init() {
-        Ok((output, drm_notifier, session_notifier)) => {
+        Ok((output, drm_notifier)) => {
             if let Err(err) = handle.insert_source(drm_notifier, |_event, _, _state| {}) {
                 eprintln!("saai-displayd: failed to register DRM notifier: {err}");
-            }
-            if let Err(err) = handle.insert_source(session_notifier, |_event, _, _state| {}) {
-                eprintln!("saai-displayd: failed to register session notifier: {err}");
             }
             println!("saai-displayd: hardware output initialized");
             Some(output)
