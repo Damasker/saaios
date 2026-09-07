@@ -28,6 +28,13 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
+/* ADR-009: bounded restart budget for the UI slot (drm-splash today,
+   saai-displayd once wired in as primary). Working figures, not derived
+   analytically -- see ADR-009 for the reasoning; refine by physical test
+   before relying on them for saai-displayd. */
+#define UI_RESTART_BUDGET 5
+#define UI_RESTART_WINDOW_SECONDS 60
+
 static const char *const restart_modules[] = {
     "logbuffer.ko",
     "google-bms.ko",
@@ -1137,10 +1144,10 @@ static int create_drm_card_node(void) {
                  makedev(major_number, minor_number));
 }
 
-static void start_display_splash(void) {
+static pid_t start_display_splash(void) {
     if (create_drm_card_node() < 0) {
         log_message("DRM card did not appear");
-        return;
+        return -1;
     }
     pid_t child = fork();
     if (child == 0) {
@@ -1160,6 +1167,7 @@ static void start_display_splash(void) {
     if (child > 0) {
         log_message("native display splash started");
     }
+    return child;
 }
 
 static int create_input_node(const char *wanted_name,
@@ -1374,7 +1382,9 @@ int main(void) {
         log_message("haptic runtime power locked active");
         apply_haptic_factory_calibration();
     }
-    start_display_splash();
+    pid_t ui_pid = start_display_splash();
+    time_t ui_window_start = time(NULL);
+    int ui_restart_count = 0;
     char *const brightness_argv[] = {
         "display-brightness.sh", "restore", NULL,
     };
@@ -1429,6 +1439,28 @@ int main(void) {
             usleep(250000);
             console_pid = start_console();
             log_message("USB console restarted");
+        } else if (ui_pid > 0 && ended == ui_pid) {
+            /* ADR-009: single UI-slot ownership -- waitpid() above already
+               reaped the previous holder of /dev/dri/card0, so the kernel
+               has released DRM master; the next process to open the card
+               becomes master automatically, no handoff signal needed. */
+            time_t now = time(NULL);
+            if (now - ui_window_start > UI_RESTART_WINDOW_SECONDS) {
+                ui_window_start = now;
+                ui_restart_count = 0;
+            }
+            ui_restart_count++;
+            if (ui_restart_count > UI_RESTART_BUDGET) {
+                log_message(
+                    "UI slot exceeded restart budget (%d in %lds), giving up until reboot",
+                    ui_restart_count, (long)UI_RESTART_WINDOW_SECONDS);
+                ui_pid = -1;
+            } else {
+                usleep(250000);
+                ui_pid = start_display_splash();
+                log_message("UI slot restarted (%d/%d in window)",
+                            ui_restart_count, UI_RESTART_BUDGET);
+            }
         }
     }
 }
