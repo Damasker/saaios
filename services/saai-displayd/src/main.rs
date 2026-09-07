@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+#[cfg(not(feature = "panther-hardware"))]
 use std::io::BufRead;
 use std::sync::Arc;
 
@@ -8,13 +9,13 @@ mod hardware;
 mod touch;
 
 use sha2::{Digest, Sha256};
+#[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::Keycode;
+#[cfg(not(feature = "panther-hardware"))]
+use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
     delegate_compositor, delegate_seat, delegate_shm, delegate_xdg_shell,
-    input::{
-        keyboard::{FilterResult, XkbConfig},
-        Seat, SeatHandler, SeatState,
-    },
+    input::{Seat, SeatHandler, SeatState},
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
         wayland_server::{
@@ -51,8 +52,15 @@ struct State {
     xdg_shell_state: XdgShellState,
     seat_state: SeatState<State>,
     _seat: Seat<State>,
+    // No keyboard capability on the real Pixel 7 build (ADR-012): this
+    // device has no physical keyboard, and drm-splash.c's own on-screen
+    // keyboard proves this architecture never needed wl_keyboard/xkbcommon
+    // keysym translation to begin with. Kept for the headless S02 build,
+    // where the keyboard-focus/synthetic-inject acceptance tests still use
+    // a real KeyboardHandle and a normal host libxkbcommon works fine.
+    #[cfg(not(feature = "panther-hardware"))]
     keyboard: smithay::input::keyboard::KeyboardHandle<State>,
-    /// First surface to commit a real (non-null) buffer keeps keyboard focus
+    /// First surface to commit a real (non-null) buffer keeps input focus
     /// for the lifetime of this headless compositor -- single-window focus
     /// policy, matching the eventual fullscreen panther shell.
     focused_surface: Option<WlSurface>,
@@ -136,13 +144,18 @@ impl CompositorHandler for State {
         // this (or any) client's actual content.
         if self.focused_surface.is_none() {
             self.focused_surface = Some(surface.clone());
-            let serial = SERIAL_COUNTER.next_serial();
-            let keyboard = self.keyboard.clone();
-            keyboard.set_focus(self, Some(surface.clone()), serial);
-            println!(
-                "saai-displayd: keyboard focus set to surface {:?}",
-                surface.id()
-            );
+            #[cfg(not(feature = "panther-hardware"))]
+            {
+                let serial = SERIAL_COUNTER.next_serial();
+                let keyboard = self.keyboard.clone();
+                keyboard.set_focus(self, Some(surface.clone()), serial);
+                println!(
+                    "saai-displayd: keyboard focus set to surface {:?}",
+                    surface.id()
+                );
+            }
+            #[cfg(feature = "panther-hardware")]
+            println!("saai-displayd: focus set to surface {:?}", surface.id());
         }
 
         match result {
@@ -234,6 +247,7 @@ fn main() {
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
     let mut seat_state = SeatState::<State>::new();
     let mut seat = seat_state.new_wl_seat(&dh, "seat0");
+    #[cfg(not(feature = "panther-hardware"))]
     let keyboard = seat
         .add_keyboard(XkbConfig::default(), 200, 25)
         .expect("failed to add keyboard capability");
@@ -356,6 +370,7 @@ fn main() {
         xdg_shell_state,
         seat_state,
         _seat: seat,
+        #[cfg(not(feature = "panther-hardware"))]
         keyboard: keyboard.clone(),
         focused_surface: None,
         toplevels: HashMap::new(),
@@ -400,50 +415,54 @@ fn main() {
     // sends a press+release of a fixed key to whichever surface currently
     // holds keyboard focus, so the S02 "synthetic input delivered only to
     // the focused client" acceptance test can be driven from a shell script
-    // without real hardware.
-    let stdin_source = Generic::new(std::io::stdin(), Interest::READ, Mode::Level);
-    match handle.insert_source(stdin_source, move |_, _, state: &mut State| {
-        let mut line = String::new();
-        if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
-            return Ok(PostAction::Remove);
-        }
-        if line.trim() == "inject-key" {
-            if state.focused_surface.is_some() {
-                let time = 0;
-                // evdev KEY_A (30) + 8 = xkb keycode 38.
-                let keycode = Keycode::new(38);
-                keyboard.input::<(), _>(
-                    state,
-                    keycode,
-                    smithay::backend::input::KeyState::Pressed,
-                    SERIAL_COUNTER.next_serial(),
-                    time,
-                    |_, _, _| FilterResult::Forward,
-                );
-                keyboard.input::<(), _>(
-                    state,
-                    keycode,
-                    smithay::backend::input::KeyState::Released,
-                    SERIAL_COUNTER.next_serial(),
-                    time,
-                    |_, _, _| FilterResult::Forward,
-                );
-                println!("saai-displayd: injected synthetic key press+release");
-            } else {
-                println!("saai-displayd: inject-key requested but no surface is focused yet");
+    // without real hardware. Not built for the panther-hardware target at
+    // all -- no keyboard capability there to inject into (ADR-012).
+    #[cfg(not(feature = "panther-hardware"))]
+    {
+        let stdin_source = Generic::new(std::io::stdin(), Interest::READ, Mode::Level);
+        match handle.insert_source(stdin_source, move |_, _, state: &mut State| {
+            let mut line = String::new();
+            if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
+                return Ok(PostAction::Remove);
             }
-        }
-        Ok(PostAction::Continue)
-    }) {
-        Ok(_) => {}
-        Err(err) => {
-            // Best-effort debug convenience only -- stdin is not always
-            // pollable depending on how this process was launched (backgrounded
-            // with an inherited fd, a plain file, etc). Losing it must never
-            // take the compositor down.
-            eprintln!(
-                "saai-displayd: inject-key debug trigger unavailable, continuing without it: {err}"
-            );
+            if line.trim() == "inject-key" {
+                if state.focused_surface.is_some() {
+                    let time = 0;
+                    // evdev KEY_A (30) + 8 = xkb keycode 38.
+                    let keycode = Keycode::new(38);
+                    keyboard.input::<(), _>(
+                        state,
+                        keycode,
+                        smithay::backend::input::KeyState::Pressed,
+                        SERIAL_COUNTER.next_serial(),
+                        time,
+                        |_, _, _| FilterResult::Forward,
+                    );
+                    keyboard.input::<(), _>(
+                        state,
+                        keycode,
+                        smithay::backend::input::KeyState::Released,
+                        SERIAL_COUNTER.next_serial(),
+                        time,
+                        |_, _, _| FilterResult::Forward,
+                    );
+                    println!("saai-displayd: injected synthetic key press+release");
+                } else {
+                    println!("saai-displayd: inject-key requested but no surface is focused yet");
+                }
+            }
+            Ok(PostAction::Continue)
+        }) {
+            Ok(_) => {}
+            Err(err) => {
+                // Best-effort debug convenience only -- stdin is not always
+                // pollable depending on how this process was launched (backgrounded
+                // with an inherited fd, a plain file, etc). Losing it must never
+                // take the compositor down.
+                eprintln!(
+                    "saai-displayd: inject-key debug trigger unavailable, continuing without it: {err}"
+                );
+            }
         }
     }
 
