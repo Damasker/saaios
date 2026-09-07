@@ -8,6 +8,10 @@ zig=${ZIG:-zig}
 magiskboot=${MAGISKBOOT:?set MAGISKBOOT}
 stock=${STOCK_INIT_BOOT:?set STOCK_INIT_BOOT}
 tinyalsa_dir=${TINYALSA_DIR:?set TINYALSA_DIR}
+# S03 Change 6: cross-compiled by cargo (services/saai-displayd), not by
+# this script's zig-cc C builds -- see os/targets/panther/build-cross-sysroot.sh
+# and the cross-panther CI job for how it's produced (ADR-008/010/011/012).
+saai_displayd=${SAAI_DISPLAYD_BIN:?set SAAI_DISPLAYD_BIN}
 source_dir="$script_dir/src"
 scripts_dir="$script_dir/scripts"
 config_dir="$script_dir/config"
@@ -91,6 +95,7 @@ set -- ramdisk.cpio \
     "add 0755 saaios/saaios-runtime $artifacts/saaios-runtime-panther-tcp" \
     "add 0755 saaios/saaios-console $artifacts/saaios-console-panther-tcp" \
     "add 0755 saaios/drm-splash $drm_splash" \
+    "add 0755 saaios/saai-displayd $saai_displayd" \
     "mkdir 0755 saaios/fonts" \
     "add 0644 saaios/fonts/Inter-Regular.ttf $assets_dir/fonts/Inter-Regular.ttf" \
     "add 0644 saaios/fonts/Inter-SemiBold.ttf $assets_dir/fonts/Inter-SemiBold.ttf" \

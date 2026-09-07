@@ -1144,15 +1144,21 @@ static int create_drm_card_node(void) {
                  makedev(major_number, minor_number));
 }
 
-static pid_t start_display_splash(void) {
+/* ADR-009/Change 6: same fork+redirect+exec shape for whichever binary
+   currently owns the UI slot -- drm-splash (fallback, always available)
+   or saai-displayd (primary, real DRM/KMS + touch, ADR-010/011/012). The
+   sequential-waitpid-before-fork invariant that makes DRM-master handoff
+   automatic doesn't care which binary is running, only that there is
+   ever at most one. */
+static pid_t start_ui_binary(const char *path, const char *argv0,
+                             const char *log_path) {
     if (create_drm_card_node() < 0) {
         log_message("DRM card did not appear");
         return -1;
     }
     pid_t child = fork();
     if (child == 0) {
-        int output = open("/run/drm-splash.log",
-                          O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+        int output = open(log_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
                           0644);
         if (output >= 0) {
             (void)dup2(output, STDOUT_FILENO);
@@ -1161,13 +1167,30 @@ static pid_t start_display_splash(void) {
                 close(output);
             }
         }
-        execl("/saaios/drm-splash", "drm-splash", NULL);
+        /* saai-displayd needs XDG_RUNTIME_DIR to create its Wayland
+           socket -- init's own environment has no such thing, and without
+           it ListeningSocketSource::new_auto() fails immediately
+           (physically confirmed during manual testing this same session).
+           Harmless to set for drm-splash too, which never reads it. */
+        mkdir_one("/run/wayland", 0700);
+        (void)setenv("XDG_RUNTIME_DIR", "/run/wayland", 1);
+        execl(path, argv0, NULL);
         _exit(127);
     }
     if (child > 0) {
-        log_message("native display splash started");
+        log_message("UI slot started: %s", argv0);
     }
     return child;
+}
+
+static pid_t start_display_splash(void) {
+    return start_ui_binary("/saaios/drm-splash", "drm-splash",
+                           "/run/drm-splash.log");
+}
+
+static pid_t start_saai_displayd(void) {
+    return start_ui_binary("/saaios/saai-displayd", "saai-displayd",
+                           "/run/saai-displayd.log");
 }
 
 static int create_input_node(const char *wanted_name,
@@ -1382,9 +1405,14 @@ int main(void) {
         log_message("haptic runtime power locked active");
         apply_haptic_factory_calibration();
     }
-    pid_t ui_pid = start_display_splash();
+    /* ADR-009 Change 6: saai-displayd is the primary UI slot occupant now
+       (real DRM/KMS output + touch, ADR-010/ADR-011/ADR-012 cleared its
+       last on-device blockers); drm-splash becomes the fallback, taken
+       over only once primary exhausts its restart budget. */
+    pid_t ui_pid = start_saai_displayd();
     time_t ui_window_start = time(NULL);
     int ui_restart_count = 0;
+    int ui_using_fallback = 0;
     char *const brightness_argv[] = {
         "display-brightness.sh", "restore", NULL,
     };
@@ -1445,21 +1473,39 @@ int main(void) {
                has released DRM master; the next process to open the card
                becomes master automatically, no handoff signal needed. */
             time_t now = time(NULL);
-            if (now - ui_window_start > UI_RESTART_WINDOW_SECONDS) {
-                ui_window_start = now;
-                ui_restart_count = 0;
-            }
-            ui_restart_count++;
-            if (ui_restart_count > UI_RESTART_BUDGET) {
-                log_message(
-                    "UI slot exceeded restart budget (%d in %lds), giving up until reboot",
-                    ui_restart_count, (long)UI_RESTART_WINDOW_SECONDS);
-                ui_pid = -1;
+            if (!ui_using_fallback) {
+                if (now - ui_window_start > UI_RESTART_WINDOW_SECONDS) {
+                    ui_window_start = now;
+                    ui_restart_count = 0;
+                }
+                ui_restart_count++;
+                if (ui_restart_count > UI_RESTART_BUDGET) {
+                    log_message(
+                        "UI slot: saai-displayd exceeded restart budget "
+                        "(%d in %lds), falling back to drm-splash",
+                        ui_restart_count, (long)UI_RESTART_WINDOW_SECONDS);
+                    ui_using_fallback = 1;
+                    ui_window_start = now;
+                    ui_restart_count = 0;
+                    usleep(250000);
+                    ui_pid = start_display_splash();
+                } else {
+                    usleep(250000);
+                    ui_pid = start_saai_displayd();
+                    log_message(
+                        "UI slot restarted saai-displayd (%d/%d in window)",
+                        ui_restart_count, UI_RESTART_BUDGET);
+                }
             } else {
+                /* Fallback has no restart budget by design (ADR-009): it's
+                   the already-proven-stable safety net for the rest of this
+                   boot, and giving up on it entirely would mean a
+                   permanently blank screen with no way back short of a
+                   cold reboot. Retrying it forever is the intended
+                   behavior, not a bug. */
                 usleep(250000);
                 ui_pid = start_display_splash();
-                log_message("UI slot restarted (%d/%d in window)",
-                            ui_restart_count, UI_RESTART_BUDGET);
+                log_message("UI slot restarted drm-splash (fallback)");
             }
         }
     }
