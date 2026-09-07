@@ -41,7 +41,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential curl ca-certificates xz-utils git patch dpkg-dev \
+            build-essential curl ca-certificates xz-utils git patch dpkg-dev bison \
             meson ninja-build autoconf automake libtool gperf pkg-config \
             libseat-dev libudev-dev libinput-dev libxkbcommon-dev
 
