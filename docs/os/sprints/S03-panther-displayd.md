@@ -4,7 +4,7 @@
 
 - Состояние: `In progress`.
 - Зависит от: S02.
-- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat), ADR-011 (touch через сырой evdev, без libinput/libudev).
+- Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat), ADR-011 (touch через сырой evdev, без libinput/libudev), ADR-012 (клавиатурная способность не подключается на этой цели).
 - Рабочий fallback: физически проверенный образ commit `42a88e0`
   (Change 3 закрыт, supervision для drm-splash физически проверен), Android slot B.
 - DRM/KMS backend `saai-displayd` (Change 4) физически проверен, реальные
@@ -179,7 +179,12 @@
    событий, не в визуальном отклике.
 6. Подключить handoff+supervision из шага 2/3 к реальному запуску
    `saai-displayd` вместо/вместе с `drm-splash` по спроектированному
-   протоколу.
+   протоколу. Разблокировано ADR-012 (commit `f434af0`): коммитнутый
+   бинарник теперь физически запускается standalone на устройстве без
+   диагностических обходов (клавиатурный SIGTRAP из 1d05260 устранён
+   отключением клавиатурной способности на этой цели, не самим багом) —
+   до этого `native-init.c` не смог бы вообще ни разу удержать
+   `saai-displayd` в UI-слоте под supervision из ADR-009.
 7. Холодная перезагрузка, физическая регрессия, обновить
    `os/targets/panther/README.md` при необходимости.
 
