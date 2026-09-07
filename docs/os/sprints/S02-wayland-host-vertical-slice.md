@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `Backlog`.
+- Состояние: `Done`.
 - Зависит от: S01.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005.
 - Рабочий fallback: существующий `drm-splash`; phone image не меняется.
@@ -83,5 +83,31 @@ Pixel 7, установленный image и userdata не меняются.
 
 ## Evidence
 
-Заполняется при переходе в `Done`: commit, CI run, команды тестирования,
-benchmark framework, frame hash и известные ограничения.
+- Framework spike + ADR: commit `c0c7092` — Smithay 0.7.0 (headless
+  features) против сырого `wayland-server`: 82 против 23 зависимостей,
+  ~29s против ~10.5s чистой сборки; см.
+  [ADR-007](../../adr/ADR-007-smithay-compositor-framework.md).
+- Реализация: commits `99a1981`, `495184a`, `46e3dcc` —
+  `saai-displayd` (headless compositor: `wl_compositor`, `wl_shm`,
+  `xdg_wm_base`, `wl_seat`) и `saai-demo-surface` (независимый клиент);
+  жизненный цикл surface (commit → configure → ack → attach → commit),
+  keyboard focus (первый закоммитивший surface), sha256 хеш кадра,
+  `ensure_configured()`-проверка на protocol-negative commit, устойчивость
+  compositor к отключению некорректного клиента.
+- CI: commits `6cadda9` (`libxkbcommon-dev`), `c351c9e`/`656a2e9`
+  (headless-сценарий как реальный `cargo test`, плюс явный `cargo build
+  --workspace` перед `test` — `cargo test --workspace` сам по себе не
+  гарантирует собранный бинарник для соседнего пакета), `bb11554`
+  (отдельный тест на focused-only input delivery). Финальный зелёный прогон:
+  [`34099976911`](https://github.com/Damasker/saaios/actions/runs/34099976911).
+- Тестовые команды: `cargo test -p saai-displayd --test
+  headless_vertical_slice` — два теста, `headless_vertical_slice` (обычный
+  клиент, protocol-negative, fault-injection resilience, frame hash
+  determinism) и `focused_input_delivery` (synthetic input доставлен
+  только сфокусированному клиенту); оба стабильно зелёные (3 подряд локальных
+  прогона, ~21-30s).
+- Известные ограничения: cross-compile под `aarch64-unknown-linux-musl` не
+  проверялся (S02 сознательно host-only); backend-фичи Smithay для
+  DRM/libinput/udev не включены — предмет S03; frame hash сравнивается
+  только между двумя клиентами одного прогона, не с заранее записанным
+  эталонным значением.
