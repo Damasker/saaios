@@ -181,10 +181,40 @@ delegate_noop!(AppState: ignore wl_shm::WlShm);
 delegate_noop!(AppState: wl_shm_pool::WlShmPool);
 delegate_noop!(AppState: ignore wayland_client::protocol::wl_buffer::WlBuffer);
 
+/// Builds a wl_shm-backed buffer of the fixed test-pattern size and
+/// attaches it to `surface`, committing immediately. Shared by the normal
+/// lifecycle path and the `violate-configure` negative-protocol test, which
+/// calls this before any configure has been received.
+fn attach_test_pattern(
+    shm: &wl_shm::WlShm,
+    surface: &wl_surface::WlSurface,
+    qh: &QueueHandle<AppState>,
+) {
+    let size = (STRIDE * HEIGHT) as usize;
+    let mut file = tempfile::tempfile().expect("failed to create anonymous shm file");
+    let mut pixels = vec![0u8; size];
+    draw_test_pattern(&mut pixels);
+    file.write_all(&pixels).expect("failed to write pixel data");
+    file.flush().ok();
+
+    let pool = shm.create_pool(file.as_fd(), size as i32, qh, ());
+    let buffer = pool.create_buffer(0, WIDTH, HEIGHT, STRIDE, wl_shm::Format::Argb8888, qh, ());
+
+    surface.attach(Some(&buffer), 0, 0);
+    surface.damage_buffer(0, 0, WIDTH, HEIGHT);
+    surface.commit();
+}
+
 fn main() {
     let label = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "demo".to_string());
+    // Negative-protocol test mode (S02 acceptance: "protocol: configure до
+    // buffer attach"): attach a buffer on the very first commit, before any
+    // configure was ever received. xdg-shell requires the first commit to be
+    // buffer-less; a compliant compositor must reject this with a protocol
+    // error and disconnect only this client.
+    let violate_configure = std::env::args().nth(2).as_deref() == Some("violate-configure");
     let conn = Connection::connect_to_env().expect(
         "failed to connect to Wayland display -- set WAYLAND_DISPLAY to saai-displayd's socket",
     );
@@ -209,10 +239,6 @@ fn main() {
     toplevel.set_title(format!("saai-demo-surface-{label}"));
     toplevel.set_app_id(format!("dev.saaios.demo-surface.{label}"));
 
-    // Initial commit with no buffer attached triggers the first configure,
-    // per xdg-shell's configure/ack/commit lifecycle.
-    surface.commit();
-
     let mut state = AppState {
         label: label.clone(),
         running: true,
@@ -226,40 +252,59 @@ fn main() {
     let mut buffer_attached = false;
     let deadline = Instant::now() + Duration::from_secs(8);
 
-    // Wait for the first configure with a real deadline: once the frame is
-    // attached and committed there is nothing further to wait for, and
-    // blocking_dispatch has no timeout of its own, so it must not be called
-    // again after that point.
-    while state.running && !buffer_attached && Instant::now() < deadline {
-        queue
-            .blocking_dispatch(&mut state)
-            .expect("dispatch failed");
+    if violate_configure {
+        println!(
+            "saai-demo-surface[{}]: violating protocol -- attaching buffer before any configure",
+            state.label
+        );
+        attach_test_pattern(
+            state.shm.as_ref().unwrap(),
+            state.surface.as_ref().unwrap(),
+            &qh,
+        );
+        buffer_attached = true;
+        // A compliant compositor answers this with a protocol error and
+        // disconnects us; give it a bounded window to do so and observe
+        // whichever happens (disconnect vs. some other reply) rather than
+        // assuming a specific error shape.
+        while Instant::now() < deadline {
+            match queue.roundtrip(&mut state) {
+                Ok(_) => std::thread::sleep(Duration::from_millis(100)),
+                Err(err) => {
+                    println!(
+                        "saai-demo-surface[{}]: connection ended after protocol violation: {err}",
+                        state.label
+                    );
+                    break;
+                }
+            }
+        }
+    } else {
+        // Initial commit with no buffer attached triggers the first configure,
+        // per xdg-shell's configure/ack/commit lifecycle.
+        state.surface.as_ref().unwrap().commit();
 
-        if state.configured && !buffer_attached {
-            let size = (STRIDE * HEIGHT) as usize;
-            let mut file = tempfile::tempfile().expect("failed to create anonymous shm file");
-            let mut pixels = vec![0u8; size];
-            draw_test_pattern(&mut pixels);
-            file.write_all(&pixels).expect("failed to write pixel data");
-            file.flush().ok();
+        // Wait for the first configure with a real deadline: once the frame is
+        // attached and committed there is nothing further to wait for, and
+        // blocking_dispatch has no timeout of its own, so it must not be called
+        // again after that point.
+        while state.running && !buffer_attached && Instant::now() < deadline {
+            queue
+                .blocking_dispatch(&mut state)
+                .expect("dispatch failed");
 
-            let pool = state
-                .shm
-                .as_ref()
-                .unwrap()
-                .create_pool(file.as_fd(), size as i32, &qh, ());
-            let buffer =
-                pool.create_buffer(0, WIDTH, HEIGHT, STRIDE, wl_shm::Format::Argb8888, &qh, ());
-
-            let surface = state.surface.as_ref().unwrap();
-            surface.attach(Some(&buffer), 0, 0);
-            surface.damage_buffer(0, 0, WIDTH, HEIGHT);
-            surface.commit();
-            buffer_attached = true;
-            println!(
-                "saai-demo-surface[{}]: committed {WIDTH}x{HEIGHT} test pattern frame",
-                state.label
-            );
+            if state.configured && !buffer_attached {
+                attach_test_pattern(
+                    state.shm.as_ref().unwrap(),
+                    state.surface.as_ref().unwrap(),
+                    &qh,
+                );
+                buffer_attached = true;
+                println!(
+                    "saai-demo-surface[{}]: committed {WIDTH}x{HEIGHT} test pattern frame",
+                    state.label
+                );
+            }
         }
     }
 
@@ -268,7 +313,7 @@ fn main() {
     // saai-displayd's stdin "inject-key" trigger) has a real chance to
     // arrive before this process exits -- each roundtrip is itself bounded
     // by the compositor's responsiveness, never an indefinite wait.
-    if buffer_attached {
+    if buffer_attached && !violate_configure {
         while !state.received_key && Instant::now() < deadline {
             let _ = queue.roundtrip(&mut state);
             std::thread::sleep(Duration::from_millis(100));

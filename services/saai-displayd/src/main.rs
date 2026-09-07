@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::Arc;
 
@@ -50,6 +51,10 @@ struct State {
     /// for the lifetime of this headless compositor -- single-window focus
     /// policy, matching the eventual fullscreen panther shell.
     focused_surface: Option<WlSurface>,
+    /// wl_surface id -> its ToplevelSurface handle, so commit() can call
+    /// ensure_configured() (S02 protocol-negative test: reject a buffer
+    /// attached before the surface's first configure was acked).
+    toplevels: HashMap<WlSurface, ToplevelSurface>,
 }
 
 impl CompositorHandler for State {
@@ -80,6 +85,23 @@ impl CompositorHandler for State {
             );
             return;
         };
+
+        // S02 protocol-negative test: xdg-shell requires a surface to have
+        // its initial configure acked before any buffer-carrying commit --
+        // only relevant once we know this commit actually carries one.
+        // ensure_configured() checks this and, on violation, posts
+        // xdg_surface::Error::NotConstructed itself -- the offending client
+        // gets disconnected with a protocol error, everyone else is
+        // unaffected.
+        if let Some(toplevel) = self.toplevels.get(surface) {
+            if !toplevel.ensure_configured() {
+                println!(
+                    "saai-displayd: rejected commit on surface {:?} -- buffer attached before initial configure was acked",
+                    surface.id()
+                );
+                return;
+            }
+        }
 
         let hash = with_buffer_contents(&buffer, |ptr, len, _data| {
             let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
@@ -144,6 +166,14 @@ impl XdgShellHandler for State {
             state.size = Some((800, 480).into());
         });
         surface.send_configure();
+        self.toplevels.insert(surface.wl_surface().clone(), surface);
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.toplevels.remove(surface.wl_surface());
+        if self.focused_surface.as_ref() == Some(surface.wl_surface()) {
+            self.focused_surface = None;
+        }
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
@@ -181,6 +211,7 @@ fn main() {
         _seat: seat,
         keyboard: keyboard.clone(),
         focused_surface: None,
+        toplevels: HashMap::new(),
     };
 
     let socket = ListeningSocketSource::new_auto().expect("failed to create listening socket");
@@ -223,46 +254,51 @@ fn main() {
     // holds keyboard focus, so the S02 "synthetic input delivered only to
     // the focused client" acceptance test can be driven from a shell script
     // without real hardware.
-    handle
-        .insert_source(
-            Generic::new(std::io::stdin(), Interest::READ, Mode::Level),
-            move |_, _, state: &mut State| {
-                let mut line = String::new();
-                if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
-                    return Ok(PostAction::Remove);
-                }
-                if line.trim() == "inject-key" {
-                    if state.focused_surface.is_some() {
-                        let time = 0;
-                        // evdev KEY_A (30) + 8 = xkb keycode 38.
-                        let keycode = Keycode::new(38);
-                        keyboard.input::<(), _>(
-                            state,
-                            keycode,
-                            smithay::backend::input::KeyState::Pressed,
-                            SERIAL_COUNTER.next_serial(),
-                            time,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                        keyboard.input::<(), _>(
-                            state,
-                            keycode,
-                            smithay::backend::input::KeyState::Released,
-                            SERIAL_COUNTER.next_serial(),
-                            time,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                        println!("saai-displayd: injected synthetic key press+release");
-                    } else {
-                        println!(
-                            "saai-displayd: inject-key requested but no surface is focused yet"
-                        );
-                    }
-                }
-                Ok(PostAction::Continue)
-            },
-        )
-        .expect("failed to insert stdin source");
+    let stdin_source = Generic::new(std::io::stdin(), Interest::READ, Mode::Level);
+    match handle.insert_source(stdin_source, move |_, _, state: &mut State| {
+        let mut line = String::new();
+        if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
+            return Ok(PostAction::Remove);
+        }
+        if line.trim() == "inject-key" {
+            if state.focused_surface.is_some() {
+                let time = 0;
+                // evdev KEY_A (30) + 8 = xkb keycode 38.
+                let keycode = Keycode::new(38);
+                keyboard.input::<(), _>(
+                    state,
+                    keycode,
+                    smithay::backend::input::KeyState::Pressed,
+                    SERIAL_COUNTER.next_serial(),
+                    time,
+                    |_, _, _| FilterResult::Forward,
+                );
+                keyboard.input::<(), _>(
+                    state,
+                    keycode,
+                    smithay::backend::input::KeyState::Released,
+                    SERIAL_COUNTER.next_serial(),
+                    time,
+                    |_, _, _| FilterResult::Forward,
+                );
+                println!("saai-displayd: injected synthetic key press+release");
+            } else {
+                println!("saai-displayd: inject-key requested but no surface is focused yet");
+            }
+        }
+        Ok(PostAction::Continue)
+    }) {
+        Ok(_) => {}
+        Err(err) => {
+            // Best-effort debug convenience only -- stdin is not always
+            // pollable depending on how this process was launched (backgrounded
+            // with an inherited fd, a plain file, etc). Losing it must never
+            // take the compositor down.
+            eprintln!(
+                "saai-displayd: inject-key debug trigger unavailable, continuing without it: {err}"
+            );
+        }
+    }
 
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");
     event_loop
