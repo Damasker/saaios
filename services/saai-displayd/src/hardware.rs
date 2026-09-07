@@ -105,8 +105,18 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier, LibSeatSessionNotifi
         .handle;
 
     let mut allocator = DumbAllocator::new(drm_fd.clone());
+    // An empty modifiers slice is *not* "no preference" here: Smithay's
+    // own create_buffer() rejects it (Iterator::all() on an empty slice is
+    // vacuously true, so the "is Linear/Invalid present" check always
+    // fails -> EINVAL). Dumb buffers are inherently linear, so this is the
+    // only modifier that could ever be valid anyway.
     let dumb_buffer = allocator
-        .create_buffer(mode_w as u32, mode_h as u32, Fourcc::Xrgb8888, &[])
+        .create_buffer(
+            mode_w as u32,
+            mode_h as u32,
+            Fourcc::Xrgb8888,
+            &[smithay::backend::allocator::Modifier::Linear],
+        )
         .map_err(|e| format!("dumb buffer allocation failed: {e}"))?;
     let raw_handle = *dumb_buffer.handle();
     let framebuffer = framebuffer_from_dumb_buffer(&drm_fd, &dumb_buffer, true)
