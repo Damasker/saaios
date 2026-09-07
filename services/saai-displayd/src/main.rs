@@ -1,8 +1,14 @@
+use std::io::BufRead;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
+use smithay::input::keyboard::Keycode;
 use smithay::{
     delegate_compositor, delegate_seat, delegate_shm, delegate_xdg_shell,
-    input::{Seat, SeatHandler, SeatState},
+    input::{
+        keyboard::{FilterResult, XkbConfig},
+        Seat, SeatHandler, SeatState,
+    },
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
         wayland_server::{
@@ -12,13 +18,17 @@ use smithay::{
         },
     },
     utils::Serial,
+    utils::SERIAL_COUNTER,
     wayland::{
         buffer::BufferHandler,
-        compositor::{CompositorClientState, CompositorHandler, CompositorState},
+        compositor::{
+            with_states, BufferAssignment, CompositorClientState, CompositorHandler,
+            CompositorState, SurfaceAttributes,
+        },
         shell::xdg::{
             PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
         },
-        shm::{ShmHandler, ShmState},
+        shm::{with_buffer_contents, ShmHandler, ShmState},
         socket::ListeningSocketSource,
     },
 };
@@ -35,6 +45,11 @@ struct State {
     xdg_shell_state: XdgShellState,
     seat_state: SeatState<State>,
     _seat: Seat<State>,
+    keyboard: smithay::input::keyboard::KeyboardHandle<State>,
+    /// First surface to commit a real (non-null) buffer keeps keyboard focus
+    /// for the lifetime of this headless compositor -- single-window focus
+    /// policy, matching the eventual fullscreen panther shell.
+    focused_surface: Option<WlSurface>,
 }
 
 impl CompositorHandler for State {
@@ -50,7 +65,48 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
-        println!("saai-displayd: commit on surface {:?}", surface.id());
+        let buffer = with_states(surface, |states| {
+            let mut guard = states.cached_state.get::<SurfaceAttributes>();
+            match &guard.current().buffer {
+                Some(BufferAssignment::NewBuffer(buffer)) => Some(buffer.clone()),
+                _ => None,
+            }
+        });
+
+        let Some(buffer) = buffer else {
+            println!(
+                "saai-displayd: commit on surface {:?} (no buffer)",
+                surface.id()
+            );
+            return;
+        };
+
+        let hash = with_buffer_contents(&buffer, |ptr, len, _data| {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+            let mut hasher = Sha256::new();
+            hasher.update(bytes);
+            hasher.finalize()
+        });
+
+        match hash {
+            Ok(digest) => println!(
+                "saai-displayd: commit on surface {:?}, frame sha256={:x}",
+                surface.id(),
+                digest
+            ),
+            Err(err) => eprintln!("saai-displayd: failed to hash committed buffer: {err}"),
+        }
+
+        if self.focused_surface.is_none() {
+            self.focused_surface = Some(surface.clone());
+            let serial = SERIAL_COUNTER.next_serial();
+            let keyboard = self.keyboard.clone();
+            keyboard.set_focus(self, Some(surface.clone()), serial);
+            println!(
+                "saai-displayd: keyboard focus set to surface {:?}",
+                surface.id()
+            );
+        }
     }
 }
 delegate_compositor!(State);
@@ -112,7 +168,10 @@ fn main() {
     let shm_state = ShmState::new::<State>(&dh, Vec::new());
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
     let mut seat_state = SeatState::<State>::new();
-    let seat = seat_state.new_wl_seat(&dh, "seat0");
+    let mut seat = seat_state.new_wl_seat(&dh, "seat0");
+    let keyboard = seat
+        .add_keyboard(XkbConfig::default(), 200, 25)
+        .expect("failed to add keyboard capability");
 
     let mut state = State {
         compositor_state,
@@ -120,6 +179,8 @@ fn main() {
         xdg_shell_state,
         seat_state,
         _seat: seat,
+        keyboard: keyboard.clone(),
+        focused_surface: None,
     };
 
     let socket = ListeningSocketSource::new_auto().expect("failed to create listening socket");
@@ -156,6 +217,52 @@ fn main() {
             },
         )
         .expect("failed to insert display source");
+
+    // Debug/test-only synthetic input trigger: `echo inject-key | saai-displayd`
+    // sends a press+release of a fixed key to whichever surface currently
+    // holds keyboard focus, so the S02 "synthetic input delivered only to
+    // the focused client" acceptance test can be driven from a shell script
+    // without real hardware.
+    handle
+        .insert_source(
+            Generic::new(std::io::stdin(), Interest::READ, Mode::Level),
+            move |_, _, state: &mut State| {
+                let mut line = String::new();
+                if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
+                    return Ok(PostAction::Remove);
+                }
+                if line.trim() == "inject-key" {
+                    if state.focused_surface.is_some() {
+                        let time = 0;
+                        // evdev KEY_A (30) + 8 = xkb keycode 38.
+                        let keycode = Keycode::new(38);
+                        keyboard.input::<(), _>(
+                            state,
+                            keycode,
+                            smithay::backend::input::KeyState::Pressed,
+                            SERIAL_COUNTER.next_serial(),
+                            time,
+                            |_, _, _| FilterResult::Forward,
+                        );
+                        keyboard.input::<(), _>(
+                            state,
+                            keycode,
+                            smithay::backend::input::KeyState::Released,
+                            SERIAL_COUNTER.next_serial(),
+                            time,
+                            |_, _, _| FilterResult::Forward,
+                        );
+                        println!("saai-displayd: injected synthetic key press+release");
+                    } else {
+                        println!(
+                            "saai-displayd: inject-key requested but no surface is focused yet"
+                        );
+                    }
+                }
+                Ok(PostAction::Continue)
+            },
+        )
+        .expect("failed to insert stdin source");
 
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");
     event_loop

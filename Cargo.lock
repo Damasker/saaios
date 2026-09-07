@@ -2000,6 +2000,7 @@ dependencies = [
 name = "saai-displayd"
 version = "0.1.0"
 dependencies = [
+ "sha2",
  "smithay",
 ]
 

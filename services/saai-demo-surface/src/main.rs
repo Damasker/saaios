@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use wayland_client::{
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
-    protocol::{wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface},
+    protocol::{wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface},
     Connection, Dispatch, QueueHandle,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -15,8 +15,10 @@ const HEIGHT: i32 = 480;
 const STRIDE: i32 = WIDTH * 4;
 
 struct AppState {
+    label: String,
     running: bool,
     configured: bool,
+    received_key: bool,
     _xdg_surface: Option<xdg_surface::XdgSurface>,
     surface: Option<wl_surface::WlSurface>,
     shm: Option<wl_shm::WlShm>,
@@ -79,7 +81,8 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for AppState {
             if !state.configured {
                 state.configured = true;
                 println!(
-                    "saai-demo-surface: received first configure, attaching test pattern buffer"
+                    "saai-demo-surface[{}]: received first configure, attaching test pattern buffer",
+                    state.label
                 );
             }
         }
@@ -97,11 +100,75 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for AppState {
     ) {
         match event {
             xdg_toplevel::Event::Close => {
-                println!("saai-demo-surface: compositor requested close");
+                println!(
+                    "saai-demo-surface[{}]: compositor requested close",
+                    state.label
+                );
                 state.running = false;
             }
             xdg_toplevel::Event::Configure { width, height, .. } => {
-                println!("saai-demo-surface: toplevel configure {width}x{height}");
+                println!(
+                    "saai-demo-surface[{}]: toplevel configure {width}x{height}",
+                    state.label
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        proxy: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: wayland_client::WEnum::Value(caps),
+        } = event
+        {
+            if caps.contains(wl_seat::Capability::Keyboard) {
+                proxy.get_keyboard(qh, ());
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
+                state.received_key = true;
+                println!(
+                    "saai-demo-surface[{}]: received key event, key={key} state={key_state:?}",
+                    state.label
+                );
+            }
+            wl_keyboard::Event::Enter { .. } => {
+                println!(
+                    "saai-demo-surface[{}]: keyboard focus entered this surface",
+                    state.label
+                );
+            }
+            wl_keyboard::Event::Leave { .. } => {
+                println!(
+                    "saai-demo-surface[{}]: keyboard focus left this surface",
+                    state.label
+                );
             }
             _ => {}
         }
@@ -115,6 +182,9 @@ delegate_noop!(AppState: wl_shm_pool::WlShmPool);
 delegate_noop!(AppState: ignore wayland_client::protocol::wl_buffer::WlBuffer);
 
 fn main() {
+    let label = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "demo".to_string());
     let conn = Connection::connect_to_env().expect(
         "failed to connect to Wayland display -- set WAYLAND_DISPLAY to saai-displayd's socket",
     );
@@ -129,27 +199,32 @@ fn main() {
     let wm_base: xdg_wm_base::XdgWmBase = globals
         .bind(&qh, 1..=6, ())
         .expect("xdg_wm_base not advertised");
+    let _seat: wl_seat::WlSeat = globals
+        .bind(&qh, 1..=1, ())
+        .expect("wl_seat not advertised");
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
-    toplevel.set_title("saai-demo-surface".into());
-    toplevel.set_app_id("dev.saaios.demo-surface".into());
+    toplevel.set_title(format!("saai-demo-surface-{label}"));
+    toplevel.set_app_id(format!("dev.saaios.demo-surface.{label}"));
 
     // Initial commit with no buffer attached triggers the first configure,
     // per xdg-shell's configure/ack/commit lifecycle.
     surface.commit();
 
     let mut state = AppState {
+        label: label.clone(),
         running: true,
         configured: false,
+        received_key: false,
         _xdg_surface: Some(xdg_surface),
         surface: Some(surface),
         shm: Some(shm),
     };
 
     let mut buffer_attached = false;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(8);
 
     // Wait for the first configure with a real deadline: once the frame is
     // attached and committed there is nothing further to wait for, and
@@ -181,16 +256,30 @@ fn main() {
             surface.damage_buffer(0, 0, WIDTH, HEIGHT);
             surface.commit();
             buffer_attached = true;
-            println!("saai-demo-surface: committed {WIDTH}x{HEIGHT} test pattern frame");
+            println!(
+                "saai-demo-surface[{}]: committed {WIDTH}x{HEIGHT} test pattern frame",
+                state.label
+            );
         }
     }
 
-    // One roundtrip flushes the commit request and lets the compositor's
-    // immediate reaction (if any) arrive before we exit, without blocking
-    // indefinitely on further events that may never come.
+    // After the frame is committed, poll a bounded number of roundtrips so a
+    // synthetic key injected into the compositor around this time (see
+    // saai-displayd's stdin "inject-key" trigger) has a real chance to
+    // arrive before this process exits -- each roundtrip is itself bounded
+    // by the compositor's responsiveness, never an indefinite wait.
     if buffer_attached {
-        let _ = queue.roundtrip(&mut state);
+        while !state.received_key && Instant::now() < deadline {
+            let _ = queue.roundtrip(&mut state);
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
-    println!("saai-demo-surface: exiting cleanly");
+    if state.received_key {
+        println!(
+            "saai-demo-surface[{}]: observed the injected key event",
+            state.label
+        );
+    }
+    println!("saai-demo-surface[{}]: exiting cleanly", state.label);
 }

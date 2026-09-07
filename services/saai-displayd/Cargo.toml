@@ -8,3 +8,4 @@ repository.workspace = true
 
 [dependencies]
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop"] }
+sha2 = "0.10"
