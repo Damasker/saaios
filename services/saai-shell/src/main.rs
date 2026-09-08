@@ -63,6 +63,7 @@
 
 use std::time::{Duration, Instant};
 
+use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
     protocol::{wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
@@ -111,13 +112,6 @@ enum RootPage {
 }
 
 impl RootPage {
-    const ALL: [RootPage; 4] = [
-        RootPage::Now,
-        RootPage::Inbox,
-        RootPage::Spaces,
-        RootPage::Me,
-    ];
-
     /// Full-brightness fill for this page's content area, and for its
     /// own tab-bar segment when it's the active one. Each combines only
     /// the R and G byte positions the lock-surface diagnostic actually
@@ -148,22 +142,40 @@ impl RootPage {
     }
 }
 
-/// Design-space layout of the bottom tab bar, matching drm-splash.c's
-/// own `root_tab_at()` exactly (four 270px-wide segments starting at
-/// y=2100, on the same 1080x2400 design canvas drm-splash.c always
-/// assumed) -- scaled proportionally against whatever size this
-/// surface is actually configured at, same as drm-splash.c scaled
-/// against its own `create.width`/`create.height`.
+fn root_view(width: u32, height: u32) -> LayoutNode {
+    let tab_height = ((height as u64 * 300) / 2400) as u32;
+    let tabs = Node::linear(
+        "root-tabs",
+        Axis::Horizontal,
+        ["now", "inbox", "spaces", "me"]
+            .into_iter()
+            .map(|id| Node::leaf(id).with_action(format!("select_root:{id}")))
+            .collect(),
+    )
+    .with_size(Length::Fill, Length::Px(tab_height));
+    let root = Node::linear("root", Axis::Vertical, vec![Node::leaf("content"), tabs]);
+    layout(&root, Rect::new(0, 0, width, height))
+}
+
+fn page_from_id(id: &str) -> Option<RootPage> {
+    match id {
+        "now" => Some(RootPage::Now),
+        "inbox" => Some(RootPage::Inbox),
+        "spaces" => Some(RootPage::Spaces),
+        "me" => Some(RootPage::Me),
+        _ => None,
+    }
+}
+
+/// Touch and rendering consume the same computed Saai UI tree. There is no
+/// second set of tab rectangles to drift away from what is drawn.
 fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
     if width == 0 || height == 0 {
         return None;
     }
-    let design_x = (pos.0 * 1080.0 / width as f64) as i32;
-    let design_y = (pos.1 * 2400.0 / height as f64) as i32;
-    if !(2100..2400).contains(&design_y) || !(0..1080).contains(&design_x) {
-        return None;
-    }
-    Some(RootPage::ALL[(design_x / 270).clamp(0, 3) as usize])
+    root_view(width, height)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| page_from_id(&node.id))
 }
 
 fn main() {
@@ -729,7 +741,7 @@ impl Shell {
     /// Renders the active root section's placeholder content plus the
     /// bottom tab bar (Change step 6) -- proves the real
     /// client<->compositor vertical slice end to end (surface
-    /// creation, configure, SHM buffer, commit, frame callback), same
+    /// creation, configure, SHM buffer and commit), same
     /// as the single dark-slate fill this replaced, just with content
     /// that actually changes on navigation instead of a static color.
     fn draw(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>) {
@@ -766,24 +778,29 @@ impl Shell {
             }
         };
 
-        // Tab bar starts at design y=2100 (drm-splash.c's own
-        // `root_page`/`render_root_controls` layout), scaled
-        // proportionally against whatever size this surface actually
-        // is -- same design-canvas convention as `tab_at()`.
-        let tab_bar_start = ((height as u64 * 2100) / 2400) as u32;
+        let view = root_view(width, height);
+        let content_rect = view.children[0].rect;
+        let tab_nodes = &view.children[1].children;
+        let pages_by_x: Vec<RootPage> = (0..width)
+            .map(|x| {
+                tab_nodes
+                    .iter()
+                    .find(|node| node.rect.contains(x as f64, node.rect.y as f64))
+                    .and_then(|node| page_from_id(&node.id))
+                    .unwrap_or(RootPage::Now)
+            })
+            .collect();
         let content_pixel = self.current_page.color();
-        let seg_width = (width / 4).max(1);
         for y in 0..height {
             let row_start = (y * width) as usize * 4;
             let row = &mut canvas[row_start..row_start + width as usize * 4];
-            if y < tab_bar_start {
+            if y < content_rect.height {
                 for chunk in row.chunks_exact_mut(4) {
                     chunk.copy_from_slice(&content_pixel);
                 }
             } else {
                 for (x, chunk) in row.chunks_exact_mut(4).enumerate() {
-                    let seg = ((x as u32 / seg_width) as usize).min(3);
-                    let page = RootPage::ALL[seg];
+                    let page = pages_by_x[x];
                     let pixel = if page == self.current_page {
                         page.color()
                     } else {

@@ -7,6 +7,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+saai-ui-core.workspace = true
 # xkbcommon disabled: no physical keyboard on this device (ADR-012 made
 # the same call for saai-displayd) -- pulling it in here would carry the
 # same crash risk and image-size cost ADR-013 had to work around, for a

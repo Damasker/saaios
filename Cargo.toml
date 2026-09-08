@@ -13,6 +13,7 @@ members = [
     "crates/automation-engine",
     "crates/telemetry",
     "crates/config",
+    "crates/saai-ui-core",
     "crates/console-tui",
     "crates/console-web",
     "services/saaios-runtime",
@@ -42,6 +43,7 @@ ai-runtime = { path = "crates/ai-runtime" }
 automation-engine = { path = "crates/automation-engine" }
 telemetry = { path = "crates/telemetry" }
 config = { path = "crates/config" }
+saai-ui-core = { path = "crates/saai-ui-core" }
 console-tui = { path = "crates/console-tui" }
 console-web = { path = "crates/console-web" }
 
