@@ -25,8 +25,9 @@ fi
 
 actual_sha=$(sha256sum "$image" | awk '{print $1}')
 if [ -f "$expected_sha_file" ]; then
-    expected_sha=$(tr -d ' \n\r\t' < "$expected_sha_file")
-    if [ "$actual_sha" != "$expected_sha" ]; then
+    # Accept bare hash or `sha256sum` two-field lines; take first token only.
+    expected_sha=$(awk 'NF { print $1; exit }' "$expected_sha_file")
+    if [ -z "$expected_sha" ] || [ "$actual_sha" != "$expected_sha" ]; then
         echo "flash-s01-evidence: SHA-256 mismatch" >&2
         echo "  expected $expected_sha" >&2
         echo "  actual   $actual_sha" >&2
