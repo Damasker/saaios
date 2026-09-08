@@ -8,7 +8,9 @@
 - Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
 - Evidence image (unflashed): `dist/panther/saaios-panther-init_boot.img`
   SHA-256 `463c9de929625019c69a219667fbe7167b7f6613ce416284197064ca9f5f6b7e`,
-  source `da4005e`. Flash helper: `os/targets/panther/scripts/flash-s01-evidence.sh`.
+  source `da4005e`. Flash helper:
+  `S01_FLASH_CONFIRM=1 ./os/targets/panther/scripts/flash-s01-evidence.sh`
+  (refuses non-`panther` product and multi-device without `ANDROID_SERIAL`).
 
 ## Goal
 
