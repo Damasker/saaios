@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `In progress` (gate reopen 2026-09-08: #26 code must land on shared HEAD).
+- Состояние: `In progress` (#26 merged via PR #30 @ `62ebeb3`; remaining: UX #31 + Evidence #28).
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-006.
 - Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
