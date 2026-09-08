@@ -35,6 +35,13 @@ jobs:
           os/targets/panther/tests/native-init-identity-test.c
           -o /tmp/native-init-identity-test &&
           /tmp/native-init-identity-test
+      - name: identity UX contract
+        run: >-
+          cc -std=c11 -Wall -Wextra -Werror
+          -Wno-unused-function
+          os/targets/panther/tests/identity-ux-test.c
+          -o /tmp/identity-ux-test &&
+          /tmp/identity-ux-test
       - name: e2e
         run: cargo test -p diagnose-slow-system -- --nocapture
 

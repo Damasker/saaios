@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `In progress` (#26 merged via PR #30 @ `62ebeb3`; remaining: UX #31 + Evidence #28).
+- Состояние: `In progress` (#26 merged; UX #31 implemented pending merge; Evidence #28).
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-006.
 - Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
@@ -100,8 +100,8 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
 - `CHECK DEVICE` остаётся прямым read-only вызовом `system.identity`; e2e
   подтверждает один policy/tool/audit cycle без обращения к модели.
 - Accepted UX contract: `docs/os/sprints/S01-system-identity-ux.md` (PR #29).
-  Four UI states are specified; native DRM implementation against that contract
-  remains a follow-up before final physical close.
+  Four UI states are implemented in `drm-splash` (`identity-ux` + DEVICE
+  CHECK/RETRY rendering). Final physical close still requires Issue #28.
 - CI must pass on the merge commit: format, clippy, workspace tests, PID 1
   identity fallback host test, e2e, and Panther cross-build including
   `saaios-runtime` / `console-tui`.
