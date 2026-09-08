@@ -46,6 +46,20 @@
 //!
 //! Both are logged as known limitations in the S04 sprint doc, not
 //! silently dropped.
+//!
+//! Change step 6 ports drm-splash.c's four root sections (`root_page()`,
+//! `render_root_controls()`): "Сейчас"/"Входящие"/"Пространства"/"Я",
+//! navigable via a bottom tab bar. No real per-section content yet
+//! (placeholder-only is explicitly in scope for this step, per the S04
+//! sprint doc) and no text rendering exists in this client at all
+//! (drm-splash.c has its own bitmap font; porting that is out of scope
+//! here) -- each section is a distinct solid color instead, same
+//! "color as the physically-verifiable signal" approach already used
+//! for the lock surface and layer-shell bar. The tab bar lives inside
+//! the toplevel's own buffer, not a separate layer surface: touch
+//! routing only knows `focused_surface`/`lock_surface` (a known
+//! limitation from Change 4), so a real layer surface couldn't
+//! receive the taps that switch pages.
 
 use std::time::{Duration, Instant};
 
@@ -85,6 +99,72 @@ use smithay_client_toolkit::{
 
 /// Matches drm-splash.c's own idle-to-lock constant.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The four root sections (drm-splash.c's `root_page()`/`root_pages`),
+/// in bottom-tab-bar order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootPage {
+    Now,
+    Inbox,
+    Spaces,
+    Me,
+}
+
+impl RootPage {
+    const ALL: [RootPage; 4] = [
+        RootPage::Now,
+        RootPage::Inbox,
+        RootPage::Spaces,
+        RootPage::Me,
+    ];
+
+    /// Full-brightness fill for this page's content area, and for its
+    /// own tab-bar segment when it's the active one. Each combines only
+    /// the R and G byte positions the lock-surface diagnostic actually
+    /// confirmed (see SessionLockHandler::configure's comment) --
+    /// byte-index 0's real channel was never characterized, so it's
+    /// left at 0 everywhere rather than guessed at.
+    fn color(self) -> [u8; 4] {
+        // Byte-index 1 = R, byte-index 2 = G (empirically confirmed by
+        // the lock-surface diagnostic, SessionLockHandler::configure's
+        // comment) -- an earlier version of this function had these
+        // two positions swapped, which physically showed up as green
+        // instead of red for `Now` (confirmed on hardware: the
+        // constants below are the corrected version).
+        match self {
+            RootPage::Now => [0x00, 0xd0, 0x00, 0x00],
+            RootPage::Inbox => [0x00, 0x00, 0xd0, 0x00],
+            RootPage::Spaces => [0x00, 0x60, 0xd0, 0x00],
+            RootPage::Me => [0x00, 0xd0, 0x60, 0x00],
+        }
+    }
+
+    /// Dimmed version of `color()`, for this page's tab-bar segment
+    /// when it's *not* the active page -- the only signal this client
+    /// has for "which tab is selected" without any text rendering.
+    fn dim_color(self) -> [u8; 4] {
+        let [b, g, r, x] = self.color();
+        [b / 3, g / 3, r / 3, x]
+    }
+}
+
+/// Design-space layout of the bottom tab bar, matching drm-splash.c's
+/// own `root_tab_at()` exactly (four 270px-wide segments starting at
+/// y=2100, on the same 1080x2400 design canvas drm-splash.c always
+/// assumed) -- scaled proportionally against whatever size this
+/// surface is actually configured at, same as drm-splash.c scaled
+/// against its own `create.width`/`create.height`.
+fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let design_x = (pos.0 * 1080.0 / width as f64) as i32;
+    let design_y = (pos.1 * 2400.0 / height as f64) as i32;
+    if !(2100..2400).contains(&design_y) || !(0..1080).contains(&design_x) {
+        return None;
+    }
+    Some(RootPage::ALL[(design_x / 270).clamp(0, 3) as usize])
+}
 
 fn main() {
     let conn = Connection::connect_to_env().expect("failed to connect to Wayland display");
@@ -170,6 +250,9 @@ fn main() {
         locked: true,
         unlock_pending: false,
         last_activity: Instant::now(),
+        current_page: RootPage::Now,
+        last_touch_pos: (0.0, 0.0),
+        tab_touch_pending: false,
         layer,
         layer_width: 0,
         layer_height: 120,
@@ -234,6 +317,17 @@ struct Shell {
     /// doesn't unlock).
     unlock_pending: bool,
     last_activity: Instant,
+    /// Currently visible root section (Change step 6).
+    current_page: RootPage,
+    /// Last known touch position (from `down()`/`motion()`) -- `up()`
+    /// doesn't carry a position itself, so this is what tells it where
+    /// the touch actually ended for tab-bar hit-testing.
+    last_touch_pos: (f64, f64),
+    /// Set on a touch-down over the toplevel's own tab bar while
+    /// unlocked; the matching touch-up is what actually switches pages
+    /// (same "release, not press" rule as `unlock_pending`, so a drag
+    /// through the tab bar doesn't switch pages by accident).
+    tab_touch_pending: bool,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -263,12 +357,13 @@ impl CompositorHandler for Shell {
 
     fn frame(
         &mut self,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        self.draw(conn, qh);
+        // The shell is event-driven. Presentation feedback must not
+        // redraw an unchanged full-screen scene forever.
     }
 
     fn surface_enter(
@@ -383,7 +478,7 @@ impl SessionLockHandler for Shell {
     fn configure(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         session_lock_surface: SessionLockSurface,
         configure: SessionLockSurfaceConfigure,
         _serial: u32,
@@ -433,7 +528,6 @@ impl SessionLockHandler for Shell {
 
         let surface = session_lock_surface.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
-        surface.frame(qh, surface.clone());
         buffer.attach_to(surface).expect("buffer attach");
         surface.commit();
         self.lock_buffer = Some(buffer);
@@ -450,7 +544,7 @@ impl LayerShellHandler for Shell {
     fn configure(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
@@ -488,7 +582,6 @@ impl LayerShellHandler for Shell {
 
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
-        surface.frame(qh, surface.clone());
         buffer.attach_to(surface).expect("buffer attach");
         self.layer.commit();
         self.layer_buffer = Some(buffer);
@@ -547,19 +640,21 @@ impl TouchHandler for Shell {
         _time: u32,
         surface: wl_surface::WlSurface,
         _id: i32,
-        _position: (f64, f64),
+        position: (f64, f64),
     ) {
         self.last_activity = Instant::now();
+        self.last_touch_pos = position;
         self.unlock_pending = self.locked
             && self
                 .lock_surfaces
                 .iter()
                 .any(|ls| *ls.wl_surface() == surface);
+        self.tab_touch_pending = !self.locked && surface == *self.window.wl_surface();
     }
 
     fn up(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _serial: u32,
@@ -579,8 +674,16 @@ impl TouchHandler for Shell {
             self.lock_surfaces.clear();
             self.locked = false;
             println!("saai-shell: unlocked by touch");
+        } else if self.tab_touch_pending {
+            self.tab_touch_pending = false;
+            if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
+                if page != self.current_page {
+                    println!("saai-shell: switched to {page:?}");
+                    self.current_page = page;
+                    self.draw(conn, qh);
+                }
+            }
         }
-        let _ = qh;
     }
 
     fn motion(
@@ -590,8 +693,9 @@ impl TouchHandler for Shell {
         _touch: &wl_touch::WlTouch,
         _time: u32,
         _id: i32,
-        _position: (f64, f64),
+        position: (f64, f64),
     ) {
+        self.last_touch_pos = position;
     }
 
     fn shape(
@@ -617,15 +721,18 @@ impl TouchHandler for Shell {
 
     fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
         self.unlock_pending = false;
+        self.tab_touch_pending = false;
     }
 }
 
 impl Shell {
-    /// Solid placeholder fill -- proves the real client<->compositor
-    /// vertical slice end to end (surface creation, configure, SHM
-    /// buffer, commit, frame callback). Actual shell content (four
-    /// sections) is Change step 6.
-    fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
+    /// Renders the active root section's placeholder content plus the
+    /// bottom tab bar (Change step 6) -- proves the real
+    /// client<->compositor vertical slice end to end (surface
+    /// creation, configure, SHM buffer, commit, frame callback), same
+    /// as the single dark-slate fill this replaced, just with content
+    /// that actually changes on navigation instead of a static color.
+    fn draw(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>) {
         let width = self.width;
         let height = self.height;
         let stride = width as i32 * 4;
@@ -659,20 +766,37 @@ impl Shell {
             }
         };
 
-        // Dark slate placeholder -- distinguishable from both
-        // saai-demo-surface's test pattern and a black/uninitialized
-        // screen when observed physically.
-        let pixel: [u8; 4] = [0x30, 0x2a, 0x20, 0x00];
-        for chunk in canvas.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&pixel);
+        // Tab bar starts at design y=2100 (drm-splash.c's own
+        // `root_page`/`render_root_controls` layout), scaled
+        // proportionally against whatever size this surface actually
+        // is -- same design-canvas convention as `tab_at()`.
+        let tab_bar_start = ((height as u64 * 2100) / 2400) as u32;
+        let content_pixel = self.current_page.color();
+        let seg_width = (width / 4).max(1);
+        for y in 0..height {
+            let row_start = (y * width) as usize * 4;
+            let row = &mut canvas[row_start..row_start + width as usize * 4];
+            if y < tab_bar_start {
+                for chunk in row.chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&content_pixel);
+                }
+            } else {
+                for (x, chunk) in row.chunks_exact_mut(4).enumerate() {
+                    let seg = ((x as u32 / seg_width) as usize).min(3);
+                    let page = RootPage::ALL[seg];
+                    let pixel = if page == self.current_page {
+                        page.color()
+                    } else {
+                        page.dim_color()
+                    };
+                    chunk.copy_from_slice(&pixel);
+                }
+            }
         }
 
         self.window
             .wl_surface()
             .damage_buffer(0, 0, width as i32, height as i32);
-        self.window
-            .wl_surface()
-            .frame(qh, self.window.wl_surface().clone());
         buffer
             .attach_to(self.window.wl_surface())
             .expect("buffer attach");
@@ -693,6 +817,24 @@ impl Shell {
             Ok(session_lock) => self.session_lock = Some(session_lock),
             Err(err) => eprintln!("saai-shell: failed to re-lock: {err}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tab_at, RootPage};
+
+    #[test]
+    fn bottom_bar_maps_all_four_tabs() {
+        assert_eq!(tab_at((135.0, 2250.0), 1080, 2400), Some(RootPage::Now));
+        assert_eq!(tab_at((405.0, 2250.0), 1080, 2400), Some(RootPage::Inbox));
+        assert_eq!(tab_at((675.0, 2250.0), 1080, 2400), Some(RootPage::Spaces));
+        assert_eq!(tab_at((945.0, 2250.0), 1080, 2400), Some(RootPage::Me));
+    }
+
+    #[test]
+    fn content_area_is_not_a_tab() {
+        assert_eq!(tab_at((540.0, 1200.0), 1080, 2400), None);
     }
 }
 

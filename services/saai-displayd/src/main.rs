@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::rc::Rc;
 use std::sync::Arc;
+#[cfg(feature = "panther-hardware")]
+use std::time::Instant;
 
 #[cfg(feature = "panther-hardware")]
 mod hardware;
@@ -11,6 +13,8 @@ mod hardware;
 mod touch;
 
 use sha2::{Digest, Sha256};
+#[cfg(feature = "panther-hardware")]
+use smithay::desktop::utils::send_frames_surface_tree;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
@@ -122,6 +126,12 @@ struct State {
     /// per change.
     #[cfg(feature = "panther-hardware")]
     repaint_needed: bool,
+    /// Surfaces included in the in-flight DRM frame. Their Wayland frame
+    /// callbacks are completed only after the kernel reports VBlank.
+    #[cfg(feature = "panther-hardware")]
+    pending_frame_surfaces: Vec<WlSurface>,
+    #[cfg(feature = "panther-hardware")]
+    presentation_started: Instant,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
     /// Kept alive for the lifetime of the process -- not because the
@@ -211,26 +221,11 @@ impl State {
             }
         }
         match hw.present(false) {
-            Ok(()) => self.flip_pending = true,
+            Ok(()) => {
+                self.flip_pending = true;
+                self.pending_frame_surfaces = shown;
+            }
             Err(err) => eprintln!("saai-displayd: hardware present failed: {err}"),
-        }
-        // Only surfaces whose frame was actually just presented get
-        // told they can draw their next one -- see the comment in
-        // commit() for why this matters (throttling, not just
-        // correctness: an unconditional ack on every raw commit turned
-        // a normally-inert "redraw on frame callback" client pattern
-        // into a busy loop).
-        let time_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u32)
-            .unwrap_or(0);
-        for surface in &shown {
-            with_states(surface, |states| {
-                let mut guard = states.cached_state.get::<SurfaceAttributes>();
-                for callback in guard.current().frame_callbacks.drain(..) {
-                    callback.done(time_ms);
-                }
-            });
         }
     }
 }
@@ -248,8 +243,9 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
-        // Frame callbacks (`wl_surface.frame`) are acknowledged in
-        // recomposite() now, not unconditionally here on every commit
+        // Frame callbacks (`wl_surface.frame`) are acknowledged after
+        // the DRM VBlank for the scene submitted by recomposite(), not
+        // unconditionally here on every commit
         // -- an earlier version of this fix did ack them here, and
         // physically exposed a real bug it wasn't looking for:
         // saai-shell's CompositorHandler::frame() redraws and requests
@@ -257,12 +253,10 @@ impl CompositorHandler for State {
         // the compositor" pattern that had silently never fired before
         // (frame callbacks didn't work at all until that first fix).
         // Acking synchronously on every raw commit meant the toplevel's
-        // static placeholder redrew in a tight loop as fast as commits
-        // round-tripped, not at any sane frame rate. Acking only for
-        // surfaces actually included in a presented scene, from inside
-        // recomposite(), naturally throttles redraws to this
-        // compositor's real presentation cadence (bounded by
-        // flip_pending/VBlank) instead of the raw commit rate.
+        // static placeholder redrew as fast as commits round-tripped.
+        // Delivery after VBlank gives animated clients correct pacing;
+        // saai-shell itself is event-driven and does not request another
+        // frame until its content actually changes.
         let buffer = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             match &guard.current().buffer {
@@ -588,6 +582,17 @@ fn main() {
                     // at all before this.
                     DrmEvent::VBlank(_crtc) => {
                         state.flip_pending = false;
+
+                        // A frame callback means the frame reached scanout,
+                        // not merely that an atomic commit was submitted.
+                        // The Smithay helper also handles subsurfaces.
+                        let output = state._wl_output.clone();
+                        let time = state.presentation_started.elapsed();
+                        for surface in std::mem::take(&mut state.pending_frame_surfaces) {
+                            send_frames_surface_tree(&surface, &output, time, None, |_, _| {
+                                Some(output.clone())
+                            });
+                        }
                         if state.repaint_needed {
                             state.repaint_needed = false;
                             state.recomposite();
@@ -777,6 +782,10 @@ fn main() {
         flip_pending: hardware_ok,
         #[cfg(feature = "panther-hardware")]
         repaint_needed: false,
+        #[cfg(feature = "panther-hardware")]
+        pending_frame_surfaces: Vec::new(),
+        #[cfg(feature = "panther-hardware")]
+        presentation_started: Instant::now(),
         _wl_output: wl_output,
         output_width,
         output_height,
