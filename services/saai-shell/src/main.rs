@@ -14,8 +14,14 @@
 //! saai-displayd's touch routing, not by this client).
 //!
 //! `wlr-layer-shell` (the other half of ADR-015, for status bar/
-//! navigation-style system surfaces) is not implemented yet -- separate
-//! follow-up within this same Change step.
+//! navigation-style system surfaces) rounds out Change step 4: this
+//! test also creates a single top-anchored layer surface (namespace
+//! "saai-shell-statusbar-test") and fills it a solid, empirically
+//! distinct color -- proving the protocol renders end to end. No real
+//! status bar content, and no touch dispatch to it yet (saai-displayd's
+//! touch routing still only knows `focused_surface`/`lock_surface`,
+//! not layer surfaces) -- both are follow-up work, not this step's
+//! goal.
 
 use std::time::Duration;
 
@@ -26,8 +32,8 @@ use smithay_client_toolkit::reexports::client::{
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_output, delegate_registry, delegate_session_lock, delegate_shm,
-    delegate_xdg_shell, delegate_xdg_window,
+    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_session_lock,
+    delegate_shm, delegate_xdg_shell, delegate_xdg_window,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -36,6 +42,10 @@ use smithay_client_toolkit::{
         SessionLockSurfaceConfigure,
     },
     shell::{
+        wlr_layer::{
+            Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+            LayerSurfaceConfigure,
+        },
         xdg::{
             window::{Window, WindowConfigure, WindowDecorations, WindowHandler},
             XdgShell,
@@ -67,6 +77,7 @@ fn main() {
     let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base not available");
     let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
     let session_lock_state = SessionLockState::new(&globals, &qh);
+    let layer_shell = LayerShell::bind(&globals, &qh).expect("wlr-layer-shell not available");
 
     let surface = compositor.create_surface(&qh);
     let window = xdg_shell.create_window(surface, WindowDecorations::ServerDefault, &qh);
@@ -78,6 +89,26 @@ fn main() {
     // future work, not this vertical slice).
     window.set_min_size(Some((1080, 2400)));
     window.commit();
+
+    // Second half of ADR-015 (Change 4): a real system-surface layer,
+    // for the status bar/nav-style content the four root sections will
+    // eventually need (Change 6) -- this test slice just proves the
+    // protocol renders, no real content yet.
+    let bar_surface = compositor.create_surface(&qh);
+    let layer = layer_shell.create_layer_surface(
+        &qh,
+        bar_surface,
+        Layer::Top,
+        Some("saai-shell-statusbar-test"),
+        None,
+    );
+    layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
+    layer.set_size(0, 120);
+    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    // Initial commit with no attached buffer -- required by the
+    // protocol before the compositor will send the first configure
+    // (mirrors the toolkit's own simple_layer.rs example).
+    layer.commit();
 
     let pool = SlotPool::new(1080 * 2400 * 4, &shm).expect("failed to create SHM pool");
 
@@ -98,6 +129,11 @@ fn main() {
         lock_surfaces: Vec::new(),
         lock_pool: None,
         lock_buffer: None,
+        layer,
+        layer_width: 0,
+        layer_height: 120,
+        layer_pool: None,
+        layer_buffer: None,
     };
 
     println!("saai-shell: connected, toplevel created");
@@ -144,6 +180,12 @@ struct Shell {
     /// still needs to read after `commit()` returns.
     lock_pool: Option<SlotPool>,
     lock_buffer: Option<Buffer>,
+
+    layer: LayerSurface,
+    layer_width: u32,
+    layer_height: u32,
+    layer_pool: Option<SlotPool>,
+    layer_buffer: Option<Buffer>,
 }
 
 impl CompositorHandler for Shell {
@@ -342,6 +384,61 @@ impl SessionLockHandler for Shell {
     }
 }
 
+impl LayerShellHandler for Shell {
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
+        // Not fatal for this test client, same stance as SessionLockHandler::finished --
+        // keep running as a plain toplevel if the compositor takes the layer surface away.
+        println!("saai-shell: layer surface closed");
+    }
+
+    fn configure(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _layer: &LayerSurface,
+        configure: LayerSurfaceConfigure,
+        _serial: u32,
+    ) {
+        let (width, height) = configure.new_size;
+        let (width, height) = (width.max(1), height.max(1));
+        println!("saai-shell: layer surface configure at {width}x{height}");
+        self.layer_width = width;
+        self.layer_height = height;
+
+        let stride = width as i32 * 4;
+        let pool = self.layer_pool.get_or_insert_with(|| {
+            SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                .expect("create layer surface pool")
+        });
+        let (buffer, canvas) = pool
+            .create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            )
+            .expect("create buffer");
+
+        // Yellow (R + G, both empirically confirmed by the lock-surface
+        // diagnostic above) -- deliberately avoids byte-index 0, whose
+        // real channel was never characterized (it produced no visible
+        // output in that test; unclear if that's a true "blue" too dark
+        // to read or genuinely unused). Distinct from both the
+        // toplevel's dark slate and the lock surface's red.
+        let pixel: [u8; 4] = [0x00, 0xd0, 0xd0, 0x00];
+        for chunk in canvas.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&pixel);
+        }
+
+        let surface = self.layer.wl_surface();
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        surface.frame(qh, surface.clone());
+        buffer.attach_to(surface).expect("buffer attach");
+        self.layer.commit();
+        self.layer_buffer = Some(buffer);
+    }
+}
+
 impl Shell {
     /// Solid placeholder fill -- proves the real client<->compositor
     /// vertical slice end to end (surface creation, configure, SHM
@@ -403,6 +500,7 @@ impl Shell {
 }
 
 delegate_compositor!(Shell);
+delegate_layer!(Shell);
 delegate_output!(Shell);
 delegate_session_lock!(Shell);
 delegate_shm!(Shell);
