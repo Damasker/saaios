@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "panther-hardware")]
 use calloop::signals::{Signal, Signals};
+#[cfg(feature = "panther-hardware")]
+use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 
 #[cfg(feature = "panther-hardware")]
 mod hardware;
@@ -63,6 +65,8 @@ use smithay::{
 #[derive(Default)]
 struct SaaiClientState {
     compositor_state: CompositorClientState,
+    #[cfg(feature = "panther-hardware")]
+    peer_pid: u32,
 }
 impl ClientData for SaaiClientState {}
 
@@ -215,12 +219,12 @@ fn spawn_shell(socket_name: &str) -> Result<Child, String> {
 }
 
 #[cfg(feature = "panther-hardware")]
-fn is_privileged_shell(client: &Client, dh: &DisplayHandle, shell_pid: &AtomicU32) -> bool {
+fn is_privileged_shell(client: &Client, shell_pid: &AtomicU32) -> bool {
     let expected = shell_pid.load(Ordering::Acquire);
     expected != 0
         && client
-            .get_credentials(dh)
-            .is_ok_and(|credentials| credentials.pid as u32 == expected)
+            .get_data::<SaaiClientState>()
+            .is_some_and(|data| data.peer_pid == expected)
 }
 
 #[cfg(feature = "panther-hardware")]
@@ -924,9 +928,8 @@ fn main() {
         #[cfg(feature = "panther-hardware")]
         session_lock_state: {
             let filter_pid = privileged_shell_pid.clone();
-            let filter_dh = dh.clone();
             SessionLockManagerState::new::<State, _>(&dh, move |client| {
-                is_privileged_shell(client, &filter_dh, &filter_pid)
+                is_privileged_shell(client, &filter_pid)
             })
         },
         #[cfg(not(feature = "panther-hardware"))]
@@ -936,9 +939,8 @@ fn main() {
         #[cfg(feature = "panther-hardware")]
         layer_shell_state: {
             let filter_pid = privileged_shell_pid.clone();
-            let filter_dh = dh.clone();
             WlrLayerShellState::new_with_filter::<State, _>(&dh, move |client| {
-                is_privileged_shell(client, &filter_dh, &filter_pid)
+                is_privileged_shell(client, &filter_pid)
             })
         },
         #[cfg(not(feature = "panther-hardware"))]
@@ -951,11 +953,29 @@ fn main() {
 
     let mut dh_for_socket = dh.clone();
     handle
-        .insert_source(socket, move |client_stream, _, _state| match dh_for_socket
-            .insert_client(client_stream, Arc::new(SaaiClientState::default()))
-        {
-            Ok(_) => println!("saai-displayd: client connected"),
-            Err(err) => eprintln!("saai-displayd: failed to insert client: {err}"),
+        .insert_source(socket, move |client_stream, _, _state| {
+            #[cfg(feature = "panther-hardware")]
+            let peer_pid = match getsockopt(&client_stream, PeerCredentials) {
+                Ok(credentials) => credentials.pid() as u32,
+                Err(err) => {
+                    eprintln!("saai-displayd: failed to read client credentials: {err}");
+                    0
+                }
+            };
+            let client_data = SaaiClientState {
+                compositor_state: CompositorClientState::default(),
+                #[cfg(feature = "panther-hardware")]
+                peer_pid,
+            };
+            match dh_for_socket.insert_client(client_stream, Arc::new(client_data)) {
+                Ok(_) => {
+                    #[cfg(feature = "panther-hardware")]
+                    println!("saai-displayd: client connected pid={peer_pid}");
+                    #[cfg(not(feature = "panther-hardware"))]
+                    println!("saai-displayd: client connected");
+                }
+                Err(err) => eprintln!("saai-displayd: failed to insert client: {err}"),
+            }
         })
         .expect("failed to insert socket source");
 
