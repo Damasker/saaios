@@ -13,3 +13,6 @@ saai-ui-core.workspace = true
 # same crash risk and image-size cost ADR-013 had to work around, for a
 # capability this shell doesn't use.
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+
+[build-dependencies]
+saai-ui-compiler.workspace = true

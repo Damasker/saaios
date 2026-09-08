@@ -1,0 +1,13 @@
+sui 1
+
+screen root {
+  column {
+    content id=content fill
+    tabs id=root-tabs height=300 {
+      tab now label="Сейчас" icon=now action=select_root:now
+      tab inbox label="Входящие" icon=inbox action=select_root:inbox
+      tab spaces label="Пространства" icon=spaces action=select_root:spaces
+      tab me label="Я" icon=person action=select_root:me
+    }
+  }
+}

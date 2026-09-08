@@ -101,6 +101,16 @@ use smithay_client_toolkit::{
 /// Matches drm-splash.c's own idle-to-lock constant.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TabDefinition {
+    id: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    action: &'static str,
+}
+
+include!(concat!(env!("OUT_DIR"), "/root_sui.rs"));
+
 /// The four root sections (drm-splash.c's `root_page()`/`root_pages`),
 /// in bottom-tab-bar order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,17 +153,21 @@ impl RootPage {
 }
 
 fn root_view(width: u32, height: u32) -> LayoutNode {
-    let tab_height = ((height as u64 * 300) / 2400) as u32;
+    let tab_height = ((height as u64 * ROOT_TAB_HEIGHT as u64) / 2400) as u32;
     let tabs = Node::linear(
-        "root-tabs",
+        ROOT_TABS_ID,
         Axis::Horizontal,
-        ["now", "inbox", "spaces", "me"]
-            .into_iter()
-            .map(|id| Node::leaf(id).with_action(format!("select_root:{id}")))
+        ROOT_TABS
+            .iter()
+            .map(|tab| Node::leaf(tab.id).with_action(tab.action))
             .collect(),
     )
     .with_size(Length::Fill, Length::Px(tab_height));
-    let root = Node::linear("root", Axis::Vertical, vec![Node::leaf("content"), tabs]);
+    let root = Node::linear(
+        ROOT_SCREEN_ID,
+        Axis::Vertical,
+        vec![Node::leaf(ROOT_CONTENT_ID), tabs],
+    );
     layout(&root, Rect::new(0, 0, width, height))
 }
 
@@ -167,6 +181,10 @@ fn page_from_id(id: &str) -> Option<RootPage> {
     }
 }
 
+fn page_from_action(action: &str) -> Option<RootPage> {
+    action.strip_prefix("select_root:").and_then(page_from_id)
+}
+
 /// Touch and rendering consume the same computed Saai UI tree. There is no
 /// second set of tab rectangles to drift away from what is drawn.
 fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
@@ -175,7 +193,8 @@ fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
     }
     root_view(width, height)
         .hit_test(pos.0, pos.1)
-        .and_then(|node| page_from_id(&node.id))
+        .and_then(|node| node.action.as_deref())
+        .and_then(page_from_action)
 }
 
 fn main() {
@@ -839,7 +858,15 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{tab_at, RootPage};
+    use super::{tab_at, RootPage, ROOT_TABS};
+
+    #[test]
+    fn root_tabs_come_from_sui_markup() {
+        assert_eq!(ROOT_TABS.len(), 4);
+        assert_eq!(ROOT_TABS[0].label, "Сейчас");
+        assert_eq!(ROOT_TABS[3].icon, "person");
+        assert_eq!(ROOT_TABS[3].action, "select_root:me");
+    }
 
     #[test]
     fn bottom_bar_maps_all_four_tabs() {
