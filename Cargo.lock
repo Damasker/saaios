@@ -2095,8 +2095,13 @@ dependencies = [
 name = "saai-shell"
 version = "0.1.0"
 dependencies = [
+ "saai-ui-core",
  "smithay-client-toolkit",
 ]
+
+[[package]]
+name = "saai-ui-core"
+version = "0.1.0"
 
 [[package]]
 name = "saaios-runtime"
