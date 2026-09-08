@@ -80,6 +80,15 @@ struct State {
     toplevels: HashMap<WlSurface, ToplevelSurface>,
     #[cfg(feature = "panther-hardware")]
     hardware: Option<hardware::HardwareOutput>,
+    /// The last frame `focused_surface` committed while unlocked, kept
+    /// around so `unlock()` can re-present it immediately -- without
+    /// this, the panel keeps showing the lock surface's last frame
+    /// after unlocking until the toplevel happens to commit something
+    /// new on its own (it's a static placeholder right now, so that
+    /// could be never). Input routing is correct the instant `locked`
+    /// flips to false either way; this only fixes what's on screen.
+    #[cfg(feature = "panther-hardware")]
+    last_focused_frame: Option<(Vec<u8>, u32, u32, u32)>,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
     /// Kept alive for the lifetime of the process -- not because the
@@ -220,6 +229,23 @@ impl CompositorHandler for State {
                                 .iter()
                                 .any(|ls| ls.wl_surface() == surface)
                     };
+                    if self.focused_surface.as_ref() == Some(surface) {
+                        // Cached regardless of `self.locked` -- this
+                        // client requests its initial lock immediately
+                        // at startup, in the same burst of requests as
+                        // creating the toplevel, so by the time the
+                        // toplevel's *real* first commit (with an
+                        // actual buffer) reaches the server, locked is
+                        // often already true. Gating this on
+                        // `!self.locked` meant the very first boot's
+                        // toplevel frame was never cached at all, which
+                        // is exactly the case that matters most.
+                        // Cached so unlock() can re-present this frame
+                        // immediately, instead of leaving the lock
+                        // surface's last frame on screen until the
+                        // toplevel happens to commit something new.
+                        self.last_focused_frame = Some((_pixels.clone(), _width, _height, _stride));
+                    }
                     if should_present {
                         if let Some(hw) = self.hardware.as_mut() {
                             hw.blit(&_pixels, _width, _height, _stride);
@@ -317,6 +343,15 @@ impl SessionLockHandler for State {
         println!("saai-displayd: session unlocked");
         self.locked = false;
         self.lock_surface = None;
+        #[cfg(feature = "panther-hardware")]
+        if let Some((pixels, width, height, stride)) = self.last_focused_frame.as_ref() {
+            if let Some(hw) = self.hardware.as_mut() {
+                hw.blit(pixels, *width, *height, *stride);
+                if let Err(err) = hw.present(false) {
+                    eprintln!("saai-displayd: hardware present failed: {err}");
+                }
+            }
+        }
     }
 
     fn new_surface(&mut self, surface: LockSurface, _output: WlOutput) {
@@ -562,6 +597,8 @@ fn main() {
         touch,
         #[cfg(feature = "panther-hardware")]
         hardware,
+        #[cfg(feature = "panther-hardware")]
+        last_focused_frame: None,
         _wl_output: wl_output,
         output_width,
         output_height,
