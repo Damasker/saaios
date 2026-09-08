@@ -35,13 +35,33 @@ if [ -f "$expected_sha_file" ]; then
     fi
 fi
 
-if ! fastboot devices | grep -q .; then
+device_lines=$(fastboot devices | awk 'NF >= 2')
+device_count=$(printf '%s\n' "$device_lines" | awk 'NF { c++ } END { print c+0 }')
+if [ "$device_count" -eq 0 ]; then
     echo "flash-s01-evidence: no fastboot device; boot Pixel 7 to bootloader and retry" >&2
+    exit 1
+fi
+if [ "$device_count" -ne 1 ] && [ -z "${ANDROID_SERIAL:-}" ]; then
+    echo "flash-s01-evidence: refusing multiple fastboot devices; set ANDROID_SERIAL" >&2
+    printf '%s\n' "$device_lines" >&2
+    exit 1
+fi
+
+# Pixel 7 codename is panther; refuse any other bootloader product.
+product=$(fastboot getvar product 2>&1 | sed -n 's/^.*product:[[:space:]]*//p' | head -n 1 | tr -d '\r')
+if [ "$product" != "panther" ]; then
+    echo "flash-s01-evidence: refusing product '$product' (want panther / Pixel 7)" >&2
+    exit 1
+fi
+
+if [ "${S01_FLASH_CONFIRM:-}" != "1" ]; then
+    echo "flash-s01-evidence: set S01_FLASH_CONFIRM=1 to flash init_boot_a on panther" >&2
     exit 1
 fi
 
 echo "flash-s01-evidence: image=$image"
 echo "flash-s01-evidence: sha256=$actual_sha"
+echo "flash-s01-evidence: product=$product"
 if [ -f "$source_commit_file" ]; then
     echo "flash-s01-evidence: source_commit=$(tr -d '\n' < "$source_commit_file")"
 fi
