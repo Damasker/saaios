@@ -1,4 +1,6 @@
+use fontdue::{Font, FontSettings};
 use saai_ui_core::Rect;
+use std::fs;
 
 pub type Pixel = [u8; 4];
 
@@ -15,6 +17,35 @@ pub const SURFACE: Pixel = rgb(25, 33, 38);
 pub const SURFACE_SELECTED: Pixel = rgb(38, 51, 57);
 pub const MUTED: Pixel = rgb(76, 91, 98);
 pub const ACCENT: Pixel = rgb(116, 211, 190);
+pub const TEXT: Pixel = rgb(232, 241, 239);
+pub const TEXT_MUTED: Pixel = rgb(141, 158, 164);
+
+pub struct Fonts {
+    regular: Font,
+    semibold: Font,
+}
+
+impl Fonts {
+    pub fn load_system() -> Result<Self, String> {
+        Self::load(
+            "/saaios/fonts/Inter-Regular.ttf",
+            "/saaios/fonts/Inter-SemiBold.ttf",
+        )
+    }
+
+    fn load(regular_path: &str, semibold_path: &str) -> Result<Self, String> {
+        let regular = fs::read(regular_path)
+            .map_err(|error| format!("read {regular_path}: {error}"))?;
+        let semibold = fs::read(semibold_path)
+            .map_err(|error| format!("read {semibold_path}: {error}"))?;
+        Ok(Self {
+            regular: Font::from_bytes(regular, FontSettings::default())
+                .map_err(|error| format!("parse {regular_path}: {error}"))?,
+            semibold: Font::from_bytes(semibold, FontSettings::default())
+                .map_err(|error| format!("parse {semibold_path}: {error}"))?,
+        })
+    }
+}
 
 pub struct Canvas<'a> {
     pixels: &'a mut [u8],
@@ -52,6 +83,21 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    fn blend(&mut self, x: i32, y: i32, color: Pixel, alpha: u8) {
+        if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 || alpha == 0 {
+            return;
+        }
+        let start = (y as usize * self.width as usize + x as usize) * 4;
+        let inverse = 255 - alpha as u16;
+        self.pixels[start] = 0;
+        for channel in 1..4 {
+            self.pixels[start + channel] = ((color[channel] as u16 * alpha as u16
+                + self.pixels[start + channel] as u16 * inverse
+                + 127)
+                / 255) as u8;
+        }
+    }
+
     #[cfg(test)]
     fn pixel(&self, x: u32, y: u32) -> Pixel {
         let start = (y as usize * self.width as usize + x as usize) * 4;
@@ -59,7 +105,13 @@ impl<'a> Canvas<'a> {
     }
 }
 
-pub fn draw_root(canvas: &mut Canvas<'_>, content: Rect, tabs: &[Rect], selected: usize) {
+pub fn draw_root(
+    canvas: &mut Canvas<'_>,
+    content: Rect,
+    tabs: &[(Rect, &str)],
+    selected: usize,
+    fonts: Option<&Fonts>,
+) {
     canvas.fill(BACKGROUND);
 
     // A stable phone-like content surface. The number of rows changes per
@@ -69,6 +121,17 @@ pub fn draw_root(canvas: &mut Canvas<'_>, content: Rect, tabs: &[Rect], selected
     let card_width = content.width.saturating_sub(margin * 2);
     canvas.fill_rect(Rect::new(margin, 150, card_width, 190), SURFACE);
     canvas.fill_rect(Rect::new(margin, 150, 14, 190), ACCENT);
+    if let (Some(fonts), Some((_, title))) = (fonts, tabs.get(selected)) {
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            title,
+            54.0,
+            content.x + content.width / 2,
+            210,
+            TEXT,
+        );
+    }
 
     let row_count = selected.saturating_add(2).min(5);
     for row in 0..row_count {
@@ -88,20 +151,23 @@ pub fn draw_root(canvas: &mut Canvas<'_>, content: Rect, tabs: &[Rect], selected
         );
     }
 
-    if let Some(tab_bar) = tabs.first().and_then(|first| {
+    if let Some(tab_bar) = tabs.first().and_then(|(first, _)| {
         tabs.last().map(|last| {
             Rect::new(
                 first.x,
                 first.y,
-                last.x.saturating_add(last.width).saturating_sub(first.x),
-                first.height.max(last.height),
+                last.0
+                    .x
+                    .saturating_add(last.0.width)
+                    .saturating_sub(first.x),
+                first.height.max(last.0.height),
             )
         })
     }) {
         canvas.fill_rect(tab_bar, SURFACE);
     }
 
-    for (index, rect) in tabs.iter().copied().enumerate() {
+    for (index, (rect, label)) in tabs.iter().copied().enumerate() {
         let is_selected = index == selected;
         if is_selected {
             canvas.fill_rect(
@@ -135,6 +201,53 @@ pub fn draw_root(canvas: &mut Canvas<'_>, content: Rect, tabs: &[Rect], selected
             ),
             if is_selected { ACCENT } else { MUTED },
         );
+
+        if let Some(fonts) = fonts {
+            draw_text_centered(
+                canvas,
+                if is_selected {
+                    &fonts.semibold
+                } else {
+                    &fonts.regular
+                },
+                label,
+                if is_selected { 31.0 } else { 27.0 },
+                rect.x + rect.width / 2,
+                rect.y + 172,
+                if is_selected { TEXT } else { TEXT_MUTED },
+            );
+        }
+    }
+}
+
+fn draw_text_centered(
+    canvas: &mut Canvas<'_>,
+    font: &Font,
+    text: &str,
+    size: f32,
+    center_x: u32,
+    top: u32,
+    color: Pixel,
+) {
+    let width = text
+        .chars()
+        .map(|character| font.metrics(character, size).advance_width)
+        .sum::<f32>();
+    let mut cursor = center_x as f32 - width / 2.0;
+    for character in text.chars() {
+        let (metrics, bitmap) = font.rasterize(character, size);
+        let glyph_x = cursor.round() as i32 + metrics.xmin;
+        for row in 0..metrics.height {
+            for column in 0..metrics.width {
+                canvas.blend(
+                    glyph_x + column as i32,
+                    top as i32 + row as i32,
+                    color,
+                    bitmap[row * metrics.width + column],
+                );
+            }
+        }
+        cursor += metrics.advance_width;
     }
 }
 
@@ -147,17 +260,29 @@ mod tests {
     fn selected_indicator_moves_between_edge_tabs() {
         let mut pixels = vec![0; 1080 * 2400 * 4];
         let tabs = [
-            Rect::new(0, 2100, 270, 300),
-            Rect::new(270, 2100, 270, 300),
-            Rect::new(540, 2100, 270, 300),
-            Rect::new(810, 2100, 270, 300),
+            (Rect::new(0, 2100, 270, 300), "Сейчас"),
+            (Rect::new(270, 2100, 270, 300), "Входящие"),
+            (Rect::new(540, 2100, 270, 300), "Пространства"),
+            (Rect::new(810, 2100, 270, 300), "Я"),
         ];
         let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
-        draw_root(&mut canvas, Rect::new(0, 0, 1080, 2100), &tabs, 0);
+        draw_root(
+            &mut canvas,
+            Rect::new(0, 0, 1080, 2100),
+            &tabs,
+            0,
+            None,
+        );
         assert_eq!(canvas.pixel(135, 2125), ACCENT);
         assert_eq!(canvas.pixel(945, 2125), SURFACE);
 
-        draw_root(&mut canvas, Rect::new(0, 0, 1080, 2100), &tabs, 3);
+        draw_root(
+            &mut canvas,
+            Rect::new(0, 0, 1080, 2100),
+            &tabs,
+            3,
+            None,
+        );
         assert_eq!(canvas.pixel(135, 2125), SURFACE);
         assert_eq!(canvas.pixel(945, 2125), ACCENT);
     }

@@ -241,6 +241,14 @@ fn main() {
 
     let pool = SlotPool::new(1080 * 2400 * 4, &shm).expect("failed to create SHM pool");
 
+    let fonts = match render::Fonts::load_system() {
+        Ok(fonts) => Some(fonts),
+        Err(error) => {
+            eprintln!("saai-shell: Inter unavailable, continuing without text: {error}");
+            None
+        }
+    };
+
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -271,6 +279,7 @@ fn main() {
         layer_height: 120,
         layer_pool: None,
         layer_buffer: None,
+        fonts,
     };
 
     println!("saai-shell: connected, toplevel created");
@@ -347,6 +356,7 @@ struct Shell {
     layer_height: u32,
     layer_pool: Option<SlotPool>,
     layer_buffer: Option<Buffer>,
+    fonts: Option<render::Fonts>,
 }
 
 impl CompositorHandler for Shell {
@@ -781,13 +791,15 @@ impl Shell {
         let tabs = view.children[1]
             .children
             .iter()
-            .map(|node| node.rect)
+            .zip(ROOT_TABS)
+            .map(|(node, tab)| (node.rect, tab.label))
             .collect::<Vec<_>>();
         render::draw_root(
             &mut render::Canvas::new(canvas, width, height),
             content_rect,
             &tabs,
             self.current_page.index(),
+            self.fonts.as_ref(),
         );
 
         self.window
