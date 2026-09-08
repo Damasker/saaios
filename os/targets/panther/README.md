@@ -54,6 +54,25 @@ Copy `saaios-runtime` and `saaios-console` from `target/aarch64-unknown-linux-mu
 into the
 private artifact directory using the names from `artifacts.example.manifest`.
 
+Build `saai-displayd` (real DRM/KMS output + touch input) with its own
+script rather than a plain `cargo build`:
+
+```sh
+export ZIG=/path/to/zig
+./os/targets/panther/build-saai-displayd.sh
+```
+
+This needs a nightly Rust toolchain in addition to the pinned stable one
+(the script installs it via `rustup` itself if missing) -- `init_boot` is
+a fixed 8MB partition, and `saai-displayd` only fits alongside everything
+else already bundled there when built with `-Z build-std` and
+`panic = "immediate-abort"`, which requires nightly. See
+[ADR-013](../../docs/adr/ADR-013-nightly-build-std-for-size.md) for why,
+and its cost (this binary loses panic messages -- rebuild without the
+script, on stable, for a debug build if you need to diagnose a crash).
+Nothing else in the workspace is affected; the pinned stable 1.97.1
+toolchain and the shared `[profile.pixel7]` are untouched.
+
 Example:
 
 ```sh
@@ -62,6 +81,7 @@ export MAGISKBOOT=/opt/magiskboot
 export STOCK_INIT_BOOT=/secure/local/init_boot.img
 export STOCK_VENDOR_BOOT=/secure/local/vendor_boot.img
 export TINYALSA_DIR=/src/tinyalsa
+export SAAI_DISPLAYD_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saai-displayd
 
 ./os/targets/panther/build-wifi-vendor-boot.sh
 ./os/targets/panther/build-native-c-image.sh

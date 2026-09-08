@@ -63,20 +63,30 @@ jobs:
       - name: build cross sysroot
         run: os/targets/panther/build-cross-sysroot.sh
 
-      - name: cross-compile saai-displayd
+      - name: cross-compile saai-demo-surface
         run: |
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
           export CC_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
           export AR_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-ar.sh"
           export CRATE_CC_NO_DEFAULTS=1
           export RUSTFLAGS="-C link-self-contained=no"
-          export PKG_CONFIG_ALLOW_CROSS=1
-          export PKG_CONFIG_SYSROOT_DIR="$PWD/os/targets/panther/artifacts/toolchain/sysroot-aarch64-musl"
-          export PKG_CONFIG_PATH="$PWD/os/targets/panther/artifacts/toolchain/sysroot-aarch64-musl/usr/local/lib/pkgconfig"
-          cargo build --profile pixel7 --target aarch64-unknown-linux-musl -p saai-displayd -p saai-demo-surface --features saai-displayd/panther-hardware
+          cargo build --profile pixel7 --target aarch64-unknown-linux-musl -p saai-demo-surface
+
+      - name: cross-compile saai-displayd
+        # Uses the real build path (ADR-013), not a plain `cargo build`:
+        # nightly + -Z build-std + panic=immediate-abort, since that's what
+        # actually ships -- a plain stable build wouldn't catch a
+        # regression that only breaks the size-optimized path.
+        run: os/targets/panther/build-saai-displayd.sh
 
       - name: verify binaries
         run: |
           file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'ARM aarch64'
           file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'statically linked'
           file target/aarch64-unknown-linux-musl/pixel7/saai-demo-surface | grep -q 'ARM aarch64'
+          # init_boot is a fixed 8MB partition shared with everything else
+          # already bundled in the ramdisk (ADR-013) -- catch a size
+          # regression here rather than at flash time.
+          size=$(stat -c%s target/aarch64-unknown-linux-musl/pixel7/saai-displayd)
+          echo "saai-displayd size: $size bytes"
+          [ "$size" -le 1600000 ]

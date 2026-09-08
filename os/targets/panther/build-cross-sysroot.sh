@@ -42,6 +42,18 @@ c = ['$zig', 'cc', '-target', 'aarch64-linux-musl']
 ar = ['$zig', 'ar']
 pkg-config = 'pkg-config'
 
+[built-in options]
+# One function/datum per ELF section, so the final Rust link's
+# --gc-sections (already on by default) can discard individual unused
+# functions instead of being forced to keep or drop whole .o files.
+# Without this, libxkbcommon's keymap-compiler alone -- entirely unreachable
+# once ADR-012 dropped keyboard capability from the panther-hardware
+# build -- stayed linked in wholesale (~300KB+, confirmed via nm) because
+# its many static helper functions share translation units with the
+# handful of symbols smithay's seat/keyboard plumbing does reference
+# unconditionally. See ADR-013.
+c_args = ['-ffunction-sections', '-fdata-sections']
+
 [host_machine]
 system = 'linux'
 cpu_family = 'aarch64'
