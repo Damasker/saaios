@@ -330,8 +330,15 @@ fallback — не переписывается, не расширяется.
    Pixel 7. После исправления stale frame в `0326b0a` пользователь подтвердил
    итоговую визуальную приёмку: «сейчас все работает»; выбранное состояние
    корректно переходит между всеми четырьмя вкладками, включая `Now`.
-7. Supervision/crash-loop для `saai-shell` (шаг 1's дизайн), подключение
-   combined-readiness к `native-init.c`.
+7. **Готово (2026-09-08).** `saai-displayd` запускает `saai-shell` только
+   после создания Wayland-сокета, передаёт `WAYLAND_DISPLAY`, наблюдает
+   `SIGCHLD` и перезапускает shell с бюджетом 3 отказа/60s. При исчерпании
+   бюджета compositor выходит с кодом 71 и передаёт управление уже
+   существующему supervisor/fallback в `native-init.c`; PID 1 менять не
+   потребовалось. PID системного shell считывается из peer credentials
+   принятого Unix-сокета и ограничивает session-lock/layer-shell globals.
+   Намеренный `kill -9` физически подтвердил сохранение PID compositor'а
+   и полный повторный запуск lock surface с новым PID shell.
 8. Холодная перезагрузка, физическая регрессия (idle/lock/touch-wake на
    реальном экране, намеренное падение `saai-shell` не роняет
    `saai-displayd`), обновить README при необходимости.
@@ -769,3 +776,19 @@ application-platform.md), откатывать нечего на уровне о
   вкладки. Пользователь повторил переходы на физическом экране и подтвердил:
   «сейчас все работает». Визуальная и touch-приёмка четырёх корневых разделов
   пройдена.
+
+- **Change 7 (process ownership + supervision), 2026-09-08.** Реализация
+  собрана статически для ARM64 и проверена горячей заменой на Pixel 7.
+  `saai-displayd` PID 558 после готовности DRM/touch/Wayland сам запустил
+  `/saaios/saai-shell` PID 559; лог прошёл полный цикл до lock surface и
+  первого кадра 1080×2400. Первый device-прогон обнаружил deadlock в
+  первоначальной PID-фильтрации: вызов `Client::get_credentials` из global
+  filter повторно входил в занятый Wayland backend. Исправление `45508d1`
+  считывает `SO_PEERCRED` один раз из принятого Unix-сокета и хранит PID в
+  `SaaiClientState`; после него handshake и системные протоколы завершились.
+  Fault injection `kill -9 559` дал `shell failure 1/3`, compositor остался
+  PID 558, новый shell PID 564 заново создал toplevel, status layer и lock
+  surface. Host-тесты бюджета: 2/2; headless и `panther-hardware` checks
+  пройдены. Постоянный образ включает оба процесса, имеет ровно 8388608 байт
+  и SHA-256 `52a6b774b8f6c7e64a35efc6cc45bbdeffe5e9529dcc4638e4c54c0d5712dfbc`.
+  Холодная прошивка/проверка остаётся шагом 8 и здесь ещё не заявлена.
