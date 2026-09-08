@@ -6,16 +6,20 @@ use policy_engine::PolicyEngine;
 use protocol::{MessageKind, PolicyVerdict};
 use serde_json::json;
 use std::sync::Arc;
-use system_tools::{install_system_tools, ToolsMode};
+use system_tools::{install_system_tools, system_identity, ToolsMode};
 use tempfile::tempdir;
 use tool_registry::ToolRegistry;
+
+fn install_mock_system_tools(registry: &mut ToolRegistry) {
+    install_system_tools(registry, ToolsMode::Mock, system_identity(ToolsMode::Mock));
+}
 
 #[tokio::test]
 async fn diagnose_slow_system_mock_planner() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
 
@@ -80,7 +84,7 @@ async fn diagnose_with_mock_model_provider_asks_confirmation() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(32);
@@ -117,7 +121,7 @@ async fn direct_system_identity_executes_once_with_policy_and_audit() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let runtime = AiRuntime::new(
         Arc::new(registry),
         Arc::new(PolicyEngine::new()),
@@ -172,7 +176,7 @@ async fn multi_turn_session_remembers_prior_diagnose() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(32);
@@ -203,7 +207,7 @@ async fn progress_channel_receives_tool_events() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(32);
@@ -244,7 +248,7 @@ async fn prompt_injection_does_not_auto_execute_kill() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
 
@@ -264,7 +268,7 @@ async fn session_grant_skips_second_confirmation() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(32);
@@ -321,7 +325,7 @@ async fn high_cpu_diagnose_emits_automation_events() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(64);
@@ -367,7 +371,7 @@ async fn resource_budget_rejects_second_concurrent_request() {
     let dir = tempdir().unwrap();
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
     let bus = EventBus::new(8);
@@ -424,7 +428,7 @@ async fn telemetry_sample_triggers_high_cpu_automation() {
     let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
     let bus = EventBus::new(64);
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     let tools = Arc::new(registry);
 
     let automation = Arc::new(AutomationEngine::new(
@@ -543,7 +547,7 @@ async fn memory_facts_injected_into_system_prompt() {
         .unwrap();
 
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, ToolsMode::Mock);
+    install_mock_system_tools(&mut registry);
     install_memory_tools(&mut registry, memory.clone());
     let tools = Arc::new(registry);
     let policy = Arc::new(PolicyEngine::new());
@@ -551,14 +555,15 @@ async fn memory_facts_injected_into_system_prompt() {
     let provider = Arc::new(CaptureProvider {
         system: Mutex::new(String::new()),
     });
+    let device = json!({
+        "system": "SaaiOS",
+        "deployment": "native_device",
+        "device_class": "phone",
+        "target": "panther"
+    });
     let runtime = AiRuntime::new(tools, policy, audit, bus, provider.clone())
         .with_memory(memory)
-        .with_system_identity(json!({
-            "system": "SaaiOS",
-            "deployment": "native_device",
-            "device_class": "phone",
-            "target": "panther"
-        }));
+        .with_system_identity(device.clone());
 
     runtime.handle_user_text("ping").await.unwrap();
     let system = provider.system.lock().unwrap().clone();
@@ -572,4 +577,12 @@ async fn memory_facts_injected_into_system_prompt() {
             && system.contains("panther"),
         "system prompt should include local device identity, got: {system}"
     );
+    let context = system
+        .split_once("<device_context source=\"local_runtime\">\n")
+        .and_then(|(_, remainder)| remainder.split_once("\n</device_context>"))
+        .map(|(json, _)| json)
+        .expect("device_context block");
+    let planner_device: serde_json::Value =
+        serde_json::from_str(context).expect("device_context JSON");
+    assert_eq!(planner_device, device);
 }

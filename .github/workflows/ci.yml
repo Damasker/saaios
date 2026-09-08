@@ -12,6 +12,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy
+          targets: aarch64-unknown-linux-musl
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
 
       - name: system dependencies
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
@@ -24,6 +28,13 @@ jobs:
         run: cargo build --workspace
       - name: test
         run: cargo test --workspace
+      - name: PID 1 identity fallback
+        run: >-
+          cc -std=c11 -Wall -Wextra -Werror
+          -Wno-unused-function -Wno-format-truncation
+          os/targets/panther/tests/native-init-identity-test.c
+          -o /tmp/native-init-identity-test &&
+          /tmp/native-init-identity-test
       - name: e2e
         run: cargo test -p diagnose-slow-system -- --nocapture
 
@@ -63,6 +74,16 @@ jobs:
       - name: build cross sysroot
         run: os/targets/panther/build-cross-sysroot.sh
 
+      - name: cross-compile saaios runtime and console
+        run: |
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
+          export CC_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
+          export AR_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-ar.sh"
+          export CRATE_CC_NO_DEFAULTS=1
+          export RUSTFLAGS="-C link-self-contained=no"
+          cargo build --profile pixel7 --locked --target aarch64-unknown-linux-musl \
+            -p saaios-runtime -p console-tui
+
       - name: cross-compile saai-demo-surface
         run: |
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
@@ -84,6 +105,8 @@ jobs:
           file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'ARM aarch64'
           file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'statically linked'
           file target/aarch64-unknown-linux-musl/pixel7/saai-demo-surface | grep -q 'ARM aarch64'
+          file target/aarch64-unknown-linux-musl/pixel7/saaios-runtime | grep -q 'ARM aarch64'
+          file target/aarch64-unknown-linux-musl/pixel7/saaios-console | grep -q 'ARM aarch64'
           # init_boot is a fixed 8MB partition shared with everything else
           # already bundled in the ramdisk (ADR-013) -- catch a size
           # regression here rather than at flash time.
