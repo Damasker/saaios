@@ -3,6 +3,8 @@ use std::collections::HashMap;
 #[cfg(not(feature = "panther-hardware"))]
 use std::io::BufRead;
 use std::rc::Rc;
+#[cfg(feature = "panther-hardware")]
+use std::process::{Child, Command};
 use std::sync::Arc;
 #[cfg(feature = "panther-hardware")]
 use std::time::Instant;
@@ -130,6 +132,11 @@ struct State {
     /// callbacks are completed only after the kernel reports VBlank.
     #[cfg(feature = "panther-hardware")]
     pending_frame_surfaces: Vec<WlSurface>,
+    /// ADR-014: the compositor owns the system shell process. Keeping the
+    /// Child handle here makes that ownership explicit and gives the next
+    /// supervision step a single place to observe/restart it.
+    #[cfg(feature = "panther-hardware")]
+    shell_child: Option<Child>,
     #[cfg(feature = "panther-hardware")]
     presentation_started: Instant,
     #[cfg(feature = "panther-hardware")]
@@ -160,6 +167,17 @@ struct State {
     /// layer surface renders but cannot receive touch input in this
     /// step -- known limitation, not a goal of this vertical slice.
     layer_surfaces: Vec<LayerSurface>,
+}
+
+#[cfg(feature = "panther-hardware")]
+const SAAI_SHELL_PATH: &str = "/saaios/saai-shell";
+
+#[cfg(feature = "panther-hardware")]
+fn spawn_shell(socket_name: &str) -> Result<Child, String> {
+    Command::new(SAAI_SHELL_PATH)
+        .env("WAYLAND_DISPLAY", socket_name)
+        .spawn()
+        .map_err(|error| format!("failed to start {SAAI_SHELL_PATH}: {error}"))
 }
 
 #[cfg(feature = "panther-hardware")]
@@ -793,6 +811,8 @@ fn main() {
         #[cfg(feature = "panther-hardware")]
         pending_frame_surfaces: Vec::new(),
         #[cfg(feature = "panther-hardware")]
+        shell_child: None,
+        #[cfg(feature = "panther-hardware")]
         presentation_started: Instant::now(),
         _wl_output: wl_output,
         output_width,
@@ -824,6 +844,16 @@ fn main() {
             Err(err) => eprintln!("saai-displayd: failed to insert client: {err}"),
         })
         .expect("failed to insert socket source");
+
+    #[cfg(feature = "panther-hardware")]
+    {
+        let child = spawn_shell(&socket_name).unwrap_or_else(|error| {
+            eprintln!("saai-displayd: {error}");
+            std::process::exit(70);
+        });
+        println!("saai-displayd: started saai-shell pid={}", child.id());
+        state.shell_child = Some(child);
+    }
 
     let display_fd = display
         .borrow_mut()
