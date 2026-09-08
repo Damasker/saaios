@@ -115,7 +115,15 @@ fn main() {
     // system shell, not an app; matches drm-splash.c's own fixed
     // 1080x2400 panel assumption for now (real multi-output handling is
     // future work, not this vertical slice).
+    //
+    // set_min_size() alone does NOT request fullscreen -- it only
+    // constrains resizing, so the server was free to configure whatever
+    // size it wanted (observed on hardware: 800x480, the same default
+    // saai-displayd hands out when it has no better information). This
+    // was a real, previously-unnoticed bug: every visual test this
+    // sprint ran against an 800x480 toplevel, not the real panel.
     window.set_min_size(Some((1080, 2400)));
+    window.set_fullscreen(None);
     window.commit();
 
     // Second half of ADR-015 (Change 4): a real system-surface layer,
