@@ -14,8 +14,8 @@ use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
-    delegate_compositor, delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
-    delegate_xdg_shell,
+    delegate_compositor, delegate_layer_shell, delegate_output, delegate_seat,
+    delegate_session_lock, delegate_shm, delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -39,8 +39,9 @@ use smithay::{
         },
         output::OutputHandler,
         session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
-        shell::xdg::{
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+        shell::{
+            wlr_layer::{LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
+            xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{with_buffer_contents, ShmHandler, ShmState},
         socket::ListeningSocketSource,
@@ -97,6 +98,14 @@ struct State {
     /// `focused_surface` while locked. See the touch routing in main().
     locked: bool,
     lock_surface: Option<LockSurface>,
+    layer_shell_state: WlrLayerShellState,
+    /// Known layer surfaces (status bar / nav overlay per ADR-015) --
+    /// checked in commit()'s should_present branch so their frames reach
+    /// the panel. No spatial hit-testing wired up yet: touch routing
+    /// still only knows about `focused_surface`/`lock_surface`, so a
+    /// layer surface renders but cannot receive touch input in this
+    /// step -- known limitation, not a goal of this vertical slice.
+    layer_surfaces: Vec<LayerSurface>,
 }
 
 impl CompositorHandler for State {
@@ -204,6 +213,10 @@ impl CompositorHandler for State {
                         self.lock_surface.as_ref().map(|ls| ls.wl_surface()) == Some(surface)
                     } else {
                         self.focused_surface.as_ref() == Some(surface)
+                            || self
+                                .layer_surfaces
+                                .iter()
+                                .any(|ls| ls.wl_surface() == surface)
                     };
                     if should_present {
                         if let Some(hw) = self.hardware.as_mut() {
@@ -315,6 +328,41 @@ impl SessionLockHandler for State {
     }
 }
 delegate_session_lock!(State);
+
+impl WlrLayerShellHandler for State {
+    fn shell_state(&mut self) -> &mut WlrLayerShellState {
+        &mut self.layer_shell_state
+    }
+
+    fn new_layer_surface(
+        &mut self,
+        surface: LayerSurface,
+        _output: Option<WlOutput>,
+        _layer: smithay::wayland::shell::wlr_layer::Layer,
+        namespace: String,
+    ) {
+        // Minimal vertical slice (S04 Change 4, second half of ADR-015):
+        // prove the protocol renders end to end, same standard as the
+        // session-lock slice above. No real status-bar content yet and
+        // no per-client anchor/size negotiation -- every layer surface
+        // gets a fixed top strip, panel width x a fixed height, exactly
+        // like `new_surface` above always overrides with the real panel
+        // size rather than trusting client hints.
+        println!("saai-displayd: new layer surface, namespace={namespace:?}");
+        let width = self.output_width;
+        let height = 120;
+        surface.with_pending_state(|state| {
+            state.size = Some((width, height).into());
+        });
+        surface.send_configure();
+        self.layer_surfaces.push(surface);
+    }
+
+    fn layer_destroyed(&mut self, surface: LayerSurface) {
+        self.layer_surfaces.retain(|ls| ls != &surface);
+    }
+}
+delegate_layer_shell!(State);
 
 fn main() {
     let mut display: Display<State> = Display::new().expect("failed to create display");
@@ -514,6 +562,11 @@ fn main() {
         session_lock_state: SessionLockManagerState::new::<State, _>(&dh, |_| true),
         locked: false,
         lock_surface: None,
+        // Same permissive-filter deferral as session_lock_state above --
+        // ADR-015's real PID filter needs saai-displayd to have actually
+        // forked saai-shell (Change step 7), not yet true.
+        layer_shell_state: WlrLayerShellState::new_with_filter::<State, _>(&dh, |_| true),
+        layer_surfaces: Vec::new(),
     };
 
     let socket = ListeningSocketSource::new_auto().expect("failed to create listening socket");
