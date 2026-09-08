@@ -14,7 +14,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S02 | Wayland vertical slice на host | Done | S01 |
 | S03 | `saai-displayd` на Pixel 7 | Done | S02 |
 | S04 | Отдельный `saai-shell` и lock | Done | S03 |
-| S05 | Приложения, manifest и lifecycle | Backlog | S04 |
+| S05 | Приложения, manifest и lifecycle | In progress | S04 |
 | S06 | Настоящие пространства и entity store | Backlog | S05 |
 | S07 | Capability, sandbox и portals | Backlog | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
@@ -110,6 +110,9 @@ DRM fallback и USB-консоль; холодная загрузка воспр
 **Rollback:** `drm-splash` включается как boot/recovery UI.
 
 ## S05 — Manifest и жизненный цикл приложений
+
+Рабочий паспорт и декомпозиция:
+[S05-application-lifecycle.md](S05-application-lifecycle.md).
 
 **Goal:** SaaiOS устанавливает и управляет первым отдельным приложением.
 
