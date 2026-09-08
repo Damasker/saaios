@@ -34,10 +34,10 @@ impl Fonts {
     }
 
     fn load(regular_path: &str, semibold_path: &str) -> Result<Self, String> {
-        let regular = fs::read(regular_path)
-            .map_err(|error| format!("read {regular_path}: {error}"))?;
-        let semibold = fs::read(semibold_path)
-            .map_err(|error| format!("read {semibold_path}: {error}"))?;
+        let regular =
+            fs::read(regular_path).map_err(|error| format!("read {regular_path}: {error}"))?;
+        let semibold =
+            fs::read(semibold_path).map_err(|error| format!("read {semibold_path}: {error}"))?;
         Ok(Self {
             regular: Font::from_bytes(regular, FontSettings::default())
                 .map_err(|error| format!("parse {regular_path}: {error}"))?,
@@ -266,23 +266,11 @@ mod tests {
             (Rect::new(810, 2100, 270, 300), "Я"),
         ];
         let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &tabs,
-            0,
-            None,
-        );
+        draw_root(&mut canvas, Rect::new(0, 0, 1080, 2100), &tabs, 0, None);
         assert_eq!(canvas.pixel(135, 2125), ACCENT);
         assert_eq!(canvas.pixel(945, 2125), SURFACE);
 
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &tabs,
-            3,
-            None,
-        );
+        draw_root(&mut canvas, Rect::new(0, 0, 1080, 2100), &tabs, 3, None);
         assert_eq!(canvas.pixel(135, 2125), SURFACE);
         assert_eq!(canvas.pixel(945, 2125), ACCENT);
     }
