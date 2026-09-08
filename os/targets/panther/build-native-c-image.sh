@@ -12,6 +12,7 @@ tinyalsa_dir=${TINYALSA_DIR:?set TINYALSA_DIR}
 # this script's zig-cc C builds -- see os/targets/panther/build-cross-sysroot.sh
 # and the cross-panther CI job for how it's produced (ADR-008/010/011/012).
 saai_displayd=${SAAI_DISPLAYD_BIN:?set SAAI_DISPLAYD_BIN}
+saai_shell=${SAAI_SHELL_BIN:?set SAAI_SHELL_BIN}
 source_dir="$script_dir/src"
 scripts_dir="$script_dir/scripts"
 config_dir="$script_dir/config"
@@ -96,6 +97,7 @@ set -- ramdisk.cpio \
     "add 0755 saaios/saaios-console $artifacts/saaios-console-panther-tcp" \
     "add 0755 saaios/drm-splash $drm_splash" \
     "add 0755 saaios/saai-displayd $saai_displayd" \
+    "add 0755 saaios/saai-shell $saai_shell" \
     "mkdir 0755 saaios/fonts" \
     "add 0644 saaios/fonts/Inter-Regular.ttf $assets_dir/fonts/Inter-Regular.ttf" \
     "add 0644 saaios/fonts/Inter-SemiBold.ttf $assets_dir/fonts/Inter-SemiBold.ttf" \

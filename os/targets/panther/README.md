@@ -17,6 +17,7 @@ fallback.
 - `tools/` — small hardware diagnostics used during bring-up.
 - `patches/` — source patches required for third-party components.
 - `build-native-c-image.sh` — builds static programs and the init_boot image.
+- `build-saai-shell.sh` — builds the persistent system shell for that image.
 - `build-wifi-vendor-boot.sh` — injects matching signed modules and firmware
   into a stock vendor_boot image.
 - `artifacts.example.manifest` — expected local artifact names.
@@ -60,6 +61,7 @@ script rather than a plain `cargo build`:
 ```sh
 export ZIG=/path/to/zig
 ./os/targets/panther/build-saai-displayd.sh
+./os/targets/panther/build-saai-shell.sh
 ```
 
 This needs a nightly Rust toolchain in addition to the pinned stable one
@@ -82,6 +84,7 @@ export STOCK_INIT_BOOT=/secure/local/init_boot.img
 export STOCK_VENDOR_BOOT=/secure/local/vendor_boot.img
 export TINYALSA_DIR=/src/tinyalsa
 export SAAI_DISPLAYD_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saai-displayd
+export SAAI_SHELL_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saai-shell
 
 ./os/targets/panther/build-wifi-vendor-boot.sh
 ./os/targets/panther/build-native-c-image.sh
