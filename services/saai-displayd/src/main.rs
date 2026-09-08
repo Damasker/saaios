@@ -307,6 +307,14 @@ impl CompositorHandler for State {
             )
         });
 
+        // The compositor owns a complete copy after with_buffer_contents()
+        // returns. Release the client buffer immediately so SlotPool can
+        // safely reuse it for the next page. Without this event saai-shell
+        // kept every full-screen slot permanently busy; on hardware that
+        // produced commits whose pixels occasionally still represented the
+        // previous tab even though current_page had already changed.
+        buffer.release();
+
         // Must run before the hardware-blit check below: on a surface's very
         // first buffer-carrying commit, focus is still None, so checking
         // focus first would skip blitting that frame -- the display would
