@@ -6,6 +6,8 @@ use std::io::BufRead;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::Arc;
+#[cfg(feature = "panther-hardware")]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "panther-hardware")]
@@ -144,6 +146,8 @@ struct State {
     #[cfg(feature = "panther-hardware")]
     shell_restart_budget: RestartBudget,
     #[cfg(feature = "panther-hardware")]
+    privileged_shell_pid: Arc<AtomicU32>,
+    #[cfg(feature = "panther-hardware")]
     presentation_started: Instant,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
@@ -211,11 +215,22 @@ fn spawn_shell(socket_name: &str) -> Result<Child, String> {
 }
 
 #[cfg(feature = "panther-hardware")]
+fn is_privileged_shell(client: &Client, dh: &DisplayHandle, shell_pid: &AtomicU32) -> bool {
+    let expected = shell_pid.load(Ordering::Acquire);
+    expected != 0
+        && client
+            .get_credentials(dh)
+            .is_ok_and(|credentials| credentials.pid as u32 == expected)
+}
+
+#[cfg(feature = "panther-hardware")]
 impl State {
     fn launch_shell(&mut self) -> bool {
         loop {
             match spawn_shell(&self.shell_socket_name) {
                 Ok(child) => {
+                    self.privileged_shell_pid
+                        .store(child.id(), Ordering::Release);
                     println!("saai-displayd: started saai-shell pid={}", child.id());
                     self.shell_child = Some(child);
                     return true;
@@ -248,6 +263,7 @@ impl State {
             return true;
         };
         self.shell_child = None;
+        self.privileged_shell_pid.store(0, Ordering::Release);
         let failures = self.shell_restart_budget.record_failure(Instant::now());
         eprintln!(
             "saai-displayd: saai-shell exited ({status}); shell failure {failures}/{SHELL_RESTART_LIMIT}"
@@ -656,6 +672,9 @@ fn main() {
     ));
     let dh: DisplayHandle = display.borrow().handle();
 
+    #[cfg(feature = "panther-hardware")]
+    let privileged_shell_pid = Arc::new(AtomicU32::new(0));
+
     let compositor_state = CompositorState::new::<State>(&dh);
     let shm_state = ShmState::new::<State>(&dh, Vec::new());
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
@@ -896,21 +915,33 @@ fn main() {
         #[cfg(feature = "panther-hardware")]
         shell_restart_budget: RestartBudget::default(),
         #[cfg(feature = "panther-hardware")]
+        privileged_shell_pid: privileged_shell_pid.clone(),
+        #[cfg(feature = "panther-hardware")]
         presentation_started: Instant::now(),
         _wl_output: wl_output,
         output_width,
         output_height,
-        // Permissive filter: every client is trusted for now. ADR-015's
-        // real security boundary (only saai-shell's own pid can bind
-        // this global) needs saai-displayd to actually know that pid,
-        // which only happens once it forks saai-shell itself -- S04
-        // Change step 7, not yet done.
+        #[cfg(feature = "panther-hardware")]
+        session_lock_state: {
+            let filter_pid = privileged_shell_pid.clone();
+            let filter_dh = dh.clone();
+            SessionLockManagerState::new::<State, _>(&dh, move |client| {
+                is_privileged_shell(client, &filter_dh, &filter_pid)
+            })
+        },
+        #[cfg(not(feature = "panther-hardware"))]
         session_lock_state: SessionLockManagerState::new::<State, _>(&dh, |_| true),
         locked: false,
         lock_surface: None,
-        // Same permissive-filter deferral as session_lock_state above --
-        // ADR-015's real PID filter needs saai-displayd to have actually
-        // forked saai-shell (Change step 7), not yet true.
+        #[cfg(feature = "panther-hardware")]
+        layer_shell_state: {
+            let filter_pid = privileged_shell_pid.clone();
+            let filter_dh = dh.clone();
+            WlrLayerShellState::new_with_filter::<State, _>(&dh, move |client| {
+                is_privileged_shell(client, &filter_dh, &filter_pid)
+            })
+        },
+        #[cfg(not(feature = "panther-hardware"))]
         layer_shell_state: WlrLayerShellState::new_with_filter::<State, _>(&dh, |_| true),
         layer_surfaces: Vec::new(),
     };
