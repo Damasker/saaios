@@ -29,6 +29,8 @@
 #include "../third_party/stb/stb_truetype.h"
 #pragma GCC diagnostic pop
 
+#include "identity-ux.h"
+
 #define SAAIOS_DRM_MODE_CONNECTED 1
 
 static uint32_t active_connector_id;
@@ -44,6 +46,7 @@ static bool ai_keyboard_open = false;
 #define AI_PROMPT_MAX 72
 static char ai_prompt[AI_PROMPT_MAX + 1] = {0};
 static size_t ai_prompt_length = 0;
+static identity_ux g_identity_ux;
 static bool bluetooth_saved_view = false;
 static int bluetooth_forget_candidate = -1;
 static bool panel_native_bgrx = true;
@@ -1269,6 +1272,59 @@ static bool ai_query_running(void) {
     return false;
 }
 
+static void stop_ai_query_child(void) {
+    if (ai_query_pid > 0) {
+        (void)kill(ai_query_pid, SIGKILL);
+    }
+    ai_query_pid = -1;
+}
+
+static bool read_text_file(const char *path, char *buffer, size_t capacity) {
+    FILE *file;
+    size_t length = 0;
+    int value;
+    if (!path || !buffer || capacity == 0) {
+        return false;
+    }
+    buffer[0] = '\0';
+    file = fopen(path, "r");
+    if (!file) {
+        return false;
+    }
+    while (length + 1 < capacity && (value = fgetc(file)) != EOF) {
+        buffer[length++] = (char)value;
+    }
+    buffer[length] = '\0';
+    fclose(file);
+    return length > 0;
+}
+
+static void poll_identity_ux(void) {
+    uint64_t now_ms;
+    uint64_t generation;
+    char output[1024];
+
+    if (g_identity_ux.state != IDENTITY_UX_RUNNING) {
+        return;
+    }
+    generation = g_identity_ux.generation;
+    now_ms = monotonic_milliseconds();
+    if (now_ms != 0 && g_identity_ux.started_ms != 0 &&
+        now_ms - g_identity_ux.started_ms >= IDENTITY_UX_TIMEOUT_MS) {
+        stop_ai_query_child();
+        identity_ux_fail(&g_identity_ux, generation, IDENTITY_UX_ERR_TIMEOUT);
+        return;
+    }
+    if (ai_query_running()) {
+        return;
+    }
+    if (!read_text_file("/run/saaios-ai-ui.log", output, sizeof(output))) {
+        identity_ux_fail(&g_identity_ux, generation, IDENTITY_UX_ERR_INVALID);
+        return;
+    }
+    (void)identity_ux_complete_from_output(&g_identity_ux, generation, output);
+}
+
 static int read_ai_lines(char lines[][AI_LINE_CHARS + 1], int maximum) {
     FILE *file = fopen("/run/saaios-ai-ui.log", "r");
     if (!file) {
@@ -1355,12 +1411,20 @@ static void start_ai_request(const char *prompt, int action) {
 }
 
 static void start_identity_request(int action) {
-    if (ai_query_running()) {
+    uint64_t now_ms = monotonic_milliseconds();
+    uint64_t generation;
+    pid_t child;
+
+    if (!identity_ux_begin(&g_identity_ux, now_ms)) {
         return;
+    }
+    generation = g_identity_ux.generation;
+    if (ai_query_running()) {
+        stop_ai_query_child();
     }
     (void)unlink("/run/saaios-ai-ui.log");
     ai_last_action = action;
-    pid_t child = fork();
+    child = fork();
     if (child == 0) {
         int log = open("/run/saaios-ai-ui.log",
                        O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
@@ -1376,7 +1440,9 @@ static void start_identity_request(int action) {
     }
     if (child > 0) {
         ai_query_pid = child;
+        return;
     }
+    identity_ux_fail(&g_identity_ux, generation, IDENTITY_UX_ERR_OFFLINE);
 }
 
 static void start_ai_query(int selected) {
@@ -1816,9 +1882,18 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
     static const char *const labels[] = {
         "CHECK DEVICE", "CHECK NETWORK", "CHECK STORAGE"
     };
-    bool running = ai_query_running();
+    bool other_running;
     char lines[4][AI_LINE_CHARS + 1] = {{0}};
-    int line_count = running ? 0 : read_ai_lines(lines, 4);
+    int line_count;
+    bool show_identity;
+
+    poll_identity_ux();
+    other_running = ai_query_running() &&
+                    g_identity_ux.state != IDENTITY_UX_RUNNING;
+    line_count = other_running ? 0 : read_ai_lines(lines, 4);
+    show_identity = g_identity_ux.state == IDENTITY_UX_RUNNING ||
+                    ai_last_action <= 0;
+
     render_page_chrome(pixels, stride_pixels, width, height, "DEVICE");
     bool runtime_ready = access("/tmp/saaios.sock", F_OK) == 0;
     fill_soft_rect(pixels, stride_pixels, width, height,
@@ -1851,19 +1926,30 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
               ui_y(height, 905), 0x008EA8C6);
     for (int index = 0; index < 3; ++index) {
         int top = 950 + index * 190;
-        uint32_t color = index == ai_last_action
+        const char *label = labels[index];
+        uint32_t row_color = index == ai_last_action
             ? 0x003A397F : 0x00152238;
+        uint32_t label_color = 0x00FFFFFF;
+        if (index == 0) {
+            if (g_identity_ux.state == IDENTITY_UX_RUNNING) {
+                label = "CHECKING...";
+                row_color = 0x00152238;
+                label_color = 0x008C86FF;
+            } else if (g_identity_ux.state == IDENTITY_UX_ERROR) {
+                label = "RETRY";
+            }
+        }
         fill_soft_rect(pixels, stride_pixels, width, height,
                        ui_x(width, 54), ui_y(height, top),
                        ui_x(width, 972), ui_y(height, 150),
-                       ui_x(width, 32), color);
+                       ui_x(width, 32), row_color);
         fill_soft_rect(pixels, stride_pixels, width, height,
                        ui_x(width, 88), ui_y(height, top + 42),
                        ui_x(width, 66), ui_y(height, 66),
                        ui_x(width, 20), 0x006C63FF);
         draw_text(pixels, stride_pixels, width, height,
-                  labels[index], ui_scale(width, 7), ui_x(width, 195),
-                  ui_y(height, top + 75), 0x00FFFFFF);
+                  label, ui_scale(width, 7), ui_x(width, 195),
+                  ui_y(height, top + 75), label_color);
     }
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 1540),
@@ -1872,11 +1958,55 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
     draw_text(pixels, stride_pixels, width, height,
               "SYSTEM RESULT", ui_scale(width, 6), ui_x(width, 92),
               ui_y(height, 1610), 0x007E96B2);
-    if (running) {
+    if (show_identity && g_identity_ux.state == IDENTITY_UX_RUNNING) {
+        draw_text(pixels, stride_pixels, width, height,
+                  "CHECKING DEVICE", ui_scale(width, 7), ui_x(width, 92),
+                  ui_y(height, 1725), 0x008C86FF);
+        draw_text(pixels, stride_pixels, width, height,
+                  "READING SYSTEM IDENTITY", ui_scale(width, 6),
+                  ui_x(width, 92), ui_y(height, 1830), 0x00F5F8FC);
+    } else if (show_identity && g_identity_ux.state == IDENTITY_UX_SUCCESS) {
+        draw_text(pixels, stride_pixels, width, height,
+                  "IDENTITY OBSERVED", ui_scale(width, 7), ui_x(width, 92),
+                  ui_y(height, 1725), 0x0000CFA0);
+        draw_text(pixels, stride_pixels, width, height,
+                  g_identity_ux.product_line, ui_scale(width, 7),
+                  ui_x(width, 92), ui_y(height, 1830), 0x00F5F8FC);
+        draw_text(pixels, stride_pixels, width, height,
+                  g_identity_ux.device_line, ui_scale(width, 6),
+                  ui_x(width, 92), ui_y(height, 1935), 0x00F5F8FC);
+        draw_text(pixels, stride_pixels, width, height,
+                  g_identity_ux.slot_line, ui_scale(width, 7),
+                  ui_x(width, 92), ui_y(height, 2040), 0x00F5F8FC);
+    } else if (show_identity && g_identity_ux.state == IDENTITY_UX_ERROR) {
+        const char *detail = NULL;
+        if (g_identity_ux.error == IDENTITY_UX_ERR_OFFLINE) {
+            detail = "SYSTEM CORE OFFLINE";
+        } else if (g_identity_ux.error == IDENTITY_UX_ERR_TOOL_MISSING) {
+            detail = "IDENTITY TOOL MISSING";
+        } else if (g_identity_ux.error == IDENTITY_UX_ERR_TIMEOUT) {
+            detail = "IDENTITY CHECK TIMED OUT";
+        }
+        draw_text(pixels, stride_pixels, width, height,
+                  "ERROR", ui_scale(width, 7), ui_x(width, 92),
+                  ui_y(height, 1725), 0x00D56D6D);
+        if (detail) {
+            draw_text(pixels, stride_pixels, width, height,
+                      detail, ui_scale(width, 6), ui_x(width, 92),
+                      ui_y(height, 1830), 0x00FFD0D0);
+            draw_text(pixels, stride_pixels, width, height,
+                      "IDENTITY NOT READ", ui_scale(width, 6),
+                      ui_x(width, 92), ui_y(height, 1935), 0x00FFD0D0);
+        } else {
+            draw_text(pixels, stride_pixels, width, height,
+                      "IDENTITY NOT READ", ui_scale(width, 6),
+                      ui_x(width, 92), ui_y(height, 1830), 0x00FFD0D0);
+        }
+    } else if (other_running) {
         draw_word(pixels, stride_pixels, width, height,
                   "SYSTEM WORKING", ui_scale(width, 9), ui_y(height, 1810),
                   0x008C86FF);
-    } else if (line_count > 0) {
+    } else if (line_count > 0 && ai_last_action > 0) {
         for (int index = 0; index < line_count; ++index) {
             int scale = strlen(lines[index]) > 22 ? 6 : 7;
             draw_text(pixels, stride_pixels, width, height,
@@ -1884,9 +2014,9 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                       ui_y(height, 1725 + index * 105), 0x00B7CBE2);
         }
     } else {
-        draw_word(pixels, stride_pixels, width, height,
-                  "READY FOR AN INTENT", ui_scale(width, 7),
-                  ui_y(height, 1810), 0x008CA9C8);
+        draw_text(pixels, stride_pixels, width, height,
+                  "READY TO CHECK IDENTITY", ui_scale(width, 6),
+                  ui_x(width, 92), ui_y(height, 1810), 0x008CA9C8);
     }
 }
 
@@ -2555,6 +2685,7 @@ int main(void) {
         }
         if (ready == 0) {
             uint64_t now_ms = monotonic_milliseconds();
+            poll_identity_ux();
             if (display_on && now_ms != 0 && last_activity_ms != 0 &&
                 now_ms - last_activity_ms >= 60000U) {
                 fprintf(stderr, "drm-splash: idle timeout\n");
@@ -2845,11 +2976,20 @@ int main(void) {
                         } else if (page == 5 && !ai_keyboard_open &&
                                    console_touch_item >= 0) {
                             if (console_touch_item == 3) {
-                                if (!ai_query_running()) {
+                                if (!ai_query_running() &&
+                                    g_identity_ux.state !=
+                                        IDENTITY_UX_RUNNING) {
                                     clear_ai_prompt();
                                     ai_keyboard_open = true;
                                 }
-                            } else {
+                            } else if (console_touch_item == 0) {
+                                if (g_identity_ux.state !=
+                                    IDENTITY_UX_RUNNING) {
+                                    start_ai_query(0);
+                                }
+                            } else if (!ai_query_running() &&
+                                       g_identity_ux.state !=
+                                           IDENTITY_UX_RUNNING) {
                                 start_ai_query(console_touch_item);
                             }
                             active = true;

@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `In progress` (#26 merged via PR #30 @ `62ebeb3`; remaining: UX #31 + Evidence #28).
+- Состояние: `In progress` (#26 merged; UX #31 implemented pending merge; Evidence #28).
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-006.
 - Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
@@ -100,8 +100,8 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
 - `CHECK DEVICE` остаётся прямым read-only вызовом `system.identity`; e2e
   подтверждает один policy/tool/audit cycle без обращения к модели.
 - Accepted UX contract: `docs/os/sprints/S01-system-identity-ux.md` (PR #29).
-  Four UI states are specified; native DRM implementation against that contract
-  remains a follow-up before final physical close.
+  Four UI states are implemented in `drm-splash` (`identity-ux` + DEVICE
+  CHECK/RETRY rendering). Final physical close still requires Issue #28.
 - CI must pass on the merge commit: format, clippy, workspace tests, PID 1
   identity fallback host test, e2e, and Panther cross-build including
   `saaios-runtime` / `console-tui`.
@@ -123,8 +123,8 @@ verification (Issue #28).
 
 ### Physical verification checklist (required to close S01)
 
-1. Build image from merged #26 commit; record filename, size, SHA-256, source
-   commit.
+1. Build image from shared HEAD that includes merged #26 **and** #31
+   (PR #33); record filename, size, SHA-256, source commit.
 2. Flash only slot A after explicit operator approval; keep Android slot B.
 3. Confirm status/tool/prompt share one DeviceContext object.
 4. Exercise idle → running → success and error/retry per UX contract; prove
