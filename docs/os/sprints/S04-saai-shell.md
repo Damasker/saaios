@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `In progress`.
+- Состояние: `Done`.
 - Зависит от: S03.
 - Архитектурные решения: ADR-005 (три компонента: `saai-displayd`/
   `saai-shell`/`saai-appd`), ADR-007 (Smithay), ADR-009 (supervision/
@@ -11,9 +11,9 @@
   ребёнок `saai-displayd`), ADR-015 (`ext-session-lock-v1` +
   `wlr-layer-shell` для системных поверхностей), ADR-016 (DRM double
   buffering/scene composition), ADR-017 (декларативный Saai UI).
-- Рабочий fallback: `drm-splash` остаётся boot/recovery UI, физически
-  проверен и держит слот, пока `saai-displayd`+`saai-shell` не сообщили о
-  готовности (per `docs/os/architecture/application-platform.md`).
+- Рабочий fallback: `drm-splash` остаётся crash-loop recovery UI и физически
+  проверен. Между стартом `saai-displayd` и первым кадром `saai-shell`
+  допускается короткий чёрный интервал по решению ADR-014.
 
 ## Goal
 
@@ -339,9 +339,11 @@ fallback — не переписывается, не расширяется.
    принятого Unix-сокета и ограничивает session-lock/layer-shell globals.
    Намеренный `kill -9` физически подтвердил сохранение PID compositor'а
    и полный повторный запуск lock surface с новым PID shell.
-8. Холодная перезагрузка, физическая регрессия (idle/lock/touch-wake на
-   реальном экране, намеренное падение `saai-shell` не роняет
-   `saai-displayd`), обновить README при необходимости.
+8. **Готово (2026-09-08).** Постоянный 8MB-образ прошит в `init_boot_a` и
+   загружен с нуля. Проверены точные хэши обоих бинарников, lock→touch-unlock,
+   все четыре корневые вкладки, отсутствие DRM present/EBUSY ошибок и
+   повторный fault injection: `saai-shell` перезапустился, PID
+   `saai-displayd` не изменился.
 
 ## Test
 
@@ -357,8 +359,9 @@ fallback — не переписывается, не расширяется.
 - fault injection: `kill -9` на `saai-shell` — `saai-displayd` не падает,
   `saai-shell` перезапускается в рамках бюджета, за пределами бюджета —
   честный, задокументированный откат (детали зависят от шага 1's ADR);
-- cold reboot: воспроизводимо, `native-init.c`'s fallback логика ждёт
-  готовности обоих компонентов, не только `saai-displayd`.
+- cold reboot: воспроизводимо; shell запускается compositor'ом только после
+  готовности Wayland-сокета, а исчерпание бюджета каскадирует в существующий
+  fallback `native-init.c` (ADR-014).
 
 ## Acceptance criteria
 
@@ -791,4 +794,23 @@ application-platform.md), откатывать нечего на уровне о
   surface. Host-тесты бюджета: 2/2; headless и `panther-hardware` checks
   пройдены. Постоянный образ включает оба процесса, имеет ровно 8388608 байт
   и SHA-256 `52a6b774b8f6c7e64a35efc6cc45bbdeffe5e9529dcc4638e4c54c0d5712dfbc`.
-  Холодная прошивка/проверка остаётся шагом 8 и здесь ещё не заявлена.
+  На этом этапе холодная прошивка ещё не была заявлена; она завершена в
+  следующем пункте.
+
+- **Change 8 (постоянный образ + cold regression), 2026-09-08.** Образ
+  `52a6b774b8f6c7e64a35efc6cc45bbdeffe5e9529dcc4638e4c54c0d5712dfbc`
+  размером ровно 8388608 байт записан в активный `init_boot_a`; bootloader
+  подтвердил `product=panther`, `current-slot=a`, `unlocked=yes`. После
+  `fastboot reboot` устройство вернуло USB serial и сеть, а на uptime 20.64s:
+  - `/saaios/saai-displayd` = `3a4472c4…582ea`, PID 359;
+  - `/saaios/saai-shell` = `1cdca2ee…e27b2`, дочерний PID 367;
+  - boot-лог не содержит `failed`/`error`/`fallback`/`crash`;
+  - физическое касание разблокировало lock surface, после чего лог подтвердил
+    переходы во все `Me`/`Spaces`/`Inbox`/`Now` и разные хэши кадров;
+  - `Resource busy` = 0, `hardware present failed` = 0;
+  - `kill -9 367` дал `shell failure 1/3`, новый shell PID 423 подключился с
+    совпадающим peer PID, а compositor остался PID 359.
+
+  S04 принят полностью: отдельная системная оболочка переживает собственное
+  падение, lock и root navigation воспроизводятся после холодной загрузки, а
+  постоянный образ больше не зависит от ручного `/tmp/saai-shell`.
