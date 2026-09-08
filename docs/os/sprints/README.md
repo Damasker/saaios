@@ -13,7 +13,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S01 | Системная идентичность | Done | S00 |
 | S02 | Wayland vertical slice на host | Done | S01 |
 | S03 | `saai-displayd` на Pixel 7 | Done | S02 |
-| S04 | Отдельный `saai-shell` и lock | Ready | S03 |
+| S04 | Отдельный `saai-shell` и lock | In progress | S03 |
 | S05 | Приложения, manifest и lifecycle | Backlog | S04 |
 | S06 | Настоящие пространства и entity store | Backlog | S05 |
 | S07 | Capability, sandbox и portals | Backlog | S05, S06 |
@@ -94,6 +94,8 @@ DRM fallback и USB-консоль; холодная загрузка воспр
 изменяется.
 
 ## S04 — Отдельный `saai-shell` и lock screen
+
+Рабочий паспорт и декомпозиция: [S04-saai-shell.md](S04-saai-shell.md).
 
 **Goal:** текущая мобильная оболочка становится независимым системным клиентом.
 
