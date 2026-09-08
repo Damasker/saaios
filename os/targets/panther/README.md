@@ -27,6 +27,11 @@ calibration and credentials are intentionally not committed. Extract them from
 the matching factory image/device into one local directory and point
 `SAAIOS_PANTHER_ARTIFACTS` at it.
 
+The native image replaces Android's init and removes the remaining stock
+`/system` ramdisk tools (`snapuserd`, property tools, and toolbox) while
+repacking. Native PID 1 does not execute them, and omitting them keeps the
+standalone SaaiOS userspace inside Pixel 7's fixed 8MB `init_boot` partition.
+
 ## Build prerequisites
 
 - Zig 0.13.0 with an `aarch64-linux-musl` target, or set `ZIG`.

@@ -90,6 +90,7 @@ cd "$build_dir"
 set -- ramdisk.cpio \
     "rm -r .backup" \
     "rm -r overlay.d" \
+    "rm -r system" \
     "add 0755 init $native_init" \
     "mkdir 0755 saaios" \
     "add 0755 saaios/busybox $artifacts/busybox-arm64" \
