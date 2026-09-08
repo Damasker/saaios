@@ -14,17 +14,22 @@ use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
-    delegate_compositor, delegate_seat, delegate_shm, delegate_xdg_shell,
+    delegate_compositor, delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
+    delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
+    output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
         wayland_server::{
             backend::ClientData,
-            protocol::{wl_buffer::WlBuffer, wl_seat::WlSeat, wl_surface::WlSurface},
+            protocol::{
+                wl_buffer::WlBuffer, wl_output::WlOutput, wl_seat::WlSeat, wl_surface::WlSurface,
+            },
             Client, Display, DisplayHandle, Resource,
         },
     },
     utils::Serial,
+    utils::Transform,
     utils::SERIAL_COUNTER,
     wayland::{
         buffer::BufferHandler,
@@ -32,6 +37,8 @@ use smithay::{
             with_states, BufferAssignment, CompositorClientState, CompositorHandler,
             CompositorState, SurfaceAttributes,
         },
+        output::OutputHandler,
+        session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
         shell::xdg::{
             PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
         },
@@ -72,6 +79,24 @@ struct State {
     hardware: Option<hardware::HardwareOutput>,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
+    /// Kept alive for the lifetime of the process -- not because the
+    /// wl_output global depends on it (smithay's global dispatch data
+    /// owns what's needed to answer protocol requests independently),
+    /// but so a future mode change is a method call away rather than a
+    /// rediscovery.
+    _wl_output: Output,
+    /// Real dimensions the client sees via wl_output/lock surfaces --
+    /// pixel7's real panel size, or a generic placeholder for the
+    /// headless S02 build.
+    output_width: i32,
+    output_height: i32,
+    session_lock_state: SessionLockManagerState,
+    /// ADR-015's core security invariant lives here, not in the protocol
+    /// alone: ext-session-lock-v1 only gives us the lock/unlock lifecycle,
+    /// *we* still have to make sure input actually stops reaching
+    /// `focused_surface` while locked. See the touch routing in main().
+    locked: bool,
+    lock_surface: Option<LockSurface>,
 }
 
 impl CompositorHandler for State {
@@ -166,11 +191,26 @@ impl CompositorHandler for State {
                     digest
                 );
                 #[cfg(feature = "panther-hardware")]
-                if self.focused_surface.as_ref() == Some(surface) {
-                    if let Some(hw) = self.hardware.as_mut() {
-                        hw.blit(&_pixels, _width, _height, _stride);
-                        if let Err(err) = hw.present(false) {
-                            eprintln!("saai-displayd: hardware present failed: {err}");
+                {
+                    // While locked, only the lock surface's own commits
+                    // ever reach the panel -- otherwise the toplevel
+                    // underneath could keep animating on screen even
+                    // though it can no longer receive input, which would
+                    // be a visible break of the "locked means locked"
+                    // expectation even though the security property
+                    // (touch routing) is already correctly enforced
+                    // elsewhere.
+                    let should_present = if self.locked {
+                        self.lock_surface.as_ref().map(|ls| ls.wl_surface()) == Some(surface)
+                    } else {
+                        self.focused_surface.as_ref() == Some(surface)
+                    };
+                    if should_present {
+                        if let Some(hw) = self.hardware.as_mut() {
+                            hw.blit(&_pixels, _width, _height, _stride);
+                            if let Err(err) = hw.present(false) {
+                                eprintln!("saai-displayd: hardware present failed: {err}");
+                            }
                         }
                     }
                 }
@@ -238,6 +278,44 @@ impl XdgShellHandler for State {
 }
 delegate_xdg_shell!(State);
 
+impl OutputHandler for State {}
+delegate_output!(State);
+
+impl SessionLockHandler for State {
+    fn lock_state(&mut self) -> &mut SessionLockManagerState {
+        &mut self.session_lock_state
+    }
+
+    fn lock(&mut self, confirmation: SessionLocker) {
+        // Every client on this compositor is trusted for now (ADR-015's
+        // PID-based global filter is deferred to S04 Change step 7, once
+        // saai-displayd actually forks saai-shell and knows its real
+        // pid) -- confirm immediately, no separate "clear the screen
+        // first" step since hardware::init()'s own black fill already
+        // covers the normal startup case.
+        println!("saai-displayd: session lock requested");
+        self.locked = true;
+        confirmation.lock();
+    }
+
+    fn unlock(&mut self) {
+        println!("saai-displayd: session unlocked");
+        self.locked = false;
+        self.lock_surface = None;
+    }
+
+    fn new_surface(&mut self, surface: LockSurface, _output: WlOutput) {
+        println!("saai-displayd: lock surface created");
+        let (width, height) = (self.output_width, self.output_height);
+        surface.with_pending_state(|state| {
+            state.size = Some((width as u32, height as u32).into());
+        });
+        surface.send_configure();
+        self.lock_surface = Some(surface);
+    }
+}
+delegate_session_lock!(State);
+
 fn main() {
     let mut display: Display<State> = Display::new().expect("failed to create display");
     let dh: DisplayHandle = display.handle();
@@ -260,18 +338,46 @@ fn main() {
 
     #[cfg(feature = "panther-hardware")]
     let hardware = match hardware::init() {
-        Ok((output, drm_notifier)) => {
+        Ok((hw, drm_notifier)) => {
             if let Err(err) = handle.insert_source(drm_notifier, |_event, _, _state| {}) {
                 eprintln!("saai-displayd: failed to register DRM notifier: {err}");
             }
             println!("saai-displayd: hardware output initialized");
-            Some(output)
+            Some(hw)
         }
         Err(err) => {
             eprintln!("saai-displayd: hardware output unavailable: {err}");
             None
         }
     };
+
+    #[cfg(feature = "panther-hardware")]
+    let (output_width, output_height) = hardware
+        .as_ref()
+        .map(|hw| (hw.width as i32, hw.height as i32))
+        .unwrap_or((1080, 2400));
+    #[cfg(not(feature = "panther-hardware"))]
+    let (output_width, output_height) = (1920, 1080);
+
+    let wl_output = Output::new(
+        "panel-0".to_string(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "SaaiOS".into(),
+            model: "panther".into(),
+        },
+    );
+    wl_output.create_global::<State>(&dh);
+    wl_output.change_current_state(
+        Some(OutputMode {
+            size: (output_width, output_height).into(),
+            refresh: 60000,
+        }),
+        Some(Transform::Normal),
+        Some(Scale::Integer(1)),
+        Some((0, 0).into()),
+    );
 
     #[cfg(feature = "panther-hardware")]
     match touch::open() {
@@ -304,13 +410,32 @@ fn main() {
                             // needs `state` by mutable reference, which
                             // would conflict with a closure still borrowing
                             // it for this same call's other argument.
-                            let focus = state
-                                .focused_surface
-                                .clone()
-                                .map(|s| (s, Point::from((0.0, 0.0))));
+                            //
+                            // ADR-015's security invariant enforced here, not
+                            // just in the session_lock protocol handlers:
+                            // while locked, touch goes to the lock surface
+                            // (or nowhere, if the client hasn't created one
+                            // yet) and never falls through to
+                            // `focused_surface` -- a locked screen must not
+                            // pass input to the app underneath.
+                            let focus = if state.locked {
+                                state
+                                    .lock_surface
+                                    .as_ref()
+                                    .map(|ls| (ls.wl_surface().clone(), Point::from((0.0, 0.0))))
+                            } else {
+                                state
+                                    .focused_surface
+                                    .clone()
+                                    .map(|s| (s, Point::from((0.0, 0.0))))
+                            };
                             match update {
                                 touch::TouchUpdate::Down { x, y } => {
-                                    println!("saai-displayd: touch down at ({x}, {y})");
+                                    println!(
+                                        "saai-displayd: touch down at ({x}, {y}), routed to: {:?} (locked={})",
+                                        focus.as_ref().map(|(s, _)| s.id()),
+                                        state.locked
+                                    );
                                     let location = Point::from((x as f64, y as f64));
                                     touch.down(
                                         state,
@@ -378,6 +503,17 @@ fn main() {
         touch,
         #[cfg(feature = "panther-hardware")]
         hardware,
+        _wl_output: wl_output,
+        output_width,
+        output_height,
+        // Permissive filter: every client is trusted for now. ADR-015's
+        // real security boundary (only saai-shell's own pid can bind
+        // this global) needs saai-displayd to actually know that pid,
+        // which only happens once it forks saai-shell itself -- S04
+        // Change step 7, not yet done.
+        session_lock_state: SessionLockManagerState::new::<State, _>(&dh, |_| true),
+        locked: false,
+        lock_surface: None,
     };
 
     let socket = ListeningSocketSource::new_auto().expect("failed to create listening socket");
