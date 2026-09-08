@@ -1,13 +1,15 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 #[cfg(not(feature = "panther-hardware"))]
 use std::io::BufRead;
 #[cfg(feature = "panther-hardware")]
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 #[cfg(feature = "panther-hardware")]
-use std::time::Instant;
+use calloop::signals::{Signal, Signals};
 
 #[cfg(feature = "panther-hardware")]
 mod hardware;
@@ -138,6 +140,10 @@ struct State {
     #[cfg(feature = "panther-hardware")]
     shell_child: Option<Child>,
     #[cfg(feature = "panther-hardware")]
+    shell_socket_name: String,
+    #[cfg(feature = "panther-hardware")]
+    shell_restart_budget: RestartBudget,
+    #[cfg(feature = "panther-hardware")]
     presentation_started: Instant,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
@@ -172,12 +178,84 @@ struct State {
 #[cfg(feature = "panther-hardware")]
 const SAAI_SHELL_PATH: &str = "/saaios/saai-shell";
 
+const SHELL_RESTART_LIMIT: usize = 3;
+const SHELL_RESTART_WINDOW: Duration = Duration::from_secs(60);
+const SHELL_FAILURE_EXIT_CODE: i32 = 71;
+
+#[derive(Default)]
+struct RestartBudget {
+    failures: VecDeque<Instant>,
+}
+
+impl RestartBudget {
+    fn record_failure(&mut self, now: Instant) -> usize {
+        while self
+            .failures
+            .front()
+            .is_some_and(|failure| now.duration_since(*failure) >= SHELL_RESTART_WINDOW)
+        {
+            self.failures.pop_front();
+        }
+        self.failures.push_back(now);
+        self.failures.len()
+    }
+}
+
 #[cfg(feature = "panther-hardware")]
 fn spawn_shell(socket_name: &str) -> Result<Child, String> {
     Command::new(SAAI_SHELL_PATH)
         .env("WAYLAND_DISPLAY", socket_name)
         .spawn()
         .map_err(|error| format!("failed to start {SAAI_SHELL_PATH}: {error}"))
+}
+
+#[cfg(feature = "panther-hardware")]
+impl State {
+    fn launch_shell(&mut self) -> bool {
+        loop {
+            match spawn_shell(&self.shell_socket_name) {
+                Ok(child) => {
+                    println!("saai-displayd: started saai-shell pid={}", child.id());
+                    self.shell_child = Some(child);
+                    return true;
+                }
+                Err(error) => {
+                    let failures = self.shell_restart_budget.record_failure(Instant::now());
+                    eprintln!(
+                        "saai-displayd: {error}; shell failure {failures}/{SHELL_RESTART_LIMIT}"
+                    );
+                    if failures >= SHELL_RESTART_LIMIT {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_shell_sigchld(&mut self) -> bool {
+        let status = match self.shell_child.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    eprintln!("saai-displayd: failed to inspect saai-shell: {error}");
+                    return true;
+                }
+            },
+            None => return true,
+        };
+        let Some(status) = status else {
+            return true;
+        };
+        self.shell_child = None;
+        let failures = self.shell_restart_budget.record_failure(Instant::now());
+        eprintln!(
+            "saai-displayd: saai-shell exited ({status}); shell failure {failures}/{SHELL_RESTART_LIMIT}"
+        );
+        if failures >= SHELL_RESTART_LIMIT {
+            return false;
+        }
+        self.launch_shell()
+    }
 }
 
 #[cfg(feature = "panther-hardware")]
@@ -813,6 +891,10 @@ fn main() {
         #[cfg(feature = "panther-hardware")]
         shell_child: None,
         #[cfg(feature = "panther-hardware")]
+        shell_socket_name: String::new(),
+        #[cfg(feature = "panther-hardware")]
+        shell_restart_budget: RestartBudget::default(),
+        #[cfg(feature = "panther-hardware")]
         presentation_started: Instant::now(),
         _wl_output: wl_output,
         output_width,
@@ -847,12 +929,26 @@ fn main() {
 
     #[cfg(feature = "panther-hardware")]
     {
-        let child = spawn_shell(&socket_name).unwrap_or_else(|error| {
-            eprintln!("saai-displayd: {error}");
-            std::process::exit(70);
-        });
-        println!("saai-displayd: started saai-shell pid={}", child.id());
-        state.shell_child = Some(child);
+        handle
+            .insert_source(
+                Signals::new(&[Signal::SIGCHLD]).expect("failed to listen for SIGCHLD"),
+                |event, _, state: &mut State| {
+                    if event.signal() == Signal::SIGCHLD && !state.handle_shell_sigchld() {
+                        eprintln!(
+                            "saai-displayd: saai-shell restart budget exhausted; exiting for PID 1 fallback"
+                        );
+                        std::process::exit(SHELL_FAILURE_EXIT_CODE);
+                    }
+                },
+            )
+            .expect("failed to register SIGCHLD source");
+        state.shell_socket_name = socket_name.clone();
+        if !state.launch_shell() {
+            eprintln!(
+                "saai-displayd: saai-shell restart budget exhausted during launch; exiting for PID 1 fallback"
+            );
+            std::process::exit(SHELL_FAILURE_EXIT_CODE);
+        }
     }
 
     let display_fd = display
@@ -962,4 +1058,33 @@ fn main() {
                 .expect("flush_clients failed");
         })
         .expect("event loop failed");
+}
+
+#[cfg(test)]
+mod supervision_tests {
+    use super::{RestartBudget, SHELL_RESTART_LIMIT, SHELL_RESTART_WINDOW};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn third_shell_failure_inside_window_exhausts_budget() {
+        let mut budget = RestartBudget::default();
+        let start = Instant::now();
+        assert_eq!(budget.record_failure(start), 1);
+        assert_eq!(budget.record_failure(start + Duration::from_secs(1)), 2);
+        assert_eq!(
+            budget.record_failure(start + Duration::from_secs(2)),
+            SHELL_RESTART_LIMIT
+        );
+    }
+
+    #[test]
+    fn failures_older_than_window_do_not_count() {
+        let mut budget = RestartBudget::default();
+        let start = Instant::now();
+        assert_eq!(budget.record_failure(start), 1);
+        assert_eq!(
+            budget.record_failure(start + SHELL_RESTART_WINDOW),
+            1
+        );
+    }
 }
