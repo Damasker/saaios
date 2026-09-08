@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `Done`.
+- Состояние: `Provisional` (implementation Evidence exists; sprint gate held until S01 physical Evidence #28).
 - Зависит от: S03.
 - Архитектурные решения: ADR-005 (три компонента: `saai-displayd`/
   `saai-shell`/`saai-appd`), ADR-007 (Smithay), ADR-009 (supervision/
