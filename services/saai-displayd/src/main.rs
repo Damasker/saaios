@@ -180,6 +180,7 @@ const SAAI_SHELL_PATH: &str = "/saaios/saai-shell";
 
 const SHELL_RESTART_LIMIT: usize = 3;
 const SHELL_RESTART_WINDOW: Duration = Duration::from_secs(60);
+#[cfg(feature = "panther-hardware")]
 const SHELL_FAILURE_EXIT_CODE: i32 = 71;
 
 #[derive(Default)]
