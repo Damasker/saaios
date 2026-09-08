@@ -93,7 +93,10 @@ fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                 let mut value = String::new();
                 while cursor < bytes.len() && bytes[cursor] != b'"' {
                     let rest = &source[cursor..];
-                    let ch = rest.chars().next().ok_or_else(|| error(start, "invalid UTF-8"))?;
+                    let ch = rest
+                        .chars()
+                        .next()
+                        .ok_or_else(|| error(start, "invalid UTF-8"))?;
                     if ch == '\\' {
                         return Err(error(cursor, "escapes are not supported in SUI v1"));
                     }
@@ -273,7 +276,12 @@ impl Parser {
         self.tokens
             .get(self.cursor)
             .map(|token| token.offset)
-            .unwrap_or_else(|| self.tokens.last().map(|token| token.offset + 1).unwrap_or(0))
+            .unwrap_or_else(|| {
+                self.tokens
+                    .last()
+                    .map(|token| token.offset + 1)
+                    .unwrap_or(0)
+            })
     }
 
     fn fail(&self, message: impl Into<String>) -> CompileError {
