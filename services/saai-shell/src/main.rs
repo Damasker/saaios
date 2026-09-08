@@ -63,6 +63,8 @@
 
 use std::time::{Duration, Instant};
 
+mod render;
+
 use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
@@ -122,33 +124,13 @@ enum RootPage {
 }
 
 impl RootPage {
-    /// Full-brightness fill for this page's content area, and for its
-    /// own tab-bar segment when it's the active one. Each combines only
-    /// the R and G byte positions the lock-surface diagnostic actually
-    /// confirmed (see SessionLockHandler::configure's comment) --
-    /// byte-index 0's real channel was never characterized, so it's
-    /// left at 0 everywhere rather than guessed at.
-    fn color(self) -> [u8; 4] {
-        // Byte-index 1 = R, byte-index 2 = G (empirically confirmed by
-        // the lock-surface diagnostic, SessionLockHandler::configure's
-        // comment) -- an earlier version of this function had these
-        // two positions swapped, which physically showed up as green
-        // instead of red for `Now` (confirmed on hardware: the
-        // constants below are the corrected version).
+    fn index(self) -> usize {
         match self {
-            RootPage::Now => [0x00, 0xd0, 0x00, 0x00],
-            RootPage::Inbox => [0x00, 0x00, 0xd0, 0x00],
-            RootPage::Spaces => [0x00, 0x60, 0xd0, 0x00],
-            RootPage::Me => [0x00, 0xd0, 0x60, 0x00],
+            RootPage::Now => 0,
+            RootPage::Inbox => 1,
+            RootPage::Spaces => 2,
+            RootPage::Me => 3,
         }
-    }
-
-    /// Dimmed version of `color()`, for this page's tab-bar segment
-    /// when it's *not* the active page -- the only signal this client
-    /// has for "which tab is selected" without any text rendering.
-    fn dim_color(self) -> [u8; 4] {
-        let [b, g, r, x] = self.color();
-        [b / 3, g / 3, r / 3, x]
     }
 }
 
@@ -600,13 +582,10 @@ impl LayerShellHandler for Shell {
             )
             .expect("create buffer");
 
-        // Yellow (R + G, both empirically confirmed by the lock-surface
-        // diagnostic above) -- deliberately avoids byte-index 0, whose
-        // real channel was never characterized (it produced no visible
-        // output in that test; unclear if that's a true "blue" too dark
-        // to read or genuinely unused). Distinct from both the
-        // toplevel's dark slate and the lock surface's red.
-        let pixel: [u8; 4] = [0x00, 0xd0, 0xd0, 0x00];
+        // The status surface is part of the permanent phone chrome now, not
+        // the old yellow protocol probe. Its panel packing comes from the
+        // same calibrated palette as the toplevel renderer.
+        let pixel = render::BACKGROUND;
         for chunk in canvas.chunks_exact_mut(4) {
             chunk.copy_from_slice(&pixel);
         }
@@ -799,36 +778,17 @@ impl Shell {
 
         let view = root_view(width, height);
         let content_rect = view.children[0].rect;
-        let tab_nodes = &view.children[1].children;
-        let pages_by_x: Vec<RootPage> = (0..width)
-            .map(|x| {
-                tab_nodes
-                    .iter()
-                    .find(|node| node.rect.contains(x as f64, node.rect.y as f64))
-                    .and_then(|node| page_from_id(&node.id))
-                    .unwrap_or(RootPage::Now)
-            })
-            .collect();
-        let content_pixel = self.current_page.color();
-        for y in 0..height {
-            let row_start = (y * width) as usize * 4;
-            let row = &mut canvas[row_start..row_start + width as usize * 4];
-            if y < content_rect.height {
-                for chunk in row.chunks_exact_mut(4) {
-                    chunk.copy_from_slice(&content_pixel);
-                }
-            } else {
-                for (x, chunk) in row.chunks_exact_mut(4).enumerate() {
-                    let page = pages_by_x[x];
-                    let pixel = if page == self.current_page {
-                        page.color()
-                    } else {
-                        page.dim_color()
-                    };
-                    chunk.copy_from_slice(&pixel);
-                }
-            }
-        }
+        let tabs = view.children[1]
+            .children
+            .iter()
+            .map(|node| node.rect)
+            .collect::<Vec<_>>();
+        render::draw_root(
+            &mut render::Canvas::new(canvas, width, height),
+            content_rect,
+            &tabs,
+            self.current_page.index(),
+        );
 
         self.window
             .wl_surface()
