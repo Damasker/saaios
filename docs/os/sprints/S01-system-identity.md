@@ -123,8 +123,8 @@ verification (Issue #28).
 
 ### Physical verification checklist (required to close S01)
 
-1. Build image from merged #26 commit; record filename, size, SHA-256, source
-   commit.
+1. Build image from shared HEAD that includes merged #26 **and** #31
+   (PR #33); record filename, size, SHA-256, source commit.
 2. Flash only slot A after explicit operator approval; keep Android slot B.
 3. Confirm status/tool/prompt share one DeviceContext object.
 4. Exercise idle → running → success and error/retry per UX contract; prove
