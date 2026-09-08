@@ -132,6 +132,27 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        // Every commit that requested a frame callback (`wl_surface.frame`)
+        // gets it acknowledged here, unconditionally -- there was no
+        // frame-callback handling at all before this, so any client
+        // logic gated on "wait for done before drawing the next frame"
+        // (this includes both saai-shell and saai-demo-surface, via
+        // WaylandSurface's usual redraw pattern) would simply hang
+        // forever. Not tied to actual scanout timing (no damage
+        // tracking / per-output primary-scanout bookkeeping exists in
+        // this compositor) -- good enough for "the client can proceed",
+        // which is the only thing anything here currently depends on.
+        let time_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u32)
+            .unwrap_or(0);
+        with_states(surface, |states| {
+            let mut guard = states.cached_state.get::<SurfaceAttributes>();
+            for callback in guard.current().frame_callbacks.drain(..) {
+                callback.done(time_ms);
+            }
+        });
+
         let buffer = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             match &guard.current().buffer {
@@ -291,8 +312,16 @@ impl XdgShellHandler for State {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         println!("saai-displayd: new xdg_toplevel");
+        // Was hardcoded to 800x480 (an S02 headless-test leftover, from
+        // before the real panther panel size was known) regardless of
+        // what the client actually asked for -- real bug, confirmed on
+        // hardware: saai-shell's own fullscreen request was silently
+        // overridden by this every single time, so every visual test
+        // this sprint ran against an 800x480 toplevel, not the real
+        // 1080x2400 panel.
+        let (width, height) = (self.output_width, self.output_height);
         surface.with_pending_state(|state| {
-            state.size = Some((800, 480).into());
+            state.size = Some((width, height).into());
         });
         surface.send_configure();
         self.toplevels.insert(surface.wl_surface().clone(), surface);
