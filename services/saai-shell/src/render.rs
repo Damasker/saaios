@@ -59,12 +59,7 @@ impl<'a> Canvas<'a> {
     }
 }
 
-pub fn draw_root(
-    canvas: &mut Canvas<'_>,
-    content: Rect,
-    tabs: &[Rect],
-    selected: usize,
-) {
+pub fn draw_root(canvas: &mut Canvas<'_>, content: Rect, tabs: &[Rect], selected: usize) {
     canvas.fill(BACKGROUND);
 
     // A stable phone-like content surface. The number of rows changes per
@@ -132,7 +127,8 @@ pub fn draw_root(
         let icon_size = if is_selected { 76 } else { 54 };
         canvas.fill_rect(
             Rect::new(
-                rect.x.saturating_add(rect.width.saturating_sub(icon_size) / 2),
+                rect.x
+                    .saturating_add(rect.width.saturating_sub(icon_size) / 2),
                 rect.y.saturating_add(70),
                 icon_size,
                 icon_size,
