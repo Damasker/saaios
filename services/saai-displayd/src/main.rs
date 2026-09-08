@@ -5,9 +5,9 @@ use std::io::BufRead;
 #[cfg(feature = "panther-hardware")]
 use std::process::{Child, Command};
 use std::rc::Rc;
-use std::sync::Arc;
 #[cfg(feature = "panther-hardware")]
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "panther-hardware")]
