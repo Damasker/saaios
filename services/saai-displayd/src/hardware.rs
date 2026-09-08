@@ -27,6 +27,7 @@ use smithay::backend::drm::dumb::{framebuffer_from_dumb_buffer, DumbFramebuffer}
 use smithay::backend::drm::{
     DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmSurface, PlaneConfig, PlaneState,
 };
+use smithay::reexports::drm::buffer::Buffer as DrmBufferTrait;
 use smithay::reexports::drm::control::{
     connector, dumbbuffer::DumbBuffer as RawDumbBuffer, Device as ControlDevice,
 };
@@ -139,13 +140,17 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
     let framebuffer = framebuffer_from_dumb_buffer(&drm_fd, &dumb_buffer, true)
         .map_err(|e| format!("framebuffer_from_dumb_buffer failed: {e}"))?;
 
-    let stride = {
-        let mut handle_copy = raw_handle;
-        let mapping = drm_fd
-            .map_dumb_buffer(&mut handle_copy)
-            .map_err(|e| format!("initial map_dumb_buffer failed: {e}"))?;
-        mapping.as_ref().len() as u32 / mode_h as u32
-    };
+    // The kernel's own CREATE_DUMB response, not derived from anything --
+    // deriving it from `mmap`'s mapped length (as this used to) is wrong:
+    // mmap rounds the mapping up to whole pages, so `len() / height` only
+    // recovers the true per-row stride when height happens to divide the
+    // padded size evenly. On the real 1080x2400 panel it silently
+    // returned 4321 instead of 4320 (1080 * 4) -- a 1-byte-per-row drift
+    // that compounds down the buffer and showed up as a diagonal
+    // shear/wash-out across the whole frame, worse the taller the
+    // surface (mild on the 480-row demo pattern, total on a full
+    // 2400-row lock surface fill).
+    let stride = raw_handle.pitch();
 
     let mut output = HardwareOutput {
         drm_fd,
