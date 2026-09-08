@@ -1,6 +1,8 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(not(feature = "panther-hardware"))]
 use std::io::BufRead;
+use std::rc::Rc;
 use std::sync::Arc;
 
 #[cfg(feature = "panther-hardware")]
@@ -365,8 +367,17 @@ impl WlrLayerShellHandler for State {
 delegate_layer_shell!(State);
 
 fn main() {
-    let mut display: Display<State> = Display::new().expect("failed to create display");
-    let dh: DisplayHandle = display.handle();
+    // Rc<RefCell<>>, not a plain owned value moved into one closure: the
+    // display needs to be reachable from every event source that can
+    // queue outgoing protocol messages (the socket/client-readable
+    // source, but also touch input below, and potentially more later),
+    // plus the end-of-iteration flush that actually guarantees delivery
+    // -- see the flush_clients() comment near the bottom of main() for
+    // why that end-of-iteration call is the one that actually matters.
+    let display: Rc<RefCell<Display<State>>> = Rc::new(RefCell::new(
+        Display::new().expect("failed to create display"),
+    ));
+    let dh: DisplayHandle = display.borrow().handle();
 
     let compositor_state = CompositorState::new::<State>(&dh);
     let shm_state = ShmState::new::<State>(&dh, Vec::new());
@@ -583,18 +594,37 @@ fn main() {
         .expect("failed to insert socket source");
 
     let display_fd = display
+        .borrow_mut()
         .backend()
         .poll_fd()
         .try_clone_to_owned()
         .expect("failed to clone display fd");
+    let display_for_fd = display.clone();
     handle
         .insert_source(
             Generic::new(display_fd, Interest::READ, Mode::Level),
             move |_, _, state: &mut State| {
-                display
+                display_for_fd
+                    .borrow_mut()
                     .dispatch_clients(state)
                     .expect("dispatch_clients failed");
-                display.flush_clients().expect("flush_clients failed");
+                // No flush_clients() here anymore -- moved to the
+                // per-iteration callback at the bottom of main() instead,
+                // so it runs regardless of which source fired (this one
+                // only runs when a *client* has sent something, making
+                // this fd readable -- a protocol event queued from some
+                // *other* source, like touch input below, would never
+                // reach that code path at all). That move is a real,
+                // independent correctness fix, but it did NOT resolve
+                // the touch-delivery bug documented below -- see the
+                // known-limitations entry in the S04 sprint doc: with
+                // this same per-iteration flush active, WAYLAND_DEBUG=1
+                // on the client still showed zero incoming wl_touch
+                // messages, even though server-side instrumentation
+                // (added and removed during diagnosis) confirmed
+                // touch.down()/up() dispatch all the way down to the
+                // wl_touch resource's own protocol-send call succeeding.
+                // Root cause not yet found.
                 Ok(PostAction::Continue)
             },
         )
@@ -657,6 +687,17 @@ fn main() {
 
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");
     event_loop
-        .run(None, &mut state, |_| {})
+        .run(None, &mut state, move |_| {
+            // Runs after *every* event loop iteration regardless of
+            // which source fired -- a real fix for the general "only the
+            // client-readable source used to flush" gap (see the comment
+            // above at display_for_fd's closure). Necessary, but proven
+            // NOT sufficient on its own for the touch-delivery bug --
+            // see the known-limitations entry in the S04 sprint doc.
+            display
+                .borrow_mut()
+                .flush_clients()
+                .expect("flush_clients failed");
+        })
         .expect("event loop failed");
 }
