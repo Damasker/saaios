@@ -2100,6 +2100,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "saai-ui-compiler"
+version = "0.1.0"
+
+[[package]]
 name = "saai-ui-core"
 version = "0.1.0"
 
