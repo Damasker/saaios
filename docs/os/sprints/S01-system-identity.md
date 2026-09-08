@@ -17,9 +17,10 @@ SaaiOS достоверно отвечает как работающая ОС т
 
 ## Current state
 
-Runtime имеет реальные Linux tools, но системный prompt не содержит локальную
-идентичность. Экран называется `ASSISTANT`, а свободный запрос физически вернул
-ложное утверждение `SAAIOS SYSTEM IS NOT INSTALLED IN YOUR PHONE`.
+Repo-side gate closed: single `DeviceContext`, bootconfig-first identity, early
+PID1 target, and four-state `CHECK DEVICE` UX are on shared HEAD (`da4005e`+).
+Evidence image is built and unflashed (see passport). Physical close is blocked
+only on operator attaching Pixel 7 for Issue #28.
 
 ## Scope
 
