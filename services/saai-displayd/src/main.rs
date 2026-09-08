@@ -1082,9 +1082,6 @@ mod supervision_tests {
         let mut budget = RestartBudget::default();
         let start = Instant::now();
         assert_eq!(budget.record_failure(start), 1);
-        assert_eq!(
-            budget.record_failure(start + SHELL_RESTART_WINDOW),
-            1
-        );
+        assert_eq!(budget.record_failure(start + SHELL_RESTART_WINDOW), 1);
     }
 }
