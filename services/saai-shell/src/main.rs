@@ -22,21 +22,46 @@
 //! touch routing still only knows `focused_surface`/`lock_surface`,
 //! not layer surfaces) -- both are follow-up work, not this step's
 //! goal.
+//!
+//! Change step 5 ports drm-splash.c's lock/idle behavior: boots locked
+//! (matching `bool locked = true` at the top of drm-splash's own main
+//! loop -- this was never a Change-4-only test hack, it's the real
+//! boot-to-lock-screen behavior a phone is expected to have), unlocks
+//! on a touch-down-then-release over the lock surface, and re-locks
+//! after 60s of no touch activity while unlocked. Two things
+//! drm-splash.c also does are deliberately NOT ported here:
+//! - **Display power off.** drm-splash calls `disable_display()`
+//!   (blanks the CRTC) on the same idle timeout. That's a DRM
+//!   operation only saai-displayd can perform (ADR-005/010: this
+//!   client gets no DRM access), and no protocol/IPC to ask for it
+//!   exists yet -- needs its own design (`ext-idle-notify-v1` +
+//!   `wlr-output-power-management-v1`, or a private mechanism), not
+//!   assumed here. The panel simply stays on and shows the lock
+//!   surface indefinitely instead of the phone-realistic
+//!   dim-then-blank sequence.
+//! - **Haptic feedback on unlock.** drm-splash opens `/dev/input/haptic`
+//!   directly. This client has no raw evdev access either (same
+//!   ADR-005/010 boundary) and there's no existing path to ask
+//!   saai-displayd to play a haptic effect on this client's behalf.
+//!
+//! Both are logged as known limitations in the S04 sprint doc, not
+//! silently dropped.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
-    protocol::{wl_output, wl_shm, wl_surface},
+    protocol::{wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
     Connection, QueueHandle,
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_session_lock,
-    delegate_shm, delegate_xdg_shell, delegate_xdg_window,
+    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_seat,
+    delegate_session_lock, delegate_shm, delegate_touch, delegate_xdg_shell, delegate_xdg_window,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
+    seat::{touch::TouchHandler, Capability, SeatHandler, SeatState},
     session_lock::{
         SessionLock, SessionLockHandler, SessionLockState, SessionLockSurface,
         SessionLockSurfaceConfigure,
@@ -57,6 +82,9 @@ use smithay_client_toolkit::{
         Shm, ShmHandler,
     },
 };
+
+/// Matches drm-splash.c's own idle-to-lock constant.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn main() {
     let conn = Connection::connect_to_env().expect("failed to connect to Wayland display");
@@ -115,6 +143,8 @@ fn main() {
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
+        seat_state: SeatState::new(&globals, &qh),
+        touch: None,
         compositor,
         shm,
         exit: false,
@@ -129,6 +159,9 @@ fn main() {
         lock_surfaces: Vec::new(),
         lock_pool: None,
         lock_buffer: None,
+        locked: true,
+        unlock_pending: false,
+        last_activity: Instant::now(),
         layer,
         layer_width: 0,
         layer_height: 120,
@@ -138,11 +171,9 @@ fn main() {
 
     println!("saai-shell: connected, toplevel created");
 
-    // Change 4 test trigger: lock immediately so the security property
-    // (touch reaches only the lock surface, never the toplevel
-    // underneath) can be verified physically without needing a real
-    // idle timeout yet -- that's Change step 5, ported from
-    // drm-splash.c's own 60s idle-to-lock behavior.
+    // Boots locked, matching drm-splash.c's own `bool locked = true` at
+    // the top of its main loop -- a phone that boots straight to an
+    // unlocked launcher would be a real regression, not a simplification.
     shell.session_lock = Some(
         shell
             .session_lock_state
@@ -155,12 +186,15 @@ fn main() {
         event_loop
             .dispatch(Duration::from_millis(16), &mut shell)
             .expect("event loop dispatch failed");
+        shell.check_idle_timeout(&qh);
     }
 }
 
 struct Shell {
     registry_state: RegistryState,
     output_state: OutputState,
+    seat_state: SeatState,
+    touch: Option<wl_touch::WlTouch>,
     compositor: CompositorState,
     shm: Shm,
 
@@ -180,6 +214,18 @@ struct Shell {
     /// still needs to read after `commit()` returns.
     lock_pool: Option<SlotPool>,
     lock_buffer: Option<Buffer>,
+    /// Mirrors saai-displayd's own `locked` bool -- this client is the
+    /// only one that ever calls lock()/unlock(), so tracking it here
+    /// (rather than round-tripping through the server) is enough to
+    /// drive the idle timer and the touch-to-unlock gesture.
+    locked: bool,
+    /// Set on a touch-down that started on the lock surface while
+    /// locked; the matching touch-up is what actually unlocks (mirrors
+    /// drm-splash.c requiring touch *release* over the lock screen, not
+    /// just a touch-start, so a drag-through or accidental brush
+    /// doesn't unlock).
+    unlock_pending: bool,
+    last_activity: Instant,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -303,6 +349,7 @@ impl ShmHandler for Shell {
 impl SessionLockHandler for Shell {
     fn locked(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, session_lock: SessionLock) {
         println!("saai-shell: session locked, creating lock surface(s)");
+        self.locked = true;
         for output in self.output_state.outputs() {
             let surface = self.compositor.create_surface(qh);
             let lock_surface = session_lock.create_lock_surface(surface, &output, qh);
@@ -322,6 +369,7 @@ impl SessionLockHandler for Shell {
         println!("saai-shell: session lock finished (refused or dropped)");
         self.session_lock = None;
         self.lock_surfaces.clear();
+        self.locked = false;
     }
 
     fn configure(
@@ -439,11 +487,136 @@ impl LayerShellHandler for Shell {
     }
 }
 
+impl SeatHandler for Shell {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+
+    fn new_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {}
+
+    fn new_capability(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        // No pointer/keyboard handling -- this is a touchscreen-only
+        // device (ADR-012 already made the same call for saai-displayd).
+        if capability == Capability::Touch && self.touch.is_none() {
+            match self.seat_state.get_touch(qh, &seat) {
+                Ok(touch) => self.touch = Some(touch),
+                Err(err) => eprintln!("saai-shell: failed to get wl_touch: {err}"),
+            }
+        }
+    }
+
+    fn remove_capability(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        if capability == Capability::Touch {
+            if let Some(touch) = self.touch.take() {
+                touch.release();
+            }
+        }
+    }
+
+    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {
+    }
+}
+
+impl TouchHandler for Shell {
+    fn down(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _serial: u32,
+        _time: u32,
+        surface: wl_surface::WlSurface,
+        _id: i32,
+        _position: (f64, f64),
+    ) {
+        self.last_activity = Instant::now();
+        self.unlock_pending = self.locked
+            && self
+                .lock_surfaces
+                .iter()
+                .any(|ls| *ls.wl_surface() == surface);
+    }
+
+    fn up(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _serial: u32,
+        _time: u32,
+        _id: i32,
+    ) {
+        self.last_activity = Instant::now();
+        // Release, not just touch-start, is what unlocks -- matches
+        // drm-splash.c's own `touch_released` gate, so a drag that
+        // starts on the lock surface but ends elsewhere (or a
+        // multi-touch gesture) doesn't unlock by accident.
+        if self.unlock_pending {
+            self.unlock_pending = false;
+            if let Some(session_lock) = self.session_lock.take() {
+                session_lock.unlock();
+            }
+            self.lock_surfaces.clear();
+            self.locked = false;
+            println!("saai-shell: unlocked by touch");
+        }
+        let _ = qh;
+    }
+
+    fn motion(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _time: u32,
+        _id: i32,
+        _position: (f64, f64),
+    ) {
+    }
+
+    fn shape(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _id: i32,
+        _major: f64,
+        _minor: f64,
+    ) {
+    }
+
+    fn orientation(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _touch: &wl_touch::WlTouch,
+        _id: i32,
+        _orientation: f64,
+    ) {
+    }
+
+    fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
+        self.unlock_pending = false;
+    }
+}
+
 impl Shell {
     /// Solid placeholder fill -- proves the real client<->compositor
     /// vertical slice end to end (surface creation, configure, SHM
-    /// buffer, commit, frame callback). Actual shell content (lock
-    /// screen, four sections) is Change step 5/6.
+    /// buffer, commit, frame callback). Actual shell content (four
+    /// sections) is Change step 6.
     fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
         let width = self.width;
         let height = self.height;
@@ -497,13 +670,31 @@ impl Shell {
             .expect("buffer attach");
         self.window.commit();
     }
+
+    /// Re-locks after `IDLE_TIMEOUT` of no touch activity while
+    /// unlocked -- matches drm-splash.c's own 1s-granularity idle poll,
+    /// just driven by this event loop's existing 16ms tick instead of a
+    /// separate timer source.
+    fn check_idle_timeout(&mut self, qh: &QueueHandle<Self>) {
+        if self.locked || self.last_activity.elapsed() < IDLE_TIMEOUT {
+            return;
+        }
+        println!("saai-shell: idle timeout, locking");
+        self.last_activity = Instant::now();
+        match self.session_lock_state.lock(qh) {
+            Ok(session_lock) => self.session_lock = Some(session_lock),
+            Err(err) => eprintln!("saai-shell: failed to re-lock: {err}"),
+        }
+    }
 }
 
 delegate_compositor!(Shell);
 delegate_layer!(Shell);
 delegate_output!(Shell);
+delegate_seat!(Shell);
 delegate_session_lock!(Shell);
 delegate_shm!(Shell);
+delegate_touch!(Shell);
 delegate_xdg_shell!(Shell);
 delegate_xdg_window!(Shell);
 delegate_registry!(Shell);
@@ -512,5 +703,5 @@ impl ProvidesRegistryState for Shell {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }
-    registry_handlers![OutputState];
+    registry_handlers![OutputState, SeatState];
 }
