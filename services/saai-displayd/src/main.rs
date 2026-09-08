@@ -4,13 +4,21 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::rc::Rc;
 use std::sync::Arc;
+#[cfg(feature = "panther-hardware")]
+use std::time::Instant;
 
 #[cfg(feature = "panther-hardware")]
 mod hardware;
+#[cfg(any(feature = "panther-hardware", test))]
+mod presentation;
 #[cfg(feature = "panther-hardware")]
 mod touch;
 
 use sha2::{Digest, Sha256};
+#[cfg(feature = "panther-hardware")]
+use smithay::backend::drm::DrmEvent;
+#[cfg(feature = "panther-hardware")]
+use smithay::desktop::utils::send_frames_surface_tree;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
@@ -56,6 +64,15 @@ struct SaaiClientState {
 }
 impl ClientData for SaaiClientState {}
 
+#[cfg(feature = "panther-hardware")]
+#[derive(Clone)]
+struct SurfaceFrame {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    stride: u32,
+}
+
 struct State {
     compositor_state: CompositorState,
     shm_state: ShmState,
@@ -80,6 +97,12 @@ struct State {
     toplevels: HashMap<WlSurface, ToplevelSurface>,
     #[cfg(feature = "panther-hardware")]
     hardware: Option<hardware::HardwareOutput>,
+    #[cfg(feature = "panther-hardware")]
+    surface_frames: HashMap<WlSurface, Rc<SurfaceFrame>>,
+    #[cfg(feature = "panther-hardware")]
+    presentation: presentation::PresentationState,
+    #[cfg(feature = "panther-hardware")]
+    started: Instant,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
     /// Kept alive for the lifetime of the process -- not because the
@@ -108,6 +131,96 @@ struct State {
     /// layer surface renders but cannot receive touch input in this
     /// step -- known limitation, not a goal of this vertical slice.
     layer_surfaces: Vec<LayerSurface>,
+}
+
+#[cfg(feature = "panther-hardware")]
+impl State {
+    fn visible_surfaces(&self) -> Vec<WlSurface> {
+        if self.locked {
+            return self
+                .lock_surface
+                .as_ref()
+                .map(|surface| vec![surface.wl_surface().clone()])
+                .unwrap_or_default();
+        }
+
+        let mut surfaces = Vec::new();
+        if let Some(surface) = self.focused_surface.as_ref() {
+            surfaces.push(surface.clone());
+        }
+        surfaces.extend(
+            self.layer_surfaces
+                .iter()
+                .map(|surface| surface.wl_surface().clone()),
+        );
+        surfaces
+    }
+
+    fn request_repaint(&mut self) {
+        self.presentation.request_repaint();
+        self.try_present();
+    }
+
+    fn try_present(&mut self) {
+        if !self.presentation.can_render() {
+            return;
+        }
+        if self
+            .hardware
+            .as_ref()
+            .is_some_and(hardware::HardwareOutput::page_flip_pending)
+        {
+            return;
+        }
+
+        // Copy the small scene description before mutably borrowing the
+        // output. Client SHM is already copied at commit time, so the DRM
+        // back buffer never aliases memory a client can rewrite.
+        let frames: Vec<Rc<SurfaceFrame>> = self
+            .visible_surfaces()
+            .iter()
+            .filter_map(|surface| self.surface_frames.get(surface).cloned())
+            .collect();
+
+        let Some(output) = self.hardware.as_mut() else {
+            return;
+        };
+        output.fill(0, 0, 0);
+        for frame in frames {
+            output.blit(&frame.pixels, frame.width, frame.height, frame.stride);
+        }
+        match output.queue_page_flip() {
+            Ok(()) => self.presentation.queued(),
+            Err(err) => {
+                // Keep the dirty bit set. A subsequent client/input/DRM
+                // event will retry without spinning the event loop.
+                eprintln!("saai-displayd: hardware page flip failed: {err}");
+            }
+        }
+    }
+
+    fn drm_event(&mut self, event: DrmEvent) {
+        match event {
+            DrmEvent::VBlank(_) => {
+                if let Some(output) = self.hardware.as_mut() {
+                    output.page_flip_complete();
+                }
+                self.presentation.vblank();
+
+                let output = self._wl_output.clone();
+                let time = self.started.elapsed();
+                for surface in self.visible_surfaces() {
+                    send_frames_surface_tree(&surface, &output, time, None, |_, _| {
+                        Some(output.clone())
+                    });
+                }
+                self.try_present();
+            }
+            DrmEvent::Error(err) => {
+                eprintln!("saai-displayd: DRM event error: {err}");
+            }
+        }
+    }
 }
 
 impl CompositorHandler for State {
@@ -178,7 +291,7 @@ impl CompositorHandler for State {
         // focus first would skip blitting that frame -- the display would
         // only ever show the initial fill from hardware::init() and never
         // this (or any) client's actual content.
-        if self.focused_surface.is_none() {
+        if self.focused_surface.is_none() && self.toplevels.contains_key(surface) {
             self.focused_surface = Some(surface.clone());
             #[cfg(not(feature = "panther-hardware"))]
             {
@@ -220,13 +333,17 @@ impl CompositorHandler for State {
                                 .iter()
                                 .any(|ls| ls.wl_surface() == surface)
                     };
+                    self.surface_frames.insert(
+                        surface.clone(),
+                        Rc::new(SurfaceFrame {
+                            pixels: _pixels,
+                            width: _width,
+                            height: _height,
+                            stride: _stride,
+                        }),
+                    );
                     if should_present {
-                        if let Some(hw) = self.hardware.as_mut() {
-                            hw.blit(&_pixels, _width, _height, _stride);
-                            if let Err(err) = hw.present(false) {
-                                eprintln!("saai-displayd: hardware present failed: {err}");
-                            }
-                        }
+                        self.request_repaint();
                     }
                 }
             }
@@ -265,8 +382,9 @@ impl XdgShellHandler for State {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         println!("saai-displayd: new xdg_toplevel");
+        let (width, height) = (self.output_width, self.output_height);
         surface.with_pending_state(|state| {
-            state.size = Some((800, 480).into());
+            state.size = Some((width, height).into());
         });
         surface.send_configure();
         self.toplevels.insert(surface.wl_surface().clone(), surface);
@@ -276,6 +394,11 @@ impl XdgShellHandler for State {
         self.toplevels.remove(surface.wl_surface());
         if self.focused_surface.as_ref() == Some(surface.wl_surface()) {
             self.focused_surface = None;
+        }
+        #[cfg(feature = "panther-hardware")]
+        {
+            self.surface_frames.remove(surface.wl_surface());
+            self.request_repaint();
         }
     }
 
@@ -310,13 +433,20 @@ impl SessionLockHandler for State {
         // covers the normal startup case.
         println!("saai-displayd: session lock requested");
         self.locked = true;
+        #[cfg(feature = "panther-hardware")]
+        self.request_repaint();
         confirmation.lock();
     }
 
     fn unlock(&mut self) {
         println!("saai-displayd: session unlocked");
         self.locked = false;
-        self.lock_surface = None;
+        if let Some(_surface) = self.lock_surface.take() {
+            #[cfg(feature = "panther-hardware")]
+            self.surface_frames.remove(_surface.wl_surface());
+        }
+        #[cfg(feature = "panther-hardware")]
+        self.request_repaint();
     }
 
     fn new_surface(&mut self, surface: LockSurface, _output: WlOutput) {
@@ -326,6 +456,10 @@ impl SessionLockHandler for State {
             state.size = Some((width as u32, height as u32).into());
         });
         surface.send_configure();
+        if let Some(_previous) = self.lock_surface.take() {
+            #[cfg(feature = "panther-hardware")]
+            self.surface_frames.remove(_previous.wl_surface());
+        }
         self.lock_surface = Some(surface);
     }
 }
@@ -362,6 +496,11 @@ impl WlrLayerShellHandler for State {
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
         self.layer_surfaces.retain(|ls| ls != &surface);
+        #[cfg(feature = "panther-hardware")]
+        {
+            self.surface_frames.remove(surface.wl_surface());
+            self.request_repaint();
+        }
     }
 }
 delegate_layer_shell!(State);
@@ -398,7 +537,9 @@ fn main() {
     #[cfg(feature = "panther-hardware")]
     let hardware = match hardware::init() {
         Ok((hw, drm_notifier)) => {
-            if let Err(err) = handle.insert_source(drm_notifier, |_event, _, _state| {}) {
+            if let Err(err) = handle.insert_source(drm_notifier, |event, _, state| {
+                state.drm_event(event);
+            }) {
                 eprintln!("saai-displayd: failed to register DRM notifier: {err}");
             }
             println!("saai-displayd: hardware output initialized");
@@ -562,6 +703,12 @@ fn main() {
         touch,
         #[cfg(feature = "panther-hardware")]
         hardware,
+        #[cfg(feature = "panther-hardware")]
+        surface_frames: HashMap::new(),
+        #[cfg(feature = "panther-hardware")]
+        presentation: presentation::PresentationState::default(),
+        #[cfg(feature = "panther-hardware")]
+        started: Instant::now(),
         _wl_output: wl_output,
         output_width,
         output_height,

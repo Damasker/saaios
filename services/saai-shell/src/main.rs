@@ -115,7 +115,7 @@ fn main() {
     // system shell, not an app; matches drm-splash.c's own fixed
     // 1080x2400 panel assumption for now (real multi-output handling is
     // future work, not this vertical slice).
-    window.set_min_size(Some((1080, 2400)));
+    window.set_fullscreen(None);
     window.commit();
 
     // Second half of ADR-015 (Change 4): a real system-surface layer,

@@ -39,14 +39,20 @@ pub struct HardwareOutput {
     drm_fd: DrmDeviceFd,
     surface: DrmSurface,
     plane: smithay::reexports::drm::control::plane::Handle,
-    framebuffer: DumbFramebuffer,
-    raw_handle: RawDumbBuffer,
-    // Kept alive only for its Drop impl (destroys the kernel dumb buffer);
-    // never read after allocation, writes go through `raw_handle` instead.
-    _dumb: smithay::backend::allocator::dumb::DumbBuffer,
+    frames: Vec<FrameSlot>,
+    front: usize,
+    back: usize,
+    pending: Option<usize>,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
+}
+
+struct FrameSlot {
+    framebuffer: DumbFramebuffer,
+    raw_handle: RawDumbBuffer,
+    // Kept alive for its Drop impl (destroys the kernel dumb buffer).
+    _dumb: smithay::backend::allocator::dumb::DumbBuffer,
 }
 
 pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
@@ -128,17 +134,25 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
     // vacuously true, so the "is Linear/Invalid present" check always
     // fails -> EINVAL). Dumb buffers are inherently linear, so this is the
     // only modifier that could ever be valid anyway.
-    let dumb_buffer = allocator
-        .create_buffer(
-            mode_w as u32,
-            mode_h as u32,
-            Fourcc::Xrgb8888,
-            &[smithay::backend::allocator::Modifier::Linear],
-        )
-        .map_err(|e| format!("dumb buffer allocation failed: {e}"))?;
-    let raw_handle = *dumb_buffer.handle();
-    let framebuffer = framebuffer_from_dumb_buffer(&drm_fd, &dumb_buffer, true)
-        .map_err(|e| format!("framebuffer_from_dumb_buffer failed: {e}"))?;
+    let mut frames = Vec::with_capacity(2);
+    for _ in 0..2 {
+        let dumb_buffer = allocator
+            .create_buffer(
+                mode_w as u32,
+                mode_h as u32,
+                Fourcc::Xrgb8888,
+                &[smithay::backend::allocator::Modifier::Linear],
+            )
+            .map_err(|e| format!("dumb buffer allocation failed: {e}"))?;
+        let raw_handle = *dumb_buffer.handle();
+        let framebuffer = framebuffer_from_dumb_buffer(&drm_fd, &dumb_buffer, true)
+            .map_err(|e| format!("framebuffer_from_dumb_buffer failed: {e}"))?;
+        frames.push(FrameSlot {
+            framebuffer,
+            raw_handle,
+            _dumb: dumb_buffer,
+        });
+    }
 
     // The kernel's own CREATE_DUMB response, not derived from anything --
     // deriving it from `mmap`'s mapped length (as this used to) is wrong:
@@ -150,30 +164,36 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
     // shear/wash-out across the whole frame, worse the taller the
     // surface (mild on the 480-row demo pattern, total on a full
     // 2400-row lock surface fill).
-    let stride = raw_handle.pitch();
+    let stride = frames[0].raw_handle.pitch();
 
     let mut output = HardwareOutput {
         drm_fd,
         surface,
         plane,
-        framebuffer,
-        raw_handle,
-        _dumb: dumb_buffer,
+        frames,
+        front: 0,
+        back: 1,
+        pending: None,
         width: mode_w as u32,
         height: mode_h as u32,
         stride,
     };
-    output.fill(0x00, 0x00, 0x00);
-    output.present(true)?;
+    output.fill_slot(0, 0x00, 0x00, 0x00);
+    output.fill_slot(1, 0x00, 0x00, 0x00);
+    output.initial_modeset()?;
 
     Ok((output, notifier))
 }
 
 impl HardwareOutput {
-    /// Fills the whole framebuffer with one solid XRGB8888 color.
+    /// Fills the back buffer with one solid XRGB8888 color.
     pub fn fill(&mut self, r: u8, g: u8, b: u8) {
+        self.fill_slot(self.back, r, g, b);
+    }
+
+    fn fill_slot(&mut self, slot: usize, r: u8, g: u8, b: u8) {
         let pixel = u32::from_be_bytes([0x00, r, g, b]);
-        let mut handle_copy = self.raw_handle;
+        let mut handle_copy = self.frames[slot].raw_handle;
         let mut mapping = match self.drm_fd.map_dumb_buffer(&mut handle_copy) {
             Ok(m) => m,
             Err(e) => {
@@ -191,7 +211,7 @@ impl HardwareOutput {
     /// panel size -- no scaling, matching the smallest-verifiable-step cut
     /// of this milestone. Rest of the screen keeps whatever `fill` set.
     pub fn blit(&mut self, src: &[u8], src_width: u32, src_height: u32, src_stride: u32) {
-        let mut handle_copy = self.raw_handle;
+        let mut handle_copy = self.frames[self.back].raw_handle;
         let mut mapping = match self.drm_fd.map_dumb_buffer(&mut handle_copy) {
             Ok(m) => m,
             Err(e) => {
@@ -201,11 +221,19 @@ impl HardwareOutput {
         };
         let dst = mapping.as_mut();
         let copy_w = src_width.min(self.width) as usize;
-        let copy_h = src_height.min(self.height) as usize;
+        let source_rows = if src_stride == 0 {
+            0
+        } else {
+            src.len() / src_stride as usize
+        };
+        let copy_h = (src_height.min(self.height) as usize).min(source_rows);
         for row in 0..copy_h {
             let src_off = row * src_stride as usize;
             let dst_off = row * self.stride as usize;
-            let n = copy_w * 4;
+            let n = (copy_w * 4)
+                .min(src_stride as usize)
+                .min(src.len() - src_off)
+                .min(dst.len() - dst_off);
             dst[dst_off..dst_off + n].copy_from_slice(&src[src_off..src_off + n]);
         }
         eprintln!(
@@ -214,32 +242,52 @@ impl HardwareOutput {
         );
     }
 
-    /// Pushes the current framebuffer contents to the panel. `modeset`
-    /// forces a full `commit()` (needed once, at startup); afterwards a
-    /// `page_flip()` is enough since the mode never changes. Same fb handle
-    /// every time (we mutate one dumb buffer in place rather than
-    /// double-buffering) -- confirmed fine on this hardware: the exynos
-    /// driver here doesn't implement dirty_framebuffer (ENOSYS) at all, so
-    /// a flip to an unchanged fb id is the only signal it needs or supports.
-    pub fn present(&self, modeset: bool) -> Result<(), String> {
+    fn planes_for(&self, slot: usize) -> [PlaneState; 1] {
         let config = PlaneConfig {
             src: Rectangle::from_size(Size::from((self.width as f64, self.height as f64))),
             dst: Rectangle::from_size(Size::from((self.width as i32, self.height as i32))),
             transform: Transform::Normal,
             alpha: 1.0,
             damage_clips: None,
-            fb: *self.framebuffer.as_ref(),
+            fb: *self.frames[slot].framebuffer.as_ref(),
             fence: None,
         };
-        let planes = [PlaneState {
+        [PlaneState {
             handle: self.plane,
             config: Some(config),
-        }];
-        let result = if modeset {
-            self.surface.commit(planes, false)
-        } else {
-            self.surface.page_flip(planes, false)
-        };
-        result.map_err(|e| format!("present failed: {e}"))
+        }]
+    }
+
+    fn initial_modeset(&self) -> Result<(), String> {
+        self.surface
+            .commit(self.planes_for(self.front), false)
+            .map_err(|e| format!("initial modeset failed: {e}"))
+    }
+
+    /// Queues the fully composed back buffer and requests a DRM completion
+    /// event. The buffer is not writable again until `page_flip_complete`.
+    pub fn queue_page_flip(&mut self) -> Result<(), String> {
+        if self.pending.is_some() {
+            return Err("page flip already pending".to_string());
+        }
+        let slot = self.back;
+        self.surface
+            .page_flip(self.planes_for(slot), true)
+            .map_err(|e| format!("page flip failed: {e}"))?;
+        self.pending = Some(slot);
+        Ok(())
+    }
+
+    pub fn page_flip_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Releases the old front buffer only after the kernel reports vblank.
+    pub fn page_flip_complete(&mut self) {
+        if let Some(new_front) = self.pending.take() {
+            let old_front = self.front;
+            self.front = new_front;
+            self.back = old_front;
+        }
     }
 }
