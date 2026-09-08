@@ -2,9 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(not(feature = "panther-hardware"))]
 use std::io::BufRead;
-use std::rc::Rc;
 #[cfg(feature = "panther-hardware")]
 use std::process::{Child, Command};
+use std::rc::Rc;
 use std::sync::Arc;
 #[cfg(feature = "panther-hardware")]
 use std::time::Instant;
