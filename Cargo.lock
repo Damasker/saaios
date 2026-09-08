@@ -1546,6 +1546,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "memory-store"
 version = "0.1.0"
 dependencies = [
@@ -1614,6 +1623,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -2124,6 +2134,7 @@ name = "saai-displayd"
 version = "0.1.0"
 dependencies = [
  "calloop 0.14.4",
+ "nix",
  "sha2",
  "smithay",
  "tempfile",
