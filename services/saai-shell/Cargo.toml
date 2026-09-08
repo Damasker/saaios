@@ -1,0 +1,14 @@
+[package]
+name = "saai-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# xkbcommon disabled: no physical keyboard on this device (ADR-012 made
+# the same call for saai-displayd) -- pulling it in here would carry the
+# same crash risk and image-size cost ADR-013 had to work around, for a
+# capability this shell doesn't use.
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }

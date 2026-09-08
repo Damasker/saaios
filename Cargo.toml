@@ -19,6 +19,7 @@ members = [
     "tests/diagnose-slow-system",
     "services/saai-displayd",
     "services/saai-demo-surface",
+    "services/saai-shell",
 ]
 
 [workspace.package]
