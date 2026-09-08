@@ -8,8 +8,8 @@
   `saai-shell`/`saai-appd`), ADR-007 (Smithay), ADR-009 (supervision/
   fallback модель для UI-слота, обобщается здесь на shell), ADR-012
   (клавиатурная способность на panther), ADR-014 (`saai-shell` —
-  ребёнок `saai-displayd`, см. Change 1). Ещё один ADR по ходу
-  спринта — см. Change 2.
+  ребёнок `saai-displayd`), ADR-015 (`ext-session-lock-v1` +
+  `wlr-layer-shell` для системных поверхностей).
 - Рабочий fallback: `drm-splash` остаётся boot/recovery UI, физически
   проверен и держит слот, пока `saai-displayd`+`saai-shell` не сообщили о
   готовности (per `docs/os/architecture/application-platform.md`).
@@ -135,11 +135,16 @@ fallback — не переписывается, не расширяется.
    пока оба не готовы" реализуется лишь частично, кратковременный чёрный
    экран между инициализацией `saai-displayd` и первым кадром
    `saai-shell` возможен и не устраняется этим решением.
-2. ADR: механизм системных поверхностей (lock surface, системные слои,
-   безопасное перекрытие) — `wlr-layer-shell` против минимального
-   собственного протокола. Оценить по коду (что реально делегирует
-   Smithay для `wayland-protocols-wlr`, какой объём работы на стороне
-   compositor'а), не только по документации протокола.
+2. **Готово (2026-09-08).** ADR: механизм системных поверхностей —
+   [ADR-015](../../adr/ADR-015-system-surface-protocols.md). Решение:
+   два протокола, не один — `ext-session-lock-v1` для lock screen
+   (протокольная гарантия эксклюзивности, не по соглашению), `wlr-layer-
+   shell` для остальных системных поверхностей (статус-бар, навигация).
+   Оба уже реализованы в Smithay 0.7.0 (`session_lock`/`shell::wlr_layer`
+   модули), нулевая новая C-зависимость. Оба global'а фильтруются по PID
+   `saai-shell` (который `saai-displayd` знает точно, т.к. сам его
+   форкает — ADR-014) через `Client::get_credentials` — обычные
+   приложения не видят эти globals вообще.
 3. Минимальный `saai-shell`: настоящий Wayland-клиент (toolkit — решить
    при реализации: сырой `wayland-client`, как `saai-demo-surface`, или
    более полная обвязка), подключается к уже существующему `xdg_shell`
