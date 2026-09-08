@@ -22,8 +22,14 @@
 //! own 1080x2400 pixel space, so this module doesn't scale either.
 
 use std::fs::File;
+use std::os::unix::fs::OpenOptionsExt;
 
 pub const TOUCHSCREEN_PATH: &str = "/dev/input/touchscreen";
+
+// O_NONBLOCK's value on Linux (stable across architectures) -- avoids
+// pulling in libc for one constant, matching this crate's existing
+// preference for minimal dependencies (ADR-011).
+const O_NONBLOCK: i32 = 0o4000;
 
 const EV_SYN: u16 = 0x00;
 const EV_ABS: u16 = 0x03;
@@ -128,5 +134,22 @@ impl TouchState {
 }
 
 pub fn open() -> Result<File, String> {
-    File::open(TOUCHSCREEN_PATH).map_err(|e| format!("failed to open {TOUCHSCREEN_PATH}: {e}"))
+    // Must be non-blocking: main.rs registers this fd with calloop as
+    // `Interest::READ, Mode::Level` and then drains it in a loop until
+    // `read()` returns anything other than a full `RawEvent` -- on a
+    // *blocking* fd, once the currently-buffered events are drained,
+    // that next `read()` call doesn't return "no more data right now",
+    // it just blocks the single-threaded event loop until the next
+    // physical touch arrives. That starves every other event source
+    // (including the flush that actually delivers queued protocol
+    // messages to clients) for the rest of the process's life, the
+    // first time any touch ever happens -- this was a real bug, not a
+    // hypothetical one: confirmed on hardware as the root cause of
+    // wl_touch events never reaching any client (S04 sprint doc, Change
+    // step 5 known limitations, has the full diagnostic trail).
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK)
+        .open(TOUCHSCREEN_PATH)
+        .map_err(|e| format!("failed to open {TOUCHSCREEN_PATH}: {e}"))
 }
