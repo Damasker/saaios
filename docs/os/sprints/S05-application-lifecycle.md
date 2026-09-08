@@ -2,8 +2,8 @@
 
 ## Паспорт
 
-- Состояние: `In progress`.
-- Зависит от: S04 (`Done`, persistent supervised shell).
+- Состояние: `Frozen until S01 closes`.
+- Зависит от: S04 (`Provisional` until S01 Evidence closes the gate).
 - Архитектурные решения: ADR-005, ADR-018.
 - Рабочий fallback: отключить `saai-appd`; `saai-shell`, `saai-displayd`,
   `drm-splash` и USB recovery остаются без изменений.

@@ -2,10 +2,13 @@
 
 ## Паспорт
 
-- Состояние: `In progress` (#26 merged; UX #31 implemented pending merge; Evidence #28).
+- Состояние: `In progress` (#26/#31 merged @ `da4005e`; awaiting physical Evidence #28).
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-006.
 - Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
+- Evidence image (unflashed): `dist/panther/saaios-panther-init_boot.img`
+  SHA-256 `463c9de929625019c69a219667fbe7167b7f6613ce416284197064ca9f5f6b7e`,
+  source `da4005e`. Flash helper: `os/targets/panther/scripts/flash-s01-evidence.sh`.
 
 ## Goal
 
