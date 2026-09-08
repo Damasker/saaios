@@ -56,6 +56,19 @@ struct SaaiClientState {
 }
 impl ClientData for SaaiClientState {}
 
+/// One surface's last committed frame, cached for `State::recomposite()`
+/// (ADR-016). Plain owned pixels, not a reference into the Wayland
+/// buffer -- the buffer itself may be reused/destroyed by the client
+/// well before this compositor needs to redraw the scene again (e.g.
+/// on unlock, with no new commit from anyone involved).
+#[cfg(feature = "panther-hardware")]
+struct SurfaceFrame {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    stride: u32,
+}
+
 struct State {
     compositor_state: CompositorState,
     shm_state: ShmState,
@@ -80,15 +93,35 @@ struct State {
     toplevels: HashMap<WlSurface, ToplevelSurface>,
     #[cfg(feature = "panther-hardware")]
     hardware: Option<hardware::HardwareOutput>,
-    /// The last frame `focused_surface` committed while unlocked, kept
-    /// around so `unlock()` can re-present it immediately -- without
-    /// this, the panel keeps showing the lock surface's last frame
-    /// after unlocking until the toplevel happens to commit something
-    /// new on its own (it's a static placeholder right now, so that
-    /// could be never). Input routing is correct the instant `locked`
-    /// flips to false either way; this only fixes what's on screen.
+    /// Every known surface's last committed frame (ADR-016) -- lets
+    /// `recomposite()` rebuild the whole visible scene (background ->
+    /// app -> system layers -> lock) on demand, instead of the old
+    /// approach of blitting whatever surface happened to commit most
+    /// recently and hoping nothing else needed redrawing. Not pruned
+    /// aggressively: entries for destroyed surfaces are removed
+    /// opportunistically (toplevel/layer destroy handlers), a leaked
+    /// entry just wastes a little memory, it can't cause a stale
+    /// surface to render (recomposite() only ever looks up frames for
+    /// surfaces still referenced by focused_surface/layer_surfaces/
+    /// lock_surface).
     #[cfg(feature = "panther-hardware")]
-    last_focused_frame: Option<(Vec<u8>, u32, u32, u32)>,
+    surface_frames: HashMap<WlSurface, SurfaceFrame>,
+    /// Set the moment a page-flip is submitted (`HardwareOutput::present`),
+    /// cleared when its completion event arrives (`DrmEvent::VBlank`,
+    /// see main()). While set, `recomposite()` must not run again --
+    /// `HardwareOutput` only double-buffers two frames deep, and
+    /// submitting a second flip before the first completes is exactly
+    /// the EBUSY bug ADR-016 was written to fix.
+    #[cfg(feature = "panther-hardware")]
+    flip_pending: bool,
+    /// Set when something wanted to recomposite while `flip_pending`
+    /// was already true -- the VBlank handler checks this and runs
+    /// exactly one more recomposite() once the in-flight flip
+    /// completes, coalescing any number of scene changes that arrived
+    /// mid-flip into a single follow-up repaint instead of queuing one
+    /// per change.
+    #[cfg(feature = "panther-hardware")]
+    repaint_needed: bool,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
     /// Kept alive for the lifetime of the process -- not because the
@@ -119,6 +152,89 @@ struct State {
     layer_surfaces: Vec<LayerSurface>,
 }
 
+#[cfg(feature = "panther-hardware")]
+impl State {
+    /// Ask for a scene recomposite, respecting the one-flip-in-flight
+    /// rule (ADR-016): runs immediately if nothing is already pending,
+    /// otherwise just remembers to run exactly once more when the
+    /// in-flight flip's completion event arrives (see the DRM notifier
+    /// handler in main()).
+    fn request_recomposite(&mut self) {
+        if self.flip_pending {
+            self.repaint_needed = true;
+        } else {
+            self.recomposite();
+        }
+    }
+
+    /// Rebuilds the visible scene from cached per-surface frames and
+    /// presents it, in a fixed background -> app -> system layers ->
+    /// lock order. Replaces the old approach of blitting whatever
+    /// surface happened to commit most recently: that approach could
+    /// never correctly redraw after unlock (nothing remembered the
+    /// toplevel's or layer surfaces' content once the lock surface had
+    /// painted over them), and offered no path to composite more than
+    /// one non-lock surface at a time -- both needed for Change 6's
+    /// four root sections.
+    ///
+    /// Must only be called when `!self.flip_pending` -- callers go
+    /// through `request_recomposite()`, not this directly, except the
+    /// DRM notifier's VBlank handler which already checked.
+    fn recomposite(&mut self) {
+        let Some(hw) = self.hardware.as_mut() else {
+            return;
+        };
+        hw.fill(0x00, 0x00, 0x00);
+        let mut shown: Vec<WlSurface> = Vec::new();
+        if self.locked {
+            if let Some((s, frame)) = self.lock_surface.as_ref().and_then(|ls| {
+                let s = ls.wl_surface().clone();
+                self.surface_frames.get(&s).map(|f| (s, f))
+            }) {
+                hw.blit(&frame.pixels, frame.width, frame.height, frame.stride);
+                shown.push(s);
+            }
+        } else {
+            if let Some((s, frame)) = self.focused_surface.clone().and_then(|s| {
+                let frame = self.surface_frames.get(&s)?;
+                Some((s, frame))
+            }) {
+                hw.blit(&frame.pixels, frame.width, frame.height, frame.stride);
+                shown.push(s);
+            }
+            for layer in &self.layer_surfaces {
+                let s = layer.wl_surface().clone();
+                if let Some(frame) = self.surface_frames.get(&s) {
+                    hw.blit(&frame.pixels, frame.width, frame.height, frame.stride);
+                    shown.push(s);
+                }
+            }
+        }
+        match hw.present(false) {
+            Ok(()) => self.flip_pending = true,
+            Err(err) => eprintln!("saai-displayd: hardware present failed: {err}"),
+        }
+        // Only surfaces whose frame was actually just presented get
+        // told they can draw their next one -- see the comment in
+        // commit() for why this matters (throttling, not just
+        // correctness: an unconditional ack on every raw commit turned
+        // a normally-inert "redraw on frame callback" client pattern
+        // into a busy loop).
+        let time_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u32)
+            .unwrap_or(0);
+        for surface in &shown {
+            with_states(surface, |states| {
+                let mut guard = states.cached_state.get::<SurfaceAttributes>();
+                for callback in guard.current().frame_callbacks.drain(..) {
+                    callback.done(time_ms);
+                }
+            });
+        }
+    }
+}
+
 impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
         &mut self.compositor_state
@@ -132,27 +248,21 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
-        // Every commit that requested a frame callback (`wl_surface.frame`)
-        // gets it acknowledged here, unconditionally -- there was no
-        // frame-callback handling at all before this, so any client
-        // logic gated on "wait for done before drawing the next frame"
-        // (this includes both saai-shell and saai-demo-surface, via
-        // WaylandSurface's usual redraw pattern) would simply hang
-        // forever. Not tied to actual scanout timing (no damage
-        // tracking / per-output primary-scanout bookkeeping exists in
-        // this compositor) -- good enough for "the client can proceed",
-        // which is the only thing anything here currently depends on.
-        let time_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u32)
-            .unwrap_or(0);
-        with_states(surface, |states| {
-            let mut guard = states.cached_state.get::<SurfaceAttributes>();
-            for callback in guard.current().frame_callbacks.drain(..) {
-                callback.done(time_ms);
-            }
-        });
-
+        // Frame callbacks (`wl_surface.frame`) are acknowledged in
+        // recomposite() now, not unconditionally here on every commit
+        // -- an earlier version of this fix did ack them here, and
+        // physically exposed a real bug it wasn't looking for:
+        // saai-shell's CompositorHandler::frame() redraws and requests
+        // another callback on every ack, a normal "stay in sync with
+        // the compositor" pattern that had silently never fired before
+        // (frame callbacks didn't work at all until that first fix).
+        // Acking synchronously on every raw commit meant the toplevel's
+        // static placeholder redrew in a tight loop as fast as commits
+        // round-tripped, not at any sane frame rate. Acking only for
+        // surfaces actually included in a presented scene, from inside
+        // recomposite(), naturally throttles redraws to this
+        // compositor's real presentation cadence (bounded by
+        // flip_pending/VBlank) instead of the raw commit rate.
         let buffer = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             match &guard.current().buffer {
@@ -233,15 +343,35 @@ impl CompositorHandler for State {
                 );
                 #[cfg(feature = "panther-hardware")]
                 {
-                    // While locked, only the lock surface's own commits
-                    // ever reach the panel -- otherwise the toplevel
+                    // Every known surface's frame is cached regardless
+                    // of `self.locked` -- this client requests its
+                    // initial lock immediately at startup, in the same
+                    // burst of requests as creating the toplevel, so by
+                    // the time the toplevel's *real* first commit (with
+                    // an actual buffer) reaches the server, locked is
+                    // often already true; gating the cache on
+                    // `!self.locked` (an earlier version of this code)
+                    // meant the very first boot's toplevel frame was
+                    // never cached at all, which is exactly the case
+                    // that matters most for redraw-after-unlock.
+                    self.surface_frames.insert(
+                        surface.clone(),
+                        SurfaceFrame {
+                            pixels: _pixels,
+                            width: _width,
+                            height: _height,
+                            stride: _stride,
+                        },
+                    );
+                    // While locked, only the lock surface affects the
+                    // visible scene -- otherwise the toplevel
                     // underneath could keep animating on screen even
                     // though it can no longer receive input, which would
                     // be a visible break of the "locked means locked"
                     // expectation even though the security property
                     // (touch routing) is already correctly enforced
                     // elsewhere.
-                    let should_present = if self.locked {
+                    let affects_scene = if self.locked {
                         self.lock_surface.as_ref().map(|ls| ls.wl_surface()) == Some(surface)
                     } else {
                         self.focused_surface.as_ref() == Some(surface)
@@ -250,30 +380,8 @@ impl CompositorHandler for State {
                                 .iter()
                                 .any(|ls| ls.wl_surface() == surface)
                     };
-                    if self.focused_surface.as_ref() == Some(surface) {
-                        // Cached regardless of `self.locked` -- this
-                        // client requests its initial lock immediately
-                        // at startup, in the same burst of requests as
-                        // creating the toplevel, so by the time the
-                        // toplevel's *real* first commit (with an
-                        // actual buffer) reaches the server, locked is
-                        // often already true. Gating this on
-                        // `!self.locked` meant the very first boot's
-                        // toplevel frame was never cached at all, which
-                        // is exactly the case that matters most.
-                        // Cached so unlock() can re-present this frame
-                        // immediately, instead of leaving the lock
-                        // surface's last frame on screen until the
-                        // toplevel happens to commit something new.
-                        self.last_focused_frame = Some((_pixels.clone(), _width, _height, _stride));
-                    }
-                    if should_present {
-                        if let Some(hw) = self.hardware.as_mut() {
-                            hw.blit(&_pixels, _width, _height, _stride);
-                            if let Err(err) = hw.present(false) {
-                                eprintln!("saai-displayd: hardware present failed: {err}");
-                            }
-                        }
+                    if affects_scene {
+                        self.request_recomposite();
                     }
                 }
             }
@@ -329,8 +437,12 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.toplevels.remove(surface.wl_surface());
+        #[cfg(feature = "panther-hardware")]
+        self.surface_frames.remove(surface.wl_surface());
         if self.focused_surface.as_ref() == Some(surface.wl_surface()) {
             self.focused_surface = None;
+            #[cfg(feature = "panther-hardware")]
+            self.request_recomposite();
         }
     }
 
@@ -372,15 +484,12 @@ impl SessionLockHandler for State {
         println!("saai-displayd: session unlocked");
         self.locked = false;
         self.lock_surface = None;
+        // Forces a full scene recomposite (ADR-016) -- without this the
+        // panel would keep showing the lock surface's last frame until
+        // some other surface happens to commit something new on its
+        // own, which for a static placeholder toplevel could be never.
         #[cfg(feature = "panther-hardware")]
-        if let Some((pixels, width, height, stride)) = self.last_focused_frame.as_ref() {
-            if let Some(hw) = self.hardware.as_mut() {
-                hw.blit(pixels, *width, *height, *stride);
-                if let Err(err) = hw.present(false) {
-                    eprintln!("saai-displayd: hardware present failed: {err}");
-                }
-            }
-        }
+        self.request_recomposite();
     }
 
     fn new_surface(&mut self, surface: LockSurface, _output: WlOutput) {
@@ -426,6 +535,11 @@ impl WlrLayerShellHandler for State {
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
         self.layer_surfaces.retain(|ls| ls != &surface);
+        #[cfg(feature = "panther-hardware")]
+        {
+            self.surface_frames.remove(surface.wl_surface());
+            self.request_recomposite();
+        }
     }
 }
 delegate_layer_shell!(State);
@@ -462,7 +576,32 @@ fn main() {
     #[cfg(feature = "panther-hardware")]
     let hardware = match hardware::init() {
         Ok((hw, drm_notifier)) => {
-            if let Err(err) = handle.insert_source(drm_notifier, |_event, _, _state| {}) {
+            if let Err(err) = handle.insert_source(drm_notifier, |event, _, state: &mut State| {
+                use smithay::backend::drm::DrmEvent;
+                match event {
+                    // The flip just submitted (either the initial
+                    // modeset in hardware::init(), or the most recent
+                    // recomposite()) is now confirmed on screen -- safe
+                    // to submit the next one. ADR-016: this is the
+                    // handler that used to be `|_event, _, _state| {}`,
+                    // the root reason nothing tracked flip completion
+                    // at all before this.
+                    DrmEvent::VBlank(_crtc) => {
+                        state.flip_pending = false;
+                        if state.repaint_needed {
+                            state.repaint_needed = false;
+                            state.recomposite();
+                        }
+                    }
+                    DrmEvent::Error(err) => {
+                        eprintln!("saai-displayd: DRM event error: {err}");
+                        // Assume the in-flight flip (if any) is dead
+                        // rather than staying stuck with flip_pending
+                        // permanently true and never presenting again.
+                        state.flip_pending = false;
+                    }
+                }
+            }) {
                 eprintln!("saai-displayd: failed to register DRM notifier: {err}");
             }
             println!("saai-displayd: hardware output initialized");
@@ -474,6 +613,8 @@ fn main() {
         }
     };
 
+    #[cfg(feature = "panther-hardware")]
+    let hardware_ok = hardware.is_some();
     #[cfg(feature = "panther-hardware")]
     let (output_width, output_height) = hardware
         .as_ref()
@@ -627,7 +768,15 @@ fn main() {
         #[cfg(feature = "panther-hardware")]
         hardware,
         #[cfg(feature = "panther-hardware")]
-        last_focused_frame: None,
+        surface_frames: HashMap::new(),
+        // hardware::init() already submitted one flip (the initial
+        // modeset) before this State even existed, if it succeeded --
+        // start "pending" to match, so nothing calls recomposite()
+        // again before that first flip's VBlank event is processed.
+        #[cfg(feature = "panther-hardware")]
+        flip_pending: hardware_ok,
+        #[cfg(feature = "panther-hardware")]
+        repaint_needed: false,
         _wl_output: wl_output,
         output_width,
         output_height,
