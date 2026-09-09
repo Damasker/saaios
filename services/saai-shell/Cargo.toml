@@ -23,4 +23,5 @@ saai-ui-compiler.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
+saai-entity-store.workspace = true
 tempfile.workspace = true
