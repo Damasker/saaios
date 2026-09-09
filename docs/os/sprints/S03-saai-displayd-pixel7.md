@@ -136,7 +136,15 @@ bootloader вернуть сохранённый `init_boot_a`; slot B не из
   (`18987941…29771`); S03 image hash совпадает (`9cb39c84…c880`).
 - Gated physical helper: `os/targets/panther/tools/s03-physical-verify.ps1`
   (flash только при `-AllowFlash` и `SAAIOS_ALLOW_FLASH=yes`, только `init_boot_a`).
-- Physical run добавляется после отдельного явного разрешения на flash.
+- Live device baseline 2026-09-09 (до S03 flash): USB NCM `172.31.7.1`
+  отвечает, runtime TCP `38127` открыт, COM13 shell доступен. На slot A сейчас
+  **не** S03 candidate, а более ранний experimental image:
+  `/saaios/saai-displayd` + `/saaios/saai-shell` (lock/spaces), без
+  `saai-display-supervisor` / `saai-demo-surface`. Log показывает blit
+  `1080x2400` и touch routing. Flash S03 заменит этот UI на demo-surface +
+  supervisor/`drm-splash` fallback — только после явного разрешения.
+- Physical run S03 candidate добавляется после отдельного явного разрешения
+  на flash.
 
 ### Physical verification checklist
 
