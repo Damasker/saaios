@@ -342,7 +342,11 @@ impl EntityStore {
         Ok(entities)
     }
 
-    pub fn get_entity(&self, space_id: &str, entity_id: Uuid) -> Result<Option<Entity>, StoreError> {
+    pub fn get_entity(
+        &self,
+        space_id: &str,
+        entity_id: Uuid,
+    ) -> Result<Option<Entity>, StoreError> {
         validate_space_id(space_id)?;
         let paths = self.space_paths(space_id)?;
         let path = paths.entities.join(entity_filename(entity_id));
