@@ -21,7 +21,8 @@
 - `saai-demo-surface` умеет быть Wayland-клиентом, но запускается вручную;
 - `/data/saaios` монтируется PID 1;
 - Change 1 уже добавил `saai-appd` crate и строгую typed-модель manifest v1;
-  app layout, storage, daemon IPC и supervisor остаются следующими шагами.
+  app layout, storage, supervisor и daemon IPC уже реализованы; следующими
+  шагами остаются demo-package, интеграция с shell и аппаратная проверка.
 
 ## Scope
 
@@ -41,7 +42,8 @@ demo-app и подключение оболочки.
    `b872e86`).
 3. **Готово (2026-09-09).** Supervisor процессов: launch/stop,
    single-instance и crash budget (`6be3fca`).
-4. Versioned JSON-lines Unix IPC и host integration test двух процессов.
+4. **Готово (2026-09-09).** Versioned JSON-lines Unix IPC и host integration
+   test с отдельными daemon, app и observer (`9321d0f`, `f583bd3`).
 5. Demo-app package и запуск/переключение из `saai-shell`.
 6. ARM64 packaging `saai-appd`, device install в `/data`, fault injection и
    cold regression без изменения `init_boot` для самого demo-app.
@@ -106,5 +108,15 @@ app и явными `SAAIOS_APP_ID`, `SAAIOS_DATA_DIR`, `XDG_RUNTIME_DIR`,
 в `crash_limited`, после чего только явный `launch` очищает budget. Drop и
 ошибочные process operations не оставляют намеренно забытых children/state.
 Общий прогон после Change 3: 21 test; all-target clippy с `-D warnings`.
+
+Change 4: `saai-appd` обслуживает Unix socket `/run/saaios/appd.sock` с
+правами `0660`, строгой schema 1 и ограничением сообщения 64 KiB. Команды
+`list/install/launch/stop/remove` возвращают typed responses; подписавшиеся
+клиенты получают broadcast-события `installed/running/stopped/crashed/`
+`crash_limited/removed`. Integration test запускает отдельный daemon,
+настоящий child process и observer, проходит полный lifecycle, подтверждает
+single-instance по одинаковому PID и сохранение app data после удаления кода.
+Общий прогон после Change 4: 27 unit tests и 1 integration test; all-target
+clippy с `-D warnings`; ARM64 musl check успешен.
 
 Аппаратный результат пока не заявляется по host-тестам.
