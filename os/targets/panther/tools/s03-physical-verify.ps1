@@ -25,7 +25,7 @@ if (-not $RepoRoot) {
 $dist = Join-Path $RepoRoot "dist\panther"
 $s03 = Join-Path $dist "saaios-panther-s03-init_boot.img"
 $s01 = Join-Path $dist "saaios-panther-s01-init_boot.img"
-$expectedS03 = "9CB39C849F36EF2C317AC55A2595DD5BA7142FC6610BA0112BF4ED60D1D0C880"
+$expectedS03 = "747228C90A6031BE7DCF62C0B081388DEAAA62784A8E86CAE45E232095077F55"
 $expectedS01 = "18987941EE7C41A98EA9A9471287933D75A27BF9417050253800D2E937829771"
 
 function Assert-Hash([string]$Path, [string]$Expected) {

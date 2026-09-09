@@ -114,16 +114,18 @@ bootloader вернуть сохранённый `init_boot_a`; slot B не из
   - `saai-displayd`: 559528 bytes,
     SHA-256 `9af2694aab75daac8754e5bcd8708ac3ae36f1ab088af5f2145ce55da6f07ca5`;
   - `saai-demo-surface`: 486328 bytes,
-    SHA-256 `39b6d22865a34760bf5dd7e2f33d885431a54ab76502ce47fa141af91aec4cfc`;
+    SHA-256 `acc098228b8976360cdc995d4559aed5b70548abccc1c923a61150701f8c1cb2`;
   - C `saai-display-supervisor`: 20400 bytes,
     SHA-256 `4ebb8c59d494155e4555507913cc06c28344763496fb41c28360e141a20f170c`.
 - Собран, но не установлен
   `dist/panther/saaios-panther-s03-init_boot.img`: 8388608 bytes,
-  SHA-256 `9cb39c849f36ef2c317ac55a2595dd5ba7142fc6610ba0112bf4ed60d1d0c880`.
+  SHA-256 `747228c90a6031be7dcf62c0b081388deaaa62784a8e86cae45e232095077f55`.
   Повторный unpack подтвердил header v4, Android 17.0.0 / patch 2026-07,
-  LZ4 ramdisk 8303399 bytes и совпадение хешей embedded PID 1, fallback,
+  LZ4 ramdisk 8303403 bytes и совпадение хешей embedded PID 1, fallback,
   compositor, client и supervisor. Image ровно помещается в штатный 8 MiB
   `init_boot`; vendor boot, userdata и slot B не изменялись.
+- 2026-09-09: touch marker исправлен с жёлтого BGRA на белый
+  (`[0xff,0xff,0xff,0xff]`); demo-surface и S03 image пересобраны.
 - Host re-verify 2026-09-09: `cargo fmt`/`clippy -D warnings`/`test -p saai-displayd`,
   C identity + watchdog + supervisor compile, pixel7 AArch64 musl rebuild
   (`DISPLAYD_MATCH`/`CLIENT_MATCH`) и magiskboot unpack хешей embedded binaries.

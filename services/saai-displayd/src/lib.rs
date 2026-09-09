@@ -127,7 +127,8 @@ pub fn demo_frame_with_touch(x: u32, y: u32) -> Vec<u8> {
         for marker_x in left..=right {
             if marker_x == x || marker_y == y {
                 let offset = (marker_y * FRAME_STRIDE + marker_x * 4) as usize;
-                frame[offset..offset + 4].copy_from_slice(&[0x00, 0xff, 0xff, 0xff]);
+                // wl_shm Argb8888 little-endian bytes are BGRA; white is all 0xff.
+                frame[offset..offset + 4].copy_from_slice(&[0xff, 0xff, 0xff, 0xff]);
             }
         }
     }
@@ -273,7 +274,7 @@ mod tests {
         let touched = demo_frame_with_touch(12, 8);
         assert_ne!(sha256_hex(&touched), expected_frame_hash());
         let offset = (8 * FRAME_STRIDE + 12 * 4) as usize;
-        assert_eq!(&touched[offset..offset + 4], &[0x00, 0xff, 0xff, 0xff]);
+        assert_eq!(&touched[offset..offset + 4], &[0xff, 0xff, 0xff, 0xff]);
     }
 
     #[test]
