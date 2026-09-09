@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `In progress`.
+- Состояние: `Done` (2026-09-10).
 - Зависит от: S05 (`Done`).
 - Архитектурные решения: ADR-005, ADR-006, ADR-019.
 - Рабочий fallback: S05 image и read-only legacy active-space.
@@ -47,8 +47,9 @@ append-only журнал, восстановление проекций, bootstr
 6. **Готово на host (2026-09-09).** `saai-shell`: реальные пространства и
    scoped проекции `Сейчас` (`7e9f78b`, `320d28c`, `3e101ff`, `decc527`,
    `30d872e`).
-7. ARM64 packaging, persistent service supervision, device isolation/fault/
-   cold-reboot acceptance.
+7. **Готово (2026-09-10).** ARM64 packaging (`build-saai-entityd.sh`,
+   `024ccfe`), persistent service supervision из `native-init.c`
+   (`024ccfe`), device isolation/fault/cold-reboot acceptance.
 
 ## Test
 
@@ -142,3 +143,45 @@ Mock socket test доказал reconnect bootstrap и authoritative selection;
 geometry tests доказали все четыре space actions, обе крайние root tabs и
 scoped entity card из `.sui`. Совместно со store/protocol/daemon прошло 28
 unit/process tests; all-target clippy с `-D warnings` чист на R620.
+
+Change 7: физически подтверждено на устройстве (Pixel 7, panther), после
+fast-forward слияния `024ccfe` (уже собранного и прошитого параллельно) в
+`feat/pixel7-native-saaios`:
+
+- **Packaging.** `build-saai-entityd.sh` собирает `saai-entityd` тем же
+  способом, что и `saai-appd` (stable toolchain, не нужен build-std --
+  бинарь живёт на `/data`, не в фикс-размерном `init_boot`). CI собирает
+  и проверяет `ARM aarch64`/`statically linked` наравне с `saai-appd`.
+- **Persistent service supervision.** `native-init.c` (PID 1) запускает
+  `saai-entityd` из `/data/saaios/system/saai-entityd` сразу после
+  `setup_data_storage()`, тем же паттерном, что и `saai-appd` (S05).
+  Fault injection: `kill -9` работающего `saai-entityd` -- `/run/boot.log`
+  показывает `system service exited: saai-entityd` ->
+  `system service started: saai-entityd` ->
+  `system service restarted: saai-entityd`; новый процесс поднялся с тем
+  же командной строкой (`--store-root`/`--legacy-active-space`/`--socket`)
+  за секунды. `saai-shell`'s собственный лог независимо подтвердил
+  разрыв и восстановление соединения: `saai-entityd disconnected: entityd
+  socket closed` -> `connected to saai-entityd`.
+- **Cold-reboot acceptance.** Через реальный `saai-shell` (`Пространства`
+  -> `Личное`) выполнен `select_space:personal`; `selection.json`
+  получил `{"space_id":"personal","source":"user"}`. Полный холодный
+  цикл `reboot-bootloader` + `fastboot reboot` (не hot-swap) дал свежий
+  `/proc/uptime` (42s); все четыре сервиса (`saai-entityd`, `saai-appd`,
+  `saai-displayd`, `saai-shell`) поднялись автоматически без ручного
+  вмешательства; `selection.json` не изменился. Прямой запрос
+  `get_selection` к живому сокету `entityd` (в обход `saai-shell`, через
+  одноразовый C-пробник, скомпилированный zig cc) подтвердил тот же
+  `space_id: personal` на уровне протокола -- не только на уровне файла.
+  Экран физически показал заголовок `Личное` после разблокировки.
+- **Device isolation.** Через тот же протокольный пробник создана entity
+  в `personal` (`create_entity`); `list_entities` для `work` вернул
+  пустой список -- entity не пересекла границу пространства; `list_entities`
+  для `personal` вернул ровно созданный объект. Тестовая entity удалена
+  (`delete_entity`) после проверки, не оставлена в реальном store.
+
+S06's Acceptance criteria теперь выполнены целиком, включая закрытые на
+host ранее пункты -- сохранение selection и entity данных через
+реальный device-level shell/entityd restart и cold reboot, плюс
+изоляция между пространствами, подтверждены на физическом устройстве, а
+не только в host-тестах.

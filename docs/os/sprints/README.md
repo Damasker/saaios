@@ -15,7 +15,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S03 | `saai-displayd` на Pixel 7 | Done | S02 |
 | S04 | Отдельный `saai-shell` и lock | Done | S03 |
 | S05 | Приложения, manifest и lifecycle | Done | S04 |
-| S06 | Настоящие пространства и entity store | In progress | S05 |
+| S06 | Настоящие пространства и entity store | Done | S05 |
 | S07 | Capability, sandbox и portals | Backlog | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
@@ -155,6 +155,22 @@ source `6afb663`, SHA-256
 
 **Rollback:** read-only возврат к предыдущей schema и восстановление backup;
 никакой молчаливой downgrade-записи.
+
+**Evidence:** host vertical (store/protocol/daemon/shell) прошёл 28+
+unit/process tests с all-target clippy на R620. На Pixel 7 физически
+подтверждены: `saai-entityd` ARM64 packaging и persistent supervision из
+`native-init.c` (`024ccfe`) тем же паттерном, что и `saai-appd`; `kill -9`
+работающего `saai-entityd` дал автоматический restart (`/run/boot.log`) и
+независимое переподключение `saai-shell`; выбор пространства через
+реальный touch-путь (`Пространства` → `Личное`) пережил полный холодный
+`fastboot`-цикл (`/proc/uptime` = 42s), подтверждено на трёх уровнях --
+файл `selection.json`, прямой запрос к сокету `entityd` в обход shell,
+и визуально на экране; изоляция между пространствами подтверждена
+`create_entity`/`list_entities` через тот же прямой протокольный запрос.
+Полная пересборка `init_boot` для этой версии сделана не в этой сессии
+(бинарник уже был на устройстве от параллельной работы) -- проверка шла
+против уже прошитого состояния, содержимое бинаря сверено по хешу с
+собранным из того же commit.
 
 ## S07 — Capability, sandbox и portals
 
