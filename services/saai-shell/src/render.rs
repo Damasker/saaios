@@ -25,6 +25,23 @@ pub struct Fonts {
     semibold: Font,
 }
 
+#[derive(Clone, Copy)]
+pub struct DemoAppView<'a> {
+    pub label: &'a str,
+    pub status: &'a str,
+    pub action: &'a str,
+}
+
+impl<'a> DemoAppView<'a> {
+    pub const fn new(label: &'a str, status: &'a str, action: &'a str) -> Self {
+        Self {
+            label,
+            status,
+            action,
+        }
+    }
+}
+
 impl Fonts {
     pub fn load_system() -> Result<Self, String> {
         Self::load(
@@ -110,6 +127,7 @@ pub fn draw_root(
     tabs: &[(Rect, &str)],
     selected: usize,
     fonts: Option<&Fonts>,
+    content_action: Option<(Rect, DemoAppView<'_>)>,
 ) {
     canvas.fill(BACKGROUND);
 
@@ -133,7 +151,8 @@ pub fn draw_root(
     }
 
     let row_count = selected.saturating_add(2).min(5);
-    for row in 0..row_count {
+    let first_placeholder = usize::from(content_action.is_some());
+    for row in first_placeholder..row_count {
         let y = 430 + row as u32 * 230;
         if y >= content.height {
             break;
@@ -148,6 +167,48 @@ pub fn draw_root(
             Rect::new(margin + 154, y + 96, card_width.saturating_sub(290), 18),
             MUTED,
         );
+    }
+
+    if let Some((rect, app)) = content_action {
+        canvas.fill_rect(rect, SURFACE_SELECTED);
+        canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
+        let button_width = 250.min(rect.width / 3);
+        let button = Rect::new(
+            rect.x + rect.width.saturating_sub(button_width + 34),
+            rect.y + 58,
+            button_width,
+            88,
+        );
+        canvas.fill_rect(button, ACCENT);
+        if let Some(fonts) = fonts {
+            draw_text(
+                canvas,
+                &fonts.semibold,
+                app.label,
+                38.0,
+                rect.x + 174,
+                rect.y + 48,
+                TEXT,
+            );
+            draw_text(
+                canvas,
+                &fonts.regular,
+                app.status,
+                27.0,
+                rect.x + 174,
+                rect.y + 108,
+                TEXT_MUTED,
+            );
+            draw_text_centered(
+                canvas,
+                &fonts.semibold,
+                app.action,
+                25.0,
+                button.x + button.width / 2,
+                button.y + 24,
+                BACKGROUND,
+            );
+        }
     }
 
     if let Some(tab_bar) = tabs.first().and_then(|(first, _)| {
@@ -250,6 +311,33 @@ fn draw_text_centered(
     }
 }
 
+fn draw_text(
+    canvas: &mut Canvas<'_>,
+    font: &Font,
+    text: &str,
+    size: f32,
+    left: u32,
+    top: u32,
+    color: Pixel,
+) {
+    let mut cursor = left as f32;
+    for character in text.chars() {
+        let (metrics, bitmap) = font.rasterize(character, size);
+        let glyph_x = cursor.round() as i32 + metrics.xmin;
+        for row in 0..metrics.height {
+            for column in 0..metrics.width {
+                canvas.blend(
+                    glyph_x + column as i32,
+                    top as i32 + row as i32,
+                    color,
+                    bitmap[row * metrics.width + column],
+                );
+            }
+        }
+        cursor += metrics.advance_width;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{draw_root, Canvas, ACCENT, SURFACE};
@@ -265,11 +353,25 @@ mod tests {
             (Rect::new(810, 2100, 270, 300), "Я"),
         ];
         let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
-        draw_root(&mut canvas, Rect::new(0, 0, 1080, 2100), &tabs, 0, None);
+        draw_root(
+            &mut canvas,
+            Rect::new(0, 0, 1080, 2100),
+            &tabs,
+            0,
+            None,
+            None,
+        );
         assert_eq!(canvas.pixel(135, 2125), ACCENT);
         assert_eq!(canvas.pixel(945, 2125), SURFACE);
 
-        draw_root(&mut canvas, Rect::new(0, 0, 1080, 2100), &tabs, 3, None);
+        draw_root(
+            &mut canvas,
+            Rect::new(0, 0, 1080, 2100),
+            &tabs,
+            3,
+            None,
+            None,
+        );
         assert_eq!(canvas.pixel(135, 2125), SURFACE);
         assert_eq!(canvas.pixel(945, 2125), ACCENT);
     }

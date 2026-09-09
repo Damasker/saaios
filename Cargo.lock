@@ -2169,9 +2169,12 @@ name = "saai-shell"
 version = "0.1.0"
 dependencies = [
  "fontdue",
+ "saai-app-protocol",
  "saai-ui-compiler",
  "saai-ui-core",
+ "serde_json",
  "smithay-client-toolkit",
+ "tempfile",
 ]
 
 [[package]]

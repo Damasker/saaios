@@ -2,7 +2,9 @@ sui 1
 
 screen root {
   column {
-    content id=content fill
+    content id=content fill {
+      action demo-app page=now top=430 height=240 label="Saai Demo" action=manage_app:org.saaios.demo-surface
+    }
     tabs id=root-tabs height=300 {
       tab now label="Сейчас" icon=now action=select_root:now
       tab inbox label="Входящие" icon=inbox action=select_root:inbox

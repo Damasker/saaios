@@ -16,13 +16,25 @@ fn main() {
         })
         .collect::<Vec<_>>()
         .join(",\n    ");
+    let content_actions = screen
+        .content_actions
+        .iter()
+        .map(|action| {
+            format!(
+                "ContentActionDefinition {{ id: {:?}, page: {:?}, top: {}, height: {}, label: {:?}, action: {:?} }}",
+                action.id, action.page, action.top, action.height, action.label, action.action
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n    ");
     let generated = format!(
         "const ROOT_SCREEN_ID: &str = {:?};\n\
          const ROOT_CONTENT_ID: &str = {:?};\n\
+         const ROOT_CONTENT_ACTIONS: &[ContentActionDefinition] = &[\n    {}\n];\n\
          const ROOT_TABS_ID: &str = {:?};\n\
          const ROOT_TAB_HEIGHT: u32 = {};\n\
          const ROOT_TABS: &[TabDefinition] = &[\n    {}\n];\n",
-        screen.id, screen.content_id, screen.tabs_id, screen.tab_height, tabs
+        screen.id, screen.content_id, content_actions, screen.tabs_id, screen.tab_height, tabs
     );
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     fs::write(output.join("root_sui.rs"), generated).expect("write generated root SUI");

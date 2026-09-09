@@ -6,9 +6,20 @@ use std::fmt;
 pub struct ScreenSpec {
     pub id: String,
     pub content_id: String,
+    pub content_actions: Vec<ContentActionSpec>,
     pub tabs_id: String,
     pub tab_height: u32,
     pub tabs: Vec<TabSpec>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContentActionSpec {
+    pub id: String,
+    pub page: String,
+    pub top: u32,
+    pub height: u32,
+    pub label: String,
+    pub action: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,6 +178,38 @@ impl Parser {
         self.kind(TokenKind::Equals)?;
         let content_id = self.ident()?;
         self.keyword("fill")?;
+        let mut content_actions = Vec::new();
+        if self.next_is(&TokenKind::LBrace) {
+            self.kind(TokenKind::LBrace)?;
+            while !self.next_is(&TokenKind::RBrace) {
+                self.keyword("action")?;
+                let id = self.ident()?;
+                self.keyword("page")?;
+                self.kind(TokenKind::Equals)?;
+                let page = self.ident()?;
+                self.keyword("top")?;
+                self.kind(TokenKind::Equals)?;
+                let top = self.number()?;
+                self.keyword("height")?;
+                self.kind(TokenKind::Equals)?;
+                let height = self.number()?;
+                self.keyword("label")?;
+                self.kind(TokenKind::Equals)?;
+                let label = self.string()?;
+                self.keyword("action")?;
+                self.kind(TokenKind::Equals)?;
+                let action = self.ident()?;
+                content_actions.push(ContentActionSpec {
+                    id,
+                    page,
+                    top,
+                    height,
+                    label,
+                    action,
+                });
+            }
+            self.kind(TokenKind::RBrace)?;
+        }
         self.keyword("tabs")?;
         self.keyword("id")?;
         self.kind(TokenKind::Equals)?;
@@ -206,6 +249,13 @@ impl Parser {
             return Err(self.fail("tabs block must not be empty"));
         }
         let mut ids = std::collections::HashSet::new();
+        if content_actions
+            .iter()
+            .any(|action| action.height == 0 || !ids.insert(action.id.as_str()))
+        {
+            return Err(self.fail("content action id must be unique and height non-zero"));
+        }
+        ids.clear();
         if tabs.iter().any(|tab| !ids.insert(tab.id.as_str())) {
             return Err(self.fail("duplicate tab id"));
         }
@@ -213,6 +263,7 @@ impl Parser {
         Ok(ScreenSpec {
             id,
             content_id,
+            content_actions,
             tabs_id,
             tab_height,
             tabs,
@@ -317,8 +368,24 @@ mod tests {
     fn parses_utf8_screen() {
         let screen = compile(VALID).unwrap();
         assert_eq!(screen.id, "root");
+        assert!(screen.content_actions.is_empty());
         assert_eq!(screen.tabs[0].label, "Сейчас");
         assert_eq!(screen.tabs[1].action, "select_root:me");
+    }
+
+    #[test]
+    fn parses_declarative_content_action() {
+        let source = VALID.replace(
+            "content id=content fill",
+            "content id=content fill { action demo page=now top=430 height=220 label=\"Demo\" action=manage_app:org.saaios.demo }",
+        );
+        let screen = compile(&source).unwrap();
+        let action = &screen.content_actions[0];
+        assert_eq!(action.id, "demo");
+        assert_eq!(action.page, "now");
+        assert_eq!(action.top, 430);
+        assert_eq!(action.height, 220);
+        assert_eq!(action.action, "manage_app:org.saaios.demo");
     }
 
     #[test]

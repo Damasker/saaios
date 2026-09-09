@@ -63,8 +63,10 @@
 
 use std::time::{Duration, Instant};
 
+mod appd_client;
 mod render;
 
+use saai_app_protocol::{AppSummary, LifecycleEventKind, ResponseResult, ServerMessage};
 use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
@@ -102,12 +104,25 @@ use smithay_client_toolkit::{
 
 /// Matches drm-splash.c's own idle-to-lock constant.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const DEMO_APP_ID: &str = "org.saaios.demo-surface";
+const DEMO_APP_ACTION: &str = "manage_app:org.saaios.demo-surface";
+const DEMO_PACKAGE_PATH: &str = "/data/saaios/packages/org.saaios.demo-surface";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TabDefinition {
     id: &'static str,
     label: &'static str,
     icon: &'static str,
+    action: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContentActionDefinition {
+    id: &'static str,
+    page: &'static str,
+    top: u32,
+    height: u32,
+    label: &'static str,
     action: &'static str,
 }
 
@@ -130,6 +145,54 @@ impl RootPage {
             RootPage::Inbox => 1,
             RootPage::Spaces => 2,
             RootPage::Me => 3,
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            RootPage::Now => "now",
+            RootPage::Inbox => "inbox",
+            RootPage::Spaces => "spaces",
+            RootPage::Me => "me",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DemoAppState {
+    Unavailable,
+    Missing,
+    Installed,
+    Running,
+    Stopped,
+    CrashLimited,
+    Pending,
+    Error,
+}
+
+impl DemoAppState {
+    fn from_summary(app: &AppSummary) -> Self {
+        match app.state.as_str() {
+            "running" => Self::Running,
+            "stopped" => Self::Stopped,
+            "crash_limited" => Self::CrashLimited,
+            _ => Self::Installed,
+        }
+    }
+
+    fn view(self, label: &'static str) -> render::DemoAppView<'static> {
+        match self {
+            Self::Unavailable => render::DemoAppView::new(label, "Сервис недоступен", "Ожидание"),
+            Self::Missing => render::DemoAppView::new(label, "Не установлено", "Установить"),
+            Self::Installed | Self::Stopped => {
+                render::DemoAppView::new(label, "Готово к запуску", "Открыть")
+            }
+            Self::Running => render::DemoAppView::new(label, "Работает", "Открыто"),
+            Self::CrashLimited => {
+                render::DemoAppView::new(label, "Остановлено после сбоя", "Повторить")
+            }
+            Self::Pending => render::DemoAppView::new(label, "Выполняется…", "Подождите"),
+            Self::Error => render::DemoAppView::new(label, "Не удалось выполнить", "Повторить"),
         }
     }
 }
@@ -177,6 +240,30 @@ fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
         .hit_test(pos.0, pos.1)
         .and_then(|node| node.action.as_deref())
         .and_then(page_from_action)
+}
+
+fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
+    let margin = width / 22;
+    let top = ((action.top as u64 * height as u64) / 2400) as u32;
+    let action_height = ((action.height as u64 * height as u64) / 2400) as u32;
+    Rect::new(
+        margin,
+        top,
+        width.saturating_sub(margin.saturating_mul(2)),
+        action_height,
+    )
+}
+
+fn content_action_at(
+    page: RootPage,
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+) -> Option<ContentActionDefinition> {
+    ROOT_CONTENT_ACTIONS.iter().copied().find(|action| {
+        action.page == page.id()
+            && content_action_rect(action, width, height).contains(pos.0, pos.1)
+    })
 }
 
 fn main() {
@@ -249,6 +336,9 @@ fn main() {
         }
     };
 
+    let appd_socket = std::env::var_os("SAAIOS_APPD_SOCKET")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/run/saaios/appd.sock".into());
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -280,6 +370,8 @@ fn main() {
         layer_pool: None,
         layer_buffer: None,
         fonts,
+        appd: appd_client::AppdClient::new(appd_socket),
+        demo_app_state: DemoAppState::Unavailable,
     };
 
     println!("saai-shell: connected, toplevel created");
@@ -299,6 +391,7 @@ fn main() {
         event_loop
             .dispatch(Duration::from_millis(16), &mut shell)
             .expect("event loop dispatch failed");
+        shell.poll_appd(&conn, &qh);
         shell.check_idle_timeout(&qh);
     }
 }
@@ -357,6 +450,8 @@ struct Shell {
     layer_pool: Option<SlotPool>,
     layer_buffer: Option<Buffer>,
     fonts: Option<render::Fonts>,
+    appd: appd_client::AppdClient,
+    demo_app_state: DemoAppState,
 }
 
 impl CompositorHandler for Shell {
@@ -702,6 +797,13 @@ impl TouchHandler for Shell {
                     self.current_page = page;
                     self.draw(conn, qh);
                 }
+            } else if let Some(action) = content_action_at(
+                self.current_page,
+                self.last_touch_pos,
+                self.width,
+                self.height,
+            ) {
+                self.invoke_content_action(action, conn, qh);
             }
         }
     }
@@ -800,6 +902,15 @@ impl Shell {
             &tabs,
             self.current_page.index(),
             self.fonts.as_ref(),
+            ROOT_CONTENT_ACTIONS
+                .iter()
+                .find(|action| action.page == self.current_page.id())
+                .map(|action| {
+                    (
+                        content_action_rect(action, width, height),
+                        self.demo_app_state.view(action.label),
+                    )
+                }),
         );
 
         self.window
@@ -809,6 +920,95 @@ impl Shell {
             .attach_to(self.window.wl_surface())
             .expect("buffer attach");
         self.window.commit();
+    }
+
+    fn invoke_content_action(
+        &mut self,
+        action: ContentActionDefinition,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        println!(
+            "saai-shell: invoked content action {} ({})",
+            action.id, action.action
+        );
+        if action.action != DEMO_APP_ACTION {
+            return;
+        }
+        match self.demo_app_state {
+            DemoAppState::Missing | DemoAppState::Error => {
+                self.appd.install(DEMO_PACKAGE_PATH);
+                self.demo_app_state = DemoAppState::Pending;
+            }
+            DemoAppState::Installed | DemoAppState::Stopped | DemoAppState::CrashLimited => {
+                self.appd.launch(DEMO_APP_ID);
+                self.demo_app_state = DemoAppState::Pending;
+            }
+            DemoAppState::Unavailable | DemoAppState::Running | DemoAppState::Pending => return,
+        }
+        self.draw(conn, qh);
+    }
+
+    fn poll_appd(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        let was_available = self.appd.is_connected();
+        let messages = self.appd.poll();
+        let available = self.appd.is_connected();
+        let mut changed = was_available != available;
+        if !available {
+            changed |= self.demo_app_state != DemoAppState::Unavailable;
+            self.demo_app_state = DemoAppState::Unavailable;
+        }
+        for message in messages {
+            changed |= self.apply_appd_message(message);
+        }
+        if changed && !self.first_configure {
+            self.draw(conn, qh);
+        }
+    }
+
+    fn apply_appd_message(&mut self, message: ServerMessage) -> bool {
+        let previous = self.demo_app_state;
+        match message {
+            ServerMessage::Response { ok: false, .. } => self.demo_app_state = DemoAppState::Error,
+            ServerMessage::Response {
+                result: Some(ResponseResult::List { apps }),
+                ..
+            } => {
+                self.demo_app_state = apps
+                    .iter()
+                    .find(|app| app.id == DEMO_APP_ID)
+                    .map(DemoAppState::from_summary)
+                    .unwrap_or(DemoAppState::Missing);
+            }
+            ServerMessage::Response {
+                result: Some(ResponseResult::Installed { app }),
+                ..
+            } if app.id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Installed,
+            ServerMessage::Response {
+                result: Some(ResponseResult::Launched { app_id, .. }),
+                ..
+            } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Running,
+            ServerMessage::Response {
+                result: Some(ResponseResult::Stopped { app_id, .. }),
+                ..
+            } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Stopped,
+            ServerMessage::Response {
+                result: Some(ResponseResult::Removed { app_id, .. }),
+                ..
+            } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Missing,
+            ServerMessage::Event { event, .. } if event.app_id == DEMO_APP_ID => {
+                self.demo_app_state = match event.event {
+                    LifecycleEventKind::Installed => DemoAppState::Installed,
+                    LifecycleEventKind::Running => DemoAppState::Running,
+                    LifecycleEventKind::Stopped => DemoAppState::Stopped,
+                    LifecycleEventKind::Crashed => DemoAppState::Pending,
+                    LifecycleEventKind::CrashLimited => DemoAppState::CrashLimited,
+                    LifecycleEventKind::Removed => DemoAppState::Missing,
+                };
+            }
+            _ => {}
+        }
+        self.demo_app_state != previous
     }
 
     /// Re-locks after `IDLE_TIMEOUT` of no touch activity while
