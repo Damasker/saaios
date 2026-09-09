@@ -150,8 +150,7 @@ impl Event {
                 space.validate()?;
                 ensure_same_space(&self.space_id, &space.id)
             }
-            EventPayload::EntityCreated { entity }
-            | EventPayload::EntityUpdated { entity } => {
+            EventPayload::EntityCreated { entity } | EventPayload::EntityUpdated { entity } => {
                 entity.validate()?;
                 ensure_same_space(&self.space_id, &entity.space_id)
             }
@@ -172,10 +171,7 @@ impl Event {
 }
 
 pub fn validate_space_id(value: &str) -> Result<(), ValidationError> {
-    if value.is_empty()
-        || value.len() > MAX_SPACE_ID_BYTES
-        || !value.is_ascii()
-        || !is_slug(value)
+    if value.is_empty() || value.len() > MAX_SPACE_ID_BYTES || !value.is_ascii() || !is_slug(value)
     {
         return Err(ValidationError::InvalidSpaceId);
     }
@@ -265,8 +261,19 @@ mod tests {
 
     #[test]
     fn traversal_and_noncanonical_space_ids_are_rejected() {
-        for invalid in ["../home", "/home", "Home", "home/notes", "home..work", "-home", "home-"] {
-            assert_eq!(validate_space_id(invalid), Err(ValidationError::InvalidSpaceId));
+        for invalid in [
+            "../home",
+            "/home",
+            "Home",
+            "home/notes",
+            "home..work",
+            "-home",
+            "home-",
+        ] {
+            assert_eq!(
+                validate_space_id(invalid),
+                Err(ValidationError::InvalidSpaceId)
+            );
         }
     }
 
