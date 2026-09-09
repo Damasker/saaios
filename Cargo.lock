@@ -2207,8 +2207,11 @@ dependencies = [
 name = "saai-shell"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "fontdue",
  "saai-app-protocol",
+ "saai-entity-protocol",
+ "saai-entity-store",
  "saai-ui-compiler",
  "saai-ui-core",
  "serde_json",

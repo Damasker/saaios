@@ -29,6 +29,50 @@ pub enum UiKind {
     Wayland,
 }
 
+/// Fixed, versioned capability vocabulary (ADR-020). A manifest may only
+/// request names from this list -- the request is still not a grant (S05's
+/// original comment on this field remains true until S07 wires up
+/// `saai-appd`'s effective-grants store): this enum only closes off the
+/// possibility of a manifest inventing a capability name that no policy
+/// anywhere will ever recognize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Capability {
+    SpaceEntitiesRead,
+    SpaceEntitiesWrite,
+    NetInternet,
+    ClipboardRead,
+    ClipboardWrite,
+    PortalOpenFile,
+}
+
+impl Capability {
+    pub const ALL: [Capability; 6] = [
+        Capability::SpaceEntitiesRead,
+        Capability::SpaceEntitiesWrite,
+        Capability::NetInternet,
+        Capability::ClipboardRead,
+        Capability::ClipboardWrite,
+        Capability::PortalOpenFile,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Capability::SpaceEntitiesRead => "space.entities.read",
+            Capability::SpaceEntitiesWrite => "space.entities.write",
+            Capability::NetInternet => "net.internet",
+            Capability::ClipboardRead => "clipboard.read",
+            Capability::ClipboardWrite => "clipboard.write",
+            Capability::PortalOpenFile => "portal.open_file",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Capability> {
+        Capability::ALL
+            .into_iter()
+            .find(|capability| capability.as_str() == value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppManifest {
     pub schema: u32,
@@ -38,8 +82,11 @@ pub struct AppManifest {
     pub version: Version,
     pub ui: UiKind,
     pub single_instance: bool,
-    /// Requested capabilities only. S05 never turns these into grants.
-    pub capabilities: Vec<String>,
+    /// Requested capabilities only -- parsing rejects any name outside the
+    /// vocabulary (ADR-020), but this is still a request, not a grant. S07
+    /// adds the effective-grants store that actually decides what a running
+    /// process can do.
+    pub capabilities: Vec<Capability>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +122,8 @@ pub enum ManifestError {
     InvalidCapability(String),
     #[error("duplicate capability {0:?}")]
     DuplicateCapability(String),
+    #[error("capability {0:?} is not in the ADR-020 vocabulary")]
+    UnknownCapability(String),
 }
 
 impl AppManifest {
@@ -100,6 +149,7 @@ impl AppManifest {
         };
 
         let mut unique = HashSet::with_capacity(raw.capabilities.len());
+        let mut capabilities = Vec::with_capacity(raw.capabilities.len());
         for capability in &raw.capabilities {
             if !valid_dotted_name(capability, 2) {
                 return Err(ManifestError::InvalidCapability(capability.clone()));
@@ -107,6 +157,9 @@ impl AppManifest {
             if !unique.insert(capability.as_str()) {
                 return Err(ManifestError::DuplicateCapability(capability.clone()));
             }
+            let known = Capability::parse(capability)
+                .ok_or_else(|| ManifestError::UnknownCapability(capability.clone()))?;
+            capabilities.push(known);
         }
 
         Ok(Self {
@@ -117,7 +170,7 @@ impl AppManifest {
             version,
             ui,
             single_instance: raw.single_instance,
-            capabilities: raw.capabilities,
+            capabilities,
         })
     }
 }
@@ -160,7 +213,7 @@ fn valid_exec_path(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppManifest, ManifestError, UiKind};
+    use super::{AppManifest, Capability, ManifestError, UiKind};
 
     const VALID: &str = r#"
 schema = 1
@@ -180,6 +233,13 @@ capabilities = ["space.entities.read", "space.entities.write"]
         assert_eq!(manifest.version.to_string(), "0.1.0");
         assert_eq!(manifest.ui, UiKind::Wayland);
         assert!(manifest.single_instance);
+        assert_eq!(
+            manifest.capabilities,
+            vec![
+                Capability::SpaceEntitiesRead,
+                Capability::SpaceEntitiesWrite
+            ]
+        );
     }
 
     #[test]
@@ -265,6 +325,24 @@ capabilities = ["space.entities.read", "space.entities.write"]
             AppManifest::parse_toml(&invalid),
             Err(ManifestError::InvalidCapability(_))
         ));
+    }
+
+    #[test]
+    fn rejects_capability_outside_vocabulary() {
+        // Valid dotted-name syntax (matches valid_dotted_name's own rules),
+        // but not one of the ADR-020 vocabulary entries.
+        let invalid = VALID.replacen("space.entities.read", "net.bluetooth", 1);
+        assert!(matches!(
+            AppManifest::parse_toml(&invalid),
+            Err(ManifestError::UnknownCapability(name)) if name == "net.bluetooth"
+        ));
+    }
+
+    #[test]
+    fn capability_round_trips_through_as_str() {
+        for capability in Capability::ALL {
+            assert_eq!(Capability::parse(capability.as_str()), Some(capability));
+        }
     }
 
     #[test]
