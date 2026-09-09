@@ -25,13 +25,20 @@ jobs:
         run: cargo test -p saai-displayd --all-targets -- --nocapture
       - name: test
         run: cargo test --workspace
-      - name: PID 1 identity fallback
+      - name: Panther PID 1 and display watchdog
         run: >-
           cc -std=c11 -Wall -Wextra -Werror
           -Wno-unused-function -Wno-format-truncation
           os/targets/panther/tests/native-init-identity-test.c
           -o /tmp/native-init-identity-test &&
-          /tmp/native-init-identity-test
+          /tmp/native-init-identity-test &&
+          cc -std=c11 -Wall -Wextra -Werror
+          os/targets/panther/src/display-supervisor.c
+          -o /tmp/display-supervisor &&
+          cc -std=c11 -Wall -Wextra -Werror
+          os/targets/panther/tests/display-watchdog-test.c
+          -o /tmp/display-watchdog-test &&
+          /tmp/display-watchdog-test
       - name: e2e
         run: cargo test -p diagnose-slow-system -- --nocapture
       - name: Pixel 7 cross-build
@@ -42,6 +49,12 @@ jobs:
           CRATE_CC_NO_DEFAULTS: "1"
           RUSTFLAGS: -C link-self-contained=no
         run: >-
+          zig cc -target aarch64-linux-musl -static -Os -s
+          os/targets/panther/src/display-supervisor.c
+          -o /tmp/saai-display-supervisor &&
+          zig cc -target aarch64-linux-musl -static -Os -s
+          os/targets/panther/src/native-init.c
+          -o /tmp/saaios-native-init &&
           cargo build --profile pixel7 --locked
           --target aarch64-unknown-linux-musl
           -p saaios-runtime -p console-tui -p saai-displayd

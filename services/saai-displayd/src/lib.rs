@@ -2,9 +2,104 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
+#[cfg(target_os = "linux")]
+pub mod panther;
+
 pub const FRAME_WIDTH: u32 = 64;
 pub const FRAME_HEIGHT: u32 = 48;
 pub const FRAME_STRIDE: u32 = FRAME_WIDTH * 4;
+pub const PANTHER_WIDTH: u32 = 1080;
+pub const PANTHER_HEIGHT: u32 = 2400;
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum FrameTransformError {
+    InvalidGeometry,
+    SourceTooSmall,
+    TargetTooSmall,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrameGeometry {
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+}
+
+pub fn scale_argb_to_panther_bgrx(
+    source: &[u8],
+    source_geometry: FrameGeometry,
+    target: &mut [u8],
+    target_geometry: FrameGeometry,
+) -> Result<(), FrameTransformError> {
+    let FrameGeometry {
+        width: source_width,
+        height: source_height,
+        stride: source_stride,
+    } = source_geometry;
+    let FrameGeometry {
+        width: target_width,
+        height: target_height,
+        stride: target_stride,
+    } = target_geometry;
+    if source_width == 0
+        || source_height == 0
+        || source_stride < source_width.saturating_mul(4)
+        || target_width == 0
+        || target_height == 0
+        || target_stride < target_width.saturating_mul(4)
+    {
+        return Err(FrameTransformError::InvalidGeometry);
+    }
+    let source_len = source_stride as usize * source_height as usize;
+    let target_len = target_stride as usize * target_height as usize;
+    if source.len() < source_len {
+        return Err(FrameTransformError::SourceTooSmall);
+    }
+    if target.len() < target_len {
+        return Err(FrameTransformError::TargetTooSmall);
+    }
+
+    for y in 0..target_height {
+        let source_y = y as usize * source_height as usize / target_height as usize;
+        for x in 0..target_width {
+            let source_x = x as usize * source_width as usize / target_width as usize;
+            let source_offset = source_y * source_stride as usize + source_x * 4;
+            let target_offset = y as usize * target_stride as usize + x as usize * 4;
+            let blue = source[source_offset];
+            let green = source[source_offset + 1];
+            let red = source[source_offset + 2];
+            target[target_offset] = 0;
+            target[target_offset + 1] = red;
+            target[target_offset + 2] = green;
+            target[target_offset + 3] = blue;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TouchBounds {
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_y: i32,
+    pub max_y: i32,
+}
+
+impl TouchBounds {
+    pub fn normalize(self, x: i32, y: i32, width: u32, height: u32) -> (f64, f64) {
+        fn axis(value: i32, min: i32, max: i32, extent: u32) -> f64 {
+            if max <= min || extent == 0 {
+                return 0.0;
+            }
+            let value = value.clamp(min, max) - min;
+            value as f64 * extent.saturating_sub(1) as f64 / (max - min) as f64
+        }
+        (
+            axis(x, self.min_x, self.max_x, width),
+            axis(y, self.min_y, self.max_y, height),
+        )
+    }
+}
 
 pub fn demo_frame() -> Vec<u8> {
     let mut pixels = Vec::with_capacity((FRAME_STRIDE * FRAME_HEIGHT) as usize);
@@ -20,6 +115,23 @@ pub fn demo_frame() -> Vec<u8> {
         }
     }
     pixels
+}
+
+pub fn demo_frame_with_touch(x: u32, y: u32) -> Vec<u8> {
+    let mut frame = demo_frame();
+    let left = x.saturating_sub(3);
+    let right = x.saturating_add(3).min(FRAME_WIDTH - 1);
+    let top = y.saturating_sub(3);
+    let bottom = y.saturating_add(3).min(FRAME_HEIGHT - 1);
+    for marker_y in top..=bottom {
+        for marker_x in left..=right {
+            if marker_x == x || marker_y == y {
+                let offset = (marker_y * FRAME_STRIDE + marker_x * 4) as usize;
+                frame[offset..offset + 4].copy_from_slice(&[0x00, 0xff, 0xff, 0xff]);
+            }
+        }
+    }
+    frame
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -154,6 +266,55 @@ mod tests {
             expected_frame_hash(),
             "b71d8fd372b5947dd4bb9d23dde37f777ccc57547fa0fcd59a7e924ef69efc61",
         );
+    }
+
+    #[test]
+    fn touch_marker_produces_a_second_distinct_frame() {
+        let touched = demo_frame_with_touch(12, 8);
+        assert_ne!(sha256_hex(&touched), expected_frame_hash());
+        let offset = (8 * FRAME_STRIDE + 12 * 4) as usize;
+        assert_eq!(&touched[offset..offset + 4], &[0x00, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn panther_transform_scales_and_swizzles_argb() {
+        let source = [
+            0x33, 0x22, 0x11, 0xff, 0x66, 0x55, 0x44, 0xff, 0x99, 0x88, 0x77, 0xff, 0xcc, 0xbb,
+            0xaa, 0xff,
+        ];
+        let mut target = vec![0xee; 4 * 4 * 4];
+        scale_argb_to_panther_bgrx(
+            &source,
+            FrameGeometry {
+                width: 2,
+                height: 2,
+                stride: 8,
+            },
+            &mut target,
+            FrameGeometry {
+                width: 4,
+                height: 4,
+                stride: 16,
+            },
+        )
+        .unwrap();
+        assert_eq!(&target[0..4], &[0, 0x11, 0x22, 0x33]);
+        assert_eq!(&target[12..16], &[0, 0x44, 0x55, 0x66]);
+        assert_eq!(&target[48..52], &[0, 0x77, 0x88, 0x99]);
+        assert_eq!(&target[60..64], &[0, 0xaa, 0xbb, 0xcc]);
+    }
+
+    #[test]
+    fn touch_normalization_clamps_to_surface() {
+        let bounds = TouchBounds {
+            min_x: 10,
+            max_x: 1090,
+            min_y: 20,
+            max_y: 2420,
+        };
+        assert_eq!(bounds.normalize(-10, 20, 64, 48), (0.0, 0.0));
+        assert_eq!(bounds.normalize(1090, 3000, 64, 48), (63.0, 47.0));
+        assert_eq!(bounds.normalize(550, 1220, 64, 48), (31.5, 23.5));
     }
 
     #[test]

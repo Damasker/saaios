@@ -17,6 +17,9 @@ bin_dir=${BIN_DIR:-"$repo_root/dist/panther/bin"}
 output=${OUTPUT:-"$repo_root/dist/panther/saaios-panther-init_boot.img"}
 native_init="$bin_dir/saaios-native-init-arm64"
 drm_splash="$bin_dir/saaios-drm-splash-arm64"
+displayd="$artifacts/saai-displayd-arm64"
+display_client="$artifacts/saai-demo-surface-arm64"
+display_supervisor="$bin_dir/saai-display-supervisor-arm64"
 touch_monitor="$bin_dir/saaios-touch-monitor-arm64"
 wifi_scan="$bin_dir/saaios-wifi-scan-arm64"
 sntp_sync="$bin_dir/saaios-sntp-sync-arm64"
@@ -34,6 +37,9 @@ mkdir -p "$bin_dir" "$(dirname -- "$output")"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/native-init.c" -o "$native_init"
+
+"$zig" cc -target aarch64-linux-musl -static -Os -s \
+    "$source_dir/display-supervisor.c" -o "$display_supervisor"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     -I/usr/include/libdrm \
@@ -91,6 +97,9 @@ set -- ramdisk.cpio \
     "add 0755 saaios/saaios-runtime $artifacts/saaios-runtime-panther-tcp" \
     "add 0755 saaios/saaios-console $artifacts/saaios-console-panther-tcp" \
     "add 0755 saaios/drm-splash $drm_splash" \
+    "add 0755 saaios/saai-displayd $displayd" \
+    "add 0755 saaios/saai-demo-surface $display_client" \
+    "add 0755 saaios/saai-display-supervisor $display_supervisor" \
     "mkdir 0755 saaios/fonts" \
     "add 0644 saaios/fonts/Inter-Regular.ttf $assets_dir/fonts/Inter-Regular.ttf" \
     "add 0644 saaios/fonts/Inter-SemiBold.ttf $assets_dir/fonts/Inter-SemiBold.ttf" \

@@ -1,5 +1,5 @@
-use anyhow::{bail, Context, Result};
-use clap::Parser;
+use anyhow::{anyhow, bail, Context, Result};
+use saai_displayd::panther::{PantherOutput, PantherTouch, TouchEvent};
 use saai_displayd::{
     expected_frame_hash, sha256_hex, HeadlessReport, FRAME_HEIGHT, FRAME_STRIDE, FRAME_WIDTH,
 };
@@ -28,14 +28,64 @@ use wayland_server::{
     Resource, WEnum,
 };
 
-#[derive(Debug, Parser)]
+#[derive(Debug)]
 struct Args {
-    #[arg(long, default_value = "wayland-saaios-s02")]
     socket: String,
-    #[arg(long)]
     report: PathBuf,
-    #[arg(long, default_value_t = 5_000)]
     timeout_ms: u64,
+    backend: Backend,
+    drm_card: PathBuf,
+    touch: PathBuf,
+    ready: PathBuf,
+    heartbeat: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Backend {
+    Headless,
+    Panther,
+}
+
+impl Args {
+    fn parse() -> Result<Self> {
+        let mut args = Self {
+            socket: "wayland-saaios-s02".into(),
+            report: PathBuf::new(),
+            timeout_ms: 0,
+            backend: Backend::Headless,
+            drm_card: "/dev/dri/card0".into(),
+            touch: "/dev/input/touchscreen".into(),
+            ready: "/run/saai-displayd.ready".into(),
+            heartbeat: "/run/saai-displayd.heartbeat".into(),
+        };
+        let mut values = std::env::args().skip(1);
+        while let Some(flag) = values.next() {
+            let value = values
+                .next()
+                .ok_or_else(|| anyhow!("missing value for {flag}"))?;
+            match flag.as_str() {
+                "--socket" => args.socket = value,
+                "--report" => args.report = value.into(),
+                "--timeout-ms" => args.timeout_ms = value.parse().context("parse --timeout-ms")?,
+                "--backend" => {
+                    args.backend = match value.as_str() {
+                        "headless" => Backend::Headless,
+                        "panther" => Backend::Panther,
+                        _ => bail!("unknown backend {value}"),
+                    }
+                }
+                "--drm-card" => args.drm_card = value.into(),
+                "--touch" => args.touch = value.into(),
+                "--ready" => args.ready = value.into(),
+                "--heartbeat" => args.heartbeat = value.into(),
+                _ => bail!("unknown argument {flag}"),
+            }
+        }
+        if args.report.as_os_str().is_empty() {
+            bail!("--report is required");
+        }
+        Ok(args)
+    }
 }
 
 struct ClientState {
@@ -55,7 +105,6 @@ struct SurfaceData {
     pending_buffer: Option<Option<wl_buffer::WlBuffer>>,
     current_buffer: Option<wl_buffer::WlBuffer>,
     callbacks: Vec<wl_callback::WlCallback>,
-    presented: bool,
 }
 
 struct PoolData {
@@ -84,6 +133,11 @@ struct ToplevelData {
     xdg_surface: xdg_surface::XdgSurface,
 }
 
+struct PantherRuntime {
+    output: PantherOutput,
+    touch: PantherTouch,
+}
+
 #[derive(Default)]
 struct State {
     pointers: Vec<wl_pointer::WlPointer>,
@@ -93,12 +147,22 @@ struct State {
     report: Option<HeadlessReport>,
     close_at: Option<Instant>,
     next_serial: u32,
+    active_surface: Option<wl_surface::WlSurface>,
+    pointer_focus: HashSet<ObjectId>,
+    clock_origin: Option<Instant>,
+    panther: Option<PantherRuntime>,
+    fatal_error: Option<String>,
 }
 
 impl State {
     fn serial(&mut self) -> u32 {
         self.next_serial = self.next_serial.wrapping_add(1).max(1);
         self.next_serial
+    }
+
+    fn event_time(&mut self) -> u32 {
+        let origin = self.clock_origin.get_or_insert_with(Instant::now);
+        origin.elapsed().as_millis() as u32
     }
 
     fn xdg_for_surface(&self, surface: &wl_surface::WlSurface) -> Option<&xdg_surface::XdgSurface> {
@@ -193,6 +257,31 @@ impl State {
             return;
         }
 
+        if let Some(panther) = &mut self.panther {
+            if let Err(error) =
+                panther
+                    .output
+                    .present(&bytes, FRAME_WIDTH, FRAME_HEIGHT, FRAME_STRIDE)
+            {
+                self.fatal_error = Some(format!("{error:#}"));
+                return;
+            }
+            if self.active_surface.as_ref() != Some(surface) {
+                self.pointer_focus.clear();
+                self.active_surface = Some(surface.clone());
+            }
+            buffer.release();
+            self.report.get_or_insert(HeadlessReport {
+                schema: 1,
+                configured: true,
+                frame_hash: sha256_hex(&bytes),
+                input_events_sent: 0,
+                close_sent: false,
+                disconnected_clients: 0,
+            });
+            return;
+        }
+
         let enter_serial = self.serial();
         let button_serial = self.serial();
         let mut input_recipients = 0;
@@ -226,6 +315,60 @@ impl State {
             disconnected_clients: 0,
         });
         self.close_at = Some(Instant::now());
+    }
+
+    fn dispatch_touch(&mut self) {
+        let events = match self.panther.as_mut().map(|panther| panther.touch.drain()) {
+            Some(Ok(events)) => events,
+            Some(Err(error)) => {
+                self.fatal_error = Some(format!("{error:#}"));
+                return;
+            }
+            None => return,
+        };
+        let Some(surface) = self.active_surface.clone() else {
+            return;
+        };
+        for event in events {
+            let serial = self.serial();
+            let event_time = self.event_time();
+            let (x, y) = match event {
+                TouchEvent::Down { x, y }
+                | TouchEvent::Motion { x, y }
+                | TouchEvent::Up { x, y } => (x, y),
+            };
+            let mut recipients = 0;
+            for pointer in &self.pointers {
+                if !pointer.id().same_client_as(&surface.id()) {
+                    continue;
+                }
+                match event {
+                    TouchEvent::Down { .. } => {
+                        if self.pointer_focus.insert(pointer.id()) {
+                            pointer.enter(serial, &surface, x, y);
+                        }
+                        pointer.motion(event_time, x, y);
+                        pointer.button(serial, event_time, 0x110, wl_pointer::ButtonState::Pressed);
+                    }
+                    TouchEvent::Motion { .. } => pointer.motion(event_time, x, y),
+                    TouchEvent::Up { .. } => {
+                        pointer.button(
+                            serial,
+                            event_time,
+                            0x110,
+                            wl_pointer::ButtonState::Released,
+                        );
+                    }
+                }
+                if pointer.version() >= wl_pointer::EVT_FRAME_SINCE {
+                    pointer.frame();
+                }
+                recipients += 1;
+            }
+            if let Some(report) = &mut self.report {
+                report.input_events_sent += recipients;
+            }
+        }
     }
 }
 
@@ -340,13 +483,9 @@ impl Dispatch<wl_surface::WlSurface, Mutex<SurfaceData>> for State {
                     let had_attach = pending.is_some();
                     if let Some(pending) = pending {
                         surface.current_buffer = pending;
-                        if surface.current_buffer.is_none() {
-                            surface.presented = false;
-                        }
                     }
                     let initial_commit = !had_attach && surface.current_buffer.is_none();
-                    let new_buffer = if had_attach && !surface.presented {
-                        surface.presented = surface.current_buffer.is_some();
+                    let new_buffer = if had_attach {
                         surface.current_buffer.clone()
                     } else {
                         None
@@ -368,6 +507,18 @@ impl Dispatch<wl_surface::WlSurface, Mutex<SurfaceData>> for State {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn destroyed(
+        state: &mut State,
+        _client: ClientId,
+        resource: &wl_surface::WlSurface,
+        _data: &Mutex<SurfaceData>,
+    ) {
+        if state.active_surface.as_ref() == Some(resource) {
+            state.active_surface = None;
+            state.pointer_focus.clear();
         }
     }
 }
@@ -722,11 +873,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         _data: &(),
     ) {
         state.pointers.retain(|pointer| pointer != resource);
+        state.pointer_focus.remove(&resource.id());
     }
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse()?;
+    if args.backend == Backend::Headless && args.timeout_ms == 0 {
+        bail!("headless backend requires a non-zero --timeout-ms");
+    }
+    if args.backend == Backend::Panther {
+        let _ = fs::remove_file(&args.ready);
+        let _ = fs::remove_file(&args.heartbeat);
+    }
     let mut display: Display<State> = Display::new().context("create Wayland display")?;
     let mut handle = display.handle();
     handle.create_global::<State, wl_compositor::WlCompositor, _>(4, ());
@@ -737,10 +896,27 @@ fn main() -> Result<()> {
     println!("READY {}", args.socket);
 
     let disconnected = Arc::new(AtomicUsize::new(0));
-    let deadline = Instant::now() + Duration::from_millis(args.timeout_ms);
-    let mut state = State::default();
+    let deadline =
+        (args.timeout_ms != 0).then(|| Instant::now() + Duration::from_millis(args.timeout_ms));
+    let mut state = State {
+        panther: if args.backend == Backend::Panther {
+            Some(PantherRuntime {
+                output: PantherOutput::open(&args.drm_card)?,
+                touch: PantherTouch::open(&args.touch)?,
+            })
+        } else {
+            None
+        },
+        ..State::default()
+    };
+    if args.backend == Backend::Panther {
+        fs::write(&args.ready, "drm-touch-wayland-ready")
+            .with_context(|| format!("write {}", args.ready.display()))?;
+    }
     let mut clients = Vec::new();
-    while Instant::now() < deadline {
+    let mut heartbeat = 0u64;
+    let mut last_heartbeat = Instant::now();
+    while deadline.is_none_or(|deadline| Instant::now() < deadline) {
         if let Some(stream) = listener.accept().context("accept Wayland client")? {
             clients.push(
                 handle
@@ -756,7 +932,19 @@ fn main() -> Result<()> {
         display
             .dispatch_clients(&mut state)
             .context("dispatch Wayland clients")?;
+        state.dispatch_touch();
+        if let Some(error) = state.fatal_error.take() {
+            bail!("Panther backend failed: {error}");
+        }
         display.flush_clients().context("flush Wayland clients")?;
+        if args.backend == Backend::Panther
+            && last_heartbeat.elapsed() >= Duration::from_millis(250)
+        {
+            heartbeat = heartbeat.wrapping_add(1);
+            fs::write(&args.heartbeat, heartbeat.to_string())
+                .with_context(|| format!("write {}", args.heartbeat.display()))?;
+            last_heartbeat = Instant::now();
+        }
         if state
             .close_at
             .is_some_and(|sent| sent.elapsed() >= Duration::from_millis(250))
@@ -766,6 +954,9 @@ fn main() -> Result<()> {
         thread::sleep(Duration::from_millis(1));
     }
 
+    if args.backend == Backend::Panther {
+        bail!("Panther backend stopped unexpectedly");
+    }
     let mut report = state.report.context("headless lifecycle timed out")?;
     report.disconnected_clients = disconnected.load(Ordering::Relaxed);
     if report.frame_hash != expected_frame_hash() {

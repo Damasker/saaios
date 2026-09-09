@@ -66,6 +66,8 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 futures = "0.3"
 bytes = "1"
+drm = "0.15"
+evdev = "0.13"
 http = "1"
 sha2 = "0.10"
 wayland-client = "0.31"

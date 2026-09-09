@@ -1,8 +1,11 @@
 use anyhow::{bail, Context, Result};
-use clap::Parser;
-use saai_displayd::{demo_frame, FRAME_HEIGHT, FRAME_STRIDE, FRAME_WIDTH};
+use saai_displayd::{demo_frame, demo_frame_with_touch, FRAME_HEIGHT, FRAME_STRIDE, FRAME_WIDTH};
 use serde::Serialize;
-use std::{io::Write, os::fd::AsFd};
+use std::{
+    fs::File,
+    io::Write,
+    os::{fd::AsFd, unix::fs::FileExt},
+};
 use wayland_client::{
     delegate_noop,
     protocol::{
@@ -12,18 +15,32 @@ use wayland_client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Default)]
 struct Args {
-    #[arg(long)]
     observer: bool,
-    #[arg(long)]
     unconfigured_buffer: bool,
-    #[arg(long)]
     duplicate_role: bool,
-    #[arg(long)]
     crash_before_buffer: bool,
-    #[arg(long)]
     reuse_role: bool,
+    interactive: bool,
+}
+
+impl Args {
+    fn parse() -> Result<Self> {
+        let mut args = Self::default();
+        for flag in std::env::args().skip(1) {
+            match flag.as_str() {
+                "--observer" => args.observer = true,
+                "--unconfigured-buffer" => args.unconfigured_buffer = true,
+                "--duplicate-role" => args.duplicate_role = true,
+                "--crash-before-buffer" => args.crash_before_buffer = true,
+                "--reuse-role" => args.reuse_role = true,
+                "--interactive" => args.interactive = true,
+                _ => bail!("unknown argument {flag}"),
+            }
+        }
+        Ok(args)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +60,7 @@ struct State {
     duplicate_role: bool,
     crash_before_buffer: bool,
     reuse_role: bool,
+    interactive: bool,
     role_reused: bool,
     violation_sent: bool,
     running: bool,
@@ -53,7 +71,10 @@ struct State {
     xdg_surface: Option<xdg_surface::XdgSurface>,
     toplevel: Option<xdg_toplevel::XdgToplevel>,
     buffer: Option<wl_buffer::WlBuffer>,
+    shm_file: Option<File>,
     configured: bool,
+    pointer_x: f64,
+    pointer_y: f64,
     pointer_enters: u32,
     pointer_buttons: u32,
     close_received: bool,
@@ -108,6 +129,7 @@ impl State {
             qh,
             (),
         ));
+        self.shm_file = Some(file);
         self.maybe_send_unconfigured_buffer();
         if self.configured {
             self.attach();
@@ -123,6 +145,22 @@ impl State {
             // A no-op commit must not re-present or re-release the old buffer.
             surface.commit();
         }
+    }
+
+    fn redraw_touch(&mut self) -> Result<()> {
+        let Some(file) = &self.shm_file else {
+            return Ok(());
+        };
+        let x = self.pointer_x.round().clamp(0.0, (FRAME_WIDTH - 1) as f64) as u32;
+        let y = self.pointer_y.round().clamp(0.0, (FRAME_HEIGHT - 1) as f64) as u32;
+        let frame = demo_frame_with_touch(x, y);
+        file.write_all_at(&frame, 0)
+            .context("draw touch marker into wl_shm")?;
+        file.sync_data().context("flush touch marker")?;
+        self.attach();
+        println!("CLIENT_TOUCH x={x} y={y}");
+        std::io::stdout().flush().context("flush touch evidence")?;
+        Ok(())
     }
 
     fn maybe_send_unconfigured_buffer(&mut self) {
@@ -279,11 +317,32 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { .. } => state.pointer_enters += 1,
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                state.pointer_enters += 1;
+                state.pointer_x = surface_x;
+                state.pointer_y = surface_y;
+            }
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                state.pointer_x = surface_x;
+                state.pointer_y = surface_y;
+            }
             wl_pointer::Event::Button {
                 state: WEnum::Value(wl_pointer::ButtonState::Pressed),
                 ..
-            } => state.pointer_buttons += 1,
+            } => {
+                state.pointer_buttons += 1;
+                if state.interactive {
+                    state.redraw_touch().expect("redraw touch marker");
+                }
+            }
             _ => {}
         }
     }
@@ -296,7 +355,7 @@ delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(State: ignore wl_buffer::WlBuffer);
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse()?;
     let connection = Connection::connect_to_env().context("connect to Wayland socket")?;
     let mut queue = connection.new_event_queue();
     let qh = queue.handle();
@@ -307,6 +366,7 @@ fn main() -> Result<()> {
         duplicate_role: args.duplicate_role,
         crash_before_buffer: args.crash_before_buffer,
         reuse_role: args.reuse_role,
+        interactive: args.interactive,
         role_reused: false,
         violation_sent: false,
         running: true,
@@ -317,7 +377,10 @@ fn main() -> Result<()> {
         xdg_surface: None,
         toplevel: None,
         buffer: None,
+        shm_file: None,
         configured: false,
+        pointer_x: 0.0,
+        pointer_y: 0.0,
         pointer_enters: 0,
         pointer_buttons: 0,
         close_received: false,

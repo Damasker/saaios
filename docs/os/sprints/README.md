@@ -12,7 +12,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S00 | Архитектура и процесс | Done | рабочий DRM UI |
 | S01 | Системная идентичность | Done | S00 |
 | S02 | Wayland vertical slice на host | Done | S01 |
-| S03 | `saai-displayd` на Pixel 7 | Backlog | S02 |
+| S03 | `saai-displayd` на Pixel 7 | In progress | S02 |
 | S04 | Отдельный `saai-shell` и lock | Backlog | S03 |
 | S05 | Приложения, manifest и lifecycle | Backlog | S04 |
 | S06 | Настоящие пространства и entity store | Backlog | S05 |
@@ -76,6 +76,9 @@ ADR о framework; CI воспроизводит сценарий.
 phone image.
 
 ## S03 — `saai-displayd` на Pixel 7
+
+Рабочий паспорт и декомпозиция:
+[S03-saai-displayd-pixel7.md](S03-saai-displayd-pixel7.md).
 
 **Goal:** тот же тестовый Wayland-клиент выводится на реальный экран и получает
 касания.

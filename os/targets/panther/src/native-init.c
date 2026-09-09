@@ -1150,10 +1150,10 @@ static int create_drm_card_node(void) {
                  makedev(major_number, minor_number));
 }
 
-static void start_display_splash(void) {
+static pid_t start_display_splash(void) {
     if (create_drm_card_node() < 0) {
         log_message("DRM card did not appear");
-        return;
+        return -1;
     }
     pid_t child = fork();
     if (child == 0) {
@@ -1173,6 +1173,50 @@ static void start_display_splash(void) {
     if (child > 0) {
         log_message("native display splash started");
     }
+    return child;
+}
+
+static pid_t start_display_supervisor(void) {
+    if (create_drm_card_node() < 0) {
+        log_message("DRM card did not appear");
+        return -1;
+    }
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/saai-display-supervisor.log",
+                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+                          0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl("/saaios/saai-display-supervisor",
+              "saai-display-supervisor", NULL);
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("display supervisor started");
+    }
+    return child;
+}
+
+static void enable_wayland_display(void) {
+    int marker = open("/run/saaios-display.enable",
+                      O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                      0600);
+    if (marker < 0) {
+        log_message("display enable marker failed: %s", strerror(errno));
+        return;
+    }
+    static const char enabled[] = "1\n";
+    if (write(marker, enabled, sizeof(enabled) - 1) !=
+        (ssize_t)(sizeof(enabled) - 1)) {
+        log_message("display enable marker write failed: %s", strerror(errno));
+    }
+    close(marker);
 }
 
 static int create_input_node(const char *wanted_name,
@@ -1388,7 +1432,11 @@ int main(void) {
         log_message("haptic runtime power locked active");
         apply_haptic_factory_calibration();
     }
-    start_display_splash();
+    pid_t display_supervisor_pid = start_display_supervisor();
+    pid_t display_fallback_pid = -1;
+    if (display_supervisor_pid < 0) {
+        display_fallback_pid = start_display_splash();
+    }
     char *const brightness_argv[] = {
         "display-brightness.sh", "restore", NULL,
     };
@@ -1435,6 +1483,9 @@ int main(void) {
     mark_userspace_stable();
     log_message("native userspace ready");
     mark_current_slot_successful();
+    if (display_supervisor_pid > 0) {
+        enable_wayland_display();
+    }
 
     for (;;) {
         int status = 0;
@@ -1443,6 +1494,15 @@ int main(void) {
             usleep(250000);
             console_pid = start_console();
             log_message("USB console restarted");
+        } else if (ended == display_supervisor_pid) {
+            display_supervisor_pid = -1;
+            usleep(250000);
+            display_fallback_pid = start_display_splash();
+            log_message("display supervisor exited; native fallback restarted");
+        } else if (ended == display_fallback_pid) {
+            usleep(250000);
+            display_fallback_pid = start_display_splash();
+            log_message("native display fallback restarted");
         }
     }
 }
