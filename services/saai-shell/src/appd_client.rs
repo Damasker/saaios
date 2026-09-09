@@ -56,6 +56,19 @@ impl AppdClient {
         });
     }
 
+    /// Records the user's accept/decline-all answer to a `ConsentRequired`
+    /// response (ADR-020) -- does not itself launch the app; the caller
+    /// retries `launch()` after seeing `ConsentDecided` come back.
+    pub fn decide_consent(&mut self, app_id: impl Into<String>, accept: bool) {
+        let request_id = self.request_id();
+        self.queue(ClientRequest::DecideConsent {
+            schema: APPD_WIRE_SCHEMA_V1,
+            request_id,
+            app_id: app_id.into(),
+            accept,
+        });
+    }
+
     pub fn poll(&mut self) -> Vec<ServerMessage> {
         if self.stream.is_none() && Instant::now() >= self.retry_at {
             self.connect();

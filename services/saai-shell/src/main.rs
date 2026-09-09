@@ -253,6 +253,96 @@ fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
         .and_then(page_from_action)
 }
 
+const CONSENT_SCREEN_ID: &str = "consent";
+const CONSENT_HEADER_ID: &str = "consent-header";
+const CONSENT_BUTTONS_ID: &str = "consent-buttons";
+const CONSENT_ACCEPT_ID: &str = "consent-accept";
+const CONSENT_DECLINE_ID: &str = "consent-decline";
+const CONSENT_ACCEPT_ACTION: &str = "consent:accept";
+const CONSENT_DECLINE_ACTION: &str = "consent:decline";
+/// Matches the root tab bar's own height (ROOT_TAB_HEIGHT) so the two
+/// screens share the same bottom-button proportions.
+const CONSENT_BUTTON_HEIGHT: u32 = ROOT_TAB_HEIGHT;
+
+/// The requested-capability screen (ADR-020 section 2, S07 Change 4): a
+/// second full-screen `ui_tree` layout, built and hit-tested the same way
+/// as `root_view()`, shown instead of the normal root content while an
+/// app's launch is blocked on consent.
+struct PendingConsent {
+    app_id: String,
+    app_name: &'static str,
+    requested: Vec<String>,
+}
+
+/// What `draw()` renders this frame, computed up front from `&self` before
+/// `buffer`/`canvas` take a mutable borrow for the rest of the function.
+enum Frame {
+    Consent {
+        app_name: &'static str,
+        labels: Vec<String>,
+        header: Rect,
+        accept: Rect,
+        decline: Rect,
+    },
+    Root {
+        content_rect: Rect,
+        tabs: Vec<(Rect, &'static str)>,
+        content_cards: Vec<(Rect, render::ActionCardView)>,
+        context_label: String,
+    },
+}
+
+fn consent_view(width: u32, height: u32) -> LayoutNode {
+    let buttons = Node::linear(
+        CONSENT_BUTTONS_ID,
+        Axis::Horizontal,
+        vec![
+            Node::leaf(CONSENT_ACCEPT_ID).with_action(CONSENT_ACCEPT_ACTION),
+            Node::leaf(CONSENT_DECLINE_ID).with_action(CONSENT_DECLINE_ACTION),
+        ],
+    )
+    .with_size(Length::Fill, Length::Px(CONSENT_BUTTON_HEIGHT));
+    let root = Node::linear(
+        CONSENT_SCREEN_ID,
+        Axis::Vertical,
+        vec![Node::leaf(CONSENT_HEADER_ID), buttons],
+    );
+    layout(&root, Rect::new(0, 0, width, height))
+}
+
+/// `Some(true)` for accept, `Some(false)` for decline, `None` if the touch
+/// missed both buttons -- same tree `draw()` renders from, per the same
+/// "no second set of rectangles" rule as `tab_at()`.
+fn consent_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bool> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    match consent_view(width, height)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref())
+    {
+        Some(CONSENT_ACCEPT_ACTION) => Some(true),
+        Some(CONSENT_DECLINE_ACTION) => Some(false),
+        _ => None,
+    }
+}
+
+/// Human-readable (Russian) label for one ADR-020 vocabulary entry. Falls
+/// back to the raw dotted name for anything not yet in this list, so an
+/// unrecognized capability is still visible, not silently dropped from the
+/// screen.
+fn capability_label(name: &str) -> &str {
+    match name {
+        "space.entities.read" => "Чтение объектов пространства",
+        "space.entities.write" => "Изменение объектов пространства",
+        "net.internet" => "Доступ в интернет",
+        "clipboard.read" => "Чтение буфера обмена",
+        "clipboard.write" => "Запись в буфер обмена",
+        "portal.open_file" => "Выбор файла",
+        other => other,
+    }
+}
+
 fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top = ((action.top as u64 * height as u64) / 2400) as u32;
@@ -386,6 +476,7 @@ fn main() {
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
         demo_app_state: DemoAppState::Unavailable,
+        pending_consent: None,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -472,6 +563,9 @@ struct Shell {
     fonts: Option<render::Fonts>,
     appd: appd_client::AppdClient,
     demo_app_state: DemoAppState,
+    /// Set while a launch is blocked on the ADR-020 consent screen -- see
+    /// `apply_appd_message`'s `ConsentRequired`/`ConsentDecided` handling.
+    pending_consent: Option<PendingConsent>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -816,7 +910,23 @@ impl TouchHandler for Shell {
             println!("saai-shell: unlocked by touch");
         } else if self.tab_touch_pending {
             self.tab_touch_pending = false;
-            if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
+            if self.pending_consent.is_some() {
+                // Modal: the consent screen owns every touch while it is
+                // showing, not the tab bar or content cards underneath it.
+                if let Some(accept) =
+                    consent_action_at(self.last_touch_pos, self.width, self.height)
+                {
+                    if let Some(pending) = self.pending_consent.take() {
+                        println!(
+                            "saai-shell: consent {} for {}",
+                            if accept { "accepted" } else { "declined" },
+                            pending.app_id
+                        );
+                        self.appd.decide_consent(pending.app_id, accept);
+                    }
+                    self.draw(conn, qh);
+                }
+            } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
@@ -883,25 +993,55 @@ impl Shell {
         let width = self.width;
         let height = self.height;
         let stride = width as i32 * 4;
-        let view = root_view(width, height);
-        let content_rect = view.children[0].rect;
-        let tabs = view.children[1]
-            .children
-            .iter()
-            .zip(ROOT_TABS)
-            .map(|(node, tab)| (node.rect, tab.label))
-            .collect::<Vec<_>>();
-        let content_cards = ROOT_CONTENT_ACTIONS
-            .iter()
-            .filter(|action| action.page == self.current_page.id())
-            .map(|action| {
-                (
-                    content_action_rect(action, width, height),
-                    self.content_card(action),
-                )
-            })
-            .collect::<Vec<_>>();
-        let context_label = self.context_label();
+
+        // Every `&self` read this frame needs (content cards, context
+        // label, consent labels) happens here, before `buffer`/`canvas`
+        // take a mutable borrow tied to `self.buffer`/`self.pool` for the
+        // rest of the function -- `self.content_card()`/`self.context_
+        // label()` need the whole of `self`, not just those two fields.
+        let frame = if let Some(pending) = &self.pending_consent {
+            let view = consent_view(width, height);
+            let header = view.children[0].rect;
+            let buttons = &view.children[1].children;
+            let labels = pending
+                .requested
+                .iter()
+                .map(|name| capability_label(name).to_owned())
+                .collect::<Vec<_>>();
+            Frame::Consent {
+                app_name: pending.app_name,
+                labels,
+                header,
+                accept: buttons[0].rect,
+                decline: buttons[1].rect,
+            }
+        } else {
+            let view = root_view(width, height);
+            let content_rect = view.children[0].rect;
+            let tabs = view.children[1]
+                .children
+                .iter()
+                .zip(ROOT_TABS)
+                .map(|(node, tab)| (node.rect, tab.label))
+                .collect::<Vec<_>>();
+            let content_cards = ROOT_CONTENT_ACTIONS
+                .iter()
+                .filter(|action| action.page == self.current_page.id())
+                .map(|action| {
+                    (
+                        content_action_rect(action, width, height),
+                        self.content_card(action),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let context_label = self.context_label();
+            Frame::Root {
+                content_rect,
+                tabs,
+                content_cards,
+                context_label,
+            }
+        };
 
         let buffer = self.buffer.get_or_insert_with(|| {
             self.pool
@@ -932,15 +1072,41 @@ impl Shell {
             }
         };
 
-        render::draw_root(
-            &mut render::Canvas::new(canvas, width, height),
-            content_rect,
-            &tabs,
-            self.current_page.index(),
-            &context_label,
-            self.fonts.as_ref(),
-            &content_cards,
-        );
+        match frame {
+            Frame::Consent {
+                app_name,
+                labels,
+                header,
+                accept,
+                decline,
+            } => {
+                render::draw_consent(
+                    &mut render::Canvas::new(canvas, width, height),
+                    app_name,
+                    &labels,
+                    header,
+                    accept,
+                    decline,
+                    self.fonts.as_ref(),
+                );
+            }
+            Frame::Root {
+                content_rect,
+                tabs,
+                content_cards,
+                context_label,
+            } => {
+                render::draw_root(
+                    &mut render::Canvas::new(canvas, width, height),
+                    content_rect,
+                    &tabs,
+                    self.current_page.index(),
+                    &context_label,
+                    self.fonts.as_ref(),
+                    &content_cards,
+                );
+            }
+        }
 
         self.window
             .wl_surface()
@@ -1033,6 +1199,31 @@ impl Shell {
                 result: Some(AppResponseResult::Removed { app_id, .. }),
                 ..
             } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Missing,
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::ConsentRequired { app_id, requested }),
+                ..
+            } if app_id == DEMO_APP_ID => {
+                self.pending_consent = Some(PendingConsent {
+                    app_id,
+                    app_name: "Saai Demo",
+                    requested,
+                });
+                // The launch that triggered this is refused, not merely
+                // delayed -- back to a launchable state, not stuck Pending.
+                self.demo_app_state = DemoAppState::Installed;
+            }
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::ConsentDecided { app_id, .. }),
+                ..
+            } if app_id == DEMO_APP_ID => {
+                self.pending_consent = None;
+                // Accept or decline, the daemon now has a decision that
+                // covers this request -- retry the launch the user
+                // originally asked for; it can no longer come back as
+                // ConsentRequired for the same capability set.
+                self.appd.launch(app_id);
+                self.demo_app_state = DemoAppState::Pending;
+            }
             AppServerMessage::Event { event, .. } if event.app_id == DEMO_APP_ID => {
                 self.demo_app_state = match event.event {
                     LifecycleEventKind::Installed => DemoAppState::Installed,
@@ -1208,7 +1399,10 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{content_action_at, tab_at, RootPage, ROOT_CONTENT_ACTIONS, ROOT_TABS};
+    use super::{
+        capability_label, consent_action_at, content_action_at, tab_at, RootPage,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS,
+    };
 
     #[test]
     fn root_tabs_come_from_sui_markup() {
@@ -1259,6 +1453,27 @@ mod tests {
             content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
             Some("selected-entity")
         );
+    }
+
+    #[test]
+    fn consent_screen_left_half_of_button_row_accepts() {
+        assert_eq!(consent_action_at((270.0, 2250.0), 1080, 2400), Some(true));
+    }
+
+    #[test]
+    fn consent_screen_right_half_of_button_row_declines() {
+        assert_eq!(consent_action_at((810.0, 2250.0), 1080, 2400), Some(false));
+    }
+
+    #[test]
+    fn consent_screen_header_area_is_not_a_button() {
+        assert_eq!(consent_action_at((540.0, 1000.0), 1080, 2400), None);
+    }
+
+    #[test]
+    fn capability_label_translates_known_vocabulary_and_falls_back_for_unknown() {
+        assert_eq!(capability_label("net.internet"), "Доступ в интернет");
+        assert_eq!(capability_label("net.bluetooth"), "net.bluetooth");
     }
 }
 

@@ -132,6 +132,93 @@ impl<'a> Canvas<'a> {
     }
 }
 
+/// The ADR-020 consent screen (S07 Change 4): full-screen, replaces
+/// `draw_root` entirely while a launch is blocked on consent -- same
+/// `Canvas`/`Fonts` primitives, a second top-level entry point rather than
+/// a mode bolted onto `draw_root`, since the two share no layout beyond
+/// both being full-screen.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_consent(
+    canvas: &mut Canvas<'_>,
+    app_name: &str,
+    capabilities: &[String],
+    header: Rect,
+    accept_button: Rect,
+    decline_button: Rect,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+
+    let Some(fonts) = fonts else {
+        // No font asset available (missing/unreadable on this build) --
+        // still show the two buttons in distinct colors so the screen is
+        // at least operable without text, matching this client's existing
+        // "color as the physically-verifiable signal" fallback used
+        // elsewhere before Inter rendering landed.
+        canvas.fill_rect(accept_button, ACCENT);
+        canvas.fill_rect(decline_button, SURFACE);
+        return;
+    };
+
+    let margin = header.width / 22;
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        &format!("{app_name} запрашивает доступ"),
+        46.0,
+        header.x + margin,
+        header.y + 220,
+        TEXT,
+    );
+
+    let mut row_top = header.y + 340;
+    if capabilities.is_empty() {
+        draw_text(
+            canvas,
+            &fonts.regular,
+            "Без дополнительных разрешений",
+            32.0,
+            header.x + margin,
+            row_top,
+            TEXT_MUTED,
+        );
+    }
+    for capability in capabilities {
+        canvas.fill_rect(Rect::new(header.x + margin, row_top + 10, 16, 16), ACCENT);
+        draw_text(
+            canvas,
+            &fonts.regular,
+            capability,
+            32.0,
+            header.x + margin + 44,
+            row_top,
+            TEXT_MUTED,
+        );
+        row_top += 70;
+    }
+
+    canvas.fill_rect(accept_button, ACCENT);
+    canvas.fill_rect(decline_button, SURFACE);
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        "Разрешить",
+        40.0,
+        accept_button.x + accept_button.width / 2,
+        accept_button.y + accept_button.height / 2 - 20,
+        BACKGROUND,
+    );
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        "Отклонить",
+        40.0,
+        decline_button.x + decline_button.width / 2,
+        decline_button.y + decline_button.height / 2 - 20,
+        TEXT,
+    );
+}
+
 pub fn draw_root(
     canvas: &mut Canvas<'_>,
     content: Rect,
