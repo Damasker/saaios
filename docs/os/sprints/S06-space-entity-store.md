@@ -36,8 +36,10 @@ append-only журнал, восстановление проекций, bootstr
 1. **Готово (2026-09-09).** ADR-019 и исполняемый план S06.
 2. **Готово (2026-09-09).** Typed schema и негативные validation tests
    (`40c689a`, `948da26`).
-3. Event-first atomic store, projection replay и crash-recovery tests.
-4. Идемпотентный bootstrap и миграция legacy active-space.
+3. **Готово (2026-09-09).** Event-first atomic store, projection replay и
+   crash-recovery tests (`b127bad`, `d3f59b5`).
+4. **Готово (2026-09-09).** Идемпотентный bootstrap и миграция legacy
+   active-space (`9d8ca71`).
 5. `saai-entityd`: versioned local IPC, create/update/delete/list/select.
 6. `saai-shell`: реальные пространства и scoped проекции `Сейчас`.
 7. ARM64 packaging, persistent service supervision, device isolation/fault/
@@ -87,3 +89,20 @@ Change 2: новый независимый crate `saai-entity-store` задаё
 bounded title/name и 64-KiB properties проверяются до записи. Event не может
 вложить entity другого пространства. Unknown field/schema/event kind
 отвергаются. Семь unit tests и clippy с `-D warnings` прошли на R620.
+
+Change 3: store публикует каждый immutable event отдельным mode-0600 файлом
+через `fsync → rename → directory fsync`, а затем атомарно обновляет
+восстанавливаемую entity projection. Space создаётся целиком в sibling staging
+directory. Replay требует непрерывную sequence, matching filename/id, первый
+`space_created` и корректные revision transitions. Инъекция отказа после
+durable event, но до projection write успешно восстановила entity при reopen;
+temporary event проигнорирован, опубликованный invalid JSON заблокировал open.
+CRUD сохранил байты предыдущих событий, а два space вернули только собственные
+entity.
+
+Change 4: bootstrap создаёт стабильные `home/work/personal/saaios`, маркирует
+`saaios` как system space и переводит legacy indices `0..3` в эти id.
+Missing/invalid legacy даёт `home`; повторный bootstrap не перечитывает
+изменившийся legacy-файл и не меняет уже принятую `selection.json`. Legacy
+остаётся нетронутым. После Change 4 общий результат — 16 unit tests и clippy с
+`-D warnings` на R620.
