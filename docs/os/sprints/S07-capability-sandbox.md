@@ -59,8 +59,14 @@ portal (только точка входа "кто через кого").
    существующей manifest-валидации в `saai-appd`. `AppManifest.capabilities`
    сменил тип `Vec<String>` -> `Vec<Capability>` (ни один другой файл ещё
    не читал это поле, проверено перед сменой типа).
-3. Хранилище effective grants: `{app_id, granted, manifest_capabilities_hash}`
-   отдельно от manifest; re-consent при изменении запрошенного набора.
+3. **Готово (2026-09-10, `2269973`).** Хранилище effective grants
+   (`GrantStore`, `services/saai-appd/src/grants.rs`):
+   `{app_id, granted, requested_hash}` отдельно от manifest, с re-consent
+   при изменении запрошенного набора capability. Тот же fsync-temp ->
+   rename -> fsync-directory паттерн, что уже использует
+   `saai-entity-store` (S06). Путь -- `var/appd/grants/`, вне любого
+   каталога, который `saai-appd` когда-либо смонтирует внутрь sandbox
+   приложения (иначе приложение могло бы выдать себе разрешения само).
 4. `saai-shell`: экран согласия при установке/первом запуске, использует
    существующий SUI/action путь.
 5. `saai-appd`'s `spawn()`: `pre_exec()` с `unshare(NEWNS|NEWNET|NEWIPC|NEWUTS)`
@@ -132,3 +138,17 @@ vocabulary имени (`net.bluetooth` -- негативный тест) -- от
 Round-trip тест подтверждает `Capability::parse(cap.as_str()) == Some(cap)`
 для всех 6 вариантов. 25 unit + 1 integration теста `saai-appd` зелёные,
 fmt/clippy `-D warnings` чисты по всему workspace на R620.
+
+Change 3: `GrantStore` подтверждён 6 unit-тестами: без записи -- нет
+покрытия и нет разрешений; принятое решение выдаёт ровно запрошенный
+набор; отклонённое решение хранится как настоящий пустой grant (не
+"неизвестно") и не требует повторного вопроса при том же запросе;
+расширение запрошенного набора делает старое согласие непокрывающим
+именно для нового (более широкого) набора, но не трогает уже принятое
+согласие на прежний, более узкий набор; изменение порядка capability в
+запросе не меняет hash и не требует повторного согласия; запись с
+несовпадающей схемой отклоняется. 31 unit + 1 integration тест
+`saai-appd` зелёные, fmt/clippy `-D warnings` чисты по всему workspace,
+кросс-компиляция под `aarch64-unknown-linux-musl`
+(`build-saai-appd.sh`) подтверждена (`ARM aarch64`, `statically
+linked`) на R620.
