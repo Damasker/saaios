@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `Ready`.
+- Состояние: `In progress`.
 - Зависит от: S05 (`Done`), S06 (`Done`).
 - Архитектурные решения: ADR-005, ADR-018, ADR-020.
 - Рабочий fallback: S06 image, приложения запускаются без sandbox (текущее
@@ -53,9 +53,12 @@ portal (только точка входа "кто через кого").
 
 1. ADR-020 (capability vocabulary, effective grants, sandbox mechanism) --
    принят, включая on-device namespace spike.
-2. Capability vocabulary как typed enum/schema, negative tests (неизвестное
-   имя, дубликат, capability вне vocabulary) -- расширение существующей
-   manifest-валидации в `saai-appd`.
+2. **Готово (2026-09-10, `45f3c26`).** Capability vocabulary как typed
+   enum/schema (`Capability`, 6 записей из ADR-020), negative tests
+   (неизвестное имя, дубликат, capability вне vocabulary) -- расширение
+   существующей manifest-валидации в `saai-appd`. `AppManifest.capabilities`
+   сменил тип `Vec<String>` -> `Vec<Capability>` (ни один другой файл ещё
+   не читал это поле, проверено перед сменой типа).
 3. Хранилище effective grants: `{app_id, granted, manifest_capabilities_hash}`
    отдельно от manifest; re-consent при изменении запрошенного набора.
 4. `saai-shell`: экран согласия при установке/первом запуске, использует
@@ -120,3 +123,12 @@ ADR-020, не молчаливо приняты.
 ## Evidence
 
 Заполняется по каждому Change только после зелёных host/device проверок.
+
+Change 2: `Capability` enum задаёт ровно 6 записей ADR-020's vocabulary.
+`AppManifest::parse_toml` теперь возвращает `ManifestError::
+UnknownCapability` для синтаксически корректного, но не входящего в
+vocabulary имени (`net.bluetooth` -- негативный тест) -- отдельно от уже
+существующих `InvalidCapability` (формат) и `DuplicateCapability`.
+Round-trip тест подтверждает `Capability::parse(cap.as_str()) == Some(cap)`
+для всех 6 вариантов. 25 unit + 1 integration теста `saai-appd` зелёные,
+fmt/clippy `-D warnings` чисты по всему workspace на R620.

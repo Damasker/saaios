@@ -16,7 +16,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S04 | Отдельный `saai-shell` и lock | Done | S03 |
 | S05 | Приложения, manifest и lifecycle | Done | S04 |
 | S06 | Настоящие пространства и entity store | Done | S05 |
-| S07 | Capability, sandbox и portals | Ready | S05, S06 |
+| S07 | Capability, sandbox и portals | In progress | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
