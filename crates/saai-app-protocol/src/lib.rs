@@ -8,7 +8,7 @@ pub const APPD_WIRE_SCHEMA_V1: u32 = 1;
 pub const MAX_WIRE_MESSAGE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_ID_BYTES: usize = 64;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientRequest {
     List {
@@ -211,6 +211,15 @@ pub fn encode_message(message: &ServerMessage) -> Result<Vec<u8>, ProtocolError>
     Ok(encoded)
 }
 
+pub fn encode_request(request: &ClientRequest) -> Result<Vec<u8>, ProtocolError> {
+    let mut encoded = serde_json::to_vec(request)?;
+    if encoded.len() > MAX_WIRE_MESSAGE_BYTES {
+        return Err(ProtocolError::MessageTooLarge);
+    }
+    encoded.push(b'\n');
+    Ok(encoded)
+}
+
 fn valid_request_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_REQUEST_ID_BYTES
@@ -222,7 +231,7 @@ fn valid_request_id(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_request, encode_message, AppSummary, ClientRequest, LifecycleEvent,
+        decode_request, encode_message, encode_request, AppSummary, ClientRequest, LifecycleEvent,
         LifecycleEventKind, ProtocolError, ResponseResult, ServerMessage, APPD_WIRE_SCHEMA_V1,
         MAX_WIRE_MESSAGE_BYTES,
     };
@@ -300,5 +309,20 @@ mod tests {
         assert_eq!(json["schema"], APPD_WIRE_SCHEMA_V1);
         assert_eq!(json["type"], "event");
         assert_eq!(json["event"], "running");
+    }
+
+    #[test]
+    fn request_encodes_as_one_json_line() {
+        let request = ClientRequest::Launch {
+            schema: APPD_WIRE_SCHEMA_V1,
+            request_id: "shell:7".into(),
+            app_id: "org.saaios.demo".into(),
+        };
+        let encoded = encode_request(&request).unwrap();
+        assert_eq!(encoded.last(), Some(&b'\n'));
+        assert_eq!(
+            decode_request(&encoded[..encoded.len() - 1]).unwrap(),
+            request
+        );
     }
 }

@@ -7,18 +7,17 @@ use thiserror::Error;
 mod daemon;
 mod store;
 mod supervisor;
-mod wire;
 
 pub use daemon::{run_daemon, AppdError, DaemonConfig};
+pub use saai_app_protocol::{
+    decode_request, encode_message, encode_request, AppSummary, ClientRequest, LifecycleEvent,
+    LifecycleEventKind, ProtocolError, ResponseResult, ServerMessage, WireError,
+    APPD_WIRE_SCHEMA_V1, MAX_WIRE_MESSAGE_BYTES,
+};
 pub use store::{AppStore, InstalledApp, StoreError};
 pub use supervisor::{
     AppEvent, AppEventKind, AppState, AppSupervisor, LaunchOutcome, SupervisorError,
     SupervisorPolicy,
-};
-pub use wire::{
-    decode_request, encode_message, AppSummary, ClientRequest, LifecycleEvent, LifecycleEventKind,
-    ProtocolError, ResponseResult, ServerMessage, WireError, APPD_WIRE_SCHEMA_V1,
-    MAX_WIRE_MESSAGE_BYTES,
 };
 
 pub const MANIFEST_SCHEMA_V1: u32 = 1;

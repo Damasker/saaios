@@ -15,6 +15,7 @@ members = [
     "crates/config",
     "crates/saai-ui-core",
     "crates/saai-ui-compiler",
+    "crates/saai-app-protocol",
     "crates/console-tui",
     "crates/console-web",
     "services/saaios-runtime",
@@ -47,6 +48,7 @@ telemetry = { path = "crates/telemetry" }
 config = { path = "crates/config" }
 saai-ui-core = { path = "crates/saai-ui-core" }
 saai-ui-compiler = { path = "crates/saai-ui-compiler" }
+saai-app-protocol = { path = "crates/saai-app-protocol" }
 console-tui = { path = "crates/console-tui" }
 console-web = { path = "crates/console-web" }
 
