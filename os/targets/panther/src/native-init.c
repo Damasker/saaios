@@ -34,6 +34,7 @@
    before relying on them for saai-displayd. */
 #define UI_RESTART_BUDGET 5
 #define UI_RESTART_WINDOW_SECONDS 60
+#define APPD_PATH "/data/saaios/system/saai-appd"
 
 static const char *const restart_modules[] = {
     "logbuffer.ko",
@@ -1206,6 +1207,45 @@ static pid_t start_saai_displayd(void) {
                            "/run/saai-displayd.log");
 }
 
+/* S05: appd is a system service, but its binary lives on the persistent
+   SaaiOS data volume. This keeps application delivery independent from the
+   fixed-size init_boot image while PID 1 still owns service supervision. */
+static pid_t start_saai_appd(void) {
+    struct stat binary;
+    if (stat(APPD_PATH, &binary) < 0 || !S_ISREG(binary.st_mode) ||
+        access(APPD_PATH, X_OK) < 0) {
+        log_message("saai-appd unavailable at %s", APPD_PATH);
+        return -1;
+    }
+
+    mkdir_one("/run/saaios", 0755);
+    mkdir_one("/run/wayland", 0700);
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/saai-appd.log",
+                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl(APPD_PATH, "saai-appd",
+              "--data-root", "/data/saaios",
+              "--socket", "/run/saaios/appd.sock",
+              "--runtime-dir", "/run/wayland",
+              "--wayland-display", "wayland-1", NULL);
+        dprintf(STDERR_FILENO, "saai-appd exec failed: %s\n",
+                strerror(errno));
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("system service started: saai-appd");
+    }
+    return child;
+}
+
 static int create_input_node(const char *wanted_name,
                              const char *symlink_path) {
     for (int attempt = 0; attempt < 50; ++attempt) {
@@ -1382,6 +1422,7 @@ int main(void) {
     setup_metadata_log();
     restore_saved_time();
     setup_data_storage();
+    pid_t appd_pid = start_saai_appd();
 
     for (size_t i = 0; i < ARRAY_SIZE(usb_modules); ++i) {
         if (strcmp(usb_modules[i], "tcpci_max77759.ko") == 0) {
@@ -1481,6 +1522,13 @@ int main(void) {
             usleep(250000);
             console_pid = start_console();
             log_message("USB console restarted");
+        } else if (appd_pid > 0 && ended == appd_pid) {
+            log_message("system service exited: saai-appd");
+            usleep(500000);
+            appd_pid = start_saai_appd();
+            if (appd_pid > 0) {
+                log_message("system service restarted: saai-appd");
+            }
         } else if (ui_pid > 0 && ended == ui_pid) {
             /* ADR-009: single UI-slot ownership -- waitpid() above already
                reaped the previous holder of /dev/dri/card0, so the kernel
