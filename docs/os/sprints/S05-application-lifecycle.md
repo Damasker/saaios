@@ -37,7 +37,8 @@ demo-app и подключение оболочки.
 1. **Готово (2026-09-09).** Manifest v1 как typed model + негативные
    unit/schema tests (`137c159`, `5f00f91`, `97d6397`).
 2. **Готово (2026-09-09).** Файловое хранилище с staging+rename,
-   duplicate-id и path-boundary tests (`5efe10e`, `24f1d62`).
+   duplicate-id, startup scan и path-boundary tests (`5efe10e`, `24f1d62`,
+   `b872e86`).
 3. Supervisor процессов: launch/stop/single-instance/crash budget.
 4. Versioned JSON-lines Unix IPC и host integration test двух процессов.
 5. Demo-app package и запуск/переключение из `saai-shell`.
@@ -90,7 +91,9 @@ executable и только затем делает rename в конечный `a
 перезаписывает код; ошибка удаляет staging и не создаёт app data. Отдельная
 canary-проверка подтверждает неизменность данных соседнего приложения; source
 внутри управляемых code/data trees и несовпадение directory id с manifest
-отвергаются. Общий прогон: 14 tests, `cargo test --locked`; all-target clippy
-с `-D warnings`.
+отвергаются. Startup scan заново строит сортированный registry только из
+валидных каталогов, игнорирует незавершённый staging и не доверяет отдельной
+изменяемой базе. Общий прогон: 16 tests, `cargo test --locked`; all-target
+clippy с `-D warnings`.
 
 Аппаратный результат пока не заявляется по host-тестам.
