@@ -186,7 +186,12 @@ capabilities = ["space.entities.read", "space.entities.write"]
 
     #[test]
     fn rejects_unsafe_ids() {
-        for id in ["notes", "org.saaios.Notes", "org.saaios../notes", "org..notes"] {
+        for id in [
+            "notes",
+            "org.saaios.Notes",
+            "org.saaios../notes",
+            "org..notes",
+        ] {
             let invalid = VALID.replacen("org.saaios.example.notes", id, 1);
             assert!(matches!(
                 AppManifest::parse_toml(&invalid),
@@ -197,7 +202,13 @@ capabilities = ["space.entities.read", "space.entities.write"]
 
     #[test]
     fn rejects_exec_outside_normalized_bin_path() {
-        for exec in ["/bin/notes", "../bin/notes", "bin/../notes", "notes", "bin\\notes"] {
+        for exec in [
+            "/bin/notes",
+            "../bin/notes",
+            "bin/../notes",
+            "notes",
+            "bin\\notes",
+        ] {
             let invalid = VALID.replacen("bin/notes", exec, 1);
             assert!(matches!(
                 AppManifest::parse_toml(&invalid),
