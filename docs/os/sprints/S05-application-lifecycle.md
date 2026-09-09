@@ -22,7 +22,11 @@
 - `/data/saaios` монтируется PID 1;
 - Change 1 уже добавил `saai-appd` crate и строгую typed-модель manifest v1;
   app layout, storage, supervisor, daemon IPC, demo-package и интеграция с
-  shell уже реализованы; следующим шагом остаётся аппаратная проверка.
+  shell уже реализованы и прошли первый аппаратный lifecycle;
+- PID 1 запускает `saai-appd` из `/data/saaios/system` и возвращает сервис
+  после его аварийного завершения; холодный старт проверен на Pixel 7;
+- незакрытая аппаратная проверка S05: три последовательных падения самого
+  приложения и наблюдаемый `crash_limited` в оболочке.
 
 ## Scope
 
@@ -48,8 +52,9 @@ demo-app и подключение оболочки.
    SUI-карточка, установка, запуск, touch, штатное закрытие и возврат фокуса
    в `saai-shell` (`3a5f3f7`, `45d65bb`, `fb5c845`, `8498348`, `1f85cd7`,
    `351b483`).
-6. ARM64 packaging `saai-appd`, device install в `/data`, fault injection и
-   cold regression без изменения `init_boot` для самого demo-app.
+6. **Частично готово (2026-09-09).** ARM64 packaging `saai-appd`, постоянный
+   device install в `/data`, супервизия сервиса и cold regression готовы
+   (`254c4de`, `6afb663`); остался device fault injection 3/60 для demo-app.
 
 ## Test
 
@@ -152,3 +157,21 @@ binary SHA-256
 процесс demo отсутствовал, а PID `saai-appd`, `saai-displayd` и `saai-shell`
 остались живы; idle-lock оболочки продолжил работать. Хэши package manifest
 и binary на устройстве совпали с воспроизводимой ARM64-сборкой выше.
+
+Change 6: отдельный `build-saai-appd.sh` и cross-panther CI собирают
+статический ARM64 service для `/data/saaios/system/saai-appd`; бинарник не
+расходует фиксированный ramdisk budget. PID 1 проверяет regular executable,
+запускает appd после монтирования `/data` и перезапускает после выхода.
+Новый образ с source commit `6afb663` собран из локально проверенных приватных
+артефактов; SHA-256 образа
+`be22d1af98b73c24fa9272f2575ac6bbc4aa858516de2478e18f417da07db215`,
+compressed ramdisk 7,428,206 bytes при лимите раздела 8 MiB. Прошит только
+`init_boot_a`; slot B не менялся.
+
+После холодной загрузки на Pixel 7 PID 1 сам запустил appd PID 155, displayd
+PID 381 и shell PID 389. Registry заново обнаружил установленный manifest;
+контрольный app-data marker сохранил SHA-256
+`4019af35219b1c77788069fff3b2f91e1cc9b10741ca514af21b63a5bf8af56b`.
+Отдельная инъекция отказа завершила только appd: PID 1 поднял новый PID 436,
+тогда как PID displayd и shell не изменились; последовательность
+`exited → started → restarted` записана в `/run/boot.log`.
