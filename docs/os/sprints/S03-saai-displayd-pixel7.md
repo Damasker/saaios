@@ -67,6 +67,19 @@ Physical acceptance ждёт явного разрешения на flash тол
 
 ## Acceptance criteria
 
+| Критерий | Статус | Evidence |
+|---|---|---|
+| Host/CI: fmt, clippy, tests, watchdog, cross-build | Proven | PR [#38](https://github.com/Damasker/saaios/pull/38) CI green on `44a2e73` |
+| Image packs displayd/demo/supervisor/splash/PID 1 | Proven | unpack hashes; img `747228c9…77f55` |
+| DSI `1080x2400x60` + BGRX color table on device | Blocked | needs S03 flash |
+| Touch → focused client + white marker | Blocked | needs S03 flash (marker fixed white in `44a2e73`) |
+| no-ready / crash / stale heartbeat → `drm-splash` | Blocked | needs S03 flash |
+| USB during fallback; cold boot takeover | Blocked | needs S03 flash |
+| slot B / userdata / vendor_boot untouched | Pending | flash path writes only `init_boot_a` |
+
+Остановка: нет явного разрешения на flash. Live Pixel сейчас на experimental
+`saai-displayd`+`saai-shell`, не на S03 candidate.
+
 - DSI работает строго в `1080x2400x60`, source frame проходит BGRX transform;
 - S02 color table различима и совпадает с уже принятой физической таблицей;
 - реальное касание получает только активный Wayland client и изменяет frame;
