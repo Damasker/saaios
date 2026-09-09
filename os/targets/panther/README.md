@@ -18,6 +18,8 @@ fallback.
 - `patches/` — source patches required for third-party components.
 - `build-native-c-image.sh` — builds static programs and the init_boot image.
 - `build-saai-shell.sh` — builds the persistent system shell for that image.
+- `build-saai-appd.sh` — builds the supervised application service for
+  `/data/saaios/system`.
 - `build-wifi-vendor-boot.sh` — injects matching signed modules and firmware
   into a stock vendor_boot image.
 - `artifacts.example.manifest` — expected local artifact names.
@@ -67,6 +69,7 @@ script rather than a plain `cargo build`:
 export ZIG=/path/to/zig
 ./os/targets/panther/build-saai-displayd.sh
 ./os/targets/panther/build-saai-shell.sh
+./os/targets/panther/build-saai-appd.sh
 ```
 
 This needs a nightly Rust toolchain in addition to the pinned stable one
@@ -101,6 +104,16 @@ Outputs default to `dist/panther/`, which is ignored by Git. The image builder
 also writes `.SHA256`, `.SOURCE_COMMIT`, and `.INPUTS.SHA256` sidecars. Keep all
 four files together: the input manifest prevents a source-labelled image from
 silently carrying stale separately-built Rust binaries.
+
+`saai-appd` is deliberately not added to `init_boot`. Install the output of
+`build-saai-appd.sh` atomically as `/data/saaios/system/saai-appd` with mode
+`0755` before rebooting. PID 1 validates that it is a regular executable,
+starts it with `/data/saaios` as its managed root, and restarts it if it exits.
+If the file is absent, the shell and recovery path still boot; application
+actions remain unavailable until the service is installed and the device is
+restarted. Application packages themselves stay under `/data/saaios/packages`
+and `/data/saaios/apps`, so installing or updating an app does not alter
+`init_boot`.
 
 At runtime, the optional private model configuration is read from
 `/metadata/saaios/runtime.toml`. It is never baked into the image. Audit and

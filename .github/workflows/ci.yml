@@ -91,14 +91,15 @@ jobs:
           cargo build --profile pixel7 --locked --target aarch64-unknown-linux-musl \
             -p saaios-runtime -p console-tui
 
-      - name: cross-compile saai-demo-surface
+      - name: cross-compile application platform
         run: |
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
           export CC_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-aarch64-musl.sh"
           export AR_aarch64_unknown_linux_musl="$PWD/os/targets/panther/tools/zig-ar.sh"
           export CRATE_CC_NO_DEFAULTS=1
           export RUSTFLAGS="-C link-self-contained=no"
-          cargo build --profile pixel7 --target aarch64-unknown-linux-musl -p saai-demo-surface
+          cargo build --profile pixel7 --locked --target aarch64-unknown-linux-musl \
+            -p saai-appd -p saai-demo-surface
 
       - name: cross-compile saai-displayd
         # Uses the real build path (ADR-013), not a plain `cargo build`:
@@ -112,6 +113,8 @@ jobs:
           file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'ARM aarch64'
           file target/aarch64-unknown-linux-musl/pixel7/saai-displayd | grep -q 'statically linked'
           file target/aarch64-unknown-linux-musl/pixel7/saai-demo-surface | grep -q 'ARM aarch64'
+          file target/aarch64-unknown-linux-musl/pixel7/saai-appd | grep -q 'ARM aarch64'
+          file target/aarch64-unknown-linux-musl/pixel7/saai-appd | grep -q 'statically linked'
           file target/aarch64-unknown-linux-musl/pixel7/saaios-runtime | grep -q 'ARM aarch64'
           file target/aarch64-unknown-linux-musl/pixel7/saaios-console | grep -q 'ARM aarch64'
           # init_boot is a fixed 8MB partition shared with everything else
