@@ -135,7 +135,9 @@ bootloader вернуть сохранённый `init_boot_a`; slot B не из
 - Local S01 rollback image hash совпадает с passport
   (`18987941…29771`); S03 image hash совпадает (`9cb39c84…c880`).
 - Gated physical helper: `os/targets/panther/tools/s03-physical-verify.ps1`
-  (flash только при `-AllowFlash` и `SAAIOS_ALLOW_FLASH=yes`, только `init_boot_a`).
+  (`-EnterBootloader` / `-AllowFlash` / `-RollbackToS01` только при
+  `SAAIOS_ALLOW_FLASH=yes`; `-VerifyLive` проверяет S03 markers по COM13).
+  На текущем live image `-VerifyLive` корректно падает: нет supervisor/demo.
 - Live device baseline 2026-09-09 (до S03 flash): USB NCM `172.31.7.1`
   отвечает, runtime TCP `38127` открыт, COM13 shell доступен. На slot A сейчас
   **не** S03 candidate, а более ранний experimental image:
