@@ -10,6 +10,10 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod store;
+
+pub use store::{EntityStore, StoreError};
+
 pub const SCHEMA_VERSION: u32 = 1;
 pub const BUILTIN_SPACE_IDS: [&str; 4] = ["home", "work", "personal", "saaios"];
 pub const MAX_SPACE_ID_BYTES: usize = 48;
@@ -51,7 +55,12 @@ pub struct Entity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    content = "data",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum EventPayload {
     SpaceCreated { space: Space },
     EntityCreated { entity: Entity },
