@@ -35,6 +35,8 @@ pub enum StoreError {
     },
     #[error("application {0:?} is already installed")]
     Duplicate(String),
+    #[error("invalid application id {0:?}")]
+    InvalidAppId(String),
     #[error("package contains an unsupported file type: {0}")]
     UnsupportedEntry(PathBuf),
     #[error("application executable is missing or is not a regular file: {0}")]
@@ -198,6 +200,23 @@ impl AppStore {
         Ok(installed)
     }
 
+    pub fn remove(&self, app_id: &str) -> Result<bool, StoreError> {
+        if !valid_app_id(app_id) {
+            return Err(StoreError::InvalidAppId(app_id.to_owned()));
+        }
+        let Some(installed) = self.load(app_id)? else {
+            return Ok(false);
+        };
+        let tombstone = self.unique_sibling("remove", app_id)?;
+        rename(&installed.code_dir, &tombstone)?;
+        fs::remove_dir_all(&tombstone).map_err(|source| StoreError::Io {
+            operation: "remove application code",
+            path: tombstone,
+            source,
+        })?;
+        Ok(true)
+    }
+
     fn reject_managed_source(&self, package_root: &Path) -> Result<(), StoreError> {
         let source = canonicalize(package_root)?;
         for managed in [&self.apps_dir, &self.data_dir] {
@@ -233,6 +252,33 @@ impl AppStore {
             operation: "create unique staging directory",
             path: self.apps_dir.clone(),
             source: io::Error::new(io::ErrorKind::AlreadyExists, "staging names exhausted"),
+        })
+    }
+
+    fn unique_sibling(&self, operation: &str, app_id: &str) -> Result<PathBuf, StoreError> {
+        let first = NEXT_STAGE.fetch_add(STAGING_ATTEMPTS, Ordering::Relaxed);
+        for offset in 0..STAGING_ATTEMPTS {
+            let candidate = self.apps_dir.join(format!(
+                ".{operation}-{app_id}-{}-{}",
+                std::process::id(),
+                first + offset
+            ));
+            match fs::symlink_metadata(&candidate) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(candidate),
+                Err(source) => {
+                    return Err(StoreError::Io {
+                        operation: "inspect temporary package path",
+                        path: candidate,
+                        source,
+                    });
+                }
+            }
+        }
+        Err(StoreError::Io {
+            operation: "choose unique temporary package path",
+            path: self.apps_dir.clone(),
+            source: io::Error::new(io::ErrorKind::AlreadyExists, "temporary names exhausted"),
         })
     }
 }
@@ -573,5 +619,41 @@ mod tests {
         fs::write(store.apps_dir().join("not-an-app"), "unexpected").unwrap();
 
         assert!(matches!(store.scan(), Err(StoreError::UnsupportedEntry(_))));
+    }
+
+    #[test]
+    fn remove_deletes_only_code_and_preserves_app_and_neighbor_data() {
+        let temporary = TempDir::new().unwrap();
+        let store = AppStore::new(temporary.path().join("saaios"));
+        let source = package(temporary.path(), "package", APP_ID, "payload");
+        let installed = store.install(&source).unwrap();
+        fs::write(installed.data_dir.join("keep"), "app-data").unwrap();
+        let canary = store.data_dir().join("org.saaios.example.canary");
+        fs::create_dir_all(&canary).unwrap();
+        fs::write(canary.join("keep"), "neighbor-data").unwrap();
+
+        assert!(store.remove(APP_ID).unwrap());
+
+        assert!(!installed.code_dir.exists());
+        assert_eq!(
+            fs::read_to_string(installed.data_dir.join("keep")).unwrap(),
+            "app-data"
+        );
+        assert_eq!(
+            fs::read_to_string(canary.join("keep")).unwrap(),
+            "neighbor-data"
+        );
+        assert!(!store.remove(APP_ID).unwrap());
+    }
+
+    #[test]
+    fn remove_rejects_unvalidated_id_before_path_use() {
+        let temporary = TempDir::new().unwrap();
+        let store = AppStore::new(temporary.path().join("saaios"));
+
+        assert!(matches!(
+            store.remove("../neighbor"),
+            Err(StoreError::InvalidAppId(_))
+        ));
     }
 }
