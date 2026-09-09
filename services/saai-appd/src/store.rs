@@ -153,6 +153,51 @@ impl AppStore {
         }))
     }
 
+    pub fn scan(&self) -> Result<Vec<InstalledApp>, StoreError> {
+        self.ensure_layout()?;
+        let entries = fs::read_dir(&self.apps_dir).map_err(|source| StoreError::Io {
+            operation: "scan installed applications",
+            path: self.apps_dir.clone(),
+            source,
+        })?;
+        let mut app_ids = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| StoreError::Io {
+                operation: "read installed application entry",
+                path: self.apps_dir.clone(),
+                source,
+            })?;
+            let name = entry.file_name();
+            let Some(app_id) = name.to_str() else {
+                return Err(StoreError::UnsupportedEntry(entry.path()));
+            };
+            if app_id.starts_with(".install-") {
+                continue;
+            }
+            if !valid_app_id(app_id) {
+                return Err(StoreError::UnsupportedEntry(entry.path()));
+            }
+            app_ids.push(app_id.to_owned());
+        }
+        app_ids.sort_unstable();
+
+        let mut installed = Vec::with_capacity(app_ids.len());
+        for app_id in app_ids {
+            let Some(app) = self.load(&app_id)? else {
+                return Err(StoreError::Io {
+                    operation: "load application observed during scan",
+                    path: self.apps_dir.join(app_id),
+                    source: io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "application disappeared during scan",
+                    ),
+                });
+            };
+            installed.push(app);
+        }
+        Ok(installed)
+    }
+
     fn reject_managed_source(&self, package_root: &Path) -> Result<(), StoreError> {
         let source = canonicalize(package_root)?;
         for managed in [&self.apps_dir, &self.data_dir] {
@@ -487,5 +532,46 @@ mod tests {
             store.load(APP_ID),
             Err(StoreError::InstalledIdMismatch(path)) if path == wrong_directory
         ));
+    }
+
+    #[test]
+    fn scan_rebuilds_sorted_registry_from_installed_directories() {
+        let temporary = TempDir::new().unwrap();
+        let store = AppStore::new(temporary.path().join("saaios"));
+        let second = package(
+            temporary.path(),
+            "second",
+            "org.saaios.example.second",
+            "second",
+        );
+        let first = package(
+            temporary.path(),
+            "first",
+            "org.saaios.example.first",
+            "first",
+        );
+        store.install(&second).unwrap();
+        store.install(&first).unwrap();
+        fs::create_dir(store.apps_dir().join(".install-interrupted")).unwrap();
+
+        let installed = store.scan().unwrap();
+
+        assert_eq!(
+            installed
+                .iter()
+                .map(|app| app.manifest.id.as_str())
+                .collect::<Vec<_>>(),
+            ["org.saaios.example.first", "org.saaios.example.second"]
+        );
+    }
+
+    #[test]
+    fn scan_rejects_unmanaged_entries() {
+        let temporary = TempDir::new().unwrap();
+        let store = AppStore::new(temporary.path().join("saaios"));
+        store.ensure_layout().unwrap();
+        fs::write(store.apps_dir().join("not-an-app"), "unexpected").unwrap();
+
+        assert!(matches!(store.scan(), Err(StoreError::UnsupportedEntry(_))));
     }
 }
