@@ -14,7 +14,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S02 | Wayland vertical slice на host | Done | S01 |
 | S03 | `saai-displayd` на Pixel 7 | Done | S02 |
 | S04 | Отдельный `saai-shell` и lock | Done | S03 |
-| S05 | Приложения, manifest и lifecycle | In progress | S04 |
+| S05 | Приложения, manifest и lifecycle | Done | S04 |
 | S06 | Настоящие пространства и entity store | Backlog | S05 |
 | S07 | Capability, sandbox и portals | Backlog | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
@@ -128,6 +128,14 @@ duplicate id отвергаются; crash loop ограничен.
 
 **Rollback:** отключить `saai-appd` и удалить только каталог demo-app, сохранив
 shell и recovery.
+
+**Evidence:** host vertical проверил install→launch→stop→remove и сохранность
+app data. На Pixel 7 подтверждены установка после boot, fullscreen Wayland,
+touch, штатное закрытие, холодный перескан manifest, сохранность данных,
+рестарт appd под PID 1 и ограничение третьего app crash за 60 секунд. S05 image
+source `6afb663`, SHA-256
+`be22d1af98b73c24fa9272f2575ac6bbc4aa858516de2478e18f417da07db215`;
+прошит только `init_boot_a`, slot B не менялся.
 
 ## S06 — Пространства и entity store
 
