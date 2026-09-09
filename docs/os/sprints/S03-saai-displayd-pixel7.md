@@ -127,7 +127,10 @@ bootloader вернуть сохранённый `init_boot_a`; slot B не из
 - Host re-verify 2026-09-09: `cargo fmt`/`clippy -D warnings`/`test -p saai-displayd`,
   C identity + watchdog + supervisor compile, pixel7 AArch64 musl rebuild
   (`DISPLAYD_MATCH`/`CLIENT_MATCH`) и magiskboot unpack хешей embedded binaries.
-- Commit/CI evidence и physical run добавляются после push и отдельного flash.
+- Commit `410c7f9`; GitHub Actions
+  [`34319708084`](https://github.com/Damasker/saaios/actions/runs/34319708084)
+  зелёный (fmt, clippy, Wayland slice, workspace tests, watchdog, e2e, cross-build).
+- Physical run добавляется после отдельного явного разрешения на flash.
 
 ### Physical verification checklist
 
