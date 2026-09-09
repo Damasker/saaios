@@ -4,6 +4,10 @@ use semver::Version;
 use serde::Deserialize;
 use thiserror::Error;
 
+mod store;
+
+pub use store::{AppStore, InstalledApp, StoreError};
+
 pub const MANIFEST_SCHEMA_V1: u32 = 1;
 pub const MAX_APP_ID_LEN: usize = 253;
 pub const MAX_APP_NAME_CHARS: usize = 80;
