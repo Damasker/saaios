@@ -44,9 +44,10 @@ demo-app и подключение оболочки.
    single-instance и crash budget (`6be3fca`).
 4. **Готово (2026-09-09).** Versioned JSON-lines Unix IPC и host integration
    test с отдельными daemon, app и observer (`9321d0f`, `f583bd3`).
-5. **Готово на host (2026-09-09).** Demo-app package, SUI-карточка,
-   запуск и focus switch из `saai-shell` (`3a5f3f7`, `45d65bb`, `fb5c845`,
-   `8498348`, `1f85cd7`, `351b483`).
+5. **Готово, включая Pixel 7 (2026-09-09).** Demo-app package,
+   SUI-карточка, установка, запуск, touch, штатное закрытие и возврат фокуса
+   в `saai-shell` (`3a5f3f7`, `45d65bb`, `fb5c845`, `8498348`, `1f85cd7`,
+   `351b483`).
 6. ARM64 packaging `saai-appd`, device install в `/data`, fault injection и
    cold regression без изменения `init_boot` для самого demo-app.
 
@@ -142,4 +143,12 @@ lifecycle events без запуска процессов напрямую. Ка
 binary SHA-256
 `0e0bafde28a48a3750acb1200489cf527973c7b103a255b240daa47ea454d124`.
 
-Аппаратный результат пока не заявляется по host-тестам.
+На физическом Pixel 7 пакет установлен из `/data/saaios/packages` в
+`/data/saaios/apps` уже после загрузки, без перепрошивки `init_boot`.
+Пользователь через SUI-карточку запустил приложение, подтвердил корректный
+полноэкранный вывод и touch, затем штатно закрыл его. Журнал `saai-displayd`
+зафиксировал переключение фокуса с shell surface на отдельный app surface,
+рендер `1080x2400` и маршрутизацию реальных touch down/up. После закрытия
+процесс demo отсутствовал, а PID `saai-appd`, `saai-displayd` и `saai-shell`
+остались живы; idle-lock оболочки продолжил работать. Хэши package manifest
+и binary на устройстве совпали с воспроизводимой ARM64-сборкой выше.
