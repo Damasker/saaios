@@ -192,6 +192,26 @@ The device must have an unlocked bootloader. Verify the exact model and stock
 firmware revision before flashing. Do not flash these images to any device
 other than `panther`.
 
+## Dedicated-device partition policy
+
+The operator has confirmed that this development Pixel 7 contains no user data
+that needs to be preserved. `userdata` may therefore be erased, reformatted and
+used for SaaiOS development. This does not make every partition disposable.
+
+- Writes inside `metadata` are limited to `/metadata/saaios`; do not reformat
+  or repurpose the whole partition.
+- Slot-A boot partitions still require an exact target, source commit, SHA-256,
+  rollback path and explicit approval for each flash.
+- Keep slot B as the Android recovery path.
+- Never erase, format or repurpose `persist`, `devinfo`, bootloader,
+  radio/modem, secure-element, factory, calibration, hardware-identity or
+  rollback-protection partitions.
+- Treat every unlisted partition as read-only until its exact purpose is
+  verified and the operator explicitly expands this policy.
+
+This authorization does not permit committing credentials, calibration data,
+device-unique values or private runtime state.
+
 ## Private runtime state
 
 The following files are created only on the phone and must never be committed:
