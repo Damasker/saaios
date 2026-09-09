@@ -2147,6 +2147,7 @@ dependencies = [
 name = "saai-demo-surface"
 version = "0.1.0"
 dependencies = [
+ "fontdue",
  "memmap2",
  "tempfile",
  "wayland-client",

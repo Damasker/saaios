@@ -1030,7 +1030,7 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{tab_at, RootPage, ROOT_TABS};
+    use super::{content_action_at, tab_at, RootPage, ROOT_CONTENT_ACTIONS, ROOT_TABS};
 
     #[test]
     fn root_tabs_come_from_sui_markup() {
@@ -1050,7 +1050,18 @@ mod tests {
 
     #[test]
     fn content_area_is_not_a_tab() {
-        assert_eq!(tab_at((540.0, 1200.0), 1080, 2400), None);
+        assert_eq!(super::tab_at((540.0, 1200.0), 1080, 2400), None);
+    }
+
+    #[test]
+    fn demo_action_geometry_comes_from_sui_markup() {
+        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 1);
+        assert_eq!(ROOT_CONTENT_ACTIONS[0].label, "Saai Demo");
+        assert_eq!(
+            content_action_at(RootPage::Now, (540.0, 500.0), 1080, 2400).map(|action| action.id),
+            Some("demo-app")
+        );
+        assert!(content_action_at(RootPage::Inbox, (540.0, 500.0), 1080, 2400).is_none());
     }
 }
 

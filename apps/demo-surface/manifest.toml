@@ -1,0 +1,9 @@
+schema = 1
+id = "org.saaios.demo-surface"
+name = "Saai Demo"
+exec = "bin/saai-demo-surface"
+version = "0.1.0"
+ui = "wayland"
+single_instance = true
+capabilities = []
+

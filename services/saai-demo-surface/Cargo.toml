@@ -7,6 +7,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+fontdue = { version = "0.9.3", default-features = false }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
 tempfile = "3"

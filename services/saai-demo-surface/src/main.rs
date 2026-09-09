@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use wayland_client::{
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
-    protocol::{wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface},
+    protocol::{
+        wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, wl_touch,
+    },
     Connection, Dispatch, QueueHandle,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -14,11 +16,19 @@ const WIDTH: i32 = 800;
 const HEIGHT: i32 = 480;
 const STRIDE: i32 = WIDTH * 4;
 
+mod render;
+
 struct AppState {
     label: String,
     running: bool,
     configured: bool,
     received_key: bool,
+    installed_mode: bool,
+    configured_width: i32,
+    configured_height: i32,
+    touch: Option<wl_touch::WlTouch>,
+    touch_started: bool,
+    touch_position: (f64, f64),
     _xdg_surface: Option<xdg_surface::XdgSurface>,
     surface: Option<wl_surface::WlSurface>,
     shm: Option<wl_shm::WlShm>,
@@ -111,6 +121,10 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for AppState {
                     "saai-demo-surface[{}]: toplevel configure {width}x{height}",
                     state.label
                 );
+                if width > 0 && height > 0 {
+                    state.configured_width = width;
+                    state.configured_height = height;
+                }
             }
             _ => {}
         }
@@ -119,7 +133,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for AppState {
 
 impl Dispatch<wl_seat::WlSeat, ()> for AppState {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         proxy: &wl_seat::WlSeat,
         event: wl_seat::Event,
         _data: &(),
@@ -133,6 +147,38 @@ impl Dispatch<wl_seat::WlSeat, ()> for AppState {
             if caps.contains(wl_seat::Capability::Keyboard) {
                 proxy.get_keyboard(qh, ());
             }
+            if caps.contains(wl_seat::Capability::Touch) && state.touch.is_none() {
+                state.touch = Some(proxy.get_touch(qh, ()));
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_touch::WlTouch, ()> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_touch::WlTouch,
+        event: wl_touch::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_touch::Event::Down { x, y, .. } => {
+                state.touch_started = true;
+                state.touch_position = (x, y);
+            }
+            wl_touch::Event::Motion { x, y, .. } => state.touch_position = (x, y),
+            wl_touch::Event::Up { .. } if state.touch_started => {
+                state.touch_started = false;
+                let close_top = state.configured_height.saturating_sub(360) as f64;
+                if state.installed_mode && state.touch_position.1 >= close_top {
+                    println!("saai-demo-surface[{}]: close action tapped", state.label);
+                    state.running = false;
+                }
+            }
+            wl_touch::Event::Cancel => state.touch_started = false,
+            _ => {}
         }
     }
 }
@@ -189,19 +235,37 @@ fn attach_test_pattern(
     shm: &wl_shm::WlShm,
     surface: &wl_surface::WlSurface,
     qh: &QueueHandle<AppState>,
+    installed_mode: bool,
+    width: i32,
+    height: i32,
 ) {
-    let size = (STRIDE * HEIGHT) as usize;
+    let (width, height) = if installed_mode {
+        (width.max(1), height.max(1))
+    } else {
+        (WIDTH, HEIGHT)
+    };
+    let stride = width * 4;
+    let size = (stride * height) as usize;
     let mut file = tempfile::tempfile().expect("failed to create anonymous shm file");
     let mut pixels = vec![0u8; size];
-    draw_test_pattern(&mut pixels);
+    if installed_mode {
+        render::draw(&mut pixels, width as u32, height as u32);
+    } else {
+        draw_test_pattern(&mut pixels);
+    }
     file.write_all(&pixels).expect("failed to write pixel data");
     file.flush().ok();
 
     let pool = shm.create_pool(file.as_fd(), size as i32, qh, ());
-    let buffer = pool.create_buffer(0, WIDTH, HEIGHT, STRIDE, wl_shm::Format::Argb8888, qh, ());
+    let format = if installed_mode {
+        wl_shm::Format::Xrgb8888
+    } else {
+        wl_shm::Format::Argb8888
+    };
+    let buffer = pool.create_buffer(0, width, height, stride, format, qh, ());
 
     surface.attach(Some(&buffer), 0, 0);
-    surface.damage_buffer(0, 0, WIDTH, HEIGHT);
+    surface.damage_buffer(0, 0, width, height);
     surface.commit();
 }
 
@@ -215,6 +279,7 @@ fn main() {
     // buffer-less; a compliant compositor must reject this with a protocol
     // error and disconnect only this client.
     let violate_configure = std::env::args().nth(2).as_deref() == Some("violate-configure");
+    let installed_mode = std::env::var_os("SAAIOS_APP_ID").is_some();
     let conn = Connection::connect_to_env().expect(
         "failed to connect to Wayland display -- set WAYLAND_DISPLAY to saai-displayd's socket",
     );
@@ -244,6 +309,12 @@ fn main() {
         running: true,
         configured: false,
         received_key: false,
+        installed_mode,
+        configured_width: WIDTH,
+        configured_height: HEIGHT,
+        touch: None,
+        touch_started: false,
+        touch_position: (0.0, 0.0),
         _xdg_surface: Some(xdg_surface),
         surface: Some(surface),
         shm: Some(shm),
@@ -261,6 +332,9 @@ fn main() {
             state.shm.as_ref().unwrap(),
             state.surface.as_ref().unwrap(),
             &qh,
+            false,
+            WIDTH,
+            HEIGHT,
         );
         buffer_attached = true;
         // A compliant compositor answers this with a protocol error and
@@ -298,11 +372,29 @@ fn main() {
                     state.shm.as_ref().unwrap(),
                     state.surface.as_ref().unwrap(),
                     &qh,
+                    state.installed_mode,
+                    state.configured_width,
+                    state.configured_height,
                 );
                 buffer_attached = true;
                 println!(
-                    "saai-demo-surface[{}]: committed {WIDTH}x{HEIGHT} test pattern frame",
-                    state.label
+                    "saai-demo-surface[{}]: committed {}x{} {} frame",
+                    state.label,
+                    if state.installed_mode {
+                        state.configured_width
+                    } else {
+                        WIDTH
+                    },
+                    if state.installed_mode {
+                        state.configured_height
+                    } else {
+                        HEIGHT
+                    },
+                    if state.installed_mode {
+                        "application"
+                    } else {
+                        "test pattern"
+                    }
                 );
             }
         }
@@ -313,10 +405,18 @@ fn main() {
     // saai-displayd's stdin "inject-key" trigger) has a real chance to
     // arrive before this process exits -- each roundtrip is itself bounded
     // by the compositor's responsiveness, never an indefinite wait.
-    if buffer_attached && !violate_configure {
+    if buffer_attached && !violate_configure && !installed_mode {
         while !state.received_key && Instant::now() < deadline {
             let _ = queue.roundtrip(&mut state);
             std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    if buffer_attached && installed_mode {
+        while state.running {
+            queue
+                .blocking_dispatch(&mut state)
+                .expect("installed application dispatch failed");
         }
     }
 
