@@ -5,8 +5,13 @@ use serde::Deserialize;
 use thiserror::Error;
 
 mod store;
+mod supervisor;
 
 pub use store::{AppStore, InstalledApp, StoreError};
+pub use supervisor::{
+    AppEvent, AppEventKind, AppState, AppSupervisor, LaunchOutcome, SupervisorError,
+    SupervisorPolicy,
+};
 
 pub const MANIFEST_SCHEMA_V1: u32 = 1;
 pub const MAX_APP_ID_LEN: usize = 253;
