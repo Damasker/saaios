@@ -5,10 +5,12 @@ use serde::Deserialize;
 use thiserror::Error;
 
 mod daemon;
+mod grants;
 mod store;
 mod supervisor;
 
 pub use daemon::{run_daemon, AppdError, DaemonConfig};
+pub use grants::{GrantError, GrantRecord, GrantStore, GRANT_SCHEMA_V1};
 pub use saai_app_protocol::{
     decode_request, encode_message, encode_request, AppSummary, ClientRequest, LifecycleEvent,
     LifecycleEventKind, ProtocolError, ResponseResult, ServerMessage, WireError,

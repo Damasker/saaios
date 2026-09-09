@@ -11,10 +11,11 @@ saai-app-protocol.workspace = true
 clap.workspace = true
 semver.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile.workspace = true
