@@ -88,6 +88,8 @@ export MAGISKBOOT=/opt/magiskboot
 export STOCK_INIT_BOOT=/secure/local/init_boot.img
 export STOCK_VENDOR_BOOT=/secure/local/vendor_boot.img
 export TINYALSA_DIR=/src/tinyalsa
+export SAAIOS_RUNTIME_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saaios-runtime
+export SAAIOS_CONSOLE_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saaios-console
 export SAAI_DISPLAYD_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saai-displayd
 export SAAI_SHELL_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saai-shell
 
@@ -95,7 +97,10 @@ export SAAI_SHELL_BIN=$PWD/target/aarch64-unknown-linux-musl/pixel7/saai-shell
 ./os/targets/panther/build-native-c-image.sh
 ```
 
-Outputs default to `dist/panther/`, which is ignored by Git.
+Outputs default to `dist/panther/`, which is ignored by Git. The image builder
+also writes `.SHA256`, `.SOURCE_COMMIT`, and `.INPUTS.SHA256` sidecars. Keep all
+four files together: the input manifest prevents a source-labelled image from
+silently carrying stale separately-built Rust binaries.
 
 At runtime, the optional private model configuration is read from
 `/metadata/saaios/runtime.toml`. It is never baked into the image. Audit and

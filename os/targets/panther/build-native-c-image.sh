@@ -13,6 +13,8 @@ tinyalsa_dir=${TINYALSA_DIR:?set TINYALSA_DIR}
 # and the cross-panther CI job for how it's produced (ADR-008/010/011/012).
 saai_displayd=${SAAI_DISPLAYD_BIN:?set SAAI_DISPLAYD_BIN}
 saai_shell=${SAAI_SHELL_BIN:?set SAAI_SHELL_BIN}
+saai_runtime=${SAAIOS_RUNTIME_BIN:?set SAAIOS_RUNTIME_BIN}
+saai_console=${SAAIOS_CONSOLE_BIN:?set SAAIOS_CONSOLE_BIN}
 source_dir="$script_dir/src"
 scripts_dir="$script_dir/scripts"
 config_dir="$script_dir/config"
@@ -96,8 +98,8 @@ set -- ramdisk.cpio \
     "add 0755 init $native_init" \
     "mkdir 0755 saaios" \
     "add 0755 saaios/busybox $artifacts/busybox-arm64" \
-    "add 0755 saaios/saaios-runtime $artifacts/saaios-runtime-panther-tcp" \
-    "add 0755 saaios/saaios-console $artifacts/saaios-console-panther-tcp" \
+    "add 0755 saaios/saaios-runtime $saai_runtime" \
+    "add 0755 saaios/saaios-console $saai_console" \
     "add 0755 saaios/drm-splash $drm_splash" \
     "add 0755 saaios/saai-displayd $saai_displayd" \
     "add 0755 saaios/saai-shell $saai_shell" \
@@ -140,4 +142,33 @@ done
 "$magiskboot" cpio "$@"
 "$magiskboot" repack boot.img "$output"
 
+partition_size=8388608
+image_size=$(wc -c < "$output" | tr -d ' ')
+if [ "$image_size" -gt "$partition_size" ]; then
+    printf '%s\n' \
+        "init_boot image is $image_size bytes; panther partition limit is $partition_size" >&2
+    exit 1
+fi
+
+inputs_file="$output.INPUTS.SHA256"
+: > "$inputs_file"
+for entry in \
+    "saaios-runtime:$saai_runtime" \
+    "saaios-console:$saai_console" \
+    "saai-displayd:$saai_displayd" \
+    "saai-shell:$saai_shell" \
+    "native-init:$native_init" \
+    "drm-splash:$drm_splash"
+do
+    name=${entry%%:*}
+    path=${entry#*:}
+    hash=$(sha256sum "$path" | awk '{print $1}')
+    printf '%s  %s\n' "$hash" "$name" >> "$inputs_file"
+done
+
+image_hash=$(sha256sum "$output" | awk '{print $1}')
+printf '%s  %s\n' "$image_hash" "$(basename -- "$output")" > "$output.SHA256"
+git -C "$repo_root" rev-parse HEAD > "$output.SOURCE_COMMIT"
+
 printf '%s\n' "$output"
+printf '%s\n' "$output.SHA256" "$output.SOURCE_COMMIT" "$inputs_file"
