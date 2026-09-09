@@ -21,8 +21,8 @@
 - `saai-demo-surface` умеет быть Wayland-клиентом, но запускается вручную;
 - `/data/saaios` монтируется PID 1;
 - Change 1 уже добавил `saai-appd` crate и строгую typed-модель manifest v1;
-  app layout, storage, supervisor и daemon IPC уже реализованы; следующими
-  шагами остаются demo-package, интеграция с shell и аппаратная проверка.
+  app layout, storage, supervisor, daemon IPC, demo-package и интеграция с
+  shell уже реализованы; следующим шагом остаётся аппаратная проверка.
 
 ## Scope
 
@@ -44,7 +44,9 @@ demo-app и подключение оболочки.
    single-instance и crash budget (`6be3fca`).
 4. **Готово (2026-09-09).** Versioned JSON-lines Unix IPC и host integration
    test с отдельными daemon, app и observer (`9321d0f`, `f583bd3`).
-5. Demo-app package и запуск/переключение из `saai-shell`.
+5. **Готово на host (2026-09-09).** Demo-app package, SUI-карточка,
+   запуск и focus switch из `saai-shell` (`3a5f3f7`, `45d65bb`, `fb5c845`,
+   `8498348`, `1f85cd7`, `351b483`).
 6. ARM64 packaging `saai-appd`, device install в `/data`, fault injection и
    cold regression без изменения `init_boot` для самого demo-app.
 
@@ -118,5 +120,26 @@ Change 4: `saai-appd` обслуживает Unix socket `/run/saaios/appd.sock`
 single-instance по одинаковому PID и сохранение app data после удаления кода.
 Общий прогон после Change 4: 27 unit tests и 1 integration test; all-target
 clippy с `-D warnings`; ARM64 musl check успешен.
+
+Change 5: wire types вынесены в общий минимальный `saai-app-protocol`; shell
+имеет неблокирующий reconnecting client и получает registry responses и
+lifecycle events без запуска процессов напрямую. Карточка `Saai Demo`, её
+геометрия и действие объявлены в `root.sui`; renderer и touch hit-test
+используют скомпилированное описание. Состояния `не установлено / готово /
+работает / crash-limited / ошибка` наблюдаемы в shell. Устанавливаемый пакет
+содержит manifest v1 и отдельный ARM64 Wayland binary под `/data`; приложение
+рисует полноэкранный мобильный экран с Inter и физически проверенной упаковкой
+цвета, принимает touch и имеет явное штатное закрытие.
+
+`application-wayland-host.sh` на R620 прошёл реальную цепочку из отдельных
+`saai-displayd`, `saai-appd` и двух Wayland clients: install, launch нового
+окна, переход фокуса, stop и возврат фокуса предыдущему окну. Readiness
+первого клиента проверяется до launch, поэтому тест не зависит от порядка
+планирования процессов. Relevant unit/integration tests и all-target clippy
+с `-D warnings` успешны. ARM64 musl demo-package собран скриптом
+`build-demo-package.sh`; manifest SHA-256
+`922ac0fe991f3d69fce1ff93740b8adeaebe85722cac1fe8e2a2fba5341b1871`,
+binary SHA-256
+`0e0bafde28a48a3750acb1200489cf527973c7b103a255b240daa47ea454d124`.
 
 Аппаратный результат пока не заявляется по host-тестам.
