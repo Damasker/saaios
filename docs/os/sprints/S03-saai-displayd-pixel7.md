@@ -145,6 +145,8 @@ bootloader вернуть сохранённый `init_boot_a`; slot B не из
   `saai-display-supervisor` / `saai-demo-surface`. Log показывает blit
   `1080x2400` и touch routing. Flash S03 заменит этот UI на demo-surface +
   supervisor/`drm-splash` fallback — только после явного разрешения.
+- Pull request: https://github.com/Damasker/saaios/pull/38
+  (base `feat/s02-wayland-host`; physical flash still pending explicit permission).
 - Physical run S03 candidate добавляется после отдельного явного разрешения
   на flash.
 
