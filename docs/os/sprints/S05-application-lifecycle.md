@@ -39,7 +39,8 @@ demo-app и подключение оболочки.
 2. **Готово (2026-09-09).** Файловое хранилище с staging+rename,
    duplicate-id, startup scan и path-boundary tests (`5efe10e`, `24f1d62`,
    `b872e86`).
-3. Supervisor процессов: launch/stop/single-instance/crash budget.
+3. **Готово (2026-09-09).** Supervisor процессов: launch/stop,
+   single-instance и crash budget (`6be3fca`).
 4. Versioned JSON-lines Unix IPC и host integration test двух процессов.
 5. Demo-app package и запуск/переключение из `saai-shell`.
 6. ARM64 packaging `saai-appd`, device install в `/data`, fault injection и
@@ -95,5 +96,15 @@ canary-проверка подтверждает неизменность дан
 валидных каталогов, игнорирует незавершённый staging и не доверяет отдельной
 изменяемой базе. Общий прогон: 16 tests, `cargo test --locked`; all-target
 clippy с `-D warnings`.
+
+Change 3: `AppSupervisor` запускает реальный executable с рабочим каталогом
+app и явными `SAAIOS_APP_ID`, `SAAIOS_DATA_DIR`, `XDG_RUNTIME_DIR`,
+`WAYLAND_DISPLAY`; inherited environment очищается. `single_instance=true`
+возвращает существующий PID, `false` допускает отдельные процессы. Явный
+`stop` завершает и reap-ит children без записи crash. Неуспешные exits
+автоматически перезапускаются и учитываются в окне 60 секунд; третий переводит
+в `crash_limited`, после чего только явный `launch` очищает budget. Drop и
+ошибочные process operations не оставляют намеренно забытых children/state.
+Общий прогон после Change 3: 21 test; all-target clippy с `-D warnings`.
 
 Аппаратный результат пока не заявляется по host-тестам.
