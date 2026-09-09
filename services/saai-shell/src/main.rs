@@ -1155,7 +1155,7 @@ impl Shell {
                     space_id,
                     mut entities,
                 } => {
-                    entities.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+                    entities.sort_by_key(|entity| std::cmp::Reverse(entity.updated_at));
                     changed |= self.entity_counts.get(&space_id) != Some(&entities.len());
                     self.entity_counts.insert(space_id.clone(), entities.len());
                     if space_id == self.selected_space_id {
