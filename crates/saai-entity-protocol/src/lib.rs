@@ -139,7 +139,7 @@ pub enum ServerMessage {
         request_id: String,
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        result: Option<ResponseResult>,
+        result: Option<Box<ResponseResult>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<WireError>,
     },
@@ -155,7 +155,7 @@ impl ServerMessage {
             schema: ENTITYD_WIRE_SCHEMA_V1,
             request_id: request_id.into(),
             ok: true,
-            result: Some(result),
+            result: Some(Box::new(result)),
             error: None,
         }
     }
