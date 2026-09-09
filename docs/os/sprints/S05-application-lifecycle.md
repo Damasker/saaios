@@ -36,7 +36,8 @@ demo-app и подключение оболочки.
 
 1. **Готово (2026-09-09).** Manifest v1 как typed model + негативные
    unit/schema tests (`137c159`, `5f00f91`, `97d6397`).
-2. Файловое хранилище с staging+rename, duplicate-id и path-boundary tests.
+2. **Готово (2026-09-09).** Файловое хранилище с staging+rename,
+   duplicate-id и path-boundary tests (`5efe10e`, `24f1d62`).
 3. Supervisor процессов: launch/stop/single-instance/crash budget.
 4. Versioned JSON-lines Unix IPC и host integration test двух процессов.
 5. Demo-app package и запуск/переключение из `saai-shell`.
@@ -81,4 +82,15 @@ Change 1: `services/saai-appd` принимает только schema 1, DNS-lik
 `app_id`, SemVer, нормализованный относительный `bin/...` exec, Wayland UI и
 валидные capability tokens; unknown fields/schema и duplicates отвергаются.
 Восемь unit/schema tests прошли локально и на R620 с `--locked`; clippy прошёл
-с `-D warnings`. Аппаратный результат пока не заявляется по host-тестам.
+с `-D warnings`.
+
+Change 2: `AppStore` создаёт отдельные code/data roots, копирует доверенный
+пакет в sibling staging без следования symlink, повторно проверяет manifest и
+executable и только затем делает rename в конечный `app_id`. Duplicate не
+перезаписывает код; ошибка удаляет staging и не создаёт app data. Отдельная
+canary-проверка подтверждает неизменность данных соседнего приложения; source
+внутри управляемых code/data trees и несовпадение directory id с manifest
+отвергаются. Общий прогон: 14 tests, `cargo test --locked`; all-target clippy
+с `-D warnings`.
+
+Аппаратный результат пока не заявляется по host-тестам.
