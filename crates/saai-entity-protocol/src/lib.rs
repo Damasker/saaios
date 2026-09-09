@@ -94,10 +94,20 @@ impl ClientRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ResponseResult {
-    Spaces { spaces: Vec<Space> },
-    Selection { selection: SpaceSelection },
-    Entities { space_id: String, entities: Vec<Entity> },
-    Entity { entity: Entity, event: Event },
+    Spaces {
+        spaces: Vec<Space>,
+    },
+    Selection {
+        selection: SpaceSelection,
+    },
+    Entities {
+        space_id: String,
+        entities: Vec<Entity>,
+    },
+    Entity {
+        entity: Entity,
+        event: Event,
+    },
     Deleted {
         space_id: String,
         entity_id: Uuid,
@@ -272,7 +282,8 @@ mod tests {
         for message in [success, error] {
             let encoded = encode_message(&message).unwrap();
             assert_eq!(encoded.last(), Some(&b'\n'));
-            let decoded: ServerMessage = serde_json::from_slice(&encoded[..encoded.len() - 1]).unwrap();
+            let decoded: ServerMessage =
+                serde_json::from_slice(&encoded[..encoded.len() - 1]).unwrap();
             assert_eq!(decoded, message);
         }
     }
