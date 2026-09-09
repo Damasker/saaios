@@ -20,7 +20,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
-| S11 | GPU, power, update и release gate | Backlog | S04–S10 |
+| S11 | GPU, power, OTA и release gate | Backlog | S04–S10 |
 
 ## S00 — Архитектура и процесс
 
@@ -203,22 +203,38 @@ filesystem/network mediation, системный permission surface, portal дл
 
 **Rollback:** остановить planner/automation workers, сохранив объекты и аудит.
 
-## S11 — Производительность, питание и release gate
+## S11 — Производительность, питание, OTA и release gate
 
 **Goal:** новый стек становится стабильным основным UI для ежедневного
 использования на тестовом Pixel 7.
 
 **Scope:** измерения latency/memory/idle, GPU только при доказанной пользе,
-deep idle, signed app/update metadata, A/B userspace update, recovery drill и
-полная регрессия.
+deep idle, полная регрессия и OTA-контур:
+
+- подписанный versioned manifest и подписанный полный системный artifact;
+- возобновляемая staged-загрузка с проверкой размера, SHA-256 и подписи до
+  записи разделов;
+- проверки питания, свободного места, сети, модели устройства и допустимого
+  перехода версии, включая запрет downgrade по умолчанию;
+- запись только в неактивный A/B OS slot; активный slot и разделы firmware,
+  calibration, identity и hardware metadata обновлятору недоступны;
+- ограниченное число boot attempts, health confirmation после запуска,
+  автоматический откат на последний healthy slot и внешний recovery drill;
+- переход от сохранённого Android в slot B к двум SaaiOS slots разрешается
+  только отдельным подтверждённым этапом после готовности внешнего factory
+  recovery.
 
 **Acceptance:** согласованные бюджеты производительности выполнены; нет
-неограниченных restart loops; обновление и намеренно прерванное обновление
-восстанавливаются; пройдены cold-boot, 24-hour soak и rollback drill;
-стабильный архив связан с commit и хешами.
+неограниченных restart loops; штатное, намеренно прерванное, повреждённое и
+адресованное не тому устройству обновления проверены. Ни один тест не пишет в
+активный slot; неподписанный artifact и запрещённый downgrade отвергаются;
+неподтверждённая новая система автоматически откатывается. Пройдены cold-boot,
+24-hour soak, power-loss и rollback drills; стабильный архив связан с commit,
+manifest, подписью и хешами.
 
-**Rollback:** последний физически принятый образ SaaiOS в слоте A и сохранённый
-Android в слоте B.
+**Rollback:** до подтверждённой OTA-миграции — последний физически принятый
+SaaiOS в слоте A и Android в слоте B. После миграции — предыдущий healthy
+SaaiOS в неактивном слоте и заранее проверенный внешний factory recovery.
 
 ## Управление roadmap
 
