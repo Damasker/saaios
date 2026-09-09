@@ -40,7 +40,9 @@ append-only журнал, восстановление проекций, bootstr
    crash-recovery tests (`b127bad`, `d3f59b5`).
 4. **Готово (2026-09-09).** Идемпотентный bootstrap и миграция legacy
    active-space (`9d8ca71`).
-5. `saai-entityd`: versioned local IPC, create/update/delete/list/select.
+5. **Готово на host (2026-09-09).** `saai-entityd`: versioned local IPC,
+   create/update/delete/list/select (`67d295d`, `0029908`, `b1fa88f`,
+   `f6ff2e6`, `3d0183a`).
 6. `saai-shell`: реальные пространства и scoped проекции `Сейчас`.
 7. ARM64 packaging, persistent service supervision, device isolation/fault/
    cold-reboot acceptance.
@@ -105,4 +107,20 @@ Change 4: bootstrap создаёт стабильные `home/work/personal/saai
 Missing/invalid legacy даёт `home`; повторный bootstrap не перечитывает
 изменившийся legacy-файл и не меняет уже принятую `selection.json`. Legacy
 остаётся нетронутым. После Change 4 общий результат — 16 unit tests и clippy с
+`-D warnings` на R620.
+
+Change 5: `saai-entity-protocol` задаёт ограниченный 128-KiB JSON-lines wire
+с явными schema/request id и обязательным `space_id` для каждой entity-команды.
+Большие response variants boxed без изменения JSON. `saai-entityd` один
+владеет store, bootstrap и mode-0660 Unix socket; поддерживает list spaces,
+get/select space, scoped list, create/update/delete и явную event subscription.
+Daemon назначает UUID/timestamps/revision, а optimistic update/delete требуют
+текущую revision.
+
+Host integration использовал controller, отдельный work-space client и
+subscriber: migrated selection=`work`, Home/Work получили разные entity,
+home list не увидел work id, stale revision была отвергнута, update/delete и
+selection дали typed events. После убийства и нового запуска daemon выбранное
+`personal`, обновлённая Home entity и удалённая Work entity восстановились.
+Итог: 20 unit/protocol tests, 1 process integration и all-target clippy с
 `-D warnings` на R620.
