@@ -2,8 +2,8 @@
 
 ## Паспорт
 
-- Состояние: `Frozen until S01 closes`.
-- Зависит от: S04 (`Provisional` until S01 Evidence closes the gate).
+- Состояние: `In progress`.
+- Зависит от: S04 (`Done`).
 - Архитектурные решения: ADR-005, ADR-018.
 - Рабочий fallback: отключить `saai-appd`; `saai-shell`, `saai-displayd`,
   `drm-splash` и USB recovery остаются без изменений.
@@ -19,7 +19,9 @@
   системные session-lock/layer-shell globals;
 - `saai-shell` — отдельный supervised процесс, но не имеет списка приложений;
 - `saai-demo-surface` умеет быть Wayland-клиентом, но запускается вручную;
-- `/data/saaios` монтируется PID 1, однако app layout/manifest/daemon ещё нет.
+- `/data/saaios` монтируется PID 1;
+- Change 1 уже добавил `saai-appd` crate и строгую typed-модель manifest v1;
+  app layout, storage, daemon IPC и supervisor остаются следующими шагами.
 
 ## Scope
 
@@ -32,7 +34,8 @@ demo-app и подключение оболочки.
 
 ## Change
 
-1. Manifest v1 как typed model + негативные unit/schema tests.
+1. **Готово (2026-09-09).** Manifest v1 как typed model + негативные
+   unit/schema tests (`137c159`, `5f00f91`, `97d6397`).
 2. Файловое хранилище с staging+rename, duplicate-id и path-boundary tests.
 3. Supervisor процессов: launch/stop/single-instance/crash budget.
 4. Versioned JSON-lines Unix IPC и host integration test двух процессов.
@@ -74,5 +77,8 @@ S05 создаёт запуск исполняемого кода и новые 
 
 ## Evidence
 
-Заполняется по мере закрытия Change 1–6. Аппаратный результат не заявляется
-по host-тестам.
+Change 1: `services/saai-appd` принимает только schema 1, DNS-like lowercase
+`app_id`, SemVer, нормализованный относительный `bin/...` exec, Wayland UI и
+валидные capability tokens; unknown fields/schema и duplicates отвергаются.
+Восемь unit/schema tests прошли локально и на R620 с `--locked`; clippy прошёл
+с `-D warnings`. Аппаратный результат пока не заявляется по host-тестам.

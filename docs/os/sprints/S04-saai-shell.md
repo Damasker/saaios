@@ -2,7 +2,8 @@
 
 ## Паспорт
 
-- Состояние: `Provisional` (implementation Evidence exists; sprint gate held until S01 physical Evidence #28).
+- Состояние: `Done` (implementation and physical Evidence accepted; S01 gate
+  closed 2026-09-09).
 - Зависит от: S03.
 - Архитектурные решения: ADR-005 (три компонента: `saai-displayd`/
   `saai-shell`/`saai-appd`), ADR-007 (Smithay), ADR-009 (supervision/
@@ -27,6 +28,14 @@ Wayland-клиентом `saai-displayd`, реализующим ту же фу�
 fallback — не переписывается, не расширяется.
 
 ## Current state
+
+S04 завершён: `saai-shell` автоматически запускается и ограниченно
+перезапускается дочерним процессом `saai-displayd`; lock surface, touch wake,
+четыре корневых раздела, системный layer и declarative Saai UI физически
+проверены. Combined Evidence cold boot 2026-09-09 подтвердил постоянный
+Wayland startup path; `drm-splash` остаётся crash-loop fallback.
+
+Ниже сохранён исходный baseline, по которому декомпозировался спринт.
 
 Зафиксировано чтением `docs/adr/ADR-005-owned-wayland-application-platform.md`,
 `docs/os/architecture/application-platform.md`, и кода `saai-displayd`/

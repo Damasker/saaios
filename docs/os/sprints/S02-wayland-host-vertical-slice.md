@@ -2,7 +2,8 @@
 
 ## Паспорт
 
-- Состояние: `Provisional` (implementation Evidence exists; sprint gate held until S01 physical Evidence #28).
+- Состояние: `Done` (implementation Evidence accepted; S01 physical gate
+  closed 2026-09-09).
 - Зависит от: S01.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005.
 - Рабочий fallback: существующий `drm-splash`; phone image не меняется.
@@ -14,9 +15,11 @@
 
 ## Current state
 
-Pixel 7 использует один статический C-процесс для DRM UI и прямого чтения
-touch. Независимого display server, surface protocol и app lifecycle пока нет.
-Текущий UI физически проверен и остаётся стабильным fallback.
+S02 завершён: независимые `saai-displayd` и `saai-demo-surface` проходят
+headless Wayland vertical slice, protocol-negative и crash-recovery сценарии
+в CI. Последующие S03/S04 перенесли тот же compositor boundary на Pixel 7 и
+отдельный системный shell; статический C UI сохранён только как проверенный
+fallback.
 
 ## Scope
 

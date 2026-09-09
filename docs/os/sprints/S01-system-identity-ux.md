@@ -238,6 +238,12 @@ terminal transition: это исключает duplicate spawn и сохраня
 8. Проверить четыре состояния без animation и в grayscale; тексты не
    обрезаются, touch target срабатывает у всех четырёх краёв.
 
+Выполнено 2026-09-09 на combined Evidence image source `be9630d`, SHA-256
+`c1ebb5afd0ee276ca7c2774b765084a19e001ad1afc4d3385c57dc7b66aedff8`.
+Пользователь подтвердил idle/running/success, offline/error/retry и timeout;
+audit подтвердил один `system.identity` на принятую попытку и подавление
+быстрого двойного tap. Поздний ответ после timeout не изменил terminal error.
+
 ## Implementation-facing decisions
 
 - Один request: `system.identity`; multi-probe orchestration отсутствует.

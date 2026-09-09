@@ -2,15 +2,14 @@
 
 ## Паспорт
 
-- Состояние: `In progress` (#26/#31 merged @ `da4005e`; awaiting physical Evidence #28).
+- Состояние: `Done` (#26/#31 implementation + physical Evidence #28).
 - Зависит от: S00.
 - Архитектурные решения: ADR-002, ADR-004, ADR-006.
-- Рабочий fallback: установленный образ commit `7b29c62`, Android slot B.
-- Evidence image (unflashed): `dist/panther/saaios-panther-init_boot.img`
-  SHA-256 `463c9de929625019c69a219667fbe7167b7f6613ce416284197064ca9f5f6b7e`,
-  source `da4005e`. Flash helper:
-  `S01_FLASH_CONFIRM=1 ./os/targets/panther/scripts/flash-s01-evidence.sh`
-  (refuses non-`panther` product and multi-device without `ANDROID_SERIAL`).
+- Рабочий Evidence/rollback image:
+  `dist/panther/saaios-panther-combined-evidence-init_boot.img`, SHA-256
+  `c1ebb5afd0ee276ca7c2774b765084a19e001ad1afc4d3385c57dc7b66aedff8`,
+  source `be9630de7a8fa45d17ea512eb852822c9527f599`, 8388608 bytes.
+  Android slot B сохранён.
 
 ## Goal
 
@@ -19,10 +18,11 @@ SaaiOS достоверно отвечает как работающая ОС т
 
 ## Current state
 
-Repo-side gate closed: single `DeviceContext`, bootconfig-first identity, early
-PID1 target, and four-state `CHECK DEVICE` UX are on shared HEAD (`da4005e`+).
-Evidence image is built and unflashed (see passport). Physical close is blocked
-only on operator attaching Pixel 7 for Issue #28.
+Repo-side and physical gates are closed. Single `DeviceContext`,
+bootconfig-first identity, early PID1 target and four-state `CHECK DEVICE` UX
+are on shared HEAD. The combined image was built from explicit same-checkout
+inputs, flashed to Pixel 7 slot A and accepted through success, offline/retry,
+timeout/late-result and cold-reboot scenarios on 2026-09-09.
 
 ## Scope
 
@@ -88,8 +88,9 @@ hostname, serial, MAC/IP, полный cmdline, credentials и пользова�
 
 ## Rollback
 
-Вернуть физически проверенный init_boot image commit `7b29c62` в slot A или
-переключиться на сохранённый Android slot B. Userdata не мигрируется.
+Вернуть физически проверенный combined Evidence image source `be9630d` в
+slot A или переключиться на сохранённый Android slot B. Userdata не
+мигрируется.
 
 ## Evidence
 
@@ -127,7 +128,7 @@ verification (Issue #28).
   `sha256sum /dev/block/sda11` =
   `18987941ee7c41a98ea9a9471287933d75a27bf9417050253800d2e937829771`.
 
-### Physical verification checklist (required to close S01)
+### Physical verification checklist (completed)
 
 1. Build image from shared HEAD that includes merged #26 **and** #31
    (PR #33); record filename, size, SHA-256, source commit.
@@ -137,3 +138,55 @@ verification (Issue #28).
    exactly one `system.identity` per accepted tap.
 5. Free-form system question; cold reboot; redact secrets before posting.
 6. Update this Evidence section and close Issue #28.
+
+### Final physical Evidence (2026-09-09)
+
+- Первая собранная для #28 версия
+  `saaios-panther-init_boot.img` (SHA-256
+  `463c9de929625019c69a219667fbe7167b7f6613ce416284197064ca9f5f6b7e`,
+  declared source `da4005e`) была **отклонена**: после прошивки её
+  встроенный `saai-displayd` имел старый SHA-256 и не запускал
+  `saai-shell`. Это выявило, что source commit образа не удостоверял отдельно
+  поданные Rust binaries.
+- Build path исправлен commit `be9630d`: runtime, console, displayd и shell
+  теперь передаются явными путями, лимит 8 MiB проверяется, рядом с образом
+  записываются `.SOURCE_COMMIT`, `.SHA256` и `.INPUTS.SHA256`.
+- Принятый образ:
+  `saaios-panther-combined-evidence-init_boot.img`, ровно 8388608 bytes,
+  SHA-256
+  `c1ebb5afd0ee276ca7c2774b765084a19e001ad1afc4d3385c57dc7b66aedff8`,
+  source `be9630de7a8fa45d17ea512eb852822c9527f599`.
+- Хэши входов, повторно сверенные на работающем телефоне:
+  `saaios-runtime` =
+  `41df5f524f3566e0fcb7cbbb4acad6d65968f2ec7abe4157bd80d67e7e3a8d38`,
+  `saaios-console` =
+  `6cb1845260ff70453e954bbfd6719b1f40bb517a51686fb8eff0f36101b47484`,
+  `saai-displayd` =
+  `3a4472c46571de225dac8446825c0c4fc3dbbf736a9ab87d26802672e40582ea`,
+  `saai-shell` =
+  `cbf6cac9374cd37707b3a6597c9f3aede3c11dfe7cee81c64afb9c56b2246cb6`,
+  `native-init` =
+  `212e8e6fd395ea3a11af0cf53057c5668c6b0bed608b90ae9c39812dc55be5f8`,
+  `drm-splash` =
+  `d085c48f6332a27eeaf01a76cf25143e3f8d116cdd390830200c5c034520842b`.
+- Flash guard подтвердил `panther`, unlocked bootloader и активный slot A;
+  записан только `init_boot_a`, slot B не менялся. При первом boot автоматически
+  запустились `saai-displayd`, его supervised `saai-shell` и runtime.
+- Прямой `--identity` вернул `SAAIOS PHONE / TARGET PANTHER / BOOT SLOT A`.
+  Audit каждой принятой UI-попытки содержит ровно один согласованный цикл
+  `tool_call(system.identity) -> policy allow -> tool_result`; быстрый двойной
+  tap не создал второй цикл.
+- Пользователь физически подтвердил idle, running и success (`SAAIOS`,
+  `PIXEL 7 / PANTHER`, `SLOT A`), затем offline error + `RETRY`. После
+  восстановления runtime один retry вернул success.
+- Timeout проверен `SIGSTOP` runtime без изменения файлов: через 10 секунд UI
+  показал `IDENTITY CHECK TIMED OUT`; после `SIGCONT` поздний ответ не изменил
+  terminal error, а новый `RETRY` успешно завершился.
+- Свободный ASCII-вопрос `what system are you?` получил правдивый ответ:
+  `I am SaaiOS, the operating system running on this device.` Русский текст
+  через serial не использован как Evidence из-за потери UTF-8 в терминале.
+- После холодной перезагрузки снова автоматически поднялась основная Wayland-
+  связка `saai-displayd -> saai-shell`; `drm-splash` отсутствовал, все четыре
+  хэша входов совпали, slot остался A, повторный identity дал тот же результат.
+
+S01 physical gate закрыт; зависимые S02-S04 становятся `Done`, S05 разморожен.

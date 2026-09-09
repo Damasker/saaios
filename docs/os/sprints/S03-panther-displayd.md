@@ -2,7 +2,8 @@
 
 ## Паспорт
 
-- Состояние: `Provisional` (implementation Evidence exists; sprint gate held until S01 physical Evidence #28).
+- Состояние: `Done` (implementation and physical Evidence accepted; S01 gate
+  closed 2026-09-09).
 - Зависит от: S02.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat), ADR-011 (touch через сырой evdev, без libinput/libudev), ADR-012 (клавиатурная способность не подключается на этой цели), ADR-013 (nightly build-std для размера init_boot).
 - Рабочий primary: физически проверенный прошитый образ, `saai-displayd`
@@ -25,6 +26,13 @@
 без замены текущей оболочки.
 
 ## Current state
+
+S03 завершён: `saai-displayd` владеет DRM/KMS и evdev на Pixel 7, запускается
+PID 1 как primary UI slot, а после исчерпания restart budget передаёт слот
+проверенному `drm-splash`. Combined Evidence cold boot 2026-09-09 подтвердил
+автоматический запуск compositor и последующего `saai-shell`.
+
+Ниже сохранён исходный baseline, по которому декомпозировался спринт.
 
 Зафиксировано чтением `os/targets/panther/src/native-init.c` и
 `drm-splash.c` (commit `1602a87`):
