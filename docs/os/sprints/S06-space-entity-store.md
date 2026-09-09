@@ -34,7 +34,8 @@ append-only журнал, восстановление проекций, bootstr
 ## Change
 
 1. **Готово (2026-09-09).** ADR-019 и исполняемый план S06.
-2. Typed schema и негативные validation tests.
+2. **Готово (2026-09-09).** Typed schema и негативные validation tests
+   (`40c689a`, `948da26`).
 3. Event-first atomic store, projection replay и crash-recovery tests.
 4. Идемпотентный bootstrap и миграция legacy active-space.
 5. `saai-entityd`: versioned local IPC, create/update/delete/list/select.
@@ -79,3 +80,10 @@ schema; повторное включение S06 должно продолжи�
 
 Добавляется по каждому Change только после зелёных автоматических или
 физических проверок.
+
+Change 2: новый независимый crate `saai-entity-store` задаёт строгие schema 1
+для `Space`, `Entity`, `Event` и tagged event payload. Space id и entity type
+не могут содержать path components; UUID, revision, sequence, timestamp order,
+bounded title/name и 64-KiB properties проверяются до записи. Event не может
+вложить entity другого пространства. Unknown field/schema/event kind
+отвергаются. Семь unit tests и clippy с `-D warnings` прошли на R620.
