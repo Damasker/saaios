@@ -35,6 +35,7 @@
 #define UI_RESTART_BUDGET 5
 #define UI_RESTART_WINDOW_SECONDS 60
 #define APPD_PATH "/data/saaios/system/saai-appd"
+#define ENTITYD_PATH "/data/saaios/system/saai-entityd"
 
 static const char *const restart_modules[] = {
     "logbuffer.ko",
@@ -1246,6 +1247,43 @@ static pid_t start_saai_appd(void) {
     return child;
 }
 
+/* S06: entityd is the sole writer for the durable Space/Entity/Event store.
+   It follows appd's persistent-service model so the fixed init_boot image
+   owns supervision without carrying the independently updatable binary. */
+static pid_t start_saai_entityd(void) {
+    struct stat binary;
+    if (stat(ENTITYD_PATH, &binary) < 0 || !S_ISREG(binary.st_mode) ||
+        access(ENTITYD_PATH, X_OK) < 0) {
+        log_message("saai-entityd unavailable at %s", ENTITYD_PATH);
+        return -1;
+    }
+
+    mkdir_one("/run/saaios", 0755);
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/saai-entityd.log",
+                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl(ENTITYD_PATH, "saai-entityd",
+              "--store-root", "/data/saaios/var/entities",
+              "--legacy-active-space", "/data/saaios/var/ui/active-space",
+              "--socket", "/run/saaios/entityd.sock", NULL);
+        dprintf(STDERR_FILENO, "saai-entityd exec failed: %s\n",
+                strerror(errno));
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("system service started: saai-entityd");
+    }
+    return child;
+}
+
 static int create_input_node(const char *wanted_name,
                              const char *symlink_path) {
     for (int attempt = 0; attempt < 50; ++attempt) {
@@ -1422,6 +1460,7 @@ int main(void) {
     setup_metadata_log();
     restore_saved_time();
     setup_data_storage();
+    pid_t entityd_pid = start_saai_entityd();
     pid_t appd_pid = start_saai_appd();
 
     for (size_t i = 0; i < ARRAY_SIZE(usb_modules); ++i) {
@@ -1528,6 +1567,13 @@ int main(void) {
             appd_pid = start_saai_appd();
             if (appd_pid > 0) {
                 log_message("system service restarted: saai-appd");
+            }
+        } else if (entityd_pid > 0 && ended == entityd_pid) {
+            log_message("system service exited: saai-entityd");
+            usleep(500000);
+            entityd_pid = start_saai_entityd();
+            if (entityd_pid > 0) {
+                log_message("system service restarted: saai-entityd");
             }
         } else if (ui_pid > 0 && ended == ui_pid) {
             /* ADR-009: single UI-slot ownership -- waitpid() above already

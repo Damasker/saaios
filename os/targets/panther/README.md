@@ -20,6 +20,8 @@ fallback.
 - `build-saai-shell.sh` — builds the persistent system shell for that image.
 - `build-saai-appd.sh` — builds the supervised application service for
   `/data/saaios/system`.
+- `build-saai-entityd.sh` — builds the supervised Space/Entity store service
+  for `/data/saaios/system`.
 - `build-wifi-vendor-boot.sh` — injects matching signed modules and firmware
   into a stock vendor_boot image.
 - `artifacts.example.manifest` — expected local artifact names.
@@ -70,6 +72,7 @@ export ZIG=/path/to/zig
 ./os/targets/panther/build-saai-displayd.sh
 ./os/targets/panther/build-saai-shell.sh
 ./os/targets/panther/build-saai-appd.sh
+./os/targets/panther/build-saai-entityd.sh
 ```
 
 This needs a nightly Rust toolchain in addition to the pinned stable one
@@ -114,6 +117,13 @@ actions remain unavailable until the service is installed and the device is
 restarted. Application packages themselves stay under `/data/saaios/packages`
 and `/data/saaios/apps`, so installing or updating an app does not alter
 `init_boot`.
+
+`saai-entityd` uses the same persistent-service delivery model. Install the
+output of `build-saai-entityd.sh` atomically as
+`/data/saaios/system/saai-entityd` with mode `0755`. PID 1 starts it after
+mounting `/data`, owns its restart, and leaves the device bootable when the
+binary is absent. Its durable store is `/data/saaios/var/entities`; the legacy
+active-space file is read only for the one-time selection migration.
 
 At runtime, the optional private model configuration is read from
 `/metadata/saaios/runtime.toml`. It is never baked into the image. Audit and
