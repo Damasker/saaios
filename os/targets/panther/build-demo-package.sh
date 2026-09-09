@@ -34,4 +34,3 @@ chmod 0755 "$package_dir/bin/saai-demo-surface"
 
 printf '%s\n' "$package_dir"
 sha256sum "$package_dir/manifest.toml" "$package_dir/bin/saai-demo-surface"
-
