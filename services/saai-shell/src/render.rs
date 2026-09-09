@@ -90,11 +90,10 @@ impl<'a> Canvas<'a> {
         let start = (y as usize * self.width as usize + x as usize) * 4;
         let inverse = 255 - alpha as u16;
         self.pixels[start] = 0;
-        for channel in 1..4 {
-            self.pixels[start + channel] = ((color[channel] as u16 * alpha as u16
-                + self.pixels[start + channel] as u16 * inverse
-                + 127)
-                / 255) as u8;
+        for (channel, &src) in color.iter().enumerate().skip(1) {
+            self.pixels[start + channel] =
+                ((src as u16 * alpha as u16 + self.pixels[start + channel] as u16 * inverse + 127)
+                    / 255) as u8;
         }
     }
 

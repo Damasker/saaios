@@ -1,5 +1,7 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
+#[cfg(any(test, feature = "panther-hardware"))]
+use std::collections::VecDeque;
 #[cfg(not(feature = "panther-hardware"))]
 use std::io::BufRead;
 #[cfg(feature = "panther-hardware")]
@@ -8,6 +10,7 @@ use std::rc::Rc;
 #[cfg(feature = "panther-hardware")]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+#[cfg(any(test, feature = "panther-hardware"))]
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "panther-hardware")]
@@ -186,16 +189,20 @@ struct State {
 #[cfg(feature = "panther-hardware")]
 const SAAI_SHELL_PATH: &str = "/saaios/saai-shell";
 
+#[cfg(any(test, feature = "panther-hardware"))]
 const SHELL_RESTART_LIMIT: usize = 3;
+#[cfg(any(test, feature = "panther-hardware"))]
 const SHELL_RESTART_WINDOW: Duration = Duration::from_secs(60);
 #[cfg(feature = "panther-hardware")]
 const SHELL_FAILURE_EXIT_CODE: i32 = 71;
 
+#[cfg(any(test, feature = "panther-hardware"))]
 #[derive(Default)]
 struct RestartBudget {
     failures: VecDeque<Instant>,
 }
 
+#[cfg(any(test, feature = "panther-hardware"))]
 impl RestartBudget {
     fn record_failure(&mut self, now: Instant) -> usize {
         while self

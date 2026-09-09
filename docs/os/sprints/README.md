@@ -10,11 +10,11 @@ Roadmap описывает порядок доказуемых вертикал�
 | ID | Результат | Состояние | Зависит от |
 |---|---|---|---|
 | S00 | Архитектура и процесс | Done | рабочий DRM UI |
-| S01 | Системная идентичность | Done | S00 |
-| S02 | Wayland vertical slice на host | Done | S01 |
-| S03 | `saai-displayd` на Pixel 7 | Done | S02 |
-| S04 | Отдельный `saai-shell` и lock | Done | S03 |
-| S05 | Приложения, manifest и lifecycle | In progress | S04 |
+| S01 | Системная идентичность | In progress (awaiting #28 Evidence) | S00 |
+| S02 | Wayland vertical slice на host | Provisional | S01 |
+| S03 | `saai-displayd` на Pixel 7 | Provisional | S02 |
+| S04 | Отдельный `saai-shell` и lock | Provisional | S03 |
+| S05 | Приложения, manifest и lifecycle | Frozen until S01 closes | S04 |
 | S06 | Настоящие пространства и entity store | Backlog | S05 |
 | S07 | Capability, sandbox и portals | Backlog | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |

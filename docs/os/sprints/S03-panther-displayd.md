@@ -2,7 +2,7 @@
 
 ## Паспорт
 
-- Состояние: `Done`.
+- Состояние: `Provisional` (implementation Evidence exists; sprint gate held until S01 physical Evidence #28).
 - Зависит от: S02.
 - Архитектурные решения: ADR-002, ADR-004, ADR-005, ADR-007, ADR-008, ADR-009 (supervision/fallback дизайн, см. Change 2), ADR-010 (прямой доступ к DRM без libseat), ADR-011 (touch через сырой evdev, без libinput/libudev), ADR-012 (клавиатурная способность не подключается на этой цели), ADR-013 (nightly build-std для размера init_boot).
 - Рабочий primary: физически проверенный прошитый образ, `saai-displayd`

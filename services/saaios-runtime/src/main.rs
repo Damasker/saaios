@@ -15,7 +15,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use system_tools::{install_system_tools, system_identity, ToolsMode};
+use system_tools::{install_system_tools, system_identity, DeviceContext, ToolsMode};
 use telemetry::TelemetrySampler;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixListener};
@@ -222,7 +222,7 @@ struct RuntimeStatusDto {
     tools_mode: String,
     tool_count: usize,
     tools: Vec<String>,
-    device: serde_json::Value,
+    device: DeviceContext,
     memory_enabled: bool,
     memory_path: Option<String>,
     audit_path: String,
@@ -250,7 +250,7 @@ struct RuntimeMeta {
     provider_kind: String,
     tools_mode: String,
     tool_names: Vec<String>,
-    device: serde_json::Value,
+    device: DeviceContext,
     memory_enabled: bool,
     memory_path: Option<PathBuf>,
     audit_path: PathBuf,
@@ -342,10 +342,9 @@ async fn main() -> Result<()> {
         ToolsMode::Mock
     };
 
-    let device = system_identity(tools_mode);
-
     let mut registry = ToolRegistry::new();
-    install_system_tools(&mut registry, tools_mode);
+    let device = system_identity(tools_mode);
+    install_system_tools(&mut registry, tools_mode, device.clone());
 
     let memory = if !settings.memory_enabled {
         None
@@ -1075,7 +1074,28 @@ fn demo_event(correlation_id: Uuid) -> Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use model_provider::{ChatMessage, ModelProvider, ModelResponse, ToolDefinition};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::duplex;
+
+    struct CountingProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelProvider for CountingProvider {
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
+        ) -> Result<ModelResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ModelResponse {
+                assistant_text: None,
+                tool_calls: Vec::new(),
+            })
+        }
+    }
 
     #[tokio::test]
     async fn reads_a_fragmented_tcp_style_request() {
@@ -1111,5 +1131,120 @@ mod tests {
         assert!(error
             .to_string()
             .contains("client closed before a complete JSON request arrived"));
+    }
+
+    #[tokio::test]
+    async fn status_and_identity_tool_share_one_device_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let device = system_identity(ToolsMode::Mock);
+        let mut registry = ToolRegistry::new();
+        install_system_tools(&mut registry, ToolsMode::Mock, device.clone());
+        let runtime = AiRuntime::new(
+            Arc::new(registry),
+            Arc::new(PolicyEngine::new()),
+            Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap()),
+            EventBus::new(16),
+            Arc::new(model_provider::MockModelProvider),
+        )
+        .with_system_identity(device.clone());
+        let meta = RuntimeMeta {
+            started: Instant::now(),
+            config_path: None,
+            provider_name: "mock".into(),
+            provider_kind: "mock".into(),
+            tools_mode: "mock".into(),
+            tool_names: vec!["system.identity".into()],
+            device: device.clone(),
+            memory_enabled: false,
+            memory_path: None,
+            audit_path: dir.path().join("audit.jsonl"),
+            sock: dir.path().join("runtime.sock"),
+            automation: false,
+            auto_diagnose: false,
+            telemetry: None,
+            max_concurrent: 1,
+            request_timeout_secs: 30,
+        };
+
+        let tool = runtime
+            .execute_allowed_tool("system.identity", json!({}))
+            .await
+            .unwrap();
+        let status = meta.status(&runtime);
+
+        assert_eq!(tool.output, status.device);
+        assert_eq!(status.device, device);
+    }
+
+    #[tokio::test]
+    async fn system_identity_request_calls_one_tool_and_no_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+        let provider = Arc::new(CountingProvider {
+            calls: AtomicUsize::new(0),
+        });
+        let device = system_identity(ToolsMode::Mock);
+        let mut registry = ToolRegistry::new();
+        install_system_tools(&mut registry, ToolsMode::Mock, device.clone());
+        let runtime = Arc::new(
+            AiRuntime::new(
+                Arc::new(registry),
+                Arc::new(PolicyEngine::new()),
+                audit.clone(),
+                EventBus::new(16),
+                provider.clone(),
+            )
+            .with_system_identity(device.clone()),
+        );
+        let meta = Arc::new(RuntimeMeta {
+            started: Instant::now(),
+            config_path: None,
+            provider_name: "counting".into(),
+            provider_kind: "test".into(),
+            tools_mode: "mock".into(),
+            tool_names: vec!["system.identity".into()],
+            device,
+            memory_enabled: false,
+            memory_path: None,
+            audit_path: dir.path().join("audit.jsonl"),
+            sock: dir.path().join("runtime.sock"),
+            automation: false,
+            auto_diagnose: false,
+            telemetry: None,
+            max_concurrent: 1,
+            request_timeout_secs: 30,
+        });
+        let (server, mut client) = duplex(4096);
+        client
+            .write_all(b"{\"op\":\"system_identity\"}")
+            .await
+            .unwrap();
+
+        handle_client(
+            server,
+            runtime,
+            Arc::new(tokio::sync::Mutex::new(None)),
+            meta,
+            Arc::new(EventFeed::new(4)),
+        )
+        .await
+        .unwrap();
+
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response: ClientResponse = serde_json::from_slice(&response).unwrap();
+        assert!(response.ok);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        let records = audit.read_all().unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| {
+                    record.kind == MessageKind::ToolCall
+                        && record.payload["tool"] == "system.identity"
+                })
+                .count(),
+            1
+        );
     }
 }

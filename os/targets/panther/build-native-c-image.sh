@@ -42,7 +42,9 @@ mkdir -p "$bin_dir" "$(dirname -- "$output")"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     -I/usr/include/libdrm \
-    "$source_dir/drm-splash.c" -o "$drm_splash" -lm
+    -I"$source_dir" \
+    "$source_dir/drm-splash.c" "$source_dir/identity-ux.c" \
+    -o "$drm_splash" -lm
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/touch-monitor.c" -o "$touch_monitor"

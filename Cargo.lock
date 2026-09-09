@@ -2174,6 +2174,7 @@ version = "0.1.0"
 dependencies = [
  "ai-runtime",
  "anyhow",
+ "async-trait",
  "audit-log",
  "automation-engine",
  "chrono",

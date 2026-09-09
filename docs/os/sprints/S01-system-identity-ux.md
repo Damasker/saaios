@@ -1,6 +1,6 @@
 # S01 — Pixel 7 system identity UX
 
-Статус: ready for implementation
+Статус: implemented in `drm-splash` (Issue #31); physical Evidence via #28
 Экран: native `drm-splash`, Pixel 7, 1080×2400, touch-first
 Команда: один read-only вызов `system.identity`
 
