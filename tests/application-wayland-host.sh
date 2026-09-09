@@ -60,6 +60,21 @@ SAAIOS_APP_ID=org.saaios.host-base \
     target/debug/saai-demo-surface base >"$temporary/base.log" 2>&1 &
 base_pid=$!
 
+attempt=0
+while [ "$attempt" -lt 200 ]; do
+    focus_count=$(grep -c 'keyboard focus set to' "$displayd_log" || true)
+    if grep -q 'application frame' "$temporary/base.log" && [ "$focus_count" -ge 1 ]; then
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.05
+done
+if ! grep -q 'application frame' "$temporary/base.log" || [ "${focus_count:-0}" -lt 1 ]; then
+    printf '%s\n' "base toplevel did not become ready" >&2
+    cat "$displayd_log" "$temporary/base.log" >&2
+    exit 1
+fi
+
 target/debug/saai-appd \
     --data-root "$data_root" \
     --socket "$appd_socket" \
