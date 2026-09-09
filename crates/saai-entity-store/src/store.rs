@@ -94,7 +94,10 @@ impl EntityStore {
         };
         event.validate()?;
         write_new_json(&temporary.join(SPACE_FILE), &space)?;
-        write_new_json(&temporary.join(EVENTS_DIR).join(event_filename(&event)), &event)?;
+        write_new_json(
+            &temporary.join(EVENTS_DIR).join(event_filename(&event)),
+            &event,
+        )?;
         sync_directory(&temporary.join(EVENTS_DIR))?;
         sync_directory(&temporary.join(ENTITIES_DIR))?;
         sync_directory(&temporary)?;
@@ -112,7 +115,10 @@ impl EntityStore {
             let space: Space = read_json(&directory.join(SPACE_FILE))?;
             space.validate()?;
             if directory.file_name().and_then(|name| name.to_str()) != Some(space.id.as_str()) {
-                return Err(corrupt(&space.id, "space directory does not match space id"));
+                return Err(corrupt(
+                    &space.id,
+                    "space directory does not match space id",
+                ));
             }
             spaces.push(space);
         }
@@ -315,7 +321,12 @@ fn recover_space(paths: &SpacePaths) -> Result<(), StoreError> {
     let events = load_events(paths)?;
     match events.first().map(|event| &event.payload) {
         Some(EventPayload::SpaceCreated { space: created }) if created == &space => {}
-        _ => return Err(corrupt(&paths.id, "first event is not matching space_created")),
+        _ => {
+            return Err(corrupt(
+                &paths.id,
+                "first event is not matching space_created",
+            ))
+        }
     }
     let expected = replay_loaded_events(paths, &events)?;
     let mut expected_files = BTreeSet::new();
@@ -385,12 +396,15 @@ fn replay_loaded_events(
 fn load_events(paths: &SpacePaths) -> Result<Vec<Event>, StoreError> {
     let mut events = Vec::new();
     for path in json_files(&paths.events)? {
-        let event: Event = read_json(&path).map_err(|error| corrupt(&paths.id, error.to_string()))?;
+        let event: Event =
+            read_json(&path).map_err(|error| corrupt(&paths.id, error.to_string()))?;
         event
             .validate()
             .map_err(|error| corrupt(&paths.id, error.to_string()))?;
         let expected_sequence = events.len() as u64 + 1;
-        if event.sequence != expected_sequence || path.file_name().and_then(|v| v.to_str()) != Some(&event_filename(&event)) {
+        if event.sequence != expected_sequence
+            || path.file_name().and_then(|v| v.to_str()) != Some(&event_filename(&event))
+        {
             return Err(corrupt(&paths.id, "event filename or sequence mismatch"));
         }
         events.push(event);
@@ -443,13 +457,15 @@ fn write_new_json<T: Serialize>(path: &Path, value: &T) -> Result<(), StoreError
 }
 
 fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent"))?;
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?;
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-UTF-8 filename"))?;
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-UTF-8 filename")
+        })?;
     let temporary = parent.join(format!(".{name}.{}.tmp", Uuid::new_v4()));
     write_new_bytes(&temporary, bytes)?;
     if let Err(error) = fs::rename(&temporary, path) {
@@ -588,8 +604,14 @@ mod tests {
 
         let home = store.list_entities("home").unwrap();
         let work = store.list_entities("work").unwrap();
-        assert_eq!(home.iter().map(|e| e.id).collect::<Vec<_>>(), [Uuid::from_u128(1)]);
-        assert_eq!(work.iter().map(|e| e.id).collect::<Vec<_>>(), [Uuid::from_u128(2)]);
+        assert_eq!(
+            home.iter().map(|e| e.id).collect::<Vec<_>>(),
+            [Uuid::from_u128(1)]
+        );
+        assert_eq!(
+            work.iter().map(|e| e.id).collect::<Vec<_>>(),
+            [Uuid::from_u128(2)]
+        );
     }
 
     #[test]
@@ -660,7 +682,12 @@ mod tests {
             store.create_space(space(id)).unwrap();
         }
         assert_eq!(
-            store.list_spaces().unwrap().into_iter().map(|s| s.id).collect::<Vec<_>>(),
+            store
+                .list_spaces()
+                .unwrap()
+                .into_iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
             ["home", "personal", "saaios", "work"]
         );
     }
