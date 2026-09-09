@@ -17,7 +17,8 @@
 
 - S05 image source `6afb663` физически принят на Pixel 7;
 - legacy UI хранит только индекс `/data/saaios/var/ui/active-space`;
-- новый Wayland-shell не владеет entity data;
+- новый Wayland-shell получает entity data от `saai-entityd` и не владеет
+  хранилищем;
 - memory-store и audit-log существуют отдельно, но не имеют `space_id` и не
   являются entity store.
 
@@ -43,7 +44,9 @@ append-only журнал, восстановление проекций, bootstr
 5. **Готово на host (2026-09-09).** `saai-entityd`: versioned local IPC,
    create/update/delete/list/select (`67d295d`, `0029908`, `b1fa88f`,
    `f6ff2e6`, `3d0183a`).
-6. `saai-shell`: реальные пространства и scoped проекции `Сейчас`.
+6. **Готово на host (2026-09-09).** `saai-shell`: реальные пространства и
+   scoped проекции `Сейчас` (`7e9f78b`, `320d28c`, `3e101ff`, `decc527`,
+   `30d872e`).
 7. ARM64 packaging, persistent service supervision, device isolation/fault/
    cold-reboot acceptance.
 
@@ -124,3 +127,18 @@ selection дали typed events. После убийства и нового з�
 `personal`, обновлённая Home entity и удалённая Work entity восстановились.
 Итог: 20 unit/protocol tests, 1 process integration и all-target clippy с
 `-D warnings` на R620.
+
+Change 6: `saai-shell` подключается к versioned Unix IPC `saai-entityd`, при
+каждом reconnect подписывается на события и заново загружает authoritative
+список пространств и selection. Раздел `Пространства` показывает четыре
+декларативно описанные в `root.sui` карточки, их scoped entity counts и
+выделение принятого daemon выбора. Заголовок всех root pages содержит имя
+выбранного пространства, а `Сейчас` показывает последнюю entity только этого
+space. Selection и entity events перечитывают затронутую проекцию; потеря
+сервиса очищает cache и явно отображается как недоступность, не как ложные
+данные.
+
+Mock socket test доказал reconnect bootstrap и authoritative selection;
+geometry tests доказали все четыре space actions, обе крайние root tabs и
+scoped entity card из `.sui`. Совместно со store/protocol/daemon прошло 28
+unit/process tests; all-target clippy с `-D warnings` чист на R620.
