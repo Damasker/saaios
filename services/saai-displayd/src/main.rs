@@ -100,10 +100,14 @@ struct State {
     // a real KeyboardHandle and a normal host libxkbcommon works fine.
     #[cfg(not(feature = "panther-hardware"))]
     keyboard: smithay::input::keyboard::KeyboardHandle<State>,
-    /// First surface to commit a real (non-null) buffer keeps input focus
-    /// for the lifetime of this headless compositor -- single-window focus
-    /// policy, matching the eventual fullscreen panther shell.
+    /// Active fullscreen toplevel. A newly mapped toplevel becomes active;
+    /// destroying it restores the previous live toplevel (normally the
+    /// persistent system shell).
     focused_surface: Option<WlSurface>,
+    /// Mapping order doubles as a minimal focus stack for the S05
+    /// single-fullscreen-app model. Existing surfaces cannot steal focus by
+    /// merely committing another frame.
+    focus_history: Vec<WlSurface>,
     /// wl_surface id -> its ToplevelSurface handle, so commit() can call
     /// ensure_configured() (S02 protocol-negative test: reject a buffer
     /// attached before the surface's first configure was acked).
@@ -232,6 +236,33 @@ fn is_privileged_shell(client: &Client, shell_pid: &AtomicU32) -> bool {
         && client
             .get_data::<SaaiClientState>()
             .is_some_and(|data| data.peer_pid == expected)
+}
+
+impl State {
+    fn activate_toplevel(&mut self, surface: Option<WlSurface>) {
+        if self.focused_surface == surface {
+            return;
+        }
+        self.focused_surface = surface.clone();
+        #[cfg(not(feature = "panther-hardware"))]
+        {
+            let serial = SERIAL_COUNTER.next_serial();
+            let keyboard = self.keyboard.clone();
+            keyboard.set_focus(self, surface.clone(), serial);
+            println!(
+                "saai-displayd: keyboard focus set to {:?}",
+                surface.as_ref().map(Resource::id)
+            );
+        }
+        #[cfg(feature = "panther-hardware")]
+        {
+            println!(
+                "saai-displayd: focus set to {:?}",
+                surface.as_ref().map(Resource::id)
+            );
+            self.request_recomposite();
+        }
+    }
 }
 
 #[cfg(feature = "panther-hardware")]
@@ -439,25 +470,12 @@ impl CompositorHandler for State {
         // previous tab even though current_page had already changed.
         buffer.release();
 
-        // Must run before the hardware-blit check below: on a surface's very
-        // first buffer-carrying commit, focus is still None, so checking
-        // focus first would skip blitting that frame -- the display would
-        // only ever show the initial fill from hardware::init() and never
-        // this (or any) client's actual content.
-        if self.focused_surface.is_none() {
-            self.focused_surface = Some(surface.clone());
-            #[cfg(not(feature = "panther-hardware"))]
-            {
-                let serial = SERIAL_COUNTER.next_serial();
-                let keyboard = self.keyboard.clone();
-                keyboard.set_focus(self, Some(surface.clone()), serial);
-                println!(
-                    "saai-displayd: keyboard focus set to surface {:?}",
-                    surface.id()
-                );
-            }
-            #[cfg(feature = "panther-hardware")]
-            println!("saai-displayd: focus set to surface {:?}", surface.id());
+        // Mapping, not every commit, changes focus. This makes a newly
+        // launched S05 application visible while preventing a background
+        // client animation from stealing focus later.
+        if self.toplevels.contains_key(surface) && !self.focus_history.contains(surface) {
+            self.focus_history.push(surface.clone());
+            self.activate_toplevel(Some(surface.clone()));
         }
 
         match result {
@@ -563,12 +581,12 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.toplevels.remove(surface.wl_surface());
+        self.focus_history
+            .retain(|candidate| candidate != surface.wl_surface());
         #[cfg(feature = "panther-hardware")]
         self.surface_frames.remove(surface.wl_surface());
         if self.focused_surface.as_ref() == Some(surface.wl_surface()) {
-            self.focused_surface = None;
-            #[cfg(feature = "panther-hardware")]
-            self.request_recomposite();
+            self.activate_toplevel(self.focus_history.last().cloned());
         }
     }
 
@@ -902,6 +920,7 @@ fn main() {
         #[cfg(not(feature = "panther-hardware"))]
         keyboard: keyboard.clone(),
         focused_surface: None,
+        focus_history: Vec::new(),
         toplevels: HashMap::new(),
         #[cfg(feature = "panther-hardware")]
         touch,
