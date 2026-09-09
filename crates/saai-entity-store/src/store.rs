@@ -1,5 +1,6 @@
 use crate::{
-    validate_space_id, Entity, Event, EventPayload, Space, ValidationError, SCHEMA_VERSION,
+    validate_space_id, Entity, Event, EventPayload, SelectionSource, Space, SpaceKind,
+    SpaceSelection, ValidationError, BUILTIN_SPACE_IDS, SCHEMA_VERSION,
 };
 use chrono::Utc;
 use serde::de::DeserializeOwned;
@@ -17,6 +18,8 @@ const SPACES_DIR: &str = "spaces";
 const SPACE_FILE: &str = "space.json";
 const EVENTS_DIR: &str = "events";
 const ENTITIES_DIR: &str = "entities";
+const SELECTION_FILE: &str = "selection.json";
+const BUILTIN_SPACE_NAMES: [&str; 4] = ["Дом", "Работа", "Личное", "SaaiOS"];
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -48,6 +51,13 @@ pub enum StoreError {
 pub struct EntityStore {
     root: PathBuf,
     writer: Mutex<()>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapResult {
+    pub spaces_created: usize,
+    pub selection: SpaceSelection,
+    pub migrated_legacy: bool,
 }
 
 impl EntityStore {
@@ -124,6 +134,88 @@ impl EntityStore {
         }
         spaces.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(spaces)
+    }
+
+    pub fn bootstrap_builtin_spaces(
+        &self,
+        legacy_active_space: Option<&Path>,
+    ) -> Result<BootstrapResult, StoreError> {
+        let mut spaces_created = 0;
+        let created_at = Utc::now();
+        for (id, name) in BUILTIN_SPACE_IDS.into_iter().zip(BUILTIN_SPACE_NAMES) {
+            let space = Space {
+                schema: SCHEMA_VERSION,
+                id: id.into(),
+                name: name.into(),
+                kind: if id == "saaios" {
+                    SpaceKind::System
+                } else {
+                    SpaceKind::User
+                },
+                created_at,
+            };
+            match self.create_space(space) {
+                Ok(_) => spaces_created += 1,
+                Err(StoreError::SpaceExists(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        if let Some(selection) = self.selected_space()? {
+            return Ok(BootstrapResult {
+                spaces_created,
+                selection,
+                migrated_legacy: false,
+            });
+        }
+
+        let legacy_index = legacy_active_space.and_then(read_legacy_index);
+        let (space_id, source, migrated_legacy) = match legacy_index {
+            Some(index) => (
+                BUILTIN_SPACE_IDS[index].to_string(),
+                SelectionSource::Legacy,
+                true,
+            ),
+            None => ("home".into(), SelectionSource::Default, false),
+        };
+        let selection = SpaceSelection {
+            schema: SCHEMA_VERSION,
+            space_id,
+            source,
+            updated_at: Utc::now(),
+        };
+        self.write_selection(&selection)?;
+        Ok(BootstrapResult {
+            spaces_created,
+            selection,
+            migrated_legacy,
+        })
+    }
+
+    pub fn selected_space(&self) -> Result<Option<SpaceSelection>, StoreError> {
+        let path = self.root.join(SELECTION_FILE);
+        match read_json::<SpaceSelection>(&path) {
+            Ok(selection) => {
+                selection.validate()?;
+                self.space_paths(&selection.space_id)?;
+                Ok(Some(selection))
+            }
+            Err(StoreError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn select_space(&self, space_id: &str) -> Result<SpaceSelection, StoreError> {
+        validate_space_id(space_id)?;
+        self.space_paths(space_id)?;
+        let selection = SpaceSelection {
+            schema: SCHEMA_VERSION,
+            space_id: space_id.into(),
+            source: SelectionSource::User,
+            updated_at: Utc::now(),
+        };
+        self.write_selection(&selection)?;
+        Ok(selection)
     }
 
     pub fn create_entity(&self, entity: Entity) -> Result<Event, StoreError> {
@@ -284,6 +376,19 @@ impl EntityStore {
         }
         Ok(SpacePaths::from_directory(directory))
     }
+
+    fn write_selection(&self, selection: &SpaceSelection) -> Result<(), StoreError> {
+        selection.validate()?;
+        self.space_paths(&selection.space_id)?;
+        let _writer = self.writer.lock().expect("entity store writer lock");
+        atomic_write_json(&self.root.join(SELECTION_FILE), selection)
+    }
+}
+
+fn read_legacy_index(path: &Path) -> Option<usize> {
+    let value = fs::read_to_string(path).ok()?;
+    let index = value.trim().parse::<usize>().ok()?;
+    (index < BUILTIN_SPACE_IDS.len()).then_some(index)
 }
 
 #[derive(Debug)]
@@ -556,7 +661,6 @@ fn corrupt(space_id: &str, reason: impl Into<String>) -> StoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SpaceKind, BUILTIN_SPACE_IDS};
     use chrono::TimeZone;
     use serde_json::{json, Map};
     use tempfile::TempDir;
@@ -690,5 +794,72 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["home", "personal", "saaios", "work"]
         );
+    }
+
+    #[test]
+    fn every_legacy_index_maps_to_a_stable_builtin_id() {
+        for (index, expected) in BUILTIN_SPACE_IDS.into_iter().enumerate() {
+            let temp = TempDir::new().unwrap();
+            let legacy = temp.path().join("legacy-active-space");
+            fs::write(&legacy, format!("{index}\n")).unwrap();
+            let store = EntityStore::open(temp.path().join("store")).unwrap();
+            let result = store.bootstrap_builtin_spaces(Some(&legacy)).unwrap();
+
+            assert_eq!(result.spaces_created, 4);
+            assert_eq!(result.selection.space_id, expected);
+            assert_eq!(result.selection.source, SelectionSource::Legacy);
+            assert!(result.migrated_legacy);
+            assert_eq!(fs::read_to_string(legacy).unwrap(), format!("{index}\n"));
+        }
+    }
+
+    #[test]
+    fn bootstrap_is_idempotent_and_does_not_reread_legacy_selection() {
+        let temp = TempDir::new().unwrap();
+        let legacy = temp.path().join("legacy-active-space");
+        fs::write(&legacy, b"2\n").unwrap();
+        let store = EntityStore::open(temp.path().join("store")).unwrap();
+        let first = store.bootstrap_builtin_spaces(Some(&legacy)).unwrap();
+        let selection_path = store.root().join(SELECTION_FILE);
+        let first_bytes = fs::read(&selection_path).unwrap();
+
+        fs::write(&legacy, b"1\n").unwrap();
+        let second = store.bootstrap_builtin_spaces(Some(&legacy)).unwrap();
+        assert_eq!(second.spaces_created, 0);
+        assert!(!second.migrated_legacy);
+        assert_eq!(second.selection, first.selection);
+        assert_eq!(fs::read(selection_path).unwrap(), first_bytes);
+        assert_eq!(fs::read_to_string(legacy).unwrap(), "1\n");
+    }
+
+    #[test]
+    fn missing_or_invalid_legacy_selection_defaults_to_home() {
+        for legacy_value in [None, Some("-1\n"), Some("4\n"), Some("junk\n")] {
+            let temp = TempDir::new().unwrap();
+            let legacy = temp.path().join("legacy-active-space");
+            if let Some(value) = legacy_value {
+                fs::write(&legacy, value).unwrap();
+            }
+            let store = EntityStore::open(temp.path().join("store")).unwrap();
+            let result = store.bootstrap_builtin_spaces(Some(&legacy)).unwrap();
+            assert_eq!(result.selection.space_id, "home");
+            assert_eq!(result.selection.source, SelectionSource::Default);
+            assert!(!result.migrated_legacy);
+        }
+    }
+
+    #[test]
+    fn explicit_selection_requires_an_existing_space() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let selected = store.select_space("work").unwrap();
+        assert_eq!(selected.space_id, "work");
+        assert_eq!(selected.source, SelectionSource::User);
+        assert_eq!(store.selected_space().unwrap(), Some(selected));
+        assert!(matches!(
+            store.select_space("missing"),
+            Err(StoreError::SpaceNotFound(id)) if id == "missing"
+        ));
     }
 }

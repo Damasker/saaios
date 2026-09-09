@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 mod store;
 
-pub use store::{EntityStore, StoreError};
+pub use store::{BootstrapResult, EntityStore, StoreError};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const BUILTIN_SPACE_IDS: [&str; 4] = ["home", "work", "personal", "saaios"];
@@ -77,6 +77,23 @@ pub struct Event {
     pub space_id: String,
     pub timestamp: DateTime<Utc>,
     pub payload: EventPayload,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionSource {
+    Default,
+    Legacy,
+    User,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SpaceSelection {
+    pub schema: u32,
+    pub space_id: String,
+    pub source: SelectionSource,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -176,6 +193,13 @@ impl Event {
                 Ok(())
             }
         }
+    }
+}
+
+impl SpaceSelection {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        validate_schema("space_selection", self.schema)?;
+        validate_space_id(&self.space_id)
     }
 }
 
