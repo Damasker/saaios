@@ -247,7 +247,19 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), StoreError> {
 }
 
 fn verify_executable(path: &Path) -> Result<(), StoreError> {
-    let metadata = symlink_metadata(path)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(StoreError::MissingExecutable(path.to_path_buf()));
+        }
+        Err(source) => {
+            return Err(StoreError::Io {
+                operation: "inspect executable",
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
     if !metadata.file_type().is_file() {
         return Err(StoreError::MissingExecutable(path.to_path_buf()));
     }
@@ -413,7 +425,7 @@ mod tests {
 
         assert!(matches!(
             store.install(&source),
-            Err(StoreError::Io { .. }) | Err(StoreError::MissingExecutable(_))
+            Err(StoreError::MissingExecutable(_))
         ));
         assert!(!store.apps_dir().join(APP_ID).exists());
         assert!(!store.data_dir().join(APP_ID).exists());
