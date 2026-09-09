@@ -130,6 +130,12 @@ bootloader вернуть сохранённый `init_boot_a`; slot B не из
 - Commit `410c7f9`; GitHub Actions
   [`34319708084`](https://github.com/Damasker/saaios/actions/runs/34319708084)
   зелёный (fmt, clippy, Wayland slice, workspace tests, watchdog, e2e, cross-build).
+  Docs follow-up `dabe21d` /
+  [`34320077611`](https://github.com/Damasker/saaios/actions/runs/34320077611) тоже зелёный.
+- Local S01 rollback image hash совпадает с passport
+  (`18987941…29771`); S03 image hash совпадает (`9cb39c84…c880`).
+- Gated physical helper: `os/targets/panther/tools/s03-physical-verify.ps1`
+  (flash только при `-AllowFlash` и `SAAIOS_ALLOW_FLASH=yes`, только `init_boot_a`).
 - Physical run добавляется после отдельного явного разрешения на flash.
 
 ### Physical verification checklist
