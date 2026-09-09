@@ -59,17 +59,22 @@ Human with the phone may: OEM unlock, Download mode, USB/UART, flash, photo of s
 ### Pixel 7 development-device storage authorization
 
 The operator has confirmed that the dedicated Pixel 7 (`panther`) contains no
-user data that must be preserved. This is a scoped authorization for SaaiOS
-development, not a blanket authorization to overwrite partitions:
+user data that must be preserved. Partitions may be used by SaaiOS according
+to their documented platform purpose. This is not authorization to use an
+unrelated partition as scratch space:
 
 - `userdata` may be erased, reformatted and used by SaaiOS for code, mutable
   application data, tests and recovery exercises;
-- `metadata` is shared device state, not general scratch space: ordinary work
-  may create, replace or remove files only below `/metadata/saaios`;
-- slot-A boot partitions may be written only through the existing hardware
-  safety gate with an exact target, source commit, artifact hash, rollback and
-  per-flash operator approval;
-- slot B remains the default Android rollback and is not reusable storage;
+- `metadata` may hold SaaiOS boot/update metadata and may be migrated or
+  reformatted when a sprint explicitly defines its schema, recovery and
+  compatibility impact; until such a migration lands, ordinary runtime writes
+  remain below `/metadata/saaios`;
+- boot, vendor, dynamic-system and other A/B OS partitions may contain SaaiOS
+  components appropriate to that partition, but every write still passes the
+  hardware safety gate with an exact target, source, hash and rollback;
+- slot B remains the current Android rollback. It may later become the second
+  SaaiOS update slot only after an external recovery path is verified and the
+  A/B migration is accepted explicitly; it is never generic data storage;
 - `persist`, `devinfo`, bootloader, radio/modem, secure-element, factory,
   calibration, hardware-identity, rollback-protection and equivalent
   device-unique partitions are read-only or forbidden;
@@ -77,5 +82,6 @@ development, not a blanket authorization to overwrite partitions:
   name, purpose and current slot. If it is not explicitly allowed above, do
   not write it without a separate operator decision.
 
-Absence of user data does not relax the rules against committing credentials,
+Absence of user data removes the data-preservation constraint, but does not
+relax hardware-integrity gates or the rules against committing credentials,
 device-unique values or private runtime state.

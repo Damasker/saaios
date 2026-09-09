@@ -195,14 +195,20 @@ other than `panther`.
 ## Dedicated-device partition policy
 
 The operator has confirmed that this development Pixel 7 contains no user data
-that needs to be preserved. `userdata` may therefore be erased, reformatted and
-used for SaaiOS development. This does not make every partition disposable.
+that needs to be preserved. Partitions may be used by SaaiOS according to their
+documented platform purpose. This does not make any partition generic scratch
+space.
 
-- Writes inside `metadata` are limited to `/metadata/saaios`; do not reformat
-  or repurpose the whole partition.
-- Slot-A boot partitions still require an exact target, source commit, SHA-256,
-  rollback path and explicit approval for each flash.
-- Keep slot B as the Android recovery path.
+- `userdata` may be erased, reformatted and used for SaaiOS code and state.
+- `metadata` may carry SaaiOS boot/update state and may be migrated by a sprint
+  that defines its schema and recovery. Until then, runtime writes stay below
+  `/metadata/saaios`.
+- Boot, vendor, dynamic-system and other A/B OS partitions may carry SaaiOS
+  components appropriate to their platform role. Each write still requires an
+  exact target, source commit, SHA-256, rollback path and explicit approval.
+- Keep slot B as the current Android recovery path. It may become the second
+  SaaiOS update slot after external recovery is verified and that migration is
+  explicitly accepted; never use it as generic data storage.
 - Never erase, format or repurpose `persist`, `devinfo`, bootloader,
   radio/modem, secure-element, factory, calibration, hardware-identity or
   rollback-protection partitions.
