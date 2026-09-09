@@ -15,7 +15,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S03 | `saai-displayd` на Pixel 7 | Done | S02 |
 | S04 | Отдельный `saai-shell` и lock | Done | S03 |
 | S05 | Приложения, manifest и lifecycle | Done | S04 |
-| S06 | Настоящие пространства и entity store | Backlog | S05 |
+| S06 | Настоящие пространства и entity store | In progress | S05 |
 | S07 | Capability, sandbox и portals | Backlog | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
@@ -138,6 +138,9 @@ source `6afb663`, SHA-256
 прошит только `init_boot_a`, slot B не менялся.
 
 ## S06 — Пространства и entity store
+
+Рабочий паспорт и декомпозиция:
+[S06-space-entity-store.md](S06-space-entity-store.md).
 
 **Goal:** `Дом`, `Работа`, `Личное` и `SaaiOS` становятся настоящими областями
 данных, а не только сохранённым UI-переключателем.

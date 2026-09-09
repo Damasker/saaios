@@ -32,9 +32,10 @@ userspace. See the [live bring-up record](targets/panther/README.md) and
 
 ## Current milestone
 
-Delivery is governed by the [sprint roadmap](sprints/README.md). The current
-gate is S01 system identity on the installed Pixel 7 image; work does not
-advance to the Wayland vertical slice until S01 Evidence is complete.
+Delivery is governed by the [sprint roadmap](sprints/README.md). S00–S05 are
+complete on host and Pixel 7. The current gate is S06: real spaces and the
+local entity store; the physically accepted S05 image remains the hardware
+fallback.
 
 ## Rules
 
