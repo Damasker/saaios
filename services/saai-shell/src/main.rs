@@ -203,9 +203,7 @@ impl DemoAppState {
                 render::ActionCardView::new(label, "Остановлено после сбоя", "Повторить")
             }
             Self::Pending => render::ActionCardView::new(label, "Выполняется…", "Подождите"),
-            Self::Error => {
-                render::ActionCardView::new(label, "Не удалось выполнить", "Повторить")
-            }
+            Self::Error => render::ActionCardView::new(label, "Не удалось выполнить", "Повторить"),
         }
     }
 }
@@ -1086,7 +1084,11 @@ impl Shell {
             return render::ActionCardView::new(
                 action.label,
                 status,
-                if selected { "Выбрано" } else { "Открыть" },
+                if selected {
+                    "Выбрано"
+                } else {
+                    "Открыть"
+                },
             )
             .selected(selected);
         }
@@ -1134,7 +1136,10 @@ impl Shell {
                 ..
             } => match *result {
                 EntityResponseResult::Spaces { spaces } => {
-                    let ids = spaces.iter().map(|space| space.id.clone()).collect::<Vec<_>>();
+                    let ids = spaces
+                        .iter()
+                        .map(|space| space.id.clone())
+                        .collect::<Vec<_>>();
                     changed = self.spaces != spaces;
                     self.spaces = spaces;
                     for id in ids {
@@ -1251,8 +1256,7 @@ mod tests {
             );
         }
         assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400)
-                .map(|action| action.id),
+            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
             Some("selected-entity")
         );
     }

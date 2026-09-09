@@ -164,7 +164,11 @@ pub fn draw_root(
     }
 
     let row_count = selected.saturating_add(2).min(5);
-    let first_placeholder = if content_actions.is_empty() { 0 } else { row_count };
+    let first_placeholder = if content_actions.is_empty() {
+        0
+    } else {
+        row_count
+    };
     for row in first_placeholder..row_count {
         let y = 430 + row as u32 * 230;
         if y >= content.height {
@@ -185,7 +189,11 @@ pub fn draw_root(
     for (rect, card) in content_actions {
         canvas.fill_rect(
             *rect,
-            if card.selected { SURFACE_SELECTED } else { SURFACE },
+            if card.selected {
+                SURFACE_SELECTED
+            } else {
+                SURFACE
+            },
         );
         canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
         let button_width = 250.min(rect.width / 3);
