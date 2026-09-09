@@ -22,6 +22,7 @@ members = [
     "services/saai-displayd",
     "services/saai-demo-surface",
     "services/saai-shell",
+    "services/saai-appd",
 ]
 
 [workspace.package]
@@ -73,6 +74,7 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 futures = "0.3"
 bytes = "1"
 http = "1"
+semver = "1"
 
 [profile.pixel7]
 inherits = "release"
