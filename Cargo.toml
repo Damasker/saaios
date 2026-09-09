@@ -26,6 +26,7 @@ members = [
     "services/saai-demo-surface",
     "services/saai-shell",
     "services/saai-appd",
+    "services/saai-entityd",
 ]
 
 [workspace.package]

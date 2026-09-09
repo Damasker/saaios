@@ -41,6 +41,8 @@ pub enum StoreError {
     EntityNotFound(Uuid),
     #[error("entity revision must be {expected}, got {actual}")]
     RevisionConflict { expected: u64, actual: u64 },
+    #[error("entity revision is exhausted: {0}")]
+    RevisionExhausted(Uuid),
     #[error("corrupt event log for {space_id}: {reason}")]
     CorruptLog { space_id: String, reason: String },
     #[error("injected failure after durable event")]
@@ -260,7 +262,10 @@ impl EntityStore {
         let current = replay_events(&paths)?
             .remove(&entity.id)
             .ok_or(StoreError::EntityNotFound(entity.id))?;
-        let expected = current.revision.saturating_add(1);
+        let expected = current
+            .revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionExhausted(entity.id))?;
         if entity.revision != expected {
             return Err(StoreError::RevisionConflict {
                 expected,
@@ -295,7 +300,10 @@ impl EntityStore {
         let current = replay_events(&paths)?
             .remove(&entity_id)
             .ok_or(StoreError::EntityNotFound(entity_id))?;
-        let expected = current.revision.saturating_add(1);
+        let expected = current
+            .revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionExhausted(entity_id))?;
         if revision != expected {
             return Err(StoreError::RevisionConflict {
                 expected,
@@ -332,6 +340,23 @@ impl EntityStore {
         }
         entities.sort_by_key(|entity| entity.id);
         Ok(entities)
+    }
+
+    pub fn get_entity(&self, space_id: &str, entity_id: Uuid) -> Result<Option<Entity>, StoreError> {
+        validate_space_id(space_id)?;
+        let paths = self.space_paths(space_id)?;
+        let path = paths.entities.join(entity_filename(entity_id));
+        match read_json::<Entity>(&path) {
+            Ok(entity) => {
+                entity.validate()?;
+                if entity.space_id != space_id || entity.id != entity_id {
+                    return Err(corrupt(space_id, "projection identity mismatch"));
+                }
+                Ok(Some(entity))
+            }
+            Err(StoreError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn recover_all(&self) -> Result<(), StoreError> {
@@ -475,7 +500,7 @@ fn replay_loaded_events(
                 let Some(current) = entities.get(&entity.id) else {
                     return Err(corrupt(&paths.id, "entity_updated before create"));
                 };
-                if entity.revision != current.revision.saturating_add(1)
+                if current.revision.checked_add(1) != Some(entity.revision)
                     || entity.created_at != current.created_at
                 {
                     return Err(corrupt(&paths.id, "invalid entity update revision"));
@@ -489,7 +514,7 @@ fn replay_loaded_events(
                 let Some(current) = entities.remove(entity_id) else {
                     return Err(corrupt(&paths.id, "entity_deleted before create"));
                 };
-                if *revision != current.revision.saturating_add(1) {
+                if current.revision.checked_add(1) != Some(*revision) {
                     return Err(corrupt(&paths.id, "invalid entity delete revision"));
                 }
             }
