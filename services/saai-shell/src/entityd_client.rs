@@ -257,7 +257,7 @@ mod tests {
         assert!(matches!(
             message,
             ServerMessage::Response { result: Some(result), .. }
-                if matches!(*result, ResponseResult::Selection { selection } if selection.space_id == "personal")
+                if matches!(&*result, ResponseResult::Selection { selection } if selection.space_id == "personal")
         ));
         server.join().unwrap();
     }
