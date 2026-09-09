@@ -138,7 +138,7 @@ lifecycle events без запуска процессов напрямую. Ка
 планирования процессов. Relevant unit/integration tests и all-target clippy
 с `-D warnings` успешны. ARM64 musl demo-package собран скриптом
 `build-demo-package.sh`; manifest SHA-256
-`922ac0fe991f3d69fce1ff93740b8adeaebe85722cac1fe8e2a2fba5341b1871`,
+`2e6cd4f6da7d7620f866dcb52e2a35441b4082758e638e45f7808a4d34f9647e`,
 binary SHA-256
 `0e0bafde28a48a3750acb1200489cf527973c7b103a255b240daa47ea454d124`.
 
