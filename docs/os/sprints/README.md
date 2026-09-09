@@ -16,7 +16,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S04 | Отдельный `saai-shell` и lock | Done | S03 |
 | S05 | Приложения, manifest и lifecycle | Done | S04 |
 | S06 | Настоящие пространства и entity store | Done | S05 |
-| S07 | Capability, sandbox и portals | Backlog | S05, S06 |
+| S07 | Capability, sandbox и portals | Ready | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
@@ -174,11 +174,16 @@ unit/process tests с all-target clippy на R620. На Pixel 7 физическ
 
 ## S07 — Capability, sandbox и portals
 
+Рабочий паспорт и декомпозиция:
+[S07-capability-sandbox.md](S07-capability-sandbox.md).
+
 **Goal:** приложение получает только явно разрешённые действия и данные.
 
 **Scope:** capability vocabulary, effective grants, process isolation,
 filesystem/network mediation, системный permission surface, portal для
-выбора объекта и clipboard. Реализация выбирается отдельным threat-model ADR.
+выбора объекта и clipboard. Threat-model ADR-020 выбрал mount/network/ipc/uts
+namespaces + seccomp-bpf после on-device spike, подтвердившего, что
+`CLONE_NEWPID`/`CLONE_NEWUSER` физически недоступны на ядре Pixel 7.
 
 **Acceptance:** негативные тесты доказывают запрет чтения другого app/space,
 произвольной сети и подделки системного подтверждения; deny является default;
