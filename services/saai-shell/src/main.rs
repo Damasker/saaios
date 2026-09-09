@@ -61,12 +61,21 @@
 //! limitation from Change 4), so a real layer surface couldn't
 //! receive the taps that switch pages.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 mod appd_client;
+mod entityd_client;
 mod render;
 
-use saai_app_protocol::{AppSummary, LifecycleEventKind, ResponseResult, ServerMessage};
+use saai_app_protocol::{
+    AppSummary, LifecycleEventKind, ResponseResult as AppResponseResult,
+    ServerMessage as AppServerMessage,
+};
+use saai_entity_protocol::{
+    Entity, EntitydEvent, ResponseResult as EntityResponseResult,
+    ServerMessage as EntityServerMessage, Space,
+};
 use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
@@ -180,19 +189,23 @@ impl DemoAppState {
         }
     }
 
-    fn view(self, label: &'static str) -> render::DemoAppView<'static> {
+    fn view(self, label: &'static str) -> render::ActionCardView {
         match self {
-            Self::Unavailable => render::DemoAppView::new(label, "Сервис недоступен", "Ожидание"),
-            Self::Missing => render::DemoAppView::new(label, "Не установлено", "Установить"),
+            Self::Unavailable => {
+                render::ActionCardView::new(label, "Сервис недоступен", "Ожидание")
+            }
+            Self::Missing => render::ActionCardView::new(label, "Не установлено", "Установить"),
             Self::Installed | Self::Stopped => {
-                render::DemoAppView::new(label, "Готово к запуску", "Открыть")
+                render::ActionCardView::new(label, "Готово к запуску", "Открыть")
             }
-            Self::Running => render::DemoAppView::new(label, "Работает", "Открыто"),
+            Self::Running => render::ActionCardView::new(label, "Работает", "Открыто"),
             Self::CrashLimited => {
-                render::DemoAppView::new(label, "Остановлено после сбоя", "Повторить")
+                render::ActionCardView::new(label, "Остановлено после сбоя", "Повторить")
             }
-            Self::Pending => render::DemoAppView::new(label, "Выполняется…", "Подождите"),
-            Self::Error => render::DemoAppView::new(label, "Не удалось выполнить", "Повторить"),
+            Self::Pending => render::ActionCardView::new(label, "Выполняется…", "Подождите"),
+            Self::Error => {
+                render::ActionCardView::new(label, "Не удалось выполнить", "Повторить")
+            }
         }
     }
 }
@@ -339,6 +352,9 @@ fn main() {
     let appd_socket = std::env::var_os("SAAIOS_APPD_SOCKET")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "/run/saaios/appd.sock".into());
+    let entityd_socket = std::env::var_os("SAAIOS_ENTITYD_SOCKET")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/run/saaios/entityd.sock".into());
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -372,6 +388,11 @@ fn main() {
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
         demo_app_state: DemoAppState::Unavailable,
+        entityd: entityd_client::EntitydClient::new(entityd_socket),
+        spaces: Vec::new(),
+        selected_space_id: "home".into(),
+        entity_counts: BTreeMap::new(),
+        selected_entities: Vec::new(),
     };
 
     println!("saai-shell: connected, toplevel created");
@@ -392,6 +413,7 @@ fn main() {
             .dispatch(Duration::from_millis(16), &mut shell)
             .expect("event loop dispatch failed");
         shell.poll_appd(&conn, &qh);
+        shell.poll_entityd(&conn, &qh);
         shell.check_idle_timeout(&qh);
     }
 }
@@ -452,6 +474,11 @@ struct Shell {
     fonts: Option<render::Fonts>,
     appd: appd_client::AppdClient,
     demo_app_state: DemoAppState,
+    entityd: entityd_client::EntitydClient,
+    spaces: Vec<Space>,
+    selected_space_id: String,
+    entity_counts: BTreeMap<String, usize>,
+    selected_entities: Vec<Entity>,
 }
 
 impl CompositorHandler for Shell {
@@ -858,6 +885,25 @@ impl Shell {
         let width = self.width;
         let height = self.height;
         let stride = width as i32 * 4;
+        let view = root_view(width, height);
+        let content_rect = view.children[0].rect;
+        let tabs = view.children[1]
+            .children
+            .iter()
+            .zip(ROOT_TABS)
+            .map(|(node, tab)| (node.rect, tab.label))
+            .collect::<Vec<_>>();
+        let content_cards = ROOT_CONTENT_ACTIONS
+            .iter()
+            .filter(|action| action.page == self.current_page.id())
+            .map(|action| {
+                (
+                    content_action_rect(action, width, height),
+                    self.content_card(action),
+                )
+            })
+            .collect::<Vec<_>>();
+        let context_label = self.context_label();
 
         let buffer = self.buffer.get_or_insert_with(|| {
             self.pool
@@ -888,29 +934,14 @@ impl Shell {
             }
         };
 
-        let view = root_view(width, height);
-        let content_rect = view.children[0].rect;
-        let tabs = view.children[1]
-            .children
-            .iter()
-            .zip(ROOT_TABS)
-            .map(|(node, tab)| (node.rect, tab.label))
-            .collect::<Vec<_>>();
         render::draw_root(
             &mut render::Canvas::new(canvas, width, height),
             content_rect,
             &tabs,
             self.current_page.index(),
+            &context_label,
             self.fonts.as_ref(),
-            ROOT_CONTENT_ACTIONS
-                .iter()
-                .find(|action| action.page == self.current_page.id())
-                .map(|action| {
-                    (
-                        content_action_rect(action, width, height),
-                        self.demo_app_state.view(action.label),
-                    )
-                }),
+            &content_cards,
         );
 
         self.window
@@ -932,6 +963,12 @@ impl Shell {
             "saai-shell: invoked content action {} ({})",
             action.id, action.action
         );
+        if let Some(space_id) = action.action.strip_prefix("select_space:") {
+            if self.entityd.is_connected() {
+                self.entityd.select_space(space_id);
+            }
+            return;
+        }
         if action.action != DEMO_APP_ACTION {
             return;
         }
@@ -966,12 +1003,14 @@ impl Shell {
         }
     }
 
-    fn apply_appd_message(&mut self, message: ServerMessage) -> bool {
+    fn apply_appd_message(&mut self, message: AppServerMessage) -> bool {
         let previous = self.demo_app_state;
         match message {
-            ServerMessage::Response { ok: false, .. } => self.demo_app_state = DemoAppState::Error,
-            ServerMessage::Response {
-                result: Some(ResponseResult::List { apps }),
+            AppServerMessage::Response { ok: false, .. } => {
+                self.demo_app_state = DemoAppState::Error
+            }
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::List { apps }),
                 ..
             } => {
                 self.demo_app_state = apps
@@ -980,23 +1019,23 @@ impl Shell {
                     .map(DemoAppState::from_summary)
                     .unwrap_or(DemoAppState::Missing);
             }
-            ServerMessage::Response {
-                result: Some(ResponseResult::Installed { app }),
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::Installed { app }),
                 ..
             } if app.id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Installed,
-            ServerMessage::Response {
-                result: Some(ResponseResult::Launched { app_id, .. }),
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::Launched { app_id, .. }),
                 ..
             } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Running,
-            ServerMessage::Response {
-                result: Some(ResponseResult::Stopped { app_id, .. }),
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::Stopped { app_id, .. }),
                 ..
             } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Stopped,
-            ServerMessage::Response {
-                result: Some(ResponseResult::Removed { app_id, .. }),
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::Removed { app_id, .. }),
                 ..
             } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Missing,
-            ServerMessage::Event { event, .. } if event.app_id == DEMO_APP_ID => {
+            AppServerMessage::Event { event, .. } if event.app_id == DEMO_APP_ID => {
                 self.demo_app_state = match event.event {
                     LifecycleEventKind::Installed => DemoAppState::Installed,
                     LifecycleEventKind::Running => DemoAppState::Running,
@@ -1009,6 +1048,140 @@ impl Shell {
             _ => {}
         }
         self.demo_app_state != previous
+    }
+
+    fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
+        if action.action == DEMO_APP_ACTION {
+            return self.demo_app_state.view(action.label);
+        }
+        if action.action == "inspect_selected_entity" {
+            return match self.selected_entities.first() {
+                Some(entity) => render::ActionCardView::new(
+                    entity.title.clone(),
+                    format!("{} · версия {}", entity.entity_type, entity.revision),
+                    "Локально",
+                ),
+                None if self.entityd.is_connected() => render::ActionCardView::new(
+                    action.label,
+                    "В этом пространстве пока пусто",
+                    "Нет объектов",
+                ),
+                None => render::ActionCardView::new(
+                    action.label,
+                    "Сервис пространств недоступен",
+                    "Ожидание",
+                ),
+            };
+        }
+        if let Some(space_id) = action.action.strip_prefix("select_space:") {
+            let selected = space_id == self.selected_space_id;
+            let status = if self.entityd.is_connected() {
+                match self.entity_counts.get(space_id) {
+                    Some(count) => format!("Объектов: {count}"),
+                    None => "Загрузка объектов…".into(),
+                }
+            } else {
+                "Сервис пространств недоступен".into()
+            };
+            return render::ActionCardView::new(
+                action.label,
+                status,
+                if selected { "Выбрано" } else { "Открыть" },
+            )
+            .selected(selected);
+        }
+        render::ActionCardView::new(action.label, "", "")
+    }
+
+    fn context_label(&self) -> String {
+        self.spaces
+            .iter()
+            .find(|space| space.id == self.selected_space_id)
+            .map(|space| space.name.clone())
+            .unwrap_or_else(|| match self.selected_space_id.as_str() {
+                "home" => "Дом".into(),
+                "work" => "Работа".into(),
+                "personal" => "Личное".into(),
+                "saaios" => "SaaiOS".into(),
+                other => other.to_owned(),
+            })
+    }
+
+    fn poll_entityd(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        let was_available = self.entityd.is_connected();
+        let messages = self.entityd.poll();
+        let available = self.entityd.is_connected();
+        let mut changed = was_available != available;
+        if !available && was_available {
+            self.spaces.clear();
+            self.entity_counts.clear();
+            self.selected_entities.clear();
+        }
+        for message in messages {
+            changed |= self.apply_entityd_message(message);
+        }
+        if changed && !self.first_configure {
+            self.draw(conn, qh);
+        }
+    }
+
+    fn apply_entityd_message(&mut self, message: EntityServerMessage) -> bool {
+        let mut changed = false;
+        match message {
+            EntityServerMessage::Response {
+                ok: true,
+                result: Some(result),
+                ..
+            } => match *result {
+                EntityResponseResult::Spaces { spaces } => {
+                    let ids = spaces.iter().map(|space| space.id.clone()).collect::<Vec<_>>();
+                    changed = self.spaces != spaces;
+                    self.spaces = spaces;
+                    for id in ids {
+                        self.entityd.list_entities(id);
+                    }
+                }
+                EntityResponseResult::Selection { selection } => {
+                    changed = self.selected_space_id != selection.space_id;
+                    self.selected_space_id = selection.space_id.clone();
+                    self.entityd.list_entities(selection.space_id);
+                }
+                EntityResponseResult::Entities {
+                    space_id,
+                    mut entities,
+                } => {
+                    entities.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+                    changed |= self.entity_counts.get(&space_id) != Some(&entities.len());
+                    self.entity_counts.insert(space_id.clone(), entities.len());
+                    if space_id == self.selected_space_id {
+                        changed |= self.selected_entities != entities;
+                        self.selected_entities = entities;
+                    }
+                }
+                EntityResponseResult::Entity { entity, .. } => {
+                    self.entityd.list_entities(entity.space_id);
+                }
+                EntityResponseResult::Deleted { space_id, .. } => {
+                    self.entityd.list_entities(space_id);
+                }
+                EntityResponseResult::Subscribed => {}
+            },
+            EntityServerMessage::Event {
+                event: EntitydEvent::SelectionChanged { selection },
+                ..
+            } => {
+                changed = self.selected_space_id != selection.space_id;
+                self.selected_space_id = selection.space_id.clone();
+                self.entityd.list_entities(selection.space_id);
+            }
+            EntityServerMessage::Event {
+                event: EntitydEvent::EntityChanged { record },
+                ..
+            } => self.entityd.list_entities(record.space_id),
+            EntityServerMessage::Response { ok: false, .. } => changed = true,
+            _ => {}
+        }
+        changed
     }
 
     /// Re-locks after `IDLE_TIMEOUT` of no touch activity while
@@ -1055,13 +1228,33 @@ mod tests {
 
     #[test]
     fn demo_action_geometry_comes_from_sui_markup() {
-        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 1);
+        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 6);
         assert_eq!(ROOT_CONTENT_ACTIONS[0].label, "Saai Demo");
         assert_eq!(
             content_action_at(RootPage::Now, (540.0, 500.0), 1080, 2400).map(|action| action.id),
             Some("demo-app")
         );
         assert!(content_action_at(RootPage::Inbox, (540.0, 500.0), 1080, 2400).is_none());
+    }
+
+    #[test]
+    fn space_actions_and_selected_entity_come_from_sui_markup() {
+        for (point, expected) in [
+            ((540.0, 500.0), "space-home"),
+            ((540.0, 720.0), "space-work"),
+            ((540.0, 940.0), "space-personal"),
+            ((540.0, 1160.0), "space-saaios"),
+        ] {
+            assert_eq!(
+                content_action_at(RootPage::Spaces, point, 1080, 2400).map(|action| action.id),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400)
+                .map(|action| action.id),
+            Some("selected-entity")
+        );
     }
 }
 

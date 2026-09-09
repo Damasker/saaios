@@ -1,4 +1,4 @@
-use saai_entity_store::{Entity, Event, Space, SpaceSelection};
+pub use saai_entity_store::{Entity, Event, Space, SpaceSelection};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::io;

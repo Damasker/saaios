@@ -25,20 +25,31 @@ pub struct Fonts {
     semibold: Font,
 }
 
-#[derive(Clone, Copy)]
-pub struct DemoAppView<'a> {
-    pub label: &'a str,
-    pub status: &'a str,
-    pub action: &'a str,
+#[derive(Clone)]
+pub struct ActionCardView {
+    pub label: String,
+    pub status: String,
+    pub action: String,
+    pub selected: bool,
 }
 
-impl<'a> DemoAppView<'a> {
-    pub const fn new(label: &'a str, status: &'a str, action: &'a str) -> Self {
+impl ActionCardView {
+    pub fn new(
+        label: impl Into<String>,
+        status: impl Into<String>,
+        action: impl Into<String>,
+    ) -> Self {
         Self {
-            label,
-            status,
-            action,
+            label: label.into(),
+            status: status.into(),
+            action: action.into(),
+            selected: false,
         }
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
     }
 }
 
@@ -126,8 +137,9 @@ pub fn draw_root(
     content: Rect,
     tabs: &[(Rect, &str)],
     selected: usize,
+    context_label: &str,
     fonts: Option<&Fonts>,
-    content_action: Option<(Rect, DemoAppView<'_>)>,
+    content_actions: &[(Rect, ActionCardView)],
 ) {
     canvas.fill(BACKGROUND);
 
@@ -139,10 +151,11 @@ pub fn draw_root(
     canvas.fill_rect(Rect::new(margin, 150, card_width, 190), SURFACE);
     canvas.fill_rect(Rect::new(margin, 150, 14, 190), ACCENT);
     if let (Some(fonts), Some((_, title))) = (fonts, tabs.get(selected)) {
+        let header = format!("{context_label} · {title}");
         draw_text_centered(
             canvas,
             &fonts.semibold,
-            title,
+            &header,
             54.0,
             content.x + content.width / 2,
             210,
@@ -151,7 +164,7 @@ pub fn draw_root(
     }
 
     let row_count = selected.saturating_add(2).min(5);
-    let first_placeholder = usize::from(content_action.is_some());
+    let first_placeholder = if content_actions.is_empty() { 0 } else { row_count };
     for row in first_placeholder..row_count {
         let y = 430 + row as u32 * 230;
         if y >= content.height {
@@ -169,8 +182,11 @@ pub fn draw_root(
         );
     }
 
-    if let Some((rect, app)) = content_action {
-        canvas.fill_rect(rect, SURFACE_SELECTED);
+    for (rect, card) in content_actions {
+        canvas.fill_rect(
+            *rect,
+            if card.selected { SURFACE_SELECTED } else { SURFACE },
+        );
         canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
         let button_width = 250.min(rect.width / 3);
         let button = Rect::new(
@@ -184,7 +200,7 @@ pub fn draw_root(
             draw_text(
                 canvas,
                 &fonts.semibold,
-                app.label,
+                &card.label,
                 38.0,
                 rect.x + 174,
                 rect.y + 48,
@@ -193,7 +209,7 @@ pub fn draw_root(
             draw_text(
                 canvas,
                 &fonts.regular,
-                app.status,
+                &card.status,
                 27.0,
                 rect.x + 174,
                 rect.y + 108,
@@ -202,7 +218,7 @@ pub fn draw_root(
             draw_text_centered(
                 canvas,
                 &fonts.semibold,
-                app.action,
+                &card.action,
                 25.0,
                 button.x + button.width / 2,
                 button.y + 24,
@@ -358,8 +374,9 @@ mod tests {
             Rect::new(0, 0, 1080, 2100),
             &tabs,
             0,
+            "Дом",
             None,
-            None,
+            &[],
         );
         assert_eq!(canvas.pixel(135, 2125), ACCENT);
         assert_eq!(canvas.pixel(945, 2125), SURFACE);
@@ -369,8 +386,9 @@ mod tests {
             Rect::new(0, 0, 1080, 2100),
             &tabs,
             3,
+            "Дом",
             None,
-            None,
+            &[],
         );
         assert_eq!(canvas.pixel(135, 2125), SURFACE);
         assert_eq!(canvas.pixel(945, 2125), ACCENT);

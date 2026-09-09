@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 fontdue = { version = "0.9.3", default-features = false }
 saai-app-protocol.workspace = true
+saai-entity-protocol.workspace = true
 saai-ui-core.workspace = true
 serde_json.workspace = true
 # xkbcommon disabled: no physical keyboard on this device (ADR-012 made
@@ -21,4 +22,5 @@ smithay-client-toolkit = { version = "0.19", default-features = false, features 
 saai-ui-compiler.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
 tempfile.workspace = true
