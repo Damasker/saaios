@@ -35,6 +35,16 @@ pub enum ClientRequest {
         request_id: String,
         app_id: String,
     },
+    /// ADR-020: records the user's accept/decline-all decision for the
+    /// capabilities `saai-appd` currently requests on this app's behalf --
+    /// the daemon derives the requested set itself from the installed
+    /// manifest, the client only says yes or no.
+    DecideConsent {
+        schema: u32,
+        request_id: String,
+        app_id: String,
+        accept: bool,
+    },
 }
 
 impl ClientRequest {
@@ -44,7 +54,8 @@ impl ClientRequest {
             | Self::Install { schema, .. }
             | Self::Launch { schema, .. }
             | Self::Stop { schema, .. }
-            | Self::Remove { schema, .. } => *schema,
+            | Self::Remove { schema, .. }
+            | Self::DecideConsent { schema, .. } => *schema,
         }
     }
 
@@ -54,7 +65,8 @@ impl ClientRequest {
             | Self::Install { request_id, .. }
             | Self::Launch { request_id, .. }
             | Self::Stop { request_id, .. }
-            | Self::Remove { request_id, .. } => request_id,
+            | Self::Remove { request_id, .. }
+            | Self::DecideConsent { request_id, .. } => request_id,
         }
     }
 }
@@ -66,6 +78,13 @@ pub struct AppSummary {
     pub version: String,
     pub state: String,
     pub pids: Vec<u32>,
+    /// Canonical capability names (ADR-020 vocabulary) the manifest
+    /// currently requests -- a request, not a grant (see `consent_needed`).
+    pub requested_capabilities: Vec<String>,
+    /// True when the effective-grants store has no decision covering the
+    /// exact set of `requested_capabilities` above -- the shell must show
+    /// the consent screen before this app can be launched.
+    pub consent_needed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +108,17 @@ pub enum ResponseResult {
     Removed {
         app_id: String,
         removed: bool,
+    },
+    /// Returned instead of `Launched` when `consent_needed` is true --
+    /// launching is refused, not merely delayed, until `DecideConsent`
+    /// records an accept for exactly this `requested` set.
+    ConsentRequired {
+        app_id: String,
+        requested: Vec<String>,
+    },
+    ConsentDecided {
+        app_id: String,
+        granted: Vec<String>,
     },
 }
 
@@ -289,6 +319,8 @@ mod tests {
                     version: "0.1.0".into(),
                     state: "installed".into(),
                     pids: vec![],
+                    requested_capabilities: vec![],
+                    consent_needed: false,
                 }],
             },
         );

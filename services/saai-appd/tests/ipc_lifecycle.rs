@@ -88,7 +88,7 @@ fn daemon_and_demo_complete_install_launch_stop_remove_flow() {
     let data_root = temporary.path().join("saaios");
     let runtime_dir = temporary.path().join("runtime");
     let socket = temporary.path().join("run/appd.sock");
-    let package = make_package(temporary.path());
+    let package = make_package(temporary.path(), "[]");
     fs::create_dir(&runtime_dir).unwrap();
 
     let child = Command::new(env!("CARGO_BIN_EXE_saai-appd"))
@@ -210,13 +210,130 @@ fn daemon_and_demo_complete_install_launch_stop_remove_flow() {
     ));
 }
 
-fn make_package(parent: &Path) -> PathBuf {
+#[test]
+fn daemon_gates_launch_on_consent_and_records_decision() {
+    let temporary = TempDir::new().unwrap();
+    let data_root = temporary.path().join("saaios");
+    let runtime_dir = temporary.path().join("runtime");
+    let socket = temporary.path().join("run/appd.sock");
+    let package = make_package(temporary.path(), "[\"net.internet\"]");
+    fs::create_dir(&runtime_dir).unwrap();
+
+    let child = Command::new(env!("CARGO_BIN_EXE_saai-appd"))
+        .arg("--data-root")
+        .arg(&data_root)
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--runtime-dir")
+        .arg(&runtime_dir)
+        .arg("--wayland-display")
+        .arg("wayland-test")
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let _daemon = DaemonGuard { child };
+    wait_for_socket(&socket);
+
+    let mut controller = Client::connect(&socket);
+
+    let installed = controller.request(
+        "install",
+        json!({
+            "schema": 1,
+            "request_id": "install",
+            "command": "install",
+            "package_path": package,
+        }),
+    );
+    assert!(matches!(
+        installed,
+        ResponseResult::Installed { ref app }
+            if app.id == APP_ID
+                && app.requested_capabilities == ["net.internet"]
+                && app.consent_needed
+    ));
+
+    // A launch attempted before any decision is refused outright, not
+    // merely delayed -- ADR-020 section 2 / S07 Change 4.
+    let gated = controller.request(
+        "launch-gated",
+        json!({"schema": 1, "request_id": "launch-gated", "command": "launch", "app_id": APP_ID}),
+    );
+    assert!(matches!(
+        gated,
+        ResponseResult::ConsentRequired { ref app_id, ref requested }
+            if app_id == APP_ID && requested == &["net.internet"]
+    ));
+
+    // Declining is a real decision (empty grant, not "unknown"): consent
+    // is now covered for this exact request, so the app is allowed to run
+    // -- consent governs which capabilities it gets, not whether it may
+    // launch at all.
+    let declined = controller.request(
+        "decline",
+        json!({
+            "schema": 1,
+            "request_id": "decline",
+            "command": "decide_consent",
+            "app_id": APP_ID,
+            "accept": false,
+        }),
+    );
+    assert!(matches!(
+        declined,
+        ResponseResult::ConsentDecided { ref app_id, ref granted }
+            if app_id == APP_ID && granted.is_empty()
+    ));
+
+    let launched = controller.request(
+        "launch-after-decline",
+        json!({
+            "schema": 1,
+            "request_id": "launch-after-decline",
+            "command": "launch",
+            "app_id": APP_ID,
+        }),
+    );
+    assert!(matches!(
+        launched,
+        ResponseResult::Launched {
+            existing: false,
+            ..
+        }
+    ));
+
+    // list() reflects the same decision: no longer needs consent for the
+    // same requested set.
+    let listed = controller.request(
+        "list-after-decline",
+        json!({"schema": 1, "request_id": "list-after-decline", "command": "list"}),
+    );
+    assert!(matches!(
+        listed,
+        ResponseResult::List { ref apps }
+            if apps.len() == 1 && apps[0].id == APP_ID && !apps[0].consent_needed
+    ));
+
+    assert!(matches!(
+        controller.request(
+            "stop",
+            json!({"schema": 1, "request_id": "stop", "command": "stop", "app_id": APP_ID}),
+        ),
+        ResponseResult::Stopped {
+            was_running: true,
+            ..
+        }
+    ));
+}
+
+fn make_package(parent: &Path, capabilities: &str) -> PathBuf {
     let root = parent.join("package");
     fs::create_dir_all(root.join("bin")).unwrap();
     fs::write(
         root.join("manifest.toml"),
         format!(
-            "schema = 1\nid = \"{APP_ID}\"\nname = \"IPC demo\"\nexec = \"bin/demo\"\nversion = \"0.1.0\"\nui = \"wayland\"\nsingle_instance = true\ncapabilities = []\n"
+            "schema = 1\nid = \"{APP_ID}\"\nname = \"IPC demo\"\nexec = \"bin/demo\"\nversion = \"0.1.0\"\nui = \"wayland\"\nsingle_instance = true\ncapabilities = {capabilities}\n"
         ),
     )
     .unwrap();

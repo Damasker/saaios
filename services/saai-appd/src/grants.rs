@@ -126,6 +126,12 @@ impl GrantStore {
     /// has already been asked about this exact set and consent does not
     /// need to be re-collected before the next launch.
     pub fn covers(&self, app_id: &str, capabilities: &[Capability]) -> Result<bool, GrantError> {
+        if capabilities.is_empty() {
+            // Nothing requested, nothing to ask about -- trivially covered
+            // even before any decision has ever been recorded for this
+            // app_id.
+            return Ok(true);
+        }
         let expected = Self::requested_hash(capabilities);
         Ok(self
             .load(app_id)?
@@ -140,12 +146,15 @@ impl GrantStore {
         app_id: &str,
         capabilities: &[Capability],
     ) -> Result<Vec<Capability>, GrantError> {
+        if capabilities.is_empty() {
+            return Ok(Vec::new());
+        }
         if !self.covers(app_id, capabilities)? {
             return Ok(Vec::new());
         }
         let record = self
             .load(app_id)?
-            .expect("covers() just confirmed a record exists");
+            .expect("covers() just confirmed a record exists for a non-empty request");
         Ok(capabilities
             .iter()
             .copied()
@@ -362,6 +371,21 @@ mod tests {
                 &[Capability::NetInternet, Capability::SpaceEntitiesRead],
             )
             .unwrap());
+    }
+
+    #[test]
+    fn empty_request_never_needs_consent() {
+        let root = tempdir().unwrap();
+        let store = GrantStore::new(root.path());
+        // No decision has ever been recorded for this app_id -- an empty
+        // request must still be trivially covered, not treated as unknown.
+        assert!(store.covers("org.saaios.example", &[]).unwrap());
+        assert_eq!(
+            store
+                .effective_capabilities("org.saaios.example", &[])
+                .unwrap(),
+            Vec::new()
+        );
     }
 
     #[test]

@@ -13,8 +13,9 @@ use tokio::time::MissedTickBehavior;
 
 use crate::{
     decode_request, encode_message, AppEventKind, AppState, AppStore, AppSummary, AppSupervisor,
-    ClientRequest, InstalledApp, LaunchOutcome, LifecycleEvent, LifecycleEventKind, ProtocolError,
-    ResponseResult, ServerMessage, StoreError, SupervisorError, MAX_WIRE_MESSAGE_BYTES,
+    ClientRequest, GrantError, GrantStore, InstalledApp, LaunchOutcome, LifecycleEvent,
+    LifecycleEventKind, ProtocolError, ResponseResult, ServerMessage, StoreError, SupervisorError,
+    MAX_WIRE_MESSAGE_BYTES,
 };
 
 const EVENT_CAPACITY: usize = 128;
@@ -34,6 +35,8 @@ pub enum AppdError {
     Store(#[from] StoreError),
     #[error(transparent)]
     Supervisor(#[from] SupervisorError),
+    #[error(transparent)]
+    Grant(#[from] GrantError),
     #[error("another saai-appd is already listening at {0}")]
     AlreadyRunning(PathBuf),
     #[error("{operation} failed for {path}: {source}")]
@@ -48,6 +51,7 @@ pub enum AppdError {
 struct DaemonState {
     store: AppStore,
     supervisor: AppSupervisor,
+    grants: GrantStore,
 }
 
 struct SocketGuard {
@@ -81,7 +85,12 @@ pub async fn run_daemon(config: DaemonConfig) -> Result<(), AppdError> {
         },
     )?;
     let supervisor = AppSupervisor::new(store.clone(), &config.runtime_dir, config.wayland_display);
-    let state = Arc::new(Mutex::new(DaemonState { store, supervisor }));
+    let grants = GrantStore::new(&config.data_root);
+    let state = Arc::new(Mutex::new(DaemonState {
+        store,
+        supervisor,
+        grants,
+    }));
     let (events, _) = broadcast::channel(EVENT_CAPACITY);
     let mut poll = tokio::time::interval(SUPERVISOR_POLL_INTERVAL);
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -236,7 +245,7 @@ fn handle_request(
                 .store
                 .scan()?
                 .iter()
-                .map(|app| summary(app, &state.supervisor))
+                .map(|app| summary(app, &state.supervisor, &state.grants))
                 .collect();
             ResponseResult::List { apps }
         }
@@ -249,27 +258,60 @@ fn handle_request(
                 None,
             ));
             ResponseResult::Installed {
-                app: summary(&installed, &state.supervisor),
+                app: summary(&installed, &state.supervisor, &state.grants),
             }
         }
         ClientRequest::Launch { app_id, .. } => {
-            let outcome = state.supervisor.launch(&app_id)?;
-            let (pid, existing) = match outcome {
-                LaunchOutcome::Started { pid } => {
-                    events.push(lifecycle(
-                        LifecycleEventKind::Running,
-                        &app_id,
-                        Some(pid),
-                        None,
-                    ));
-                    (pid, false)
+            let installed = state.store.load(&app_id)?;
+            // Fail-safe: if the grant record can't be read back, treat the
+            // request as uncovered rather than silently launching (ADR-020
+            // -- an unreadable grant store must never look like consent).
+            let needs_consent = installed.as_ref().is_some_and(|installed| {
+                !state
+                    .grants
+                    .covers(&app_id, &installed.manifest.capabilities)
+                    .unwrap_or(false)
+            });
+            if let (true, Some(installed)) = (needs_consent, &installed) {
+                let requested = installed
+                    .manifest
+                    .capabilities
+                    .iter()
+                    .map(|capability| capability.as_str().to_owned())
+                    .collect();
+                ResponseResult::ConsentRequired { app_id, requested }
+            } else {
+                let outcome = state.supervisor.launch(&app_id)?;
+                let (pid, existing) = match outcome {
+                    LaunchOutcome::Started { pid } => {
+                        events.push(lifecycle(
+                            LifecycleEventKind::Running,
+                            &app_id,
+                            Some(pid),
+                            None,
+                        ));
+                        (pid, false)
+                    }
+                    LaunchOutcome::Existing { pid } => (pid, true),
+                };
+                ResponseResult::Launched {
+                    app_id,
+                    pid,
+                    existing,
                 }
-                LaunchOutcome::Existing { pid } => (pid, true),
-            };
-            ResponseResult::Launched {
+            }
+        }
+        ClientRequest::DecideConsent { app_id, accept, .. } => {
+            let installed = state.store.load(&app_id)?.ok_or_else(|| {
+                AppdError::Supervisor(SupervisorError::NotInstalled(app_id.clone()))
+            })?;
+            let record =
+                state
+                    .grants
+                    .record_decision(&app_id, &installed.manifest.capabilities, accept)?;
+            ResponseResult::ConsentDecided {
                 app_id,
-                pid,
-                existing,
+                granted: record.granted,
             }
         }
         ClientRequest::Stop { app_id, .. } => {
@@ -297,19 +339,32 @@ fn handle_request(
     Ok((ServerMessage::success(request_id, result), events))
 }
 
-fn summary(app: &InstalledApp, supervisor: &AppSupervisor) -> AppSummary {
+fn summary(app: &InstalledApp, supervisor: &AppSupervisor, grants: &GrantStore) -> AppSummary {
     let state = match supervisor.state(&app.manifest.id) {
         None => "installed",
         Some(AppState::Running) => "running",
         Some(AppState::Stopped) => "stopped",
         Some(AppState::CrashLimited) => "crash_limited",
     };
+    let requested_capabilities = app
+        .manifest
+        .capabilities
+        .iter()
+        .map(|capability| capability.as_str().to_owned())
+        .collect();
+    // Same fail-safe as the Launch handler: an unreadable grant record
+    // means "ask again", never "already granted".
+    let consent_needed = !grants
+        .covers(&app.manifest.id, &app.manifest.capabilities)
+        .unwrap_or(false);
     AppSummary {
         id: app.manifest.id.clone(),
         name: app.manifest.name.clone(),
         version: app.manifest.version.to_string(),
         state: state.to_owned(),
         pids: supervisor.pids(&app.manifest.id),
+        requested_capabilities,
+        consent_needed,
     }
 }
 
