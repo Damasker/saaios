@@ -16,6 +16,7 @@ members = [
     "crates/saai-ui-core",
     "crates/saai-ui-compiler",
     "crates/saai-app-protocol",
+    "crates/saai-entity-store",
     "crates/console-tui",
     "crates/console-web",
     "services/saaios-runtime",
