@@ -1,3 +1,4 @@
+use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -179,6 +180,8 @@ pub enum ProtocolError {
     MessageTooLarge,
     #[error("wire message is not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("wire transport failed: {0}")]
+    Io(#[from] io::Error),
     #[error("unsupported wire schema {0}")]
     UnsupportedSchema(u32),
     #[error("request_id must contain 1..={MAX_REQUEST_ID_BYTES} safe ASCII bytes")]

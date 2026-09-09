@@ -4,10 +4,12 @@ use semver::Version;
 use serde::Deserialize;
 use thiserror::Error;
 
+mod daemon;
 mod store;
 mod supervisor;
 mod wire;
 
+pub use daemon::{run_daemon, AppdError, DaemonConfig};
 pub use store::{AppStore, InstalledApp, StoreError};
 pub use supervisor::{
     AppEvent, AppEventKind, AppState, AppSupervisor, LaunchOutcome, SupervisorError,

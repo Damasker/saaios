@@ -173,7 +173,7 @@ impl AppStore {
             let Some(app_id) = name.to_str() else {
                 return Err(StoreError::UnsupportedEntry(entry.path()));
             };
-            if app_id.starts_with(".install-") {
+            if app_id.starts_with(".install-") || app_id.starts_with(".remove-") {
                 continue;
             }
             if !valid_app_id(app_id) {
@@ -599,6 +599,7 @@ mod tests {
         store.install(&second).unwrap();
         store.install(&first).unwrap();
         fs::create_dir(store.apps_dir().join(".install-interrupted")).unwrap();
+        fs::create_dir(store.apps_dir().join(".remove-interrupted")).unwrap();
 
         let installed = store.scan().unwrap();
 
