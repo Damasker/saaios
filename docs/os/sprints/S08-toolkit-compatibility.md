@@ -7,7 +7,9 @@
 - Архитектурные решения: ADR-021 (источник пакетов -- Alpine musl, не
   from-source; `wl_data_device_manager` обязателен, не опционален).
   Clipboard-через-policy механизм и text-input/OSK-стратегия всё ещё не
-  решены -- см. Change 2.
+  решены -- см. Change 2. ADR-024: GPU-ускорение (проприетарный Mali-блоб
+  и открытый `panthor`) вне объёма этого спринта -- Change 7 нацелен
+  только на существующий software (`wl_shm`/Cairo) путь GTK4/Qt.
 - Рабочий fallback: `saai-shell` и `saai-demo-surface` продолжают быть
   единственными реальными Wayland-клиентами; ни установка, ни запуск
   стороннего приложения через `saai-appd` не меняются, пока это не
@@ -265,6 +267,29 @@ Qt/Kirigami-приложение запускаются как обычные к
    устройстве: install→launch→touch→switch→remove, полный sandbox negative
    test (по аналогии с S07's `sandbox-probe`) специально для этих двух
    приложений.
+
+   **Предварительный GPU-driver spike завершён (2026-09-10, ADR-024,
+   без кодовых изменений), перед основной работой этого Change.** Оба
+   пути к GPU-ускорению закрыты: проприетарный Mali-блоб
+   (`mali_kbase.ko`+`libGLES_mali.so`, физически присутствуют в
+   factory-образах `vendor_dlkm.img`/`vendor.img`, ABI совпадает с
+   боевым ядром) собран исключительно под Android's ANativeWindow/
+   gralloc HAL -- ни единой строки `wayland`/`gbm` в бинарнике; открытый
+   `panthor` (верный драйвер для Mali-G710/Valhall CSF) требует ядро
+   >=6.10, устройство на GKI-залоченном 6.1.157 -- backport не
+   spike-масштаба. Alpine's `mesa-dri-gallium` (llvmpipe, чистый CPU-
+   рендеринг) физически проверен headless через `qemu-aarch64-static`
+   -- не доходит до экрана без `zwp_linux_dmabuf_v1` в `saai-displayd`
+   (которого нет), и, неожиданно, его само присутствие в sysroot'е
+   ЛОМАЕТ ранее рабочий Cairo/`wl_shm`-путь того же `gtk4-demo` (Change
+   4-конфигурация: успешный `commit ... frame sha256=926ea70d...`; та же
+   команда после добавления `mesa-dri-gallium`: клиент подключается, но
+   не коммитит кадр, тихо завершается). Change 7 нацелен только на уже
+   рабочий software (`wl_shm`/Cairo) путь, не пакует ни один
+   GPU-компонент; реальный телефонный крэш Change 6 (`invalid value ...
+   for the size of the input`) не воспроизводится в headless-окружении
+   -- следовательно, не GPU-driver вопрос, отдельное расследование
+   предстоит в основной части этого Change.
 
 ## Test
 
