@@ -391,9 +391,34 @@ impl AppSupervisor {
             .env("SAAIOS_DATA_DIR", &installed.data_dir)
             .env("XDG_RUNTIME_DIR", &self.runtime_dir)
             .env("WAYLAND_DISPLAY", &self.wayland_display)
+            // S08 Change 4: mechanism-level env vars GTK4/Qt already read on
+            // their own -- not a settings VALUE (SaaiOS has no real
+            // settings/theme source yet; that is S09/S10's job, not
+            // appd's), just plumbing that keeps a sandboxed, D-Bus-less
+            // launch from wasting startup time on lookups that can never
+            // succeed here. Confirmed harmless and unnecessary for
+            // correctness (a real Alpine-built gtk4-demo already opens a
+            // display and commits a frame without them -- see the S08
+            // sprint doc's Change 4 Evidence) -- set anyway because they
+            // are cheap and remove real log noise (failed a11y-bus/XCB-
+            // detection attempts) a real device run would otherwise carry
+            // on every launch.
+            .env("QT_QPA_PLATFORM", "wayland")
+            .env("GTK_A11Y", "none")
+            .env("NO_AT_BRIDGE", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        // ADR-021: each app ships its own complete runtime bundle, fonts
+        // included, under its own code_dir -- there is no shared system
+        // fontconfig location on this device to fall back to instead. Only
+        // set when the app actually bundled one; fontconfig's own built-in
+        // defaults (and toolkits' tolerance for missing fonts) cover an
+        // app that didn't.
+        let bundled_fonts = installed.code_dir.join("etc").join("fonts");
+        if bundled_fonts.is_dir() {
+            command.env("FONTCONFIG_PATH", &bundled_fonts);
+        }
         // Safety: this closure runs after fork(), before execve(), in the
         // still-single-threaded child -- the only place unshare()/mount()
         // can actually put the exec'd process itself into new namespaces
@@ -480,9 +505,23 @@ mod tests {
 
     impl Fixture {
         fn new(script: &str, single_instance: bool) -> Self {
+            Self::build(script, single_instance, false)
+        }
+
+        /// Same as `new`, but the installed package also ships its own
+        /// `etc/fonts` directory -- for exercising the S08 Change 4
+        /// conditional `FONTCONFIG_PATH` injection.
+        fn with_bundled_fonts(script: &str, single_instance: bool) -> Self {
+            Self::build(script, single_instance, true)
+        }
+
+        fn build(script: &str, single_instance: bool, bundle_fonts: bool) -> Self {
             let temporary = TempDir::new().unwrap();
             let source = temporary.path().join("package");
             fs::create_dir_all(source.join("bin")).unwrap();
+            if bundle_fonts {
+                fs::create_dir_all(source.join("etc").join("fonts")).unwrap();
+            }
             fs::write(
                 source.join("manifest.toml"),
                 format!(
@@ -562,7 +601,7 @@ mod tests {
     #[test]
     fn child_receives_only_explicit_runtime_context() {
         let fixture = Fixture::new(
-            "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n%s\\n%s\\n' \"$SAAIOS_APP_ID\" \"$SAAIOS_DATA_DIR\" \"$XDG_RUNTIME_DIR\" \"$WAYLAND_DISPLAY\" \"${SHOULD_NOT_LEAK-unset}\" >\"$SAAIOS_DATA_DIR/context\"\n",
+            "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"$SAAIOS_APP_ID\" \"$SAAIOS_DATA_DIR\" \"$XDG_RUNTIME_DIR\" \"$WAYLAND_DISPLAY\" \"${SHOULD_NOT_LEAK-unset}\" \"$QT_QPA_PLATFORM\" \"$GTK_A11Y\" \"$NO_AT_BRIDGE\" \"${FONTCONFIG_PATH-unset}\" >\"$SAAIOS_DATA_DIR/context\"\n",
             true,
         );
         let mut supervisor = fixture.supervisor();
@@ -581,6 +620,33 @@ mod tests {
         assert_eq!(lines[2], fixture.runtime_dir.to_str().unwrap());
         assert_eq!(lines[3], "wayland-test");
         assert_eq!(lines[4], "unset");
+        // S08 Change 4: mechanism-level toolkit env vars, always set --
+        // and FONTCONFIG_PATH, which must stay unset when the app (like
+        // this fixture) never bundled its own etc/fonts.
+        assert_eq!(lines[5], "wayland");
+        assert_eq!(lines[6], "none");
+        assert_eq!(lines[7], "1");
+        assert_eq!(lines[8], "unset");
+    }
+
+    #[test]
+    fn fontconfig_path_set_only_when_app_bundles_its_own_fonts() {
+        let fixture = Fixture::with_bundled_fonts(
+            "#!/bin/sh\nprintf '%s\\n' \"${FONTCONFIG_PATH-unset}\" >\"$SAAIOS_DATA_DIR/fontconfig\"\n",
+            true,
+        );
+        let mut supervisor = fixture.supervisor();
+
+        supervisor.launch(APP_ID, &[]).unwrap();
+        let value = wait_for_file(&fixture.store.data_dir().join(APP_ID).join("fontconfig"));
+
+        let expected = fixture
+            .store
+            .apps_dir()
+            .join(APP_ID)
+            .join("etc")
+            .join("fonts");
+        assert_eq!(value.trim(), expected.to_str().unwrap());
     }
 
     #[test]
