@@ -115,9 +115,7 @@ impl AppRuntime {
 #[derive(Debug)]
 pub struct AppSupervisor {
     store: AppStore,
-    /// Only used to derive the entity-store mask path (ADR-020 section 4)
-    /// -- `store.apps_dir()`/`store.data_dir()` already cover the other
-    /// two masked parents.
+    /// Shared persistent root replaced by the sandbox's default-deny view.
     data_root: PathBuf,
     runtime_dir: PathBuf,
     wayland_display: String,
@@ -377,11 +375,11 @@ impl AppSupervisor {
     ) -> Result<Child, SupervisorError> {
         let executable = installed.code_dir.join(&installed.manifest.exec);
         let sandbox_paths = SandboxPaths {
-            apps_dir: self.store.apps_dir().to_path_buf(),
+            data_root: self.data_root.clone(),
             code_dir: installed.code_dir.clone(),
-            apps_data_dir: self.store.data_dir().to_path_buf(),
             data_dir: installed.data_dir.clone(),
-            entities_dir: self.data_root.join("var").join("entities"),
+            wayland_socket: self.runtime_dir.join(&self.wayland_display),
+            portal_socket: PathBuf::from("/run/saaios/portal.sock"),
         };
         let granted = granted.to_vec();
         let allow_unsandboxed = self.allow_unsandboxed;

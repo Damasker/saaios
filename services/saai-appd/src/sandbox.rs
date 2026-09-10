@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -10,18 +10,14 @@ use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, TargetArch};
 
 use crate::Capability;
 
-/// The paths one sandboxed app process needs mediated (ADR-020 section 4):
-/// the two shared parent directories every installed app lives under get
-/// masked with an empty tmpfs, and only this app's own code/data
-/// subdirectories are bound back through the mask. The raw entity store
-/// is masked with no reveal at all -- `saai-entityd`'s socket is the only
-/// sanctioned path to that data (S06).
+/// The complete filesystem view explicitly revealed to one application.
+/// Everything else below the shared SaaiOS data and runtime roots is hidden.
 pub struct SandboxPaths {
-    pub apps_dir: PathBuf,
+    pub data_root: PathBuf,
     pub code_dir: PathBuf,
-    pub apps_data_dir: PathBuf,
     pub data_dir: PathBuf,
-    pub entities_dir: PathBuf,
+    pub wayland_socket: PathBuf,
+    pub portal_socket: PathBuf,
 }
 
 /// Installs ADR-020's process isolation for one app. Must run inside
@@ -74,71 +70,83 @@ pub fn apply(
     )
     .map_err(nix_to_io)?;
 
-    // Scratch mountpoints live under /run/saaios, which nothing here ever
-    // masks, keyed by this (freshly forked, uniquely numbered) process's
-    // own pid so concurrent launches of different apps -- or successive
-    // crash-restarts of the same one -- never collide.
     let scratch_root =
-        PathBuf::from("/run/saaios/.sandbox-reveal").join(std::process::id().to_string());
-    mask_and_reveal(
-        &paths.apps_dir,
-        &paths.code_dir,
-        &scratch_root.join("code"),
-        true,
-    )?;
-    mask_and_reveal(
-        &paths.apps_data_dir,
-        &paths.data_dir,
-        &scratch_root.join("data"),
-        false,
-    )?;
-    mask_only(&paths.entities_dir)?;
-    // Both leaf scratch dirs (code/data) are already gone -- this only
-    // removes the now-empty per-pid parent they shared.
-    let _ = fs::remove_dir(&scratch_root);
+        PathBuf::from("/tmp/.saaios-sandbox-reveal").join(std::process::id().to_string());
+    fs::create_dir_all(&scratch_root)?;
+
+    let code_pin = scratch_root.join("code");
+    let data_pin = scratch_root.join("data");
+    let wayland_pin = scratch_root.join("wayland");
+    let portal_pin = scratch_root.join("portal");
+    pin_directory(&paths.code_dir, &code_pin)?;
+    pin_directory(&paths.data_dir, &data_pin)?;
+    pin_file(&paths.wayland_socket, &wayland_pin)?;
+    pin_file(&paths.portal_socket, &portal_pin)?;
+
+    // Hide the complete persistent root, including system binaries, packages,
+    // grants, runtime memory/audit data and raw entity files. Reveal only this
+    // app's immutable code and writable data directory.
+    mask_tmpfs(&paths.data_root, "mode=0755,size=4m", true)?;
+    reveal_directory(&code_pin, &paths.code_dir, true)?;
+    reveal_directory(&data_pin, &paths.data_dir, false)?;
+
+    // `/run` contains privileged appd/entityd sockets. Only Wayland and the
+    // capability-checking portal cross the application boundary.
+    mask_tmpfs(Path::new("/run"), "mode=0755,size=4m", true)?;
+    reveal_file(&wayland_pin, &paths.wayland_socket)?;
+    reveal_file(&portal_pin, &paths.portal_socket)?;
+
+    for path in ["/metadata", "/proc", "/sys", "/saaios"] {
+        mask_if_present(Path::new(path))?;
+    }
+    mask_device_tree(&scratch_root)?;
+
+    let _ = fs::remove_dir_all(&scratch_root);
+    mask_tmpfs(Path::new("/tmp"), "mode=1777,size=16m", true)?;
+
+    drop_all_capabilities()?;
 
     install_seccomp_filter()?;
 
     Ok(())
 }
 
-/// Masks `parent` with an empty tmpfs, hiding every sibling of `own`,
-/// while keeping `own`'s original content reachable at that exact path.
-///
-/// The naive version of this -- bind-mount `own` onto itself, *then* mask
-/// `parent` -- does not work: masking `parent` re-resolves every path
-/// underneath it from scratch, so `own` immediately starts pointing into
-/// the fresh, empty tmpfs rather than the pre-mask content it used to
-/// point to (confirmed with a throwaway on-device C spike before writing
-/// this the working way). The original content has to be pinned
-/// *outside* `parent` first (bind-mount to `scratch`, unaffected by
-/// anything that happens to `parent`), then moved back into place with
-/// `MS_MOVE` once the mask is already on and `own`'s directory exists
-/// again inside the new tmpfs.
-fn mask_and_reveal(parent: &Path, own: &Path, scratch: &Path, read_only: bool) -> io::Result<()> {
+fn pin_directory(source: &Path, scratch: &Path) -> io::Result<()> {
     fs::create_dir_all(scratch)?;
     mount(
-        Some(own),
+        Some(source),
         scratch,
         None::<&str>,
         MsFlags::MS_BIND,
         None::<&str>,
     )
-    .map_err(nix_to_io)?;
+    .map_err(nix_to_io)
+}
 
+fn pin_file(source: &Path, scratch: &Path) -> io::Result<()> {
+    let file_type = fs::symlink_metadata(source)?.file_type();
+    if file_type.is_dir() || file_type.is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("sandbox endpoint is not a direct file: {}", source.display()),
+        ));
+    }
+    File::create(scratch)?;
     mount(
+        Some(source),
+        scratch,
         None::<&str>,
-        parent,
-        Some("tmpfs"),
-        MsFlags::empty(),
+        MsFlags::MS_BIND,
         None::<&str>,
     )
-    .map_err(nix_to_io)?;
+    .map_err(nix_to_io)
+}
 
-    fs::create_dir_all(own)?;
+fn reveal_directory(scratch: &Path, destination: &Path, read_only: bool) -> io::Result<()> {
+    fs::create_dir_all(destination)?;
     mount(
         Some(scratch),
-        own,
+        destination,
         None::<&str>,
         MsFlags::MS_MOVE,
         None::<&str>,
@@ -146,34 +154,137 @@ fn mask_and_reveal(parent: &Path, own: &Path, scratch: &Path, read_only: bool) -
     .map_err(nix_to_io)?;
     let _ = fs::remove_dir(scratch);
 
-    if read_only {
-        mount(
-            None::<&str>,
-            own,
-            None::<&str>,
-            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
-            None::<&str>,
-        )
-        .map_err(nix_to_io)?;
+    let flags = MsFlags::MS_BIND
+        | MsFlags::MS_REMOUNT
+        | MsFlags::MS_NOSUID
+        | MsFlags::MS_NODEV
+        | if read_only {
+            MsFlags::MS_RDONLY
+        } else {
+            MsFlags::MS_NOEXEC
+        };
+    mount(None::<&str>, destination, None::<&str>, flags, None::<&str>).map_err(nix_to_io)
+}
+
+fn reveal_file(scratch: &Path, destination: &Path) -> io::Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    File::create(destination)?;
+    mount(
+        Some(scratch),
+        destination,
+        None::<&str>,
+        MsFlags::MS_MOVE,
+        None::<&str>,
+    )
+    .map_err(nix_to_io)?;
+    fs::remove_file(scratch)
+}
+
+fn mask_tmpfs(path: &Path, options: &str, no_exec: bool) -> io::Result<()> {
+    let mut flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV;
+    if no_exec {
+        flags |= MsFlags::MS_NOEXEC;
+    }
+    mount(None::<&str>, path, Some("tmpfs"), flags, Some(options)).map_err(nix_to_io)
+}
+
+fn mask_if_present(path: &Path) -> io::Result<()> {
+    if path.exists() {
+        mask_tmpfs(path, "mode=0555,size=64k", true)?;
     }
     Ok(())
 }
 
-/// Masks `path` with an empty tmpfs and reveals nothing underneath it --
-/// used for the raw entity store, which has no sanctioned direct-file
-/// access path at all (S06's `saai-entityd` socket is the only door).
-fn mask_only(path: &Path) -> io::Result<()> {
-    if !path.exists() {
-        return Ok(());
+fn mask_device_tree(scratch_root: &Path) -> io::Result<()> {
+    let safe_devices = ["null", "zero", "random", "urandom"];
+    for name in safe_devices {
+        pin_file(
+            &Path::new("/dev").join(name),
+            &scratch_root.join(format!("dev-{name}")),
+        )?;
     }
     mount(
         None::<&str>,
-        path,
+        "/dev",
         Some("tmpfs"),
-        MsFlags::empty(),
-        None::<&str>,
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+        Some("mode=0755,size=1m"),
     )
-    .map_err(nix_to_io)
+    .map_err(nix_to_io)?;
+    for name in safe_devices {
+        reveal_file(
+            &scratch_root.join(format!("dev-{name}")),
+            &Path::new("/dev").join(name),
+        )?;
+    }
+    fs::create_dir("/dev/shm")?;
+    mask_tmpfs(Path::new("/dev/shm"), "mode=1777,size=8m", false)
+}
+
+#[repr(C)]
+struct CapabilityHeader {
+    version: u32,
+    pid: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CapabilityData {
+    effective: u32,
+    permitted: u32,
+    inheritable: u32,
+}
+
+fn drop_all_capabilities() -> io::Result<()> {
+    for capability in 0..64 {
+        let result = unsafe { libc::prctl(libc::PR_CAPBSET_DROP, capability, 0, 0, 0) };
+        if result < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::EINVAL) {
+                return Err(error);
+            }
+        }
+    }
+    let ambient = unsafe {
+        libc::prctl(
+            libc::PR_CAP_AMBIENT,
+            libc::PR_CAP_AMBIENT_CLEAR_ALL,
+            0,
+            0,
+            0,
+        )
+    };
+    if ambient < 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EINVAL) {
+            return Err(error);
+        }
+    }
+
+    const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+    let mut header = CapabilityHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let mut data = [
+        CapabilityData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        };
+        2
+    ];
+    let result = unsafe { libc::syscall(libc::SYS_capset, &mut header, data.as_mut_ptr()) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let result = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Deny-list compensating for the missing PID/user namespace isolation
@@ -256,11 +367,11 @@ mod tests {
     #[test]
     fn non_root_is_fail_closed_unless_test_override_is_explicit() {
         let paths = super::SandboxPaths {
-            apps_dir: PathBuf::from("/nonexistent/apps"),
+            data_root: PathBuf::from("/nonexistent"),
             code_dir: PathBuf::from("/nonexistent/apps/org.saaios.example"),
-            apps_data_dir: PathBuf::from("/nonexistent/var/apps"),
             data_dir: PathBuf::from("/nonexistent/var/apps/org.saaios.example"),
-            entities_dir: PathBuf::from("/nonexistent/var/entities"),
+            wayland_socket: PathBuf::from("/nonexistent/run/wayland-1"),
+            portal_socket: PathBuf::from("/nonexistent/run/portal.sock"),
         };
         let error = apply(&paths, &[Capability::NetInternet], false).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
