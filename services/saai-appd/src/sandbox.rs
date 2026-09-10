@@ -202,7 +202,11 @@ fn mask_if_present(path: &Path) -> io::Result<()> {
 
 fn mask_device_tree(scratch_root: &Path) -> io::Result<()> {
     let safe_devices = ["null", "zero", "random", "urandom"];
-    for name in safe_devices {
+    let available = safe_devices
+        .into_iter()
+        .filter(|name| Path::new("/dev").join(name).exists())
+        .collect::<Vec<_>>();
+    for name in &available {
         pin_file(
             &Path::new("/dev").join(name),
             &scratch_root.join(format!("dev-{name}")),
@@ -216,7 +220,7 @@ fn mask_device_tree(scratch_root: &Path) -> io::Result<()> {
         Some("mode=0755,size=1m"),
     )
     .map_err(nix_to_io)?;
-    for name in safe_devices {
+    for name in available {
         reveal_file(
             &scratch_root.join(format!("dev-{name}")),
             &Path::new("/dev").join(name),
