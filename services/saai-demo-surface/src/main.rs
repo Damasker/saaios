@@ -269,10 +269,91 @@ fn attach_test_pattern(
     surface.commit();
 }
 
+/// S07 Change 7's one complete end-to-end portal scenario: connects to
+/// `saai-shell`'s portal socket as this real (possibly sandboxed) process,
+/// writes a fixed string to the clipboard, reads it back, and confirms it
+/// matches -- exercising the actual authorization path (this process's own
+/// pid, resolved by `saai-shell` via `SO_PEERCRED` to whatever app_id
+/// `saai-appd` launched it under, checked against that app's real granted
+/// capabilities) rather than a synthetic/mocked one. Triggered only by
+/// `SAAIOS_PORTAL_ROUNDTRIP` so normal launches (and the existing S02/S05
+/// acceptance scripts) are unaffected.
+fn run_portal_roundtrip() {
+    use saai_portal_protocol::{
+        encode_request, ClientRequest, ResponseResult, ServerMessage, PORTAL_WIRE_SCHEMA_V1,
+    };
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+
+    const TEST_TEXT: &str = "saaios-portal-roundtrip-test";
+
+    let socket_path = std::env::var_os("SAAIOS_PORTAL_SOCKET")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/run/saaios/portal.sock"));
+
+    let result = (|| -> Result<String, String> {
+        let mut stream =
+            UnixStream::connect(&socket_path).map_err(|error| format!("connect: {error}"))?;
+        let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
+
+        let write_request = ClientRequest::ClipboardWrite {
+            schema: PORTAL_WIRE_SCHEMA_V1,
+            request_id: "demo-surface:portal-write".into(),
+            text: TEST_TEXT.into(),
+        };
+        stream
+            .write_all(&encode_request(&write_request).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("write request: {error}"))?;
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .map_err(|error| format!("read write-response: {error}"))?;
+        match serde_json::from_str(&line).map_err(|error| error.to_string())? {
+            ServerMessage::Response {
+                ok: true,
+                result: Some(ResponseResult::ClipboardWritten),
+                ..
+            } => {}
+            other => return Err(format!("clipboard_write did not succeed: {other:?}")),
+        }
+
+        let read_request = ClientRequest::ClipboardRead {
+            schema: PORTAL_WIRE_SCHEMA_V1,
+            request_id: "demo-surface:portal-read".into(),
+        };
+        stream
+            .write_all(&encode_request(&read_request).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("write request: {error}"))?;
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .map_err(|error| format!("read read-response: {error}"))?;
+        match serde_json::from_str(&line).map_err(|error| error.to_string())? {
+            ServerMessage::Response {
+                ok: true,
+                result: Some(ResponseResult::ClipboardText { text }),
+                ..
+            } if text == TEST_TEXT => Ok(text),
+            other => Err(format!(
+                "clipboard_read did not return the written text: {other:?}"
+            )),
+        }
+    })();
+
+    match result {
+        Ok(text) => println!("saai-demo-surface: portal round-trip OK, read back {text:?}"),
+        Err(error) => println!("saai-demo-surface: portal round-trip FAILED: {error}"),
+    }
+}
+
 fn main() {
     let label = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "demo".to_string());
+    if std::env::var_os("SAAIOS_PORTAL_ROUNDTRIP").is_some() {
+        run_portal_roundtrip();
+        return;
+    }
     // Negative-protocol test mode (S02 acceptance: "protocol: configure до
     // buffer attach"): attach a buffer on the very first commit, before any
     // configure was ever received. xdg-shell requires the first commit to be

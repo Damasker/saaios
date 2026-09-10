@@ -18,6 +18,7 @@ members = [
     "crates/saai-app-protocol",
     "crates/saai-entity-store",
     "crates/saai-entity-protocol",
+    "crates/saai-portal-protocol",
     "crates/console-tui",
     "crates/console-web",
     "services/saaios-runtime",
@@ -54,6 +55,7 @@ saai-ui-compiler = { path = "crates/saai-ui-compiler" }
 saai-app-protocol = { path = "crates/saai-app-protocol" }
 saai-entity-store = { path = "crates/saai-entity-store" }
 saai-entity-protocol = { path = "crates/saai-entity-protocol" }
+saai-portal-protocol = { path = "crates/saai-portal-protocol" }
 console-tui = { path = "crates/console-tui" }
 console-web = { path = "crates/console-web" }
 

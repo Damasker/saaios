@@ -263,7 +263,7 @@ fn handle_request(
                 None,
             ));
             ResponseResult::Installed {
-                app: summary(&installed, &state.supervisor, &state.grants),
+                app: Box::new(summary(&installed, &state.supervisor, &state.grants)),
             }
         }
         ClientRequest::Launch { app_id, .. } => {
@@ -370,6 +370,16 @@ fn summary(app: &InstalledApp, supervisor: &AppSupervisor, grants: &GrantStore) 
     let consent_needed = !grants
         .covers(&app.manifest.id, &app.manifest.capabilities)
         .unwrap_or(false);
+    // Same fail-safe direction as `consent_needed`: an unreadable grant
+    // record must read as "nothing granted", never as a silent grant --
+    // `saai-shell`'s portal socket (S07 Change 7) authorizes directly
+    // against this list.
+    let granted_capabilities = grants
+        .effective_capabilities(&app.manifest.id, &app.manifest.capabilities)
+        .unwrap_or_default()
+        .iter()
+        .map(|capability| capability.as_str().to_owned())
+        .collect();
     AppSummary {
         id: app.manifest.id.clone(),
         name: app.manifest.name.clone(),
@@ -378,6 +388,7 @@ fn summary(app: &InstalledApp, supervisor: &AppSupervisor, grants: &GrantStore) 
         pids: supervisor.pids(&app.manifest.id),
         requested_capabilities,
         consent_needed,
+        granted_capabilities,
     }
 }
 

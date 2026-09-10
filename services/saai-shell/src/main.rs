@@ -66,6 +66,7 @@ use std::time::{Duration, Instant};
 
 mod appd_client;
 mod entityd_client;
+mod portal_server;
 mod render;
 
 use saai_app_protocol::{
@@ -443,6 +444,9 @@ fn main() {
     let entityd_socket = std::env::var_os("SAAIOS_ENTITYD_SOCKET")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "/run/saaios/entityd.sock".into());
+    let portal_socket = std::env::var_os("SAAIOS_PORTAL_SOCKET")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/run/saaios/portal.sock".into());
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -482,6 +486,12 @@ fn main() {
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
         selected_entities: Vec::new(),
+        portal: portal_server::PortalServer::bind(portal_socket)
+            .expect("failed to bind saai-shell portal socket"),
+        apps_by_pid: BTreeMap::new(),
+        apps_grants: BTreeMap::new(),
+        clipboard: None,
+        last_apps_refresh: Instant::now(),
     };
 
     println!("saai-shell: connected, toplevel created");
@@ -503,6 +513,8 @@ fn main() {
             .expect("event loop dispatch failed");
         shell.poll_appd(&conn, &qh);
         shell.poll_entityd(&conn, &qh);
+        shell.refresh_apps_if_due();
+        shell.poll_portal();
         shell.check_idle_timeout(&qh);
     }
 }
@@ -571,6 +583,22 @@ struct Shell {
     selected_space_id: String,
     entity_counts: BTreeMap<String, usize>,
     selected_entities: Vec<Entity>,
+    /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
+    /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
+    portal: portal_server::PortalServer,
+    /// Resolves a portal connection's `SO_PEERCRED` pid to an app_id --
+    /// rebuilt from every `list()` response and kept current between
+    /// refreshes by `Running`/`Removed` lifecycle events (see
+    /// `update_app_caches`).
+    apps_by_pid: BTreeMap<u32, String>,
+    /// Canonical granted-capability names per app_id, from the same
+    /// `AppSummary.granted_capabilities` `saai-appd` now reports -- what
+    /// the portal actually authorizes requests against.
+    apps_grants: BTreeMap<String, Vec<String>>,
+    /// The portal's in-memory clipboard. No persistence, no history --
+    /// cleared on `saai-shell` restart.
+    clipboard: Option<String>,
+    last_apps_refresh: Instant,
 }
 
 impl CompositorHandler for Shell {
@@ -1167,7 +1195,82 @@ impl Shell {
         }
     }
 
+    /// Re-issues `list()` roughly once a second while connected, bounding
+    /// how stale `apps_by_pid`/`apps_grants` can get between the events
+    /// that already update them incrementally (`Running`, `Removed`,
+    /// `ConsentDecided`) -- without this, the portal's authorization check
+    /// would only ever see a fresh pid/grant snapshot right after a
+    /// reconnect, which for a long-lived shell process could be hours ago.
+    fn refresh_apps_if_due(&mut self) {
+        if self.appd.is_connected() && self.last_apps_refresh.elapsed() >= Duration::from_secs(1) {
+            self.appd.list();
+            self.last_apps_refresh = Instant::now();
+        }
+    }
+
+    fn poll_portal(&mut self) {
+        self.portal
+            .poll(&self.apps_by_pid, &self.apps_grants, &mut self.clipboard);
+    }
+
+    /// Keeps the portal's authorization caches (`apps_by_pid`,
+    /// `apps_grants`) current -- separate from `apply_appd_message`'s own
+    /// match below because that one is still filtering everything down to
+    /// the single hardcoded `DEMO_APP_ID` card (a known, pre-existing
+    /// limitation of this UI, not something Change 7 needs to fix), while
+    /// the portal has to authorize *any* installed app, not just the demo.
+    fn update_app_caches(&mut self, message: &AppServerMessage) {
+        match message {
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::List { apps }),
+                ..
+            } => {
+                // A List response is authoritative for the whole registry --
+                // rebuilding from scratch here means a removed app's stale
+                // pid can never survive past the next refresh, even if some
+                // lifecycle event was missed.
+                self.apps_by_pid.clear();
+                self.apps_grants.clear();
+                for app in apps {
+                    self.note_app_summary(app);
+                }
+            }
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::Installed { app }),
+                ..
+            } => self.note_app_summary(app),
+            AppServerMessage::Response {
+                result: Some(AppResponseResult::ConsentDecided { app_id, granted }),
+                ..
+            } => {
+                self.apps_grants.insert(app_id.clone(), granted.clone());
+            }
+            AppServerMessage::Event { event, .. } => match event.event {
+                LifecycleEventKind::Running => {
+                    if let Some(pid) = event.pid {
+                        self.apps_by_pid.insert(pid, event.app_id.clone());
+                    }
+                }
+                LifecycleEventKind::Removed => {
+                    self.apps_by_pid.retain(|_, app_id| *app_id != event.app_id);
+                    self.apps_grants.remove(&event.app_id);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn note_app_summary(&mut self, app: &AppSummary) {
+        self.apps_grants
+            .insert(app.id.clone(), app.granted_capabilities.clone());
+        for &pid in &app.pids {
+            self.apps_by_pid.insert(pid, app.id.clone());
+        }
+    }
+
     fn apply_appd_message(&mut self, message: AppServerMessage) -> bool {
+        self.update_app_caches(&message);
         let previous = self.demo_app_state;
         match message {
             AppServerMessage::Response { ok: false, .. } => {

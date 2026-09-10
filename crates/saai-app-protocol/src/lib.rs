@@ -85,6 +85,14 @@ pub struct AppSummary {
     /// exact set of `requested_capabilities` above -- the shell must show
     /// the consent screen before this app can be launched.
     pub consent_needed: bool,
+    /// Canonical capability names actually granted right now (S07 Change
+    /// 7) -- unlike `requested_capabilities`, this reflects the user's
+    /// accept/decline decision: empty whenever `consent_needed` is true, or
+    /// when the decision on file was a decline. `saai-shell`'s portal
+    /// socket (ADR-020 section 8) is the reader that needs this field --
+    /// it authorizes clipboard/file-picker requests from a running app
+    /// against exactly this list, not the manifest's request.
+    pub granted_capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,8 +101,11 @@ pub enum ResponseResult {
     List {
         apps: Vec<AppSummary>,
     },
+    // Boxed: `AppSummary` grew past clippy's large_enum_variant threshold
+    // once (S07 Change 7's `granted_capabilities`) -- `List`'s `Vec<AppSummary>`
+    // is already heap-indirect, this is the one variant that held one inline.
     Installed {
-        app: AppSummary,
+        app: Box<AppSummary>,
     },
     Launched {
         app_id: String,
@@ -321,6 +332,7 @@ mod tests {
                     pids: vec![],
                     requested_capabilities: vec![],
                     consent_needed: false,
+                    granted_capabilities: vec![],
                 }],
             },
         );

@@ -2153,6 +2153,8 @@ version = "0.1.0"
 dependencies = [
  "fontdue",
  "memmap2",
+ "saai-portal-protocol",
+ "serde_json",
  "tempfile",
  "wayland-client",
  "wayland-protocols",
@@ -2208,14 +2210,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "saai-portal-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "saai-shell"
 version = "0.1.0"
 dependencies = [
  "chrono",
  "fontdue",
+ "nix",
  "saai-app-protocol",
  "saai-entity-protocol",
  "saai-entity-store",
+ "saai-portal-protocol",
  "saai-ui-compiler",
  "saai-ui-core",
  "serde_json",

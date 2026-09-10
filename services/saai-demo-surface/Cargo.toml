@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 fontdue = { version = "0.9.3", default-features = false }
+saai-portal-protocol.workspace = true
+serde_json.workspace = true
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
 tempfile = "3"
