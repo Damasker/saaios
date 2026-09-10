@@ -1,0 +1,8 @@
+schema = 1
+id = "org.saaios.sandbox-probe"
+name = "Sandbox Probe"
+exec = "bin/sandbox-probe"
+version = "0.1.0"
+ui = "wayland"
+single_instance = true
+capabilities = []
