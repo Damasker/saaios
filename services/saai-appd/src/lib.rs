@@ -6,6 +6,7 @@ use thiserror::Error;
 
 mod daemon;
 mod grants;
+mod sandbox;
 mod store;
 mod supervisor;
 

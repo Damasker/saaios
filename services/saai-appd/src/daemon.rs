@@ -84,7 +84,12 @@ pub async fn run_daemon(config: DaemonConfig) -> Result<(), AppdError> {
             source,
         },
     )?;
-    let supervisor = AppSupervisor::new(store.clone(), &config.runtime_dir, config.wayland_display);
+    let supervisor = AppSupervisor::new(
+        store.clone(),
+        &config.data_root,
+        &config.runtime_dir,
+        config.wayland_display,
+    );
     let grants = GrantStore::new(&config.data_root);
     let state = Arc::new(Mutex::new(DaemonState {
         store,
@@ -281,7 +286,15 @@ fn handle_request(
                     .collect();
                 ResponseResult::ConsentRequired { app_id, requested }
             } else {
-                let outcome = state.supervisor.launch(&app_id)?;
+                let granted = installed
+                    .map(|installed| {
+                        state
+                            .grants
+                            .effective_capabilities(&app_id, &installed.manifest.capabilities)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let outcome = state.supervisor.launch(&app_id, &granted)?;
                 let (pid, existing) = match outcome {
                     LaunchOutcome::Started { pid } => {
                         events.push(lifecycle(

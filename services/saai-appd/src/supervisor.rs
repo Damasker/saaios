@@ -1,12 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::{AppStore, InstalledApp, StoreError};
+use crate::sandbox::{self, SandboxPaths};
+use crate::{AppStore, Capability, InstalledApp, StoreError};
 
 pub const DEFAULT_CRASH_LIMIT: usize = 3;
 pub const DEFAULT_CRASH_WINDOW: Duration = Duration::from_secs(60);
@@ -78,6 +80,12 @@ struct AppRuntime {
     children: Vec<Child>,
     failures: VecDeque<Instant>,
     crash_limited: bool,
+    /// The capability set this instance was actually launched with --
+    /// `poll()`'s crash-restart reuses this exact set (ADR-020: a
+    /// restarted process must get the same sandbox as its first launch,
+    /// not silently re-derive it from whatever the grant store says at
+    /// the moment it happens to crash).
+    granted: Vec<Capability>,
 }
 
 impl AppRuntime {
@@ -87,6 +95,7 @@ impl AppRuntime {
             children: Vec::new(),
             failures: VecDeque::new(),
             crash_limited: false,
+            granted: Vec::new(),
         }
     }
 
@@ -106,6 +115,10 @@ impl AppRuntime {
 #[derive(Debug)]
 pub struct AppSupervisor {
     store: AppStore,
+    /// Only used to derive the entity-store mask path (ADR-020 section 4)
+    /// -- `store.apps_dir()`/`store.data_dir()` already cover the other
+    /// two masked parents.
+    data_root: PathBuf,
     runtime_dir: PathBuf,
     wayland_display: String,
     policy: SupervisorPolicy,
@@ -115,11 +128,13 @@ pub struct AppSupervisor {
 impl AppSupervisor {
     pub fn new(
         store: AppStore,
+        data_root: impl AsRef<Path>,
         runtime_dir: impl AsRef<Path>,
         wayland_display: impl Into<String>,
     ) -> Self {
         Self {
             store,
+            data_root: data_root.as_ref().to_path_buf(),
             runtime_dir: runtime_dir.as_ref().to_path_buf(),
             wayland_display: wayland_display.into(),
             policy: SupervisorPolicy::default(),
@@ -129,6 +144,7 @@ impl AppSupervisor {
 
     pub fn with_policy(
         store: AppStore,
+        data_root: impl AsRef<Path>,
         runtime_dir: impl AsRef<Path>,
         wayland_display: impl Into<String>,
         policy: SupervisorPolicy,
@@ -138,6 +154,7 @@ impl AppSupervisor {
         }
         Ok(Self {
             store,
+            data_root: data_root.as_ref().to_path_buf(),
             runtime_dir: runtime_dir.as_ref().to_path_buf(),
             wayland_display: wayland_display.into(),
             policy,
@@ -145,7 +162,11 @@ impl AppSupervisor {
         })
     }
 
-    pub fn launch(&mut self, app_id: &str) -> Result<LaunchOutcome, SupervisorError> {
+    pub fn launch(
+        &mut self,
+        app_id: &str,
+        granted: &[Capability],
+    ) -> Result<LaunchOutcome, SupervisorError> {
         let installed = self
             .store
             .load(app_id)?
@@ -173,7 +194,8 @@ impl AppSupervisor {
             runtime.failures.clear();
             runtime.crash_limited = false;
         }
-        let child = self.spawn(app_id, &runtime.installed)?;
+        runtime.granted = granted.to_vec();
+        let child = self.spawn(app_id, &runtime.installed, &runtime.granted)?;
         let pid = child.id();
         runtime.children.push(child);
         self.apps.insert(app_id.to_owned(), runtime);
@@ -286,7 +308,7 @@ impl AppSupervisor {
                 }
             } else {
                 for _ in 0..restart_count {
-                    let child = match self.spawn(&app_id, &runtime.installed) {
+                    let child = match self.spawn(&app_id, &runtime.installed, &runtime.granted) {
                         Ok(child) => child,
                         Err(error) => {
                             self.apps.insert(app_id.clone(), runtime);
@@ -337,9 +359,23 @@ impl AppSupervisor {
         Ok(())
     }
 
-    fn spawn(&self, app_id: &str, installed: &InstalledApp) -> Result<Child, SupervisorError> {
+    fn spawn(
+        &self,
+        app_id: &str,
+        installed: &InstalledApp,
+        granted: &[Capability],
+    ) -> Result<Child, SupervisorError> {
         let executable = installed.code_dir.join(&installed.manifest.exec);
-        Command::new(executable)
+        let sandbox_paths = SandboxPaths {
+            apps_dir: self.store.apps_dir().to_path_buf(),
+            code_dir: installed.code_dir.clone(),
+            apps_data_dir: self.store.data_dir().to_path_buf(),
+            data_dir: installed.data_dir.clone(),
+            entities_dir: self.data_root.join("var").join("entities"),
+        };
+        let granted = granted.to_vec();
+        let mut command = Command::new(executable);
+        command
             .current_dir(&installed.code_dir)
             .env_clear()
             .env("SAAIOS_APP_ID", app_id)
@@ -348,13 +384,25 @@ impl AppSupervisor {
             .env("WAYLAND_DISPLAY", &self.wayland_display)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|source| SupervisorError::Process {
-                operation: "launch",
-                app_id: app_id.to_owned(),
-                source,
-            })
+            .stderr(Stdio::null());
+        // Safety: this closure runs after fork(), before execve(), in the
+        // still-single-threaded child -- the only place unshare()/mount()
+        // can actually put the exec'd process itself into new namespaces
+        // (ADR-020). It only calls into libc/nix syscalls and does not
+        // rely on any state shared with the parent process.
+        unsafe {
+            command.pre_exec(move || {
+                sandbox::apply(&sandbox_paths, &granted).map_err(|error| {
+                    eprintln!("saai-appd: sandbox setup failed: {error}");
+                    error
+                })
+            });
+        }
+        command.spawn().map_err(|source| SupervisorError::Process {
+            operation: "launch",
+            app_id: app_id.to_owned(),
+            source,
+        })
     }
 }
 
@@ -452,8 +500,10 @@ mod tests {
         }
 
         fn supervisor(&self) -> AppSupervisor {
+            let data_root = self.store.apps_dir().parent().unwrap();
             AppSupervisor::with_policy(
                 self.store.clone(),
+                data_root,
                 &self.runtime_dir,
                 "wayland-test",
                 SupervisorPolicy {
@@ -470,11 +520,11 @@ mod tests {
         let fixture = Fixture::new("#!/bin/sh\nsleep 30\n", true);
         let mut supervisor = fixture.supervisor();
 
-        let LaunchOutcome::Started { pid } = supervisor.launch(APP_ID).unwrap() else {
+        let LaunchOutcome::Started { pid } = supervisor.launch(APP_ID, &[]).unwrap() else {
             panic!("first launch must start the app");
         };
         assert_eq!(
-            supervisor.launch(APP_ID).unwrap(),
+            supervisor.launch(APP_ID, &[]).unwrap(),
             LaunchOutcome::Existing { pid }
         );
         assert_eq!(supervisor.pids(APP_ID), [pid]);
@@ -488,10 +538,10 @@ mod tests {
         let fixture = Fixture::new("#!/bin/sh\nsleep 30\n", false);
         let mut supervisor = fixture.supervisor();
 
-        let LaunchOutcome::Started { pid: first } = supervisor.launch(APP_ID).unwrap() else {
+        let LaunchOutcome::Started { pid: first } = supervisor.launch(APP_ID, &[]).unwrap() else {
             panic!("first launch must start the app");
         };
-        let LaunchOutcome::Started { pid: second } = supervisor.launch(APP_ID).unwrap() else {
+        let LaunchOutcome::Started { pid: second } = supervisor.launch(APP_ID, &[]).unwrap() else {
             panic!("second launch must start another instance");
         };
         assert_ne!(first, second);
@@ -508,7 +558,7 @@ mod tests {
         let mut supervisor = fixture.supervisor();
         std::env::set_var("SHOULD_NOT_LEAK", "secret");
 
-        supervisor.launch(APP_ID).unwrap();
+        supervisor.launch(APP_ID, &[]).unwrap();
         let context = wait_for_file(&fixture.store.data_dir().join(APP_ID).join("context"));
         std::env::remove_var("SHOULD_NOT_LEAK");
 
@@ -527,7 +577,7 @@ mod tests {
     fn three_crashes_in_window_limit_restart_until_explicit_launch() {
         let fixture = Fixture::new("#!/bin/sh\nexit 17\n", true);
         let mut supervisor = fixture.supervisor();
-        supervisor.launch(APP_ID).unwrap();
+        supervisor.launch(APP_ID, &[]).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut crashes = 0;
         let mut limited = false;
@@ -550,7 +600,7 @@ mod tests {
         assert!(supervisor.pids(APP_ID).is_empty());
         assert!(supervisor.poll().unwrap().is_empty());
         assert!(matches!(
-            supervisor.launch(APP_ID).unwrap(),
+            supervisor.launch(APP_ID, &[]).unwrap(),
             LaunchOutcome::Started { .. }
         ));
         assert_eq!(supervisor.state(APP_ID), Some(AppState::Running));
@@ -560,13 +610,13 @@ mod tests {
     fn explicit_stop_is_not_counted_as_a_crash() {
         let fixture = Fixture::new("#!/bin/sh\nsleep 30\n", true);
         let mut supervisor = fixture.supervisor();
-        supervisor.launch(APP_ID).unwrap();
+        supervisor.launch(APP_ID, &[]).unwrap();
 
         assert!(supervisor.stop(APP_ID).unwrap());
         assert!(supervisor.poll().unwrap().is_empty());
         assert_eq!(supervisor.state(APP_ID), Some(AppState::Stopped));
         assert!(matches!(
-            supervisor.launch(APP_ID).unwrap(),
+            supervisor.launch(APP_ID, &[]).unwrap(),
             LaunchOutcome::Started { .. }
         ));
     }

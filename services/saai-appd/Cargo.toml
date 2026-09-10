@@ -9,6 +9,9 @@ repository.workspace = true
 [dependencies]
 saai-app-protocol.workspace = true
 clap.workspace = true
+libc = "0.2"
+nix = { version = "0.31", features = ["mount", "sched", "user"] }
+seccompiler = "0.4"
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
