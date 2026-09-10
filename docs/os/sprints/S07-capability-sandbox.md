@@ -163,8 +163,46 @@ portal (только точка входа "кто через кого").
    порталу от своего имени, пишет строку, читает её обратно, сверяет --
    выключен по умолчанию, обычные запуски и существующие S02/S05
    приёмочные скрипты не затронуты.
-8. Физическая приёмка на устройстве: fault injection, cold reboot, negative
-   tests (попытка выйти за границы sandbox из демо-приложения).
+8. **Частично готово (2026-09-10, до `5b99b01`; cold reboot ещё не
+   покрыт).** Физическая приёмка на устройстве: негативные тесты/fault
+   injection через новый `org.saaios.sandbox-probe` (`os/targets/panther/
+   tests/sandbox-probe.c` + вспомогательный универсальный JSON-запросчик
+   `unix-json-request.c`) -- реальный sandboxed-процесс изнутри проверяет
+   18 инвариантов разом: appd/entityd сокеты скрыты, portal/Wayland
+   видны, системные бинари и сырые entities скрыты, initramfs-инструменты
+   (`/saaios`) скрыты, host-`/proc`/`/sys` скрыты, DRM/input устройства
+   скрыты, корневая файловая система read-only, appd/entityd
+   connect() отклоняется, сеть недоступна без `net.internet`, effective/
+   permitted capabilities обнулены, `kill`/`mount`/`reboot` блокируются
+   seccomp (EPERM). Заодно ужесточён sandbox.rs: `mask_device_tree()`
+   раскрывает только реально существующие safe device nodes (`null`/
+   `zero`/`random`/`urandom`), `/run` целиком маскируется и раскрывается
+   только под Wayland/portal-сокеты (не только appd/entityd, как было),
+   `/metadata`/`/proc`/`/sys`/`/saaios` маскируются явно, `/` монтируется
+   read-only bind'ом, все capabilities сбрасываются (`PR_CAPBSET_DROP` +
+   `PR_CAP_AMBIENT_CLEAR_ALL` + `capset`) и `PR_SET_NO_NEW_PRIVS`
+   устанавливается, seccomp deny-list расширен (`bpf`, `perf_event_open`,
+   `open_by_handle_at`, `name_to_handle_at`, `mknodat`, `swapon/swapoff`,
+   `keyctl`/`add_key`/`request_key`, плюс `mknod` на x86_64).
+   `saai-shell`'s `apps_by_pid` теперь чистится и на `Stopped`/`Crashed`/
+   `CrashLimited`, не только на `Removed` -- закрывает staleness-пробел,
+   отмеченный как known limitation в Change 7.
+
+   По пути найден и исправлен баг в самом тесте (не в sandbox'e):
+   проверка "root filesystem is read-only" писала в `/init`, который
+   всегда возвращает `ETXTBSY` (PID 1 исполняется из этого файла же) --
+   ложный FAIL, не показывающий реальное состояние read-only root.
+   Исправлено переключением на `/plat_property_contexts` (обычный,
+   никогда не исполняемый файл прямо в rootfs) -- подтверждено
+   throwaway-спайком (`root-ro-spike.c`, не закоммичен), что текущая
+   техника `make_root_read_only()` работает верно (`EROFS`), просто
+   тест целился не в тот файл.
+
+   Cold reboot (grants не сбрасываются и не обходятся после
+   перезагрузки) -- отдельный, ещё не покрытый физически в рамках S07
+   пункт (базовая durable-персистентность grants уже гарантирована тем
+   же fsync-паттерном, что и в S06, но выделенного device-level
+   acceptance прогона после реальной перезагрузки для S07 ещё не было).
 
 ## Test
 
@@ -369,3 +407,28 @@ sandboxed-процесс своим собственным portal-клиенто
 задача должна была доказать. Устройство возвращено к исходному
 состоянию (`list()` подтверждает только `org.saaios.demo-surface` с
 исходными пустыми capabilities).
+
+Change 8 (частично, negative tests/fault injection): headless --
+`cargo build --workspace`, `fmt --check` чисты (изменение целиком в C,
+не затрагивает Rust-код напрямую в этом коммите). Кросс-компиляция
+`sandbox-probe`/`unix-json-request` через `zig cc -target
+aarch64-linux-musl` подтверждена (`ARM aarch64`, `statically linked`).
+
+Физически на устройстве: `org.saaios.sandbox-probe` собран, упакован,
+установлен и запущен под настоящим sandbox'ом дважды -- до и после
+исправления теста. Первый прогон дал `RESULT FAIL failures=1` --
+единственный провал (`root filesystem is read-only`) диагностирован
+throwaway C-спайком (`root-ro-spike.c`) как ложный: цель проверки
+(`/init`) всегда даёт `ETXTBSY`, независимо от sandbox, потому что PID 1
+исполняется из этого файла -- подтверждено даже полностью
+несанбоксированной записью тем же способом прямо в шелле
+(`exec 3>/init` -> `Text file busy`). После переключения цели на
+`/plat_property_contexts` (сначала подтверждена его несанбоксированная
+записываемость) второй прогон дал чистый `RESULT PASS failures=0` по
+всем 18 пунктам, включая реальное `EROFS` на попытке записи в корень,
+реальный `EPERM` на `kill`/`mount`/`reboot` из-под seccomp, и реальное
+отсутствие сетевого маршрута без `net.internet` -- закрывает оба
+пробела, оставленных открытыми после Change 5/6 (там seccomp/сеть
+подтверждались только косвенно). Устройство возвращено к исходному
+состоянию (`list()` после удаления `sandbox-probe` показывает только
+`org.saaios.demo-surface`).
