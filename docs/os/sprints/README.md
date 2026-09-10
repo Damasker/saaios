@@ -212,18 +212,41 @@ acceptance подтвердил, что effective grants (принятые и я
 **Goal:** по одному настоящему адаптивному приложению обоих toolkit работает
 как обычный клиент SaaiOS.
 
-**Scope:** необходимые Wayland-протоколы, fonts/themes/settings portal,
-экранная клавиатура, popups, clipboard через policy, упаковка runtime в
-`/data`. Полные KDE/GNOME sessions и XWayland не входят. Change 1 --
-спайк кросс-компиляции GTK4/Qt6+Kirigami под aarch64-musl плюс решения по
-clipboard-через-policy и text-input/OSK-стратегии -- явно блокирует
-Change 2+; ни одной архитектурной ADR под это ещё не принято.
+**Scope:** необходимые Wayland-протоколы (`wl_data_device_manager`,
+`zwp_text_input_manager_v3`), env-var-based theme/font passthrough (не
+полноценный settings portal -- у SaaiOS ещё нет источника настроек,
+ADR-021's Change 4 сознательно сузил объём), упаковка runtime стороннего
+toolkit'а в `/data` через воспроизводимый build-скрипт. Полноценный
+input-method-v2/OSK, clipboard-через-policy, GPU-ускорение, полные
+KDE/GNOME sessions и XWayland не входят -- каждый закрыт отдельной ADR
+как физически/архитектурно нереализуемый в разумном объёме на этом
+железе (ADR-022, ADR-023, ADR-024), не просто отложен.
 
 **Acceptance:** GTK-приложение и Qt/Kirigami-приложение запускаются,
 масштабируются, получают touch/text input, переживают switch и закрываются;
 системные разрешения нельзя обойти toolkit API; размер и память измерены.
 
 **Rollback:** удалить соответствующий runtime bundle без изменения shell.
+
+**Evidence (промежуточный, спринт не закрыт):** источник пакетов -- Alpine
+musl (ADR-021), не from-source. GPU-ускорение физически исключено --
+проприетарный Mali-блоб собран только под Android's HAL, открытый
+`panthor` требует ядро >=6.10 против GKI-залоченного 6.1.157 устройства
+(ADR-024). GTK4 (Alpine's `gtk4.0` 4.14.4) детерминированно падает на
+реальном aarch64 при создании wl_shm-буфера -- дефект апстрима,
+исчерпывающе локализован (не в коде проекта, не в sandbox/displayd, не
+content-зависим), но не устранён; заблокирован для физической приёмки
+(ADR-025). Qt5/QtQuick и Kirigami2 тем же методом подтверждены рабочими
+на том же железе (ADR-026) -- Change 7 переключил основной toolkit
+спринта на Qt/Kirigami. `org.saaios.demo.kirigami` -- первое реальное,
+воспроизводимо собираемое приложение стороннего toolkit'а -- прошло
+install→launch→stop→remove через настоящий `saai-appd`'s IPC на боевом
+устройстве (ADR-027); остаются непроверенными физический touch тапом
+(нет синтетического инжектора на `panther-hardware`, серийная консоль
+не может коснуться экрана) и негативный sandbox-тест на clipboard для
+конкретно этого приложения (общий пробел уже задокументирован
+отдельно, ADR-023). GTK-демо не собрано и не принято -- явно заблокировано
+находкой ADR-025, не входит в текущий критический путь.
 
 ## S09 — Intent → Task → Action
 
