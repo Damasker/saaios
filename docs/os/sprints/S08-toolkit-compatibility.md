@@ -141,8 +141,24 @@ Qt/Kirigami-приложение запускаются как обычные к
    задача, перенесена в Change 2. Clipboard-через-policy МЕХАНИЗМ и
    text-input/OSK-стратегия этим Change'м не решены -- остаются в
    Change 2/3.
-2. Недостающие Wayland-протоколы в `saai-displayd`, гейтится Change 1 --
-   минимум stub `wl_data_device_manager` (ADR-021) первым, до остального.
+2. **Готово (2026-09-10, `a6d9804`).** `wl_data_device_manager` в
+   `saai-displayd` -- через smithay's собственный `data_device` модуль
+   (`DataDeviceState` + `ClientDndGrabHandler`/`ServerDndGrabHandler`/
+   `SelectionHandler`/`DataDeviceHandler` с дефолтными no-op методами,
+   `delegate_data_device!`), тот же паттерн, что уже у compositor/shm/
+   seat/xdg_shell/session_lock/layer_shell. `set_data_device_focus()`
+   вызывается из `activate_toplevel()` -- независимо от наличия
+   клавиатуры (ADR-012), т.к. фокус clipboard/DnD следит за тем, какой
+   клиент владеет выделением, не за тем, какой получает key events.
+   Даёт реальный, рабочий client-to-client clipboard/DnD через
+   встроенный smithay-брокеринг offer/fd между клиентами -- не
+   протокольную заглушку -- но **намеренно не связано с S07's grants**:
+   `saai-appd`'s sandbox физически не видит этот трафик (Wayland wire
+   между двумя уже запущенными клиентами, вне mount/seccomp границы) --
+   явно задокументировано в коде как временный, ограниченный текущим
+   набором доверенных клиентов (`saai-shell` + demo-приложения) пробел,
+   не закрытая задача; привязка к `Capability::ClipboardRead/Write` --
+   отдельная будущая работа.
 3. Text-input-v3/input-method-v2 + экранная клавиатура в `saai-shell` для
    сторонних клиентов.
 4. Settings/theme portal поверх существующего portal-протокола (S07).
@@ -239,3 +255,31 @@ Qt5/Kirigami2's бинарники прошли `readelf -d` без недост
 блокер, узкая задача Change 2. Throwaway-артефакты спайка (`apk.static`,
 sysroot, `kirigami-spike.qml`) не закоммичены, живут в `/tmp/alpine-spike/`
 на R620, воспроизводимы по шагам ADR-021.
+
+Change 2: host -- `cargo build`/`cargo test -p saai-displayd` зелёные в
+обеих конфигурациях (default headless и `--features panther-hardware`),
+включая новый `data_device_global.rs` (спавнит настоящий бинарь
+`saai-displayd`, подключается plain `wayland-client`, проверяет
+`wl_data_device_manager` в списке globals). `fmt --check` и
+`clippy --all-targets -D warnings` чисты в обеих конфигурациях.
+`cargo test --workspace` -- 55 test-result блоков, все зелёные. Пересобран
+ADR-008's cross-sysroot (`build-cross-sysroot.sh`, не существовал на этом
+чекауте) и кросс-компилирован `saai-displayd` под aarch64-musl
+(`build-saai-displayd.sh`) -- 563 KB, `ARM aarch64, statically linked,
+stripped`.
+
+Физически на устройстве (Pixel 7, настоящий DRM/touch backend, не
+headless): бинарь развёрнут hot-swap'ом (`/saaios/saai-displayd`), хэш
+сверен на каждом шаге; `native-init.c`'s supervision корректно
+перезапустила и `saai-displayd`, и его дочерний `saai-shell` с верными
+хэшами. Одноразовый throwaway aarch64-бинарь `registry-probe` (голый
+`wayland-client`, собран тем же zig-кросс-тулчейном, что уже использует
+`saai-shell`/`saai-demo-surface`, не закоммичен) подключился к настоящему
+работающему compositor'у и подтвердил `wl_data_device_manager` среди
+объявленных globals -- впервые не в headless/qemu-эмуляции (ADR-021), а
+на реальном железе. `ext_session_lock_manager_v1`/`zwlr_layer_shell_v1`
+корректно не появились для этого непривилегированного пробника --
+существовавшая до этого изменения фильтрация `is_privileged_shell()`,
+подтверждено чтением кода, не регрессия. Реальный
+`org.saaios.demo-surface` запустился без регрессии под новой сборкой
+compositor'а. Устройство возвращено к исходному состоянию.
