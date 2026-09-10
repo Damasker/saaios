@@ -159,8 +159,22 @@ Qt/Kirigami-приложение запускаются как обычные к
    набором доверенных клиентов (`saai-shell` + demo-приложения) пробел,
    не закрытая задача; привязка к `Capability::ClipboardRead/Write` --
    отдельная будущая работа.
-3. Text-input-v3/input-method-v2 + экранная клавиатура в `saai-shell` для
-   сторонних клиентов.
+3. **Частично готово (2026-09-10, `5ded5dc`, ADR-022; input-method-v2/OSK
+   отложены, не сделаны).** `zwp_text_input_manager_v3` в `saai-displayd`
+   -- через smithay's `TextInputManagerState`, тот же паттерн, что и
+   `wl_data_device_manager` (ADR-021): фокус ведётся из
+   `activate_toplevel()`, независимо от клавиатуры. `zwp_input_method_
+   manager_v2` (сторона `saai-shell` как экранной клавиатуры) **не
+   реализован** -- физический спайк (7 вариантов компиляции keymap на
+   реальном Pixel 7, каждый в отдельном forked-процессе) доказал, что
+   smithay's `GetInputMethod`-обработчик безусловно требует рабочую
+   клавиатуру (`seat.get_keyboard().unwrap()`), а на этом железе не
+   компилируется НИ ОДИН keymap -- даже полностью самодостаточный,
+   написанный вручную, без единого обращения к файлам. Это глубже, чем
+   диагноз ADR-012 ("неполный xkb-data") -- вероятно баг в самой сборке
+   `libxkbcommon.a`. Три пути вперёд (расследовать xkbcommon-баг,
+   написать input-method-v2 вручную в обход smithay, патчить smithay) --
+   ни один не выбран, каждый требует отдельного решения.
 4. Settings/theme portal поверх существующего portal-протокола (S07).
 5. Clipboard через policy -- конкретная реализация выбранного в Change 1
    варианта.
@@ -283,3 +297,23 @@ headless): бинарь развёрнут hot-swap'ом (`/saaios/saai-displayd
 подтверждено чтением кода, не регрессия. Реальный
 `org.saaios.demo-surface` запустился без регрессии под новой сборкой
 compositor'а. Устройство возвращено к исходному состоянию.
+
+Change 3: полный ход расследования и семь проверенных вариантов -- в
+ADR-022. Host -- `cargo build`/`cargo test -p saai-displayd` зелёные в
+обеих конфигурациях, включая новый `text_input_global.rs` (спавнит
+настоящий `saai-displayd`, биндит `zwp_text_input_manager_v3`, вызывает
+`enable()`+`commit()`, проверяет что roundtrip завершается и процесс жив
+-- именно тот сценарий, что упал бы, будь диагноз ADR-022 неверным).
+`fmt --check`/`clippy --all-targets -D warnings` чисты в обеих
+конфигурациях. `cargo test --workspace` -- 56 test-result блоков, все
+зелёные. Кросс-компилирован `saai-displayd` (579 KB).
+
+Физически на устройстве: бинарь развёрнут hot-swap'ом, хэш сверен.
+Throwaway aarch64-бинарь `text-input-probe` (plain `wayland-client` +
+`wayland-protocols`, тот же zig-тулчейн) на реальном работающем
+compositor'е забиндил `zwp_text_input_manager_v3`, вызвал
+`enable()`+`commit()`, дождался roundtrip -- `RESULT: PASS`. Отдельно
+подтверждено `ps`/`sha256sum /proc/<pid>/exe`, что `saai-displayd` не
+перезапустился (тот же pid, тот же хэш) -- то есть не упал. Реальный
+`org.saaios.demo-surface` запустился без регрессии. Устройство возвращено
+к исходному состоянию.
