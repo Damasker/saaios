@@ -2,10 +2,76 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
+
+/// OpenAI's function-calling API only accepts names matching
+/// `^[a-zA-Z0-9_-]+$` -- this project's tool names use dot-separated
+/// namespacing (`memory.remember`, `system.metrics`, ...), which a real
+/// strict-validating OpenAI-compatible endpoint rejects outright (verified
+/// against Requesty.ai: "Invalid 'tools[0].function.name': string does not
+/// match pattern"). Encode only at this API boundary -- tool-registry,
+/// policy-engine, and everything else keep using the dotted names
+/// unchanged. A lookup table (not a blind `.`/`_` swap) is required for a
+/// correct round trip: some tool names already contain underscores of
+/// their own (`process.kill_request`), so replacing `_` back to `.`
+/// wherever it appears would corrupt those.
+fn sanitize_tool_name(name: &str) -> String {
+    name.replace('.', "_")
+}
+
+/// Conversation history sent back on every follow-up turn embeds the
+/// assistant's own prior `tool_calls[].function.name` (from an earlier
+/// `ChatMessage::assistant_with_tools`) -- the SAME strict validator that
+/// rejects a dotted name in `tools[]` also rejects one here, confirmed
+/// physically (a tool-triggering follow-up question 400'd the same way
+/// after only `build_tool_defs` was fixed). The forward direction has no
+/// ambiguity (unlike the reverse lookup in `build_tool_defs`'s
+/// `name_map`), so a plain `sanitize_tool_name` call is enough -- this
+/// never needs to invert it, only keep it consistent with what the
+/// current turn's `tools[]` array already sent.
+fn sanitize_messages_for_wire(messages: &[ChatMessage]) -> Value {
+    let mut value = serde_json::to_value(messages).unwrap_or_else(|_| json!([]));
+    if let Some(list) = value.as_array_mut() {
+        for message in list.iter_mut() {
+            let Some(calls) = message.get_mut("tool_calls").and_then(|v| v.as_array_mut()) else {
+                continue;
+            };
+            for call in calls.iter_mut() {
+                if let Some(name) = call.pointer("/function/name").and_then(|v| v.as_str()) {
+                    let sanitized = sanitize_tool_name(name);
+                    if let Some(slot) = call.pointer_mut("/function/name") {
+                        *slot = Value::String(sanitized);
+                    }
+                }
+            }
+        }
+    }
+    value
+}
+
+fn build_tool_defs(tools: &[ToolDefinition]) -> (Vec<Value>, HashMap<String, String>) {
+    let mut name_map = HashMap::with_capacity(tools.len());
+    let defs = tools
+        .iter()
+        .map(|t| {
+            let sanitized = sanitize_tool_name(&t.name);
+            name_map.insert(sanitized.clone(), t.name.clone());
+            json!({
+                "type": "function",
+                "function": {
+                    "name": sanitized,
+                    "description": t.description,
+                    "parameters": t.parameters
+                }
+            })
+        })
+        .collect();
+    (defs, name_map)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -339,23 +405,11 @@ impl ModelProvider for OpenAiCompatProvider {
             "{}/chat/completions",
             self.config.api_base.trim_end_matches('/')
         );
-        let tool_defs: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters
-                    }
-                })
-            })
-            .collect();
+        let (tool_defs, name_map) = build_tool_defs(tools);
 
         let body = json!({
             "model": self.config.model,
-            "messages": messages,
+            "messages": sanitize_messages_for_wire(messages),
             "tools": tool_defs,
             "tool_choice": "auto"
         });
@@ -379,11 +433,14 @@ impl ModelProvider for OpenAiCompatProvider {
         let mut tool_calls = Vec::new();
         if let Some(arr) = message.get("tool_calls").and_then(|v| v.as_array()) {
             for item in arr {
-                let name = item
+                let sanitized = item
                     .pointer("/function/name")
                     .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string();
+                    .unwrap_or_default();
+                let name = name_map
+                    .get(sanitized)
+                    .cloned()
+                    .unwrap_or_else(|| sanitized.to_string());
                 let args_raw = item
                     .pointer("/function/arguments")
                     .and_then(|v| v.as_str())
@@ -418,23 +475,11 @@ impl ModelProvider for OpenAiCompatProvider {
             "{}/chat/completions",
             self.config.api_base.trim_end_matches('/')
         );
-        let tool_defs: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters
-                    }
-                })
-            })
-            .collect();
+        let (tool_defs, name_map) = build_tool_defs(tools);
 
         let body = json!({
             "model": self.config.model,
-            "messages": messages,
+            "messages": sanitize_messages_for_wire(messages),
             "tools": tool_defs,
             "tool_choice": "auto",
             "stream": true
@@ -492,10 +537,14 @@ impl ModelProvider for OpenAiCompatProvider {
                         while tool_acc.len() <= idx {
                             tool_acc.push((String::new(), String::new()));
                         }
-                        if let Some(name) = item.pointer("/function/name").and_then(|v| v.as_str())
+                        if let Some(sanitized) =
+                            item.pointer("/function/name").and_then(|v| v.as_str())
                         {
-                            if !name.is_empty() {
-                                tool_acc[idx].0 = name.to_string();
+                            if !sanitized.is_empty() {
+                                tool_acc[idx].0 = name_map
+                                    .get(sanitized)
+                                    .cloned()
+                                    .unwrap_or_else(|| sanitized.to_string());
                             }
                         }
                         if let Some(args) =
