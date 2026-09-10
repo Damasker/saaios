@@ -86,13 +86,52 @@ portal (только точка входа "кто через кого").
    пустой список capability считался непокрытым (нет записи -> нет
    согласия), из-за чего `effective_capabilities()` падал на `.expect()`
    -- пустой запрос теперь тривиально покрыт без обращения к диску.
-5. `saai-appd`'s `spawn()`: `pre_exec()` с `unshare(NEWNS|NEWNET|NEWIPC|NEWUTS)`
-   (кроме `NEWNET` при `net.internet`), private/rslave root, tmpfs-маскирование
-   `/data/saaios/{apps,packages}`, `/data/saaios/var/apps`,
-   `/data/saaios/var/entities` с explicit bind-mount назад собственных путей
-   приложения.
-6. seccomp-фильтр (`seccompiler`) с deny-list из ADR-020, применяется тем же
-   `pre_exec()` после `PR_SET_NO_NEW_PRIVS`.
+5. **Готово (2026-09-10, `0807124`, fix `9af6a9e`).** `saai-appd`'s
+   `spawn()`: новый модуль `sandbox.rs`, вызывается из
+   `Command::pre_exec()` (после `fork()`, до `execve()`, единственный
+   поток дочернего процесса) -- `unshare(NEWNS|NEWIPC|NEWUTS)` (плюс
+   `NEWNET`, кроме случая `net.internet` в выданных grants), затем
+   `mount("/", MS_REC|MS_PRIVATE)`, затем tmpfs-маскирование
+   `apps_dir`/`apps_data_dir` с explicit bind-mount назад собственных
+   code/data путей приложения (code -- read-only, data -- read-write),
+   затем tmpfs-маскирование `var/entities` без reveal вообще (S06's
+   `saai-entityd` -- единственная санкционированная дверь). Деградирует
+   в отсутствие изоляции без ошибки, если процесс не root (`saai-appd`'s
+   собственный test suite на R620 работает под непривилегированным
+   пользователем и не может создавать namespaces/mount) -- реальное
+   устройство (`native-init.c`) всегда root, так что production launch
+   этим fallback'ом не затронут.
+
+   На первой же реальной попытке запуска (`org.saaios.demo-surface`)
+   найден и физически продиагностирован (throwaway C-спайк
+   `mount-mask-spike.c`) баг: маскирование родителя *после*
+   bind-mount'а каталога на самого себя не сохраняет каталог
+   достижимым по тому же пути -- маскирование родителя пересобирает
+   путь заново через новый (пустой) tmpfs. Исправлено (коммит
+   `9af6a9e`, второй спайк `mount-mask-spike2.c` подтвердил каждую
+   проверку) через промежуточный scratch-путь вне маскируемого дерева:
+   bind-mount оригинала в `/run/saaios/.sandbox-reveal/<pid>/{code,data}`
+   *до* маскирования, затем `MS_MOVE` scratch-mount на место после
+   маскирования и создания свежего каталога внутри нового tmpfs. Тем же
+   коммитом устранена побочная утечка: пустой per-pid scratch-каталог
+   больше не остаётся в `/run/saaios/.sandbox-reveal/` после запуска.
+
+   Отдельно расследовано и закрыто как false alarm: реальный
+   `saai-demo-surface` завершается почти сразу после запуска
+   (`state: stopped`, не `crash_limited`) -- временная инструментация
+   (`Stdio::inherit()` вместо `Stdio::null()`, откачена после проверки)
+   показала в `/run/saai-appd.log`, что это штатное поведение
+   тестового клиента (подключился, отрисовал один кадр, вышел), не
+   баг sandbox.
+6. **Готово (2026-09-10, `0807124`).** seccomp-фильтр (`seccompiler`) с
+   deny-list из ADR-020 (`ptrace`/`kill`/`tkill`/`tgkill`, `mount`/
+   `umount2`/`pivot_root`/`chroot`, `unshare`/`setns`, `reboot`/
+   `init_module`/`delete_module`/`kexec_load`/`personality`), применяется
+   тем же `pre_exec()` сразу после mount-масок. Известный, задокументированный
+   в коде пробел: `clone` сам по себе не запрещён (иначе сломалось бы
+   обычное создание потоков любым рантаймом на платформе, включая Rust's
+   std) -- аргумент-специфичная фильтрация только `CLONE_NEW*`-флагов вне
+   рамок этой версии.
 7. Portal точка входа: `saai-shell` посредник для `clipboard.read/write` и
    `portal.open_file`, без реализации UI выбора файла целиком (достаточно
    протокольной точки входа и одного сквозного сценария).
@@ -212,3 +251,49 @@ org.saaios.demo-surface` и позже `consent accepted for
 org.saaios.demo-surface`; после accept demo-app физически запустился и
 получил фокус (собственная тестовая поверхность). Устройство
 возвращено к исходному состоянию (проверено `list()`).
+
+Change 5/6: реальный namespace/seccomp-спайк (тот же, что лёг в основу
+ADR-020) подтвердил на этом ядре доступность `CLONE_NEWNS`/`NEWNET`/
+`NEWIPC`/`NEWUTS` и присутствие `CONFIG_SECCOMP`/`CONFIG_SECCOMP_FILTER`
+до начала этой работы. Wiring в `spawn()` прошёл через один реальный
+баг (см. Change 5 выше) и один false alarm (демо-приложение штатно
+завершается после одного кадра), оба закрыты физической диагностикой
+на устройстве, а не предположением.
+
+Финальная (после коммита `9af6a9e`) headless-проверка на R620: `cargo
+build`/`cargo test -p saai-appd` (33 unit + 2 integration теста,
+включая `sandbox::tests::
+non_root_degrades_to_no_isolation_instead_of_failing_the_launch`),
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
+-- -D warnings`, `cargo test --workspace` (все крейты зелёные) и
+`tests/application-wayland-host.sh` (S05's acceptance-скрипт) -- все
+чисто. Кросс-компиляция `build-saai-appd.sh` под
+`aarch64-unknown-linux-musl` подтверждена (`file`: `ELF 64-bit LSB
+executable, ARM aarch64, ..., statically linked, stripped`; sha256
+`fc331e31f1f9c57ed40c2ebe521bf9e3f8d17f5c1b306778b93ca1bd24224526`).
+
+Физически на устройстве: бинарь развёрнут тем же hot-swap-паттерном
+(scp -> HTTP -> `wget` на телефоне -> атомарный `mv` поверх
+`/data/saaios/system/saai-appd` -> `kill` старого pid -> проверка
+sha256 нового pid'а через `/proc/<pid>/exe`), хэш подтверждён
+идентичным на обоих концах на каждом шаге. Два последовательных
+запуска реального `org.saaios.demo-surface` через прямой запрос к
+`appd.sock` (`sockprobe`) оба вернули `launched` -> чистый `stopped`;
+`/run/saaios/.sandbox-reveal/` не получил ни одного нового
+scratch-каталога ни после первого, ни после второго запуска (три
+каталога-свидетеля старого бага, `583`/`601`/`616`, оставлены как есть
+-- `/run` это tmpfs, переживёт только до перезагрузки). Финальный
+`list()` подтвердил, что состояние реального приложения не тронуто:
+`requested_capabilities: []`, `consent_needed: false`, `state:
+"stopped"`.
+
+Не проверено отдельным устройство-специфичным тестом в этом раунде
+(оставлено как открытый пункт): явное подтверждение, что `CLONE_NEWNET`
+физически блокирует сетевое соединение изнутри sandboxed процесса, и
+что seccomp-фильтр реально возвращает `EPERM` на запрещённый syscall
+(например `ptrace`) из живого процесса, а не только успешно
+устанавливается. Текущее свидетельство для обоих механизмов --
+косвенное (спайк ADR-020 для namespace-семантики; отсутствие ошибки
+при `install_seccomp_filter()` во время успешного запуска для BPF).
+Это отдельный пункт fault-injection'а в Change 8, не закрывается этим
+изменением.
