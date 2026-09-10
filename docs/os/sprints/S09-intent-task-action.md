@@ -2,11 +2,14 @@
 
 ## Паспорт
 
-- Состояние: `Ready` (2026-09-11, Definition of Ready).
+- Состояние: `In progress` (2026-09-11, Change 1 начат).
 - Зависит от: S06 (`Done`), S07 (`Done`).
-- Архитектурные решения: ни одной ADR под этот спринт ещё не принято --
-  Change 1 обязан закрыть два вопроса ниже архитектурным решением
-  (или явной пометкой "не нужно") до любого другого кода.
+- Архитектурные решения: ADR-029 -- text-input вопрос закрыт физически:
+  bespoke touch-hit-test клавиатура внутри `saai-shell`, той же
+  `Node`/`layout`/`hit_test` системой, что уже рисует весь остальной
+  UI, без единого обращения к `libxkbcommon`/generic Wayland
+  text-input. Второй вопрос Change 1 (Intent/Task/Action's модель
+  данных -- native entity store vs Platform Track) ещё не решён.
 - Рабочий fallback: `saai-shell` и весь S05-S08 стек продолжают работать
   без единого изменения, пока Intent/Task/Action не введены -- ничего в
   этом спринте не меняет уже работающий touch/app-lifecycle путь.
@@ -163,3 +166,22 @@ consent-паттерн новым путём.
 
 Заполняется по каждому Change только после зелёных host/device
 проверок.
+
+Change 1 (текстовый ввод, наполовину): полный ход и физическое
+доказательство -- ADR-029. Кратко: throwaway-патч `saai-shell`
+(6-клавишная клавиатура `H`/`I`/`!`/`DEL`/`CLR`/`OK`, той же
+`Node`/`layout`/`hit_test` системой, что `tab_at()`/`consent_action_at()`)
+собран (`cargo build/test -p saai-shell` host, зелёные, 16 тестов),
+кросс-компилирован под aarch64-musl, физически развёрнут на реальном
+Pixel 7 -- throwaway `panther-hardware saai-displayd` (хэш совпадает с
+боевым) в изолированном `unshare -m` namespace, модифицированный
+`saai-shell` bind-mount'ится поверх `/saaios/saai-shell` только внутри
+этого namespace, реальный боевой `saai-shell` (pid 613) не затронут.
+Синтетическая evdev-инъекция через `uinput` (тот же метод, что
+ADR-028) отправила 4 тапа по реальным координатам клавиш -- итоговый
+лог: `keyboard-test buffer now: "H"` -> `"HI"` -> `"HI!"` ->
+`keyboard-test RESULT: "HI!"`. Диагностический патч отменён
+(`git checkout --`), пересобранный `saai-shell`'s хэш (`34653527...`)
+подтверждён байт-в-байт идентичным работающему боевому процессу.
+Второй вопрос Change 1 (Intent/Task/Action's модель данных) остаётся
+открытым.

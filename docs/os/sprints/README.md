@@ -18,7 +18,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S06 | Настоящие пространства и entity store | Done | S05 |
 | S07 | Capability, sandbox и portals | Done | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Done (переоцененный объём) | S07 |
-| S09 | Intent → Task → Action workflow | Ready | S06, S07 |
+| S09 | Intent → Task → Action workflow | In progress | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
 | S11 | GPU, power, OTA и release gate | Backlog | S04–S10 |
 
@@ -269,14 +269,17 @@ compositor. Устройство возвращено к исходному со
 чатовый запрос.
 
 **Scope:** Change 1 (обязательно первым, спайк + ADR) решает два вопроса
-без готового ответа сегодня: (1) как вообще физически вводится текст на
-этом устройстве -- `saai-shell` не имеет ни одного экрана ввода текста
+без готового ответа. (1) **Закрыт физически (ADR-029):** как вводится
+текст -- `saai-shell` не имел ни одного экрана ввода текста
 (`KeyboardInteractivity::None`), а generic `input-method-v2`/OSK-путь
 для сторонних клиентов уже физически доказан нерабочим на этом железе
-(ADR-022, `libxkbcommon` крашится на любом keymap) -- кандидат: bespoke
-touch-hit-test клавиатура внутри `saai-shell`, тот же класс решения, что
-уже использует `drm-splash.c`, без единого обращения к `libxkbcommon`;
-(2) как `Intent`/`Task`/`Action`/`Result` соотносятся с уже существующей
+(ADR-022, `libxkbcommon` крашится на любом keymap). Bespoke touch-hit-test
+клавиатура внутри `saai-shell` (та же `Node`/`layout`/`hit_test` система,
+что уже рисует весь остальной UI, без единого обращения к
+`libxkbcommon`) физически собрала реальную строку из синтетических
+evdev-тапов (`uinput`, метод ADR-028) -- throwaway-патч отменён,
+`saai-shell` пересобран и подтверждён байт-в-байт идентичным боевому.
+(2) **Открыт:** как `Intent`/`Task`/`Action`/`Result` соотносятся с уже существующей
 Platform Track'а инфраструктурой (`crates/policy-engine`,
 `tool-registry`, `automation-engine` -- `PendingConfirmation`/
 `RiskLevel` уже решают смежную, но не идентичную задачу, ADR-004 называет
