@@ -68,6 +68,14 @@ static bool internet_connect_fails(void) {
     return result < 0;
 }
 
+/* Picking the write target matters: /init looked like an obvious choice
+ * but always fails with ETXTBSY (26, "Text file busy") because PID 1 is
+ * actively executing from it -- true unsandboxed too, so it never actually
+ * exercised the read-only root mount at all (confirmed with a throwaway
+ * on-device spike, root-ro-spike.c, not committed). /plat_property_contexts
+ * is a plain, always-present, never-executing regular file directly on the
+ * rootfs -- writable unsandboxed (verified), EROFS once the sandbox seals
+ * root read-only. */
 static bool write_fails(const char *path) {
     errno = 0;
     int fd = open(path, O_WRONLY | O_CLOEXEC);
@@ -101,7 +109,7 @@ int main(void) {
     check(absent("/sys/class"), "sysfs hidden");
     check(absent("/dev/dri/card0"), "DRM device hidden");
     check(absent("/dev/input"), "input devices hidden");
-    check(write_fails("/init"), "root filesystem is read-only");
+    check(write_fails("/plat_property_contexts"), "root filesystem is read-only");
     check(unix_connect_fails("/run/saaios/appd.sock"), "appd connect denied");
     check(unix_connect_fails("/run/saaios/entityd.sock"), "entityd connect denied");
     check(internet_connect_fails(), "network unavailable without net.internet");
