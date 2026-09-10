@@ -128,7 +128,10 @@ fn pin_file(source: &Path, scratch: &Path) -> io::Result<()> {
     if file_type.is_dir() || file_type.is_symlink() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("sandbox endpoint is not a direct file: {}", source.display()),
+            format!(
+                "sandbox endpoint is not a direct file: {}",
+                source.display()
+            ),
         ));
     }
     File::create(scratch)?;
@@ -268,14 +271,11 @@ fn drop_all_capabilities() -> io::Result<()> {
         version: LINUX_CAPABILITY_VERSION_3,
         pid: 0,
     };
-    let mut data = [
-        CapabilityData {
-            effective: 0,
-            permitted: 0,
-            inheritable: 0,
-        };
-        2
-    ];
+    let mut data = [CapabilityData {
+        effective: 0,
+        permitted: 0,
+        inheritable: 0,
+    }; 2];
     let result = unsafe { libc::syscall(libc::SYS_capset, &mut header, data.as_mut_ptr()) };
     if result < 0 {
         return Err(io::Error::last_os_error());
