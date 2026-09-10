@@ -26,3 +26,7 @@ sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
+# Only for the wl_data_device_manager registry-presence test (ADR-021) --
+# a plain client connecting to the real spawned saai-displayd binary, the
+# same way saai-demo-surface and saai-shell already do in production.
+wayland-client = "0.31"

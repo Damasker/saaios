@@ -31,8 +31,8 @@ use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
-    delegate_compositor, delegate_layer_shell, delegate_output, delegate_seat,
-    delegate_session_lock, delegate_shm, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output,
+    delegate_seat, delegate_session_lock, delegate_shm, delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -55,6 +55,13 @@ use smithay::{
             CompositorState, SurfaceAttributes,
         },
         output::OutputHandler,
+        selection::{
+            data_device::{
+                set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
+                ServerDndGrabHandler,
+            },
+            SelectionHandler,
+        },
         session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
         shell::{
             wlr_layer::{LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
@@ -91,7 +98,22 @@ struct State {
     shm_state: ShmState,
     xdg_shell_state: XdgShellState,
     seat_state: SeatState<State>,
-    _seat: Seat<State>,
+    seat: Seat<State>,
+    /// ADR-021 (S08 Change 2): GTK4's `_gdk_wayland_display_open()`
+    /// unconditionally requires `wl_data_device_manager` alongside
+    /// `wl_compositor`/`wl_shm` -- without it, GTK4 refuses to open a
+    /// Wayland display at all, confirmed physically against this exact
+    /// compositor build (see ADR-021's Evidence). This wires up smithay's
+    /// own data-device implementation (real client-to-client clipboard/DnD,
+    /// not a protocol-level no-op) so the global exists and clients can use
+    /// it -- capability-gating clipboard reads/writes against S07's grants
+    /// is explicitly NOT done here (see `DataDeviceHandler`/`SelectionHandler`
+    /// impls below), left for a later change once the policy mechanism is
+    /// decided.
+    data_device_state: DataDeviceState,
+    /// Needed by `set_data_device_focus` in `activate_toplevel()` -- cheap
+    /// to clone, kept here rather than threading it through every call site.
+    dh: DisplayHandle,
     // No keyboard capability on the real Pixel 7 build (ADR-012): this
     // device has no physical keyboard, and drm-splash.c's own on-screen
     // keyboard proves this architecture never needed wl_keyboard/xkbcommon
@@ -244,6 +266,15 @@ impl State {
             return;
         }
         self.focused_surface = surface.clone();
+        // Independent of keyboard availability (ADR-012's touch-only
+        // panther-hardware build included) -- clipboard/DnD focus tracks
+        // which client currently owns the selection target, not which
+        // client can receive key events.
+        set_data_device_focus(
+            &self.dh,
+            &self.seat,
+            surface.as_ref().and_then(Resource::client),
+        );
         #[cfg(not(feature = "panther-hardware"))]
         {
             let serial = SERIAL_COUNTER.next_serial();
@@ -557,6 +588,37 @@ impl SeatHandler for State {
 }
 delegate_seat!(State);
 
+// ADR-021 (S08 Change 2): existence-only. These default-method impls give
+// working client-to-client clipboard/drag-and-drop through smithay's own
+// data-device machinery (offers and fds are brokered directly between the
+// two client connections, not routed through this compositor's own
+// storage) -- enough for `_gdk_wayland_display_open()` to stop refusing
+// GTK4 clients, and for real inter-app copy/paste to function.
+//
+// This is NOT yet gated by S07's capability grants: any two clients that
+// can both reach this compositor can already copy/paste between each
+// other today, the same as an unmodified desktop compositor. `saai-appd`'s
+// sandbox has no way to see or intercept this at all -- it is Wayland
+// protocol traffic between two already-launched client processes, entirely
+// outside the mount/seccomp boundary. Acceptable for now only because the
+// only Wayland clients that exist are `saai-shell` and the trusted demo
+// apps (same scope note as S05's "only trusted applications" and S07's
+// sandbox-probe suite) -- this must not be read as "clipboard capability
+// enforcement is done". Gating this against `Capability::ClipboardRead`/
+// `ClipboardWrite` is explicit, tracked follow-up work, not implied by
+// this Change.
+impl ClientDndGrabHandler for State {}
+impl ServerDndGrabHandler for State {}
+impl SelectionHandler for State {
+    type SelectionUserData = ();
+}
+impl DataDeviceHandler for State {
+    fn data_device_state(&self) -> &DataDeviceState {
+        &self.data_device_state
+    }
+}
+delegate_data_device!(State);
+
 impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
@@ -707,6 +769,7 @@ fn main() {
     let compositor_state = CompositorState::new::<State>(&dh);
     let shm_state = ShmState::new::<State>(&dh, Vec::new());
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
+    let data_device_state = DataDeviceState::new::<State>(&dh);
     let mut seat_state = SeatState::<State>::new();
     let mut seat = seat_state.new_wl_seat(&dh, "seat0");
     #[cfg(not(feature = "panther-hardware"))]
@@ -916,7 +979,9 @@ fn main() {
         shm_state,
         xdg_shell_state,
         seat_state,
-        _seat: seat,
+        seat,
+        data_device_state,
+        dh: dh.clone(),
         #[cfg(not(feature = "panther-hardware"))]
         keyboard: keyboard.clone(),
         focused_surface: None,
