@@ -1251,11 +1251,19 @@ impl Shell {
                         self.apps_by_pid.insert(pid, event.app_id.clone());
                     }
                 }
-                LifecycleEventKind::Removed => {
-                    self.apps_by_pid.retain(|_, app_id| *app_id != event.app_id);
-                    self.apps_grants.remove(&event.app_id);
+                LifecycleEventKind::Stopped
+                | LifecycleEventKind::Crashed
+                | LifecycleEventKind::CrashLimited
+                | LifecycleEventKind::Removed => {
+                    if let Some(pid) = event.pid {
+                        self.apps_by_pid.remove(&pid);
+                    }
+                    if event.event == LifecycleEventKind::Removed {
+                        self.apps_by_pid.retain(|_, app_id| *app_id != event.app_id);
+                        self.apps_grants.remove(&event.app_id);
+                    }
                 }
-                _ => {}
+                LifecycleEventKind::Installed => {}
             },
             _ => {}
         }

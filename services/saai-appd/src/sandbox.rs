@@ -104,6 +104,7 @@ pub fn apply(
     let _ = fs::remove_dir_all(&scratch_root);
     mask_tmpfs(Path::new("/tmp"), "mode=1777,size=16m", true)?;
 
+    make_root_read_only()?;
     drop_all_capabilities()?;
 
     install_seccomp_filter()?;
@@ -230,6 +231,28 @@ fn mask_device_tree(scratch_root: &Path) -> io::Result<()> {
     mask_tmpfs(Path::new("/dev/shm"), "mode=1777,size=8m", false)
 }
 
+fn make_root_read_only() -> io::Result<()> {
+    // A read-only bind of the root mount protects writable initramfs files
+    // such as `/init`. The explicit app-data bind mount remains a separate
+    // writable child mount; code is already a separate read-only child mount.
+    mount(
+        Some("/"),
+        "/",
+        None::<&str>,
+        MsFlags::MS_BIND,
+        None::<&str>,
+    )
+    .map_err(nix_to_io)?;
+    mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
+        None::<&str>,
+    )
+    .map_err(nix_to_io)
+}
+
 #[repr(C)]
 struct CapabilityHeader {
     version: u32,
@@ -323,11 +346,27 @@ const DENIED_SYSCALLS: &[i64] = &[
     libc::SYS_delete_module,
     libc::SYS_kexec_load,
     libc::SYS_personality,
+    libc::SYS_bpf,
+    libc::SYS_perf_event_open,
+    libc::SYS_open_by_handle_at,
+    libc::SYS_name_to_handle_at,
+    libc::SYS_mknodat,
+    libc::SYS_swapon,
+    libc::SYS_swapoff,
+    libc::SYS_keyctl,
+    libc::SYS_add_key,
+    libc::SYS_request_key,
 ];
+
+#[cfg(target_arch = "x86_64")]
+const ARCH_DENIED_SYSCALLS: &[i64] = &[libc::SYS_mknod];
+
+#[cfg(target_arch = "aarch64")]
+const ARCH_DENIED_SYSCALLS: &[i64] = &[];
 
 fn install_seccomp_filter() -> io::Result<()> {
     let mut rules = BTreeMap::new();
-    for syscall in DENIED_SYSCALLS {
+    for syscall in DENIED_SYSCALLS.iter().chain(ARCH_DENIED_SYSCALLS) {
         rules.insert(*syscall, Vec::new());
     }
     let filter = SeccompFilter::new(

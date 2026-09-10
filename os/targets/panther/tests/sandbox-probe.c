@@ -68,6 +68,16 @@ static bool internet_connect_fails(void) {
     return result < 0;
 }
 
+static bool write_fails(const char *path) {
+    errno = 0;
+    int fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        close(fd);
+        return false;
+    }
+    return errno == EROFS || errno == EACCES || errno == ENOENT;
+}
+
 int main(void) {
     const char *data = getenv("SAAIOS_DATA_DIR");
     if (!data) {
@@ -91,6 +101,7 @@ int main(void) {
     check(absent("/sys/class"), "sysfs hidden");
     check(absent("/dev/dri/card0"), "DRM device hidden");
     check(absent("/dev/input"), "input devices hidden");
+    check(write_fails("/init"), "root filesystem is read-only");
     check(unix_connect_fails("/run/saaios/appd.sock"), "appd connect denied");
     check(unix_connect_fails("/run/saaios/entityd.sock"), "entityd connect denied");
     check(internet_connect_fails(), "network unavailable without net.internet");
