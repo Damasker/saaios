@@ -2170,6 +2170,7 @@ dependencies = [
  "smithay",
  "tempfile",
  "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

@@ -32,7 +32,8 @@ use smithay::input::keyboard::Keycode;
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
     delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output,
-    delegate_seat, delegate_session_lock, delegate_shm, delegate_xdg_shell,
+    delegate_seat, delegate_session_lock, delegate_shm, delegate_text_input_manager,
+    delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -69,6 +70,7 @@ use smithay::{
         },
         shm::{with_buffer_contents, ShmHandler, ShmState},
         socket::ListeningSocketSource,
+        text_input::{TextInputHandle, TextInputManagerState},
     },
 };
 
@@ -114,6 +116,26 @@ struct State {
     /// Needed by `set_data_device_focus` in `activate_toplevel()` -- cheap
     /// to clone, kept here rather than threading it through every call site.
     dh: DisplayHandle,
+    /// ADR-022 (S08 Change 3): `zwp_text_input_manager_v3` only -- the
+    /// client-facing half of text-input-v3, letting GTK4/Qt apps enable a
+    /// text field and receive `enter`/`leave` without touching any keyboard
+    /// machinery at all (confirmed by reading smithay's own
+    /// `GetTextInput` handler: it only touches per-seat `TextInputHandle`/
+    /// `InputMethodHandle` user data, never `Seat::get_keyboard()`).
+    /// Deliberately NOT paired with `InputMethodManagerState` -- a spike
+    /// proved `zwp_input_method_manager_v2`'s `GetInputMethod` handler
+    /// unconditionally calls `seat.get_keyboard().unwrap()`, and a working
+    /// keymap is not obtainable on this device at all (ADR-022 supersedes
+    /// ADR-012's narrower "incomplete xkb-data" diagnosis: even a fully
+    /// self-contained from-string keymap with zero file/rule-path
+    /// dependency SIGTRAPs here). Enabling a text field currently has no
+    /// on-screen keyboard to answer it -- a real, tracked limitation, not
+    /// silently dropped -- see ADR-022.
+    /// Kept alive for the lifetime of the process -- not read again after
+    /// construction, same reasoning as `_wl_output` above: the global it
+    /// registered, and the per-object dispatch `delegate_text_input_manager!`
+    /// wires up, don't need the field's value, only its existence.
+    _text_input_manager_state: TextInputManagerState,
     // No keyboard capability on the real Pixel 7 build (ADR-012): this
     // device has no physical keyboard, and drm-splash.c's own on-screen
     // keyboard proves this architecture never needed wl_keyboard/xkbcommon
@@ -275,6 +297,19 @@ impl State {
             &self.seat,
             surface.as_ref().and_then(Resource::client),
         );
+        // ADR-022 (S08 Change 3): same reasoning -- text-input-v3 focus is
+        // "which client's field is live", not "which client gets key
+        // events". `insert_if_missing` matches smithay's own `GetTextInput`
+        // handler (text_input/mod.rs) -- a `TextInputHandle` may not exist
+        // yet for this seat if no client has ever bound text-input-v3.
+        self.seat
+            .user_data()
+            .insert_if_missing(TextInputHandle::default);
+        if let Some(text_input_handle) = self.seat.user_data().get::<TextInputHandle>().cloned() {
+            text_input_handle.leave();
+            text_input_handle.set_focus(surface.clone());
+            text_input_handle.enter();
+        }
         #[cfg(not(feature = "panther-hardware"))]
         {
             let serial = SERIAL_COUNTER.next_serial();
@@ -619,6 +654,14 @@ impl DataDeviceHandler for State {
 }
 delegate_data_device!(State);
 
+// ADR-022 (S08 Change 3): no custom handler trait needed -- smithay's own
+// GetTextInput/text-input-object request handling covers the full
+// zwp_text_input_v3 surface (enable/disable/commit/set_surrounding_text/
+// content type/cursor rectangle) without any hook back into this State.
+// Focus tracking is driven from `activate_toplevel()`, the same place
+// `set_data_device_focus` is called from.
+delegate_text_input_manager!(State);
+
 impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
@@ -770,6 +813,7 @@ fn main() {
     let shm_state = ShmState::new::<State>(&dh, Vec::new());
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
     let data_device_state = DataDeviceState::new::<State>(&dh);
+    let text_input_manager_state = TextInputManagerState::new::<State>(&dh);
     let mut seat_state = SeatState::<State>::new();
     let mut seat = seat_state.new_wl_seat(&dh, "seat0");
     #[cfg(not(feature = "panther-hardware"))]
@@ -982,6 +1026,7 @@ fn main() {
         seat,
         data_device_state,
         dh: dh.clone(),
+        _text_input_manager_state: text_input_manager_state,
         #[cfg(not(feature = "panther-hardware"))]
         keyboard: keyboard.clone(),
         focused_surface: None,
