@@ -17,7 +17,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S05 | Приложения, manifest и lifecycle | Done | S04 |
 | S06 | Настоящие пространства и entity store | Done | S05 |
 | S07 | Capability, sandbox и portals | Done | S05, S06 |
-| S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
+| S08 | GTK и Qt/Kirigami совместимость | Ready | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
 | S11 | GPU, power, OTA и release gate | Backlog | S04–S10 |
@@ -206,12 +206,18 @@ acceptance подтвердил, что effective grants (принятые и я
 
 ## S08 — GTK и Qt/Kirigami совместимость
 
+Рабочий паспорт и декомпозиция:
+[S08-toolkit-compatibility.md](S08-toolkit-compatibility.md).
+
 **Goal:** по одному настоящему адаптивному приложению обоих toolkit работает
 как обычный клиент SaaiOS.
 
 **Scope:** необходимые Wayland-протоколы, fonts/themes/settings portal,
 экранная клавиатура, popups, clipboard через policy, упаковка runtime в
-`/data`. Полные KDE/GNOME sessions и XWayland не входят.
+`/data`. Полные KDE/GNOME sessions и XWayland не входят. Change 1 --
+спайк кросс-компиляции GTK4/Qt6+Kirigami под aarch64-musl плюс решения по
+clipboard-через-policy и text-input/OSK-стратегии -- явно блокирует
+Change 2+; ни одной архитектурной ADR под это ещё не принято.
 
 **Acceptance:** GTK-приложение и Qt/Kirigami-приложение запускаются,
 масштабируются, получают touch/text input, переживают switch и закрываются;
