@@ -67,8 +67,25 @@ portal (только точка входа "кто через кого").
    `saai-entity-store` (S06). Путь -- `var/appd/grants/`, вне любого
    каталога, который `saai-appd` когда-либо смонтирует внутрь sandbox
    приложения (иначе приложение могло бы выдать себе разрешения само).
-4. `saai-shell`: экран согласия при установке/первом запуске, использует
-   существующий SUI/action путь.
+4. **Готово (2026-09-10, `ef33ff3`, `24acbb1`).** `saai-shell`: экран
+   согласия при launch, использует существующий SUI/action путь.
+   `saai-appd`'s Launch теперь проверяет `GrantStore::covers()` и
+   отвечает `ConsentRequired{app_id, requested}` вместо запуска, если
+   решения ещё нет; новый `DecideConsent{app_id, accept}` записывает
+   ответ через `GrantStore::record_decision` и отвечает
+   `ConsentDecided{app_id, granted}` -- демон сам знает запрошенный
+   набор из manifest, клиент только говорит да/нет. `AppSummary`
+   получил `requested_capabilities`/`consent_needed` для проактивного
+   показа. `saai-shell` рисует второй полноэкранный `ui_tree`-layout
+   (`consent_view()`, рядом с `root_view()`) с заголовком, списком
+   разрешений (человекочитаемые русские подписи) и кнопками
+   "Разрешить"/"Отклонить"; hit-test читает то же дерево, что рисует
+   `draw()` -- то же правило ADR-017, что и у панели вкладок.
+
+   По пути найден и исправлен баг в уже закоммиченном `GrantStore`:
+   пустой список capability считался непокрытым (нет записи -> нет
+   согласия), из-за чего `effective_capabilities()` падал на `.expect()`
+   -- пустой запрос теперь тривиально покрыт без обращения к диску.
 5. `saai-appd`'s `spawn()`: `pre_exec()` с `unshare(NEWNS|NEWNET|NEWIPC|NEWUTS)`
    (кроме `NEWNET` при `net.internet`), private/rslave root, tmpfs-маскирование
    `/data/saaios/{apps,packages}`, `/data/saaios/var/apps`,
@@ -152,3 +169,46 @@ Change 3: `GrantStore` подтверждён 6 unit-тестами: без за
 кросс-компиляция под `aarch64-unknown-linux-musl`
 (`build-saai-appd.sh`) подтверждена (`ARM aarch64`, `statically
 linked`) на R620.
+
+Change 4: host-level -- новый integration тест
+(`daemon_gates_launch_on_consent_and_records_decision`) прогоняет
+install -> `ConsentRequired` -> `decide_consent` (decline) ->
+`Launched` -> `list` против настоящего запущенного демона; отдельно
+перезапущен уже существующий host-скрипт
+`tests/application-wayland-host.sh` (S05's acceptance evidence) после
+этого изменения -- PASS без изменений, подтверждая, что launch с
+пустым capability-списком (реальный demo-app) по-прежнему проходит
+напрямую, без consent-гейта. 32 unit + 2 integration теста `saai-appd`,
+12 тестов `saai-shell` (4 новых -- обе половины кнопочного ряда экрана
+согласия, мёртвая зона заголовка, fallback подписи) зелёные;
+fmt/clippy `-D warnings` чисты по всему workspace; кросс-компиляция
+`saai-appd` и `saai-shell` под `aarch64-unknown-linux-musl` подтверждена
+на R620.
+
+Физически на устройстве (Pixel 7, panther), через hot-swap уже
+запущенных `saai-appd`/`saai-shell` (без пересборки `init_boot` --
+`saai-shell` живёт в нём, но подмена того же паттерна, что уже
+использовался для `saai-displayd`/`saai-entityd` в предыдущих раундах,
+сработала одинаково для обоих): т.к. интерфейс `saai-shell` привязан
+к единственному реальному `org.saaios.demo-surface` (карточка
+"Saai Demo"), а его манифест намеренно не меняется (см. Change 4's
+appd-коммит), для визуальной проверки временно (1) удалён текущий
+`org.saaios.demo-surface` (только код, `var/apps` данные сохраняются
+API'ем store), (2) переустановлен под тем же id с manifest, запрошившим
+`net.internet`/`clipboard.read`/`space.entities.read`, (3) после
+проверки удалён и переустановлен обратно оригинальный manifest
+(`capabilities = []`) -- подтверждено идентичное `consent_needed:
+false`, `requested_capabilities: []` до и после. Прямые запросы к
+`appd.sock` через одноразовый zig-cc пробник (`sockprobe`, не
+закоммичен) подтвердили server-side: `install` вернул
+`consent_needed: true` с точным списком; `launch` вернул
+`consent_required` с тем же списком, не `launched`. Через реальный
+touch-путь `saai-shell` (тап по карточке "Saai Demo") пользователь
+физически увидел экран согласия с заголовком "Saai Demo запрашивает
+доступ", списком разрешений и кнопками "Разрешить"/"Отклонить" --
+подтверждено визуально дважды (сначала decline, затем на новом наборе
+capability -- accept), лог показал `consent declined for
+org.saaios.demo-surface` и позже `consent accepted for
+org.saaios.demo-surface`; после accept demo-app физически запустился и
+получил фокус (собственная тестовая поверхность). Устройство
+возвращено к исходному состоянию (проверено `list()`).
