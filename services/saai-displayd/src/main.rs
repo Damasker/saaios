@@ -642,6 +642,18 @@ delegate_seat!(State);
 // enforcement is done". Gating this against `Capability::ClipboardRead`/
 // `ClipboardWrite` is explicit, tracked follow-up work, not implied by
 // this Change.
+//
+// ADR-023 (S08 Change 5 attempt): that follow-up turned out not to be
+// implementable against this smithay version's public API at all.
+// `new_selection()` below is a pure FYI notification -- device.rs calls
+// it, then unconditionally applies the selection regardless of what this
+// method does, there is no way to veto a write. Reading
+// (`wl_data_offer.receive`) is handled by an internal `ObjectData` bound
+// directly to the offer object at creation time, entirely bypassing the
+// `Dispatch`/handler-trait path this file uses everywhere else -- no
+// hook exists to intercept or deny it either. Closing this gap for real
+// needs a hand-rolled data-device implementation or a patched smithay,
+// neither attempted here; see ADR-023 for the full finding and reasoning.
 impl ClientDndGrabHandler for State {}
 impl ServerDndGrabHandler for State {}
 impl SelectionHandler for State {
