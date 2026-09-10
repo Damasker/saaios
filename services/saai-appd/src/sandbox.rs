@@ -66,24 +66,78 @@ pub fn apply(paths: &SandboxPaths, granted: &[Capability]) -> io::Result<()> {
     )
     .map_err(nix_to_io)?;
 
-    mask_and_reveal(&paths.apps_dir, &paths.code_dir, true)?;
-    mask_and_reveal(&paths.apps_data_dir, &paths.data_dir, false)?;
+    // Scratch mountpoints live under /run/saaios, which nothing here ever
+    // masks, keyed by this (freshly forked, uniquely numbered) process's
+    // own pid so concurrent launches of different apps -- or successive
+    // crash-restarts of the same one -- never collide.
+    let scratch_root =
+        PathBuf::from("/run/saaios/.sandbox-reveal").join(std::process::id().to_string());
+    mask_and_reveal(
+        &paths.apps_dir,
+        &paths.code_dir,
+        &scratch_root.join("code"),
+        true,
+    )?;
+    mask_and_reveal(
+        &paths.apps_data_dir,
+        &paths.data_dir,
+        &scratch_root.join("data"),
+        false,
+    )?;
     mask_only(&paths.entities_dir)?;
+    // Both leaf scratch dirs (code/data) are already gone -- this only
+    // removes the now-empty per-pid parent they shared.
+    let _ = fs::remove_dir(&scratch_root);
 
     install_seccomp_filter()?;
 
     Ok(())
 }
 
-/// Masks `parent` with an empty tmpfs, hiding every sibling of `own` --
-/// `own` itself stays reachable at its exact path because it is bind-
-/// mounted onto itself (pinned as its own mountpoint) *before* the mask
-/// goes on: remounting `parent` only reattaches something new at
-/// `parent`'s own dentry, it does not retroactively unmount whatever is
-/// already mounted at a path underneath it.
-fn mask_and_reveal(parent: &Path, own: &Path, read_only: bool) -> io::Result<()> {
+/// Masks `parent` with an empty tmpfs, hiding every sibling of `own`,
+/// while keeping `own`'s original content reachable at that exact path.
+///
+/// The naive version of this -- bind-mount `own` onto itself, *then* mask
+/// `parent` -- does not work: masking `parent` re-resolves every path
+/// underneath it from scratch, so `own` immediately starts pointing into
+/// the fresh, empty tmpfs rather than the pre-mask content it used to
+/// point to (confirmed with a throwaway on-device C spike before writing
+/// this the working way). The original content has to be pinned
+/// *outside* `parent` first (bind-mount to `scratch`, unaffected by
+/// anything that happens to `parent`), then moved back into place with
+/// `MS_MOVE` once the mask is already on and `own`'s directory exists
+/// again inside the new tmpfs.
+fn mask_and_reveal(parent: &Path, own: &Path, scratch: &Path, read_only: bool) -> io::Result<()> {
+    fs::create_dir_all(scratch)?;
+    mount(
+        Some(own),
+        scratch,
+        None::<&str>,
+        MsFlags::MS_BIND,
+        None::<&str>,
+    )
+    .map_err(nix_to_io)?;
+
+    mount(
+        None::<&str>,
+        parent,
+        Some("tmpfs"),
+        MsFlags::empty(),
+        None::<&str>,
+    )
+    .map_err(nix_to_io)?;
+
     fs::create_dir_all(own)?;
-    mount(Some(own), own, None::<&str>, MsFlags::MS_BIND, None::<&str>).map_err(nix_to_io)?;
+    mount(
+        Some(scratch),
+        own,
+        None::<&str>,
+        MsFlags::MS_MOVE,
+        None::<&str>,
+    )
+    .map_err(nix_to_io)?;
+    let _ = fs::remove_dir(scratch);
+
     if read_only {
         mount(
             None::<&str>,
@@ -94,14 +148,6 @@ fn mask_and_reveal(parent: &Path, own: &Path, read_only: bool) -> io::Result<()>
         )
         .map_err(nix_to_io)?;
     }
-    mount(
-        None::<&str>,
-        parent,
-        Some("tmpfs"),
-        MsFlags::empty(),
-        None::<&str>,
-    )
-    .map_err(nix_to_io)?;
     Ok(())
 }
 
