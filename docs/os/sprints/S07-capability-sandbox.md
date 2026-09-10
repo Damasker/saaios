@@ -132,9 +132,37 @@ portal (только точка входа "кто через кого").
    обычное создание потоков любым рантаймом на платформе, включая Rust's
    std) -- аргумент-специфичная фильтрация только `CLONE_NEW*`-флагов вне
    рамок этой версии.
-7. Portal точка входа: `saai-shell` посредник для `clipboard.read/write` и
-   `portal.open_file`, без реализации UI выбора файла целиком (достаточно
-   протокольной точки входа и одного сквозного сценария).
+7. **Готово (2026-09-10, `d42e8a2`).** Portal точка входа: новый крейт
+   `saai-portal-protocol` (тот же JSON-lines стиль, что уже
+   у `saai-app-protocol`/`saai-entity-protocol`) и новый сокет
+   `saai-shell`'а -- `/run/saaios/portal.sock` (путь никогда не
+   маскируется sandbox'ом, доступен приложению так же, как уже доступны
+   `appd.sock`/Wayland-сокет). Авторизация не зависит от видимости
+   пути: `saai-shell` резолвит реальный pid подключившегося процесса
+   через `SO_PEERCRED` (`nix`'s `getsockopt(.., PeerCredentials)` --
+   `std`'s `peer_cred()` всё ещё за нестабильным
+   `peer_credentials_unix_socket` на этом тулчейне) в app_id по
+   собственному кэшу состояния `saai-appd` (`apps_by_pid`/
+   `apps_grants`, из каждого `list()`, обновляется раз в секунду и
+   сразу на `Running`/`Removed`/`ConsentDecided`), затем проверяет
+   `granted_capabilities` именно этого app_id -- подключение с pid, не
+   входящего в текущий список запущенных приложений (произвольная
+   shell-команда, например), отклоняется с `unknown_peer` раньше любой
+   проверки capability. `clipboard.read`/`clipboard.write` -- полный
+   рабочий цикл через один `Option<String>` в памяти `saai-shell`e (без
+   сохранения, сбрасывается при перезапуске). `portal.open_file` идёт
+   через тот же путь запрос/ответ/проверка capability, но всегда
+   отвечает типизированной `not_implemented` -- UI выбора файла не
+   реализован, это осознанно зафиксировано, а не тихо пропущено.
+
+   `AppSummary` получил `granted_capabilities` (то же
+   `GrantStore::effective_capabilities`, что уже использует Launch, с
+   тем же fail-safe направлением, что и `consent_needed`) -- то, против
+   чего портал реально авторизует запросы. `saai-demo-surface` получил
+   `SAAIOS_PORTAL_ROUNDTRIP`-управляемый тестовый путь: подключается к
+   порталу от своего имени, пишет строку, читает её обратно, сверяет --
+   выключен по умолчанию, обычные запуски и существующие S02/S05
+   приёмочные скрипты не затронуты.
 8. Физическая приёмка на устройстве: fault injection, cold reboot, negative
    tests (попытка выйти за границы sandbox из демо-приложения).
 
@@ -297,3 +325,47 @@ scratch-каталога ни после первого, ни после вто�
 при `install_seccomp_filter()` во время успешного запуска для BPF).
 Это отдельный пункт fault-injection'а в Change 8, не закрывается этим
 изменением.
+
+Change 7: host-level -- новый крейт `saai-portal-protocol` подтверждён
+5 unit-тестами (round-trip кодирования/декодирования каждой из трёх
+команд, отказ на неизвестной схеме/полe/request_id, отказ на слишком
+большом сообщении). `saai-shell`'s `portal_server` подтверждён 4 новыми
+тестами: подключение с pid, не входящим в `apps_by_pid`, отклоняется
+`unknown_peer` раньше любой проверки capability; известное приложение
+без нужного гранта отклоняется `capability_denied`; `clipboard_write`
+-> `clipboard_read` для авторизованного приложения возвращает ровно
+записанный текст; `open_file` для приложения, у которого запрошенная
+capability есть, всё равно отвечает типизированной `not_implemented`, а
+не успехом или отказом по capability. 54 test-result блока по всему
+workspace зелёные (включая новые: `saai-portal-protocol`'s 5 тестов,
+`saai-shell`'s 20 тестов итого, `saai-demo-surface`'s собственный build);
+fmt/clippy `-D warnings` чисты по всему workspace (пришлось забоксить
+`ResponseResult::Installed`'s `AppSummary` -- `granted_capabilities`
+подтолкнул размер варианта за порог `clippy::large_enum_variant`);
+кросс-компиляция `saai-appd`/`saai-shell`/`saai-demo-surface` под
+`aarch64-unknown-linux-musl` подтверждена; `tests/application-wayland-host.sh`
+(S05's acceptance evidence) перезапущен после изменения -- PASS без
+изменений.
+
+Физически на устройстве (Pixel 7, panther): все три бинаря развёрнуты
+тем же hot-swap-паттерном, что и раньше (`saai-appd` и реальный
+`demo-surface` под `/data/saaios`, `saai-shell` под `/saaios/` --
+`rootfs` там оказался перезаписываемым `tmpfs`, тот же паттерн, что уже
+использовался для Change 4, сработал без изменений), хэши сверены на
+каждом шаге. Реальный `demo-surface` запускается без регрессии после
+редеплоя (это изменение не трогает ни `sandbox.rs`, ни `supervisor.rs`).
+Произвольный процесс на устройстве (сырое соединение через `sockprobe`,
+не зарегистрированное как приложение), подключившийся напрямую к
+`portal.sock`, получил `unknown_peer` -- негативный путь подтверждён
+против настоящего процесса, не мока. Одноразовое throwaway-приложение
+(`org.saaios.test.portal-probe`, `capabilities = ["clipboard.read",
+"clipboard.write"]`, не входит в поставку, удалено после теста)
+установлено, согласие принято, запущено под настоящим sandbox'ом; его
+собственная лог-строка (`saai-demo-surface: portal round-trip OK, read
+back "saaios-portal-roundtrip-test"`) подтверждает, что настоящий
+sandboxed-процесс своим собственным portal-клиентом записал и прочитал
+буфер обмена через `saai-shell`, авторизованный по своим настоящим
+`granted_capabilities` -- тот самый один сквозной сценарий, который эта
+задача должна была доказать. Устройство возвращено к исходному
+состоянию (`list()` подтверждает только `org.saaios.demo-surface` с
+исходными пустыми capabilities).
