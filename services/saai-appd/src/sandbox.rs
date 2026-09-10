@@ -235,14 +235,7 @@ fn make_root_read_only() -> io::Result<()> {
     // A read-only bind of the root mount protects writable initramfs files
     // such as `/init`. The explicit app-data bind mount remains a separate
     // writable child mount; code is already a separate read-only child mount.
-    mount(
-        Some("/"),
-        "/",
-        None::<&str>,
-        MsFlags::MS_BIND,
-        None::<&str>,
-    )
-    .map_err(nix_to_io)?;
+    mount(Some("/"), "/", None::<&str>, MsFlags::MS_BIND, None::<&str>).map_err(nix_to_io)?;
     mount(
         None::<&str>,
         "/",
