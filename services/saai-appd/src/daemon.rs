@@ -27,6 +27,7 @@ pub struct DaemonConfig {
     pub socket_path: PathBuf,
     pub runtime_dir: PathBuf,
     pub wayland_display: String,
+    pub allow_unsandboxed: bool,
 }
 
 #[derive(Debug, Error)]
@@ -89,7 +90,8 @@ pub async fn run_daemon(config: DaemonConfig) -> Result<(), AppdError> {
         &config.data_root,
         &config.runtime_dir,
         config.wayland_display,
-    );
+    )
+    .with_unsandboxed_host_fallback(config.allow_unsandboxed);
     let grants = GrantStore::new(&config.data_root);
     let state = Arc::new(Mutex::new(DaemonState {
         store,

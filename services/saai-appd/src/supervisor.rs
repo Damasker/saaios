@@ -121,6 +121,7 @@ pub struct AppSupervisor {
     data_root: PathBuf,
     runtime_dir: PathBuf,
     wayland_display: String,
+    allow_unsandboxed: bool,
     policy: SupervisorPolicy,
     apps: HashMap<String, AppRuntime>,
 }
@@ -137,6 +138,7 @@ impl AppSupervisor {
             data_root: data_root.as_ref().to_path_buf(),
             runtime_dir: runtime_dir.as_ref().to_path_buf(),
             wayland_display: wayland_display.into(),
+            allow_unsandboxed: false,
             policy: SupervisorPolicy::default(),
             apps: HashMap::new(),
         }
@@ -157,9 +159,17 @@ impl AppSupervisor {
             data_root: data_root.as_ref().to_path_buf(),
             runtime_dir: runtime_dir.as_ref().to_path_buf(),
             wayland_display: wayland_display.into(),
+            allow_unsandboxed: false,
             policy,
             apps: HashMap::new(),
         })
+    }
+
+    /// Enables the non-root bypass used by host process tests. Production
+    /// callers must keep the secure default (`false`).
+    pub fn with_unsandboxed_host_fallback(mut self, enabled: bool) -> Self {
+        self.allow_unsandboxed = enabled;
+        self
     }
 
     pub fn launch(
@@ -374,6 +384,7 @@ impl AppSupervisor {
             entities_dir: self.data_root.join("var").join("entities"),
         };
         let granted = granted.to_vec();
+        let allow_unsandboxed = self.allow_unsandboxed;
         let mut command = Command::new(executable);
         command
             .current_dir(&installed.code_dir)
@@ -392,7 +403,7 @@ impl AppSupervisor {
         // rely on any state shared with the parent process.
         unsafe {
             command.pre_exec(move || {
-                sandbox::apply(&sandbox_paths, &granted).map_err(|error| {
+                sandbox::apply(&sandbox_paths, &granted, allow_unsandboxed).map_err(|error| {
                     eprintln!("saai-appd: sandbox setup failed: {error}");
                     error
                 })
@@ -512,6 +523,7 @@ mod tests {
                 },
             )
             .unwrap()
+            .with_unsandboxed_host_fallback(true)
         }
     }
 

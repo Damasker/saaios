@@ -32,17 +32,25 @@ pub struct SandboxPaths {
 /// does not support at all -- confirmed by an on-device spike, see
 /// ADR-020's Контекст).
 ///
-/// Silently degrades to no isolation when not running as root: this
-/// crate's own test suite runs as an unprivileged user (R620's CI/dev
-/// environment), which cannot create mount/network namespaces or mount
-/// anything -- failing every launch there would make sandboxing
-/// impossible to test at all via the existing IPC integration tests.
-/// The real device (`native-init.c`'s process tree) always runs as root,
-/// so production launches are never affected by this fallback.
-pub fn apply(paths: &SandboxPaths, granted: &[Capability]) -> io::Result<()> {
+/// Production is fail-closed: an unprivileged daemon cannot construct the
+/// required namespaces and must refuse the launch. `allow_unsandboxed` exists
+/// only for explicit host integration tests whose temporary shell scripts run
+/// under an ordinary developer account; PID 1 never passes that override.
+pub fn apply(
+    paths: &SandboxPaths,
+    granted: &[Capability],
+    allow_unsandboxed: bool,
+) -> io::Result<()> {
     if !Uid::effective().is_root() {
-        eprintln!("saai-appd: sandbox skipped (not running as root)");
-        return Ok(());
+        return if allow_unsandboxed {
+            eprintln!("saai-appd: sandbox explicitly bypassed for host test");
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "sandbox requires root namespace and mount privileges",
+            ))
+        };
     }
 
     let net_internet = granted.contains(&Capability::NetInternet);
@@ -246,7 +254,7 @@ mod tests {
     /// the real mount/namespace behavior requires root and is verified
     /// physically on-device instead (see the S07 sprint doc's Evidence).
     #[test]
-    fn non_root_degrades_to_no_isolation_instead_of_failing_the_launch() {
+    fn non_root_is_fail_closed_unless_test_override_is_explicit() {
         let paths = super::SandboxPaths {
             apps_dir: PathBuf::from("/nonexistent/apps"),
             code_dir: PathBuf::from("/nonexistent/apps/org.saaios.example"),
@@ -254,9 +262,8 @@ mod tests {
             data_dir: PathBuf::from("/nonexistent/var/apps/org.saaios.example"),
             entities_dir: PathBuf::from("/nonexistent/var/entities"),
         };
-        // None of these paths exist and this test does not run as root,
-        // so a real attempt to unshare/mount would fail loudly -- apply()
-        // must short-circuit before touching any of it.
-        assert!(apply(&paths, &[Capability::NetInternet]).is_ok());
+        let error = apply(&paths, &[Capability::NetInternet], false).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(apply(&paths, &[Capability::NetInternet], true).is_ok());
     }
 }
