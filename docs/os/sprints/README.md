@@ -16,7 +16,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S04 | Отдельный `saai-shell` и lock | Done | S03 |
 | S05 | Приложения, manifest и lifecycle | Done | S04 |
 | S06 | Настоящие пространства и entity store | Done | S05 |
-| S07 | Capability, sandbox и portals | In progress | S05, S06 |
+| S07 | Capability, sandbox и portals | Done | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Backlog | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
@@ -191,6 +191,18 @@ namespaces + seccomp-bpf после on-device spike, подтвердившег�
 
 **Rollback:** сторонние приложения отключаются целиком; системные приложения
 продолжают работать с минимальным статическим набором capability.
+
+**Evidence:** capability vocabulary, effective-grants store, consent-экран,
+namespace/seccomp isolation и portal-точка входа (clipboard + типизированный
+`not_implemented` для `open_file`) реализованы и физически проверены на
+Pixel 7 по отдельности (см. полный Evidence в паспорте спринта). Итоговый
+device-level negative-test проход через `org.saaios.sandbox-probe` дал чистый
+`RESULT PASS failures=0` по 18 инвариантам (скрытые сокеты/файлы/устройства,
+read-only root, обнулённые capabilities, seccomp `EPERM` на `kill`/`mount`/
+`reboot`, реальное отсутствие сети без `net.internet`). Cold-reboot
+acceptance подтвердил, что effective grants (принятые и явно отклонённые)
+переживают настоящую холодную перезагрузку побайтово и honoured'ся при
+запуске без повторного запроса согласия.
 
 ## S08 — GTK и Qt/Kirigami совместимость
 
