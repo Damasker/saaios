@@ -1,0 +1,8 @@
+schema = 1
+id = "org.saaios.demo.kirigami"
+name = "Kirigami Demo"
+exec = "bin/launch"
+version = "0.1.0"
+ui = "wayland"
+single_instance = true
+capabilities = []
