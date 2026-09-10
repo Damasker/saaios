@@ -17,7 +17,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S05 | Приложения, manifest и lifecycle | Done | S04 |
 | S06 | Настоящие пространства и entity store | Done | S05 |
 | S07 | Capability, sandbox и portals | Done | S05, S06 |
-| S08 | GTK и Qt/Kirigami совместимость | Ready | S07 |
+| S08 | GTK и Qt/Kirigami совместимость | In progress | S07 |
 | S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
 | S11 | GPU, power, OTA и release gate | Backlog | S04–S10 |

@@ -2,11 +2,12 @@
 
 ## Паспорт
 
-- Состояние: `Ready`.
+- Состояние: `In progress`.
 - Зависит от: S07 (`Done`).
-- Архитектурные решения: ни одной ещё не принято -- Change 1 обязан
-  закрыться ADR-021 (или несколькими) прежде, чем Change 2+ можно будет
-  начинать; см. Scope и Change ниже.
+- Архитектурные решения: ADR-021 (источник пакетов -- Alpine musl, не
+  from-source; `wl_data_device_manager` обязателен, не опционален).
+  Clipboard-через-policy механизм и text-input/OSK-стратегия всё ещё не
+  решены -- см. Change 2.
 - Рабочий fallback: `saai-shell` и `saai-demo-surface` продолжают быть
   единственными реальными Wayland-клиентами; ни установка, ни запуск
   стороннего приложения через `saai-appd` не меняются, пока это не
@@ -123,12 +124,25 @@ Qt/Kirigami-приложение запускаются как обычные к
 
 ## Change
 
-1. **Спайк + ADR (блокирует всё остальное).** Кросс-компиляция минимального
-   GTK4- и Qt6+Kirigami-приложения под aarch64-musl; оценка размера;
-   решение по clipboard-через-policy; решение по text-input/OSK-стратегии.
-   Каждое из трёх решений -- отдельная секция одного ADR-021 или отдельные
-   ADR, если объём того требует -- решается по факту написания, не заранее.
-2. Недостающие Wayland-протоколы в `saai-displayd`, гейтится Change 1.
+1. **Готово (2026-09-10, ADR-021, без кодовых изменений -- host-only
+   спайк на R620).** Кросс-компиляция/источник пакетов для GTK4 и
+   Qt5+Kirigami2 под aarch64-musl подтверждена воспроизводимой через
+   Alpine Linux'а готовые пакеты (не from-source пересборка ADR-008-стиля
+   -- решение явно пересматриваемо, не окончательное на весь спринт).
+   Размер измерен: `gtk4.0` -- 181 MiB закрытие зависимостей (152
+   пакета, включает ненужные X11-fallback/CUPS/GStreamer -- не
+   минимальная сборка). Найдено и подтверждено по апстримному исходнику:
+   `wl_data_device_manager` -- обязательный, не факультативный global
+   для любого GTK4-клиента (`_gdk_wayland_display_open()` требует его
+   безусловно) -- меняет приоритет внутри Change 2 (см. ниже).
+   Qt5/Kirigami2's ELF-бинарники подтверждены валидными с чистым графом
+   зависимостей, но реальный QML-сценарий через `qmlscene-qt5` уперся в
+   нерасследованную проблему Qt's `QFactoryLoader` -- отдельная, узкая
+   задача, перенесена в Change 2. Clipboard-через-policy МЕХАНИЗМ и
+   text-input/OSK-стратегия этим Change'м не решены -- остаются в
+   Change 2/3.
+2. Недостающие Wayland-протоколы в `saai-displayd`, гейтится Change 1 --
+   минимум stub `wl_data_device_manager` (ADR-021) первым, до остального.
 3. Text-input-v3/input-method-v2 + экранная клавиатура в `saai-shell` для
    сторонних клиентов.
 4. Settings/theme portal поверх существующего portal-протокола (S07).
@@ -200,3 +214,28 @@ sandbox должен сдерживать это так же, как любой 
 ## Evidence
 
 Заполняется по каждому Change только после зелёных host/device проверок.
+
+Change 1: полный ход спайка и обоснование решений -- ADR-021. Кратко:
+`qemu-user-static`+binfmt установлены на R620 (`sudo apt-get install
+qemu-user-static`) -- aarch64 ELF исполняются на этом x86_64-хосте без
+телефона. Alpine v3.20 `apk-tools-static` собрал реальный aarch64-musl
+sysroot (`gtk4.0-demo` closure -- 153 пакета/196 MiB; отдельно голый
+`gtk4.0` -- 152 пакета/181 MiB; полный набор с Qt5/Qt6/Kirigami2 -- 194
+пакета/387 MiB). `gtk4-demo --version` выполнился под
+`qemu-aarch64-static` (код 0). Реальный закоммиченный `saai-displayd`
+(headless/host сборка, `cargo build -p saai-displayd`, без
+`--features panther-hardware`) поднят на R620, слушает
+`WAYLAND_DISPLAY=wayland-1`; `gtk4-demo` под qemu подключился к нему
+(лог: `client connected`), `WAYLAND_DEBUG=1` подтвердил полный
+registry-обмен всеми 8 текущими globals и `wl_shm_pool`/roundtrip. GTK4
+тем не менее отказался открыть дисплей -- подтверждено по исходнику
+GTK (`gdk/wayland/gdkdisplay-wayland.c`), что `wl_data_device_manager`
+обязателен безусловно, не только `wl_compositor`/`wl_shm`/shell.
+Qt5/Kirigami2's бинарники прошли `readelf -d` без недостающих SONAME;
+`qmlscene-qt5` против тестовой Kirigami QML-сцены (`kirigami-spike.qml`)
+уперся в нерасследованную ENOENT-проблему Qt's `QFactoryLoader`
+(`faccessat` на каталог плагинов, тот же путь корректно листается
+`busybox ls` под тем же `qemu-aarch64-static -L`) -- не архитектурный
+блокер, узкая задача Change 2. Throwaway-артефакты спайка (`apk.static`,
+sysroot, `kirigami-spike.qml`) не закоммичены, живут в `/tmp/alpine-spike/`
+на R620, воспроизводимы по шагам ADR-021.
