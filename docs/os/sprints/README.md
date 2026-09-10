@@ -18,7 +18,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S06 | Настоящие пространства и entity store | Done | S05 |
 | S07 | Capability, sandbox и portals | Done | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Done (переоцененный объём) | S07 |
-| S09 | Intent → Task → Action workflow | Backlog | S06, S07 |
+| S09 | Intent → Task → Action workflow | Ready | S06, S07 |
 | S10 | Planner, automation и memory | Backlog | S09 |
 | S11 | GPU, power, OTA и release gate | Backlog | S04–S10 |
 
@@ -262,18 +262,37 @@ compositor. Устройство возвращено к исходному со
 
 ## S09 — Intent → Task → Action
 
+Рабочий паспорт и декомпозиция:
+[S09-intent-task-action.md](S09-intent-task-action.md).
+
 **Goal:** строка намерения создаёт наблюдаемый рабочий процесс, а не только
 чатовый запрос.
 
-**Scope:** versioned модели `Intent`, `Task`, `Action`, `Result`; состояния и
-идемпотентность; подтверждение опасного Action; отображение в `Сейчас` и
-`Входящие`.
+**Scope:** Change 1 (обязательно первым, спайк + ADR) решает два вопроса
+без готового ответа сегодня: (1) как вообще физически вводится текст на
+этом устройстве -- `saai-shell` не имеет ни одного экрана ввода текста
+(`KeyboardInteractivity::None`), а generic `input-method-v2`/OSK-путь
+для сторонних клиентов уже физически доказан нерабочим на этом железе
+(ADR-022, `libxkbcommon` крашится на любом keymap) -- кандидат: bespoke
+touch-hit-test клавиатура внутри `saai-shell`, тот же класс решения, что
+уже использует `drm-splash.c`, без единого обращения к `libxkbcommon`;
+(2) как `Intent`/`Task`/`Action`/`Result` соотносятся с уже существующей
+Platform Track'а инфраструктурой (`crates/policy-engine`,
+`tool-registry`, `automation-engine` -- `PendingConfirmation`/
+`RiskLevel` уже решают смежную, но не идентичную задачу, ADR-004 называет
+будущую конвергенцию, но не реализует её) -- или native OS Track строит
+независимый эквивалент поверх `saai-entity-store` (S06), как уже сделал
+S06 само для `memory-store`/`audit-log`. Дальше -- versioned модели
+`Intent`/`Task`/`Action`/`Result`; состояния и идемпотентность;
+подтверждение опасного Action; отображение в `Сейчас`.
 
-**Acceptance:** сценарий создаётся, приостанавливается, подтверждается,
-возобновляется после reboot и оставляет связный audit trail; повтор события не
-повторяет необратимое действие.
+**Acceptance:** пользователь физически вводит текст намерения на реальном
+устройстве; сценарий создаётся, приостанавливается на подтверждении,
+подтверждается, возобновляется после reboot и оставляет связный audit
+trail; повтор события не повторяет необратимое действие.
 
-**Rollback:** workflow становится read-only; ручные модули продолжают работать.
+**Rollback:** не устанавливать/не включать Intent/Task/Action целиком --
+`saai-shell` и весь S05-S08 путь работают без единого изменения.
 
 ## S10 — Planner, automation и memory
 
