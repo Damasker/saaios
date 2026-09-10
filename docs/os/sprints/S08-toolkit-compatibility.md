@@ -211,8 +211,56 @@ Qt/Kirigami-приложение запускаются как обычные к
    это хрупкая, не преднамеренная защита, не решение. Два пути вперёд
    (написать `wl_data_device_manager` вручную, или патчить smithay) --
    ни один не выбран, решается отдельно при появлении бюджета.
-6. Упаковка GTK/Qt runtime в `/data` под манифест приложения (per-app
-   bundle).
+6. **Готово (2026-09-10, механизм подтверждён физически).** Упаковка
+   GTK/Qt runtime в `/data` под манифест приложения (per-app bundle).
+   Перед кодом подтверждено на реальном устройстве: `/lib` на этом
+   rootfs содержит только `firmware/` и `modules/` -- ни `ld-musl-
+   aarch64.so.1`, ни какого-либо `libc.so` нигде на устройстве нет
+   (`find / -maxdepth 2 -iname 'ld-musl*' -o -iname 'libc.so*'` -- пусто).
+   Именно поэтому все первосортные бинарники в проекте статические --
+   динамически слинкованный Alpine-бинарник (ADR-021) физически не может
+   выполниться без собственного loader'а. Добавлено новое поле
+   `SandboxPaths::lib_dir: Option<PathBuf>` -- тот же mask-and-reveal
+   паттерн, что уже применяется к `code_dir`/`data_dir` (S07): `/lib`
+   безусловно маскируется в пустой tmpfs для каждого приложения, и
+   раскрывается bind-mount'ом из `<code_dir>/lib` только если оно у
+   приложения есть -- ни статические Rust-бинарники (у которых
+   `lib_dir: None`), ни хост, ни другие приложения этот `/lib` не видят.
+   `AppSupervisor::spawn()` дополнительно выставляет
+   `LD_LIBRARY_PATH=/lib`, когда `lib_dir` присутствует -- не полагаясь
+   молча на musl's дефолтный search path. Механизм физически
+   воспроизведён напрямую (`unshare -m` + `mount --bind
+   <package>/lib /lib`, тот же примитив, что `sandbox.rs`'s
+   `reveal_directory` использует внутри) с реальным Alpine `gtk4-demo`
+   (753 файла, `cp -L`-развёрнутый от символических ссылок, т.к.
+   `store.rs`'s `copy_tree` отклоняет символьные ссылки как security
+   boundary) -- бинарник запускается, линкуется, доходит до
+   GLib/GTK-инициализации и до попытки подключения к Wayland. Реальный
+   тестовый пакет `org.saaios.test.gtk4-lib-probe`, установленный и
+   запущенный через полный `saai-appd`-путь (не в обход sandbox), тоже
+   подтвердил, что линковка отрабатывает -- `crash_limited` наступил
+   НЕ из-за `/lib`-механизма, а из-за двух отдельных, узких упаковочных
+   пробелов, диагностированных через `Stdio::inherit()`-патч
+   (`/run/saai-appd.log`) и прямое воспроизведение вне sandbox: (1)
+   тестовый пакет не включал `/usr/share/X11/xkb` -- клиентский
+   `libxkbcommon.so` (не тот же вендоренный статический крейт, что
+   упёрся в ADR-022) падал в SIGSEGV сразу после `xkbcommon: ERROR:
+   failed to add default include path`; подтверждено, что
+   `XKB_CONFIG_ROOT=<bundle>/share/X11/xkb` целиком убирает эту ошибку и
+   падение -- решаемо упаковочной конвенцией, не архитектурный блокер;
+   (2) после этого GTK4 доходит до реального рендеринга и падает там же,
+   где и должно быть ожидаемо для минимального Alpine-пакета без
+   GPU-драйвера: `Ngl`/`GL`/`Vulkan`-рендереры все отказывают
+   инициализироваться (нет Mesa/Mali-драйвера в пакете), откат на
+   Cairo software-рендерер падает на `Unable to create Cairo image
+   surface: invalid value ... for the size of the input` и завершается
+   `Segmentation fault`. Обе находки -- предметная область Change 7
+   (реальное упаковывание демо-приложения и его рендеринг-путь), не
+   этого Change: цель Change 6 -- доказать, что sandbox МОЖЕТ пустить
+   динамически слинкованный рантайм внутрь себя -- физически доказана.
+   Throwaway-приложение удалено (`remove`), устройство подтверждено
+   возвращённым к исходному состоянию (`list` -- только
+   `org.saaios.demo-surface`).
 7. Один GTK-демо и один Qt/Kirigami-демо приложение, физическая приёмка на
    устройстве: install→launch→touch→switch→remove, полный sandbox negative
    test (по аналогии с S07's `sandbox-probe`) специально для этих двух
@@ -379,3 +427,47 @@ Change 5: без кодовых изменений, кроме уточняющ�
 saai-displayd`/`fmt --check` подтверждены чистыми после правки
 комментария; физическая проверка не требуется, поведение compositor'а
 не изменилось.
+
+Change 6: host -- `cargo build/test/fmt --check/clippy -p saai-appd`
+(clippy и в `-p saai-appd`, и в `--workspace --all-targets -D warnings`)
+зелёные, включая обновлённый тест `non_root_is_fail_closed_unless_test_
+override_is_explicit` (новое поле `SandboxPaths::lib_dir`). `cargo test
+--workspace` зелёный целиком. Кросс-компилирован `saai-appd`
+(`00b1a4b1...bee7b0d90`).
+
+На R620 собран throwaway тестовый пакет `org.saaios.test.gtk4-lib-probe`
+(реальный `gtk4-demo` из Alpine sysroot ADR-021 + весь его `lib/`-closure,
+753 файла) -- первая попытка (`cp -a`, сохраняет symlinks) отклонена
+`store.rs`'s `install()` как небезопасный тип файла (ожидаемое, уже
+протестированное поведение `copy_tree`); пересобран `cp -L`
+(разыменованные копии), установлен успешно.
+
+Физически на устройстве: диагностическая сборка `saai-appd`
+(`Stdio::inherit()` вместо `Stdio::null()` в `supervisor.rs`, временный
+патч, backup сохранён, отменён и перепроверен зелёным host-прогоном
+после диагностики) развёрнута hot-swap'ом, хэш сверен. Запуск тестового
+пакета через `saai-appd`'s реальный IPC (`launch`) дошёл до
+`crash_limited` (3 попытки, S05's crash-loop budget) -- `/run/saai-appd.
+log` (перенаправленный туда `native-init.c`'s stdout/stderr механизм)
+показал, что дочерний процесс реально стартует, линкуется и доходит до
+`GLib`/`GTK`-инициализации, а не падает на exec() -- т.е. `/lib`-reveal +
+`LD_LIBRARY_PATH` механизм работает. Точная причина падения выделена
+прямым воспроизведением вне `saai-appd` (`unshare -m` + `mount --bind
+<bundle>/lib /lib`, тот же примитив, что `sandbox.rs`'s
+`reveal_directory` использует) с явными env-переменными: без
+`/usr/share/X11/xkb` -- `Segmentation fault` сразу после `xkbcommon:
+ERROR: failed to add default include path`; после добавления в пакет
+скачанного с R620 `/usr/share/X11/xkb` (3.9 MiB из того же Alpine
+sysroot) и `XKB_CONFIG_ROOT`, указывающего на него -- эта ошибка и
+падение исчезают полностью, процесс доходит до попытки инициализации
+`Ngl`/`GL`/`Vulkan`-рендереров, все три отказывают (нет GPU-драйвера в
+минимальном пакете), откат на Cairo software-путь падает на `Unable to
+create Cairo image surface: invalid value ... for the size of the input`
+и `Segmentation fault` там же. Оба пробела (xkb-данные, GPU-рендеринг)
+задокументированы как предмет Change 7, не этого Change. Throwaway-пакет
+удалён (`remove`), `list` подтвердил возврат к исходному состоянию
+(только `org.saaios.demo-surface`), scratch-файлы на устройстве очищены,
+диагностический патч `supervisor.rs` отменён и перепроверен (`git diff`
+против backup -- пусто), production-сборка (тот же хэш
+`00b1a4b1...bee7b0d90`) развёрнута hot-swap'ом и подтверждена запущенной
+(`sha256sum /proc/<pid>/exe`).

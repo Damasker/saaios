@@ -18,6 +18,21 @@ pub struct SandboxPaths {
     pub data_dir: PathBuf,
     pub wayland_socket: PathBuf,
     pub portal_socket: PathBuf,
+    /// S08 Change 6: a dynamically-linked runtime (GTK4/Qt via Alpine's
+    /// prebuilt musl packages, ADR-021) needs its own copy of
+    /// `ld-musl-aarch64.so.1` and every shared library it links against --
+    /// confirmed on-device that this rootfs has no dynamic-linking
+    /// infrastructure of its own at all (`/lib` holds only kernel
+    /// `firmware`/`modules`, no loader, no libc.so; every first-party
+    /// binary in this project is static specifically because of that).
+    /// When an app bundles its own `<code_dir>/lib`, it is bind-mounted
+    /// read-only at `/lib` inside that one app's own mount namespace --
+    /// other apps, and the host, never see it. `None` for every app that
+    /// doesn't need one (all the existing static Rust binaries): `/lib`
+    /// still gets masked to an empty tmpfs either way, so a statically-
+    /// linked app never sees the host's kernel firmware/module files
+    /// either.
+    pub lib_dir: Option<PathBuf>,
 }
 
 /// Installs ADR-020's process isolation for one app. Must run inside
@@ -78,10 +93,14 @@ pub fn apply(
     let data_pin = scratch_root.join("data");
     let wayland_pin = scratch_root.join("wayland");
     let portal_pin = scratch_root.join("portal");
+    let lib_pin = scratch_root.join("lib");
     pin_directory(&paths.code_dir, &code_pin)?;
     pin_directory(&paths.data_dir, &data_pin)?;
     pin_file(&paths.wayland_socket, &wayland_pin)?;
     pin_file(&paths.portal_socket, &portal_pin)?;
+    if let Some(lib_dir) = &paths.lib_dir {
+        pin_directory(lib_dir, &lib_pin)?;
+    }
 
     // Hide the complete persistent root, including system binaries, packages,
     // grants, runtime memory/audit data and raw entity files. Reveal only this
@@ -99,6 +118,15 @@ pub fn apply(
     for path in ["/metadata", "/proc", "/sys", "/saaios"] {
         mask_if_present(Path::new(path))?;
     }
+
+    // S08 Change 6: always masked, only ever revealed for an app that
+    // bundled its own loader/shared libraries -- see `SandboxPaths::
+    // lib_dir`'s doc comment for why this is needed at all.
+    mask_tmpfs(Path::new("/lib"), "mode=0755,size=4m", true)?;
+    if paths.lib_dir.is_some() {
+        reveal_directory(&lib_pin, Path::new("/lib"), true)?;
+    }
+
     mask_device_tree(&scratch_root)?;
 
     let _ = fs::remove_dir_all(&scratch_root);
@@ -408,6 +436,7 @@ mod tests {
             data_dir: PathBuf::from("/nonexistent/var/apps/org.saaios.example"),
             wayland_socket: PathBuf::from("/nonexistent/run/wayland-1"),
             portal_socket: PathBuf::from("/nonexistent/run/portal.sock"),
+            lib_dir: None,
         };
         let error = apply(&paths, &[Capability::NetInternet], false).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);

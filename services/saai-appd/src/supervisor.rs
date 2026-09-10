@@ -374,12 +374,22 @@ impl AppSupervisor {
         granted: &[Capability],
     ) -> Result<Child, SupervisorError> {
         let executable = installed.code_dir.join(&installed.manifest.exec);
+        // S08 Change 6: mirrors the FONTCONFIG_PATH convention below --
+        // an app that bundles its own dynamically-linked runtime (GTK4/Qt
+        // via Alpine's musl packages, ADR-021) ships the loader and every
+        // shared library it needs under its own `<code_dir>/lib`; the
+        // sandbox reveals it at `/lib` only for that one app (see
+        // `SandboxPaths::lib_dir`'s doc comment for why this device needs
+        // it at all).
+        let bundled_lib = installed.code_dir.join("lib");
+        let lib_dir = bundled_lib.is_dir().then_some(bundled_lib);
         let sandbox_paths = SandboxPaths {
             data_root: self.data_root.clone(),
             code_dir: installed.code_dir.clone(),
             data_dir: installed.data_dir.clone(),
             wayland_socket: self.runtime_dir.join(&self.wayland_display),
             portal_socket: PathBuf::from("/run/saaios/portal.sock"),
+            lib_dir,
         };
         let granted = granted.to_vec();
         let allow_unsandboxed = self.allow_unsandboxed;
@@ -418,6 +428,14 @@ impl AppSupervisor {
         let bundled_fonts = installed.code_dir.join("etc").join("fonts");
         if bundled_fonts.is_dir() {
             command.env("FONTCONFIG_PATH", &bundled_fonts);
+        }
+        // S08 Change 6: explicit, not relied-on-by-default -- the loader
+        // bind-mounted at `/lib` (see `SandboxPaths::lib_dir`) already
+        // gets checked by musl's own compiled-in default search path,
+        // but setting LD_LIBRARY_PATH directly does not depend on that
+        // assumption holding across Alpine musl builds.
+        if sandbox_paths.lib_dir.is_some() {
+            command.env("LD_LIBRARY_PATH", "/lib");
         }
         // Safety: this closure runs after fork(), before execve(), in the
         // still-single-threaded child -- the only place unshare()/mount()
