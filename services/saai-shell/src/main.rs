@@ -78,6 +78,7 @@ use saai_entity_protocol::{
     ServerMessage as EntityServerMessage, Space,
 };
 use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
+use serde_json::{json, Map};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
     protocol::{wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
@@ -275,6 +276,64 @@ struct PendingConsent {
     requested: Vec<String>,
 }
 
+const INTENT_SCREEN_ID: &str = "intent-input";
+const INTENT_HEADER_ID: &str = "intent-header";
+const INTENT_ROWS_ID: &str = "intent-rows";
+const INTENT_CANCEL_ACTION: &str = "intent:cancel";
+const INTENT_SPACE_ACTION: &str = "intent:space";
+const INTENT_BACKSPACE_ACTION: &str = "intent:backspace";
+const INTENT_SEND_ACTION: &str = "intent:send";
+const INTENT_KEY_PREFIX: &str = "intent:key:";
+/// Same reasoning as `CONSENT_BUTTON_HEIGHT`: a plain literal, not scaled
+/// against `ROOT_TAB_HEIGHT`'s 2400-unit design space, matching how
+/// `consent_view()`'s own header/buttons are sized.
+const INTENT_HEADER_HEIGHT: u32 = 260;
+
+/// ADR-029's proven touch-hit-test keyboard, grown from its 6-key spike
+/// (`H`/`I`/`!`) to a real (if Latin-only -- Cyrillic is future polish,
+/// not an architectural question) lowercase QWERTY, per that ADR's own
+/// "Последствия" section. Change 2's job is proving the Intent -> Task
+/// -> Action -> Result workflow end to end, not re-proving text entry
+/// works -- ADR-029 already did that.
+const INTENT_KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+
+struct IntentControlDef {
+    id: &'static str,
+    label: &'static str,
+    action: &'static str,
+}
+
+const INTENT_CONTROLS: [IntentControlDef; 4] = [
+    IntentControlDef {
+        id: "intent-cancel",
+        label: "Отмена",
+        action: INTENT_CANCEL_ACTION,
+    },
+    IntentControlDef {
+        id: "intent-space",
+        label: "␣",
+        action: INTENT_SPACE_ACTION,
+    },
+    IntentControlDef {
+        id: "intent-backspace",
+        label: "⌫",
+        action: INTENT_BACKSPACE_ACTION,
+    },
+    IntentControlDef {
+        id: "intent-send",
+        label: "Отправить",
+        action: INTENT_SEND_ACTION,
+    },
+];
+
+/// Active while the on-screen keyboard (S09 Change 2) is composing a new
+/// `saaios.intent`'s text. Modal, same as `PendingConsent` -- owns every
+/// touch while it's showing (see `TouchHandler::up()`).
+#[derive(Default)]
+struct IntentInputState {
+    buffer: String,
+}
+
 /// What `draw()` renders this frame, computed up front from `&self` before
 /// `buffer`/`canvas` take a mutable borrow for the rest of the function.
 enum Frame {
@@ -285,12 +344,72 @@ enum Frame {
         accept: Rect,
         decline: Rect,
     },
+    IntentInput {
+        buffer: String,
+        header: Rect,
+        keys: Vec<(Rect, String)>,
+    },
     Root {
         content_rect: Rect,
         tabs: Vec<(Rect, &'static str)>,
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
     },
+}
+
+fn intent_key_action(ch: char) -> String {
+    format!("{INTENT_KEY_PREFIX}{ch}")
+}
+
+/// Built and hit-tested the same way as `root_view()`/`consent_view()`:
+/// one `Node`/`layout()` tree, no second set of rectangles for touch.
+/// Every row (letters and controls alike) is `Length::Fill` on both
+/// axes, so the keyboard reflows to whatever the real panel size is
+/// instead of assuming a fixed design canvas.
+fn intent_view(width: u32, height: u32) -> LayoutNode {
+    let mut rows: Vec<Node> = INTENT_KEY_ROWS
+        .iter()
+        .enumerate()
+        .map(|(row_index, letters)| {
+            Node::linear(
+                format!("intent-row-{row_index}"),
+                Axis::Horizontal,
+                letters
+                    .chars()
+                    .map(|ch| {
+                        Node::leaf(format!("intent-key-{ch}")).with_action(intent_key_action(ch))
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    rows.push(Node::linear(
+        "intent-controls",
+        Axis::Horizontal,
+        INTENT_CONTROLS
+            .iter()
+            .map(|control| Node::leaf(control.id).with_action(control.action))
+            .collect(),
+    ));
+    let keyboard = Node::linear(INTENT_ROWS_ID, Axis::Vertical, rows);
+    let root = Node::linear(
+        INTENT_SCREEN_ID,
+        Axis::Vertical,
+        vec![
+            Node::leaf(INTENT_HEADER_ID).with_size(Length::Fill, Length::Px(INTENT_HEADER_HEIGHT)),
+            keyboard,
+        ],
+    );
+    layout(&root, Rect::new(0, 0, width, height))
+}
+
+fn intent_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<String> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    intent_view(width, height)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.clone())
 }
 
 fn consent_view(width: u32, height: u32) -> LayoutNode {
@@ -481,6 +600,7 @@ fn main() {
         appd: appd_client::AppdClient::new(appd_socket),
         demo_app_state: DemoAppState::Unavailable,
         pending_consent: None,
+        intent_input: None,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -578,6 +698,9 @@ struct Shell {
     /// Set while a launch is blocked on the ADR-020 consent screen -- see
     /// `apply_appd_message`'s `ConsentRequired`/`ConsentDecided` handling.
     pending_consent: Option<PendingConsent>,
+    /// S09 Change 2: set while the on-screen keyboard is composing a new
+    /// `saaios.intent`. Modal, same as `pending_consent`.
+    intent_input: Option<IntentInputState>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -954,6 +1077,13 @@ impl TouchHandler for Shell {
                     }
                     self.draw(conn, qh);
                 }
+            } else if self.intent_input.is_some() {
+                // Modal, same as consent: the on-screen keyboard owns
+                // every touch while it's showing.
+                if let Some(action) = intent_action_at(self.last_touch_pos, self.width, self.height)
+                {
+                    self.handle_intent_input_action(&action, conn, qh);
+                }
             } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
@@ -1043,6 +1173,26 @@ impl Shell {
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
+        } else if let Some(state) = &self.intent_input {
+            let view = intent_view(width, height);
+            let header = view.children[0].rect;
+            let keyboard_rows = &view.children[1].children;
+            let mut keys = Vec::new();
+            for (row_index, letters) in INTENT_KEY_ROWS.iter().enumerate() {
+                let row_node = &keyboard_rows[row_index];
+                for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
+                    keys.push((key_node.rect, ch.to_uppercase().to_string()));
+                }
+            }
+            let controls_node = &keyboard_rows[INTENT_KEY_ROWS.len()];
+            for (key_node, control) in controls_node.children.iter().zip(INTENT_CONTROLS.iter()) {
+                keys.push((key_node.rect, control.label.to_string()));
+            }
+            Frame::IntentInput {
+                buffer: state.buffer.clone(),
+                header,
+                keys,
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
@@ -1118,6 +1268,19 @@ impl Shell {
                     self.fonts.as_ref(),
                 );
             }
+            Frame::IntentInput {
+                buffer,
+                header,
+                keys,
+            } => {
+                render::draw_intent_input(
+                    &mut render::Canvas::new(canvas, width, height),
+                    &buffer,
+                    header,
+                    &keys,
+                    self.fonts.as_ref(),
+                );
+            }
             Frame::Root {
                 content_rect,
                 tabs,
@@ -1161,6 +1324,11 @@ impl Shell {
             }
             return;
         }
+        if action.action == "open_intent_input" {
+            self.intent_input = Some(IntentInputState::default());
+            self.draw(conn, qh);
+            return;
+        }
         if action.action != DEMO_APP_ACTION {
             return;
         }
@@ -1174,6 +1342,59 @@ impl Shell {
                 self.demo_app_state = DemoAppState::Pending;
             }
             DemoAppState::Unavailable | DemoAppState::Running | DemoAppState::Pending => return,
+        }
+        self.draw(conn, qh);
+    }
+
+    /// S09 Change 2: drives the on-screen keyboard opened by
+    /// `open_intent_input`. `intent:send` is the one path that talks to
+    /// `saai-entityd` -- everything else only touches `self.intent_input`'s
+    /// local buffer.
+    fn handle_intent_input_action(
+        &mut self,
+        action: &str,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        let Some(state) = self.intent_input.as_mut() else {
+            return;
+        };
+        match action {
+            INTENT_CANCEL_ACTION => {
+                self.intent_input = None;
+            }
+            INTENT_SPACE_ACTION => {
+                state.buffer.push(' ');
+            }
+            INTENT_BACKSPACE_ACTION => {
+                state.buffer.pop();
+            }
+            INTENT_SEND_ACTION => {
+                let text = state.buffer.trim().to_string();
+                if !text.is_empty() && self.entityd.is_connected() {
+                    let mut properties = Map::new();
+                    properties.insert("text".into(), json!(text));
+                    // "saaios.intent" -- must match saai-taskd's own
+                    // model::INTENT_TYPE (ADR-030). The two crates share
+                    // no dependency by design, so this is a convention,
+                    // not a compile-time guarantee.
+                    self.entityd.create_entity(
+                        self.selected_space_id.clone(),
+                        "saaios.intent",
+                        &text,
+                        properties,
+                    );
+                    println!("saai-shell: submitted intent \"{text}\"");
+                }
+                self.intent_input = None;
+            }
+            other => {
+                if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
+                    if let Some(ch) = key.chars().next() {
+                        state.buffer.push(ch);
+                    }
+                }
+            }
         }
         self.draw(conn, qh);
     }
@@ -1373,6 +1594,14 @@ impl Shell {
                 ),
             };
         }
+        if action.action == "open_intent_input" {
+            let status = if self.entityd.is_connected() {
+                "Ввести текст намерения"
+            } else {
+                "Сервис пространств недоступен"
+            };
+            return render::ActionCardView::new(action.label, status, "Открыть");
+        }
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
             let selected = space_id == self.selected_space_id;
             let status = if self.entityd.is_connected() {
@@ -1511,8 +1740,8 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        capability_label, consent_action_at, content_action_at, tab_at, RootPage,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        capability_label, consent_action_at, content_action_at, intent_action_at, tab_at, RootPage,
+        INTENT_CANCEL_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
 
     #[test]
@@ -1538,7 +1767,7 @@ mod tests {
 
     #[test]
     fn demo_action_geometry_comes_from_sui_markup() {
-        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 6);
+        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 7);
         assert_eq!(ROOT_CONTENT_ACTIONS[0].label, "Saai Demo");
         assert_eq!(
             content_action_at(RootPage::Now, (540.0, 500.0), 1080, 2400).map(|action| action.id),
@@ -1564,6 +1793,10 @@ mod tests {
             content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
             Some("selected-entity")
         );
+        assert_eq!(
+            content_action_at(RootPage::Now, (540.0, 1020.0), 1080, 2400).map(|action| action.id),
+            Some("new-intent")
+        );
     }
 
     #[test]
@@ -1579,6 +1812,39 @@ mod tests {
     #[test]
     fn consent_screen_header_area_is_not_a_button() {
         assert_eq!(consent_action_at((540.0, 1000.0), 1080, 2400), None);
+    }
+
+    #[test]
+    fn intent_keyboard_rows_map_to_their_own_letters() {
+        assert_eq!(
+            intent_action_at((50.0, 300.0), 1080, 2400).as_deref(),
+            Some("intent:key:q")
+        );
+        assert_eq!(
+            intent_action_at((50.0, 850.0), 1080, 2400).as_deref(),
+            Some("intent:key:a")
+        );
+        assert_eq!(
+            intent_action_at((50.0, 1400.0), 1080, 2400).as_deref(),
+            Some("intent:key:z")
+        );
+    }
+
+    #[test]
+    fn intent_keyboard_controls_row_has_cancel_and_send_at_the_ends() {
+        assert_eq!(
+            intent_action_at((50.0, 2000.0), 1080, 2400).as_deref(),
+            Some(INTENT_CANCEL_ACTION)
+        );
+        assert_eq!(
+            intent_action_at((950.0, 2000.0), 1080, 2400).as_deref(),
+            Some(INTENT_SEND_ACTION)
+        );
+    }
+
+    #[test]
+    fn intent_keyboard_header_is_not_a_key() {
+        assert_eq!(intent_action_at((540.0, 100.0), 1080, 2400), None);
     }
 
     #[test]

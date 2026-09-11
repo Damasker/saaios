@@ -1,6 +1,7 @@
 use saai_entity_protocol::{
     encode_request, ClientRequest, ServerMessage, ENTITYD_WIRE_SCHEMA_V1, MAX_WIRE_MESSAGE_BYTES,
 };
+use serde_json::{Map, Value};
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -35,6 +36,28 @@ impl EntitydClient {
             schema: ENTITYD_WIRE_SCHEMA_V1,
             request_id,
             space_id: space_id.into(),
+        });
+    }
+
+    /// S09 Change 2: the one write path a `saai-shell` client needs so
+    /// far -- submitting a new `saaios.intent` from the on-screen
+    /// keyboard. `saai-taskd` (not this client) is what turns it into a
+    /// Task/Action/Result (ADR-030).
+    pub fn create_entity(
+        &mut self,
+        space_id: impl Into<String>,
+        entity_type: impl Into<String>,
+        title: impl Into<String>,
+        properties: Map<String, Value>,
+    ) {
+        let request_id = self.request_id();
+        self.queue(ClientRequest::CreateEntity {
+            schema: ENTITYD_WIRE_SCHEMA_V1,
+            request_id,
+            space_id: space_id.into(),
+            entity_type: entity_type.into(),
+            title: title.into(),
+            properties,
         });
     }
 

@@ -28,6 +28,7 @@ members = [
     "services/saai-shell",
     "services/saai-appd",
     "services/saai-entityd",
+    "services/saai-taskd",
 ]
 
 [workspace.package]

@@ -2239,6 +2239,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "saai-taskd"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "saai-entity-protocol",
+ "saai-entity-store",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "saai-ui-compiler"
 version = "0.1.0"
 

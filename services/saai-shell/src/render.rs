@@ -219,6 +219,75 @@ pub fn draw_consent(
     );
 }
 
+/// S09 Change 2 / ADR-030: the bespoke touch-hit-test on-screen keyboard
+/// ADR-029 proved on a throwaway spike, now the real, committed way to
+/// type a `saaios.intent`'s text. `keys` is already laid out and
+/// hit-tested by `main.rs`'s `intent_view()` -- this only draws the
+/// rectangles it's handed, the same "no second set of rectangles" rule
+/// `draw_root()` follows for the tab bar and content cards.
+pub fn draw_intent_input(
+    canvas: &mut Canvas<'_>,
+    buffer: &str,
+    header: Rect,
+    keys: &[(Rect, String)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+    canvas.fill_rect(header, SURFACE);
+
+    let Some(fonts) = fonts else {
+        // Same no-font fallback draw_consent() uses: every key still gets
+        // a distinct, tappable rectangle even with no label rendered.
+        for (rect, _) in keys {
+            canvas.fill_rect(*rect, SURFACE_SELECTED);
+        }
+        return;
+    };
+
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        "Новое намерение",
+        42.0,
+        header.x + 30,
+        header.y + 40,
+        TEXT,
+    );
+    let (preview, preview_color) = if buffer.is_empty() {
+        ("Наберите текст…", TEXT_MUTED)
+    } else {
+        (buffer, TEXT)
+    };
+    draw_text(
+        canvas,
+        &fonts.regular,
+        preview,
+        34.0,
+        header.x + 30,
+        header.y + 130,
+        preview_color,
+    );
+
+    for (rect, label) in keys {
+        let key = Rect::new(
+            rect.x.saturating_add(4),
+            rect.y.saturating_add(4),
+            rect.width.saturating_sub(8),
+            rect.height.saturating_sub(8),
+        );
+        canvas.fill_rect(key, SURFACE);
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            label,
+            32.0,
+            key.x + key.width / 2,
+            key.y + key.height / 2 - 18,
+            TEXT,
+        );
+    }
+}
+
 pub fn draw_root(
     canvas: &mut Canvas<'_>,
     content: Rect,

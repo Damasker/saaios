@@ -1,0 +1,39 @@
+use clap::Parser;
+use saai_taskd::Daemon;
+use std::path::PathBuf;
+
+#[derive(Debug, Parser)]
+#[command(name = "saai-taskd")]
+struct Args {
+    #[arg(long, default_value = "/run/saaios/entityd.sock")]
+    entityd_socket: PathBuf,
+    /// Space this daemon watches for `saaios.intent` entities. S09
+    /// Change 2 only needs one space -- multi-space workflows are out
+    /// of scope until something actually asks for them.
+    #[arg(long, default_value = "home")]
+    space: String,
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let args = Args::parse();
+    let mut daemon = match Daemon::connect(&args.entityd_socket, args.space).await {
+        Ok(daemon) => daemon,
+        Err(error) => {
+            eprintln!("saai-taskd: failed to connect to saai-entityd: {error}");
+            std::process::exit(1);
+        }
+    };
+    match daemon.reconcile_existing_intents().await {
+        Ok(0) => {}
+        Ok(count) => eprintln!("saai-taskd: reconciled {count} pre-existing intent(s)"),
+        Err(error) => {
+            eprintln!("saai-taskd: reconcile failed: {error}");
+            std::process::exit(1);
+        }
+    }
+    if let Err(error) = daemon.run().await {
+        eprintln!("saai-taskd: {error}");
+        std::process::exit(1);
+    }
+}
