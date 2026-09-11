@@ -12,18 +12,26 @@ struct Args {
     /// of scope until something actually asks for them.
     #[arg(long, default_value = "home")]
     space: String,
+    /// `host:port` of the on-device `saaios-runtime` free-form intents
+    /// are bridged to (ADR-033). Required, not defaulted -- it's
+    /// specific to how this particular device's `saaios-runtime` is
+    /// reached (a USB-NCM address of whatever host is connected right
+    /// now), not something safe to guess.
+    #[arg(long)]
+    runtime_addr: String,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let args = Args::parse();
-    let mut daemon = match Daemon::connect(&args.entityd_socket, args.space).await {
-        Ok(daemon) => daemon,
-        Err(error) => {
-            eprintln!("saai-taskd: failed to connect to saai-entityd: {error}");
-            std::process::exit(1);
-        }
-    };
+    let mut daemon =
+        match Daemon::connect(&args.entityd_socket, args.space, args.runtime_addr).await {
+            Ok(daemon) => daemon,
+            Err(error) => {
+                eprintln!("saai-taskd: failed to connect to saai-entityd: {error}");
+                std::process::exit(1);
+            }
+        };
     match daemon.reconcile_existing_intents().await {
         Ok(0) => {}
         Ok(count) => eprintln!("saai-taskd: reconciled {count} pre-existing intent(s)"),

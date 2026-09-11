@@ -2,12 +2,14 @@
 //! the existing `saai-entity-store` (S06), not as a port of Platform
 //! Track's `policy-engine`/`tool-registry`. This module is the pure,
 //! host-testable half of that decision: entity-type/property schema,
-//! the workflow status state machine, idempotency, the one
-//! non-dangerous Action Change 2 runs, and (Change 3) the one
-//! dangerous Action that pauses for confirmation instead. No IO here
-//! -- the wire client lives in `client.rs`.
+//! the workflow status state machine, idempotency, the dangerous
+//! `delete_entity` Action (Change 3), and (S10 Change 2) the bridge
+//! Action kind that lets a free-form Intent become a real, model-
+//! authored proposal instead of a hardcoded transform. No IO here --
+//! the wire clients live in `client.rs`/`runtime_bridge.rs`.
 
 use saai_entity_protocol::Entity;
+use saai_entity_store::MAX_ENTITY_TITLE_CHARS;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -16,11 +18,6 @@ pub const TASK_TYPE: &str = "saaios.task";
 pub const ACTION_TYPE: &str = "saaios.action";
 pub const RESULT_TYPE: &str = "saaios.result";
 
-/// Non-dangerous by construction: it only reads the intent text it was
-/// itself given and computes a deterministic transform. It reaches
-/// nothing outside this process, so it never needs a confirmation gate.
-pub const ECHO_ACTION_KIND: &str = "echo";
-
 /// Change 3's one dangerous Action: deletes another entity in the same
 /// space. Irreversible from the live store's point of view (the
 /// event log keeps history, but the entity itself is gone) and reaches
@@ -28,9 +25,19 @@ pub const ECHO_ACTION_KIND: &str = "echo";
 /// Threat/privacy impact section describes. Selected explicitly via an
 /// intent's own `action_kind`/`target_entity_id` properties
 /// (`dangerous_action_of`) -- free-form keyboard text never reaches
-/// this path on its own; parsing "delete X" out of natural language is
-/// S10's planner's job, not this Change's.
+/// this path on its own.
 pub const DELETE_ENTITY_ACTION_KIND: &str = "delete_entity";
+
+/// S10 Change 2 (ADR-033): every free-form Intent that isn't the
+/// explicit `delete_entity` path goes through the already-running
+/// on-device `saaios-runtime` instead of a hardcoded transform --
+/// Change 2 of S09 (`echo`) was always a placeholder to prove the
+/// entity-store conveyor before a real model existed to ask; now that
+/// one is physically proven reachable (ADR-033), there is no reason to
+/// keep both. Whether this becomes `Done` immediately or
+/// `WaitingConfirmation` is decided purely by whether the runtime's
+/// response carries `pending` -- see `lib.rs`'s `process_planner_intent`.
+pub const RUNTIME_ACTION_KIND: &str = "saaios_runtime_tool";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowStatus {
@@ -67,18 +74,31 @@ impl WorkflowStatus {
     }
 }
 
-/// Change 2 drives Running -> {Done, Failed} for its one non-dangerous
-/// Action. Change 3 adds the confirmation gate: a dangerous Action's
-/// Task starts at `WaitingConfirmation` (never `Running` immediately)
-/// and can only reach `Running` through an explicit, separately
-/// authored update (`saai-shell`'s confirmation screen, a live touch --
-/// never something this daemon writes to itself), or `Cancelled`
-/// through the same kind of explicit decline. There is deliberately no
-/// `WaitingConfirmation -> Done` or any reboot/restart-only path to
-/// `Running` -- resuming after a restart re-enters this exact same
-/// state machine through the same external-confirmation edge, per S09's
-/// Threat/privacy impact requirement that a resumed Task never
-/// auto-executes on a cached decision.
+/// A Task now starts `Pending` whenever what it will become isn't known
+/// yet -- true for every planner-bridged Intent (S10 Change 2), since
+/// nothing here knows whether the model will answer outright or propose
+/// something that needs confirmation until `saaios-runtime` actually
+/// replies. From `Pending` it can reach `Running` (answered outright,
+/// about to be finalized `Done`), `WaitingConfirmation` (the model
+/// proposed something `saaios-runtime`'s own `policy-engine` flagged
+/// `ask_user`), or `Failed` directly (the bridge couldn't even reach
+/// `saaios-runtime` -- there was never anything to run). `Running` only
+/// ever continues to `Done`/`Failed` for itself, matching Change 2 of
+/// S09's original shape. `WaitingConfirmation` can only reach `Running`
+/// or `Cancelled` through an explicit, separately authored update
+/// (`saai-shell`'s confirmation screen, a live touch -- never something
+/// this daemon writes to itself) -- there is deliberately no
+/// `WaitingConfirmation -> Done` and no reboot/restart-only path to
+/// `Running`, per S09's Threat/privacy impact requirement that a
+/// resumed Task never auto-executes on a cached decision.
+/// `WaitingConfirmation -> Failed` is the one exception this daemon
+/// *does* write to a confirmed Action itself: the human already made
+/// the "yes, run it" decision (the Task is `Running` by then, not
+/// `WaitingConfirmation` any more) -- this transition belongs to the
+/// still-`WaitingConfirmation` Action underneath it, when actually
+/// resuming it fails (`saaios-runtime` unreachable, malformed
+/// response), not to a cached auto-decision about whether to run at
+/// all.
 pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
     use WorkflowStatus::*;
     matches!(
@@ -87,8 +107,10 @@ pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
             | (Running, Done)
             | (Running, Failed)
             | (Pending, WaitingConfirmation)
+            | (Pending, Failed)
             | (WaitingConfirmation, Running)
             | (WaitingConfirmation, Cancelled)
+            | (WaitingConfirmation, Failed)
     )
 }
 
@@ -179,25 +201,27 @@ pub fn find_action_for_task(actions: &[Entity], task_id: Uuid) -> Option<&Entity
         .find(|action| task_id_of(action) == Some(task_id))
 }
 
-/// The one non-dangerous Action Change 2 runs. Deterministic and pure:
-/// same input always produces the same output, which is what makes the
-/// idempotency guard above sufficient on its own -- there's no
-/// observable difference between running it once and running it twice
-/// on the same intent, other than the duplicate Task/Result this
-/// function has nothing to do with preventing.
-pub fn run_echo_action(text: &str) -> Value {
-    json!({
-        "echo": text.to_uppercase(),
-        "chars": text.chars().count(),
-        "words": text.split_whitespace().count(),
-    })
-}
-
-pub fn result_summary(text: &str, output: &Value) -> String {
-    let echo = output.get("echo").and_then(Value::as_str).unwrap_or("");
-    let chars = output.get("chars").and_then(Value::as_u64).unwrap_or(0);
-    let words = output.get("words").and_then(Value::as_u64).unwrap_or(0);
-    format!("Намерение «{text}» обработано: {chars} симв., {words} слов -> {echo}")
+/// Discovered the hard way (S10 Change 2 physical testing, before this
+/// was committed): `saai-entity-store` requires a title that's
+/// non-empty after trimming, at most `MAX_ENTITY_TITLE_CHARS`, and free
+/// of control characters -- this daemon's own hand-written titles
+/// (short, static strings, or a `short_id()`) always satisfied that by
+/// construction, but a model's own summary text has no such guarantee
+/// (a multi-line answer, or one long enough to exceed the limit, made
+/// `saai-entityd` reject the `CreateEntity` call outright and crashed
+/// this daemon before this existed). Every title built from intent text
+/// or a model's own output goes through this first.
+pub fn safe_title(text: &str, fallback: &str) -> String {
+    let cleaned: String = text.chars().filter(|c| !c.is_control()).collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        return fallback.to_string();
+    }
+    if trimmed.chars().count() > MAX_ENTITY_TITLE_CHARS {
+        trimmed.chars().take(MAX_ENTITY_TITLE_CHARS).collect()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Change 3's classifier: does this intent select the dangerous
@@ -205,8 +229,8 @@ pub fn result_summary(text: &str, output: &Value) -> String {
 /// intent explicitly carrying both `action_kind: "delete_entity"` and a
 /// well-formed `target_entity_id` property takes this path -- anything
 /// else (in particular, every intent the on-screen keyboard creates,
-/// which only ever sets `text`) falls through to the ordinary Change 2
-/// echo path.
+/// which only ever sets `text`) falls through to the planner bridge
+/// (S10 Change 2).
 pub fn dangerous_action_of(intent: &Entity) -> Option<Uuid> {
     let kind = intent.properties.get("action_kind")?.as_str()?;
     if kind != DELETE_ENTITY_ACTION_KIND {
@@ -282,6 +306,13 @@ mod tests {
     }
 
     #[test]
+    fn s10_change_2_bridge_failure_transitions_are_accepted() {
+        use WorkflowStatus::*;
+        assert!(valid_transition(Pending, Failed));
+        assert!(valid_transition(WaitingConfirmation, Failed));
+    }
+
+    #[test]
     fn a_resumed_task_can_never_skip_straight_to_done() {
         use WorkflowStatus::*;
         assert!(!valid_transition(WaitingConfirmation, Done));
@@ -321,7 +352,7 @@ mod tests {
             ACTION_TYPE,
             action_properties(
                 task_id,
-                ECHO_ACTION_KIND,
+                RUNTIME_ACTION_KIND,
                 WorkflowStatus::Running,
                 &json!({}),
                 None,
@@ -391,7 +422,7 @@ mod tests {
             ACTION_TYPE,
             action_properties(
                 Uuid::new_v4(),
-                ECHO_ACTION_KIND,
+                RUNTIME_ACTION_KIND,
                 WorkflowStatus::Done,
                 &json!({}),
                 None,
@@ -401,28 +432,38 @@ mod tests {
     }
 
     #[test]
-    fn echo_action_is_deterministic() {
-        let first = run_echo_action("hi there");
-        let second = run_echo_action("hi there");
-        assert_eq!(first, second);
-        assert_eq!(first["echo"], json!("HI THERE"));
-        assert_eq!(first["chars"], json!(8));
-        assert_eq!(first["words"], json!(2));
+    fn safe_title_passes_short_clean_text_through_unchanged() {
+        assert_eq!(safe_title("Задача: привет", "fallback"), "Задача: привет");
     }
 
     #[test]
-    fn echo_action_counts_unicode_chars_not_bytes() {
-        let output = run_echo_action("привет");
-        assert_eq!(output["chars"], json!(6));
+    fn safe_title_falls_back_on_empty_or_whitespace_only_text() {
+        assert_eq!(safe_title("", "fallback"), "fallback");
+        assert_eq!(safe_title("   \t  ", "fallback"), "fallback");
     }
 
     #[test]
-    fn result_summary_embeds_the_computed_output() {
-        let output = run_echo_action("hi");
-        let summary = result_summary("hi", &output);
-        assert!(summary.contains("HI"));
-        assert!(summary.contains("2 симв"));
-        assert!(summary.contains("1 слов"));
+    fn safe_title_strips_control_characters_like_a_multiline_model_answer() {
+        assert_eq!(
+            safe_title("line one\nline two\r\n", "fallback"),
+            "line oneline two"
+        );
+    }
+
+    #[test]
+    fn safe_title_truncates_by_chars_not_bytes_and_stays_under_the_limit() {
+        // Multi-byte UTF-8 chars (2 bytes each in UTF-8) -- a byte-based
+        // truncation at 160 would either panic mid-character or cut the
+        // count in half; this must truncate at exactly 160 *characters*.
+        let long = "п".repeat(200);
+        let title = safe_title(&long, "fallback");
+        assert_eq!(title.chars().count(), 160);
+    }
+
+    #[test]
+    fn safe_title_leaves_text_exactly_at_the_limit_untouched() {
+        let exact = "a".repeat(160);
+        assert_eq!(safe_title(&exact, "fallback"), exact);
     }
 
     #[test]
