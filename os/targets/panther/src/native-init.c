@@ -905,6 +905,32 @@ static void save_dmesg(const char *destination) {
     }
 }
 
+static void configure_loopback(void) {
+    /* Never brought up by the kernel itself. Any native component that
+       calls another native component over TCP on this same device (for
+       example saai-taskd reaching saaios-runtime, ADR-034) routes through
+       lo even when it dials the USB gadget's own address, because the
+       kernel's local routing table treats that address as reachable via
+       loopback. Left down, such a connection times out instead of failing
+       fast, which is how the gap in ADR-034 was found. */
+    char *const argv[] = {
+        "busybox", "ifconfig", "lo", "127.0.0.1",
+        "netmask", "255.0.0.0", "up", NULL,
+    };
+    pid_t child = fork();
+    if (child == 0) {
+        execv("/saaios/busybox", argv);
+        _exit(127);
+    }
+    if (child > 0) {
+        int status = 0;
+        if (waitpid(child, &status, 0) < 0 ||
+            !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            log_message("loopback interface configuration failed");
+        }
+    }
+}
+
 static void configure_network(void) {
     char *const argv[] = {
         "busybox", "ifconfig", "usb0", "172.31.7.1",
@@ -1546,6 +1572,7 @@ int main(void) {
 
     sleep(2);
     (void)create_tty_node();
+    configure_loopback();
     configure_network();
     start_usb_dhcp();
     start_runtime();
