@@ -26,7 +26,7 @@ Ledger = audit-log, UDS/TLS; привязка к S09–S11.
 | S08 | GTK и Qt/Kirigami совместимость | Done (переоцененный объём) | S07 |
 | S09 | Intent → Task → Action workflow | Done | S06, S07 |
 | S10 | Planner, automation и memory | Done | S09 |
-| S11 | Производительность, idle и стабильность | Ready | S01–S10 |
+| S11 | Производительность, idle и стабильность | In progress | S01–S10 |
 | S12 | OTA и release gate | Backlog | S04, S11 |
 
 ## S00 — Архитектура и процесс
