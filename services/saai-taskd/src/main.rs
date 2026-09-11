@@ -32,6 +32,18 @@ async fn main() {
             std::process::exit(1);
         }
     }
+    // Change 3: a Task confirmed (moved to Running) while this daemon
+    // wasn't running to see the event still needs its Action executed.
+    // A Task still WaitingConfirmation is deliberately left untouched
+    // here -- see Daemon::reconcile_confirmed_tasks's own doc comment.
+    match daemon.reconcile_confirmed_tasks().await {
+        Ok(0) => {}
+        Ok(count) => eprintln!("saai-taskd: resumed {count} confirmed task(s)"),
+        Err(error) => {
+            eprintln!("saai-taskd: confirmed-task reconcile failed: {error}");
+            std::process::exit(1);
+        }
+    }
     if let Err(error) = daemon.run().await {
         eprintln!("saai-taskd: {error}");
         std::process::exit(1);

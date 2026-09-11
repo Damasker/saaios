@@ -288,6 +288,71 @@ pub fn draw_intent_input(
     }
 }
 
+/// S09 Change 3: the confirmation screen for a dangerous `saaios.task`
+/// (ADR-031's follow-up). `title` is already the task's own
+/// human-readable title (e.g. "Подтвердите: удалить объект a1b2c3d4")
+/// -- `saai-shell` shows it verbatim rather than interpreting the
+/// Action's `kind`/`input`, so it never needs to know `saai-taskd`'s
+/// vocabulary (ADR-030's no-cross-runtime-dependency principle applies
+/// here too, not just to the daemon split itself).
+pub fn draw_task_confirm(
+    canvas: &mut Canvas<'_>,
+    title: &str,
+    header: Rect,
+    accept_button: Rect,
+    decline_button: Rect,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+
+    let Some(fonts) = fonts else {
+        canvas.fill_rect(accept_button, ACCENT);
+        canvas.fill_rect(decline_button, SURFACE);
+        return;
+    };
+
+    let margin = header.width / 22;
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        "Требуется подтверждение",
+        46.0,
+        header.x + margin,
+        header.y + 220,
+        TEXT,
+    );
+    draw_text(
+        canvas,
+        &fonts.regular,
+        title,
+        32.0,
+        header.x + margin,
+        header.y + 340,
+        TEXT_MUTED,
+    );
+
+    canvas.fill_rect(accept_button, ACCENT);
+    canvas.fill_rect(decline_button, SURFACE);
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        "Подтвердить",
+        40.0,
+        accept_button.x + accept_button.width / 2,
+        accept_button.y + accept_button.height / 2 - 20,
+        BACKGROUND,
+    );
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        "Отклонить",
+        40.0,
+        decline_button.x + decline_button.width / 2,
+        decline_button.y + decline_button.height / 2 - 20,
+        TEXT,
+    );
+}
+
 pub fn draw_root(
     canvas: &mut Canvas<'_>,
     content: Rect,

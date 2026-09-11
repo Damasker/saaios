@@ -78,7 +78,7 @@ use saai_entity_protocol::{
     ServerMessage as EntityServerMessage, Space,
 };
 use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
-use serde_json::{json, Map};
+use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
     protocol::{wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
@@ -334,12 +334,37 @@ struct IntentInputState {
     buffer: String,
 }
 
+const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
+const TASK_CONFIRM_BUTTONS_ID: &str = "task-confirm-buttons";
+const TASK_CONFIRM_ACCEPT_ID: &str = "task-confirm-accept";
+const TASK_CONFIRM_DECLINE_ID: &str = "task-confirm-decline";
+const TASK_CONFIRM_ACCEPT_ACTION: &str = "task_confirm:accept";
+const TASK_CONFIRM_DECLINE_ACTION: &str = "task_confirm:decline";
+/// Same reasoning as `CONSENT_BUTTON_HEIGHT`: matches the tab bar's own
+/// button proportions on this "second full-screen `ui_tree`" class of
+/// modal.
+const TASK_CONFIRM_BUTTON_HEIGHT: u32 = ROOT_TAB_HEIGHT;
+/// `saaios.task`'s own recognized values for the property this screen
+/// reads and writes -- kept local to `saai-shell` rather than imported
+/// from `saai-taskd`, per ADR-030's no-cross-runtime-dependency
+/// principle: the two crates agree on this string by convention, not
+/// by sharing a type.
+const TASK_STATUS_WAITING_CONFIRMATION: &str = "waiting_confirmation";
+const TASK_STATUS_RUNNING: &str = "running";
+const TASK_STATUS_CANCELLED: &str = "cancelled";
+
 /// What `draw()` renders this frame, computed up front from `&self` before
 /// `buffer`/`canvas` take a mutable borrow for the rest of the function.
 enum Frame {
     Consent {
         app_name: &'static str,
         labels: Vec<String>,
+        header: Rect,
+        accept: Rect,
+        decline: Rect,
+    },
+    TaskConfirm {
+        title: String,
         header: Rect,
         accept: Rect,
         decline: Rect,
@@ -355,6 +380,40 @@ enum Frame {
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
     },
+}
+
+fn task_confirm_view(width: u32, height: u32) -> LayoutNode {
+    let buttons = Node::linear(
+        TASK_CONFIRM_BUTTONS_ID,
+        Axis::Horizontal,
+        vec![
+            Node::leaf(TASK_CONFIRM_ACCEPT_ID).with_action(TASK_CONFIRM_ACCEPT_ACTION),
+            Node::leaf(TASK_CONFIRM_DECLINE_ID).with_action(TASK_CONFIRM_DECLINE_ACTION),
+        ],
+    )
+    .with_size(Length::Fill, Length::Px(TASK_CONFIRM_BUTTON_HEIGHT));
+    let root = Node::linear(
+        "task-confirm",
+        Axis::Vertical,
+        vec![Node::leaf(TASK_CONFIRM_HEADER_ID), buttons],
+    );
+    layout(&root, Rect::new(0, 0, width, height))
+}
+
+/// `Some(true)` for confirm, `Some(false)` for decline -- same shape as
+/// `consent_action_at()`.
+fn task_confirm_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bool> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    match task_confirm_view(width, height)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref())
+    {
+        Some(TASK_CONFIRM_ACCEPT_ACTION) => Some(true),
+        Some(TASK_CONFIRM_DECLINE_ACTION) => Some(false),
+        _ => None,
+    }
 }
 
 fn intent_key_action(ch: char) -> String {
@@ -1077,6 +1136,16 @@ impl TouchHandler for Shell {
                     }
                     self.draw(conn, qh);
                 }
+            } else if self.pending_task_confirmation().is_some() {
+                // Modal, same as consent: the dangerous-Task
+                // confirmation screen owns every touch while it's
+                // showing (S09 Change 3 / ADR-031's follow-up).
+                if let Some(confirm) =
+                    task_confirm_action_at(self.last_touch_pos, self.width, self.height)
+                {
+                    self.confirm_pending_task(confirm);
+                    self.draw(conn, qh);
+                }
             } else if self.intent_input.is_some() {
                 // Modal, same as consent: the on-screen keyboard owns
                 // every touch while it's showing.
@@ -1173,6 +1242,16 @@ impl Shell {
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
+        } else if let Some(task) = self.pending_task_confirmation() {
+            let view = task_confirm_view(width, height);
+            let header = view.children[0].rect;
+            let buttons = &view.children[1].children;
+            Frame::TaskConfirm {
+                title: task.title.clone(),
+                header,
+                accept: buttons[0].rect,
+                decline: buttons[1].rect,
+            }
         } else if let Some(state) = &self.intent_input {
             let view = intent_view(width, height);
             let header = view.children[0].rect;
@@ -1262,6 +1341,21 @@ impl Shell {
                     &mut render::Canvas::new(canvas, width, height),
                     app_name,
                     &labels,
+                    header,
+                    accept,
+                    decline,
+                    self.fonts.as_ref(),
+                );
+            }
+            Frame::TaskConfirm {
+                title,
+                header,
+                accept,
+                decline,
+            } => {
+                render::draw_task_confirm(
+                    &mut render::Canvas::new(canvas, width, height),
+                    &title,
                     header,
                     accept,
                     decline,
@@ -1640,6 +1734,56 @@ impl Shell {
             })
     }
 
+    /// S09 Change 3 (ADR-031's follow-up): the first `saaios.task` in
+    /// the selected space still waiting on a live confirmation, if any
+    /// -- read straight from `selected_entities` (already kept current
+    /// by `poll_entityd`), not from any separate state this client
+    /// tracks itself. That's the whole point: after a cold reboot this
+    /// client has no memory of its own, and a Task the store still
+    /// marks `waiting_confirmation` shows up here exactly the same way
+    /// it did before the reboot -- never auto-confirmed, never hidden.
+    fn pending_task_confirmation(&self) -> Option<&Entity> {
+        self.selected_entities.iter().find(|entity| {
+            entity.entity_type == "saaios.task"
+                && entity.properties.get("status").and_then(Value::as_str)
+                    == Some(TASK_STATUS_WAITING_CONFIRMATION)
+        })
+    }
+
+    /// Writes the one property this screen ever changes (`status`),
+    /// keeping every other property -- `intent_id` in particular --
+    /// exactly as `saai-taskd` wrote it. `saai-taskd`'s own `Subscribe`
+    /// reaction to this update is what actually executes (or discards)
+    /// the paused Action; this method only ever flips the switch.
+    fn confirm_pending_task(&mut self, confirm: bool) {
+        // Cloned to an owned `Entity` up front, ending the borrow of
+        // `self` before `self.entityd.update_entity()` needs its own
+        // (disjoint but, from the borrow checker's point of view
+        // through a `&self`-taking helper, not provably disjoint)
+        // mutable borrow of `self.entityd`.
+        let Some(task) = self.pending_task_confirmation().cloned() else {
+            return;
+        };
+        let mut properties = task.properties.clone();
+        properties.insert(
+            "status".into(),
+            Value::String(
+                if confirm {
+                    TASK_STATUS_RUNNING
+                } else {
+                    TASK_STATUS_CANCELLED
+                }
+                .to_string(),
+            ),
+        );
+        println!(
+            "saai-shell: task {} {}",
+            task.id,
+            if confirm { "confirmed" } else { "cancelled" }
+        );
+        self.entityd.update_entity(&task, properties);
+    }
+
     fn poll_entityd(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
         let was_available = self.entityd.is_connected();
         let messages = self.entityd.poll();
@@ -1740,8 +1884,9 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        capability_label, consent_action_at, content_action_at, intent_action_at, tab_at, RootPage,
-        INTENT_CANCEL_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        capability_label, consent_action_at, content_action_at, intent_action_at, tab_at,
+        task_confirm_action_at, RootPage, INTENT_CANCEL_ACTION, INTENT_SEND_ACTION,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
 
     #[test]
@@ -1812,6 +1957,27 @@ mod tests {
     #[test]
     fn consent_screen_header_area_is_not_a_button() {
         assert_eq!(consent_action_at((540.0, 1000.0), 1080, 2400), None);
+    }
+
+    #[test]
+    fn task_confirm_screen_left_half_of_button_row_confirms() {
+        assert_eq!(
+            task_confirm_action_at((270.0, 2250.0), 1080, 2400),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn task_confirm_screen_right_half_of_button_row_declines() {
+        assert_eq!(
+            task_confirm_action_at((810.0, 2250.0), 1080, 2400),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn task_confirm_screen_header_area_is_not_a_button() {
+        assert_eq!(task_confirm_action_at((540.0, 1000.0), 1080, 2400), None);
     }
 
     #[test]

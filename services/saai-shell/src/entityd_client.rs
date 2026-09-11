@@ -1,5 +1,6 @@
 use saai_entity_protocol::{
-    encode_request, ClientRequest, ServerMessage, ENTITYD_WIRE_SCHEMA_V1, MAX_WIRE_MESSAGE_BYTES,
+    encode_request, ClientRequest, Entity, ServerMessage, ENTITYD_WIRE_SCHEMA_V1,
+    MAX_WIRE_MESSAGE_BYTES,
 };
 use serde_json::{Map, Value};
 use std::io::{self, Read, Write};
@@ -57,6 +58,25 @@ impl EntitydClient {
             space_id: space_id.into(),
             entity_type: entity_type.into(),
             title: title.into(),
+            properties,
+        });
+    }
+
+    /// S09 Change 3: confirming or cancelling a dangerous Task's
+    /// `saaios.task` entity is a full-replace update, same as
+    /// `saai-taskd`'s own client -- callers pass the *entire* new
+    /// properties map (typically the current one with `status`
+    /// overwritten), not just the changed field.
+    pub fn update_entity(&mut self, entity: &Entity, properties: Map<String, Value>) {
+        let request_id = self.request_id();
+        self.queue(ClientRequest::UpdateEntity {
+            schema: ENTITYD_WIRE_SCHEMA_V1,
+            request_id,
+            space_id: entity.space_id.clone(),
+            entity_id: entity.id,
+            expected_revision: entity.revision,
+            entity_type: entity.entity_type.clone(),
+            title: entity.title.clone(),
             properties,
         });
     }

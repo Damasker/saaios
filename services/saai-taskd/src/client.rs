@@ -18,6 +18,7 @@ use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
+use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -202,6 +203,33 @@ impl EntitydConn {
             other => Err(ClientError::UnexpectedResult(format!("{other:?}"))),
         }
     }
+
+    /// Change 3's dangerous Action: deletes another entity in the same
+    /// space by id/revision. `saai-entityd` itself rejects a stale
+    /// revision as a `RevisionConflict` wire error -- callers rely on
+    /// that, not on any check of their own, to avoid deleting something
+    /// that changed since it was last read.
+    pub async fn delete_entity(
+        &mut self,
+        space_id: &str,
+        entity_id: Uuid,
+        expected_revision: u64,
+    ) -> Result<(), ClientError> {
+        let request_id = self.request_id();
+        match self
+            .call(ClientRequest::DeleteEntity {
+                schema: ENTITYD_WIRE_SCHEMA_V1,
+                request_id,
+                space_id: space_id.to_string(),
+                entity_id,
+                expected_revision,
+            })
+            .await?
+        {
+            ResponseResult::Deleted { .. } => Ok(()),
+            other => Err(ClientError::UnexpectedResult(format!("{other:?}"))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -332,6 +360,58 @@ mod tests {
                         conn.next_event().await.unwrap(),
                         EntitydEvent::SelectionChanged { .. }
                     ));
+                })
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn delete_entity_sends_the_expected_revision_and_succeeds_on_deleted() {
+        let target = Uuid::new_v4();
+        with_fake_entityd(
+            move |stream| {
+                let mut reader = StdBufReader::new(stream.try_clone().unwrap());
+                let request = read_request(&mut reader);
+                match &request {
+                    ClientRequest::DeleteEntity {
+                        space_id,
+                        entity_id,
+                        expected_revision,
+                        ..
+                    } => {
+                        assert_eq!(space_id, "home");
+                        assert_eq!(*entity_id, target);
+                        assert_eq!(*expected_revision, 3);
+                    }
+                    other => panic!("expected DeleteEntity, got {other:?}"),
+                }
+                respond(
+                    &stream,
+                    &ServerMessage::success(
+                        request.request_id(),
+                        ResponseResult::Deleted {
+                            space_id: "home".into(),
+                            entity_id: target,
+                            revision: 4,
+                            event: saai_entity_protocol::Event {
+                                schema: 1,
+                                id: Uuid::new_v4(),
+                                sequence: 1,
+                                space_id: "home".into(),
+                                timestamp: chrono::Utc::now(),
+                                payload: saai_entity_store::EventPayload::EntityDeleted {
+                                    entity_id: target,
+                                    revision: 4,
+                                },
+                            },
+                        },
+                    ),
+                );
+            },
+            move |mut conn| {
+                Box::pin(async move {
+                    conn.delete_entity("home", target, 3).await.unwrap();
                 })
             },
         )
