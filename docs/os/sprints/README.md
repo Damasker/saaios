@@ -19,7 +19,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S07 | Capability, sandbox и portals | Done | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Done (переоцененный объём) | S07 |
 | S09 | Intent → Task → Action workflow | Done | S06, S07 |
-| S10 | Planner, automation и memory | Backlog | S09 |
+| S10 | Planner, automation и memory | Ready | S09 |
 | S11 | GPU, power, OTA и release gate | Backlog | S04–S10 |
 
 ## S00 — Архитектура и процесс
@@ -346,16 +346,42 @@ cold reboot подтверждены полностью физически; ид
 
 ## S10 — Planner, automation и memory
 
-**Goal:** локальный ИИ предлагает планы и автоматизацию внутри видимых границ.
+Рабочий паспорт и декомпозиция:
+[S10-planner-automation-memory.md](S10-planner-automation-memory.md).
 
-**Scope:** planner только создаёт предложения; policy исполняет; расписания,
-триггеры, лимиты, отмена; memory привязана к пространству и происхождению.
+**Goal:** локальный ИИ предлагает планы и автоматизацию внутри видимых границ
+-- то же `Intent`/`Task`/`Action`, что S09 уже физически доказало, не новый,
+более слабый путь в обход.
 
-**Acceptance:** модель не может обойти capability; каждый Action объясним и
-отменяем где возможно; budget/loop limits проверены; отключение модели не
-ломает ручное управление и уже сохранённые задачи.
+**Scope:** Change 1 (спайк + ADR, по прецеденту S09) решает: как свободный
+текст Intent превращается в предложенный Action. Ключевая находка Definition
+of Ready -- это не гипотетическая интеграция: `saaios-runtime` (Platform
+Track) уже реально развёрнут и работает прямо на этом Pixel 7 (`--real-linux
+--tcp 172.31.7.1:38127`), с реальной (не mock) локальной моделью
+`qwen2.5:3b-instruct` через Ollama на подключённом по USB-NCM хосте --
+`automation-engine`'s `system.metrics`-опрос уже реально пишет аудит каждые
+~30с. При этом `saai-taskd` и этот работающий `saaios-runtime` физически не
+пересекаются нигде -- ни один зарегистрированный инструмент
+(`system-tools::install_system_tools`) не касается `saai-entity-store`.
+Кандидат A для Change 1 -- `saai-taskd` вызывает уже работающий `saaios-
+runtime` через его существующий TCP-протокол (тот же, что `console-tui`)
+вместо изобретения нового ИИ-стека -- это и есть ADR-004's конвергенция,
+наконец физически возможная поверх уже развёрнутой инфраструктуры. Дальше --
+минимальный вертикальный срез (свободный Intent -> предложение от уже
+работающей модели -> Action, видимый в `Сейчас`); расписания/триггеры и
+привязка `memory` к пространству -- отдельные, не входящие в Change 1/2
+задачи.
 
-**Rollback:** остановить planner/automation workers, сохранив объекты и аудит.
+**Acceptance:** модель не может обойти capability -- предложенный planner'ом
+Action проходит тот же `WorkflowStatus`/confirmation-конвейер, что и
+explicit-путь S09; каждый Action объясним (видна исходная Intent-строка) и
+отменяем где применимо; budget/loop limits (`ResourceBudgets::
+max_tool_iters`, уже существующий механизм) физически проверены; отключение
+`saaios-runtime` не ломает ручное управление и уже сохранённые задачи.
+
+**Rollback:** не давать planner'у писать в entity store -- explicit-Action-
+пути S09 (echo, `delete_entity`) и весь остальной S05-S09 стек продолжают
+работать без единого изменения.
 
 ## S11 — Производительность, питание, OTA и release gate
 
