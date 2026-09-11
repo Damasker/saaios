@@ -19,7 +19,7 @@ Roadmap описывает порядок доказуемых вертикал�
 | S07 | Capability, sandbox и portals | Done | S05, S06 |
 | S08 | GTK и Qt/Kirigami совместимость | Done (переоцененный объём) | S07 |
 | S09 | Intent → Task → Action workflow | Done | S06, S07 |
-| S10 | Planner, automation и memory | In progress | S09 |
+| S10 | Planner, automation и memory | Done | S09 |
 | S11 | GPU, power, OTA и release gate | Backlog | S04–S10 |
 
 ## S00 — Архитектура и процесс
@@ -424,16 +424,32 @@ Periodic tick внутри уже существующего `saai-taskd` (не 
 интервале ещё дважды (`fire_count` = 3 за ~41с), каждый раз доведя
 полный `Intent -> Task -> Action -> Result` до `Done` через уже
 существующий planner-мост -- без единого созданного вручную `Intent`.
-Привязка `memory` к пространству -- по-прежнему отдельная, не начатая
-задача.
 
-**Acceptance:** модель не может обойти capability -- предложенный planner'ом
-Action проходит тот же `WorkflowStatus`/confirmation-конвейер, что и
-explicit-путь S09; каждый Action объясним (видна исходная Intent-строка) и
-отменяем где применимо; budget/loop limits (`ResourceBudgets::
-max_tool_iters`, уже существующий механизм) физически проверены; отключение
-`saaios-runtime` не ломает ручное управление и уже сохранённые задачи --
-все четыре подтверждены физически.
+**Memory, привязанная к пространству, физически подтверждена (ADR-038 +
+ADR-039):** `memory-store` остаётся Platform Track'ом (плоский JSONL) --
+миграция в `saai-entity-store` потребовала бы, чтобы `saaios-runtime`
+впервые стал клиентом native OS Track'а ради простого
+партиционирования данных, которому не нужны ни `WorkflowStatus`, ни
+confirmation; вместо этого `space_id` явно протянут от `saai-taskd`
+(единственного, кто его знает) через wire-протокол в `ToolContext`.
+На реальном устройстве: факт, вспомненный моделью в `home`
+(`memory.remember`, выбрано моделью самостоятельно), не был виден при
+`memory.recall` из `work` -- изоляция подтверждена; тот же запрос из
+`home` факт нашёл; `memory.forget` корректно создал tombstone. Два
+независимых `saai-taskd` работали одновременно против одного
+`saaios-runtime`. Все четыре куска S10 закрыты.
+
+**Acceptance:** модель не может обойти capability -- подтверждено, каждый
+planner-предложенный Action (включая schedule-порождённые) проходит тот же
+`WorkflowStatus`/confirmation-конвейер, что и explicit-путь S09; каждый
+Action объясним и отменяем -- подтверждено; budget/loop limits и
+устойчивость explicit-пути к отключению модели -- подтверждены
+косвенно (независимо проверенный Platform Track механизм и
+структурная независимость `process_dangerous_intent` от
+`saaios-runtime`, не отдельным целевым тестом в этом спринте).
+
+**Спринт закрыт (`Done`, 2026-09-11).** Полное построчное обоснование --
+в [S10-planner-automation-memory.md](S10-planner-automation-memory.md#acceptance-criteria).
 
 **Rollback:** не давать planner'у писать в entity store -- explicit-Action-
 путь S09 (`delete_entity`) и весь остальной S05-S09 стек продолжают

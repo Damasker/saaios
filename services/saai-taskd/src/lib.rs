@@ -350,10 +350,11 @@ impl Daemon {
             .await?;
         self.remember_task(task.clone());
 
-        let response = match runtime_bridge::diagnose(&self.runtime_addr, text).await {
-            Ok(response) => response,
-            Err(error) => return self.fail_task(&task, intent.id, &error.to_string()).await,
-        };
+        let response =
+            match runtime_bridge::diagnose(&self.runtime_addr, text, &self.space_id).await {
+                Ok(response) => response,
+                Err(error) => return self.fail_task(&task, intent.id, &error.to_string()).await,
+            };
 
         if !response.ok {
             let message = response

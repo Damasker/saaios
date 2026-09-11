@@ -164,16 +164,25 @@ impl AiRuntime {
         self.conversations.reset(session_id)
     }
 
-    /// One-shot helper (no multi-turn session). Prefer [`Self::handle_user_text_in_session`].
+    /// One-shot helper (no multi-turn session, no space -- used only by
+    /// `saaios-runtime`'s own internal auto-diagnose worker, which has no
+    /// space context of its own). Prefer [`Self::handle_user_text_in_session`].
     pub async fn handle_user_text(&self, text: &str) -> Result<HandleOutcome> {
-        self.handle_user_text_in_session(text, None, None).await
+        self.handle_user_text_in_session(text, None, None, None)
+            .await
     }
 
+    /// S10 (ADR-038): `space_id` is `None` for a plain console session
+    /// (sees every memory fact -- unchanged from before this field
+    /// existed) or `Some` when the caller (`saai-taskd`'s planner
+    /// bridge, ADR-033/034) knows which space the request is on behalf
+    /// of.
     pub async fn handle_user_text_in_session(
         &self,
         text: &str,
         session_id: Option<Uuid>,
         progress: Option<mpsc::Sender<RuntimeEvent>>,
+        space_id: Option<String>,
     ) -> Result<HandleOutcome> {
         let correlation_id = Uuid::new_v4();
         let session_id = session_id.unwrap_or_else(Uuid::new_v4);
@@ -187,7 +196,7 @@ impl AiRuntime {
             .acquire_slot(correlation_id)
             .instrument(span.clone())
             .await?;
-        let fut = self.handle_user_text_inner(text, correlation_id, session_id, progress);
+        let fut = self.handle_user_text_inner(text, correlation_id, session_id, progress, space_id);
         let result = tokio::time::timeout(self.budgets.request_timeout, fut)
             .instrument(span)
             .await;
@@ -273,6 +282,7 @@ impl AiRuntime {
                 &ToolContext {
                     correlation_id,
                     call_id,
+                    space_id: None,
                 },
             )
             .await
@@ -294,6 +304,7 @@ impl AiRuntime {
         correlation_id: Uuid,
         session_id: Uuid,
         progress: Option<mpsc::Sender<RuntimeEvent>>,
+        space_id: Option<String>,
     ) -> Result<HandleOutcome> {
         let req_env = Envelope::new(
             MessageKind::UserRequest,
@@ -314,7 +325,7 @@ impl AiRuntime {
             system.push_str("\n</device_context>\n");
         }
         if let Some(mem) = &self.memory {
-            match mem.format_context(12) {
+            match mem.format_context(12, space_id.as_deref()) {
                 Ok(ctx) if !ctx.is_empty() => system.push_str(&ctx),
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, "failed to load memory context"),
@@ -567,6 +578,7 @@ impl AiRuntime {
                                 &ToolContext {
                                     correlation_id,
                                     call_id,
+                                    space_id: space_id.clone(),
                                 },
                             )
                             .await
@@ -740,6 +752,11 @@ impl AiRuntime {
                     &ToolContext {
                         correlation_id,
                         call_id,
+                        // ADR-038: no space-aware tool requires
+                        // confirmation today, so `PendingConfirmation`
+                        // (policy-engine) carries no space to resume
+                        // here. Revisit if that ever changes.
+                        space_id: None,
                     },
                 )
                 .await
@@ -933,6 +950,7 @@ pub async fn diagnose_slow_with_mock_planner(
             &ToolContext {
                 correlation_id,
                 call_id: metrics_call,
+                space_id: None,
             },
         )
         .await?;
@@ -956,6 +974,7 @@ pub async fn diagnose_slow_with_mock_planner(
             &ToolContext {
                 correlation_id,
                 call_id: list_call,
+                space_id: None,
             },
         )
         .await?;

@@ -183,14 +183,14 @@ async fn multi_turn_session_remembers_prior_diagnose() {
     let runtime = AiRuntime::new(tools, policy, audit, bus, Arc::new(MockModelProvider));
 
     let first = runtime
-        .handle_user_text_in_session("Почему тормозит?", None, None)
+        .handle_user_text_in_session("Почему тормозит?", None, None, None)
         .await
         .expect("first turn");
     assert!(first.pending_confirmation.is_some());
     assert!(!first.events.is_empty());
 
     let second = runtime
-        .handle_user_text_in_session("Какой pid у виновника?", Some(first.session_id), None)
+        .handle_user_text_in_session("Какой pid у виновника?", Some(first.session_id), None, None)
         .await
         .expect("second turn");
     assert_eq!(second.session_id, first.session_id);
@@ -214,7 +214,7 @@ async fn progress_channel_receives_tool_events() {
     let runtime = AiRuntime::new(tools, policy, audit, bus, Arc::new(MockModelProvider));
     let (tx, mut rx) = tokio::sync::mpsc::channel(64);
     let outcome = runtime
-        .handle_user_text_in_session("Почему тормозит?", None, Some(tx))
+        .handle_user_text_in_session("Почему тормозит?", None, Some(tx), None)
         .await
         .expect("diagnose");
     let mut saw_tool = false;

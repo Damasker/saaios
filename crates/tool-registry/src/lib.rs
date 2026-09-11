@@ -31,6 +31,13 @@ pub struct ToolSpec {
 pub struct ToolContext {
     pub correlation_id: Uuid,
     pub call_id: Uuid,
+    /// S10 (ADR-038): which space this call was made on behalf of, when
+    /// the caller knows one. Only `saai-taskd`'s planner bridge knows a
+    /// space today (ADR-030) -- a direct console session has none, and
+    /// passes `None` here exactly like it always has. Tools that don't
+    /// care about space isolation (most of them) simply ignore this
+    /// field; `memory-store`'s tools are the first to read it.
+    pub space_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,6 +149,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await

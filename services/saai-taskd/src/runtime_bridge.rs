@@ -99,10 +99,19 @@ async fn call(addr: &str, request: &Value) -> Result<RuntimeResponse, BridgeErro
 /// that turns free-form Intent text into either a finished answer or a
 /// paused proposal, physically confirmed against the real on-device
 /// runtime in ADR-033.
-pub async fn diagnose(addr: &str, text: &str) -> Result<RuntimeResponse, BridgeError> {
+/// `space_id` (ADR-038) is this daemon's own already-known space
+/// (`--space`, ADR-030) -- the one caller of this bridge that ever
+/// knows one at all. Threaded through so `saaios-runtime`'s memory
+/// tools can keep a fact remembered from one space out of another's
+/// recall.
+pub async fn diagnose(
+    addr: &str,
+    text: &str,
+    space_id: &str,
+) -> Result<RuntimeResponse, BridgeError> {
     call(
         addr,
-        &json!({ "op": "diagnose", "text": text, "stream": false }),
+        &json!({ "op": "diagnose", "text": text, "stream": false, "space_id": space_id }),
     )
     .await
 }
@@ -168,10 +177,34 @@ mod tests {
         let addr = with_fake_runtime(
             r#"{"ok":true,"correlation_id":"550e8400-e29b-41d4-a716-446655440000","session_id":null,"diagnose":{"summary":"42 GB free","culprit_pid":null,"culprit_name":null,"proposed_action":null},"pending":null,"error":null,"tool_result":null}"#,
         );
-        let response = diagnose(&addr, "how much disk space?").await.unwrap();
+        let response = diagnose(&addr, "how much disk space?", "home")
+            .await
+            .unwrap();
         assert!(response.ok);
         assert!(response.pending.is_none());
         assert_eq!(response.summary(), Some("42 GB free"));
+    }
+
+    #[tokio::test]
+    async fn diagnose_sends_its_space_id_on_the_wire() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).unwrap();
+            tx.send(request).unwrap();
+            stream
+                .write_all(
+                    br#"{"ok":true,"correlation_id":null,"session_id":null,"diagnose":null,"pending":null,"error":null,"tool_result":null}"#,
+                )
+                .unwrap();
+        });
+        diagnose(&addr, "hi", "work").await.unwrap();
+        let sent = String::from_utf8(rx.recv().unwrap()).unwrap();
+        let parsed: Value = serde_json::from_str(&sent).unwrap();
+        assert_eq!(parsed["space_id"], "work");
     }
 
     #[tokio::test]
@@ -179,7 +212,7 @@ mod tests {
         let addr = with_fake_runtime(
             r#"{"ok":true,"correlation_id":"550e8400-e29b-41d4-a716-446655440000","session_id":"660e8400-e29b-41d4-a716-446655440000","diagnose":{"summary":"","culprit_pid":null,"culprit_name":null,"proposed_action":null},"pending":{"call_id":"770e8400-e29b-41d4-a716-446655440000","tool":"process.kill_request","arguments":{"pid":999},"summary":"Run process.kill_request?"},"error":null,"tool_result":null}"#,
         );
-        let response = diagnose(&addr, "stop pid 999").await.unwrap();
+        let response = diagnose(&addr, "stop pid 999", "home").await.unwrap();
         let pending = response.pending.expect("expected a pending proposal");
         assert_eq!(pending.tool, "process.kill_request");
         assert_eq!(pending.arguments["pid"], json!(999));
@@ -216,7 +249,7 @@ mod tests {
         let addr = listener.local_addr().unwrap().to_string();
         drop(listener);
 
-        let error = diagnose(&addr, "hello").await.unwrap_err();
+        let error = diagnose(&addr, "hello", "home").await.unwrap_err();
         assert!(matches!(error, BridgeError::Connect { .. }));
     }
 }

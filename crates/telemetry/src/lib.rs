@@ -83,6 +83,7 @@ impl TelemetrySampler {
                 &ToolContext {
                     correlation_id,
                     call_id,
+                    space_id: None,
                 },
             )
             .await?;

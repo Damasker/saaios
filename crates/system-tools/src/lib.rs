@@ -1098,6 +1098,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await
@@ -1166,6 +1167,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await
@@ -1185,6 +1187,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await
@@ -1200,6 +1203,7 @@ mod tests {
         let ctx = ToolContext {
             correlation_id: Uuid::new_v4(),
             call_id: Uuid::new_v4(),
+            space_id: None,
         };
         let temp = reg
             .execute("system.temperature", json!({}), &ctx)
@@ -1230,6 +1234,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await
@@ -1255,6 +1260,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await
@@ -1269,6 +1275,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await
@@ -1283,6 +1290,7 @@ mod tests {
                 &ToolContext {
                     correlation_id: Uuid::new_v4(),
                     call_id: Uuid::new_v4(),
+                    space_id: None,
                 },
             )
             .await

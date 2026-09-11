@@ -123,6 +123,13 @@ enum ClientRequest {
         /// When true, respond with NDJSON progress frames then a final `done` object.
         #[serde(default)]
         stream: bool,
+        /// S10 (ADR-038): which space this request was made on behalf of.
+        /// Absent for a plain console session (no regression -- it sees
+        /// every memory fact, exactly as before this field existed);
+        /// `saai-taskd`'s planner bridge (ADR-033/034) is the one caller
+        /// that sends its own known space.
+        #[serde(default)]
+        space_id: Option<String>,
     },
     Confirm {
         correlation_id: Uuid,
@@ -699,6 +706,7 @@ where
         text,
         session_id,
         stream: true,
+        space_id,
     } = &req
     {
         handle_diagnose_stream(
@@ -707,6 +715,7 @@ where
             last_pending,
             text.clone(),
             *session_id,
+            space_id.clone(),
         )
         .await?;
         return Ok(());
@@ -747,8 +756,9 @@ where
             text,
             session_id,
             stream: _,
+            space_id,
         } => match runtime
-            .handle_user_text_in_session(&text, session_id, None)
+            .handle_user_text_in_session(&text, session_id, None, space_id)
             .await
         {
             Ok(outcome) => {
@@ -859,7 +869,7 @@ where
             },
         },
         ClientRequest::MemoryRecall { query } => match runtime.memory() {
-            Some(store) => match store.recall(&query) {
+            Some(store) => match store.recall(&query, None) {
                 Ok(facts) => ClientResponse {
                     ok: true,
                     memory_facts: Some(facts),
@@ -878,7 +888,7 @@ where
             },
         },
         ClientRequest::MemoryTail { limit } => match runtime.memory() {
-            Some(store) => match store.list_recent(limit) {
+            Some(store) => match store.list_recent(limit, None) {
                 Ok(facts) => ClientResponse {
                     ok: true,
                     memory_facts: Some(facts),
@@ -897,7 +907,7 @@ where
             },
         },
         ClientRequest::MemoryForget { key } => match runtime.memory() {
-            Some(store) => match store.forget(&key) {
+            Some(store) => match store.forget(&key, None) {
                 Ok(Some(_)) => ClientResponse {
                     ok: true,
                     memory_facts: Some(vec![]),
@@ -984,6 +994,7 @@ async fn handle_diagnose_stream<S>(
     last_pending: Arc<tokio::sync::Mutex<Option<HandleOutcome>>>,
     text: String,
     session_id: Option<Uuid>,
+    space_id: Option<String>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -992,7 +1003,7 @@ where
     let runtime2 = runtime.clone();
     let join = tokio::spawn(async move {
         runtime2
-            .handle_user_text_in_session(&text, session_id, Some(tx))
+            .handle_user_text_in_session(&text, session_id, Some(tx), space_id)
             .await
     });
 
@@ -1117,6 +1128,7 @@ mod tests {
                 text,
                 session_id: None,
                 stream: true,
+                space_id: None,
             } if text == "hello"
         ));
     }
