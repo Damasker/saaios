@@ -115,6 +115,15 @@ use smithay_client_toolkit::{
 
 /// Matches drm-splash.c's own idle-to-lock constant.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// S11 Change 2 (ADR-041): how much *additional* idle time, on top of
+/// the `IDLE_TIMEOUT` lock above, before this actually suspends the
+/// device (`SAAIOS_DEEP_IDLE_SECS` overrides for testing -- a real
+/// multi-minute wait isn't practical to sit through physically every
+/// verification round). Five minutes is a first, deliberately
+/// conservative production default -- ADR-040's spike proved the
+/// suspend/resume cycle itself safe, but not any particular threshold
+/// for how eager to be about it.
+const DEFAULT_DEEP_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const DEMO_APP_ID: &str = "org.saaios.demo-surface";
 const DEMO_APP_ACTION: &str = "manage_app:org.saaios.demo-surface";
 const DEMO_PACKAGE_PATH: &str = "/data/saaios/packages/org.saaios.demo-surface";
@@ -625,6 +634,11 @@ fn main() {
     let portal_socket = std::env::var_os("SAAIOS_PORTAL_SOCKET")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "/run/saaios/portal.sock".into());
+    let deep_idle_timeout = std::env::var("SAAIOS_DEEP_IDLE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_DEEP_IDLE_TIMEOUT);
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -671,6 +685,7 @@ fn main() {
         apps_grants: BTreeMap::new(),
         clipboard: None,
         last_apps_refresh: Instant::now(),
+        deep_idle_timeout,
     };
 
     println!("saai-shell: connected, toplevel created");
@@ -695,6 +710,7 @@ fn main() {
         shell.refresh_apps_if_due();
         shell.poll_portal();
         shell.check_idle_timeout(&qh);
+        shell.check_deep_idle();
     }
 }
 
@@ -781,6 +797,9 @@ struct Shell {
     /// cleared on `saai-shell` restart.
     clipboard: Option<String>,
     last_apps_refresh: Instant,
+    /// S11 Change 2 -- additional idle time past `IDLE_TIMEOUT`'s lock
+    /// before `check_deep_idle` actually suspends the device.
+    deep_idle_timeout: Duration,
 }
 
 impl CompositorHandler for Shell {
@@ -1878,6 +1897,42 @@ impl Shell {
             Ok(session_lock) => self.session_lock = Some(session_lock),
             Err(err) => eprintln!("saai-shell: failed to re-lock: {err}"),
         }
+    }
+
+    /// S11 Change 2 (ADR-041): once the screen has already been locked
+    /// (`check_idle_timeout`) and stays untouched for a further
+    /// `deep_idle_timeout`, actually suspends the device instead of
+    /// just leaving the lock screen lit forever. ADR-040's spike found
+    /// `mem` suspends and resumes cleanly on this hardware, but wlan0's
+    /// own host-wake IRQ fires almost immediately if the interface is
+    /// left up while associated -- brought down first so the device
+    /// actually stays asleep, back up on the way out. Runs as a plain
+    /// blocking file write on this event loop's own thread: while the
+    /// kernel is genuinely asleep there is nothing else for this
+    /// process (or anything else on the device) to usefully do anyway,
+    /// so blocking here is the intended behavior, not a missed `spawn`.
+    fn check_deep_idle(&mut self) {
+        if !self.locked || self.last_activity.elapsed() < self.deep_idle_timeout {
+            return;
+        }
+        println!("saai-shell: deep idle timeout, suspending");
+        let _ = std::process::Command::new("/saaios/busybox")
+            .args(["ip", "link", "set", "wlan0", "down"])
+            .status();
+        if let Err(err) = std::fs::write("/sys/power/state", "mem") {
+            eprintln!("saai-shell: suspend request failed: {err}");
+        }
+        // Execution only reaches here once the device has actually
+        // woken back up (or the write above failed outright and never
+        // suspended at all) -- either way, wlan0 comes back and the
+        // idle clock restarts fresh so a resume never immediately
+        // re-triggers another suspend attempt before the user has had
+        // a real `deep_idle_timeout` window to act.
+        let _ = std::process::Command::new("/saaios/busybox")
+            .args(["ip", "link", "set", "wlan0", "up"])
+            .status();
+        self.last_activity = Instant::now();
+        println!("saai-shell: resumed from deep idle");
     }
 }
 
