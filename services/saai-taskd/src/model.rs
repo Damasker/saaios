@@ -8,6 +8,7 @@
 //! authored proposal instead of a hardcoded transform. No IO here --
 //! the wire clients live in `client.rs`/`runtime_bridge.rs`.
 
+use chrono::{DateTime, Utc};
 use saai_entity_protocol::Entity;
 use saai_entity_store::MAX_ENTITY_TITLE_CHARS;
 use serde_json::{json, Map, Value};
@@ -17,6 +18,14 @@ pub const INTENT_TYPE: &str = "saaios.intent";
 pub const TASK_TYPE: &str = "saaios.task";
 pub const ACTION_TYPE: &str = "saaios.action";
 pub const RESULT_TYPE: &str = "saaios.result";
+
+/// S10 Change 3 (ADR-036): a schedule is its own native entity, not a
+/// port of Platform Track's `automation-engine::TriggerKind` -- that
+/// enum has no time-based variant at all, and its one existing "auto"
+/// path bypasses `saai-entity-store` entirely (see the ADR). `every_secs`
+/// is the simplest trigger shape that proves the mechanism; cron/at-style
+/// triggers stay out of scope until something actually asks for them.
+pub const SCHEDULE_TYPE: &str = "saaios.schedule";
 
 /// Change 3's one dangerous Action: deletes another entity in the same
 /// space. Irreversible from the live store's point of view (the
@@ -244,10 +253,91 @@ pub fn dangerous_action_of(intent: &Entity) -> Option<Uuid> {
         .ok()
 }
 
+/// Builds/rebuilds a schedule's full property set -- `update_entity`
+/// replaces properties wholesale (same as every other entity in this
+/// module), so re-firing a schedule always passes all five fields back,
+/// not just the ones that changed.
+pub fn schedule_properties(
+    every_secs: u64,
+    text: &str,
+    enabled: bool,
+    last_fired_at: Option<DateTime<Utc>>,
+    fire_count: u64,
+) -> Map<String, Value> {
+    let mut map = Map::new();
+    map.insert("every_secs".into(), json!(every_secs));
+    map.insert("text".into(), json!(text));
+    map.insert("enabled".into(), json!(enabled));
+    map.insert(
+        "last_fired_at".into(),
+        match last_fired_at {
+            Some(ts) => json!(ts.to_rfc3339()),
+            None => Value::Null,
+        },
+    );
+    map.insert("fire_count".into(), json!(fire_count));
+    map
+}
+
+pub fn schedule_every_secs(entity: &Entity) -> Option<u64> {
+    entity.properties.get("every_secs").and_then(Value::as_u64)
+}
+
+/// The text a due schedule turns into a new Intent's `text` property --
+/// deliberately the exact same property name/shape the on-screen
+/// keyboard already writes, so the schedule's Intent is indistinguishable
+/// from one a human typed (ADR-036's central point: nothing downstream
+/// of Intent creation changes for this Change).
+pub fn schedule_text(entity: &Entity) -> Option<&str> {
+    entity.properties.get("text").and_then(Value::as_str)
+}
+
+fn schedule_enabled(entity: &Entity) -> bool {
+    entity
+        .properties
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn schedule_last_fired_at(entity: &Entity) -> Option<DateTime<Utc>> {
+    entity
+        .properties
+        .get("last_fired_at")?
+        .as_str()?
+        .parse()
+        .ok()
+}
+
+pub fn schedule_fire_count(entity: &Entity) -> u64 {
+    entity
+        .properties
+        .get("fire_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+/// Whether a schedule should fire right now. A schedule that's disabled,
+/// missing `every_secs`, or not yet due is simply not due -- there is no
+/// separate error/malformed state, unlike Task/Action's `Failed`, since
+/// nothing has been attempted yet.
+pub fn is_schedule_due(entity: &Entity, now: DateTime<Utc>) -> bool {
+    if entity.entity_type != SCHEDULE_TYPE || !schedule_enabled(entity) {
+        return false;
+    }
+    let Some(every_secs) = schedule_every_secs(entity) else {
+        return false;
+    };
+    match schedule_last_fired_at(entity) {
+        None => true,
+        Some(last) => (now - last).num_seconds() >= every_secs as i64,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use chrono::{Duration as ChronoDuration, Utc};
     use saai_entity_protocol::Entity;
 
     fn entity(entity_type: &str, properties: Map<String, Value>) -> Entity {
@@ -503,5 +593,78 @@ mod tests {
         properties.insert("action_kind".into(), json!(DELETE_ENTITY_ACTION_KIND));
         properties.insert("target_entity_id".into(), json!("not-a-uuid"));
         assert_eq!(dangerous_action_of(&intent_with(properties)), None);
+    }
+
+    fn schedule(properties: Map<String, Value>) -> Entity {
+        entity(SCHEDULE_TYPE, properties)
+    }
+
+    #[test]
+    fn schedule_properties_round_trip_through_their_own_readers() {
+        let now = Utc::now();
+        let props = schedule_properties(30, "напомни попить воды", true, Some(now), 3);
+        let sched = schedule(props);
+        assert_eq!(schedule_text(&sched), Some("напомни попить воды"));
+        assert_eq!(schedule_fire_count(&sched), 3);
+        assert!(schedule_enabled(&sched));
+        // Round-tripped through RFC3339 text -- compare at second
+        // precision, not exact `DateTime` equality.
+        assert_eq!(
+            schedule_last_fired_at(&sched).unwrap().timestamp(),
+            now.timestamp()
+        );
+    }
+
+    #[test]
+    fn schedule_properties_store_null_for_never_fired() {
+        let sched = schedule(schedule_properties(60, "hi", true, None, 0));
+        assert_eq!(schedule_last_fired_at(&sched), None);
+    }
+
+    #[test]
+    fn a_never_fired_enabled_schedule_is_due_immediately() {
+        let sched = schedule(schedule_properties(3600, "hi", true, None, 0));
+        assert!(is_schedule_due(&sched, Utc::now()));
+    }
+
+    #[test]
+    fn a_schedule_fired_less_than_every_secs_ago_is_not_due() {
+        let now = Utc::now();
+        let sched = schedule(schedule_properties(3600, "hi", true, Some(now), 1));
+        assert!(!is_schedule_due(&sched, now + ChronoDuration::seconds(10)));
+    }
+
+    #[test]
+    fn a_schedule_fired_at_least_every_secs_ago_is_due_again() {
+        let now = Utc::now();
+        let sched = schedule(schedule_properties(60, "hi", true, Some(now), 1));
+        assert!(is_schedule_due(&sched, now + ChronoDuration::seconds(60)));
+        assert!(is_schedule_due(&sched, now + ChronoDuration::seconds(120)));
+    }
+
+    #[test]
+    fn a_disabled_schedule_is_never_due() {
+        let sched = schedule(schedule_properties(1, "hi", false, None, 0));
+        assert!(!is_schedule_due(&sched, Utc::now()));
+    }
+
+    #[test]
+    fn a_schedule_missing_every_secs_is_never_due() {
+        let mut props = Map::new();
+        props.insert("text".into(), json!("hi"));
+        props.insert("enabled".into(), json!(true));
+        let sched = schedule(props);
+        assert!(!is_schedule_due(&sched, Utc::now()));
+    }
+
+    #[test]
+    fn is_schedule_due_ignores_non_schedule_entities() {
+        let mut props = schedule_properties(1, "hi", true, None, 0);
+        // Same shape as a due schedule, but the wrong entity_type --
+        // must never be picked up by a listing that also contains
+        // Task/Action/Result/Intent entities in the same space.
+        props.insert("every_secs".into(), json!(1));
+        let not_a_schedule = entity(TASK_TYPE, props);
+        assert!(!is_schedule_due(&not_a_schedule, Utc::now()));
     }
 }

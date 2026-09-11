@@ -34,17 +34,29 @@ pub mod client;
 pub mod model;
 pub mod runtime_bridge;
 
+use chrono::Utc;
 use client::{ClientError, EntitydConn};
 use model::{
     action_properties, dangerous_action_of, find_action_for_task, has_task_for_intent,
-    result_properties, safe_title, status_of, task_properties, WorkflowStatus, ACTION_TYPE,
-    DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, RESULT_TYPE, RUNTIME_ACTION_KIND, TASK_TYPE,
+    is_schedule_due, result_properties, safe_title, schedule_every_secs, schedule_fire_count,
+    schedule_properties, schedule_text, status_of, task_properties, WorkflowStatus, ACTION_TYPE,
+    DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, RESULT_TYPE, RUNTIME_ACTION_KIND, SCHEDULE_TYPE,
+    TASK_TYPE,
 };
 use saai_entity_protocol::{Entity, EntitydEvent};
 use saai_entity_store::EventPayload;
 use serde_json::{json, Value};
 use std::path::Path;
+use std::time::Duration;
 use uuid::Uuid;
+
+/// S10 Change 3 (ADR-036): how often this daemon checks its space's
+/// `saaios.schedule` entities for anything due. Five seconds is short
+/// enough to physically verify a schedule firing without a multi-minute
+/// wait, and cheap enough (one `list_entities` call, no IO if nothing's
+/// due) that a tighter production cadence isn't worth the complexity of
+/// making it configurable until something actually needs one.
+const SCHEDULE_TICK_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct Daemon {
     conn: EntitydConn,
@@ -138,36 +150,105 @@ impl Daemon {
     }
 
     pub async fn run(&mut self) -> Result<(), ClientError> {
+        let mut schedule_tick = tokio::time::interval(SCHEDULE_TICK_INTERVAL);
+        // The first `tick()` on a freshly created interval fires
+        // immediately -- consume it up front so `run()`'s very first
+        // loop iteration doesn't race a real entityd event with a
+        // schedule check that has nothing to find yet.
+        schedule_tick.tick().await;
         loop {
-            let EntitydEvent::EntityChanged { record } = self.conn.next_event().await? else {
-                continue;
-            };
-            if record.space_id != self.space_id {
-                continue;
-            }
-            let entity = match record.payload {
-                EventPayload::EntityCreated { entity } | EventPayload::EntityUpdated { entity } => {
-                    entity
-                }
-                EventPayload::SpaceCreated { .. } | EventPayload::EntityDeleted { .. } => continue,
-            };
-            if entity.entity_type == INTENT_TYPE {
-                if !has_task_for_intent(&self.known_tasks, entity.id) {
-                    self.process_intent(&entity).await?;
-                }
-            } else if entity.entity_type == TASK_TYPE {
-                self.remember_task(entity.clone());
-                match status_of(&entity) {
-                    Some(WorkflowStatus::Running) => {
-                        self.try_resume_confirmed_task(&entity).await?;
+            tokio::select! {
+                event = self.conn.next_event() => {
+                    let EntitydEvent::EntityChanged { record } = event? else {
+                        continue;
+                    };
+                    if record.space_id != self.space_id {
+                        continue;
                     }
-                    Some(WorkflowStatus::Cancelled) => {
-                        self.try_cancel_pending_action(&entity).await?;
+                    let entity = match record.payload {
+                        EventPayload::EntityCreated { entity } | EventPayload::EntityUpdated { entity } => {
+                            entity
+                        }
+                        EventPayload::SpaceCreated { .. } | EventPayload::EntityDeleted { .. } => continue,
+                    };
+                    if entity.entity_type == INTENT_TYPE {
+                        if !has_task_for_intent(&self.known_tasks, entity.id) {
+                            self.process_intent(&entity).await?;
+                        }
+                    } else if entity.entity_type == TASK_TYPE {
+                        self.remember_task(entity.clone());
+                        match status_of(&entity) {
+                            Some(WorkflowStatus::Running) => {
+                                self.try_resume_confirmed_task(&entity).await?;
+                            }
+                            Some(WorkflowStatus::Cancelled) => {
+                                self.try_cancel_pending_action(&entity).await?;
+                            }
+                            _ => {}
+                        }
                     }
-                    _ => {}
+                }
+                _ = schedule_tick.tick() => {
+                    self.evaluate_due_schedules().await?;
                 }
             }
         }
+    }
+
+    /// S10 Change 3 (ADR-036): lists this space's `saaios.schedule`
+    /// entities, and for each one that's due, creates a `saaios.intent`
+    /// with its `text` -- identical in shape to what the on-screen
+    /// keyboard creates, so `process_intent()` needs no changes at all
+    /// to pick it up on the very next loop iteration (delivered back
+    /// through the normal `Subscribe` stream, same as any other write).
+    /// Firing updates the schedule's own `last_fired_at`/`fire_count`
+    /// before creating the Intent, not after -- a crash between the two
+    /// undercounts a slow consumer rather than ever double-firing one on
+    /// retry.
+    async fn evaluate_due_schedules(&mut self) -> Result<usize, ClientError> {
+        let now = Utc::now();
+        let schedules: Vec<Entity> = self
+            .conn
+            .list_entities(&self.space_id)
+            .await?
+            .into_iter()
+            .filter(|entity| entity.entity_type == SCHEDULE_TYPE)
+            .collect();
+
+        let mut fired = 0;
+        for schedule in schedules {
+            if !is_schedule_due(&schedule, now) {
+                continue;
+            }
+            let Some(text) = schedule_text(&schedule).map(str::to_string) else {
+                continue;
+            };
+            let fire_count = schedule_fire_count(&schedule) + 1;
+            let every_secs = schedule_every_secs(&schedule).unwrap_or(0);
+            self.conn
+                .update_entity(
+                    &schedule,
+                    schedule_properties(every_secs, &text, true, Some(now), fire_count),
+                )
+                .await?;
+            let mut intent_properties = serde_json::Map::new();
+            intent_properties.insert("text".into(), json!(text));
+            intent_properties.insert("schedule_id".into(), json!(schedule.id.to_string()));
+            self.conn
+                .create_entity(
+                    &self.space_id,
+                    INTENT_TYPE,
+                    &safe_title(&text, "Расписание"),
+                    intent_properties,
+                )
+                .await?;
+            eprintln!(
+                "saai-taskd: schedule {} fired ({fire_count}) -> intent(\"{text}\")",
+                schedule.id
+            );
+            fired += 1;
+        }
+        Ok(fired)
     }
 
     fn remember_task(&mut self, task: Entity) {
