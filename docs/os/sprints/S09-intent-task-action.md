@@ -2,14 +2,21 @@
 
 ## Паспорт
 
-- Состояние: `In progress` (2026-09-11, Change 1 начат).
+- Состояние: `In progress` (2026-09-11, Change 1 -- оба вопроса решены,
+  вертикальный срез ещё не начат).
 - Зависит от: S06 (`Done`), S07 (`Done`).
 - Архитектурные решения: ADR-029 -- text-input вопрос закрыт физически:
   bespoke touch-hit-test клавиатура внутри `saai-shell`, той же
   `Node`/`layout`/`hit_test` системой, что уже рисует весь остальной
   UI, без единого обращения к `libxkbcommon`/generic Wayland
-  text-input. Второй вопрос Change 1 (Intent/Task/Action's модель
-  данных -- native entity store vs Platform Track) ещё не решён.
+  text-input. ADR-030 -- второй вопрос Change 1 закрыт: `Intent`/
+  `Task`/`Action`/`Result` -- новые `entity_type` в native
+  `saai-entity-store` (S06), НЕ портирование Platform Track's
+  `policy-engine`/`tool-registry` (у которых, по прочитанному коду,
+  ноль персистентности -- `PendingConfirmation` живёт ровно в рамках
+  одного tokio-таска, `session_allows` обнуляется при рестарте
+  процесса). ADR-004's конвергенция остаётся будущей, отдельной
+  задачей.
 - Рабочий fallback: `saai-shell` и весь S05-S08 стек продолжают работать
   без единого изменения, пока Intent/Task/Action не введены -- ничего в
   этом спринте не меняет уже работающий touch/app-lifecycle путь.
@@ -42,34 +49,42 @@
   `drm-splash.c` уже реализует touch-hit-test поверх собственной
   растровой раскладки для своего legacy UI, без единого обращения к
   xkbcommon -- рабочий пример того же класса решения для `saai-shell`.
-- **Нет модели `Intent`/`Task`/`Action`/`Result` нигде в репозитории.**
-  `saai-entity-store` (S06) знает только `Space`/`Entity`/`Event` --
-  универсальные, без готового workflow-состояния (pending/running/
-  waiting-for-confirmation/done/failed) или идемпотентности.
-- **Параллельная, уже существующая инфраструктура в Platform Track
-  (`crates/`, ADR-001/ADR-004) решает смежную, но не идентичную задачу.**
-  `policy-engine` уже имеет `PolicyDecision`, `PendingConfirmation`,
-  `RiskLevel` -- механизм подтверждения опасного действия ПОХОЖ на то,
-  что нужно S09's Acceptance ("подтверждение опасного Action"), но
-  привязан к `ToolSpec`/`ToolExecutor` (`tool-registry`), которые не
-  персистентны через entity store и не переживают reboot тем же
-  механизмом, что S06 уже физически доказал для `Space`/`Entity`/
-  `Event`. `automation-engine` реализует `TriggerKind`/`AutomationRule`
-  -- это ближе к S10's Scope ("расписания, триггеры"), не к S09
-  напрямую. ADR-004: "Platform later consumes OS services through the
-  same tool/policy/event APIs it already has" -- то есть предполагаемое
-  направление конвергенции уже названо архитектурно, но НЕ реализовано:
-  сегодня `saaios-runtime` (Platform Track, отдельный бинарник, работает
-  на generic Linux/VM, НЕ на native Pixel 7 boot) и native OS Track
-  (`saai-appd`/`saai-entityd`/`saai-displayd`/`saai-shell`) -- два
-  независимых рантайма без единой точки интеграции.
+- **Нет модели `Intent`/`Task`/`Action`/`Result` нигде в репозитории
+  (решено ADR-030: новые `entity_type` в `saai-entity-store`, не новая
+  инфраструктура).** `saai-entity-store` (S06) знает `Space`/`Entity`/
+  `Event`, но `Entity.entity_type: String` уже универсальна (dotted-
+  token, произвольные `properties: Map<String, Value>` до 64 КБ) --
+  workflow-состояние (`pending`/`running`/`waiting_confirmation`/
+  `done`/`failed`/`cancelled`) и идемпотентность (через `revision`,
+  уже встроенный optimistic-concurrency механизм) укладываются в эту
+  схему без изменений самого store.
+- **Platform Track (`crates/`, ADR-001/ADR-004) прочитан на уровне
+  кода, не только API -- переиспользование физически не работает
+  (ADR-030).** `crates/policy-engine/src/lib.rs`: `session_allows` --
+  `Mutex<HashSet<String>>` в памяти процесса, обнуляется при рестарте.
+  `PendingConfirmation` -- обычная struct, создаётся как локальная
+  переменная внутри `ai-runtime`'s `handle_user_text_inner`
+  (`crates/ai-runtime/src/lib.rs:336`) и живёт ровно в рамках одного
+  tokio-таска одного запроса -- НИЧЕГО не персистентно, ни между
+  запросами одного процесса, ни тем более через рестарт. S09's
+  Acceptance ("переживает холодную перезагрузку") физически
+  невыполнимо на этом фундаменте без переписывания `policy-engine`/
+  `ai-runtime` под персистентную модель -- переиспользование не
+  экономит работу. `automation-engine` (`TriggerKind`/`AutomationRule`)
+  ближе к S10's Scope, не к S09 напрямую. Подтверждено также: ни один
+  native OS Track сервис не зависит от `protocol`-крейта (`grep` по
+  всем `Cargo.toml`) -- два рантайма сегодня физически не делят ни
+  строчки кода. ADR-004's "Platform later consumes OS services through
+  the same tool/policy/event APIs it already has" остаётся названным
+  направлением, сознательно не реализуемым в S09 (ADR-030).
 - **S06 уже физически доказало, что "не переиспользовать Platform
-  Track напрямую" -- рабочий, не гипотетический паттерн.** S06-doc's
-  собственное Current state отдельно отметило: "memory-store и
-  audit-log существуют отдельно, но не имеют `space_id` и не являются
-  entity store" -- и S06 построило `saai-entityd` заново, native, а не
-  расширило `memory-store`/`audit-log`. Та же дилемма повторяется здесь
-  для `policy-engine`/`tool-registry`/`automation-engine`.
+  Track напрямую" -- рабочий, не гипотетический паттерн; ADR-030
+  повторяет тот же прецедент.** S06-doc's собственное Current state
+  отдельно отметило: "memory-store и audit-log существуют отдельно, но
+  не имеют `space_id` и не являются entity store" -- и S06 построило
+  `saai-entityd` заново, native, а не расширило `memory-store`/
+  `audit-log`. Та же дилемма теперь решена тем же способом для
+  `policy-engine`/`tool-registry`/`automation-engine`.
 - **ADR-020's capability vocabulary (S07) статичен и приложение-
   ориентирован** (`SpaceEntitiesRead/Write`, `NetInternet`,
   `ClipboardRead/Write`, `PortalOpenFile`) -- ни одна capability не
@@ -92,13 +107,14 @@
   Результат -- ADR с физическим доказательством выбранного пути
   (реальный тап по реальной раскладке возвращает реальную строку в
   `saai-shell`'s коде, подтверждено на устройстве, не в теории).
-- Решить и задокументировать ADR-ом: `Intent`/`Task`/`Action`/`Result`
-  -- новые типы поверх существующей `saai-entity-store`'s схемы (S06,
-  вероятно как новый `EventPayload`/`Entity`-вариант) или отдельный,
-  новый native store/daemon. Явно решить (не откладывать): участвует ли
-  в этом спринте Platform Track's `policy-engine`/`tool-registry`
-  (портируется/переиспользуется как библиотека) или native OS Track
-  строит независимый эквивалент, как уже сделал S06 для `memory-store`/
+- ~~Решить и задокументировать ADR-ом: `Intent`/`Task`/`Action`/
+  `Result`~~ -- **решено, ADR-030**: новые `entity_type` значения
+  (`saaios.intent`, `saaios.task`, `saaios.action`) поверх уже
+  существующей `saai-entity-store`'s схемы (S06), НЕ отдельный новый
+  store/daemon. Platform Track's `policy-engine`/`tool-registry` НЕ
+  портируются и не переиспользуются как библиотека (физически не
+  персистентны, см. Current state) -- native OS Track строит
+  независимый эквивалент, как уже сделал S06 для `memory-store`/
   `audit-log`, оставляя ADR-004's конвергенцию будущей, отдельной
   задачей.
 - Минимальный вертикальный срез ПОСЛЕ Change 1's решений: одна Intent
@@ -167,7 +183,7 @@ consent-паттерн новым путём.
 Заполняется по каждому Change только после зелёных host/device
 проверок.
 
-Change 1 (текстовый ввод, наполовину): полный ход и физическое
+Change 1 (текстовый ввод, первая половина): полный ход и физическое
 доказательство -- ADR-029. Кратко: throwaway-патч `saai-shell`
 (6-клавишная клавиатура `H`/`I`/`!`/`DEL`/`CLR`/`OK`, той же
 `Node`/`layout`/`hit_test` системой, что `tab_at()`/`consent_action_at()`)
@@ -183,5 +199,22 @@ ADR-028) отправила 4 тапа по реальным координат�
 `keyboard-test RESULT: "HI!"`. Диагностический патч отменён
 (`git checkout --`), пересобранный `saai-shell`'s хэш (`34653527...`)
 подтверждён байт-в-байт идентичным работающему боевому процессу.
-Второй вопрос Change 1 (Intent/Task/Action's модель данных) остаётся
-открытым.
+
+Change 1 (модель данных, вторая половина): полный ход и обоснование --
+ADR-030. Кратко: прочитан реальный код `crates/policy-engine/src/lib.rs`
+и `crates/ai-runtime/src/lib.rs` -- `PendingConfirmation` создаётся как
+локальная переменная внутри одного tokio-таска (`handle_user_text_
+inner`, строка 336) и не переживает даже следующий запрос того же
+процесса, не то что рестарт; `session_allows` -- `Mutex<HashSet<
+String>>`, обнуляется при рестарте. `grep` по всем `Cargo.toml`
+подтвердил: ни один native OS Track сервис не зависит от `protocol`-
+крейта -- Platform Track и native OS Track сегодня физически не делят
+код. Прочитан `crates/saai-entity-store/src/lib.rs`+`store.rs`:
+`Entity.entity_type`/`properties` уже достаточно универсальны для
+`Intent`/`Task`/`Action` без изменения самого store, а cold-reboot
+персистентность уже физически доказана (S06, `fastboot reboot`).
+Решение: `Intent`/`Task`/`Action`/`Result` -- новые `entity_type` в
+native `saai-entity-store`, НЕ Platform Track's `policy-engine`/
+`tool-registry`. Change 1 закрыт полностью -- оба вопроса решены и
+обоснованы кодом/физическим доказательством (ADR-029 + ADR-030).
+Минимальный вертикальный срез (следующий шаг Change 2) ещё не начат.
