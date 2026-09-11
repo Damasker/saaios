@@ -5,6 +5,12 @@ Roadmap описывает порядок доказуемых вертикал�
 написанного кода. Процесс и Definition of Done находятся в
 [DEVELOPMENT_PROCESS.md](../DEVELOPMENT_PROCESS.md).
 
+После S01 зафиксирован docs-only Sprint 0 mapping для Cognitive Core и Work
+Scheduler (без кода):
+[cognitive-core-work-scheduler-mapping.md](../architecture/cognitive-core-work-scheduler-mapping.md)
+— границы Planner/Scheduler, один workflow store + derived ready set, Task
+Ledger = audit-log, UDS/TLS; привязка к S09–S11.
+
 ## Текущее состояние
 
 | ID | Результат | Состояние | Зависит от |
