@@ -6,6 +6,7 @@ Product and delivery sources of truth:
 
 - [Product principles](PRODUCT-PRINCIPLES.md)
 - [System intelligence and self-management](architecture/system-intelligence.md)
+- [Cognitive Core / Work Scheduler mapping (Sprint 0)](architecture/cognitive-core-work-scheduler-mapping.md)
 - [Wayland application-platform architecture](architecture/application-platform.md)
 - [Development process and Definition of Done](DEVELOPMENT_PROCESS.md)
 - [Quality strategy](QUALITY.md)
