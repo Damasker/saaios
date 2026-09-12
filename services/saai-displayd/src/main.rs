@@ -93,6 +93,42 @@ struct SurfaceFrame {
     width: u32,
     height: u32,
     stride: u32,
+    /// SHA-256 of `pixels`, already computed by `commit()` for every
+    /// buffer anyway -- lets a repeat commit with byte-identical content
+    /// (real and reproducible under rapid input; see the OOM
+    /// investigation this field was added for) skip the ~10MB copy this
+    /// cache would otherwise take on every single raw commit, not just
+    /// ones that actually change the picture.
+    digest: [u8; 32],
+}
+
+/// Whether a commit with `new_digest` actually changes what's on screen
+/// for a surface whose previously cached frame hashed to `previous`.
+/// `None` (nothing cached yet, e.g. a surface's first commit) always
+/// counts as new content.
+#[cfg(feature = "panther-hardware")]
+fn is_new_content(previous: Option<[u8; 32]>, new_digest: [u8; 32]) -> bool {
+    Some(new_digest) != previous
+}
+
+#[cfg(all(test, feature = "panther-hardware"))]
+mod surface_frame_dedup_tests {
+    use super::is_new_content;
+
+    #[test]
+    fn first_commit_with_nothing_cached_is_new() {
+        assert!(is_new_content(None, [1u8; 32]));
+    }
+
+    #[test]
+    fn matching_digest_is_not_new() {
+        assert!(!is_new_content(Some([7u8; 32]), [7u8; 32]));
+    }
+
+    #[test]
+    fn differing_digest_is_new() {
+        assert!(is_new_content(Some([7u8; 32]), [8u8; 32]));
+    }
 }
 
 struct State {
@@ -511,16 +547,37 @@ impl CompositorHandler for State {
             }
         }
 
+        // Real, reproducible under rapid input (the ADR-043 OOM
+        // investigation): Wayland can legitimately deliver more than one
+        // raw commit in a row for the same surface with byte-identical
+        // content -- request_recomposite()'s flip_pending gating already
+        // coalesces the *redraw* side of that into one repaint, but
+        // nothing skipped the ~10MB copy+cache-replace below, so each
+        // redundant commit still paid for one anyway. The digest is
+        // already computed here for every commit regardless -- comparing
+        // it against what's already cached for this surface costs
+        // nothing extra and lets a matching commit skip the copy
+        // entirely.
+        #[cfg(feature = "panther-hardware")]
+        let previous_digest = self.surface_frames.get(surface).map(|frame| frame.digest);
+
         let result = with_buffer_contents(&buffer, |ptr, len, data| {
             let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
             let mut hasher = Sha256::new();
             hasher.update(bytes);
+            let digest = hasher.finalize();
             #[cfg(feature = "panther-hardware")]
-            let pixels = bytes.to_vec();
+            let pixels = {
+                let digest_bytes: [u8; 32] = digest
+                    .as_slice()
+                    .try_into()
+                    .expect("sha256 digest is always 32 bytes");
+                is_new_content(previous_digest, digest_bytes).then(|| bytes.to_vec())
+            };
             #[cfg(not(feature = "panther-hardware"))]
             let pixels = ();
             (
-                hasher.finalize(),
+                digest,
                 pixels,
                 data.width as u32,
                 data.height as u32,
@@ -564,15 +621,31 @@ impl CompositorHandler for State {
                     // meant the very first boot's toplevel frame was
                     // never cached at all, which is exactly the case
                     // that matters most for redraw-after-unlock.
-                    self.surface_frames.insert(
-                        surface.clone(),
-                        SurfaceFrame {
-                            pixels: _pixels,
-                            width: _width,
-                            height: _height,
-                            stride: _stride,
-                        },
-                    );
+                    match _pixels {
+                        Some(pixels) => {
+                            let digest_bytes: [u8; 32] = digest
+                                .as_slice()
+                                .try_into()
+                                .expect("sha256 digest is always 32 bytes");
+                            self.surface_frames.insert(
+                                surface.clone(),
+                                SurfaceFrame {
+                                    pixels,
+                                    width: _width,
+                                    height: _height,
+                                    stride: _stride,
+                                    digest: digest_bytes,
+                                },
+                            );
+                        }
+                        None => {
+                            // Content byte-identical to what's already
+                            // cached for this surface -- the ~10MB
+                            // copy+replace this would otherwise cost is
+                            // skipped (see the comment above `let result
+                            // = with_buffer_contents(...)`).
+                        }
+                    }
                     // While locked, only the lock surface affects the
                     // visible scene -- otherwise the toplevel
                     // underneath could keep animating on screen even
