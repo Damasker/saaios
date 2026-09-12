@@ -5,7 +5,9 @@
 - Состояние: `In progress` (2026-09-12). Change 1 -- ADR-044:
   механизм записи раздела выбран (переиспользование уже существующей
   `create_partition_node()`, allow-list `{init_boot_a, vendor_boot_a}`
-  для записи).
+  для записи). Change 2 -- ADR-045: схема подписи (ed25519) и
+  versioned manifest реализованы и протестированы, крейт
+  `saai-ota-manifest`, 15/15 тестов + end-to-end на реальных файлах.
 - Зависит от: S01-S11 (все `Done`). S04 -- узкий, но реальный
   precedent: `fastboot flash init_boot_a` + `--set-active=a` +
   `fastboot reboot` уже физически подтверждены надёжными несколько раз
@@ -101,13 +103,18 @@ false`. Решение (уже намеченное в S11's DoR, подтвер
 использует `androidboot.slot_suffix`/GPT-факты напрямую, не этот
 модуль.
 
-**Нет ни одной существующей крипто-подписи в проекте.** `grep` по всем
-`Cargo.toml` и исходникам на `ed25519`/`dalek`/`ring =`/`rsa =`/
-`Signature` -- ноль совпадений (уже проверено при написании S11's DoR,
-подтверждено повторно здесь). Манифесты приложений (S05/S07) явно не
-подписаны ("пока только доверенные приложения"). Схема подписи
-manifest/artifact для OTA -- полностью новая работа, без готового
-прецедента для переиспользования.
+**Исправлено ADR-045: схема подписи и manifest теперь реализованы.**
+На момент написания этого DoR в проекте не было ни одной крипто-подписи
+(`grep` по всем `Cargo.toml` на `ed25519`/`dalek`/`ring =`/`rsa =`/
+`Signature` -- ноль совпадений, манифесты приложений S05/S07 явно не
+подписаны). Change 2 (ADR-045) закрыл этот пробел: новый крейт
+`crates/saai-ota-manifest` -- `ManifestBody` (versioned,
+`deny_unknown_fields`), подпись ed25519, anti-downgrade в две
+проверки (строго новее установленной версии + не ниже
+`min_supported_version`), allow-list разделов как параметр вызова
+(ADR-044's `{init_boot_a, vendor_boot_a}` передаётся снаружи). CLI
+`saai-ota-sign` (keygen/build/verify) -- build-server-side инструмент,
+никогда не запускается на устройстве.
 
 **Download-клиент уже есть, свободное место для staging достаточно.**
 `busybox` на устройстве включает applet `wget` (подтверждено `busybox
@@ -149,13 +156,12 @@ Change 5.
     сегодня ровно `{init_boot_a, vendor_boot_a}`. Спайк был чисто
     read-only (только `/sys/class/block/*/uevent` и просмотр
     исходников) -- ничего не записано на этом шаге;
-  - Change 2: схема подписи manifest + artifact (вероятно ed25519 --
-    лёгкий, чистый Rust, без OpenSSL на устройстве) и формат versioned
-    manifest (device model/hardware id, версия, min-version для
-    anti-downgrade, список разделов с SHA-256 и размером, подпись
-    поверх всего). Полностью host-testable: fixture-файлы (валидная
-    подпись, испорченная подпись, повреждённый artifact, чужая модель
-    устройства, downgrade) проверяются без единого изменения на
+  - Change 2 (полностью host-testable) -- **закрыт, ADR-045**: ed25519
+    подпись, `ManifestBody` (device model/hardware id, версия,
+    min-version для anti-downgrade, список разделов с SHA-256 и
+    размером), подпись поверх всего. Крейт `crates/saai-ota-manifest` +
+    CLI `saai-ota-sign` (keygen/build/verify). 15/15 unit-тестов +
+    end-to-end на реальных файлах на R620 -- ни одного изменения на
     телефоне;
   - Change 3: staged verified download на устройстве -- реальный
     (тестовый) manifest+artifact через уже работающий `busybox wget`
@@ -191,7 +197,9 @@ Change 5.
 1. Спайк: механизм записи раздела -- **закрыт (ADR-044)**:
    переиспользование `create_partition_node()`, allow-list
    `{init_boot_a, vendor_boot_a}`.
-2. Подпись + versioned manifest, полностью host-testable.
+2. Подпись + versioned manifest -- **закрыт (ADR-045)**: крейт
+   `saai-ota-manifest`, ed25519, 15/15 тестов + end-to-end на реальных
+   файлах, полностью host-testable.
 3. Staged verified download на устройстве в `/data`, никаких
    изменений разделов.
 4. Запись обновления в единственный доступный SaaiOS-слот (A) с
@@ -279,6 +287,22 @@ Change 5.
 вызываемой до подтверждения здоровья UI, потенциально глушащий
 аппаратный автооткат. Ничего не записано на устройство в рамках этого
 Change.
+
+**Change 2 закрыт (ADR-045), 2026-09-12.** Крейт `crates/
+saai-ota-manifest`: ed25519-подпись, versioned `ManifestBody`
+(`deny_unknown_fields`), anti-downgrade в две проверки, allow-list
+как параметр. `cargo test -p saai-ota-manifest` -- 15/15 зелёные
+(валидный манифест, испорченная подпись, подделанное тело, чужой ключ,
+чужая модель устройства, downgrade, повторная установка той же
+версии, ниже min_supported_version, раздел не из allow-list,
+неизвестное поле схемы, неподдерживаемая схема, повреждённый artifact,
+целый artifact, отсутствующий в манифесте раздел, стабильность
+канонических байт). End-to-end на реальных файлах в `/tmp/ota-e2e` на
+R620 (`saai-ota-sign keygen`/`build`/`verify`) -- те же пять сценариев
+физически подтверждены вне юнит-тестов. `cargo clippy --all-targets`
+чисто, `cargo fmt -- --check` чисто, `cargo build --workspace` чисто.
+Ничего не менялось и не проверялось на телефоне -- Change 2 полностью
+host-only, как и требовал DoR.
 
 Заполняется по мере закрытия каждого Change -- отдельный ADR на
 каждый Change, тем же паттерном, что S09/S10/S11.
