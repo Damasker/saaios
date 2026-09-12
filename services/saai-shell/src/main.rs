@@ -124,6 +124,34 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// suspend/resume cycle itself safe, but not any particular threshold
 /// for how eager to be about it.
 const DEFAULT_DEEP_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Bright red -- deliberately unmistakable against the toplevel's dark
+/// slate placeholder, so a photo of the panel makes it obvious which
+/// surface is actually receiving the compositor's output while locked.
+///
+/// Byte order here is [0x00, 0xd0, 0x00, 0x00], *not* the [B, G, R, X] a
+/// standard XRGB8888 LE layout would predict for red. A three-band
+/// on-device diagnostic (one solid color per byte position, read back
+/// directly from this pool's memfd via /proc/<pid>/fd to confirm the
+/// client-side write itself before ever trusting the photo) proved this
+/// panel's pipeline reads R from byte-index 1 and G from byte-index 2 --
+/// swapped from the conventional B,G,R,X -- while byte-index 0 produced
+/// no visible output at all in the same test (untested whether that's a
+/// true "blue" that just read as too dark to name, or genuinely unused;
+/// not re-verified here since only red was needed for that milestone).
+/// Root cause on the DRM/driver side not identified -- no standard
+/// fourcc swaps R and G while leaving B in place, so this is applied as
+/// an empirically-verified byte order, not a fourcc fix.
+const LOCK_SCREEN_COLOR: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
+/// Plain black -- every byte-order permutation of all-zero reads as
+/// black, so this needs none of `LOCK_SCREEN_COLOR`'s empirical care.
+/// Shown on the lock surface (the panel's actual visible content while
+/// locked -- not the toplevel, which stays hidden underneath it, ADR-016)
+/// immediately before a real `mem`-suspend and while resuming from one.
+/// Real, physically confirmed UX gap otherwise (S11 Change 2/ADR-041):
+/// nothing made the panel visibly go dark before suspending, so there
+/// was no reliable cue for when it was actually safe -- or necessary --
+/// to press power.
+const SLEEP_INDICATOR_COLOR: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
 const DEMO_APP_ID: &str = "org.saaios.demo-surface";
 const DEMO_APP_ACTION: &str = "manage_app:org.saaios.demo-surface";
 const DEMO_PACKAGE_PATH: &str = "/data/saaios/packages/org.saaios.demo-surface";
@@ -658,8 +686,11 @@ fn main() {
         lock_surfaces: Vec::new(),
         lock_pool: None,
         lock_buffer: None,
+        lock_width: 0,
+        lock_height: 0,
         locked: true,
         unlock_pending: false,
+        sleeping: false,
         last_activity: Instant::now(),
         current_page: RootPage::Now,
         last_touch_pos: (0.0, 0.0),
@@ -710,7 +741,7 @@ fn main() {
         shell.refresh_apps_if_due();
         shell.poll_portal();
         shell.check_idle_timeout(&qh);
-        shell.check_deep_idle();
+        shell.check_deep_idle(&conn);
     }
 }
 
@@ -738,6 +769,17 @@ struct Shell {
     /// still needs to read after `commit()` returns.
     lock_pool: Option<SlotPool>,
     lock_buffer: Option<Buffer>,
+    /// Size the lock surface was last `configure()`d at -- needed by
+    /// `present_lock_surface()` to redraw it later (e.g. the sleep
+    /// indicator around a real suspend, S11 Change 2) outside of a fresh
+    /// configure event, where `configure`'s own `new_size` parameter
+    /// isn't available. Matches `self.width`/`self.height` in practice
+    /// (both ultimately come from the same single physical panel), but
+    /// tracked separately since nothing guarantees the two configure
+    /// events always agree, and this is the value the lock surface's
+    /// own buffer was actually sized for.
+    lock_width: u32,
+    lock_height: u32,
     /// Mirrors saai-displayd's own `locked` bool -- this client is the
     /// only one that ever calls lock()/unlock(), so tracking it here
     /// (rather than round-tripping through the server) is enough to
@@ -749,6 +791,13 @@ struct Shell {
     /// just a touch-start, so a drag-through or accidental brush
     /// doesn't unlock).
     unlock_pending: bool,
+    /// Set once `check_deep_idle` blanks the lock surface to
+    /// `SLEEP_INDICATOR_COLOR`; cleared by the next touch, which wakes
+    /// the screen back to `LOCK_SCREEN_COLOR` instead of unlocking --
+    /// unlocking still needs its own separate tap-and-release on the
+    /// now-visible lock screen, same two-step as pressing a real
+    /// phone's power button before swiping to unlock.
+    sleeping: bool,
     last_activity: Instant,
     /// Currently visible root section (Change step 6).
     current_page: RootPage,
@@ -939,64 +988,27 @@ impl SessionLockHandler for Shell {
         self.session_lock = None;
         self.lock_surfaces.clear();
         self.locked = false;
+        self.sleeping = false;
     }
 
     fn configure(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        session_lock_surface: SessionLockSurface,
+        _session_lock_surface: SessionLockSurface,
         configure: SessionLockSurfaceConfigure,
         _serial: u32,
     ) {
         let (width, height) = configure.new_size;
         let (width, height) = (width.max(1), height.max(1));
         println!("saai-shell: lock surface configure at {width}x{height}");
-
-        let stride = width as i32 * 4;
-        let pool = self.lock_pool.get_or_insert_with(|| {
-            SlotPool::new(width as usize * height as usize * 4, &self.shm)
-                .expect("create lock surface pool")
-        });
-        let (buffer, canvas) = pool
-            .create_buffer(
-                width as i32,
-                height as i32,
-                stride,
-                wl_shm::Format::Xrgb8888,
-            )
-            .expect("create buffer");
-
-        // Bright red -- deliberately unmistakable against the toplevel's
-        // dark slate placeholder, so a photo of the panel makes it
-        // obvious which surface is actually receiving the compositor's
-        // output while locked.
-        //
-        // Byte order here is [0x00, 0xd0, 0x00, 0x00], *not* the
-        // [B, G, R, X] a standard XRGB8888 LE layout would predict for
-        // red. A three-band on-device diagnostic (one solid color per
-        // byte position, read back directly from this pool's memfd via
-        // /proc/<pid>/fd to confirm the client-side write itself before
-        // ever trusting the photo) proved this panel's pipeline reads R
-        // from byte-index 1 and G from byte-index 2 -- swapped from the
-        // conventional B,G,R,X -- while byte-index 0 produced no visible
-        // output at all in the same test (untested whether that's a true
-        // "blue" that just read as too dark to name, or genuinely
-        // unused; not re-verified here since only red is needed for this
-        // milestone). Root cause on the DRM/driver side not identified --
-        // no standard fourcc swaps R and G while leaving B in place, so
-        // this is applied as an empirically-verified byte order, not a
-        // fourcc fix.
-        let pixel: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
-        for chunk in canvas.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&pixel);
-        }
-
-        let surface = session_lock_surface.wl_surface();
-        surface.damage_buffer(0, 0, width as i32, height as i32);
-        buffer.attach_to(surface).expect("buffer attach");
-        surface.commit();
-        self.lock_buffer = Some(buffer);
+        self.lock_width = width;
+        self.lock_height = height;
+        // A fresh configure means a new size -- the old buffer (if any)
+        // was sized for the previous one and `present_lock_surface()`
+        // never resizes an existing buffer itself.
+        self.lock_buffer = None;
+        self.present_lock_surface(LOCK_SCREEN_COLOR);
     }
 }
 
@@ -1107,6 +1119,19 @@ impl TouchHandler for Shell {
     ) {
         self.last_activity = Instant::now();
         self.last_touch_pos = position;
+        if self.sleeping {
+            // First touch after the screen went dark just wakes it back
+            // to the lock screen -- it does not also unlock, matching a
+            // real phone's press-then-swipe two-step. Consumes this
+            // touch entirely so a stray drag can't fall through into
+            // unlock_pending below.
+            self.sleeping = false;
+            self.unlock_pending = false;
+            self.tab_touch_pending = false;
+            self.present_lock_surface(LOCK_SCREEN_COLOR);
+            println!("saai-shell: woke from pseudo-sleep");
+            return;
+        }
         self.unlock_pending = self.locked
             && self
                 .lock_surfaces
@@ -1899,40 +1924,85 @@ impl Shell {
         }
     }
 
-    /// S11 Change 2 (ADR-041): once the screen has already been locked
-    /// (`check_idle_timeout`) and stays untouched for a further
-    /// `deep_idle_timeout`, actually suspends the device instead of
-    /// just leaving the lock screen lit forever. ADR-040's spike found
-    /// `mem` suspends and resumes cleanly on this hardware, but wlan0's
-    /// own host-wake IRQ fires almost immediately if the interface is
-    /// left up while associated -- brought down first so the device
-    /// actually stays asleep, back up on the way out. Runs as a plain
-    /// blocking file write on this event loop's own thread: while the
-    /// kernel is genuinely asleep there is nothing else for this
-    /// process (or anything else on the device) to usefully do anyway,
-    /// so blocking here is the intended behavior, not a missed `spawn`.
-    fn check_deep_idle(&mut self) {
-        if !self.locked || self.last_activity.elapsed() < self.deep_idle_timeout {
+    /// Fills the lock surface -- the panel's actual visible content
+    /// while locked; the toplevel stays hidden underneath it (ADR-016) --
+    /// with one solid color and commits it. Shared by the initial
+    /// `LOCK_SCREEN_COLOR` placeholder (`SessionLockSurfaceHandler::
+    /// configure`, above) and the `SLEEP_INDICATOR_COLOR` frame
+    /// `check_deep_idle()` shows around a real suspend. Reuses the
+    /// already-created pool/buffer the same way `draw()` reuses its own
+    /// for the toplevel; a no-op before the first configure
+    /// (`lock_width`/`lock_height` still 0) or if the lock surface
+    /// object itself isn't present for some other reason.
+    fn present_lock_surface(&mut self, color: [u8; 4]) {
+        let width = self.lock_width;
+        let height = self.lock_height;
+        if width == 0 || height == 0 {
             return;
         }
-        println!("saai-shell: deep idle timeout, suspending");
-        let _ = std::process::Command::new("/saaios/busybox")
-            .args(["ip", "link", "set", "wlan0", "down"])
-            .status();
-        if let Err(err) = std::fs::write("/sys/power/state", "mem") {
-            eprintln!("saai-shell: suspend request failed: {err}");
+        let Some(lock_surface) = self.lock_surfaces.last() else {
+            return;
+        };
+        let stride = width as i32 * 4;
+
+        if self.lock_pool.is_none() {
+            self.lock_pool = Some(
+                SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                    .expect("create lock surface pool"),
+            );
         }
-        // Execution only reaches here once the device has actually
-        // woken back up (or the write above failed outright and never
-        // suspended at all) -- either way, wlan0 comes back and the
-        // idle clock restarts fresh so a resume never immediately
-        // re-triggers another suspend attempt before the user has had
-        // a real `deep_idle_timeout` window to act.
-        let _ = std::process::Command::new("/saaios/busybox")
-            .args(["ip", "link", "set", "wlan0", "up"])
-            .status();
-        self.last_activity = Instant::now();
-        println!("saai-shell: resumed from deep idle");
+        let pool = self.lock_pool.as_mut().expect("just ensured above");
+
+        if self.lock_buffer.is_none() {
+            let (buffer, _canvas) = pool
+                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                .expect("create lock buffer");
+            self.lock_buffer = Some(buffer);
+        }
+        let buffer = self.lock_buffer.as_mut().expect("just ensured above");
+
+        let canvas = match pool.canvas(buffer) {
+            Some(canvas) => canvas,
+            None => {
+                let (second_buffer, canvas) = pool
+                    .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                    .expect("create lock buffer");
+                *buffer = second_buffer;
+                canvas
+            }
+        };
+        for chunk in canvas.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&color);
+        }
+
+        let surface = lock_surface.wl_surface();
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        buffer.attach_to(surface).expect("buffer attach");
+        surface.commit();
+    }
+
+    /// S11 Change 2 (ADR-041), revised in ADR-051: once the screen has
+    /// already been locked (`check_idle_timeout`) and stays untouched
+    /// for a further `deep_idle_timeout`, blanks the lock surface to
+    /// `SLEEP_INDICATOR_COLOR` instead of leaving the lock screen lit
+    /// forever. An earlier version of this also wrote `mem` to
+    /// `/sys/power/state` to actually suspend the kernel; ADR-051 found
+    /// that write reliably fails with EBUSY on this hardware whenever a
+    /// USB cable is attached, because the `dwc3-otg` wakeup source
+    /// stays held for as long as the USB link is configured (our own
+    /// serial console and USB-NCM being exactly such a link) -- not a
+    /// bug in this file, but it meant every suspend attempt was
+    /// immediately undone before the screen could visibly stay dark,
+    /// which is what this function is actually responsible for. This
+    /// version only ever changes what's on screen; `TouchHandler::down`
+    /// clears `sleeping` again on the next touch.
+    fn check_deep_idle(&mut self, _conn: &Connection) {
+        if !self.locked || self.sleeping || self.last_activity.elapsed() < self.deep_idle_timeout {
+            return;
+        }
+        println!("saai-shell: deep idle timeout, screen off");
+        self.sleeping = true;
+        self.present_lock_surface(SLEEP_INDICATOR_COLOR);
     }
 }
 
