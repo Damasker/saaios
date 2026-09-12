@@ -581,7 +581,30 @@ impl CompositorHandler for State {
         let mut reused_pixels = previous_frame.map(|frame| frame.pixels).unwrap_or_default();
 
         let result = with_buffer_contents(&buffer, move |ptr, len, data| {
-            let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+            // `with_buffer_contents` hands back the *pool's* pointer and
+            // length (its own doc comment says so explicitly), not this
+            // buffer's -- a pool backs every buffer a client has ever
+            // created on it and only grows, so using `len` directly here
+            // hashed and copied the whole, ever-growing pool on every
+            // single commit instead of just this frame's own pixels
+            // (ADR-052: measured 4x-8x the real ~10MB frame size and
+            // climbing over a session, accounting for the multi-hundred-
+            // millisecond per-tap lag this caused). This buffer's own
+            // window into that pool is `data.offset..+data.stride*
+            // data.height`; falling back to an empty slice on a bounds
+            // mismatch is defensive only -- a well-behaved client (the
+            // only kind this compositor talks to) never triggers it.
+            let buffer_len = data.stride as usize * data.height as usize;
+            let end = (data.offset as usize).saturating_add(buffer_len);
+            let bytes: &[u8] = if end <= len {
+                unsafe { std::slice::from_raw_parts(ptr.add(data.offset as usize), buffer_len) }
+            } else {
+                eprintln!(
+                    "saai-displayd: commit buffer geometry (offset={} len={buffer_len}) exceeds pool length {len}, skipping",
+                    data.offset
+                );
+                &[]
+            };
             let mut hasher = Sha256::new();
             hasher.update(bytes);
             let digest = hasher.finalize();
