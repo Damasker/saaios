@@ -2343,6 +2343,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "saai-ota-stage"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ed25519-dalek",
+ "futures",
+ "hex",
+ "reqwest",
+ "saai-ota-manifest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "system-tools",
+ "tokio",
+]
+
+[[package]]
 name = "saai-portal-protocol"
 version = "0.1.0"
 dependencies = [

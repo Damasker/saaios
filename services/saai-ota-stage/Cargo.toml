@@ -1,0 +1,21 @@
+[package]
+name = "saai-ota-stage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+saai-ota-manifest.workspace = true
+system-tools.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+clap.workspace = true
+sha2.workspace = true
+hex.workspace = true
+ed25519-dalek.workspace = true
+futures.workspace = true

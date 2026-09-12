@@ -30,6 +30,7 @@ members = [
     "services/saai-appd",
     "services/saai-entityd",
     "services/saai-taskd",
+    "services/saai-ota-stage",
 ]
 
 [workspace.package]

@@ -189,6 +189,34 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Checks a partition's already-known size and SHA-256 against the
+/// manifest's declared values. For a caller that streamed the content
+/// (e.g. a network download) and hashed it incrementally, without ever
+/// holding the whole thing in memory at once.
+pub fn verify_partition_digest(
+    body: &ManifestBody,
+    partition_name: &str,
+    actual_size: u64,
+    actual_sha256_hex: &str,
+) -> Result<(), ManifestError> {
+    let entry = body
+        .partitions
+        .iter()
+        .find(|entry| entry.name == partition_name)
+        .ok_or_else(|| ManifestError::PartitionNotInManifest(partition_name.to_string()))?;
+
+    if actual_size != entry.size_bytes || actual_sha256_hex != entry.sha256 {
+        return Err(ManifestError::PartitionMismatch {
+            name: partition_name.to_string(),
+            expected_sha: entry.sha256.clone(),
+            expected_size: entry.size_bytes,
+            actual_sha: actual_sha256_hex.to_string(),
+            actual_size,
+        });
+    }
+    Ok(())
+}
+
 /// Checks staged artifact bytes for one partition against the manifest's
 /// declared hash and size. Call only after `check_installable` accepted
 /// the manifest itself, and before any partition write.
@@ -197,25 +225,7 @@ pub fn verify_partition_bytes(
     partition_name: &str,
     data: &[u8],
 ) -> Result<(), ManifestError> {
-    let entry = body
-        .partitions
-        .iter()
-        .find(|entry| entry.name == partition_name)
-        .ok_or_else(|| ManifestError::PartitionNotInManifest(partition_name.to_string()))?;
-
-    let actual_size = data.len() as u64;
-    let actual_sha = sha256_hex(data);
-
-    if actual_size != entry.size_bytes || actual_sha != entry.sha256 {
-        return Err(ManifestError::PartitionMismatch {
-            name: partition_name.to_string(),
-            expected_sha: entry.sha256.clone(),
-            expected_size: entry.size_bytes,
-            actual_sha,
-            actual_size,
-        });
-    }
-    Ok(())
+    verify_partition_digest(body, partition_name, data.len() as u64, &sha256_hex(data))
 }
 
 #[cfg(test)]
@@ -479,6 +489,30 @@ mod tests {
         let body = sample_body();
         let intact = b"fake init_boot_a image bytes";
         assert!(verify_partition_bytes(&body, "init_boot_a", intact).is_ok());
+    }
+
+    #[test]
+    fn streamed_digest_matching_manifest_is_accepted() {
+        let body = sample_body();
+        let intact = b"fake init_boot_a image bytes";
+        let digest = sha256_hex(intact);
+        assert!(
+            verify_partition_digest(&body, "init_boot_a", intact.len() as u64, &digest).is_ok()
+        );
+    }
+
+    #[test]
+    fn streamed_digest_from_truncated_download_is_rejected() {
+        let body = sample_body();
+        // Simulates an interrupted download: fewer bytes than the manifest
+        // declares, so both the size and the digest of what arrived differ.
+        let truncated = b"fake init_boot_a image";
+        let digest = sha256_hex(truncated);
+        let result = verify_partition_digest(&body, "init_boot_a", truncated.len() as u64, &digest);
+        assert!(matches!(
+            result,
+            Err(ManifestError::PartitionMismatch { .. })
+        ));
     }
 
     #[test]
