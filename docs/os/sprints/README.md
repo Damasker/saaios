@@ -27,7 +27,7 @@ Ledger = audit-log, UDS/TLS; привязка к S09–S11.
 | S09 | Intent → Task → Action workflow | Done | S06, S07 |
 | S10 | Planner, automation и memory | Done | S09 |
 | S11 | Производительность, idle и стабильность | Done (с честными оговорками) | S01–S10 |
-| S12 | OTA и release gate | Ready | S01–S11 |
+| S12 | OTA и release gate | In progress | S01–S11 |
 
 ## S00 — Архитектура и процесс
 
@@ -551,31 +551,35 @@ Pixel 7 -- подписанный manifest/artifact, staged verified download,
 precedent для настоящего двух-слотового SaaiOS OTA -- такого в проекте
 нет.
 
-**Ключевая находка Definition of Ready: в SaaiOS сегодня нет ни одного
-пути писать раздел изнутри себя.** Проверено на реальном устройстве:
-`/dev/block/by-name/` не существует, `/proc/partitions` содержит
-только сырые числовые узлы. Все образы за весь проект ставились
-исключительно через `fastboot` с хоста в bootloader-режиме. Это
-меняет старт спринта -- Change 1 не про подпись, а про архитектурный
-спайк: как SaaiOS вообще пишет раздел (нативный GPT-резолвер в
-userspace vs повторное использование fastboot-пути через управляемый
-reboot-to-bootloader), с ADR по итогам. Также: единственный реально
-доступный SaaiOS-слот -- A; слот B закрыт owner policy до отдельного,
-специально подтверждённого этапа с внешним factory recovery, которого
-не существует -- поэтому запись обновления (Change 4) честно
-скоупится как safe in-place update с backup/restore rollback на
-единственном слоте, не как cross-slot A/B failover.
+**Единственный реально доступный SaaiOS-слот -- A; слот B закрыт owner
+policy** до отдельного, специально подтверждённого этапа с внешним
+factory recovery, которого не существует -- поэтому запись обновления
+(Change 4) честно скоупится как safe in-place update с backup/restore
+rollback на единственном слоте, не как cross-slot A/B failover.
 
-**Scope:** Change 1 (спайк, только чтение GPT, ничего не пишет) --
-механизм записи раздела, ADR. Change 2 (полностью host-testable) --
-схема подписи (вероятно ed25519, в проекте сегодня нет ни одной
-крипто-подписи) и versioned manifest с anti-downgrade. Change 3 --
-staged verified download на устройстве через уже имеющийся `busybox
-wget` в `/data` (108.9 ГБ свободно), без изменений разделов. Change 4
--- запись в единственный доступный слот A, backup/restore rollback.
-Change 5 -- health confirmation, ограниченный boot attempt limit,
-автоматический откат, физически продемонстрирован на намеренно
-нездоровой сборке.
+**Change 1 физически подтверждён (ADR-044):** спайк (read-only,
+ничего не записано) нашёл, что в `native-init.c` уже существует
+работающий, каждую загрузку исполняемый механизм записи раздела --
+`create_partition_node()` резолвит раздел по `PARTNAME` (ядро уже
+парсит GPT, отдаёт имена через `/sys/block/*/*/uevent`), а
+`mark_current_slot_successful()` уже реально пишет байт в `devinfo` на
+каждом boot. Первоначальная формулировка DoR ("нет ни одного пути
+писать раздел") была неполной и честно исправлена тем же ADR. Решение:
+OTA's writer переиспользует `create_partition_node()`, без нового
+GPT-парсера, ограничен жёстким allow-list `{init_boot_a,
+vendor_boot_a}`. Побочная находка для Change 5: `mark_current_slot_
+successful()` вызывается до подтверждения здоровья UI -- возможно
+глушит аппаратный автооткат для класса отказов, найденного S11.
+
+**Scope:** Change 2 (полностью host-testable) -- схема подписи
+(вероятно ed25519, в проекте сегодня нет ни одной крипто-подписи) и
+versioned manifest с anti-downgrade. Change 3 -- staged verified
+download на устройстве через уже имеющийся `busybox wget` в `/data`
+(108.9 ГБ свободно), без изменений разделов. Change 4 -- запись в
+единственный доступный слот A через `create_partition_node()`,
+backup/restore rollback. Change 5 -- health confirmation, ограниченный
+boot attempt limit, автоматический откат, физически продемонстрирован
+на намеренно нездоровой сборке.
 
 **Acceptance:** неподписанный/повреждённый artifact и запрещённый
 downgrade отвергаются до записи раздела; прерванная/повреждённая
