@@ -2326,6 +2326,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "saai-ota-health"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "tempfile",
+]
+
+[[package]]
 name = "saai-ota-manifest"
 version = "0.1.0"
 dependencies = [
