@@ -608,6 +608,20 @@ fn capability_label(name: &str) -> &str {
     }
 }
 
+/// S13 Change 3: `saai-appd`'s own state vocabulary
+/// (`services/saai-appd/src/daemon.rs`), translated the same
+/// fallback-to-the-raw-string way `capability_label` handles anything
+/// it doesn't recognize.
+fn app_state_label(state: &str) -> &str {
+    match state {
+        "running" => "Работает",
+        "stopped" => "Остановлено",
+        "crash_limited" => "Отключено после сбоев",
+        "installed" => "Установлено",
+        other => other,
+    }
+}
+
 fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top = ((action.top as u64 * height as u64) / 2400) as u32;
@@ -651,8 +665,10 @@ fn inbox_pending_tasks(entities: &[Entity]) -> Vec<&Entity> {
 
 /// Same 190-tall/220-apart stacking `root.sui`'s "Пространства" cards
 /// use (`space-home` top=430, `space-work` top=650, ...), just computed
-/// per-index instead of read from compiled-in constants.
-fn inbox_row_rect(index: usize, width: u32, height: u32) -> Rect {
+/// per-index instead of read from compiled-in constants. Shared by
+/// every page whose card count is runtime data -- "Входящие" (S13
+/// Change 2) and "Я" (S13 Change 3) so far.
+fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top_2400 = 430 + index as u32 * 220;
     let top = ((top_2400 as u64 * height as u64) / 2400) as u32;
@@ -669,7 +685,7 @@ fn inbox_task_at(pos: (f64, f64), width: u32, height: u32, entities: &[Entity]) 
     inbox_pending_tasks(entities)
         .into_iter()
         .enumerate()
-        .find(|(index, _)| inbox_row_rect(*index, width, height).contains(pos.0, pos.1))
+        .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
         .map(|(_, entity)| entity.id)
 }
 
@@ -805,6 +821,7 @@ fn main() {
         portal: portal_server::PortalServer::bind(portal_socket)
             .expect("failed to bind saai-shell portal socket"),
         apps_by_pid: BTreeMap::new(),
+        installed_apps: BTreeMap::new(),
         apps_grants: BTreeMap::new(),
         clipboard: None,
         last_apps_refresh: Instant::now(),
@@ -944,6 +961,12 @@ struct Shell {
     /// `AppSummary.granted_capabilities` `saai-appd` now reports -- what
     /// the portal actually authorizes requests against.
     apps_grants: BTreeMap<String, Vec<String>>,
+    /// S13 Change 3/4: the full `AppSummary` per installed app, keyed
+    /// by id -- `apps_by_pid`/`apps_grants` above only ever kept the
+    /// two derived slices the portal needed, not enough to show a real
+    /// app list ("Я"'s own grants view, "Сейчас"'s launcher) with
+    /// names, versions and state.
+    installed_apps: BTreeMap<String, AppSummary>,
     /// The portal's in-memory clipboard. No persistence, no history --
     /// cleared on `saai-shell` restart.
     clipboard: Option<String>,
@@ -1419,6 +1442,8 @@ impl Shell {
                 .collect::<Vec<_>>();
             let content_cards = if self.current_page == RootPage::Inbox {
                 self.inbox_content_cards(width, height)
+            } else if self.current_page == RootPage::Me {
+                self.me_content_cards(width, height)
             } else {
                 ROOT_CONTENT_ACTIONS
                     .iter()
@@ -1686,6 +1711,7 @@ impl Shell {
                 // lifecycle event was missed.
                 self.apps_by_pid.clear();
                 self.apps_grants.clear();
+                self.installed_apps.clear();
                 for app in apps {
                     self.note_app_summary(app);
                 }
@@ -1716,6 +1742,7 @@ impl Shell {
                     if event.event == LifecycleEventKind::Removed {
                         self.apps_by_pid.retain(|_, app_id| *app_id != event.app_id);
                         self.apps_grants.remove(&event.app_id);
+                        self.installed_apps.remove(&event.app_id);
                     }
                 }
                 LifecycleEventKind::Installed => {}
@@ -1730,6 +1757,7 @@ impl Shell {
         for &pid in &app.pids {
             self.apps_by_pid.insert(pid, app.id.clone());
         }
+        self.installed_apps.insert(app.id.clone(), app.clone());
     }
 
     fn apply_appd_message(&mut self, message: AppServerMessage) -> bool {
@@ -1814,7 +1842,7 @@ impl Shell {
         let tasks = inbox_pending_tasks(&self.selected_entities);
         if tasks.is_empty() {
             return vec![(
-                inbox_row_rect(0, width, height),
+                stacked_row_rect(0, width, height),
                 render::ActionCardView::new(
                     "Нет задач, ожидающих подтверждения",
                     "",
@@ -1827,11 +1855,60 @@ impl Shell {
             .enumerate()
             .map(|(index, task)| {
                 (
-                    inbox_row_rect(index, width, height),
+                    stacked_row_rect(index, width, height),
                     render::ActionCardView::new(task.title.clone(), "Ждёт подтверждения", "Открыть"),
                 )
             })
             .collect()
+    }
+
+    /// S13 Change 3: "Я" -- a device/apps summary built entirely from
+    /// state this client already tracks (`spaces`, `entity_counts`,
+    /// `installed_apps`) plus each app's currently granted
+    /// capabilities (`capability_label`, same vocabulary the consent
+    /// screen already uses). Read-only -- no protocol supports
+    /// revoking one capability from an already-decided app (see
+    /// ADR-054's notes on `saai-app-protocol`), so there is nothing
+    /// for a tap here to do yet.
+    fn me_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        let total_entities: usize = self.entity_counts.values().sum();
+        let mut cards = vec![(
+            stacked_row_rect(0, width, height),
+            render::ActionCardView::new(
+                "Это устройство",
+                format!(
+                    "Пространств: {} · Объектов: {total_entities}",
+                    self.spaces.len()
+                ),
+                "",
+            ),
+        )];
+        for (index, app) in self.installed_apps.values().enumerate() {
+            let grants = self
+                .apps_grants
+                .get(&app.id)
+                .map(|granted| {
+                    if granted.is_empty() {
+                        "без разрешений".to_string()
+                    } else {
+                        granted
+                            .iter()
+                            .map(|name| capability_label(name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                })
+                .unwrap_or_else(|| "без разрешений".to_string());
+            cards.push((
+                stacked_row_rect(index + 1, width, height),
+                render::ActionCardView::new(
+                    app.name.clone(),
+                    format!("{} · {grants}", app_state_label(&app.state)),
+                    "",
+                ),
+            ));
+        }
+        cards
     }
 
     fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
