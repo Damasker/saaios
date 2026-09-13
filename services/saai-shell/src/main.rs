@@ -804,6 +804,34 @@ fn storage_string() -> String {
     }
 }
 
+/// S22: surfaces facts S12's OTA tools (`saai-ota-write`/`-health`,
+/// CLI-only, never wired into `native-init.c` or given a daemon/
+/// protocol of their own) already persist -- deliberately read-only.
+/// An actual "check for updates now" action needs an update-server URL
+/// setting that doesn't exist yet and would call into binaries whose
+/// on-device path was never fixed by S12's manual-CLI scope; both are
+/// honestly out of scope here rather than built on an unverified
+/// assumption about either.
+fn boot_slot() -> String {
+    let bootconfig = std::fs::read_to_string("/proc/bootconfig").unwrap_or_default();
+    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    for source in [&bootconfig, &cmdline] {
+        for token in source.split_whitespace() {
+            if let Some(suffix) = token.strip_prefix("androidboot.slot_suffix=") {
+                return suffix.trim_start_matches('_').to_uppercase();
+            }
+        }
+    }
+    "неизвестно".to_string()
+}
+
+fn boot_attempts() -> u32 {
+    std::fs::read_to_string("/data/saaios/system/boot-attempts")
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top = ((action.top as u64 * height as u64) / 2400) as u32;
@@ -2272,6 +2300,20 @@ impl Shell {
                     "Изменить",
                 ),
             ),
+            // S22: read-only -- see the doc comment on `boot_slot` for
+            // why there's no "проверить обновления" action here yet.
+            (
+                stacked_row_rect(7, width, height),
+                render::ActionCardView::new(
+                    "Обновления",
+                    format!(
+                        "Слот {} · попыток загрузки: {}",
+                        boot_slot(),
+                        boot_attempts()
+                    ),
+                    "",
+                ),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -2290,7 +2332,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 7, width, height),
+                stacked_row_rect(index + 8, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
