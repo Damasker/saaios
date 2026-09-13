@@ -171,6 +171,10 @@ struct ShellSettings {
     brightness_pct: u8,
     idle_timeout_secs: u64,
     deep_idle_timeout_secs: u64,
+    /// S17. Signed minutes, `0` = UTC -- matches `TIMEZONE_PRESETS_
+    /// MINUTES`'s own units, deliberately not hours-only (some real
+    /// timezones use a half-hour or 45-minute offset).
+    utc_offset_minutes: i32,
 }
 
 impl ShellSettings {
@@ -190,6 +194,7 @@ impl ShellSettings {
             brightness_pct: 100,
             idle_timeout_secs: IDLE_TIMEOUT.as_secs(),
             deep_idle_timeout_secs: Self::default_deep_idle_secs(),
+            utc_offset_minutes: 0,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -211,6 +216,11 @@ impl ShellSettings {
                 .get("deep_idle_timeout_secs")
                 .and_then(Value::as_u64)
                 .unwrap_or(default.deep_idle_timeout_secs),
+            utc_offset_minutes: value
+                .get("utc_offset_minutes")
+                .and_then(Value::as_i64)
+                .map(|minutes| minutes as i32)
+                .unwrap_or(default.utc_offset_minutes),
         }
     }
 
@@ -219,6 +229,7 @@ impl ShellSettings {
             "brightness_pct": self.brightness_pct,
             "idle_timeout_secs": self.idle_timeout_secs,
             "deep_idle_timeout_secs": self.deep_idle_timeout_secs,
+            "utc_offset_minutes": self.utc_offset_minutes,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -386,15 +397,53 @@ fn read_battery() -> Option<(u8, bool)> {
 /// this alone isn't worth the size/build cost on the `pixel7` profile.
 /// Matches this file's existing pattern of shelling out to `busybox`
 /// for one-off system state elsewhere.
-fn current_time_string() -> String {
-    std::process::Command::new("date")
-        .arg("+%H:%M")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|text| text.trim().to_string())
-        .unwrap_or_else(|| "--:--".to_string())
+/// S17: no timezone concept existed anywhere in the project before
+/// this (verified: no `/etc/localtime`, no `/etc/timezone`, no `TZ`
+/// set anywhere in `native-init.c`) -- the system clock itself is UTC
+/// (`os/targets/panther/src/sntp-sync.c` sets it via `settimeofday`,
+/// standard Unix practice of keeping the kernel clock in UTC
+/// regardless of what a user sees displayed). This used to shell out
+/// to `date +%H:%M` (S13), which would only ever have shown UTC too,
+/// with no way to apply an offset short of also managing a `TZ` env
+/// var and its notoriously inverted POSIX sign convention
+/// (`TZ=UTC-3` means *ahead* of UTC, not behind). Doing the arithmetic
+/// directly on the raw epoch sidesteps that footgun entirely, and
+/// happens to need no process spawn at all anymore either.
+fn current_time_string(utc_offset_minutes: i32) -> String {
+    let epoch_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    let local_seconds = epoch_seconds + i64::from(utc_offset_minutes) * 60;
+    let seconds_of_day = local_seconds.rem_euclid(86400);
+    let hours = seconds_of_day / 3600;
+    let minutes = (seconds_of_day % 3600) / 60;
+    format!("{hours:02}:{minutes:02}")
+}
+
+/// Curated UTC offsets (minutes) rather than full IANA tzdata --
+/// no timezone database ships on this image, and shipping/maintaining
+/// one just for a handful of DST-naive fixed offsets would be a much
+/// bigger undertaking than this UI actually needs. Deliberately
+/// includes a couple of half-hour offsets (India, among others use
+/// non-whole-hour offsets) to prove the representation isn't
+/// hour-only, not to be exhaustive.
+const TIMEZONE_PRESETS_MINUTES: [i32; 9] = [
+    0,   // UTC
+    60,  // Центральная Европа (UTC+1)
+    120, // Восточная Европа (UTC+2)
+    180, // Москва (UTC+3)
+    270, // Иран (UTC+4:30)
+    330, // Индия (UTC+5:30)
+    480, // Китай (UTC+8)
+    540, // Япония (UTC+9)
+    -300, // США, восточное побережье (UTC-5)
+];
+
+fn format_utc_offset(minutes: i32) -> String {
+    let sign = if minutes < 0 { '-' } else { '+' };
+    let abs_minutes = minutes.unsigned_abs();
+    format!("UTC{sign}{:02}:{:02}", abs_minutes / 60, abs_minutes % 60)
 }
 
 const CONSENT_SCREEN_ID: &str = "consent";
@@ -856,6 +905,8 @@ fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str
         Some("cycle_idle_timeout")
     } else if stacked_row_rect(5, width, height).contains(pos.0, pos.1) {
         Some("cycle_deep_idle_timeout")
+    } else if stacked_row_rect(6, width, height).contains(pos.0, pos.1) {
+        Some("cycle_timezone")
     } else {
         None
     }
@@ -1833,6 +1884,10 @@ impl Shell {
                     self.settings.deep_idle_timeout_secs,
                 );
             }
+            "cycle_timezone" => {
+                self.settings.utc_offset_minutes =
+                    next_in_cycle(&TIMEZONE_PRESETS_MINUTES, self.settings.utc_offset_minutes);
+            }
             _ => return,
         }
         self.settings.save();
@@ -2137,6 +2192,17 @@ impl Shell {
                     "Изменить",
                 ),
             ),
+            // S17: no timezone concept existed before this ADR-061 --
+            // see `current_time_string`'s own doc comment for why this
+            // is a curated UTC-offset cycle, not full IANA tzdata.
+            (
+                stacked_row_rect(6, width, height),
+                render::ActionCardView::new(
+                    "Часовой пояс",
+                    format_utc_offset(self.settings.utc_offset_minutes),
+                    "Изменить",
+                ),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -2155,7 +2221,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 6, width, height),
+                stacked_row_rect(index + 7, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
@@ -2483,7 +2549,7 @@ impl Shell {
             &mut render::Canvas::new(canvas, width, height),
             width,
             height,
-            &current_time_string(),
+            &current_time_string(self.settings.utc_offset_minutes),
             wifi_is_up(),
             read_battery(),
             self.fonts.as_ref(),
@@ -2581,10 +2647,29 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        capability_label, consent_action_at, content_action_at, intent_action_at, tab_at,
-        task_confirm_action_at, RootPage, INTENT_CANCEL_ACTION, INTENT_SEND_ACTION,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        capability_label, consent_action_at, content_action_at, format_utc_offset,
+        intent_action_at, next_in_cycle, tab_at, task_confirm_action_at, RootPage,
+        INTENT_CANCEL_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
+
+    #[test]
+    fn format_utc_offset_handles_zero_positive_negative_and_half_hours() {
+        assert_eq!(format_utc_offset(0), "UTC+00:00");
+        assert_eq!(format_utc_offset(180), "UTC+03:00");
+        assert_eq!(format_utc_offset(330), "UTC+05:30");
+        assert_eq!(format_utc_offset(-300), "UTC-05:00");
+    }
+
+    #[test]
+    fn next_in_cycle_wraps_and_treats_an_unknown_value_as_index_zero() {
+        let levels = [10, 20, 30];
+        assert_eq!(next_in_cycle(&levels, 10), 20);
+        assert_eq!(next_in_cycle(&levels, 30), 10);
+        // Not found -> treated as if it were `levels[0]`, so this
+        // advances to `levels[1]`, same as `next_in_cycle(&levels, 10)`
+        // above -- not a special "reset to first" case.
+        assert_eq!(next_in_cycle(&levels, 999), 20);
+    }
 
     #[test]
     fn root_tabs_come_from_sui_markup() {
