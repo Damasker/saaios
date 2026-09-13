@@ -1,6 +1,51 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::Rect;
 use std::fs;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// S25: accessibility text scale, read inside `draw_text`/`draw_
+/// text_centered` rather than threaded through this file's ~40
+/// existing call sites as one more parameter each. This process only
+/// ever renders one shell UI on one thread, so there's no
+/// concurrency hazard from process-global state here -- the tradeoff
+/// is one small piece of shared mutable state in exchange for not
+/// touching every already-working draw call's signature. `AtomicU32`
+/// holding the `f32`'s bits because `std` has no `AtomicF32`.
+static TEXT_SCALE_BITS: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0f32.to_bits()
+
+/// `scale_pct` is a percent of every literal `size` argument already
+/// in this file (`100` = unchanged). Clamped to a sane range so a
+/// corrupt settings file can't blow up glyph rasterization with a
+/// zero or enormous size.
+pub fn set_text_scale(scale_pct: u8) {
+    let scale = (f32::from(scale_pct) / 100.0).clamp(0.5, 2.0);
+    TEXT_SCALE_BITS.store(scale.to_bits(), Ordering::Relaxed);
+}
+
+fn text_scale() -> f32 {
+    f32::from_bits(TEXT_SCALE_BITS.load(Ordering::Relaxed))
+}
+
+/// S25: a post-process contrast stretch applied once, from `main.rs`,
+/// over an entire already-drawn frame's raw pixel bytes -- not a
+/// second color palette threaded through this file's ~90 individual
+/// `fill_rect`/`draw_text` call sites. `boost_pct` `0` is a byte-for-
+/// byte no-op; higher values push every channel further from a
+/// mid-grey pivot toward black or white. Operates on all 4 bytes per
+/// pixel including the always-zero first byte (see `rgb`'s doc
+/// comment) -- harmless, since stretching a value already at 0 away
+/// from the 128 pivot only ever clamps back down to 0.
+pub fn apply_contrast_boost(pixels: &mut [u8], boost_pct: u8) {
+    if boost_pct == 0 {
+        return;
+    }
+    let factor = 1.0 + (f32::from(boost_pct.min(100)) / 100.0) * 3.0;
+    for channel in pixels.iter_mut() {
+        let value = f32::from(*channel);
+        let stretched = (value - 128.0) * factor + 128.0;
+        *channel = stretched.clamp(0.0, 255.0) as u8;
+    }
+}
 
 pub type Pixel = [u8; 4];
 
@@ -880,6 +925,7 @@ fn draw_text_centered(
     top: u32,
     color: Pixel,
 ) {
+    let size = size * text_scale();
     let width = text
         .chars()
         .map(|character| font.metrics(character, size).advance_width)
@@ -911,6 +957,7 @@ fn draw_text(
     top: u32,
     color: Pixel,
 ) {
+    let size = size * text_scale();
     let mut cursor = left as f32;
     for character in text.chars() {
         let (metrics, bitmap) = font.rasterize(character, size);
@@ -931,8 +978,27 @@ fn draw_text(
 
 #[cfg(test)]
 mod tests {
-    use super::{draw_root, Canvas, ACCENT, SURFACE};
+    use super::{apply_contrast_boost, draw_root, Canvas, ACCENT, SURFACE};
     use saai_ui_core::Rect;
+
+    #[test]
+    fn contrast_boost_zero_is_a_byte_for_byte_no_op() {
+        let original = vec![10u8, 90, 128, 200, 250, 0];
+        let mut pixels = original.clone();
+        apply_contrast_boost(&mut pixels, 0);
+        assert_eq!(pixels, original);
+    }
+
+    #[test]
+    fn contrast_boost_pushes_values_away_from_the_midpoint() {
+        let mut pixels = vec![100u8, 128, 200];
+        apply_contrast_boost(&mut pixels, 100);
+        // Below the 128 pivot moves further down, above it moves
+        // further up, exactly at the pivot stays put.
+        assert!(pixels[0] < 100);
+        assert_eq!(pixels[1], 128);
+        assert!(pixels[2] > 200);
+    }
 
     #[test]
     fn selected_indicator_moves_between_edge_tabs() {

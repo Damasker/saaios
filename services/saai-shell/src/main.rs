@@ -152,6 +152,16 @@ const BRIGHTNESS_LEVELS_PCT: [u8; 4] = [25, 50, 75, 100];
 const IDLE_TIMEOUT_LEVELS_SECS: [u64; 4] = [30, 60, 120, 300];
 const DEEP_IDLE_TIMEOUT_LEVELS_SECS: [u64; 4] = [15, 60, 300, 900];
 const VOLUME_LEVELS_PCT: [u8; 5] = [0, 25, 50, 75, 100];
+/// S25. `100` is the base size every literal `size` argument in
+/// `render.rs`'s draw calls already means -- 85/125/150 shrink or
+/// grow every one of them by the same factor via `render::set_text_
+/// scale`.
+const TEXT_SCALE_LEVELS_PCT: [u8; 4] = [85, 100, 125, 150];
+/// S25. Three honest levels rather than a bare on/off toggle, same
+/// cycle-through-presets convention as every other setting in this
+/// file. `0` (off) is the default -- see `ShellSettings.contrast_
+/// pct`'s doc comment.
+const CONTRAST_LEVELS_PCT: [u8; 3] = [0, 50, 100];
 
 fn next_in_cycle<T: PartialEq + Copy>(levels: &[T], current: T) -> T {
     let index = levels.iter().position(|&level| level == current).unwrap_or(0);
@@ -209,6 +219,17 @@ struct ShellSettings {
     /// (S19) already on this same disk, and there's no other local
     /// user account on this device for a PIN to protect against.
     pin_code: Option<String>,
+    /// S25. Percent of every text draw call's base size
+    /// (`render::set_text_scale`) -- see that function's doc comment
+    /// for why this is process-global state inside `render.rs`
+    /// rather than a parameter threaded through its ~40 existing
+    /// `draw_text`/`draw_text_centered` call sites.
+    text_scale_pct: u8,
+    /// S25. Post-process contrast stretch (`render::apply_contrast_
+    /// boost`), applied once per rendered frame rather than as a
+    /// second color palette threaded through every `fill_rect`/
+    /// `draw_text` call. `0` is a no-op.
+    contrast_pct: u8,
 }
 
 impl ShellSettings {
@@ -231,6 +252,8 @@ impl ShellSettings {
             utc_offset_minutes: 0,
             volume_pct: 75,
             pin_code: None,
+            text_scale_pct: 100,
+            contrast_pct: 0,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -268,6 +291,16 @@ impl ShellSettings {
                 .filter(|pin| !pin.is_empty())
                 .map(str::to_string)
                 .or(default.pin_code),
+            text_scale_pct: value
+                .get("text_scale_pct")
+                .and_then(Value::as_u64)
+                .map(|pct| pct as u8)
+                .unwrap_or(default.text_scale_pct),
+            contrast_pct: value
+                .get("contrast_pct")
+                .and_then(Value::as_u64)
+                .map(|pct| pct as u8)
+                .unwrap_or(default.contrast_pct),
         }
     }
 
@@ -279,6 +312,8 @@ impl ShellSettings {
             "utc_offset_minutes": self.utc_offset_minutes,
             "volume_pct": self.volume_pct,
             "pin_code": self.pin_code,
+            "text_scale_pct": self.text_scale_pct,
+            "contrast_pct": self.contrast_pct,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -1515,6 +1550,10 @@ fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str
         Some("open_bluetooth_list")
     } else if stacked_row_rect(11, width, height).contains(pos.0, pos.1) {
         Some("open_pin_setup")
+    } else if stacked_row_rect(12, width, height).contains(pos.0, pos.1) {
+        Some("cycle_text_scale")
+    } else if stacked_row_rect(13, width, height).contains(pos.0, pos.1) {
+        Some("cycle_contrast")
     } else {
         None
     }
@@ -1602,6 +1641,7 @@ fn main() {
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
+    render::set_text_scale(settings.text_scale_pct);
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -2709,6 +2749,7 @@ impl Shell {
                 );
             }
         }
+        render::apply_contrast_boost(canvas, self.settings.contrast_pct);
 
         self.window
             .wl_surface()
@@ -2813,6 +2854,15 @@ impl Shell {
                 self.pin_setup = Some(PinSetupState::default());
                 self.draw(conn, qh);
                 return;
+            }
+            "cycle_text_scale" => {
+                self.settings.text_scale_pct =
+                    next_in_cycle(&TEXT_SCALE_LEVELS_PCT, self.settings.text_scale_pct);
+                render::set_text_scale(self.settings.text_scale_pct);
+            }
+            "cycle_contrast" => {
+                self.settings.contrast_pct =
+                    next_in_cycle(&CONTRAST_LEVELS_PCT, self.settings.contrast_pct);
             }
             _ => return,
         }
@@ -3336,6 +3386,32 @@ impl Shell {
                     "Изменить",
                 ),
             ),
+            // S25: process-global, see `render::set_text_scale`'s doc
+            // comment for why -- not a per-card local effect, this
+            // changes every screen's text at once.
+            (
+                stacked_row_rect(12, width, height),
+                render::ActionCardView::new(
+                    "Размер текста",
+                    format!("{}%", self.settings.text_scale_pct),
+                    "Изменить",
+                ),
+            ),
+            // S25: `render::apply_contrast_boost`'s doc comment
+            // explains why this is a post-process stretch, not a
+            // second color palette.
+            (
+                stacked_row_rect(13, width, height),
+                render::ActionCardView::new(
+                    "Контраст",
+                    if self.settings.contrast_pct == 0 {
+                        "Обычный".to_string()
+                    } else {
+                        format!("Повышенный ({}%)", self.settings.contrast_pct)
+                    },
+                    "Изменить",
+                ),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -3354,7 +3430,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 12, width, height),
+                stacked_row_rect(index + 14, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
@@ -3705,6 +3781,7 @@ impl Shell {
             read_battery(),
             self.fonts.as_ref(),
         );
+        render::apply_contrast_boost(canvas, self.settings.contrast_pct);
 
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
@@ -3865,6 +3942,7 @@ impl Shell {
             &keys,
             self.fonts.as_ref(),
         );
+        render::apply_contrast_boost(canvas, self.settings.contrast_pct);
 
         let surface = lock_surface.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
