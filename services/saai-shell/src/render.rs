@@ -239,8 +239,13 @@ pub fn draw_consent(
 /// hit-tested by `main.rs`'s `intent_view()` -- this only draws the
 /// rectangles it's handed, the same "no second set of rectangles" rule
 /// `draw_root()` follows for the tab bar and content cards.
+/// `title` is a parameter (S19) rather than a hardcoded "Новое
+/// намерение" -- `saai-shell` reuses this same keyboard tree verbatim
+/// for the Wi-Fi password screen (see `WifiPasswordState`'s doc
+/// comment), which needs its own header text.
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
+    title: &str,
     buffer: &str,
     header: Rect,
     keys: &[(Rect, String)],
@@ -261,7 +266,7 @@ pub fn draw_intent_input(
     draw_text(
         canvas,
         &fonts.semibold,
-        "Новое намерение",
+        title,
         42.0,
         header.x + 30,
         header.y + 40,
@@ -365,6 +370,62 @@ pub fn draw_task_confirm(
         decline_button.y + decline_button.height / 2 - 20,
         TEXT,
     );
+}
+
+/// S19: "Wi-Fi сети" -- one row per `wifi_scan_results()` entry plus
+/// the two fixed trailing "Обновить"/"Назад" rows already baked into
+/// `rows` by the caller (see `wifi_list_action_at`'s doc comment for
+/// why the row count is runtime-sized rather than a `root.sui`
+/// screen). Same simple header-plus-list shape as `draw_task_
+/// confirm`, just with N rows instead of two buttons.
+pub fn draw_wifi_list(
+    canvas: &mut Canvas<'_>,
+    status_line: &str,
+    header: Rect,
+    rows: &[(Rect, String)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+    canvas.fill_rect(header, SURFACE);
+
+    let Some(fonts) = fonts else {
+        for (rect, _) in rows {
+            canvas.fill_rect(*rect, SURFACE_SELECTED);
+        }
+        return;
+    };
+
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        "Wi-Fi сети",
+        42.0,
+        header.x + 30,
+        header.y + 40,
+        TEXT,
+    );
+    draw_text(
+        canvas,
+        &fonts.regular,
+        status_line,
+        30.0,
+        header.x + 30,
+        header.y + 130,
+        TEXT_MUTED,
+    );
+
+    for (rect, label) in rows {
+        canvas.fill_rect(*rect, SURFACE);
+        draw_text(
+            canvas,
+            &fonts.regular,
+            label,
+            32.0,
+            rect.x + 30,
+            rect.y + rect.height / 2 - 18,
+            TEXT,
+        );
+    }
 }
 
 pub fn draw_root(

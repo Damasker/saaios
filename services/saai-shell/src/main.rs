@@ -407,6 +407,132 @@ fn wifi_is_up() -> bool {
         .unwrap_or(false)
 }
 
+/// S19: real, unlike S18's `apply_volume`. `native-init.c`'s
+/// `setup_wifi` already starts a live `wpa_supplicant` against
+/// `/saaios/wpa_supplicant.conf` (`update_config=1`) with its control
+/// socket at `/run/wpa_supplicant`, plus a `wpa_cli -a` action-script
+/// watcher (confirmed by reading `native-init.c` before writing this)
+/// -- scanning/connecting here drives infrastructure that is already
+/// running on every boot, not a guess. No daemon of our own is
+/// needed: `wpa_cli` is a stateless client per invocation, so every
+/// call here just reopens the same control socket.
+const WPA_CLI_BIN: &str = "/saaios/wpa_cli";
+const WPA_CLI_ARGS: [&str; 4] = ["-p", "/run/wpa_supplicant", "-i", "wlan0"];
+
+fn wpa_cli(args: &[&str]) -> String {
+    let mut full_args = WPA_CLI_ARGS.to_vec();
+    full_args.extend_from_slice(args);
+    std::process::Command::new(WPA_CLI_BIN)
+        .args(&full_args)
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+struct WifiNetwork {
+    ssid: String,
+    secured: bool,
+    signal_dbm: i32,
+}
+
+/// Parses `wpa_cli scan_results`'s own tab-separated table (header
+/// row, then one row per BSS: bssid / frequency / signal level /
+/// flags / ssid). Doesn't itself trigger a fresh scan -- `wpa_
+/// supplicant` already scans periodically on its own in the
+/// background; `wifi_trigger_scan` is the separate explicit
+/// "Обновить" action. Collapses multiple BSSIDs of the same SSID
+/// (common with mesh/multi-AP networks) into one row, keeping the
+/// strongest signal seen.
+fn wifi_scan_results() -> Vec<WifiNetwork> {
+    let output = wpa_cli(&["scan_results"]);
+    let mut networks: Vec<WifiNetwork> = Vec::new();
+    for line in output.lines().skip(1) {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 5 {
+            continue;
+        }
+        let ssid = fields[4].trim();
+        if ssid.is_empty() {
+            continue;
+        }
+        let signal_dbm: i32 = fields[2].trim().parse().unwrap_or(0);
+        let secured = fields[3].contains("WPA") || fields[3].contains("WEP");
+        if let Some(existing) = networks.iter_mut().find(|network| network.ssid == ssid) {
+            if signal_dbm > existing.signal_dbm {
+                existing.signal_dbm = signal_dbm;
+                existing.secured = secured;
+            }
+        } else {
+            networks.push(WifiNetwork {
+                ssid: ssid.to_string(),
+                secured,
+                signal_dbm,
+            });
+        }
+    }
+    networks.sort_by_key(|network| std::cmp::Reverse(network.signal_dbm));
+    networks
+}
+
+fn wifi_trigger_scan() {
+    let _ = wpa_cli(&["scan"]);
+}
+
+/// `wpa_cli status`'s own `key=value` lines. `wpa_state=COMPLETED`
+/// plus a non-empty `ssid=` is the same "actually associated" signal
+/// `wpa_supplicant` itself uses internally, not a guess at one.
+fn wifi_status_line() -> String {
+    let output = wpa_cli(&["status"]);
+    let mut state = String::new();
+    let mut ssid = String::new();
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("wpa_state=") {
+            state = value.trim().to_string();
+        } else if let Some(value) = line.strip_prefix("ssid=") {
+            ssid = value.trim().to_string();
+        }
+    }
+    if state == "COMPLETED" && !ssid.is_empty() {
+        format!("Подключено: {ssid}")
+    } else {
+        "Не подключено".to_string()
+    }
+}
+
+fn wifi_connect_open(ssid: &str) {
+    wifi_add_and_select(ssid, None);
+}
+
+fn wifi_connect_psk(ssid: &str, psk: &str) {
+    wifi_add_and_select(ssid, Some(psk));
+}
+
+/// One `add_network`/`set_network`/`enable_network`/`select_network`
+/// sequence per connect attempt -- `wpa_cli`'s own documented
+/// non-interactive usage. `update_config=1` in `wpa_supplicant.conf`
+/// (confirmed before writing this) means `save_config` also persists
+/// this across reboots, not just for the current boot session.
+fn wifi_add_and_select(ssid: &str, psk: Option<&str>) {
+    let id = wpa_cli(&["add_network"]).trim().to_string();
+    if id.parse::<u32>().is_err() {
+        return;
+    }
+    let quoted_ssid = format!("\"{ssid}\"");
+    let _ = wpa_cli(&["set_network", &id, "ssid", &quoted_ssid]);
+    match psk {
+        Some(psk) => {
+            let quoted_psk = format!("\"{psk}\"");
+            let _ = wpa_cli(&["set_network", &id, "psk", &quoted_psk]);
+        }
+        None => {
+            let _ = wpa_cli(&["set_network", &id, "key_mgmt", "NONE"]);
+        }
+    }
+    let _ = wpa_cli(&["enable_network", &id]);
+    let _ = wpa_cli(&["select_network", &id]);
+    let _ = wpa_cli(&["save_config"]);
+}
+
 /// The fuel gauge's own power_supply node is named `maxfg`, not
 /// `battery` -- confirmed by listing `/sys/class/power_supply/` on
 /// device (S13 Change 1 investigation). Returns `(percent, charging)`;
@@ -561,6 +687,57 @@ struct IntentInputState {
     buffer: String,
 }
 
+/// S19: reuses `intent_view()`'s keyboard layout and hit-testing
+/// verbatim (same rows, same control ids) rather than growing a
+/// second keyboard tree -- the two are visually and structurally
+/// identical, only the header text and what "Отправить" does differ,
+/// both handled by which of `intent_input`/`wifi_password` is
+/// currently `Some`. Inherits ADR-029's keyboard's own limitation:
+/// lowercase Latin letters and spaces only, no digits/symbols/
+/// uppercase -- honestly, that covers approximately no real WPA2
+/// password. Open-network connect (no password needed at all) and
+/// the scan/status pipeline are what this sprint makes unconditionally
+/// useful today; typing a real secured-network password is blocked on
+/// the keyboard itself growing a digit/symbol row, not on anything
+/// here.
+struct WifiPasswordState {
+    ssid: String,
+    buffer: String,
+}
+
+/// One row of `wifi_scan_results()`'s output, or a fixed trailing
+/// "Обновить"/"Назад" control row -- returned by `wifi_list_action_at`
+/// the same way `InboxRowKind` disambiguates "Входящие"'s rows.
+enum WifiListTap {
+    Network(usize),
+    Refresh,
+    Back,
+}
+
+/// Same reasoning as `me_action_at`: `network_count` is runtime-sized
+/// (like `installed_apps.len()` elsewhere), so this can't be a
+/// `root.sui` entry -- two more `stacked_row_rect` slots after the
+/// networks are the fixed "Обновить"/"Назад" controls.
+fn wifi_list_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    network_count: usize,
+) -> Option<WifiListTap> {
+    for index in 0..network_count {
+        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
+            return Some(WifiListTap::Network(index));
+        }
+    }
+    if stacked_row_rect(network_count, width, height).contains(pos.0, pos.1) {
+        return Some(WifiListTap::Refresh);
+    }
+    if stacked_row_rect(network_count + 1, width, height).contains(pos.0, pos.1) {
+        return Some(WifiListTap::Back);
+    }
+    None
+}
+
 const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
 const TASK_CONFIRM_BUTTONS_ID: &str = "task-confirm-buttons";
 const TASK_CONFIRM_ACCEPT_ID: &str = "task-confirm-accept";
@@ -600,6 +777,17 @@ enum Frame {
         buffer: String,
         header: Rect,
         keys: Vec<(Rect, String)>,
+    },
+    WifiPasswordInput {
+        ssid: String,
+        buffer: String,
+        header: Rect,
+        keys: Vec<(Rect, String)>,
+    },
+    WifiList {
+        header: Rect,
+        status_line: String,
+        rows: Vec<(Rect, String)>,
     },
     Root {
         content_rect: Rect,
@@ -1022,6 +1210,8 @@ fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str
         Some("cycle_timezone")
     } else if stacked_row_rect(8, width, height).contains(pos.0, pos.1) {
         Some("cycle_volume")
+    } else if stacked_row_rect(9, width, height).contains(pos.0, pos.1) {
+        Some("open_wifi_list")
     } else {
         None
     }
@@ -1148,6 +1338,8 @@ fn main() {
         appd: appd_client::AppdClient::new(appd_socket),
         pending_consent: None,
         intent_input: None,
+        wifi_password: None,
+        wifi_list: None,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -1276,6 +1468,15 @@ struct Shell {
     /// S09 Change 2: set while the on-screen keyboard is composing a new
     /// `saaios.intent`. Modal, same as `pending_consent`.
     intent_input: Option<IntentInputState>,
+    /// S19: set while the on-screen keyboard is composing a
+    /// secured Wi-Fi network's password. Modal, same as
+    /// `intent_input` -- and reuses the exact same keyboard layout
+    /// (see `WifiPasswordState`'s doc comment).
+    wifi_password: Option<WifiPasswordState>,
+    /// S19: set while "Wi-Fi сети" is open, populated by
+    /// `wifi_scan_results()` when opened and on each "Обновить" tap.
+    /// `None` (not merely empty) means the screen itself is closed.
+    wifi_list: Option<Vec<WifiNetwork>>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -1641,6 +1842,24 @@ impl TouchHandler for Shell {
                 {
                     self.handle_intent_input_action(&action, conn, qh);
                 }
+            } else if self.wifi_password.is_some() {
+                // S19: same keyboard tree as `intent_input` above
+                // (see `WifiPasswordState`'s doc comment) -- checked
+                // first since it visually sits on top of "Wi-Fi
+                // сети" while it's open.
+                if let Some(action) = intent_action_at(self.last_touch_pos, self.width, self.height)
+                {
+                    self.handle_wifi_password_action(&action, conn, qh);
+                }
+            } else if self.wifi_list.is_some() {
+                // S19: modal, same as the others -- owns every touch
+                // while "Wi-Fi сети" is open.
+                let network_count = self.wifi_list.as_ref().map_or(0, Vec::len);
+                if let Some(tap) =
+                    wifi_list_action_at(self.last_touch_pos, self.width, self.height, network_count)
+                {
+                    self.handle_wifi_list_tap(tap, conn, qh);
+                }
             } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
@@ -1806,6 +2025,60 @@ impl Shell {
                 header,
                 keys,
             }
+        } else if let Some(state) = &self.wifi_password {
+            // Same tree as `intent_input` above, reused verbatim --
+            // see `WifiPasswordState`'s doc comment.
+            let view = intent_view(width, height);
+            let header = view.children[0].rect;
+            let keyboard_rows = &view.children[1].children;
+            let mut keys = Vec::new();
+            for (row_index, letters) in INTENT_KEY_ROWS.iter().enumerate() {
+                let row_node = &keyboard_rows[row_index];
+                for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
+                    keys.push((key_node.rect, ch.to_uppercase().to_string()));
+                }
+            }
+            let controls_node = &keyboard_rows[INTENT_KEY_ROWS.len()];
+            for (key_node, control) in controls_node.children.iter().zip(INTENT_CONTROLS.iter()) {
+                keys.push((key_node.rect, control.label.to_string()));
+            }
+            Frame::WifiPasswordInput {
+                ssid: state.ssid.clone(),
+                buffer: state.buffer.clone(),
+                header,
+                keys,
+            }
+        } else if let Some(networks) = &self.wifi_list {
+            // S19: runtime-sized, like "Входящие"/"Сейчас" -- see
+            // `wifi_list_action_at`'s own doc comment for why this
+            // uses `stacked_row_rect` instead of a `root.sui` entry.
+            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            let mut rows: Vec<(Rect, String)> = networks
+                .iter()
+                .enumerate()
+                .map(|(index, network)| {
+                    let label = format!(
+                        "{}   ·   {}   ·   {} dBm",
+                        network.ssid,
+                        if network.secured { "защищена" } else { "открыта" },
+                        network.signal_dbm
+                    );
+                    (stacked_row_rect(index, width, height), label)
+                })
+                .collect();
+            rows.push((
+                stacked_row_rect(networks.len(), width, height),
+                "Обновить".to_string(),
+            ));
+            rows.push((
+                stacked_row_rect(networks.len() + 1, width, height),
+                "Назад".to_string(),
+            ));
+            Frame::WifiList {
+                header,
+                status_line: wifi_status_line(),
+                rows,
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
@@ -1911,9 +2184,43 @@ impl Shell {
             } => {
                 render::draw_intent_input(
                     &mut render::Canvas::new(canvas, width, height),
+                    "Новое намерение",
                     &buffer,
                     header,
                     &keys,
+                    self.fonts.as_ref(),
+                );
+            }
+            Frame::WifiPasswordInput {
+                ssid,
+                buffer,
+                header,
+                keys,
+            } => {
+                // Password preview is masked (unlike the intent
+                // keyboard's plaintext echo) -- what's actually typed
+                // stays in `buffer`/`state.buffer`, only the on-screen
+                // preview substitutes a dot per character.
+                let masked: String = buffer.chars().map(|_| '•').collect();
+                render::draw_intent_input(
+                    &mut render::Canvas::new(canvas, width, height),
+                    &format!("Пароль для «{ssid}»"),
+                    &masked,
+                    header,
+                    &keys,
+                    self.fonts.as_ref(),
+                );
+            }
+            Frame::WifiList {
+                header,
+                status_line,
+                rows,
+            } => {
+                render::draw_wifi_list(
+                    &mut render::Canvas::new(canvas, width, height),
+                    &status_line,
+                    header,
+                    &rows,
                     self.fonts.as_ref(),
                 );
             }
@@ -2016,6 +2323,16 @@ impl Shell {
                     next_in_cycle(&VOLUME_LEVELS_PCT, self.settings.volume_pct);
                 apply_volume(self.settings.volume_pct);
             }
+            "open_wifi_list" => {
+                // No setting changes here (unlike every other arm
+                // above) -- opens a screen rather than cycling a
+                // persisted value, so this returns before the
+                // `settings.save()` common tail.
+                wifi_trigger_scan();
+                self.wifi_list = Some(wifi_scan_results());
+                self.draw(conn, qh);
+                return;
+            }
             _ => return,
         }
         self.settings.save();
@@ -2070,6 +2387,83 @@ impl Shell {
                         state.buffer.push(ch);
                     }
                 }
+            }
+        }
+        self.draw(conn, qh);
+    }
+
+    /// S19: drives the same keyboard tree as `handle_intent_input_
+    /// action`, opened instead by tapping a secured network on "Wi-Fi
+    /// сети" (`handle_wifi_list_tap`). `intent:send` here means
+    /// "connect", not "create an entity".
+    fn handle_wifi_password_action(
+        &mut self,
+        action: &str,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        let Some(state) = self.wifi_password.as_mut() else {
+            return;
+        };
+        match action {
+            INTENT_CANCEL_ACTION => {
+                self.wifi_password = None;
+            }
+            INTENT_SPACE_ACTION => {
+                state.buffer.push(' ');
+            }
+            INTENT_BACKSPACE_ACTION => {
+                state.buffer.pop();
+            }
+            INTENT_SEND_ACTION => {
+                let ssid = state.ssid.clone();
+                let psk = state.buffer.clone();
+                if !psk.is_empty() {
+                    wifi_connect_psk(&ssid, &psk);
+                    println!("saai-shell: connecting to \"{ssid}\" (WPA)");
+                }
+                self.wifi_password = None;
+                self.wifi_list = None;
+            }
+            other => {
+                if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
+                    if let Some(ch) = key.chars().next() {
+                        state.buffer.push(ch);
+                    }
+                }
+            }
+        }
+        self.draw(conn, qh);
+    }
+
+    /// S19: "Wi-Fi сети"'s own tap handling -- see `WifiListTap`'s doc
+    /// comment for why the row layout is runtime-computed rather than
+    /// a `root.sui` entry.
+    fn handle_wifi_list_tap(&mut self, tap: WifiListTap, conn: &Connection, qh: &QueueHandle<Self>) {
+        match tap {
+            WifiListTap::Network(index) => {
+                let Some(network) = self.wifi_list.as_ref().and_then(|list| list.get(index))
+                else {
+                    return;
+                };
+                if network.secured {
+                    self.wifi_password = Some(WifiPasswordState {
+                        ssid: network.ssid.clone(),
+                        buffer: String::new(),
+                    });
+                } else {
+                    let ssid = network.ssid.clone();
+                    wifi_connect_open(&ssid);
+                    println!("saai-shell: connecting to \"{ssid}\" (open)");
+                    self.wifi_list = None;
+                }
+            }
+            WifiListTap::Refresh => {
+                wifi_trigger_scan();
+                self.wifi_list = Some(wifi_scan_results());
+            }
+            WifiListTap::Back => {
+                self.wifi_list = None;
             }
         }
         self.draw(conn, qh);
@@ -2364,6 +2758,12 @@ impl Shell {
                     "Изменить",
                 ),
             ),
+            // S19: real, unlike S18's volume -- see `wifi_status_line`/
+            // `wifi_scan_results`' doc comments. Opens "Wi-Fi сети".
+            (
+                stacked_row_rect(9, width, height),
+                render::ActionCardView::new("Wi-Fi", wifi_status_line(), "Сети"),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -2382,7 +2782,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 9, width, height),
+                stacked_row_rect(index + 10, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
@@ -2858,8 +3258,9 @@ impl Shell {
 mod tests {
     use super::{
         capability_label, consent_action_at, content_action_at, format_utc_offset,
-        intent_action_at, next_in_cycle, tab_at, task_confirm_action_at, RootPage,
-        INTENT_CANCEL_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        intent_action_at, next_in_cycle, stacked_row_rect, tab_at, task_confirm_action_at,
+        wifi_list_action_at, Rect, RootPage, WifiListTap, INTENT_CANCEL_ACTION,
+        INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
 
     #[test]
@@ -2879,6 +3280,46 @@ mod tests {
         // advances to `levels[1]`, same as `next_in_cycle(&levels, 10)`
         // above -- not a special "reset to first" case.
         assert_eq!(next_in_cycle(&levels, 999), 20);
+    }
+
+    #[test]
+    fn wifi_list_action_at_finds_networks_then_refresh_then_back() {
+        let width = 1080;
+        let height = 2400;
+        let network_count = 2;
+        let network_0 = stacked_row_rect(0, width, height);
+        let network_1 = stacked_row_rect(1, width, height);
+        let refresh = stacked_row_rect(2, width, height);
+        let back = stacked_row_rect(3, width, height);
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        assert!(matches!(
+            wifi_list_action_at(center(network_0), width, height, network_count),
+            Some(WifiListTap::Network(0))
+        ));
+        assert!(matches!(
+            wifi_list_action_at(center(network_1), width, height, network_count),
+            Some(WifiListTap::Network(1))
+        ));
+        assert!(matches!(
+            wifi_list_action_at(center(refresh), width, height, network_count),
+            Some(WifiListTap::Refresh)
+        ));
+        assert!(matches!(
+            wifi_list_action_at(center(back), width, height, network_count),
+            Some(WifiListTap::Back)
+        ));
+    }
+
+    #[test]
+    fn wifi_list_action_at_misses_above_the_first_row() {
+        let width = 1080;
+        let height = 2400;
+        assert!(wifi_list_action_at((10.0, 10.0), width, height, 0).is_none());
     }
 
     #[test]
