@@ -15,13 +15,12 @@
 //!
 //! `wlr-layer-shell` (the other half of ADR-015, for status bar/
 //! navigation-style system surfaces) rounds out Change step 4: this
-//! test also creates a single top-anchored layer surface (namespace
-//! "saai-shell-statusbar-test") and fills it a solid, empirically
-//! distinct color -- proving the protocol renders end to end. No real
-//! status bar content, and no touch dispatch to it yet (saai-displayd's
-//! touch routing still only knows `focused_surface`/`lock_surface`,
-//! not layer surfaces) -- both are follow-up work, not this step's
-//! goal.
+//! test also creates a single top-anchored layer surface, proving the
+//! protocol renders end to end. Real content (time/Wi-Fi/battery)
+//! landed later, S13 Change 1. Still no touch dispatch to it
+//! (saai-displayd's touch routing still only knows
+//! `focused_surface`/`lock_surface`, not layer surfaces) -- follow-up
+//! work if the bar ever needs to be interactive, not this step's goal.
 //!
 //! Change step 5 ports drm-splash.c's lock/idle behavior: boots locked
 //! (matching `bool locked = true` at the top of drm-splash's own main
@@ -115,6 +114,11 @@ use smithay_client_toolkit::{
 
 /// Matches drm-splash.c's own idle-to-lock constant.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// S13 Change 1: how often the status bar re-reads time/Wi-Fi/battery
+/// and redraws. A plain poll, like `refresh_apps_if_due`'s own
+/// interval just below -- none of these three sources have a push
+/// mechanism worth wiring up for a once-a-second clock display.
+const STATUSBAR_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 /// S11 Change 2 (ADR-041): how much *additional* idle time, on top of
 /// the `IDLE_TIMEOUT` lock above, before this actually suspends the
 /// device (`SAAIOS_DEEP_IDLE_SECS` overrides for testing -- a real
@@ -290,6 +294,50 @@ fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
         .hit_test(pos.0, pos.1)
         .and_then(|node| node.action.as_deref())
         .and_then(page_from_action)
+}
+
+/// `wlan0`'s own `operstate` (S13 Change 1) -- `true` only for `up`,
+/// matching what the interface itself reports rather than assuming a
+/// connection exists. Confirmed on-device to read `down` honestly when
+/// `wpa_supplicant` hasn't associated to anything, not just when the
+/// radio is off.
+fn wifi_is_up() -> bool {
+    std::fs::read_to_string("/sys/class/net/wlan0/operstate")
+        .map(|state| state.trim() == "up")
+        .unwrap_or(false)
+}
+
+/// The fuel gauge's own power_supply node is named `maxfg`, not
+/// `battery` -- confirmed by listing `/sys/class/power_supply/` on
+/// device (S13 Change 1 investigation). Returns `(percent, charging)`;
+/// `None` if the node is missing entirely (host builds, or hardware
+/// this shell has never run on).
+fn read_battery() -> Option<(u8, bool)> {
+    let capacity: u8 = std::fs::read_to_string("/sys/class/power_supply/maxfg/capacity")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let status = std::fs::read_to_string("/sys/class/power_supply/maxfg/status").unwrap_or_default();
+    let charging = matches!(status.trim(), "Charging" | "Full");
+    Some((capacity, charging))
+}
+
+/// Shells out to `date` rather than pulling in a datetime crate for one
+/// `HH:MM` string a second -- `chrono` is already a dev-only dependency
+/// here (tests only); promoting it to a real runtime dependency for
+/// this alone isn't worth the size/build cost on the `pixel7` profile.
+/// Matches this file's existing pattern of shelling out to `busybox`
+/// for one-off system state elsewhere.
+fn current_time_string() -> String {
+    std::process::Command::new("date")
+        .arg("+%H:%M")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|text| text.trim().to_string())
+        .unwrap_or_else(|| "--:--".to_string())
 }
 
 const CONSENT_SCREEN_ID: &str = "consent";
@@ -625,14 +673,14 @@ fn main() {
 
     // Second half of ADR-015 (Change 4): a real system-surface layer,
     // for the status bar/nav-style content the four root sections will
-    // eventually need (Change 6) -- this test slice just proves the
-    // protocol renders, no real content yet.
+    // eventually need (Change 6) -- real content (time/Wi-Fi/battery)
+    // added S13 Change 1, see `present_status_bar`.
     let bar_surface = compositor.create_surface(&qh);
     let layer = layer_shell.create_layer_surface(
         &qh,
         bar_surface,
         Layer::Top,
-        Some("saai-shell-statusbar-test"),
+        Some("saai-shell-statusbar"),
         None,
     );
     layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
@@ -700,6 +748,7 @@ fn main() {
         layer_height: 120,
         layer_pool: None,
         layer_buffer: None,
+        last_statusbar_refresh: Instant::now(),
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
         demo_app_state: DemoAppState::Unavailable,
@@ -739,6 +788,7 @@ fn main() {
         shell.poll_appd(&conn, &qh);
         shell.poll_entityd(&conn, &qh);
         shell.refresh_apps_if_due();
+        shell.refresh_statusbar_if_due();
         shell.poll_portal();
         shell.check_idle_timeout(&qh);
         shell.check_deep_idle(&conn);
@@ -816,6 +866,9 @@ struct Shell {
     layer_height: u32,
     layer_pool: Option<SlotPool>,
     layer_buffer: Option<Buffer>,
+    /// S13 Change 1: throttles `refresh_statusbar_if_due` the same way
+    /// `last_apps_refresh` throttles `refresh_apps_if_due`.
+    last_statusbar_refresh: Instant,
     fonts: Option<render::Fonts>,
     appd: appd_client::AppdClient,
     demo_app_state: DemoAppState,
@@ -1032,34 +1085,11 @@ impl LayerShellHandler for Shell {
         println!("saai-shell: layer surface configure at {width}x{height}");
         self.layer_width = width;
         self.layer_height = height;
-
-        let stride = width as i32 * 4;
-        let pool = self.layer_pool.get_or_insert_with(|| {
-            SlotPool::new(width as usize * height as usize * 4, &self.shm)
-                .expect("create layer surface pool")
-        });
-        let (buffer, canvas) = pool
-            .create_buffer(
-                width as i32,
-                height as i32,
-                stride,
-                wl_shm::Format::Xrgb8888,
-            )
-            .expect("create buffer");
-
-        // The status surface is part of the permanent phone chrome now, not
-        // the old yellow protocol probe. Its panel packing comes from the
-        // same calibrated palette as the toplevel renderer.
-        let pixel = render::BACKGROUND;
-        for chunk in canvas.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&pixel);
-        }
-
-        let surface = self.layer.wl_surface();
-        surface.damage_buffer(0, 0, width as i32, height as i32);
-        buffer.attach_to(surface).expect("buffer attach");
-        self.layer.commit();
-        self.layer_buffer = Some(buffer);
+        // A fresh configure means a new size -- the old buffer (if any)
+        // was sized for the previous one, same reasoning as the lock
+        // surface's own `configure`.
+        self.layer_buffer = None;
+        self.present_status_bar();
     }
 }
 
@@ -1934,6 +1964,71 @@ impl Shell {
     /// for the toplevel; a no-op before the first configure
     /// (`lock_width`/`lock_height` still 0) or if the lock surface
     /// object itself isn't present for some other reason.
+    /// S13 Change 1: draws the real status bar content (time, Wi-Fi,
+    /// battery) into the permanent system layer. Reuses `layer_pool`/
+    /// `layer_buffer` the same way `present_lock_surface` reuses its
+    /// own pool/buffer -- called both from the layer's own `configure`
+    /// (first paint) and periodically from `refresh_statusbar_if_due`.
+    fn present_status_bar(&mut self) {
+        let width = self.layer_width;
+        let height = self.layer_height;
+        if width == 0 || height == 0 {
+            return;
+        }
+        let stride = width as i32 * 4;
+
+        if self.layer_pool.is_none() {
+            self.layer_pool = Some(
+                SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                    .expect("create layer surface pool"),
+            );
+        }
+        let pool = self.layer_pool.as_mut().expect("just ensured above");
+
+        if self.layer_buffer.is_none() {
+            let (buffer, _canvas) = pool
+                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                .expect("create layer buffer");
+            self.layer_buffer = Some(buffer);
+        }
+        let buffer = self.layer_buffer.as_mut().expect("just ensured above");
+
+        let canvas = match pool.canvas(buffer) {
+            Some(canvas) => canvas,
+            None => {
+                let (second_buffer, canvas) = pool
+                    .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                    .expect("create layer buffer");
+                *buffer = second_buffer;
+                canvas
+            }
+        };
+        render::draw_status_bar(
+            &mut render::Canvas::new(canvas, width, height),
+            width,
+            height,
+            &current_time_string(),
+            wifi_is_up(),
+            read_battery(),
+            self.fonts.as_ref(),
+        );
+
+        let surface = self.layer.wl_surface();
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        buffer.attach_to(surface).expect("buffer attach");
+        self.layer.commit();
+    }
+
+    /// S13 Change 1: throttled the same way `refresh_apps_if_due` is --
+    /// called once per main-loop tick, only actually redraws once
+    /// `STATUSBAR_REFRESH_INTERVAL` has elapsed.
+    fn refresh_statusbar_if_due(&mut self) {
+        if self.last_statusbar_refresh.elapsed() >= STATUSBAR_REFRESH_INTERVAL {
+            self.present_status_bar();
+            self.last_statusbar_refresh = Instant::now();
+        }
+    }
+
     fn present_lock_surface(&mut self, color: [u8; 4]) {
         let width = self.lock_width;
         let height = self.lock_height;

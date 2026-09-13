@@ -525,6 +525,75 @@ pub fn draw_root(
     }
 }
 
+/// The permanent system layer's real content (S13 Change 1) -- time on
+/// the left, network and battery state on the right. Replaces the
+/// solid-color placeholder that namespace's own `"...-test"` suffix
+/// (`main.rs`) had been honestly admitting to since ADR-015.
+pub fn draw_status_bar(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    height: u32,
+    time_text: &str,
+    wifi_up: bool,
+    battery: Option<(u8, bool)>,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+    let Some(fonts) = fonts else {
+        return;
+    };
+    let baseline = height / 2 - 22;
+    let margin = width / 30;
+    draw_text(canvas, &fonts.semibold, time_text, 44.0, margin, baseline, TEXT);
+
+    let wifi_label = if wifi_up { "Wi-Fi" } else { "Нет сети" };
+    let wifi_color = if wifi_up { ACCENT } else { TEXT_MUTED };
+    let battery_label = battery
+        .map(|(percent, charging)| {
+            if charging {
+                format!("{percent}% +")
+            } else {
+                format!("{percent}%")
+            }
+        })
+        .unwrap_or_default();
+
+    // Right-aligned: battery flush with the margin, Wi-Fi immediately to
+    // its left with a fixed gap -- same "measure, then place" approach
+    // `draw_text_centered` already uses, just anchored from the right
+    // edge instead of a center point.
+    let text_width = |font: &Font, text: &str, size: f32| -> f32 {
+        text.chars()
+            .map(|character| font.metrics(character, size).advance_width)
+            .sum()
+    };
+    let gap = 40.0;
+    let battery_width = text_width(&fonts.semibold, &battery_label, 40.0);
+    let battery_left = width as f32 - margin as f32 - battery_width;
+    if !battery_label.is_empty() {
+        draw_text(
+            canvas,
+            &fonts.semibold,
+            &battery_label,
+            40.0,
+            battery_left.round() as u32,
+            baseline,
+            TEXT,
+        );
+    }
+    let wifi_width = text_width(&fonts.regular, wifi_label, 36.0);
+    let wifi_left = battery_left - gap - wifi_width;
+    draw_text(
+        canvas,
+        &fonts.regular,
+        wifi_label,
+        36.0,
+        wifi_left.round() as u32,
+        baseline + 4,
+        wifi_color,
+    );
+}
+
 fn draw_text_centered(
     canvas: &mut Canvas<'_>,
     font: &Font,
