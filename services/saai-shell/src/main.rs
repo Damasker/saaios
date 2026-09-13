@@ -617,6 +617,40 @@ fn uptime_string() -> String {
     }
 }
 
+/// S15: no disk-usage reading existed anywhere in the project. `std`
+/// has no cross-platform statvfs API, and this file already has a
+/// precedent (`current_time_string`, S13) for shelling out to a small
+/// system utility rather than adding a new dependency for one
+/// occasional read -- `df`'s own `1K-blocks`/`Used` columns are exactly
+/// what's needed, no parsing library required.
+fn storage_usage_kb() -> Option<(u64, u64)> {
+    let output = std::process::Command::new("df")
+        .args(["-k", "/data"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let data_line = text.lines().nth(1)?;
+    let mut fields = data_line.split_whitespace();
+    fields.next()?; // filesystem name, unused
+    let total_kb: u64 = fields.next()?.parse().ok()?;
+    let used_kb: u64 = fields.next()?.parse().ok()?;
+    Some((used_kb, total_kb))
+}
+
+fn storage_string() -> String {
+    match storage_usage_kb() {
+        Some((used_kb, total_kb)) => {
+            let used_gb = used_kb as f64 / 1_048_576.0;
+            let total_gb = total_kb as f64 / 1_048_576.0;
+            format!("{used_gb:.1} ГБ из {total_gb:.1} ГБ занято")
+        }
+        None => "неизвестно".to_string(),
+    }
+}
+
 fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top = ((action.top as u64 * height as u64) / 2400) as u32;
@@ -1914,6 +1948,13 @@ impl Shell {
                     "",
                 ),
             ),
+            // S15: `/data` usage -- the one partition apps/user state
+            // actually lives on (S05's `--data-root`), a more useful
+            // number here than the read-only system image's own size.
+            (
+                stacked_row_rect(2, width, height),
+                render::ActionCardView::new("Хранилище", storage_string(), ""),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -1932,7 +1973,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 2, width, height),
+                stacked_row_rect(index + 3, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
