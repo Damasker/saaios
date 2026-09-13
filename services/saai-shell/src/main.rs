@@ -440,6 +440,10 @@ const TIMEZONE_PRESETS_MINUTES: [i32; 9] = [
     -300, // США, восточное побережье (UTC-5)
 ];
 
+/// S21: below this (and not charging), `check_low_battery` creates one
+/// `saaios.notification`.
+const LOW_BATTERY_THRESHOLD_PCT: u8 = 15;
+
 fn format_utc_offset(minutes: i32) -> String {
     let sign = if minutes < 0 { '-' } else { '+' };
     let abs_minutes = minutes.unsigned_abs();
@@ -859,12 +863,61 @@ fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
     )
 }
 
-fn inbox_task_at(pos: (f64, f64), width: u32, height: u32, entities: &[Entity]) -> Option<Uuid> {
-    inbox_pending_tasks(entities)
+/// S21: generic system notifications (low battery so far -- see
+/// `refresh_statusbar_if_due`) -- the first entity type in the
+/// project besides `saaios.task` that "Входящие" shows. `dismissed`
+/// defaults to absent/false, same "missing means no" convention
+/// `saaios.task`'s own `status` lookup already uses.
+const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
+
+fn inbox_notifications(entities: &[Entity]) -> Vec<&Entity> {
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == NOTIFICATION_ENTITY_TYPE
+                && !entity
+                    .properties
+                    .get("dismissed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InboxRowKind {
+    Task,
+    Notification,
+}
+
+/// Tasks first, notifications after -- a task needing confirmation is
+/// more actionable than an informational notice, not sorted by
+/// recency. Shared by rendering (`inbox_content_cards`) and hit-testing
+/// (`inbox_row_at`) so the two can never disagree about row order.
+fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
+    let mut rows: Vec<(InboxRowKind, &Entity)> = inbox_pending_tasks(entities)
+        .into_iter()
+        .map(|entity| (InboxRowKind::Task, entity))
+        .collect();
+    rows.extend(
+        inbox_notifications(entities)
+            .into_iter()
+            .map(|entity| (InboxRowKind::Notification, entity)),
+    );
+    rows
+}
+
+fn inbox_row_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    entities: &[Entity],
+) -> Option<(InboxRowKind, Uuid)> {
+    inbox_rows(entities)
         .into_iter()
         .enumerate()
         .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
-        .map(|(_, entity)| entity.id)
+        .map(|(_, (kind, entity))| (kind, entity.id))
 }
 
 /// S13 Change 4: "Сейчас"'s hit-test, mirroring `content_action_at`
@@ -1027,6 +1080,7 @@ fn main() {
         layer_pool: None,
         layer_buffer: None,
         last_statusbar_refresh: Instant::now(),
+        low_battery_notified: false,
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
         pending_consent: None,
@@ -1148,6 +1202,9 @@ struct Shell {
     /// S13 Change 1: throttles `refresh_statusbar_if_due` the same way
     /// `last_apps_refresh` throttles `refresh_apps_if_due`.
     last_statusbar_refresh: Instant,
+    /// S21: guards `check_low_battery` against creating a fresh
+    /// notification every second while the battery stays low.
+    low_battery_notified: bool,
     fonts: Option<render::Fonts>,
     appd: appd_client::AppdClient,
     /// Set while a launch is blocked on the ADR-020 consent screen -- see
@@ -1528,14 +1585,17 @@ impl TouchHandler for Shell {
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Inbox {
-                // S13 Change 2: "Входящие" has no `root.sui` entries,
-                // so its rows aren't reachable through
-                // `content_action_at` below -- this page's tap target
-                // is entirely runtime task data instead.
-                if let Some(task_id) =
-                    inbox_task_at(self.last_touch_pos, self.width, self.height, &self.selected_entities)
+                // S13 Change 2 (tasks), extended S21 (notifications):
+                // "Входящие" has no `root.sui` entries, so its rows
+                // aren't reachable through `content_action_at` below --
+                // this page's tap target is entirely runtime data.
+                if let Some((kind, id)) =
+                    inbox_row_at(self.last_touch_pos, self.width, self.height, &self.selected_entities)
                 {
-                    self.confirming_task_id = Some(task_id);
+                    match kind {
+                        InboxRowKind::Task => self.confirming_task_id = Some(id),
+                        InboxRowKind::Notification => self.dismiss_notification(id),
+                    }
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Now {
@@ -2094,24 +2154,33 @@ impl Shell {
     /// otherwise draw for a page with zero real cards -- Acceptance
     /// criteria explicitly called this out during the DoR.
     fn inbox_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let tasks = inbox_pending_tasks(&self.selected_entities);
-        if tasks.is_empty() {
+        let rows = inbox_rows(&self.selected_entities);
+        if rows.is_empty() {
             return vec![(
                 stacked_row_rect(0, width, height),
-                render::ActionCardView::new(
-                    "Нет задач, ожидающих подтверждения",
-                    "",
-                    "",
-                ),
+                render::ActionCardView::new("Нет новых задач и уведомлений", "", ""),
             )];
         }
-        tasks
-            .into_iter()
+        rows.into_iter()
             .enumerate()
-            .map(|(index, task)| {
+            .map(|(index, (kind, entity))| {
+                let (status, action) = match kind {
+                    InboxRowKind::Task => ("Ждёт подтверждения", "Открыть"),
+                    // S21: the notification's own `body` property is
+                    // its message; the title is used as the card
+                    // label, same split as a task's title/status.
+                    InboxRowKind::Notification => (
+                        entity
+                            .properties
+                            .get("body")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                        "Скрыть",
+                    ),
+                };
                 (
                     stacked_row_rect(index, width, height),
-                    render::ActionCardView::new(task.title.clone(), "Ждёт подтверждения", "Открыть"),
+                    render::ActionCardView::new(entity.title.clone(), status, action),
                 )
             })
             .collect()
@@ -2399,6 +2468,24 @@ impl Shell {
         self.entityd.update_entity(&task, properties);
     }
 
+    /// S21: marks a notification `dismissed` rather than deleting it --
+    /// same full-replace-properties convention `confirm_pending_task`
+    /// already uses for tasks, so `saai-entityd`'s protocol needed no
+    /// changes for either entity type.
+    fn dismiss_notification(&mut self, id: Uuid) {
+        let Some(notification) = self
+            .selected_entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        let mut properties = notification.properties.clone();
+        properties.insert("dismissed".into(), Value::Bool(true));
+        self.entityd.update_entity(&notification, properties);
+    }
+
     fn poll_entityd(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
         let was_available = self.entityd.is_connected();
         let messages = self.entityd.poll();
@@ -2567,8 +2654,39 @@ impl Shell {
     fn refresh_statusbar_if_due(&mut self) {
         if self.last_statusbar_refresh.elapsed() >= STATUSBAR_REFRESH_INTERVAL {
             self.present_status_bar();
+            self.check_low_battery();
             self.last_statusbar_refresh = Instant::now();
         }
+    }
+
+    /// S21: first real notification producer, entirely client-side --
+    /// no new service needed, `read_battery()` (S13) already has what
+    /// this needs. `low_battery_notified` is the guard against creating
+    /// a fresh one every second while the battery stays low; it resets
+    /// once the battery recovers above the threshold, so a second real
+    /// discharge cycle notifies again instead of staying silently
+    /// suppressed forever.
+    fn check_low_battery(&mut self) {
+        let Some((percent, charging)) = read_battery() else {
+            return;
+        };
+        if percent > LOW_BATTERY_THRESHOLD_PCT || charging {
+            self.low_battery_notified = false;
+            return;
+        }
+        if self.low_battery_notified || !self.entityd.is_connected() {
+            return;
+        }
+        self.low_battery_notified = true;
+        let mut properties = Map::new();
+        properties.insert("body".into(), Value::String(format!("Осталось {percent}%")));
+        properties.insert("kind".into(), Value::String("low_battery".into()));
+        self.entityd.create_entity(
+            self.selected_space_id.clone(),
+            NOTIFICATION_ENTITY_TYPE,
+            "Разряжается батарея",
+            properties,
+        );
     }
 
     fn present_lock_surface(&mut self, color: [u8; 4]) {
