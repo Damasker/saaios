@@ -578,6 +578,45 @@ fn app_state_label(state: &str) -> &str {
     }
 }
 
+/// S14: "О телефоне" -- the compiled-in build id (`build.rs`, S14) plus
+/// three plain `/proc` reads. No `system-tools` crate reuse here on
+/// purpose: that crate pulls in `tokio`/`async_trait`/`tool_registry`
+/// for the cognitive-core runtime's needs, far heavier than this
+/// `panic_immediate_abort` binary (ADR-013) should carry for three
+/// strings shown once on one screen.
+fn kernel_release() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|text| text.trim().to_string())
+        .unwrap_or_else(|_| "неизвестно".to_string())
+}
+
+fn hardware_model() -> String {
+    std::fs::read_to_string("/proc/device-tree/model")
+        .map(|text| text.trim_end_matches('\0').trim().to_string())
+        .unwrap_or_else(|_| "неизвестно".to_string())
+}
+
+fn uptime_string() -> String {
+    let seconds = std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|text| text.split_whitespace().next().map(str::to_string))
+        .and_then(|first| first.parse::<f64>().ok());
+    let Some(seconds) = seconds else {
+        return "неизвестно".to_string();
+    };
+    let total = seconds as u64;
+    let days = total / 86400;
+    let hours = (total % 86400) / 3600;
+    let minutes = (total % 3600) / 60;
+    if days > 0 {
+        format!("{days} дн {hours} ч")
+    } else if hours > 0 {
+        format!("{hours} ч {minutes} мин")
+    } else {
+        format!("{minutes} мин")
+    }
+}
+
 fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top = ((action.top as u64 * height as u64) / 2400) as u32;
@@ -1846,17 +1885,36 @@ impl Shell {
     /// for a tap here to do yet.
     fn me_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
         let total_entities: usize = self.entity_counts.values().sum();
-        let mut cards = vec![(
-            stacked_row_rect(0, width, height),
-            render::ActionCardView::new(
-                "Это устройство",
-                format!(
-                    "Пространств: {} · Объектов: {total_entities}",
-                    self.spaces.len()
+        let mut cards = vec![
+            (
+                stacked_row_rect(0, width, height),
+                render::ActionCardView::new(
+                    "Это устройство",
+                    format!(
+                        "Пространств: {} · Объектов: {total_entities}",
+                        self.spaces.len()
+                    ),
+                    "",
                 ),
-                "",
             ),
-        )];
+            // S14: "О телефоне" -- build id is compiled in (`build.rs`);
+            // model/kernel/uptime are read fresh every draw since uptime
+            // obviously changes and the other two are cheap enough not
+            // to bother caching.
+            (
+                stacked_row_rect(1, width, height),
+                render::ActionCardView::new(
+                    format!("SaaiOS · сборка {}", env!("SAAIOS_BUILD_ID")),
+                    format!(
+                        "{} · ядро {} · работает {}",
+                        hardware_model(),
+                        kernel_release(),
+                        uptime_string()
+                    ),
+                    "",
+                ),
+            ),
+        ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
                 .apps_grants
@@ -1874,7 +1932,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 1, width, height),
+                stacked_row_rect(index + 2, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
