@@ -431,6 +431,12 @@ pub fn draw_row_list(
     }
 }
 
+// S23 added `is_grid` as the 8th plain draw-time knob on an already
+// data-only function (no behavior to extract into a struct without
+// inventing one purely to appease this lint) -- same call shape as
+// `draw_consent`/`draw_task_confirm`, just with one more page-shaped
+// screen to describe.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_root(
     canvas: &mut Canvas<'_>,
     content: Rect,
@@ -439,6 +445,7 @@ pub fn draw_root(
     context_label: &str,
     fonts: Option<&Fonts>,
     content_actions: &[(Rect, ActionCardView)],
+    is_grid: bool,
 ) {
     canvas.fill(BACKGROUND);
 
@@ -463,91 +470,133 @@ pub fn draw_root(
     }
 
     let row_count = selected.saturating_add(2).min(5);
-    let first_placeholder = if content_actions.is_empty() {
-        0
-    } else {
-        row_count
-    };
-    for row in first_placeholder..row_count {
-        let y = 430 + row as u32 * 230;
-        if y >= content.height {
-            break;
+    let first_placeholder = if content_actions.is_empty() { 0 } else { row_count };
+    if !is_grid {
+        for row in first_placeholder..row_count {
+            let y = 430 + row as u32 * 230;
+            if y >= content.height {
+                break;
+            }
+            canvas.fill_rect(Rect::new(margin, y, card_width, 170), SURFACE);
+            canvas.fill_rect(Rect::new(margin + 34, y + 42, 86, 86), MUTED);
+            canvas.fill_rect(
+                Rect::new(margin + 154, y + 52, card_width.saturating_sub(210), 24),
+                MUTED,
+            );
+            canvas.fill_rect(
+                Rect::new(margin + 154, y + 96, card_width.saturating_sub(290), 18),
+                MUTED,
+            );
         }
-        canvas.fill_rect(Rect::new(margin, y, card_width, 170), SURFACE);
-        canvas.fill_rect(Rect::new(margin + 34, y + 42, 86, 86), MUTED);
-        canvas.fill_rect(
-            Rect::new(margin + 154, y + 52, card_width.saturating_sub(210), 24),
-            MUTED,
-        );
-        canvas.fill_rect(
-            Rect::new(margin + 154, y + 96, card_width.saturating_sub(290), 18),
-            MUTED,
-        );
     }
 
-    for (rect, card) in content_actions {
-        canvas.fill_rect(
-            *rect,
-            if card.selected {
-                SURFACE_SELECTED
-            } else {
-                SURFACE
-            },
-        );
-        // S13 Change 5: an empty `action` means this card has nothing to
-        // tap (an info summary -- "Это устройство", "Я"'s app grants,
-        // "Входящие"'s empty state) -- the icon block and the
-        // accent-colored button were drawn unconditionally before, which
-        // made every such card look clickable even though nothing
-        // happened when tapped. Text starts at the icon's own left edge
-        // instead of after it when there's no icon to make room for.
-        let has_action = !card.action.is_empty();
-        let text_left = if has_action {
-            canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
-            rect.x + 174
-        } else {
-            rect.x + 34
-        };
-        let button = has_action.then(|| {
-            let button_width = 250.min(rect.width / 3);
-            let button = Rect::new(
-                rect.x + rect.width.saturating_sub(button_width + 34),
-                rect.y + 58,
-                button_width,
-                88,
+    // S23: "Сейчас"'s icon grid (phone-style: square icon, label
+    // below, no description/button) -- every other page keeps the
+    // original single-column card list below. No real per-app icon
+    // asset exists anywhere in the project (no icon pipeline was ever
+    // built), so the "icon" is a colored square with the app's own
+    // first letter, same honest placeholder spirit as `MUTED`'s
+    // loading skeleton above.
+    if is_grid {
+        for (rect, card) in content_actions {
+            let icon_size = rect.width.min(rect.height.saturating_sub(70)).min(180);
+            let icon_x = rect.x + rect.width.saturating_sub(icon_size) / 2;
+            canvas.fill_rect(
+                Rect::new(icon_x, rect.y, icon_size, icon_size),
+                if card.selected { SURFACE_SELECTED } else { ACCENT },
             );
-            canvas.fill_rect(button, ACCENT);
-            button
-        });
-        if let Some(fonts) = fonts {
-            draw_text(
-                canvas,
-                &fonts.semibold,
-                &card.label,
-                38.0,
-                text_left,
-                rect.y + 48,
-                TEXT,
-            );
-            draw_text(
-                canvas,
-                &fonts.regular,
-                &card.status,
-                27.0,
-                text_left,
-                rect.y + 108,
-                TEXT_MUTED,
-            );
-            if let Some(button) = button {
+            if let Some(fonts) = fonts {
+                let initial = card
+                    .label
+                    .chars()
+                    .next()
+                    .map(|ch| ch.to_uppercase().to_string())
+                    .unwrap_or_default();
                 draw_text_centered(
                     canvas,
                     &fonts.semibold,
-                    &card.action,
-                    25.0,
-                    button.x + button.width / 2,
-                    button.y + 24,
+                    &initial,
+                    54.0,
+                    icon_x + icon_size / 2,
+                    rect.y + icon_size / 2 - 27,
                     BACKGROUND,
                 );
+                draw_text_centered(
+                    canvas,
+                    &fonts.regular,
+                    &card.label,
+                    26.0,
+                    rect.x + rect.width / 2,
+                    rect.y + icon_size + 16,
+                    TEXT,
+                );
+            }
+        }
+    } else {
+        for (rect, card) in content_actions {
+            canvas.fill_rect(
+                *rect,
+                if card.selected {
+                    SURFACE_SELECTED
+                } else {
+                    SURFACE
+                },
+            );
+            // S13 Change 5: an empty `action` means this card has nothing to
+            // tap (an info summary -- "Это устройство", "Я"'s app grants,
+            // "Входящие"'s empty state) -- the icon block and the
+            // accent-colored button were drawn unconditionally before, which
+            // made every such card look clickable even though nothing
+            // happened when tapped. Text starts at the icon's own left edge
+            // instead of after it when there's no icon to make room for.
+            let has_action = !card.action.is_empty();
+            let text_left = if has_action {
+                canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
+                rect.x + 174
+            } else {
+                rect.x + 34
+            };
+            let button = has_action.then(|| {
+                let button_width = 250.min(rect.width / 3);
+                let button = Rect::new(
+                    rect.x + rect.width.saturating_sub(button_width + 34),
+                    rect.y + 58,
+                    button_width,
+                    88,
+                );
+                canvas.fill_rect(button, ACCENT);
+                button
+            });
+            if let Some(fonts) = fonts {
+                draw_text(
+                    canvas,
+                    &fonts.semibold,
+                    &card.label,
+                    38.0,
+                    text_left,
+                    rect.y + 48,
+                    TEXT,
+                );
+                draw_text(
+                    canvas,
+                    &fonts.regular,
+                    &card.status,
+                    27.0,
+                    text_left,
+                    rect.y + 108,
+                    TEXT_MUTED,
+                );
+                if let Some(button) = button {
+                    draw_text_centered(
+                        canvas,
+                        &fonts.semibold,
+                        &card.action,
+                        25.0,
+                        button.x + button.width / 2,
+                        button.y + 24,
+                        BACKGROUND,
+                    );
+                }
             }
         }
     }
@@ -771,6 +820,7 @@ mod tests {
             "Дом",
             None,
             &[],
+            true,
         );
         assert_eq!(canvas.pixel(135, 2125), ACCENT);
         assert_eq!(canvas.pixel(945, 2125), SURFACE);
@@ -783,6 +833,7 @@ mod tests {
             "Дом",
             None,
             &[],
+            false,
         );
         assert_eq!(canvas.pixel(135, 2125), SURFACE);
         assert_eq!(canvas.pixel(945, 2125), ACCENT);

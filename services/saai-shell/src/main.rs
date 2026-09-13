@@ -1260,6 +1260,33 @@ fn inbox_pending_tasks(entities: &[Entity]) -> Vec<&Entity> {
 /// per-index instead of read from compiled-in constants. Shared by
 /// every page whose card count is runtime data -- "Входящие" (S13
 /// Change 2) and "Я" (S13 Change 3) so far.
+/// S23: "Сейчас"'s icon grid -- 3 columns, phone-style, replacing the
+/// single-column list every other page still uses (`stacked_row_
+/// rect`). Same 1080x2400 reference-canvas convention as that
+/// function: literal units scaled by the real panel size, not a
+/// design-time assumption about actual resolution.
+const NOW_GRID_COLUMNS: u32 = 3;
+
+fn now_grid_rect(index: usize, width: u32, height: u32) -> Rect {
+    let margin = width / 22;
+    let columns = NOW_GRID_COLUMNS;
+    let gap = margin / 2;
+    let usable_width = width.saturating_sub(margin * 2);
+    let cell_width = usable_width.saturating_sub(gap * (columns - 1)) / columns;
+    let cell_height_2400 = 300u32;
+    let row = index as u32 / columns;
+    let column = index as u32 % columns;
+    let top_2400 = 430 + row * (cell_height_2400 + 40);
+    let top = ((u64::from(top_2400) * u64::from(height)) / 2400) as u32;
+    let cell_height = ((u64::from(cell_height_2400) * u64::from(height)) / 2400) as u32;
+    Rect::new(
+        margin + column * (cell_width + gap),
+        top,
+        cell_width,
+        cell_height,
+    )
+}
+
 fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top_2400 = 430 + index as u32 * 220;
@@ -1331,9 +1358,12 @@ fn inbox_row_at(
 }
 
 /// S13 Change 4: "Сейчас"'s hit-test, mirroring `content_action_at`
-/// but for a page that mixes a runtime-sized app list (rows 0..apps.len())
-/// with the two remaining static `root.sui` cards (rows apps.len()..),
-/// stacked directly below it. Returns the same `action` string either
+/// but for a page that mixes a runtime-sized app list (cells
+/// 0..apps.len()) with the two remaining static `root.sui` cards
+/// (cells apps.len()..). S23 moved this from `stacked_row_rect`'s
+/// single column to `now_grid_rect`'s 3-column grid -- the index
+/// math is unchanged, only which rect function turns an index into a
+/// screen position. Returns the same `action` string either
 /// kind of card would carry, so the caller dispatches identically to
 /// how `invoke_content_action` used to.
 fn now_action_at(
@@ -1343,7 +1373,7 @@ fn now_action_at(
     installed_apps: &BTreeMap<String, AppSummary>,
 ) -> Option<String> {
     for (index, app) in installed_apps.values().enumerate() {
-        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
+        if now_grid_rect(index, width, height).contains(pos.0, pos.1) {
             return Some(format!("manage_app:{}", app.id));
         }
     }
@@ -1352,7 +1382,7 @@ fn now_action_at(
         .iter()
         .filter(|action| action.page == "now")
         .enumerate()
-        .find(|(offset, _)| stacked_row_rect(base + offset, width, height).contains(pos.0, pos.1))
+        .find(|(offset, _)| now_grid_rect(base + offset, width, height).contains(pos.0, pos.1))
         .map(|(_, action)| action.action.to_string())
 }
 
@@ -2474,6 +2504,7 @@ impl Shell {
                     &context_label,
                     self.fonts.as_ref(),
                     &content_cards,
+                    self.current_page == RootPage::Now,
                 );
             }
         }
@@ -3086,7 +3117,7 @@ impl Shell {
             .enumerate()
             .map(|(index, app)| {
                 (
-                    stacked_row_rect(index, width, height),
+                    now_grid_rect(index, width, height),
                     render::ActionCardView::new(
                         app.name.clone(),
                         app_state_label(&app.state),
@@ -3106,7 +3137,7 @@ impl Shell {
             .enumerate()
         {
             cards.push((
-                stacked_row_rect(base + offset, width, height),
+                now_grid_rect(base + offset, width, height),
                 self.content_card(action),
             ));
         }
@@ -3600,6 +3631,25 @@ mod tests {
         let width = 1080;
         let height = 2400;
         assert!(wifi_list_action_at((10.0, 10.0), width, height, 0).is_none());
+    }
+
+    #[test]
+    fn now_grid_rect_lays_out_three_columns_per_row() {
+        let width = 1080;
+        let height = 2400;
+        let cell_0 = super::now_grid_rect(0, width, height);
+        let cell_1 = super::now_grid_rect(1, width, height);
+        let cell_2 = super::now_grid_rect(2, width, height);
+        let cell_3 = super::now_grid_rect(3, width, height);
+        // Same row (0..3): equal y, strictly increasing x.
+        assert_eq!(cell_0.y, cell_1.y);
+        assert_eq!(cell_1.y, cell_2.y);
+        assert!(cell_0.x < cell_1.x);
+        assert!(cell_1.x < cell_2.x);
+        // Next row (index 3, the 4th cell) starts back at the left
+        // margin, below row 0.
+        assert_eq!(cell_3.x, cell_0.x);
+        assert!(cell_3.y > cell_0.y);
     }
 
     #[test]
