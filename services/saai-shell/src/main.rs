@@ -200,6 +200,15 @@ struct ShellSettings {
     /// S18. See `apply_volume`'s doc comment -- the setting/UI side is
     /// real, the hardware effect is an unverified best-effort guess.
     volume_pct: u8,
+    /// S24. `None` (default) means unlock stays "any tap" -- the
+    /// original behavior this device has been tested with all along
+    /// -- so turning this on is opt-in, never a silent behavior
+    /// change for an existing settings file. Stored in plaintext in
+    /// the same settings file as every other setting here; no worse
+    /// than `wpa_supplicant.conf`'s own plaintext Wi-Fi passwords
+    /// (S19) already on this same disk, and there's no other local
+    /// user account on this device for a PIN to protect against.
+    pin_code: Option<String>,
 }
 
 impl ShellSettings {
@@ -221,6 +230,7 @@ impl ShellSettings {
             deep_idle_timeout_secs: Self::default_deep_idle_secs(),
             utc_offset_minutes: 0,
             volume_pct: 75,
+            pin_code: None,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -252,6 +262,12 @@ impl ShellSettings {
                 .and_then(Value::as_u64)
                 .map(|pct| pct as u8)
                 .unwrap_or(default.volume_pct),
+            pin_code: value
+                .get("pin_code")
+                .and_then(Value::as_str)
+                .filter(|pin| !pin.is_empty())
+                .map(str::to_string)
+                .or(default.pin_code),
         }
     }
 
@@ -262,6 +278,7 @@ impl ShellSettings {
             "deep_idle_timeout_secs": self.deep_idle_timeout_secs,
             "utc_offset_minutes": self.utc_offset_minutes,
             "volume_pct": self.volume_pct,
+            "pin_code": self.pin_code,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -729,6 +746,83 @@ fn format_utc_offset(minutes: i32) -> String {
     format!("UTC{sign}{:02}:{:02}", abs_minutes / 60, abs_minutes % 60)
 }
 
+/// S24: a real numeric keypad, not ADR-029's letters-only keyboard
+/// (`INTENT_KEY_ROWS` has no digit keys at all). Plain
+/// `stacked_row_rect`-style index-to-rect math (see `now_grid_rect`),
+/// not a `Node`/`layout()` tree -- this needs to render both on the
+/// normal toplevel surface ("Я"'s "Изменить PIN") and on the
+/// session-lock surface (`present_lock_surface`), and the lock
+/// surface has no `Node` tree infrastructure of its own at all.
+/// Layout: 1-9, then a blank cell, 0, and backspace -- same shape as
+/// a phone dialer. Two more slots (indices 12-13, an extra row) are
+/// "Отмена"/"Готово" controls, used only by the PIN-setup screen
+/// (`pin_setup_action_at`), never during unlock.
+const PIN_KEYPAD_COLUMNS: u32 = 3;
+const PIN_KEYPAD_DIGIT_LABELS: [&str; 12] =
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"];
+
+fn pin_keypad_rect(index: usize, width: u32, height: u32) -> Rect {
+    let margin = width / 10;
+    let columns = PIN_KEYPAD_COLUMNS;
+    let gap = margin / 3;
+    let usable_width = width.saturating_sub(margin * 2);
+    let cell_width = usable_width.saturating_sub(gap * (columns - 1)) / columns;
+    let cell_height_2400 = 240u32;
+    let row = index as u32 / columns;
+    let column = index as u32 % columns;
+    let top_2400 = 900 + row * (cell_height_2400 + 30);
+    let top = ((u64::from(top_2400) * u64::from(height)) / 2400) as u32;
+    let cell_height = ((u64::from(cell_height_2400) * u64::from(height)) / 2400) as u32;
+    Rect::new(
+        margin + column * (cell_width + gap),
+        top,
+        cell_width,
+        cell_height,
+    )
+}
+
+/// Digit ("0".."9") or "⌫" for backspace -- `None` for a miss or the
+/// deliberately blank cell at index 9. Shared by both the lock
+/// surface and the PIN-setup screen: same keys mean the same thing
+/// in both places.
+fn pin_keypad_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
+    PIN_KEYPAD_DIGIT_LABELS
+        .iter()
+        .enumerate()
+        .find(|(index, label)| {
+            !label.is_empty() && pin_keypad_rect(*index, width, height).contains(pos.0, pos.1)
+        })
+        .map(|(_, label)| *label)
+}
+
+/// S24: "Отмена"/"Готово" (plus "Убрать PIN" when a PIN is already
+/// set) for the PIN-setup screen only -- laid out as one more
+/// `pin_keypad_rect` row (indices 12.. ) below the digit grid, not a
+/// separate geometry system.
+fn pin_setup_controls(has_existing_pin: bool) -> Vec<&'static str> {
+    if has_existing_pin {
+        vec!["Отмена", "Готово", "Убрать PIN"]
+    } else {
+        vec!["Отмена", "Готово"]
+    }
+}
+
+fn pin_setup_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    has_existing_pin: bool,
+) -> Option<&'static str> {
+    if let Some(digit) = pin_keypad_action_at(pos, width, height) {
+        return Some(digit);
+    }
+    pin_setup_controls(has_existing_pin)
+        .into_iter()
+        .enumerate()
+        .find(|(offset, _)| pin_keypad_rect(12 + offset, width, height).contains(pos.0, pos.1))
+        .map(|(_, label)| label)
+}
+
 const CONSENT_SCREEN_ID: &str = "consent";
 const CONSENT_HEADER_ID: &str = "consent-header";
 const CONSENT_BUTTONS_ID: &str = "consent-buttons";
@@ -823,6 +917,14 @@ struct IntentInputState {
 /// here.
 struct WifiPasswordState {
     ssid: String,
+    buffer: String,
+}
+
+/// S24: "Изменить PIN" on "Я" -- see `PIN_KEYPAD_DIGIT_LABELS`'s doc
+/// comment for why this is a dedicated numeric keypad, not the
+/// ADR-029 letters keyboard `WifiPasswordState` reuses.
+#[derive(Default)]
+struct PinSetupState {
     buffer: String,
 }
 
@@ -950,6 +1052,11 @@ enum Frame {
         header: Rect,
         status_line: String,
         rows: Vec<(Rect, String)>,
+    },
+    PinSetup {
+        buffer: String,
+        header: Rect,
+        keys: Vec<(Rect, &'static str)>,
     },
     Root {
         content_rect: Rect,
@@ -1406,6 +1513,8 @@ fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str
         Some("open_wifi_list")
     } else if stacked_row_rect(10, width, height).contains(pos.0, pos.1) {
         Some("open_bluetooth_list")
+    } else if stacked_row_rect(11, width, height).contains(pos.0, pos.1) {
+        Some("open_pin_setup")
     } else {
         None
     }
@@ -1535,6 +1644,8 @@ fn main() {
         wifi_password: None,
         wifi_list: None,
         bluetooth_list_open: false,
+        pin_setup: None,
+        pin_entry_buffer: String::new(),
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -1678,6 +1789,17 @@ struct Shell {
     /// results`'s doc comment), so this is just whether the screen is
     /// open at all.
     bluetooth_list_open: bool,
+    /// S24: set while "Изменить PIN" (opened from "Я") is composing a
+    /// new PIN. Modal, same as the others.
+    pin_setup: Option<PinSetupState>,
+    /// S24: digits entered so far against the lock surface's own
+    /// keypad -- cleared on a wrong guess, a successful unlock, or
+    /// waking from `sleeping`. Unrelated to `pin_setup`'s buffer
+    /// (setting a new PIN vs. entering the existing one to unlock are
+    /// different screens, on different surfaces, that happen never to
+    /// be open at the same time -- `locked` is always `true` while
+    /// this one matters and always `false` while `pin_setup` does).
+    pin_entry_buffer: String,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -1875,7 +1997,7 @@ impl SessionLockHandler for Shell {
         // was sized for the previous one and `present_lock_surface()`
         // never resizes an existing buffer itself.
         self.lock_buffer = None;
-        self.present_lock_surface(LOCK_SCREEN_COLOR);
+        self.present_lock_pin_entry();
     }
 }
 
@@ -1972,7 +2094,8 @@ impl TouchHandler for Shell {
             self.sleeping = false;
             self.unlock_pending = false;
             self.tab_touch_pending = false;
-            self.present_lock_surface(LOCK_SCREEN_COLOR);
+            self.pin_entry_buffer.clear();
+            self.present_lock_pin_entry();
             println!("saai-shell: woke from pseudo-sleep");
             return;
         }
@@ -2000,12 +2123,46 @@ impl TouchHandler for Shell {
         // multi-touch gesture) doesn't unlock by accident.
         if self.unlock_pending {
             self.unlock_pending = false;
-            if let Some(session_lock) = self.session_lock.take() {
-                session_lock.unlock();
+            // S24: opt-in -- with no PIN set, every release on the lock
+            // surface still unlocks immediately, unchanged from before
+            // this sprint. With a PIN set, a release is a keypad tap,
+            // not an unlock by itself.
+            match self.settings.pin_code.clone() {
+                None => {
+                    if let Some(session_lock) = self.session_lock.take() {
+                        session_lock.unlock();
+                    }
+                    self.lock_surfaces.clear();
+                    self.locked = false;
+                    println!("saai-shell: unlocked by touch");
+                }
+                Some(pin_code) => {
+                    if let Some(key) =
+                        pin_keypad_action_at(self.last_touch_pos, self.lock_width, self.lock_height)
+                    {
+                        if key == "⌫" {
+                            self.pin_entry_buffer.pop();
+                        } else {
+                            self.pin_entry_buffer.push_str(key);
+                        }
+                        if self.pin_entry_buffer.len() >= pin_code.len() {
+                            if self.pin_entry_buffer == pin_code {
+                                self.pin_entry_buffer.clear();
+                                if let Some(session_lock) = self.session_lock.take() {
+                                    session_lock.unlock();
+                                }
+                                self.lock_surfaces.clear();
+                                self.locked = false;
+                                println!("saai-shell: unlocked by PIN");
+                                return;
+                            }
+                            println!("saai-shell: PIN mismatch, retry");
+                            self.pin_entry_buffer.clear();
+                        }
+                        self.present_lock_pin_entry();
+                    }
+                }
             }
-            self.lock_surfaces.clear();
-            self.locked = false;
-            println!("saai-shell: unlocked by touch");
         } else if self.tab_touch_pending {
             self.tab_touch_pending = false;
             if self.pending_consent.is_some() {
@@ -2042,6 +2199,17 @@ impl TouchHandler for Shell {
                 if let Some(action) = intent_action_at(self.last_touch_pos, self.width, self.height)
                 {
                     self.handle_intent_input_action(&action, conn, qh);
+                }
+            } else if self.pin_setup.is_some() {
+                // S24: modal, same as the others.
+                let has_existing_pin = self.settings.pin_code.is_some();
+                if let Some(key) = pin_setup_action_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    has_existing_pin,
+                ) {
+                    self.handle_pin_setup_action(key, conn, qh);
                 }
             } else if self.wifi_password.is_some() {
                 // S19: same keyboard tree as `intent_input` above
@@ -2236,6 +2404,26 @@ impl Shell {
                 keys.push((key_node.rect, control.label.to_string()));
             }
             Frame::IntentInput {
+                buffer: state.buffer.clone(),
+                header,
+                keys,
+            }
+        } else if let Some(state) = &self.pin_setup {
+            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            let has_existing_pin = self.settings.pin_code.is_some();
+            let mut keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
+                .iter()
+                .enumerate()
+                .filter(|(_, label)| !label.is_empty())
+                .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
+                .collect();
+            keys.extend(
+                pin_setup_controls(has_existing_pin)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, label)| (pin_keypad_rect(12 + offset, width, height), label)),
+            );
+            Frame::PinSetup {
                 buffer: state.buffer.clone(),
                 header,
                 keys,
@@ -2442,6 +2630,19 @@ impl Shell {
                     self.fonts.as_ref(),
                 );
             }
+            Frame::PinSetup {
+                buffer,
+                header,
+                keys,
+            } => {
+                render::draw_pin_setup(
+                    &mut render::Canvas::new(canvas, width, height),
+                    &buffer,
+                    header,
+                    &keys,
+                    self.fonts.as_ref(),
+                );
+            }
             Frame::WifiPasswordInput {
                 ssid,
                 buffer,
@@ -2607,6 +2808,12 @@ impl Shell {
                 self.draw(conn, qh);
                 return;
             }
+            "open_pin_setup" => {
+                // Same reasoning as "open_wifi_list" above.
+                self.pin_setup = Some(PinSetupState::default());
+                self.draw(conn, qh);
+                return;
+            }
             _ => return,
         }
         self.settings.save();
@@ -2661,6 +2868,45 @@ impl Shell {
                         state.buffer.push(ch);
                     }
                 }
+            }
+        }
+        self.draw(conn, qh);
+    }
+
+    /// S24: "Изменить PIN"'s own keypad handling -- digits accumulate
+    /// in `state.buffer`; "Готово" saves it (a minimum length guards
+    /// against an accidental one-digit PIN, no maximum), "Отмена"
+    /// discards, "Убрать PIN" clears `settings.pin_code` outright
+    /// (only reachable when one is already set -- see
+    /// `pin_setup_controls`).
+    fn handle_pin_setup_action(&mut self, key: &str, conn: &Connection, qh: &QueueHandle<Self>) {
+        let Some(state) = self.pin_setup.as_mut() else {
+            return;
+        };
+        match key {
+            "Отмена" => {
+                self.pin_setup = None;
+            }
+            "⌫" => {
+                state.buffer.pop();
+            }
+            "Готово" => {
+                let pin = state.buffer.clone();
+                if pin.len() >= 4 {
+                    self.settings.pin_code = Some(pin);
+                    self.settings.save();
+                    self.pin_setup = None;
+                }
+                // Too short: stays open, same as before the tap --
+                // no error UI, but also no silent partial save.
+            }
+            "Убрать PIN" => {
+                self.settings.pin_code = None;
+                self.settings.save();
+                self.pin_setup = None;
+            }
+            digit => {
+                state.buffer.push_str(digit);
             }
         }
         self.draw(conn, qh);
@@ -3075,6 +3321,21 @@ impl Shell {
                     "Устройства",
                 ),
             ),
+            // S24: opt-in -- see `ShellSettings.pin_code`'s doc
+            // comment. Default (`None`) keeps unlock as "any tap",
+            // unchanged from before this sprint.
+            (
+                stacked_row_rect(11, width, height),
+                render::ActionCardView::new(
+                    "PIN-код",
+                    if self.settings.pin_code.is_some() {
+                        "Установлен"
+                    } else {
+                        "Не установлен -- разблокировка тапом"
+                    },
+                    "Изменить",
+                ),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -3093,7 +3354,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 11, width, height),
+                stacked_row_rect(index + 12, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
@@ -3539,6 +3800,78 @@ impl Shell {
         surface.commit();
     }
 
+    /// S24: what actually gets shown on the lock surface each time it
+    /// needs repainting -- the flat `LOCK_SCREEN_COLOR` this always
+    /// showed before this sprint when no PIN is set (delegates
+    /// straight to `present_lock_surface`, no change in that case),
+    /// or a numeric keypad plus filled-dot progress indicators when
+    /// `settings.pin_code` is set. Never called for the
+    /// `SLEEP_INDICATOR_COLOR` deep-idle blank (`check_deep_idle`
+    /// keeps calling `present_lock_surface` directly for that) --
+    /// screen-off should stay screen-off regardless of PIN.
+    fn present_lock_pin_entry(&mut self) {
+        let Some(pin_code) = self.settings.pin_code.clone() else {
+            self.present_lock_surface(LOCK_SCREEN_COLOR);
+            return;
+        };
+        let width = self.lock_width;
+        let height = self.lock_height;
+        if width == 0 || height == 0 {
+            return;
+        }
+        let Some(lock_surface) = self.lock_surfaces.last() else {
+            return;
+        };
+        let stride = width as i32 * 4;
+
+        if self.lock_pool.is_none() {
+            self.lock_pool = Some(
+                SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                    .expect("create lock surface pool"),
+            );
+        }
+        let pool = self.lock_pool.as_mut().expect("just ensured above");
+
+        if self.lock_buffer.is_none() {
+            let (buffer, _canvas) = pool
+                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                .expect("create lock buffer");
+            self.lock_buffer = Some(buffer);
+        }
+        let buffer = self.lock_buffer.as_mut().expect("just ensured above");
+
+        let canvas = match pool.canvas(buffer) {
+            Some(canvas) => canvas,
+            None => {
+                let (second_buffer, canvas) = pool
+                    .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                    .expect("create lock buffer");
+                *buffer = second_buffer;
+                canvas
+            }
+        };
+
+        let keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| !label.is_empty())
+            .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
+            .collect();
+        render::draw_lock_pin_entry(
+            &mut render::Canvas::new(canvas, width, height),
+            width,
+            self.pin_entry_buffer.len(),
+            pin_code.len(),
+            &keys,
+            self.fonts.as_ref(),
+        );
+
+        let surface = lock_surface.wl_surface();
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        buffer.attach_to(surface).expect("buffer attach");
+        surface.commit();
+    }
+
     /// S11 Change 2 (ADR-041), revised in ADR-051: once the screen has
     /// already been locked (`check_idle_timeout`) and stays untouched
     /// for a further `deep_idle_timeout`, blanks the lock surface to
@@ -3631,6 +3964,61 @@ mod tests {
         let width = 1080;
         let height = 2400;
         assert!(wifi_list_action_at((10.0, 10.0), width, height, 0).is_none());
+    }
+
+    #[test]
+    fn pin_keypad_action_at_finds_digits_and_backspace_but_not_the_blank_cell() {
+        let width = 1080;
+        let height = 2400;
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        assert_eq!(
+            super::pin_keypad_action_at(center(super::pin_keypad_rect(0, width, height)), width, height),
+            Some("1")
+        );
+        assert_eq!(
+            super::pin_keypad_action_at(center(super::pin_keypad_rect(10, width, height)), width, height),
+            Some("0")
+        );
+        assert_eq!(
+            super::pin_keypad_action_at(center(super::pin_keypad_rect(11, width, height)), width, height),
+            Some("⌫")
+        );
+        // Index 9 is the deliberately blank cell between 9 and 0.
+        assert_eq!(
+            super::pin_keypad_action_at(center(super::pin_keypad_rect(9, width, height)), width, height),
+            None
+        );
+    }
+
+    #[test]
+    fn pin_setup_action_at_exposes_forget_only_when_a_pin_already_exists() {
+        let width = 1080;
+        let height = 2400;
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        // Index 14 (the third control slot) is only "Убрать PIN" when
+        // a PIN already exists.
+        assert_eq!(
+            super::pin_setup_action_at(center(super::pin_keypad_rect(14, width, height)), width, height, true),
+            Some("Убрать PIN")
+        );
+        assert_eq!(
+            super::pin_setup_action_at(center(super::pin_keypad_rect(14, width, height)), width, height, false),
+            None
+        );
+        assert_eq!(
+            super::pin_setup_action_at(center(super::pin_keypad_rect(12, width, height)), width, height, false),
+            Some("Отмена")
+        );
     }
 
     #[test]

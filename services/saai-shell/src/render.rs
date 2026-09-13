@@ -431,6 +431,138 @@ pub fn draw_row_list(
     }
 }
 
+/// S24: "Изменить PIN" on "Я" -- same header-plus-keys shape as
+/// `draw_intent_input`, but the preview is masked (a PIN is a secret,
+/// same reasoning as `WifiPasswordInput`'s masked preview) and the
+/// keys come from `pin_keypad_rect`'s numeric layout instead of
+/// ADR-029's letters.
+pub fn draw_pin_setup(
+    canvas: &mut Canvas<'_>,
+    buffer: &str,
+    header: Rect,
+    keys: &[(Rect, &str)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+    canvas.fill_rect(header, SURFACE);
+
+    let Some(fonts) = fonts else {
+        for (rect, _) in keys {
+            canvas.fill_rect(*rect, SURFACE_SELECTED);
+        }
+        return;
+    };
+
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        "Новый PIN-код",
+        42.0,
+        header.x + 30,
+        header.y + 40,
+        TEXT,
+    );
+    let masked: String = buffer.chars().map(|_| '•').collect();
+    let (preview, preview_color) = if masked.is_empty() {
+        ("Введите новый PIN (минимум 4 цифры)".to_string(), TEXT_MUTED)
+    } else {
+        (masked, TEXT)
+    };
+    draw_text(
+        canvas,
+        &fonts.regular,
+        &preview,
+        34.0,
+        header.x + 30,
+        header.y + 130,
+        preview_color,
+    );
+
+    for (rect, label) in keys {
+        let key = Rect::new(
+            rect.x.saturating_add(4),
+            rect.y.saturating_add(4),
+            rect.width.saturating_sub(8),
+            rect.height.saturating_sub(8),
+        );
+        canvas.fill_rect(key, SURFACE);
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            label,
+            32.0,
+            key.x + key.width / 2,
+            key.y + key.height / 2 - 18,
+            TEXT,
+        );
+    }
+}
+
+/// S24: the lock surface's own keypad, shown instead of a flat
+/// `LOCK_SCREEN_COLOR` fill whenever `ShellSettings.pin_code` is set
+/// (`present_lock_pin_entry` in `main.rs`). `entered_len` dots are
+/// filled (`ACCENT`), the rest of `pin_len` stay `MUTED` outlines --
+/// no digits are ever drawn, only progress, since this is what
+/// protects the lock in the first place.
+pub fn draw_lock_pin_entry(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    entered_len: usize,
+    pin_len: usize,
+    keys: &[(Rect, &str)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+
+    let dot_size = 36u32;
+    let gap = 30u32;
+    let count = pin_len.max(1) as u32;
+    let total_width = count * dot_size + count.saturating_sub(1) * gap;
+    let start_x = width.saturating_sub(total_width) / 2;
+    let dot_y = 420u32;
+    for index in 0..pin_len {
+        let x = start_x + index as u32 * (dot_size + gap);
+        let color = if index < entered_len { ACCENT } else { MUTED };
+        canvas.fill_rect(Rect::new(x, dot_y, dot_size, dot_size), color);
+    }
+
+    let Some(fonts) = fonts else {
+        for (rect, _) in keys {
+            canvas.fill_rect(*rect, SURFACE_SELECTED);
+        }
+        return;
+    };
+
+    draw_text_centered(
+        canvas,
+        &fonts.regular,
+        "Введите PIN",
+        32.0,
+        width / 2,
+        330,
+        TEXT_MUTED,
+    );
+
+    for (rect, label) in keys {
+        let key = Rect::new(
+            rect.x.saturating_add(4),
+            rect.y.saturating_add(4),
+            rect.width.saturating_sub(8),
+            rect.height.saturating_sub(8),
+        );
+        canvas.fill_rect(key, SURFACE);
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            label,
+            36.0,
+            key.x + key.width / 2,
+            key.y + key.height / 2 - 20,
+            TEXT,
+        );
+    }
+}
+
 // S23 added `is_grid` as the 8th plain draw-time knob on an already
 // data-only function (no behavior to extract into a struct without
 // inventing one purely to appease this lint) -- same call shape as
