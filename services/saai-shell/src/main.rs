@@ -533,6 +533,127 @@ fn wifi_add_and_select(ssid: &str, psk: Option<&str>) {
     let _ = wpa_cli(&["save_config"]);
 }
 
+/// S20: real, same shape as S19's Wi-Fi -- `/saaios/bt-scan` and
+/// `/saaios/bt-pair` are complete raw-HCI (Bluetooth management
+/// socket) tools already built and shipped in the image (confirmed
+/// by reading their source and `build-native-c-image.sh` before
+/// writing this), just never invoked automatically at boot or from
+/// any UI. Unlike Wi-Fi's `wpa_supplicant`, there is no long-running
+/// daemon to ask -- `bt-scan` itself blocks for ~8s doing discovery,
+/// and a real pairing handshake (`bt-pair <index>`) can legitimately
+/// take tens of seconds waiting on the peer. Both are `spawn()`ed
+/// detached with stdout redirected to a log file instead of run
+/// synchronously, so a tap here never freezes `saai-shell`'s own
+/// event loop -- the UI re-reads whichever log file has accumulated
+/// so far on every redraw, same "read fresh, no caching" convention
+/// as `wifi_status_line`.
+const BT_SCAN_BIN: &str = "/saaios/bt-scan";
+const BT_PAIR_BIN: &str = "/saaios/bt-pair";
+const BT_SCAN_LOG_PATH: &str = "/run/saai-shell-bt-scan.log";
+const BT_PAIR_LOG_PATH: &str = "/run/saai-shell-bt-pair.log";
+/// `bt-pair`'s own persisted list of previously paired devices
+/// (`publish_devices()` in `bt-pair.c`) -- one "SAVED\t<name>" line
+/// per remembered device, refreshed on every successful pair.
+const BT_SAVED_LOG_PATH: &str = "/run/bluetooth-saved.log";
+
+struct BluetoothDevice {
+    name: String,
+    transport: String,
+}
+
+fn spawn_detached(binary: &str, args: &[&str], log_path: &str) {
+    let Ok(log_file) = std::fs::File::create(log_path) else {
+        return;
+    };
+    let _ = std::process::Command::new(binary)
+        .args(args)
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+fn bluetooth_trigger_scan() {
+    spawn_detached(BT_SCAN_BIN, &[], BT_SCAN_LOG_PATH);
+}
+
+/// Parses `bt-scan`'s own stdout protocol (`DEVICE\t<name>`, then
+/// `TRANSPORT\t<name>\t<CLASSIC|BLE>` for the device just printed,
+/// finally `DONE\t<count>`) from whatever's accumulated in the log
+/// file so far -- `done` is `false` while a scan is still running or
+/// hasn't been started yet. A device's list position here is the
+/// same index `bt-pair <index>` expects: both walk
+/// `/run/bluetooth-devices.bin`'s records in the order `bt-scan`
+/// appended them.
+fn bluetooth_scan_results() -> (Vec<BluetoothDevice>, bool) {
+    let Ok(text) = std::fs::read_to_string(BT_SCAN_LOG_PATH) else {
+        return (Vec::new(), false);
+    };
+    let mut devices: Vec<BluetoothDevice> = Vec::new();
+    let mut done = false;
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields.as_slice() {
+            ["DEVICE", name] => devices.push(BluetoothDevice {
+                name: (*name).to_string(),
+                transport: String::new(),
+            }),
+            ["TRANSPORT", name, transport] => {
+                if let Some(device) = devices.iter_mut().rev().find(|d| d.name == *name) {
+                    device.transport = (*transport).to_string();
+                }
+            }
+            ["DONE", _] => done = true,
+            _ => {}
+        }
+    }
+    (devices, done)
+}
+
+fn bluetooth_pair(index: usize) {
+    spawn_detached(BT_PAIR_BIN, &[&index.to_string()], BT_PAIR_LOG_PATH);
+}
+
+/// `bt-pair <index>`'s own result line, if the background pairing
+/// attempt has reached one yet (`None` while only its initial
+/// "PAIRING" line is present, or before it's been run at all).
+fn bluetooth_pair_result() -> Option<String> {
+    let text = std::fs::read_to_string(BT_PAIR_LOG_PATH).ok()?;
+    for line in text.lines() {
+        if let Some(name) = line.strip_prefix("PAIRED\t") {
+            return Some(format!("Сопряжено: {name}"));
+        }
+        if let Some(reason) = line.strip_prefix("PAIR-ERROR\t") {
+            return Some(format!("Ошибка сопряжения: {reason}"));
+        }
+    }
+    None
+}
+
+/// Prefers a pairing result in progress/just finished over the scan
+/// state, so tapping a device to pair immediately starts showing
+/// that outcome instead of being silently overwritten by scan status
+/// text.
+fn bluetooth_status_summary() -> String {
+    if let Some(result) = bluetooth_pair_result() {
+        return result;
+    }
+    if !std::path::Path::new(BT_SCAN_LOG_PATH).exists() {
+        return "Поиск ещё не запускался".to_string();
+    }
+    let (devices, done) = bluetooth_scan_results();
+    if done {
+        format!("Поиск завершён: найдено {}", devices.len())
+    } else {
+        "Идёт поиск... (~8 с)".to_string()
+    }
+}
+
+fn bluetooth_paired_count() -> usize {
+    std::fs::read_to_string(BT_SAVED_LOG_PATH)
+        .map(|text| text.lines().filter(|line| line.starts_with("SAVED\t")).count())
+        .unwrap_or(0)
+}
+
 /// The fuel gauge's own power_supply node is named `maxfg`, not
 /// `battery` -- confirmed by listing `/sys/class/power_supply/` on
 /// device (S13 Change 1 investigation). Returns `(percent, charging)`;
@@ -738,6 +859,42 @@ fn wifi_list_action_at(
     None
 }
 
+/// S20: same shape as `WifiListTap`, one more trailing control row
+/// ("Искать" is separate from "Обновить список" here, since a
+/// Bluetooth scan takes ~8s in the background -- unlike Wi-Fi's
+/// already-continuously-scanning `wpa_supplicant`, starting a new
+/// scan and re-reading the current log are genuinely different
+/// actions here).
+enum BluetoothListTap {
+    Device(usize),
+    Scan,
+    Refresh,
+    Back,
+}
+
+fn bluetooth_list_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    device_count: usize,
+) -> Option<BluetoothListTap> {
+    for index in 0..device_count {
+        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
+            return Some(BluetoothListTap::Device(index));
+        }
+    }
+    if stacked_row_rect(device_count, width, height).contains(pos.0, pos.1) {
+        return Some(BluetoothListTap::Scan);
+    }
+    if stacked_row_rect(device_count + 1, width, height).contains(pos.0, pos.1) {
+        return Some(BluetoothListTap::Refresh);
+    }
+    if stacked_row_rect(device_count + 2, width, height).contains(pos.0, pos.1) {
+        return Some(BluetoothListTap::Back);
+    }
+    None
+}
+
 const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
 const TASK_CONFIRM_BUTTONS_ID: &str = "task-confirm-buttons";
 const TASK_CONFIRM_ACCEPT_ID: &str = "task-confirm-accept";
@@ -785,6 +942,11 @@ enum Frame {
         keys: Vec<(Rect, String)>,
     },
     WifiList {
+        header: Rect,
+        status_line: String,
+        rows: Vec<(Rect, String)>,
+    },
+    BluetoothList {
         header: Rect,
         status_line: String,
         rows: Vec<(Rect, String)>,
@@ -1212,6 +1374,8 @@ fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str
         Some("cycle_volume")
     } else if stacked_row_rect(9, width, height).contains(pos.0, pos.1) {
         Some("open_wifi_list")
+    } else if stacked_row_rect(10, width, height).contains(pos.0, pos.1) {
+        Some("open_bluetooth_list")
     } else {
         None
     }
@@ -1340,6 +1504,7 @@ fn main() {
         intent_input: None,
         wifi_password: None,
         wifi_list: None,
+        bluetooth_list_open: false,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -1477,6 +1642,12 @@ struct Shell {
     /// `wifi_scan_results()` when opened and on each "Обновить" tap.
     /// `None` (not merely empty) means the screen itself is closed.
     wifi_list: Option<Vec<WifiNetwork>>,
+    /// S20: unlike `wifi_list`, no snapshot to carry -- "Bluetooth
+    /// устройства"'s rows are always recomputed straight from
+    /// `BT_SCAN_LOG_PATH` on every draw (see `bluetooth_scan_
+    /// results`'s doc comment), so this is just whether the screen is
+    /// open at all.
+    bluetooth_list_open: bool,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -1860,6 +2031,20 @@ impl TouchHandler for Shell {
                 {
                     self.handle_wifi_list_tap(tap, conn, qh);
                 }
+            } else if self.bluetooth_list_open {
+                // S20: modal, same as the others -- owns every touch
+                // while "Bluetooth устройства" is open. Recomputes the
+                // device count fresh (see `bluetooth_list_open`'s doc
+                // comment) rather than reading a stored snapshot.
+                let device_count = bluetooth_scan_results().0.len();
+                if let Some(tap) = bluetooth_list_action_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    device_count,
+                ) {
+                    self.handle_bluetooth_list_tap(tap, conn, qh);
+                }
             } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
@@ -2079,6 +2264,42 @@ impl Shell {
                 status_line: wifi_status_line(),
                 rows,
             }
+        } else if self.bluetooth_list_open {
+            // S20: same runtime-sized-list shape as the Wi-Fi branch
+            // above, but rows/status are recomputed straight from
+            // disk each time (see `bluetooth_list_open`'s doc
+            // comment) instead of reading a stored snapshot.
+            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            let (devices, _done) = bluetooth_scan_results();
+            let mut rows: Vec<(Rect, String)> = devices
+                .iter()
+                .enumerate()
+                .map(|(index, device)| {
+                    let label = if device.transport.is_empty() {
+                        device.name.clone()
+                    } else {
+                        format!("{}   ·   {}", device.name, device.transport)
+                    };
+                    (stacked_row_rect(index, width, height), label)
+                })
+                .collect();
+            rows.push((
+                stacked_row_rect(devices.len(), width, height),
+                "Искать устройства (~8 с)".to_string(),
+            ));
+            rows.push((
+                stacked_row_rect(devices.len() + 1, width, height),
+                "Обновить список".to_string(),
+            ));
+            rows.push((
+                stacked_row_rect(devices.len() + 2, width, height),
+                "Назад".to_string(),
+            ));
+            Frame::BluetoothList {
+                header,
+                status_line: bluetooth_status_summary(),
+                rows,
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
@@ -2216,8 +2437,23 @@ impl Shell {
                 status_line,
                 rows,
             } => {
-                render::draw_wifi_list(
+                render::draw_row_list(
                     &mut render::Canvas::new(canvas, width, height),
+                    "Wi-Fi сети",
+                    &status_line,
+                    header,
+                    &rows,
+                    self.fonts.as_ref(),
+                );
+            }
+            Frame::BluetoothList {
+                header,
+                status_line,
+                rows,
+            } => {
+                render::draw_row_list(
+                    &mut render::Canvas::new(canvas, width, height),
+                    "Bluetooth устройства",
                     &status_line,
                     header,
                     &rows,
@@ -2330,6 +2566,13 @@ impl Shell {
                 // `settings.save()` common tail.
                 wifi_trigger_scan();
                 self.wifi_list = Some(wifi_scan_results());
+                self.draw(conn, qh);
+                return;
+            }
+            "open_bluetooth_list" => {
+                // Same reasoning as "open_wifi_list" above.
+                bluetooth_trigger_scan();
+                self.bluetooth_list_open = true;
                 self.draw(conn, qh);
                 return;
             }
@@ -2464,6 +2707,32 @@ impl Shell {
             }
             WifiListTap::Back => {
                 self.wifi_list = None;
+            }
+        }
+        self.draw(conn, qh);
+    }
+
+    /// S20: "Bluetooth устройства"'s own tap handling. `Refresh` looks
+    /// like a no-op (it changes no state) but isn't really one --
+    /// `draw()` re-reads both log files fresh every call, so tapping
+    /// it is what actually makes a scan/pair result in progress show
+    /// up, the same way tapping anything else that redraws would.
+    fn handle_bluetooth_list_tap(
+        &mut self,
+        tap: BluetoothListTap,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match tap {
+            BluetoothListTap::Device(index) => {
+                bluetooth_pair(index);
+            }
+            BluetoothListTap::Scan => {
+                bluetooth_trigger_scan();
+            }
+            BluetoothListTap::Refresh => {}
+            BluetoothListTap::Back => {
+                self.bluetooth_list_open = false;
             }
         }
         self.draw(conn, qh);
@@ -2764,6 +3033,17 @@ impl Shell {
                 stacked_row_rect(9, width, height),
                 render::ActionCardView::new("Wi-Fi", wifi_status_line(), "Сети"),
             ),
+            // S20: real, same shape as S19 -- see `bluetooth_scan_
+            // results`/`bluetooth_pair`'s doc comments. Opens
+            // "Bluetooth устройства".
+            (
+                stacked_row_rect(10, width, height),
+                render::ActionCardView::new(
+                    "Bluetooth",
+                    format!("Сопряжено устройств: {}", bluetooth_paired_count()),
+                    "Устройства",
+                ),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -2782,7 +3062,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 10, width, height),
+                stacked_row_rect(index + 11, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
@@ -3257,10 +3537,10 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        capability_label, consent_action_at, content_action_at, format_utc_offset,
-        intent_action_at, next_in_cycle, stacked_row_rect, tab_at, task_confirm_action_at,
-        wifi_list_action_at, Rect, RootPage, WifiListTap, INTENT_CANCEL_ACTION,
-        INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
+        format_utc_offset, intent_action_at, next_in_cycle, stacked_row_rect, tab_at,
+        task_confirm_action_at, wifi_list_action_at, BluetoothListTap, Rect, RootPage,
+        WifiListTap, INTENT_CANCEL_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
 
     #[test]
@@ -3320,6 +3600,39 @@ mod tests {
         let width = 1080;
         let height = 2400;
         assert!(wifi_list_action_at((10.0, 10.0), width, height, 0).is_none());
+    }
+
+    #[test]
+    fn bluetooth_list_action_at_finds_devices_then_scan_then_refresh_then_back() {
+        let width = 1080;
+        let height = 2400;
+        let device_count = 1;
+        let device_0 = stacked_row_rect(0, width, height);
+        let scan = stacked_row_rect(1, width, height);
+        let refresh = stacked_row_rect(2, width, height);
+        let back = stacked_row_rect(3, width, height);
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        assert!(matches!(
+            bluetooth_list_action_at(center(device_0), width, height, device_count),
+            Some(BluetoothListTap::Device(0))
+        ));
+        assert!(matches!(
+            bluetooth_list_action_at(center(scan), width, height, device_count),
+            Some(BluetoothListTap::Scan)
+        ));
+        assert!(matches!(
+            bluetooth_list_action_at(center(refresh), width, height, device_count),
+            Some(BluetoothListTap::Refresh)
+        ));
+        assert!(matches!(
+            bluetooth_list_action_at(center(back), width, height, device_count),
+            Some(BluetoothListTap::Back)
+        ));
     }
 
     #[test]

@@ -373,13 +373,16 @@ pub fn draw_task_confirm(
 }
 
 /// S19: "Wi-Fi сети" -- one row per `wifi_scan_results()` entry plus
-/// the two fixed trailing "Обновить"/"Назад" rows already baked into
-/// `rows` by the caller (see `wifi_list_action_at`'s doc comment for
-/// why the row count is runtime-sized rather than a `root.sui`
-/// screen). Same simple header-plus-list shape as `draw_task_
-/// confirm`, just with N rows instead of two buttons.
-pub fn draw_wifi_list(
+/// the fixed trailing control rows already baked into `rows` by the
+/// caller (see `wifi_list_action_at`'s doc comment for why the row
+/// count is runtime-sized rather than a `root.sui` screen). Same
+/// simple header-plus-list shape as `draw_task_confirm`, just with N
+/// rows instead of two buttons. S20 generalized this from a
+/// Wi-Fi-only `draw_wifi_list` to also draw "Bluetooth устройства" --
+/// same shape both times, only the title and row contents differ.
+pub fn draw_row_list(
     canvas: &mut Canvas<'_>,
+    title: &str,
     status_line: &str,
     header: Rect,
     rows: &[(Rect, String)],
@@ -398,7 +401,7 @@ pub fn draw_wifi_list(
     draw_text(
         canvas,
         &fonts.semibold,
-        "Wi-Fi сети",
+        title,
         42.0,
         header.x + 30,
         header.y + 40,
