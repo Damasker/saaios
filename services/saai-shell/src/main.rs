@@ -151,6 +151,7 @@ const BACKLIGHT_MAX: u32 = 4095;
 const BRIGHTNESS_LEVELS_PCT: [u8; 4] = [25, 50, 75, 100];
 const IDLE_TIMEOUT_LEVELS_SECS: [u64; 4] = [30, 60, 120, 300];
 const DEEP_IDLE_TIMEOUT_LEVELS_SECS: [u64; 4] = [15, 60, 300, 900];
+const VOLUME_LEVELS_PCT: [u8; 5] = [0, 25, 50, 75, 100];
 
 fn next_in_cycle<T: PartialEq + Copy>(levels: &[T], current: T) -> T {
     let index = levels.iter().position(|&level| level == current).unwrap_or(0);
@@ -167,6 +168,27 @@ fn apply_brightness(pct: u8) {
     let _ = std::fs::write(BACKLIGHT_PATH, value.to_string());
 }
 
+/// S18: **honest gap, unlike `apply_brightness`.** No userspace volume
+/// control existed anywhere in the project to confirm against before
+/// this -- the kernel modules load (`snd-soc-cs35l41`, `aoc_alsa_dev`,
+/// `native-init.c`'s own "ALSA sound devices ready" log line) but no
+/// `amixer`/`alsactl` binary or any other precedent for which ALSA
+/// simple-mixer control actually maps to output volume on this
+/// hardware was ever established (confirmed absent by survey before
+/// writing this). Tries `amixer` on the off chance a minimal build of
+/// it is present on-device after all; silently no-ops (matching every
+/// other best-effort hardware write in this file) if it isn't -- the
+/// setting/UI/persistence side of this feature is real regardless of
+/// whether this specific call has any effect, and the right follow-up
+/// once the device is available again is to find the actual control
+/// name (`amixer scontrols` or reading `/proc/asound/.../controls`)
+/// and replace this guess.
+fn apply_volume(pct: u8) {
+    let _ = std::process::Command::new("amixer")
+        .args(["sset", "Master", &format!("{}%", pct.min(100))])
+        .status();
+}
+
 struct ShellSettings {
     brightness_pct: u8,
     idle_timeout_secs: u64,
@@ -175,6 +197,9 @@ struct ShellSettings {
     /// MINUTES`'s own units, deliberately not hours-only (some real
     /// timezones use a half-hour or 45-minute offset).
     utc_offset_minutes: i32,
+    /// S18. See `apply_volume`'s doc comment -- the setting/UI side is
+    /// real, the hardware effect is an unverified best-effort guess.
+    volume_pct: u8,
 }
 
 impl ShellSettings {
@@ -195,6 +220,7 @@ impl ShellSettings {
             idle_timeout_secs: IDLE_TIMEOUT.as_secs(),
             deep_idle_timeout_secs: Self::default_deep_idle_secs(),
             utc_offset_minutes: 0,
+            volume_pct: 75,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -221,6 +247,11 @@ impl ShellSettings {
                 .and_then(Value::as_i64)
                 .map(|minutes| minutes as i32)
                 .unwrap_or(default.utc_offset_minutes),
+            volume_pct: value
+                .get("volume_pct")
+                .and_then(Value::as_u64)
+                .map(|pct| pct as u8)
+                .unwrap_or(default.volume_pct),
         }
     }
 
@@ -230,6 +261,7 @@ impl ShellSettings {
             "idle_timeout_secs": self.idle_timeout_secs,
             "deep_idle_timeout_secs": self.deep_idle_timeout_secs,
             "utc_offset_minutes": self.utc_offset_minutes,
+            "volume_pct": self.volume_pct,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -988,6 +1020,8 @@ fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str
         Some("cycle_deep_idle_timeout")
     } else if stacked_row_rect(6, width, height).contains(pos.0, pos.1) {
         Some("cycle_timezone")
+    } else if stacked_row_rect(8, width, height).contains(pos.0, pos.1) {
+        Some("cycle_volume")
     } else {
         None
     }
@@ -1074,6 +1108,7 @@ fn main() {
         .unwrap_or_else(|| "/run/saaios/portal.sock".into());
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
+    apply_volume(settings.volume_pct);
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -1976,6 +2011,11 @@ impl Shell {
                 self.settings.utc_offset_minutes =
                     next_in_cycle(&TIMEZONE_PRESETS_MINUTES, self.settings.utc_offset_minutes);
             }
+            "cycle_volume" => {
+                self.settings.volume_pct =
+                    next_in_cycle(&VOLUME_LEVELS_PCT, self.settings.volume_pct);
+                apply_volume(self.settings.volume_pct);
+            }
             _ => return,
         }
         self.settings.save();
@@ -2314,6 +2354,16 @@ impl Shell {
                     "",
                 ),
             ),
+            // S18: see `apply_volume`'s doc comment -- persistence/UI
+            // real, hardware effect unverified.
+            (
+                stacked_row_rect(8, width, height),
+                render::ActionCardView::new(
+                    "Громкость",
+                    format!("{}%", self.settings.volume_pct),
+                    "Изменить",
+                ),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -2332,7 +2382,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 8, width, height),
+                stacked_row_rect(index + 9, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
