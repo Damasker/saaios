@@ -1528,34 +1528,42 @@ fn now_action_at(
         .map(|(_, action)| action.action.to_string())
 }
 
-/// S16: "Я"'s three settings rows sit at fixed indices 3-5 (see
-/// `me_content_cards`, after the two read-only info rows and one
-/// storage row) -- unlike "Входящие"/"Сейчас" this page's actionable
-/// content isn't runtime-sized, so plain fixed indices are enough,
-/// no `installed_apps.len()`-style offset needed.
-fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
-    if stacked_row_rect(3, width, height).contains(pos.0, pos.1) {
-        Some("cycle_brightness")
-    } else if stacked_row_rect(4, width, height).contains(pos.0, pos.1) {
-        Some("cycle_idle_timeout")
-    } else if stacked_row_rect(5, width, height).contains(pos.0, pos.1) {
-        Some("cycle_deep_idle_timeout")
-    } else if stacked_row_rect(6, width, height).contains(pos.0, pos.1) {
-        Some("cycle_timezone")
-    } else if stacked_row_rect(8, width, height).contains(pos.0, pos.1) {
-        Some("cycle_volume")
-    } else if stacked_row_rect(9, width, height).contains(pos.0, pos.1) {
-        Some("open_wifi_list")
-    } else if stacked_row_rect(10, width, height).contains(pos.0, pos.1) {
-        Some("open_bluetooth_list")
-    } else if stacked_row_rect(11, width, height).contains(pos.0, pos.1) {
-        Some("open_pin_setup")
-    } else if stacked_row_rect(12, width, height).contains(pos.0, pos.1) {
-        Some("cycle_text_scale")
-    } else if stacked_row_rect(13, width, height).contains(pos.0, pos.1) {
-        Some("cycle_contrast")
-    } else {
-        None
+/// Physically discovered during the S14-S25 series' first device
+/// pass: 14 fixed rows plus N installed apps stopped fitting on one
+/// screen a while before S25 even landed, and this shell has never
+/// had any scroll/drag gesture recognition (`TouchHandler::motion`
+/// only ever tracks a position, never a delta) -- several settings
+/// (Wi-Fi onward) were silently untappable. Paginated the same way
+/// "Wi-Fi сети"/"Bluetooth устройства" already page past their own
+/// fixed trailing rows, rather than inventing gesture recognition:
+/// `ME_PAGE_SIZE` real rows per page plus one or two navigation rows
+/// ("Ещё"/"Назад"), `Shell.me_page` tracking which page is open.
+const ME_PAGE_SIZE: usize = 6;
+/// Count of `me_all_card_views`'s fixed (non-app) entries -- kept as
+/// one literal here rather than derived from that function's return
+/// length, since `me_fixed_card_action` has to agree with it and
+/// there's no way to assert two functions' lengths match at compile
+/// time anyway.
+const ME_FIXED_CARD_COUNT: usize = 14;
+
+/// The `me_all_card_views`'s logical index -> tap action mapping.
+/// `None` for the three read-only info rows (device summary, build
+/// info, storage), "Обновления" (S22, read-only by design), and
+/// every installed-app row (info-only on "Я", unlike "Сейчас"'s
+/// `now_action_at`).
+fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
+    match logical_index {
+        3 => Some("cycle_brightness"),
+        4 => Some("cycle_idle_timeout"),
+        5 => Some("cycle_deep_idle_timeout"),
+        6 => Some("cycle_timezone"),
+        8 => Some("cycle_volume"),
+        9 => Some("open_wifi_list"),
+        10 => Some("open_bluetooth_list"),
+        11 => Some("open_pin_setup"),
+        12 => Some("cycle_text_scale"),
+        13 => Some("cycle_contrast"),
+        _ => None,
     }
 }
 
@@ -1686,6 +1694,7 @@ fn main() {
         bluetooth_list_open: false,
         pin_setup: None,
         pin_entry_buffer: String::new(),
+        me_page: 0,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -1840,6 +1849,11 @@ struct Shell {
     /// be open at the same time -- `locked` is always `true` while
     /// this one matters and always `false` while `pin_setup` does).
     pin_entry_buffer: String,
+    /// See `ME_PAGE_SIZE`'s doc comment -- which page of "Я"'s
+    /// settings/app list is currently showing. Deliberately not
+    /// reset when leaving "Я" for another tab -- returning to it
+    /// keeps the page the user was last looking at.
+    me_page: usize,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -2332,7 +2346,7 @@ impl TouchHandler for Shell {
                 // sit below "Я"'s two-then-three fixed info rows, at
                 // indices `content_action_at`'s `root.sui`-driven table
                 // (which has no "me" entries at all) can't reach.
-                if let Some(action) = me_action_at(self.last_touch_pos, self.width, self.height) {
+                if let Some(action) = self.me_action_at(self.last_touch_pos, self.width, self.height) {
                     self.invoke_me_action(action, conn, qh);
                 }
             } else if let Some(action) = content_action_at(
@@ -2806,6 +2820,34 @@ impl Shell {
     /// timeouts are read fresh by `check_idle_timeout`/`check_deep_idle`
     /// every tick, nothing to push), persists, and redraws so the
     /// card's own status text reflects the new value immediately.
+    /// See `ME_PAGE_SIZE`'s doc comment -- a method now (not a free
+    /// function) since it needs `self.me_page` and `self.installed_
+    /// apps.len()` to know which logical indices the current page
+    /// covers, the same two pieces `me_content_cards` below needs to
+    /// build the matching rects.
+    fn me_action_at(&self, pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
+        let total = ME_FIXED_CARD_COUNT + self.installed_apps.len();
+        let start = self.me_page * ME_PAGE_SIZE;
+        let visible_count = total.saturating_sub(start).min(ME_PAGE_SIZE);
+        for local_index in 0..visible_count {
+            if stacked_row_rect(local_index, width, height).contains(pos.0, pos.1) {
+                return me_fixed_card_action(start + local_index);
+            }
+        }
+        let mut nav_index = visible_count;
+        let has_more = start + ME_PAGE_SIZE < total;
+        if has_more {
+            if stacked_row_rect(nav_index, width, height).contains(pos.0, pos.1) {
+                return Some("me_page_next");
+            }
+            nav_index += 1;
+        }
+        if self.me_page > 0 && stacked_row_rect(nav_index, width, height).contains(pos.0, pos.1) {
+            return Some("me_page_prev");
+        }
+        None
+    }
+
     fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
         match action {
             "cycle_brightness" => {
@@ -2863,6 +2905,16 @@ impl Shell {
             "cycle_contrast" => {
                 self.settings.contrast_pct =
                     next_in_cycle(&CONTRAST_LEVELS_PCT, self.settings.contrast_pct);
+            }
+            "me_page_next" => {
+                self.me_page += 1;
+                self.draw(conn, qh);
+                return;
+            }
+            "me_page_prev" => {
+                self.me_page = self.me_page.saturating_sub(1);
+                self.draw(conn, qh);
+                return;
             }
             _ => return,
         }
@@ -3252,168 +3304,166 @@ impl Shell {
     /// revoking one capability from an already-decided app (see
     /// ADR-054's notes on `saai-app-protocol`), so there is nothing
     /// for a tap here to do yet.
+    /// See `ME_PAGE_SIZE`'s doc comment -- slices `me_all_card_views`
+    /// into the current page's window and appends "Ещё"/"Назад" nav
+    /// rows, the same pattern `Frame::WifiList`/`Frame::BluetoothList`
+    /// already use for their own trailing controls.
     fn me_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        let all = self.me_all_card_views();
+        let total = all.len();
+        let start = self.me_page * ME_PAGE_SIZE;
+        let visible: Vec<render::ActionCardView> = all.into_iter().skip(start).take(ME_PAGE_SIZE).collect();
+        let visible_count = visible.len();
+        let mut cards: Vec<(Rect, render::ActionCardView)> = visible
+            .into_iter()
+            .enumerate()
+            .map(|(local_index, card)| (stacked_row_rect(local_index, width, height), card))
+            .collect();
+        let mut nav_index = visible_count;
+        if start + ME_PAGE_SIZE < total {
+            cards.push((
+                stacked_row_rect(nav_index, width, height),
+                render::ActionCardView::new(
+                    "Ещё",
+                    format!("Показаны {}-{} из {total}", start + 1, start + visible_count),
+                    "Вниз",
+                ),
+            ));
+            nav_index += 1;
+        }
+        if self.me_page > 0 {
+            cards.push((
+                stacked_row_rect(nav_index, width, height),
+                render::ActionCardView::new("Назад", "", "Вверх"),
+            ));
+        }
+        cards
+    }
+
+    /// The full, unpaginated logical list "Я" shows -- same order and
+    /// content as before pagination existed, just without rects
+    /// (`me_content_cards` assigns those per-page).
+    fn me_all_card_views(&self) -> Vec<render::ActionCardView> {
         let total_entities: usize = self.entity_counts.values().sum();
         let mut cards = vec![
-            (
-                stacked_row_rect(0, width, height),
-                render::ActionCardView::new(
-                    "Это устройство",
-                    format!(
-                        "Пространств: {} · Объектов: {total_entities}",
-                        self.spaces.len()
-                    ),
-                    "",
+            render::ActionCardView::new(
+                "Это устройство",
+                format!(
+                    "Пространств: {} · Объектов: {total_entities}",
+                    self.spaces.len()
                 ),
+                "",
             ),
             // S14: "О телефоне" -- build id is compiled in (`build.rs`);
             // model/kernel/uptime are read fresh every draw since uptime
             // obviously changes and the other two are cheap enough not
             // to bother caching.
-            (
-                stacked_row_rect(1, width, height),
-                render::ActionCardView::new(
-                    format!("SaaiOS · сборка {}", env!("SAAIOS_BUILD_ID")),
-                    format!(
-                        "{} · ядро {} · работает {}",
-                        hardware_model(),
-                        kernel_release(),
-                        uptime_string()
-                    ),
-                    "",
+            render::ActionCardView::new(
+                format!("SaaiOS · сборка {}", env!("SAAIOS_BUILD_ID")),
+                format!(
+                    "{} · ядро {} · работает {}",
+                    hardware_model(),
+                    kernel_release(),
+                    uptime_string()
                 ),
+                "",
             ),
             // S15: `/data` usage -- the one partition apps/user state
             // actually lives on (S05's `--data-root`), a more useful
             // number here than the read-only system image's own size.
-            (
-                stacked_row_rect(2, width, height),
-                render::ActionCardView::new("Хранилище", storage_string(), ""),
-            ),
+            render::ActionCardView::new("Хранилище", storage_string(), ""),
             // S16: first three tap-to-cycle settings cards -- see
-            // `me_action_at` for the matching hit-test.
-            (
-                stacked_row_rect(3, width, height),
-                render::ActionCardView::new(
-                    "Яркость экрана",
-                    format!("{}%", self.settings.brightness_pct),
-                    "Изменить",
-                ),
+            // `me_fixed_card_action` for the matching hit-test.
+            render::ActionCardView::new(
+                "Яркость экрана",
+                format!("{}%", self.settings.brightness_pct),
+                "Изменить",
             ),
-            (
-                stacked_row_rect(4, width, height),
-                render::ActionCardView::new(
-                    "Блокировка экрана",
-                    format!("через {} с бездействия", self.settings.idle_timeout_secs),
-                    "Изменить",
-                ),
+            render::ActionCardView::new(
+                "Блокировка экрана",
+                format!("через {} с бездействия", self.settings.idle_timeout_secs),
+                "Изменить",
             ),
-            (
-                stacked_row_rect(5, width, height),
-                render::ActionCardView::new(
-                    "Гашение экрана",
-                    format!(
-                        "через {} с после блокировки",
-                        self.settings.deep_idle_timeout_secs
-                    ),
-                    "Изменить",
+            render::ActionCardView::new(
+                "Гашение экрана",
+                format!(
+                    "через {} с после блокировки",
+                    self.settings.deep_idle_timeout_secs
                 ),
+                "Изменить",
             ),
             // S17: no timezone concept existed before this ADR-061 --
             // see `current_time_string`'s own doc comment for why this
             // is a curated UTC-offset cycle, not full IANA tzdata.
-            (
-                stacked_row_rect(6, width, height),
-                render::ActionCardView::new(
-                    "Часовой пояс",
-                    format_utc_offset(self.settings.utc_offset_minutes),
-                    "Изменить",
-                ),
+            render::ActionCardView::new(
+                "Часовой пояс",
+                format_utc_offset(self.settings.utc_offset_minutes),
+                "Изменить",
             ),
             // S22: read-only -- see the doc comment on `boot_slot` for
             // why there's no "проверить обновления" action here yet.
-            (
-                stacked_row_rect(7, width, height),
-                render::ActionCardView::new(
-                    "Обновления",
-                    format!(
-                        "Слот {} · попыток загрузки: {}",
-                        boot_slot(),
-                        boot_attempts()
-                    ),
-                    "",
+            render::ActionCardView::new(
+                "Обновления",
+                format!(
+                    "Слот {} · попыток загрузки: {}",
+                    boot_slot(),
+                    boot_attempts()
                 ),
+                "",
             ),
             // S18: see `apply_volume`'s doc comment -- persistence/UI
             // real, hardware effect unverified.
-            (
-                stacked_row_rect(8, width, height),
-                render::ActionCardView::new(
-                    "Громкость",
-                    format!("{}%", self.settings.volume_pct),
-                    "Изменить",
-                ),
+            render::ActionCardView::new(
+                "Громкость",
+                format!("{}%", self.settings.volume_pct),
+                "Изменить",
             ),
             // S19: real, unlike S18's volume -- see `wifi_status_line`/
             // `wifi_scan_results`' doc comments. Opens "Wi-Fi сети".
-            (
-                stacked_row_rect(9, width, height),
-                render::ActionCardView::new("Wi-Fi", wifi_status_line(), "Сети"),
-            ),
+            render::ActionCardView::new("Wi-Fi", wifi_status_line(), "Сети"),
             // S20: real, same shape as S19 -- see `bluetooth_scan_
             // results`/`bluetooth_pair`'s doc comments. Opens
             // "Bluetooth устройства".
-            (
-                stacked_row_rect(10, width, height),
-                render::ActionCardView::new(
-                    "Bluetooth",
-                    format!("Сопряжено устройств: {}", bluetooth_paired_count()),
-                    "Устройства",
-                ),
+            render::ActionCardView::new(
+                "Bluetooth",
+                format!("Сопряжено устройств: {}", bluetooth_paired_count()),
+                "Устройства",
             ),
             // S24: opt-in -- see `ShellSettings.pin_code`'s doc
             // comment. Default (`None`) keeps unlock as "any tap",
             // unchanged from before this sprint.
-            (
-                stacked_row_rect(11, width, height),
-                render::ActionCardView::new(
-                    "PIN-код",
-                    if self.settings.pin_code.is_some() {
-                        "Установлен"
-                    } else {
-                        "Не установлен -- разблокировка тапом"
-                    },
-                    "Изменить",
-                ),
+            render::ActionCardView::new(
+                "PIN-код",
+                if self.settings.pin_code.is_some() {
+                    "Установлен"
+                } else {
+                    "Не установлен -- разблокировка тапом"
+                },
+                "Изменить",
             ),
             // S25: process-global, see `render::set_text_scale`'s doc
             // comment for why -- not a per-card local effect, this
             // changes every screen's text at once.
-            (
-                stacked_row_rect(12, width, height),
-                render::ActionCardView::new(
-                    "Размер текста",
-                    format!("{}%", self.settings.text_scale_pct),
-                    "Изменить",
-                ),
+            render::ActionCardView::new(
+                "Размер текста",
+                format!("{}%", self.settings.text_scale_pct),
+                "Изменить",
             ),
             // S25: `render::apply_contrast_boost`'s doc comment
             // explains why this is a post-process stretch, not a
             // second color palette.
-            (
-                stacked_row_rect(13, width, height),
-                render::ActionCardView::new(
-                    "Контраст",
-                    if self.settings.contrast_pct == 0 {
-                        "Обычный".to_string()
-                    } else {
-                        format!("Повышенный ({}%)", self.settings.contrast_pct)
-                    },
-                    "Изменить",
-                ),
+            render::ActionCardView::new(
+                "Контраст",
+                if self.settings.contrast_pct == 0 {
+                    "Обычный".to_string()
+                } else {
+                    format!("Повышенный ({}%)", self.settings.contrast_pct)
+                },
+                "Изменить",
             ),
         ];
-        for (index, app) in self.installed_apps.values().enumerate() {
+        debug_assert_eq!(cards.len(), ME_FIXED_CARD_COUNT);
+        for app in self.installed_apps.values() {
             let grants = self
                 .apps_grants
                 .get(&app.id)
@@ -3429,13 +3479,10 @@ impl Shell {
                     }
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
-            cards.push((
-                stacked_row_rect(index + 14, width, height),
-                render::ActionCardView::new(
-                    app.name.clone(),
-                    format!("{} · {grants}", app_state_label(&app.state)),
-                    "",
-                ),
+            cards.push(render::ActionCardView::new(
+                app.name.clone(),
+                format!("{} · {grants}", app_state_label(&app.state)),
+                "",
             ));
         }
         cards
