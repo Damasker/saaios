@@ -15,6 +15,19 @@ saai_displayd=${SAAI_DISPLAYD_BIN:?set SAAI_DISPLAYD_BIN}
 saai_shell=${SAAI_SHELL_BIN:?set SAAI_SHELL_BIN}
 saai_runtime=${SAAIOS_RUNTIME_BIN:?set SAAIOS_RUNTIME_BIN}
 saai_console=${SAAIOS_CONSOLE_BIN:?set SAAIOS_CONSOLE_BIN}
+# First third-party-style app (built independently of saai-shell/
+# saai-displayd, installed through saai-appd's real Install RPC
+# rather than baked in as a launcher special-case) -- see docs/adr
+# for the "install a third-party app" spike this came from. The same
+# binary doubles as its own installer (`saai-mahjong --install`,
+# rather than a second dedicated binary -- image size on the fixed
+# 8MB init_boot partition). Bundled as a package under saaios/
+# packages/ rather than pre-installed under saaios/apps/ so the real
+# install path (a filesystem copy plus a lifecycle event) still has
+# to run once at the console, not skip straight to "already
+# installed".
+saai_mahjong=${SAAI_MAHJONG_BIN:?set SAAI_MAHJONG_BIN}
+mahjong_manifest="$repo_root/apps/mahjong/manifest.toml"
 source_dir="$script_dir/src"
 scripts_dir="$script_dir/scripts"
 config_dir="$script_dir/config"
@@ -103,6 +116,11 @@ set -- ramdisk.cpio \
     "add 0755 saaios/drm-splash $drm_splash" \
     "add 0755 saaios/saai-displayd $saai_displayd" \
     "add 0755 saaios/saai-shell $saai_shell" \
+    "mkdir 0755 saaios/packages" \
+    "mkdir 0755 saaios/packages/org.saaios.mahjong" \
+    "mkdir 0755 saaios/packages/org.saaios.mahjong/bin" \
+    "add 0644 saaios/packages/org.saaios.mahjong/manifest.toml $mahjong_manifest" \
+    "add 0755 saaios/packages/org.saaios.mahjong/bin/saai-mahjong $saai_mahjong" \
     "mkdir 0755 saaios/fonts" \
     "add 0644 saaios/fonts/Montserrat-Regular.ttf $assets_dir/fonts/Montserrat-Regular.ttf" \
     "add 0644 saaios/fonts/Montserrat-SemiBold.ttf $assets_dir/fonts/Montserrat-SemiBold.ttf" \
@@ -157,6 +175,7 @@ for entry in \
     "saaios-console:$saai_console" \
     "saai-displayd:$saai_displayd" \
     "saai-shell:$saai_shell" \
+    "saai-mahjong:$saai_mahjong" \
     "native-init:$native_init" \
     "drm-splash:$drm_splash"
 do

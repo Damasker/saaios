@@ -2326,6 +2326,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "saai-mahjong"
+version = "0.1.0"
+dependencies = [
+ "fontdue",
+ "saai-app-protocol",
+ "serde_json",
+ "tempfile",
+ "wayland-client",
+ "wayland-protocols",
+]
+
+[[package]]
 name = "saai-ota-health"
 version = "0.1.0"
 dependencies = [

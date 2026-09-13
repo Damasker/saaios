@@ -26,6 +26,7 @@ members = [
     "tests/diagnose-slow-system",
     "services/saai-displayd",
     "services/saai-demo-surface",
+    "services/saai-mahjong",
     "services/saai-shell",
     "services/saai-appd",
     "services/saai-entityd",
