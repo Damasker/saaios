@@ -2411,6 +2411,7 @@ dependencies = [
  "serde_json",
  "smithay-client-toolkit",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

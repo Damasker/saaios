@@ -111,6 +111,7 @@ use smithay_client_toolkit::{
         Shm, ShmHandler,
     },
 };
+use uuid::Uuid;
 
 /// Matches drm-splash.c's own idle-to-lock constant.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -631,6 +632,47 @@ fn content_action_at(
     })
 }
 
+/// S13 Change 2: "Входящие" has no `root.sui` entries at all -- unlike
+/// every other page's content, the task list's length is runtime data
+/// (however many tasks `saai-taskd` currently has waiting), not
+/// something `build.rs` can bake in from markup. These three functions
+/// are this page's own equivalent of `ROOT_CONTENT_ACTIONS`/
+/// `content_action_rect`/`content_action_at`.
+fn inbox_pending_tasks(entities: &[Entity]) -> Vec<&Entity> {
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == "saaios.task"
+                && entity.properties.get("status").and_then(Value::as_str)
+                    == Some(TASK_STATUS_WAITING_CONFIRMATION)
+        })
+        .collect()
+}
+
+/// Same 190-tall/220-apart stacking `root.sui`'s "Пространства" cards
+/// use (`space-home` top=430, `space-work` top=650, ...), just computed
+/// per-index instead of read from compiled-in constants.
+fn inbox_row_rect(index: usize, width: u32, height: u32) -> Rect {
+    let margin = width / 22;
+    let top_2400 = 430 + index as u32 * 220;
+    let top = ((top_2400 as u64 * height as u64) / 2400) as u32;
+    let row_height = ((190_u64 * height as u64) / 2400) as u32;
+    Rect::new(
+        margin,
+        top,
+        width.saturating_sub(margin.saturating_mul(2)),
+        row_height,
+    )
+}
+
+fn inbox_task_at(pos: (f64, f64), width: u32, height: u32, entities: &[Entity]) -> Option<Uuid> {
+    inbox_pending_tasks(entities)
+        .into_iter()
+        .enumerate()
+        .find(|(index, _)| inbox_row_rect(*index, width, height).contains(pos.0, pos.1))
+        .map(|(_, entity)| entity.id)
+}
+
 fn main() {
     let conn = Connection::connect_to_env().expect("failed to connect to Wayland display");
     let (globals, event_queue) = registry_queue_init(&conn).expect("failed to init registry");
@@ -758,6 +800,7 @@ fn main() {
         spaces: Vec::new(),
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
+        confirming_task_id: None,
         selected_entities: Vec::new(),
         portal: portal_server::PortalServer::bind(portal_socket)
             .expect("failed to bind saai-shell portal socket"),
@@ -883,6 +926,12 @@ struct Shell {
     selected_space_id: String,
     entity_counts: BTreeMap<String, usize>,
     selected_entities: Vec<Entity>,
+    /// S13 Change 2: which task the modal on top of "Входящие" is
+    /// currently showing -- `Some` only after the user taps a specific
+    /// row in that page's list, `None` again once accepted/declined.
+    /// Replaces the old always-auto-popup-the-first-one behavior (see
+    /// `confirming_task`) with an explicit, page-scoped entry point.
+    confirming_task_id: Option<Uuid>,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -1210,10 +1259,12 @@ impl TouchHandler for Shell {
                     }
                     self.draw(conn, qh);
                 }
-            } else if self.pending_task_confirmation().is_some() {
+            } else if self.confirming_task_id.is_some() {
                 // Modal, same as consent: the dangerous-Task
                 // confirmation screen owns every touch while it's
-                // showing (S09 Change 3 / ADR-031's follow-up).
+                // showing (S09 Change 3 / ADR-031's follow-up). Only
+                // reachable by first tapping a row on "Входящие" (S13
+                // Change 2) -- no longer auto-opened.
                 if let Some(confirm) =
                     task_confirm_action_at(self.last_touch_pos, self.width, self.height)
                 {
@@ -1231,6 +1282,17 @@ impl TouchHandler for Shell {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
+                    self.draw(conn, qh);
+                }
+            } else if self.current_page == RootPage::Inbox {
+                // S13 Change 2: "Входящие" has no `root.sui` entries,
+                // so its rows aren't reachable through
+                // `content_action_at` below -- this page's tap target
+                // is entirely runtime task data instead.
+                if let Some(task_id) =
+                    inbox_task_at(self.last_touch_pos, self.width, self.height, &self.selected_entities)
+                {
+                    self.confirming_task_id = Some(task_id);
                     self.draw(conn, qh);
                 }
             } else if let Some(action) = content_action_at(
@@ -1316,7 +1378,7 @@ impl Shell {
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
-        } else if let Some(task) = self.pending_task_confirmation() {
+        } else if let Some(task) = self.confirming_task() {
             let view = task_confirm_view(width, height);
             let header = view.children[0].rect;
             let buttons = &view.children[1].children;
@@ -1355,16 +1417,20 @@ impl Shell {
                 .zip(ROOT_TABS)
                 .map(|(node, tab)| (node.rect, tab.label))
                 .collect::<Vec<_>>();
-            let content_cards = ROOT_CONTENT_ACTIONS
-                .iter()
-                .filter(|action| action.page == self.current_page.id())
-                .map(|action| {
-                    (
-                        content_action_rect(action, width, height),
-                        self.content_card(action),
-                    )
-                })
-                .collect::<Vec<_>>();
+            let content_cards = if self.current_page == RootPage::Inbox {
+                self.inbox_content_cards(width, height)
+            } else {
+                ROOT_CONTENT_ACTIONS
+                    .iter()
+                    .filter(|action| action.page == self.current_page.id())
+                    .map(|action| {
+                        (
+                            content_action_rect(action, width, height),
+                            self.content_card(action),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
             let context_label = self.context_label();
             Frame::Root {
                 content_rect,
@@ -1739,6 +1805,35 @@ impl Shell {
         self.demo_app_state != previous
     }
 
+    /// S13 Change 2: "Входящие"'s own content, built from live task
+    /// data instead of `root.sui`. An honest empty state ("нет задач")
+    /// rather than the placeholder gray rows `draw_root` would
+    /// otherwise draw for a page with zero real cards -- Acceptance
+    /// criteria explicitly called this out during the DoR.
+    fn inbox_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        let tasks = inbox_pending_tasks(&self.selected_entities);
+        if tasks.is_empty() {
+            return vec![(
+                inbox_row_rect(0, width, height),
+                render::ActionCardView::new(
+                    "Нет задач, ожидающих подтверждения",
+                    "",
+                    "",
+                ),
+            )];
+        }
+        tasks
+            .into_iter()
+            .enumerate()
+            .map(|(index, task)| {
+                (
+                    inbox_row_rect(index, width, height),
+                    render::ActionCardView::new(task.title.clone(), "Ждёт подтверждения", "Открыть"),
+                )
+            })
+            .collect()
+    }
+
     fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
         if action.action == DEMO_APP_ACTION {
             return self.demo_app_state.view(action.label);
@@ -1816,9 +1911,15 @@ impl Shell {
     /// client has no memory of its own, and a Task the store still
     /// marks `waiting_confirmation` shows up here exactly the same way
     /// it did before the reboot -- never auto-confirmed, never hidden.
-    fn pending_task_confirmation(&self) -> Option<&Entity> {
+    /// S13 Change 2: the task named by `confirming_task_id`, if it's
+    /// still present and still actually waiting -- `None` collapses
+    /// the modal back to whatever page is underneath (harmless if the
+    /// id is stale, e.g. the task was resolved from another client).
+    fn confirming_task(&self) -> Option<&Entity> {
+        let id = self.confirming_task_id?;
         self.selected_entities.iter().find(|entity| {
-            entity.entity_type == "saaios.task"
+            entity.id == id
+                && entity.entity_type == "saaios.task"
                 && entity.properties.get("status").and_then(Value::as_str)
                     == Some(TASK_STATUS_WAITING_CONFIRMATION)
         })
@@ -1835,9 +1936,14 @@ impl Shell {
         // (disjoint but, from the borrow checker's point of view
         // through a `&self`-taking helper, not provably disjoint)
         // mutable borrow of `self.entityd`.
-        let Some(task) = self.pending_task_confirmation().cloned() else {
+        let Some(task) = self.confirming_task().cloned() else {
             return;
         };
+        // Closes the modal regardless of outcome -- the old behavior
+        // (auto-popup the next waiting task, if any) is gone with S13
+        // Change 2; the user comes back to "Входящие" and taps the
+        // next one themselves if there is one.
+        self.confirming_task_id = None;
         let mut properties = task.properties.clone();
         properties.insert(
             "status".into(),
