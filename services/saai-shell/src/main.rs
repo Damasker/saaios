@@ -157,9 +157,6 @@ const LOCK_SCREEN_COLOR: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
 /// was no reliable cue for when it was actually safe -- or necessary --
 /// to press power.
 const SLEEP_INDICATOR_COLOR: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
-const DEMO_APP_ID: &str = "org.saaios.demo-surface";
-const DEMO_APP_ACTION: &str = "manage_app:org.saaios.demo-surface";
-const DEMO_PACKAGE_PATH: &str = "/data/saaios/packages/org.saaios.demo-surface";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TabDefinition {
@@ -207,47 +204,6 @@ impl RootPage {
             RootPage::Inbox => "inbox",
             RootPage::Spaces => "spaces",
             RootPage::Me => "me",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DemoAppState {
-    Unavailable,
-    Missing,
-    Installed,
-    Running,
-    Stopped,
-    CrashLimited,
-    Pending,
-    Error,
-}
-
-impl DemoAppState {
-    fn from_summary(app: &AppSummary) -> Self {
-        match app.state.as_str() {
-            "running" => Self::Running,
-            "stopped" => Self::Stopped,
-            "crash_limited" => Self::CrashLimited,
-            _ => Self::Installed,
-        }
-    }
-
-    fn view(self, label: &'static str) -> render::ActionCardView {
-        match self {
-            Self::Unavailable => {
-                render::ActionCardView::new(label, "Сервис недоступен", "Ожидание")
-            }
-            Self::Missing => render::ActionCardView::new(label, "Не установлено", "Установить"),
-            Self::Installed | Self::Stopped => {
-                render::ActionCardView::new(label, "Готово к запуску", "Открыть")
-            }
-            Self::Running => render::ActionCardView::new(label, "Работает", "Открыто"),
-            Self::CrashLimited => {
-                render::ActionCardView::new(label, "Остановлено после сбоя", "Повторить")
-            }
-            Self::Pending => render::ActionCardView::new(label, "Выполняется…", "Подождите"),
-            Self::Error => render::ActionCardView::new(label, "Не удалось выполнить", "Повторить"),
         }
     }
 }
@@ -358,7 +314,7 @@ const CONSENT_BUTTON_HEIGHT: u32 = ROOT_TAB_HEIGHT;
 /// app's launch is blocked on consent.
 struct PendingConsent {
     app_id: String,
-    app_name: &'static str,
+    app_name: String,
     requested: Vec<String>,
 }
 
@@ -443,7 +399,7 @@ const TASK_STATUS_CANCELLED: &str = "cancelled";
 /// `buffer`/`canvas` take a mutable borrow for the rest of the function.
 enum Frame {
     Consent {
-        app_name: &'static str,
+        app_name: String,
         labels: Vec<String>,
         header: Rect,
         accept: Rect,
@@ -689,6 +645,32 @@ fn inbox_task_at(pos: (f64, f64), width: u32, height: u32, entities: &[Entity]) 
         .map(|(_, entity)| entity.id)
 }
 
+/// S13 Change 4: "Сейчас"'s hit-test, mirroring `content_action_at`
+/// but for a page that mixes a runtime-sized app list (rows 0..apps.len())
+/// with the two remaining static `root.sui` cards (rows apps.len()..),
+/// stacked directly below it. Returns the same `action` string either
+/// kind of card would carry, so the caller dispatches identically to
+/// how `invoke_content_action` used to.
+fn now_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    installed_apps: &BTreeMap<String, AppSummary>,
+) -> Option<String> {
+    for (index, app) in installed_apps.values().enumerate() {
+        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
+            return Some(format!("manage_app:{}", app.id));
+        }
+    }
+    let base = installed_apps.len();
+    ROOT_CONTENT_ACTIONS
+        .iter()
+        .filter(|action| action.page == "now")
+        .enumerate()
+        .find(|(offset, _)| stacked_row_rect(base + offset, width, height).contains(pos.0, pos.1))
+        .map(|(_, action)| action.action.to_string())
+}
+
 fn main() {
     let conn = Connection::connect_to_env().expect("failed to connect to Wayland display");
     let (globals, event_queue) = registry_queue_init(&conn).expect("failed to init registry");
@@ -809,7 +791,6 @@ fn main() {
         last_statusbar_refresh: Instant::now(),
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
-        demo_app_state: DemoAppState::Unavailable,
         pending_consent: None,
         intent_input: None,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
@@ -931,7 +912,6 @@ struct Shell {
     last_statusbar_refresh: Instant,
     fonts: Option<render::Fonts>,
     appd: appd_client::AppdClient,
-    demo_app_state: DemoAppState,
     /// Set while a launch is blocked on the ADR-020 consent screen -- see
     /// `apply_appd_message`'s `ConsentRequired`/`ConsentDecided` handling.
     pending_consent: Option<PendingConsent>,
@@ -1318,6 +1298,30 @@ impl TouchHandler for Shell {
                     self.confirming_task_id = Some(task_id);
                     self.draw(conn, qh);
                 }
+            } else if self.current_page == RootPage::Now {
+                // S13 Change 4: same reasoning as "Входящие" above --
+                // the app-list rows have no `root.sui` entries, so
+                // `content_action_at` alone can't find them (or, now,
+                // even correctly locate the two cards that remain
+                // static, since they're repositioned below the
+                // runtime-sized app list).
+                if let Some(action_str) = now_action_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    &self.installed_apps,
+                ) {
+                    if let Some(app_id) = action_str.strip_prefix("manage_app:") {
+                        let app_id = app_id.to_string();
+                        self.invoke_app_launch(&app_id, conn, qh);
+                    } else if action_str == "open_intent_input" {
+                        self.intent_input = Some(IntentInputState::default());
+                        self.draw(conn, qh);
+                    }
+                    // "inspect_selected_entity" has no tap behavior --
+                    // matches this card's pre-existing no-op (it was
+                    // never wired into `invoke_content_action` either).
+                }
             } else if let Some(action) = content_action_at(
                 self.current_page,
                 self.last_touch_pos,
@@ -1395,7 +1399,7 @@ impl Shell {
                 .map(|name| capability_label(name).to_owned())
                 .collect::<Vec<_>>();
             Frame::Consent {
-                app_name: pending.app_name,
+                app_name: pending.app_name.clone(),
                 labels,
                 header,
                 accept: buttons[0].rect,
@@ -1444,6 +1448,8 @@ impl Shell {
                 self.inbox_content_cards(width, height)
             } else if self.current_page == RootPage::Me {
                 self.me_content_cards(width, height)
+            } else if self.current_page == RootPage::Now {
+                self.now_content_cards(width, height)
             } else {
                 ROOT_CONTENT_ACTIONS
                     .iter()
@@ -1504,7 +1510,7 @@ impl Shell {
             } => {
                 render::draw_consent(
                     &mut render::Canvas::new(canvas, width, height),
-                    app_name,
+                    &app_name,
                     &labels,
                     header,
                     accept,
@@ -1586,21 +1592,23 @@ impl Shell {
         if action.action == "open_intent_input" {
             self.intent_input = Some(IntentInputState::default());
             self.draw(conn, qh);
-            return;
         }
-        if action.action != DEMO_APP_ACTION {
-            return;
-        }
-        match self.demo_app_state {
-            DemoAppState::Missing | DemoAppState::Error => {
-                self.appd.install(DEMO_PACKAGE_PATH);
-                self.demo_app_state = DemoAppState::Pending;
-            }
-            DemoAppState::Installed | DemoAppState::Stopped | DemoAppState::CrashLimited => {
-                self.appd.launch(DEMO_APP_ID);
-                self.demo_app_state = DemoAppState::Pending;
-            }
-            DemoAppState::Unavailable | DemoAppState::Running | DemoAppState::Pending => return,
+    }
+
+    /// S13 Change 4: launches an already-installed app by id -- the
+    /// generic replacement for the old demo-only branch here (removed
+    /// along with `DemoAppState`; that state machine's `Missing`/
+    /// `Error` cases existed to bootstrap-install the demo specifically,
+    /// a capability this generic list intentionally doesn't have, see
+    /// ADR-056). A no-op if already running, matching the old demo
+    /// behavior for `Running`/`Pending`.
+    fn invoke_app_launch(&mut self, app_id: &str, conn: &Connection, qh: &QueueHandle<Self>) {
+        let already_running = self
+            .installed_apps
+            .get(app_id)
+            .is_some_and(|app| app.state == "running");
+        if !already_running {
+            self.appd.launch(app_id);
         }
         self.draw(conn, qh);
     }
@@ -1663,10 +1671,6 @@ impl Shell {
         let messages = self.appd.poll();
         let available = self.appd.is_connected();
         let mut changed = was_available != available;
-        if !available {
-            changed |= self.demo_app_state != DemoAppState::Unavailable;
-            self.demo_app_state = DemoAppState::Unavailable;
-        }
         for message in messages {
             changed |= self.apply_appd_message(message);
         }
@@ -1694,11 +1698,10 @@ impl Shell {
     }
 
     /// Keeps the portal's authorization caches (`apps_by_pid`,
-    /// `apps_grants`) current -- separate from `apply_appd_message`'s own
-    /// match below because that one is still filtering everything down to
-    /// the single hardcoded `DEMO_APP_ID` card (a known, pre-existing
-    /// limitation of this UI, not something Change 7 needs to fix), while
-    /// the portal has to authorize *any* installed app, not just the demo.
+    /// `apps_grants`) current, plus `installed_apps` (S13 Change 3/4) --
+    /// separate from `apply_appd_message`'s own match because that one
+    /// only cares about `ConsentRequired`/`ConsentDecided`, while this
+    /// one has to fold in every kind of app-list-affecting message.
     fn update_app_caches(&mut self, message: &AppServerMessage) {
         match message {
             AppServerMessage::Response {
@@ -1760,77 +1763,48 @@ impl Shell {
         self.installed_apps.insert(app.id.clone(), app.clone());
     }
 
+    /// S13 Change 4: generic over every installed app, not just the
+    /// demo -- `update_app_caches` already keeps `installed_apps`/
+    /// `apps_by_pid`/`apps_grants` current for any app id, so the only
+    /// thing left here is `pending_consent`, which was already
+    /// app-agnostic on the *receiving* end (keyed off whatever `app_id`
+    /// the server names) even when this method only ever special-cased
+    /// the demo's own launch/install flow. Always reports "changed" --
+    /// this only ever runs once per message that actually arrived, so
+    /// unconditionally redrawing costs nothing an empty poll wouldn't
+    /// already skip.
     fn apply_appd_message(&mut self, message: AppServerMessage) -> bool {
         self.update_app_caches(&message);
-        let previous = self.demo_app_state;
         match message {
-            AppServerMessage::Response { ok: false, .. } => {
-                self.demo_app_state = DemoAppState::Error
-            }
-            AppServerMessage::Response {
-                result: Some(AppResponseResult::List { apps }),
-                ..
-            } => {
-                self.demo_app_state = apps
-                    .iter()
-                    .find(|app| app.id == DEMO_APP_ID)
-                    .map(DemoAppState::from_summary)
-                    .unwrap_or(DemoAppState::Missing);
-            }
-            AppServerMessage::Response {
-                result: Some(AppResponseResult::Installed { app }),
-                ..
-            } if app.id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Installed,
-            AppServerMessage::Response {
-                result: Some(AppResponseResult::Launched { app_id, .. }),
-                ..
-            } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Running,
-            AppServerMessage::Response {
-                result: Some(AppResponseResult::Stopped { app_id, .. }),
-                ..
-            } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Stopped,
-            AppServerMessage::Response {
-                result: Some(AppResponseResult::Removed { app_id, .. }),
-                ..
-            } if app_id == DEMO_APP_ID => self.demo_app_state = DemoAppState::Missing,
             AppServerMessage::Response {
                 result: Some(AppResponseResult::ConsentRequired { app_id, requested }),
                 ..
-            } if app_id == DEMO_APP_ID => {
+            } => {
+                let app_name = self
+                    .installed_apps
+                    .get(&app_id)
+                    .map(|app| app.name.clone())
+                    .unwrap_or_else(|| app_id.clone());
                 self.pending_consent = Some(PendingConsent {
                     app_id,
-                    app_name: "Saai Demo",
+                    app_name,
                     requested,
                 });
-                // The launch that triggered this is refused, not merely
-                // delayed -- back to a launchable state, not stuck Pending.
-                self.demo_app_state = DemoAppState::Installed;
             }
             AppServerMessage::Response {
                 result: Some(AppResponseResult::ConsentDecided { app_id, .. }),
                 ..
-            } if app_id == DEMO_APP_ID => {
+            } => {
                 self.pending_consent = None;
                 // Accept or decline, the daemon now has a decision that
                 // covers this request -- retry the launch the user
                 // originally asked for; it can no longer come back as
                 // ConsentRequired for the same capability set.
                 self.appd.launch(app_id);
-                self.demo_app_state = DemoAppState::Pending;
-            }
-            AppServerMessage::Event { event, .. } if event.app_id == DEMO_APP_ID => {
-                self.demo_app_state = match event.event {
-                    LifecycleEventKind::Installed => DemoAppState::Installed,
-                    LifecycleEventKind::Running => DemoAppState::Running,
-                    LifecycleEventKind::Stopped => DemoAppState::Stopped,
-                    LifecycleEventKind::Crashed => DemoAppState::Pending,
-                    LifecycleEventKind::CrashLimited => DemoAppState::CrashLimited,
-                    LifecycleEventKind::Removed => DemoAppState::Missing,
-                };
             }
             _ => {}
         }
-        self.demo_app_state != previous
+        true
     }
 
     /// S13 Change 2: "Входящие"'s own content, built from live task
@@ -1911,10 +1885,47 @@ impl Shell {
         cards
     }
 
-    fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
-        if action.action == DEMO_APP_ACTION {
-            return self.demo_app_state.view(action.label);
+    /// S13 Change 4: "Сейчас"'s content -- one card per installed app
+    /// (replacing the old single hardcoded demo card), followed by the
+    /// two still-static `root.sui` cards for this page
+    /// ("Объект пространства", "Новое намерение"), positioned right
+    /// after the app list instead of at their old fixed `root.sui`
+    /// coordinates -- `now_action_at` computes hit rects the same way.
+    fn now_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        let mut cards: Vec<(Rect, render::ActionCardView)> = self
+            .installed_apps
+            .values()
+            .enumerate()
+            .map(|(index, app)| {
+                (
+                    stacked_row_rect(index, width, height),
+                    render::ActionCardView::new(
+                        app.name.clone(),
+                        app_state_label(&app.state),
+                        if app.state == "running" {
+                            "Работает"
+                        } else {
+                            "Запустить"
+                        },
+                    ),
+                )
+            })
+            .collect();
+        let base = self.installed_apps.len();
+        for (offset, action) in ROOT_CONTENT_ACTIONS
+            .iter()
+            .filter(|action| action.page == "now")
+            .enumerate()
+        {
+            cards.push((
+                stacked_row_rect(base + offset, width, height),
+                self.content_card(action),
+            ));
         }
+        cards
+    }
+
+    fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
         if action.action == "inspect_selected_entity" {
             return match self.selected_entities.first() {
                 Some(entity) => render::ActionCardView::new(
@@ -2314,12 +2325,19 @@ mod tests {
     }
 
     #[test]
-    fn demo_action_geometry_comes_from_sui_markup() {
-        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 7);
-        assert_eq!(ROOT_CONTENT_ACTIONS[0].label, "Saai Demo");
+    fn now_page_static_actions_come_from_sui_markup() {
+        // S13 Change 4 removed the compiled-in demo-app card -- "Сейчас"
+        // now has exactly the two entries that were always meant to
+        // stay static (the app list itself is runtime data, handled by
+        // `now_action_at`/`now_content_cards`, not this table).
+        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 6);
         assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 500.0), 1080, 2400).map(|action| action.id),
-            Some("demo-app")
+            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
+            Some("selected-entity")
+        );
+        assert_eq!(
+            content_action_at(RootPage::Now, (540.0, 1000.0), 1080, 2400).map(|action| action.id),
+            Some("new-intent")
         );
         assert!(content_action_at(RootPage::Inbox, (540.0, 500.0), 1080, 2400).is_none());
     }

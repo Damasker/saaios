@@ -3,7 +3,6 @@ sui 1
 screen root {
   column {
     content id=content fill {
-      action demo-app page=now top=430 height=240 label="Saai Demo" action=manage_app:org.saaios.demo-surface
       action selected-entity page=now top=720 height=210 label="Объект пространства" action=inspect_selected_entity
       action new-intent page=now top=950 height=140 label="Новое намерение" action=open_intent_input
       action space-home page=spaces top=430 height=190 label="Дом" action=select_space:home

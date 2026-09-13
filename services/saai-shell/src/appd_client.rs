@@ -38,15 +38,6 @@ impl AppdClient {
         });
     }
 
-    pub fn install(&mut self, package_path: impl Into<PathBuf>) {
-        let request_id = self.request_id();
-        self.queue(ClientRequest::Install {
-            schema: APPD_WIRE_SCHEMA_V1,
-            request_id,
-            package_path: package_path.into(),
-        });
-    }
-
     pub fn launch(&mut self, app_id: impl Into<String>) {
         let request_id = self.request_id();
         self.queue(ClientRequest::Launch {
