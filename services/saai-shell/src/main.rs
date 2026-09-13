@@ -736,7 +736,7 @@ fn main() {
     let fonts = match render::Fonts::load_system() {
         Ok(fonts) => Some(fonts),
         Err(error) => {
-            eprintln!("saai-shell: Inter unavailable, continuing without text: {error}");
+            eprintln!("saai-shell: system font unavailable, continuing without text: {error}");
             None
         }
     };

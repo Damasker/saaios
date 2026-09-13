@@ -55,9 +55,23 @@ impl ActionCardView {
 
 impl Fonts {
     pub fn load_system() -> Result<Self, String> {
+        // S13 Change 5: swapped from Inter, by explicit user request
+        // after seeing Inter on-device. First tried Manrope, which
+        // physically turned out to read as visually indistinguishable
+        // from Inter at these render sizes -- Montserrat is the
+        // second, confirmed-distinctive choice. Both Space Grotesk and
+        // Sora were considered and rejected before that: neither ships
+        // any Cyrillic glyphs at all (checked via `fontTools`'s cmap),
+        // which would have broken every Russian label in this UI.
+        // Montserrat ships as a variable font on Google Fonts now (no
+        // separate static weight files) -- `fontdue` has no
+        // variable-font support, so the two weights here are static
+        // instances pre-generated with `fonttools varLib.instancer`
+        // (wght=400, wght=600) rather than loaded from the variable
+        // file directly.
         Self::load(
-            "/saaios/fonts/Inter-Regular.ttf",
-            "/saaios/fonts/Inter-SemiBold.ttf",
+            "/saaios/fonts/Montserrat-Regular.ttf",
+            "/saaios/fonts/Montserrat-SemiBold.ttf",
         )
     }
 
@@ -416,22 +430,38 @@ pub fn draw_root(
                 SURFACE
             },
         );
-        canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
-        let button_width = 250.min(rect.width / 3);
-        let button = Rect::new(
-            rect.x + rect.width.saturating_sub(button_width + 34),
-            rect.y + 58,
-            button_width,
-            88,
-        );
-        canvas.fill_rect(button, ACCENT);
+        // S13 Change 5: an empty `action` means this card has nothing to
+        // tap (an info summary -- "Это устройство", "Я"'s app grants,
+        // "Входящие"'s empty state) -- the icon block and the
+        // accent-colored button were drawn unconditionally before, which
+        // made every such card look clickable even though nothing
+        // happened when tapped. Text starts at the icon's own left edge
+        // instead of after it when there's no icon to make room for.
+        let has_action = !card.action.is_empty();
+        let text_left = if has_action {
+            canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
+            rect.x + 174
+        } else {
+            rect.x + 34
+        };
+        let button = has_action.then(|| {
+            let button_width = 250.min(rect.width / 3);
+            let button = Rect::new(
+                rect.x + rect.width.saturating_sub(button_width + 34),
+                rect.y + 58,
+                button_width,
+                88,
+            );
+            canvas.fill_rect(button, ACCENT);
+            button
+        });
         if let Some(fonts) = fonts {
             draw_text(
                 canvas,
                 &fonts.semibold,
                 &card.label,
                 38.0,
-                rect.x + 174,
+                text_left,
                 rect.y + 48,
                 TEXT,
             );
@@ -440,19 +470,21 @@ pub fn draw_root(
                 &fonts.regular,
                 &card.status,
                 27.0,
-                rect.x + 174,
+                text_left,
                 rect.y + 108,
                 TEXT_MUTED,
             );
-            draw_text_centered(
-                canvas,
-                &fonts.semibold,
-                &card.action,
-                25.0,
-                button.x + button.width / 2,
-                button.y + 24,
-                BACKGROUND,
-            );
+            if let Some(button) = button {
+                draw_text_centered(
+                    canvas,
+                    &fonts.semibold,
+                    &card.action,
+                    25.0,
+                    button.x + button.width / 2,
+                    button.y + 24,
+                    BACKGROUND,
+                );
+            }
         }
     }
 
