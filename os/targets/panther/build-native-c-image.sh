@@ -104,9 +104,9 @@ set -- ramdisk.cpio \
     "add 0755 saaios/saai-displayd $saai_displayd" \
     "add 0755 saaios/saai-shell $saai_shell" \
     "mkdir 0755 saaios/fonts" \
-    "add 0644 saaios/fonts/Inter-Regular.ttf $assets_dir/fonts/Inter-Regular.ttf" \
-    "add 0644 saaios/fonts/Inter-SemiBold.ttf $assets_dir/fonts/Inter-SemiBold.ttf" \
-    "add 0644 saaios/fonts/OFL-1.1.txt $assets_dir/fonts/OFL-1.1.txt" \
+    "add 0644 saaios/fonts/Montserrat-Regular.ttf $assets_dir/fonts/Montserrat-Regular.ttf" \
+    "add 0644 saaios/fonts/Montserrat-SemiBold.ttf $assets_dir/fonts/Montserrat-SemiBold.ttf" \
+    "add 0644 saaios/fonts/Montserrat-OFL.txt $assets_dir/fonts/Montserrat-OFL.txt" \
     "add 0755 saaios/touch-monitor $touch_monitor" \
     "add 0755 saaios/wifi-scan $wifi_scan" \
     "add 0755 saaios/sntp-sync $sntp_sync" \
