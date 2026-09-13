@@ -129,6 +129,106 @@ const STATUSBAR_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 /// suspend/resume cycle itself safe, but not any particular threshold
 /// for how eager to be about it.
 const DEFAULT_DEEP_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// S16: first persisted, user-changeable setting in this project --
+/// everything before this (deep idle timeout included) was either a
+/// compile-time constant or an env-var override for testing, never
+/// something the running shell itself could write back. One flat JSON
+/// object, no `serde` derive (only `serde_json`, already a dependency,
+/// is used elsewhere in this file for exactly this shape of ad hoc
+/// object) under the same `/data/saaios` root S05's app data already
+/// lives under.
+const SETTINGS_PATH: &str = "/data/saaios/var/shell-settings.json";
+/// Real sysfs path, confirmed present on this hardware by the old C
+/// boot/recovery UI (`os/targets/panther/src/drm-splash.c`) -- never
+/// read or written anywhere in the new Wayland stack before S16.
+const BACKLIGHT_PATH: &str =
+    "/sys/devices/platform/1c2c0000.drmdsim/1c2c0000.drmdsim.0/backlight/panel0-backlight/brightness";
+const BACKLIGHT_MAX: u32 = 4095;
+/// Discrete steps a tap cycles through, rather than a drag-to-adjust
+/// slider -- this UI has no drag-gesture rendering anywhere yet (every
+/// existing interaction is tap-a-card), and inventing one just for
+/// this would be a much larger, separate piece of work.
+const BRIGHTNESS_LEVELS_PCT: [u8; 4] = [25, 50, 75, 100];
+const IDLE_TIMEOUT_LEVELS_SECS: [u64; 4] = [30, 60, 120, 300];
+const DEEP_IDLE_TIMEOUT_LEVELS_SECS: [u64; 4] = [15, 60, 300, 900];
+
+fn next_in_cycle<T: PartialEq + Copy>(levels: &[T], current: T) -> T {
+    let index = levels.iter().position(|&level| level == current).unwrap_or(0);
+    levels[(index + 1) % levels.len()]
+}
+
+/// Scales a 0-100 percentage onto the panel's real 0-4095 backlight
+/// range and writes it. Errors are swallowed the same way every other
+/// best-effort sysfs write in this file already is (`wifi_is_up`,
+/// `read_battery`) -- a phone that can't dim its screen should still
+/// otherwise work.
+fn apply_brightness(pct: u8) {
+    let value = (BACKLIGHT_MAX as u64 * pct.min(100) as u64 / 100) as u32;
+    let _ = std::fs::write(BACKLIGHT_PATH, value.to_string());
+}
+
+struct ShellSettings {
+    brightness_pct: u8,
+    idle_timeout_secs: u64,
+    deep_idle_timeout_secs: u64,
+}
+
+impl ShellSettings {
+    /// `SAAIOS_DEEP_IDLE_SECS` (S11) predates persisted settings and
+    /// stays live as the same practical-for-physical-testing escape
+    /// hatch it always was -- takes priority over both the settings
+    /// file and the compiled-in default whenever it's actually set.
+    fn default_deep_idle_secs() -> u64 {
+        std::env::var("SAAIOS_DEEP_IDLE_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_DEEP_IDLE_TIMEOUT.as_secs())
+    }
+
+    fn load() -> Self {
+        let default = Self {
+            brightness_pct: 100,
+            idle_timeout_secs: IDLE_TIMEOUT.as_secs(),
+            deep_idle_timeout_secs: Self::default_deep_idle_secs(),
+        };
+        let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        else {
+            return default;
+        };
+        Self {
+            brightness_pct: value
+                .get("brightness_pct")
+                .and_then(Value::as_u64)
+                .map(|pct| pct as u8)
+                .unwrap_or(default.brightness_pct),
+            idle_timeout_secs: value
+                .get("idle_timeout_secs")
+                .and_then(Value::as_u64)
+                .unwrap_or(default.idle_timeout_secs),
+            deep_idle_timeout_secs: value
+                .get("deep_idle_timeout_secs")
+                .and_then(Value::as_u64)
+                .unwrap_or(default.deep_idle_timeout_secs),
+        }
+    }
+
+    fn save(&self) {
+        let value = json!({
+            "brightness_pct": self.brightness_pct,
+            "idle_timeout_secs": self.idle_timeout_secs,
+            "deep_idle_timeout_secs": self.deep_idle_timeout_secs,
+        });
+        let Ok(text) = serde_json::to_string_pretty(&value) else {
+            return;
+        };
+        if let Some(parent) = std::path::Path::new(SETTINGS_PATH).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(SETTINGS_PATH, text);
+    }
+}
 /// Bright red -- deliberately unmistakable against the toplevel's dark
 /// slate placeholder, so a photo of the panel makes it obvious which
 /// surface is actually receiving the compositor's output while locked.
@@ -744,6 +844,23 @@ fn now_action_at(
         .map(|(_, action)| action.action.to_string())
 }
 
+/// S16: "Я"'s three settings rows sit at fixed indices 3-5 (see
+/// `me_content_cards`, after the two read-only info rows and one
+/// storage row) -- unlike "Входящие"/"Сейчас" this page's actionable
+/// content isn't runtime-sized, so plain fixed indices are enough,
+/// no `installed_apps.len()`-style offset needed.
+fn me_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
+    if stacked_row_rect(3, width, height).contains(pos.0, pos.1) {
+        Some("cycle_brightness")
+    } else if stacked_row_rect(4, width, height).contains(pos.0, pos.1) {
+        Some("cycle_idle_timeout")
+    } else if stacked_row_rect(5, width, height).contains(pos.0, pos.1) {
+        Some("cycle_deep_idle_timeout")
+    } else {
+        None
+    }
+}
+
 fn main() {
     let conn = Connection::connect_to_env().expect("failed to connect to Wayland display");
     let (globals, event_queue) = registry_queue_init(&conn).expect("failed to init registry");
@@ -823,11 +940,8 @@ fn main() {
     let portal_socket = std::env::var_os("SAAIOS_PORTAL_SOCKET")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "/run/saaios/portal.sock".into());
-    let deep_idle_timeout = std::env::var("SAAIOS_DEEP_IDLE_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(DEFAULT_DEEP_IDLE_TIMEOUT);
+    let settings = ShellSettings::load();
+    apply_brightness(settings.brightness_pct);
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
@@ -879,7 +993,7 @@ fn main() {
         apps_grants: BTreeMap::new(),
         clipboard: None,
         last_apps_refresh: Instant::now(),
-        deep_idle_timeout,
+        settings,
     };
 
     println!("saai-shell: connected, toplevel created");
@@ -1024,9 +1138,11 @@ struct Shell {
     /// cleared on `saai-shell` restart.
     clipboard: Option<String>,
     last_apps_refresh: Instant,
-    /// S11 Change 2 -- additional idle time past `IDLE_TIMEOUT`'s lock
-    /// before `check_deep_idle` actually suspends the device.
-    deep_idle_timeout: Duration,
+    /// S16: persisted, user-changeable (brightness, both idle
+    /// timeouts) -- replaces the old fixed `IDLE_TIMEOUT` constant and
+    /// per-instance-but-still-fixed-at-startup `deep_idle_timeout`
+    /// field from S11.
+    settings: ShellSettings,
 }
 
 impl CompositorHandler for Shell {
@@ -1395,6 +1511,14 @@ impl TouchHandler for Shell {
                     // matches this card's pre-existing no-op (it was
                     // never wired into `invoke_content_action` either).
                 }
+            } else if self.current_page == RootPage::Me {
+                // S16: same reasoning again -- the three settings rows
+                // sit below "Я"'s two-then-three fixed info rows, at
+                // indices `content_action_at`'s `root.sui`-driven table
+                // (which has no "me" entries at all) can't reach.
+                if let Some(action) = me_action_at(self.last_touch_pos, self.width, self.height) {
+                    self.invoke_me_action(action, conn, qh);
+                }
             } else if let Some(action) = content_action_at(
                 self.current_page,
                 self.last_touch_pos,
@@ -1686,6 +1810,35 @@ impl Shell {
         self.draw(conn, qh);
     }
 
+    /// S16: advances whichever setting `action` names to the next
+    /// value in its own fixed cycle, applies the side effect that
+    /// setting actually controls (only brightness has one -- the two
+    /// timeouts are read fresh by `check_idle_timeout`/`check_deep_idle`
+    /// every tick, nothing to push), persists, and redraws so the
+    /// card's own status text reflects the new value immediately.
+    fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
+        match action {
+            "cycle_brightness" => {
+                self.settings.brightness_pct =
+                    next_in_cycle(&BRIGHTNESS_LEVELS_PCT, self.settings.brightness_pct);
+                apply_brightness(self.settings.brightness_pct);
+            }
+            "cycle_idle_timeout" => {
+                self.settings.idle_timeout_secs =
+                    next_in_cycle(&IDLE_TIMEOUT_LEVELS_SECS, self.settings.idle_timeout_secs);
+            }
+            "cycle_deep_idle_timeout" => {
+                self.settings.deep_idle_timeout_secs = next_in_cycle(
+                    &DEEP_IDLE_TIMEOUT_LEVELS_SECS,
+                    self.settings.deep_idle_timeout_secs,
+                );
+            }
+            _ => return,
+        }
+        self.settings.save();
+        self.draw(conn, qh);
+    }
+
     /// S09 Change 2: drives the on-screen keyboard opened by
     /// `open_intent_input`. `intent:send` is the one path that talks to
     /// `saai-entityd` -- everything else only touches `self.intent_input`'s
@@ -1955,6 +2108,35 @@ impl Shell {
                 stacked_row_rect(2, width, height),
                 render::ActionCardView::new("Хранилище", storage_string(), ""),
             ),
+            // S16: first three tap-to-cycle settings cards -- see
+            // `me_action_at` for the matching hit-test.
+            (
+                stacked_row_rect(3, width, height),
+                render::ActionCardView::new(
+                    "Яркость экрана",
+                    format!("{}%", self.settings.brightness_pct),
+                    "Изменить",
+                ),
+            ),
+            (
+                stacked_row_rect(4, width, height),
+                render::ActionCardView::new(
+                    "Блокировка экрана",
+                    format!("через {} с бездействия", self.settings.idle_timeout_secs),
+                    "Изменить",
+                ),
+            ),
+            (
+                stacked_row_rect(5, width, height),
+                render::ActionCardView::new(
+                    "Гашение экрана",
+                    format!(
+                        "через {} с после блокировки",
+                        self.settings.deep_idle_timeout_secs
+                    ),
+                    "Изменить",
+                ),
+            ),
         ];
         for (index, app) in self.installed_apps.values().enumerate() {
             let grants = self
@@ -1973,7 +2155,7 @@ impl Shell {
                 })
                 .unwrap_or_else(|| "без разрешений".to_string());
             cards.push((
-                stacked_row_rect(index + 3, width, height),
+                stacked_row_rect(index + 6, width, height),
                 render::ActionCardView::new(
                     app.name.clone(),
                     format!("{} · {grants}", app_state_label(&app.state)),
@@ -2236,7 +2418,8 @@ impl Shell {
     /// just driven by this event loop's existing 16ms tick instead of a
     /// separate timer source.
     fn check_idle_timeout(&mut self, qh: &QueueHandle<Self>) {
-        if self.locked || self.last_activity.elapsed() < IDLE_TIMEOUT {
+        let idle_timeout = Duration::from_secs(self.settings.idle_timeout_secs);
+        if self.locked || self.last_activity.elapsed() < idle_timeout {
             return;
         }
         println!("saai-shell: idle timeout, locking");
@@ -2385,7 +2568,8 @@ impl Shell {
     /// version only ever changes what's on screen; `TouchHandler::down`
     /// clears `sleeping` again on the next touch.
     fn check_deep_idle(&mut self, _conn: &Connection) {
-        if !self.locked || self.sleeping || self.last_activity.elapsed() < self.deep_idle_timeout {
+        let deep_idle_timeout = Duration::from_secs(self.settings.deep_idle_timeout_secs);
+        if !self.locked || self.sleeping || self.last_activity.elapsed() < deep_idle_timeout {
             return;
         }
         println!("saai-shell: deep idle timeout, screen off");
