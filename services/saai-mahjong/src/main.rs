@@ -1,4 +1,5 @@
-use std::io::Write;
+use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -6,8 +7,8 @@ use wayland_client::{
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
-        wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
-        wl_touch,
+        wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+        wl_surface, wl_touch,
     },
     Connection, Dispatch, QueueHandle,
 };
@@ -85,6 +86,15 @@ struct AppState {
     tiles: Vec<Tile>,
     selected: Option<usize>,
     needs_redraw: bool,
+    /// S28: one persistent backing file/pool/buffer, recreated only
+    /// when `configured_width`/`configured_height` actually change --
+    /// see `redraw`'s doc comment for why a fresh tempfile per redraw
+    /// reliably segfaulted the app under the sandbox.
+    shm_file: Option<File>,
+    shm_pool: Option<wl_shm_pool::WlShmPool>,
+    buffer: Option<wl_buffer::WlBuffer>,
+    buffer_width: i32,
+    buffer_height: i32,
 }
 
 impl AppState {
@@ -274,14 +284,25 @@ delegate_noop!(AppState: ignore wl_compositor::WlCompositor);
 delegate_noop!(AppState: ignore wl_surface::WlSurface);
 delegate_noop!(AppState: ignore wl_shm::WlShm);
 delegate_noop!(AppState: wl_shm_pool::WlShmPool);
-delegate_noop!(AppState: ignore wayland_client::protocol::wl_buffer::WlBuffer);
+delegate_noop!(AppState: ignore wl_buffer::WlBuffer);
 
-/// Builds a fresh `wl_shm` pool/buffer for the current board state and
-/// commits it. Not double-buffered (a new tempfile/pool per redraw,
-/// same shape as `saai-demo-surface`'s own `attach_test_pattern`) --
-/// a tile game redraws on taps, not every frame, so the extra
-/// allocation per tap is not a real cost.
-fn redraw(state: &AppState, shm: &wl_shm::WlShm, surface: &wl_surface::WlSurface, qh: &QueueHandle<AppState>) {
+/// Draws the current board state into the app's one persistent shm
+/// buffer and commits it.
+///
+/// S28: this used to build a brand-new tempfile/pool/buffer on every
+/// redraw (same shape as `saai-demo-surface`'s own one-shot
+/// `attach_test_pattern`, which never redraws twice so the bug never
+/// showed up there). Neither this app nor the compositor ever
+/// destroyed the previous pool/buffer, so its backing tmpfs pages
+/// stayed pinned for as long as the compositor held its dup'd fd --
+/// which turned out to be indefinitely. Two full 1080x2400 XRGB8888
+/// frames (~9.9MB each) already exceed the sandbox's 16MB per-app
+/// `/tmp` quota (ADR-020's `mask_tmpfs`), so the second redraw of any
+/// session -- i.e. the very first tap -- reliably SIGSEGV'd, while a
+/// manual unsandboxed launch (host's uncapped `/tmp`) never showed
+/// it. One buffer, resized only when the surface itself resizes,
+/// keeps exactly one frame resident no matter how many taps happen.
+fn redraw(state: &mut AppState, shm: &wl_shm::WlShm, surface: &wl_surface::WlSurface, qh: &QueueHandle<AppState>) {
     let width = state.configured_width.max(1);
     let height = state.configured_height.max(1);
     let stride = width * 4;
@@ -299,14 +320,35 @@ fn redraw(state: &AppState, shm: &wl_shm::WlShm, surface: &wl_surface::WlSurface
         state.won(),
     );
 
-    let mut file = tempfile::tempfile().expect("failed to create anonymous shm file");
+    if state.buffer.is_none() || state.buffer_width != width || state.buffer_height != height {
+        if let Some(buffer) = state.buffer.take() {
+            buffer.destroy();
+        }
+        if let Some(pool) = state.shm_pool.take() {
+            pool.destroy();
+        }
+        state.shm_file = None;
+
+        let file = tempfile::tempfile().expect("failed to create anonymous shm file");
+        let pool = shm.create_pool(file.as_fd(), size as i32, qh, ());
+        let buffer = pool.create_buffer(0, width, height, stride, wl_shm::Format::Xrgb8888, qh, ());
+
+        state.shm_file = Some(file);
+        state.shm_pool = Some(pool);
+        state.buffer = Some(buffer);
+        state.buffer_width = width;
+        state.buffer_height = height;
+    }
+
+    let file = state
+        .shm_file
+        .as_mut()
+        .expect("shm file missing right after (re)creation");
+    file.seek(SeekFrom::Start(0)).expect("failed to seek shm file");
     file.write_all(&pixels).expect("failed to write pixel data");
     file.flush().ok();
 
-    let pool = shm.create_pool(file.as_fd(), size as i32, qh, ());
-    let buffer = pool.create_buffer(0, width, height, stride, wl_shm::Format::Xrgb8888, qh, ());
-
-    surface.attach(Some(&buffer), 0, 0);
+    surface.attach(state.buffer.as_ref(), 0, 0);
     surface.damage_buffer(0, 0, width, height);
     surface.commit();
 }
@@ -354,6 +396,11 @@ fn main() {
         tiles: new_board(),
         selected: None,
         needs_redraw: false,
+        shm_file: None,
+        shm_pool: None,
+        buffer: None,
+        buffer_width: 0,
+        buffer_height: 0,
     };
 
     // Initial commit with no buffer attached triggers the first
@@ -374,7 +421,7 @@ fn main() {
             state.needs_redraw = false;
             let shm = state.shm.as_ref().unwrap().clone();
             let surface = state.surface.as_ref().unwrap().clone();
-            redraw(&state, &shm, &surface, &qh);
+            redraw(&mut state, &shm, &surface, &qh);
         }
         queue
             .blocking_dispatch(&mut state)

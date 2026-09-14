@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::io::Write as _;
 use std::os::unix::process::CommandExt;
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -492,11 +494,36 @@ fn stop_children(app_id: &str, children: &mut Vec<Child>) -> Result<(), Supervis
 }
 
 fn exit_event(app_id: &str, kind: AppEventKind, pid: u32, status: ExitStatus) -> AppEvent {
+    if kind == AppEventKind::Crashed {
+        log_crash_diagnostic(app_id, pid, &status);
+    }
     AppEvent {
         app_id: app_id.to_owned(),
         kind,
         pid: Some(pid),
         exit_code: status.code(),
+    }
+}
+
+/// S28 diagnostic only: `status.code()` collapses a signal kill down to
+/// `None`, which is exactly the case under investigation (a sandboxed
+/// app that dies with no panic message reaching anywhere, since its
+/// own stdout/stderr are discarded per ADR-020). Appended, not
+/// overwritten, since a relaunch-and-tap repro cycle is the whole
+/// point.
+fn log_crash_diagnostic(app_id: &str, pid: u32, status: &ExitStatus) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/data/saaios/var/appd-crashes.log")
+    {
+        let _ = writeln!(
+            file,
+            "app_id={app_id} pid={pid} exit_code={:?} signal={:?} core_dumped={}",
+            status.code(),
+            status.signal(),
+            status.core_dumped(),
+        );
     }
 }
 
