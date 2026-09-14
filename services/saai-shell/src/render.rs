@@ -417,6 +417,79 @@ pub fn draw_task_confirm(
     );
 }
 
+/// The "adb"-style pairing prompt for a new SSH client -- same
+/// header-plus-two-buttons shape as `draw_task_confirm` (built from
+/// the exact same `task_confirm_view` geometry, see `main.rs`'s
+/// frame-building code), just with the pairing-specific text and
+/// button labels instead of the generic dangerous-Task ones.
+pub fn draw_remote_pair(
+    canvas: &mut Canvas<'_>,
+    client_name: &str,
+    fingerprint: &str,
+    header: Rect,
+    accept_button: Rect,
+    decline_button: Rect,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(BACKGROUND);
+
+    let Some(fonts) = fonts else {
+        canvas.fill_rect(accept_button, ACCENT);
+        canvas.fill_rect(decline_button, SURFACE);
+        return;
+    };
+
+    let margin = header.width / 22;
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        "Разрешить SSH-доступ?",
+        46.0,
+        header.x + margin,
+        header.y + 200,
+        TEXT,
+    );
+    draw_text(
+        canvas,
+        &fonts.regular,
+        client_name,
+        32.0,
+        header.x + margin,
+        header.y + 310,
+        TEXT_MUTED,
+    );
+    draw_text(
+        canvas,
+        &fonts.regular,
+        fingerprint,
+        26.0,
+        header.x + margin,
+        header.y + 370,
+        TEXT_MUTED,
+    );
+
+    canvas.fill_rect(accept_button, ACCENT);
+    canvas.fill_rect(decline_button, SURFACE);
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        "Разрешить",
+        40.0,
+        accept_button.x + accept_button.width / 2,
+        accept_button.y + accept_button.height / 2 - 20,
+        BACKGROUND,
+    );
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        "Отклонить",
+        40.0,
+        decline_button.x + decline_button.width / 2,
+        decline_button.y + decline_button.height / 2 - 20,
+        TEXT,
+    );
+}
+
 /// S19: "Wi-Fi сети" -- one row per `wifi_scan_results()` entry plus
 /// the fixed trailing control rows already baked into `rows` by the
 /// caller (see `wifi_list_action_at`'s doc comment for why the row

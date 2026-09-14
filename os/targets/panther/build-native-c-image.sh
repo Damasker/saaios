@@ -46,6 +46,18 @@ bt_pair="$bin_dir/saaios-bt-pair-arm64"
 bt_gatt_probe="$bin_dir/saaios-bt-gatt-probe-arm64"
 reboot_bootloader="$bin_dir/reboot-bootloader-arm64"
 file_recv="$bin_dir/saaios-file-recv-arm64"
+pair_recv="$bin_dir/saaios-pair-recv-arm64"
+# Alpine's own dynamically-linked aarch64 build (dropbear-2024.85,
+# v3.20/main) -- fetched once via apk.static into a throwaway sysroot
+# and copied here, same "grab a prebuilt Alpine musl binary" sourcing
+# as ADR-021 already established for Qt5/Kirigami, not built from
+# source by this script. Needs its own copy of ld-musl-aarch64.so.1
+# and libz.so.1 alongside it (this project's own binaries are all
+# static; this is the one exception) -- run via the loader directly
+# (`ld-musl-aarch64.so.1 <path-to-dropbear> ...`) rather than via the
+# kernel's own ELF interpreter mechanism, so nothing here needs
+# patchelf.
+dropbear_dir="$artifacts/dropbear"
 wpa_supplicant="$artifacts/saaios-wpa_supplicant-arm64"
 wpa_cli="$artifacts/saaios-wpa_cli-arm64"
 tinyplay="$bin_dir/saaios-tinyplay-arm64"
@@ -87,6 +99,9 @@ mkdir -p "$bin_dir" "$(dirname -- "$output")"
     "$source_dir/file-recv.c" -o "$file_recv"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
+    "$source_dir/pair-recv.c" -o "$pair_recv"
+
+"$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/reboot-bootloader.c" -o "$reboot_bootloader"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
@@ -115,8 +130,6 @@ set -- ramdisk.cpio \
     "add 0755 init $native_init" \
     "mkdir 0755 saaios" \
     "add 0755 saaios/busybox $artifacts/busybox-arm64" \
-    "add 0755 saaios/saaios-runtime $saai_runtime" \
-    "add 0755 saaios/saaios-console $saai_console" \
     "add 0755 saaios/drm-splash $drm_splash" \
     "add 0755 saaios/saai-displayd $saai_displayd" \
     "add 0755 saaios/saai-shell $saai_shell" \
@@ -152,6 +165,11 @@ set -- ramdisk.cpio \
     "add 0755 saaios/wifi-action.sh $scripts_dir/wifi-action.sh" \
     "add 0755 saaios/reboot-bootloader $reboot_bootloader" \
     "add 0755 saaios/file-recv $file_recv" \
+    "add 0755 saaios/pair-recv $pair_recv" \
+    "mkdir 0755 saaios/dropbear" \
+    "add 0755 saaios/dropbear/dropbear $dropbear_dir/dropbear" \
+    "add 0755 saaios/dropbear/ld-musl-aarch64.so.1 $dropbear_dir/ld-musl-aarch64.so.1" \
+    "add 0755 saaios/dropbear/libz.so.1 $dropbear_dir/libz.so.1" \
     "add 0644 saaios/focal_touch.ko $artifacts/focal_touch.ko" \
     "mkdir 0755 lib" \
     "mkdir 0755 lib/firmware" \
@@ -177,10 +195,11 @@ inputs_file="$output.INPUTS.SHA256"
 : > "$inputs_file"
 for entry in \
     "saaios-runtime:$saai_runtime" \
-    "saaios-console:$saai_console" \
     "saai-displayd:$saai_displayd" \
     "saai-shell:$saai_shell" \
     "saai-mahjong:$saai_mahjong" \
+    "pair-recv:$pair_recv" \
+    "dropbear:$dropbear_dir/dropbear" \
     "file-recv:$file_recv" \
     "native-init:$native_init" \
     "drm-splash:$drm_splash"

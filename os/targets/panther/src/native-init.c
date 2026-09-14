@@ -36,6 +36,13 @@
 #define UI_RESTART_WINDOW_SECONDS 60
 #define APPD_PATH "/data/saaios/system/saai-appd"
 #define ENTITYD_PATH "/data/saaios/system/saai-entityd"
+/* Moved off the fixed 8MB init_boot ramdisk onto the same persistent
+ * /data volume appd/entityd already use (ADR: "SSH pairing policy" --
+ * found while making room there for dropbear's own dynamic-link
+ * libs). At >3MB this was the single largest thing in the ramdisk;
+ * same "independent of the fixed-size image" reasoning as APPD_PATH's
+ * own comment already gives, just applied here two years late. */
+#define RUNTIME_PATH "/data/saaios/system/saaios-runtime"
 
 static const char *const restart_modules[] = {
     "logbuffer.ko",
@@ -1152,12 +1159,16 @@ static void start_runtime(void) {
         "--memory", "/data/saaios/var/runtime/memory.jsonl",
         NULL,
     };
+    if (access(RUNTIME_PATH, X_OK) < 0) {
+        log_message("saaios-runtime unavailable at %s", RUNTIME_PATH);
+        return;
+    }
     if (access("/metadata/saaios/runtime.toml", R_OK) == 0) {
         log_message("SaaiOS runtime using persistent configuration");
-        run_child("/saaios/saaios-runtime", configured_argv);
+        run_child(RUNTIME_PATH, configured_argv);
     } else {
         log_message("SaaiOS runtime using safe default configuration");
-        run_child("/saaios/saaios-runtime", default_argv);
+        run_child(RUNTIME_PATH, default_argv);
     }
 }
 
@@ -1302,6 +1313,117 @@ static pid_t start_file_recv(void) {
     }
     if (child > 0) {
         log_message("system service started: file-recv");
+    }
+    return child;
+}
+
+#define DROPBEAR_DIR "/saaios/dropbear"
+#define DROPBEAR_HOME "/data/saaios/var/dropbear"
+#define DROPBEAR_HOST_KEY DROPBEAR_HOME "/dropbear_ed25519_host_key"
+
+/* dropbear (like any real sshd) resolves the authenticating user's
+ * home directory and login shell through the system user database --
+ * this image otherwise ships no /etc/passwd at all (confirmed:
+ * `whoami` reports "unknown uid 0" without this). A minimal, root-
+ * only entry, not a real multi-user setup -- and dropbear separately
+ * refuses any shell not listed in /etc/shells, hence that file too
+ * (found the hard way: "User 'root' has invalid shell, rejected").
+ * Ramdisk-backed like everything else under /etc, so this has to run
+ * at every boot, not once. */
+static void setup_dropbear_identity(void) {
+    mkdir_one("/etc", 0755);
+    int passwd_fd = open("/etc/passwd", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (passwd_fd >= 0) {
+        dprintf(passwd_fd, "root:x:0:0:root:%s:/saaios/sh\n", DROPBEAR_HOME);
+        close(passwd_fd);
+    }
+    int shells_fd = open("/etc/shells", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (shells_fd >= 0) {
+        dprintf(shells_fd, "/saaios/sh\n");
+        close(shells_fd);
+    }
+    mkdir_one(DROPBEAR_HOME, 0755);
+    mkdir_one(DROPBEAR_HOME "/.ssh", 0700);
+    int keys_fd = open(DROPBEAR_HOME "/.ssh/authorized_keys",
+                       O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+    if (keys_fd >= 0) {
+        close(keys_fd);
+    }
+}
+
+/* Real SSH (Alpine's musl-dynamic dropbear build, ADR: "SSH pairing
+ * policy") -- always started, same as every other system service
+ * here, but harmless with an empty authorized_keys: no key means no
+ * login, regardless of anything else. `pair-recv` (below) is the
+ * only path a key ever gets added to that file, and it fails closed
+ * on its own when "Удалённый доступ" is off (main.rs's
+ * REMOTE_ACCESS_MARKER) -- this process doesn't need to know that
+ * toggle's state itself. The host key is generated once, by hand,
+ * via `dropbearkey` (not by this function) into /data -- a real
+ * persistent partition survivable across every future init_boot
+ * reflash; if it's ever missing (fresh /data, e.g. a factory reset),
+ * dropbear simply doesn't start until one is placed there again. */
+static pid_t start_dropbear(void) {
+    if (access(DROPBEAR_DIR "/dropbear", X_OK) < 0) {
+        log_message("dropbear unavailable");
+        return -1;
+    }
+    if (access(DROPBEAR_HOST_KEY, F_OK) < 0) {
+        log_message("dropbear host key missing at %s, not starting", DROPBEAR_HOST_KEY);
+        return -1;
+    }
+    setup_dropbear_identity();
+
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/dropbear.log",
+                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        setenv("LD_LIBRARY_PATH", DROPBEAR_DIR, 1);
+        execl(DROPBEAR_DIR "/ld-musl-aarch64.so.1", "ld-musl-aarch64.so.1",
+              DROPBEAR_DIR "/dropbear",
+              "-F", "-E", "-p", "22",
+              "-r", DROPBEAR_HOST_KEY, NULL);
+        dprintf(STDERR_FILENO, "dropbear exec failed: %s\n", strerror(errno));
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("system service started: dropbear");
+    }
+    return child;
+}
+
+/* The "adb"-style pairing gate in front of dropbear -- see pair-
+ * recv.c's own doc comment. A dumb relay to saai-shell's consent
+ * socket; this process alone never decides yes/no. */
+static pid_t start_pair_recv(void) {
+    if (access("/saaios/pair-recv", X_OK) < 0) {
+        log_message("pair-recv unavailable");
+        return -1;
+    }
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/pair-recv.log",
+                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl("/saaios/pair-recv", "pair-recv", NULL);
+        dprintf(STDERR_FILENO, "pair-recv exec failed: %s\n", strerror(errno));
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("system service started: pair-recv");
     }
     return child;
 }
@@ -1522,6 +1644,8 @@ int main(void) {
     pid_t entityd_pid = start_saai_entityd();
     pid_t appd_pid = start_saai_appd();
     pid_t file_recv_pid = start_file_recv();
+    pid_t dropbear_pid = start_dropbear();
+    pid_t pair_recv_pid = start_pair_recv();
 
     for (size_t i = 0; i < ARRAY_SIZE(usb_modules); ++i) {
         if (strcmp(usb_modules[i], "tcpci_max77759.ko") == 0) {
@@ -1635,6 +1759,20 @@ int main(void) {
             file_recv_pid = start_file_recv();
             if (file_recv_pid > 0) {
                 log_message("system service restarted: file-recv");
+            }
+        } else if (dropbear_pid > 0 && ended == dropbear_pid) {
+            log_message("system service exited: dropbear");
+            usleep(500000);
+            dropbear_pid = start_dropbear();
+            if (dropbear_pid > 0) {
+                log_message("system service restarted: dropbear");
+            }
+        } else if (pair_recv_pid > 0 && ended == pair_recv_pid) {
+            log_message("system service exited: pair-recv");
+            usleep(500000);
+            pair_recv_pid = start_pair_recv();
+            if (pair_recv_pid > 0) {
+                log_message("system service restarted: pair-recv");
             }
         } else if (entityd_pid > 0 && ended == entityd_pid) {
             log_message("system service exited: saai-entityd");

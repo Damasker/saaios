@@ -199,6 +199,34 @@ fn apply_volume(pct: u8) {
         .status();
 }
 
+/// The Unix socket `pair-recv.c` connects to for every SSH pairing
+/// request -- see that file's own doc comment for the wire shape
+/// (`poll_remote_pairing` decodes it) and `PendingPairRequest` for
+/// what happens with it.
+const REMOTE_PAIR_SOCKET_PATH: &str = "/run/saaios/remote-pair.sock";
+/// The master "Удалённый доступ" switch's on-disk signal to `pair-
+/// recv` (a separate process, native-init.c-started, that can't read
+/// `ShellSettings`'s own JSON directly without duplicating its parse
+/// logic) -- present means enabled. `pair-recv.c` checks this before
+/// ever asking this process for a decision, so turning the toggle off
+/// stops new pairings from even reaching the on-device prompt, not
+/// just from being approved.
+const REMOTE_ACCESS_MARKER: &str = "/data/saaios/var/remote-access-enabled";
+
+/// Real effect, unlike `apply_volume` -- `pair-recv` reads this file's
+/// mere existence on every incoming pairing request. Already-approved
+/// keys in `dropbear`'s `authorized_keys` are untouched by this
+/// toggle (same as Android's "USB debugging" switch not itself
+/// revoking already-authorized computers) -- see docs/os/ideas.md for
+/// the honest gap that leaves.
+fn apply_remote_access(enabled: bool) {
+    if enabled {
+        let _ = std::fs::write(REMOTE_ACCESS_MARKER, "");
+    } else {
+        let _ = std::fs::remove_file(REMOTE_ACCESS_MARKER);
+    }
+}
+
 struct ShellSettings {
     brightness_pct: u8,
     idle_timeout_secs: u64,
@@ -230,6 +258,11 @@ struct ShellSettings {
     /// second color palette threaded through every `fill_rect`/
     /// `draw_text` call. `0` is a no-op.
     contrast_pct: u8,
+    /// Master switch for the `pair-recv`/`dropbear` SSH pairing flow
+    /// (see `apply_remote_access`'s doc comment). `false` by default
+    /// -- an existing settings file with no such field parses to
+    /// `false`, so upgrading never silently opens this up.
+    remote_access_enabled: bool,
 }
 
 impl ShellSettings {
@@ -254,6 +287,7 @@ impl ShellSettings {
             pin_code: None,
             text_scale_pct: 100,
             contrast_pct: 0,
+            remote_access_enabled: false,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -301,6 +335,10 @@ impl ShellSettings {
                 .and_then(Value::as_u64)
                 .map(|pct| pct as u8)
                 .unwrap_or(default.contrast_pct),
+            remote_access_enabled: value
+                .get("remote_access_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(default.remote_access_enabled),
         }
     }
 
@@ -314,6 +352,7 @@ impl ShellSettings {
             "pin_code": self.pin_code,
             "text_scale_pct": self.text_scale_pct,
             "contrast_pct": self.contrast_pct,
+            "remote_access_enabled": self.remote_access_enabled,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -879,6 +918,36 @@ struct PendingConsent {
     requested: Vec<String>,
 }
 
+/// The other half of `pair-recv.c` (see that file's own doc comment):
+/// a brand new SSH client is useless until a human taps "Allow" here,
+/// same policy shape as `PendingConsent` above -- modal, owns every
+/// touch while it's showing. `stream` is the live connection back to
+/// `pair-recv`, held open for the (up to two minutes) it takes a
+/// human to actually look at the screen; the response is written
+/// directly to it on accept/decline, then it's dropped.
+struct PendingPairRequest {
+    client_name: String,
+    public_key: String,
+    stream: std::os::unix::net::UnixStream,
+}
+
+/// Not a real cryptographic fingerprint (no `sha2` dependency in this
+/// crate yet -- see docs/os/ideas.md) -- just enough of the key's own
+/// base64 for a human to sanity-check "is this the client I expect",
+/// same spirit as showing a truncated commit hash.
+fn key_fingerprint(public_key: &str) -> String {
+    let base64_part = public_key.split_whitespace().nth(1).unwrap_or(public_key);
+    if base64_part.len() <= 24 {
+        base64_part.to_string()
+    } else {
+        format!(
+            "{}…{}",
+            &base64_part[..12],
+            &base64_part[base64_part.len() - 12..]
+        )
+    }
+}
+
 const INTENT_SCREEN_ID: &str = "intent-input";
 const INTENT_HEADER_ID: &str = "intent-header";
 const INTENT_ROWS_ID: &str = "intent-rows";
@@ -1063,6 +1132,13 @@ enum Frame {
     },
     TaskConfirm {
         title: String,
+        header: Rect,
+        accept: Rect,
+        decline: Rect,
+    },
+    RemotePairing {
+        client_name: String,
+        fingerprint: String,
         header: Rect,
         accept: Rect,
         decline: Rect,
@@ -1544,7 +1620,7 @@ const ME_PAGE_SIZE: usize = 6;
 /// length, since `me_fixed_card_action` has to agree with it and
 /// there's no way to assert two functions' lengths match at compile
 /// time anyway.
-const ME_FIXED_CARD_COUNT: usize = 14;
+const ME_FIXED_CARD_COUNT: usize = 15;
 
 /// The `me_all_card_views`'s logical index -> tap action mapping.
 /// `None` for the three read-only info rows (device summary, build
@@ -1563,6 +1639,7 @@ fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
         11 => Some("open_pin_setup"),
         12 => Some("cycle_text_scale"),
         13 => Some("cycle_contrast"),
+        14 => Some("toggle_remote_access"),
         _ => None,
     }
 }
@@ -1649,6 +1726,23 @@ fn main() {
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
+    apply_remote_access(settings.remote_access_enabled);
+    let remote_pair_listener = {
+        let socket_path = REMOTE_PAIR_SOCKET_PATH;
+        if let Some(parent) = std::path::Path::new(socket_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Best-effort: a stale socket file left by a previous
+        // saai-shell process, same reasoning as `PortalServer::bind`'s
+        // own cleanup.
+        let _ = std::fs::remove_file(socket_path);
+        std::os::unix::net::UnixListener::bind(socket_path)
+            .and_then(|listener| {
+                listener.set_nonblocking(true)?;
+                Ok(listener)
+            })
+            .ok()
+    };
     render::set_text_scale(settings.text_scale_pct);
     let mut shell = Shell {
         registry_state: RegistryState::new(&globals),
@@ -1688,6 +1782,8 @@ fn main() {
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
         pending_consent: None,
+        remote_pair_listener,
+        pending_pair_request: None,
         intent_input: None,
         wifi_password: None,
         wifi_list: None,
@@ -1730,6 +1826,7 @@ fn main() {
             .expect("event loop dispatch failed");
         shell.poll_appd(&conn, &qh);
         shell.poll_entityd(&conn, &qh);
+        shell.poll_remote_pairing(&conn, &qh);
         shell.refresh_apps_if_due();
         shell.refresh_statusbar_if_due();
         shell.poll_portal();
@@ -1820,6 +1917,14 @@ struct Shell {
     /// Set while a launch is blocked on the ADR-020 consent screen -- see
     /// `apply_appd_message`'s `ConsentRequired`/`ConsentDecided` handling.
     pending_consent: Option<PendingConsent>,
+    /// The "adb"-style pairing policy layer: `None` if `pair-recv`
+    /// isn't running or its socket couldn't be bound (remote access
+    /// simply doesn't work in that case, not a fatal error for the
+    /// shell itself).
+    remote_pair_listener: Option<std::os::unix::net::UnixListener>,
+    /// Set while a new SSH client is waiting for an on-device tap --
+    /// modal, same as `pending_consent`.
+    pending_pair_request: Option<PendingPairRequest>,
     /// S09 Change 2: set while the on-screen keyboard is composing a new
     /// `saaios.intent`. Modal, same as `pending_consent`.
     intent_input: Option<IntentInputState>,
@@ -2235,6 +2340,16 @@ impl TouchHandler for Shell {
                     }
                     self.draw(conn, qh);
                 }
+            } else if self.pending_pair_request.is_some() {
+                // Modal, same as consent -- reuses task_confirm_
+                // action_at's hit-test verbatim (identical geometry
+                // to the frame this draws, see the frame-building
+                // branch above).
+                if let Some(accept) =
+                    task_confirm_action_at(self.last_touch_pos, self.width, self.height)
+                {
+                    self.respond_to_pair_request(accept, conn, qh);
+                }
             } else if self.confirming_task_id.is_some() {
                 // Modal, same as consent: the dangerous-Task
                 // confirmation screen owns every touch while it's
@@ -2438,6 +2553,20 @@ impl Shell {
             let buttons = &view.children[1].children;
             Frame::TaskConfirm {
                 title: task.title.clone(),
+                header,
+                accept: buttons[0].rect,
+                decline: buttons[1].rect,
+            }
+        } else if let Some(pending) = &self.pending_pair_request {
+            // Reuses task_confirm_view's geometry verbatim (same
+            // header-plus-two-buttons shape) -- only the drawn text
+            // and the touch handler's meaning differ.
+            let view = task_confirm_view(width, height);
+            let header = view.children[0].rect;
+            let buttons = &view.children[1].children;
+            Frame::RemotePairing {
+                client_name: pending.client_name.clone(),
+                fingerprint: key_fingerprint(&pending.public_key),
                 header,
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
@@ -2664,6 +2793,23 @@ impl Shell {
                 render::draw_task_confirm(
                     &mut render::Canvas::new(canvas, width, height),
                     &title,
+                    header,
+                    accept,
+                    decline,
+                    self.fonts.as_ref(),
+                );
+            }
+            Frame::RemotePairing {
+                client_name,
+                fingerprint,
+                header,
+                accept,
+                decline,
+            } => {
+                render::draw_remote_pair(
+                    &mut render::Canvas::new(canvas, width, height),
+                    &client_name,
+                    &fingerprint,
                     header,
                     accept,
                     decline,
@@ -2905,6 +3051,10 @@ impl Shell {
             "cycle_contrast" => {
                 self.settings.contrast_pct =
                     next_in_cycle(&CONTRAST_LEVELS_PCT, self.settings.contrast_pct);
+            }
+            "toggle_remote_access" => {
+                self.settings.remote_access_enabled = !self.settings.remote_access_enabled;
+                apply_remote_access(self.settings.remote_access_enabled);
             }
             "me_page_next" => {
                 self.me_page += 1;
@@ -3461,6 +3611,19 @@ impl Shell {
                 },
                 "Изменить",
             ),
+            // Policy layer for SSH pairing (`pair-recv.c`/`dropbear`)
+            // -- see `apply_remote_access`'s doc comment. Off by
+            // default, same "opt-in, never silent" convention as
+            // `pin_code`.
+            render::ActionCardView::new(
+                "Удалённый доступ (SSH)",
+                if self.settings.remote_access_enabled {
+                    "Включён -- новые устройства могут запросить доступ"
+                } else {
+                    "Выключен"
+                },
+                "Изменить",
+            ),
         ];
         debug_assert_eq!(cards.len(), ME_FIXED_CARD_COUNT);
         for app in self.installed_apps.values() {
@@ -3621,6 +3784,83 @@ impl Shell {
     /// exactly as `saai-taskd` wrote it. `saai-taskd`'s own `Subscribe`
     /// reaction to this update is what actually executes (or discards)
     /// the paused Action; this method only ever flips the switch.
+    /// Accepts pending connections on `remote_pair_listener` and, if
+    /// none is already showing, turns the first complete request
+    /// into `pending_pair_request` -- the modal that
+    /// `handle_client`/`respond_to_pair_request` above and below
+    /// this drive. A blocking read of one JSON line is safe here:
+    /// the only thing that ever connects to this socket is `pair-
+    /// recv`, a process on this same device that writes its whole
+    /// request immediately after connecting, never a real network
+    /// client (see `pair-recv.c`'s own doc comment for why the
+    /// network-facing side is a separate process at all).
+    fn poll_remote_pairing(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        if self.pending_pair_request.is_some() {
+            return;
+        }
+        let Some(listener) = self.remote_pair_listener.as_ref() else {
+            return;
+        };
+        let Ok((stream, _address)) = listener.accept() else {
+            return;
+        };
+        let _ = stream.set_nonblocking(false);
+        let mut reader = std::io::BufReader::new(match stream.try_clone() {
+            Ok(clone) => clone,
+            Err(_) => return,
+        });
+        let mut line = String::new();
+        if std::io::BufRead::read_line(&mut reader, &mut line).unwrap_or(0) == 0 {
+            return;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            return;
+        };
+        let client_name = value
+            .get("client_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let public_key = value
+            .get("public_key")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if client_name.is_empty() || public_key.is_empty() {
+            return;
+        }
+        println!("saai-shell: pairing request from \"{client_name}\"");
+        self.pending_pair_request = Some(PendingPairRequest {
+            client_name,
+            public_key,
+            stream,
+        });
+        self.draw(conn, qh);
+    }
+
+    /// The other end of `poll_remote_pairing` -- writes the user's
+    /// decision back over the same connection `pair-recv` is still
+    /// blocked reading from, then drops it. `pair-recv` itself (not
+    /// this process) is what actually appends the key to `dropbear`'s
+    /// `authorized_keys` on approval -- see that file's own doc
+    /// comment for why that boundary is drawn there.
+    fn respond_to_pair_request(&mut self, approved: bool, conn: &Connection, qh: &QueueHandle<Self>) {
+        if let Some(mut pending) = self.pending_pair_request.take() {
+            println!(
+                "saai-shell: SSH pairing {} for \"{}\"",
+                if approved { "approved" } else { "declined" },
+                pending.client_name
+            );
+            let response = if approved {
+                b"{\"approved\":true}\n".as_slice()
+            } else {
+                b"{\"approved\":false}\n".as_slice()
+            };
+            let _ = std::io::Write::write_all(&mut pending.stream, response);
+        }
+        self.draw(conn, qh);
+    }
+
     fn confirm_pending_task(&mut self, confirm: bool) {
         // Cloned to an owned `Entity` up front, ending the borrow of
         // `self` before `self.entityd.update_entity()` needs its own
@@ -4144,6 +4384,16 @@ mod tests {
             super::pin_setup_action_at(center(super::pin_keypad_rect(12, width, height)), width, height, false),
             Some("Отмена")
         );
+    }
+
+    #[test]
+    fn key_fingerprint_keeps_short_keys_whole_and_truncates_long_ones() {
+        assert_eq!(super::key_fingerprint("ssh-ed25519 AAAAshort"), "AAAAshort");
+        let long_base64 = "A".repeat(50);
+        let long_key = format!("ssh-ed25519 {long_base64} comment");
+        let fingerprint = super::key_fingerprint(&long_key);
+        assert!(fingerprint.contains('…'));
+        assert!(fingerprint.len() < long_base64.len());
     }
 
     #[test]
