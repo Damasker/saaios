@@ -952,6 +952,7 @@ const INTENT_SCREEN_ID: &str = "intent-input";
 const INTENT_HEADER_ID: &str = "intent-header";
 const INTENT_ROWS_ID: &str = "intent-rows";
 const INTENT_CANCEL_ACTION: &str = "intent:cancel";
+const INTENT_MODE_TOGGLE_ACTION: &str = "intent:mode:toggle";
 const INTENT_SPACE_ACTION: &str = "intent:space";
 const INTENT_BACKSPACE_ACTION: &str = "intent:backspace";
 const INTENT_SEND_ACTION: &str = "intent:send";
@@ -969,17 +970,69 @@ const INTENT_HEADER_HEIGHT: u32 = 260;
 /// works -- ADR-029 already did that.
 const INTENT_KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 
+/// S29: the digits/symbols side of the same keyboard, toggled in by
+/// `INTENT_MODE_TOGGLE_ACTION` -- same three-row shape as
+/// `INTENT_KEY_ROWS` so `intent_view()` doesn't need to know which
+/// one is active beyond picking the row source (`keyboard_rows_for_
+/// mode`). Curated for what a real WPA2 password (ADR-065's own
+/// motivating case) actually needs, not an exhaustive ASCII table --
+/// still no uppercase, that's future polish, not this sprint's scope.
+const INTENT_SYMBOL_ROWS: [&str; 3] = ["1234567890", "-_/:;()$&@\"", ".,?!'#%^*+="];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum KeyboardMode {
+    #[default]
+    Letters,
+    Symbols,
+}
+
+impl KeyboardMode {
+    fn toggled(self) -> Self {
+        match self {
+            KeyboardMode::Letters => KeyboardMode::Symbols,
+            KeyboardMode::Symbols => KeyboardMode::Letters,
+        }
+    }
+}
+
+/// `INTENT_KEY_ROWS` or `INTENT_SYMBOL_ROWS`, whichever `mode` is
+/// currently showing -- the one place that decision is made, shared
+/// by `intent_view()` (what's tappable) and `intent_keyboard_keys()`
+/// (what's drawn), so the two can never disagree about which row set
+/// is live.
+fn keyboard_rows_for_mode(mode: KeyboardMode) -> &'static [&'static str; 3] {
+    match mode {
+        KeyboardMode::Letters => &INTENT_KEY_ROWS,
+        KeyboardMode::Symbols => &INTENT_SYMBOL_ROWS,
+    }
+}
+
+/// The one control (`IntentControlDef::label`) whose drawn text isn't
+/// a fixed string -- "123" invites switching to `Symbols`, "ABC"
+/// invites switching back, same convention as a real OSK.
+fn mode_toggle_label(mode: KeyboardMode) -> String {
+    match mode {
+        KeyboardMode::Letters => "123".to_string(),
+        KeyboardMode::Symbols => "ABC".to_string(),
+    }
+}
+
 struct IntentControlDef {
     id: &'static str,
     label: &'static str,
     action: &'static str,
 }
 
-const INTENT_CONTROLS: [IntentControlDef; 4] = [
+const INTENT_CONTROLS: [IntentControlDef; 5] = [
     IntentControlDef {
         id: "intent-cancel",
         label: "Отмена",
         action: INTENT_CANCEL_ACTION,
+    },
+    IntentControlDef {
+        id: "intent-mode",
+        label: "123",
+        action: INTENT_MODE_TOGGLE_ACTION,
     },
     IntentControlDef {
         id: "intent-space",
@@ -1004,6 +1057,7 @@ const INTENT_CONTROLS: [IntentControlDef; 4] = [
 #[derive(Default)]
 struct IntentInputState {
     buffer: String,
+    mode: KeyboardMode,
 }
 
 /// S19: reuses `intent_view()`'s keyboard layout and hit-testing
@@ -1011,17 +1065,14 @@ struct IntentInputState {
 /// second keyboard tree -- the two are visually and structurally
 /// identical, only the header text and what "Отправить" does differ,
 /// both handled by which of `intent_input`/`wifi_password` is
-/// currently `Some`. Inherits ADR-029's keyboard's own limitation:
-/// lowercase Latin letters and spaces only, no digits/symbols/
-/// uppercase -- honestly, that covers approximately no real WPA2
-/// password. Open-network connect (no password needed at all) and
-/// the scan/status pipeline are what this sprint makes unconditionally
-/// useful today; typing a real secured-network password is blocked on
-/// the keyboard itself growing a digit/symbol row, not on anything
-/// here.
+/// currently `Some`. S29 added a digits/symbols mode (`KeyboardMode`,
+/// toggled by the same "123"/"ABC" control both screens share) --
+/// still lowercase-only and no uppercase, but a real WPA2 password
+/// with digits and punctuation is now actually typeable.
 struct WifiPasswordState {
     ssid: String,
     buffer: String,
+    mode: KeyboardMode,
 }
 
 /// S24: "Изменить PIN" on "Я" -- see `PIN_KEYPAD_DIGIT_LABELS`'s doc
@@ -1220,8 +1271,8 @@ fn intent_key_action(ch: char) -> String {
 /// Every row (letters and controls alike) is `Length::Fill` on both
 /// axes, so the keyboard reflows to whatever the real panel size is
 /// instead of assuming a fixed design canvas.
-fn intent_view(width: u32, height: u32) -> LayoutNode {
-    let mut rows: Vec<Node> = INTENT_KEY_ROWS
+fn intent_view(width: u32, height: u32, mode: KeyboardMode) -> LayoutNode {
+    let mut rows: Vec<Node> = keyboard_rows_for_mode(mode)
         .iter()
         .enumerate()
         .map(|(row_index, letters)| {
@@ -1257,13 +1308,49 @@ fn intent_view(width: u32, height: u32) -> LayoutNode {
     layout(&root, Rect::new(0, 0, width, height))
 }
 
-fn intent_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<String> {
+fn intent_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    mode: KeyboardMode,
+) -> Option<String> {
     if width == 0 || height == 0 {
         return None;
     }
-    intent_view(width, height)
+    intent_view(width, height, mode)
         .hit_test(pos.0, pos.1)
         .and_then(|node| node.action.clone())
+}
+
+/// Builds both the header rect and the drawn `(Rect, label)` pairs for
+/// every key -- letters/digits uppercased for display the same way a
+/// real keyboard shows capital letter-caps while typing lowercase,
+/// controls labelled from `INTENT_CONTROLS` except the one whose
+/// label depends on `mode` (`mode_toggle_label`). Shared by both
+/// `intent_input` and `wifi_password`'s `draw()` branches -- see
+/// `WifiPasswordState`'s doc comment for why they share one keyboard.
+fn intent_keyboard_keys(width: u32, height: u32, mode: KeyboardMode) -> (Rect, Vec<(Rect, String)>) {
+    let view = intent_view(width, height, mode);
+    let header = view.children[0].rect;
+    let keyboard_rows = &view.children[1].children;
+    let rows = keyboard_rows_for_mode(mode);
+    let mut keys = Vec::new();
+    for (row_index, letters) in rows.iter().enumerate() {
+        let row_node = &keyboard_rows[row_index];
+        for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
+            keys.push((key_node.rect, ch.to_uppercase().to_string()));
+        }
+    }
+    let controls_node = &keyboard_rows[rows.len()];
+    for (key_node, control) in controls_node.children.iter().zip(INTENT_CONTROLS.iter()) {
+        let label = if control.action == INTENT_MODE_TOGGLE_ACTION {
+            mode_toggle_label(mode)
+        } else {
+            control.label.to_string()
+        };
+        keys.push((key_node.rect, label));
+    }
+    (header, keys)
 }
 
 fn consent_view(width: u32, height: u32) -> LayoutNode {
@@ -2365,7 +2452,12 @@ impl TouchHandler for Shell {
             } else if self.intent_input.is_some() {
                 // Modal, same as consent: the on-screen keyboard owns
                 // every touch while it's showing.
-                if let Some(action) = intent_action_at(self.last_touch_pos, self.width, self.height)
+                let mode = self
+                    .intent_input
+                    .as_ref()
+                    .map_or(KeyboardMode::Letters, |state| state.mode);
+                if let Some(action) =
+                    intent_action_at(self.last_touch_pos, self.width, self.height, mode)
                 {
                     self.handle_intent_input_action(&action, conn, qh);
                 }
@@ -2385,7 +2477,12 @@ impl TouchHandler for Shell {
                 // (see `WifiPasswordState`'s doc comment) -- checked
                 // first since it visually sits on top of "Wi-Fi
                 // сети" while it's open.
-                if let Some(action) = intent_action_at(self.last_touch_pos, self.width, self.height)
+                let mode = self
+                    .wifi_password
+                    .as_ref()
+                    .map_or(KeyboardMode::Letters, |state| state.mode);
+                if let Some(action) =
+                    intent_action_at(self.last_touch_pos, self.width, self.height, mode)
                 {
                     self.handle_wifi_password_action(&action, conn, qh);
                 }
@@ -2572,20 +2669,7 @@ impl Shell {
                 decline: buttons[1].rect,
             }
         } else if let Some(state) = &self.intent_input {
-            let view = intent_view(width, height);
-            let header = view.children[0].rect;
-            let keyboard_rows = &view.children[1].children;
-            let mut keys = Vec::new();
-            for (row_index, letters) in INTENT_KEY_ROWS.iter().enumerate() {
-                let row_node = &keyboard_rows[row_index];
-                for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
-                    keys.push((key_node.rect, ch.to_uppercase().to_string()));
-                }
-            }
-            let controls_node = &keyboard_rows[INTENT_KEY_ROWS.len()];
-            for (key_node, control) in controls_node.children.iter().zip(INTENT_CONTROLS.iter()) {
-                keys.push((key_node.rect, control.label.to_string()));
-            }
+            let (header, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::IntentInput {
                 buffer: state.buffer.clone(),
                 header,
@@ -2614,20 +2698,7 @@ impl Shell {
         } else if let Some(state) = &self.wifi_password {
             // Same tree as `intent_input` above, reused verbatim --
             // see `WifiPasswordState`'s doc comment.
-            let view = intent_view(width, height);
-            let header = view.children[0].rect;
-            let keyboard_rows = &view.children[1].children;
-            let mut keys = Vec::new();
-            for (row_index, letters) in INTENT_KEY_ROWS.iter().enumerate() {
-                let row_node = &keyboard_rows[row_index];
-                for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
-                    keys.push((key_node.rect, ch.to_uppercase().to_string()));
-                }
-            }
-            let controls_node = &keyboard_rows[INTENT_KEY_ROWS.len()];
-            for (key_node, control) in controls_node.children.iter().zip(INTENT_CONTROLS.iter()) {
-                keys.push((key_node.rect, control.label.to_string()));
-            }
+            let (header, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::WifiPasswordInput {
                 ssid: state.ssid.clone(),
                 buffer: state.buffer.clone(),
@@ -3089,6 +3160,9 @@ impl Shell {
             INTENT_CANCEL_ACTION => {
                 self.intent_input = None;
             }
+            INTENT_MODE_TOGGLE_ACTION => {
+                state.mode = state.mode.toggled();
+            }
             INTENT_SPACE_ACTION => {
                 state.buffer.push(' ');
             }
@@ -3181,6 +3255,9 @@ impl Shell {
             INTENT_CANCEL_ACTION => {
                 self.wifi_password = None;
             }
+            INTENT_MODE_TOGGLE_ACTION => {
+                state.mode = state.mode.toggled();
+            }
             INTENT_SPACE_ACTION => {
                 state.buffer.push(' ');
             }
@@ -3222,6 +3299,7 @@ impl Shell {
                     self.wifi_password = Some(WifiPasswordState {
                         ssid: network.ssid.clone(),
                         buffer: String::new(),
+                        mode: KeyboardMode::Letters,
                     });
                 } else {
                     let ssid = network.ssid.clone();
@@ -4268,8 +4346,9 @@ mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, intent_action_at, next_in_cycle, stacked_row_rect, tab_at,
-        task_confirm_action_at, wifi_list_action_at, BluetoothListTap, Rect, RootPage,
-        WifiListTap, INTENT_CANCEL_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        task_confirm_action_at, wifi_list_action_at, BluetoothListTap, KeyboardMode, Rect,
+        RootPage, WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
 
     #[test]
@@ -4549,15 +4628,15 @@ mod tests {
     #[test]
     fn intent_keyboard_rows_map_to_their_own_letters() {
         assert_eq!(
-            intent_action_at((50.0, 300.0), 1080, 2400).as_deref(),
+            intent_action_at((50.0, 300.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
             Some("intent:key:q")
         );
         assert_eq!(
-            intent_action_at((50.0, 850.0), 1080, 2400).as_deref(),
+            intent_action_at((50.0, 850.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
             Some("intent:key:a")
         );
         assert_eq!(
-            intent_action_at((50.0, 1400.0), 1080, 2400).as_deref(),
+            intent_action_at((50.0, 1400.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
             Some("intent:key:z")
         );
     }
@@ -4565,18 +4644,47 @@ mod tests {
     #[test]
     fn intent_keyboard_controls_row_has_cancel_and_send_at_the_ends() {
         assert_eq!(
-            intent_action_at((50.0, 2000.0), 1080, 2400).as_deref(),
+            intent_action_at((50.0, 2000.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
             Some(INTENT_CANCEL_ACTION)
         );
         assert_eq!(
-            intent_action_at((950.0, 2000.0), 1080, 2400).as_deref(),
+            intent_action_at((950.0, 2000.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
             Some(INTENT_SEND_ACTION)
         );
     }
 
     #[test]
     fn intent_keyboard_header_is_not_a_key() {
-        assert_eq!(intent_action_at((540.0, 100.0), 1080, 2400), None);
+        assert_eq!(
+            intent_action_at((540.0, 100.0), 1080, 2400, KeyboardMode::Letters),
+            None
+        );
+    }
+
+    #[test]
+    fn intent_keyboard_symbol_mode_maps_digits_and_symbols() {
+        assert_eq!(
+            intent_action_at((50.0, 300.0), 1080, 2400, KeyboardMode::Symbols).as_deref(),
+            Some("intent:key:1")
+        );
+        assert_eq!(
+            intent_action_at((50.0, 850.0), 1080, 2400, KeyboardMode::Symbols).as_deref(),
+            Some("intent:key:-")
+        );
+    }
+
+    #[test]
+    fn intent_keyboard_mode_toggle_is_the_second_control() {
+        assert_eq!(
+            intent_action_at((300.0, 2000.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
+            Some(INTENT_MODE_TOGGLE_ACTION)
+        );
+    }
+
+    #[test]
+    fn keyboard_mode_toggles_both_ways() {
+        assert_eq!(KeyboardMode::Letters.toggled(), KeyboardMode::Symbols);
+        assert_eq!(KeyboardMode::Symbols.toggled(), KeyboardMode::Letters);
     }
 
     #[test]
