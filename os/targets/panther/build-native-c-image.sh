@@ -45,6 +45,7 @@ bt_scan="$bin_dir/saaios-bt-scan-arm64"
 bt_pair="$bin_dir/saaios-bt-pair-arm64"
 bt_gatt_probe="$bin_dir/saaios-bt-gatt-probe-arm64"
 reboot_bootloader="$bin_dir/reboot-bootloader-arm64"
+file_recv="$bin_dir/saaios-file-recv-arm64"
 wpa_supplicant="$artifacts/saaios-wpa_supplicant-arm64"
 wpa_cli="$artifacts/saaios-wpa_cli-arm64"
 tinyplay="$bin_dir/saaios-tinyplay-arm64"
@@ -81,6 +82,9 @@ mkdir -p "$bin_dir" "$(dirname -- "$output")"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/bt-gatt-probe.c" -o "$bt_gatt_probe"
+
+"$zig" cc -target aarch64-linux-musl -static -Os -s \
+    "$source_dir/file-recv.c" -o "$file_recv"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/reboot-bootloader.c" -o "$reboot_bootloader"
@@ -147,6 +151,7 @@ set -- ramdisk.cpio \
     "add 0755 saaios/udhcpc.script $scripts_dir/udhcpc.script" \
     "add 0755 saaios/wifi-action.sh $scripts_dir/wifi-action.sh" \
     "add 0755 saaios/reboot-bootloader $reboot_bootloader" \
+    "add 0755 saaios/file-recv $file_recv" \
     "add 0644 saaios/focal_touch.ko $artifacts/focal_touch.ko" \
     "mkdir 0755 lib" \
     "mkdir 0755 lib/firmware" \
@@ -176,6 +181,7 @@ for entry in \
     "saai-displayd:$saai_displayd" \
     "saai-shell:$saai_shell" \
     "saai-mahjong:$saai_mahjong" \
+    "file-recv:$file_recv" \
     "native-init:$native_init" \
     "drm-splash:$drm_splash"
 do

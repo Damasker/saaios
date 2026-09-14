@@ -1273,6 +1273,39 @@ static pid_t start_saai_appd(void) {
     return child;
 }
 
+/* Bootstrap for network-based deployment (see file-recv.c's own doc
+ * comment): a persistent TCP listener that writes any file pushed to
+ * it under /data/saaios/incoming/, the first channel onto this device
+ * that isn't "bake it into the 8MB init_boot ramdisk and reflash".
+ * Started unconditionally at boot, same as every other system
+ * service here -- harmless before Wi-Fi associates (accept() just
+ * has nothing to accept yet), real from the moment it does. */
+static pid_t start_file_recv(void) {
+    if (access("/saaios/file-recv", X_OK) < 0) {
+        log_message("file-recv unavailable");
+        return -1;
+    }
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/file-recv.log",
+                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl("/saaios/file-recv", "file-recv", NULL);
+        dprintf(STDERR_FILENO, "file-recv exec failed: %s\n", strerror(errno));
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("system service started: file-recv");
+    }
+    return child;
+}
+
 /* S06: entityd is the sole writer for the durable Space/Entity/Event store.
    It follows appd's persistent-service model so the fixed init_boot image
    owns supervision without carrying the independently updatable binary. */
@@ -1488,6 +1521,7 @@ int main(void) {
     setup_data_storage();
     pid_t entityd_pid = start_saai_entityd();
     pid_t appd_pid = start_saai_appd();
+    pid_t file_recv_pid = start_file_recv();
 
     for (size_t i = 0; i < ARRAY_SIZE(usb_modules); ++i) {
         if (strcmp(usb_modules[i], "tcpci_max77759.ko") == 0) {
@@ -1594,6 +1628,13 @@ int main(void) {
             appd_pid = start_saai_appd();
             if (appd_pid > 0) {
                 log_message("system service restarted: saai-appd");
+            }
+        } else if (file_recv_pid > 0 && ended == file_recv_pid) {
+            log_message("system service exited: file-recv");
+            usleep(500000);
+            file_recv_pid = start_file_recv();
+            if (file_recv_pid > 0) {
+                log_message("system service restarted: file-recv");
             }
         } else if (entityd_pid > 0 && ended == entityd_pid) {
             log_message("system service exited: saai-entityd");
