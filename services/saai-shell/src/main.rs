@@ -2115,6 +2115,10 @@ fn orb_action_at(pos: (f64, f64), width: u32, height: u32, menu_actions: &[OrbAc
 struct OrbFrame {
     dot: Rect,
     dot_color: render::Pixel,
+    /// HIA-16: drives `draw_orb`'s non-color signal -- a hollow ring
+    /// instead of a solid square, so `Attention` is distinguishable
+    /// by shape alone, not only by its fixed alert color.
+    is_attention: bool,
     menu_rows: Vec<(Rect, &'static str)>,
 }
 
@@ -4056,6 +4060,7 @@ impl Shell {
                 &mut render::Canvas::new(canvas, width, height),
                 orb.dot,
                 orb.dot_color,
+                orb.is_attention,
                 &orb.menu_rows,
                 self.fonts.as_ref(),
             );
@@ -5325,7 +5330,9 @@ impl Shell {
         };
         let view = orb_view(width, height, &menu_actions);
         let has_pending = !inbox_notifications(&self.selected_entities).is_empty();
-        let dot_color = match orb_state(self.orb_menu_open, has_pending) {
+        let state = orb_state(self.orb_menu_open, has_pending);
+        let is_attention = state == OrbState::Attention;
+        let dot_color = match state {
             OrbState::Attention => render::rgb(230, 90, 70),
             OrbState::Idle | OrbState::Menu => {
                 space_color(&self.system_space_entities, &self.selected_space_id).pixel()
@@ -5335,6 +5342,7 @@ impl Shell {
             return OrbFrame {
                 dot: view.rect,
                 dot_color,
+                is_attention,
                 menu_rows: Vec::new(),
             };
         }
@@ -5347,6 +5355,7 @@ impl Shell {
         OrbFrame {
             dot: dot_rect,
             dot_color,
+            is_attention,
             menu_rows,
         }
     }

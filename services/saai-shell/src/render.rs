@@ -407,10 +407,21 @@ pub fn draw_object_view(
 /// tab-bar/cards underneath it (see `orb_zone_rect`'s own doc comment
 /// in `main.rs` for why it never overlaps their hit-test space).
 /// `menu_rows` is empty in `Idle`/`Attention`; two rows in `Menu`.
+/// HIA-16: `is_attention` draws a real shape difference, not just a
+/// different fill color -- a hollow ring-square (outer `dot_color`
+/// frame, `BACKGROUND`-colored center) instead of the solid square
+/// every other state uses. `ATTENTION`'s own color (a fixed alert
+/// red, `main.rs`'s `build_orb_frame`) already told a sighted user
+/// something needs them; this is the same signal for anyone who
+/// can't rely on color alone (HIA-ROADMAP.md's own acceptance line,
+/// document section 52) -- a colorblind user, or a photo/screen-
+/// share that's lost its color fidelity, still sees "hollow" as
+/// distinct from "solid" regardless of hue.
 pub fn draw_orb(
     canvas: &mut Canvas<'_>,
     dot_rect: Rect,
     dot_color: Pixel,
+    is_attention: bool,
     menu_rows: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
@@ -429,6 +440,19 @@ pub fn draw_orb(
         }
     }
     canvas.fill_rect(dot_rect, dot_color);
+    if is_attention {
+        // A quarter of the side (minimum 6px so it stays visible even
+        // on the smallest panel `orb_dot_size` ever produces) left as
+        // a visible frame all the way around.
+        let border = (dot_rect.width / 4).max(6);
+        let inner = Rect::new(
+            dot_rect.x + border,
+            dot_rect.y + border,
+            dot_rect.width.saturating_sub(border * 2),
+            dot_rect.height.saturating_sub(border * 2),
+        );
+        canvas.fill_rect(inner, BACKGROUND);
+    }
 }
 
 /// The "adb"-style pairing prompt for a new SSH client -- same
@@ -1079,7 +1103,7 @@ fn draw_text(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_contrast_boost, draw_root, Canvas, ACCENT, SURFACE};
+    use super::{apply_contrast_boost, draw_orb, draw_root, Canvas, ACCENT, BACKGROUND, SURFACE};
     use saai_ui_core::Rect;
 
     #[test]
@@ -1136,5 +1160,25 @@ mod tests {
         );
         assert_eq!(canvas.pixel(135, 2125), SURFACE);
         assert_eq!(canvas.pixel(945, 2125), ACCENT);
+    }
+
+    #[test]
+    fn orb_is_hollow_only_when_attention_is_true() {
+        // HIA-16's own acceptance line (HIA-ROADMAP.md): Attention
+        // must be distinguishable by shape, not only by color -- the
+        // center pixel is the dot's own fill color when solid, and
+        // BACKGROUND (hollowed out) only when is_attention is true.
+        let mut pixels = vec![0u8; 200 * 200 * 4];
+        let mut canvas = Canvas::new(&mut pixels, 200, 200);
+        let dot_rect = Rect::new(50, 50, 100, 100);
+
+        draw_orb(&mut canvas, dot_rect, ACCENT, false, &[], None);
+        assert_eq!(canvas.pixel(100, 100), ACCENT);
+
+        draw_orb(&mut canvas, dot_rect, ACCENT, true, &[], None);
+        assert_eq!(canvas.pixel(100, 100), BACKGROUND);
+        // Still a ring, not an empty box -- the frame around the
+        // hollow center keeps showing the dot's own color.
+        assert_eq!(canvas.pixel(55, 100), ACCENT);
     }
 }
