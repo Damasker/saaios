@@ -1690,11 +1690,15 @@ enum Frame {
         accept: Rect,
         decline: Rect,
     },
-    TaskConfirm {
+    /// HIA-07: replaces the old task-only `TaskConfirm` -- one
+    /// variant for any entity, `actions` sized to whatever
+    /// `ObjectViewContent::actions` produced (0-2 today).
+    ObjectView {
         title: String,
+        status: String,
+        related: Option<String>,
         header: Rect,
-        accept: Rect,
-        decline: Rect,
+        actions: Vec<(Rect, &'static str)>,
     },
     RemotePairing {
         client_name: String,
@@ -1773,6 +1777,142 @@ fn task_confirm_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bo
         Some(TASK_CONFIRM_ACCEPT_ACTION) => Some(true),
         Some(TASK_CONFIRM_DECLINE_ACTION) => Some(false),
         _ => None,
+    }
+}
+
+const OBJECT_VIEW_HEADER_ID: &str = "object-view-header";
+const OBJECT_VIEW_BUTTONS_ID: &str = "object-view-buttons";
+const OBJECT_VIEW_ACTION_PREFIX: &str = "object-view-action:";
+
+/// HIA-07 (docs/os/sprints/HIA-ROADMAP.md): one reusable screen for
+/// any entity -- same header-plus-buttons shape as `task_confirm_
+/// view`, generalized to 0-2 buttons instead of always exactly two
+/// (`action_count` comes from `ObjectViewContent::actions`' own
+/// length at the call site). No separate "related" leaf -- like
+/// `task_confirm_view`, this is one header leaf plus an optional
+/// button row; `draw_object_view` places title/status/related at
+/// fixed offsets within the header rect itself, the same pattern
+/// the old task-only draw function already used for title alone.
+fn object_view(width: u32, height: u32, action_count: usize) -> LayoutNode {
+    let mut children = vec![Node::leaf(OBJECT_VIEW_HEADER_ID)];
+    if action_count > 0 {
+        let button_leaves: Vec<Node> = (0..action_count)
+            .map(|index| {
+                Node::leaf(format!("object-view-action-{index}"))
+                    .with_action(format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
+            })
+            .collect();
+        children.push(
+            Node::linear(OBJECT_VIEW_BUTTONS_ID, Axis::Horizontal, button_leaves)
+                .with_size(Length::Fill, Length::Px(TASK_CONFIRM_BUTTON_HEIGHT)),
+        );
+    }
+    let root = Node::linear("object-view", Axis::Vertical, children);
+    layout(&root, Rect::new(0, 0, width, height))
+}
+
+/// The tapped button's position (0 = first/primary), or `None` if the
+/// tap missed every button or there are none -- same "layout only
+/// returns a position, the call site decides what it means" shape as
+/// `task_confirm_action_at`'s own `bool`, generalized past two fixed
+/// buttons since which entity is showing decides how many buttons
+/// (and what they do) at any given moment.
+fn object_view_action_at(pos: (f64, f64), width: u32, height: u32, action_count: usize) -> Option<usize> {
+    if width == 0 || height == 0 || action_count == 0 {
+        return None;
+    }
+    object_view(width, height, action_count)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref())
+        .and_then(|action| action.strip_prefix(OBJECT_VIEW_ACTION_PREFIX))
+        .and_then(|index| index.parse::<usize>().ok())
+}
+
+/// What Object View shows for one entity -- `saaios.task`/`saaios.
+/// notification` are the two real, pre-existing types "Входящие"
+/// already listed before this (S13 Change 2 / S21); every other
+/// entity_type falls through to the `_` arm below, HIA-ROADMAP.md's
+/// own negative scenario: still a real title and a non-empty status
+/// line, never blank, never a crash, just no type-specific actions.
+struct ObjectViewContent {
+    title: String,
+    status: String,
+    related: Option<String>,
+    actions: Vec<&'static str>,
+}
+
+fn object_view_content(entity: &Entity, selected_entities: &[Entity]) -> ObjectViewContent {
+    match entity.entity_type.as_str() {
+        "saaios.task" => {
+            // A real related-entity lookup, not a placeholder: every
+            // saaios.task saai-taskd creates carries the intent_id
+            // that produced it (see `confirm_pending_task`'s own old
+            // doc comment, now folded into `handle_object_view_
+            // action`) -- shown here only when that intent is
+            // actually present in the same already-loaded entity list,
+            // never a second round-trip to entityd just for this.
+            let related = entity
+                .properties
+                .get("intent_id")
+                .and_then(Value::as_str)
+                .and_then(|id| id.parse::<Uuid>().ok())
+                .and_then(|id| {
+                    selected_entities
+                        .iter()
+                        .find(|candidate| candidate.id == id && candidate.entity_type == "saaios.intent")
+                })
+                .map(|intent| format!("Из намерения: {}", intent.title));
+            ObjectViewContent {
+                title: entity.title.clone(),
+                status: "Ждёт подтверждения".to_string(),
+                related,
+                // Same wording the old saaios.task-only confirm
+                // screen already used -- users who saw it shouldn't
+                // see the button text change out from under them.
+                actions: vec!["Подтвердить", "Отклонить"],
+            }
+        }
+        NOTIFICATION_ENTITY_TYPE => ObjectViewContent {
+            title: entity.title.clone(),
+            status: entity
+                .properties
+                .get("body")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            related: None,
+            actions: vec!["Скрыть"],
+        },
+        _ => {
+            let status = if entity.properties.is_empty() {
+                "Нет дополнительных данных".to_string()
+            } else {
+                entity
+                    .properties
+                    .iter()
+                    .map(|(key, value)| format!("{key}: {}", object_view_property_text(value)))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            };
+            ObjectViewContent {
+                title: entity.title.clone(),
+                status,
+                related: None,
+                actions: Vec::new(),
+            }
+        }
+    }
+}
+
+/// A raw string's own text, not its quoted JSON form -- everything
+/// else (numbers/bools/null/arrays/objects) falls back to `Value`'s
+/// own `Display`, which is honest enough for the fallback path this
+/// feeds (HIA-07's negative scenario is about never being empty, not
+/// about being pretty).
+fn object_view_property_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
     }
 }
 
@@ -2400,7 +2540,7 @@ fn main() {
         spaces: Vec::new(),
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
-        confirming_task_id: None,
+        viewing_entity_id: None,
         selected_entities: Vec::new(),
         system_space_entities: Vec::new(),
         context_frame: Vec::new(),
@@ -2592,12 +2732,15 @@ struct Shell {
     /// Throttles `refresh_context_signals_if_due`, same pattern as
     /// `last_statusbar_refresh`/`last_apps_refresh` just below.
     last_context_signal_refresh: Instant,
-    /// S13 Change 2: which task the modal on top of "Входящие" is
-    /// currently showing -- `Some` only after the user taps a specific
-    /// row in that page's list, `None` again once accepted/declined.
-    /// Replaces the old always-auto-popup-the-first-one behavior (see
-    /// `confirming_task`) with an explicit, page-scoped entry point.
-    confirming_task_id: Option<Uuid>,
+    /// HIA-07: which entity Object View is currently showing --
+    /// `Some` only after the user taps a row on "Входящие" (S13
+    /// Change 2 / S21), `None` again once its action is taken
+    /// (`handle_object_view_action`) or it turns out stale
+    /// (`viewing_entity`). Was `confirming_task_id`/`saaios.task`-only
+    /// before this; same "explicit, page-scoped entry point, no
+    /// auto-popup" shape S13 Change 2 already established, now
+    /// covering any entity_type "Входящие" ever lists a row for.
+    viewing_entity_id: Option<Uuid>,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -2978,16 +3121,23 @@ impl TouchHandler for Shell {
                 {
                     self.respond_to_pair_request(accept, conn, qh);
                 }
-            } else if self.confirming_task_id.is_some() {
-                // Modal, same as consent: the dangerous-Task
-                // confirmation screen owns every touch while it's
-                // showing (S09 Change 3 / ADR-031's follow-up). Only
-                // reachable by first tapping a row on "Входящие" (S13
-                // Change 2) -- no longer auto-opened.
-                if let Some(confirm) =
-                    task_confirm_action_at(self.last_touch_pos, self.width, self.height)
+            } else if self.viewing_entity_id.is_some() {
+                // Modal, same as consent: Object View owns every
+                // touch while it's showing (S09 Change 3 / ADR-031's
+                // follow-up, generalized past `saaios.task` alone by
+                // HIA-07). Only reachable by first tapping a row on
+                // "Входящие" (S13 Change 2 / S21) -- no auto-popup.
+                // Button count varies by entity_type, so it has to be
+                // recomputed here, same "read fresh" reasoning
+                // `object_view_content` itself already documents.
+                let action_count = self
+                    .viewing_entity()
+                    .map(|entity| object_view_content(entity, &self.selected_entities).actions.len())
+                    .unwrap_or(0);
+                if let Some(index) =
+                    object_view_action_at(self.last_touch_pos, self.width, self.height, action_count)
                 {
-                    self.confirm_pending_task(confirm);
+                    self.handle_object_view_action(index);
                     self.draw(conn, qh);
                 }
             } else if self.intent_input.is_some() {
@@ -3075,13 +3225,16 @@ impl TouchHandler for Shell {
                 // "Входящие" has no `root.sui` entries, so its rows
                 // aren't reachable through `content_action_at` below --
                 // this page's tap target is entirely runtime data.
-                if let Some((kind, id)) =
+                if let Some((_kind, id)) =
                     inbox_row_at(self.last_touch_pos, self.width, self.height, &self.selected_entities)
                 {
-                    match kind {
-                        InboxRowKind::Task => self.confirming_task_id = Some(id),
-                        InboxRowKind::Notification => self.dismiss_notification(id),
-                    }
+                    // HIA-07: every row, task or notification alike,
+                    // opens the same Object View now -- a task's own
+                    // Подтвердить/Отклонить and a notification's own
+                    // Скрыть live in that screen's action row instead
+                    // of one kind opening a dedicated modal and the
+                    // other dismissing on the bare row tap.
+                    self.viewing_entity_id = Some(id);
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Now {
@@ -3199,15 +3352,27 @@ impl Shell {
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
-        } else if let Some(task) = self.confirming_task() {
-            let view = task_confirm_view(width, height);
+        } else if let Some(entity) = self.viewing_entity() {
+            let content = object_view_content(entity, &self.selected_entities);
+            let view = object_view(width, height, content.actions.len());
             let header = view.children[0].rect;
-            let buttons = &view.children[1].children;
-            Frame::TaskConfirm {
-                title: task.title.clone(),
+            let actions: Vec<(Rect, &'static str)> = if content.actions.is_empty() {
+                Vec::new()
+            } else {
+                let button_rects = &view.children[1].children;
+                content
+                    .actions
+                    .iter()
+                    .zip(button_rects.iter())
+                    .map(|(label, node)| (node.rect, *label))
+                    .collect()
+            };
+            Frame::ObjectView {
+                title: content.title,
+                status: content.status,
+                related: content.related,
                 header,
-                accept: buttons[0].rect,
-                decline: buttons[1].rect,
+                actions,
             }
         } else if let Some(pending) = &self.pending_pair_request {
             // Reuses task_confirm_view's geometry verbatim (same
@@ -3448,18 +3613,20 @@ impl Shell {
                     self.fonts.as_ref(),
                 );
             }
-            Frame::TaskConfirm {
+            Frame::ObjectView {
                 title,
+                status,
+                related,
                 header,
-                accept,
-                decline,
+                actions,
             } => {
-                render::draw_task_confirm(
+                render::draw_object_view(
                     &mut render::Canvas::new(canvas, width, height),
                     &title,
+                    &status,
+                    related.as_deref(),
                     header,
-                    accept,
-                    decline,
+                    &actions,
                     self.fonts.as_ref(),
                 );
             }
@@ -3601,8 +3768,8 @@ impl Shell {
     /// The lifecycle-cycle gesture's actual write path -- full-replace
     /// `update_entity` on the space's existing `saaios.space-lifecycle`
     /// record if one exists (same pattern `dismiss_notification`/
-    /// `confirm_pending_task` already use), or `create_entity` the
-    /// first time this space's lifecycle is ever touched.
+    /// `handle_object_view_action` already use), or `create_entity`
+    /// the first time this space's lifecycle is ever touched.
     fn cycle_space_lifecycle(&mut self, space_id: &str) {
         let next = space_lifecycle(&self.system_space_entities, space_id).next();
         let mut properties = Map::new();
@@ -4251,20 +4418,23 @@ impl Shell {
         rows.into_iter()
             .enumerate()
             .map(|(index, (kind, entity))| {
-                let (status, action) = match kind {
-                    InboxRowKind::Task => ("Ждёт подтверждения", "Открыть"),
+                // HIA-07: both kinds now open the same Object View
+                // on tap (see the touch-dispatch site), so both rows
+                // say "Открыть" -- a notification's "Скрыть" moved
+                // into that screen's own action row, it no longer
+                // happens directly from this list.
+                let status = match kind {
+                    InboxRowKind::Task => "Ждёт подтверждения",
                     // S21: the notification's own `body` property is
                     // its message; the title is used as the card
                     // label, same split as a task's title/status.
-                    InboxRowKind::Notification => (
-                        entity
-                            .properties
-                            .get("body")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                        "Скрыть",
-                    ),
+                    InboxRowKind::Notification => entity
+                        .properties
+                        .get("body")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
                 };
+                let action = "Открыть";
                 (
                     stacked_row_rect(index, width, height),
                     render::ActionCardView::new(entity.title.clone(), status, action),
@@ -4626,17 +4796,33 @@ impl Shell {
     /// client has no memory of its own, and a Task the store still
     /// marks `waiting_confirmation` shows up here exactly the same way
     /// it did before the reboot -- never auto-confirmed, never hidden.
-    /// S13 Change 2: the task named by `confirming_task_id`, if it's
-    /// still present and still actually waiting -- `None` collapses
-    /// the modal back to whatever page is underneath (harmless if the
-    /// id is stale, e.g. the task was resolved from another client).
-    fn confirming_task(&self) -> Option<&Entity> {
-        let id = self.confirming_task_id?;
+    /// HIA-07: the entity named by `viewing_entity_id`, if it's
+    /// still present and still actually relevant -- `None` collapses
+    /// Object View back to whatever page is underneath (harmless if
+    /// the id is stale, e.g. the task was resolved from another
+    /// client, or the notification already dismissed elsewhere).
+    /// "Relevant" is type-specific (same status/dismissed checks S13
+    /// Change 2 and S21 already used before this existed); an
+    /// unrecognized entity_type has no staleness concept of its own,
+    /// so it's always still relevant as long as the id exists at all.
+    fn viewing_entity(&self) -> Option<&Entity> {
+        let id = self.viewing_entity_id?;
         self.selected_entities.iter().find(|entity| {
-            entity.id == id
-                && entity.entity_type == "saaios.task"
-                && entity.properties.get("status").and_then(Value::as_str)
-                    == Some(TASK_STATUS_WAITING_CONFIRMATION)
+            if entity.id != id {
+                return false;
+            }
+            match entity.entity_type.as_str() {
+                "saaios.task" => {
+                    entity.properties.get("status").and_then(Value::as_str)
+                        == Some(TASK_STATUS_WAITING_CONFIRMATION)
+                }
+                NOTIFICATION_ENTITY_TYPE => !entity
+                    .properties
+                    .get("dismissed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                _ => true,
+            }
         })
     }
 
@@ -4722,44 +4908,57 @@ impl Shell {
         self.draw(conn, qh);
     }
 
-    fn confirm_pending_task(&mut self, confirm: bool) {
-        // Cloned to an owned `Entity` up front, ending the borrow of
-        // `self` before `self.entityd.update_entity()` needs its own
-        // (disjoint but, from the borrow checker's point of view
-        // through a `&self`-taking helper, not provably disjoint)
-        // mutable borrow of `self.entityd`.
-        let Some(task) = self.confirming_task().cloned() else {
+    /// HIA-07: interprets a tapped Object View button according to
+    /// whichever entity is currently showing -- same "the layout only
+    /// returns a position, the call site decides what it means" shape
+    /// `task_confirm_action_at`'s own `bool` already used (this
+    /// replaces its one other former call site, the old `confirm_
+    /// pending_task`), generalized past two fixed buttons/one fixed
+    /// entity_type. `index` is only ever consulted for the types that
+    /// define an action at that position at all -- an entity_type
+    /// with an empty `actions` list never reaches here in the first
+    /// place (`object_view_action_at` returns `None` when
+    /// `action_count == 0`).
+    fn handle_object_view_action(&mut self, index: usize) {
+        let Some(entity) = self.viewing_entity().cloned() else {
             return;
         };
-        // Closes the modal regardless of outcome -- the old behavior
-        // (auto-popup the next waiting task, if any) is gone with S13
-        // Change 2; the user comes back to "Входящие" and taps the
-        // next one themselves if there is one.
-        self.confirming_task_id = None;
-        let mut properties = task.properties.clone();
-        properties.insert(
-            "status".into(),
-            Value::String(
-                if confirm {
-                    TASK_STATUS_RUNNING
-                } else {
-                    TASK_STATUS_CANCELLED
-                }
-                .to_string(),
-            ),
-        );
-        println!(
-            "saai-shell: task {} {}",
-            task.id,
-            if confirm { "confirmed" } else { "cancelled" }
-        );
-        self.entityd.update_entity(&task, properties);
+        // Closes Object View regardless of outcome -- same "no
+        // auto-popup, the user comes back and taps the next one
+        // themselves" reasoning S13 Change 2 already established for
+        // the task-only modal this replaces.
+        self.viewing_entity_id = None;
+        match entity.entity_type.as_str() {
+            "saaios.task" => {
+                let confirm = index == 0;
+                let mut properties = entity.properties.clone();
+                properties.insert(
+                    "status".into(),
+                    Value::String(
+                        if confirm {
+                            TASK_STATUS_RUNNING
+                        } else {
+                            TASK_STATUS_CANCELLED
+                        }
+                        .to_string(),
+                    ),
+                );
+                println!(
+                    "saai-shell: task {} {}",
+                    entity.id,
+                    if confirm { "confirmed" } else { "cancelled" }
+                );
+                self.entityd.update_entity(&entity, properties);
+            }
+            NOTIFICATION_ENTITY_TYPE => self.dismiss_notification(entity.id),
+            _ => {}
+        }
     }
 
     /// S21: marks a notification `dismissed` rather than deleting it --
-    /// same full-replace-properties convention `confirm_pending_task`
-    /// already uses for tasks, so `saai-entityd`'s protocol needed no
-    /// changes for either entity type.
+    /// same full-replace-properties convention `handle_object_view_
+    /// action` already uses for tasks, so `saai-entityd`'s protocol
+    /// needed no changes for either entity type.
     fn dismiss_notification(&mut self, id: Uuid) {
         let Some(notification) = self
             .selected_entities
@@ -5154,13 +5353,14 @@ mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
-        effective_context_space, remove_context_source, space_color, space_color_entity,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at,
-        trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
-        ContextFrameEntry, ContextSource, Entity, KeyboardMode, Rect, RootPage, Space,
-        SpaceColor, SpaceLifecycle, TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        effective_context_space, object_view_action_at, object_view_content,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
+        stacked_row_rect, tab_at, task_confirm_action_at, trusted_client_action_at,
+        upsert_context_entry, wifi_list_action_at, BluetoothListTap, ContextFrameEntry,
+        ContextSource, Entity, KeyboardMode, Rect, RootPage, Space, SpaceColor, SpaceLifecycle,
+        TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, SPACE_COLOR_ENTITY_TYPE, MANUAL_CONFIDENCE, WIFI_CONFIDENCE,
     };
@@ -5212,6 +5412,34 @@ mod tests {
         properties.insert("space_id".into(), serde_json::Value::String(space_id.into()));
         properties.insert("color".into(), serde_json::Value::String(color.into()));
         test_entity(SPACE_COLOR_ENTITY_TYPE, properties)
+    }
+
+    fn task_entity(title: &str, intent_id: Option<uuid::Uuid>) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert(
+            "status".into(),
+            serde_json::Value::String("waiting_confirmation".into()),
+        );
+        if let Some(id) = intent_id {
+            properties.insert("intent_id".into(), serde_json::Value::String(id.to_string()));
+        }
+        let mut entity = test_entity("saaios.task", properties);
+        entity.title = title.to_string();
+        entity
+    }
+
+    fn notification_entity(title: &str, body: &str) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert("body".into(), serde_json::Value::String(body.into()));
+        let mut entity = test_entity(NOTIFICATION_ENTITY_TYPE, properties);
+        entity.title = title.to_string();
+        entity
+    }
+
+    fn intent_entity(title: &str) -> Entity {
+        let mut entity = test_entity("saaios.intent", serde_json::Map::new());
+        entity.title = title.to_string();
+        entity
     }
 
     #[test]
@@ -5833,6 +6061,88 @@ mod tests {
             assert_eq!(SpaceColor::parse(color.as_str()), Some(color));
         }
         assert_eq!(SpaceColor::parse("not-a-real-color"), None);
+    }
+
+    #[test]
+    fn object_view_action_at_finds_two_buttons_by_position() {
+        // Same geometry as task_confirm_view's own accept/decline
+        // split (task_confirm_screen_left/right_half_of_button_row_*
+        // above) -- object_view(_, _, 2) uses the identical layout
+        // shape.
+        assert_eq!(object_view_action_at((270.0, 2250.0), 1080, 2400, 2), Some(0));
+        assert_eq!(object_view_action_at((810.0, 2250.0), 1080, 2400, 2), Some(1));
+        assert_eq!(object_view_action_at((540.0, 1000.0), 1080, 2400, 2), None);
+    }
+
+    #[test]
+    fn object_view_action_at_finds_a_single_button_spanning_the_full_row() {
+        assert_eq!(object_view_action_at((270.0, 2250.0), 1080, 2400, 1), Some(0));
+        assert_eq!(object_view_action_at((810.0, 2250.0), 1080, 2400, 1), Some(0));
+    }
+
+    #[test]
+    fn object_view_action_at_finds_nothing_with_zero_actions() {
+        assert_eq!(object_view_action_at((270.0, 2250.0), 1080, 2400, 0), None);
+        assert_eq!(object_view_action_at((540.0, 1000.0), 1080, 2400, 0), None);
+    }
+
+    #[test]
+    fn object_view_content_for_a_task_has_no_related_line_without_a_matching_intent() {
+        let task = task_entity("Подтвердите: удалить объект", None);
+        let content = object_view_content(&task, &[]);
+        assert_eq!(content.title, "Подтвердите: удалить объект");
+        assert_eq!(content.status, "Ждёт подтверждения");
+        assert_eq!(content.related, None);
+        assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+    }
+
+    #[test]
+    fn object_view_content_for_a_task_shows_the_originating_intent_when_present() {
+        let intent = intent_entity("Напомни поливать цветы");
+        let task = task_entity("Подтвердите: полить цветы", Some(intent.id));
+        let selected_entities = vec![intent.clone(), task.clone()];
+        let content = object_view_content(&task, &selected_entities);
+        assert_eq!(
+            content.related,
+            Some("Из намерения: Напомни поливать цветы".to_string())
+        );
+    }
+
+    #[test]
+    fn object_view_content_for_a_notification_shows_its_body_and_a_dismiss_action() {
+        let notification = notification_entity("Маджонг: победа!", "Хорошая игра");
+        let content = object_view_content(&notification, &[]);
+        assert_eq!(content.title, "Маджонг: победа!");
+        assert_eq!(content.status, "Хорошая игра");
+        assert_eq!(content.related, None);
+        assert_eq!(content.actions, vec!["Скрыть"]);
+    }
+
+    #[test]
+    fn object_view_content_for_an_unknown_entity_type_is_never_empty_and_has_no_actions() {
+        // HIA-07's own negative scenario (HIA-ROADMAP.md): an
+        // entity_type this file has no special case for still gets a
+        // real title and a non-empty status, not a blank/crashing
+        // View -- just no type-specific actions.
+        let mut properties = serde_json::Map::new();
+        properties.insert("some_number".into(), serde_json::Value::from(42));
+        properties.insert("some_text".into(), serde_json::Value::String("hello".into()));
+        let mut entity = test_entity("some.unknown.type", properties);
+        entity.title = "Загадочный объект".to_string();
+        let content = object_view_content(&entity, &[]);
+        assert_eq!(content.title, "Загадочный объект");
+        assert!(!content.status.is_empty());
+        assert!(content.status.contains("some_number"));
+        assert!(content.status.contains("hello"));
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_content_for_an_unknown_entity_type_with_no_properties_still_has_a_status_line() {
+        let mut entity = test_entity("some.other.unknown", serde_json::Map::new());
+        entity.title = "Пустой объект".to_string();
+        let content = object_view_content(&entity, &[]);
+        assert_eq!(content.status, "Нет дополнительных данных");
     }
 }
 

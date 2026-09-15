@@ -352,76 +352,61 @@ pub fn draw_intent_input(
     }
 }
 
-/// S09 Change 3: the confirmation screen for a dangerous `saaios.task`
-/// (ADR-031's follow-up). `title` is already the task's own
-/// human-readable title (e.g. "Подтвердите: удалить объект a1b2c3d4")
-/// -- `saai-shell` shows it verbatim rather than interpreting the
-/// Action's `kind`/`input`, so it never needs to know `saai-taskd`'s
-/// vocabulary (ADR-030's no-cross-runtime-dependency principle applies
-/// here too, not just to the daemon split itself).
-pub fn draw_task_confirm(
+/// HIA-07: one screen for any entity, instead of a dedicated view per
+/// `entity_type` (this replaced the previous, `saaios.task`-only
+/// `draw_task_confirm`, same header-plus-buttons shape and
+/// fixed-offset text placement, generalized to 0-2 buttons and an
+/// optional third "related" line instead of always exactly two).
+/// `actions` is empty for an entity_type with no type-specific
+/// behavior (HIA-ROADMAP.md's own negative scenario: still a real,
+/// non-empty screen, just without a button row).
+pub fn draw_object_view(
     canvas: &mut Canvas<'_>,
     title: &str,
+    status: &str,
+    related: Option<&str>,
     header: Rect,
-    accept_button: Rect,
-    decline_button: Rect,
+    actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(BACKGROUND);
+    for (index, (rect, _label)) in actions.iter().enumerate() {
+        // First button is the primary/accepting action -- holds
+        // for a single-button screen too
+        // (e.g. a notification's "Скрыть"), where it's the only, and
+        // therefore primary, action.
+        canvas.fill_rect(*rect, if index == 0 { ACCENT } else { SURFACE });
+    }
 
     let Some(fonts) = fonts else {
-        canvas.fill_rect(accept_button, ACCENT);
-        canvas.fill_rect(decline_button, SURFACE);
         return;
     };
 
     let margin = header.width / 22;
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        "Требуется подтверждение",
-        46.0,
-        header.x + margin,
-        header.y + 220,
-        TEXT,
-    );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        title,
-        32.0,
-        header.x + margin,
-        header.y + 340,
-        TEXT_MUTED,
-    );
+    draw_text(canvas, &fonts.semibold, title, 46.0, header.x + margin, header.y + 220, TEXT);
+    draw_text(canvas, &fonts.regular, status, 32.0, header.x + margin, header.y + 340, TEXT_MUTED);
+    if let Some(related) = related {
+        draw_text(canvas, &fonts.regular, related, 28.0, header.x + margin, header.y + 460, TEXT_MUTED);
+    }
 
-    canvas.fill_rect(accept_button, ACCENT);
-    canvas.fill_rect(decline_button, SURFACE);
-    draw_text_centered(
-        canvas,
-        &fonts.semibold,
-        "Подтвердить",
-        40.0,
-        accept_button.x + accept_button.width / 2,
-        accept_button.y + accept_button.height / 2 - 20,
-        BACKGROUND,
-    );
-    draw_text_centered(
-        canvas,
-        &fonts.semibold,
-        "Отклонить",
-        40.0,
-        decline_button.x + decline_button.width / 2,
-        decline_button.y + decline_button.height / 2 - 20,
-        TEXT,
-    );
+    for (index, (rect, label)) in actions.iter().enumerate() {
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            label,
+            40.0,
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2 - 20,
+            if index == 0 { BACKGROUND } else { TEXT },
+        );
+    }
 }
 
 /// The "adb"-style pairing prompt for a new SSH client -- same
-/// header-plus-two-buttons shape as `draw_task_confirm` (built from
-/// the exact same `task_confirm_view` geometry, see `main.rs`'s
+/// header-plus-two-buttons shape `draw_object_view` also uses (built
+/// from the exact same `task_confirm_view` geometry, see `main.rs`'s
 /// frame-building code), just with the pairing-specific text and
-/// button labels instead of the generic dangerous-Task ones.
+/// button labels instead of a generic entity's own.
 pub fn draw_remote_pair(
     canvas: &mut Canvas<'_>,
     client_name: &str,
@@ -494,8 +479,8 @@ pub fn draw_remote_pair(
 /// the fixed trailing control rows already baked into `rows` by the
 /// caller (see `wifi_list_action_at`'s doc comment for why the row
 /// count is runtime-sized rather than a `root.sui` screen). Same
-/// simple header-plus-list shape as `draw_task_confirm`, just with N
-/// rows instead of two buttons. S20 generalized this from a
+/// simple header-plus-list shape as `draw_object_view`, just with N
+/// rows instead of a button row. S20 generalized this from a
 /// Wi-Fi-only `draw_wifi_list` to also draw "Bluetooth устройства" --
 /// same shape both times, only the title and row contents differ.
 pub fn draw_row_list(
@@ -684,7 +669,7 @@ pub fn draw_lock_pin_entry(
 // S23 added `is_grid` as the 8th plain draw-time knob on an already
 // data-only function (no behavior to extract into a struct without
 // inventing one purely to appease this lint) -- same call shape as
-// `draw_consent`/`draw_task_confirm`, just with one more page-shaped
+// `draw_consent`/`draw_object_view`, just with one more page-shaped
 // screen to describe.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_root(
