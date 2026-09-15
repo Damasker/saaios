@@ -103,6 +103,19 @@ static const char *const usb_modules[] = {
     "max77759-charger.ko",
     "tcpci_max77759.ko",
     "google-cpm.ko",
+    /* S27: without these, google,charger/google,battery's platform
+     * devices sit in the device tree with no driver ever bound --
+     * google_cpm alone can select a power path but nothing tells the
+     * charger IC to actually authorize current, so the phone reports
+     * "Not charging" indefinitely despite a fully negotiated USB-PD
+     * contract. Both .ko files already ship on vendor_kernel_boot's
+     * own ramdisk (untouched by this project's init_boot rebuilds,
+     * merged in by the bootloader before this init ever runs) --
+     * see ADR for "charging modules" -- this was a missing insmod,
+     * not a missing artifact. Placed after google-cpm.ko: verified
+     * live in that order on a running device before adding here. */
+    "google-battery.ko",
+    "google-charger.ko",
     "exynos-pd_hsi0.ko",
     "phy-exynos-usbdrd-super.ko",
     "dwc3-exynos-usb.ko",
