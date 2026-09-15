@@ -18,6 +18,14 @@ pub const INTENT_TYPE: &str = "saaios.intent";
 pub const TASK_TYPE: &str = "saaios.task";
 pub const ACTION_TYPE: &str = "saaios.action";
 pub const RESULT_TYPE: &str = "saaios.result";
+/// ADR-089 (HIA-19's offline/degraded review): a Task that reaches
+/// `Failed` used to do so silently -- visible only by reading the
+/// entity store directly, since `saai-shell`'s "Входящие" only ever
+/// listed `waiting_confirmation` Tasks. Same `entity_type`/`body`
+/// shape `saai-shell`'s own `NOTIFICATION_ENTITY_TYPE` already uses
+/// for `low_battery` -- reusing HIA-07's Object View (ADR-088)
+/// instead of a new screen.
+pub const NOTIFICATION_TYPE: &str = "saaios.notification";
 
 /// S10 Change 3 (ADR-036): a schedule is its own native entity, not a
 /// port of Platform Track's `automation-engine::TriggerKind` -- that

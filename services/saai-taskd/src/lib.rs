@@ -40,12 +40,12 @@ use model::{
     action_properties, dangerous_action_of, find_action_for_task, has_task_for_intent,
     is_schedule_due, result_properties, safe_title, schedule_every_secs, schedule_fire_count,
     schedule_properties, schedule_text, status_of, task_properties, WorkflowStatus, ACTION_TYPE,
-    DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, RESULT_TYPE, RUNTIME_ACTION_KIND, SCHEDULE_TYPE,
-    TASK_TYPE,
+    DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, RESULT_TYPE, RUNTIME_ACTION_KIND,
+    SCHEDULE_TYPE, TASK_TYPE,
 };
 use saai_entity_protocol::{Entity, EntitydEvent};
 use saai_entity_store::EventPayload;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::time::Duration;
 use uuid::Uuid;
@@ -453,6 +453,27 @@ impl Daemon {
         Ok(())
     }
 
+    /// ADR-089 (HIA-19's offline/degraded review): a failed Task used
+    /// to be visible only by reading the entity store directly --
+    /// `saai-shell`'s "Входящие" only ever listed `waiting_
+    /// confirmation` Tasks, so an intent that failed (most commonly
+    /// because `saaios-runtime` isn't reachable -- ADR-033's own doc
+    /// comment already admits it usually lives on a USB-NCM-tethered
+    /// host, not the device itself) could vanish without a trace.
+    /// Best-effort on purpose -- see this method's own doc comment.
+    async fn notify_task_failed(&mut self, task_title: &str, message: &str) {
+        let mut properties = Map::new();
+        properties.insert("body".into(), json!(message));
+        properties.insert("kind".into(), json!("task_failed"));
+        if let Err(error) = self
+            .conn
+            .create_entity(&self.space_id, NOTIFICATION_TYPE, task_title, properties)
+            .await
+        {
+            eprintln!("saai-taskd: failed to create failure notification: {error}");
+        }
+    }
+
     async fn fail_task(
         &mut self,
         task: &Entity,
@@ -460,6 +481,12 @@ impl Daemon {
         message: &str,
     ) -> Result<(), ClientError> {
         eprintln!("saai-taskd: task {} failed: {message}", task.id);
+        // Best-effort, deliberately not `?` -- a hiccup creating the
+        // notification must never turn this Task's own already-
+        // durable `Failed` write below into a daemon-crashing error
+        // one layer up (`process_intent`'s caller can `std::process::
+        // exit(1)` on a propagated error at startup reconcile).
+        self.notify_task_failed(&task.title, message).await;
         let mut failed_properties = task_properties(intent_id, WorkflowStatus::Failed);
         failed_properties.insert("error".into(), json!(message));
         let updated_task = self.conn.update_entity(task, failed_properties).await?;
@@ -739,6 +766,7 @@ impl Daemon {
 
         let intent_id = model::intent_id_of(task)
             .ok_or_else(|| ClientError::UnexpectedResult("task missing intent_id".into()))?;
+        self.notify_task_failed(&task.title, message).await;
         let mut failed_properties = task_properties(intent_id, WorkflowStatus::Failed);
         failed_properties.insert("error".into(), json!(message));
         let updated_task = self.conn.update_entity(task, failed_properties).await?;
