@@ -131,8 +131,6 @@ set -- ramdisk.cpio \
     "mkdir 0755 saaios" \
     "add 0755 saaios/busybox $artifacts/busybox-arm64" \
     "add 0755 saaios/drm-splash $drm_splash" \
-    "add 0755 saaios/saai-displayd $saai_displayd" \
-    "add 0755 saaios/saai-shell $saai_shell" \
     "mkdir 0755 saaios/packages" \
     "mkdir 0755 saaios/packages/org.saaios.mahjong" \
     "mkdir 0755 saaios/packages/org.saaios.mahjong/bin" \

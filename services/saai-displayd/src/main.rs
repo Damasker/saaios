@@ -270,8 +270,20 @@ struct State {
     layer_surfaces: Vec<LayerSurface>,
 }
 
+/// S32's follow-up (docs/os/ideas.md): moved off the fixed 8MB
+/// init_boot ramdisk onto the same persistent /data volume
+/// saai-appd/saai-entityd/saaios-runtime already use -- the same
+/// "independent of the fixed-size image" reasoning, just applied to
+/// the two remaining occupants (this one and saai-displayd itself,
+/// native-init.c's own DISPLAYD_PATH). If this path is ever missing
+/// (a fresh /data with no bootstrap copy yet), spawn_shell()'s
+/// std::process::Command::spawn() fails cleanly -- launch_shell()'s
+/// own RestartBudget/SHELL_RESTART_LIMIT already handles that by
+/// exiting this process, letting PID 1's own UI-slot restart budget
+/// fall back to drm-splash (ADR-009), same safety net that already
+/// covered a crashing saai-shell before this move.
 #[cfg(feature = "panther-hardware")]
-const SAAI_SHELL_PATH: &str = "/saaios/saai-shell";
+const SAAI_SHELL_PATH: &str = "/data/saaios/system/saai-shell";
 
 #[cfg(any(test, feature = "panther-hardware"))]
 const SHELL_RESTART_LIMIT: usize = 3;

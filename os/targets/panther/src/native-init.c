@@ -36,6 +36,13 @@
 #define UI_RESTART_WINDOW_SECONDS 60
 #define APPD_PATH "/data/saaios/system/saai-appd"
 #define ENTITYD_PATH "/data/saaios/system/saai-entityd"
+/* Same /data relocation as APPD_PATH/ENTITYD_PATH, applied to the two
+ * remaining fixed-image occupants -- the docs/os/ideas.md item that
+ * finally closed the gap those two ADRs left open. saai-shell itself
+ * is not started here at all -- it is saai-displayd's own child
+ * (ADR-014), so only its own hardcoded SAAI_SHELL_PATH constant
+ * needed the matching change, not anything in this file. */
+#define DISPLAYD_PATH "/data/saaios/system/saai-displayd"
 /* Moved off the fixed 8MB init_boot ramdisk onto the same persistent
  * /data volume appd/entityd already use (ADR: "SSH pairing policy" --
  * found while making room there for dropbear's own dynamic-link
@@ -1254,7 +1261,7 @@ static pid_t start_display_splash(void) {
 }
 
 static pid_t start_saai_displayd(void) {
-    return start_ui_binary("/saaios/saai-displayd", "saai-displayd",
+    return start_ui_binary(DISPLAYD_PATH, "saai-displayd",
                            "/run/saai-displayd.log");
 }
 
