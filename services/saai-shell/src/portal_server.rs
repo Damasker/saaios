@@ -32,8 +32,13 @@ use std::path::PathBuf;
 use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 use saai_portal_protocol::{
     decode_request, encode_message, ClientRequest, ResponseResult, ServerMessage,
-    MAX_CLIPBOARD_TEXT_BYTES, MAX_WIRE_MESSAGE_BYTES,
+    MAX_CLIPBOARD_TEXT_BYTES, MAX_NOTIFICATION_BODY_BYTES, MAX_NOTIFICATION_TITLE_BYTES,
+    MAX_WIRE_MESSAGE_BYTES,
 };
+use serde_json::{Map, Value};
+
+use crate::entityd_client::EntitydClient;
+use crate::NOTIFICATION_ENTITY_TYPE;
 
 /// Matches `Capability::as_str()` in saai-appd (ADR-020's vocabulary).
 /// `saai-shell` only speaks `saai-appd`'s wire protocol, not its Rust
@@ -42,6 +47,7 @@ use saai_portal_protocol::{
 const CAP_CLIPBOARD_READ: &str = "clipboard.read";
 const CAP_CLIPBOARD_WRITE: &str = "clipboard.write";
 const CAP_PORTAL_OPEN_FILE: &str = "portal.open_file";
+const CAP_NOTIFICATIONS_POST: &str = "notifications.post";
 
 pub struct PortalServer {
     listener: UnixListener,
@@ -89,10 +95,13 @@ impl PortalServer {
         apps_by_pid: &BTreeMap<u32, String>,
         apps_grants: &BTreeMap<String, Vec<String>>,
         clipboard: &mut Option<String>,
+        entityd: &mut EntitydClient,
+        selected_space_id: &str,
     ) {
         self.accept_pending();
-        self.connections
-            .retain_mut(|connection| connection.service(apps_by_pid, apps_grants, clipboard));
+        self.connections.retain_mut(|connection| {
+            connection.service(apps_by_pid, apps_grants, clipboard, entityd, selected_space_id)
+        });
     }
 
     fn accept_pending(&mut self) {
@@ -137,6 +146,8 @@ impl Connection {
         apps_by_pid: &BTreeMap<u32, String>,
         apps_grants: &BTreeMap<String, Vec<String>>,
         clipboard: &mut Option<String>,
+        entityd: &mut EntitydClient,
+        selected_space_id: &str,
     ) -> bool {
         if self.flush().is_err() {
             return false;
@@ -150,7 +161,14 @@ impl Connection {
             if frame.last() == Some(&b'\r') {
                 frame.pop();
             }
-            let response = self.handle_frame(&frame, apps_by_pid, apps_grants, clipboard);
+            let response = self.handle_frame(
+                &frame,
+                apps_by_pid,
+                apps_grants,
+                clipboard,
+                entityd,
+                selected_space_id,
+            );
             match encode_message(&response) {
                 Ok(encoded) => self.write_buffer.extend(encoded),
                 Err(error) => eprintln!("saai-shell: failed to encode portal response: {error}"),
@@ -165,6 +183,8 @@ impl Connection {
         apps_by_pid: &BTreeMap<u32, String>,
         apps_grants: &BTreeMap<String, Vec<String>>,
         clipboard: &mut Option<String>,
+        entityd: &mut EntitydClient,
+        selected_space_id: &str,
     ) -> ServerMessage {
         let request = match decode_request(frame) {
             Ok(request) => request,
@@ -187,6 +207,7 @@ impl Connection {
             ClientRequest::ClipboardRead { .. } => CAP_CLIPBOARD_READ,
             ClientRequest::ClipboardWrite { .. } => CAP_CLIPBOARD_WRITE,
             ClientRequest::OpenFile { .. } => CAP_PORTAL_OPEN_FILE,
+            ClientRequest::PostNotification { .. } => CAP_NOTIFICATIONS_POST,
         };
         if !granted.iter().any(|capability| capability == required) {
             return ServerMessage::error(
@@ -221,6 +242,37 @@ impl Connection {
                 "not_implemented",
                 "portal.open_file is a recorded entry point only -- the file picker flow is not built yet",
             ),
+            ClientRequest::PostNotification { title, body, .. } => {
+                if title.len() > MAX_NOTIFICATION_TITLE_BYTES
+                    || body.len() > MAX_NOTIFICATION_BODY_BYTES
+                {
+                    return ServerMessage::error(
+                        request_id,
+                        "notification_too_large",
+                        "title/body exceed the portal's notification size limit",
+                    );
+                }
+                if !entityd.is_connected() {
+                    return ServerMessage::error(
+                        request_id,
+                        "entityd_unavailable",
+                        "saai-entityd is not currently connected",
+                    );
+                }
+                let mut properties = Map::new();
+                properties.insert("body".into(), Value::String(body));
+                // Server-derived, not app-supplied (see PostNotification's
+                // own doc comment) -- an app can never claim a kind that
+                // looks like a first-party one (`low_battery`, etc).
+                properties.insert("kind".into(), Value::String(format!("app:{app_id}")));
+                entityd.create_entity(
+                    selected_space_id.to_string(),
+                    NOTIFICATION_ENTITY_TYPE,
+                    title,
+                    properties,
+                );
+                ServerMessage::success(request_id, ResponseResult::NotificationPosted)
+            }
         }
     }
 
@@ -282,6 +334,16 @@ mod tests {
     };
 
     use super::PortalServer;
+    use crate::entityd_client::EntitydClient;
+
+    /// A fresh client that will never actually connect (no server at this
+    /// path) -- exactly what every existing portal test needs, since none
+    /// of them exercise `PostNotification`'s entityd-backed path. Kept as
+    /// one helper so adding `entityd`/`selected_space_id` to `roundtrip`'s
+    /// signature only touched call sites once, not test-by-test.
+    fn disconnected_entityd() -> EntitydClient {
+        EntitydClient::new("/nonexistent/saai-shell-test-entityd.sock")
+    }
 
     fn roundtrip(
         server: &mut PortalServer,
@@ -291,10 +353,11 @@ mod tests {
         client: &mut UnixStream,
         request: &ClientRequest,
     ) -> ServerMessage {
+        let mut entityd = disconnected_entityd();
         client.write_all(&encode_request(request).unwrap()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            server.poll(apps_by_pid, apps_grants, clipboard);
+            server.poll(apps_by_pid, apps_grants, clipboard, &mut entityd, "home");
             client.set_nonblocking(true).unwrap();
             let mut reader = BufReader::new(&*client);
             let mut line = String::new();
@@ -461,5 +524,77 @@ mod tests {
         })
         .unwrap();
         assert!(decode_portal_request(&encoded[..encoded.len() - 1]).is_ok());
+    }
+
+    #[test]
+    fn post_notification_is_denied_without_the_capability() {
+        let temporary = tempfile::tempdir().unwrap();
+        let socket = temporary.path().join("portal.sock");
+        let mut server = PortalServer::bind(&socket).unwrap();
+        let mut client = UnixStream::connect(&socket).unwrap();
+
+        let mut apps_by_pid = BTreeMap::new();
+        apps_by_pid.insert(std::process::id(), "org.saaios.mahjong".to_string());
+        let apps_grants = BTreeMap::new(); // no capabilities on file at all
+
+        let response = roundtrip(
+            &mut server,
+            &apps_by_pid,
+            &apps_grants,
+            &mut None,
+            &mut client,
+            &ClientRequest::PostNotification {
+                schema: PORTAL_WIRE_SCHEMA_V1,
+                request_id: "t7".into(),
+                title: "Победа!".into(),
+                body: "Все пары найдены".into(),
+            },
+        );
+        assert!(matches!(
+            response,
+            ServerMessage::Response { ok: false, error: Some(error), .. }
+                if error.code == "capability_denied"
+        ));
+    }
+
+    #[test]
+    fn post_notification_is_refused_when_entityd_is_unreachable() {
+        let temporary = tempfile::tempdir().unwrap();
+        let socket = temporary.path().join("portal.sock");
+        let mut server = PortalServer::bind(&socket).unwrap();
+        let mut client = UnixStream::connect(&socket).unwrap();
+
+        let mut apps_by_pid = BTreeMap::new();
+        apps_by_pid.insert(std::process::id(), "org.saaios.mahjong".to_string());
+        let mut apps_grants = BTreeMap::new();
+        apps_grants.insert(
+            "org.saaios.mahjong".to_string(),
+            vec!["notifications.post".to_string()],
+        );
+
+        // The capability check passes here, but this test's `roundtrip`
+        // (like every other one in this module) hands the server a
+        // never-connects `EntitydClient` -- exactly the state a real
+        // saai-shell would be in if saai-entityd crashed. The portal must
+        // fail closed, not silently drop the notification as if it
+        // succeeded.
+        let response = roundtrip(
+            &mut server,
+            &apps_by_pid,
+            &apps_grants,
+            &mut None,
+            &mut client,
+            &ClientRequest::PostNotification {
+                schema: PORTAL_WIRE_SCHEMA_V1,
+                request_id: "t8".into(),
+                title: "Победа!".into(),
+                body: "Все пары найдены".into(),
+            },
+        );
+        assert!(matches!(
+            response,
+            ServerMessage::Response { ok: false, error: Some(error), .. }
+                if error.code == "entityd_unavailable"
+        ));
     }
 }

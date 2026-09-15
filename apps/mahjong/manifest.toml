@@ -5,4 +5,4 @@ exec = "bin/saai-mahjong"
 version = "0.1.0"
 ui = "wayland"
 single_instance = true
-capabilities = []
+capabilities = ["notifications.post"]

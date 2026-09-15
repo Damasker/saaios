@@ -1441,6 +1441,7 @@ fn capability_label(name: &str) -> &str {
         "clipboard.read" => "Чтение буфера обмена",
         "clipboard.write" => "Запись в буфер обмена",
         "portal.open_file" => "Выбор файла",
+        "notifications.post" => "Отправка уведомлений",
         other => other,
     }
 }
@@ -3413,8 +3414,13 @@ impl Shell {
     }
 
     fn poll_portal(&mut self) {
-        self.portal
-            .poll(&self.apps_by_pid, &self.apps_grants, &mut self.clipboard);
+        self.portal.poll(
+            &self.apps_by_pid,
+            &self.apps_grants,
+            &mut self.clipboard,
+            &mut self.entityd,
+            &self.selected_space_id,
+        );
     }
 
     /// Keeps the portal's authorization caches (`apps_by_pid`,

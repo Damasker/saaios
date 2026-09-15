@@ -2331,6 +2331,7 @@ version = "0.1.0"
 dependencies = [
  "fontdue",
  "saai-app-protocol",
+ "saai-portal-protocol",
  "serde_json",
  "tempfile",
  "wayland-client",

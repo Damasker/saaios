@@ -27,6 +27,13 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 /// amounts of memory inside `saai-shell`, which is not sandboxed itself.
 pub const MAX_CLIPBOARD_TEXT_BYTES: usize = 4096;
 
+/// S30: a third-party app's notification title/body -- generous enough
+/// for a real message, small enough that a misbehaving app can't pin
+/// arbitrary memory in `saai-shell` (same reasoning as the clipboard
+/// limit above) or flood "Входящие" with a wall of text.
+pub const MAX_NOTIFICATION_TITLE_BYTES: usize = 200;
+pub const MAX_NOTIFICATION_BODY_BYTES: usize = 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientRequest {
@@ -49,6 +56,20 @@ pub enum ClientRequest {
         schema: u32,
         request_id: String,
     },
+    /// S30: lets a sandboxed app raise a real `saaios.notification`
+    /// entity (ADR-062) without ever reaching `saai-entityd`'s own
+    /// socket directly -- `saai-shell` is still the only thing that
+    /// writes entities on an app's behalf, same trust-boundary role
+    /// this portal already plays for clipboard/open_file. No `kind`
+    /// field here: the server derives `kind` from the requesting
+    /// app's own id (`app:<id>`), so a sandboxed app can never spoof
+    /// a system-looking notification kind (`low_battery`, etc.).
+    PostNotification {
+        schema: u32,
+        request_id: String,
+        title: String,
+        body: String,
+    },
 }
 
 impl ClientRequest {
@@ -56,7 +77,8 @@ impl ClientRequest {
         match self {
             Self::ClipboardRead { schema, .. }
             | Self::ClipboardWrite { schema, .. }
-            | Self::OpenFile { schema, .. } => *schema,
+            | Self::OpenFile { schema, .. }
+            | Self::PostNotification { schema, .. } => *schema,
         }
     }
 
@@ -64,7 +86,8 @@ impl ClientRequest {
         match self {
             Self::ClipboardRead { request_id, .. }
             | Self::ClipboardWrite { request_id, .. }
-            | Self::OpenFile { request_id, .. } => request_id,
+            | Self::OpenFile { request_id, .. }
+            | Self::PostNotification { request_id, .. } => request_id,
         }
     }
 }
@@ -74,6 +97,7 @@ impl ClientRequest {
 pub enum ResponseResult {
     ClipboardText { text: String },
     ClipboardWritten,
+    NotificationPosted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

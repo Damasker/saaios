@@ -46,16 +46,18 @@ pub enum Capability {
     ClipboardRead,
     ClipboardWrite,
     PortalOpenFile,
+    NotificationsPost,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 6] = [
+    pub const ALL: [Capability; 7] = [
         Capability::SpaceEntitiesRead,
         Capability::SpaceEntitiesWrite,
         Capability::NetInternet,
         Capability::ClipboardRead,
         Capability::ClipboardWrite,
         Capability::PortalOpenFile,
+        Capability::NotificationsPost,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -66,6 +68,7 @@ impl Capability {
             Capability::ClipboardRead => "clipboard.read",
             Capability::ClipboardWrite => "clipboard.write",
             Capability::PortalOpenFile => "portal.open_file",
+            Capability::NotificationsPost => "notifications.post",
         }
     }
 

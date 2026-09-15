@@ -15,6 +15,7 @@ use wayland_client::{
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 mod install;
+mod notify;
 mod render;
 
 use render::{BoardLayout, Tile};
@@ -122,6 +123,14 @@ impl AppState {
                     if self.tiles[current].symbol == self.tiles[index].symbol {
                         self.tiles[current].removed = true;
                         self.tiles[index].removed = true;
+                        // S30: fires exactly once, from the tap that
+                        // actually completes the match -- not from
+                        // redraw() (which would repeat it every frame
+                        // while won() stays true) or from won() being
+                        // polled anywhere else.
+                        if self.won() {
+                            notify::post_win_notification();
+                        }
                     }
                     self.selected = None;
                 }
