@@ -708,6 +708,13 @@ struct ShellSettings {
     /// -- an existing settings file with no such field parses to
     /// `false`, so upgrading never silently opens this up.
     remote_access_enabled: bool,
+    /// HIA-04b: the Rollback this roadmap entry names -- `true` by
+    /// default (the Orb is the point of building it), but a real
+    /// escape hatch back to tab-bar-only navigation for anyone who
+    /// wants it, same "opt back out, not opt in" shape as
+    /// `contrast_pct`/`text_scale_pct` already use for their own
+    /// defaults.
+    orb_enabled: bool,
 }
 
 impl ShellSettings {
@@ -733,6 +740,7 @@ impl ShellSettings {
             text_scale_pct: 100,
             contrast_pct: 0,
             remote_access_enabled: false,
+            orb_enabled: true,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -784,6 +792,10 @@ impl ShellSettings {
                 .get("remote_access_enabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(default.remote_access_enabled),
+            orb_enabled: value
+                .get("orb_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(default.orb_enabled),
         }
     }
 
@@ -798,6 +810,7 @@ impl ShellSettings {
             "text_scale_pct": self.text_scale_pct,
             "contrast_pct": self.contrast_pct,
             "remote_access_enabled": self.remote_access_enabled,
+            "orb_enabled": self.orb_enabled,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -1916,6 +1929,134 @@ fn object_view_property_text(value: &Value) -> String {
     }
 }
 
+const ORB_DOT_ID: &str = "orb-dot";
+const ORB_TOGGLE_ACTION: &str = "orb:toggle";
+const ORB_MENU_INBOX_ID: &str = "orb-menu-inbox";
+const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
+const ORB_MENU_INTENT_ID: &str = "orb-menu-intent";
+const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
+/// HIA-04a's spike (ADR-090) proved the mechanics; this is the
+/// permanent shape. `Idle`/`Attention` are silent (no menu drawn),
+/// `Menu` is the one state a tap actually opens. `Listening`/
+/// `ControlLayer` (source document section 55) are deliberately not
+/// built yet -- HIA-ROADMAP.md defers both to Phase 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrbState {
+    Idle,
+    Menu,
+    Attention,
+}
+
+/// Pure decision, no `Shell` needed -- `Menu` wins outright (it's a
+/// deliberate user action in progress), otherwise `Attention` reflects
+/// a real, already-live signal (`inbox_notifications`, S21/S30, now
+/// also fed by ADR-089's failed-task notifications) rather than a
+/// synthetic flag invented for this feature alone.
+fn orb_state(menu_open: bool, has_pending_notifications: bool) -> OrbState {
+    if menu_open {
+        OrbState::Menu
+    } else if has_pending_notifications {
+        OrbState::Attention
+    } else {
+        OrbState::Idle
+    }
+}
+
+/// Square, not a circle -- same reasoning as `draw_status_bar`'s HIA-03
+/// dot: no circle-drawing primitive exists in `render.rs`.
+fn orb_dot_size(width: u32, height: u32) -> u32 {
+    90.min(width / 10).min(height / 10)
+}
+
+/// HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb must
+/// never occupy hit-test space the tab-bar/cards already use. Every
+/// `Frame::Root` page's cards start at `y=430` (2400-scale --
+/// `stacked_row_rect`/`now_grid_rect` both hardcode that same
+/// constant) and the tab bar sits at the very bottom of the screen;
+/// this zone's bottom edge is pinned to `y=410`, twenty px of margin
+/// short of where a card could ever start, in EVERY state including
+/// `menu_open` -- the menu grows upward into the header box's own
+/// dead space (`draw_root`'s `SURFACE`-filled rect at `y=150..340`,
+/// which has never had a hit-test target of its own), never downward
+/// into card territory.
+fn orb_zone_rect(width: u32, height: u32, menu_open: bool) -> Rect {
+    let margin = width / 22;
+    let dot_size = orb_dot_size(width, height);
+    let bottom = ((410_u64 * height as u64) / 2400) as u32;
+    if !menu_open {
+        return Rect::new(
+            width.saturating_sub(margin + dot_size),
+            bottom.saturating_sub(dot_size),
+            dot_size,
+            dot_size,
+        );
+    }
+    let top = ((160_u64 * height as u64) / 2400) as u32;
+    let zone_width = 420.min(width.saturating_sub(margin * 2));
+    Rect::new(
+        width.saturating_sub(margin + zone_width),
+        top,
+        zone_width,
+        bottom.saturating_sub(top),
+    )
+}
+
+/// Closed: the whole zone IS the dot, one leaf, nothing to stack.
+/// Open: a vertical list within the (now taller) zone -- two action
+/// rows on top, the dot itself last, doubling as the close control --
+/// same "layout only returns a position, the call site decides what
+/// it means" shape `object_view`/`task_confirm_view` already use.
+fn orb_view(width: u32, height: u32, menu_open: bool) -> LayoutNode {
+    let zone = orb_zone_rect(width, height, menu_open);
+    if !menu_open {
+        return layout(&Node::leaf(ORB_DOT_ID).with_action(ORB_TOGGLE_ACTION), zone);
+    }
+    let root = Node::linear(
+        "orb-menu",
+        Axis::Vertical,
+        vec![
+            Node::leaf(ORB_MENU_INBOX_ID).with_action(ORB_MENU_INBOX_ACTION),
+            Node::leaf(ORB_MENU_INTENT_ID).with_action(ORB_MENU_INTENT_ACTION),
+            Node::leaf(ORB_DOT_ID)
+                .with_action(ORB_TOGGLE_ACTION)
+                .with_size(Length::Fill, Length::Px(orb_dot_size(width, height))),
+        ],
+    );
+    layout(&root, zone)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrbAction {
+    Toggle,
+    OpenInbox,
+    OpenIntent,
+}
+
+fn orb_action_at(pos: (f64, f64), width: u32, height: u32, menu_open: bool) -> Option<OrbAction> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    match orb_view(width, height, menu_open)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref())
+    {
+        Some(ORB_TOGGLE_ACTION) => Some(OrbAction::Toggle),
+        Some(ORB_MENU_INBOX_ACTION) => Some(OrbAction::OpenInbox),
+        Some(ORB_MENU_INTENT_ACTION) => Some(OrbAction::OpenIntent),
+        _ => None,
+    }
+}
+
+/// What `draw_orb` needs, computed once per frame in `build_orb_
+/// frame` (a `Shell` method -- needs `&self` for the current space's
+/// color and notification state, which `orb_view`/`orb_state` alone
+/// can't see).
+struct OrbFrame {
+    dot: Rect,
+    dot_color: render::Pixel,
+    menu_rows: Vec<(Rect, &'static str)>,
+}
+
 fn intent_key_action(ch: char) -> String {
     format!("{INTENT_KEY_PREFIX}{ch}")
 }
@@ -2405,7 +2546,7 @@ const ME_PAGE_SIZE: usize = 6;
 /// length, since `me_fixed_card_action` has to agree with it and
 /// there's no way to assert two functions' lengths match at compile
 /// time anyway.
-const ME_FIXED_CARD_COUNT: usize = 17;
+const ME_FIXED_CARD_COUNT: usize = 18;
 
 /// The `me_all_card_views`'s logical index -> tap action mapping.
 /// `None` for the three read-only info rows (device summary, build
@@ -2427,6 +2568,7 @@ fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
         14 => Some("toggle_remote_access"),
         15 => Some("open_trusted_clients"),
         16 => Some("cycle_space_color"),
+        17 => Some("toggle_orb"),
         _ => None,
     }
 }
@@ -2584,6 +2726,7 @@ fn main() {
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
         viewing_entity_id: None,
+        orb_menu_open: false,
         selected_entities: Vec::new(),
         system_space_entities: Vec::new(),
         context_frame: Vec::new(),
@@ -2787,6 +2930,10 @@ struct Shell {
     /// auto-popup" shape S13 Change 2 already established, now
     /// covering any entity_type "Входящие" ever lists a row for.
     viewing_entity_id: Option<Uuid>,
+    /// HIA-04b: `true` only while the Orb's own menu is showing --
+    /// `orb_state()` reports `Menu` whenever this is set, regardless
+    /// of any pending notification underneath it.
+    orb_menu_open: bool,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -3260,6 +3407,27 @@ impl TouchHandler for Shell {
                 ) {
                     self.handle_trusted_client_tap(tap, conn, qh);
                 }
+            } else if let Some(action) = self
+                .settings
+                .orb_enabled
+                .then(|| {
+                    orb_action_at(
+                        self.last_touch_pos,
+                        self.width,
+                        self.height,
+                        self.orb_menu_open,
+                    )
+                })
+                .flatten()
+            {
+                // HIA-04b: only reachable once every modal above has
+                // said no -- the exact condition under which
+                // `Frame::Root` (the only frame the Orb is ever drawn
+                // on) is what's actually showing. Checked before
+                // `tab_at`/page-content below on principle, though
+                // `orb_zone_rect`'s own doc comment already guarantees
+                // their hit-test rects never overlap in practice.
+                self.handle_orb_action(action, conn, qh);
             } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
@@ -3612,6 +3780,17 @@ impl Shell {
             }
         };
 
+        // HIA-04b: the Orb is drawn once, unconditionally, after the
+        // whole `Frame` match below -- computed here, before that
+        // match, because every `&self` read it needs (`orb_state`'s
+        // own notification check, `space_color`) has to happen before
+        // `canvas`/`buffer` take their mutable borrow, same reasoning
+        // this function's own top comment already gives for `frame`.
+        // Only ever `Some` on `Frame::Root` (the only frame the Orb
+        // ever draws on) and only when the Rollback setting allows it.
+        let orb_frame = (self.settings.orb_enabled && matches!(frame, Frame::Root { .. }))
+            .then(|| self.build_orb_frame(width, height));
+
         let buffer = self.buffer.get_or_insert_with(|| {
             self.pool
                 .create_buffer(
@@ -3799,6 +3978,19 @@ impl Shell {
                     self.current_page == RootPage::Now,
                 );
             }
+        }
+        // HIA-04b: unconditional -- `orb_frame` is already `None`
+        // whenever it shouldn't draw (not `Frame::Root`, or the
+        // Rollback setting turned it off), computed once above before
+        // this function's own mutable canvas borrow began.
+        if let Some(orb) = &orb_frame {
+            render::draw_orb(
+                &mut render::Canvas::new(canvas, width, height),
+                orb.dot,
+                orb.dot_color,
+                &orb.menu_rows,
+                self.fonts.as_ref(),
+            );
         }
         render::apply_contrast_boost(canvas, self.settings.contrast_pct);
 
@@ -4055,6 +4247,15 @@ impl Shell {
             "cycle_space_color" => {
                 if self.entityd.is_connected() {
                     self.cycle_space_color(&self.selected_space_id.clone());
+                }
+            }
+            "toggle_orb" => {
+                self.settings.orb_enabled = !self.settings.orb_enabled;
+                if !self.settings.orb_enabled {
+                    // Turning it off mid-menu shouldn't leave a stale
+                    // open menu waiting for whenever it's turned back
+                    // on.
+                    self.orb_menu_open = false;
                 }
             }
             "toggle_remote_access" => {
@@ -4685,6 +4886,17 @@ impl Shell {
                 ),
                 "Изменить",
             ),
+            // HIA-04b's own Rollback: a real escape hatch back to
+            // tab-bar-only navigation.
+            render::ActionCardView::new(
+                "Orb",
+                if self.settings.orb_enabled {
+                    "Включён"
+                } else {
+                    "Выключен -- только таб-бар"
+                },
+                "Изменить",
+            ),
         ];
         debug_assert_eq!(cards.len(), ME_FIXED_CARD_COUNT);
         for app in self.installed_apps.values() {
@@ -4998,6 +5210,58 @@ impl Shell {
             }
             NOTIFICATION_ENTITY_TYPE => self.dismiss_notification(entity.id),
             _ => {}
+        }
+    }
+
+    /// HIA-04b: the Orb's own action handler, same "layout returns a
+    /// position/identity, the call site decides what it means" split
+    /// as `handle_object_view_action`'s own `index`. Both menu actions
+    /// reuse already-real navigation -- `RootPage::Inbox`/
+    /// `IntentInputState` are the exact paths the tab-bar and "Сейчас"
+    /// card already drive, not new placeholder behavior invented for
+    /// this menu.
+    fn handle_orb_action(&mut self, action: OrbAction, conn: &Connection, qh: &QueueHandle<Self>) {
+        match action {
+            OrbAction::Toggle => self.orb_menu_open = !self.orb_menu_open,
+            OrbAction::OpenInbox => {
+                self.orb_menu_open = false;
+                self.current_page = RootPage::Inbox;
+            }
+            OrbAction::OpenIntent => {
+                self.orb_menu_open = false;
+                self.intent_input = Some(IntentInputState::default());
+            }
+        }
+        self.draw(conn, qh);
+    }
+
+    /// `Attention`'s own fixed alert color, deliberately not one of
+    /// `SpaceColor`'s six values -- a space's own accent should never
+    /// be mistaken for "something needs you".
+    fn build_orb_frame(&self, width: u32, height: u32) -> OrbFrame {
+        let view = orb_view(width, height, self.orb_menu_open);
+        let has_pending = !inbox_notifications(&self.selected_entities).is_empty();
+        let dot_color = match orb_state(self.orb_menu_open, has_pending) {
+            OrbState::Attention => render::rgb(230, 90, 70),
+            OrbState::Idle | OrbState::Menu => {
+                space_color(&self.system_space_entities, &self.selected_space_id).pixel()
+            }
+        };
+        if self.orb_menu_open {
+            OrbFrame {
+                dot: view.children[2].rect,
+                dot_color,
+                menu_rows: vec![
+                    (view.children[0].rect, "Входящие"),
+                    (view.children[1].rect, "Новое намерение"),
+                ],
+            }
+        } else {
+            OrbFrame {
+                dot: view.rect,
+                dot_color,
+                menu_rows: Vec::new(),
+            }
         }
     }
 
@@ -5400,11 +5664,12 @@ mod tests {
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
         effective_context_space, known_surfaces, object_view_action_at, object_view_content,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
-        stacked_row_rect, tab_at, task_confirm_action_at, trusted_client_action_at,
-        upsert_context_entry, wifi_list_action_at, BluetoothListTap, ContextFrameEntry,
-        ContextSource, Entity, KeyboardMode, Rect, RootPage, Space, SpaceColor, SpaceLifecycle,
+        orb_action_at, orb_state, orb_zone_rect, remove_context_source, space_color,
+        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
+        task_confirm_action_at, trusted_client_action_at, upsert_context_entry,
+        wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
+        KeyboardMode, OrbAction, OrbState, Rect, RootPage, Space, SpaceColor, SpaceLifecycle,
         TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
         INTENT_SEND_ACTION, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
@@ -6202,6 +6467,83 @@ mod tests {
         assert_eq!(surfaces[0].name, "Pixel main display");
         assert!(surfaces[0].capabilities.touch);
         assert!(!surfaces[0].capabilities.always_on_display);
+    }
+
+    #[test]
+    fn orb_state_prefers_menu_over_attention() {
+        assert_eq!(orb_state(true, true), OrbState::Menu);
+        assert_eq!(orb_state(true, false), OrbState::Menu);
+    }
+
+    #[test]
+    fn orb_state_falls_back_from_attention_to_idle() {
+        assert_eq!(orb_state(false, true), OrbState::Attention);
+        assert_eq!(orb_state(false, false), OrbState::Idle);
+    }
+
+    #[test]
+    fn orb_zone_never_reaches_where_cards_start() {
+        // HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb
+        // must never occupy hit-test space the tab-bar/cards already
+        // use. Every Root page's cards start at y=430 (2400-scale) --
+        // confirm the zone's bottom edge always stays short of that,
+        // closed or open, on a range of real panel sizes.
+        for (width, height) in [(1080, 2400), (800, 480), (1440, 3120)] {
+            let cards_start = ((430_u64 * height as u64) / 2400) as u32;
+            for menu_open in [false, true] {
+                let zone = orb_zone_rect(width, height, menu_open);
+                assert!(
+                    zone.y + zone.height <= cards_start,
+                    "zone bottom {} exceeds cards_start {} at {width}x{height}, menu_open={menu_open}",
+                    zone.y + zone.height,
+                    cards_start
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn orb_action_at_toggles_the_closed_dot() {
+        let dot = orb_zone_rect(1080, 2400, false);
+        let point = (
+            (dot.x + dot.width / 2) as f64,
+            (dot.y + dot.height / 2) as f64,
+        );
+        assert_eq!(orb_action_at(point, 1080, 2400, false), Some(OrbAction::Toggle));
+    }
+
+    #[test]
+    fn orb_action_at_misses_a_normal_card_row_when_closed() {
+        // The same point a real "Пространства"/"Входящие" card would
+        // occupy (stacked_row_rect(0, ..)'s own territory) must never
+        // register as an Orb tap.
+        let first_card = stacked_row_rect(0, 1080, 2400);
+        let point = (
+            (first_card.x + first_card.width / 2) as f64,
+            (first_card.y + first_card.height / 2) as f64,
+        );
+        assert_eq!(orb_action_at(point, 1080, 2400, false), None);
+    }
+
+    #[test]
+    fn orb_action_at_finds_both_menu_rows_and_the_close_dot_when_open() {
+        let view_zone = orb_zone_rect(1080, 2400, true);
+        let inbox_point = (
+            (view_zone.x + view_zone.width / 2) as f64,
+            (view_zone.y + 10) as f64,
+        );
+        assert_eq!(
+            orb_action_at(inbox_point, 1080, 2400, true),
+            Some(OrbAction::OpenInbox)
+        );
+        let dot_point = (
+            (view_zone.x + view_zone.width / 2) as f64,
+            (view_zone.y + view_zone.height - 10) as f64,
+        );
+        assert_eq!(
+            orb_action_at(dot_point, 1080, 2400, true),
+            Some(OrbAction::Toggle)
+        );
     }
 }
 

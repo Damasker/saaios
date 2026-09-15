@@ -402,6 +402,35 @@ pub fn draw_object_view(
     }
 }
 
+/// HIA-04b: drawn last, unconditionally, on top of whatever
+/// `Frame::Root` just rendered -- not a modal, coexists with the
+/// tab-bar/cards underneath it (see `orb_zone_rect`'s own doc comment
+/// in `main.rs` for why it never overlaps their hit-test space).
+/// `menu_rows` is empty in `Idle`/`Attention`; two rows in `Menu`.
+pub fn draw_orb(
+    canvas: &mut Canvas<'_>,
+    dot_rect: Rect,
+    dot_color: Pixel,
+    menu_rows: &[(Rect, &str)],
+    fonts: Option<&Fonts>,
+) {
+    for (rect, label) in menu_rows {
+        canvas.fill_rect(*rect, SURFACE_SELECTED);
+        if let Some(fonts) = fonts {
+            draw_text(
+                canvas,
+                &fonts.regular,
+                label,
+                32.0,
+                rect.x + 24,
+                rect.y + rect.height / 2 - 16,
+                TEXT,
+            );
+        }
+    }
+    canvas.fill_rect(dot_rect, dot_color);
+}
+
 /// The "adb"-style pairing prompt for a new SSH client -- same
 /// header-plus-two-buttons shape `draw_object_view` also uses (built
 /// from the exact same `task_confirm_view` geometry, see `main.rs`'s
