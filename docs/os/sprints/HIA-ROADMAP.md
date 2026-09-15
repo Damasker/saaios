@@ -179,6 +179,14 @@ Object View (HIA-07) выигрывает от реального Space Graph (H
 
 ### HIA-08: Surface abstraction (минимальная версия)
 
+- **Статус**: Done, 2026-09-15 (без ADR, как и предполагалось ниже).
+  `Surface`/`SurfaceCapabilities` (`touch`, `always_on_display`) +
+  `known_surfaces()` -- реестр из одной записи ("Pixel main display",
+  `touch: true`, `always_on_display: false`), залогирован один раз
+  при старте, нигде не читается обратно и не меняет рендер --
+  подтверждено вживую (новая сборка развёрнута без пересборки образа,
+  ADR-082, тапы/отклик экрана без изменений). Покрыто тестом
+  (`known_surfaces_is_a_registry_of_exactly_one_real_surface`).
 - **Goal**: понятие Surface существует в коде как реестр, даже если
   в нём ровно одна запись ("Pixel main display").
 - **Текущее состояние**: устройство и экран -- одно и то же

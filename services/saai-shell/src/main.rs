@@ -2073,6 +2073,49 @@ fn app_state_label(state: &str) -> &str {
     }
 }
 
+/// HIA-08 (docs/os/sprints/HIA-ROADMAP.md), deliberately minimal: a
+/// named display surface and what it can do -- a registry of exactly
+/// one today, existing purely so future work (HIA-15 AOD, or a real
+/// second physical Surface) has an actual type to extend instead of
+/// inventing one from scratch under time pressure then. Nothing reads
+/// this to change render or input behavior yet -- `known_surfaces()`
+/// is logged once at startup and otherwise unused, same "scaffold,
+/// not an architecture decision" spirit the roadmap's own acceptance
+/// line calls for (no ADR for this item, unlike HIA-01/02/07).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Surface {
+    name: &'static str,
+    capabilities: SurfaceCapabilities,
+}
+
+/// Plain booleans, not a bitflags/enum set -- two fields today, no
+/// reason yet to pay for more machinery than that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct SurfaceCapabilities {
+    /// Real: `TouchHandler`'s `impl` below is this shell's only input
+    /// path, there has never been a pointer/keyboard-only build.
+    touch: bool,
+    /// Not real yet -- no low-power partial-refresh path exists
+    /// anywhere in this codebase. `false` here is the honest current
+    /// fact, not a placeholder; HIA-15 is what would flip it.
+    always_on_display: bool,
+}
+
+/// The one Surface this shell has ever run on, filled in from facts
+/// already established elsewhere in this file (see each field's own
+/// doc comment on `SurfaceCapabilities`) -- not new discovery, and
+/// not a live query of the actual Wayland/DRM state, which this
+/// binary has never needed to introspect for a single fixed panel.
+fn known_surfaces() -> Vec<Surface> {
+    vec![Surface {
+        name: "Pixel main display",
+        capabilities: SurfaceCapabilities {
+            touch: true,
+            always_on_display: false,
+        },
+    }]
+}
+
 /// S14: "О телефоне" -- the compiled-in build id (`build.rs`, S14) plus
 /// three plain `/proc` reads. No `system-tools` crate reuse here on
 /// purpose: that crate pulls in `tokio`/`async_trait`/`tool_registry`
@@ -2556,6 +2599,9 @@ fn main() {
     };
 
     println!("saai-shell: connected, toplevel created");
+    // HIA-08: logged, not read back anywhere -- see `known_surfaces`'s
+    // own doc comment for why this exists at all right now.
+    println!("saai-shell: known surfaces: {:?}", known_surfaces());
 
     // Boots locked, matching drm-splash.c's own `bool locked = true` at
     // the top of its main loop -- a phone that boots straight to an
@@ -5353,7 +5399,7 @@ mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
-        effective_context_space, object_view_action_at, object_view_content,
+        effective_context_space, known_surfaces, object_view_action_at, object_view_content,
         remove_context_source, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
         stacked_row_rect, tab_at, task_confirm_action_at, trusted_client_action_at,
@@ -6143,6 +6189,19 @@ mod tests {
         entity.title = "Пустой объект".to_string();
         let content = object_view_content(&entity, &[]);
         assert_eq!(content.status, "Нет дополнительных данных");
+    }
+
+    #[test]
+    fn known_surfaces_is_a_registry_of_exactly_one_real_surface() {
+        // HIA-08's own acceptance line: a registry of one today, not
+        // an empty/absent concept -- and its capabilities match what
+        // this file already establishes elsewhere (a real touch path,
+        // no always-on-display path yet).
+        let surfaces = known_surfaces();
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].name, "Pixel main display");
+        assert!(surfaces[0].capabilities.touch);
+        assert!(!surfaces[0].capabilities.always_on_display);
     }
 }
 
