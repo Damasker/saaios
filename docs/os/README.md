@@ -8,6 +8,7 @@ Product and delivery sources of truth:
 - [System intelligence and self-management](architecture/system-intelligence.md)
 - [Cognitive Core / Work Scheduler mapping (Sprint 0)](architecture/cognitive-core-work-scheduler-mapping.md)
 - [Wayland application-platform architecture](architecture/application-platform.md)
+- [Human Interface Architecture v2 (long-term vision, not current roadmap)](architecture/human-interface-architecture-v2.md)
 - [Development process and Definition of Done](DEVELOPMENT_PROCESS.md)
 - [Quality strategy](QUALITY.md)
 - [Sprint roadmap](sprints/README.md)
