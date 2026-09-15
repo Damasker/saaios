@@ -23,6 +23,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -311,6 +312,15 @@ static void start_safety_timer(void) {
         reboot_with_reason("saaios-timeout");
     }
     _exit(0);
+}
+
+/* Empty on purpose: the only job of this handler is to make SIGALRM's
+ * delivery interrupt a blocking waitpid() (EINTR) instead of its
+ * default action (terminate the process -- fatal for PID 1). Every
+ * real reap this file already does keeps working exactly as before;
+ * this only adds one more reason waitpid() can return early. */
+static void alarm_tick(int signal_number) {
+    (void)signal_number;
 }
 
 static void start_hardware_watchdog(void) {
@@ -1340,6 +1350,11 @@ static pid_t start_file_recv(void) {
 #define DROPBEAR_DIR "/saaios/dropbear"
 #define DROPBEAR_HOME "/data/saaios/var/dropbear"
 #define DROPBEAR_HOST_KEY DROPBEAR_HOME "/dropbear_ed25519_host_key"
+/* Same literal path as saai-shell's own REMOTE_ACCESS_MARKER const
+ * (main.rs) -- duplicated across languages by convention (ADR-030),
+ * not shared. Now genuinely read by this process (see the doc
+ * comment on start_dropbear() below for why that changed). */
+#define REMOTE_ACCESS_MARKER "/data/saaios/var/remote-access-enabled"
 
 /* dropbear (like any real sshd) resolves the authenticating user's
  * home directory and login shell through the system user database --
@@ -1372,17 +1387,17 @@ static void setup_dropbear_identity(void) {
 }
 
 /* Real SSH (Alpine's musl-dynamic dropbear build, ADR: "SSH pairing
- * policy") -- always started, same as every other system service
- * here, but harmless with an empty authorized_keys: no key means no
- * login, regardless of anything else. `pair-recv` (below) is the
- * only path a key ever gets added to that file, and it fails closed
- * on its own when "Удалённый доступ" is off (main.rs's
- * REMOTE_ACCESS_MARKER) -- this process doesn't need to know that
- * toggle's state itself. The host key is generated once, by hand,
- * via `dropbearkey` (not by this function) into /data -- a real
- * persistent partition survivable across every future init_boot
- * reflash; if it's ever missing (fresh /data, e.g. a factory reset),
- * dropbear simply doesn't start until one is placed there again. */
+ * policy"). Harmless even while running with an empty authorized_
+ * keys: no key means no login, regardless of anything else -- but
+ * "Удалённый доступ" off now also stops this process outright
+ * (sync_dropbear_with_marker(), docs/os/ideas.md's own "ADB hides
+ * the port entirely" gap), not just refuses new pairings the way
+ * `pair-recv` already did on its own. The host key is generated
+ * once, by hand, via `dropbearkey` (not by this function) into
+ * /data -- a real persistent partition survivable across every
+ * future init_boot reflash; if it's ever missing (fresh /data, e.g.
+ * a factory reset), dropbear simply doesn't start until one is
+ * placed there again. */
 static pid_t start_dropbear(void) {
     if (access(DROPBEAR_DIR "/dropbear", X_OK) < 0) {
         log_message("dropbear unavailable");
@@ -1417,6 +1432,33 @@ static pid_t start_dropbear(void) {
         log_message("system service started: dropbear");
     }
     return child;
+}
+
+/* Called once a second from the main loop (SIGALRM, see below) --
+ * starts dropbear if the marker appeared and it isn't running, stops
+ * it (SIGTERM, reaped synchronously so it never lingers as a zombie
+ * for the next wildcard waitpid() to trip over) if the marker is gone
+ * and it still is. Returns the pid to track from now on (unchanged,
+ * a fresh child's, or -1). Already-open interactive sessions die with
+ * the process, same as turning off ADB's USB debugging drops an open
+ * adb shell -- an intentional user action, not a bug. */
+static pid_t sync_dropbear_with_marker(pid_t current) {
+    int enabled = access(REMOTE_ACCESS_MARKER, F_OK) == 0;
+    if (enabled && current <= 0) {
+        pid_t started = start_dropbear();
+        if (started > 0) {
+            log_message("dropbear started (remote access enabled)");
+        }
+        return started;
+    }
+    if (!enabled && current > 0) {
+        kill(current, SIGTERM);
+        int status = 0;
+        waitpid(current, &status, 0);
+        log_message("dropbear stopped (remote access disabled)");
+        return -1;
+    }
+    return current;
 }
 
 /* The "adb"-style pairing gate in front of dropbear -- see pair-
@@ -1664,7 +1706,10 @@ int main(void) {
     pid_t entityd_pid = start_saai_entityd();
     pid_t appd_pid = start_saai_appd();
     pid_t file_recv_pid = start_file_recv();
-    pid_t dropbear_pid = start_dropbear();
+    // sync_dropbear_with_marker(-1), not start_dropbear() directly --
+    // respects "Удалённый доступ" from the very first boot second,
+    // not just from the first alarm_tick() a second later.
+    pid_t dropbear_pid = sync_dropbear_with_marker(-1);
     pid_t pair_recv_pid = start_pair_recv();
 
     for (size_t i = 0; i < ARRAY_SIZE(usb_modules); ++i) {
@@ -1759,9 +1804,33 @@ int main(void) {
     log_message("native userspace ready");
     mark_current_slot_successful();
 
+    /* SA_RESTART deliberately omitted -- the entire point is for this
+     * signal to interrupt the blocking waitpid() below once a second
+     * so the dropbear toggle gets checked even when nothing else is
+     * exiting. A self-repeating setitimer(), not one-shot alarm(2) --
+     * a tick that lands while this process is doing anything other
+     * than blocked in that waitpid() call (mid-branch, inside some
+     * other start_*() call, logging, ...) is consumed silently by
+     * alarm_tick() with nothing left to rearm it, which would
+     * permanently stop the sync after the first such miss. The
+     * kernel re-firing this on its own every second sidesteps that
+     * class of bug entirely -- nothing in this file needs to remember
+     * to ask for the next tick. */
+    struct sigaction alarm_action = {0};
+    alarm_action.sa_handler = alarm_tick;
+    sigaction(SIGALRM, &alarm_action, NULL);
+    struct itimerval dropbear_sync_interval = {0};
+    dropbear_sync_interval.it_value.tv_sec = 1;
+    dropbear_sync_interval.it_interval.tv_sec = 1;
+    setitimer(ITIMER_REAL, &dropbear_sync_interval, NULL);
+
     for (;;) {
         int status = 0;
         pid_t ended = waitpid(-1, &status, 0);
+        if (ended < 0 && errno == EINTR) {
+            dropbear_pid = sync_dropbear_with_marker(dropbear_pid);
+            continue;
+        }
         if (ended == console_pid) {
             usleep(250000);
             console_pid = start_console();
