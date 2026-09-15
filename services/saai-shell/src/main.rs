@@ -2139,6 +2139,25 @@ struct OrbFrame {
     menu_rows: Vec<(Rect, &'static str)>,
 }
 
+/// ADR-093 follow-up: what actually needs to change for `present_
+/// status_bar` to redraw -- compared against the last-drawn snapshot
+/// so an unchanged tick (the common case, since `current_time_string`
+/// only changes once a minute) can skip the real Wayland commit
+/// entirely. `saai-displayd` only treats a layer-surface commit as
+/// scene-affecting while unlocked (`affects_scene` in its own commit
+/// handler); while locked it already ignores the status bar's commits
+/// regardless. So this dedup's only real effect is letting the
+/// kernel's self-refresh idle timer actually complete during the
+/// unlocked-but-idle window, up to `IDLE_TIMEOUT`, instead of being
+/// reset every second by a repaint nothing asked for.
+#[derive(Clone, PartialEq)]
+struct StatusBarSnapshot {
+    time_text: String,
+    wifi_up: bool,
+    battery: Option<(u8, bool)>,
+    dot_color: render::Pixel,
+}
+
 fn intent_key_action(ch: char) -> String {
     format!("{INTENT_KEY_PREFIX}{ch}")
 }
@@ -2796,6 +2815,7 @@ fn main() {
         layer_height: 120,
         layer_pool: None,
         layer_buffer: None,
+        last_statusbar_snapshot: None,
         last_statusbar_refresh: Instant::now(),
         low_battery_notified: false,
         fonts,
@@ -2936,6 +2956,11 @@ struct Shell {
     layer_height: u32,
     layer_pool: Option<SlotPool>,
     layer_buffer: Option<Buffer>,
+    /// ADR-093 follow-up: last snapshot actually drawn into
+    /// `layer_buffer`, so `present_status_bar` can skip redundant
+    /// commits. `None` both initially and whenever the buffer itself
+    /// was just invalidated (forces a real redraw either way).
+    last_statusbar_snapshot: Option<StatusBarSnapshot>,
     /// S13 Change 1: throttles `refresh_statusbar_if_due` the same way
     /// `last_apps_refresh` throttles `refresh_apps_if_due`.
     last_statusbar_refresh: Instant,
@@ -3250,6 +3275,7 @@ impl LayerShellHandler for Shell {
         // was sized for the previous one, same reasoning as the lock
         // surface's own `configure`.
         self.layer_buffer = None;
+        self.last_statusbar_snapshot = None;
         self.present_status_bar();
     }
 }
@@ -4784,6 +4810,36 @@ impl Shell {
     /// unconditionally redrawing costs nothing an empty poll wouldn't
     /// already skip.
     fn apply_appd_message(&mut self, message: AppServerMessage) -> bool {
+        // ADR-093 follow-up: `refresh_apps_if_due` polls `appd.list()`
+        // roughly once a second purely to bound how stale the caches can
+        // get (see that method's own doc comment) -- not because the
+        // registry usually changed between polls. Reporting every List
+        // response as "changed" (this used to always return `true` below,
+        // for every message kind) meant that 1Hz poll alone forced a real
+        // `draw()`/commit via `poll_appd` even while genuinely idle,
+        // defeating self-refresh the exact same way the status bar's own
+        // unconditional redraw did before `StatusBarSnapshot`. The other
+        // message kinds below are real, infrequent state transitions
+        // (consent decisions, lifecycle events), not a periodic poll, so
+        // only List gets this treatment.
+        if let AppServerMessage::Response {
+            result: Some(AppResponseResult::List { .. }),
+            ..
+        } = &message
+        {
+            let before = (
+                self.apps_by_pid.clone(),
+                self.apps_grants.clone(),
+                self.installed_apps.clone(),
+            );
+            self.update_app_caches(&message);
+            let after = (
+                self.apps_by_pid.clone(),
+                self.apps_grants.clone(),
+                self.installed_apps.clone(),
+            );
+            return before != after;
+        }
         self.update_app_caches(&message);
         match message {
             AppServerMessage::Response {
@@ -5671,6 +5727,24 @@ impl Shell {
         if width == 0 || height == 0 {
             return;
         }
+
+        let snapshot = StatusBarSnapshot {
+            time_text: current_time_string(self.settings.utc_offset_minutes),
+            wifi_up: wifi_is_up(),
+            battery: read_battery(),
+            dot_color: space_color(&self.system_space_entities, &self.selected_space_id).pixel(),
+        };
+        // ADR-093 follow-up: skip the redraw+commit entirely when nothing
+        // visible has changed since the last real paint. `current_time_
+        // string` only ticks once a minute, so this is the common case --
+        // and every skipped commit is one less forced DRM flip blocking
+        // the kernel's self-refresh idle timer during unlocked-idle time.
+        // Still requires `layer_buffer.is_some()`: right after a resize
+        // it's `None` (genuinely empty), which must always redraw.
+        if self.layer_buffer.is_some() && self.last_statusbar_snapshot.as_ref() == Some(&snapshot) {
+            return;
+        }
+
         let stride = width as i32 * 4;
 
         if self.layer_pool.is_none() {
@@ -5703,10 +5777,10 @@ impl Shell {
             &mut render::Canvas::new(canvas, width, height),
             width,
             height,
-            &current_time_string(self.settings.utc_offset_minutes),
-            wifi_is_up(),
-            read_battery(),
-            space_color(&self.system_space_entities, &self.selected_space_id).pixel(),
+            &snapshot.time_text,
+            snapshot.wifi_up,
+            snapshot.battery,
+            snapshot.dot_color,
             self.fonts.as_ref(),
         );
         render::apply_contrast_boost(canvas, self.settings.contrast_pct);
@@ -5715,6 +5789,7 @@ impl Shell {
         surface.damage_buffer(0, 0, width as i32, height as i32);
         buffer.attach_to(surface).expect("buffer attach");
         self.layer.commit();
+        self.last_statusbar_snapshot = Some(snapshot);
     }
 
     /// S13 Change 1: throttled the same way `refresh_apps_if_due` is --
