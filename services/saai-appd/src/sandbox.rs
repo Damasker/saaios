@@ -94,12 +94,25 @@ pub fn apply(
     let wayland_pin = scratch_root.join("wayland");
     let portal_pin = scratch_root.join("portal");
     let lib_pin = scratch_root.join("lib");
+    let fonts_pin = scratch_root.join("fonts");
     pin_directory(&paths.code_dir, &code_pin)?;
     pin_directory(&paths.data_dir, &data_pin)?;
     pin_file(&paths.wayland_socket, &wayland_pin)?;
     pin_file(&paths.portal_socket, &portal_pin)?;
     if let Some(lib_dir) = &paths.lib_dir {
         pin_directory(lib_dir, &lib_pin)?;
+    }
+    // S28's follow-up: every sandboxed app's `/saaios` gets masked
+    // below like everything else under it, but system fonts live at
+    // `/saaios/fonts` -- with no exception, no third-party app could
+    // ever render text (confirmed live: `org.saaios.mahjong`'s board
+    // drew as bare colored rectangles, `Fonts::load()` failing
+    // silently through its own `.ok()`). Guarded by existence, not
+    // unconditional, the same reason `mask_if_present` checks first:
+    // this path doesn't exist on a host test machine.
+    let reveal_fonts = Path::new("/saaios/fonts").exists();
+    if reveal_fonts {
+        pin_directory(Path::new("/saaios/fonts"), &fonts_pin)?;
     }
 
     // Hide the complete persistent root, including system binaries, packages,
@@ -117,6 +130,9 @@ pub fn apply(
 
     for path in ["/metadata", "/proc", "/sys", "/saaios"] {
         mask_if_present(Path::new(path))?;
+    }
+    if reveal_fonts {
+        reveal_directory(&fonts_pin, Path::new("/saaios/fonts"), true)?;
     }
 
     // S08 Change 6: always masked, only ever revealed for an app that
