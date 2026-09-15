@@ -1037,6 +1037,20 @@ fn main() {
         Some((0, 0).into()),
     );
 
+    /// S32: bumps `/run/saaios/last-input`'s mtime -- `saai-shell`
+    /// polls it (own literal copy of the path, ADR-030's usual
+    /// no-cross-runtime-dependency convention) to tell "nothing
+    /// happening anywhere" apart from "nothing happening on MY
+    /// surfaces specifically", since this compositor is the one
+    /// process that sees every touch regardless of which client's
+    /// surface it's routed to. Fire-and-forget: a failure here (e.g.
+    /// `/run/saaios` not mounted yet during very early boot) must
+    /// never take down touch routing itself.
+    #[cfg(feature = "panther-hardware")]
+    fn mark_global_input_activity() {
+        let _ = std::fs::File::create("/run/saaios/last-input");
+    }
+
     #[cfg(feature = "panther-hardware")]
     match touch::open() {
         Ok(touch_file) => {
@@ -1094,6 +1108,7 @@ fn main() {
                                         focus.as_ref().map(|(s, _)| s.id()),
                                         state.locked
                                     );
+                                    mark_global_input_activity();
                                     let location = Point::from((x as f64, y as f64));
                                     touch.down(
                                         state,
@@ -1122,6 +1137,7 @@ fn main() {
                                 }
                                 touch::TouchUpdate::Up => {
                                     println!("saai-displayd: touch up");
+                                    mark_global_input_activity();
                                     touch.up(
                                         state,
                                         &UpEvent {

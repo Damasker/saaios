@@ -61,7 +61,7 @@
 //! receive the taps that switch pages.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 mod appd_client;
 mod entityd_client;
@@ -204,6 +204,23 @@ fn apply_volume(pct: u8) {
 /// (`poll_remote_pairing` decodes it) and `PendingPairRequest` for
 /// what happens with it.
 const REMOTE_PAIR_SOCKET_PATH: &str = "/run/saaios/remote-pair.sock";
+/// S32: `saai-displayd` touches this file's mtime on every touch
+/// down/up it routes -- to `focused_surface`, i.e. whichever app's
+/// toplevel currently has it, not just this client's own surfaces.
+/// `check_idle_timeout` reads it alongside its own `last_activity`
+/// because this client only ever sees touches that land on ITS OWN
+/// surfaces (the root UI, the lock screen); a third-party app in the
+/// foreground (`org.saaios.mahjong`, say) receives touch input
+/// directly from the compositor and this client is never told about
+/// it at all, so it used to lock the screen out from under someone
+/// actively playing. The compositor is the one process that already
+/// sees every touch regardless of which client's surface it's routed
+/// to, so it's the only place that can answer "is anything happening
+/// anywhere" -- a marker file is the same "shell out / poll a file,
+/// don't grow a new protocol for one boolean" convention this project
+/// already uses for Wi-Fi status, storage, and the remote-access
+/// toggle.
+const GLOBAL_LAST_INPUT_PATH: &str = "/run/saaios/last-input";
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
 /// `ShellSettings`'s own JSON directly without duplicating its parse
@@ -813,6 +830,30 @@ const TIMEZONE_PRESETS_MINUTES: [i32; 9] = [
 /// S21: below this (and not charging), `check_low_battery` creates one
 /// `saaios.notification`.
 const LOW_BATTERY_THRESHOLD_PCT: u8 = 15;
+
+/// `true` if nobody has touched anywhere on the panel (this client's
+/// own surfaces or any other client's) for at least `threshold` --
+/// i.e. it's safe, from this signal alone, to lock. Missing file
+/// (host tests, or a boot that hasn't seen a single touch event yet)
+/// counts as idle: there's no evidence of activity to defer for.
+/// Split from the real `GLOBAL_LAST_INPUT_PATH`-bound call so tests
+/// can point it at a throwaway file instead of the real `/run/saaios`
+/// path.
+fn input_idle_for_at_least(path: &std::path::Path, threshold: Duration) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return true;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return true;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|elapsed| elapsed >= threshold)
+}
+
+fn global_input_idle_for_at_least(threshold: Duration) -> bool {
+    input_idle_for_at_least(std::path::Path::new(GLOBAL_LAST_INPUT_PATH), threshold)
+}
 
 fn format_utc_offset(minutes: i32) -> String {
     let sign = if minutes < 0 { '-' } else { '+' };
@@ -4080,6 +4121,15 @@ impl Shell {
         if self.locked || self.last_activity.elapsed() < idle_timeout {
             return;
         }
+        if !global_input_idle_for_at_least(idle_timeout) {
+            // S32: this client's own touches went quiet, but the
+            // compositor saw more recent activity somewhere else --
+            // a foreground third-party app, most likely. Don't lock
+            // out from under it; just keep deferring while that
+            // activity continues, the same way a fresh own-surface
+            // touch would.
+            return;
+        }
         println!("saai-shell: idle timeout, locking");
         self.last_activity = Instant::now();
         match self.session_lock_state.lock(qh) {
@@ -4345,11 +4395,12 @@ impl Shell {
 mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
-        format_utc_offset, intent_action_at, next_in_cycle, stacked_row_rect, tab_at,
-        task_confirm_action_at, wifi_list_action_at, BluetoothListTap, KeyboardMode, Rect,
-        RootPage, WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
+        stacked_row_rect, tab_at, task_confirm_action_at, wifi_list_action_at, BluetoothListTap,
+        KeyboardMode, Rect, RootPage, WifiListTap, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
+    use std::time::Duration;
 
     #[test]
     fn format_utc_offset_handles_zero_positive_negative_and_half_hours() {
@@ -4691,6 +4742,26 @@ mod tests {
     fn capability_label_translates_known_vocabulary_and_falls_back_for_unknown() {
         assert_eq!(capability_label("net.internet"), "Доступ в интернет");
         assert_eq!(capability_label("net.bluetooth"), "net.bluetooth");
+    }
+
+    #[test]
+    fn input_idle_reports_idle_when_the_marker_file_is_missing() {
+        let missing = std::env::temp_dir().join("saai-shell-test-missing-marker-does-not-exist");
+        assert!(input_idle_for_at_least(&missing, Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn input_idle_reports_not_idle_right_after_a_touch() {
+        let marker = tempfile::NamedTempFile::new().unwrap();
+        assert!(!input_idle_for_at_least(marker.path(), Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn input_idle_reports_idle_once_the_marker_is_old_enough() {
+        let marker = tempfile::NamedTempFile::new().unwrap();
+        let ancient = std::time::SystemTime::now() - Duration::from_secs(120);
+        marker.as_file().set_modified(ancient).unwrap();
+        assert!(input_idle_for_at_least(marker.path(), Duration::from_secs(60)));
     }
 }
 
