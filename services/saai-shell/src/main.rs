@@ -1674,6 +1674,15 @@ fn trusted_client_action_at(
     None
 }
 
+/// HIA-20: every `dev_surface_rows()` row is read-only diagnostic
+/// text, not a button -- the only real tap target on this screen is
+/// the trailing "Назад" row right after them, same convention
+/// `trusted_client_action_at`'s own `Back` variant already uses, just
+/// without the per-row action this screen has no need for.
+fn dev_surface_back_tapped(pos: (f64, f64), width: u32, height: u32, row_count: usize) -> bool {
+    stacked_row_rect(row_count, width, height).contains(pos.0, pos.1)
+}
+
 const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
 const TASK_CONFIRM_BUTTONS_ID: &str = "task-confirm-buttons";
 const TASK_CONFIRM_ACCEPT_ID: &str = "task-confirm-accept";
@@ -1742,6 +1751,14 @@ enum Frame {
         rows: Vec<(Rect, String)>,
     },
     TrustedClients {
+        header: Rect,
+        status_line: String,
+        rows: Vec<(Rect, String)>,
+    },
+    /// HIA-20: the hidden diagnostic screen -- same row-list shape as
+    /// `TrustedClients` just above, reused verbatim rather than
+    /// inventing new geometry for a screen that's read-only text.
+    DevSurface {
         header: Rect,
         status_line: String,
         rows: Vec<(Rect, String)>,
@@ -2613,13 +2630,21 @@ const ME_PAGE_SIZE: usize = 6;
 /// time anyway.
 const ME_FIXED_CARD_COUNT: usize = 18;
 
+/// HIA-20: how many silent taps on the build-id card
+/// (`me_fixed_card_action`'s index 1) open the hidden diagnostic
+/// screen -- same number as Android's own well-known "tap build
+/// number" developer-options unlock.
+const DEV_SURFACE_TAP_THRESHOLD: u32 = 7;
+
 /// The `me_all_card_views`'s logical index -> tap action mapping.
-/// `None` for the three read-only info rows (device summary, build
-/// info, storage), "Обновления" (S22, read-only by design), and
-/// every installed-app row (info-only on "Я", unlike "Сейчас"'s
-/// `now_action_at`).
+/// `None` for the two purely read-only info rows (device summary,
+/// storage), "Обновления" (S22, read-only by design), and every
+/// installed-app row (info-only on "Я", unlike "Сейчас"'s `now_
+/// action_at`). Index 1 (build info) looks read-only too -- its tap
+/// action is silent by design, see `DEV_SURFACE_TAP_THRESHOLD`.
 fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
     match logical_index {
+        1 => Some("tap_build_info"),
         3 => Some("cycle_brightness"),
         4 => Some("cycle_idle_timeout"),
         5 => Some("cycle_deep_idle_timeout"),
@@ -2792,6 +2817,8 @@ fn main() {
         entity_counts: BTreeMap::new(),
         viewing_entity_id: None,
         orb_menu_open: false,
+        dev_surface_tap_count: 0,
+        dev_surface_open: false,
         selected_entities: Vec::new(),
         system_space_entities: Vec::new(),
         context_frame: Vec::new(),
@@ -2999,6 +3026,16 @@ struct Shell {
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
     orb_menu_open: bool,
+    /// HIA-20: silent, un-hinted tap counter on the build-id card
+    /// (`me_fixed_card_action`'s index 1, "tap_build_info") -- the
+    /// same well-known convention Android's own "tap build number"
+    /// developer-options unlock uses. Never shown anywhere; resets to
+    /// 0 the moment it actually opens `dev_surface_open`, per HIA-
+    /// ROADMAP.md's own "must not pollute the normal interface".
+    dev_surface_tap_count: u32,
+    /// HIA-20: the hidden diagnostic screen (`Frame::DevSurface`) --
+    /// real, live `ContextFrame`/grants, not static placeholder text.
+    dev_surface_open: bool,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -3472,6 +3509,16 @@ impl TouchHandler for Shell {
                 ) {
                     self.handle_trusted_client_tap(tap, conn, qh);
                 }
+            } else if self.dev_surface_open {
+                // HIA-20: modal, same as the others -- every row here
+                // is read-only diagnostic text, only "Назад" (the row
+                // right after them) does anything.
+                let row_count = self.dev_surface_rows().len();
+                if dev_surface_back_tapped(self.last_touch_pos, self.width, self.height, row_count)
+                {
+                    self.dev_surface_open = false;
+                    self.draw(conn, qh);
+                }
             } else if let Some(action) = self
                 .settings
                 .orb_enabled
@@ -3816,6 +3863,27 @@ impl Shell {
                 status_line: format!("{} доверенных ключей", clients.len()),
                 rows,
             }
+        } else if self.dev_surface_open {
+            // HIA-20: same runtime-sized-list shape as the two
+            // branches above, read-only text rows plus one trailing
+            // "Назад" -- `dev_surface_rows()`'s own doc comment
+            // explains why this is always read fresh, never cached.
+            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            let data_rows = self.dev_surface_rows();
+            let mut rows: Vec<(Rect, String)> = data_rows
+                .iter()
+                .enumerate()
+                .map(|(index, text)| (stacked_row_rect(index, width, height), text.clone()))
+                .collect();
+            rows.push((
+                stacked_row_rect(data_rows.len(), width, height),
+                "Назад".to_string(),
+            ));
+            Frame::DevSurface {
+                header,
+                status_line: "Диагностика".to_string(),
+                rows,
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
@@ -4027,6 +4095,20 @@ impl Shell {
                 render::draw_row_list(
                     &mut render::Canvas::new(canvas, width, height),
                     "Доверенные клиенты",
+                    &status_line,
+                    header,
+                    &rows,
+                    self.fonts.as_ref(),
+                );
+            }
+            Frame::DevSurface {
+                header,
+                status_line,
+                rows,
+            } => {
+                render::draw_row_list(
+                    &mut render::Canvas::new(canvas, width, height),
+                    "Диагностика",
                     &status_line,
                     header,
                     &rows,
@@ -4261,6 +4343,19 @@ impl Shell {
 
     fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
         match action {
+            "tap_build_info" => {
+                // HIA-20: no toast, no counter shown anywhere -- see
+                // `dev_surface_tap_count`'s own doc comment for why
+                // this stays completely silent until it actually
+                // opens.
+                self.dev_surface_tap_count += 1;
+                if self.dev_surface_tap_count >= DEV_SURFACE_TAP_THRESHOLD {
+                    self.dev_surface_tap_count = 0;
+                    self.dev_surface_open = true;
+                }
+                self.draw(conn, qh);
+                return;
+            }
             "cycle_brightness" => {
                 self.settings.brightness_pct =
                     next_in_cycle(&BRIGHTNESS_LEVELS_PCT, self.settings.brightness_pct);
@@ -4995,6 +5090,62 @@ impl Shell {
             ));
         }
         cards
+    }
+
+    /// HIA-20: the hidden diagnostic screen's own content -- real,
+    /// live values read fresh off `self` every time this is called
+    /// (same "no cached snapshot" convention `trusted_clients()`/
+    /// `me_all_card_views`'s own app-grants loop already follow),
+    /// never a placeholder string. Doc sections 37/47 named
+    /// "active ContextFrame, capabilities, policy decisions" --
+    /// `context_frame` is the first verbatim, and in this project's
+    /// actual, already-shipped vocabulary (ADR-020), a granted
+    /// capability set IS the policy decision for that app; there is
+    /// no separate PolicyDecision log to show, so this doesn't invent
+    /// one just to look more like the aspirational document.
+    fn dev_surface_rows(&self) -> Vec<String> {
+        let mut rows = vec![format!(
+            "Пространство: {} ({})",
+            space_display_name(&self.spaces, &self.selected_space_id),
+            self.selected_space_id
+        )];
+        if self.context_frame.is_empty() {
+            rows.push("ContextFrame: пусто".to_string());
+        } else {
+            for entry in &self.context_frame {
+                let source = match entry.source {
+                    ContextSource::Manual => "manual",
+                    ContextSource::Wifi => "wifi",
+                };
+                rows.push(format!(
+                    "ContextFrame: {} · увер. {} · {source}",
+                    entry.space_id, entry.confidence
+                ));
+            }
+        }
+        if self.installed_apps.is_empty() {
+            rows.push("Возможности: нет установленных приложений".to_string());
+        } else {
+            for app in self.installed_apps.values() {
+                let grants = self
+                    .apps_grants
+                    .get(&app.id)
+                    .map(|granted| {
+                        if granted.is_empty() {
+                            "без разрешений".to_string()
+                        } else {
+                            granted
+                                .iter()
+                                .map(|name| capability_label(name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    })
+                    .unwrap_or_else(|| "без разрешений".to_string());
+                rows.push(format!("{}: {grants}", app.name));
+            }
+        }
+        rows
     }
 
     /// S13 Change 4: "Сейчас"'s content -- one card per installed app
@@ -5763,7 +5914,8 @@ mod tests {
         space_color,
         space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
-        task_confirm_action_at, trusted_client_action_at, upsert_context_entry,
+        dev_surface_back_tapped, me_fixed_card_action, task_confirm_action_at,
+        trusted_client_action_at, upsert_context_entry,
         wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
         KeyboardMode, OrbAction, OrbState, Rect, RootPage, Space, SpaceColor, SpaceLifecycle,
         TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
@@ -6716,6 +6868,31 @@ mod tests {
                     .contains(&OrbAction::OpenInbox));
             }
         }
+    }
+
+    #[test]
+    fn me_fixed_card_action_index_1_is_the_silent_build_info_tap() {
+        // HIA-20's own hidden entry point -- confirm it sits at
+        // exactly the index the build-id card occupies in `me_all_
+        // card_views`, not silently lost to some future edit there.
+        assert_eq!(me_fixed_card_action(1), Some("tap_build_info"));
+    }
+
+    #[test]
+    fn dev_surface_back_tapped_finds_only_the_row_right_after_the_data() {
+        let width = 1080;
+        let height = 2400;
+        let row_count = 3;
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        let data_row = center(stacked_row_rect(1, width, height));
+        let back_row = center(stacked_row_rect(row_count, width, height));
+        assert!(!dev_surface_back_tapped(data_row, width, height, row_count));
+        assert!(dev_surface_back_tapped(back_row, width, height, row_count));
     }
 }
 
