@@ -104,6 +104,14 @@ const SPACE_RELATION_ENTITY_TYPE: &str = "saaios.space-relation";
 /// the four builtin spaces (S06) never needed this before and
 /// shouldn't require a migration to keep behaving the same way.
 const SPACE_LIFECYCLE_ENTITY_TYPE: &str = "saaios.space-lifecycle";
+/// HIA-02: one record per (space, physical signal) association --
+/// `properties`: `space_id`, `signal_type` (only `"wifi_ssid"` so
+/// far -- Bluetooth is a real future source per HIA-ROADMAP.md, not
+/// built here), `value` (the SSID itself). No UI creates these yet,
+/// same "reads-only, authoring deferred" gap ADR-086 already left
+/// for `saaios.space-relation`.
+const SPACE_SIGNAL_ENTITY_TYPE: &str = "saaios.space-signal";
+const SPACE_SIGNAL_TYPE_WIFI_SSID: &str = "wifi_ssid";
 
 /// HIA-01's lifecycle vocabulary (document section 4.3/section 69) --
 /// `Stable` is the default for every space that has never been
@@ -226,6 +234,87 @@ fn space_display_name(spaces: &[Space], space_id: &str) -> String {
             other => other.to_owned(),
         })
 }
+
+/// HIA-02 (docs/os/sprints/HIA-ROADMAP.md): which real-world signal
+/// put a `ContextFrameEntry` into `Shell::context_frame`. `Manual`
+/// is set only from a real tap (`upsert_manual_context`'s own doc
+/// comment explains why an auto-switch must NOT also touch it) --
+/// so it's always the safety net a lost physical signal falls back
+/// to (see `effective_context_space`'s own doc comment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextSource {
+    Manual,
+    Wifi,
+}
+
+/// Fixed, not learned -- a real physical presence signal (currently
+/// connected to a known SSID) should generally win over whatever was
+/// last manually/previously selected, and losing that signal should
+/// fall back to the manual entry, which never expires on its own.
+/// `MANUAL_CONFIDENCE < WIFI_CONFIDENCE` is the entire policy; no
+/// decay/staleness timer needed on top of it (`refresh_context_
+/// signals_if_due` recomputes the Wifi entry from scratch, live,
+/// every `CONTEXT_SIGNAL_REFRESH_INTERVAL`).
+const MANUAL_CONFIDENCE: u8 = 50;
+const WIFI_CONFIDENCE: u8 = 80;
+
+/// One space this shell currently has *some* evidence for being the
+/// right context -- HIA-01's "Goal" line asks for confidence/source
+/// per entry; `observed_at` isn't tracked separately because nothing
+/// here needs staleness beyond "was this source's entry ever
+/// refreshed to reflect the space it currently names" -- each source
+/// keeps at most one entry (`upsert_context_entry` replaces, never
+/// accumulates), so an entry's mere presence already means "current
+/// as of the last refresh for its source".
+#[derive(Debug, Clone, PartialEq)]
+struct ContextFrameEntry {
+    space_id: String,
+    confidence: u8,
+    source: ContextSource,
+}
+
+/// `selected_space_id` (the Rollback this ADR's own roadmap entry
+/// names) stays the single field everything else in this file reads
+/// -- this just decides what it *should* be. `fallback` covers the
+/// only case with no entries at all (before the first `Selection`
+/// response ever arrives at boot).
+fn effective_context_space(frame: &[ContextFrameEntry], fallback: &str) -> String {
+    frame
+        .iter()
+        .max_by_key(|entry| entry.confidence)
+        .map(|entry| entry.space_id.clone())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// At most one entry per `ContextSource` -- a fresh entry for a
+/// source always replaces that source's previous one instead of
+/// accumulating history nobody reads.
+fn upsert_context_entry(frame: &mut Vec<ContextFrameEntry>, entry: ContextFrameEntry) {
+    frame.retain(|existing| existing.source != entry.source);
+    frame.push(entry);
+}
+
+fn remove_context_source(frame: &mut Vec<ContextFrameEntry>, source: ContextSource) {
+    frame.retain(|existing| existing.source != source);
+}
+
+/// The `saaios.space-signal` record (system space, same reasoning as
+/// `SPACE_RELATION_ENTITY_TYPE`'s own doc comment) mapping a Wi-Fi
+/// SSID to the space that should activate while connected to it.
+/// Like `saaios.space-relation`, creation has no UI yet -- this is
+/// read-only plumbing, seeded manually for now (see ADR-087).
+fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String> {
+    system_entities
+        .iter()
+        .find(|entity| {
+            entity.entity_type == SPACE_SIGNAL_ENTITY_TYPE
+                && entity.properties.get("signal_type").and_then(Value::as_str)
+                    == Some(SPACE_SIGNAL_TYPE_WIFI_SSID)
+                && entity.properties.get("value").and_then(Value::as_str) == Some(ssid)
+        })
+        .and_then(|entity| entity.properties.get("space_id").and_then(Value::as_str))
+        .map(str::to_string)
+}
 use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -279,6 +368,13 @@ const STATUSBAR_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 /// suspend/resume cycle itself safe, but not any particular threshold
 /// for how eager to be about it.
 const DEFAULT_DEEP_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// HIA-02: how often `refresh_context_signals_if_due` re-checks
+/// ambient physical signals (Wi-Fi today) and, if the top-confidence
+/// entry in `context_frame` disagrees with `selected_space_id`,
+/// auto-switches. Coarser than `STATUSBAR_REFRESH_INTERVAL` on
+/// purpose -- "did I enter a known space" doesn't need sub-second
+/// reaction time, and this shells out to `wpa_cli status` each time.
+const CONTEXT_SIGNAL_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 /// S16: first persisted, user-changeable setting in this project --
 /// everything before this (deep idle timeout included) was either a
 /// compile-time constant or an env-var override for testing, never
@@ -803,7 +899,7 @@ fn wifi_trigger_scan() {
 /// `wpa_cli status`'s own `key=value` lines. `wpa_state=COMPLETED`
 /// plus a non-empty `ssid=` is the same "actually associated" signal
 /// `wpa_supplicant` itself uses internally, not a guess at one.
-fn wifi_status_line() -> String {
+fn wifi_connected_ssid() -> Option<String> {
     let output = wpa_cli(&["status"]);
     let mut state = String::new();
     let mut ssid = String::new();
@@ -815,9 +911,16 @@ fn wifi_status_line() -> String {
         }
     }
     if state == "COMPLETED" && !ssid.is_empty() {
-        format!("Подключено: {ssid}")
+        Some(ssid)
     } else {
-        "Не подключено".to_string()
+        None
+    }
+}
+
+fn wifi_status_line() -> String {
+    match wifi_connected_ssid() {
+        Some(ssid) => format!("Подключено: {ssid}"),
+        None => "Не подключено".to_string(),
     }
 }
 
@@ -2181,6 +2284,8 @@ fn main() {
         confirming_task_id: None,
         selected_entities: Vec::new(),
         system_space_entities: Vec::new(),
+        context_frame: Vec::new(),
+        last_context_signal_refresh: Instant::now(),
         portal: portal_server::PortalServer::bind(portal_socket)
             .expect("failed to bind saai-shell portal socket"),
         apps_by_pid: BTreeMap::new(),
@@ -2213,6 +2318,7 @@ fn main() {
         shell.poll_remote_pairing(&conn, &qh);
         shell.refresh_apps_if_due();
         shell.refresh_statusbar_if_due();
+        shell.refresh_context_signals_if_due();
         shell.poll_portal();
         shell.check_idle_timeout(&qh);
         shell.check_deep_idle(&conn);
@@ -2359,6 +2465,14 @@ struct Shell {
     /// fixed id instead of the dynamic selection, since this data
     /// needs to be visible no matter what's on screen.
     system_space_entities: Vec<Entity>,
+    /// HIA-02: at most one entry per `ContextSource`, kept current by
+    /// `upsert_manual_context` (Manual, on a real tap) and
+    /// `refresh_context_signals_if_due` (Wifi, on a timer) --
+    /// `effective_context_space` picks the top-confidence entry.
+    context_frame: Vec<ContextFrameEntry>,
+    /// Throttles `refresh_context_signals_if_due`, same pattern as
+    /// `last_statusbar_refresh`/`last_apps_refresh` just below.
+    last_context_signal_refresh: Instant,
     /// S13 Change 2: which task the modal on top of "Входящие" is
     /// currently showing -- `Some` only after the user taps a specific
     /// row in that page's list, `None` again once accepted/declined.
@@ -3386,6 +3500,60 @@ impl Shell {
         }
     }
 
+    /// HIA-02: called from the one place a real, deliberate user
+    /// choice happens -- `invoke_content_action`'s tap-driven
+    /// `select_space:` branch -- and nowhere else. Deliberately NOT
+    /// called from `apply_entityd_message`'s `Selection`/
+    /// `SelectionChanged` arms, even though those also update
+    /// `selected_space_id`: if a Wi-Fi-triggered auto-switch also
+    /// overwrote the Manual entry, losing that Wi-Fi signal
+    /// afterwards would have nothing distinct left to fall back to.
+    /// Keeping this optimistic (set before entityd confirms the
+    /// switch, not after) is fine -- it only feeds
+    /// `effective_context_space`'s decision, never drawn directly.
+    fn upsert_manual_context(&mut self, space_id: &str) {
+        upsert_context_entry(
+            &mut self.context_frame,
+            ContextFrameEntry {
+                space_id: space_id.to_string(),
+                confidence: MANUAL_CONFIDENCE,
+                source: ContextSource::Manual,
+            },
+        );
+    }
+
+    /// HIA-02's physical-signal side: throttled the same way
+    /// `refresh_apps_if_due`/`refresh_statusbar_if_due` are, called
+    /// once per main-loop tick. Re-derives the Wi-Fi context-frame
+    /// entry from scratch every time (connected SSID, if any, matched
+    /// against `saaios.space-signal` records) rather than tracking
+    /// deltas -- same "read fresh" convention `wifi_status_line`
+    /// already followed before this. If the resulting top-confidence
+    /// space differs from what's currently selected, actually
+    /// switches to it through the same `select_space` path a manual
+    /// tap uses -- no separate "auto-selected" state to keep in sync.
+    fn refresh_context_signals_if_due(&mut self) {
+        if self.last_context_signal_refresh.elapsed() < CONTEXT_SIGNAL_REFRESH_INTERVAL {
+            return;
+        }
+        self.last_context_signal_refresh = Instant::now();
+        match wifi_connected_ssid().and_then(|ssid| space_for_wifi_ssid(&self.system_space_entities, &ssid)) {
+            Some(space_id) => upsert_context_entry(
+                &mut self.context_frame,
+                ContextFrameEntry {
+                    space_id,
+                    confidence: WIFI_CONFIDENCE,
+                    source: ContextSource::Wifi,
+                },
+            ),
+            None => remove_context_source(&mut self.context_frame, ContextSource::Wifi),
+        }
+        let effective = effective_context_space(&self.context_frame, &self.selected_space_id);
+        if effective != self.selected_space_id && self.entityd.is_connected() {
+            self.entityd.select_space(effective);
+        }
+    }
+
     fn invoke_content_action(
         &mut self,
         action: ContentActionDefinition,
@@ -3413,6 +3581,7 @@ impl Shell {
             if space_id == self.selected_space_id {
                 self.cycle_space_lifecycle(space_id);
             } else {
+                self.upsert_manual_context(space_id);
                 self.entityd.select_space(space_id);
             }
             return;
@@ -4829,12 +4998,14 @@ mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
-        space_display_name, space_lifecycle, space_lifecycle_entity, space_relation_targets,
-        stacked_row_rect, tab_at, task_confirm_action_at, trusted_client_action_at,
-        wifi_list_action_at, BluetoothListTap, Entity, KeyboardMode, Rect, RootPage, Space,
-        SpaceLifecycle, TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        effective_context_space, remove_context_source, space_display_name, space_for_wifi_ssid,
+        space_lifecycle, space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
+        task_confirm_action_at, trusted_client_action_at, upsert_context_entry,
+        wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
+        KeyboardMode, Rect, RootPage, Space, SpaceLifecycle, TrustedClientTap, WifiListTap,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, MANUAL_CONFIDENCE, WIFI_CONFIDENCE,
     };
     use saai_entity_store::SpaceKind;
     use std::time::Duration;
@@ -4866,6 +5037,17 @@ mod tests {
         properties.insert("to_space_id".into(), serde_json::Value::String(to.into()));
         properties.insert("kind".into(), serde_json::Value::String(kind.into()));
         test_entity(SPACE_RELATION_ENTITY_TYPE, properties)
+    }
+
+    fn wifi_signal_entity(space_id: &str, ssid: &str) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert("space_id".into(), serde_json::Value::String(space_id.into()));
+        properties.insert(
+            "signal_type".into(),
+            serde_json::Value::String(SPACE_SIGNAL_TYPE_WIFI_SSID.into()),
+        );
+        properties.insert("value".into(), serde_json::Value::String(ssid.into()));
+        test_entity(SPACE_SIGNAL_ENTITY_TYPE, properties)
     }
 
     #[test]
@@ -5339,6 +5521,93 @@ mod tests {
         assert_eq!(space_display_name(&spaces, "car"), "Машина");
         assert_eq!(space_display_name(&spaces, "work"), "Работа");
         assert_eq!(space_display_name(&spaces, "unknown-id"), "unknown-id");
+    }
+
+    #[test]
+    fn effective_context_space_falls_back_with_an_empty_frame() {
+        assert_eq!(effective_context_space(&[], "home"), "home");
+    }
+
+    #[test]
+    fn effective_context_space_prefers_the_highest_confidence_entry() {
+        let frame = vec![
+            ContextFrameEntry {
+                space_id: "work".into(),
+                confidence: 50,
+                source: ContextSource::Manual,
+            },
+            ContextFrameEntry {
+                space_id: "home".into(),
+                confidence: 80,
+                source: ContextSource::Wifi,
+            },
+        ];
+        assert_eq!(effective_context_space(&frame, "personal"), "home");
+    }
+
+    #[test]
+    fn upsert_context_entry_replaces_the_same_source_instead_of_accumulating() {
+        let mut frame = Vec::new();
+        upsert_context_entry(
+            &mut frame,
+            ContextFrameEntry {
+                space_id: "home".into(),
+                confidence: 80,
+                source: ContextSource::Wifi,
+            },
+        );
+        upsert_context_entry(
+            &mut frame,
+            ContextFrameEntry {
+                space_id: "work".into(),
+                confidence: 80,
+                source: ContextSource::Wifi,
+            },
+        );
+        assert_eq!(frame.len(), 1);
+        assert_eq!(frame[0].space_id, "work");
+    }
+
+    #[test]
+    fn losing_the_wifi_signal_falls_back_to_the_manual_entry() {
+        // The exact negative scenario HIA-ROADMAP.md's HIA-02 entry
+        // names: losing the physical signal must not leave the
+        // context frame empty -- it falls back to the last manual/
+        // known selection, which never expires on its own.
+        let mut frame = vec![ContextFrameEntry {
+            space_id: "work".into(),
+            confidence: MANUAL_CONFIDENCE,
+            source: ContextSource::Manual,
+        }];
+        upsert_context_entry(
+            &mut frame,
+            ContextFrameEntry {
+                space_id: "home".into(),
+                confidence: WIFI_CONFIDENCE,
+                source: ContextSource::Wifi,
+            },
+        );
+        assert_eq!(effective_context_space(&frame, "personal"), "home");
+        remove_context_source(&mut frame, ContextSource::Wifi);
+        assert_eq!(effective_context_space(&frame, "personal"), "work");
+    }
+
+    #[test]
+    fn space_for_wifi_ssid_matches_only_the_right_type_and_value() {
+        let entities = vec![
+            wifi_signal_entity("home", "HomeNet"),
+            wifi_signal_entity("work", "OfficeNet"),
+            relation_entity("home", "car", "related_to"),
+        ];
+        assert_eq!(
+            space_for_wifi_ssid(&entities, "HomeNet"),
+            Some("home".to_string())
+        );
+        assert_eq!(
+            space_for_wifi_ssid(&entities, "OfficeNet"),
+            Some("work".to_string())
+        );
+        assert_eq!(space_for_wifi_ssid(&entities, "SomeOtherNet"), None);
     }
 }
 
