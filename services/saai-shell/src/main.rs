@@ -244,6 +244,70 @@ fn apply_remote_access(enabled: bool) {
     }
 }
 
+/// The same file `pair-recv.c`'s own `AUTHORIZED_KEYS` define writes
+/// to -- duplicated as a literal here rather than shared, the usual
+/// no-cross-runtime-dependency convention (ADR-030) this project
+/// already applies to `saaios.task`'s status strings.
+const AUTHORIZED_KEYS_PATH: &str = "/data/saaios/var/dropbear/.ssh/authorized_keys";
+
+/// One line of `authorized_keys` -- `client_name` is that line's own
+/// trailing comment field, the same "one source of truth, no separate
+/// copy" reasoning docs/os/ideas.md already recorded for why this
+/// screen reads the file directly instead of saai-shell keeping its
+/// own list.
+struct TrustedClient {
+    client_name: String,
+    fingerprint: String,
+}
+
+/// Read fresh every time, not cached -- same reasoning as
+/// `bluetooth_list_open`'s own doc comment: this list needs to stay
+/// correct across taps that mutate the very file it reads (a revoke
+/// removes a line then immediately redraws), and the file is small
+/// enough that re-parsing it every draw costs nothing worth avoiding.
+fn trusted_clients() -> Vec<TrustedClient> {
+    let Ok(content) = std::fs::read_to_string(AUTHORIZED_KEYS_PATH) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| TrustedClient {
+            client_name: line
+                .split_whitespace()
+                .nth(2)
+                .unwrap_or("(без имени)")
+                .to_string(),
+            fingerprint: key_fingerprint(line),
+        })
+        .collect()
+}
+
+/// Removes exactly one line by its position in the file as `trusted_
+/// clients()` currently enumerates it -- re-reads and rewrites the
+/// whole file rather than trying to patch it in place, the same
+/// "small file, just redo it" choice `ShellSettings::save()` already
+/// makes for its own JSON. A stale index (the file changed between
+/// this screen's last draw and this tap, e.g. a fresh pairing landed
+/// in between) just removes whatever now sits at that position or,
+/// past the end, does nothing -- no worse than the same race any
+/// index-based row tap in this codebase already accepts.
+fn revoke_trusted_client(index: usize) {
+    let Ok(content) = std::fs::read_to_string(AUTHORIZED_KEYS_PATH) else {
+        return;
+    };
+    let mut lines: Vec<&str> = content.lines().filter(|line| !line.trim().is_empty()).collect();
+    if index >= lines.len() {
+        return;
+    }
+    lines.remove(index);
+    let mut new_content = lines.join("\n");
+    if !new_content.is_empty() {
+        new_content.push('\n');
+    }
+    let _ = std::fs::write(AUTHORIZED_KEYS_PATH, new_content);
+}
+
 struct ShellSettings {
     brightness_pct: u8,
     idle_timeout_secs: u64,
@@ -1200,6 +1264,32 @@ fn bluetooth_list_action_at(
     None
 }
 
+/// Same shape as `BluetoothListTap`, minus a scan/refresh control --
+/// this list has no live-scanning state to refresh, it's a plain file
+/// re-read fresh on every draw (`trusted_clients()`'s own doc
+/// comment).
+enum TrustedClientTap {
+    Revoke(usize),
+    Back,
+}
+
+fn trusted_client_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    client_count: usize,
+) -> Option<TrustedClientTap> {
+    for index in 0..client_count {
+        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
+            return Some(TrustedClientTap::Revoke(index));
+        }
+    }
+    if stacked_row_rect(client_count, width, height).contains(pos.0, pos.1) {
+        return Some(TrustedClientTap::Back);
+    }
+    None
+}
+
 const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
 const TASK_CONFIRM_BUTTONS_ID: &str = "task-confirm-buttons";
 const TASK_CONFIRM_ACCEPT_ID: &str = "task-confirm-accept";
@@ -1259,6 +1349,11 @@ enum Frame {
         rows: Vec<(Rect, String)>,
     },
     BluetoothList {
+        header: Rect,
+        status_line: String,
+        rows: Vec<(Rect, String)>,
+    },
+    TrustedClients {
         header: Rect,
         status_line: String,
         rows: Vec<(Rect, String)>,
@@ -1756,7 +1851,7 @@ const ME_PAGE_SIZE: usize = 6;
 /// length, since `me_fixed_card_action` has to agree with it and
 /// there's no way to assert two functions' lengths match at compile
 /// time anyway.
-const ME_FIXED_CARD_COUNT: usize = 15;
+const ME_FIXED_CARD_COUNT: usize = 16;
 
 /// The `me_all_card_views`'s logical index -> tap action mapping.
 /// `None` for the three read-only info rows (device summary, build
@@ -1776,6 +1871,7 @@ fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
         12 => Some("cycle_text_scale"),
         13 => Some("cycle_contrast"),
         14 => Some("toggle_remote_access"),
+        15 => Some("open_trusted_clients"),
         _ => None,
     }
 }
@@ -1924,6 +2020,7 @@ fn main() {
         wifi_password: None,
         wifi_list: None,
         bluetooth_list_open: false,
+        trusted_clients_open: false,
         pin_setup: None,
         pin_entry_buffer: String::new(),
         me_page: 0,
@@ -2079,6 +2176,10 @@ struct Shell {
     /// results`'s doc comment), so this is just whether the screen is
     /// open at all.
     bluetooth_list_open: bool,
+    /// Same shape as `bluetooth_list_open` -- "Доверенные клиенты"
+    /// (opened from "Я") has no cached rows either, `trusted_clients()`
+    /// is read fresh from `authorized_keys` on every touch/draw.
+    trusted_clients_open: bool,
     /// S24: set while "Изменить PIN" (opened from "Я") is composing a
     /// new PIN. Modal, same as the others.
     pin_setup: Option<PinSetupState>,
@@ -2558,6 +2659,20 @@ impl TouchHandler for Shell {
                 ) {
                     self.handle_bluetooth_list_tap(tap, conn, qh);
                 }
+            } else if self.trusted_clients_open {
+                // Modal, same as the others -- owns every touch while
+                // "Доверенные клиенты" is open. Recomputes the client
+                // count fresh, same reasoning as the Bluetooth branch
+                // just above.
+                let client_count = trusted_clients().len();
+                if let Some(tap) = trusted_client_action_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    client_count,
+                ) {
+                    self.handle_trusted_client_tap(tap, conn, qh);
+                }
             } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
@@ -2821,6 +2936,44 @@ impl Shell {
                 status_line: bluetooth_status_summary(),
                 rows,
             }
+        } else if self.trusted_clients_open {
+            // Same runtime-sized-list shape as the Bluetooth branch
+            // above -- `trusted_clients()`'s own doc comment explains
+            // why this reads straight from disk instead of a cached
+            // snapshot.
+            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            let clients = trusted_clients();
+            let mut rows: Vec<(Rect, String)> = clients
+                .iter()
+                .enumerate()
+                .map(|(index, client)| {
+                    // Truncated the same way `key_fingerprint` itself
+                    // used to be before ADR-083 -- full 44-char
+                    // SHA256 fingerprints don't fit a row alongside a
+                    // name, but enough of the prefix still lets two
+                    // same-named clients be told apart.
+                    let short_fingerprint = client
+                        .fingerprint
+                        .get(..24)
+                        .unwrap_or(&client.fingerprint);
+                    (
+                        stacked_row_rect(index, width, height),
+                        format!(
+                            "{}   ·   {short_fingerprint}…   ·   Отозвать",
+                            client.client_name
+                        ),
+                    )
+                })
+                .collect();
+            rows.push((
+                stacked_row_rect(clients.len(), width, height),
+                "Назад".to_string(),
+            ));
+            Frame::TrustedClients {
+                header,
+                status_line: format!("{} доверенных ключей", clients.len()),
+                rows,
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
@@ -3011,6 +3164,20 @@ impl Shell {
                     self.fonts.as_ref(),
                 );
             }
+            Frame::TrustedClients {
+                header,
+                status_line,
+                rows,
+            } => {
+                render::draw_row_list(
+                    &mut render::Canvas::new(canvas, width, height),
+                    "Доверенные клиенты",
+                    &status_line,
+                    header,
+                    &rows,
+                    self.fonts.as_ref(),
+                );
+            }
             Frame::Root {
                 content_rect,
                 tabs,
@@ -3175,6 +3342,12 @@ impl Shell {
             "toggle_remote_access" => {
                 self.settings.remote_access_enabled = !self.settings.remote_access_enabled;
                 apply_remote_access(self.settings.remote_access_enabled);
+            }
+            "open_trusted_clients" => {
+                // Same reasoning as "open_wifi_list" above.
+                self.trusted_clients_open = true;
+                self.draw(conn, qh);
+                return;
             }
             "me_page_next" => {
                 self.me_page += 1;
@@ -3389,6 +3562,23 @@ impl Shell {
             BluetoothListTap::Refresh => {}
             BluetoothListTap::Back => {
                 self.bluetooth_list_open = false;
+            }
+        }
+        self.draw(conn, qh);
+    }
+
+    fn handle_trusted_client_tap(
+        &mut self,
+        tap: TrustedClientTap,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match tap {
+            TrustedClientTap::Revoke(index) => {
+                revoke_trusted_client(index);
+            }
+            TrustedClientTap::Back => {
+                self.trusted_clients_open = false;
             }
         }
         self.draw(conn, qh);
@@ -3755,6 +3945,11 @@ impl Shell {
                     "Выключен"
                 },
                 "Изменить",
+            ),
+            render::ActionCardView::new(
+                "Доверенные клиенты",
+                format!("{} ключей", trusted_clients().len()),
+                "Открыть",
             ),
         ];
         debug_assert_eq!(cards.len(), ME_FIXED_CARD_COUNT);
@@ -4409,9 +4604,10 @@ mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
-        stacked_row_rect, tab_at, task_confirm_action_at, wifi_list_action_at, BluetoothListTap,
-        KeyboardMode, Rect, RootPage, WifiListTap, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        stacked_row_rect, tab_at, task_confirm_action_at, trusted_client_action_at,
+        wifi_list_action_at, BluetoothListTap, KeyboardMode, Rect, RootPage, TrustedClientTap,
+        WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS,
     };
     use std::time::Duration;
 
@@ -4603,6 +4799,30 @@ mod tests {
             bluetooth_list_action_at(center(back), width, height, device_count),
             Some(BluetoothListTap::Back)
         ));
+    }
+
+    #[test]
+    fn trusted_client_action_at_finds_clients_then_back() {
+        let width = 1080;
+        let height = 2400;
+        let client_count = 1;
+        let client_0 = stacked_row_rect(0, width, height);
+        let back = stacked_row_rect(1, width, height);
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        assert!(matches!(
+            trusted_client_action_at(center(client_0), width, height, client_count),
+            Some(TrustedClientTap::Revoke(0))
+        ));
+        assert!(matches!(
+            trusted_client_action_at(center(back), width, height, client_count),
+            Some(TrustedClientTap::Back)
+        ));
+        assert!(trusted_client_action_at((10.0, 10.0), width, height, client_count).is_none());
     }
 
     #[test]
