@@ -924,6 +924,7 @@ pub fn draw_root(
 /// the left, network and battery state on the right. Replaces the
 /// solid-color placeholder that namespace's own `"...-test"` suffix
 /// (`main.rs`) had been honestly admitting to since ADR-015.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_status_bar(
     canvas: &mut Canvas<'_>,
     width: u32,
@@ -931,15 +932,28 @@ pub fn draw_status_bar(
     time_text: &str,
     wifi_up: bool,
     battery: Option<(u8, bool)>,
+    space_color: Pixel,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(BACKGROUND);
+    let margin = width / 30;
+    // HIA-03: drawn before the no-fonts early return below, so the
+    // dot itself never depends on `Fonts::load_system()` having
+    // succeeded -- HIA-ROADMAP.md's own acceptance line asks for
+    // "always visible", not "visible whenever a font happened to
+    // load". A plain square, not a circle -- this file has no
+    // circle-drawing primitive, and every other "swatch" here
+    // (`MUTED`'s loading skeleton, `ACCENT`'s selection bar) is
+    // already a rectangle, not a special case worth adding one for.
+    let dot_size = 22;
+    let dot_y = height / 2 - dot_size / 2;
+    canvas.fill_rect(Rect::new(margin, dot_y, dot_size, dot_size), space_color);
     let Some(fonts) = fonts else {
         return;
     };
     let baseline = height / 2 - 22;
-    let margin = width / 30;
-    draw_text(canvas, &fonts.semibold, time_text, 44.0, margin, baseline, TEXT);
+    let time_x = margin + dot_size + 16;
+    draw_text(canvas, &fonts.semibold, time_text, 44.0, time_x, baseline, TEXT);
 
     let wifi_label = if wifi_up { "Wi-Fi" } else { "Нет сети" };
     let wifi_color = if wifi_up { ACCENT } else { TEXT_MUTED };

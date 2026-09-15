@@ -112,6 +112,13 @@ const SPACE_LIFECYCLE_ENTITY_TYPE: &str = "saaios.space-lifecycle";
 /// for `saaios.space-relation`.
 const SPACE_SIGNAL_ENTITY_TYPE: &str = "saaios.space-signal";
 const SPACE_SIGNAL_TYPE_WIFI_SSID: &str = "wifi_ssid";
+/// HIA-03: one record per space that has ever had its status-bar dot
+/// color changed from the default -- `properties`: `space_id`,
+/// `color`. Absence means `SpaceColor::Default` (the plain `ACCENT`
+/// teal every space already used before this existed), same "silent
+/// default" shape `SPACE_LIFECYCLE_ENTITY_TYPE`'s own doc comment
+/// already established.
+const SPACE_COLOR_ENTITY_TYPE: &str = "saaios.space-color";
 
 /// HIA-01's lifecycle vocabulary (document section 4.3/section 69) --
 /// `Stable` is the default for every space that has never been
@@ -233,6 +240,117 @@ fn space_display_name(spaces: &[Space], space_id: &str) -> String {
             "saaios" => "SaaiOS".into(),
             other => other.to_owned(),
         })
+}
+
+/// HIA-03 (docs/os/sprints/HIA-ROADMAP.md): the status-bar dot's
+/// color. `Default` is deliberately a real, reachable member of the
+/// cycle (not `None`/absence) -- same shape as `SpaceLifecycle`'s
+/// `Stable`: the silent default a space starts at and can cycle back
+/// around to, not a special case the rest of this file has to know
+/// about separately. Six choices, not a free-form picker -- no color
+/// picker widget exists anywhere in this codebase, and every other
+/// per-value setting here (brightness, contrast, volume...) is
+/// already a small fixed cycle, not free text entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpaceColor {
+    Default,
+    Blue,
+    Green,
+    Orange,
+    Purple,
+    Pink,
+}
+
+impl SpaceColor {
+    fn as_str(self) -> &'static str {
+        match self {
+            SpaceColor::Default => "default",
+            SpaceColor::Blue => "blue",
+            SpaceColor::Green => "green",
+            SpaceColor::Orange => "orange",
+            SpaceColor::Purple => "purple",
+            SpaceColor::Pink => "pink",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SpaceColor::Default => "Обычный",
+            SpaceColor::Blue => "Синий",
+            SpaceColor::Green => "Зелёный",
+            SpaceColor::Orange => "Оранжевый",
+            SpaceColor::Purple => "Фиолетовый",
+            SpaceColor::Pink => "Розовый",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "default" => Some(SpaceColor::Default),
+            "blue" => Some(SpaceColor::Blue),
+            "green" => Some(SpaceColor::Green),
+            "orange" => Some(SpaceColor::Orange),
+            "purple" => Some(SpaceColor::Purple),
+            "pink" => Some(SpaceColor::Pink),
+            _ => None,
+        }
+    }
+
+    /// Drives the "Цвет пространства" card on "Я" -- same fixed-cycle
+    /// shape as `SpaceLifecycle::next`.
+    fn next(self) -> Self {
+        match self {
+            SpaceColor::Default => SpaceColor::Blue,
+            SpaceColor::Blue => SpaceColor::Green,
+            SpaceColor::Green => SpaceColor::Orange,
+            SpaceColor::Orange => SpaceColor::Purple,
+            SpaceColor::Purple => SpaceColor::Pink,
+            SpaceColor::Pink => SpaceColor::Default,
+        }
+    }
+
+    /// `render::ACCENT` for `Default` -- the exact color the status
+    /// bar's accents already used everywhere else before this dot
+    /// existed, so an untouched space's dot doesn't introduce a new
+    /// color into the palette, just repeats one already on screen.
+    fn pixel(self) -> render::Pixel {
+        match self {
+            SpaceColor::Default => render::ACCENT,
+            SpaceColor::Blue => render::rgb(88, 156, 232),
+            SpaceColor::Green => render::rgb(120, 200, 120),
+            SpaceColor::Orange => render::rgb(230, 160, 80),
+            SpaceColor::Purple => render::rgb(170, 130, 220),
+            SpaceColor::Pink => render::rgb(230, 120, 160),
+        }
+    }
+}
+
+/// `SpaceColor::Default` for a space with no matching entity at all --
+/// not an `Option`, same "always a well-defined answer" shape as
+/// `space_lifecycle`. This is HIA-03's negative scenario
+/// (`HIA-ROADMAP.md`'s own acceptance line): a space with no color
+/// ever set gets a deterministic default, never an empty/missing dot.
+fn space_color(system_entities: &[Entity], space_id: &str) -> SpaceColor {
+    system_entities
+        .iter()
+        .find(|entity| {
+            entity.entity_type == SPACE_COLOR_ENTITY_TYPE
+                && entity.properties.get("space_id").and_then(Value::as_str) == Some(space_id)
+        })
+        .and_then(|entity| entity.properties.get("color").and_then(Value::as_str))
+        .and_then(SpaceColor::parse)
+        .unwrap_or(SpaceColor::Default)
+}
+
+/// The existing `saaios.space-color` record for `space_id`, if one
+/// exists -- `cycle_space_color` needs the real `Entity` (id/
+/// revision) to `update_entity` it in place instead of accumulating
+/// duplicates, same reasoning as `space_lifecycle_entity`.
+fn space_color_entity<'a>(system_entities: &'a [Entity], space_id: &str) -> Option<&'a Entity> {
+    system_entities.iter().find(|entity| {
+        entity.entity_type == SPACE_COLOR_ENTITY_TYPE
+            && entity.properties.get("space_id").and_then(Value::as_str) == Some(space_id)
+    })
 }
 
 /// HIA-02 (docs/os/sprints/HIA-ROADMAP.md): which real-world signal
@@ -2104,7 +2222,7 @@ const ME_PAGE_SIZE: usize = 6;
 /// length, since `me_fixed_card_action` has to agree with it and
 /// there's no way to assert two functions' lengths match at compile
 /// time anyway.
-const ME_FIXED_CARD_COUNT: usize = 16;
+const ME_FIXED_CARD_COUNT: usize = 17;
 
 /// The `me_all_card_views`'s logical index -> tap action mapping.
 /// `None` for the three read-only info rows (device summary, build
@@ -2125,6 +2243,7 @@ fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
         13 => Some("cycle_contrast"),
         14 => Some("toggle_remote_access"),
         15 => Some("open_trusted_clients"),
+        16 => Some("cycle_space_color"),
         _ => None,
     }
 }
@@ -3500,6 +3619,24 @@ impl Shell {
         }
     }
 
+    /// HIA-03's "Цвет пространства" card on "Я" -- same write shape as
+    /// `cycle_space_lifecycle` just above, one entity type over.
+    fn cycle_space_color(&mut self, space_id: &str) {
+        let next = space_color(&self.system_space_entities, space_id).next();
+        let mut properties = Map::new();
+        properties.insert("space_id".into(), Value::String(space_id.to_string()));
+        properties.insert("color".into(), Value::String(next.as_str().to_string()));
+        match space_color_entity(&self.system_space_entities, space_id) {
+            Some(entity) => self.entityd.update_entity(entity, properties),
+            None => self.entityd.create_entity(
+                SYSTEM_SPACE_ID,
+                SPACE_COLOR_ENTITY_TYPE,
+                format!("Цвет: {space_id}"),
+                properties,
+            ),
+        }
+    }
+
     /// HIA-02: called from the one place a real, deliberate user
     /// choice happens -- `invoke_content_action`'s tap-driven
     /// `select_space:` branch -- and nowhere else. Deliberately NOT
@@ -3701,6 +3838,11 @@ impl Shell {
             "cycle_contrast" => {
                 self.settings.contrast_pct =
                     next_in_cycle(&CONTRAST_LEVELS_PCT, self.settings.contrast_pct);
+            }
+            "cycle_space_color" => {
+                if self.entityd.is_connected() {
+                    self.cycle_space_color(&self.selected_space_id.clone());
+                }
             }
             "toggle_remote_access" => {
                 self.settings.remote_access_enabled = !self.settings.remote_access_enabled;
@@ -4314,6 +4456,19 @@ impl Shell {
                 format!("{} ключей", trusted_clients().len()),
                 "Открыть",
             ),
+            // HIA-03: cycles the CURRENTLY SELECTED space's color --
+            // same "acts on selected_space_id" scoping the status bar
+            // dot itself already has, nothing app-global about this
+            // one card despite living among device-wide settings.
+            render::ActionCardView::new(
+                "Цвет пространства",
+                format!(
+                    "{} · {}",
+                    space_color(&self.system_space_entities, &self.selected_space_id).label(),
+                    space_display_name(&self.spaces, &self.selected_space_id)
+                ),
+                "Изменить",
+            ),
         ];
         debug_assert_eq!(cards.len(), ME_FIXED_CARD_COUNT);
         for app in self.installed_apps.values() {
@@ -4796,6 +4951,7 @@ impl Shell {
             &current_time_string(self.settings.utc_offset_minutes),
             wifi_is_up(),
             read_battery(),
+            space_color(&self.system_space_entities, &self.selected_space_id).pixel(),
             self.fonts.as_ref(),
         );
         render::apply_contrast_boost(canvas, self.settings.contrast_pct);
@@ -4998,14 +5154,15 @@ mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
-        effective_context_space, remove_context_source, space_display_name, space_for_wifi_ssid,
-        space_lifecycle, space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
-        task_confirm_action_at, trusted_client_action_at, upsert_context_entry,
-        wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
-        KeyboardMode, Rect, RootPage, Space, SpaceLifecycle, TrustedClientTap, WifiListTap,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, MANUAL_CONFIDENCE, WIFI_CONFIDENCE,
+        effective_context_space, remove_context_source, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at,
+        trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
+        ContextFrameEntry, ContextSource, Entity, KeyboardMode, Rect, RootPage, Space,
+        SpaceColor, SpaceLifecycle, TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, SPACE_COLOR_ENTITY_TYPE, MANUAL_CONFIDENCE, WIFI_CONFIDENCE,
     };
     use saai_entity_store::SpaceKind;
     use std::time::Duration;
@@ -5048,6 +5205,13 @@ mod tests {
         );
         properties.insert("value".into(), serde_json::Value::String(ssid.into()));
         test_entity(SPACE_SIGNAL_ENTITY_TYPE, properties)
+    }
+
+    fn color_entity(space_id: &str, color: &str) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert("space_id".into(), serde_json::Value::String(space_id.into()));
+        properties.insert("color".into(), serde_json::Value::String(color.into()));
+        test_entity(SPACE_COLOR_ENTITY_TYPE, properties)
     }
 
     #[test]
@@ -5608,6 +5772,67 @@ mod tests {
             Some("work".to_string())
         );
         assert_eq!(space_for_wifi_ssid(&entities, "SomeOtherNet"), None);
+    }
+
+    #[test]
+    fn space_color_defaults_with_no_matching_record() {
+        // HIA-03's own negative scenario (HIA-ROADMAP.md): a space
+        // with no color ever set gets a deterministic default, not
+        // an empty/missing dot.
+        assert_eq!(space_color(&[], "car"), SpaceColor::Default);
+        let unrelated = vec![color_entity("work", "blue")];
+        assert_eq!(space_color(&unrelated, "car"), SpaceColor::Default);
+    }
+
+    #[test]
+    fn space_color_reads_the_matching_record() {
+        let entities = vec![color_entity("work", "blue"), color_entity("home", "pink")];
+        assert_eq!(space_color(&entities, "work"), SpaceColor::Blue);
+        assert_eq!(space_color(&entities, "home"), SpaceColor::Pink);
+    }
+
+    #[test]
+    fn space_color_entity_finds_the_real_record_to_update_in_place() {
+        let entities = vec![color_entity("work", "blue")];
+        assert!(space_color_entity(&entities, "work").is_some());
+        assert!(space_color_entity(&entities, "home").is_none());
+    }
+
+    #[test]
+    fn space_color_cycles_through_all_six_states_and_wraps() {
+        let mut color = SpaceColor::Default;
+        let mut seen = vec![color];
+        for _ in 0..5 {
+            color = color.next();
+            seen.push(color);
+        }
+        assert_eq!(
+            seen,
+            vec![
+                SpaceColor::Default,
+                SpaceColor::Blue,
+                SpaceColor::Green,
+                SpaceColor::Orange,
+                SpaceColor::Purple,
+                SpaceColor::Pink,
+            ]
+        );
+        assert_eq!(color.next(), SpaceColor::Default);
+    }
+
+    #[test]
+    fn space_color_as_str_and_parse_round_trip_for_every_variant() {
+        for color in [
+            SpaceColor::Default,
+            SpaceColor::Blue,
+            SpaceColor::Green,
+            SpaceColor::Orange,
+            SpaceColor::Purple,
+            SpaceColor::Pink,
+        ] {
+            assert_eq!(SpaceColor::parse(color.as_str()), Some(color));
+        }
+        assert_eq!(SpaceColor::parse("not-a-real-color"), None);
     }
 }
 
