@@ -1931,10 +1931,9 @@ fn object_view_property_text(value: &Value) -> String {
 
 const ORB_DOT_ID: &str = "orb-dot";
 const ORB_TOGGLE_ACTION: &str = "orb:toggle";
-const ORB_MENU_INBOX_ID: &str = "orb-menu-inbox";
 const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
-const ORB_MENU_INTENT_ID: &str = "orb-menu-intent";
 const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
+const ORB_MENU_BLUETOOTH_ACTION: &str = "orb-menu:bluetooth";
 /// HIA-04a's spike (ADR-090) proved the mechanics; this is the
 /// permanent shape. `Idle`/`Attention` are silent (no menu drawn),
 /// `Menu` is the one state a tap actually opens. `Listening`/
@@ -1975,15 +1974,18 @@ fn orb_dot_size(width: u32, height: u32) -> u32 {
 /// constant) and the tab bar sits at the very bottom of the screen;
 /// this zone's bottom edge is pinned to `y=410`, twenty px of margin
 /// short of where a card could ever start, in EVERY state including
-/// `menu_open` -- the menu grows upward into the header box's own
-/// dead space (`draw_root`'s `SURFACE`-filled rect at `y=150..340`,
-/// which has never had a hit-test target of its own), never downward
-/// into card territory.
-fn orb_zone_rect(width: u32, height: u32, menu_open: bool) -> Rect {
+/// an open menu, regardless of how many rows it holds -- HIA-05 adds
+/// a variable action count (1-3 today) but keeps the exact same fixed
+/// zone bounds, just splitting the available fill-space among however
+/// many rows there are. The menu grows upward into the header box's
+/// own dead space (`draw_root`'s `SURFACE`-filled rect at
+/// `y=150..340`, which has never had a hit-test target of its own),
+/// never downward into card territory.
+fn orb_zone_rect(width: u32, height: u32, menu_action_count: usize) -> Rect {
     let margin = width / 22;
     let dot_size = orb_dot_size(width, height);
     let bottom = ((410_u64 * height as u64) / 2400) as u32;
-    if !menu_open {
+    if menu_action_count == 0 {
         return Rect::new(
             width.saturating_sub(margin + dot_size),
             bottom.saturating_sub(dot_size),
@@ -2001,50 +2003,109 @@ fn orb_zone_rect(width: u32, height: u32, menu_open: bool) -> Rect {
     )
 }
 
-/// Closed: the whole zone IS the dot, one leaf, nothing to stack.
-/// Open: a vertical list within the (now taller) zone -- two action
-/// rows on top, the dot itself last, doubling as the close control --
-/// same "layout only returns a position, the call site decides what
-/// it means" shape `object_view`/`task_confirm_view` already use.
-fn orb_view(width: u32, height: u32, menu_open: bool) -> LayoutNode {
-    let zone = orb_zone_rect(width, height, menu_open);
-    if !menu_open {
-        return layout(&Node::leaf(ORB_DOT_ID).with_action(ORB_TOGGLE_ACTION), zone);
-    }
-    let root = Node::linear(
-        "orb-menu",
-        Axis::Vertical,
-        vec![
-            Node::leaf(ORB_MENU_INBOX_ID).with_action(ORB_MENU_INBOX_ACTION),
-            Node::leaf(ORB_MENU_INTENT_ID).with_action(ORB_MENU_INTENT_ACTION),
-            Node::leaf(ORB_DOT_ID)
-                .with_action(ORB_TOGGLE_ACTION)
-                .with_size(Length::Fill, Length::Px(orb_dot_size(width, height))),
-        ],
-    );
-    layout(&root, zone)
-}
-
+/// HIA-05: which real thing a tapped Orb row does -- `Toggle` is
+/// always the dot itself (open/close), never a labeled row. The other
+/// three are `orb_menu_actions`' own vocabulary; adding a
+/// fourth someday only needs a new variant plus its `wire()`/`parse()`/
+/// `label()` arms, `orb_view`/`orb_action_at` already handle any
+/// length list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OrbAction {
     Toggle,
     OpenInbox,
     OpenIntent,
+    OpenBluetooth,
 }
 
-fn orb_action_at(pos: (f64, f64), width: u32, height: u32, menu_open: bool) -> Option<OrbAction> {
+impl OrbAction {
+    fn wire(self) -> &'static str {
+        match self {
+            OrbAction::Toggle => ORB_TOGGLE_ACTION,
+            OrbAction::OpenInbox => ORB_MENU_INBOX_ACTION,
+            OrbAction::OpenIntent => ORB_MENU_INTENT_ACTION,
+            OrbAction::OpenBluetooth => ORB_MENU_BLUETOOTH_ACTION,
+        }
+    }
+
+    fn parse(action: &str) -> Option<Self> {
+        match action {
+            ORB_TOGGLE_ACTION => Some(OrbAction::Toggle),
+            ORB_MENU_INBOX_ACTION => Some(OrbAction::OpenInbox),
+            ORB_MENU_INTENT_ACTION => Some(OrbAction::OpenIntent),
+            ORB_MENU_BLUETOOTH_ACTION => Some(OrbAction::OpenBluetooth),
+            _ => None,
+        }
+    }
+
+    /// Never called for `Toggle` -- that one's drawn as the dot
+    /// itself, not a text row (`build_orb_frame` never puts it in
+    /// `menu_rows`).
+    fn label(self) -> &'static str {
+        match self {
+            OrbAction::Toggle => "",
+            OrbAction::OpenInbox => "Входящие",
+            OrbAction::OpenIntent => "Новое намерение",
+            OrbAction::OpenBluetooth => "Bluetooth устройства",
+        }
+    }
+}
+
+/// HIA-05: the two real, already-live signals that vary this list --
+/// which space is active (`is_system_space` -- HIA-02's own
+/// ContextFrame is what decides `selected_space_id` in the first
+/// place) and whether Bluetooth has any paired device at all
+/// (`bluetooth_paired`, from `bluetooth_paired_count() > 0`, S20,
+/// real -- "paired", not necessarily "currently connected"; no live-
+/// connection-state concept exists anywhere in this codebase, an
+/// honest gap noted in `docs/os/ideas.md` rather than papered over
+/// here). `OpenInbox` is the one action every context keeps --
+/// "Входящие" always makes sense regardless of which space or device
+/// state is active. Pure, no `Shell` needed -- the two booleans are
+/// all the real-world state this decision actually depends on, same
+/// split `orb_state` already uses.
+fn orb_menu_actions(is_system_space: bool, bluetooth_paired: bool) -> Vec<OrbAction> {
+    let mut actions = vec![OrbAction::OpenInbox];
+    if !is_system_space {
+        actions.push(OrbAction::OpenIntent);
+    }
+    if bluetooth_paired {
+        actions.push(OrbAction::OpenBluetooth);
+    }
+    actions
+}
+
+/// Closed (`menu_actions` empty): the whole zone IS the dot, one
+/// leaf, nothing to stack. Open: a vertical list within the (now
+/// taller) zone -- one row per `menu_actions` entry, the dot itself
+/// last, doubling as the close control -- same "layout only returns a
+/// position, the call site decides what it means" shape `object_view`/
+/// `task_confirm_view` already use.
+fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
+    let zone = orb_zone_rect(width, height, menu_actions.len());
+    if menu_actions.is_empty() {
+        return layout(&Node::leaf(ORB_DOT_ID).with_action(ORB_TOGGLE_ACTION), zone);
+    }
+    let mut children: Vec<Node> = menu_actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| Node::leaf(format!("orb-menu-{index}")).with_action(action.wire()))
+        .collect();
+    children.push(
+        Node::leaf(ORB_DOT_ID)
+            .with_action(ORB_TOGGLE_ACTION)
+            .with_size(Length::Fill, Length::Px(orb_dot_size(width, height))),
+    );
+    layout(&Node::linear("orb-menu", Axis::Vertical, children), zone)
+}
+
+fn orb_action_at(pos: (f64, f64), width: u32, height: u32, menu_actions: &[OrbAction]) -> Option<OrbAction> {
     if width == 0 || height == 0 {
         return None;
     }
-    match orb_view(width, height, menu_open)
+    orb_view(width, height, menu_actions)
         .hit_test(pos.0, pos.1)
         .and_then(|node| node.action.as_deref())
-    {
-        Some(ORB_TOGGLE_ACTION) => Some(OrbAction::Toggle),
-        Some(ORB_MENU_INBOX_ACTION) => Some(OrbAction::OpenInbox),
-        Some(ORB_MENU_INTENT_ACTION) => Some(OrbAction::OpenIntent),
-        _ => None,
-    }
+        .and_then(OrbAction::parse)
 }
 
 /// What `draw_orb` needs, computed once per frame in `build_orb_
@@ -3411,12 +3472,19 @@ impl TouchHandler for Shell {
                 .settings
                 .orb_enabled
                 .then(|| {
-                    orb_action_at(
-                        self.last_touch_pos,
-                        self.width,
-                        self.height,
-                        self.orb_menu_open,
-                    )
+                    // HIA-05: only actually computes the (possibly
+                    // context-dependent) action list when the menu is
+                    // showing -- closed, an empty slice is enough to
+                    // hit-test the dot alone.
+                    let menu_actions = if self.orb_menu_open {
+                        orb_menu_actions(
+                            self.selected_space_id == SYSTEM_SPACE_ID,
+                            bluetooth_paired_count() > 0,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    orb_action_at(self.last_touch_pos, self.width, self.height, &menu_actions)
                 })
                 .flatten()
             {
@@ -5231,6 +5299,14 @@ impl Shell {
                 self.orb_menu_open = false;
                 self.intent_input = Some(IntentInputState::default());
             }
+            OrbAction::OpenBluetooth => {
+                self.orb_menu_open = false;
+                // Same "open_bluetooth_list" behavior the fixed card
+                // on "Я" already triggers -- a fresh scan, not a
+                // stale one.
+                bluetooth_trigger_scan();
+                self.bluetooth_list_open = true;
+            }
         }
         self.draw(conn, qh);
     }
@@ -5239,7 +5315,15 @@ impl Shell {
     /// `SpaceColor`'s six values -- a space's own accent should never
     /// be mistaken for "something needs you".
     fn build_orb_frame(&self, width: u32, height: u32) -> OrbFrame {
-        let view = orb_view(width, height, self.orb_menu_open);
+        let menu_actions = if self.orb_menu_open {
+            orb_menu_actions(
+                self.selected_space_id == SYSTEM_SPACE_ID,
+                bluetooth_paired_count() > 0,
+            )
+        } else {
+            Vec::new()
+        };
+        let view = orb_view(width, height, &menu_actions);
         let has_pending = !inbox_notifications(&self.selected_entities).is_empty();
         let dot_color = match orb_state(self.orb_menu_open, has_pending) {
             OrbState::Attention => render::rgb(230, 90, 70),
@@ -5247,21 +5331,23 @@ impl Shell {
                 space_color(&self.system_space_entities, &self.selected_space_id).pixel()
             }
         };
-        if self.orb_menu_open {
-            OrbFrame {
-                dot: view.children[2].rect,
-                dot_color,
-                menu_rows: vec![
-                    (view.children[0].rect, "Входящие"),
-                    (view.children[1].rect, "Новое намерение"),
-                ],
-            }
-        } else {
-            OrbFrame {
+        if menu_actions.is_empty() {
+            return OrbFrame {
                 dot: view.rect,
                 dot_color,
                 menu_rows: Vec::new(),
-            }
+            };
+        }
+        let dot_rect = view.children[menu_actions.len()].rect;
+        let menu_rows = menu_actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| (view.children[index].rect, action.label()))
+            .collect();
+        OrbFrame {
+            dot: dot_rect,
+            dot_color,
+            menu_rows,
         }
     }
 
@@ -5664,7 +5750,8 @@ mod tests {
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
         effective_context_space, known_surfaces, object_view_action_at, object_view_content,
-        orb_action_at, orb_state, orb_zone_rect, remove_context_source, space_color,
+        orb_action_at, orb_menu_actions, orb_state, orb_zone_rect, remove_context_source,
+        space_color,
         space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
         task_confirm_action_at, trusted_client_action_at, upsert_context_entry,
@@ -6487,14 +6574,15 @@ mod tests {
         // must never occupy hit-test space the tab-bar/cards already
         // use. Every Root page's cards start at y=430 (2400-scale) --
         // confirm the zone's bottom edge always stays short of that,
-        // closed or open, on a range of real panel sizes.
+        // for every real action count HIA-05 can now produce (0-3),
+        // on a range of real panel sizes.
         for (width, height) in [(1080, 2400), (800, 480), (1440, 3120)] {
             let cards_start = ((430_u64 * height as u64) / 2400) as u32;
-            for menu_open in [false, true] {
-                let zone = orb_zone_rect(width, height, menu_open);
+            for menu_action_count in 0..=3 {
+                let zone = orb_zone_rect(width, height, menu_action_count);
                 assert!(
                     zone.y + zone.height <= cards_start,
-                    "zone bottom {} exceeds cards_start {} at {width}x{height}, menu_open={menu_open}",
+                    "zone bottom {} exceeds cards_start {} at {width}x{height}, menu_action_count={menu_action_count}",
                     zone.y + zone.height,
                     cards_start
                 );
@@ -6504,12 +6592,12 @@ mod tests {
 
     #[test]
     fn orb_action_at_toggles_the_closed_dot() {
-        let dot = orb_zone_rect(1080, 2400, false);
+        let dot = orb_zone_rect(1080, 2400, 0);
         let point = (
             (dot.x + dot.width / 2) as f64,
             (dot.y + dot.height / 2) as f64,
         );
-        assert_eq!(orb_action_at(point, 1080, 2400, false), Some(OrbAction::Toggle));
+        assert_eq!(orb_action_at(point, 1080, 2400, &[]), Some(OrbAction::Toggle));
     }
 
     #[test]
@@ -6522,18 +6610,19 @@ mod tests {
             (first_card.x + first_card.width / 2) as f64,
             (first_card.y + first_card.height / 2) as f64,
         );
-        assert_eq!(orb_action_at(point, 1080, 2400, false), None);
+        assert_eq!(orb_action_at(point, 1080, 2400, &[]), None);
     }
 
     #[test]
-    fn orb_action_at_finds_both_menu_rows_and_the_close_dot_when_open() {
-        let view_zone = orb_zone_rect(1080, 2400, true);
+    fn orb_action_at_finds_a_menu_row_and_the_close_dot_when_open() {
+        let actions = [OrbAction::OpenInbox, OrbAction::OpenIntent];
+        let view_zone = orb_zone_rect(1080, 2400, actions.len());
         let inbox_point = (
             (view_zone.x + view_zone.width / 2) as f64,
             (view_zone.y + 10) as f64,
         );
         assert_eq!(
-            orb_action_at(inbox_point, 1080, 2400, true),
+            orb_action_at(inbox_point, 1080, 2400, &actions),
             Some(OrbAction::OpenInbox)
         );
         let dot_point = (
@@ -6541,9 +6630,83 @@ mod tests {
             (view_zone.y + view_zone.height - 10) as f64,
         );
         assert_eq!(
-            orb_action_at(dot_point, 1080, 2400, true),
+            orb_action_at(dot_point, 1080, 2400, &actions),
             Some(OrbAction::Toggle)
         );
+    }
+
+    #[test]
+    fn orb_action_at_finds_a_third_row_when_the_menu_has_three_actions() {
+        // HIA-05's own shape: the menu isn't fixed at two rows --
+        // confirm a real three-action list (as `Shell::orb_menu_
+        // actions` produces with a paired Bluetooth device) is fully
+        // reachable, not just the first two.
+        let actions = [
+            OrbAction::OpenInbox,
+            OrbAction::OpenIntent,
+            OrbAction::OpenBluetooth,
+        ];
+        let view_zone = orb_zone_rect(1080, 2400, actions.len());
+        let third_row_point = (
+            (view_zone.x + view_zone.width / 2) as f64,
+            (view_zone.y + view_zone.height * 2 / 3 - 10) as f64,
+        );
+        assert_eq!(
+            orb_action_at(third_row_point, 1080, 2400, &actions),
+            Some(OrbAction::OpenBluetooth)
+        );
+    }
+
+    #[test]
+    fn orb_action_wire_and_parse_round_trip_for_every_variant() {
+        for action in [
+            OrbAction::Toggle,
+            OrbAction::OpenInbox,
+            OrbAction::OpenIntent,
+            OrbAction::OpenBluetooth,
+        ] {
+            assert_eq!(OrbAction::parse(action.wire()), Some(action));
+        }
+        assert_eq!(OrbAction::parse("not-a-real-orb-action"), None);
+    }
+
+    #[test]
+    fn orb_menu_actions_differs_between_two_real_context_frames() {
+        // HIA-05's own acceptance line (HIA-ROADMAP.md): at least two
+        // different action sets for two different real ContextFrames.
+        // A user space with no paired Bluetooth device is the
+        // baseline (Входящие + Новое намерение, the same fixed pair
+        // HIA-04b shipped); the system space drops "Новое намерение"
+        // (intents don't belong there); a paired Bluetooth device
+        // adds a third action regardless of which space. All three
+        // are genuinely different lists, not the same one relabeled.
+        let home = orb_menu_actions(false, false);
+        let system_space = orb_menu_actions(true, false);
+        let home_with_bluetooth = orb_menu_actions(false, true);
+
+        assert_eq!(home, vec![OrbAction::OpenInbox, OrbAction::OpenIntent]);
+        assert_eq!(system_space, vec![OrbAction::OpenInbox]);
+        assert_eq!(
+            home_with_bluetooth,
+            vec![
+                OrbAction::OpenInbox,
+                OrbAction::OpenIntent,
+                OrbAction::OpenBluetooth
+            ]
+        );
+
+        assert_ne!(home, system_space);
+        assert_ne!(home, home_with_bluetooth);
+    }
+
+    #[test]
+    fn orb_menu_actions_always_keeps_open_inbox() {
+        for is_system_space in [false, true] {
+            for bluetooth_paired in [false, true] {
+                assert!(orb_menu_actions(is_system_space, bluetooth_paired)
+                    .contains(&OrbAction::OpenInbox));
+            }
+        }
     }
 }
 
