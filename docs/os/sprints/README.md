@@ -11,6 +11,13 @@ Scheduler (без кода):
 — границы Planner/Scheduler, один workflow store + derived ready set, Task
 Ledger = audit-log, UDS/TLS; привязка к S09–S11.
 
+S00–S32 закрыли этот трек — рабочий телефон под собственной ОС. Дальнейшее
+направление (Orb, Space Graph v2, ContextFrame, голос, в перспективе Personal
+Computing Environment) описано отдельно в
+[HIA-ROADMAP.md](HIA-ROADMAP.md), не смешано с этой таблицей — другой масштаб
+работы, требует собственного Definition of Ready прохода перед тем, как любая
+строка оттуда попадёт сюда как настоящий спринт.
+
 ## Текущее состояние
 
 | ID | Результат | Состояние | Зависит от |
