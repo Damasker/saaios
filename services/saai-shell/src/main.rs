@@ -972,21 +972,28 @@ struct PendingPairRequest {
     stream: std::os::unix::net::UnixStream,
 }
 
-/// Not a real cryptographic fingerprint (no `sha2` dependency in this
-/// crate yet -- see docs/os/ideas.md) -- just enough of the key's own
-/// base64 for a human to sanity-check "is this the client I expect",
-/// same spirit as showing a truncated commit hash.
+/// A real cryptographic fingerprint: SHA256 over the key blob's
+/// *decoded* bytes (not its base64 text), re-encoded unpadded -- the
+/// exact "SHA256:<base64>" shape `ssh-keygen -l -f <pubkey>` already
+/// prints, so whoever is looking at this screen can cross-check it
+/// against their own client's own tooling, not just this project's
+/// own invented format. Falls back to the raw key text itself if it
+/// doesn't even parse as `<type> <base64> [comment]` -- still shows
+/// something rather than nothing on a screen that exists specifically
+/// so a human can refuse.
 fn key_fingerprint(public_key: &str) -> String {
-    let base64_part = public_key.split_whitespace().nth(1).unwrap_or(public_key);
-    if base64_part.len() <= 24 {
-        base64_part.to_string()
-    } else {
-        format!(
-            "{}…{}",
-            &base64_part[..12],
-            &base64_part[base64_part.len() - 12..]
-        )
-    }
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+
+    let Some(base64_part) = public_key.split_whitespace().nth(1) else {
+        return public_key.to_string();
+    };
+    let Ok(decoded) = STANDARD.decode(base64_part) else {
+        return public_key.to_string();
+    };
+    let digest = Sha256::digest(&decoded);
+    format!("SHA256:{}", STANDARD_NO_PAD.encode(digest))
 }
 
 const INTENT_SCREEN_ID: &str = "intent-input";
@@ -4523,13 +4530,27 @@ mod tests {
     }
 
     #[test]
-    fn key_fingerprint_keeps_short_keys_whole_and_truncates_long_ones() {
-        assert_eq!(super::key_fingerprint("ssh-ed25519 AAAAshort"), "AAAAshort");
-        let long_base64 = "A".repeat(50);
-        let long_key = format!("ssh-ed25519 {long_base64} comment");
-        let fingerprint = super::key_fingerprint(&long_key);
-        assert!(fingerprint.contains('…'));
-        assert!(fingerprint.len() < long_base64.len());
+    fn key_fingerprint_matches_ssh_keygen_l_for_a_known_key() {
+        // Golden value cross-checked independently via Python's
+        // hashlib against the same key blob (base64.b64decode ->
+        // hashlib.sha256 -> base64.b64encode, padding stripped) --
+        // not just re-deriving the same computation this function
+        // itself performs.
+        assert_eq!(
+            super::key_fingerprint(
+                "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7cwj3z6LbyDARZYUd1Y7CuuM6xKbl2/YpSd3adSNz4 test-client"
+            ),
+            "SHA256:OuaL+poCXsAtdU50sBMBwOUNL+faDqJqWTmiE3baoOI"
+        );
+    }
+
+    #[test]
+    fn key_fingerprint_falls_back_to_the_raw_text_for_unparseable_input() {
+        assert_eq!(super::key_fingerprint("not-a-key-at-all"), "not-a-key-at-all");
+        assert_eq!(
+            super::key_fingerprint("ssh-ed25519 not-valid-base64!!"),
+            "ssh-ed25519 not-valid-base64!!"
+        );
     }
 
     #[test]

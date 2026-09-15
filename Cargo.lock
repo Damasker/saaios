@@ -2412,6 +2412,7 @@ dependencies = [
 name = "saai-shell"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "fontdue",
  "nix",
@@ -2422,6 +2423,7 @@ dependencies = [
  "saai-ui-compiler",
  "saai-ui-core",
  "serde_json",
+ "sha2",
  "smithay-client-toolkit",
  "tempfile",
  "uuid",
