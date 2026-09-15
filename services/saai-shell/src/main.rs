@@ -76,6 +76,156 @@ use saai_entity_protocol::{
     Entity, EntitydEvent, ResponseResult as EntityResponseResult,
     ServerMessage as EntityServerMessage, Space,
 };
+
+/// HIA-01 (docs/os/sprints/HIA-ROADMAP.md): the builtin system space
+/// (`saai-entity-store::BUILTIN_SPACE_IDS` already reserves it,
+/// `SpaceKind::System` vs `SpaceKind::User`) is where this project's
+/// own cross-space bookkeeping lives, same "not user content" role
+/// as `/data/saaios/var/...` config directories one layer down. Space
+/// relations/lifecycle are stored here, not scattered across every
+/// individual space they describe, specifically because
+/// `saai-entityd`'s `ListEntities` is scoped to one space at a
+/// time -- keeping them all in one well-known space is what makes
+/// "list every relation" a single query instead of N.
+const SYSTEM_SPACE_ID: &str = "saaios";
+/// One edge of the space graph. `properties`: `from_space_id`,
+/// `to_space_id`, `kind` (one of the document's own vocabulary --
+/// parent_of/child_of/related_to/contains/usually_with/
+/// exclusive_with/activates/deactivates/inherits_from, though nothing
+/// here enforces that list, same "convention over schema" this
+/// project already applies to every other `saaios.*` entity type).
+/// Directional storage only -- a symmetric kind like `related_to`
+/// needs one record per direction to be findable from both ends; a
+/// known simplification, not a bug, for this first version.
+const SPACE_RELATION_ENTITY_TYPE: &str = "saaios.space-relation";
+/// One record per space that has ever had its lifecycle changed from
+/// the default. `properties`: `space_id`, `lifecycle`. Absence means
+/// `SpaceLifecycle::Stable` (`space_lifecycle()`'s own default) --
+/// the four builtin spaces (S06) never needed this before and
+/// shouldn't require a migration to keep behaving the same way.
+const SPACE_LIFECYCLE_ENTITY_TYPE: &str = "saaios.space-lifecycle";
+
+/// HIA-01's lifecycle vocabulary (document section 4.3/section 69) --
+/// `Stable` is the default for every space that has never been
+/// touched, matching how the four builtin spaces (S06) have always
+/// behaved with no lifecycle concept at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpaceLifecycle {
+    Temporary,
+    Emerging,
+    Stable,
+    Archived,
+}
+
+impl SpaceLifecycle {
+    fn as_str(self) -> &'static str {
+        match self {
+            SpaceLifecycle::Temporary => "temporary",
+            SpaceLifecycle::Emerging => "emerging",
+            SpaceLifecycle::Stable => "stable",
+            SpaceLifecycle::Archived => "archived",
+        }
+    }
+
+    /// Shown on the space's own card (`content_card`'s `select_space:`
+    /// branch) -- `None` for `Stable` specifically, so the common,
+    /// untouched case doesn't clutter every card with a label nobody
+    /// asked to see (same "only show what's not the default" spirit
+    /// as `capability_label`'s callers already apply elsewhere).
+    fn label(self) -> Option<&'static str> {
+        match self {
+            SpaceLifecycle::Temporary => Some("Временное"),
+            SpaceLifecycle::Emerging => Some("Складывается"),
+            SpaceLifecycle::Stable => None,
+            SpaceLifecycle::Archived => Some("Архивировано"),
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "temporary" => Some(SpaceLifecycle::Temporary),
+            "emerging" => Some(SpaceLifecycle::Emerging),
+            "stable" => Some(SpaceLifecycle::Stable),
+            "archived" => Some(SpaceLifecycle::Archived),
+            _ => None,
+        }
+    }
+
+    /// Drives the tap-an-already-selected-space gesture
+    /// (`invoke_content_action`'s `select_space:` branch) -- a fixed
+    /// cycle, same shape as `next_in_cycle` used everywhere on "Я",
+    /// just over four fixed states instead of a settings array.
+    fn next(self) -> Self {
+        match self {
+            SpaceLifecycle::Temporary => SpaceLifecycle::Emerging,
+            SpaceLifecycle::Emerging => SpaceLifecycle::Stable,
+            SpaceLifecycle::Stable => SpaceLifecycle::Archived,
+            SpaceLifecycle::Archived => SpaceLifecycle::Temporary,
+        }
+    }
+}
+
+/// `Stable` (the default) for a space with no matching entity in
+/// `system_entities` at all -- not an `Option`, there is always a
+/// well-defined answer.
+fn space_lifecycle(system_entities: &[Entity], space_id: &str) -> SpaceLifecycle {
+    system_entities
+        .iter()
+        .find(|entity| {
+            entity.entity_type == SPACE_LIFECYCLE_ENTITY_TYPE
+                && entity.properties.get("space_id").and_then(Value::as_str) == Some(space_id)
+        })
+        .and_then(|entity| entity.properties.get("lifecycle").and_then(Value::as_str))
+        .and_then(SpaceLifecycle::parse)
+        .unwrap_or(SpaceLifecycle::Stable)
+}
+
+/// The existing `saaios.space-lifecycle` record for `space_id`, if
+/// this space has ever had one written -- `cycle_space_lifecycle`
+/// needs the real `Entity` (id/revision) to `update_entity` it
+/// in place instead of accumulating duplicates.
+fn space_lifecycle_entity<'a>(system_entities: &'a [Entity], space_id: &str) -> Option<&'a Entity> {
+    system_entities.iter().find(|entity| {
+        entity.entity_type == SPACE_LIFECYCLE_ENTITY_TYPE
+            && entity.properties.get("space_id").and_then(Value::as_str) == Some(space_id)
+    })
+}
+
+/// `(target_space_id, kind)` for every edge whose `from_space_id` is
+/// `space_id` -- directional only, see `SPACE_RELATION_ENTITY_TYPE`'s
+/// own doc comment for why.
+fn space_relation_targets(system_entities: &[Entity], space_id: &str) -> Vec<(String, String)> {
+    system_entities
+        .iter()
+        .filter(|entity| entity.entity_type == SPACE_RELATION_ENTITY_TYPE)
+        .filter_map(|entity| {
+            let from = entity.properties.get("from_space_id").and_then(Value::as_str)?;
+            if from != space_id {
+                return None;
+            }
+            let to = entity.properties.get("to_space_id").and_then(Value::as_str)?;
+            let kind = entity.properties.get("kind").and_then(Value::as_str)?;
+            Some((to.to_string(), kind.to_string()))
+        })
+        .collect()
+}
+
+/// Known builtin id -> Russian name, unknown id -> the id itself --
+/// the exact fallback `context_label` always had, now shared with the
+/// relation summary in `content_card`'s `select_space:` branch too.
+fn space_display_name(spaces: &[Space], space_id: &str) -> String {
+    spaces
+        .iter()
+        .find(|space| space.id == space_id)
+        .map(|space| space.name.clone())
+        .unwrap_or_else(|| match space_id {
+            "home" => "Дом".into(),
+            "work" => "Работа".into(),
+            "personal" => "Личное".into(),
+            "saaios" => "SaaiOS".into(),
+            other => other.to_owned(),
+        })
+}
 use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -2030,6 +2180,7 @@ fn main() {
         entity_counts: BTreeMap::new(),
         confirming_task_id: None,
         selected_entities: Vec::new(),
+        system_space_entities: Vec::new(),
         portal: portal_server::PortalServer::bind(portal_socket)
             .expect("failed to bind saai-shell portal socket"),
         apps_by_pid: BTreeMap::new(),
@@ -2201,6 +2352,13 @@ struct Shell {
     selected_space_id: String,
     entity_counts: BTreeMap<String, usize>,
     selected_entities: Vec<Entity>,
+    /// HIA-01: `saaios.space-relation`/`saaios.space-lifecycle`
+    /// entities all live in the system space (`SYSTEM_SPACE_ID`),
+    /// regardless of which space the user currently has selected --
+    /// same reasoning as `selected_entities` above, just keyed to a
+    /// fixed id instead of the dynamic selection, since this data
+    /// needs to be visible no matter what's on screen.
+    system_space_entities: Vec<Entity>,
     /// S13 Change 2: which task the modal on top of "Входящие" is
     /// currently showing -- `Some` only after the user taps a specific
     /// row in that page's list, `None` again once accepted/declined.
@@ -3207,6 +3365,27 @@ impl Shell {
         self.window.commit();
     }
 
+    /// The lifecycle-cycle gesture's actual write path -- full-replace
+    /// `update_entity` on the space's existing `saaios.space-lifecycle`
+    /// record if one exists (same pattern `dismiss_notification`/
+    /// `confirm_pending_task` already use), or `create_entity` the
+    /// first time this space's lifecycle is ever touched.
+    fn cycle_space_lifecycle(&mut self, space_id: &str) {
+        let next = space_lifecycle(&self.system_space_entities, space_id).next();
+        let mut properties = Map::new();
+        properties.insert("space_id".into(), Value::String(space_id.to_string()));
+        properties.insert("lifecycle".into(), Value::String(next.as_str().to_string()));
+        match space_lifecycle_entity(&self.system_space_entities, space_id) {
+            Some(entity) => self.entityd.update_entity(entity, properties),
+            None => self.entityd.create_entity(
+                SYSTEM_SPACE_ID,
+                SPACE_LIFECYCLE_ENTITY_TYPE,
+                format!("Жизненный цикл: {space_id}"),
+                properties,
+            ),
+        }
+    }
+
     fn invoke_content_action(
         &mut self,
         action: ContentActionDefinition,
@@ -3218,7 +3397,22 @@ impl Shell {
             action.id, action.action
         );
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
-            if self.entityd.is_connected() {
+            if !self.entityd.is_connected() {
+                return;
+            }
+            // HIA-01: tapping the space that's already selected has
+            // no other effect today (re-selecting a no-op selection),
+            // so it's repurposed into the lifecycle-cycle gesture --
+            // no new hit-test geometry needed on a page whose four
+            // cards are still the static `root.sui` layout (S04).
+            // Known rough edge: nothing on the card hints at this
+            // gesture at all before the first tap -- the button
+            // itself still just says "Выбрано" (its status line has
+            // no room to explain a gesture, confirmed live: an
+            // earlier version tried and overflowed the card).
+            if space_id == self.selected_space_id {
+                self.cycle_space_lifecycle(space_id);
+            } else {
                 self.entityd.select_space(space_id);
             }
             return;
@@ -4048,7 +4242,7 @@ impl Shell {
         }
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
             let selected = space_id == self.selected_space_id;
-            let status = if self.entityd.is_connected() {
+            let mut status = if self.entityd.is_connected() {
                 match self.entity_counts.get(space_id) {
                     Some(count) => format!("Объектов: {count}"),
                     None => "Загрузка объектов…".into(),
@@ -4056,14 +4250,27 @@ impl Shell {
             } else {
                 "Сервис пространств недоступен".into()
             };
+            // HIA-01: lifecycle only shown when it's not the silent
+            // default (`SpaceLifecycle::label`'s own doc comment),
+            // relation target only when at least one real edge
+            // exists -- an untouched space's card looks exactly like
+            // it always has. At most one of the two, not both at
+            // once: this line is drawn unwrapped in a fixed-width
+            // strip (confirmed live -- the first version tried to
+            // show both and overflowed the card).
+            if let Some(label) = space_lifecycle(&self.system_space_entities, space_id).label() {
+                status.push_str(" · ");
+                status.push_str(label);
+            } else if let Some((target, _kind)) =
+                space_relation_targets(&self.system_space_entities, space_id).first()
+            {
+                status.push_str(" · → ");
+                status.push_str(&space_display_name(&self.spaces, target));
+            }
             return render::ActionCardView::new(
                 action.label,
                 status,
-                if selected {
-                    "Выбрано"
-                } else {
-                    "Открыть"
-                },
+                if selected { "Выбрано" } else { "Открыть" },
             )
             .selected(selected);
         }
@@ -4071,17 +4278,20 @@ impl Shell {
     }
 
     fn context_label(&self) -> String {
-        self.spaces
-            .iter()
-            .find(|space| space.id == self.selected_space_id)
-            .map(|space| space.name.clone())
-            .unwrap_or_else(|| match self.selected_space_id.as_str() {
-                "home" => "Дом".into(),
-                "work" => "Работа".into(),
-                "personal" => "Личное".into(),
-                "saaios" => "SaaiOS".into(),
-                other => other.to_owned(),
-            })
+        let name = space_display_name(&self.spaces, &self.selected_space_id);
+        // HIA-01: the one real, always-visible behavioral difference
+        // `SpaceLifecycle::Archived` makes today -- everything else
+        // about an archived space (its card, its entities) keeps
+        // working exactly as before; only the status-bar label
+        // admits it's archived, so nobody mistakes it for an active
+        // context by accident.
+        if space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+            == SpaceLifecycle::Archived
+        {
+            format!("{name} (архив)")
+        } else {
+            name
+        }
     }
 
     /// S09 Change 3 (ADR-031's follow-up): the first `saaios.task` in
@@ -4289,6 +4499,14 @@ impl Shell {
                     entities.sort_by_key(|entity| std::cmp::Reverse(entity.updated_at));
                     changed |= self.entity_counts.get(&space_id) != Some(&entities.len());
                     self.entity_counts.insert(space_id.clone(), entities.len());
+                    // HIA-01: the system space's own entity list is
+                    // cached independently of whatever's currently
+                    // selected -- see `system_space_entities`'s doc
+                    // comment on the struct field.
+                    if space_id == SYSTEM_SPACE_ID {
+                        changed |= self.system_space_entities != entities;
+                        self.system_space_entities = entities.clone();
+                    }
                     if space_id == self.selected_space_id {
                         changed |= self.selected_entities != entities;
                         self.selected_entities = entities;
@@ -4314,7 +4532,14 @@ impl Shell {
                 event: EntitydEvent::EntityChanged { record },
                 ..
             } => self.entityd.list_entities(record.space_id),
-            EntityServerMessage::Response { ok: false, .. } => changed = true,
+            EntityServerMessage::Response { ok: false, error, .. } => {
+                // Previously silent -- cost real debugging time once
+                // already (HIA-01's lifecycle-cycle feature shipped
+                // with an entity_type saai-entityd rejected, and nothing
+                // anywhere said why nothing happened on screen).
+                println!("saai-shell: entityd request failed: {error:?}");
+                changed = true;
+            }
             _ => {}
         }
         changed
@@ -4604,12 +4829,44 @@ mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
         format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
+        space_display_name, space_lifecycle, space_lifecycle_entity, space_relation_targets,
         stacked_row_rect, tab_at, task_confirm_action_at, trusted_client_action_at,
-        wifi_list_action_at, BluetoothListTap, KeyboardMode, Rect, RootPage, TrustedClientTap,
-        WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        wifi_list_action_at, BluetoothListTap, Entity, KeyboardMode, Rect, RootPage, Space,
+        SpaceLifecycle, TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
     };
+    use saai_entity_store::SpaceKind;
     use std::time::Duration;
+
+    fn test_entity(entity_type: &str, properties: serde_json::Map<String, serde_json::Value>) -> Entity {
+        Entity {
+            schema: 1,
+            id: uuid::Uuid::new_v4(),
+            space_id: "saaios".to_string(),
+            entity_type: entity_type.to_string(),
+            title: "test".to_string(),
+            properties,
+            revision: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    fn lifecycle_entity(space_id: &str, lifecycle: &str) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert("space_id".into(), serde_json::Value::String(space_id.into()));
+        properties.insert("lifecycle".into(), serde_json::Value::String(lifecycle.into()));
+        test_entity(SPACE_LIFECYCLE_ENTITY_TYPE, properties)
+    }
+
+    fn relation_entity(from: &str, to: &str, kind: &str) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert("from_space_id".into(), serde_json::Value::String(from.into()));
+        properties.insert("to_space_id".into(), serde_json::Value::String(to.into()));
+        properties.insert("kind".into(), serde_json::Value::String(kind.into()));
+        test_entity(SPACE_RELATION_ENTITY_TYPE, properties)
+    }
 
     #[test]
     fn format_utc_offset_handles_zero_positive_negative_and_half_hours() {
@@ -5009,6 +5266,79 @@ mod tests {
         let ancient = std::time::SystemTime::now() - Duration::from_secs(120);
         marker.as_file().set_modified(ancient).unwrap();
         assert!(input_idle_for_at_least(marker.path(), Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn space_lifecycle_defaults_to_stable_with_no_matching_record() {
+        assert_eq!(space_lifecycle(&[], "car"), SpaceLifecycle::Stable);
+        let unrelated = vec![lifecycle_entity("work", "archived")];
+        assert_eq!(space_lifecycle(&unrelated, "car"), SpaceLifecycle::Stable);
+    }
+
+    #[test]
+    fn space_lifecycle_reads_the_matching_record() {
+        let entities = vec![
+            lifecycle_entity("work", "archived"),
+            lifecycle_entity("car", "temporary"),
+        ];
+        assert_eq!(space_lifecycle(&entities, "car"), SpaceLifecycle::Temporary);
+        assert_eq!(space_lifecycle(&entities, "work"), SpaceLifecycle::Archived);
+    }
+
+    #[test]
+    fn space_lifecycle_entity_finds_the_real_record_to_update_in_place() {
+        let entities = vec![lifecycle_entity("car", "emerging")];
+        let found = space_lifecycle_entity(&entities, "car").expect("record should be found");
+        assert_eq!(
+            found.properties.get("lifecycle").and_then(|v| v.as_str()),
+            Some("emerging")
+        );
+        assert!(space_lifecycle_entity(&entities, "work").is_none());
+    }
+
+    #[test]
+    fn space_lifecycle_cycles_through_all_four_states_and_wraps() {
+        assert_eq!(SpaceLifecycle::Temporary.next(), SpaceLifecycle::Emerging);
+        assert_eq!(SpaceLifecycle::Emerging.next(), SpaceLifecycle::Stable);
+        assert_eq!(SpaceLifecycle::Stable.next(), SpaceLifecycle::Archived);
+        assert_eq!(SpaceLifecycle::Archived.next(), SpaceLifecycle::Temporary);
+    }
+
+    #[test]
+    fn space_relation_targets_only_matches_the_from_direction() {
+        let entities = vec![
+            relation_entity("car", "commute", "usually_with"),
+            relation_entity("commute", "car", "usually_with"),
+            relation_entity("car", "dacha", "related_to"),
+        ];
+        let mut targets = space_relation_targets(&entities, "car");
+        targets.sort();
+        assert_eq!(
+            targets,
+            vec![
+                ("commute".to_string(), "usually_with".to_string()),
+                ("dacha".to_string(), "related_to".to_string()),
+            ]
+        );
+        assert_eq!(
+            space_relation_targets(&entities, "commute"),
+            vec![("car".to_string(), "usually_with".to_string())]
+        );
+        assert!(space_relation_targets(&entities, "work").is_empty());
+    }
+
+    #[test]
+    fn space_display_name_prefers_a_real_space_then_falls_back_to_known_ids() {
+        let spaces = vec![Space {
+            schema: 1,
+            id: "car".to_string(),
+            name: "Машина".to_string(),
+            kind: SpaceKind::User,
+            created_at: chrono::Utc::now(),
+        }];
+        assert_eq!(space_display_name(&spaces, "car"), "Машина");
+        assert_eq!(space_display_name(&spaces, "work"), "Работа");
+        assert_eq!(space_display_name(&spaces, "unknown-id"), "unknown-id");
     }
 }
 
