@@ -22,6 +22,20 @@
  * project's existing wpa_supplicant/appd socket trust model (anyone
  * who can reach the device's own sockets already has this much
  * access).
+ *
+ * S31: "GET <relative-path>\n" is the other direction -- pulling a
+ * file (a log, a crash report, anything under /data/saaios/apps'
+ * data dirs) off the device instead of pushing one on. Deliberately
+ * NOT confined to ALLOWED_PREFIX the way PUT's destinations are:
+ * that prefix is upload staging, reading it back would just return
+ * the same bytes a client already has. GET resolves its path against
+ * the real root (same no-".."/no-leading-"/" rule as PUT, kept for
+ * header-parsing symmetry, not a meaningful boundary here since the
+ * whole filesystem is already the read domain) -- the trust model is
+ * the same "reachable on this LAN" one already covering every other
+ * socket this project exposes, not a new, wider one. Reply on success
+ * is "OK <byte-count>\n" followed by exactly that many raw bytes;
+ * on failure, a single "ERR ...\n" line and nothing else.
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -104,6 +118,53 @@ static void reply(int client, const char *message) {
     (void)write_full(client, message, strlen(message));
 }
 
+static void handle_get(int client, const char *relative) {
+    if (relative[0] == '/' || strstr(relative, "..") != NULL) {
+        reply(client, "ERR path must be relative with no .. component\n");
+        return;
+    }
+
+    char full_path[MAX_RELATIVE_PATH + 8];
+    snprintf(full_path, sizeof(full_path), "/%s", relative);
+
+    struct stat info;
+    if (stat(full_path, &info) < 0 || !S_ISREG(info.st_mode)) {
+        reply(client, "ERR file not found or not a regular file\n");
+        return;
+    }
+    if ((unsigned long long)info.st_size > MAX_FILE_BYTES) {
+        reply(client, "ERR file exceeds the 128MiB limit\n");
+        return;
+    }
+
+    int in = open(full_path, O_RDONLY | O_CLOEXEC);
+    if (in < 0) {
+        reply(client, "ERR could not open source file\n");
+        return;
+    }
+
+    char header[64];
+    int header_len = snprintf(header, sizeof(header), "OK %lld\n", (long long)info.st_size);
+    if (header_len < 0 || write_full(client, header, (size_t)header_len) < 0) {
+        close(in);
+        return;
+    }
+
+    char buffer[65536];
+    long long remaining = (long long)info.st_size;
+    while (remaining > 0) {
+        size_t chunk = remaining < (long long)sizeof(buffer) ? (size_t)remaining : sizeof(buffer);
+        ssize_t n = read(in, buffer, chunk);
+        if (n <= 0 || write_full(client, buffer, (size_t)n) < 0) {
+            break;
+        }
+        remaining -= n;
+    }
+    close(in);
+    printf("file-recv: read %s (%lld bytes)\n", full_path, (long long)info.st_size);
+    fflush(stdout);
+}
+
 static void handle_client(int client) {
     char header[MAX_HEADER_LINE];
     if (read_header_line(client, header, sizeof(header)) < 0) {
@@ -113,9 +174,13 @@ static void handle_client(int client) {
     char verb[8] = {0};
     char relative[MAX_RELATIVE_PATH] = {0};
     unsigned long long content_length = 0;
-    if (sscanf(header, "%7s %479s %llu", verb, relative, &content_length) != 3 ||
-        strcmp(verb, "PUT") != 0) {
-        reply(client, "ERR bad header, expected: PUT <path> <length>\n");
+    int put_fields = sscanf(header, "%7s %479s %llu", verb, relative, &content_length);
+    if (put_fields != 3 || strcmp(verb, "PUT") != 0) {
+        if (sscanf(header, "%7s %479s", verb, relative) == 2 && strcmp(verb, "GET") == 0) {
+            handle_get(client, relative);
+            return;
+        }
+        reply(client, "ERR bad header, expected: PUT <path> <length> or GET <path>\n");
         return;
     }
     if (relative[0] == '/' || strstr(relative, "..") != NULL) {
