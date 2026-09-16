@@ -1,4 +1,55 @@
-# ADR-024: GPU-рендеринг на panther -- реальный kbase поднимает MCU-прошивку; настоящий Mali UMD создаёт VkDevice на этом железе
+# ADR-024: GPU-рендеринг на panther -- рабочий r54p3 KMD выполняет Vulkan-команды
+
+## Решение подтверждено на Pixel 7 (2026-09-16)
+
+GPU-исполнение больше не заблокировано. Причиной ложного успеха
+`vkQueueSubmit()` и никогда не сигналившегося fence был несовместимый набор
+DDK: собранный из исходников `mali_kbase` был `r51p0` (UK 1.36), тогда как
+закрытый userspace-драйвер и CSF-прошивка из `CP2A.260705.006` относятся к
+`r54p3`.
+
+На физическом `panther` проверена рабочая гибридная связка:
+
+* `mali_pixel.ko` -- исправленный source-built вариант из текущего дерева,
+  SHA-256
+  `6bfcb22a1aeedc76065ba938bf430007094e9e415aa6fee2cdb8546eec2e6279`;
+* `mali_kbase.ko` -- подписанный factory-модуль `r54p3-00eac0` (UK 1.38) из
+  `vendor_dlkm.img` той же сборки `CP2A.260705.006`, SHA-256
+  `bd66de67604175a9a166688ec6fb0b2076d2154d898e73c05db939d733899717`;
+* `libGLES_mali.so`/`vulkan.mali.so` и `mali_csffw.bin` -- `r54p3` из той же
+  factory-сборки.
+
+Factory-вариант `mali_pixel.ko` использовать нельзя: в минимальном SaaiOS он
+завершается на `pt_client_register failed with -2`, после чего `mali-mgm` не
+готов и probe `mali_kbase` откладывается. Исправленный source-built
+`mali_pixel` сохраняет нужное поведение платформенного слоя и совместим с
+factory `r54p3` kbase -- это подтверждено на устройстве.
+
+Проверки рабочего результата:
+
+1. `vkCmdFillBuffer` меняет host-visible буфер с `0x11111111` на
+   `0xA5A5A5A5`; fence сигналится без таймаута.
+2. Отдельный offscreen render pass очищает RGBA8-изображение красным,
+   копирует его в host-visible staging buffer и получает на CPU
+   `pixel[0] = 255 0 0 255` и такой же центральный пиксель.
+3. Полный render-pass тест повторён пять раз подряд без GPU fault, timeout
+   или reset.
+
+Для корректного readback тест явно задаёт зависимости
+`COLOR_ATTACHMENT_WRITE -> TRANSFER_READ` и
+`TRANSFER_WRITE -> HOST_READ`; буфер предварительно заполняется `0x11`,
+поэтому нулевой/старый результат не может быть принят за успешный.
+
+PID 1 загружает зависимости из `/lib/modules`, затем исправленный
+`/data/saaios/system/gpu/mali_pixel.ko` и factory
+`/data/saaios/system/gpu/mali_kbase.ko`, проверяет строку версии
+`r54p3-00eac0` и создаёт `/dev/mali0`. Firmware до этого публикуется из
+`/data/saaios/firmware`, сразу после монтирования `/data`.
+
+Следующая отдельная задача -- подключить этот уже рабочий GPU к compositor:
+импорт dma-buf, синхронизация и Wayland/Vulkan render path. Старые разделы
+ниже сохранены как журнал расследования; их гипотезы о сломанной обработке
+fence в UMD **заменены** установленной причиной несовместимости DDK.
 
 ## Next session entry point: fence completion producer отсутствует (2026-09-16, продолжение)
 

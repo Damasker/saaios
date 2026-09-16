@@ -31,6 +31,29 @@ calibration and credentials are intentionally not committed. Extract them from
 the matching factory image/device into one local directory and point
 `SAAIOS_PANTHER_ARTIFACTS` at it.
 
+The working GPU stack is deliberately split the same way. Keep the two tested
+kernel modules on the persistent data volume:
+
+```text
+/data/saaios/system/gpu/mali_pixel.ko  # patched source-built platform module
+/data/saaios/system/gpu/mali_kbase.ko  # factory r54p3 module
+/data/saaios/firmware/mali_csffw.bin   # matching r54p3 CSF firmware
+```
+
+PID 1 loads the prerequisite modules from `/lib/modules`, loads these two
+modules in order, rejects any kbase whose version does not start with
+`r54p3-00eac0`, and creates `/dev/mali0`. Use only files matching the pinned
+`CP2A.260705.006` base. The verified SHA-256 values and the reason the factory
+`mali_pixel.ko` must not be used are recorded in
+[ADR-024](../../../docs/adr/ADR-024-gpu-driver-spike.md).
+
+`tools/vk-frame.c` is the hardware acceptance probe. Build it as an Android
+bionic executable against the matching NDK Vulkan headers and the extracted
+driver libraries. It submits an offscreen render pass, copies the image back,
+and exits successfully only when both sampled pixels are red; creating a
+Vulkan device or returning success from `vkQueueSubmit()` alone is not treated
+as evidence of GPU execution.
+
 The native image replaces Android's init and removes the remaining stock
 `/system` ramdisk tools (`snapuserd`, property tools, and toolbox) while
 repacking. Native PID 1 does not execute them, and omitting them keeps the
