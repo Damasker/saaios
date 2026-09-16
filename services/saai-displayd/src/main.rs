@@ -463,14 +463,21 @@ impl State {
         let Some(hw) = self.hardware.as_mut() else {
             return;
         };
-        hw.fill(0x00, 0x00, 0x00);
+        if let Err(error) = hw.fill(0x00, 0x00, 0x00) {
+            eprintln!("saai-displayd: hardware frame begin failed: {error}");
+            std::process::exit(72);
+        }
         let mut shown: Vec<WlSurface> = Vec::new();
         if self.locked {
             if let Some((s, frame)) = self.lock_surface.as_ref().and_then(|ls| {
                 let s = ls.wl_surface().clone();
                 self.surface_frames.get(&s).map(|f| (s, f))
             }) {
-                hw.blit(&frame.pixels, frame.width, frame.height, frame.stride);
+                if let Err(error) = hw.blit(&frame.pixels, frame.width, frame.height, frame.stride)
+                {
+                    eprintln!("saai-displayd: hardware lock blit failed: {error}");
+                    std::process::exit(72);
+                }
                 shown.push(s);
             }
         } else {
@@ -478,13 +485,22 @@ impl State {
                 let frame = self.surface_frames.get(&s)?;
                 Some((s, frame))
             }) {
-                hw.blit(&frame.pixels, frame.width, frame.height, frame.stride);
+                if let Err(error) = hw.blit(&frame.pixels, frame.width, frame.height, frame.stride)
+                {
+                    eprintln!("saai-displayd: hardware toplevel blit failed: {error}");
+                    std::process::exit(72);
+                }
                 shown.push(s);
             }
             for layer in &self.layer_surfaces {
                 let s = layer.wl_surface().clone();
                 if let Some(frame) = self.surface_frames.get(&s) {
-                    hw.blit(&frame.pixels, frame.width, frame.height, frame.stride);
+                    if let Err(error) =
+                        hw.blit(&frame.pixels, frame.width, frame.height, frame.stride)
+                    {
+                        eprintln!("saai-displayd: hardware layer blit failed: {error}");
+                        std::process::exit(72);
+                    }
                     shown.push(s);
                 }
             }
