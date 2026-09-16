@@ -1,5 +1,59 @@
 # ADR-024: GPU-рендеринг на panther -- реальный kbase поднимает MCU-прошивку; настоящий Mali UMD создаёт VkDevice на этом железе
 
+## Next session entry point: completion notification path
+
+На этом этапе инструментально подтверждено и больше не считается основной причиной проблемы:
+
+* power domains — работают;
+* CSF firmware boot — работает;
+* doorbell/MMIO path — работает;
+* CS_REQ/CS_ACK — работают;
+* GPU command stream — реально читается и декодируется firmware;
+* KCPU execution — завершается без pending/blocked/error;
+* `CS_EXTRACT == CS_INSERT` — command stream полностью потреблён;
+* текущий stream содержит только event/sync bookkeeping и не содержит job-launch для реальной `vkCmdFillBuffer`-работы;
+* `VkFence` при этом остаётся `VK_NOT_READY`.
+
+Рабочая гипотеза: proprietary Mali UMD использует многофазный submit. Первая GPU/KCPU-фаза завершается, но внутренний поток `mali-event-hand` не получает completion notification от kernel path, остаётся заблокированным в `ppoll()`/`poll()` и не переходит к следующей фазе, где должна появиться настоящая GPU job.
+
+Приоритет расследования на следующую сессию:
+
+1. Трассировать `ppoll()`/`poll()` потока `mali-event-hand` через уже проверенный `sysprobe`.
+2. Для каждого ожидаемого fd зафиксировать:
+
+   * номер fd;
+   * `events` / `revents`;
+   * `/proc/<pid>/fd/<n>`;
+   * `/proc/<pid>/fdinfo/<n>`.
+3. Проверить, вызывается ли `kbase_csf_event_signal()`.
+4. Проверить, вызывается ли `_kbase_event_wakeup()`.
+5. Проверить поведение `kbase_poll()` и его возвращаемую mask.
+6. Найти последний реально произошедший шаг в цепочке:
+
+```text
+GPU/KCPU completion
+        ↓
+kbase_csf_event_signal()
+        ↓
+_kbase_event_wakeup()
+        ↓
+kbase_poll()
+        ↓
+ppoll()/poll() returns
+        ↓
+mali-event-hand wakes
+        ↓
+UMD next submit phase
+        ↓
+real job-launch
+        ↓
+VkFence signal
+```
+
+Первый отсутствующий переход в этой цепочке и является текущей целевой точкой диагностики.
+
+Важно: не ставить kretprobe на `kbase_csf_kcpu_queue_process()` или другие горячие KCPU scheduler paths. Такой probe уже вызывал softlockup и реальную перезагрузку устройства; этот путь исключён из дальнейшей инструментализации.
+
 ## Статус
 
 Принято, 2026-09-10. Обновлено 2026-09-16 (kernel-уровень): настоящий,
