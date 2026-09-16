@@ -31,9 +31,10 @@ use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
-    delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output,
-    delegate_seat, delegate_session_lock, delegate_shm, delegate_text_input_manager,
-    delegate_xdg_shell,
+    backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_layer_shell,
+    delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
+    delegate_text_input_manager, delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -55,6 +56,7 @@ use smithay::{
             with_states, BufferAssignment, CompositorClientState, CompositorHandler,
             CompositorState, SurfaceAttributes,
         },
+        dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         output::OutputHandler,
         selection::{
             data_device::{
@@ -134,6 +136,11 @@ mod surface_frame_dedup_tests {
 struct State {
     compositor_state: CompositorState,
     shm_state: ShmState,
+    dmabuf_state: DmabufState,
+    // Kept so future renderer-specific feedback can update or disable the
+    // same global without rediscovering it. The protocol objects own their
+    // own dispatch state after creation.
+    _dmabuf_global: DmabufGlobal,
     xdg_shell_state: XdgShellState,
     seat_state: SeatState<State>,
     seat: Seat<State>,
@@ -757,6 +764,67 @@ impl ShmHandler for State {
 }
 delegate_shm!(State);
 
+/// The first linux-dmabuf contract is intentionally narrow: one linear
+/// XRGB/ARGB plane with no offset. It exactly matches both the Pixel panel's
+/// current scanout layout and the Vulkan buffer-copy path. Advertising only
+/// formats we can consume prevents clients from selecting tiled/compressed
+/// allocations that would need format-modifier-aware image sampling.
+fn validate_dmabuf(dmabuf: &Dmabuf) -> Result<(), &'static str> {
+    let size = dmabuf.size();
+    if size.w <= 0 || size.h <= 0 {
+        return Err("non-positive dimensions");
+    }
+    if dmabuf.num_planes() != 1 {
+        return Err("only single-plane buffers are supported");
+    }
+    let format = dmabuf.format();
+    if !matches!(format.code, Fourcc::Xrgb8888 | Fourcc::Argb8888) {
+        return Err("unsupported pixel format");
+    }
+    if !matches!(format.modifier, Modifier::Linear | Modifier::Invalid) {
+        return Err("only linear buffers are supported");
+    }
+    if dmabuf.offsets().next() != Some(0) {
+        return Err("non-zero plane offsets are not supported");
+    }
+    let Some(stride) = dmabuf.strides().next() else {
+        return Err("missing plane stride");
+    };
+    if stride < size.w as u32 * 4 {
+        return Err("plane stride is shorter than one pixel row");
+    }
+    if dmabuf.y_inverted() {
+        return Err("Y-inverted buffers are not supported yet");
+    }
+    Ok(())
+}
+
+impl DmabufHandler for State {
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn dmabuf_imported(
+        &mut self,
+        _global: &DmabufGlobal,
+        dmabuf: Dmabuf,
+        notifier: ImportNotifier,
+    ) {
+        match validate_dmabuf(&dmabuf) {
+            Ok(()) => {
+                if let Err(error) = notifier.successful::<State>() {
+                    eprintln!("saai-displayd: failed to create linux-dmabuf wl_buffer: {error}");
+                }
+            }
+            Err(reason) => {
+                eprintln!("saai-displayd: rejected linux-dmabuf import: {reason}");
+                notifier.failed();
+            }
+        }
+    }
+}
+delegate_dmabuf!(State);
+
 impl SeatHandler for State {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
@@ -968,6 +1036,20 @@ fn main() {
 
     let compositor_state = CompositorState::new::<State>(&dh);
     let shm_state = ShmState::new::<State>(&dh, Vec::new());
+    let mut dmabuf_state = DmabufState::new();
+    let dmabuf_global = dmabuf_state.create_global::<State>(
+        &dh,
+        [
+            Format {
+                code: Fourcc::Xrgb8888,
+                modifier: Modifier::Linear,
+            },
+            Format {
+                code: Fourcc::Argb8888,
+                modifier: Modifier::Linear,
+            },
+        ],
+    );
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
     let data_device_state = DataDeviceState::new::<State>(&dh);
     let text_input_manager_state = TextInputManagerState::new::<State>(&dh);
@@ -1194,6 +1276,8 @@ fn main() {
     let mut state = State {
         compositor_state,
         shm_state,
+        dmabuf_state,
+        _dmabuf_global: dmabuf_global,
         xdg_shell_state,
         seat_state,
         seat,
