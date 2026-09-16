@@ -2668,17 +2668,60 @@ fn now_action_at(
         .map(|(_, action)| action.action.to_string())
 }
 
+/// How far a touch has to move (in either direction, on this
+/// 1080x2400 panel) before `TouchHandler::up` treats it as a real
+/// drag on "Я" rather than a tap that merely twitched a few pixels --
+/// small enough that an intentional scroll is never mistaken for a
+/// tap, large enough that a normal tap on a real device never
+/// accidentally suppresses its own action.
+const ME_DRAG_TAP_SLOP_PX: f64 = 24.0;
+
 /// Physically discovered during the S14-S25 series' first device
 /// pass: 14 fixed rows plus N installed apps stopped fitting on one
-/// screen a while before S25 even landed, and this shell has never
-/// had any scroll/drag gesture recognition (`TouchHandler::motion`
-/// only ever tracks a position, never a delta) -- several settings
-/// (Wi-Fi onward) were silently untappable. Paginated the same way
-/// "Wi-Fi сети"/"Bluetooth устройства" already page past their own
-/// fixed trailing rows, rather than inventing gesture recognition:
-/// `ME_PAGE_SIZE` real rows per page plus one or two navigation rows
-/// ("Ещё"/"Назад"), `Shell.me_page` tracking which page is open.
-const ME_PAGE_SIZE: usize = 6;
+/// screen a while before S25 even landed. Originally worked around
+/// with Ещё/Назад pagination (this shell had no drag gesture
+/// recognition at all back then); replaced with real vertical
+/// drag-to-scroll once `TouchHandler` gained one (`down`/`motion`/`up`
+/// below) -- `scrolled_row_rect`/`me_max_scroll_offset` are the same
+/// idea `stacked_row_rect` already used, offset by how far the user
+/// has dragged.
+fn scrolled_row_rect(
+    index: usize,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+    content_rect: Rect,
+) -> Option<Rect> {
+    let base = stacked_row_rect(index, width, height);
+    let top = base.y as i64 - scroll_offset as i64;
+    let bottom = top + base.height as i64;
+    let content_top = content_rect.y as i64;
+    let content_bottom = (content_rect.y + content_rect.height) as i64;
+    // A row that doesn't fit entirely inside the content area at this
+    // offset is skipped outright (neither drawn nor hit-tested) rather
+    // than clipped mid-row -- rows appear/disappear whole as the user
+    // scrolls, which is enough for a plain stacked full-width list.
+    if top < content_top || bottom > content_bottom {
+        return None;
+    }
+    Some(Rect::new(base.x, top as u32, base.width, base.height))
+}
+
+/// How far "Я"'s content list can scroll before its last row's bottom
+/// edge reaches the content area's own bottom edge -- the usual
+/// "don't scroll past the end" clamp, shared by the live drag in
+/// `TouchHandler::motion` and the defensive clamp `me_content_cards`/
+/// `me_action_at` apply in case `installed_apps` shrank while "Я"
+/// wasn't the visible tab and left a stale, now-too-large offset.
+fn me_max_scroll_offset(total_rows: usize, width: u32, height: u32, content_rect: Rect) -> i32 {
+    if total_rows == 0 {
+        return 0;
+    }
+    let last_row = stacked_row_rect(total_rows - 1, width, height);
+    let last_row_bottom = last_row.y + last_row.height;
+    let content_bottom = content_rect.y + content_rect.height;
+    (last_row_bottom as i32 - content_bottom as i32).max(0)
+}
 /// Count of `me_all_card_views`'s fixed (non-app) entries -- kept as
 /// one literal here rather than derived from that function's return
 /// length, since `me_fixed_card_action` has to agree with it and
@@ -2916,7 +2959,9 @@ fn main() {
         trusted_clients_open: false,
         pin_setup: None,
         pin_entry_buffer: String::new(),
-        me_page: 0,
+        me_scroll_offset: 0,
+        me_drag: None,
+        me_scroll_dirty: false,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -2959,6 +3004,11 @@ fn main() {
         event_loop
             .dispatch(Duration::from_millis(16), &mut shell)
             .expect("event loop dispatch failed");
+        // Consume every queued touch motion first, then render only the
+        // newest scroll position once. Rendering from inside motion()
+        // made each ~40 ms frame prevent the event queue from catching
+        // up, so the picture followed old finger positions indefinitely.
+        shell.draw_pending_scroll(&conn, &qh);
         shell.poll_appd(&conn, &qh);
         shell.poll_entityd(&conn, &qh);
         shell.poll_remote_pairing(&conn, &qh);
@@ -3120,11 +3170,28 @@ struct Shell {
     /// be open at the same time -- `locked` is always `true` while
     /// this one matters and always `false` while `pin_setup` does).
     pin_entry_buffer: String,
-    /// See `ME_PAGE_SIZE`'s doc comment -- which page of "Я"'s
-    /// settings/app list is currently showing. Deliberately not
-    /// reset when leaving "Я" for another tab -- returning to it
-    /// keeps the page the user was last looking at.
-    me_page: usize,
+    /// Vertical drag-to-scroll position for "Я"'s content list, in
+    /// pixels -- 0 is the top. Deliberately not reset when leaving "Я"
+    /// for another tab -- returning to it keeps the scroll position
+    /// the user was last looking at. Clamped against the current
+    /// content length on every read (`me_max_scroll_offset`), not
+    /// here, since `installed_apps` can change size while "Я" isn't
+    /// the visible tab.
+    me_scroll_offset: i32,
+    /// `Some((touch_start_y, offset_at_touch_start))` from a
+    /// touch-down that landed inside "Я"'s content area (and no modal
+    /// was covering it) until the matching touch-up; `None` the rest
+    /// of the time, including mid-drag on any other page.
+    /// `TouchHandler::up` uses the stored start position to tell a
+    /// real drag apart from a tap that merely twitched a few pixels
+    /// (`ME_DRAG_TAP_SLOP_PX`) before deciding whether to run
+    /// `me_action_at` at all.
+    me_drag: Option<(f64, i32)>,
+    /// Set whenever a motion event changes `me_scroll_offset`. The main
+    /// loop clears it only after Wayland has dispatched the complete
+    /// currently queued input batch and a free dma-buf slot is available,
+    /// coalescing arbitrarily many stale finger positions into one frame.
+    me_scroll_dirty: bool,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -3493,6 +3560,7 @@ impl TouchHandler for Shell {
             self.sleeping = false;
             self.unlock_pending = false;
             self.tab_touch_pending = false;
+            self.me_drag = None;
             self.pin_entry_buffer.clear();
             self.present_lock_pin_entry(qh);
             println!("saai-shell: woke from pseudo-sleep");
@@ -3504,6 +3572,25 @@ impl TouchHandler for Shell {
                 .iter()
                 .any(|ls| *ls.wl_surface() == surface);
         self.tab_touch_pending = !self.locked && surface == *self.window.wl_surface();
+        // Real drag-to-scroll for "Я" (replacing this shell's old
+        // Ещё/Назад pagination, back when it had no drag gesture
+        // recognition at all): armed only when this touch starts
+        // inside the content area (not the tab bar) of "Я" itself,
+        // with no modal covering it -- `TouchHandler::motion` updates
+        // `me_scroll_offset` from here on while it stays `Some`, and
+        // `up` uses the stored start position to tell a real drag
+        // apart from a tap.
+        self.me_drag = if self.tab_touch_pending
+            && self.current_page == RootPage::Me
+            && !self.any_modal_open()
+            && root_view(self.width, self.height).children[0]
+                .rect
+                .contains(position.0, position.1)
+        {
+            Some((position.1, self.me_scroll_offset))
+        } else {
+            None
+        };
     }
 
     fn up(
@@ -3516,6 +3603,14 @@ impl TouchHandler for Shell {
         _id: i32,
     ) {
         self.last_activity = Instant::now();
+        // Taken (not just read) here, once, regardless of which
+        // branch below actually runs -- `down()` always sets a fresh
+        // value (`Some` or `None`) on the next touch, so nothing is
+        // lost by not clearing it in every other branch individually.
+        let me_drag = self.me_drag.take();
+        let was_me_drag = me_drag.is_some_and(|(start_y, _)| {
+            (self.last_touch_pos.1 - start_y).abs() > ME_DRAG_TAP_SLOP_PX
+        });
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
         // starts on the lock surface but ends elsewhere (or a
@@ -3700,6 +3795,11 @@ impl TouchHandler for Shell {
                     self.dev_surface_open = false;
                     self.draw(conn, qh);
                 }
+            } else if was_me_drag {
+                // A scroll may end over the bottom navigation bar. Consume
+                // that release as part of the gesture instead of switching
+                // tabs, and make sure its final position is presented.
+                self.me_scroll_dirty = true;
             } else if let Some(action) = self
                 .settings
                 .orb_enabled
@@ -3809,6 +3909,21 @@ impl TouchHandler for Shell {
         position: (f64, f64),
     ) {
         self.last_touch_pos = position;
+        if let Some((start_y, start_offset)) = self.me_drag {
+            let content_rect = root_view(self.width, self.height).children[0].rect;
+            let total = ME_FIXED_CARD_COUNT + self.installed_apps.len();
+            let max_offset = me_max_scroll_offset(total, self.width, self.height, content_rect);
+            // Finger moving up (position.1 decreasing) scrolls the
+            // content down (offset increases) -- the usual touch-
+            // scroll convention (content follows the finger).
+            let delta = start_y - position.1;
+            let new_offset = (start_offset as f64 + delta).round() as i32;
+            let clamped = new_offset.clamp(0, max_offset);
+            if clamped != self.me_scroll_offset {
+                self.me_scroll_offset = clamped;
+                self.me_scroll_dirty = true;
+            }
+        }
     }
 
     fn shape(
@@ -3835,10 +3950,34 @@ impl TouchHandler for Shell {
     fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
         self.unlock_pending = false;
         self.tab_touch_pending = false;
+        self.me_drag = None;
     }
 }
 
 impl Shell {
+    /// Present at most one coalesced "Я" scroll frame after a complete
+    /// Wayland dispatch batch. If both dma-buf slots are still owned by
+    /// the compositor, keep the latest position dirty and retry after the
+    /// next dispatch (which is also how the release event reaches us).
+    fn draw_pending_scroll(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        if !self.me_scroll_dirty {
+            return;
+        }
+        if self.current_page != RootPage::Me || self.locked || self.sleeping {
+            self.me_scroll_dirty = false;
+            return;
+        }
+        if self
+            .main_dmabuf
+            .as_ref()
+            .is_some_and(|canvas| !canvas.has_free_slot())
+        {
+            return;
+        }
+        self.me_scroll_dirty = false;
+        self.draw(conn, qh);
+    }
+
     /// Renders the active root section's placeholder content plus the
     /// bottom tab bar (Change step 6) -- proves the real
     /// client<->compositor vertical slice end to end (surface
@@ -4389,21 +4528,20 @@ impl Shell {
                 .0
         });
 
-        let canvas = match self.pool.canvas(buffer) {
-            Some(canvas) => canvas,
-            None => {
-                let (second_buffer, canvas) = self
-                    .pool
-                    .create_buffer(
-                        width as i32,
-                        height as i32,
-                        stride,
-                        wl_shm::Format::Xrgb8888,
-                    )
-                    .expect("create buffer");
-                *buffer = second_buffer;
-                canvas
-            }
+        // Physically found by "Я"'s drag-to-scroll (ADR/S-follow-up):
+        // creating a second buffer here every time the compositor
+        // hasn't released the existing one yet -- this function's own
+        // previous behavior -- grows the underlying wl_shm_pool
+        // without bound under sustained rapid redraws (scrolling can
+        // call `draw()` far more often than any tap-driven redraw
+        // ever did) and eventually corrupts it badly enough to kill
+        // the whole Wayland connection (`Protocol error 2 ... invalid
+        // wl_shm_pool size`). Skipping this one frame instead is
+        // always safe -- the next content change retries with whatever
+        // is current by then. Drag scrolling avoids reaching this path
+        // while its dma-buf slots are busy (`draw_pending_scroll`).
+        let Some(canvas) = self.pool.canvas(buffer) else {
+            return;
         };
 
         paint_frame(canvas);
@@ -4574,32 +4712,42 @@ impl Shell {
     /// timeouts are read fresh by `check_idle_timeout`/`check_deep_idle`
     /// every tick, nothing to push), persists, and redraws so the
     /// card's own status text reflects the new value immediately.
-    /// See `ME_PAGE_SIZE`'s doc comment -- a method now (not a free
-    /// function) since it needs `self.me_page` and `self.installed_
-    /// apps.len()` to know which logical indices the current page
-    /// covers, the same two pieces `me_content_cards` below needs to
-    /// build the matching rects.
+    /// Whether some full-screen modal currently owns every touch --
+    /// mirrors, in the same order, the condition `TouchHandler::up`'s
+    /// own dispatch cascade already checks before it would ever reach
+    /// "Я"'s own branch. Used by `TouchHandler::down` to decide
+    /// whether to arm "Я"'s drag-to-scroll -- a touch that starts on
+    /// top of an open modal must not scroll the content underneath it.
+    fn any_modal_open(&self) -> bool {
+        self.pending_consent.is_some()
+            || self.pending_pair_request.is_some()
+            || self.viewing_entity_id.is_some()
+            || self.intent_input.is_some()
+            || self.pin_setup.is_some()
+            || self.wifi_password.is_some()
+            || self.wifi_list.is_some()
+            || self.bluetooth_list_open
+            || self.trusted_clients_open
+            || self.dev_surface_open
+    }
+
+    /// A method now (not a free function) since it needs
+    /// `self.installed_apps.len()` (total row count) and
+    /// `self.me_scroll_offset` (current drag position) -- the same
+    /// two pieces `me_content_cards` below needs to build the
+    /// matching rects, so the two can never disagree about where a
+    /// row actually is.
     fn me_action_at(&self, pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
         let total = ME_FIXED_CARD_COUNT + self.installed_apps.len();
-        let start = self.me_page * ME_PAGE_SIZE;
-        let visible_count = total.saturating_sub(start).min(ME_PAGE_SIZE);
-        for local_index in 0..visible_count {
-            if stacked_row_rect(local_index, width, height).contains(pos.0, pos.1) {
-                return me_fixed_card_action(start + local_index);
-            }
-        }
-        let mut nav_index = visible_count;
-        let has_more = start + ME_PAGE_SIZE < total;
-        if has_more {
-            if stacked_row_rect(nav_index, width, height).contains(pos.0, pos.1) {
-                return Some("me_page_next");
-            }
-            nav_index += 1;
-        }
-        if self.me_page > 0 && stacked_row_rect(nav_index, width, height).contains(pos.0, pos.1) {
-            return Some("me_page_prev");
-        }
-        None
+        let content_rect = root_view(width, height).children[0].rect;
+        let offset = self
+            .me_scroll_offset
+            .clamp(0, me_max_scroll_offset(total, width, height, content_rect));
+        (0..total).find_map(|index| {
+            scrolled_row_rect(index, width, height, offset, content_rect)
+                .filter(|rect| rect.contains(pos.0, pos.1))
+                .and_then(|_| me_fixed_card_action(index))
+        })
     }
 
     fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
@@ -4694,16 +4842,6 @@ impl Shell {
             "open_trusted_clients" => {
                 // Same reasoning as "open_wifi_list" above.
                 self.trusted_clients_open = true;
-                self.draw(conn, qh);
-                return;
-            }
-            "me_page_next" => {
-                self.me_page += 1;
-                self.draw(conn, qh);
-                return;
-            }
-            "me_page_prev" => {
-                self.me_page = self.me_page.saturating_sub(1);
                 self.draw(conn, qh);
                 return;
             }
@@ -5161,45 +5299,25 @@ impl Shell {
     /// revoking one capability from an already-decided app (see
     /// ADR-054's notes on `saai-app-protocol`), so there is nothing
     /// for a tap here to do yet.
-    /// See `ME_PAGE_SIZE`'s doc comment -- slices `me_all_card_views`
-    /// into the current page's window and appends "Ещё"/"Назад" nav
-    /// rows, the same pattern `Frame::WifiList`/`Frame::BluetoothList`
-    /// already use for their own trailing controls.
+    /// Real drag-to-scroll (`TouchHandler::down`/`motion`/`up`) --
+    /// every row of `me_all_card_views` that currently fits inside
+    /// the content area at `self.me_scroll_offset`, positioned by
+    /// `scrolled_row_rect`. No more "Ещё"/"Назад" nav rows to append:
+    /// the scroll gesture itself is the navigation now.
     fn me_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
         let all = self.me_all_card_views();
-        let total = all.len();
-        let start = self.me_page * ME_PAGE_SIZE;
-        let visible: Vec<render::ActionCardView> =
-            all.into_iter().skip(start).take(ME_PAGE_SIZE).collect();
-        let visible_count = visible.len();
-        let mut cards: Vec<(Rect, render::ActionCardView)> = visible
-            .into_iter()
+        let content_rect = root_view(width, height).children[0].rect;
+        let offset = self.me_scroll_offset.clamp(
+            0,
+            me_max_scroll_offset(all.len(), width, height, content_rect),
+        );
+        all.into_iter()
             .enumerate()
-            .map(|(local_index, card)| (stacked_row_rect(local_index, width, height), card))
-            .collect();
-        let mut nav_index = visible_count;
-        if start + ME_PAGE_SIZE < total {
-            cards.push((
-                stacked_row_rect(nav_index, width, height),
-                render::ActionCardView::new(
-                    "Ещё",
-                    format!(
-                        "Показаны {}-{} из {total}",
-                        start + 1,
-                        start + visible_count
-                    ),
-                    "Вниз",
-                ),
-            ));
-            nav_index += 1;
-        }
-        if self.me_page > 0 {
-            cards.push((
-                stacked_row_rect(nav_index, width, height),
-                render::ActionCardView::new("Назад", "", "Вверх"),
-            ));
-        }
-        cards
+            .filter_map(|(index, card)| {
+                scrolled_row_rect(index, width, height, offset, content_rect)
+                    .map(|rect| (rect, card))
+            })
+            .collect()
     }
 
     /// The full, unpaginated logical list "Я" shows -- same order and
@@ -6711,6 +6829,66 @@ mod tests {
         assert_eq!(
             super::key_fingerprint("ssh-ed25519 not-valid-base64!!"),
             "ssh-ed25519 not-valid-base64!!"
+        );
+    }
+
+    #[test]
+    fn scrolled_row_rect_shifts_up_by_the_scroll_offset() {
+        let width = 1080;
+        let height = 2400;
+        let content_rect = super::Rect::new(0, 0, width, height);
+        let base = super::stacked_row_rect(2, width, height);
+        let scrolled = super::scrolled_row_rect(2, width, height, 100, content_rect)
+            .expect("row still fits inside a full-height content area");
+        assert_eq!(scrolled.y, base.y - 100);
+        assert_eq!(scrolled.x, base.x);
+        assert_eq!(scrolled.height, base.height);
+    }
+
+    #[test]
+    fn scrolled_row_rect_hides_rows_the_offset_pushes_out_of_the_content_area() {
+        let width = 1080;
+        let height = 2400;
+        let content_rect = super::Rect::new(0, 200, width, 1700);
+        let content_bottom = content_rect.y + content_rect.height;
+        // A row far enough down the list to sit entirely below the
+        // content area at zero scroll (real state: nothing has been
+        // dragged yet, so only the first few rows are visible).
+        let row_index = 10;
+        let base = super::stacked_row_rect(row_index, width, height);
+        assert!(
+            base.y + base.height > content_bottom,
+            "row 10 is expected to overflow the bottom of this content area unscrolled"
+        );
+        assert!(
+            super::scrolled_row_rect(row_index, width, height, 0, content_rect).is_none(),
+            "row 10 should not fit at zero scroll"
+        );
+        // Scrolling down (positive offset) moves it up into view --
+        // exactly enough to align its bottom edge with the content
+        // area's own bottom edge.
+        let needed_offset = (base.y + base.height - content_bottom) as i32;
+        let scrolled =
+            super::scrolled_row_rect(row_index, width, height, needed_offset, content_rect)
+                .expect("row 10 should fit once scrolled down far enough");
+        assert_eq!(scrolled.y + scrolled.height, content_bottom);
+    }
+
+    #[test]
+    fn me_max_scroll_offset_is_zero_with_no_rows_and_positive_once_content_overflows() {
+        let width = 1080;
+        let height = 2400;
+        let content_rect = super::Rect::new(0, 200, width, 1700);
+        assert_eq!(
+            super::me_max_scroll_offset(0, width, height, content_rect),
+            0
+        );
+        // ME_FIXED_CARD_COUNT (18) real rows at this row height
+        // comfortably overflows a 1700px-tall content area -- this
+        // asserts the clamp actually engages, not a specific number.
+        assert!(
+            super::me_max_scroll_offset(super::ME_FIXED_CARD_COUNT, width, height, content_rect)
+                > 0
         );
     }
 
