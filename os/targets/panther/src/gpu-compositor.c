@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <dlfcn.h>
 
@@ -29,6 +30,7 @@
 #define OP_BEGIN 1u
 #define OP_BLIT 2u
 #define OP_END 3u
+#define OP_DMABUF_BLIT 4u
 #define HWVULKAN_DEVICE_0 "vk0"
 
 struct command {
@@ -93,6 +95,7 @@ static VkQueue g_queue;
 static uint32_t g_queue_family;
 static VkCommandPool g_command_pool;
 static VkCommandBuffer g_command;
+static VkPhysicalDeviceMemoryProperties g_memory_properties;
 static VkBuffer g_staging_buffer;
 static VkDeviceMemory g_staging_memory;
 static void *g_staging_mapping;
@@ -107,7 +110,9 @@ DECLARE(vkGetPhysicalDeviceMemoryProperties);
 DECLARE(vkCreateDevice);
 DECLARE(vkGetDeviceQueue);
 DECLARE(vkAllocateMemory);
+DECLARE(vkFreeMemory);
 DECLARE(vkCreateBuffer);
+DECLARE(vkDestroyBuffer);
 DECLARE(vkGetBufferMemoryRequirements);
 DECLARE(vkBindBufferMemory);
 DECLARE(vkMapMemory);
@@ -164,6 +169,43 @@ static int write_full(int fd, const void *buffer, size_t size)
 		size -= (size_t)count;
 	}
 	return 0;
+}
+
+static int receive_fd(int socket_fd)
+{
+	char byte;
+	struct iovec iov = {
+		.iov_base = &byte,
+		.iov_len = sizeof(byte),
+	};
+	union {
+		struct cmsghdr header;
+		unsigned char bytes[CMSG_SPACE(sizeof(int))];
+	} control;
+	memset(&control, 0, sizeof(control));
+	struct msghdr message = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = control.bytes,
+		.msg_controllen = sizeof(control.bytes),
+	};
+	ssize_t received;
+	do {
+		received = recvmsg(socket_fd, &message, 0);
+	} while (received < 0 && errno == EINTR);
+	if (received != 1 || byte != 'D')
+		return -1;
+	for (struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+	     header != NULL; header = CMSG_NXTHDR(&message, header)) {
+		if (header->cmsg_level == SOL_SOCKET &&
+		    header->cmsg_type == SCM_RIGHTS &&
+		    header->cmsg_len >= CMSG_LEN(sizeof(int))) {
+			int fd;
+			memcpy(&fd, CMSG_DATA(header), sizeof(fd));
+			return fd;
+		}
+	}
+	return -1;
 }
 
 static uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties *mp,
@@ -304,7 +346,8 @@ static int gpu_end(uint32_t slot)
 
 static int import_buffer(const VkPhysicalDeviceMemoryProperties *memory_properties,
 			 uint32_t width, uint32_t height, uint32_t pitch,
-			 int dma_fd, struct imported_buffer *output)
+			 int dma_fd, VkBufferUsageFlags usage,
+			 struct imported_buffer *output)
 {
 	VkDeviceSize size = (VkDeviceSize)pitch * height;
 	VkExternalMemoryBufferCreateInfo external = {
@@ -315,7 +358,7 @@ static int import_buffer(const VkPhysicalDeviceMemoryProperties *memory_properti
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.pNext = &external,
 		.size = size,
-		.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		.usage = usage,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
 	VkResult result = p_vkCreateBuffer(g_device, &buffer_info, NULL,
@@ -389,6 +432,88 @@ static int import_buffer(const VkPhysicalDeviceMemoryProperties *memory_properti
 	return result == VK_SUCCESS ? 0 : -1;
 }
 
+static void destroy_imported_buffer(struct imported_buffer *buffer)
+{
+	if (buffer->buffer != VK_NULL_HANDLE)
+		p_vkDestroyBuffer(g_device, buffer->buffer, NULL);
+	if (buffer->memory != VK_NULL_HANDLE)
+		p_vkFreeMemory(g_device, buffer->memory, NULL);
+	memset(buffer, 0, sizeof(*buffer));
+}
+
+static int gpu_blit_dmabuf(int dma_fd, uint32_t width, uint32_t height,
+			   uint32_t stride, uint32_t output_pitch,
+			   uint32_t format)
+{
+	if (g_active_slot < 0 || width == 0 || height == 0 ||
+	    stride < width * 4 ||
+	    (format != DRM_FORMAT_XRGB8888 && format != DRM_FORMAT_ARGB8888))
+		return -1;
+	int contiguous = stride == output_pitch && width * 4 == output_pitch;
+	VkBufferCopy *rows = NULL;
+	if (!contiguous) {
+		rows = calloc(height, sizeof(*rows));
+		if (!rows)
+			return -1;
+		for (uint32_t row = 0; row < height; ++row) {
+			rows[row].srcOffset = (VkDeviceSize)row * stride;
+			rows[row].dstOffset = (VkDeviceSize)row * output_pitch;
+			rows[row].size = (VkDeviceSize)width * 4;
+		}
+	}
+
+	struct imported_buffer source = {0};
+	if (import_buffer(&g_memory_properties, width, height, stride, dma_fd,
+			  VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &source) < 0) {
+		free(rows);
+		destroy_imported_buffer(&source);
+		return -1;
+	}
+	if (begin_commands() < 0) {
+		free(rows);
+		destroy_imported_buffer(&source);
+		return -1;
+	}
+
+	VkBufferMemoryBarrier acquire = buffer_barrier(source.buffer);
+	acquire.srcAccessMask = 0;
+	acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
+	acquire.dstQueueFamilyIndex = g_queue_family;
+	p_vkCmdPipelineBarrier(g_command,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+		0, NULL, 1, &acquire, 0, NULL);
+
+	if (contiguous) {
+		VkBufferCopy copy = {
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = (VkDeviceSize)stride * height,
+		};
+		p_vkCmdCopyBuffer(g_command, source.buffer,
+			g_scanout[g_active_slot].buffer, 1, &copy);
+	} else {
+		p_vkCmdCopyBuffer(g_command, source.buffer,
+			g_scanout[g_active_slot].buffer, height, rows);
+	}
+	free(rows);
+
+	VkBufferMemoryBarrier release = buffer_barrier(source.buffer);
+	release.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	release.dstAccessMask = 0;
+	release.srcQueueFamilyIndex = g_queue_family;
+	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
+	p_vkCmdPipelineBarrier(g_command,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
+		0, NULL, 1, &release, 0, NULL);
+
+	int result = submit_commands();
+	destroy_imported_buffer(&source);
+	return result;
+}
+
 static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 			     int dma_fd0, int dma_fd1)
 {
@@ -426,7 +551,9 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	LOAD(vkCreateDevice);
 	LOAD(vkGetDeviceQueue);
 	LOAD(vkAllocateMemory);
+	LOAD(vkFreeMemory);
 	LOAD(vkCreateBuffer);
+	LOAD(vkDestroyBuffer);
 	LOAD(vkGetBufferMemoryRequirements);
 	LOAD(vkBindBufferMemory);
 	LOAD(vkMapMemory);
@@ -489,12 +616,11 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 		return -1;
 	p_vkGetDeviceQueue(g_device, g_queue_family, 0, &g_queue);
 
-	VkPhysicalDeviceMemoryProperties memory_properties;
-	p_vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
-	if (import_buffer(&memory_properties, width, height, pitch, dma_fd0,
-			  &g_scanout[0]) < 0 ||
-	    import_buffer(&memory_properties, width, height, pitch, dma_fd1,
-			  &g_scanout[1]) < 0)
+	p_vkGetPhysicalDeviceMemoryProperties(physical, &g_memory_properties);
+	if (import_buffer(&g_memory_properties, width, height, pitch, dma_fd0,
+			  VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_scanout[0]) < 0 ||
+	    import_buffer(&g_memory_properties, width, height, pitch, dma_fd1,
+			  VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_scanout[1]) < 0)
 		return -1;
 
 	g_staging_size = (VkDeviceSize)pitch * height;
@@ -511,7 +637,7 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	p_vkGetBufferMemoryRequirements(g_device, g_staging_buffer,
 					&staging_requirements);
 	uint32_t staging_type = find_memory_type(
-		&memory_properties, staging_requirements.memoryTypeBits,
+		&g_memory_properties, staging_requirements.memoryTypeBits,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 		VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	if (staging_type == UINT32_MAX)
@@ -561,17 +687,19 @@ static int parse_u32(const char *text, uint32_t *value)
 
 int main(int argc, char **argv)
 {
-	if (argc != 6) {
+	if (argc != 7) {
 		fprintf(stderr,
-			"usage: %s WIDTH HEIGHT PITCH DMA_FD0 DMA_FD1\n", argv[0]);
+			"usage: %s WIDTH HEIGHT PITCH DMA_FD0 DMA_FD1 FD_SOCKET\n",
+			argv[0]);
 		return 64;
 	}
-	uint32_t width, height, pitch, fd0, fd1;
+	uint32_t width, height, pitch, fd0, fd1, fd_socket;
 	if (parse_u32(argv[1], &width) < 0 ||
 	    parse_u32(argv[2], &height) < 0 ||
 	    parse_u32(argv[3], &pitch) < 0 ||
 	    parse_u32(argv[4], &fd0) < 0 ||
 	    parse_u32(argv[5], &fd1) < 0 ||
+	    parse_u32(argv[6], &fd_socket) < 0 ||
 	    width == 0 || height == 0 || pitch < width * 4) {
 		fprintf(stderr, "saai-gpu-compositor: invalid arguments\n");
 		return 64;
@@ -617,6 +745,24 @@ int main(int argc, char **argv)
 		case OP_END:
 			result = gpu_end(command.slot);
 			break;
+		case OP_DMABUF_BLIT: {
+			int dma_fd = receive_fd((int)fd_socket);
+			if (dma_fd >= 0 && command.width <= width &&
+			    command.height <= height && command.payload_len == 0) {
+				result = gpu_blit_dmabuf(
+					dma_fd, command.width, command.height,
+					command.stride, pitch, command.arg);
+				close(dma_fd);
+			}
+			if (result < 0) {
+				fprintf(stderr,
+					"saai-gpu-compositor: client dma-buf import/copy rejected\n");
+				if (write_full(STDOUT_FILENO, "F", 1) < 0)
+					return 77;
+				continue;
+			}
+			break;
+		}
 		default:
 			fprintf(stderr, "saai-gpu-compositor: unknown operation %u\n",
 				command.op);

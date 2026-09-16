@@ -6,6 +6,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[[example]]
+name = "dmabuf_probe"
+required-features = ["panther-hardware"]
+
 [features]
 default = []
 # Real DRM/KMS output + raw evdev touch input for the physical Pixel 7
@@ -20,7 +24,7 @@ panther-hardware = ["smithay/backend_drm"]
 
 [dependencies]
 calloop = { version = "0.14", features = ["signals"] }
-nix = { version = "0.31", features = ["fs", "socket"] }
+nix = { version = "0.31", features = ["fs", "socket", "uio"] }
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "desktop"] }
 sha2 = "0.10"
 

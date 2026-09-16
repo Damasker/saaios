@@ -56,7 +56,7 @@ use smithay::{
             with_states, BufferAssignment, CompositorClientState, CompositorHandler,
             CompositorState, SurfaceAttributes,
         },
-        dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        dmabuf::{get_dmabuf, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         output::OutputHandler,
         selection::{
             data_device::{
@@ -90,8 +90,32 @@ impl ClientData for SaaiClientState {}
 /// well before this compositor needs to redraw the scene again (e.g.
 /// on unlock, with no new commit from anyone involved).
 #[cfg(feature = "panther-hardware")]
+enum FrameBacking {
+    Pixels(Vec<u8>),
+    Dmabuf(DmabufFrame),
+}
+
+/// Holding the wl_buffer until this cached frame is replaced is required by
+/// the Wayland lifetime contract: a release event tells the client it may
+/// overwrite/reuse the allocation. The Dmabuf clone keeps the fd valid for
+/// recomposition; this guard emits release when the frame leaves the scene
+/// cache.
+#[cfg(feature = "panther-hardware")]
+struct DmabufFrame {
+    buffer: WlBuffer,
+    dmabuf: Dmabuf,
+}
+
+#[cfg(feature = "panther-hardware")]
+impl Drop for DmabufFrame {
+    fn drop(&mut self) {
+        self.buffer.release();
+    }
+}
+
+#[cfg(feature = "panther-hardware")]
 struct SurfaceFrame {
-    pixels: Vec<u8>,
+    backing: FrameBacking,
     width: u32,
     height: u32,
     stride: u32,
@@ -101,7 +125,23 @@ struct SurfaceFrame {
     /// investigation this field was added for) skip the ~10MB copy this
     /// cache would otherwise take on every single raw commit, not just
     /// ones that actually change the picture.
-    digest: [u8; 32],
+    // DMA-BUF contents may change between commits while retaining the same
+    // fd and geometry, so only copied wl_shm frames can be deduplicated by
+    // content hash.
+    digest: Option<[u8; 32]>,
+}
+
+#[cfg(feature = "panther-hardware")]
+fn blit_surface_frame(
+    hardware: &mut hardware::HardwareOutput,
+    frame: &SurfaceFrame,
+) -> Result<(), String> {
+    match &frame.backing {
+        FrameBacking::Pixels(pixels) => {
+            hardware.blit(pixels, frame.width, frame.height, frame.stride)
+        }
+        FrameBacking::Dmabuf(frame) => hardware.blit_dmabuf(&frame.dmabuf),
+    }
 }
 
 /// Whether a commit with `new_digest` actually changes what's on screen
@@ -480,8 +520,7 @@ impl State {
                 let s = ls.wl_surface().clone();
                 self.surface_frames.get(&s).map(|f| (s, f))
             }) {
-                if let Err(error) = hw.blit(&frame.pixels, frame.width, frame.height, frame.stride)
-                {
+                if let Err(error) = blit_surface_frame(hw, frame) {
                     eprintln!("saai-displayd: hardware lock blit failed: {error}");
                     std::process::exit(72);
                 }
@@ -492,8 +531,7 @@ impl State {
                 let frame = self.surface_frames.get(&s)?;
                 Some((s, frame))
             }) {
-                if let Err(error) = hw.blit(&frame.pixels, frame.width, frame.height, frame.stride)
-                {
+                if let Err(error) = blit_surface_frame(hw, frame) {
                     eprintln!("saai-displayd: hardware toplevel blit failed: {error}");
                     std::process::exit(72);
                 }
@@ -502,9 +540,7 @@ impl State {
             for layer in &self.layer_surfaces {
                 let s = layer.wl_surface().clone();
                 if let Some(frame) = self.surface_frames.get(&s) {
-                    if let Err(error) =
-                        hw.blit(&frame.pixels, frame.width, frame.height, frame.stride)
-                    {
+                    if let Err(error) = blit_surface_frame(hw, frame) {
                         eprintln!("saai-displayd: hardware layer blit failed: {error}");
                         std::process::exit(72);
                     }
@@ -582,6 +618,62 @@ impl CompositorHandler for State {
             }
         }
 
+        if let Ok(dmabuf) = get_dmabuf(&buffer).cloned() {
+            // Mapping, not every later commit, changes focus. Keep this
+            // identical to the wl_shm path below.
+            if self.toplevels.contains_key(surface) && !self.focus_history.contains(surface) {
+                self.focus_history.push(surface.clone());
+                self.activate_toplevel(Some(surface.clone()));
+            }
+
+            #[cfg(feature = "panther-hardware")]
+            {
+                let size = dmabuf.size();
+                let stride = dmabuf
+                    .strides()
+                    .next()
+                    .expect("validated dma-buf always has one stride");
+                let format = dmabuf.format();
+                println!(
+                    "saai-displayd: commit on surface {:?}, linux-dmabuf {}x{} stride={} format={:?} modifier={:?}",
+                    surface.id(),
+                    size.w,
+                    size.h,
+                    stride,
+                    format.code,
+                    format.modifier
+                );
+                self.surface_frames.insert(
+                    surface.clone(),
+                    SurfaceFrame {
+                        backing: FrameBacking::Dmabuf(DmabufFrame { buffer, dmabuf }),
+                        width: size.w as u32,
+                        height: size.h as u32,
+                        stride,
+                        digest: None,
+                    },
+                );
+                let affects_scene = if self.locked {
+                    self.lock_surface.as_ref().map(|ls| ls.wl_surface()) == Some(surface)
+                } else {
+                    self.focused_surface.as_ref() == Some(surface)
+                        || self
+                            .layer_surfaces
+                            .iter()
+                            .any(|ls| ls.wl_surface() == surface)
+                };
+                if affects_scene {
+                    self.request_recomposite();
+                }
+            }
+            #[cfg(not(feature = "panther-hardware"))]
+            {
+                drop(dmabuf);
+                buffer.release();
+            }
+            return;
+        }
+
         // Real, reproducible under rapid input (ADR-049): Wayland can
         // legitimately deliver more than one raw commit in a row for the
         // same surface with byte-identical content --
@@ -611,9 +703,12 @@ impl CompositorHandler for State {
         #[cfg(feature = "panther-hardware")]
         let previous_frame = self.surface_frames.remove(surface);
         #[cfg(feature = "panther-hardware")]
-        let previous_digest = previous_frame.as_ref().map(|frame| frame.digest);
+        let previous_digest = previous_frame.as_ref().and_then(|frame| frame.digest);
         #[cfg(feature = "panther-hardware")]
-        let mut reused_pixels = previous_frame.map(|frame| frame.pixels).unwrap_or_default();
+        let mut reused_pixels = match previous_frame.map(|frame| frame.backing) {
+            Some(FrameBacking::Pixels(pixels)) => pixels,
+            _ => Vec::new(),
+        };
 
         let result = with_buffer_contents(&buffer, move |ptr, len, data| {
             // `with_buffer_contents` hands back the *pool's* pointer and
@@ -718,11 +813,11 @@ impl CompositorHandler for State {
                     self.surface_frames.insert(
                         surface.clone(),
                         SurfaceFrame {
-                            pixels: _pixels,
+                            backing: FrameBacking::Pixels(_pixels),
                             width: _width,
                             height: _height,
                             stride: _stride,
-                            digest: digest_bytes,
+                            digest: Some(digest_bytes),
                         },
                     );
                     // While locked, only the lock surface affects the

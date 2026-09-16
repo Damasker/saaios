@@ -29,13 +29,18 @@
 //! leaves it no VT to manage.
 
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::io::{IoSlice, Read, Write};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
+use std::os::unix::net::UnixStream;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
+use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
 use smithay::backend::allocator::dumb::DumbAllocator;
-use smithay::backend::allocator::{Allocator, Fourcc};
+use smithay::backend::allocator::{
+    dmabuf::{Dmabuf, DmabufMappingMode, DmabufSyncFlags},
+    Allocator, Buffer as AllocatorBuffer, Fourcc,
+};
 use smithay::backend::drm::dumb::{framebuffer_from_dumb_buffer, DumbFramebuffer};
 use smithay::backend::drm::{
     DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmSurface, PlaneConfig, PlaneState,
@@ -53,6 +58,7 @@ const GPU_PROTOCOL_MAGIC: u32 = 0x5347_5055;
 const GPU_OP_BEGIN: u32 = 1;
 const GPU_OP_BLIT: u32 = 2;
 const GPU_OP_END: u32 = 3;
+const GPU_OP_DMABUF_BLIT: u32 = 4;
 
 /// Bionic Vulkan child used as an ABI firewall around Google's Mali UMD.
 /// The DRM dma-buf descriptors are inherited once at spawn; every frame
@@ -62,11 +68,12 @@ struct GpuCompositor {
     child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
+    fd_socket: UnixStream,
     _prime_fds: [OwnedFd; 2],
 }
 
 impl GpuCompositor {
-    fn set_cloexec(fd: &OwnedFd, enabled: bool) -> Result<(), String> {
+    fn set_cloexec(fd: BorrowedFd<'_>, enabled: bool) -> Result<(), String> {
         let raw_flags = fcntl(fd, FcntlArg::F_GETFD).map_err(|e| format!("F_GETFD failed: {e}"))?;
         let mut flags = FdFlag::from_bits_truncate(raw_flags);
         flags.set(FdFlag::FD_CLOEXEC, enabled);
@@ -81,8 +88,11 @@ impl GpuCompositor {
         stride: u32,
     ) -> Result<Self, String> {
         for fd in &prime_fds {
-            Self::set_cloexec(fd, false)?;
+            Self::set_cloexec(fd.as_fd(), false)?;
         }
+        let (fd_socket, child_fd_socket) =
+            UnixStream::pair().map_err(|e| format!("GPU fd socket pair failed: {e}"))?;
+        Self::set_cloexec(child_fd_socket.as_fd(), false)?;
         let spawn_result = Command::new(GPU_COMPOSITOR_PATH)
             .args([
                 width.to_string(),
@@ -90,6 +100,7 @@ impl GpuCompositor {
                 stride.to_string(),
                 prime_fds[0].as_raw_fd().to_string(),
                 prime_fds[1].as_raw_fd().to_string(),
+                child_fd_socket.as_raw_fd().to_string(),
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -97,8 +108,10 @@ impl GpuCompositor {
         // The child already inherited these descriptors. Restore the
         // parent's normal close-on-exec policy before any later spawn.
         for fd in &prime_fds {
-            let _ = Self::set_cloexec(fd, true);
+            let _ = Self::set_cloexec(fd.as_fd(), true);
         }
+        let _ = Self::set_cloexec(child_fd_socket.as_fd(), true);
+        drop(child_fd_socket);
         let mut child =
             spawn_result.map_err(|e| format!("failed to start {GPU_COMPOSITOR_PATH}: {e}"))?;
         let stdin = child
@@ -124,11 +137,12 @@ impl GpuCompositor {
             child,
             stdin,
             stdout,
+            fd_socket,
             _prime_fds: prime_fds,
         })
     }
 
-    fn command(&mut self, words: [u32; 8], payload: Option<&[u8]>) -> Result<(), String> {
+    fn command_response(&mut self, words: [u32; 8], payload: Option<&[u8]>) -> Result<u8, String> {
         let mut header = [0u8; 32];
         for (chunk, word) in header.chunks_exact_mut(4).zip(words) {
             chunk.copy_from_slice(&word.to_le_bytes());
@@ -148,9 +162,33 @@ impl GpuCompositor {
         self.stdout
             .read_exact(&mut ack)
             .map_err(|e| format!("GPU acknowledgement failed: {e}"))?;
-        if ack[0] != b'K' {
-            return Err(format!("GPU helper sent invalid acknowledgement {ack:?}"));
+        Ok(ack[0])
+    }
+
+    fn command(&mut self, words: [u32; 8], payload: Option<&[u8]>) -> Result<(), String> {
+        let response = self.command_response(words, payload)?;
+        if response == b'K' {
+            Ok(())
+        } else {
+            Err(format!(
+                "GPU helper sent invalid acknowledgement {response:#04x}"
+            ))
         }
+    }
+
+    fn send_fd(&self, fd: BorrowedFd<'_>) -> Result<(), String> {
+        let byte = [b'D'];
+        let iov = [IoSlice::new(&byte)];
+        let raw_fds = [fd.as_raw_fd()];
+        let control = [ControlMessage::ScmRights(&raw_fds)];
+        sendmsg::<()>(
+            self.fd_socket.as_raw_fd(),
+            &iov,
+            &control,
+            MsgFlags::empty(),
+            None,
+        )
+        .map_err(|e| format!("GPU dma-buf fd transfer failed: {e}"))?;
         Ok(())
     }
 
@@ -191,6 +229,40 @@ impl GpuCompositor {
             ],
             Some(bytes),
         )
+    }
+
+    /// Returns `Ok(false)` when the helper cleanly rejects this particular
+    /// import. The helper remains usable and the caller may fall back to a
+    /// synchronized CPU mapping plus the ordinary staging upload.
+    fn blit_dmabuf(
+        &mut self,
+        fd: BorrowedFd<'_>,
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: u32,
+    ) -> Result<bool, String> {
+        self.send_fd(fd)?;
+        let response = self.command_response(
+            [
+                GPU_PROTOCOL_MAGIC,
+                GPU_OP_DMABUF_BLIT,
+                0,
+                width,
+                height,
+                stride,
+                0,
+                format,
+            ],
+            None,
+        )?;
+        match response {
+            b'K' => Ok(true),
+            b'F' => Ok(false),
+            other => Err(format!(
+                "GPU helper sent invalid dma-buf acknowledgement {other:#04x}"
+            )),
+        }
     }
 
     fn end(&mut self, slot: usize) -> Result<(), String> {
@@ -459,6 +531,70 @@ impl HardwareOutput {
             "saai-displayd: blit wrote {copy_w}x{copy_h} px into fb (dst stride={stride}, src stride={src_stride})"
         );
         Ok(())
+    }
+
+    /// Composites one linear single-plane client dma-buf. The fast path
+    /// transfers only its fd and geometry to the Vulkan helper; pixels stay
+    /// in shared GPU/DRM memory. If the UMD rejects an otherwise valid
+    /// dma-buf, synchronize and map it once, then reuse the established
+    /// staging path without taking down the compositor.
+    pub fn blit_dmabuf(&mut self, dmabuf: &Dmabuf) -> Result<(), String> {
+        let size = dmabuf.size();
+        let width = size.w as u32;
+        let height = size.h as u32;
+        let stride = dmabuf
+            .strides()
+            .next()
+            .ok_or_else(|| "dma-buf has no stride".to_string())?;
+        let fd = dmabuf
+            .handles()
+            .next()
+            .ok_or_else(|| "dma-buf has no plane fd".to_string())?;
+        let format = dmabuf.format().code as u32;
+
+        if let Some(gpu) = self.gpu.as_mut() {
+            match gpu.blit_dmabuf(fd, width, height, stride, format)? {
+                true => {
+                    eprintln!(
+                        "saai-displayd: direct GPU dma-buf blit submitted {width}x{height} px (stride={stride})"
+                    );
+                    return Ok(());
+                }
+                false => eprintln!(
+                    "saai-displayd: Vulkan rejected client dma-buf; using synchronized staging fallback"
+                ),
+            }
+        }
+
+        dmabuf
+            .sync_plane(0, DmabufSyncFlags::START | DmabufSyncFlags::READ)
+            .map_err(|e| format!("dma-buf read sync start failed: {e}"))?;
+        let mapping = match dmabuf.map_plane(0, DmabufMappingMode::READ) {
+            Ok(mapping) => mapping,
+            Err(error) => {
+                let _ = dmabuf.sync_plane(0, DmabufSyncFlags::END | DmabufSyncFlags::READ);
+                return Err(format!("dma-buf CPU mapping failed: {error}"));
+            }
+        };
+        let required = (stride as usize)
+            .checked_mul(height as usize)
+            .ok_or_else(|| "dma-buf mapping size overflow".to_string())?;
+        if mapping.length() < required {
+            let _ = dmabuf.sync_plane(0, DmabufSyncFlags::END | DmabufSyncFlags::READ);
+            return Err(format!(
+                "dma-buf mapping is short: {} < {required}",
+                mapping.length()
+            ));
+        }
+        // SAFETY: Smithay owns `mapping` for this scope, the validated
+        // single plane covers `required` bytes, and START/END READ brackets
+        // all CPU access to the shared allocation.
+        let bytes = unsafe { std::slice::from_raw_parts(mapping.ptr().cast::<u8>(), required) };
+        let blit_result = self.blit(bytes, width, height, stride);
+        let sync_result = dmabuf
+            .sync_plane(0, DmabufSyncFlags::END | DmabufSyncFlags::READ)
+            .map_err(|e| format!("dma-buf read sync end failed: {e}"));
+        blit_result.and(sync_result)
     }
 
     /// Submits the write buffer to the panel and toggles which buffer CPU
