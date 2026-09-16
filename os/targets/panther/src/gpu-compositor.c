@@ -95,6 +95,7 @@ static VkQueue g_queue;
 static uint32_t g_queue_family;
 static VkCommandPool g_command_pool;
 static VkCommandBuffer g_command;
+static VkFence g_fence;
 static VkPhysicalDeviceMemoryProperties g_memory_properties;
 static VkBuffer g_staging_buffer;
 static VkDeviceMemory g_staging_memory;
@@ -126,6 +127,10 @@ DECLARE(vkCmdCopyBuffer);
 DECLARE(vkEndCommandBuffer);
 DECLARE(vkQueueSubmit);
 DECLARE(vkQueueWaitIdle);
+DECLARE(vkCreateFence);
+DECLARE(vkDestroyFence);
+DECLARE(vkWaitForFences);
+DECLARE(vkResetFences);
 DECLARE(vkGetMemoryFdPropertiesKHR);
 
 #define LOAD(fn) \
@@ -241,9 +246,17 @@ static int submit_commands(void)
 		.commandBufferCount = 1,
 		.pCommandBuffers = &g_command,
 	};
-	VkResult result = p_vkQueueSubmit(g_queue, 1, &submit, VK_NULL_HANDLE);
+	/* Explicit per-submission fence instead of vkQueueWaitIdle: this
+	 * only depends on THIS submission's completion, not on draining the
+	 * entire queue (which would also serialize against any unrelated
+	 * future work sharing g_queue). A bounded wait means a genuinely
+	 * wedged GPU fails this blit loudly instead of hanging the
+	 * compositor forever. */
+	VkResult result = p_vkQueueSubmit(g_queue, 1, &submit, g_fence);
 	if (result == VK_SUCCESS)
-		result = p_vkQueueWaitIdle(g_queue);
+		result = p_vkWaitForFences(g_device, 1, &g_fence, VK_TRUE,
+					   2000000000ULL);
+	p_vkResetFences(g_device, 1, &g_fence);
 	return result == VK_SUCCESS ? 0 : -1;
 }
 
@@ -567,6 +580,10 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	LOAD(vkEndCommandBuffer);
 	LOAD(vkQueueSubmit);
 	LOAD(vkQueueWaitIdle);
+	LOAD(vkCreateFence);
+	LOAD(vkDestroyFence);
+	LOAD(vkWaitForFences);
+	LOAD(vkResetFences);
 	LOAD(vkGetMemoryFdPropertiesKHR);
 
 	uint32_t physical_count = 1;
@@ -671,6 +688,11 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	};
 	if (p_vkAllocateCommandBuffers(g_device, &command_info,
 				       &g_command) != VK_SUCCESS)
+		return -1;
+	VkFenceCreateInfo fence_info = {
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+	};
+	if (p_vkCreateFence(g_device, &fence_info, NULL, &g_fence) != VK_SUCCESS)
 		return -1;
 	return 0;
 }
