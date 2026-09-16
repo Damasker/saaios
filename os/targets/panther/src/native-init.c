@@ -51,6 +51,10 @@
  * same "independent of the fixed-size image" reasoning as APPD_PATH's
  * own comment already gives, just applied here two years late. */
 #define RUNTIME_PATH "/data/saaios/system/saaios-runtime"
+#define GPU_MODULE_DIR "/data/saaios/system/gpu"
+#define GPU_PIXEL_MODULE GPU_MODULE_DIR "/mali_pixel.ko"
+#define GPU_KBASE_MODULE GPU_MODULE_DIR "/mali_kbase.ko"
+#define GPU_EXPECTED_DDK "r54p3-00eac0"
 
 static const char *const restart_modules[] = {
     "logbuffer.ko",
@@ -203,6 +207,20 @@ static const char *const audio_modules[] = {
     "cs40l26-core.ko",
     "cs40l26-i2c.ko",
     "snd-soc-cs40l26.ko",
+};
+
+/* CP2A.260705.006's signed r54p3 kbase depends on these modules.  They
+ * already live in vendor_kernel_boot's /lib/modules, unlike mali_kbase and
+ * mali_pixel themselves, which ship in vendor_dlkm and are staged on the
+ * persistent SaaiOS data volume.  Keep this explicit order: it is the same
+ * dependency order verified on the physical Pixel 7 in ADR-024. */
+static const char *const gpu_dependency_modules[] = {
+    "max77779_pmic.ko",
+    "max77779-charger.ko",
+    "max77779-fg.ko",
+    "slc_pt.ko",
+    "gpu_cooling.ko",
+    "google_bcl.ko",
 };
 
 static bool metadata_ready = false;
@@ -898,7 +916,6 @@ static int run_audio_initialization(void) {
 }
 
 static void setup_audio(void) {
-    prepare_persistent_firmware();
     for (size_t i = 0; i < ARRAY_SIZE(audio_modules); ++i) {
         if (strcmp(audio_modules[i], "aoc_core.ko") == 0) {
             (void)load_module_with_options(audio_modules[i],
@@ -916,6 +933,58 @@ static void setup_audio(void) {
         return;
     }
     log_message("native audio route ready");
+}
+
+static int file_starts_with(const char *path, const char *prefix) {
+    char value[128] = {0};
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return 0;
+    }
+    ssize_t count = read(fd, value, sizeof(value) - 1);
+    close(fd);
+    if (count <= 0) {
+        return 0;
+    }
+    return strncmp(value, prefix, strlen(prefix)) == 0;
+}
+
+/* ADR-024: the userspace driver and CSF firmware in CP2A.260705.006 are
+ * r54p3.  A source-built r51p0 kbase probes and even creates VkDevice, but
+ * silently emits no useful GPU job and never signals a fence.  The matching
+ * factory r54p3 kbase completes both vkCmdFillBuffer and a real offscreen
+ * render pass.  mali_pixel remains the small source-built variant because
+ * the factory copy makes SLC's missing pt_client fatal in this minimal OS;
+ * its platform ABI was verified with the r54p3 kbase on hardware. */
+static void setup_gpu(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(gpu_dependency_modules); ++i) {
+        if (load_module(gpu_dependency_modules[i]) < 0) {
+            log_message("GPU dependency chain incomplete at %s",
+                        gpu_dependency_modules[i]);
+            return;
+        }
+    }
+    if (load_module(GPU_PIXEL_MODULE) < 0) {
+        log_message("GPU platform module unavailable");
+        return;
+    }
+    if (load_module(GPU_KBASE_MODULE) < 0) {
+        log_message("GPU kernel module unavailable");
+        return;
+    }
+    if (!file_starts_with("/sys/module/mali_kbase/version",
+                          GPU_EXPECTED_DDK)) {
+        log_message("GPU DDK mismatch: expected %s", GPU_EXPECTED_DDK);
+        return;
+    }
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        if (create_misc_node("mali0", "/dev/mali0") == 0) {
+            log_message("GPU ready: Mali-G710 kbase %s", GPU_EXPECTED_DDK);
+            return;
+        }
+        usleep(100000);
+    }
+    log_message("GPU module loaded but /dev/mali0 did not appear");
 }
 
 static void save_dmesg(const char *destination) {
@@ -1703,6 +1772,10 @@ int main(void) {
     setup_metadata_log();
     restore_saved_time();
     setup_data_storage();
+    /* Audio, Bluetooth and GPU firmware all come from the persistent data
+     * volume.  Link them once immediately after /data is mounted so later
+     * subsystem setup cannot race the firmware loader. */
+    prepare_persistent_firmware();
     pid_t entityd_pid = start_saai_entityd();
     pid_t appd_pid = start_saai_appd();
     pid_t file_recv_pid = start_file_recv();
@@ -1723,6 +1796,7 @@ int main(void) {
     for (size_t i = 0; i < ARRAY_SIZE(display_modules); ++i) {
         (void)load_module(display_modules[i]);
     }
+    setup_gpu();
     for (size_t i = 0; i < ARRAY_SIZE(touch_modules); ++i) {
         (void)load_module(touch_modules[i]);
     }
