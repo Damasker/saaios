@@ -103,6 +103,23 @@ static void *g_staging_mapping;
 static VkDeviceSize g_staging_size;
 static struct imported_buffer g_scanout[2];
 static int g_active_slot = -1;
+/* ADR-024 continued: one-submit-per-frame batching. Every OP_DMABUF_BLIT
+ * between BEGIN and END records into BEGIN's still-open command buffer
+ * (own dedicated imported VkBuffer/memory per call -- safe to keep
+ * recording without waiting) instead of submitting and waiting
+ * individually; the actual VkBuffer/memory for each import can only be
+ * destroyed once the GPU has genuinely finished reading it, so END defers
+ * that until after its own (now frame-wide) submit_commands() returns. */
+#define MAX_PENDING_IMPORTS 8
+static struct imported_buffer g_pending_imports[MAX_PENDING_IMPORTS];
+static int g_pending_import_count;
+/* Set after a BLIT records a copy from the single shared g_staging_buffer
+ * into the still-open batch. A second BLIT this frame would overwrite
+ * g_staging_buffer before the GPU has actually read the first one's
+ * bytes (nothing has submitted it yet under batching) -- gpu_blit()
+ * checks this to flush (submit + wait once, exactly like every op used
+ * to before this batching existed) before recording a second one. */
+static int g_batch_pending_staging_blit;
 
 #define DECLARE(fn) static PFN_##fn p_##fn
 DECLARE(vkEnumeratePhysicalDevices);
@@ -271,6 +288,11 @@ static VkBufferMemoryBarrier buffer_barrier(VkBuffer buffer)
 	return barrier;
 }
 
+/* Defined further down (needs `import_buffer`'s error-cleanup call
+ * site above it); forward-declared here so gpu_blit()'s mid-frame
+ * flush and gpu_end()'s frame-end cleanup can call it. */
+static void destroy_imported_buffer(struct imported_buffer *buffer);
+
 static int gpu_begin(uint32_t slot, uint32_t color)
 {
 	if (slot >= 2 || g_active_slot >= 0 || begin_commands() < 0)
@@ -288,8 +310,11 @@ static int gpu_begin(uint32_t slot, uint32_t color)
 	uint32_t xrgb = color & 0x00ffffffu;
 	p_vkCmdFillBuffer(g_command, g_scanout[slot].buffer,
 			  0, VK_WHOLE_SIZE, xrgb);
-	if (submit_commands() < 0)
-		return -1;
+	/* ADR-024 continued: no submit here -- every BLIT/DMABUF_BLIT this
+	 * frame records into this same command buffer; gpu_end() submits
+	 * once and waits once instead of once per operation (was 3+ full
+	 * GPU submit+wait IPC round trips per frame before). */
+	g_batch_pending_staging_blit = 0;
 	g_active_slot = (int)slot;
 	return 0;
 }
@@ -298,8 +323,23 @@ static int gpu_blit(uint32_t width, uint32_t height, uint32_t stride,
 		    uint32_t output_pitch)
 {
 	if (g_active_slot < 0 || width == 0 || height == 0 ||
-	    stride < width * 4 || begin_commands() < 0)
+	    stride < width * 4)
 		return -1;
+	if (g_batch_pending_staging_blit) {
+		/* A second CPU-staged blit this frame -- flush what's
+		 * recorded so far (submit + wait once) before overwriting
+		 * g_staging_buffer, or the first blit's still-unsubmitted
+		 * copy command would end up reading the second blit's
+		 * bytes once the GPU actually executes it. */
+		if (submit_commands() < 0)
+			return -1;
+		for (int i = 0; i < g_pending_import_count; ++i)
+			destroy_imported_buffer(&g_pending_imports[i]);
+		g_pending_import_count = 0;
+		g_batch_pending_staging_blit = 0;
+		if (begin_commands() < 0)
+			return -1;
+	}
 	VkBufferMemoryBarrier staging_ready = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 		.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
@@ -335,12 +375,13 @@ static int gpu_blit(uint32_t width, uint32_t height, uint32_t stride,
 			g_scanout[g_active_slot].buffer, height, rows);
 		free(rows);
 	}
-	return submit_commands();
+	g_batch_pending_staging_blit = 1;
+	return 0;
 }
 
 static int gpu_end(uint32_t slot)
 {
-	if (slot >= 2 || g_active_slot != (int)slot || begin_commands() < 0)
+	if (slot >= 2 || g_active_slot != (int)slot)
 		return -1;
 	VkBufferMemoryBarrier release = buffer_barrier(g_scanout[slot].buffer);
 	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -351,7 +392,17 @@ static int gpu_end(uint32_t slot)
 		VK_PIPELINE_STAGE_TRANSFER_BIT,
 		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
 		0, NULL, 1, &release, 0, NULL);
-	if (submit_commands() < 0)
+	/* ADR-024 continued: this is now the ONE submit+wait for everything
+	 * BEGIN/BLIT/DMABUF_BLIT recorded this frame (or, if gpu_blit() had
+	 * to flush mid-frame, for whatever it left open afterward) -- only
+	 * once the GPU has genuinely finished all of it is it safe to
+	 * destroy this frame's imported client dma-buf buffers. */
+	int result = submit_commands();
+	for (int i = 0; i < g_pending_import_count; ++i)
+		destroy_imported_buffer(&g_pending_imports[i]);
+	g_pending_import_count = 0;
+	g_batch_pending_staging_blit = 0;
+	if (result < 0)
 		return -1;
 	g_active_slot = -1;
 	return 0;
@@ -482,7 +533,7 @@ static int gpu_blit_dmabuf(int dma_fd, uint32_t width, uint32_t height,
 		destroy_imported_buffer(&source);
 		return -1;
 	}
-	if (begin_commands() < 0) {
+	if (g_pending_import_count >= MAX_PENDING_IMPORTS) {
 		free(rows);
 		destroy_imported_buffer(&source);
 		return -1;
@@ -522,9 +573,13 @@ static int gpu_blit_dmabuf(int dma_fd, uint32_t width, uint32_t height,
 		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
 		0, NULL, 1, &release, 0, NULL);
 
-	int result = submit_commands();
-	destroy_imported_buffer(&source);
-	return result;
+	/* ADR-024 continued: recorded into the batch already opened by
+	 * gpu_begin() -- no submit here. `source` must stay alive until
+	 * gpu_end()'s frame-wide submit_commands() actually completes, so
+	 * its destruction is deferred there instead of happening right
+	 * after this call returns. */
+	g_pending_imports[g_pending_import_count++] = source;
+	return 0;
 }
 
 static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
