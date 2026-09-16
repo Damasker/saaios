@@ -106,6 +106,38 @@ GPU-copy. Следующий этап оптимизации -- `linux-dmabuf` �
 клиентов и явная fence-синхронизация; он не блокирует полноэкранный
 аппаратный вывод, подтверждённый здесь.
 
+## GPU-native linux-dmabuf и явный fence sync (2026-09-16, продолжение)
+
+Оба пункта из roadmap выше закрыты:
+
+* Wayland-клиенты, отправляющие `linux-dmabuf` буфер, больше не идут через
+  `wl_shm` host-visible staging copy: `saai-displayd` передаёт fd клиентского
+  dma-buf в `saai-gpu-compositor` через отдельный SCM_RIGHTS Unix-сокет
+  (заведён рядом с двумя scanout PRIME fd при спавне), новая команда
+  `GPU_OP_DMABUF_BLIT` импортирует его как временный `VkBuffer`
+  (`VK_QUEUE_FAMILY_FOREIGN_EXT` acquire/release барьеры, `VkBufferCopy`
+  по строкам, если stride клиента не совпадает с scanout pitch,
+  освобождается сразу после blit) и копирует прямо в scanout buffer на GPU.
+  Физически проверено: `saai-displayd.log` показывает `direct GPU dma-buf
+  blit submitted` для тестового клиента (`dmabuf_probe.rs`) -- не staging
+  fallback.
+* `submit_commands()` в `gpu-compositor.c` вместо `vkQueueWaitIdle`
+  (блокирует всю очередь целиком, неявно синхронизируясь с любой другой
+  будущей работой на том же `g_queue`) теперь создаёт один `VkFence`
+  (переиспользуется через `vkResetFences`) и ждёт именно свой submit через
+  `vkWaitForFences` с ограничением 2с -- зависшая GPU-работа теперь явно
+  проваливает blit, а не вешает компоситор навсегда. Сознательно НЕ сделан
+  полный переход на асинхронный pipeline с отложенным `wl_buffer.release()`
+  -- это требует отдельного канала уведомлений displayd<->compositor и
+  напрямую касается безопасности буферов; риск не оправдан в одном
+  изменении с заменой примитива ожидания.
+
+Оба изменения проверены на устройстве после чистой перезагрузки:
+`dmabuf_probe` по-прежнему даёт `direct GPU dma-buf blit submitted`,
+обычные `wl_shm` blit продолжают работать при реальном взаимодействии
+(touch, переключение приложений), `dmesg` чист от Mali fault/timeout/
+reset/error за всю сессию.
+
 Старые разделы ниже сохранены как журнал расследования; их гипотезы о
 сломанной обработке fence в UMD **заменены** установленной причиной
 несовместимости DDK.
