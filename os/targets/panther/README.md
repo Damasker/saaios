@@ -17,6 +17,8 @@ fallback.
 - `tools/` — small hardware diagnostics used during bring-up.
 - `patches/` — source patches required for third-party components.
 - `build-native-c-image.sh` — builds static programs and the init_boot image.
+- `build-saai-gpu-compositor.sh` — builds the bionic Vulkan helper used by
+  `saai-displayd` without loading Android's libc into the musl Wayland server.
 - `build-saai-shell.sh` — builds the persistent system shell for that image.
 - `build-saai-appd.sh` — builds the supervised application service for
   `/data/saaios/system`.
@@ -55,6 +57,23 @@ driver libraries. It submits an offscreen render pass, copies the image back,
 and exits successfully only when both sampled pixels are red; creating a
 Vulkan device or returning success from `vkQueueSubmit()` alone is not treated
 as evidence of GPU execution.
+
+Build and install the GPU compositor helper on the persistent data volume:
+
+```sh
+export ANDROID_NDK_ROOT=/path/to/android-ndk
+./os/targets/panther/build-saai-gpu-compositor.sh
+install -m 0755 \
+  target/aarch64-unknown-linux-musl/pixel7/saai-gpu-compositor \
+  /data/saaios/system/saai-gpu-compositor
+```
+
+At startup `saai-displayd` exports its two DRM scanout buffers as dma-buf
+descriptors and starts this helper. The helper imports both buffers into Mali
+Vulkan, performs clear/blit operations on the GPU, releases ownership back to
+KMS, and only then allows the page flip. If the helper is absent or cannot
+initialize, the existing CPU dumb-buffer path remains available as a boot-safe
+fallback.
 
 The native image replaces Android's init and removes the remaining stock
 `/system` ramdisk tools (`snapuserd`, property tools, and toolbox) while
