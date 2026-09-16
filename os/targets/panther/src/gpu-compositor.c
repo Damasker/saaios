@@ -2,7 +2,8 @@
  *
  * saai-displayd remains a static-musl Wayland/DRM process.  Google's Mali
  * UMD is bionic-only, so this small bionic child owns Vulkan and imports the
- * two DRM dumb-buffer dma-buf fds inherited from its parent.  A compact
+ * two DRM dumb-buffer dma-buf fds inherited from its parent as linear Vulkan
+ * buffers.  A compact
  * stdin/stdout protocol mirrors HardwareOutput::fill/blit/present:
  *
  *   command[8] = magic, op, slot, width, height, stride, payload_len, arg
@@ -80,8 +81,8 @@ struct hwvulkan_device_t {
 	PFN_vkGetInstanceProcAddr GetInstanceProcAddr;
 };
 
-struct imported_image {
-	VkImage image;
+struct imported_buffer {
+	VkBuffer buffer;
 	VkDeviceMemory memory;
 };
 
@@ -96,7 +97,7 @@ static VkBuffer g_staging_buffer;
 static VkDeviceMemory g_staging_memory;
 static void *g_staging_mapping;
 static VkDeviceSize g_staging_size;
-static struct imported_image g_images[2];
+static struct imported_buffer g_scanout[2];
 static int g_active_slot = -1;
 
 #define DECLARE(fn) static PFN_##fn p_##fn
@@ -105,10 +106,7 @@ DECLARE(vkGetPhysicalDeviceQueueFamilyProperties);
 DECLARE(vkGetPhysicalDeviceMemoryProperties);
 DECLARE(vkCreateDevice);
 DECLARE(vkGetDeviceQueue);
-DECLARE(vkCreateImage);
-DECLARE(vkGetImageMemoryRequirements);
 DECLARE(vkAllocateMemory);
-DECLARE(vkBindImageMemory);
 DECLARE(vkCreateBuffer);
 DECLARE(vkGetBufferMemoryRequirements);
 DECLARE(vkBindBufferMemory);
@@ -118,8 +116,8 @@ DECLARE(vkAllocateCommandBuffers);
 DECLARE(vkResetCommandPool);
 DECLARE(vkBeginCommandBuffer);
 DECLARE(vkCmdPipelineBarrier);
-DECLARE(vkCmdClearColorImage);
-DECLARE(vkCmdCopyBufferToImage);
+DECLARE(vkCmdFillBuffer);
+DECLARE(vkCmdCopyBuffer);
 DECLARE(vkEndCommandBuffer);
 DECLARE(vkQueueSubmit);
 DECLARE(vkQueueWaitIdle);
@@ -207,16 +205,13 @@ static int submit_commands(void)
 	return result == VK_SUCCESS ? 0 : -1;
 }
 
-static VkImageMemoryBarrier image_barrier(VkImage image)
+static VkBufferMemoryBarrier buffer_barrier(VkBuffer buffer)
 {
-	VkImageMemoryBarrier barrier = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.image = image,
-		.subresourceRange = {
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.levelCount = 1,
-			.layerCount = 1,
-		},
+	VkBufferMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.buffer = buffer,
+		.offset = 0,
+		.size = VK_WHOLE_SIZE,
 	};
 	return barrier;
 }
@@ -225,37 +220,27 @@ static int gpu_begin(uint32_t slot, uint32_t color)
 {
 	if (slot >= 2 || g_active_slot >= 0 || begin_commands() < 0)
 		return -1;
-	VkImageMemoryBarrier acquire = image_barrier(g_images[slot].image);
+	VkBufferMemoryBarrier acquire = buffer_barrier(g_scanout[slot].buffer);
 	acquire.srcAccessMask = 0;
 	acquire.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	acquire.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	acquire.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
 	acquire.dstQueueFamilyIndex = g_queue_family;
 	p_vkCmdPipelineBarrier(g_command,
 		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 		VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-		0, NULL, 0, NULL, 1, &acquire);
-	VkClearColorValue clear = { .float32 = {
-		((color >> 16) & 0xffu) / 255.0f,
-		((color >> 8) & 0xffu) / 255.0f,
-		(color & 0xffu) / 255.0f,
-		1.0f,
-	} };
-	VkImageSubresourceRange range = {
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.levelCount = 1,
-		.layerCount = 1,
-	};
-	p_vkCmdClearColorImage(g_command, g_images[slot].image,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+		0, NULL, 1, &acquire, 0, NULL);
+	/* XRGB8888 on little-endian is byte order B,G,R,X. */
+	uint32_t xrgb = color & 0x00ffffffu;
+	p_vkCmdFillBuffer(g_command, g_scanout[slot].buffer,
+			  0, VK_WHOLE_SIZE, xrgb);
 	if (submit_commands() < 0)
 		return -1;
 	g_active_slot = (int)slot;
 	return 0;
 }
 
-static int gpu_blit(uint32_t width, uint32_t height, uint32_t stride)
+static int gpu_blit(uint32_t width, uint32_t height, uint32_t stride,
+		    uint32_t output_pitch)
 {
 	if (g_active_slot < 0 || width == 0 || height == 0 ||
 	    stride < width * 4 || begin_commands() < 0)
@@ -274,19 +259,27 @@ static int gpu_blit(uint32_t width, uint32_t height, uint32_t stride)
 		VK_PIPELINE_STAGE_HOST_BIT,
 		VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
 		0, NULL, 1, &staging_ready, 0, NULL);
-	VkBufferImageCopy copy = {
-		.bufferOffset = 0,
-		.bufferRowLength = stride / 4,
-		.bufferImageHeight = height,
-		.imageSubresource = {
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.layerCount = 1,
-		},
-		.imageExtent = { width, height, 1 },
-	};
-	p_vkCmdCopyBufferToImage(g_command, g_staging_buffer,
-		g_images[g_active_slot].image,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+	if (stride == output_pitch && width * 4 == output_pitch) {
+		VkBufferCopy copy = {
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = (VkDeviceSize)stride * height,
+		};
+		p_vkCmdCopyBuffer(g_command, g_staging_buffer,
+			g_scanout[g_active_slot].buffer, 1, &copy);
+	} else {
+		VkBufferCopy *rows = calloc(height, sizeof(*rows));
+		if (!rows)
+			return -1;
+		for (uint32_t row = 0; row < height; ++row) {
+			rows[row].srcOffset = (VkDeviceSize)row * stride;
+			rows[row].dstOffset = (VkDeviceSize)row * output_pitch;
+			rows[row].size = (VkDeviceSize)width * 4;
+		}
+		p_vkCmdCopyBuffer(g_command, g_staging_buffer,
+			g_scanout[g_active_slot].buffer, height, rows);
+		free(rows);
+	}
 	return submit_commands();
 }
 
@@ -294,70 +287,48 @@ static int gpu_end(uint32_t slot)
 {
 	if (slot >= 2 || g_active_slot != (int)slot || begin_commands() < 0)
 		return -1;
-	VkImageMemoryBarrier release = image_barrier(g_images[slot].image);
+	VkBufferMemoryBarrier release = buffer_barrier(g_scanout[slot].buffer);
 	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 	release.dstAccessMask = 0;
-	release.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	release.newLayout = VK_IMAGE_LAYOUT_GENERAL;
 	release.srcQueueFamilyIndex = g_queue_family;
 	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
 	p_vkCmdPipelineBarrier(g_command,
 		VK_PIPELINE_STAGE_TRANSFER_BIT,
 		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
-		0, NULL, 0, NULL, 1, &release);
+		0, NULL, 1, &release, 0, NULL);
 	if (submit_commands() < 0)
 		return -1;
 	g_active_slot = -1;
 	return 0;
 }
 
-static int import_image(const VkPhysicalDeviceMemoryProperties *memory_properties,
-			uint32_t width, uint32_t height, uint32_t pitch, int dma_fd,
-			struct imported_image *output)
+static int import_buffer(const VkPhysicalDeviceMemoryProperties *memory_properties,
+			 uint32_t width, uint32_t height, uint32_t pitch,
+			 int dma_fd, struct imported_buffer *output)
 {
-	VkSubresourceLayout plane_layout = {
-		.offset = 0,
-		.size = (VkDeviceSize)pitch * height,
-		.rowPitch = pitch,
-		.arrayPitch = (VkDeviceSize)pitch * height,
-		.depthPitch = (VkDeviceSize)pitch * height,
-	};
-	VkImageDrmFormatModifierExplicitCreateInfoEXT modifiers = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
-		.drmFormatModifier = DRM_FORMAT_MOD_LINEAR,
-		.drmFormatModifierPlaneCount = 1,
-		.pPlaneLayouts = &plane_layout,
-	};
-	VkExternalMemoryImageCreateInfo external = {
-		.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-		.pNext = &modifiers,
+	VkDeviceSize size = (VkDeviceSize)pitch * height;
+	VkExternalMemoryBufferCreateInfo external = {
+		.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
 		.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 	};
-	VkImageCreateInfo image_info = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+	VkBufferCreateInfo buffer_info = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.pNext = &external,
-		.imageType = VK_IMAGE_TYPE_2D,
-		.format = VK_FORMAT_B8G8R8A8_UNORM,
-		.extent = { width, height, 1 },
-		.mipLevels = 1,
-		.arrayLayers = 1,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
-		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+		.size = size,
+		.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
-	VkResult result = p_vkCreateImage(g_device, &image_info, NULL,
-					  &output->image);
+	VkResult result = p_vkCreateBuffer(g_device, &buffer_info, NULL,
+					   &output->buffer);
 	if (result != VK_SUCCESS) {
 		fprintf(stderr,
-			"saai-gpu-compositor: external image create failed: %d\n",
+			"saai-gpu-compositor: external buffer create failed: %d\n",
 			result);
 		return -1;
 	}
 
 	VkMemoryRequirements requirements;
-	p_vkGetImageMemoryRequirements(g_device, output->image, &requirements);
+	p_vkGetBufferMemoryRequirements(g_device, output->buffer, &requirements);
 	VkMemoryFdPropertiesKHR fd_properties = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
 	};
@@ -375,17 +346,17 @@ static int import_image(const VkPhysicalDeviceMemoryProperties *memory_propertie
 		requirements.memoryTypeBits & fd_properties.memoryTypeBits, 0);
 	if (memory_type == UINT32_MAX) {
 		fprintf(stderr,
-			"saai-gpu-compositor: incompatible memory bits image=%x fd=%x\n",
+			"saai-gpu-compositor: incompatible memory bits buffer=%x fd=%x\n",
 			requirements.memoryTypeBits, fd_properties.memoryTypeBits);
 		return -1;
 	}
 	fprintf(stderr,
 		"saai-gpu-compositor: importing %ux%u pitch=%u size=%llu requirement=%llu\n",
-		width, height, pitch, (unsigned long long)plane_layout.size,
+		width, height, pitch, (unsigned long long)size,
 		(unsigned long long)requirements.size);
 	VkMemoryDedicatedAllocateInfo dedicated = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
-		.image = output->image,
+		.buffer = output->buffer,
 	};
 	VkImportMemoryFdInfoKHR import = {
 		.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
@@ -410,10 +381,10 @@ static int import_image(const VkPhysicalDeviceMemoryProperties *memory_propertie
 		close(import.fd);
 		return -1;
 	}
-	result = p_vkBindImageMemory(g_device, output->image, output->memory, 0);
+	result = p_vkBindBufferMemory(g_device, output->buffer, output->memory, 0);
 	if (result != VK_SUCCESS)
 		fprintf(stderr,
-			"saai-gpu-compositor: imported image bind failed: %d\n",
+			"saai-gpu-compositor: imported buffer bind failed: %d\n",
 			result);
 	return result == VK_SUCCESS ? 0 : -1;
 }
@@ -454,10 +425,7 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	LOAD(vkGetPhysicalDeviceMemoryProperties);
 	LOAD(vkCreateDevice);
 	LOAD(vkGetDeviceQueue);
-	LOAD(vkCreateImage);
-	LOAD(vkGetImageMemoryRequirements);
 	LOAD(vkAllocateMemory);
-	LOAD(vkBindImageMemory);
 	LOAD(vkCreateBuffer);
 	LOAD(vkGetBufferMemoryRequirements);
 	LOAD(vkBindBufferMemory);
@@ -467,8 +435,8 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	LOAD(vkResetCommandPool);
 	LOAD(vkBeginCommandBuffer);
 	LOAD(vkCmdPipelineBarrier);
-	LOAD(vkCmdClearColorImage);
-	LOAD(vkCmdCopyBufferToImage);
+	LOAD(vkCmdFillBuffer);
+	LOAD(vkCmdCopyBuffer);
 	LOAD(vkEndCommandBuffer);
 	LOAD(vkQueueSubmit);
 	LOAD(vkQueueWaitIdle);
@@ -497,7 +465,6 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 		VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
 		VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
 		VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
-		VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
 		VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
 		VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
 		VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
@@ -524,10 +491,10 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 
 	VkPhysicalDeviceMemoryProperties memory_properties;
 	p_vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
-	if (import_image(&memory_properties, width, height, pitch, dma_fd0,
-			 &g_images[0]) < 0 ||
-	    import_image(&memory_properties, width, height, pitch, dma_fd1,
-			 &g_images[1]) < 0)
+	if (import_buffer(&memory_properties, width, height, pitch, dma_fd0,
+			  &g_scanout[0]) < 0 ||
+	    import_buffer(&memory_properties, width, height, pitch, dma_fd1,
+			  &g_scanout[1]) < 0)
 		return -1;
 
 	g_staging_size = (VkDeviceSize)pitch * height;
@@ -645,7 +612,7 @@ int main(int argc, char **argv)
 				      command.payload_len) != 1)
 				return 74;
 			result = gpu_blit(command.width, command.height,
-					  command.stride);
+					  command.stride, pitch);
 			break;
 		case OP_END:
 			result = gpu_end(command.slot);
