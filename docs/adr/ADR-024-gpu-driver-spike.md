@@ -14,9 +14,9 @@
 * CSF event-память (`0x5fffff1000`, `0x5ffff79000`, встреченные в ring
   buffer как операнды `EVADD`): реально замаплены. `sysprobe`-трасса
   `ioctl`+`mmap` показала `ioctl(fd=3, request=0xc040803b)` —
-  `_IOWR(0x80, 59, 64 bytes)`, то есть **реальный номер
-  `KBASE_IOCTL_MEM_ALLOC` равен 59, не 5**, как предполагалось раньше по
-  памяти без проверки — прямо перед каждым `mmap(fd=3, offset=0x41000)`,
+  `_IOWR(0x80, 59, 64 bytes)`, то есть **это `KBASE_IOCTL_MEM_ALLOC_EX`
+  (не обычный `KBASE_IOCTL_MEM_ALLOC`, у которого nr=5)** -- раньше по памяти
+  без проверки предполагался номер 5 — прямо перед каждым `mmap(fd=3, offset=0x41000)`,
   который возвращает **ровно** `0x5fffff1000`/`0x5ffff79000`. CPU VA ==
   GPU VA, `munmap` за весь прогон не встречается ни разу. Гипотеза
   "SAME_VA cookie-mmap для `BASE_MEM_CSF_EVENT` не происходит/сломан в
@@ -125,6 +125,51 @@ notification-delivery баг, а решение, принимаемое проп
 путь, и реальный `arch_major_rev`/`product_id`/feature bitmask, сверить
 с тем, что ожидает закрытый UMD (сравнение с тем, что видит stock
 Android на этом же железе, недоступно без второго устройства).
+
+### UMD-KCPU-01: kernel полностью исключён -- CQS_SET никогда не enqueue'ится
+
+По предложению пользователя: прежде чем спрашивать "почему kernel не
+ставит CQS_SET", проверено, отправляет ли сам UMD команду `CQS_SET`
+через `KBASE_IOCTL_KCPU_QUEUE_ENQUEUE` вообще -- без единого нового
+kernel probe, чисто через `sysprobe` (декодирование ioctl-аргументов
+по реальным UAPI-структурам из `mali_base_csf_kernel.h`/
+`mali_kbase_csf_ioctl.h`):
+
+```
+KBASE_IOCTL_KCPU_QUEUE_CREATE  = _IOR(0x80,45,8)  = 0x8008802d
+KBASE_IOCTL_KCPU_QUEUE_DELETE  = _IOW(0x80,46,8)  = 0x4008802e
+KBASE_IOCTL_KCPU_QUEUE_ENQUEUE = _IOW(0x80,47,16) = 0x4010802f
+```
+
+Результат полного прогона `vk_exec01` под новым `sysprobe` (декодирует
+`kbase_ioctl_kcpu_queue_enqueue` + массив `struct base_kcpu_command` по
+адресу из userspace до передачи ядру):
+
+* `KBASE_IOCTL_KCPU_QUEUE_CREATE` -- вызван **3 раза** (UMD реально
+  создаёт 3 KCPU-очереди для этого submit);
+* `KBASE_IOCTL_KCPU_QUEUE_ENQUEUE` -- **вызван 0 раз**;
+* `KBASE_IOCTL_KCPU_QUEUE_DELETE` -- вызван 0 раз (не успевает до
+  `sleep(10)`/выхода).
+
+То есть **в KCPU-очереди не enqueue'ится вообще ни одна команда** --
+ни `CQS_SET`, ни `CQS_WAIT`, ничего. `kbase_csf_kcpu_queue_enqueue()`
+(ядро) физически не может быть источником проблемы: ему просто нечего
+обрабатывать, потому что до него дело не доходит. Это то же самое
+заключение, что и раньше (ring buffer содержит только `EVADD`
+event-бухгалтерию, ftrace не видит `mali_KCPU_CQS_SET`), но теперь
+подтверждено на **один уровень выше**, напрямую на границе ioctl, а не
+косвенно через firmware trace.
+
+**Разрыв на 100% локализован внутри closed-source `libGLES_mali.so`/
+`vulkan.mali.so`, до какого-либо системного вызова.** Следующий шаг
+(`UMD-KCPU-02`): статически найти в этих библиотеках место, где
+собирается вызов `ioctl(fd, KBASE_IOCTL_KCPU_QUEUE_ENQUEUE, ...)` --
+по x-ref на константу `0x4010802f` (обычно `mov`/`movk` пара или litpool
+`adrp+ldr`) -- и понять, какое условие решает, вызывать ли его вообще
+для этого submission path (скорее всего capability/feature-флаг,
+читаемый из GPU properties, которые наш kbase возвращает через
+`KBASE_IOCTL_GET_GPUPROPS`/`KBASE_IOCTL_VERSION_CHECK` -- оба реально
+вызываются в этом прогоне, видны в трассе).
 
 ### Полезная деталь для сборки: правильный link recipe для `vk_exec01`/`vk_probe`
 
