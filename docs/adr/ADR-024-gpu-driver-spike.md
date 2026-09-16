@@ -1916,3 +1916,56 @@ sync-update уведомление обратно; поэтому UMD никог
 фазе 2 (собственно `RUN_COMPUTE`/запись в буфер), которую мы поэтому
 и не находим в текущем ring buffer -- не потому что её не должно
 быть, а потому что до её эмиссии никогда не доходит очередь.
+
+### Приоритет на следующую сессию
+
+После этого цикла уже нет смысла возвращаться к power domains, CSF
+firmware boot, doorbell/MMIO, `CS_REQ`/`CS_ACK`, декодированию command
+stream или KCPU execution как к основным подозреваемым -- все эти
+слои закрыты фактами, инструментально проверены и работают. Модель
+разрыва теперь чистая:
+
+```
+vkQueueSubmit()
+   |
+UMD phase 1
+   |
+GPU CSF sync/event bookkeeping
+   |
+CS_EXTRACT == CS_INSERT
+   |
+KCPU queue empty / not blocked / no error
+   |
+kernel completion/event path
+   ?
+mali-event-hand wakes
+   ?
+UMD phase 2
+   ?
+real RUN_COMPUTE / fill
+   ?
+VkFence signal
+```
+
+Искать первый разрыв нужно строго в нижней половине этой схемы --
+completion notification путь обратно в проприетарный UMD. Порядок
+действий:
+
+1. `sysprobe`: трассировать `ppoll()`/`poll()` в потоке `mali-event-hand`.
+2. Разобрать реальный `struct pollfd[]` -- какие именно fd поток ждёт
+   (номер, `events`, `revents`, цель через `/proc/<pid>/fd/<n>`).
+3. `kbase_csf_event_signal()` -- вызывается ли вообще для этого submit.
+4. `_kbase_event_wakeup()` -- доходит ли до `wake_up_interruptible()`.
+5. `kbase_poll()` -- становится ли `/dev/mali0` readable
+   (`kbase_event_pending()`) после завершения CSF/KCPU работы.
+6. Определить, какой из этих шагов последний реально происходит --
+   это и есть точка разрыва.
+
+Если `kbase_poll()` возвращает readable, а `mali-event-hand` всё
+равно не просыпается -- проблема в userspace/eventfd/`ppoll` ABI.
+Если `kbase_poll()` никогда не становится readable после честно
+завершённой CSF/KCPU работы -- разрыв внутри kernel event-delivery
+пути. Все перечисленные функции вызываются редко/по событию, не в
+hot-path воркера (в отличие от `kbase_csf_kcpu_queue_process()`,
+уронившего устройство в этом цикле) -- безопасны для kretprobe при
+необходимости, но начинать нужно с ptrace/`sysprobe`.
