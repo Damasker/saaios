@@ -29,13 +29,13 @@
 //! leaves it no VT to manage.
 
 use std::fs::OpenOptions;
-use std::io::{IoSlice, Read, Write};
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
+use std::io::{IoSlice, IoSliceMut, Read, Write};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
-use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
+use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags};
 use smithay::backend::allocator::dumb::DumbAllocator;
 use smithay::backend::allocator::{
     dmabuf::{Dmabuf, DmabufMappingMode, DmabufSyncFlags},
@@ -192,6 +192,51 @@ impl GpuCompositor {
         Ok(())
     }
 
+    /// The other direction of `send_fd` above -- receives this frame's
+    /// exported fence syncfd from the helper (marker byte 'F', mirroring
+    /// `gpu-compositor.c`'s own `send_fd()`) after an `OP_END` command.
+    fn recv_fd(&self) -> Result<OwnedFd, String> {
+        let mut byte = [0u8; 1];
+        let mut cmsg_buffer = nix::cmsg_space!(std::os::fd::RawFd);
+        // Scoped so `iov`'s mutable borrow of `byte` (kept alive for as
+        // long as `message` exists, by `recvmsg`'s own lifetime bounds,
+        // regardless of whether `message` still needs it) ends before
+        // `byte[0]` is read below.
+        let (bytes_received, fd) = {
+            let mut iov = [IoSliceMut::new(&mut byte)];
+            let message = recvmsg::<()>(
+                self.fd_socket.as_raw_fd(),
+                &mut iov,
+                Some(&mut cmsg_buffer),
+                MsgFlags::empty(),
+            )
+            .map_err(|e| format!("fence fd receive failed: {e}"))?;
+            let mut fd = None;
+            for cmsg in message
+                .cmsgs()
+                .map_err(|e| format!("fence fd control message parse failed: {e}"))?
+            {
+                if let ControlMessageOwned::ScmRights(fds) = cmsg {
+                    if let Some(&first) = fds.first() {
+                        fd = Some(first);
+                        break;
+                    }
+                }
+            }
+            (message.bytes, fd)
+        };
+        if bytes_received != 1 || byte[0] != b'F' {
+            return Err("fence fd receive: unexpected marker byte".to_string());
+        }
+        match fd {
+            // SAFETY: gpu-compositor.c's send_fd() just handed this fd
+            // to us via SCM_RIGHTS -- a fresh, valid, exclusively-owned
+            // descriptor in this process.
+            Some(fd) => Ok(unsafe { OwnedFd::from_raw_fd(fd) }),
+            None => Err("fence fd receive: no fd in control message".to_string()),
+        }
+    }
+
     fn begin(&mut self, slot: usize, r: u8, g: u8, b: u8) -> Result<(), String> {
         let color = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
         self.command(
@@ -265,11 +310,38 @@ impl GpuCompositor {
         }
     }
 
-    fn end(&mut self, slot: usize) -> Result<(), String> {
-        self.command(
-            [GPU_PROTOCOL_MAGIC, GPU_OP_END, slot as u32, 0, 0, 0, 0, 0],
-            None,
-        )
+    /// Unlike every other command, `OP_END`'s reply carries a fence fd
+    /// (received via `recv_fd()`, ADR-024 continued) before the plain
+    /// 'K'/'F' ack byte -- gpu-compositor.c's own dispatch loop sends
+    /// them in that order for exactly this method to read back in the
+    /// same order. The caller (`HardwareOutput::present()`) passes the
+    /// returned fd into the DRM atomic commit's IN_FENCE_FD plane
+    /// property so the kernel waits for GPU completion itself, instead
+    /// of this process blocking on it the way every op used to.
+    fn end(&mut self, slot: usize) -> Result<OwnedFd, String> {
+        let mut header = [0u8; 32];
+        let words = [GPU_PROTOCOL_MAGIC, GPU_OP_END, slot as u32, 0, 0, 0, 0, 0];
+        for (chunk, word) in header.chunks_exact_mut(4).zip(words) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        self.stdin
+            .write_all(&header)
+            .map_err(|e| format!("GPU command write failed: {e}"))?;
+        self.stdin
+            .flush()
+            .map_err(|e| format!("GPU command flush failed: {e}"))?;
+        let fence_fd = self.recv_fd()?;
+        let mut ack = [0u8; 1];
+        self.stdout
+            .read_exact(&mut ack)
+            .map_err(|e| format!("GPU acknowledgement failed: {e}"))?;
+        if ack[0] != b'K' {
+            return Err(format!(
+                "GPU helper sent invalid acknowledgement {:#04x}",
+                ack[0]
+            ));
+        }
+        Ok(fence_fd)
     }
 }
 
@@ -607,9 +679,21 @@ impl HardwareOutput {
     /// rather than at confirmed completion, safe: see the module doc
     /// comment.
     pub fn present(&mut self, modeset: bool) -> Result<(), String> {
-        if let Some(gpu) = self.gpu.as_mut() {
-            gpu.end(self.write_index)?;
-        }
+        // ADR-024 continued: `end()` no longer blocks this thread until
+        // the GPU finishes -- it returns almost immediately with a
+        // fence fd instead. Passing it as this plane's IN_FENCE_FD
+        // makes the KERNEL wait for GPU completion before the actual
+        // flip, at atomic-commit time -- not this process's CPU here.
+        // Kept alive only for the duration of the commit()/page_flip()
+        // call below: the ioctl looks the fd up (and takes its own
+        // reference) synchronously during that call, exactly like
+        // Mesa/libdrm's own IN_FENCE_FD usage, so it's safe to drop
+        // (close) right after -- it does not need to outlive this
+        // function.
+        let fence_fd = match self.gpu.as_mut() {
+            Some(gpu) => Some(gpu.end(self.write_index)?),
+            None => None,
+        };
         let config = PlaneConfig {
             src: Rectangle::from_size(Size::from((self.width as f64, self.height as f64))),
             dst: Rectangle::from_size(Size::from((self.width as i32, self.height as i32))),
@@ -617,7 +701,7 @@ impl HardwareOutput {
             alpha: 1.0,
             damage_clips: None,
             fb: *self.slots[self.write_index].framebuffer.as_ref(),
-            fence: None,
+            fence: fence_fd.as_ref().map(|fd| fd.as_fd()),
         };
         let planes = [PlaneState {
             handle: self.plane,

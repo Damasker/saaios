@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <dlfcn.h>
@@ -149,6 +150,7 @@ DECLARE(vkDestroyFence);
 DECLARE(vkWaitForFences);
 DECLARE(vkResetFences);
 DECLARE(vkGetMemoryFdPropertiesKHR);
+DECLARE(vkGetFenceFdKHR);
 
 #define LOAD(fn) \
 	do { \
@@ -228,6 +230,42 @@ static int receive_fd(int socket_fd)
 		}
 	}
 	return -1;
+}
+
+/* ADR-024 continued: the other direction of receive_fd() above -- sends
+ * this frame's exported fence syncfd to displayd (marker byte 'F', vs.
+ * receive_fd()'s own 'D' for a client dma-buf fd coming the other way on
+ * the same socket). displayd passes it straight into the DRM atomic
+ * commit's IN_FENCE_FD plane property; the kernel does the actual wait,
+ * not either process's CPU. */
+static int send_fd(int socket_fd, int fd)
+{
+	char byte = 'F';
+	struct iovec iov = {
+		.iov_base = &byte,
+		.iov_len = sizeof(byte),
+	};
+	union {
+		struct cmsghdr header;
+		unsigned char bytes[CMSG_SPACE(sizeof(int))];
+	} control;
+	memset(&control, 0, sizeof(control));
+	struct msghdr message = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = control.bytes,
+		.msg_controllen = CMSG_SPACE(sizeof(int)),
+	};
+	struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+	header->cmsg_level = SOL_SOCKET;
+	header->cmsg_type = SCM_RIGHTS;
+	header->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(header), &fd, sizeof(fd));
+	ssize_t sent;
+	do {
+		sent = sendmsg(socket_fd, &message, 0);
+	} while (sent < 0 && errno == EINTR);
+	return sent == 1 ? 0 : -1;
 }
 
 static uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties *mp,
@@ -379,7 +417,27 @@ static int gpu_blit(uint32_t width, uint32_t height, uint32_t stride,
 	return 0;
 }
 
-static int gpu_end(uint32_t slot)
+/* ADR-024 continued: full async submit. This is the ONE real
+ * vkQueueSubmit for everything BEGIN/BLIT/DMABUF_BLIT recorded this
+ * frame (or, if gpu_blit() had to flush mid-frame, for whatever it left
+ * open afterward) -- but unlike the batching-only version, it does NOT
+ * wait here. The fence was created with VkExportFenceCreateInfoKHR
+ * (VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT_KHR), so instead of
+ * blocking this process (and, through the IPC round trip, displayd's
+ * CPU thread) until the GPU finishes, `vkGetFenceFdKHR` exports it as a
+ * syncfd the caller sends to displayd for the DRM atomic commit's
+ * IN_FENCE_FD plane property -- the kernel itself waits before
+ * scanning out, not any userspace CPU. Exporting also resets `g_fence`
+ * to unsignaled per spec, ready for next frame's `vkQueueSubmit`
+ * without an explicit `vkResetFences` call.
+ *
+ * `*out_fence_fd` is a new, distinct fd on success; the caller owns it
+ * (must eventually close it, after sending a copy to displayd). This
+ * function does NOT destroy this frame's `g_pending_imports` client
+ * dma-buf buffers -- the caller must wait for the exported fence to
+ * actually signal first (see OP_END's own comment in main()'s dispatch
+ * loop for why that wait belongs there instead of here). */
+static int gpu_end(uint32_t slot, int *out_fence_fd)
 {
 	if (slot >= 2 || g_active_slot != (int)slot)
 		return -1;
@@ -392,18 +450,25 @@ static int gpu_end(uint32_t slot)
 		VK_PIPELINE_STAGE_TRANSFER_BIT,
 		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
 		0, NULL, 1, &release, 0, NULL);
-	/* ADR-024 continued: this is now the ONE submit+wait for everything
-	 * BEGIN/BLIT/DMABUF_BLIT recorded this frame (or, if gpu_blit() had
-	 * to flush mid-frame, for whatever it left open afterward) -- only
-	 * once the GPU has genuinely finished all of it is it safe to
-	 * destroy this frame's imported client dma-buf buffers. */
-	int result = submit_commands();
-	for (int i = 0; i < g_pending_import_count; ++i)
-		destroy_imported_buffer(&g_pending_imports[i]);
-	g_pending_import_count = 0;
-	g_batch_pending_staging_blit = 0;
-	if (result < 0)
+	if (p_vkEndCommandBuffer(g_command) != VK_SUCCESS)
 		return -1;
+	VkSubmitInfo submit = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &g_command,
+	};
+	if (p_vkQueueSubmit(g_queue, 1, &submit, g_fence) != VK_SUCCESS)
+		return -1;
+	VkFenceGetFdInfoKHR get_fd_info = {
+		.sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
+		.fence = g_fence,
+		.handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT_KHR,
+	};
+	int fence_fd = -1;
+	if (p_vkGetFenceFdKHR(g_device, &get_fd_info, &fence_fd) != VK_SUCCESS ||
+	    fence_fd < 0)
+		return -1;
+	*out_fence_fd = fence_fd;
 	g_active_slot = -1;
 	return 0;
 }
@@ -640,6 +705,7 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	LOAD(vkWaitForFences);
 	LOAD(vkResetFences);
 	LOAD(vkGetMemoryFdPropertiesKHR);
+	LOAD(vkGetFenceFdKHR);
 
 	uint32_t physical_count = 1;
 	VkPhysicalDevice physical;
@@ -668,6 +734,11 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 		VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
 		VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
 		VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
+		/* ADR-024 continued: full async submit pipeline -- confirmed
+		 * present on this UMD via a standalone probe tool
+		 * (vk-extcheck.c) before relying on it here, not assumed. */
+		VK_KHR_EXTERNAL_FENCE_EXTENSION_NAME,
+		VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME,
 	};
 	float priority = 1.0f;
 	VkDeviceQueueCreateInfo queue_info = {
@@ -744,8 +815,13 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 	if (p_vkAllocateCommandBuffers(g_device, &command_info,
 				       &g_command) != VK_SUCCESS)
 		return -1;
+	VkExportFenceCreateInfoKHR export_fence_info = {
+		.sType = VK_STRUCTURE_TYPE_EXPORT_FENCE_CREATE_INFO_KHR,
+		.handleTypes = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT_KHR,
+	};
 	VkFenceCreateInfo fence_info = {
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.pNext = &export_fence_info,
 	};
 	if (p_vkCreateFence(g_device, &fence_info, NULL, &g_fence) != VK_SUCCESS)
 		return -1;
@@ -819,9 +895,61 @@ int main(int argc, char **argv)
 			result = gpu_blit(command.width, command.height,
 					  command.stride, pitch);
 			break;
-		case OP_END:
-			result = gpu_end(command.slot);
-			break;
+		case OP_END: {
+			/* ADR-024 continued: OP_END owns its own full
+			 * reply/cleanup cycle instead of falling through to
+			 * the shared ack-write below, because the ordering
+			 * matters and is easy to get backwards: displayd
+			 * must receive the exported fence fd and the 'K' ack
+			 * BEFORE this process's own (now-async) wait for
+			 * that same fence -- otherwise this would just be
+			 * the old per-op-blocking behavior again with extra
+			 * steps. The internal wait below, on this process's
+			 * own retained copy of the fd, is what makes it safe
+			 * to destroy `g_pending_imports` (this frame's
+			 * client dma-buf imports) afterward -- displayd has
+			 * already moved on by that point and does not wait
+			 * for it. */
+			int fence_fd = -1;
+			if (gpu_end(command.slot, &fence_fd) < 0) {
+				fprintf(stderr,
+					"saai-gpu-compositor: GPU operation %u failed\n",
+					command.op);
+				return 76;
+			}
+			int fence_fd_copy = dup(fence_fd);
+			if (fence_fd_copy < 0 ||
+			    send_fd((int)fd_socket, fence_fd) < 0) {
+				fprintf(stderr,
+					"saai-gpu-compositor: fence fd export/send failed\n");
+				return 76;
+			}
+			close(fence_fd);
+			if (write_full(STDOUT_FILENO, "K", 1) < 0)
+				return 77;
+			struct pollfd pfd = {
+				.fd = fence_fd_copy,
+				.events = POLLIN,
+			};
+			/* Same 2s bound the old vkWaitForFences call used --
+			 * a genuinely wedged GPU still fails loudly instead
+			 * of leaking imports forever, it just no longer
+			 * blocks displayd while doing so. poll() returning
+			 * 0 (timeout) or an error both fall through to the
+			 * same cleanup below; if the GPU truly never
+			 * finished, whatever destroy_imported_buffer() does
+			 * next is no less safe than before batching/async
+			 * existed (this file already accepted "wedged GPU"
+			 * as a fail-fast-the-whole-process condition, not a
+			 * leak-avoidance one). */
+			poll(&pfd, 1, 2000);
+			close(fence_fd_copy);
+			for (int i = 0; i < g_pending_import_count; ++i)
+				destroy_imported_buffer(&g_pending_imports[i]);
+			g_pending_import_count = 0;
+			g_batch_pending_staging_blit = 0;
+			continue;
+		}
 		case OP_DMABUF_BLIT: {
 			int dma_fd = receive_fd((int)fd_socket);
 			if (dma_fd >= 0 && command.width <= width &&

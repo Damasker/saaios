@@ -274,6 +274,22 @@ struct State {
     /// callbacks are completed only after the kernel reports VBlank.
     #[cfg(feature = "panther-hardware")]
     pending_frame_surfaces: Vec<WlSurface>,
+    /// ADR-024 continued (full async submit pipeline): a surface's
+    /// previous `Dmabuf`-backed frame, replaced by a newer commit while
+    /// a flip that may still be reading it (via GPU-compositor's own
+    /// async fence wait) is in flight. `present()` no longer blocks
+    /// until the GPU actually finishes with a frame's dma-bufs before
+    /// returning, so a `DmabufFrame` still in the in-flight flip's
+    /// scene cannot be allowed to `Drop` (and so `wl_buffer.release()`)
+    /// the moment a client happens to commit again for that surface --
+    /// only once `DrmEvent::VBlank` confirms the flip (and therefore
+    /// the fence the kernel waited on for it) is actually done is it
+    /// safe. Conservative on purpose: anything replaced while
+    /// `flip_pending` is true lands here regardless of whether it was
+    /// actually part of that specific flip's scene, in exchange for
+    /// not needing to track that precisely.
+    #[cfg(feature = "panther-hardware")]
+    pending_frame_trash: Vec<FrameBacking>,
     /// ADR-014: the compositor owns the system shell process. Keeping the
     /// Child handle here makes that ownership explicit and gives the next
     /// supervision step a single place to observe/restart it.
@@ -506,6 +522,30 @@ impl State {
     /// Must only be called when `!self.flip_pending` -- callers go
     /// through `request_recomposite()`, not this directly, except the
     /// DRM notifier's VBlank handler which already checked.
+    /// ADR-024 continued: called wherever a surface's cached
+    /// `SurfaceFrame` is about to be replaced (or removed outright).
+    /// A `Pixels`-backed frame's bytes were already copied out of its
+    /// `wl_buffer` at commit time (see the comment above
+    /// `with_buffer_contents` in `commit()`), so it is always safe to
+    /// drop immediately regardless of any in-flight flip. A
+    /// `Dmabuf`-backed frame is not: it stays a live reference into the
+    /// client's own buffer, which `present()` (this file's async
+    /// `HardwareOutput::present()`, ADR-024) may still have an
+    /// in-flight GPU read against even after returning. If a flip is
+    /// currently pending, defer it to `pending_frame_trash` instead of
+    /// letting it `Drop` (and so `wl_buffer.release()`) here --
+    /// `DrmEvent::VBlank` clears that trash once the flip (and the
+    /// fence the kernel waited on for it) is confirmed done.
+    fn stash_or_drop_old_frame(&mut self, old: Option<SurfaceFrame>) {
+        let Some(old) = old else { return };
+        if self.flip_pending && matches!(old.backing, FrameBacking::Dmabuf(_)) {
+            self.pending_frame_trash.push(old.backing);
+        }
+        // else: `old` (and its `backing`) drops here normally -- always
+        // safe for `Pixels`, and safe for `Dmabuf` when no flip is
+        // pending.
+    }
+
     fn recomposite(&mut self) {
         let Some(hw) = self.hardware.as_mut() else {
             return;
@@ -643,7 +683,7 @@ impl CompositorHandler for State {
                     format.code,
                     format.modifier
                 );
-                self.surface_frames.insert(
+                let old = self.surface_frames.insert(
                     surface.clone(),
                     SurfaceFrame {
                         backing: FrameBacking::Dmabuf(DmabufFrame { buffer, dmabuf }),
@@ -653,6 +693,7 @@ impl CompositorHandler for State {
                         digest: None,
                     },
                 );
+                self.stash_or_drop_old_frame(old);
                 let affects_scene = if self.locked {
                     self.lock_surface.as_ref().map(|ls| ls.wl_surface()) == Some(surface)
                 } else {
@@ -705,9 +746,22 @@ impl CompositorHandler for State {
         #[cfg(feature = "panther-hardware")]
         let previous_digest = previous_frame.as_ref().and_then(|frame| frame.digest);
         #[cfg(feature = "panther-hardware")]
-        let mut reused_pixels = match previous_frame.map(|frame| frame.backing) {
-            Some(FrameBacking::Pixels(pixels)) => pixels,
-            _ => Vec::new(),
+        let mut reused_pixels = match previous_frame {
+            Some(SurfaceFrame {
+                backing: FrameBacking::Pixels(pixels),
+                ..
+            }) => pixels,
+            Some(frame) => {
+                // Old backing was `Dmabuf` -- this surface just fell
+                // back from GPU-native dma-buf to wl_shm (or similar).
+                // Same deferred-release hazard `stash_or_drop_old_
+                // frame`'s own doc comment describes for the dma-buf
+                // commit branch above; route through the same helper
+                // rather than dropping `frame` here unconditionally.
+                self.stash_or_drop_old_frame(Some(frame));
+                Vec::new()
+            }
+            None => Vec::new(),
         };
 
         let result = with_buffer_contents(&buffer, move |ptr, len, data| {
@@ -1177,6 +1231,16 @@ fn main() {
                     DrmEvent::VBlank(_crtc) => {
                         state.flip_pending = false;
 
+                        // ADR-024 continued: the flip just confirmed by
+                        // this VBlank passed its fence as IN_FENCE_FD --
+                        // the kernel would not have completed it
+                        // otherwise. Any `Dmabuf`-backed frame deferred
+                        // into `pending_frame_trash` while that flip was
+                        // pending (`stash_or_drop_old_frame`) is now
+                        // provably safe to drop (releasing its
+                        // `wl_buffer` back to the client).
+                        state.pending_frame_trash.clear();
+
                         // A frame callback means the frame reached scanout,
                         // not merely that an atomic commit was submitted.
                         // The Smithay helper also handles subsurfaces.
@@ -1400,6 +1464,8 @@ fn main() {
         repaint_needed: false,
         #[cfg(feature = "panther-hardware")]
         pending_frame_surfaces: Vec::new(),
+        #[cfg(feature = "panther-hardware")]
+        pending_frame_trash: Vec::new(),
         #[cfg(feature = "panther-hardware")]
         shell_child: None,
         #[cfg(feature = "panther-hardware")]
