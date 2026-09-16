@@ -532,6 +532,16 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
 }
 
 impl HardwareOutput {
+    /// Which of the two physical scanout buffer slots (see the module
+    /// doc comment) CPU/GPU writes currently target -- ADR/S-follow-up:
+    /// `main.rs`'s `recomposite()` uses this to key its own per-slot
+    /// "which surface generation is already blit in here" tracking, so
+    /// it can skip re-blitting a surface that's already current in
+    /// whichever slot is about to be written.
+    pub fn write_index(&self) -> usize {
+        self.write_index
+    }
+
     fn map_write_slot(
         &mut self,
     ) -> Option<smithay::reexports::drm::control::dumbbuffer::DumbMapping<'_>> {

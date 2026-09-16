@@ -129,6 +129,19 @@ struct SurfaceFrame {
     // fd and geometry, so only copied wl_shm frames can be deduplicated by
     // content hash.
     digest: Option<[u8; 32]>,
+    /// ADR/S-follow-up (found necessary once "Я"'s drag-to-scroll made
+    /// `recomposite()` run far more often than any tap-driven redraw
+    /// ever did): a monotonic counter bumped every time `commit()`
+    /// stores a genuinely new `SurfaceFrame` for a surface, Pixels or
+    /// Dmabuf alike. Unlike `digest`, this works for dma-buf frames
+    /// too -- `recomposite()` uses it to skip re-blitting a surface
+    /// into a scanout buffer slot that already has this exact
+    /// generation's content in it, at the cost of trusting a
+    /// well-behaved client not to rewrite a dma-buf's pixels without a
+    /// matching new commit (this compositor's own first-party clients
+    /// never do; one that did would show a stale frame for at most one
+    /// more flip, not corrupt anything).
+    generation: u64,
 }
 
 #[cfg(feature = "panther-hardware")]
@@ -142,6 +155,37 @@ fn blit_surface_frame(
         }
         FrameBacking::Dmabuf(frame) => hardware.blit_dmabuf(&frame.dmabuf),
     }
+}
+
+/// Skips re-blitting `surface`'s current frame into the physical
+/// scanout slot `write_index` is about to write into, if that exact
+/// slot already has this frame's generation blit into it from an
+/// earlier `recomposite()` -- see `SurfaceFrame::generation`'s own doc
+/// comment for why a generation counter (not `digest`) is what makes
+/// this safe for dma-buf frames too, and `State::slot_generations`'s
+/// for why per-slot (not just "last blit anywhere") tracking matters
+/// with two alternating physical buffers. Takes its pieces of `State`
+/// as separate arguments rather than `&mut State` itself, since
+/// `recomposite()`'s own `hw` is a `self.hardware`-derived borrow that
+/// has to stay alive across several calls -- passing `&mut self` here
+/// too would conflict with that.
+#[cfg(feature = "panther-hardware")]
+fn blit_if_changed(
+    hw: &mut hardware::HardwareOutput,
+    surface_frames: &HashMap<WlSurface, SurfaceFrame>,
+    slot_generations: &mut [HashMap<WlSurface, u64>; 2],
+    write_index: usize,
+    surface: &WlSurface,
+) -> Result<(), String> {
+    let Some(frame) = surface_frames.get(surface) else {
+        return Ok(());
+    };
+    if slot_generations[write_index].get(surface) == Some(&frame.generation) {
+        return Ok(());
+    }
+    blit_surface_frame(hw, frame)?;
+    slot_generations[write_index].insert(surface.clone(), frame.generation);
+    Ok(())
 }
 
 /// Whether a commit with `new_digest` actually changes what's on screen
@@ -254,6 +298,22 @@ struct State {
     /// lock_surface).
     #[cfg(feature = "panther-hardware")]
     surface_frames: HashMap<WlSurface, SurfaceFrame>,
+    /// Bumped and assigned to a `SurfaceFrame::generation` every time
+    /// `commit()` stores a genuinely new one -- see that field's own
+    /// doc comment.
+    #[cfg(feature = "panther-hardware")]
+    next_frame_generation: u64,
+    /// Which `SurfaceFrame::generation` is currently blit into each of
+    /// the two physical scanout buffer slots (`HardwareOutput` always
+    /// double-buffers exactly two, indexed by its own `write_index`) --
+    /// `recomposite()` skips re-blitting a surface whose current
+    /// generation already matches what's recorded here for the slot
+    /// it's about to write into. Same small, bounded, never-explicitly-
+    /// cleaned-up leak character as `surface_frames` itself for a
+    /// destroyed surface's stale entry -- see that field's own doc
+    /// comment for why that's an accepted tradeoff here, not a bug.
+    #[cfg(feature = "panther-hardware")]
+    slot_generations: [HashMap<WlSurface, u64>; 2],
     /// Set the moment a page-flip is submitted (`HardwareOutput::present`),
     /// cleared when its completion event arrives (`DrmEvent::VBlank`,
     /// see main()). While set, `recomposite()` must not run again --
@@ -550,40 +610,67 @@ impl State {
         let Some(hw) = self.hardware.as_mut() else {
             return;
         };
+        // ADR/S-follow-up: found necessary once "Я"'s drag-to-scroll
+        // in saai-shell made recomposite() run far more often than any
+        // tap-driven redraw ever did -- re-blitting every layer (the
+        // status bar included, even when its own content hasn't
+        // changed in minutes) on every single call was the real
+        // throughput ceiling on how smooth that scrolling could ever
+        // be. `blit_if_changed` below skips a layer already current in
+        // the slot about to be written; `fill()` still runs
+        // unconditionally (a plain GPU clear, not a full-frame copy --
+        // not worth the same bookkeeping).
+        let write_index = hw.write_index();
         if let Err(error) = hw.fill(0x00, 0x00, 0x00) {
             eprintln!("saai-displayd: hardware frame begin failed: {error}");
             std::process::exit(72);
         }
         let mut shown: Vec<WlSurface> = Vec::new();
         if self.locked {
-            if let Some((s, frame)) = self.lock_surface.as_ref().and_then(|ls| {
-                let s = ls.wl_surface().clone();
-                self.surface_frames.get(&s).map(|f| (s, f))
-            }) {
-                if let Err(error) = blit_surface_frame(hw, frame) {
+            if let Some(s) = self.lock_surface.as_ref().map(|ls| ls.wl_surface().clone()) {
+                if let Err(error) = blit_if_changed(
+                    hw,
+                    &self.surface_frames,
+                    &mut self.slot_generations,
+                    write_index,
+                    &s,
+                ) {
                     eprintln!("saai-displayd: hardware lock blit failed: {error}");
                     std::process::exit(72);
                 }
-                shown.push(s);
+                if self.surface_frames.contains_key(&s) {
+                    shown.push(s);
+                }
             }
         } else {
-            if let Some((s, frame)) = self.focused_surface.clone().and_then(|s| {
-                let frame = self.surface_frames.get(&s)?;
-                Some((s, frame))
-            }) {
-                if let Err(error) = blit_surface_frame(hw, frame) {
+            if let Some(s) = self.focused_surface.clone() {
+                if let Err(error) = blit_if_changed(
+                    hw,
+                    &self.surface_frames,
+                    &mut self.slot_generations,
+                    write_index,
+                    &s,
+                ) {
                     eprintln!("saai-displayd: hardware toplevel blit failed: {error}");
                     std::process::exit(72);
                 }
-                shown.push(s);
+                if self.surface_frames.contains_key(&s) {
+                    shown.push(s);
+                }
             }
             for layer in &self.layer_surfaces {
                 let s = layer.wl_surface().clone();
-                if let Some(frame) = self.surface_frames.get(&s) {
-                    if let Err(error) = blit_surface_frame(hw, frame) {
-                        eprintln!("saai-displayd: hardware layer blit failed: {error}");
-                        std::process::exit(72);
-                    }
+                if let Err(error) = blit_if_changed(
+                    hw,
+                    &self.surface_frames,
+                    &mut self.slot_generations,
+                    write_index,
+                    &s,
+                ) {
+                    eprintln!("saai-displayd: hardware layer blit failed: {error}");
+                    std::process::exit(72);
+                }
+                if self.surface_frames.contains_key(&s) {
                     shown.push(s);
                 }
             }
@@ -683,6 +770,8 @@ impl CompositorHandler for State {
                     format.code,
                     format.modifier
                 );
+                let generation = self.next_frame_generation;
+                self.next_frame_generation += 1;
                 let old = self.surface_frames.insert(
                     surface.clone(),
                     SurfaceFrame {
@@ -691,6 +780,7 @@ impl CompositorHandler for State {
                         height: size.h as u32,
                         stride,
                         digest: None,
+                        generation,
                     },
                 );
                 self.stash_or_drop_old_frame(old);
@@ -745,6 +835,8 @@ impl CompositorHandler for State {
         let previous_frame = self.surface_frames.remove(surface);
         #[cfg(feature = "panther-hardware")]
         let previous_digest = previous_frame.as_ref().and_then(|frame| frame.digest);
+        #[cfg(feature = "panther-hardware")]
+        let previous_generation = previous_frame.as_ref().map(|frame| frame.generation);
         #[cfg(feature = "panther-hardware")]
         let mut reused_pixels = match previous_frame {
             Some(SurfaceFrame {
@@ -864,6 +956,18 @@ impl CompositorHandler for State {
                         .as_slice()
                         .try_into()
                         .expect("sha256 digest is always 32 bytes");
+                    let generation = if is_new_content(previous_digest, digest_bytes) {
+                        let generation = self.next_frame_generation;
+                        self.next_frame_generation += 1;
+                        generation
+                    } else {
+                        // Byte-identical repeat commit -- keep the same
+                        // generation so recomposite() recognizes this
+                        // surface as unchanged and skips re-blitting it,
+                        // instead of a fresh generation making it look
+                        // like new content on every duplicate commit.
+                        previous_generation.unwrap_or(0)
+                    };
                     self.surface_frames.insert(
                         surface.clone(),
                         SurfaceFrame {
@@ -872,6 +976,7 @@ impl CompositorHandler for State {
                             height: _height,
                             stride: _stride,
                             digest: Some(digest_bytes),
+                            generation,
                         },
                     );
                     // While locked, only the lock surface affects the
@@ -1454,6 +1559,10 @@ fn main() {
         hardware,
         #[cfg(feature = "panther-hardware")]
         surface_frames: HashMap::new(),
+        #[cfg(feature = "panther-hardware")]
+        next_frame_generation: 0,
+        #[cfg(feature = "panther-hardware")]
+        slot_generations: [HashMap::new(), HashMap::new()],
         // hardware::init() already submitted one flip (the initial
         // modeset) before this State even existed, if it succeeded --
         // start "pending" to match, so nothing calls recomposite()
