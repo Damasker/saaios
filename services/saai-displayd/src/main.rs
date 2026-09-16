@@ -610,21 +610,19 @@ impl State {
         let Some(hw) = self.hardware.as_mut() else {
             return;
         };
-        // ADR/S-follow-up: found necessary once "Я"'s drag-to-scroll
-        // in saai-shell made recomposite() run far more often than any
-        // tap-driven redraw ever did -- re-blitting every layer (the
-        // status bar included, even when its own content hasn't
-        // changed in minutes) on every single call was the real
-        // throughput ceiling on how smooth that scrolling could ever
-        // be. `blit_if_changed` below skips a layer already current in
-        // the slot about to be written; `fill()` still runs
-        // unconditionally (a plain GPU clear, not a full-frame copy --
-        // not worth the same bookkeeping).
+        // `fill()` clears the complete target slot, so none of the layer
+        // generations previously recorded for that slot remain present.
+        // Keeping those entries made `blit_if_changed` skip an unchanged
+        // status bar after the clear: the next main-surface frame covered
+        // the screen and the bar appeared to vanish while scrolling.
+        // Invalidate the slot immediately; every visible layer must be
+        // composited again after a full clear.
         let write_index = hw.write_index();
         if let Err(error) = hw.fill(0x00, 0x00, 0x00) {
             eprintln!("saai-displayd: hardware frame begin failed: {error}");
             std::process::exit(72);
         }
+        self.slot_generations[write_index].clear();
         let mut shown: Vec<WlSurface> = Vec::new();
         if self.locked {
             if let Some(s) = self.lock_surface.as_ref().map(|ls| ls.wl_surface().clone()) {
