@@ -215,11 +215,17 @@ fn space_relation_targets(system_entities: &[Entity], space_id: &str) -> Vec<(St
         .iter()
         .filter(|entity| entity.entity_type == SPACE_RELATION_ENTITY_TYPE)
         .filter_map(|entity| {
-            let from = entity.properties.get("from_space_id").and_then(Value::as_str)?;
+            let from = entity
+                .properties
+                .get("from_space_id")
+                .and_then(Value::as_str)?;
             if from != space_id {
                 return None;
             }
-            let to = entity.properties.get("to_space_id").and_then(Value::as_str)?;
+            let to = entity
+                .properties
+                .get("to_space_id")
+                .and_then(Value::as_str)?;
             let kind = entity.properties.get("kind").and_then(Value::as_str)?;
             Some((to.to_string(), kind.to_string()))
         })
@@ -441,7 +447,9 @@ use smithay_client_toolkit::reexports::client::{
     protocol::{wl_buffer, wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
     Connection, Dispatch, QueueHandle,
 };
-use wayland_protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::{
+    zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
+};
 
 use dmabuf_canvas::{Busy, DmabufCanvas};
 use smithay_client_toolkit::{
@@ -532,7 +540,10 @@ const TEXT_SCALE_LEVELS_PCT: [u8; 4] = [85, 100, 125, 150];
 const CONTRAST_LEVELS_PCT: [u8; 3] = [0, 50, 100];
 
 fn next_in_cycle<T: PartialEq + Copy>(levels: &[T], current: T) -> T {
-    let index = levels.iter().position(|&level| level == current).unwrap_or(0);
+    let index = levels
+        .iter()
+        .position(|&level| level == current)
+        .unwrap_or(0);
     levels[(index + 1) % levels.len()]
 }
 
@@ -664,7 +675,10 @@ fn revoke_trusted_client(index: usize) {
     let Ok(content) = std::fs::read_to_string(AUTHORIZED_KEYS_PATH) else {
         return;
     };
-    let mut lines: Vec<&str> = content.lines().filter(|line| !line.trim().is_empty()).collect();
+    let mut lines: Vec<&str> = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     if index >= lines.len() {
         return;
     }
@@ -1210,7 +1224,11 @@ fn bluetooth_status_summary() -> String {
 
 fn bluetooth_paired_count() -> usize {
     std::fs::read_to_string(BT_SAVED_LOG_PATH)
-        .map(|text| text.lines().filter(|line| line.starts_with("SAVED\t")).count())
+        .map(|text| {
+            text.lines()
+                .filter(|line| line.starts_with("SAVED\t"))
+                .count()
+        })
         .unwrap_or(0)
 }
 
@@ -1225,7 +1243,8 @@ fn read_battery() -> Option<(u8, bool)> {
         .trim()
         .parse()
         .ok()?;
-    let status = std::fs::read_to_string("/sys/class/power_supply/maxfg/status").unwrap_or_default();
+    let status =
+        std::fs::read_to_string("/sys/class/power_supply/maxfg/status").unwrap_or_default();
     let charging = matches!(status.trim(), "Charging" | "Full");
     Some((capacity, charging))
 }
@@ -1268,14 +1287,14 @@ fn current_time_string(utc_offset_minutes: i32) -> String {
 /// non-whole-hour offsets) to prove the representation isn't
 /// hour-only, not to be exhaustive.
 const TIMEZONE_PRESETS_MINUTES: [i32; 9] = [
-    0,   // UTC
-    60,  // Центральная Европа (UTC+1)
-    120, // Восточная Европа (UTC+2)
-    180, // Москва (UTC+3)
-    270, // Иран (UTC+4:30)
-    330, // Индия (UTC+5:30)
-    480, // Китай (UTC+8)
-    540, // Япония (UTC+9)
+    0,    // UTC
+    60,   // Центральная Европа (UTC+1)
+    120,  // Восточная Европа (UTC+2)
+    180,  // Москва (UTC+3)
+    270,  // Иран (UTC+4:30)
+    330,  // Индия (UTC+5:30)
+    480,  // Китай (UTC+8)
+    540,  // Япония (UTC+9)
     -300, // США, восточное побережье (UTC-5)
 ];
 
@@ -1851,7 +1870,12 @@ fn object_view(width: u32, height: u32, action_count: usize) -> LayoutNode {
 /// `task_confirm_action_at`'s own `bool`, generalized past two fixed
 /// buttons since which entity is showing decides how many buttons
 /// (and what they do) at any given moment.
-fn object_view_action_at(pos: (f64, f64), width: u32, height: u32, action_count: usize) -> Option<usize> {
+fn object_view_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    action_count: usize,
+) -> Option<usize> {
     if width == 0 || height == 0 || action_count == 0 {
         return None;
     }
@@ -1891,9 +1915,9 @@ fn object_view_content(entity: &Entity, selected_entities: &[Entity]) -> ObjectV
                 .and_then(Value::as_str)
                 .and_then(|id| id.parse::<Uuid>().ok())
                 .and_then(|id| {
-                    selected_entities
-                        .iter()
-                        .find(|candidate| candidate.id == id && candidate.entity_type == "saaios.intent")
+                    selected_entities.iter().find(|candidate| {
+                        candidate.id == id && candidate.entity_type == "saaios.intent"
+                    })
                 })
                 .map(|intent| format!("Из намерения: {}", intent.title));
             ObjectViewContent {
@@ -2119,7 +2143,12 @@ fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
     layout(&Node::linear("orb-menu", Axis::Vertical, children), zone)
 }
 
-fn orb_action_at(pos: (f64, f64), width: u32, height: u32, menu_actions: &[OrbAction]) -> Option<OrbAction> {
+fn orb_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    menu_actions: &[OrbAction],
+) -> Option<OrbAction> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -2229,7 +2258,11 @@ fn intent_action_at(
 /// label depends on `mode` (`mode_toggle_label`). Shared by both
 /// `intent_input` and `wifi_password`'s `draw()` branches -- see
 /// `WifiPasswordState`'s doc comment for why they share one keyboard.
-fn intent_keyboard_keys(width: u32, height: u32, mode: KeyboardMode) -> (Rect, Vec<(Rect, String)>) {
+fn intent_keyboard_keys(
+    width: u32,
+    height: u32,
+    mode: KeyboardMode,
+) -> (Rect, Vec<(Rect, String)>) {
     let view = intent_view(width, height, mode);
     let header = view.children[0].rect;
     let keyboard_rows = &view.children[1].children;
@@ -2715,7 +2748,23 @@ fn main() {
     let dmabuf_canvas = match DmabufCanvas::new() {
         Ok(canvas) => Some(canvas),
         Err(error) => {
-            eprintln!("saai-shell: dma-buf canvas unavailable ({error}), status bar will use wl_shm");
+            eprintln!(
+                "saai-shell: dma-buf canvas unavailable ({error}), status bar will use wl_shm"
+            );
+            None
+        }
+    };
+    // Separate `DmabufCanvas` (own DRM fd, own double-buffered slots) for
+    // the main toplevel surface -- different geometry (1080x2400 vs the
+    // status bar's 1080x120), so it cannot share the status bar's
+    // instance. Opening `/dev/dri/card0` a second time is cheap (no DRM
+    // master claimed by either, same as `dmabuf_probe.rs`).
+    let main_dmabuf_canvas = match DmabufCanvas::new() {
+        Ok(canvas) => Some(canvas),
+        Err(error) => {
+            eprintln!(
+                "saai-shell: dma-buf canvas unavailable ({error}), main surface will use wl_shm"
+            );
             None
         }
     };
@@ -2814,6 +2863,7 @@ fn main() {
         width: 1080,
         height: 2400,
         buffer: None,
+        main_dmabuf: main_dmabuf_canvas,
         window,
         session_lock_state,
         session_lock: None,
@@ -2920,6 +2970,13 @@ struct Shell {
     width: u32,
     height: u32,
     buffer: Option<Buffer>,
+    /// GPU-native alternative to `buffer`/`pool` for the main
+    /// toplevel surface (ADR-024 continued) -- `None` whenever
+    /// `zwp_linux_dmabuf_v1` or the DRM device is unavailable, or once
+    /// any error on this surface's path is hit (permanent fallback to
+    /// wl_shm for the rest of this process's life, same pattern the
+    /// status bar's own `dmabuf` field already uses).
+    main_dmabuf: Option<DmabufCanvas>,
     window: Window,
 
     session_lock_state: SessionLockState,
@@ -3523,11 +3580,18 @@ impl TouchHandler for Shell {
                 // `object_view_content` itself already documents.
                 let action_count = self
                     .viewing_entity()
-                    .map(|entity| object_view_content(entity, &self.selected_entities).actions.len())
+                    .map(|entity| {
+                        object_view_content(entity, &self.selected_entities)
+                            .actions
+                            .len()
+                    })
                     .unwrap_or(0);
-                if let Some(index) =
-                    object_view_action_at(self.last_touch_pos, self.width, self.height, action_count)
-                {
+                if let Some(index) = object_view_action_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    action_count,
+                ) {
                     self.handle_object_view_action(index);
                     self.draw(conn, qh);
                 }
@@ -3654,9 +3718,12 @@ impl TouchHandler for Shell {
                 // "Входящие" has no `root.sui` entries, so its rows
                 // aren't reachable through `content_action_at` below --
                 // this page's tap target is entirely runtime data.
-                if let Some((_kind, id)) =
-                    inbox_row_at(self.last_touch_pos, self.width, self.height, &self.selected_entities)
-                {
+                if let Some((_kind, id)) = inbox_row_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    &self.selected_entities,
+                ) {
                     // HIA-07: every row, task or notification alike,
                     // opens the same Object View now -- a task's own
                     // Подтвердить/Отклонить and a notification's own
@@ -3695,7 +3762,9 @@ impl TouchHandler for Shell {
                 // sit below "Я"'s two-then-three fixed info rows, at
                 // indices `content_action_at`'s `root.sui`-driven table
                 // (which has no "me" entries at all) can't reach.
-                if let Some(action) = self.me_action_at(self.last_touch_pos, self.width, self.height) {
+                if let Some(action) =
+                    self.me_action_at(self.last_touch_pos, self.width, self.height)
+                {
                     self.invoke_me_action(action, conn, qh);
                 }
             } else if let Some(action) = content_action_at(
@@ -3755,7 +3824,7 @@ impl Shell {
     /// creation, configure, SHM buffer and commit), same
     /// as the single dark-slate fill this replaced, just with content
     /// that actually changes on navigation instead of a static color.
-    fn draw(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>) {
+    fn draw(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
         let width = self.width;
         let height = self.height;
         let stride = width as i32 * 4;
@@ -3866,7 +3935,11 @@ impl Shell {
                     let label = format!(
                         "{}   ·   {}   ·   {} dBm",
                         network.ssid,
-                        if network.secured { "защищена" } else { "открыта" },
+                        if network.secured {
+                            "защищена"
+                        } else {
+                            "открыта"
+                        },
                         network.signal_dbm
                     );
                     (stacked_row_rect(index, width, height), label)
@@ -3937,10 +4010,8 @@ impl Shell {
                     // SHA256 fingerprints don't fit a row alongside a
                     // name, but enough of the prefix still lets two
                     // same-named clients be told apart.
-                    let short_fingerprint = client
-                        .fingerprint
-                        .get(..24)
-                        .unwrap_or(&client.fingerprint);
+                    let short_fingerprint =
+                        client.fingerprint.get(..24).unwrap_or(&client.fingerprint);
                     (
                         stacked_row_rect(index, width, height),
                         format!(
@@ -4027,6 +4098,264 @@ impl Shell {
         let orb_frame = (self.settings.orb_enabled && matches!(frame, Frame::Root { .. }))
             .then(|| self.build_orb_frame(width, height));
 
+        let fonts = self.fonts.as_ref();
+        let contrast_pct = self.settings.contrast_pct;
+        let current_page_index = self.current_page.index();
+        let current_page_is_now = self.current_page == RootPage::Now;
+
+        // GPU-native path (ADR-024 continued): paint directly into a
+        // dma-buf backed buffer, skipping the wl_shm host-visible
+        // staging copy this surface otherwise needs every frame -- the
+        // most frequently redrawn surface in this process (every
+        // animation/page switch), unlike the status bar's once-a-
+        // minute case `present_status_bar` already proved this on.
+        // Falls back to wl_shm below on any error and disables itself
+        // for the session; the lock/PIN surfaces deliberately stay on
+        // wl_shm for now (higher cost of a display bug there: it can
+        // lock the user out).
+        let dmabuf_ready = if let (Some(dmabuf_global), Some(main_dmabuf)) =
+            (self.dmabuf_global.clone(), self.main_dmabuf.as_mut())
+        {
+            match main_dmabuf.ensure_size(width, height, &dmabuf_global, qh) {
+                // Both slots still busy (compositor hasn't released
+                // either yet -- e.g. a burst of redraws faster than it
+                // can flip, physically observed right after startup:
+                // first-configure placeholder + session-lock + appd-
+                // connected redraws land within one dispatch cycle) is
+                // normal and recoverable: fall back to wl_shm for just
+                // this one frame, keep the dma-buf path alive for the
+                // next `draw()` call instead of disabling it for good.
+                Ok(()) => main_dmabuf.has_free_slot(),
+                Err(error) => {
+                    eprintln!(
+                        "saai-shell: dma-buf main surface path failed ({error}), disabling it for this session"
+                    );
+                    self.main_dmabuf = None;
+                    false
+                }
+            }
+        } else {
+            false
+        };
+
+        // `FnOnce` by construction (the `match frame` inside moves out
+        // of `frame`) -- matches this closure's own single-call
+        // invariant: it is invoked exactly once below, either by
+        // `main_dmabuf.paint()` or directly against the wl_shm canvas,
+        // never both (the dma-buf branch always returns).
+        let paint_frame = move |canvas: &mut [u8]| {
+            match frame {
+                Frame::Consent {
+                    app_name,
+                    labels,
+                    header,
+                    accept,
+                    decline,
+                } => {
+                    render::draw_consent(
+                        &mut render::Canvas::new(canvas, width, height),
+                        &app_name,
+                        &labels,
+                        header,
+                        accept,
+                        decline,
+                        fonts,
+                    );
+                }
+                Frame::ObjectView {
+                    title,
+                    status,
+                    related,
+                    header,
+                    actions,
+                } => {
+                    render::draw_object_view(
+                        &mut render::Canvas::new(canvas, width, height),
+                        &title,
+                        &status,
+                        related.as_deref(),
+                        header,
+                        &actions,
+                        fonts,
+                    );
+                }
+                Frame::RemotePairing {
+                    client_name,
+                    fingerprint,
+                    header,
+                    accept,
+                    decline,
+                } => {
+                    render::draw_remote_pair(
+                        &mut render::Canvas::new(canvas, width, height),
+                        &client_name,
+                        &fingerprint,
+                        header,
+                        accept,
+                        decline,
+                        fonts,
+                    );
+                }
+                Frame::IntentInput {
+                    buffer,
+                    header,
+                    keys,
+                } => {
+                    render::draw_intent_input(
+                        &mut render::Canvas::new(canvas, width, height),
+                        "Новое намерение",
+                        &buffer,
+                        header,
+                        &keys,
+                        fonts,
+                    );
+                }
+                Frame::PinSetup {
+                    buffer,
+                    header,
+                    keys,
+                } => {
+                    render::draw_pin_setup(
+                        &mut render::Canvas::new(canvas, width, height),
+                        &buffer,
+                        header,
+                        &keys,
+                        fonts,
+                    );
+                }
+                Frame::WifiPasswordInput {
+                    ssid,
+                    buffer,
+                    header,
+                    keys,
+                } => {
+                    // Password preview is masked (unlike the intent
+                    // keyboard's plaintext echo) -- what's actually typed
+                    // stays in `buffer`/`state.buffer`, only the on-screen
+                    // preview substitutes a dot per character.
+                    let masked: String = buffer.chars().map(|_| '•').collect();
+                    render::draw_intent_input(
+                        &mut render::Canvas::new(canvas, width, height),
+                        &format!("Пароль для «{ssid}»"),
+                        &masked,
+                        header,
+                        &keys,
+                        fonts,
+                    );
+                }
+                Frame::WifiList {
+                    header,
+                    status_line,
+                    rows,
+                } => {
+                    render::draw_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        "Wi-Fi сети",
+                        &status_line,
+                        header,
+                        &rows,
+                        fonts,
+                    );
+                }
+                Frame::BluetoothList {
+                    header,
+                    status_line,
+                    rows,
+                } => {
+                    render::draw_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        "Bluetooth устройства",
+                        &status_line,
+                        header,
+                        &rows,
+                        fonts,
+                    );
+                }
+                Frame::TrustedClients {
+                    header,
+                    status_line,
+                    rows,
+                } => {
+                    render::draw_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        "Доверенные клиенты",
+                        &status_line,
+                        header,
+                        &rows,
+                        fonts,
+                    );
+                }
+                Frame::DevSurface {
+                    header,
+                    status_line,
+                    rows,
+                } => {
+                    render::draw_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        "Диагностика",
+                        &status_line,
+                        header,
+                        &rows,
+                        fonts,
+                    );
+                }
+                Frame::Root {
+                    content_rect,
+                    tabs,
+                    content_cards,
+                    context_label,
+                } => {
+                    render::draw_root(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        current_page_index,
+                        &context_label,
+                        fonts,
+                        &content_cards,
+                        current_page_is_now,
+                    );
+                }
+            }
+            // HIA-04b: unconditional -- `orb_frame` is already `None`
+            // whenever it shouldn't draw (not `Frame::Root`, or the
+            // Rollback setting turned it off), computed once above before
+            // this function's own mutable canvas borrow began.
+            if let Some(orb) = &orb_frame {
+                render::draw_orb(
+                    &mut render::Canvas::new(canvas, width, height),
+                    orb.dot,
+                    orb.dot_color,
+                    orb.is_attention,
+                    &orb.menu_rows,
+                    fonts,
+                );
+            }
+            render::apply_contrast_boost(canvas, contrast_pct);
+        };
+
+        if dmabuf_ready {
+            let main_dmabuf = self
+                .main_dmabuf
+                .as_mut()
+                .expect("just confirmed ready above");
+            match main_dmabuf.paint(paint_frame) {
+                Ok(wl_buffer) => {
+                    let surface = self.window.wl_surface();
+                    surface.attach(Some(wl_buffer), 0, 0);
+                    surface.damage_buffer(0, 0, width as i32, height as i32);
+                    self.window.commit();
+                }
+                Err(error) => {
+                    eprintln!(
+                        "saai-shell: dma-buf main surface paint failed ({error}), disabling it for this session"
+                    );
+                    self.main_dmabuf = None;
+                }
+            }
+            return;
+        }
+
         let buffer = self.buffer.get_or_insert_with(|| {
             self.pool
                 .create_buffer(
@@ -4056,194 +4385,7 @@ impl Shell {
             }
         };
 
-        match frame {
-            Frame::Consent {
-                app_name,
-                labels,
-                header,
-                accept,
-                decline,
-            } => {
-                render::draw_consent(
-                    &mut render::Canvas::new(canvas, width, height),
-                    &app_name,
-                    &labels,
-                    header,
-                    accept,
-                    decline,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::ObjectView {
-                title,
-                status,
-                related,
-                header,
-                actions,
-            } => {
-                render::draw_object_view(
-                    &mut render::Canvas::new(canvas, width, height),
-                    &title,
-                    &status,
-                    related.as_deref(),
-                    header,
-                    &actions,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::RemotePairing {
-                client_name,
-                fingerprint,
-                header,
-                accept,
-                decline,
-            } => {
-                render::draw_remote_pair(
-                    &mut render::Canvas::new(canvas, width, height),
-                    &client_name,
-                    &fingerprint,
-                    header,
-                    accept,
-                    decline,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::IntentInput {
-                buffer,
-                header,
-                keys,
-            } => {
-                render::draw_intent_input(
-                    &mut render::Canvas::new(canvas, width, height),
-                    "Новое намерение",
-                    &buffer,
-                    header,
-                    &keys,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::PinSetup {
-                buffer,
-                header,
-                keys,
-            } => {
-                render::draw_pin_setup(
-                    &mut render::Canvas::new(canvas, width, height),
-                    &buffer,
-                    header,
-                    &keys,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::WifiPasswordInput {
-                ssid,
-                buffer,
-                header,
-                keys,
-            } => {
-                // Password preview is masked (unlike the intent
-                // keyboard's plaintext echo) -- what's actually typed
-                // stays in `buffer`/`state.buffer`, only the on-screen
-                // preview substitutes a dot per character.
-                let masked: String = buffer.chars().map(|_| '•').collect();
-                render::draw_intent_input(
-                    &mut render::Canvas::new(canvas, width, height),
-                    &format!("Пароль для «{ssid}»"),
-                    &masked,
-                    header,
-                    &keys,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::WifiList {
-                header,
-                status_line,
-                rows,
-            } => {
-                render::draw_row_list(
-                    &mut render::Canvas::new(canvas, width, height),
-                    "Wi-Fi сети",
-                    &status_line,
-                    header,
-                    &rows,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::BluetoothList {
-                header,
-                status_line,
-                rows,
-            } => {
-                render::draw_row_list(
-                    &mut render::Canvas::new(canvas, width, height),
-                    "Bluetooth устройства",
-                    &status_line,
-                    header,
-                    &rows,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::TrustedClients {
-                header,
-                status_line,
-                rows,
-            } => {
-                render::draw_row_list(
-                    &mut render::Canvas::new(canvas, width, height),
-                    "Доверенные клиенты",
-                    &status_line,
-                    header,
-                    &rows,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::DevSurface {
-                header,
-                status_line,
-                rows,
-            } => {
-                render::draw_row_list(
-                    &mut render::Canvas::new(canvas, width, height),
-                    "Диагностика",
-                    &status_line,
-                    header,
-                    &rows,
-                    self.fonts.as_ref(),
-                );
-            }
-            Frame::Root {
-                content_rect,
-                tabs,
-                content_cards,
-                context_label,
-            } => {
-                render::draw_root(
-                    &mut render::Canvas::new(canvas, width, height),
-                    content_rect,
-                    &tabs,
-                    self.current_page.index(),
-                    &context_label,
-                    self.fonts.as_ref(),
-                    &content_cards,
-                    self.current_page == RootPage::Now,
-                );
-            }
-        }
-        // HIA-04b: unconditional -- `orb_frame` is already `None`
-        // whenever it shouldn't draw (not `Frame::Root`, or the
-        // Rollback setting turned it off), computed once above before
-        // this function's own mutable canvas borrow began.
-        if let Some(orb) = &orb_frame {
-            render::draw_orb(
-                &mut render::Canvas::new(canvas, width, height),
-                orb.dot,
-                orb.dot_color,
-                orb.is_attention,
-                &orb.menu_rows,
-                self.fonts.as_ref(),
-            );
-        }
-        render::apply_contrast_boost(canvas, self.settings.contrast_pct);
+        paint_frame(canvas);
 
         self.window
             .wl_surface()
@@ -4330,7 +4472,9 @@ impl Shell {
             return;
         }
         self.last_context_signal_refresh = Instant::now();
-        match wifi_connected_ssid().and_then(|ssid| space_for_wifi_ssid(&self.system_space_entities, &ssid)) {
+        match wifi_connected_ssid()
+            .and_then(|ssid| space_for_wifi_ssid(&self.system_space_entities, &ssid))
+        {
             Some(space_id) => upsert_context_entry(
                 &mut self.context_frame,
                 ContextFrameEntry {
@@ -4693,11 +4837,15 @@ impl Shell {
     /// S19: "Wi-Fi сети"'s own tap handling -- see `WifiListTap`'s doc
     /// comment for why the row layout is runtime-computed rather than
     /// a `root.sui` entry.
-    fn handle_wifi_list_tap(&mut self, tap: WifiListTap, conn: &Connection, qh: &QueueHandle<Self>) {
+    fn handle_wifi_list_tap(
+        &mut self,
+        tap: WifiListTap,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
         match tap {
             WifiListTap::Network(index) => {
-                let Some(network) = self.wifi_list.as_ref().and_then(|list| list.get(index))
-                else {
+                let Some(network) = self.wifi_list.as_ref().and_then(|list| list.get(index)) else {
                     return;
                 };
                 if network.secured {
@@ -5000,7 +5148,8 @@ impl Shell {
         let all = self.me_all_card_views();
         let total = all.len();
         let start = self.me_page * ME_PAGE_SIZE;
-        let visible: Vec<render::ActionCardView> = all.into_iter().skip(start).take(ME_PAGE_SIZE).collect();
+        let visible: Vec<render::ActionCardView> =
+            all.into_iter().skip(start).take(ME_PAGE_SIZE).collect();
         let visible_count = visible.len();
         let mut cards: Vec<(Rect, render::ActionCardView)> = visible
             .into_iter()
@@ -5013,7 +5162,11 @@ impl Shell {
                 stacked_row_rect(nav_index, width, height),
                 render::ActionCardView::new(
                     "Ещё",
-                    format!("Показаны {}-{} из {total}", start + 1, start + visible_count),
+                    format!(
+                        "Показаны {}-{} из {total}",
+                        start + 1,
+                        start + visible_count
+                    ),
                     "Вниз",
                 ),
             ));
@@ -5372,7 +5525,11 @@ impl Shell {
             return render::ActionCardView::new(
                 action.label,
                 status,
-                if selected { "Выбрано" } else { "Открыть" },
+                if selected {
+                    "Выбрано"
+                } else {
+                    "Открыть"
+                },
             )
             .selected(selected);
         }
@@ -5499,7 +5656,12 @@ impl Shell {
     /// this process) is what actually appends the key to `dropbear`'s
     /// `authorized_keys` on approval -- see that file's own doc
     /// comment for why that boundary is drawn there.
-    fn respond_to_pair_request(&mut self, approved: bool, conn: &Connection, qh: &QueueHandle<Self>) {
+    fn respond_to_pair_request(
+        &mut self,
+        approved: bool,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
         if let Some(mut pending) = self.pending_pair_request.take() {
             println!(
                 "saai-shell: SSH pairing {} for \"{}\"",
@@ -5737,7 +5899,9 @@ impl Shell {
                 event: EntitydEvent::EntityChanged { record },
                 ..
             } => self.entityd.list_entities(record.space_id),
-            EntityServerMessage::Response { ok: false, error, .. } => {
+            EntityServerMessage::Response {
+                ok: false, error, ..
+            } => {
                 // Previously silent -- cost real debugging time once
                 // already (HIA-01's lifecycle-cycle feature shipped
                 // with an entity_type saai-entityd rejected, and nothing
@@ -5892,7 +6056,12 @@ impl Shell {
 
         if self.layer_buffer.is_none() {
             let (buffer, _canvas) = pool
-                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                .create_buffer(
+                    width as i32,
+                    height as i32,
+                    stride,
+                    wl_shm::Format::Xrgb8888,
+                )
                 .expect("create layer buffer");
             self.layer_buffer = Some(buffer);
         }
@@ -5902,7 +6071,12 @@ impl Shell {
             Some(canvas) => canvas,
             None => {
                 let (second_buffer, canvas) = pool
-                    .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                    .create_buffer(
+                        width as i32,
+                        height as i32,
+                        stride,
+                        wl_shm::Format::Xrgb8888,
+                    )
                     .expect("create layer buffer");
                 *buffer = second_buffer;
                 canvas
@@ -5989,7 +6163,12 @@ impl Shell {
 
         if self.lock_buffer.is_none() {
             let (buffer, _canvas) = pool
-                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                .create_buffer(
+                    width as i32,
+                    height as i32,
+                    stride,
+                    wl_shm::Format::Xrgb8888,
+                )
                 .expect("create lock buffer");
             self.lock_buffer = Some(buffer);
         }
@@ -5999,7 +6178,12 @@ impl Shell {
             Some(canvas) => canvas,
             None => {
                 let (second_buffer, canvas) = pool
-                    .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                    .create_buffer(
+                        width as i32,
+                        height as i32,
+                        stride,
+                        wl_shm::Format::Xrgb8888,
+                    )
                     .expect("create lock buffer");
                 *buffer = second_buffer;
                 canvas
@@ -6049,7 +6233,12 @@ impl Shell {
 
         if self.lock_buffer.is_none() {
             let (buffer, _canvas) = pool
-                .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                .create_buffer(
+                    width as i32,
+                    height as i32,
+                    stride,
+                    wl_shm::Format::Xrgb8888,
+                )
                 .expect("create lock buffer");
             self.lock_buffer = Some(buffer);
         }
@@ -6059,7 +6248,12 @@ impl Shell {
             Some(canvas) => canvas,
             None => {
                 let (second_buffer, canvas) = pool
-                    .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Xrgb8888)
+                    .create_buffer(
+                        width as i32,
+                        height as i32,
+                        stride,
+                        wl_shm::Format::Xrgb8888,
+                    )
                     .expect("create lock buffer");
                 *buffer = second_buffer;
                 canvas
@@ -6118,25 +6312,27 @@ impl Shell {
 mod tests {
     use super::{
         bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
-        format_utc_offset, input_idle_for_at_least, intent_action_at, next_in_cycle,
-        effective_context_space, known_surfaces, object_view_action_at, object_view_content,
-        orb_action_at, orb_menu_actions, orb_state, orb_zone_rect, remove_context_source,
-        space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
-        dev_surface_back_tapped, me_fixed_card_action, task_confirm_action_at,
-        trusted_client_action_at, upsert_context_entry,
-        wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
-        KeyboardMode, OrbAction, OrbState, Rect, RootPage, Space, SpaceColor, SpaceLifecycle,
-        TrustedClientTap, WifiListTap, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        dev_surface_back_tapped, effective_context_space, format_utc_offset,
+        input_idle_for_at_least, intent_action_at, known_surfaces, me_fixed_card_action,
+        next_in_cycle, object_view_action_at, object_view_content, orb_action_at, orb_menu_actions,
+        orb_state, orb_zone_rect, remove_context_source, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at,
+        trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
+        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, OrbState, Rect,
+        RootPage, Space, SpaceColor, SpaceLifecycle, TrustedClientTap, WifiListTap,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, SPACE_COLOR_ENTITY_TYPE, MANUAL_CONFIDENCE, WIFI_CONFIDENCE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_store::SpaceKind;
     use std::time::Duration;
 
-    fn test_entity(entity_type: &str, properties: serde_json::Map<String, serde_json::Value>) -> Entity {
+    fn test_entity(
+        entity_type: &str,
+        properties: serde_json::Map<String, serde_json::Value>,
+    ) -> Entity {
         Entity {
             schema: 1,
             id: uuid::Uuid::new_v4(),
@@ -6152,14 +6348,23 @@ mod tests {
 
     fn lifecycle_entity(space_id: &str, lifecycle: &str) -> Entity {
         let mut properties = serde_json::Map::new();
-        properties.insert("space_id".into(), serde_json::Value::String(space_id.into()));
-        properties.insert("lifecycle".into(), serde_json::Value::String(lifecycle.into()));
+        properties.insert(
+            "space_id".into(),
+            serde_json::Value::String(space_id.into()),
+        );
+        properties.insert(
+            "lifecycle".into(),
+            serde_json::Value::String(lifecycle.into()),
+        );
         test_entity(SPACE_LIFECYCLE_ENTITY_TYPE, properties)
     }
 
     fn relation_entity(from: &str, to: &str, kind: &str) -> Entity {
         let mut properties = serde_json::Map::new();
-        properties.insert("from_space_id".into(), serde_json::Value::String(from.into()));
+        properties.insert(
+            "from_space_id".into(),
+            serde_json::Value::String(from.into()),
+        );
         properties.insert("to_space_id".into(), serde_json::Value::String(to.into()));
         properties.insert("kind".into(), serde_json::Value::String(kind.into()));
         test_entity(SPACE_RELATION_ENTITY_TYPE, properties)
@@ -6167,7 +6372,10 @@ mod tests {
 
     fn wifi_signal_entity(space_id: &str, ssid: &str) -> Entity {
         let mut properties = serde_json::Map::new();
-        properties.insert("space_id".into(), serde_json::Value::String(space_id.into()));
+        properties.insert(
+            "space_id".into(),
+            serde_json::Value::String(space_id.into()),
+        );
         properties.insert(
             "signal_type".into(),
             serde_json::Value::String(SPACE_SIGNAL_TYPE_WIFI_SSID.into()),
@@ -6178,7 +6386,10 @@ mod tests {
 
     fn color_entity(space_id: &str, color: &str) -> Entity {
         let mut properties = serde_json::Map::new();
-        properties.insert("space_id".into(), serde_json::Value::String(space_id.into()));
+        properties.insert(
+            "space_id".into(),
+            serde_json::Value::String(space_id.into()),
+        );
         properties.insert("color".into(), serde_json::Value::String(color.into()));
         test_entity(SPACE_COLOR_ENTITY_TYPE, properties)
     }
@@ -6190,7 +6401,10 @@ mod tests {
             serde_json::Value::String("waiting_confirmation".into()),
         );
         if let Some(id) = intent_id {
-            properties.insert("intent_id".into(), serde_json::Value::String(id.to_string()));
+            properties.insert(
+                "intent_id".into(),
+                serde_json::Value::String(id.to_string()),
+            );
         }
         let mut entity = test_entity("saaios.task", properties);
         entity.title = title.to_string();
@@ -6281,20 +6495,36 @@ mod tests {
             )
         };
         assert_eq!(
-            super::pin_keypad_action_at(center(super::pin_keypad_rect(0, width, height)), width, height),
+            super::pin_keypad_action_at(
+                center(super::pin_keypad_rect(0, width, height)),
+                width,
+                height
+            ),
             Some("1")
         );
         assert_eq!(
-            super::pin_keypad_action_at(center(super::pin_keypad_rect(10, width, height)), width, height),
+            super::pin_keypad_action_at(
+                center(super::pin_keypad_rect(10, width, height)),
+                width,
+                height
+            ),
             Some("0")
         );
         assert_eq!(
-            super::pin_keypad_action_at(center(super::pin_keypad_rect(11, width, height)), width, height),
+            super::pin_keypad_action_at(
+                center(super::pin_keypad_rect(11, width, height)),
+                width,
+                height
+            ),
             Some("⌫")
         );
         // Index 9 is the deliberately blank cell between 9 and 0.
         assert_eq!(
-            super::pin_keypad_action_at(center(super::pin_keypad_rect(9, width, height)), width, height),
+            super::pin_keypad_action_at(
+                center(super::pin_keypad_rect(9, width, height)),
+                width,
+                height
+            ),
             None
         );
     }
@@ -6312,15 +6542,30 @@ mod tests {
         // Index 14 (the third control slot) is only "Убрать PIN" when
         // a PIN already exists.
         assert_eq!(
-            super::pin_setup_action_at(center(super::pin_keypad_rect(14, width, height)), width, height, true),
+            super::pin_setup_action_at(
+                center(super::pin_keypad_rect(14, width, height)),
+                width,
+                height,
+                true
+            ),
             Some("Убрать PIN")
         );
         assert_eq!(
-            super::pin_setup_action_at(center(super::pin_keypad_rect(14, width, height)), width, height, false),
+            super::pin_setup_action_at(
+                center(super::pin_keypad_rect(14, width, height)),
+                width,
+                height,
+                false
+            ),
             None
         );
         assert_eq!(
-            super::pin_setup_action_at(center(super::pin_keypad_rect(12, width, height)), width, height, false),
+            super::pin_setup_action_at(
+                center(super::pin_keypad_rect(12, width, height)),
+                width,
+                height,
+                false
+            ),
             Some("Отмена")
         );
     }
@@ -6342,7 +6587,10 @@ mod tests {
 
     #[test]
     fn key_fingerprint_falls_back_to_the_raw_text_for_unparseable_input() {
-        assert_eq!(super::key_fingerprint("not-a-key-at-all"), "not-a-key-at-all");
+        assert_eq!(
+            super::key_fingerprint("not-a-key-at-all"),
+            "not-a-key-at-all"
+        );
         assert_eq!(
             super::key_fingerprint("ssh-ed25519 not-valid-base64!!"),
             "ssh-ed25519 not-valid-base64!!"
@@ -6600,7 +6848,10 @@ mod tests {
     #[test]
     fn input_idle_reports_not_idle_right_after_a_touch() {
         let marker = tempfile::NamedTempFile::new().unwrap();
-        assert!(!input_idle_for_at_least(marker.path(), Duration::from_secs(60)));
+        assert!(!input_idle_for_at_least(
+            marker.path(),
+            Duration::from_secs(60)
+        ));
     }
 
     #[test]
@@ -6608,7 +6859,10 @@ mod tests {
         let marker = tempfile::NamedTempFile::new().unwrap();
         let ancient = std::time::SystemTime::now() - Duration::from_secs(120);
         marker.as_file().set_modified(ancient).unwrap();
-        assert!(input_idle_for_at_least(marker.path(), Duration::from_secs(60)));
+        assert!(input_idle_for_at_least(
+            marker.path(),
+            Duration::from_secs(60)
+        ));
     }
 
     #[test]
@@ -6838,15 +7092,27 @@ mod tests {
         // split (task_confirm_screen_left/right_half_of_button_row_*
         // above) -- object_view(_, _, 2) uses the identical layout
         // shape.
-        assert_eq!(object_view_action_at((270.0, 2250.0), 1080, 2400, 2), Some(0));
-        assert_eq!(object_view_action_at((810.0, 2250.0), 1080, 2400, 2), Some(1));
+        assert_eq!(
+            object_view_action_at((270.0, 2250.0), 1080, 2400, 2),
+            Some(0)
+        );
+        assert_eq!(
+            object_view_action_at((810.0, 2250.0), 1080, 2400, 2),
+            Some(1)
+        );
         assert_eq!(object_view_action_at((540.0, 1000.0), 1080, 2400, 2), None);
     }
 
     #[test]
     fn object_view_action_at_finds_a_single_button_spanning_the_full_row() {
-        assert_eq!(object_view_action_at((270.0, 2250.0), 1080, 2400, 1), Some(0));
-        assert_eq!(object_view_action_at((810.0, 2250.0), 1080, 2400, 1), Some(0));
+        assert_eq!(
+            object_view_action_at((270.0, 2250.0), 1080, 2400, 1),
+            Some(0)
+        );
+        assert_eq!(
+            object_view_action_at((810.0, 2250.0), 1080, 2400, 1),
+            Some(0)
+        );
     }
 
     #[test]
@@ -6895,7 +7161,10 @@ mod tests {
         // View -- just no type-specific actions.
         let mut properties = serde_json::Map::new();
         properties.insert("some_number".into(), serde_json::Value::from(42));
-        properties.insert("some_text".into(), serde_json::Value::String("hello".into()));
+        properties.insert(
+            "some_text".into(),
+            serde_json::Value::String("hello".into()),
+        );
         let mut entity = test_entity("some.unknown.type", properties);
         entity.title = "Загадочный объект".to_string();
         let content = object_view_content(&entity, &[]);
@@ -6968,7 +7237,10 @@ mod tests {
             (dot.x + dot.width / 2) as f64,
             (dot.y + dot.height / 2) as f64,
         );
-        assert_eq!(orb_action_at(point, 1080, 2400, &[]), Some(OrbAction::Toggle));
+        assert_eq!(
+            orb_action_at(point, 1080, 2400, &[]),
+            Some(OrbAction::Toggle)
+        );
     }
 
     #[test]

@@ -33,7 +33,9 @@ use drm::Device as BasicDevice;
 use drm::{CLOEXEC, RDWR};
 use smithay_client_toolkit::reexports::client::protocol::wl_buffer;
 use smithay_client_toolkit::reexports::client::{Dispatch, QueueHandle};
-use wayland_protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::{
+    zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
+};
 
 const DRM_DEVICE: &str = "/dev/dri/card0";
 /// XRGB8888 is always 32 bits per pixel -- `create_dumb_buffer` needs
@@ -205,6 +207,18 @@ impl DmabufCanvas {
     /// a two-slot rotation this should only ever happen if a surface is
     /// redrawn faster than the compositor can flip, which none of this
     /// app's current call sites do).
+    /// Non-consuming check for callers that want to fall back to a
+    /// different presentation path THIS frame without disabling the
+    /// dma-buf path for the rest of the session -- both slots being
+    /// momentarily busy (the compositor hasn't released either yet, e.g.
+    /// a burst of redraws faster than it can flip) is normal and
+    /// recoverable, unlike a real allocation/mmap/protocol error.
+    pub fn has_free_slot(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|slot| !slot.busy.load(Ordering::Acquire))
+    }
+
     fn acquire(&mut self) -> Result<usize, String> {
         for _ in 0..self.slots.len() {
             let index = self.next;
@@ -221,10 +235,7 @@ impl DmabufCanvas {
     /// already expects from a `SlotPool` canvas), marks it busy, and
     /// returns the `wl_buffer` to attach/damage/commit exactly like a
     /// `SlotPool::create_buffer`'s output.
-    pub fn paint(
-        &mut self,
-        paint: impl FnOnce(&mut [u8]),
-    ) -> Result<&wl_buffer::WlBuffer, String> {
+    pub fn paint(&mut self, paint: impl FnOnce(&mut [u8])) -> Result<&wl_buffer::WlBuffer, String> {
         let index = self.acquire()?;
         let logical_len = self.pitch * self.height as usize;
         let slot = &mut self.slots[index];
