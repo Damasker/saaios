@@ -312,14 +312,21 @@ static int gpu_end(uint32_t slot)
 }
 
 static int import_image(const VkPhysicalDeviceMemoryProperties *memory_properties,
-			uint32_t width, uint32_t height, int dma_fd,
+			uint32_t width, uint32_t height, uint32_t pitch, int dma_fd,
 			struct imported_image *output)
 {
-	uint64_t linear_modifier = DRM_FORMAT_MOD_LINEAR;
-	VkImageDrmFormatModifierListCreateInfoEXT modifiers = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
-		.drmFormatModifierCount = 1,
-		.pDrmFormatModifiers = &linear_modifier,
+	VkSubresourceLayout plane_layout = {
+		.offset = 0,
+		.size = (VkDeviceSize)pitch * height,
+		.rowPitch = pitch,
+		.arrayPitch = (VkDeviceSize)pitch * height,
+		.depthPitch = (VkDeviceSize)pitch * height,
+	};
+	VkImageDrmFormatModifierExplicitCreateInfoEXT modifiers = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
+		.drmFormatModifier = DRM_FORMAT_MOD_LINEAR,
+		.drmFormatModifierPlaneCount = 1,
+		.pPlaneLayouts = &plane_layout,
 	};
 	VkExternalMemoryImageCreateInfo external = {
 		.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
@@ -342,8 +349,12 @@ static int import_image(const VkPhysicalDeviceMemoryProperties *memory_propertie
 	};
 	VkResult result = p_vkCreateImage(g_device, &image_info, NULL,
 					  &output->image);
-	if (result != VK_SUCCESS)
+	if (result != VK_SUCCESS) {
+		fprintf(stderr,
+			"saai-gpu-compositor: external image create failed: %d\n",
+			result);
 		return -1;
+	}
 
 	VkMemoryRequirements requirements;
 	p_vkGetImageMemoryRequirements(g_device, output->image, &requirements);
@@ -353,13 +364,25 @@ static int import_image(const VkPhysicalDeviceMemoryProperties *memory_propertie
 	result = p_vkGetMemoryFdPropertiesKHR(
 		g_device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 		dma_fd, &fd_properties);
-	if (result != VK_SUCCESS)
+	if (result != VK_SUCCESS) {
+		fprintf(stderr,
+			"saai-gpu-compositor: dma-buf properties failed: %d\n",
+			result);
 		return -1;
+	}
 	uint32_t memory_type = find_memory_type(
 		memory_properties,
 		requirements.memoryTypeBits & fd_properties.memoryTypeBits, 0);
-	if (memory_type == UINT32_MAX)
+	if (memory_type == UINT32_MAX) {
+		fprintf(stderr,
+			"saai-gpu-compositor: incompatible memory bits image=%x fd=%x\n",
+			requirements.memoryTypeBits, fd_properties.memoryTypeBits);
 		return -1;
+	}
+	fprintf(stderr,
+		"saai-gpu-compositor: importing %ux%u pitch=%u size=%llu requirement=%llu\n",
+		width, height, pitch, (unsigned long long)plane_layout.size,
+		(unsigned long long)requirements.size);
 	VkMemoryDedicatedAllocateInfo dedicated = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
 		.image = output->image,
@@ -381,11 +404,18 @@ static int import_image(const VkPhysicalDeviceMemoryProperties *memory_propertie
 	result = p_vkAllocateMemory(g_device, &allocation, NULL,
 				    &output->memory);
 	if (result != VK_SUCCESS) {
+		fprintf(stderr,
+			"saai-gpu-compositor: dma-buf import allocation failed: %d\n",
+			result);
 		close(import.fd);
 		return -1;
 	}
-	return p_vkBindImageMemory(g_device, output->image,
-				   output->memory, 0) == VK_SUCCESS ? 0 : -1;
+	result = p_vkBindImageMemory(g_device, output->image, output->memory, 0);
+	if (result != VK_SUCCESS)
+		fprintf(stderr,
+			"saai-gpu-compositor: imported image bind failed: %d\n",
+			result);
+	return result == VK_SUCCESS ? 0 : -1;
 }
 
 static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
@@ -494,9 +524,9 @@ static int initialize_vulkan(uint32_t width, uint32_t height, uint32_t pitch,
 
 	VkPhysicalDeviceMemoryProperties memory_properties;
 	p_vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
-	if (import_image(&memory_properties, width, height, dma_fd0,
+	if (import_image(&memory_properties, width, height, pitch, dma_fd0,
 			 &g_images[0]) < 0 ||
-	    import_image(&memory_properties, width, height, dma_fd1,
+	    import_image(&memory_properties, width, height, pitch, dma_fd1,
 			 &g_images[1]) < 0)
 		return -1;
 
