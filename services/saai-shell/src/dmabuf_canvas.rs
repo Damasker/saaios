@@ -94,6 +94,11 @@ pub struct DmabufCanvas {
     width: u32,
     height: u32,
     pitch: usize,
+    /// CPU-cached render target. DRM dumb-buffer mappings on panther are
+    /// write-combined rather than normally cached: sequential stores are
+    /// fast, but the renderer's repeated read/modify/write blending is not.
+    /// Paint the scene here first and copy it to the mapped dma-buf once.
+    staging: Vec<u8>,
     slots: Vec<Slot>,
     next: usize,
 }
@@ -110,6 +115,7 @@ impl DmabufCanvas {
             width: 0,
             height: 0,
             pitch: 0,
+            staging: Vec::new(),
             slots: Vec::new(),
             next: 0,
         })
@@ -162,6 +168,7 @@ impl DmabufCanvas {
         let second = self.alloc_slot(dmabuf, qh)?;
         self.slots.push(first);
         self.slots.push(second);
+        self.staging.resize(self.pitch * self.height as usize, 0);
         Ok(())
     }
 
@@ -230,14 +237,20 @@ impl DmabufCanvas {
         Err("both dma-buf slots still busy (compositor has not released either yet)".into())
     }
 
-    /// Maps the next available slot, lets `paint` write pixels into it
-    /// (`stride` = `self.pitch()`, matching what `render::draw_status_bar`
-    /// already expects from a `SlotPool` canvas), marks it busy, and
-    /// returns the `wl_buffer` to attach/damage/commit exactly like a
-    /// `SlotPool::create_buffer`'s output.
+    /// Lets `paint` render into normal CPU-cached memory, then performs one
+    /// sequential copy into the next mapped dma-buf slot. Rendering directly
+    /// into a DRM dumb-buffer is pathologically slow on panther because the
+    /// software renderer blends and revisits pixels while that mapping is
+    /// write-combined. The staging copy preserves the zero-copy compositor
+    /// import while keeping CPU rendering responsive.
     pub fn paint(&mut self, paint: impl FnOnce(&mut [u8])) -> Result<&wl_buffer::WlBuffer, String> {
         let index = self.acquire()?;
         let logical_len = self.pitch * self.height as usize;
+        if self.staging.len() != logical_len {
+            self.staging.resize(logical_len, 0);
+        }
+        paint(&mut self.staging[..logical_len]);
+
         let slot = &mut self.slots[index];
         {
             let mut mapping = self
@@ -255,7 +268,7 @@ impl DmabufCanvas {
             // exactly what Canvas expects, tightly packed.
             let mapped = mapping.as_mut();
             let logical_len = logical_len.min(mapped.len());
-            paint(&mut mapped[..logical_len]);
+            mapped[..logical_len].copy_from_slice(&self.staging[..logical_len]);
         }
         slot.busy.store(true, Ordering::Release);
         Ok(&slot.wl_buffer)
