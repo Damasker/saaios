@@ -220,6 +220,8 @@ static const char *const gpu_dependency_modules[] = {
     "max77779-fg.ko",
     "slc_pt.ko",
     "gpu_cooling.ko",
+    /* google_bcl imports modem_force_crash_exit_ext from this module. */
+    "google_modemctl.ko",
     "google_bcl.ko",
 };
 
@@ -795,6 +797,70 @@ static void prepare_persistent_firmware(void) {
     }
     closedir(directory);
     log_message("persistent firmware linked: %d files", linked);
+}
+
+static int name_has_suffix(const char *name, const char *suffix) {
+    size_t name_length = strlen(name);
+    size_t suffix_length = strlen(suffix);
+    return name_length >= suffix_length &&
+           strcmp(name + name_length - suffix_length, suffix) == 0;
+}
+
+static int replace_symlink(const char *source, const char *target) {
+    (void)unlink(target);
+    return symlink(source, target);
+}
+
+/* The matching r54p3 Mali UMD is an Android/bionic library island kept on
+ * /data, not part of SaaiOS itself.  Publish it in a throwaway /vendor tree
+ * on every boot so the bionic linker can resolve both the HAL entry point and
+ * its version-matched transitive dependencies. */
+static void prepare_gpu_userspace(void) {
+    const char *source_directory = "/data/saaios/vk-libs";
+    const char *vendor_library_directory = "/vendor/lib64";
+    DIR *directory = opendir(source_directory);
+    if (!directory) {
+        log_message("GPU userspace directory unavailable: %s",
+                    strerror(errno));
+        return;
+    }
+    mkdir_one("/vendor", 0755);
+    mkdir_one(vendor_library_directory, 0755);
+    mkdir_one("/vendor/lib64/hw", 0755);
+    mkdir_one("/vendor/lib64/egl", 0755);
+
+    int linked = 0;
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        if (entry->d_name[0] == '.' ||
+            !name_has_suffix(entry->d_name, ".so")) {
+            continue;
+        }
+        char source[384];
+        char target[384];
+        snprintf(source, sizeof(source), "%s/%s",
+                 source_directory, entry->d_name);
+        struct stat information;
+        if (stat(source, &information) < 0 ||
+            !S_ISREG(information.st_mode)) {
+            continue;
+        }
+        snprintf(target, sizeof(target), "%s/%s",
+                 vendor_library_directory, entry->d_name);
+        if (replace_symlink(source, target) == 0) {
+            ++linked;
+        }
+    }
+    closedir(directory);
+
+    if (replace_symlink("/data/saaios/vk-libs/vulkan.mali.so",
+                        "/vendor/lib64/hw/vulkan.mali.so") < 0 ||
+        replace_symlink("/data/saaios/vk-libs/libGLES_mali.so",
+                        "/vendor/lib64/egl/libGLES_mali.so") < 0) {
+        log_message("GPU HAL links failed: %s", strerror(errno));
+        return;
+    }
+    log_message("GPU userspace linked: %d libraries", linked);
 }
 
 static int setup_gadget(const char *udc) {
@@ -1772,10 +1838,11 @@ int main(void) {
     setup_metadata_log();
     restore_saved_time();
     setup_data_storage();
-    /* Audio, Bluetooth and GPU firmware all come from the persistent data
+    /* Audio, Bluetooth and GPU assets all come from the persistent data
      * volume.  Link them once immediately after /data is mounted so later
-     * subsystem setup cannot race the firmware loader. */
+     * subsystem setup cannot race firmware or userspace discovery. */
     prepare_persistent_firmware();
+    prepare_gpu_userspace();
     pid_t entityd_pid = start_saai_entityd();
     pid_t appd_pid = start_saai_appd();
     pid_t file_recv_pid = start_file_recv();

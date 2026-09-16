@@ -38,13 +38,15 @@ kernel modules on the persistent data volume:
 /data/saaios/system/gpu/mali_pixel.ko  # patched source-built platform module
 /data/saaios/system/gpu/mali_kbase.ko  # factory r54p3 module
 /data/saaios/firmware/mali_csffw.bin   # matching r54p3 CSF firmware
+/data/saaios/vk-libs/*.so              # matching bionic UMD dependency island
 ```
 
 PID 1 loads the prerequisite modules from `/lib/modules`, loads these two
 modules in order, rejects any kbase whose version does not start with
-`r54p3-00eac0`, and creates `/dev/mali0`. Use only files matching the pinned
-`CP2A.260705.006` base. The verified SHA-256 values and the reason the factory
-`mali_pixel.ko` must not be used are recorded in
+`r54p3-00eac0`, and creates `/dev/mali0`. It also recreates the transient
+`/vendor/lib64` HAL/dependency links from `vk-libs` on every boot. Use only
+files matching the pinned `CP2A.260705.006` base. The verified SHA-256 values
+and the reason the factory `mali_pixel.ko` must not be used are recorded in
 [ADR-024](../../../docs/adr/ADR-024-gpu-driver-spike.md).
 
 `tools/vk-frame.c` is the hardware acceptance probe. Build it as an Android

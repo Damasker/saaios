@@ -44,7 +44,12 @@ PID 1 загружает зависимости из `/lib/modules`, затем 
 `/data/saaios/system/gpu/mali_pixel.ko` и factory
 `/data/saaios/system/gpu/mali_kbase.ko`, проверяет строку версии
 `r54p3-00eac0` и создаёт `/dev/mali0`. Firmware до этого публикуется из
-`/data/saaios/firmware`, сразу после монтирования `/data`.
+`/data/saaios/firmware`, сразу после монтирования `/data`. В этой же точке
+PID 1 создаёт временный `/vendor/lib64` из version-matched библиотек
+`/data/saaios/vk-libs`; это делает UMD доступным после обычной перезагрузки,
+а не только после ручной настройки shell. `google_modemctl.ko` грузится до
+`google_bcl.ko`, поскольку предоставляет импортируемый последним символ
+`modem_force_crash_exit_ext`.
 
 Следующая отдельная задача -- подключить этот уже рабочий GPU к compositor:
 импорт dma-buf, синхронизация и Wayland/Vulkan render path. Старые разделы
