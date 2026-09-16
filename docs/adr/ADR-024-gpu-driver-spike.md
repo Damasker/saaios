@@ -1,58 +1,114 @@
 # ADR-024: GPU-рендеринг на panther -- реальный kbase поднимает MCU-прошивку; настоящий Mali UMD создаёт VkDevice на этом железе
 
-## Next session entry point: completion notification path
+## Next session entry point: fence completion producer отсутствует (2026-09-16, продолжение)
 
-На этом этапе инструментально подтверждено и больше не считается основной причиной проблемы:
+На этом этапе инструментально подтверждено и закрыто (не пересматривать без новых фактов):
 
-* power domains — работают;
-* CSF firmware boot — работает;
-* doorbell/MMIO path — работает;
-* CS_REQ/CS_ACK — работают;
-* GPU command stream — реально читается и декодируется firmware;
-* KCPU execution — завершается без pending/blocked/error;
-* `CS_EXTRACT == CS_INSERT` — command stream полностью потреблён;
-* текущий stream содержит только event/sync bookkeeping и не содержит job-launch для реальной `vkCmdFillBuffer`-работы;
-* `VkFence` при этом остаётся `VK_NOT_READY`.
+* poll/read notification chain kernel -> `mali-event-hand`: полностью рабочая.
+  `ppoll()` — не вечная блокировка, а цикл с конечным timeout; `fd=3`
+  (`/dev/mali0`) реально становится readable (`revents=POLLIN`) примерно
+  через 100мс после `vkQueueSubmit()`; `read(fd=3)` реально читает 64 байта
+  настоящего `struct base_csf_notification` — all-zero, что для реального
+  открытого `kbase_read()` (CSF-путь) является корректно сформированным
+  generic `BASE_CSF_NOTIFICATION_EVENT` (type=0), а не признаком поломки.
+* CSF event-память (`0x5fffff1000`, `0x5ffff79000`, встреченные в ring
+  buffer как операнды `EVADD`): реально замаплены. `sysprobe`-трасса
+  `ioctl`+`mmap` показала `ioctl(fd=3, request=0xc040803b)` —
+  `_IOWR(0x80, 59, 64 bytes)`, то есть **реальный номер
+  `KBASE_IOCTL_MEM_ALLOC` равен 59, не 5**, как предполагалось раньше по
+  памяти без проверки — прямо перед каждым `mmap(fd=3, offset=0x41000)`,
+  который возвращает **ровно** `0x5fffff1000`/`0x5ffff79000`. CPU VA ==
+  GPU VA, `munmap` за весь прогон не встречается ни разу. Гипотеза
+  "SAME_VA cookie-mmap для `BASE_MEM_CSF_EVENT` не происходит/сломан в
+  нашем bionic-island окружении" — **опровергнута прямым фактом**, не
+  предположением.
+* Ранняя находка "мали-event-hand после `read()` уходит в тугой spin-loop
+  `libc.so+0x62300` <-> `libGLES_mali.so+0x1374f94`" — **отброшена**.
+  Статический дизассемблер этих двух адресов (после проверки, что
+  `p_vaddr == p_offset` для всех `LOAD`-сегментов обеих библиотек, т.е.
+  file offset действительно можно использовать как ELF vaddr для
+  `objdump --start-address`) показал, что это ветка
+  `scudo_mallopt(M_LOG_STATS=-205, ...)` — диагностический дамп аллокатора
+  (`getStats`/`outputRaw`/`printFragmentationInfo`), никак не связанная с
+  ожиданием fence. Параллельный быстрый (без single-step) прогон той же
+  программы показал, что `mali-event-hand` вообще не делает ни одного
+  syscall между `read(fd=3)=64` и следующим `ppoll()` — старая
+  single-step трасса либо перепутала поток (баг атрибуции в
+  `sysprobe`), либо сам single-step исказил scheduling. **Не доверять
+  этой трассе впредь.**
+* Настоящий `vkGetFenceStatus` найден не предположением, а через
+  `dladdr()` прямо в самом `vk_exec01` (указатель, возвращённый
+  `vkGetInstanceProcAddr`, у закрытого Mali UMD не экспортируется по
+  имени — только Android-specific extension-функции видны в `--dyn-syms`).
+  Статический дизассемблер (`libGLES_mali.so` file offset `0x915da0`)
+  показал: `vkGetFenceStatus(device, fence)` берёт `x0 = fence + 0x250` и
+  вызывает `sub_1b38520(x0)`; эта функция проверяет `[x0+128]`
+  (attached sync-fd) — если это не `-1`, реально делает `ppoll()` на этом
+  fd; если `-1` (наш случай, всегда), просто читает закэшированный
+  `byte[x0+1]` ("signaled"-флаг) без единого syscall. Это объясняет,
+  почему `vkGetFenceStatus()` не производит ни одного `ioctl`/`poll` в
+  нашей трассе — это ожидаемое поведение при отсутствующем sync-fd, а не
+  баг сам по себе.
+* Прямое, без `ptrace`, чтение `*(fence_handle+0x250+{0,1,128})` из
+  самого `vk_exec01` каждые 500мс на протяжении всего 5-секундного окна
+  ожидания показало: `byte[0]=0`, `byte[1]=0` (signaled cache),
+  `fd_field=-1` — **неизменны с момента `vkCreateFence()` и до самого
+  конца прогона**, включая всё время после `vkQueueSubmit()`. Это уже не
+  "не поймано в трассе syscall'ов" (как в старой, неверной
+  интерпретации single-step находки), а прямое доказательство: **тот,
+  кто должен записать `byte[1]=1` (сам "producer" completion-состояния),
+  не вызывается вообще ни разу** за весь прогон.
 
-Рабочая гипотеза: proprietary Mali UMD использует многофазный submit. Первая GPU/KCPU-фаза завершается, но внутренний поток `mali-event-hand` не получает completion notification от kernel path, остаётся заблокированным в `ppoll()`/`poll()` и не переходит к следующей фазе, где должна появиться настоящая GPU job.
+### UMD-FENCE-01: следующая цель
 
-Приоритет расследования на следующую сессию:
+Найти setter `byte[fence_obj+0x250+1]=1` внутри `libGLES_mali.so`
+(искать `strb w?, [x?, #1]` в связке с тем же объектом — рядом уже
+найдены соседние helper'ы на `0x1b384c0`-`0x1b384d8`, работающие с
+байтами `[0]`/`[1]` и полем `+128` того же объекта) и определить:
 
-1. Трассировать `ppoll()`/`poll()` потока `mali-event-hand` через уже проверенный `sysprobe`.
-2. Для каждого ожидаемого fd зафиксировать:
+1. При каком событии/условии этот setter должен вызываться (по коду —
+   не предположением).
+2. Вызывается ли он вообще где-либо в загруженном `libGLES_mali.so` для
+   этого пути submit, или недостижим (dead code в нашей конфигурации).
+3. Если достижим — какой шаг/поток должен был его вызвать, и какое
+   条件 (feature flag, property, callback registration) в нашем
+   bionic-island окружении может блокировать этот путь.
 
-   * номер fd;
-   * `events` / `revents`;
-   * `/proc/<pid>/fd/<n>`;
-   * `/proc/<pid>/fdinfo/<n>`.
-3. Проверить, вызывается ли `kbase_csf_event_signal()`.
-4. Проверить, вызывается ли `_kbase_event_wakeup()`.
-5. Проверить поведение `kbase_poll()` и его возвращаемую mask.
-6. Найти последний реально произошедший шаг в цепочке:
+Инструмент: `sysprobe` (ptrace, уже доказанно безопасен) + статический
+дизассемблер `libGLES_mali.so` (`aarch64-linux-gnu-objdump`,
+`aarch64-linux-gnu-readelf`, оба на R620). Kretprobe на новых
+kernel-функциях для этого шага не требуется — разрыв уже локализован в
+closed-source userspace UMD, не в ядре.
 
-```text
-GPU/KCPU completion
-        ↓
-kbase_csf_event_signal()
-        ↓
-_kbase_event_wakeup()
-        ↓
-kbase_poll()
-        ↓
-ppoll()/poll() returns
-        ↓
-mali-event-hand wakes
-        ↓
-UMD next submit phase
-        ↓
-real job-launch
-        ↓
-VkFence signal
+### Полезная деталь для сборки: правильный link recipe для `vk_exec01`/`vk_probe`
+
+Простой `aarch64-linux-gnu-gcc -O0 -o vk_exec01 vk_exec01.c -ldl` линкует
+против **glibc** (`interp=/lib/ld-linux-aarch64.so.1`, `NEEDED
+libc.so.6`) — такой бинарник не запускается под настоящим bionic
+`linker64` устройства ("library libc.so.6 not found"). Рабочий рецепт
+(воспроизводит `vk_probe`, `interp=/system/bin/linker64`, `NEEDED
+libc.so`/`libdl.so`):
+
+```sh
+CRTDIR=/home/mike/android-sdk/ndk/magisk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/30
+STAGING=/home/mike/panthor-backport/vk-libs-staging
+aarch64-linux-gnu-gcc -nostdlib -fPIC -pie \
+  -Wl,--dynamic-linker=/system/bin/linker64 \
+  -Wl,-rpath-link="$STAGING" \
+  "$CRTDIR/crtbegin_dynamic.o" vk_exec01.c "$CRTDIR/crtend_android.o" \
+  -I "$STAGING/include" -L "$STAGING" -lc -lm -ldl \
+  -o vk_exec01
 ```
 
-Первый отсутствующий переход в этой цепочке и является текущей целевой точкой диагностики.
+`-nostdlib` + настоящие NDK crt-объекты (`crtbegin_dynamic.o`/
+`crtend_android.o`, взяты только ради корректного `_start`/`.init_array`
+под bionic) + линковка против **настоящих extracted** `libc.so`/
+`libm.so`/`libdl.so` в `vk-libs-staging/` (не NDK-заглушек, не glibc).
 
-Важно: не ставить kretprobe на `kbase_csf_kcpu_queue_process()` или другие горячие KCPU scheduler paths. Такой probe уже вызывал softlockup и реальную перезагрузку устройства; этот путь исключён из дальнейшей инструментализации.
+Важно: не ставить `kretprobe` на `kbase_csf_kcpu_queue_process()` или
+другие горячие KCPU scheduler paths. Такой probe уже вызывал softlockup
+и реальную перезагрузку устройства; этот путь исключён из дальнейшей
+инструментализации.
 
 ## Статус
 
