@@ -1,13 +1,22 @@
-# ADR-024: GPU-рендеринг на panther -- реальный kbase поднимает MCU-прошивку; Vulkan/рендеринг ещё не сделаны
+# ADR-024: GPU-рендеринг на panther -- реальный kbase поднимает MCU-прошивку; настоящий Mali UMD создаёт VkDevice на этом железе
 
 ## Статус
 
-Принято, 2026-09-10. Обновлено 2026-09-16: настоящий, открытый Google
-kbase-драйвер, собранный из исходников для этого чипа, физически
-поднимает GPU Mali-G710 и запускает MCU-прошивку на этом устройстве
-под этой ОС (см. финальный раздел ниже) -- ядерный уровень решён.
-Полный Vulkan/рендеринг-стек (userspace DDK, bionic-мост) остаётся
-отдельной, не начатой задачей.
+Принято, 2026-09-10. Обновлено 2026-09-16 (kernel-уровень): настоящий,
+открытый Google kbase-драйвер, собранный из исходников для этого чипа,
+физически поднимает GPU Mali-G710 и запускает MCU-прошивку на этом
+устройстве под этой ОС -- ядерный уровень решён.
+
+Обновлено повторно, 2026-09-16 (userspace/Vulkan): настоящий,
+проприетарный Mali UMD от Google (`vulkan.mali.so`/`libGLES_mali.so`,
+извлечённые из официального factory-образа) физически создаёт
+`VkInstance`, находит настоящее устройство (`Mali-G710`) и создаёт
+`VkDevice` через реальные ioctl к `/dev/mali0`/kbase на этом устройстве
+под этой ОС, в обход `libvulkan.so`'s собственного (нерабочего без
+Android property-сервиса) HAL discovery (см. раздел "Vulkan/userspace"
+ниже). Само рендеринг-содержимое (submit реальной GPU-работы,
+интеграция с `saai-displayd`, bionic-мост как отдельный сервис)
+остаётся отдельной, не начатой задачей.
 
 ## Контекст
 
@@ -1266,3 +1275,239 @@ mali 28000000.mali: Firmware load successful
 Рабочее дерево (оба драйвера, диагностические модули,
 `gpu_probe_test`) сохранено на R620 (`/home/mike/panthor-backport/`,
 вне git, как и весь этот бэкпорт с самого начала).
+
+## Vulkan/userspace: настоящий Mali UMD создаёт VkDevice в обход libvulkan.so (2026-09-16, ещё позже)
+
+С ядерным уровнем решённым, следующий вопрос: можно ли на этой ОС
+запустить настоящий, проприетарный Mali userspace-драйвер (UMD) --
+`vulkan.mali.so`/`libGLES_mali.so` -- а не только kernel-модуль.
+Архитектура (по предложению пользователя): "остров совместимости" --
+отдельный bionic-рантайм рядом с основным musl-миром ОС, без попытки
+затащить Android целиком.
+
+Фабричного образа под рукой не было; сначала попробовали
+реконструировать `vendor`-раздел прямо на устройстве через liblp
+(формат Android dynamic-partitions, полностью реверс-инжинирен и
+проверен побайтово против известных размеров структур AOSP) и
+`device-mapper` (`dm-linear`, через `<linux/dm-ioctl.h>` из реального
+UAPI-заголовка ядра). Работало для чтения имён файлов, но упёрлось в
+необъяснимое расхождение размеров (`ext4 bad geometry`) -- VABC/COW
+проверили и исключили (нет `snapuserd`, нет `vendor_b`, `-cow`-раздел
+слишком мал), в итоге пользователь предоставил настоящий фабричный
+образ (`panther-cp2a.260705.006-factory-*.zip`, тот же build
+`CP2A.260705.006`, что и на живом устройстве -- подтверждено
+побайтовым совпадением UUID суперблока `vendor`). `vendor.img`/
+`system.img` там -- обычные, нефрагментированные ext4-образы,
+монтируются напрямую (`mount -o loop,ro`), без liblp/dm-mapper.
+`com.android.runtime.apex` (внутри `system.img`) -- сам по себе
+zip/JAR с ещё одним ext4-образом (`apex_payload.img`) внутри,
+содержащим настоящие `libc.so`/`libdl.so`/`libm.so`/`linker64` (то, на
+что символьные ссылки в `/system/lib64` в обычном виде не резолвятся).
+
+Кросс-компиляция под bionic без NDK: тем же `clang-17.0.2`, что и для
+kbase, с `--target=aarch64-linux-android30 -ffreestanding -nostdlib
+-nostdinc`, линковка напрямую против извлечённых `.so` (`lld`,
+`-Wl,-dynamic-linker,/system/bin/linker64`), свой `_start` (`-nostdlib`
+= нет crt-объектов NDK). `resolve_deps.sh` (`llvm-readelf -d ... |
+grep NEEDED`, транзитивное замыкание) нашёл ровно 46 нужных
+библиотек по всем трём деревьям (vendor/system/bionic-apex) -- ни
+одной недостающей.
+
+### HAL discovery: libvulkan.so не работает без Android property-сервиса
+
+`libvulkan.so`'s собственный механизм поиска ICD (`hw_get_module()` из
+`libhardware.so`: свойство `ro.hardware.vulkan` -> имя файла
+`vulkan.<имя>.so` -> `dlsym(handle, "HMI")`, `HMI` =
+`HAL_MODULE_INFO_SYM_AS_STR`) не работает на этой ОС --
+`vkEnumeratePhysicalDevices` стабильно возвращал 0 устройств, `dmesg`
+после вызова -- абсолютно чист (ICD даже не пытался тронуть железо).
+Прямая проверка `.dynsym` `vulkan.mali.so` через `llvm-nm -D`: там
+всего 4 символа, `HMI` нет вообще. Зато `libGLES_mali.so` (прямая
+зависимость `vulkan.mali.so`) экспортирует `HMI` как **данные**
+(`D`-символ, не функция) -- и `dlsym()` по стандарту SysV ABI ищет
+транзитивно по `DT_NEEDED`-зависимостям, так что
+`dlsym(vulkan_mali_handle, "HMI")` находит его через `libGLES_mali.so`.
+
+Написали `vk_probe.c` -- вручную воспроизводит ~10 строк настоящей
+логики загрузчика AOSP (`hw_module_t`/`hwvulkan_module_t`/
+`hw_device_t`/`hwvulkan_device_t`, ABI которых не менялся с момента
+появления Vulkan в Android): `dlopen(vulkan.mali.so)` ->
+`dlsym(handle, "HMI")` -> `module->methods->open(module, "vk0",
+&device)` -> звать `device->CreateInstance` напрямую, в обход
+`libvulkan.so` целиком.
+
+Первая попытка: модуль находится и правильно себя идентифицирует
+(`id=vulkan`, `name=Mali Vulkan Driver`), `open("vk0")` возвращает
+успех (0) -- но `device->CreateInstance`/`GetInstanceProcAddr` **оба
+NULL**. `dmesg` -- снова полная тишина, значит проблема ещё до
+попытки тронуть `/dev/mali0`.
+
+### Диагностика через собственный ptrace-трейсер (strace недоступен на этой ОС)
+
+По предложению пользователя -- вместо дизассемблирования сделали
+`strace`-подобную трассировку. Готового `strace` под эту ОС нет;
+написали `sysprobe.c` -- минимальный `ptrace`-трейсер (glibc,
+статическая линковка через `aarch64-linux-gnu-gcc -static`, ~160
+строк): `PTRACE_TRACEME`/`PTRACE_SYSCALL`, разбор регистров AArch64
+(`x8` = номер syscall, `x0..x5` = аргументы) через
+`PTRACE_GETREGSET`, чтение путевых строк из памяти трассируемого
+процесса через `PTRACE_PEEKDATA`. `ptrace` работает на уровне
+ядра/процесса, независимо от libc, так что этот glibc-статический
+трейсер прозрачно трассирует bionic-бинарник `vk_probe`.
+
+Первый трейс сразу дал однозначный ответ:
+
+```
+newfstatat("/dev/__properties__") = -2   (ENOENT)
+openat("/dev/__properties__")     = -2   (ENOENT)
+```
+
+-- и ни одного `connect()`/`socket()` за весь запуск. Значит: не
+хватает не property-сервиса как демона (сокет не нужен для чтения), а
+самого bionic property area (`/dev/__properties__`, shared-memory
+trie, `__system_property_area` из `system_properties.cpp`) как
+файловой структуры.
+
+### Property area: настоящий сериализатор Google вместо реконструкции формата вручную
+
+Вместо того чтобы реконструировать бинарный формат `property_info` по
+памяти (тот же риск, что и с liblp) -- нашли, что реальная
+`libc.so` (извлечённая из factory-образа) экспортирует нужные
+writer-функции напрямую (`llvm-nm -D`):
+`__system_property_area_init`, `__system_property_add`,
+`__system_property_get` и др. (версии `LIBC_PLATFORM`/`LIBC` -- те же,
+которыми пользуется `init`). Написали `propsetup.c` (тот же
+bionic-кросс-компилятор, что и `vk_probe`), вызывающий их напрямую.
+
+Трассировка (`sysprobe ./propsetup`) показала: `area_init()` пытается
+открыть `/dev/__properties__/property_info` -- готовый бинарный
+trie-файл, который на настоящем Android генерирует `init` при первой
+загрузке из текстовых `*_property_contexts`. У нас его никогда не
+было. При этом сами текстовые `/plat_property_contexts` и
+`/vendor_property_contexts` неожиданно уже лежали в `/` устройства
+(остаток более раннего этапа AoC-экстракции) и содержали все нужные
+префиксы (`vendor.mali.` -> `vendor_arm_runtime_option_prop`,
+`ro.hardware.vulkan`/`ro.board.platform` -> `exported_default_prop`,
+оба `exact`).
+
+Вместо реконструкции формата `property_info` вручную -- скачали
+настоящий исходник Google (`system/core/property_service/
+libpropertyinfoserializer` + `libpropertyinfoparser`,
+android.googlesource.com, интернет с R620 есть) и собрали
+хост-инструмент `mkpropinfo` на x86_64 (обычный `g++`, без
+кросс-компиляции -- нужен только бинарный файл-результат):
+`trie_builder.cpp`/`trie_serializer.cpp`/`property_info_parser.cpp` --
+без изменений, единственная зависимость от `libbase`
+(`android::base::Split()`) заменена трёхстрочным локальным шимом
+(`android-base/strings.h`), чтобы не тащить всю `libbase`. Свой
+маленький парсер текстовых `property_contexts`-строк (аналог
+`ParsePropertyInfoLine`, без остальной части `libbase`). Прогнали
+через настоящие `/plat_property_contexts`+`/vendor_property_contexts`
+устройства -- получили 117344-байтный `property_info`, 1549 записей.
+
+Положили файл в `/dev/__properties__/property_info` (`chmod 0644` --
+`PropertyInfoAreaFile::LoadPath()` в реальном bionic требует
+`uid==0 && gid==0 && !(mode & (S_IWGRP|S_IWOTH))`, проверено по
+исходнику `property_info_parser.cpp`). После этого
+`__system_property_area_init()` реально создал все per-context
+`prop_area`-файлы (`u:object_r:vendor_arm_runtime_option_prop:s0` и
+т.д., каждый через настоящий `prop_area::map_prop_area_rw()` из
+`prop_area.cpp`) -- `fsetxattr()` для SELinux-контекста ожидаемо падал
+(`Operation not supported`, нет SELinux/xattr на этой ФС), это не
+фатально для чтения/записи самих значений. `__system_property_add()`
++ `__system_property_get()` в одном процессе подтвердили: значения
+реально пишутся и читаются (`ro.hardware.vulkan=mali` и т.п.).
+
+### Настоящая причина NULL callbacks оказалась не в properties
+
+Повторный запуск `vk_probe` после появления property area: **всё ещё
+`CreateInstance`/`GetInstanceProcAddr` = NULL**. Повторная трассировка
+показала, что Mali UMD вообще ни разу не обращался к
+`vendor_arm_runtime_option_prop` (контексту `vendor.mali.*`) -- только
+стандартные bionic-собственные property-чтения при старте процесса
+(`debug_prop`, `arm64_memtag_prop` и т.п., не имеющие отношения к
+Mali). Значит гипотеза про properties была структурно верной
+(инфраструктура была реально сломана), но не была причиной именно
+этого симптома.
+
+Реальная причина нашлась сверкой с настоящим `hardware.h` из AOSP
+(`platform/hardware/libhardware`, `include_all/hardware/hardware.h`):
+на `__LP64__` поле `reserved` и в `hw_module_t`, и в `hw_device_t`
+объявлено как `uint64_t reserved[N]`, а не `uint32_t reserved[N]` --
+наша ручная реконструкция структуры использовала `uint32_t`. Для
+`hw_device_t` это даёт расхождение в 48 байт (`uint64_t[12]` = 96
+байт против `uint32_t[12]` = 48 байт), а `hwvulkan_device_t`'s
+`CreateInstance`/`GetInstanceProcAddr` идут сразу после
+`hw_device_t common` -- то есть мы читали их из середины настоящего
+(зануленного) `reserved`-паддинга реальной структуры, а не из
+настоящих указателей. Поле `hw_module_t.reserved` этой ошибке не
+подвержено (все читаемые нами поля идут ДО него), поэтому `id`/`name`/
+`methods` читались верно с самого начала -- баг маскировался под
+"драйвер тихо деградирует", хотя на самом деле деградировало только
+наше собственное чтение структуры.
+
+Исправили (`uint32_t` -> `uint64_t` в обоих `reserved[]`),
+пересобрали, перезапустили:
+
+```
+vk-probe: device open OK, CreateInstance=0x0000007d91575fd0 GetInstanceProcAddr=0x0000007d91563fd0
+vk-probe: calling REAL Mali UMD CreateInstance directly
+vk-probe: CreateInstance result=0x0000000000000000   (VK_SUCCESS)
+vk-probe: vkEnumeratePhysicalDevices ptr=0x0000007d91576500
+vk-probe: enum result=0x0000000000000000 count=0x0000000000000001
+vk-probe: device[0] name=Mali-G710
+```
+
+Добавили получение `vkGetPhysicalDeviceQueueFamilyProperties` и вызов
+`vkCreateDevice` (одна графическая очередь, `queueFlags=0x17` --
+GRAPHICS|COMPUTE|TRANSFER и ещё один бит, `queueCount=2`, реальные
+параметры Mali-G710):
+
+```
+vk-probe: calling vkCreateDevice(queueFamily=0)
+vk-probe: vkCreateDevice result=0x0000000000000000   (VK_SUCCESS)
+vk-probe: VkDevice created OK, handle=0xb400007db19a7010
+```
+
+Трассировка этого запуска (`sysprobe ./vk_probe`) подтвердила: внутри
+`vkCreateDevice` UMD реально делает `faccessat("/dev/mali0") = 0`,
+затем несколько десятков настоящих `ioctl()` к kbase (version check,
+set flags, allocation, создание контекста и т.п.) -- **все вернули
+0/успех**. `dmesg` при этом остаётся чист -- ожидаемо: kbase не
+логирует рутинные успешные ioctl'ы, только probe/прошивку/ошибки (что
+уже подтверждено раньше в этом документе).
+
+### Итог раздела Vulkan/userspace
+
+Полная цепочка от bionic-приложения до реального GPU физически
+работает на этой ОС: `dlopen/dlsym("HMI")` (в обход `libvulkan.so`) ->
+настоящий Mali UMD -> `vkCreateInstance` (`VK_SUCCESS`) ->
+`vkEnumeratePhysicalDevices` (находит `Mali-G710`) -> `vkCreateDevice`
+(`VK_SUCCESS`) -> реальные ioctl к `/dev/mali0` -> `mali_kbase.ko`,
+поднятый и проверенный в предыдущем разделе этого документа.
+
+Ключевые уроки методологии, оба -- прямое следствие совета
+пользователя не гадать по памяти, а проверять эмпирически или по
+первоисточнику:
+
+- Собственный минимальный `ptrace`-трейсер (нет `strace` под эту ОС)
+  дал ту же диагностическую силу, что и штатный инструмент, без
+  необходимости портировать его целиком.
+- Формат `property_info` не реконструирован по памяти, а сгенерирован
+  настоящим кодом Google (`libpropertyinfoserializer`, собранным как
+  хост-инструмент из исходников с android.googlesource.com) -- и всё
+  равно оказалось, что предполагаемая причина (properties) была не
+  той самой; настоящий баг (`uint32_t` vs `uint64_t reserved[]`) нашли
+  только сверкой с реальным `hardware.h`, а не предположением.
+
+Инструменты (`sysprobe`, `propsetup`, `mkpropinfo`+собранный
+`property_info`, обновлённый `vk_probe`) сохранены на R620
+(`/home/mike/panthor-backport/gpu-probe-tools/` и
+`/tmp/propinfo-build/`, вне git). Извлечённые деревья factory-образа
+(`vendor-mount/`, `system-mount/`, `runtime-apex-mount/`) -- там же.
+
+Не сделано: рендеринг реального кадра (submit command buffer,
+swapchain/presentation через `saai-displayd`), оформление
+bionic-моста как отдельного долгоживущего сервиса (`saai-gpud`),
+persistent property area (переживающая перезагрузку -- сейчас
+`/dev/__properties__` на tmpfs, создаётся вручную каждый раз).

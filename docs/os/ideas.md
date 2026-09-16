@@ -240,9 +240,55 @@
   сессию. Настоящий, официальный, полностью открытый (GPL) kbase от
   Google, собранный нашим тулчейном на нашем бэкпорте, физически
   поднял GPU Mali-G710 и запустил MCU-прошивку на этом устройстве под
-  этой ОС -- ядерный уровень GPU bring-up решён. Полный Vulkan/
-  рендеринг (userspace DDK, bionic-мост `saai-gpud`) остаётся отдельной,
-  не начатой задачей. Рабочее дерево (ядро+тулчейн+`.ko`+device-specific
-  исходники CAL/kbase/mali_pixel+все 5 файлов прошивки+диагностические
-  модули+ioctl-тест) сохранено на R620
-  (`/home/mike/panthor-backport/`, вне git).
+  этой ОС -- ядерный уровень GPU bring-up решён. Рабочее дерево
+  (ядро+тулчейн+`.ko`+device-specific исходники CAL/kbase/mali_pixel+
+  все 5 файлов прошивки+диагностические модули+ioctl-тест) сохранено
+  на R620 (`/home/mike/panthor-backport/`, вне git).
+
+  **Дальше, тем же днём: userspace/Vulkan тоже заработал.** Настоящий
+  Mali UMD (`vulkan.mali.so`/`libGLES_mali.so`) из официального
+  factory-образа (`panther-cp2a.260705.006`, предоставлен
+  пользователем после того, как реконструкция `vendor`-раздела
+  напрямую на устройстве через liblp+`dm-linear` упёрлась в
+  необъяснимое расхождение размеров ext4) запущен под bionic-кросс-
+  компиляцией (`clang --target=aarch64-linux-android30 -nostdlib`, без
+  NDK, линковка напрямую против извлечённого `apex_payload.img`).
+
+  `libvulkan.so`'s собственный HAL discovery (`hw_get_module`/`HMI`)
+  не работает без Android property-сервиса; обошли его, воспроизведя
+  вручную ~10 строк реальной логики загрузчика AOSP
+  (`dlopen`+`dlsym("HMI")`, найден транзитивно через `libGLES_mali.so`
+  -- `vulkan.mali.so`'s собственный `.dynsym` символа `HMI` не
+  содержит). `open("vk0")` сначала возвращал устройство с NULL
+  `CreateInstance`/`GetInstanceProcAddr` -- написали собственный
+  `ptrace`-трейсер (`strace` на этой ОС нет, ~160 строк glibc-статики,
+  прозрачно трассирует bionic-процесс) и нашли, что не хватает
+  bionic property area (`/dev/__properties__`). Вместо реконструкции
+  бинарного формата `property_info` по памяти -- скачали настоящий
+  исходник Google (`libpropertyinfoserializer`) и собрали его как
+  хост-инструмент на x86_64, прогнали через реальные
+  `plat_property_contexts`/`vendor_property_contexts` устройства.
+
+  После этого properties реально заработали, но NULL callbacks
+  остались -- трассировка показала, что Mali UMD вообще не читал
+  `vendor.mali.*` в этом пути. Настоящая причина нашлась сверкой с
+  реальным `hardware.h` из AOSP: `hw_device_t.reserved` на `__LP64__`
+  -- это `uint64_t[12]`, а не `uint32_t[12]`, как было в нашей ручной
+  реконструкции структуры; расхождение в 48 байт сдвигало чтение
+  `CreateInstance`/`GetInstanceProcAddr` в середину настоящего
+  (зануленного) паддинга. После исправления:
+  ```
+  vk-probe: CreateInstance result=0x0 (VK_SUCCESS)
+  vk-probe: device[0] name=Mali-G710
+  vk-probe: vkCreateDevice result=0x0 (VK_SUCCESS)
+  ```
+  Трассировка подтвердила: внутри `vkCreateDevice` UMD реально
+  открывает `/dev/mali0` и выполняет десятки настоящих `ioctl()` к
+  kbase, все -- успешно. Полная цепочка bionic-приложение -> настоящий
+  Mali UMD -> `vkCreateInstance`/`vkEnumeratePhysicalDevices`
+  (`Mali-G710`)/`vkCreateDevice` -> `/dev/mali0` -> `mali_kbase.ko` ->
+  железо физически работает на этой ОС. Не сделано: реальный submit
+  кадра, интеграция с `saai-displayd`, оформление bionic-моста как
+  отдельного сервиса, persistent property area. Подробности,
+  структуры и инструменты (`sysprobe`, `propsetup`, `mkpropinfo`) --
+  ADR-024.
