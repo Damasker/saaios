@@ -171,6 +171,50 @@ event-бухгалтерию, ftrace не видит `mali_KCPU_CQS_SET`), но 
 `KBASE_IOCTL_GET_GPUPROPS`/`KBASE_IOCTL_VERSION_CHECK` -- оба реально
 вызываются в этом прогоне, видны в трассе).
 
+### UMD-KCPU-02: найдена точка решения "enqueue FENCE_SIGNAL или нет"
+
+Статически найдены три тонкие функции-обёртки вокруг ioctl в
+`libGLES_mali.so` (соседний кластер, единственные во всей библиотеке
+вызовы `KBASE_IOCTL_KCPU_QUEUE_{CREATE,DELETE,ENQUEUE}`):
+
+* `0x1c46600` -- `QUEUE_CREATE(fd) -> id`
+* `0x1c46690` -- `QUEUE_DELETE(fd, id)`
+* `0x1c46710` -- `QUEUE_ENQUEUE(fd, id, cmds_addr, nr_commands)`
+
+Всего в библиотеке 9 x-ref на `0x1c46710`, каждый -- в отдельной
+маленькой функции, строящей РОВНО одну `struct base_kcpu_command` с
+жёстко зашитым `type` (например `0x1c4d000` пишет `type=0`
+(`FENCE_SIGNAL`) в `[sp]`, `0x1c4d090` -- `type=1` (`FENCE_WAIT`)).
+
+Вызывающий код для `FENCE_SIGNAL`-обёртки (`0x1c4d000`) найден в
+районе `0x1b3bc90`-`0x1b3bcc0` (тот же файл/регион, что и
+`vkGetFenceStatus`/CQS-setter из UMD-FENCE-01 -- судя по всему, единый
+translation unit, отвечающий за submission + fence lifecycle):
+
+```asm
+1b3bc90: mov  x0, x21
+1b3bc94: bl   1b392f0          ; acquire-slot(x21) -> x0 (NULL если недоступно)
+1b3bc98: str  x0, [sp, #56]
+1b3bc9c: cbz  x0, 1b3bd38      ; НЕТ слота -> пропустить весь FENCE_SIGNAL блок
+1b3bca0: ldrb w8, [x20, #12]
+1b3bca8: tbz  w8, #0, 1b3be18  ; бит0 [x20+12] не установлен -> тоже пропустить
+...
+1b3bcc0: bl   1c4d000          ; enqueue FENCE_SIGNAL -- достигается только если оба условия выше пройдены
+```
+
+`0x1b392f0` -- похоже на "acquire slot из пула" (читает счётчик
+`[x0+208]`, вызывает проверочную `0x1c47810(...)`, при успехе
+инкрементирует счётчик и возвращает указатель на слот массива, при
+неудаче -- `NULL`).
+
+В нашем прогоне (`UMD-KCPU-01`: 0 вызовов `QUEUE_ENQUEUE` вообще) одно
+из двух условий (или оба) не выполняется. Следующий шаг
+(`UMD-KCPU-03`): дизассемблировать `0x1c47810` (что именно она
+проверяет) и найти семантику бита `[x20+12] bit0` (какое поле объекта
+`x20` он отражает -- вероятно "queue group has KCPU support
+enabled"/"fence export requested" флаг, выставляемый где-то раньше на
+основе GPU properties или флагов создания устройства/очереди).
+
 ### Полезная деталь для сборки: правильный link recipe для `vk_exec01`/`vk_probe`
 
 Простой `aarch64-linux-gnu-gcc -O0 -o vk_exec01 vk_exec01.c -ldl` линкует
