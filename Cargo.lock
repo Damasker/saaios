@@ -2414,6 +2414,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chrono",
+ "drm",
  "fontdue",
  "nix",
  "saai-app-protocol",
@@ -2427,6 +2428,7 @@ dependencies = [
  "smithay-client-toolkit",
  "tempfile",
  "uuid",
+ "wayland-protocols",
 ]
 
 [[package]]

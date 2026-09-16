@@ -64,6 +64,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime};
 
 mod appd_client;
+mod dmabuf_canvas;
 mod entityd_client;
 mod portal_server;
 mod render;
@@ -437,9 +438,12 @@ use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
-    protocol::{wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
-    Connection, QueueHandle,
+    protocol::{wl_buffer, wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
+    Connection, Dispatch, QueueHandle,
 };
+use wayland_protocols::wp::linux_dmabuf::zv1::client::{zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1};
+
+use dmabuf_canvas::{Busy, DmabufCanvas};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_seat,
@@ -2700,6 +2704,21 @@ fn main() {
     let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
     let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base not available");
     let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
+    // ADR-024 continued: GPU-native status bar presentation. Neither
+    // failure is fatal -- `present_status_bar` falls back to the
+    // proven wl_shm path below when either is `None`.
+    let dmabuf_global: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1> =
+        globals.bind(&qh, 3..=3, ()).ok();
+    if dmabuf_global.is_none() {
+        eprintln!("saai-shell: zwp_linux_dmabuf_v1 v3 unavailable, status bar will use wl_shm");
+    }
+    let dmabuf_canvas = match DmabufCanvas::new() {
+        Ok(canvas) => Some(canvas),
+        Err(error) => {
+            eprintln!("saai-shell: dma-buf canvas unavailable ({error}), status bar will use wl_shm");
+            None
+        }
+    };
     let session_lock_state = SessionLockState::new(&globals, &qh);
     let layer_shell = LayerShell::bind(&globals, &qh).expect("wlr-layer-shell not available");
 
@@ -2815,6 +2834,8 @@ fn main() {
         layer_height: 120,
         layer_pool: None,
         layer_buffer: None,
+        dmabuf_global,
+        dmabuf: dmabuf_canvas,
         last_statusbar_snapshot: None,
         last_statusbar_refresh: Instant::now(),
         low_battery_notified: false,
@@ -2877,7 +2898,7 @@ fn main() {
         shell.poll_entityd(&conn, &qh);
         shell.poll_remote_pairing(&conn, &qh);
         shell.refresh_apps_if_due();
-        shell.refresh_statusbar_if_due();
+        shell.refresh_statusbar_if_due(&qh);
         shell.refresh_context_signals_if_due();
         shell.poll_portal();
         shell.check_idle_timeout(&qh);
@@ -2956,6 +2977,14 @@ struct Shell {
     layer_height: u32,
     layer_pool: Option<SlotPool>,
     layer_buffer: Option<Buffer>,
+    /// ADR-024 continued: GPU-native status bar presentation.
+    /// `None` for either field means the wl_shm path above
+    /// (`layer_pool`/`layer_buffer`) is used instead -- absent at
+    /// startup if the compositor's `zwp_linux_dmabuf_v1` global or
+    /// `/dev/dri/card0` access was unavailable, and permanently
+    /// cleared by `present_status_bar` on the first real failure.
+    dmabuf_global: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
+    dmabuf: Option<DmabufCanvas>,
     /// ADR-093 follow-up: last snapshot actually drawn into
     /// `layer_buffer`, so `present_status_bar` can skip redundant
     /// commits. `None` both initially and whenever the buffer itself
@@ -3088,6 +3117,47 @@ struct Shell {
     /// per-instance-but-still-fixed-at-startup `deep_idle_timeout`
     /// field from S11.
     settings: ShellSettings,
+}
+
+// ADR-024 continued: GPU-native status bar presentation. None of
+// smithay-client-toolkit's delegate_*! macros know about these
+// linux-dmabuf protocol objects or our own dmabuf_canvas::Busy
+// user-data, so they are dispatched by hand instead.
+impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for Shell {
+    fn event(
+        _state: &mut Self,
+        _proxy: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
+        _event: zwp_linux_dmabuf_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for Shell {
+    fn event(
+        _state: &mut Self,
+        _proxy: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
+        _event: zwp_linux_buffer_params_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_buffer::WlBuffer, Busy> for Shell {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_buffer::WlBuffer,
+        event: wl_buffer::Event,
+        data: &Busy,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        dmabuf_canvas::handle_release(data, &event);
+    }
 }
 
 impl CompositorHandler for Shell {
@@ -3261,7 +3331,7 @@ impl LayerShellHandler for Shell {
     fn configure(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
         _layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
@@ -3276,7 +3346,7 @@ impl LayerShellHandler for Shell {
         // surface's own `configure`.
         self.layer_buffer = None;
         self.last_statusbar_snapshot = None;
-        self.present_status_bar();
+        self.present_status_bar(qh);
     }
 }
 
@@ -5721,7 +5791,7 @@ impl Shell {
     /// `layer_buffer` the same way `present_lock_surface` reuses its
     /// own pool/buffer -- called both from the layer's own `configure`
     /// (first paint) and periodically from `refresh_statusbar_if_due`.
-    fn present_status_bar(&mut self) {
+    fn present_status_bar(&mut self, qh: &QueueHandle<Self>) {
         let width = self.layer_width;
         let height = self.layer_height;
         if width == 0 || height == 0 {
@@ -5739,10 +5809,75 @@ impl Shell {
         // string` only ticks once a minute, so this is the common case --
         // and every skipped commit is one less forced DRM flip blocking
         // the kernel's self-refresh idle timer during unlocked-idle time.
-        // Still requires `layer_buffer.is_some()`: right after a resize
-        // it's `None` (genuinely empty), which must always redraw.
-        if self.layer_buffer.is_some() && self.last_statusbar_snapshot.as_ref() == Some(&snapshot) {
+        // `last_statusbar_snapshot` alone is enough to guard this on
+        // either presentation path below: both reset it to `None` on
+        // every real resize (the layer's own `configure` handler, before
+        // either `layer_buffer` or the dma-buf canvas is touched), so a
+        // stale snapshot from before a resize never compares equal to a
+        // fresh one taken at the new size.
+        if self.last_statusbar_snapshot.as_ref() == Some(&snapshot) {
             return;
+        }
+
+        // GPU-native path (ADR-024's "linux-dmabuf for GPU-native
+        // clients"): skip saai-displayd's wl_shm host-visible staging
+        // copy entirely when both the dma-buf canvas and the
+        // compositor's zwp_linux_dmabuf_v1 global are available. Falls
+        // back to the proven wl_shm SlotPool path below on ANY failure
+        // (and disables itself for the rest of the session, so a real
+        // problem degrades once, not on every redraw) -- a DRM/dma-buf
+        // problem must never cost the status bar entirely.
+        if let (Some(dmabuf_global), Some(dmabuf)) =
+            (self.dmabuf_global.clone(), self.dmabuf.as_mut())
+        {
+            let fonts = self.fonts.as_ref();
+            let contrast_pct = self.settings.contrast_pct;
+            let painted = dmabuf
+                .ensure_size(width, height, &dmabuf_global, qh)
+                .and_then(|()| {
+                    // Canvas::new below assumes tight width*4 rows, same
+                    // as the wl_shm path uses via its own stride =
+                    // width*4 -- the kernel is free to pad a dumb
+                    // buffer's real pitch for alignment, so verify
+                    // rather than silently writing skewed rows into a
+                    // wider allocation.
+                    if dmabuf.pitch() != width as usize * 4 {
+                        return Err(format!(
+                            "buffer pitch {} != tightly-packed {} (kernel padded this allocation, Canvas assumes it never does)",
+                            dmabuf.pitch(),
+                            width * 4
+                        ));
+                    }
+                    dmabuf.paint(|canvas| {
+                        render::draw_status_bar(
+                            &mut render::Canvas::new(canvas, width, height),
+                            width,
+                            height,
+                            &snapshot.time_text,
+                            snapshot.wifi_up,
+                            snapshot.battery,
+                            snapshot.dot_color,
+                            fonts,
+                        );
+                        render::apply_contrast_boost(canvas, contrast_pct);
+                    })
+                });
+            match painted {
+                Ok(wl_buffer) => {
+                    let surface = self.layer.wl_surface();
+                    surface.attach(Some(wl_buffer), 0, 0);
+                    surface.damage_buffer(0, 0, width as i32, height as i32);
+                    self.layer.commit();
+                    self.last_statusbar_snapshot = Some(snapshot);
+                    return;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "saai-shell: dma-buf status bar path failed ({error}), disabling it for this session"
+                    );
+                    self.dmabuf = None;
+                }
+            }
         }
 
         let stride = width as i32 * 4;
@@ -5795,9 +5930,9 @@ impl Shell {
     /// S13 Change 1: throttled the same way `refresh_apps_if_due` is --
     /// called once per main-loop tick, only actually redraws once
     /// `STATUSBAR_REFRESH_INTERVAL` has elapsed.
-    fn refresh_statusbar_if_due(&mut self) {
+    fn refresh_statusbar_if_due(&mut self, qh: &QueueHandle<Self>) {
         if self.last_statusbar_refresh.elapsed() >= STATUSBAR_REFRESH_INTERVAL {
-            self.present_status_bar();
+            self.present_status_bar(qh);
             self.check_low_battery();
             self.last_statusbar_refresh = Instant::now();
         }

@@ -31,6 +31,20 @@ uuid.workspace = true
 # same crash risk and image-size cost ADR-013 had to work around, for a
 # capability this shell doesn't use.
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+# ADR-024 continued: GPU-native linux-dmabuf status bar canvas
+# (dmabuf_canvas.rs) -- DRM dumb-buffer allocation + PRIME export, same
+# technique already proven on device by saai-displayd's own examples/
+# dmabuf_probe.rs. Depends on `drm` directly, NOT `smithay` (which
+# dmabuf_probe.rs itself uses, since saai-displayd already needs the
+# full crate as a compositor): smithay pulls in xkbcommon
+# unconditionally regardless of feature flags, which this crate has
+# deliberately avoided from the start (no physical keyboard on this
+# device, same crash-risk/image-size reasoning as ADR-012/013) -- it
+# broke the real aarch64-musl static cross-build at link time with a
+# missing libxkbcommon.a even though `cargo check` on the host target
+# never caught it.
+drm = "0.14"
+wayland-protocols = { version = "0.32", features = ["client"] }
 
 [build-dependencies]
 saai-ui-compiler.workspace = true

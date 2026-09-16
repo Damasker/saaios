@@ -142,6 +142,79 @@ reset/error за всю сессию.
 сломанной обработке fence в UMD **заменены** установленной причиной
 несовместимости DDK.
 
+## saai-shell: статус-бар переведён на GPU-native linux-dmabuf (2026-09-16, продолжение)
+
+Первый реальный клиент собственного UI (не тестовый `dmabuf_probe`) на
+zero-copy пути: статус-бар `saai-shell` (`present_status_bar`, layer-surface
+`saai-shell-statusbar`). Выбран вместо изначально рассматривавшегося
+`saai-mahjong`, потому что mahjong работает под полным ADR-020 sandbox
+(`saai-appd`, seccomp denylist, замаскированный `/dev`) -- перевод его на
+прямой доступ к `/dev/dri/card0` потребовал бы новой `Capability`/явного
+device-node reveal, изменения политики безопасности, а не только рендеринга.
+`saai-shell` же спавнится `saai-displayd` напрямую, без sandbox, и
+перерисовывается значительно чаще -- тот же выигрыш (без `wl_shm`
+host-visible staging copy на каждый кадр), ниже риск, тот же principal.
+
+Новый модуль `services/saai-shell/src/dmabuf_canvas.rs`: double-buffered
+canvas поверх DRM dumb buffer + PRIME export, тот же приём, что уже
+физически доказан `dmabuf_probe.rs`, но через `drm::control::Device`
+напрямую, а не через `smithay::backend::allocator`. Причина: полный
+`smithay` тянет `xkbcommon` безусловно (нет `optional = true` в его
+собственном `Cargo.toml`, фиче-флаги на это не влияют) -- `saai-shell`
+осознанно избегает этой зависимости с самого начала (ADR-012/013, нет
+физической клавиатуры на устройстве), и её добавление ломало настоящую
+aarch64-musl кросс-сборку на этапе линковки (`unable to find static system
+library 'xkbcommon'`) -- невидимо для `cargo check`/`clippy` на host-таргете.
+`drm = "0.14"` этого груза не несёт.
+
+**Реальный баг, из-за которого статус-бар падал на устройстве (SIGTRAP,
+`saai-shell exited (signal: 5)`, без текста паники в релизной сборке из-за
+`panic_immediate_abort`, ADR-013):** `render::Canvas::new` требует срез
+ровно `width*height*4` (`assert_eq!`). `DumbMapping::as_mut()` возвращает
+весь `mmap`-регион, а ядро округляет длину `mmap` вверх до целой страницы --
+для буфера статус-бара 1080x120x4=518400 байт это 520192 (127 страниц), не
+518400. Ассерт падал на каждой первой перерисовке статус-бара. Найдено не
+догадкой, а прямым физическим тестом: собрана диагностическая сборка
+(стабильный тулчейн, без `-Z build-std-features=panic_immediate_abort`,
+т.е. с текстом паники) и запущена вручную на устройстве -- лог показал
+точный `assertion left == right failed: left: 520192, right: 518400` на
+`render.rs:145:9`. Исправление в `DmabufCanvas::paint()`: срез из
+`mapping.as_mut()` обрезается до `pitch * height` (= `width*4*height` на
+этом железе, ряды без паддинга, `pitch == width*4` подтверждено логом
+`saai-gpu-compositor`) перед передачей в `Canvas::new`.
+
+Диагностика этого бага также вскрыла, что `reboot` (без `-f`) на этой ОС --
+no-op (уже задокументировано в ADR-032, но не было учтено в начале этой
+сессии): Android-бинарь `/bin/reboot` сигнализирует через `sys.powerctl`
+property service, которого в native-init нет, поэтому команда молча
+ничего не делает, а `uptime` продолжает расти. `reboot -f` вызывает
+`SYS_reboot` напрямую (`native-init.c`'s `reboot_with_reason`, тот же
+путь) и реально перезагружает устройство. Несколько циклов диагностики в
+этой сессии ошибочно считались "чистой перезагрузкой", пока это не
+вскрылось через прямую проверку `/proc/uptime` до и после.
+
+**Проверено на устройстве после настоящей `reboot -f`** (не через ручной
+перехват DRM master у `drm-splash`, который сам по себе не даёт
+`hardware output initialized` и потому не воспроизводит честные условия):
+`saai-displayd.log` показывает `hardware output initialized` (успешно),
+многократные `commit on surface ..., linux-dmabuf 1080x120 stride=4320
+format=DrmFourcc(XR24) modifier=Linear` и `saai-gpu-compositor: importing
+1080x120 pitch=4320 size=518400 requirement=518400` (совпадает
+тютелька-в-тютельку -- подтверждает исправление размера), `direct GPU
+dma-buf blit submitted 1080x120 px`. `saai-shell` (тот же PID с момента
+загрузки) пережил 284+ секунд аптайма, включая реальное touch-
+взаимодействие (`touch down/up`, `switched to Me`) без единого падения;
+`dmesg` чист. Откат на `wl_shm` (`self.dmabuf = None` при любой ошибке
+`ensure_size`/`paint`) остаётся на месте как safety net, но в проверенном
+прогоне не сработал ни разу -- GPU-native путь работал с первого кадра.
+
+Осознанно НЕ тронуто в этом изменении: три остальные поверхности
+`saai-shell` (`buffer`/главный toplevel, `lock_buffer`, `pin_entry_buffer`)
+остаются на `wl_shm` -- перевод статус-бара был первым, наименее
+рискованным шагом (отдельная маленькая поверхность, не участвует в
+блокировке экрана/PIN). Миграция остальных -- отдельная будущая задача,
+не запрошенная и не начатая.
+
 ## Next session entry point: fence completion producer отсутствует (2026-09-16, продолжение)
 
 На этом этапе инструментально подтверждено и закрыто (не пересматривать без новых фактов):
