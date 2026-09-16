@@ -2768,6 +2768,20 @@ fn main() {
             None
         }
     };
+    // Third `DmabufCanvas` (own DRM fd, own slots) shared by both lock-
+    // surface presentation functions (`present_lock_surface`,
+    // `present_lock_pin_entry`) -- they already share the wl_shm
+    // `lock_buffer`/`lock_pool` pair for the same reason: same surface,
+    // same size, mutually exclusive content.
+    let lock_dmabuf_canvas = match DmabufCanvas::new() {
+        Ok(canvas) => Some(canvas),
+        Err(error) => {
+            eprintln!(
+                "saai-shell: dma-buf canvas unavailable ({error}), lock surface will use wl_shm"
+            );
+            None
+        }
+    };
     let session_lock_state = SessionLockState::new(&globals, &qh);
     let layer_shell = LayerShell::bind(&globals, &qh).expect("wlr-layer-shell not available");
 
@@ -2870,6 +2884,7 @@ fn main() {
         lock_surfaces: Vec::new(),
         lock_pool: None,
         lock_buffer: None,
+        lock_dmabuf: lock_dmabuf_canvas,
         lock_width: 0,
         lock_height: 0,
         locked: true,
@@ -2952,7 +2967,7 @@ fn main() {
         shell.refresh_context_signals_if_due();
         shell.poll_portal();
         shell.check_idle_timeout(&qh);
-        shell.check_deep_idle(&conn);
+        shell.check_deep_idle(&conn, &qh);
     }
 }
 
@@ -2987,6 +3002,12 @@ struct Shell {
     /// still needs to read after `commit()` returns.
     lock_pool: Option<SlotPool>,
     lock_buffer: Option<Buffer>,
+    /// GPU-native alternative to `lock_buffer`/`lock_pool`, shared by
+    /// `present_lock_surface` and `present_lock_pin_entry` the same
+    /// way those two already share the wl_shm pair (ADR-024
+    /// continued). `None` on unavailability or any error, same
+    /// permanent-fallback contract as `main_dmabuf`/`dmabuf`.
+    lock_dmabuf: Option<DmabufCanvas>,
     /// Size the lock surface was last `configure()`d at -- needed by
     /// `present_lock_surface()` to redraw it later (e.g. the sleep
     /// indicator around a real suspend, S11 Change 2) outside of a fresh
@@ -3360,7 +3381,7 @@ impl SessionLockHandler for Shell {
     fn configure(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
         _session_lock_surface: SessionLockSurface,
         configure: SessionLockSurfaceConfigure,
         _serial: u32,
@@ -3374,7 +3395,7 @@ impl SessionLockHandler for Shell {
         // was sized for the previous one and `present_lock_surface()`
         // never resizes an existing buffer itself.
         self.lock_buffer = None;
-        self.present_lock_pin_entry();
+        self.present_lock_pin_entry(qh);
     }
 }
 
@@ -3453,7 +3474,7 @@ impl TouchHandler for Shell {
     fn down(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
@@ -3473,7 +3494,7 @@ impl TouchHandler for Shell {
             self.unlock_pending = false;
             self.tab_touch_pending = false;
             self.pin_entry_buffer.clear();
-            self.present_lock_pin_entry();
+            self.present_lock_pin_entry(qh);
             println!("saai-shell: woke from pseudo-sleep");
             return;
         }
@@ -3537,7 +3558,7 @@ impl TouchHandler for Shell {
                             println!("saai-shell: PIN mismatch, retry");
                             self.pin_entry_buffer.clear();
                         }
-                        self.present_lock_pin_entry();
+                        self.present_lock_pin_entry(qh);
                     }
                 }
             }
@@ -6142,7 +6163,7 @@ impl Shell {
         );
     }
 
-    fn present_lock_surface(&mut self, color: [u8; 4]) {
+    fn present_lock_surface(&mut self, qh: &QueueHandle<Self>, color: [u8; 4]) {
         let width = self.lock_width;
         let height = self.lock_height;
         if width == 0 || height == 0 {
@@ -6152,6 +6173,51 @@ impl Shell {
             return;
         };
         let stride = width as i32 * 4;
+
+        // GPU-native path (ADR-024 continued), same contract as
+        // `draw()`/`present_status_bar`: a transient busy state (both
+        // slots still held by the compositor) falls back to wl_shm for
+        // just this call; any real error disables the path for the
+        // rest of the session.
+        if let (Some(dmabuf_global), Some(lock_dmabuf)) =
+            (self.dmabuf_global.clone(), self.lock_dmabuf.as_mut())
+        {
+            let ready = match lock_dmabuf.ensure_size(width, height, &dmabuf_global, qh) {
+                Ok(()) => lock_dmabuf.has_free_slot(),
+                Err(error) => {
+                    eprintln!(
+                        "saai-shell: dma-buf lock surface path failed ({error}), disabling it for this session"
+                    );
+                    self.lock_dmabuf = None;
+                    false
+                }
+            };
+            if ready {
+                let lock_dmabuf = self
+                    .lock_dmabuf
+                    .as_mut()
+                    .expect("just confirmed ready above");
+                match lock_dmabuf.paint(|canvas| {
+                    for chunk in canvas.chunks_exact_mut(4) {
+                        chunk.copy_from_slice(&color);
+                    }
+                }) {
+                    Ok(wl_buffer) => {
+                        let surface = lock_surface.wl_surface();
+                        surface.attach(Some(wl_buffer), 0, 0);
+                        surface.damage_buffer(0, 0, width as i32, height as i32);
+                        surface.commit();
+                        return;
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "saai-shell: dma-buf lock surface paint failed ({error}), disabling it for this session"
+                        );
+                        self.lock_dmabuf = None;
+                    }
+                }
+            }
+        }
 
         if self.lock_pool.is_none() {
             self.lock_pool = Some(
@@ -6208,9 +6274,9 @@ impl Shell {
     /// `SLEEP_INDICATOR_COLOR` deep-idle blank (`check_deep_idle`
     /// keeps calling `present_lock_surface` directly for that) --
     /// screen-off should stay screen-off regardless of PIN.
-    fn present_lock_pin_entry(&mut self) {
+    fn present_lock_pin_entry(&mut self, qh: &QueueHandle<Self>) {
         let Some(pin_code) = self.settings.pin_code.clone() else {
-            self.present_lock_surface(LOCK_SCREEN_COLOR);
+            self.present_lock_surface(qh, LOCK_SCREEN_COLOR);
             return;
         };
         let width = self.lock_width;
@@ -6222,6 +6288,63 @@ impl Shell {
             return;
         };
         let stride = width as i32 * 4;
+
+        let keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| !label.is_empty())
+            .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
+            .collect();
+        let entered_len = self.pin_entry_buffer.len();
+        let pin_len = pin_code.len();
+        let fonts = self.fonts.as_ref();
+        let contrast_pct = self.settings.contrast_pct;
+
+        if let (Some(dmabuf_global), Some(lock_dmabuf)) =
+            (self.dmabuf_global.clone(), self.lock_dmabuf.as_mut())
+        {
+            let ready = match lock_dmabuf.ensure_size(width, height, &dmabuf_global, qh) {
+                Ok(()) => lock_dmabuf.has_free_slot(),
+                Err(error) => {
+                    eprintln!(
+                        "saai-shell: dma-buf lock surface path failed ({error}), disabling it for this session"
+                    );
+                    self.lock_dmabuf = None;
+                    false
+                }
+            };
+            if ready {
+                let lock_dmabuf = self
+                    .lock_dmabuf
+                    .as_mut()
+                    .expect("just confirmed ready above");
+                match lock_dmabuf.paint(|canvas| {
+                    render::draw_lock_pin_entry(
+                        &mut render::Canvas::new(canvas, width, height),
+                        width,
+                        entered_len,
+                        pin_len,
+                        &keys,
+                        fonts,
+                    );
+                    render::apply_contrast_boost(canvas, contrast_pct);
+                }) {
+                    Ok(wl_buffer) => {
+                        let surface = lock_surface.wl_surface();
+                        surface.attach(Some(wl_buffer), 0, 0);
+                        surface.damage_buffer(0, 0, width as i32, height as i32);
+                        surface.commit();
+                        return;
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "saai-shell: dma-buf lock surface paint failed ({error}), disabling it for this session"
+                        );
+                        self.lock_dmabuf = None;
+                    }
+                }
+            }
+        }
 
         if self.lock_pool.is_none() {
             self.lock_pool = Some(
@@ -6260,21 +6383,15 @@ impl Shell {
             }
         };
 
-        let keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
-            .iter()
-            .enumerate()
-            .filter(|(_, label)| !label.is_empty())
-            .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
-            .collect();
         render::draw_lock_pin_entry(
             &mut render::Canvas::new(canvas, width, height),
             width,
-            self.pin_entry_buffer.len(),
-            pin_code.len(),
+            entered_len,
+            pin_len,
             &keys,
-            self.fonts.as_ref(),
+            fonts,
         );
-        render::apply_contrast_boost(canvas, self.settings.contrast_pct);
+        render::apply_contrast_boost(canvas, contrast_pct);
 
         let surface = lock_surface.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
@@ -6297,14 +6414,14 @@ impl Shell {
     /// which is what this function is actually responsible for. This
     /// version only ever changes what's on screen; `TouchHandler::down`
     /// clears `sleeping` again on the next touch.
-    fn check_deep_idle(&mut self, _conn: &Connection) {
+    fn check_deep_idle(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
         let deep_idle_timeout = Duration::from_secs(self.settings.deep_idle_timeout_secs);
         if !self.locked || self.sleeping || self.last_activity.elapsed() < deep_idle_timeout {
             return;
         }
         println!("saai-shell: deep idle timeout, screen off");
         self.sleeping = true;
-        self.present_lock_surface(SLEEP_INDICATOR_COLOR);
+        self.present_lock_surface(qh, SLEEP_INDICATOR_COLOR);
     }
 }
 
