@@ -1,5 +1,8 @@
 use fontdue::{Font, FontSettings};
-use saai_ui_core::{ColorRole, ContextColor, Rect, Rgb, StatusMark, Theme, UniversalState};
+use saai_ui_core::{
+    ColorRole, ContextColor, FontFamily, FontWeight, Rect, Rgb, StatusMark, SurfaceScale, TextRole,
+    Theme, UniversalState,
+};
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -75,6 +78,7 @@ pub const fn state_color(state: UniversalState) -> Pixel {
 pub struct Fonts {
     regular: Font,
     semibold: Font,
+    mono: Option<Font>,
 }
 
 #[derive(Clone)]
@@ -124,20 +128,49 @@ impl Fonts {
         Self::load(
             "/saaios/fonts/Montserrat-Regular.ttf",
             "/saaios/fonts/Montserrat-SemiBold.ttf",
+            "/saaios/fonts/IBMPlexMono-Regular.ttf",
         )
     }
 
-    fn load(regular_path: &str, semibold_path: &str) -> Result<Self, String> {
+    fn load(regular_path: &str, semibold_path: &str, mono_path: &str) -> Result<Self, String> {
         let regular =
             fs::read(regular_path).map_err(|error| format!("read {regular_path}: {error}"))?;
         let semibold =
             fs::read(semibold_path).map_err(|error| format!("read {semibold_path}: {error}"))?;
+        let mono = match fs::read(mono_path) {
+            Ok(bytes) => match Font::from_bytes(bytes, FontSettings::default()) {
+                Ok(font) => {
+                    eprintln!("saai-shell: loaded optional mono font {mono_path}");
+                    Some(font)
+                }
+                Err(error) => {
+                    eprintln!("saai-shell: parse {mono_path}: {error}; using sans fallback");
+                    None
+                }
+            },
+            Err(error) => {
+                eprintln!("saai-shell: read {mono_path}: {error}; using sans fallback");
+                None
+            }
+        };
         Ok(Self {
             regular: Font::from_bytes(regular, FontSettings::default())
                 .map_err(|error| format!("parse {regular_path}: {error}"))?,
             semibold: Font::from_bytes(semibold, FontSettings::default())
                 .map_err(|error| format!("parse {semibold_path}: {error}"))?,
+            mono,
         })
+    }
+
+    fn resolve(&self, role: TextRole) -> (&Font, f32) {
+        let style = role.style();
+        let font = match (style.family, style.weight) {
+            (FontFamily::Mono, _) => self.mono.as_ref().unwrap_or(&self.regular),
+            (FontFamily::Sans, FontWeight::Semibold) => &self.semibold,
+            (FontFamily::Sans, FontWeight::Regular) => &self.regular,
+        };
+        let size = SurfaceScale::PIXEL_7.logical_to_physical(style.size) as f32;
+        (font, size)
     }
 }
 
@@ -541,15 +574,31 @@ pub fn draw_remote_pair(
         header.y + 310,
         theme_color(ColorRole::TextSecondary),
     );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        fingerprint,
-        26.0,
-        header.x + margin,
-        header.y + 370,
-        theme_color(ColorRole::TextSecondary),
-    );
+    let (mono, mono_size) = fonts.resolve(TextRole::MonoBody);
+    let scaled_size = mono_size * text_scale();
+    let glyph_width = mono.metrics('0', scaled_size).advance_width.max(1.0);
+    let available_width = header.width.saturating_sub(margin * 2) as f32;
+    let chars_per_line = (available_width / glyph_width).floor().max(1.0) as usize;
+    let line_height = SurfaceScale::PIXEL_7
+        .logical_to_physical(TextRole::MonoBody.style().line_height) as f32
+        * text_scale();
+    for (line, chunk) in fingerprint
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(chars_per_line)
+        .enumerate()
+    {
+        let chunk = chunk.iter().collect::<String>();
+        draw_text(
+            canvas,
+            mono,
+            &chunk,
+            mono_size,
+            header.x + margin,
+            header.y + 370 + (line as f32 * line_height).round() as u32,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
 
     canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
     canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));

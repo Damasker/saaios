@@ -1,18 +1,35 @@
 # Panther UI third-party components
 
-## Inter 4.1
+## Montserrat
 
-The native UI bundles `Inter-Regular.ttf` and `Inter-SemiBold.ttf` from the
-official Inter 4.1 release. Inter is distributed under the SIL Open Font
-License 1.1; the complete license is stored next to the font files in
-`assets/fonts/OFL-1.1.txt`.
+The native UI sans family is `Montserrat-Regular.ttf` and
+`Montserrat-SemiBold.ttf`. They are static 400/600 instances retained from the
+physically reviewed S13 font change; see ADR-057 and ADR-070. Montserrat is
+distributed under the SIL Open Font License 1.1, stored as
+`assets/fonts/Montserrat-OFL.txt`.
 
-The checked-in files are build-time subsets containing Basic Latin, Latin-1,
-Cyrillic, Cyrillic Extended-A/B, and the small set of UI symbols used by the
-shell. This keeps both faces below 150 KiB combined while retaining Russian UI
-and response text support.
+The files include the Cyrillic coverage required by the Russian and Ukrainian
+SaaiOS interface. Their checked-in SHA-256 values are:
 
-Source: <https://github.com/rsms/inter/releases/tag/v4.1>
+- Regular: `0a6e6afb7a98e0e7bfd6c78d12a899b96e00b3d52e9ea76f2b4896c09afd34fe`
+- SemiBold: `91d71d817f649044c17089e4e4866dbeeb59bc6408619ca1a4506b14a1bab2da`
+
+Source family: <https://github.com/google/fonts/tree/main/ofl/montserrat>
+
+## IBM Plex Mono
+
+Technical identifiers, commands, addresses, logs, and telemetry use the static
+`IBMPlexMono-Regular.ttf`. It has Latin, Cyrillic, and Ukrainian coverage and
+is distributed under the SIL Open Font License 1.1, stored as
+`assets/fonts/IBMPlexMono-OFL.txt`.
+
+- Upstream: <https://github.com/IBM/plex>
+- Pinned commit: `78cd4223d8de9fcb78cba84eadecb269c56093c5`
+- Font SHA-256: `7c6fbddca4b700be918f5f6183d9bd4464fa427fe435f0b480d77fe2bb8c5a43`
+- License SHA-256: `7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da`
+
+The shell falls back to the regular sans face if the optional mono asset is
+missing or invalid, so a packaging error cannot remove all interface text.
 
 ## stb_truetype
 
