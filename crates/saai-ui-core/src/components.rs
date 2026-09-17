@@ -18,11 +18,65 @@
 //! the same convention `UniversalState::style()`'s `label_key` already
 //! established -- this crate never embeds a display-language string
 //! directly.
+//!
+//! Every primitive exposes an `accessibility()` method returning
+//! `Option<AccessibilityInfo>` (`None` for a primitive that must not be
+//! independently exposed at all, e.g. a decorative `Icon` or an unnamed
+//! `Divider`) -- role, name, value, and disabled/busy state in one place
+//! per component, matching component-library-v1.md section 4's shared
+//! state contract and each primitive's own accessibility note in section
+//! 6. Non-color cues are not a separate mechanism here: every primitive
+//! that carries meaning already carries it as text/enum data (`StatusMark`,
+//! `MetricValue`, `Field::error`, ...), never color alone, so there is
+//! nothing additional to add for that part of this task.
 
 use crate::{
     ColorRole, IconGlyph, IconSize, LogicalUnit, StatusMark, TextRole, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
+
+/// What assistive technology would announce this primitive as. Not a
+/// complete platform accessibility API (SaaiOS has no screen reader
+/// integration yet) -- the stable, backend-independent shape that one
+/// exists to be built against later, matching this crate's "component
+/// contracts/state" ownership (component-library-v1.md section 8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccessibilityRole {
+    Text,
+    Image,
+    Button,
+    TextField,
+    ListItem,
+    Disclosure,
+    ProgressIndicator,
+    Status,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccessibilityInfo {
+    pub role: AccessibilityRole,
+    pub name: Option<String>,
+    /// Already-resolved display text when the primitive has one; a
+    /// translation key (this crate's `label_key` convention) when it does
+    /// not, e.g. `MetricValue::Unknown`. Which one it is follows from the
+    /// component's own value type -- see each `accessibility()` method's
+    /// doc comment.
+    pub value: Option<String>,
+    pub disabled: bool,
+    pub busy: bool,
+}
+
+impl AccessibilityInfo {
+    fn new(role: AccessibilityRole) -> Self {
+        Self {
+            role,
+            name: None,
+            value: None,
+            disabled: false,
+            busy: false,
+        }
+    }
+}
 
 /// Section 6.1: "wrap by default for prose; ellipsis only when a full-value
 /// route exists" -- a call-site decision this type records, not enforces
@@ -69,15 +123,27 @@ impl SemanticText {
     pub fn accessible_value(&self) -> &str {
         &self.content
     }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            value: Some(self.accessible_value().to_string()),
+            ..AccessibilityInfo::new(AccessibilityRole::Text)
+        }
+    }
 }
 
 /// Section 6.2. `size` defaults to 24 logical units ("24 is the normal
 /// control size").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Icon {
     pub glyph: IconGlyph,
     pub size: IconSize,
     pub color: ColorRole,
+    /// Section 6.2: "decorative when paired with text; otherwise requires
+    /// a name." `None` (the default) means decorative -- `accessibility()`
+    /// returns `None` for it, since the text it sits beside already
+    /// carries the meaning.
+    pub name: Option<String>,
 }
 
 impl Icon {
@@ -86,12 +152,30 @@ impl Icon {
             glyph,
             size: IconSize::Large,
             color,
+            name: None,
         }
     }
 
     pub const fn with_size(mut self, size: IconSize) -> Self {
         self.size = size;
         self
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn is_decorative(&self) -> bool {
+        self.name.is_none()
+    }
+
+    pub fn accessibility(&self) -> Option<AccessibilityInfo> {
+        let name = self.name.clone()?;
+        Some(AccessibilityInfo {
+            name: Some(name),
+            ..AccessibilityInfo::new(AccessibilityRole::Image)
+        })
     }
 }
 
@@ -100,10 +184,14 @@ impl Icon {
 /// `StrokeToken::Hairline`-thick leaf); this supplies which semantic color
 /// role paints it and an optional leading inset so it can align with a
 /// neighboring row's text edge instead of running the full container width.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Divider {
     pub color: ColorRole,
     pub inset_start: Option<LogicalUnit>,
+    /// Section 6.3: "Does not receive focus or accessibility exposure
+    /// unless it represents a named boundary." `None` (the default) means
+    /// not exposed -- `accessibility()` returns `None` for it.
+    pub name: Option<String>,
 }
 
 impl Divider {
@@ -112,6 +200,7 @@ impl Divider {
         Self {
             color: ColorRole::Border,
             inset_start: None,
+            name: None,
         }
     }
 
@@ -121,12 +210,26 @@ impl Divider {
         Self {
             color: ColorRole::Grid,
             inset_start: None,
+            name: None,
         }
     }
 
     pub const fn with_inset_start(mut self, inset: LogicalUnit) -> Self {
         self.inset_start = Some(inset);
         self
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn accessibility(&self) -> Option<AccessibilityInfo> {
+        let name = self.name.clone()?;
+        Some(AccessibilityInfo {
+            name: Some(name),
+            ..AccessibilityInfo::new(AccessibilityRole::Text)
+        })
     }
 }
 
@@ -192,6 +295,17 @@ impl StatusIndicator {
             StatusIndicatorVariant::Normal => self.reason.as_deref(),
         }
     }
+
+    /// `value` is the state's `label_key` (e.g. `"state.blocked"`), not
+    /// display text -- resolved the same way `MetricValue::label_key`
+    /// already is.
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.label.clone()),
+            value: Some(self.state.style().label_key.to_string()),
+            ..AccessibilityInfo::new(AccessibilityRole::Status)
+        }
+    }
 }
 
 /// Section 6.5. `Determinate`'s value is always in 0..=100 -- constructed
@@ -219,6 +333,17 @@ impl Progress {
         match self {
             Self::Determinate(value) => Some(*value),
             Self::Indeterminate => None,
+        }
+    }
+
+    /// "Indeterminate progress uses restrained motion and a textual
+    /// activity state" -- `busy: true` for `Indeterminate` is that textual
+    /// activity state's accessibility half.
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            value: self.percent().map(|value| value.to_string()),
+            busy: matches!(self, Self::Indeterminate),
+            ..AccessibilityInfo::new(AccessibilityRole::ProgressIndicator)
         }
     }
 }
@@ -279,6 +404,15 @@ impl Button {
     pub fn can_activate(&self) -> bool {
         self.enabled && !self.busy
     }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.label.clone()),
+            disabled: !self.enabled,
+            busy: self.busy,
+            ..AccessibilityInfo::new(AccessibilityRole::Button)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,6 +435,7 @@ pub struct Field {
     /// Only meaningful for `FieldKind::Password` -- whether the user has
     /// explicitly asked to see the value.
     pub revealed: bool,
+    pub disabled: bool,
 }
 
 impl Field {
@@ -315,6 +450,7 @@ impl Field {
             trailing_icon: None,
             kind,
             revealed: false,
+            disabled: false,
         }
     }
 
@@ -353,6 +489,24 @@ impl Field {
             FieldKind::Text => self.value.clone(),
             FieldKind::Password if self.revealed => self.value.clone(),
             FieldKind::Password => "\u{2022}".repeat(self.value.chars().count()),
+        }
+    }
+
+    pub fn disabled(mut self) -> Self {
+        self.disabled = true;
+        self
+    }
+
+    /// `name` is the persistent label, never the placeholder -- section
+    /// 6.7: "Placeholder is never the only accessible label." `value`
+    /// reuses `accessible_value()`, so a masked password stays masked here
+    /// too.
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.label.clone()),
+            value: Some(self.accessible_value()),
+            disabled: self.disabled,
+            ..AccessibilityInfo::new(AccessibilityRole::TextField)
         }
     }
 }
@@ -420,6 +574,25 @@ impl DataRow {
             MIN_TOUCH_TARGET
         }
     }
+
+    /// `Static` reads as `ListItem` (informational); every other variant
+    /// reads as `Button`, matching `is_actionable()`'s own distinction --
+    /// a row this crate marks non-clickable must not also announce itself
+    /// as a button.
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        let role = match self.variant {
+            DataRowVariant::Static => AccessibilityRole::ListItem,
+            DataRowVariant::Navigation | DataRowVariant::Toggle | DataRowVariant::Status => {
+                AccessibilityRole::Button
+            }
+        };
+        AccessibilityInfo {
+            name: Some(self.primary.clone()),
+            value: self.value.clone().or_else(|| self.secondary.clone()),
+            disabled: !self.is_actionable() && self.variant != DataRowVariant::Static,
+            ..AccessibilityInfo::new(role)
+        }
+    }
 }
 
 /// "Unknown and unavailable are text states, not zero" -- a caller cannot
@@ -474,6 +647,24 @@ impl Metric {
         self.verified_at = Some(timestamp.into());
         self
     }
+
+    /// `value` is the known text (plus unit, when set) for
+    /// `MetricValue::Known`, or the same translation key
+    /// `MetricValue::label_key()` already returns for `Unknown`/
+    /// `Unavailable` -- one field, whose meaning follows the same
+    /// text-vs-key split this module's own doc comment describes.
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        let value = match (&self.value, &self.unit) {
+            (MetricValue::Known(text), Some(unit)) => Some(format!("{text} {unit}")),
+            (MetricValue::Known(text), None) => Some(text.clone()),
+            (other, _) => other.label_key().map(str::to_string),
+        };
+        AccessibilityInfo {
+            name: Some(self.label.clone()),
+            value,
+            ..AccessibilityInfo::new(AccessibilityRole::Text)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -517,6 +708,26 @@ impl Disclosure {
             DisclosureState::Expanded => DisclosureState::Collapsed,
         };
         next
+    }
+
+    /// `value` is a `disclosure.collapsed`/`disclosure.expanded`
+    /// translation key, this module's usual convention for a state that
+    /// needs display language a caller supplies. Section 6.10:
+    /// "Expansion updates focus order and accessibility state atomically
+    /// with layout" is a call-site sequencing rule this data-only type
+    /// cannot itself guarantee -- it can only make sure `toggled()`'s new
+    /// state and this method's output are never out of sync with each
+    /// other.
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        let value = match self.state {
+            DisclosureState::Collapsed => "disclosure.collapsed",
+            DisclosureState::Expanded => "disclosure.expanded",
+        };
+        AccessibilityInfo {
+            name: Some(self.label.clone()),
+            value: Some(value.to_string()),
+            ..AccessibilityInfo::new(AccessibilityRole::Disclosure)
+        }
     }
 
     /// `IconGlyph::ChevronRight` collapsed, `IconGlyph::ChevronDown`
@@ -655,5 +866,89 @@ mod tests {
 
         let back = expanded.toggled();
         assert_eq!(back.state, DisclosureState::Collapsed);
+    }
+
+    #[test]
+    fn decorative_icon_has_no_accessibility_exposure() {
+        let decorative = Icon::new(IconGlyph::ChevronRight, ColorRole::TextSecondary);
+        assert!(decorative.is_decorative());
+        assert_eq!(decorative.accessibility(), None);
+
+        let named = decorative.with_name("Раскрыть");
+        assert!(!named.is_decorative());
+        let info = named.accessibility().unwrap();
+        assert_eq!(info.role, AccessibilityRole::Image);
+        assert_eq!(info.name.as_deref(), Some("Раскрыть"));
+    }
+
+    #[test]
+    fn unnamed_divider_has_no_accessibility_exposure() {
+        assert_eq!(Divider::new().accessibility(), None);
+        let named = Divider::new().with_name("Конец списка устройств");
+        assert_eq!(
+            named.accessibility().unwrap().name.as_deref(),
+            Some("Конец списка устройств")
+        );
+    }
+
+    #[test]
+    fn button_accessibility_exposes_disabled_and_busy() {
+        let button = Button::new("Сохранить", "save", ButtonVariant::Primary);
+        let info = button.accessibility();
+        assert_eq!(info.role, AccessibilityRole::Button);
+        assert_eq!(info.name.as_deref(), Some("Сохранить"));
+        assert!(!info.disabled);
+        assert!(!info.busy);
+
+        assert!(button.clone().disabled().accessibility().disabled);
+        assert!(button.busy().accessibility().busy);
+    }
+
+    #[test]
+    fn field_accessibility_reuses_the_masked_value() {
+        let field = Field::new("PIN", FieldKind::Password).with_value("4269");
+        let info = field.accessibility();
+        assert_eq!(info.role, AccessibilityRole::TextField);
+        assert_eq!(info.name.as_deref(), Some("PIN"));
+        assert_eq!(info.value.as_deref(), Some("\u{2022}\u{2022}\u{2022}\u{2022}"));
+        assert!(!info.disabled);
+        assert!(field.disabled().accessibility().disabled);
+    }
+
+    #[test]
+    fn data_row_accessibility_role_follows_actionability() {
+        let static_row = DataRow::new("Версия", DataRowVariant::Static);
+        assert_eq!(static_row.accessibility().role, AccessibilityRole::ListItem);
+        assert!(!static_row.accessibility().disabled);
+
+        let live_nav = DataRow::new("Wi-Fi", DataRowVariant::Navigation).with_action("open_wifi");
+        let info = live_nav.accessibility();
+        assert_eq!(info.role, AccessibilityRole::Button);
+        assert!(!info.disabled);
+
+        let dead_nav = DataRow::new("Wi-Fi", DataRowVariant::Navigation);
+        assert!(dead_nav.accessibility().disabled);
+    }
+
+    #[test]
+    fn metric_accessibility_value_is_text_when_known_and_a_key_otherwise() {
+        let known = Metric::new("Батарея", MetricValue::Known("87".to_string())).with_unit("%");
+        assert_eq!(known.accessibility().value.as_deref(), Some("87 %"));
+
+        let unknown = Metric::new("Батарея", MetricValue::Unknown);
+        assert_eq!(unknown.accessibility().value.as_deref(), Some("metric.unknown"));
+    }
+
+    #[test]
+    fn disclosure_accessibility_value_tracks_state() {
+        let collapsed = Disclosure::new("Подробности", "diagnostics-panel");
+        assert_eq!(
+            collapsed.accessibility().value.as_deref(),
+            Some("disclosure.collapsed")
+        );
+        assert_eq!(
+            collapsed.toggled().accessibility().value.as_deref(),
+            Some("disclosure.expanded")
+        );
     }
 }

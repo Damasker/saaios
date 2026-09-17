@@ -266,8 +266,14 @@ real phone interface consistently.
   but still one function on both sides). No independent/duplicated rect
   arithmetic found anywhere -- this task was already structurally satisfied
   by the codebase's existing convention, not a new change.
-- [ ] Define component accessibility names, roles, values, disabled states, and
-  non-color cues.
+- [x] Define component accessibility names, roles, values, disabled states, and
+  non-color cues. Done (ADR-104): every one of the ten primitives from
+  ADR-102/ADR-103 exposes an `accessibility()` -> `AccessibilityInfo` (role,
+  name, value, disabled, busy) or `Option<AccessibilityInfo>` when a
+  primitive must not be independently exposed at all (a decorative `Icon`,
+  an unnamed `Divider`). Non-color cues needed no new work -- already
+  satisfied, since every primitive that carries meaning already does so
+  through text or an enum, never color alone.
 - [ ] Build the first device component-gallery surface covering all primitive
   states, long Russian strings, and scaled text.
 - [ ] Add golden render, layout, hit-test, press-state, and overflow tests.
