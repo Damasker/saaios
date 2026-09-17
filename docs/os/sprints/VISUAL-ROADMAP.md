@@ -1,6 +1,6 @@
 # SaaiOS Visual System — delivery roadmap
 
-Status: **VUI-00 and VUI-01 complete; VUI-02 Task List complete, Acceptance checklist complete except one item blocked by the environment (see "The sans and mono faces survive the actual Pixel boot-image asset path" below)**
+Status: **VUI-00, VUI-01, and VUI-03 complete; VUI-02 Task List complete, Acceptance checklist complete except one item blocked by the environment (see "The sans and mono faces survive the actual Pixel boot-image asset path" below)**
 
 Target device: Pixel 7 (`panther`)
 
@@ -83,7 +83,7 @@ contains:
 | VUI-00 | Audit, product contract, and delivery plan | **Done** |
 | VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
-| VUI-03 | Reference `Сейчас` surface | **In progress** |
+| VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | Backlog |
 | VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
 | VUI-06 | `Система` information architecture and settings components | Backlog |
@@ -404,7 +404,7 @@ screen migration is accepted.
 
 ## VUI-03 — Reference `Сейчас` surface
 
-**Status:** In progress
+**Status:** Done (ADR-112/113/114/115)
 
 **Depends on:** VUI-02
 
@@ -543,26 +543,106 @@ truthful home surface before expanding the framework.
     staleness indicator for a live-but-quiet connection is new plumbing
     this pass's scope did not cover. Flagged as real follow-up, not
     claimed done.
-- [ ] Validate progressive disclosure for developer and diagnostic details.
-- [ ] Extract only components with a confirmed second use; document candidates
-  that intentionally remain reference-screen private.
-- [ ] Add reference renders and end-to-end touch/navigation tests.
+- [x] Validate progressive disclosure for developer and diagnostic
+  details. Audited, not modified: HIA-20's `Frame::DevSurface` (a silent
+  tap counter on "Я"'s build-id card) is this project's existing,
+  project-wide progressive-disclosure mechanism for genuinely low-level
+  detail -- `dev_surface_rows()` shows raw `space_id`, `ContextFrame`
+  internals, confidence scores. Architecturally separate from every
+  VUI-03 change this sprint made (different `RootPage`, no shared code
+  path with `now_*`/`draw_now`), so unaffected by construction, confirmed
+  by inspection rather than needing a fresh physical pass.
+
+  The one developer-adjacent detail the composed screen itself shows --
+  `ObjectSummary`'s "{entity_type} · версия {revision}" meta line -- is
+  not new disclosure-policy scope creep: it is the exact same detail
+  level the pre-existing ad hoc `"inspect_selected_entity"` card already
+  showed before ADR-112 (see ADR-111's own note formalizing it), just
+  through a real composite instead of hand-built `ActionCardView`
+  strings. Reviewed against `Frame::DevSurface`'s own far more technical
+  content and judged appropriately light for a primary surface -- a type
+  name and a small counter, not an internal identifier or raw JSON.
+- [x] Extract only components with a confirmed second use; document
+  candidates that intentionally remain reference-screen private. Nothing
+  further extracted this pass -- audited what already exists instead:
+  - `ContextHeader`/`SystemSection`/`ObjectSummary` (ADR-111) already
+    live in `saai-ui-core`, not `saai-shell` -- but have exactly one
+    consumer so far (`draw_now`). Per this task's own rule, a single use
+    is not a "confirmed second use"; they stay Experimental
+    (component-library-v1.md section 2) with no further action until a
+    real second consumer exists (`ObjectSummary` is the likeliest
+    candidate, named in ADR-111 as ready for VUI-05's Object View).
+  - Intentionally reference-screen private, staying in `saai-shell`'s
+    `main.rs`/`render.rs`: `now_context_header`/`now_sections`/
+    `now_object_summary` (real-data composition logic specific to this
+    product surface's own meaning, not reusable UI), `today_schedules`/
+    `in_progress_work`/`next_pending_action` (entity-filtering queries,
+    same reasoning), and `now_footer_action_rect`/`now_footer_action_
+    views`/`now_footer_action_at` (ADR-113 -- pure position functions,
+    matching the same private-to-the-page convention `now_grid_rect`/
+    `stacked_row_rect` already established for every other page's own
+    layout, never shared or extracted across pages in this codebase).
+- [x] Add reference renders and end-to-end touch/navigation tests. This
+  project's own established convention (matching VUI-02's gallery work):
+  real device screenshots described and reviewed in the ADR that
+  introduced each state, not committed PNG files -- `visual-language-v1.md`
+  section 15's "reference renders" requirement is met that way throughout
+  this codebase already, not just here. Reference renders on record, by
+  ADR: empty/quiet and real populated content (ADR-112), the app-grid
+  overlay opening and closing plus intent-input reachability (ADR-113),
+  the offline state both before and after a real gap fix, screenshotted
+  twice to directly confirm the fix rather than assume it (ADR-114).
+  Interaction tests: `now_footer_action_rows_stack_above_the_tab_bar_
+  in_order`, `now_footer_action_at_finds_each_row_and_misses_above_them`
+  (ADR-113), plus every `*_action_at`/data-filter test added across
+  ADR-112/113/114, matching this codebase's own established split (pure
+  hit-test/data functions get host tests; stateful touch dispatch gets
+  physical verification, same balance ADR-089 already documented for
+  `saai-taskd`).
+
+  Known gap, flagged rather than silently passed: `draw_now` has no
+  scroll handling at all -- if real `SystemSection` content ever exceeds
+  one screen's height, it will overflow/clip rather than scroll, unlike
+  "Я"'s own `scrolled_row_rect` precedent elsewhere in this file. Not
+  exercised by this environment's real data (at most one row was ever
+  populated per section here) and out of this pass's proportionate scope
+  to build -- real follow-up, not claimed solved.
 
 ### Acceptance
 
-- [ ] No fake tasks, agents, metrics, progress, or alerts appear.
-- [ ] The first viewport states context, current work/system activity,
-  attention, and next action when the data exists.
-- [ ] Essential actions remain reachable without chat or AI.
-- [ ] Application access remains discoverable but is not the primary model.
-- [ ] Empty state is calm and useful rather than filled with decoration.
-- [ ] Physical Pixel 7 review covers portrait insets, keyboard, touch, long text,
-  and one-handed reach.
+All six re-reviewed against the real shipped default (ADR-115), not a
+dev-only preview:
+
+- [x] No fake tasks, agents, metrics, progress, or alerts appear. True by
+  construction throughout ADR-112/113/114 -- every row traces to a real
+  entity or a real connection-state check, never fabricated.
+- [x] The first viewport states context, current work/system activity,
+  attention, and next action when the data exists. `ContextHeader`,
+  "Продолжается", "Требует внимания", "Далее" -- all real, physically
+  confirmed with actual entity data.
+- [x] Essential actions remain reachable without chat or AI. "Приложения"
+  and root-tab navigation both work with `intent_input` never opened.
+- [x] Application access remains discoverable but is not the primary
+  model. "Приложения" is a single, always-visible row, one tap away --
+  and, as of ADR-115, no longer the page's default content.
+- [x] Empty state is calm and useful rather than filled with decoration.
+  "Ничего срочного"/"Нет связи с пространствами" -- centered text, no
+  invented filler.
+- [x] Physical Pixel 7 review covers portrait insets, keyboard, touch,
+  long text, and one-handed reach. Portrait insets: the status-bar-
+  overlap bug found and fixed in ADR-112. Keyboard: the intent-input
+  keyboard confirmed opening from its new row (ADR-113). Touch: footer
+  row hit-testing and the app-grid open/close round trip both physically
+  confirmed (ADR-113). Long text: relies on `SemanticText` wrap already
+  proven by VUI-02's own gallery fixture and reused verbatim here, not a
+  fresh dedicated stress test on this screen specifically. One-handed
+  reach: footer rows and tabs both meet `MIN_TOUCH_TARGET` (ADR-108) and
+  sit in the lower half of the screen.
 
 ### Rollback
 
-Keep the previous root composition selectable until the reference surface passes
-the complete device checklist.
+`saai-shell.pre-nowdefault` remains on-device for a full binary rollback
+to the pre-VUI-03 app-grid-default behavior (ADR-115).
 
 ---
 

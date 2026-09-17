@@ -634,16 +634,6 @@ const UI_GALLERY_MARKER: &str = "/run/saaios/ui-gallery";
 /// asked to act on them right now.
 const DEV_NO_LOCK_MARKER: &str = "/run/saaios/dev-no-lock";
 
-/// Development-only preview gate for VUI-03's composed `Сейчас` (ADR-112):
-/// `RootPage::Now` still renders through `draw_root`'s existing app-grid
-/// scaffold by default -- this flag switches it to the new `Frame::Now`/
-/// `draw_now` composition instead, for physical verification before the
-/// app grid's own relocation (VUI-03's next task) makes that the only
-/// path. Same volatile `/run` gate as every other dev preview this
-/// project has added (`UI_CALIBRATION_MARKER`, `UI_GALLERY_MARKER`,
-/// `DEV_NO_LOCK_MARKER`) -- cannot survive a reboot, cannot become a
-/// persistent setting.
-const NOW_COMPOSED_MARKER: &str = "/run/saaios/ui-now-composed";
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
 /// `ShellSettings`'s own JSON directly without duplicating its parse
@@ -1845,10 +1835,9 @@ enum Frame {
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
     },
-    /// VUI-03 (ADR-112): the real composed `Сейчас`, behind
-    /// `NOW_COMPOSED_MARKER` while the app grid it will eventually
-    /// replace is still `RootPage::Now`'s default. See that marker's own
-    /// doc comment.
+    /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
+    /// Now`'s only content now, the app grid relocated behind its own
+    /// "Приложения" row (ADR-113/`apps_open`).
     Now {
         content_rect: Rect,
         tabs: Vec<(Rect, &'static str)>,
@@ -3064,11 +3053,6 @@ fn main() {
         dev_no_lock_environment.as_deref(),
         std::path::Path::new(DEV_NO_LOCK_MARKER).exists(),
     );
-    let now_composed_environment = std::env::var("SAAIOS_UI_NOW_COMPOSED").ok();
-    let now_composed = calibration_requested(
-        now_composed_environment.as_deref(),
-        std::path::Path::new(NOW_COMPOSED_MARKER).exists(),
-    );
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
@@ -3115,7 +3099,6 @@ fn main() {
         lock_height: 0,
         locked: !dev_no_lock,
         dev_no_lock,
-        now_composed,
         apps_open: false,
         unlock_pending: false,
         sleeping: false,
@@ -3276,15 +3259,11 @@ struct Shell {
     locked: bool,
     /// See `DEV_NO_LOCK_MARKER`'s own doc comment.
     dev_no_lock: bool,
-    /// See `NOW_COMPOSED_MARKER`'s own doc comment.
-    now_composed: bool,
     /// VUI-03 (ADR-113): true while the app grid is showing over the
     /// composed `Сейчас`, opened via the "Приложения" footer row and
-    /// closed by re-tapping the already-selected `Сейчас` tab. Only ever
-    /// meaningful when `now_composed` is set -- with it off, `RootPage::
-    /// Now` already always shows the grid, so this flag has nothing to
-    /// add. Reset to `false` on every root tab switch so leaving and
-    /// returning to `Сейчас` never re-opens the grid unexpectedly.
+    /// closed by re-tapping the already-selected `Сейчас` tab. Reset to
+    /// `false` on every root tab switch so leaving and returning to
+    /// `Сейчас` never re-opens the grid unexpectedly.
     apps_open: bool,
     /// Set on a touch-down that started on the lock surface while
     /// locked; the matching touch-up is what actually unlocks (mirrors
@@ -4082,10 +4061,7 @@ impl TouchHandler for Shell {
                     self.viewing_entity_id = Some(id);
                     self.draw(conn, qh);
                 }
-            } else if self.current_page == RootPage::Now
-                && self.now_composed
-                && !self.apps_open
-            {
+            } else if self.current_page == RootPage::Now && !self.apps_open {
                 // VUI-03 (ADR-113): the composed screen's own two footer
                 // rows -- everything else on it (SystemSection rows,
                 // ObjectSummary) is informational only in this pass, not
@@ -4107,11 +4083,10 @@ impl TouchHandler for Shell {
                 // `content_action_at` alone can't find them (or, now,
                 // even correctly locate the two cards that remain
                 // static, since they're repositioned below the
-                // runtime-sized app list). Also reached with
-                // `now_composed` set once "Приложения" has opened the
-                // grid (`self.apps_open`) -- same grid, same handling,
-                // whether it's the permanent page or a temporary
-                // overlay above the composed screen.
+                // runtime-sized app list). Also reached once
+                // "Приложения" has opened the grid (`self.apps_open`)
+                // over the composed screen -- same grid, same handling
+                // either way.
                 if let Some(action_str) = now_action_at(
                     self.last_touch_pos,
                     self.width,
@@ -4462,7 +4437,7 @@ impl Shell {
                 status_line: "Диагностика".to_string(),
                 rows,
             }
-        } else if self.current_page == RootPage::Now && self.now_composed && !self.apps_open {
+        } else if self.current_page == RootPage::Now && !self.apps_open {
             let view = root_view(width, height);
             Frame::Now {
                 content_rect: view.children[0].rect,
