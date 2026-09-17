@@ -274,8 +274,18 @@ real phone interface consistently.
   an unnamed `Divider`). Non-color cues needed no new work -- already
   satisfied, since every primitive that carries meaning already does so
   through text or an enum, never color alone.
-- [ ] Build the first device component-gallery surface covering all primitive
-  states, long Russian strings, and scaled text.
+- [x] Build the first device component-gallery surface covering all primitive
+  states, long Russian strings, and scaled text. First pass done (ADR-105):
+  `render::draw_gallery`, one instance of each of the ten ADR-102/103
+  primitives, default state only, physically verified via a real device
+  screenshot. Caught and fixed a real bug in the process -- `saai_ui_core`'s
+  size tokens are logical units, and the first draft used them as physical
+  pixels directly, causing two primitives' stacked text lines to overlap;
+  fixed with a `physical()`/`physical_line_height()` conversion helper now
+  reusable for future rendering code. Not yet done: pressed/focused/
+  disabled/busy variants, both compact and normal side by side, long-
+  Russian-text and scaled-text coverage, and the developer bounds overlay --
+  section 7's full matrix remains open.
 - [ ] Add golden render, layout, hit-test, press-state, and overflow tests.
 
 ### Acceptance

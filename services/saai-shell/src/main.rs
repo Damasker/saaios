@@ -609,6 +609,14 @@ const UI_CALIBRATION_MARKER: &str = "/run/saaios/ui-calibration";
 fn calibration_requested(environment: Option<&str>, runtime_marker_exists: bool) -> bool {
     environment == Some("1") || runtime_marker_exists
 }
+
+/// VUI-02: same developer-only gate as `UI_CALIBRATION_MARKER`, one
+/// screen over -- `render::draw_gallery`'s device component gallery
+/// (ADR-105) is reached the same way, never through normal navigation,
+/// and is just as volatile (the marker lives under `/run`, never
+/// survives a reboot, and setting it can never become a persistent user
+/// setting).
+const UI_GALLERY_MARKER: &str = "/run/saaios/ui-gallery";
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
 /// `ShellSettings`'s own JSON directly without duplicating its parse
@@ -2902,6 +2910,11 @@ fn main() {
         calibration_environment.as_deref(),
         std::path::Path::new(UI_CALIBRATION_MARKER).exists(),
     );
+    let gallery_environment = std::env::var("SAAIOS_UI_GALLERY").ok();
+    let gallery_mode = calibration_requested(
+        gallery_environment.as_deref(),
+        std::path::Path::new(UI_GALLERY_MARKER).exists(),
+    );
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
@@ -2987,6 +3000,7 @@ fn main() {
         dev_surface_tap_count: 0,
         dev_surface_open: false,
         calibration_mode,
+        gallery_mode,
         selected_entities: Vec::new(),
         system_space_entities: Vec::new(),
         context_frame: Vec::new(),
@@ -3004,6 +3018,9 @@ fn main() {
     println!("saai-shell: connected, toplevel created");
     if shell.calibration_mode {
         println!("saai-shell: VUI-01 calibration fixture enabled");
+    }
+    if shell.gallery_mode {
+        println!("saai-shell: VUI-02 component gallery enabled");
     }
     // HIA-08: logged, not read back anywhere -- see `known_surfaces`'s
     // own doc comment for why this exists at all right now.
@@ -3260,6 +3277,7 @@ struct Shell {
     /// suppresses unlocked content input; it is never persisted as a user
     /// setting and therefore cannot accidentally become normal navigation.
     calibration_mode: bool,
+    gallery_mode: bool,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -4291,6 +4309,7 @@ impl Shell {
         let current_page_index = self.current_page.index();
         let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
+        let gallery_mode = self.gallery_mode;
 
         // GPU-native path (ADR-024 continued): paint directly into a
         // dma-buf backed buffer, skipping the wl_shm host-visible
@@ -4343,6 +4362,15 @@ impl Shell {
                 // The fixture must show the source tokens exactly. The user's
                 // optional accessibility post-process is validated on normal
                 // screens, not baked into physical palette calibration.
+                return;
+            }
+            if gallery_mode {
+                render::draw_gallery(
+                    &mut render::Canvas::new(canvas, width, height),
+                    width,
+                    height,
+                    fonts,
+                );
                 return;
             }
             match frame {

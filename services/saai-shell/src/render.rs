@@ -1,7 +1,10 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::{
-    ColorRole, ContextColor, FontFamily, FontWeight, IconGlyph, Rect, Rgb, StatusMark,
-    SurfaceScale, TextRole, Theme, UniversalState,
+    Button, ButtonVariant, ColorRole, ContextColor, DataRow, DataRowVariant, Disclosure,
+    Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize, LogicalUnit,
+    Metric, MetricValue, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, StrokeToken, SurfaceScale, TextRole, Theme,
+    UniversalState, CONTROL_VISUAL_HEIGHT, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -201,6 +204,14 @@ impl Fonts {
         };
         let size = SurfaceScale::PIXEL_7.logical_to_physical(style.size) as f32;
         (font, size)
+    }
+
+    /// `None` when the optional icon font (ADR-100) failed to load --
+    /// callers must skip drawing rather than fall back to a letter, the
+    /// same "no fallback that means anything" posture
+    /// `saai_ui_core::Icon`'s own doc comment states.
+    pub fn icon(&self) -> Option<&Font> {
+        self.icons.as_ref()
     }
 }
 
@@ -1070,6 +1081,16 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
     }
 }
 
+/// Summed glyph advance width -- the measurement half of "measure, then
+/// place" that `draw_text_centered` does inline and a right-aligned or
+/// custom-positioned label (the status bar, the gallery) needs to do
+/// itself first.
+fn text_width(font: &Font, text: &str, size: f32) -> f32 {
+    text.chars()
+        .map(|character| font.metrics(character, size).advance_width)
+        .sum()
+}
+
 fn draw_calibration_mark(canvas: &mut Canvas<'_>, rect: Rect, mark: StatusMark, color: Pixel) {
     let quarter = (rect.width / 4).max(2);
     let half = rect.width / 2;
@@ -1193,6 +1214,401 @@ fn draw_calibration_mark(canvas: &mut Canvas<'_>, rect: Rect, mark: StatusMark, 
             );
         }
     }
+}
+
+/// VUI-02's own translation-key convention (`saai_ui_core`'s
+/// `label_key`/`MetricValue::label_key`/`StatusIndicator`'s state key,
+/// `Disclosure`'s state key) resolves here, at the shell layer -- the one
+/// place component-library-v1.md section 8 actually assigns display
+/// language ownership to. Deliberately small and gallery-scoped, not a
+/// general i18n system: covers exactly the keys this file's own
+/// `draw_gallery` produces.
+fn resolve_label_key(key: &str) -> &'static str {
+    match key {
+        "state.idle" => "Ожидание",
+        "state.active" => "Активно",
+        "state.running" => "Выполняется",
+        "state.waiting" => "В очереди",
+        "state.blocked" => "Заблокировано",
+        "state.attention" => "Внимание",
+        "state.failed" => "Ошибка",
+        "state.complete" => "Готово",
+        "state.offline" => "Нет связи",
+        "metric.unknown" => "Неизвестно",
+        "metric.unavailable" => "Недоступно",
+        "disclosure.collapsed" => "Свёрнуто",
+        "disclosure.expanded" => "Развёрнуто",
+        _ => "?",
+    }
+}
+
+/// Physical pixels for the logical-unit line height a `TextRole` declares
+/// -- every gallery helper below that stacks a second line under a first
+/// one needs this, not a guessed constant. Missing this exact conversion
+/// (using a logical value like `28` directly as physical pixels) was a
+/// real bug caught by the first physical screenshot of this screen: the
+/// reason line under `StatusIndicator`'s label, and `DataRow`'s secondary
+/// line, both collided with the line above them.
+fn physical_line_height(role: TextRole) -> u32 {
+    SurfaceScale::PIXEL_7.logical_to_physical(role.style().line_height)
+}
+
+fn physical(value: LogicalUnit) -> u32 {
+    SurfaceScale::PIXEL_7.logical_to_physical(value)
+}
+
+fn draw_gallery_semantic_text(canvas: &mut Canvas<'_>, fonts: &Fonts, text: &SemanticText, left: u32, top: u32) {
+    let (font, size) = fonts.resolve(text.role);
+    draw_text(canvas, font, &text.content, size, left, top, theme_color(text.color));
+}
+
+fn draw_gallery_icon(canvas: &mut Canvas<'_>, fonts: &Fonts, icon: &Icon, left: u32, top: u32) {
+    let Some(icon_font) = fonts.icon() else {
+        return;
+    };
+    let size = physical(icon.size.value()) as f32;
+    let glyph = icon.glyph.codepoint().to_string();
+    draw_text(canvas, icon_font, &glyph, size, left, top, theme_color(icon.color));
+}
+
+fn draw_gallery_divider(canvas: &mut Canvas<'_>, divider: &Divider, rect: Rect) {
+    canvas.fill_rect(rect, theme_color(divider.color));
+}
+
+fn draw_gallery_status_indicator(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    indicator: &StatusIndicator,
+    left: u32,
+    top: u32,
+) {
+    let style = indicator.state.style();
+    let mark_size = physical(IconSize::Medium.value());
+    draw_calibration_mark(
+        canvas,
+        Rect::new(left, top, mark_size, mark_size),
+        indicator.mark(),
+        theme_color(style.color),
+    );
+    let (font, size) = fonts.resolve(TextRole::Body);
+    let text_left = left + mark_size + physical(SpacingToken::Small.value());
+    draw_text(canvas, font, &indicator.label, size, text_left, top, theme_color(style.color));
+    if let Some(reason) = indicator.visible_reason() {
+        let (reason_font, reason_size) = fonts.resolve(TextRole::Caption);
+        draw_text(
+            canvas,
+            reason_font,
+            reason,
+            reason_size,
+            text_left,
+            top + physical_line_height(TextRole::Body),
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+}
+
+fn draw_gallery_progress(canvas: &mut Canvas<'_>, progress: &Progress, rect: Rect) {
+    canvas.fill_rect(rect, theme_color(ColorRole::Grid));
+    let filled_width = match progress.percent() {
+        Some(percent) => (u64::from(rect.width) * u64::from(percent) / 100) as u32,
+        // Indeterminate: a static snapshot of the restrained motion section
+        // 6.5 describes -- this gallery draws one still frame, not the
+        // animation itself (VUI-08's job).
+        None => rect.width / 4,
+    };
+    canvas.fill_rect(
+        Rect::new(rect.x, rect.y, filled_width, rect.height),
+        theme_color(ColorRole::Accent),
+    );
+}
+
+fn draw_gallery_button(canvas: &mut Canvas<'_>, fonts: &Fonts, button: &Button, rect: Rect) {
+    let (fill, text_color) = match (button.variant, button.enabled) {
+        (_, false) => (ColorRole::DisabledSurface, ColorRole::DisabledText),
+        (ButtonVariant::Primary, true) => (ColorRole::Accent, ColorRole::HighContrastText),
+        (ButtonVariant::Destructive, true) => (ColorRole::Critical, ColorRole::HighContrastText),
+        (ButtonVariant::Secondary, true) => (ColorRole::Elevated, ColorRole::TextPrimary),
+        (ButtonVariant::Quiet, true) => (ColorRole::Surface, ColorRole::TextPrimary),
+    };
+    canvas.fill_rect(rect, theme_color(fill));
+    let (font, size) = fonts.resolve(TextRole::Label);
+    draw_text_centered(
+        canvas,
+        font,
+        &button.label,
+        size,
+        rect.x + rect.width / 2,
+        rect.y + rect.height / 2 - (size * 0.38) as u32,
+        theme_color(text_color),
+    );
+}
+
+fn draw_gallery_field(canvas: &mut Canvas<'_>, fonts: &Fonts, field: &Field, rect: Rect) {
+    let (label_font, label_size) = fonts.resolve(TextRole::Caption);
+    draw_text(
+        canvas,
+        label_font,
+        &field.label,
+        label_size,
+        rect.x,
+        rect.y,
+        theme_color(ColorRole::TextSecondary),
+    );
+    let box_top = rect.y + physical_line_height(TextRole::Caption);
+    let box_rect = Rect::new(rect.x, box_top, rect.width, rect.height.saturating_sub(box_top - rect.y));
+    let box_fill = if field.error.is_some() {
+        ColorRole::Critical
+    } else {
+        ColorRole::Surface
+    };
+    canvas.fill_rect(box_rect, theme_color(box_fill));
+    let (value_font, value_size) = fonts.resolve(TextRole::Body);
+    let inset = physical(SpacingToken::Small.value());
+    let (display, color): (String, ColorRole) = if field.is_empty() {
+        (
+            field.placeholder.clone().unwrap_or_default(),
+            ColorRole::TextSecondary,
+        )
+    } else {
+        (field.accessible_value(), ColorRole::TextPrimary)
+    };
+    draw_text(
+        canvas,
+        value_font,
+        &display,
+        value_size,
+        box_rect.x + inset,
+        box_rect.y + inset / 2,
+        theme_color(color),
+    );
+}
+
+fn draw_gallery_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
+    canvas.fill_rect(rect, theme_color(ColorRole::Surface));
+    let inset = physical(SpacingToken::Small.value());
+    let top_inset = physical(SpacingToken::XSmall.value());
+    let mut cursor_x = rect.x + inset;
+    if let Some(glyph) = row.icon {
+        if let Some(icon_font) = fonts.icon() {
+            let icon_size = physical(IconSize::Large.value());
+            draw_text(
+                canvas,
+                icon_font,
+                &glyph.codepoint().to_string(),
+                icon_size as f32,
+                cursor_x,
+                rect.y + top_inset,
+                theme_color(ColorRole::TextSecondary),
+            );
+            cursor_x += icon_size + inset;
+        }
+    }
+    let (primary_font, primary_size) = fonts.resolve(TextRole::Body);
+    draw_text(
+        canvas,
+        primary_font,
+        &row.primary,
+        primary_size,
+        cursor_x,
+        rect.y + top_inset,
+        theme_color(ColorRole::TextPrimary),
+    );
+    if let Some(secondary) = &row.secondary {
+        let (secondary_font, secondary_size) = fonts.resolve(TextRole::Caption);
+        draw_text(
+            canvas,
+            secondary_font,
+            secondary,
+            secondary_size,
+            cursor_x,
+            rect.y + top_inset + physical_line_height(TextRole::Body),
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+    if let Some(value) = &row.value {
+        let (value_font, value_size) = fonts.resolve(TextRole::Body);
+        let value_width = text_width(value_font, value, value_size) as u32;
+        let value_left = (rect.x + rect.width)
+            .saturating_sub(inset)
+            .saturating_sub(value_width);
+        draw_text(
+            canvas,
+            value_font,
+            value,
+            value_size,
+            value_left,
+            rect.y + top_inset,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+}
+
+fn draw_gallery_metric(canvas: &mut Canvas<'_>, fonts: &Fonts, metric: &Metric, left: u32, top: u32) {
+    let (label_font, label_size) = fonts.resolve(TextRole::Caption);
+    draw_text(
+        canvas,
+        label_font,
+        &metric.label,
+        label_size,
+        left,
+        top,
+        theme_color(ColorRole::TextSecondary),
+    );
+    let display = match &metric.value {
+        MetricValue::Known(text) => match &metric.unit {
+            Some(unit) => format!("{text} {unit}"),
+            None => text.clone(),
+        },
+        other => resolve_label_key(other.label_key().unwrap_or("")).to_string(),
+    };
+    let (value_font, value_size) = fonts.resolve(TextRole::Title);
+    draw_text(
+        canvas,
+        value_font,
+        &display,
+        value_size,
+        left,
+        top + physical_line_height(TextRole::Caption),
+        theme_color(ColorRole::TextPrimary),
+    );
+}
+
+fn draw_gallery_disclosure(canvas: &mut Canvas<'_>, fonts: &Fonts, disclosure: &Disclosure, rect: Rect) {
+    let (font, size) = fonts.resolve(TextRole::Body);
+    draw_text(
+        canvas,
+        font,
+        &disclosure.label,
+        size,
+        rect.x,
+        rect.y,
+        theme_color(ColorRole::TextPrimary),
+    );
+    if let Some(icon_font) = fonts.icon() {
+        let icon_size = physical(IconSize::Medium.value()) as f32;
+        let glyph = disclosure.chevron().codepoint().to_string();
+        draw_text(
+            canvas,
+            icon_font,
+            &glyph,
+            icon_size,
+            (rect.x + rect.width).saturating_sub(icon_size as u32 + physical(SpacingToken::Small.value())),
+            rect.y,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+}
+
+/// VUI-02's first device component gallery (component-library-v1.md
+/// section 7): one instance of each of the ten primitives from ADR-102/
+/// ADR-103, default state only -- pressed/focused/disabled/busy variants,
+/// compact vs normal, long Russian labels, and scaled-text coverage are
+/// explicit follow-up (see ADR-105's "Not verified by this ADR"), not
+/// claimed here. Reached only through the same developer-only gate VUI-01's
+/// calibration fixture uses (`SAAIOS_UI_GALLERY`/the runtime marker file) --
+/// never a normal navigation destination.
+pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Option<&Fonts>) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let margin = (width / 20).max(12);
+    // Same clearance `draw_calibration`'s own `palette_top` uses -- the
+    // separately-composited status bar overlay sits above the main
+    // surface regardless of which fixture this surface draws, so both
+    // fixtures need the same top clearance to avoid it.
+    let mut cursor_y = height / 10;
+
+    let Some(fonts) = fonts else {
+        return;
+    };
+
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        "SaaiOS Component Gallery · VUI-02",
+        32.0,
+        margin,
+        cursor_y,
+        theme_color(ColorRole::TextPrimary),
+    );
+    cursor_y += 80;
+
+    let row_height = (height.saturating_sub(cursor_y) / 10).max(140);
+    let content_width = width.saturating_sub(margin * 2);
+    let hairline = physical(StrokeToken::Hairline.value()).max(1);
+
+    let semantic_text = SemanticText::new(
+        "Пример SemanticText -- обычный текст тела",
+        TextRole::Body,
+        ColorRole::TextPrimary,
+    );
+    draw_gallery_semantic_text(canvas, fonts, &semantic_text, margin, cursor_y);
+    cursor_y += row_height;
+
+    let icon = Icon::new(IconGlyph::Wifi, ColorRole::Accent).with_name("Wi-Fi");
+    draw_gallery_icon(canvas, fonts, &icon, margin, cursor_y);
+    cursor_y += row_height;
+
+    let divider = Divider::new();
+    draw_gallery_divider(
+        canvas,
+        &divider,
+        Rect::new(margin, cursor_y, content_width, hairline),
+    );
+    cursor_y += row_height;
+
+    let status = StatusIndicator::new(UniversalState::Blocked, "Заблокировано")
+        .with_reason("Нет сети")
+        .with_variant(StatusIndicatorVariant::Normal);
+    draw_gallery_status_indicator(canvas, fonts, &status, margin, cursor_y);
+    cursor_y += row_height;
+
+    let progress = Progress::determinate(62);
+    draw_gallery_progress(
+        canvas,
+        &progress,
+        Rect::new(margin, cursor_y, content_width, physical(Progress::MIN_TRACK_HEIGHT)),
+    );
+    cursor_y += row_height;
+
+    let button = Button::new("Сохранить", "gallery:save", ButtonVariant::Primary);
+    draw_gallery_button(
+        canvas,
+        fonts,
+        &button,
+        Rect::new(margin, cursor_y, physical(LogicalUnit::new(160)), physical(CONTROL_VISUAL_HEIGHT)),
+    );
+    cursor_y += row_height;
+
+    let field = Field::new("PIN", FieldKind::Password).with_value("4269");
+    draw_gallery_field(
+        canvas,
+        fonts,
+        &field,
+        Rect::new(margin, cursor_y, content_width, row_height.saturating_sub(20)),
+    );
+    cursor_y += row_height;
+
+    let data_row = DataRow::new("Wi-Fi", DataRowVariant::Navigation)
+        .with_secondary("Подключено: Wallbox")
+        .with_value("99%");
+    draw_gallery_data_row(
+        canvas,
+        fonts,
+        &data_row,
+        Rect::new(margin, cursor_y, content_width, physical(TWO_LINE_ROW_HEIGHT)),
+    );
+    cursor_y += row_height;
+
+    let metric = Metric::new("Батарея", MetricValue::Known("87".to_string())).with_unit("%");
+    draw_gallery_metric(canvas, fonts, &metric, margin, cursor_y);
+    cursor_y += row_height;
+
+    let disclosure = Disclosure::new("Подробности", "diagnostics-panel").expanded();
+    draw_gallery_disclosure(
+        canvas,
+        fonts,
+        &disclosure,
+        Rect::new(margin, cursor_y, content_width, physical(LogicalUnit::new(32))),
+    );
 }
 
 // S23 added `is_grid` as the 8th plain draw-time knob on an already
@@ -1528,11 +1944,6 @@ pub fn draw_status_bar(
     // its left with a fixed gap -- same "measure, then place" approach
     // `draw_text_centered` already uses, just anchored from the right
     // edge instead of a center point.
-    let text_width = |font: &Font, text: &str, size: f32| -> f32 {
-        text.chars()
-            .map(|character| font.metrics(character, size).advance_width)
-            .sum()
-    };
     let gap = 40.0;
     let battery_width = text_width(&fonts.semibold, &battery_label, 40.0);
     let battery_left = width as f32 - margin as f32 - battery_width;
