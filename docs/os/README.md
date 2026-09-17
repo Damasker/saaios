@@ -8,10 +8,12 @@ Product and delivery sources of truth:
 - [System intelligence and self-management](architecture/system-intelligence.md)
 - [Cognitive Core / Work Scheduler mapping (Sprint 0)](architecture/cognitive-core-work-scheduler-mapping.md)
 - [Wayland application-platform architecture](architecture/application-platform.md)
-- [Human Interface Architecture v2 (long-term vision, not current roadmap)](architecture/human-interface-architecture-v2.md)
+- [Human Interface Architecture v2](architecture/human-interface-architecture-v2.md)
+- [Visual Language v1](architecture/visual-language-v1.md)
 - [Development process and Definition of Done](DEVELOPMENT_PROCESS.md)
 - [Quality strategy](QUALITY.md)
 - [Sprint roadmap](sprints/README.md)
+- [Visual-system delivery roadmap](sprints/VISUAL-ROADMAP.md)
 
 ```text
             SaaiOS OS
@@ -34,10 +36,12 @@ userspace. See the [live bring-up record](targets/panther/README.md) and
 
 ## Current milestone
 
-Delivery is governed by the [sprint roadmap](sprints/README.md). S00–S05 are
-complete on host and Pixel 7. The current gate is S06: real spaces and the
-local entity store; the physically accepted S05 image remains the hardware
-fallback.
+S00–S32 and the single-device HIA implementation track are complete with their
+documented limitations. The current product milestone is
+[VUI-01: semantic tokens and calibrated palette](sprints/VISUAL-ROADMAP.md),
+the first implementation step toward Visual Language v1 and the SaaiOS
+graphical component library. Multi-node PCE work remains deferred until a
+second physical runtime node exists.
 
 ## Rules
 
