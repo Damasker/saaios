@@ -308,6 +308,15 @@ real phone interface consistently.
 - [ ] Public primitives contain no shell-specific business logic.
 - [ ] Primary touch targets are at least 48×48 logical units.
 - [ ] Long labels wrap or reflow; they do not clip or overlap navigation.
+  Partial (ADR-107): done for `SemanticText` -- real greedy word-wrap plus
+  `max_lines`/ellipsis truncation, physically verified. The gallery's own
+  demo string used to run off the right edge of the screen in every prior
+  screenshot; it now wraps at a word boundary and truncates cleanly. Still
+  open for every other primitive with label text (`Button`, `Field`,
+  `DataRow`, `Metric`, `Disclosure`, `StatusIndicator`) -- each has its own
+  separate, not-yet-implemented wrap behavior per their own
+  component-library-v1.md anatomy notes, so this criterion is not yet met
+  for the component set as a whole.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset path.
 - [ ] Components look like one family at normal and increased text scale.
 - [ ] Component gallery is runnable on device and clearly labels fixture data.

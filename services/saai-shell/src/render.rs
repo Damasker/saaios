@@ -3,7 +3,7 @@ use saai_ui_core::{
     Button, ButtonVariant, ColorRole, ContextColor, DataRow, DataRowVariant, Disclosure,
     Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize, LogicalUnit,
     Metric, MetricValue, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, StrokeToken, SurfaceScale, TextRole, Theme,
+    StatusIndicatorVariant, StatusMark, StrokeToken, SurfaceScale, TextOverflow, TextRole, Theme,
     UniversalState, CONTROL_VISUAL_HEIGHT, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
@@ -1257,9 +1257,70 @@ fn physical(value: LogicalUnit) -> u32 {
     SurfaceScale::PIXEL_7.logical_to_physical(value)
 }
 
-fn draw_gallery_semantic_text(canvas: &mut Canvas<'_>, fonts: &Fonts, text: &SemanticText, left: u32, top: u32) {
+/// Greedy word-wrap: breaks `text` into lines whose rendered width (in
+/// `font` at `size`) fits within `max_width`. A single word wider than
+/// `max_width` on its own is not split further -- the practical limit any
+/// word-wrap without hyphenation has, and better than an infinite loop.
+/// Component-library-v1.md section 6.1: "wrap by default for prose."
+fn wrap_text(font: &Font, text: &str, size: f32, max_width: u32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if current.is_empty() || text_width(font, &candidate, size) as u32 <= max_width {
+            current = candidate;
+        } else {
+            lines.push(current);
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// Section 6.1's full contract: wraps by default, respects `max_lines`
+/// when set, and appends an ellipsis to the last visible line only when
+/// content was actually cut *and* the caller asked for
+/// `TextOverflow::Ellipsis` -- never invented on a line that already fit.
+fn draw_gallery_semantic_text(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    text: &SemanticText,
+    left: u32,
+    top: u32,
+    max_width: u32,
+) {
     let (font, size) = fonts.resolve(text.role);
-    draw_text(canvas, font, &text.content, size, left, top, theme_color(text.color));
+    let lines = wrap_text(font, &text.content, size, max_width);
+    let visible_count = text
+        .max_lines
+        .map(|max| (max as usize).min(lines.len()).max(1))
+        .unwrap_or(lines.len());
+    let truncated = lines.len() > visible_count;
+    let line_height = physical_line_height(text.role);
+    for (index, line) in lines.iter().take(visible_count).enumerate() {
+        let is_last_visible = index + 1 == visible_count;
+        let display = if is_last_visible && truncated && text.overflow == TextOverflow::Ellipsis {
+            format!("{line}\u{2026}")
+        } else {
+            line.clone()
+        };
+        draw_text(
+            canvas,
+            font,
+            &display,
+            size,
+            left,
+            top + index as u32 * line_height,
+            theme_color(text.color),
+        );
+    }
 }
 
 fn draw_gallery_icon(canvas: &mut Canvas<'_>, fonts: &Fonts, icon: &Icon, left: u32, top: u32) {
@@ -1578,12 +1639,21 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         theme_color(ColorRole::TextPrimary),
     );
 
+    // Deliberately longer than one line fits -- demonstrates section
+    // 6.1's full contract (wrap, then truncate at `max_lines` with an
+    // ellipsis) instead of a short string that would never exercise it.
+    // Fixes a real gap this gallery had until now: the untruncated demo
+    // string used to run straight off the right edge of the screen,
+    // violating the "long labels wrap or reflow; they do not clip" VUI-02
+    // acceptance criterion its own gallery is supposed to demonstrate.
     let semantic_text = SemanticText::new(
-        "Пример SemanticText -- обычный текст тела",
+        "Пример SemanticText -- обычный текст тела, достаточно длинный, чтобы перенестись на новую строку и показать многоточие",
         TextRole::Body,
         ColorRole::TextPrimary,
-    );
-    draw_gallery_semantic_text(canvas, fonts, &semantic_text, margin, rows[1]);
+    )
+    .with_max_lines(2)
+    .with_overflow(TextOverflow::Ellipsis);
+    draw_gallery_semantic_text(canvas, fonts, &semantic_text, margin, rows[1], content_width);
 
     let icon = Icon::new(IconGlyph::Wifi, ColorRole::Accent).with_name("Wi-Fi");
     draw_gallery_icon(canvas, fonts, &icon, margin, rows[2]);
