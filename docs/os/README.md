@@ -11,10 +11,12 @@ Product and delivery sources of truth:
 - [Human Interface Architecture v2](architecture/human-interface-architecture-v2.md)
 - [Visual Language v1](architecture/visual-language-v1.md)
 - [Component Library v1 inventory and base specifications](ui/component-library-v1.md)
+- [Product visual target v1 (concept boards)](ui/product-visual-target-v1.md)
 - [Development process and Definition of Done](DEVELOPMENT_PROCESS.md)
 - [Quality strategy](QUALITY.md)
 - [Sprint roadmap](sprints/README.md)
 - [Visual-system delivery roadmap](sprints/VISUAL-ROADMAP.md)
+- [Work Scheduler v2 delivery roadmap](sprints/WORK-ROADMAP.md)
 
 ```text
             SaaiOS OS

@@ -6,6 +6,12 @@ Target device: Pixel 7 (`panther`)
 
 Product contract: [`visual-language-v1.md`](../architecture/visual-language-v1.md)
 
+First-version UI destination (accepted concept boards):
+[`product-visual-target-v1.md`](../ui/product-visual-target-v1.md).
+Those boards are implemented **through this VUI sequence plus WORK-08**,
+not as a separate redesign sprint. VUI-04 does not change the live tab
+set mid-flight; `Поиск` and `Я`→`Система` are later bounded nav slices.
+
 Interaction architecture: [`human-interface-architecture-v2.md`](../architecture/human-interface-architecture-v2.md)
 
 ## Outcome
@@ -85,7 +91,7 @@ contains:
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
-| VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
+| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | Backlog |
 | VUI-06 | `Система` information architecture and settings components | Backlog |
 | VUI-07 | Remaining system surfaces and state patterns | Backlog |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
@@ -716,14 +722,18 @@ navigation passes restart and cold-boot testing.
 
 ---
 
-## VUI-05 — Object, Intent, Task, and Agent components
+## VUI-05 — Object, Intent, Task, and Worker components
 
 **Status:** Backlog
 
 **Depends on:** VUI-04 and the relevant HIA entity/runtime support
 
 **Goal:** give work and objects a consistent, inspectable, action-oriented
-visual grammar.
+visual grammar matching the v1 concept Object and Intent surfaces.
+
+Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.md)
+(object card + related + OAM actions; intent plan/queue/result).
+`Воркеры` are disposable executions, not Agent personalities.
 
 ### Tasks
 
@@ -731,7 +741,8 @@ visual grammar.
   for each Object/Intent/Task/Agent composite before implementation.
 - [ ] Implement `ObjectSummary`, `IntentSummary`, `TaskSummary`, `AgentSummary`,
   action row, observation/evidence row, and relationship path components.
-- [ ] Show `Intent → Tasks → Agents → Actions` with navigable relationships.
+- [ ] Show `Intent → Tasks → Actions → Result` with navigable SOM relationships.
+      Queue/worker counts come from workflow store (WORK-08); do not invent Agent entities.
 - [ ] Present universal state, current activity, last verified observation,
   blocker, permissions, consequences, and history consistently.
 - [ ] Gate actions by capability and policy; explain unavailable actions.

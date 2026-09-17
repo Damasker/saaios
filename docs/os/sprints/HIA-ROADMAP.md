@@ -75,6 +75,13 @@ Object View (HIA-07) выигрывает от реального Space Graph (H
 - **IRAB (ADR-120)**: Intent фиксирует focused `ObjectRef` в момент
   submit. Orb не владеет NLU. Детерминированный resolver обходит
   модель для explicit/pronoun inspect; `diagnose` — fallback.
+- **WSV2 (ADR-121)**: не новый HIA sprint. Work Scheduler остаётся
+  `saai-taskd`; DAG/ready/verification — [WORK-ROADMAP.md](WORK-ROADMAP.md).
+  Сейчас/Orb не становятся scheduler dashboard. Phone UI — WORK-08.
+- **UI v1 destination**: принятые концепт-борды
+  [product-visual-target-v1.md](../ui/product-visual-target-v1.md)
+  (`Сейчас` / `Пространство` / `Объект` / `Намерение` / `Система` + Orb).
+  Это конечная точка первой версии интерфейса, не текущий Pixel screenshot.
 - **Goal**: пространства образуют граф (parent_of/related_to/
   contains/usually_with/exclusive_with), не плоский список; у
   каждого пространства есть lifecycle (temporary/emerging/stable/

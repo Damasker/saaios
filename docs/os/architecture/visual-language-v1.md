@@ -10,6 +10,13 @@ HIA remains authoritative for the product model, objects, spaces, intents,
 actions, Context Light, and Orb. This document is the visual and interaction
 contract used to implement that model consistently.
 
+The first-version **product destination** (Orb states, five surfaces,
+object types, semantic color) is the accepted concept boards in
+[`product-visual-target-v1.md`](../ui/product-visual-target-v1.md).
+Those boards are the UI endpoint for v1. This file still governs how
+that destination is implemented without fake activity, without a chat
+home, and without replacing HIA.
+
 ## 1. Product goal
 
 SaaiOS must feel like an AI-native operating environment that understands it is
@@ -74,6 +81,11 @@ progress, or attention according to HIA. It is not a giant assistant avatar,
 launcher button, glowing decoration, or substitute for navigation. Its quiet
 state must be genuinely quiet.
 
+On `Сейчас` the Orb may sit in the composer as the primary locus. On every
+other surface it stays compact. Orb states (idle, listen, analyze, plan,
+confirm, run, result) present workflow; they do not make Orb the Scheduler
+or Policy. See [product-visual-target-v1.md](../ui/product-visual-target-v1.md).
+
 ### 3.3 Home and applications
 
 `Сейчас` is a current-state surface, not an application grid. Installed
@@ -83,16 +95,19 @@ entry or sheet. The grid must never become the primary SaaiOS mental model.
 ### 3.4 Navigation
 
 Navigation names stable OS domains, not implementation modules. During the
-migration the existing four-tab model remains usable. The target is:
+migration the existing four-tab model remains usable. The v1 destination
+(concept boards) is:
 
 - `Сейчас` — current context, work, attention, and next action;
-- `Входящие` — decisions, requests, and event history;
 - `Пространства` — user contexts and their objects;
+- `Поиск` — find people, objects, intents (not a sixth OS);
 - `Система` — the device, settings, capabilities, and diagnostics.
 
-The current `Я` tab is renamed only after its content has been reorganized into
-the truthful `Система` model. Agent or application tabs are not added without a
-real data source and a primary user need.
+`Входящие` is not a primary tab in v1; decision/attention items live on
+`Сейчас`. Object View and Intent View are reached from those domains, not
+as extra tabs. The current `Я` tab is renamed only after its content has
+been reorganized into the truthful `Система` model. Agent or application
+tabs are not added without a real data source and a primary user need.
 
 ### 3.5 Transparency and blur
 
@@ -263,32 +278,33 @@ The reference home surface contains only real information, in this order:
 It supports honest quiet, empty, offline, blocked, and failure states. A prompt
 field may be available but must not dominate the page or hide manual actions.
 
-### 9.2 Входящие
+### 9.2 Входящие / внимание
 
-An event stream, not a notification-card pile. Events group by time and object.
-Decision requests clearly state the actor, intended action, affected object,
-scope, consequence, and reversible choices.
+Not a primary tab in v1. Decision requests and event history appear on
+`Сейчас` (and on the Object they concern). Each decision states the actor,
+intended action, affected object, scope, consequence, and reversible choices.
 
 ### 9.3 Пространства
 
 Shows user contexts and their meaningful objects. Context Light may express the
 active Space. Navigation follows the Space graph described by HIA and exposes a
-clear return path.
+clear return path. The Space surface lists focus work, people, and related
+objects (SOM members), not an Android-style app drawer.
 
-### 9.4 Object, Intent, Task, and Agent
+### 9.4 Object, Intent, Task, and Worker
 
 These surfaces share one visual grammar:
 
 - identity and universal state;
-- relationship path: `Intent → Tasks → Agents → Actions`;
+- relationship path: `Intent → Tasks → Actions → Result` (SOM);
 - current activity or last verified observation;
 - blockers, permissions, and consequences;
 - history and technical details on demand;
-- direct actions permitted by capability and policy.
+- direct actions permitted by OAM and policy.
 
-An Agent surface is implemented only when the runtime provides a real Agent
-entity. Until then, the UI may say that no agent is assigned; it must not invent
-one.
+`Очередь` / `Воркеры` on the Intent board are derived ready work and
+disposable executions (ADR-121), not persistent Agent entities. Do not
+invent workers or agents to fill the layout.
 
 ### 9.5 Система
 

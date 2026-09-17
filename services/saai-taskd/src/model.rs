@@ -141,11 +141,47 @@ pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
     )
 }
 
+/// Temporary property form of Task DAG edges (ADR-121 WORK-01).
+/// Prefer SOM `saaios.depends-on` once that relation is the only format.
+pub const DEPENDS_ON_PROPERTY: &str = "depends_on_task_ids";
+
 pub fn task_properties(intent_id: Uuid, status: WorkflowStatus) -> Map<String, Value> {
     let mut map = Map::new();
     map.insert("intent_id".into(), json!(intent_id.to_string()));
     map.insert("status".into(), json!(status.as_str()));
     map
+}
+
+pub fn with_depends_on(mut properties: Map<String, Value>, deps: &[Uuid]) -> Map<String, Value> {
+    if !deps.is_empty() {
+        properties.insert(
+            DEPENDS_ON_PROPERTY.into(),
+            json!(deps.iter().map(ToString::to_string).collect::<Vec<_>>()),
+        );
+    }
+    properties
+}
+
+/// Hard dependencies only (WSV2 v1). Missing/unparseable ids are skipped.
+pub fn depends_on_of(entity: &Entity) -> Vec<Uuid> {
+    entity
+        .properties
+        .get(DEPENDS_ON_PROPERTY)
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .filter_map(|raw| raw.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Ready derivation input: a Pending task is dependency-ready iff every
+/// hard parent is in `completed` (Done, and Verified when that stage exists).
+/// Failed parents are omitted from `completed`, so the child stays blocked.
+pub fn dependencies_satisfied(depends_on: &[Uuid], completed: &[Uuid]) -> bool {
+    depends_on.iter().all(|parent| completed.contains(parent))
 }
 
 pub fn action_properties(
@@ -697,5 +733,44 @@ mod tests {
         props.insert("every_secs".into(), json!(1));
         let not_a_schedule = entity(TASK_TYPE, props);
         assert!(!is_schedule_due(&not_a_schedule, Utc::now()));
+    }
+
+    #[test]
+    fn depends_on_round_trips_through_task_properties() {
+        let parent = Uuid::new_v4();
+        let child_props = with_depends_on(
+            task_properties(Uuid::new_v4(), WorkflowStatus::Pending),
+            &[parent],
+        );
+        let child = entity(TASK_TYPE, child_props);
+        assert_eq!(depends_on_of(&child), vec![parent]);
+    }
+
+    #[test]
+    fn ready_excludes_unsatisfied_dependency() {
+        let parent = Uuid::new_v4();
+        assert!(!dependencies_satisfied(&[parent], &[]));
+    }
+
+    #[test]
+    fn ready_includes_satisfied_dependency() {
+        let parent = Uuid::new_v4();
+        assert!(dependencies_satisfied(&[parent], &[parent]));
+    }
+
+    #[test]
+    fn join_waits_for_every_parent() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        assert!(!dependencies_satisfied(&[a, b], &[a]));
+        assert!(dependencies_satisfied(&[a, b], &[a, b]));
+    }
+
+    #[test]
+    fn failed_dependency_blocks_child() {
+        let failed = Uuid::new_v4();
+        let done = Uuid::new_v4();
+        // Failed parent is omitted from the completed set.
+        assert!(!dependencies_satisfied(&[failed, done], &[done]));
     }
 }
