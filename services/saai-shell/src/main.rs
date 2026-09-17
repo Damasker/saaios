@@ -2887,6 +2887,9 @@ fn main() {
     let portal_socket = std::env::var_os("SAAIOS_PORTAL_SOCKET")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "/run/saaios/portal.sock".into());
+    // VUI-01: explicit developer-only calibration fixture. Read once at
+    // startup so normal redraws never touch the process environment.
+    let calibration_mode = std::env::var("SAAIOS_UI_CALIBRATION").as_deref() == Ok("1");
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
@@ -2971,6 +2974,7 @@ fn main() {
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
+        calibration_mode,
         selected_entities: Vec::new(),
         system_space_entities: Vec::new(),
         context_frame: Vec::new(),
@@ -2986,6 +2990,9 @@ fn main() {
     };
 
     println!("saai-shell: connected, toplevel created");
+    if shell.calibration_mode {
+        println!("saai-shell: VUI-01 calibration fixture enabled");
+    }
     // HIA-08: logged, not read back anywhere -- see `known_surfaces`'s
     // own doc comment for why this exists at all right now.
     println!("saai-shell: known surfaces: {:?}", known_surfaces());
@@ -3236,6 +3243,11 @@ struct Shell {
     /// HIA-20: the hidden diagnostic screen (`Frame::DevSurface`) --
     /// real, live `ContextFrame`/grants, not static placeholder text.
     dev_surface_open: bool,
+    /// VUI-01: developer-only, immutable for this process. The explicit
+    /// environment switch renders the semantic calibration fixture and
+    /// suppresses unlocked content input; it is never persisted as a user
+    /// setting and therefore cannot accidentally become normal navigation.
+    calibration_mode: bool,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -3572,7 +3584,8 @@ impl TouchHandler for Shell {
                 .lock_surfaces
                 .iter()
                 .any(|ls| *ls.wl_surface() == surface);
-        self.tab_touch_pending = !self.locked && surface == *self.window.wl_surface();
+        self.tab_touch_pending =
+            !self.locked && !self.calibration_mode && surface == *self.window.wl_surface();
         // Real drag-to-scroll for "Я" (replacing this shell's old
         // Ещё/Назад pagination, back when it had no drag gesture
         // recognition at all): armed only when this touch starts
@@ -4256,13 +4269,16 @@ impl Shell {
         // this function's own top comment already gives for `frame`.
         // Only ever `Some` on `Frame::Root` (the only frame the Orb
         // ever draws on) and only when the Rollback setting allows it.
-        let orb_frame = (self.settings.orb_enabled && matches!(frame, Frame::Root { .. }))
-            .then(|| self.build_orb_frame(width, height));
+        let orb_frame = (!self.calibration_mode
+            && self.settings.orb_enabled
+            && matches!(frame, Frame::Root { .. }))
+        .then(|| self.build_orb_frame(width, height));
 
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
         let current_page_index = self.current_page.index();
         let current_page_is_now = self.current_page == RootPage::Now;
+        let calibration_mode = self.calibration_mode;
 
         // GPU-native path (ADR-024 continued): paint directly into a
         // dma-buf backed buffer, skipping the wl_shm host-visible
@@ -4305,6 +4321,16 @@ impl Shell {
         // `main_dmabuf.paint()` or directly against the wl_shm canvas,
         // never both (the dma-buf branch always returns).
         let paint_frame = move |canvas: &mut [u8]| {
+            if calibration_mode {
+                render::draw_calibration(
+                    &mut render::Canvas::new(canvas, width, height),
+                    width,
+                    height,
+                    fonts,
+                );
+                render::apply_contrast_boost(canvas, contrast_pct);
+                return;
+            }
             match frame {
                 Frame::Consent {
                     app_name,

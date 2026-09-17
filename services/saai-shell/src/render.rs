@@ -1,5 +1,5 @@
 use fontdue::{Font, FontSettings};
-use saai_ui_core::{ColorRole, ContextColor, Rect, Rgb, Theme, UniversalState};
+use saai_ui_core::{ColorRole, ContextColor, Rect, Rgb, StatusMark, Theme, UniversalState};
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -771,6 +771,325 @@ pub fn draw_lock_pin_entry(
     }
 }
 
+/// VUI-01's deterministic, device-runnable calibration fixture. It is selected
+/// only by the explicit `SAAIOS_UI_CALIBRATION=1` developer environment switch
+/// in `main.rs`; normal navigation and stored settings cannot open it.
+///
+/// Every swatch comes through the same semantic-role/context/state APIs as the
+/// production shell. The state rows also draw a distinct geometric mark, so a
+/// photograph can verify both physical color and the non-color state channel.
+pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Option<&Fonts>) {
+    const PALETTE: [(ColorRole, &str); 17] = [
+        (ColorRole::Canvas, "CANVAS 071011"),
+        (ColorRole::Surface, "SURFACE 0D181A"),
+        (ColorRole::Elevated, "ELEVATED 142326"),
+        (ColorRole::Accent, "ACCENT 63D4D6"),
+        (ColorRole::AccentHighlight, "HIGHLIGHT A1EEF0"),
+        (ColorRole::TextPrimary, "TEXT D7E2DF"),
+        (ColorRole::TextSecondary, "SECONDARY 829796"),
+        (ColorRole::Success, "SUCCESS 6FB79A"),
+        (ColorRole::Attention, "ATTENTION D4B658"),
+        (ColorRole::Critical, "CRITICAL C7514B"),
+        (ColorRole::Border, "BORDER 315054"),
+        (ColorRole::Grid, "GRID 20383A"),
+        (ColorRole::Pressed, "PRESSED A1EEF0"),
+        (ColorRole::Focus, "FOCUS A1EEF0"),
+        (ColorRole::DisabledSurface, "DISABLED BG"),
+        (ColorRole::DisabledText, "DISABLED TEXT"),
+        (ColorRole::HighContrastText, "HIGH CONTRAST"),
+    ];
+    const CONTEXTS: [(ContextColor, &str); 6] = [
+        (ContextColor::Default, "DEFAULT"),
+        (ContextColor::Blue, "BLUE"),
+        (ContextColor::Green, "GREEN"),
+        (ContextColor::Orange, "ORANGE"),
+        (ContextColor::Purple, "PURPLE"),
+        (ContextColor::Pink, "PINK"),
+    ];
+    const STATES: [(UniversalState, &str); 9] = [
+        (UniversalState::Idle, "IDLE"),
+        (UniversalState::Active, "ACTIVE"),
+        (UniversalState::Running, "RUNNING"),
+        (UniversalState::Waiting, "WAITING"),
+        (UniversalState::Blocked, "BLOCKED"),
+        (UniversalState::Attention, "ATTENTION"),
+        (UniversalState::Failed, "FAILED"),
+        (UniversalState::Complete, "COMPLETE"),
+        (UniversalState::Offline, "OFFLINE"),
+    ];
+
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let margin = (width / 20).max(12);
+    let gap = (width / 60).max(6);
+    let columns = 3u32;
+    let cell_width = width
+        .saturating_sub(margin * 2)
+        .saturating_sub(gap * (columns - 1))
+        / columns;
+    let cell_height = (height / 24).max(72);
+    let palette_top = height / 10;
+    let palette_rows = PALETTE.len().div_ceil(columns as usize) as u32;
+
+    if let Some(fonts) = fonts {
+        draw_text(
+            canvas,
+            &fonts.semibold,
+            "SaaiOS Visual v1 · VUI-01",
+            42.0,
+            margin,
+            height / 24,
+            theme_color(ColorRole::TextPrimary),
+        );
+        draw_text(
+            canvas,
+            &fonts.regular,
+            "SEMANTIC PALETTE",
+            24.0,
+            margin,
+            palette_top.saturating_sub(42),
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+
+    for (index, (role, label)) in PALETTE.iter().copied().enumerate() {
+        let column = index as u32 % columns;
+        let row = index as u32 / columns;
+        let x = margin + column * (cell_width + gap);
+        let y = palette_top + row * cell_height;
+        let swatch_height = cell_height * 3 / 5;
+        canvas.fill_rect(
+            Rect::new(x, y, cell_width, swatch_height),
+            theme_color(ColorRole::Border),
+        );
+        canvas.fill_rect(
+            Rect::new(
+                x.saturating_add(4),
+                y.saturating_add(4),
+                cell_width.saturating_sub(8),
+                swatch_height.saturating_sub(8),
+            ),
+            theme_color(role),
+        );
+        if let Some(fonts) = fonts {
+            draw_text(
+                canvas,
+                &fonts.regular,
+                label,
+                18.0,
+                x,
+                y + swatch_height + 8,
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+
+    let context_top = palette_top + palette_rows * cell_height + height / 30;
+    if let Some(fonts) = fonts {
+        draw_text(
+            canvas,
+            &fonts.regular,
+            "CONTEXT COLOR · NOT STATUS",
+            24.0,
+            margin,
+            context_top.saturating_sub(42),
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+    for (index, (context, label)) in CONTEXTS.iter().copied().enumerate() {
+        let column = index as u32 % columns;
+        let row = index as u32 / columns;
+        let x = margin + column * (cell_width + gap);
+        let y = context_top + row * cell_height;
+        let swatch_height = cell_height * 3 / 5;
+        canvas.fill_rect(
+            Rect::new(x, y, cell_width, swatch_height),
+            context_color(context),
+        );
+        if let Some(fonts) = fonts {
+            draw_text(
+                canvas,
+                &fonts.regular,
+                label,
+                18.0,
+                x,
+                y + swatch_height + 8,
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+
+    let context_rows = CONTEXTS.len().div_ceil(columns as usize) as u32;
+    let state_top = context_top + context_rows * cell_height + height / 30;
+    let state_height =
+        height.saturating_sub(state_top).saturating_sub(margin) / STATES.len() as u32;
+    if let Some(fonts) = fonts {
+        draw_text(
+            canvas,
+            &fonts.regular,
+            "UNIVERSAL STATE · COLOR + MARK",
+            24.0,
+            margin,
+            state_top.saturating_sub(42),
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+    for (index, (state, label)) in STATES.iter().copied().enumerate() {
+        let style = state.style();
+        let y = state_top + index as u32 * state_height;
+        let row = Rect::new(
+            margin,
+            y,
+            width.saturating_sub(margin * 2),
+            state_height.saturating_sub(8),
+        );
+        canvas.fill_rect(row, theme_color(ColorRole::Surface));
+        canvas.fill_rect(
+            Rect::new(row.x, row.y + 8, 10, row.height.saturating_sub(16)),
+            state_color(state),
+        );
+        let mark_size = row.height.saturating_sub(24).min(64);
+        let mark = Rect::new(row.x + 28, row.y + 12, mark_size, mark_size);
+        draw_calibration_mark(canvas, mark, style.mark, state_color(state));
+        if let Some(fonts) = fonts {
+            let description = format!("{label} · {}", style.label_key);
+            draw_text(
+                canvas,
+                &fonts.semibold,
+                &description,
+                24.0,
+                mark.x + mark.width + 28,
+                row.y + row.height / 2 - 14,
+                theme_color(ColorRole::TextPrimary),
+            );
+        }
+    }
+}
+
+fn draw_calibration_mark(canvas: &mut Canvas<'_>, rect: Rect, mark: StatusMark, color: Pixel) {
+    let quarter = (rect.width / 4).max(2);
+    let half = rect.width / 2;
+    match mark {
+        StatusMark::Outline => {
+            canvas.fill_rect(rect, color);
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x + quarter / 2,
+                    rect.y + quarter / 2,
+                    rect.width.saturating_sub(quarter),
+                    rect.height.saturating_sub(quarter),
+                ),
+                theme_color(ColorRole::Surface),
+            );
+        }
+        StatusMark::ActiveDot => canvas.fill_rect(
+            Rect::new(rect.x + quarter, rect.y + quarter, half, half),
+            color,
+        ),
+        StatusMark::Activity => {
+            for index in 0..3 {
+                let bar_height = rect.height * (index + 2) / 4;
+                canvas.fill_rect(
+                    Rect::new(
+                        rect.x + index * quarter,
+                        rect.y + rect.height.saturating_sub(bar_height),
+                        quarter / 2,
+                        bar_height,
+                    ),
+                    color,
+                );
+            }
+        }
+        StatusMark::Waiting => {
+            canvas.fill_rect(
+                Rect::new(rect.x, rect.y + quarter, rect.width, quarter / 2),
+                color,
+            );
+            canvas.fill_rect(
+                Rect::new(rect.x + quarter, rect.y + half, half, quarter / 2),
+                color,
+            );
+        }
+        StatusMark::Blocked => {
+            canvas.fill_rect(Rect::new(rect.x, rect.y, quarter / 2, rect.height), color);
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x + half - quarter / 4,
+                    rect.y,
+                    quarter / 2,
+                    rect.height,
+                ),
+                color,
+            );
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x + rect.width - quarter / 2,
+                    rect.y,
+                    quarter / 2,
+                    rect.height,
+                ),
+                color,
+            );
+        }
+        StatusMark::Alert => {
+            canvas.fill_rect(
+                Rect::new(rect.x + half - quarter / 4, rect.y, quarter / 2, half),
+                color,
+            );
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x + half - quarter / 4,
+                    rect.y + rect.height - quarter / 2,
+                    quarter / 2,
+                    quarter / 2,
+                ),
+                color,
+            );
+        }
+        StatusMark::Failure => {
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x + half - quarter / 4,
+                    rect.y,
+                    quarter / 2,
+                    rect.height,
+                ),
+                color,
+            );
+            canvas.fill_rect(
+                Rect::new(rect.x, rect.y + half - quarter / 4, rect.width, quarter / 2),
+                color,
+            );
+        }
+        StatusMark::Complete => {
+            canvas.fill_rect(Rect::new(rect.x, rect.y + half, quarter / 2, half), color);
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x,
+                    rect.y + rect.height - quarter / 2,
+                    rect.width,
+                    quarter / 2,
+                ),
+                color,
+            );
+        }
+        StatusMark::Offline => {
+            canvas.fill_rect(
+                Rect::new(rect.x, rect.y + quarter, half - quarter / 2, half),
+                color,
+            );
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x + half + quarter / 2,
+                    rect.y + quarter,
+                    half - quarter / 2,
+                    half,
+                ),
+                color,
+            );
+        }
+    }
+}
+
 // S23 added `is_grid` as the 8th plain draw-time knob on an already
 // data-only function (no behavior to extract into a struct without
 // inventing one purely to appease this lint) -- same call shape as
@@ -1199,7 +1518,8 @@ fn draw_text(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_contrast_boost, context_color, draw_orb, draw_root, state_color, theme_color, Canvas,
+        apply_contrast_boost, context_color, draw_calibration, draw_orb, draw_root, state_color,
+        theme_color, Canvas,
     };
     use saai_ui_core::{ColorRole, ContextColor, Rect, UniversalState};
 
@@ -1211,6 +1531,41 @@ mod tests {
         assert_eq!(
             state_color(UniversalState::Attention),
             [0, 0xD4, 0xB6, 0x58]
+        );
+    }
+
+    #[test]
+    fn calibration_fixture_contains_palette_context_and_state_channels() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        draw_calibration(canvas, width, height, None);
+
+        let margin = width / 20;
+        let gap = width / 60;
+        let cell_width = (width - margin * 2 - gap * 2) / 3;
+        let cell_height = height / 24;
+        let palette_top = height / 10;
+        // Accent is palette entry 3: first column, second row.
+        assert_eq!(
+            canvas.pixel(margin + 4, palette_top + cell_height + 4),
+            theme_color(ColorRole::Accent)
+        );
+
+        let context_top = palette_top + 6 * cell_height + height / 30;
+        // Blue is context entry 1: second column, first row.
+        assert_eq!(
+            canvas.pixel(margin + cell_width + gap + 4, context_top + 4),
+            context_color(ContextColor::Blue)
+        );
+
+        let state_top = context_top + 2 * cell_height + height / 30;
+        let state_height = (height - state_top - margin) / 9;
+        // Attention is state entry 5. The left band is its semantic color.
+        assert_eq!(
+            canvas.pixel(margin + 2, state_top + 5 * state_height + 12),
+            state_color(UniversalState::Attention)
         );
     }
 
