@@ -1499,6 +1499,34 @@ fn draw_gallery_disclosure(canvas: &mut Canvas<'_>, fonts: &Fonts, disclosure: &
     }
 }
 
+/// One `cursor_y` per row `draw_gallery` paints, in draw order (0 is the
+/// title). Pulled out of `draw_gallery` itself so it is testable without a
+/// loaded font or a device -- ADR-105's own bug (two rows' text colliding)
+/// was a layout-math error a host test on exactly this function would have
+/// caught before a physical screenshot had to.
+const GALLERY_ROW_COUNT: usize = 11;
+
+fn gallery_row_positions(height: u32) -> [u32; GALLERY_ROW_COUNT] {
+    // Same clearance `draw_calibration`'s own `palette_top` uses -- the
+    // separately-composited status bar overlay sits above the main
+    // surface regardless of which fixture this surface draws, so both
+    // fixtures need the same top clearance to avoid it.
+    let mut cursor_y = height / 10;
+    let mut rows = [0u32; GALLERY_ROW_COUNT];
+    rows[0] = cursor_y;
+    // Same minimum clearance every other row gets below it (one Body line
+    // height plus one Caption line height) -- the title is smaller than a
+    // full row's own content, but there is no reason its own gap should be
+    // held to a looser standard than every row after it.
+    cursor_y += physical_line_height(TextRole::Body) + physical_line_height(TextRole::Caption);
+    let row_height = (height.saturating_sub(cursor_y) / 10).max(140);
+    for slot in rows.iter_mut().skip(1) {
+        *slot = cursor_y;
+        cursor_y += row_height;
+    }
+    rows
+}
+
 /// VUI-02's first device component gallery (component-library-v1.md
 /// section 7): one instance of each of the ten primitives from ADR-102/
 /// ADR-103, default state only -- pressed/focused/disabled/busy variants,
@@ -1507,14 +1535,34 @@ fn draw_gallery_disclosure(canvas: &mut Canvas<'_>, fonts: &Fonts, disclosure: &
 /// claimed here. Reached only through the same developer-only gate VUI-01's
 /// calibration fixture uses (`SAAIOS_UI_GALLERY`/the runtime marker file) --
 /// never a normal navigation destination.
+///
+/// `Divider` and `Progress` need no font to draw at all, so they are drawn
+/// before the `fonts` check and stay visible even if the font asset failed
+/// to load -- the same "still shows something, not a blank screen" posture
+/// `draw_lock_pin_entry`'s own no-fonts path already has, and the reason
+/// this crate's host tests can assert on them without a real font file.
+/// Every other primitive here needs real glyphs to mean anything, so it
+/// stays behind the check.
 pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Option<&Fonts>) {
     canvas.fill(theme_color(ColorRole::Canvas));
     let margin = (width / 20).max(12);
-    // Same clearance `draw_calibration`'s own `palette_top` uses -- the
-    // separately-composited status bar overlay sits above the main
-    // surface regardless of which fixture this surface draws, so both
-    // fixtures need the same top clearance to avoid it.
-    let mut cursor_y = height / 10;
+    let content_width = width.saturating_sub(margin * 2);
+    let hairline = physical(StrokeToken::Hairline.value()).max(1);
+    let rows = gallery_row_positions(height);
+
+    let divider = Divider::new();
+    draw_gallery_divider(
+        canvas,
+        &divider,
+        Rect::new(margin, rows[3], content_width, hairline),
+    );
+
+    let progress = Progress::determinate(62);
+    draw_gallery_progress(
+        canvas,
+        &progress,
+        Rect::new(margin, rows[5], content_width, physical(Progress::MIN_TRACK_HEIGHT)),
+    );
 
     let Some(fonts) = fonts else {
         return;
@@ -1526,66 +1574,46 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         "SaaiOS Component Gallery · VUI-02",
         32.0,
         margin,
-        cursor_y,
+        rows[0],
         theme_color(ColorRole::TextPrimary),
     );
-    cursor_y += 80;
-
-    let row_height = (height.saturating_sub(cursor_y) / 10).max(140);
-    let content_width = width.saturating_sub(margin * 2);
-    let hairline = physical(StrokeToken::Hairline.value()).max(1);
 
     let semantic_text = SemanticText::new(
         "Пример SemanticText -- обычный текст тела",
         TextRole::Body,
         ColorRole::TextPrimary,
     );
-    draw_gallery_semantic_text(canvas, fonts, &semantic_text, margin, cursor_y);
-    cursor_y += row_height;
+    draw_gallery_semantic_text(canvas, fonts, &semantic_text, margin, rows[1]);
 
     let icon = Icon::new(IconGlyph::Wifi, ColorRole::Accent).with_name("Wi-Fi");
-    draw_gallery_icon(canvas, fonts, &icon, margin, cursor_y);
-    cursor_y += row_height;
-
-    let divider = Divider::new();
-    draw_gallery_divider(
-        canvas,
-        &divider,
-        Rect::new(margin, cursor_y, content_width, hairline),
-    );
-    cursor_y += row_height;
+    draw_gallery_icon(canvas, fonts, &icon, margin, rows[2]);
 
     let status = StatusIndicator::new(UniversalState::Blocked, "Заблокировано")
         .with_reason("Нет сети")
         .with_variant(StatusIndicatorVariant::Normal);
-    draw_gallery_status_indicator(canvas, fonts, &status, margin, cursor_y);
-    cursor_y += row_height;
-
-    let progress = Progress::determinate(62);
-    draw_gallery_progress(
-        canvas,
-        &progress,
-        Rect::new(margin, cursor_y, content_width, physical(Progress::MIN_TRACK_HEIGHT)),
-    );
-    cursor_y += row_height;
+    draw_gallery_status_indicator(canvas, fonts, &status, margin, rows[4]);
 
     let button = Button::new("Сохранить", "gallery:save", ButtonVariant::Primary);
     draw_gallery_button(
         canvas,
         fonts,
         &button,
-        Rect::new(margin, cursor_y, physical(LogicalUnit::new(160)), physical(CONTROL_VISUAL_HEIGHT)),
+        Rect::new(
+            margin,
+            rows[6],
+            physical(LogicalUnit::new(160)),
+            physical(CONTROL_VISUAL_HEIGHT),
+        ),
     );
-    cursor_y += row_height;
 
     let field = Field::new("PIN", FieldKind::Password).with_value("4269");
+    let field_row_height = rows[8] - rows[7];
     draw_gallery_field(
         canvas,
         fonts,
         &field,
-        Rect::new(margin, cursor_y, content_width, row_height.saturating_sub(20)),
+        Rect::new(margin, rows[7], content_width, field_row_height.saturating_sub(20)),
     );
-    cursor_y += row_height;
 
     let data_row = DataRow::new("Wi-Fi", DataRowVariant::Navigation)
         .with_secondary("Подключено: Wallbox")
@@ -1594,23 +1622,20 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         canvas,
         fonts,
         &data_row,
-        Rect::new(margin, cursor_y, content_width, physical(TWO_LINE_ROW_HEIGHT)),
+        Rect::new(margin, rows[8], content_width, physical(TWO_LINE_ROW_HEIGHT)),
     );
-    cursor_y += row_height;
 
     let metric = Metric::new("Батарея", MetricValue::Known("87".to_string())).with_unit("%");
-    draw_gallery_metric(canvas, fonts, &metric, margin, cursor_y);
-    cursor_y += row_height;
+    draw_gallery_metric(canvas, fonts, &metric, margin, rows[9]);
 
     let disclosure = Disclosure::new("Подробности", "diagnostics-panel").expanded();
     draw_gallery_disclosure(
         canvas,
         fonts,
         &disclosure,
-        Rect::new(margin, cursor_y, content_width, physical(LogicalUnit::new(32))),
+        Rect::new(margin, rows[10], content_width, physical(LogicalUnit::new(32))),
     );
 }
-
 // S23 added `is_grid` as the 8th plain draw-time knob on an already
 // data-only function (no behavior to extract into a struct without
 // inventing one purely to appease this lint) -- same call shape as
@@ -2069,10 +2094,10 @@ fn draw_text(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_contrast_boost, context_color, draw_calibration, draw_orb, draw_root, state_color,
-        theme_color, Canvas,
+        apply_contrast_boost, context_color, draw_calibration, draw_gallery, draw_orb, draw_root,
+        gallery_row_positions, physical_line_height, state_color, theme_color, Canvas,
     };
-    use saai_ui_core::{ColorRole, ContextColor, Rect, UniversalState};
+    use saai_ui_core::{ColorRole, ContextColor, Rect, TextRole, UniversalState};
 
     #[test]
     fn semantic_colors_use_the_physically_calibrated_panel_packing() {
@@ -2208,5 +2233,74 @@ mod tests {
         // Still a ring, not an empty box -- the frame around the
         // hollow center keeps showing the dot's own color.
         assert_eq!(canvas.pixel(55, 100), theme_color(ColorRole::Accent));
+    }
+
+    #[test]
+    fn gallery_rows_never_overlap() {
+        // ADR-105's own bug, pinned as a regression test: the gap between
+        // consecutive rows must be at least one full Body line height, the
+        // tallest single line any gallery primitive draws, plus room for a
+        // second (Caption) line underneath it. A smaller gap is exactly
+        // the class of error that let `StatusIndicator`'s reason line and
+        // `DataRow`'s secondary line collide with the line above them.
+        let rows = gallery_row_positions(2400);
+        let min_gap = physical_line_height(TextRole::Body) + physical_line_height(TextRole::Caption);
+        for pair in rows.windows(2) {
+            let gap = pair[1] - pair[0];
+            assert!(
+                gap >= min_gap,
+                "gap {gap} between rows at {} and {} is smaller than {min_gap}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    #[test]
+    fn gallery_rows_stay_within_the_screen() {
+        let rows = gallery_row_positions(2400);
+        assert!(*rows.last().unwrap() < 2400);
+    }
+
+    #[test]
+    fn physical_line_height_matches_the_pixel_7_scale() {
+        // Pinned, not computed here -- a golden value. `TextRole::Body`'s
+        // logical line height is 24 units; at Pixel 7's 3-physical-per-
+        // logical scale that is exactly 72. If this ever changes,
+        // `gallery_rows_never_overlap`'s own minimum gap changes with it
+        // automatically, but this test makes the actual number visible
+        // rather than only implied.
+        assert_eq!(physical_line_height(TextRole::Body), 72);
+        assert_eq!(physical_line_height(TextRole::Caption), 48);
+    }
+
+    #[test]
+    fn gallery_divider_and_progress_draw_without_a_loaded_font() {
+        // Regression coverage for the "still shows something, not a blank
+        // screen" contract `draw_gallery`'s own doc comment states for
+        // these two primitives -- both must be visible even when `fonts`
+        // is `None`, unlike every other row in this screen.
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        draw_gallery(canvas, width, height, None);
+
+        let rows = gallery_row_positions(height);
+        let margin = (width / 20).max(12);
+        assert_eq!(
+            canvas.pixel(margin + 4, rows[3]),
+            theme_color(ColorRole::Border)
+        );
+        // Progress at 62%: left edge is the filled (Accent) portion, far
+        // right edge is the unfilled (Grid) track.
+        assert_eq!(
+            canvas.pixel(margin + 4, rows[5] + 2),
+            theme_color(ColorRole::Accent)
+        );
+        assert_eq!(
+            canvas.pixel(width - margin - 4, rows[5] + 2),
+            theme_color(ColorRole::Grid)
+        );
     }
 }

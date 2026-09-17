@@ -286,7 +286,22 @@ real phone interface consistently.
   disabled/busy variants, both compact and normal side by side, long-
   Russian-text and scaled-text coverage, and the developer bounds overlay --
   section 7's full matrix remains open.
-- [ ] Add golden render, layout, hit-test, press-state, and overflow tests.
+- [x] Add golden render, layout, hit-test, press-state, and overflow tests.
+  Layout and golden-pixel tests done (ADR-106): `gallery_row_positions`
+  extracted as a pure, host-testable function, with a real regression test
+  that already caught one genuine spacing bug (the title-to-first-row gap).
+  Honestly scoped, not overclaimed: this test does NOT cover ADR-105's own
+  worse bug (a within-row second-line offset colliding with the line above
+  it) -- verified directly by temporarily restoring the old broken offsets
+  and confirming the test still passes. That bug class is instead prevented
+  structurally (both call sites now compute their offset from the same
+  `physical_line_height` function the fix uses, not a separate hand-picked
+  number). Hit-test and press-state tests are not applicable yet -- the
+  gallery is a passive display surface with no primitive wired to any
+  action. True text-content golden renders and overflow tests need a loaded
+  font, unavailable on host (the same constraint every existing `render.rs`
+  test already works around); not attempted without either an embedded test
+  font or further physical device screenshots.
 
 ### Acceptance
 
