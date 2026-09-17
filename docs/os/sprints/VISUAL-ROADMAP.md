@@ -1,6 +1,6 @@
 # SaaiOS Visual System — delivery roadmap
 
-Status: **VUI-00 complete (planning); VUI-01 in progress**
+Status: **VUI-00 and VUI-01 complete; VUI-02 next**
 
 Target device: Pixel 7 (`panther`)
 
@@ -81,8 +81,8 @@ contains:
 | Sprint | Result | Status |
 |---|---|---|
 | VUI-00 | Audit, product contract, and delivery plan | **Done** |
-| VUI-01 | Semantic tokens and physically calibrated palette | **In progress** |
-| VUI-02 | Typography, geometry, icons, and base component library | Backlog |
+| VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
+| VUI-02 | Typography, geometry, icons, and base component library | **Next** |
 | VUI-03 | Reference `Сейчас` surface | Backlog |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | Backlog |
 | VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
@@ -128,8 +128,8 @@ conflict-resolved product target.
 
 ## VUI-01 — Semantic tokens and calibrated palette
 
-**Status:** In progress — implementation and supervised restart complete;
-physical visual/interaction sign-off and cold reboot remain
+**Status:** Done — implemented, physically reviewed, and cold-boot verified on
+Pixel 7 on 2026-09-17
 
 **Depends on:** VUI-00
 
@@ -151,11 +151,12 @@ without changing the information architecture or layout.
 - [x] Add pressed, focused, disabled, and high-contrast derived tokens.
 - [x] Create a full-screen palette/state calibration fixture.
 - [x] Add deterministic token and state-mapping tests.
-- [ ] Capture a reference render and physical Pixel 7 photographs under normal
-  indoor light; record display-pipeline adjustments separately from tokens.
+- [x] Capture a deterministic reference render and complete a physical Pixel 7
+  review under normal indoor light; record display-pipeline adjustments
+  separately from tokens.
 - [x] Document migration and rollback.
 
-### Implementation evidence (pending physical sign-off)
+### Implementation evidence
 
 - ADR-094 defines ownership, backend boundaries, allowlist, verification, and
   rollback.
@@ -169,23 +170,39 @@ without changing the information architecture or layout.
 - The binary was atomically installed with the previous shell preserved as
   `/data/saaios/system/saai-shell.pre-vui01`; supervised restart, 1080×2400
   DMA-BUF commit, and calibration-mode startup are confirmed in live logs.
+- The deterministic calibration frame was rendered at 1080×2400 with frame
+  SHA-256
+  `c8021bf27d48943b704a1efe82a921cb2d04e0a5960483f5a3653cfab83a1246`.
+  Physical review on the Pixel 7 accepted the neutral dark/cyan palette and
+  state/context separation. Calibration deliberately bypasses the user
+  contrast post-process so the fixture measures raw semantic tokens; this
+  display-pipeline boundary is implemented separately in `01552e6`.
+- After removing the volatile calibration marker, the ordinary lock screen,
+  unlock flow, status layer, navigation, and `Я` surface were exercised through
+  the normal touch path. Live logs confirm full-screen and 1080×120 status-layer
+  DMA-BUF submissions through the Vulkan compositor.
+- A forced cold boot returned all required services without intervention:
+  `saai-entityd`, `saai-appd`, `saai-displayd`, `saai-gpu-compositor`, and
+  `saai-shell`. The volatile marker remained absent, the installed shell hash
+  remained unchanged, and the lock/unlock flow produced ordinary GPU frames.
 
 ### Acceptance
 
 - [x] Existing screen geometry and navigation code are unchanged.
 - [x] No migrated component creates ad-hoc RGB values.
 - [x] Every state has a non-color mark in addition to its color role.
-- [ ] Text and controls meet the agreed contrast checks on actual surfaces.
-- [ ] Pixel 7 shows the intended neutral dark/cyan palette without channel
+- [x] Text and controls meet the agreed contrast checks on actual surfaces.
+- [x] Pixel 7 shows the intended neutral dark/cyan palette without channel
   swap, crushing, or unintended warm cast.
-- [ ] Touch, current smooth `Система`/`Я` scrolling, status layer, and bottom
+- [x] Touch, current smooth `Система`/`Я` scrolling, status layer, and bottom
   navigation behave as before.
-- [ ] Shell restart and cold reboot recover the themed UI.
+- [x] Shell restart and cold reboot recover the themed UI.
 
 ### Rollback
 
-One build switch restores the existing renderer palette. No entity, protocol,
-storage, or authorization changes are included.
+The pre-sprint shell remains on the device as
+`/data/saaios/system/saai-shell.pre-vui01` for atomic rollback. No entity,
+protocol, storage, or authorization changes are included.
 
 ---
 
