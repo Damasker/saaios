@@ -208,8 +208,10 @@ protocol, storage, or authorization changes are included.
 
 ## VUI-02 — Typography, geometry, icons, and base components
 
-**Status:** In progress — base component contract reviewed; foundation tokens
-and device gallery remain
+**Status:** In progress — base component contract reviewed; typography and
+mono font shipped and re-verified (ADR-096, ADR-099); a real device
+screenshot tool now exists for physical review; foundation tokens and device
+gallery remain
 
 **Depends on:** VUI-01
 
@@ -220,12 +222,15 @@ real phone interface consistently.
 
 - [x] Draw and review the component inventory and state sheets for every base
   primitive before declaring its API stable.
-- [ ] Add semantic typography roles independent of font filenames and raw
-  point sizes.
+- [x] Add semantic typography roles independent of font filenames and raw
+  point sizes (ADR-096, `saai-ui-core::TextRole`).
 - [ ] Compare the current Montserrat build with candidate UI faces on Pixel 7;
   keep Montserrat unless another face is demonstrably more readable.
-- [ ] Select and license a static monospace face with Latin and Cyrillic
-  coverage; verify `fontdue`, fallback, scaling, and boot-image packaging.
+- [x] Select and license a static monospace face with Latin and Cyrillic
+  coverage (ADR-096, IBM Plex Mono Regular). `fontdue` loading, sans
+  fallback, and boot-image packaging verified; exercising a real SSH
+  pairing fingerprint in the mono role, and increased text scale, remain
+  (see ADR-099's "Not verified by this ADR").
 - [ ] Define spacing, radius, stroke, touch-target, safe-inset, and elevation
   tokens in logical units.
 - [ ] Add one coherent line-icon source and a reproducible asset pipeline.
@@ -249,6 +254,24 @@ real phone interface consistently.
 - [ ] Components look like one family at normal and increased text scale.
 - [ ] Component gallery is runnable on device and clearly labels fixture data.
 - [ ] No scrolling or frame-pacing regression against the VUI-01 baseline.
+
+### Physical review evidence (ADR-099)
+
+`os/targets/panther/tools/screencap.c` -- a small DRM/KMS ioctl tool -- now
+lets a session without a human looking at the phone capture the real
+composited screen (reads the active CRTC framebuffer directly, independent of
+`saai-displayd`, no disruption). The first real screenshot immediately found
+a genuine bug this task list's own review step exists to catch: `draw_text`/
+`draw_text_centered` in `services/saai-shell/src/render.rs` never applied a
+glyph's vertical (baseline) bearing, so short glyphs (hyphen, period, colon)
+rendered floating near cap-height instead of sitting on the line -- visible as
+a mispositioned hyphen in "Wi-Fi" and "PIN-код". Fixed by baseline-aligning
+every glyph in a text run against the tallest glyph actually present in that
+run, verified both mathematically (ordinary letters keep their exact previous
+pixel position) and visually (before/after screenshots, `cargo test`/clippy
+unchanged). Use this tool for the rest of VUI-02's physical-review gates
+(component gallery, remaining primitives) instead of relying on frame-hash/
+log inference alone.
 
 ### Rollback
 

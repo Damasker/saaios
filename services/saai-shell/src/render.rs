@@ -1505,6 +1505,37 @@ pub fn draw_status_bar(
     );
 }
 
+/// A short glyph (hyphen, period, colon, apostrophe...) has a bitmap only a
+/// few pixels tall, cropped tight to its own ink by `fontdue::rasterize`.
+/// Blitting every glyph's bitmap starting at the same `top` row (as this
+/// code did before) top-aligns bitmaps instead of baseline-aligning them --
+/// invisible for ordinary letters, whose bitmap height happens to span
+/// close to a full line already, but a short glyph then renders far above
+/// where it belongs (a hyphen appearing as a floating mark near cap-height
+/// instead of sitting at mid-height -- found via `os/targets/panther/
+/// tools/screencap.c`'s real device screenshot, "Wi-Fi"/"PIN-код").
+///
+/// `fontdue::Metrics::ymin` is the glyph bitmap's bottom edge, in whole
+/// pixels above the baseline (fontdue's own doc comment). Every glyph in a
+/// run shares one baseline, so the right anchor is the TALLEST glyph
+/// actually present in this specific run: for that glyph,
+/// `ymin + height` already equals what `top` alone used to (correctly)
+/// place, so this returns 0 and every full-height call site keeps its
+/// current pixel position unchanged; every shorter glyph gets pushed down
+/// by exactly the difference, landing on the same baseline as its
+/// neighbors instead of floating at the top.
+fn glyph_baseline_offset(reference_height: i32, metrics: &fontdue::Metrics) -> i32 {
+    reference_height - (metrics.ymin + metrics.height as i32)
+}
+
+fn reference_glyph_height(glyphs: &[(fontdue::Metrics, Vec<u8>)]) -> i32 {
+    glyphs
+        .iter()
+        .map(|(metrics, _)| metrics.ymin + metrics.height as i32)
+        .max()
+        .unwrap_or(0)
+}
+
 fn draw_text_centered(
     canvas: &mut Canvas<'_>,
     font: &Font,
@@ -1515,19 +1546,21 @@ fn draw_text_centered(
     color: Pixel,
 ) {
     let size = size * text_scale();
-    let width = text
-        .chars()
-        .map(|character| font.metrics(character, size).advance_width)
+    let glyphs: Vec<_> = text.chars().map(|character| font.rasterize(character, size)).collect();
+    let width = glyphs
+        .iter()
+        .map(|(metrics, _)| metrics.advance_width)
         .sum::<f32>();
+    let reference_height = reference_glyph_height(&glyphs);
     let mut cursor = center_x as f32 - width / 2.0;
-    for character in text.chars() {
-        let (metrics, bitmap) = font.rasterize(character, size);
+    for (metrics, bitmap) in &glyphs {
         let glyph_x = cursor.round() as i32 + metrics.xmin;
+        let glyph_y = top as i32 + glyph_baseline_offset(reference_height, metrics);
         for row in 0..metrics.height {
             for column in 0..metrics.width {
                 canvas.blend(
                     glyph_x + column as i32,
-                    top as i32 + row as i32,
+                    glyph_y + row as i32,
                     color,
                     bitmap[row * metrics.width + column],
                 );
@@ -1547,15 +1580,17 @@ fn draw_text(
     color: Pixel,
 ) {
     let size = size * text_scale();
+    let glyphs: Vec<_> = text.chars().map(|character| font.rasterize(character, size)).collect();
+    let reference_height = reference_glyph_height(&glyphs);
     let mut cursor = left as f32;
-    for character in text.chars() {
-        let (metrics, bitmap) = font.rasterize(character, size);
+    for (metrics, bitmap) in &glyphs {
         let glyph_x = cursor.round() as i32 + metrics.xmin;
+        let glyph_y = top as i32 + glyph_baseline_offset(reference_height, metrics);
         for row in 0..metrics.height {
             for column in 0..metrics.width {
                 canvas.blend(
                     glyph_x + column as i32,
-                    top as i32 + row as i32,
+                    glyph_y + row as i32,
                     color,
                     bitmap[row * metrics.width + column],
                 );
