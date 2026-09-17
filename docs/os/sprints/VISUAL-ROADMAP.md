@@ -1,6 +1,6 @@
 # SaaiOS Visual System — delivery roadmap
 
-Status: **VUI-00 and VUI-01 complete; VUI-02 next**
+Status: **VUI-00 and VUI-01 complete; VUI-02 in progress**
 
 Target device: Pixel 7 (`panther`)
 
@@ -82,7 +82,7 @@ contains:
 |---|---|---|
 | VUI-00 | Audit, product contract, and delivery plan | **Done** |
 | VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
-| VUI-02 | Typography, geometry, icons, and base component library | **Next** |
+| VUI-02 | Typography, geometry, icons, and base component library | **In progress** |
 | VUI-03 | Reference `Сейчас` surface | Backlog |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | Backlog |
 | VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
@@ -208,7 +208,8 @@ protocol, storage, or authorization changes are included.
 
 ## VUI-02 — Typography, geometry, icons, and base components
 
-**Status:** Backlog
+**Status:** In progress — base component contract reviewed; foundation tokens
+and device gallery remain
 
 **Depends on:** VUI-01
 
@@ -217,7 +218,7 @@ real phone interface consistently.
 
 ### Tasks
 
-- [ ] Draw and review the component inventory and state sheets for every base
+- [x] Draw and review the component inventory and state sheets for every base
   primitive before declaring its API stable.
 - [ ] Add semantic typography roles independent of font filenames and raw
   point sizes.
