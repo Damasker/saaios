@@ -11,7 +11,8 @@ fallback.
 
 ## Repository contents
 
-- `src/` — production PID 1, DRM UI, Wi-Fi, Bluetooth, time and input tools.
+- `src/` — production PID 1, DRM UI, Wi-Fi, Bluetooth, time, input and
+  read-only cellular map tools.
 - `scripts/` — runtime audio, brightness and network helpers.
 - `config/` — non-secret wpa_supplicant build/runtime defaults.
 - `tools/` — small hardware diagnostics used during bring-up.
@@ -162,4 +163,5 @@ The following files are created only on the phone and must never be committed:
 - saved time, brightness and per-device calibration values
 
 The detailed live bring-up record is in
-`docs/os/targets/panther/README.md`.
+`docs/os/targets/panther/README.md`. Cellular map and constraints:
+`docs/os/targets/panther/modem.md`.

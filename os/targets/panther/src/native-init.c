@@ -168,6 +168,17 @@ static const char *const audio_modules[] = {
     "snd-soc-cs40l26.ko",
 };
 
+/* Stock vendor_boot already ships these. Android first-stage init loaded
+ * them from modules.load; native PID 1 must insmod the same order after
+ * spi-s3c64xx (touch), google_modemctl (audio), and pcie-exynos-gs (wifi).
+ */
+static const char *const cpif_modules[] = {
+    "shm_ipc.ko",
+    "cpif_page.ko",
+    "cpif.ko",
+    "cp_thermal_zone.ko",
+};
+
 static bool metadata_ready = false;
 
 static void mkdir_one(const char *path, mode_t mode) {
@@ -809,6 +820,80 @@ static int create_sound_nodes(void) {
     return -1;
 }
 
+static bool radio_node_wanted(const char *class_name, const char *name) {
+    if (strcmp(class_name, "cpif") == 0) {
+        return true;
+    }
+    return strncmp(name, "umts_", 5) == 0 ||
+           strncmp(name, "gnss", 4) == 0 ||
+           strcmp(name, "logbuffer_cpif") == 0;
+}
+
+static void create_radio_nodes_from_class(const char *class_name) {
+    char class_path[160];
+    snprintf(class_path, sizeof(class_path), "/sys/class/%s", class_name);
+    DIR *directory = opendir(class_path);
+    if (!directory) {
+        return;
+    }
+    int created = 0;
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        if (!radio_node_wanted(class_name, entry->d_name)) {
+            continue;
+        }
+        char dev_path[320];
+        char node_path[256];
+        snprintf(dev_path, sizeof(dev_path),
+                 "/sys/class/%s/%s/dev", class_name, entry->d_name);
+        snprintf(node_path, sizeof(node_path), "/dev/%s", entry->d_name);
+        if (create_char_node_from_sysfs(dev_path, node_path, 0660) == 0) {
+            ++created;
+        }
+    }
+    closedir(directory);
+    if (created > 0) {
+        log_message("radio %s nodes created: %d", class_name, created);
+    }
+}
+
+static void create_radio_nodes(void) {
+    create_radio_nodes_from_class("cpif");
+    create_radio_nodes_from_class("misc");
+}
+
+static void setup_cpif(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(cpif_modules); ++i) {
+        (void)load_module(cpif_modules[i]);
+    }
+    create_radio_nodes();
+}
+
+static void start_modem_probe(void) {
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/modem-probe.log",
+                          O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                          0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl("/saaios/modem-probe", "modem-probe",
+              "-o", "/data/saaios/var/modem-probe.txt", NULL);
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("modem probe started");
+    }
+}
+
 static int run_audio_initialization(void) {
     pid_t child = fork();
     if (child == 0) {
@@ -1306,6 +1391,7 @@ static pid_t start_console(void) {
             "\r\nSaaiOS native console on Pixel 7\r\n"
             "AI: saaios-console\r\n"
             "Host API: 172.31.7.1:38127\r\n"
+            "Cellular map: modem-probe\r\n"
             "Shell keepalive: touch /run/saaios.keep\r\n\r\n");
     execl("/saaios/busybox", "sh", NULL);
     _exit(127);
@@ -1377,6 +1463,7 @@ int main(void) {
     };
     run_child("/saaios/display-brightness.sh", brightness_argv);
     setup_wifi();
+    setup_cpif();
     setup_bluetooth();
 
     char udc[128] = {0};
@@ -1414,6 +1501,7 @@ int main(void) {
     configure_network();
     start_usb_dhcp();
     start_runtime();
+    start_modem_probe();
     pid_t console_pid = start_console();
     mark_userspace_stable();
     log_message("native userspace ready");

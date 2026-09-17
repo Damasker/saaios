@@ -50,6 +50,44 @@ static bool panel_native_bgrx = true;
 static bool display_calibration_mode = false;
 static int active_space = 0;
 
+/*
+ * SaaiOS visual tokens. Keep the recovery renderer self-contained, but avoid
+ * scattering product colors and dimensions across individual screens.
+ */
+#define UI_BG_TOP       0x0005070D
+#define UI_BG_BOTTOM    0x0010182A
+#define UI_SURFACE      0x00141D2B
+#define UI_SURFACE_HIGH 0x001C293A
+#define UI_SURFACE_TINT 0x00143B3A
+#define UI_BORDER       0x002B3A50
+#define UI_TEXT         0x00F4F7FB
+#define UI_TEXT_MUTED   0x0095A6BD
+#define UI_ACCENT       0x0076E4C4
+#define UI_ACCENT_BLUE  0x006FA8FF
+#define UI_SUCCESS      0x004DDB9A
+#define UI_WARNING      0x00F2B84B
+#define UI_ERROR        0x00F27777
+#define UI_RADIUS_CARD  40
+#define UI_RADIUS_PILL  30
+
+static uint32_t *background_cache;
+static uint32_t background_width;
+static uint32_t background_height;
+static uint32_t background_stride;
+static uint64_t render_count;
+static uint64_t publish_count;
+static uint64_t render_total_us;
+static uint64_t publish_total_us;
+
+typedef struct {
+    int radius;
+    unsigned char *coverage;
+} corner_mask;
+
+#define CORNER_MASK_CACHE 16
+static corner_mask corner_masks[CORNER_MASK_CACHE];
+static size_t corner_mask_count;
+
 static const char *const space_names[] = {
     "Дом", "Работа", "Личное", "SaaiOS"
 };
@@ -240,6 +278,23 @@ static int ui_y(uint32_t height, int value) {
 static int ui_scale(uint32_t width, int value) {
     int scaled = ui_x(width, value);
     return scaled > 0 ? scaled : 1;
+}
+
+static uint64_t monotonic_microseconds(void) {
+    struct timespec timestamp;
+    if (clock_gettime(CLOCK_MONOTONIC, &timestamp) != 0) return 0;
+    return (uint64_t)timestamp.tv_sec * 1000000U +
+           (uint64_t)timestamp.tv_nsec / 1000U;
+}
+
+static time_t ui_time(void) {
+    const char *fixed = getenv("SAAIOS_PREVIEW_TIME");
+    if (fixed && fixed[0]) {
+        char *end = NULL;
+        long long value = strtoll(fixed, &end, 10);
+        if (end && *end == '\0' && value > 0) return (time_t)value;
+    }
+    return time(NULL);
 }
 
 typedef struct {
@@ -479,6 +534,32 @@ static void draw_word(uint32_t *pixels, uint32_t stride_pixels,
               center_y, color);
 }
 
+static const unsigned char *corner_coverage(int radius) {
+    for (size_t i = 0; i < corner_mask_count; ++i) {
+        if (corner_masks[i].radius == radius) return corner_masks[i].coverage;
+    }
+    if (corner_mask_count >= CORNER_MASK_CACHE || radius <= 0) return NULL;
+    size_t count = (size_t)radius * radius;
+    unsigned char *coverage = malloc(count);
+    if (!coverage) return NULL;
+    for (int row = 0; row < radius; ++row) {
+        float dy = (float)radius - (float)row - 0.5f;
+        for (int column = 0; column < radius; ++column) {
+            float dx = (float)radius - (float)column - 0.5f;
+            float distance = sqrtf(dx * dx + dy * dy);
+            float amount = (float)radius + 0.5f - distance;
+            coverage[(size_t)row * radius + column] =
+                amount <= 0.0f ? 0U :
+                amount >= 1.0f ? 255U :
+                (unsigned char)(amount * 255.0f + 0.5f);
+        }
+    }
+    corner_masks[corner_mask_count].radius = radius;
+    corner_masks[corner_mask_count].coverage = coverage;
+    corner_mask_count++;
+    return coverage;
+}
+
 static void fill_soft_rect(uint32_t *pixels, uint32_t stride_pixels,
                            uint32_t width, uint32_t height,
                            int x, int y, int w, int h, int radius,
@@ -493,15 +574,22 @@ static void fill_soft_rect(uint32_t *pixels, uint32_t stride_pixels,
               x + radius, y, w - radius * 2, h, color);
     fill_rect(pixels, stride_pixels, width, height,
               x, y + radius, w, h - radius * 2, color);
+    const unsigned char *coverage_mask = corner_coverage(radius);
     for (int row = 0; row < radius; ++row) {
-        float dy = (float)radius - (float)row - 0.5f;
         for (int column = 0; column < radius; ++column) {
-            float dx = (float)radius - (float)column - 0.5f;
-            float distance = sqrtf(dx * dx + dy * dy);
-            float coverage = (float)radius + 0.5f - distance;
-            if (coverage <= 0.0f) continue;
-            unsigned int alpha = coverage >= 1.0f
-                ? 255U : (unsigned int)(coverage * 255.0f + 0.5f);
+            unsigned int alpha;
+            if (coverage_mask) {
+                alpha = coverage_mask[(size_t)row * radius + column];
+            } else {
+                float dy = (float)radius - (float)row - 0.5f;
+                float dx = (float)radius - (float)column - 0.5f;
+                float distance = sqrtf(dx * dx + dy * dy);
+                float amount = (float)radius + 0.5f - distance;
+                alpha = amount <= 0.0f ? 0U :
+                    amount >= 1.0f ? 255U :
+                    (unsigned int)(amount * 255.0f + 0.5f);
+            }
+            if (alpha == 0U) continue;
             int left = x + column;
             int right = x + w - 1 - column;
             int top = y + row;
@@ -539,7 +627,7 @@ static void render_status_bar(uint32_t *pixels, uint32_t stride_pixels,
     char capacity[8] = {0};
     char battery_text[12] = "--%";
     char address[INET_ADDRSTRLEN] = {0};
-    time_t now = time(NULL);
+    time_t now = ui_time();
     if (now > 1700000000) {
         struct tm utc = {0};
         if (gmtime_r(&now, &utc)) {
@@ -568,29 +656,51 @@ static void render_status_bar(uint32_t *pixels, uint32_t stride_pixels,
               ui_y(height, 82), 0x00E8F0FA);
 }
 
+static void render_static_background(uint32_t *pixels,
+                                     uint32_t stride_pixels,
+                                     uint32_t width, uint32_t height) {
+    for (uint32_t y = 0; y < height; ++y) {
+        uint32_t progress = height > 1 ? (y * 255U) / (height - 1U) : 0;
+        uint32_t top = UI_BG_TOP;
+        uint32_t bottom = UI_BG_BOTTOM;
+        uint32_t red = ((((top >> 16) & 0xffU) * (255U - progress)) +
+                        (((bottom >> 16) & 0xffU) * progress)) / 255U;
+        uint32_t green = ((((top >> 8) & 0xffU) * (255U - progress)) +
+                          (((bottom >> 8) & 0xffU) * progress)) / 255U;
+        uint32_t blue = (((top & 0xffU) * (255U - progress)) +
+                         ((bottom & 0xffU) * progress)) / 255U;
+        uint32_t packed = panel_color((red << 16) | (green << 8) | blue);
+        uint32_t *row = pixels + (size_t)y * stride_pixels;
+        for (uint32_t x = 0; x < width; ++x) row[x] = packed;
+    }
+    /* A restrained focal glow gives hierarchy without repainting per frame. */
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   ui_x(width, 640), ui_y(height, 210),
+                   ui_x(width, 520), ui_y(height, 660),
+                   ui_x(width, 180), 0x00142642);
+}
+
 static void render_splash(uint32_t *pixels, uint32_t stride_pixels,
                           uint32_t width, uint32_t height) {
-    for (uint32_t y = 0; y < height; ++y) {
-        uint32_t blue = 22 + (42 * y) / (height ? height : 1);
-        uint32_t green = 7 + (13 * y) / (height ? height : 1);
-        uint32_t red = 5 + (8 * y) / (height ? height : 1);
-        for (uint32_t x = 0; x < width; ++x) {
-            uint32_t glow_x = x > width / 2 ? x - width / 2 : width / 2 - x;
-            uint32_t glow_y = y > height / 2 ? y - height / 2 : height / 2 - y;
-            uint32_t glow = 0;
-            if (glow_x < width / 3 && glow_y < height / 5) {
-                glow = 22 - (22 * glow_x) / (width / 3 + 1);
-            }
-            uint32_t r = red + glow / 4;
-            uint32_t g = green + glow / 2;
-            uint32_t b = blue + glow;
-            pixels[(size_t)y * stride_pixels + x] =
-                panel_color(((r > 255 ? 255 : r) << 16) |
-                            ((g > 255 ? 255 : g) << 8) |
-                            (b > 255 ? 255 : b));
+    size_t cache_pixels = (size_t)stride_pixels * height;
+    if (!background_cache || background_width != width ||
+        background_height != height || background_stride != stride_pixels) {
+        free(background_cache);
+        background_cache = calloc(cache_pixels, sizeof(*background_cache));
+        background_width = width;
+        background_height = height;
+        background_stride = stride_pixels;
+        if (background_cache) {
+            render_static_background(background_cache, stride_pixels,
+                                     width, height);
         }
     }
-
+    if (background_cache) {
+        memcpy(pixels, background_cache,
+               cache_pixels * sizeof(*background_cache));
+    } else {
+        render_static_background(pixels, stride_pixels, width, height);
+    }
     render_status_bar(pixels, stride_pixels, width, height);
 }
 
@@ -604,7 +714,7 @@ static void render_lock_screen(uint32_t *pixels, uint32_t stride_pixels,
     char date_text[48] = "SAAIOS";
     char capacity[8] = {0};
     char battery_text[16] = "--%";
-    time_t now = time(NULL);
+    time_t now = ui_time();
     if (now > 1700000000) {
         struct tm utc = {0};
         if (gmtime_r(&now, &utc)) {
@@ -619,29 +729,29 @@ static void render_lock_screen(uint32_t *pixels, uint32_t stride_pixels,
     }
     bool ai_ready = access("/tmp/saaios.sock", F_OK) == 0;
     fill_rect(pixels, stride_pixels, width, height,
-              0, 0, (int)width, (int)height, 0x00070C11);
+              0, 0, (int)width, (int)height, UI_BG_TOP);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 110), ui_y(height, 250),
                    ui_x(width, 860), ui_y(height, 620),
-                   ui_x(width, 100), 0x000D2830);
+                   ui_x(width, 100), 0x00102C3A);
     draw_word(pixels, stride_pixels, width, height,
               date_text, ui_scale(width, 6), ui_y(height, 365), 0x008AA9B0);
     draw_word(pixels, stride_pixels, width, height,
-              clock_text, ui_scale(width, 24), ui_y(height, 610), 0x00F4F7F8);
+              clock_text, ui_scale(width, 24), ui_y(height, 610), UI_TEXT);
     draw_word(pixels, stride_pixels, width, height,
-              "SaaiOS", ui_scale(width, 7), ui_y(height, 800), 0x006FCABD);
+              "SaaiOS", ui_scale(width, 7), ui_y(height, 800), UI_ACCENT);
 
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 120), ui_y(height, 1450),
                    ui_x(width, 840), ui_y(height, 270),
-                   ui_x(width, 52), 0x00151F26);
+                   ui_x(width, 52), UI_SURFACE);
     draw_word(pixels, stride_pixels, width, height,
               "Экран заблокирован", ui_scale(width, 7),
-              ui_y(height, 1535), 0x00F4F7F8);
+              ui_y(height, 1535), UI_TEXT);
     draw_word(pixels, stride_pixels, width, height,
               ai_ready ? "Локальный ИИ готов" : "Службы запускаются",
               ui_scale(width, 5), ui_y(height, 1625),
-              ai_ready ? 0x006FCABD : 0x00A9B4BA);
+              ai_ready ? UI_ACCENT : UI_TEXT_MUTED);
     draw_word(pixels, stride_pixels, width, height,
               battery_text, ui_scale(width, 5), ui_y(height, 1685),
               0x008AA9B0);
@@ -649,10 +759,10 @@ static void render_lock_screen(uint32_t *pixels, uint32_t stride_pixels,
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 120), ui_y(height, 2030),
                    ui_x(width, 840), ui_y(height, 150),
-                   ui_x(width, 56), 0x00151F26);
+                   ui_x(width, 56), UI_SURFACE_HIGH);
     draw_word(pixels, stride_pixels, width, height,
               "Коснись экрана, чтобы открыть", ui_scale(width, 5),
-              ui_y(height, 2105), 0x00B9C9CE);
+              ui_y(height, 2105), UI_TEXT_MUTED);
 }
 
 static void render_calibration_group(uint32_t *pixels,
@@ -752,13 +862,13 @@ static void render_page_chrome(uint32_t *pixels, uint32_t stride_pixels,
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 48), ui_y(height, 170),
                    ui_x(width, 170), ui_y(height, 96),
-                   ui_x(width, 28), 0x001A2B46);
+                   ui_x(width, 28), UI_SURFACE_HIGH);
     draw_text(pixels, stride_pixels, width, height,
-              "< BACK", ui_scale(width, 6), ui_x(width, 72),
-              ui_y(height, 218), 0x00AFC3DA);
+              "< Назад", ui_scale(width, 6), ui_x(width, 72),
+              ui_y(height, 218), UI_TEXT_MUTED);
     draw_text(pixels, stride_pixels, width, height,
               title, ui_scale(width, 12), ui_x(width, 54),
-              ui_y(height, 355), 0x00F5F8FC);
+              ui_y(height, 355), UI_TEXT);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 390), ui_y(height, 2320),
                    ui_x(width, 300), ui_y(height, 18),
@@ -783,38 +893,38 @@ static void render_root_controls(uint32_t *pixels, uint32_t stride_pixels,
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 145),
                    ui_x(width, 972), ui_y(height, 112),
-                   ui_x(width, 32), 0x00222D36);
+                   ui_x(width, UI_RADIUS_PILL), UI_SURFACE_HIGH);
     draw_text(pixels, stride_pixels, width, height,
               context_label, ui_scale(width, 6), ui_x(width, 92),
-              ui_y(height, 201), 0x00F5F8FC);
+              ui_y(height, 201), UI_TEXT);
     draw_text(pixels, stride_pixels, width, height,
               "V", ui_scale(width, 5), ui_x(width, 958),
-              ui_y(height, 201), 0x008EA8C6);
+              ui_y(height, 201), UI_TEXT_MUTED);
 
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 1900),
                    ui_x(width, 972), ui_y(height, 150),
-                   ui_x(width, 40), 0x001B252D);
+                   ui_x(width, UI_RADIUS_CARD), UI_SURFACE_HIGH);
     draw_text(pixels, stride_pixels, width, height,
               "Скажи или напиши, что нужно", ui_scale(width, 5),
-              ui_x(width, 88), ui_y(height, 1975), 0x009CB1C9);
+              ui_x(width, 88), ui_y(height, 1975), UI_TEXT_MUTED);
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 892), ui_y(height, 1925),
                    ui_x(width, 104), ui_y(height, 100),
-                   ui_x(width, 30), 0x0074CFC0);
+                   ui_x(width, UI_RADIUS_PILL), UI_ACCENT);
     draw_text(pixels, stride_pixels, width, height,
               ">", ui_scale(width, 7), ui_x(width, 928),
               ui_y(height, 1975), 0x00102022);
 
     fill_rect(pixels, stride_pixels, width, height,
               0, ui_y(height, 2100), (int)width, ui_y(height, 300),
-              0x000D151C);
+              UI_BG_TOP);
     for (int index = 0; index < 4; ++index) {
         int left = index * 270;
-        int scale = ui_scale(width, index == 2 ? 3 : 4);
+        int scale = ui_scale(width, 4);
         int x = ui_x(width, left);
         int w = ui_x(width, 270);
-        uint32_t color = index == active_tab ? 0x0074CFC0 : 0x007E96B2;
+        uint32_t color = index == active_tab ? UI_ACCENT : UI_TEXT_MUTED;
         if (index == active_tab) {
             fill_soft_rect(pixels, stride_pixels, width, height,
                            ui_x(width, left + 112), ui_y(height, 2140),
@@ -1173,7 +1283,7 @@ static int read_network_names(char names[][32], int maximum) {
             continue;
         }
         *separator = '\0';
-        snprintf(names[count], 32, "%s", line);
+        snprintf(names[count], 32, "%.31s", line);
         uppercase_label(names[count]);
         ++count;
     }
@@ -1383,7 +1493,7 @@ static void render_networks(uint32_t *pixels, uint32_t stride_pixels,
     char address[INET_ADDRSTRLEN] = {0};
     int count = read_network_names(names, 3);
     bool online = read_wifi_address(address, sizeof(address));
-    render_page_chrome(pixels, stride_pixels, width, height, "NETWORK");
+    render_page_chrome(pixels, stride_pixels, width, height, "Сеть");
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 470),
                    ui_x(width, 972), ui_y(height, 290),
@@ -1394,7 +1504,7 @@ static void render_networks(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 24),
                    online ? 0x0000CFA0 : 0x005F7691);
     draw_text(pixels, stride_pixels, width, height,
-              online ? "WIFI CONNECTED" : "WIFI READY",
+              online ? "Wi-Fi подключён" : "Wi-Fi готов",
               ui_scale(width, 9), ui_x(width, 200),
               ui_y(height, 565), 0x00F5F8FC);
     if (online) {
@@ -1403,7 +1513,7 @@ static void render_networks(uint32_t *pixels, uint32_t stride_pixels,
                   ui_y(height, 685), 0x009CB1C9);
     }
     draw_text(pixels, stride_pixels, width, height,
-              "NEARBY NETWORKS", ui_scale(width, 7), ui_x(width, 58),
+              "Сети рядом", ui_scale(width, 7), ui_x(width, 58),
               ui_y(height, 865), 0x008EA8C6);
     if (count == 0) {
         fill_soft_rect(pixels, stride_pixels, width, height,
@@ -1411,7 +1521,7 @@ static void render_networks(uint32_t *pixels, uint32_t stride_pixels,
                        ui_x(width, 972), ui_y(height, 230),
                        ui_x(width, 36), 0x00152238);
         draw_word(pixels, stride_pixels, width, height,
-                  "SCANNING", ui_scale(width, 9), ui_y(height, 1045),
+                  "Поиск сетей", ui_scale(width, 9), ui_y(height, 1045),
                   0x008EA8C6);
     } else {
         for (int index = 0; index < count; ++index) {
@@ -1528,7 +1638,7 @@ static void render_bluetooth(uint32_t *pixels, uint32_t stride_pixels,
         : read_bluetooth_names(names, 4, &scanning, &finished, &failed);
     char pair_name[32] = {0};
     int pair_state = read_bluetooth_pair_state(pair_name);
-    render_page_chrome(pixels, stride_pixels, width, height, "BLUETOOTH");
+    render_page_chrome(pixels, stride_pixels, width, height, "Bluetooth");
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 455),
                    ui_x(width, 972), ui_y(height, 126),
@@ -1538,33 +1648,33 @@ static void render_bluetooth(uint32_t *pixels, uint32_t stride_pixels,
                    ui_y(height, 455), ui_x(width, 486), ui_y(height, 126),
                    ui_x(width, 34), 0x0037567D);
     draw_text(pixels, stride_pixels, width, height,
-              "NEARBY", ui_scale(width, 7), ui_x(width, 190),
+              "Рядом", ui_scale(width, 7), ui_x(width, 190),
               ui_y(height, 518), bluetooth_saved_view ? 0x007E96B2 : 0x00FFFFFF);
     draw_text(pixels, stride_pixels, width, height,
-              "SAVED", ui_scale(width, 7), ui_x(width, 710),
+              "Сохранённые", ui_scale(width, 6), ui_x(width, 650),
               ui_y(height, 518), bluetooth_saved_view ? 0x00FFFFFF : 0x007E96B2);
     const char *status = NULL;
     uint32_t status_color = 0x0000E7A8;
     if (bluetooth_saved_view) {
         if (bluetooth_forget_candidate >= 0) {
-            status = "TOUCH AGAIN TO FORGET";
+            status = "Коснитесь снова для удаления";
             status_color = 0x00E78A68;
         } else if (pair_state == 3) {
-            status = "DEVICE FORGOTTEN";
+            status = "Устройство удалено";
         } else if (pair_state == -2) {
-            status = "FORGET FAILED";
+            status = "Не удалось удалить";
             status_color = 0x00E78A68;
         } else {
-            status = "SAVED DEVICES";
+            status = "Сохранённые устройства";
         }
     } else {
-        status = pair_state == 1 ? "PAIRING" :
-            (pair_state == 2 ? "PAIRED" :
-            (pair_state < 0 ? "PAIR FAILED" :
-            (failed ? "SCAN ERROR" :
-            (scanning ? "SCANNING" :
-            (finished && count > 0 ? "TOUCH A DEVICE" :
-             "SCAN COMPLETE")))));
+        status = pair_state == 1 ? "Сопряжение" :
+            (pair_state == 2 ? "Подключено" :
+            (pair_state < 0 ? "Ошибка сопряжения" :
+            (failed ? "Ошибка поиска" :
+            (scanning ? "Поиск устройств" :
+            (finished && count > 0 ? "Выберите устройство" :
+             "Поиск завершён")))));
         if (failed || pair_state < 0) status_color = 0x00E78A68;
         else if (scanning || pair_state == 1) status_color = 0x0000E7FF;
     }
@@ -1572,9 +1682,9 @@ static void render_bluetooth(uint32_t *pixels, uint32_t stride_pixels,
               status, ui_scale(width, 7), ui_y(height, 665), status_color);
     if (count == 0) {
         draw_word(pixels, stride_pixels, width, height,
-                  bluetooth_saved_view ? "NO SAVED DEVICES" :
-                  (scanning ? "LOOKING FOR DEVICES" :
-                  (finished ? "NO NAMED DEVICES" : "BLUETOOTH READY")),
+                  bluetooth_saved_view ? "Нет сохранённых устройств" :
+                  (scanning ? "Ищем устройства" :
+                  (finished ? "Устройства не найдены" : "Bluetooth готов")),
                   ui_scale(width, 8), ui_y(height, 1230), 0x008CA9C8);
     } else {
         for (int index = 0; index < count; ++index) {
@@ -1673,32 +1783,41 @@ static void render_status(uint32_t *pixels, uint32_t stride_pixels,
     bool audio_ready = access("/run/audio-ready", R_OK) == 0;
     bool bluetooth_ready =
         access("/sys/class/bluetooth/hci0", R_OK) == 0;
-    render_page_chrome(pixels, stride_pixels, width, height, "OVERVIEW");
+    char modem_state[32] = "MAP";
+    if (!read_first_line("/run/saaios-modem.state",
+                         modem_state, sizeof(modem_state))) {
+        snprintf(modem_state, sizeof(modem_state), "MAP");
+    }
+    render_page_chrome(pixels, stride_pixels, width, height, "Обзор");
     draw_text(pixels, stride_pixels, width, height,
-              "SYSTEM READY", ui_scale(width, 7), ui_x(width, 58),
-              ui_y(height, 460), 0x0000D6A3);
+              "Система готова", ui_scale(width, 7), ui_x(width, 58),
+              ui_y(height, 460), UI_SUCCESS);
     render_dashboard_card(pixels, stride_pixels, width, height,
-                          54, 540, "BATTERY", battery, 0x0000CFA0);
+                          54, 540, "Батарея", battery, UI_SUCCESS);
     render_dashboard_card(pixels, stride_pixels, width, height,
-                          555, 540, "DISPLAY", brightness, 0x00D786FF);
+                          555, 540, "Экран", brightness, UI_ACCENT_BLUE);
     render_dashboard_card(pixels, stride_pixels, width, height,
-                          54, 925, "NETWORK",
-                          online ? "ONLINE" : "OFFLINE", 0x004F8CFF);
+                          54, 925, "Сеть",
+                          online ? "В сети" : "Не в сети", 0x004F8CFF);
     render_dashboard_card(pixels, stride_pixels, width, height,
-                          555, 925, "STORAGE",
-                          data_ready ? "READY" : "OFFLINE", 0x006C63FF);
+                          555, 925, "Модем",
+                          modem_state, 0x006C63FF);
     render_dashboard_card(pixels, stride_pixels, width, height,
-                          54, 1310, "AUDIO",
-                          audio_ready ? "READY" : "STARTING", 0x00D786FF);
+                          54, 1310, "Звук",
+                          audio_ready ? "Готов" : "Запуск", 0x00D786FF);
     render_dashboard_card(pixels, stride_pixels, width, height,
-                          555, 1310, "BLUETOOTH",
-                          bluetooth_ready ? "READY" : "STARTING", 0x008779FF);
+                          555, 1310, "Bluetooth",
+                          bluetooth_ready ? "Готов" : "Запуск", 0x008779FF);
     draw_text(pixels, stride_pixels, width, height,
-              "VOLUME KEYS CONTROL BRIGHTNESS", ui_scale(width, 5),
-              ui_x(width, 58), ui_y(height, 1775), 0x006E87A5);
+              "Кнопки громкости меняют яркость", ui_scale(width, 5),
+              ui_x(width, 58), ui_y(height, 1775), UI_TEXT_MUTED);
     if (online) {
         draw_text(pixels, stride_pixels, width, height,
                   address, ui_scale(width, 7), ui_x(width, 58),
+                  ui_y(height, 1880), 0x009CB1C9);
+    } else if (data_ready) {
+        draw_text(pixels, stride_pixels, width, height,
+                  "Накопитель готов", ui_scale(width, 7), ui_x(width, 58),
                   ui_y(height, 1880), 0x009CB1C9);
     }
 }
@@ -1727,17 +1846,17 @@ static void render_keyboard(uint32_t *pixels, uint32_t stride_pixels,
     static const int row_left[] = {30, 79, 174};
     static const int row_top[] = {950, 1130, 1310};
     static const int row_gap[] = {8, 10, 12};
-    render_page_chrome(pixels, stride_pixels, width, height, "NEW QUESTION");
+    render_page_chrome(pixels, stride_pixels, width, height, "Новый вопрос");
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 455),
                    ui_x(width, 972), ui_y(height, 340),
                    ui_x(width, 42), 0x00152238);
     draw_text(pixels, stride_pixels, width, height,
-              "YOUR QUESTION", ui_scale(width, 6), ui_x(width, 88),
+              "Ваш вопрос", ui_scale(width, 6), ui_x(width, 88),
               ui_y(height, 520), 0x008EA8C6);
     if (ai_prompt_length == 0) {
         draw_text(pixels, stride_pixels, width, height,
-                  "TYPE WITH THE KEYS BELOW", ui_scale(width, 6),
+                  "Введите текст", ui_scale(width, 6),
                   ui_x(width, 88), ui_y(height, 650), 0x006E87A5);
     } else {
         for (int line = 0; line < 3; ++line) {
@@ -1769,28 +1888,28 @@ static void render_keyboard(uint32_t *pixels, uint32_t stride_pixels,
         }
     }
     draw_keyboard_key(pixels, stride_pixels, width, height,
-                      54, 1490, 650, 160, "SPACE", 7, 0x00213655);
+                      54, 1490, 650, 160, "ПРОБЕЛ", 7, 0x00213655);
     draw_keyboard_key(pixels, stride_pixels, width, height,
-                      724, 1490, 302, 160, "DELETE", 6, 0x00334A67);
+                      724, 1490, 302, 160, "УДАЛИТЬ", 5, 0x00334A67);
     draw_keyboard_key(pixels, stride_pixels, width, height,
-                      54, 1710, 470, 170, "CANCEL", 7, 0x00213655);
+                      54, 1710, 470, 170, "ОТМЕНА", 7, 0x00213655);
     draw_keyboard_key(pixels, stride_pixels, width, height,
-                      546, 1710, 480, 170, "SEND", 8,
+                      546, 1710, 480, 170, "ОТПРАВИТЬ", 6,
                       ai_prompt_length > 0 ? 0x006C63FF : 0x002B3154);
     draw_word(pixels, stride_pixels, width, height,
-              "LATIN KEYBOARD", ui_scale(width, 6), ui_y(height, 1990),
+              "Латинская клавиатура", ui_scale(width, 6), ui_y(height, 1990),
               0x006E87A5);
 }
 
 static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                            uint32_t width, uint32_t height) {
     static const char *const labels[] = {
-        "SYSTEM HEALTH", "NETWORK CHECK", "STORAGE CHECK"
+        "Состояние системы", "Проверить сеть", "Проверить накопитель"
     };
     bool running = ai_query_running();
     char lines[4][AI_LINE_CHARS + 1] = {{0}};
     int line_count = running ? 0 : read_ai_lines(lines, 4);
-    render_page_chrome(pixels, stride_pixels, width, height, "ASSISTANT");
+    render_page_chrome(pixels, stride_pixels, width, height, "Помощник");
     bool runtime_ready = access("/tmp/saaios.sock", F_OK) == 0;
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 455),
@@ -1801,7 +1920,7 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 44), ui_y(height, 44),
                    ui_x(width, 14), runtime_ready ? 0x0000CFA0 : 0x00D56D6D);
     draw_text(pixels, stride_pixels, width, height,
-              runtime_ready ? "LOCAL AI READY" : "RUNTIME OFFLINE",
+              runtime_ready ? "Локальный ИИ готов" : "Служба ИИ недоступна",
               ui_scale(width, 7), ui_x(width, 170), ui_y(height, 510),
               runtime_ready ? 0x00C8F7EA : 0x00FFD0D0);
 
@@ -1814,11 +1933,11 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 86), ui_y(height, 86),
                    ui_x(width, 26), 0x006C63FF);
     draw_text(pixels, stride_pixels, width, height,
-              "ASK A QUESTION", ui_scale(width, 9), ui_x(width, 215),
+              "Задать вопрос", ui_scale(width, 9), ui_x(width, 215),
               ui_y(height, 730), 0x00FFFFFF);
 
     draw_text(pixels, stride_pixels, width, height,
-              "QUICK CHECKS", ui_scale(width, 6), ui_x(width, 58),
+              "Быстрые проверки", ui_scale(width, 6), ui_x(width, 58),
               ui_y(height, 905), 0x008EA8C6);
     for (int index = 0; index < 3; ++index) {
         int top = 950 + index * 190;
@@ -1841,11 +1960,11 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 972), ui_y(height, 570),
                    ui_x(width, 44), 0x00101C2E);
     draw_text(pixels, stride_pixels, width, height,
-              "AI RESPONSE", ui_scale(width, 6), ui_x(width, 92),
+              "Ответ", ui_scale(width, 6), ui_x(width, 92),
               ui_y(height, 1610), 0x007E96B2);
     if (running) {
         draw_word(pixels, stride_pixels, width, height,
-                  "AI THINKING", ui_scale(width, 9), ui_y(height, 1810),
+                  "ИИ отвечает", ui_scale(width, 9), ui_y(height, 1810),
                   0x008C86FF);
     } else if (line_count > 0) {
         for (int index = 0; index < line_count; ++index) {
@@ -1856,7 +1975,7 @@ static void render_console(uint32_t *pixels, uint32_t stride_pixels,
         }
     } else {
         draw_word(pixels, stride_pixels, width, height,
-                  "ASK ANYTHING", ui_scale(width, 7),
+                  "Задайте любой вопрос", ui_scale(width, 7),
                   ui_y(height, 1810), 0x008CA9C8);
     }
 }
@@ -1866,7 +1985,7 @@ static void render_sound(uint32_t *pixels, uint32_t stride_pixels,
     bool ready = access("/run/audio-ready", R_OK) == 0;
     bool playing = access("/run/audio-playing", R_OK) == 0;
     char raw_volume[16] = {0};
-    char volume_label[24] = "VOLUME 50";
+    char volume_label[24] = "Громкость 50";
     int volume_percent = 50;
     if (read_first_line("/run/audio-volume",
                         raw_volume, sizeof(raw_volume))) {
@@ -1875,9 +1994,9 @@ static void render_sound(uint32_t *pixels, uint32_t stride_pixels,
         if (volume_percent < 0) { volume_percent = 0; }
         if (volume_percent > 100) { volume_percent = 100; }
         snprintf(volume_label, sizeof(volume_label),
-                 "VOLUME %d", volume_percent);
+                 "Громкость %d", volume_percent);
     }
-    render_page_chrome(pixels, stride_pixels, width, height, "SOUND");
+    render_page_chrome(pixels, stride_pixels, width, height, "Звук");
     fill_soft_rect(pixels, stride_pixels, width, height,
                    ui_x(width, 54), ui_y(height, 485),
                    ui_x(width, 972), ui_y(height, 980),
@@ -1887,10 +2006,10 @@ static void render_sound(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 300), ui_y(height, 300),
                    ui_x(width, 74), playing ? 0x006C63FF : 0x002D5E85);
     draw_word(pixels, stride_pixels, width, height,
-              playing ? "PLAYING" : "TEST", ui_scale(width, 10),
+              playing ? "ИГРАЕТ" : "ТЕСТ", ui_scale(width, 10),
               ui_y(height, 770), 0x00FFFFFF);
     draw_word(pixels, stride_pixels, width, height,
-              ready ? "AUDIO READY" : "AUDIO STARTING", ui_scale(width, 7),
+              ready ? "Звук готов" : "Звук запускается", ui_scale(width, 7),
               ui_y(height, 1040), ready ? 0x0000D6A3 : 0x008EA8C6);
     draw_word(pixels, stride_pixels, width, height,
               volume_label, ui_scale(width, 11), ui_y(height, 1190),
@@ -1904,7 +2023,7 @@ static void render_sound(uint32_t *pixels, uint32_t stride_pixels,
                    ui_x(width, 720 * volume_percent / 100), ui_y(height, 28),
                    ui_x(width, 14), 0x00D786FF);
     draw_word(pixels, stride_pixels, width, height,
-              "VOLUME KEYS", ui_scale(width, 7), ui_y(height, 1600),
+              "Кнопки громкости", ui_scale(width, 7), ui_y(height, 1600),
               0x008EA8C6);
 }
 
@@ -2020,6 +2139,7 @@ static void adjust_display_brightness(bool brighter) {
 static void render_page(uint32_t *pixels, uint32_t stride_pixels,
                         uint32_t width, uint32_t height, int page,
                         int selection, bool active) {
+    uint64_t started = monotonic_microseconds();
     if (page == 1) {
         render_status(pixels, stride_pixels, width, height);
     } else if (page == 2) {
@@ -2046,33 +2166,68 @@ static void render_page(uint32_t *pixels, uint32_t stride_pixels,
         render_launcher(pixels, stride_pixels, width, height,
                         selection, active);
     }
+    uint64_t finished = monotonic_microseconds();
+    if (started && finished >= started) {
+        render_total_us += finished - started;
+    }
+    render_count++;
 }
 
 static void draw_touch_marker(uint32_t *pixels, uint32_t stride_pixels,
                               uint32_t width, uint32_t height, int x, int y) {
     const int outer = ui_scale(width, 54);
-    const int inner = ui_scale(width, 22);
-    fill_rect(pixels, stride_pixels, width, height,
-              x - outer / 2, y - outer / 2, outer, outer, 0x0000E7FF);
-    fill_rect(pixels, stride_pixels, width, height,
-              x - inner / 2, y - inner / 2, inner, inner, 0x00FFFFFF);
+    const int inner = ui_scale(width, 18);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   x - outer / 2, y - outer / 2, outer, outer,
+                   outer / 2, UI_ACCENT_BLUE);
+    fill_soft_rect(pixels, stride_pixels, width, height,
+                   x - inner / 2, y - inner / 2, inner, inner,
+                   inner / 2, UI_TEXT);
 }
 
 static void publish_frame(int drm_fd, uint32_t framebuffer_id,
                           uint32_t *pixels, size_t size) {
-    (void)msync(pixels, size, MS_SYNC);
+    (void)pixels;
+    (void)size;
+    uint64_t started = monotonic_microseconds();
+    /*
+     * Dumb buffers are CPU coherent on the verified Exynos path. SETCRTC is
+     * a modeset, not a frame-present primitive; only initial set and wake use
+     * it. DIRTYFB is advisory and harmless when the driver ignores it.
+     */
+    __sync_synchronize();
     struct drm_mode_fb_dirty_cmd dirty = {0};
     dirty.fb_id = framebuffer_id;
     (void)drm_ioctl(drm_fd, DRM_IOCTL_MODE_DIRTYFB, &dirty);
-    struct drm_mode_crtc refresh = {0};
-    refresh.set_connectors_ptr = (uintptr_t)&active_connector_id;
-    refresh.count_connectors = 1;
-    refresh.crtc_id = active_crtc_id;
-    refresh.fb_id = framebuffer_id;
-    refresh.mode_valid = 1;
-    refresh.mode = active_mode;
-    if (drm_ioctl(drm_fd, DRM_IOCTL_MODE_SETCRTC, &refresh) < 0) {
-        fprintf(stderr, "drm-splash: refresh failed: %s\n", strerror(errno));
+    uint64_t finished = monotonic_microseconds();
+    if (started && finished >= started) {
+        publish_total_us += finished - started;
+    }
+    publish_count++;
+    if (publish_count % 60U == 0U) {
+        uint64_t render_avg = render_count
+            ? render_total_us / render_count : 0;
+        uint64_t publish_avg = publish_count
+            ? publish_total_us / publish_count : 0;
+        fprintf(stderr,
+                "drm-splash: perf frames=%llu render_avg_us=%llu publish_avg_us=%llu\n",
+                (unsigned long long)publish_count,
+                (unsigned long long)render_avg,
+                (unsigned long long)publish_avg);
+    }
+}
+
+static void enable_display(int drm_fd, uint32_t framebuffer_id) {
+    struct drm_mode_crtc request = {0};
+    request.set_connectors_ptr = (uintptr_t)&active_connector_id;
+    request.count_connectors = 1;
+    request.crtc_id = active_crtc_id;
+    request.fb_id = framebuffer_id;
+    request.mode_valid = 1;
+    request.mode = active_mode;
+    if (drm_ioctl(drm_fd, DRM_IOCTL_MODE_SETCRTC, &request) < 0) {
+        fprintf(stderr, "drm-splash: display on failed: %s\n",
+                strerror(errno));
     }
 }
 
@@ -2277,8 +2432,139 @@ static void apply_keyboard_action(int action) {
     }
 }
 
-int main(void) {
+static uint64_t mix_signature(uint64_t value, const char *path) {
+    struct stat info;
+    if (stat(path, &info) == 0) {
+        value ^= (uint64_t)info.st_mtime + 0x9e3779b97f4a7c15ULL +
+                 (value << 6) + (value >> 2);
+        value ^= (uint64_t)info.st_size;
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    if (fd >= 0) {
+        unsigned char bytes[64];
+        ssize_t count = read(fd, bytes, sizeof(bytes));
+        close(fd);
+        for (ssize_t i = 0; i < count; ++i) {
+            value ^= bytes[i];
+            value *= 1099511628211ULL;
+        }
+    }
+    return value;
+}
+
+static uint64_t ui_state_signature(void) {
+    static const char *const watched[] = {
+        "/tmp/saaios.sock",
+        "/run/audio-ready",
+        "/run/audio-playing",
+        "/run/audio-volume",
+        "/run/bluetooth-scan.log",
+        "/run/bluetooth-pair.log",
+        "/run/saaios-ai-response.txt",
+        "/run/saaios-modem.state",
+        "/data/saaios/.layout",
+        "/sys/class/power_supply/maxfg/capacity",
+        "/sys/devices/platform/1c2c0000.drmdsim/"
+            "1c2c0000.drmdsim.0/backlight/panel0-backlight/brightness",
+    };
+    time_t now = ui_time();
+    uint64_t signature = now > 0 ? (uint64_t)now / 60U : 0;
+    for (size_t i = 0; i < sizeof(watched) / sizeof(watched[0]); ++i) {
+        signature = mix_signature(signature, watched[i]);
+    }
+    char address[INET_ADDRSTRLEN] = {0};
+    if (read_wifi_address(address, sizeof(address))) {
+        for (size_t i = 0; address[i]; ++i) {
+            signature ^= (unsigned char)address[i];
+            signature *= 1099511628211ULL;
+        }
+    }
+    return signature;
+}
+
+static int write_preview_ppm(const char *directory, const char *name,
+                             const uint32_t *pixels,
+                             uint32_t width, uint32_t height) {
+    char path[512];
+    int length = snprintf(path, sizeof(path), "%s/%s.ppm", directory, name);
+    if (length < 0 || (size_t)length >= sizeof(path)) return -1;
+    FILE *file = fopen(path, "wb");
+    if (!file) return -1;
+    fprintf(file, "P6\n%u %u\n255\n", width, height);
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint32_t color = logical_color(pixels[(size_t)y * width + x]);
+            unsigned char rgb[3] = {
+                (unsigned char)(color >> 16),
+                (unsigned char)(color >> 8),
+                (unsigned char)color,
+            };
+            if (fwrite(rgb, 1, sizeof(rgb), file) != sizeof(rgb)) {
+                fclose(file);
+                return -1;
+            }
+        }
+    }
+    return fclose(file);
+}
+
+static int render_previews(const char *directory) {
+    static const struct {
+        const char *name;
+        int page;
+    } pages[] = {
+        {"now", 0}, {"overview", 1}, {"network", 2}, {"sound", 3},
+        {"bluetooth", 4}, {"assistant", 5}, {"inbox", 6},
+        {"spaces", 7}, {"me", 8}, {"modules", 9},
+    };
+    const uint32_t width = 540;
+    const uint32_t height = 1200;
+    uint32_t *pixels = calloc((size_t)width * height, sizeof(*pixels));
+    if (!pixels) return 1;
+    if (mkdir(directory, 0755) < 0 && errno != EEXIST) {
+        fprintf(stderr, "drm-splash: preview mkdir %s: %s\n",
+                directory, strerror(errno));
+        free(pixels);
+        return 1;
+    }
+    setenv("SAAIOS_PREVIEW_TIME", "1788667200", 1);
+    load_active_space();
+    for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); ++i) {
+        ai_keyboard_open = false;
+        render_page(pixels, width, width, height, pages[i].page, 0, false);
+        if (write_preview_ppm(directory, pages[i].name,
+                              pixels, width, height) < 0) {
+            fprintf(stderr, "drm-splash: preview write %s failed\n",
+                    pages[i].name);
+            free(pixels);
+            return 1;
+        }
+    }
+    ai_keyboard_open = true;
+    render_page(pixels, width, width, height, 5, 0, false);
+    if (write_preview_ppm(directory, "keyboard", pixels, width, height) < 0) {
+        free(pixels);
+        return 1;
+    }
+    render_lock_screen(pixels, width, width, height);
+    if (write_preview_ppm(directory, "lock", pixels, width, height) < 0) {
+        free(pixels);
+        return 1;
+    }
+    fprintf(stderr,
+            "drm-splash: preview screens=%zu render_avg_us=%llu output=%s\n",
+            sizeof(pages) / sizeof(pages[0]) + 2,
+            (unsigned long long)(render_count
+                ? render_total_us / render_count : 0), directory);
+    free(pixels);
+    return 0;
+}
+
+int main(int argc, char **argv) {
     (void)signal(SIGCHLD, SIG_IGN);
+    if (argc == 3 && strcmp(argv[1], "--preview") == 0) {
+        return render_previews(argv[2]);
+    }
     int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         fprintf(stderr, "drm-splash: open card0 failed: %s\n", strerror(errno));
@@ -2510,6 +2796,7 @@ int main(void) {
     bool position_changed = false;
     bool touch_released = false;
     bool touch_woke_display = false;
+    uint64_t last_ui_signature = ui_state_signature();
     for (;;) {
         if (input_count == 0) {
             pause();
@@ -2536,7 +2823,9 @@ int main(void) {
                 display_on = false;
                 continue;
             }
-            if (display_on) {
+            uint64_t signature = ui_state_signature();
+            if (display_on && signature != last_ui_signature) {
+                last_ui_signature = signature;
                 if (locked) {
                     render_locked_display(pixels,
                                           create.pitch / sizeof(uint32_t),
@@ -2575,8 +2864,7 @@ int main(void) {
                     render_locked_display(pixels,
                                           create.pitch / sizeof(uint32_t),
                                           create.width, create.height);
-                    publish_frame(fd, framebuffer.fb_id,
-                                  pixels, create.size);
+                    enable_display(fd, framebuffer.fb_id);
                     display_on = true;
                     fprintf(stderr, "drm-splash: display on\n");
                 }
@@ -2593,7 +2881,7 @@ int main(void) {
                 last_activity_ms = monotonic_milliseconds();
                 render_locked_display(pixels, create.pitch / sizeof(uint32_t),
                                       create.width, create.height);
-                publish_frame(fd, framebuffer.fb_id, pixels, create.size);
+                enable_display(fd, framebuffer.fb_id);
                 display_on = true;
                 fprintf(stderr, "drm-splash: touch wake\n");
                 continue;

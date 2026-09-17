@@ -24,6 +24,8 @@ bt_init="$bin_dir/saaios-bt-init-arm64"
 bt_scan="$bin_dir/saaios-bt-scan-arm64"
 bt_pair="$bin_dir/saaios-bt-pair-arm64"
 bt_gatt_probe="$bin_dir/saaios-bt-gatt-probe-arm64"
+modem_probe="$bin_dir/saaios-modem-probe-arm64"
+cp_boot="$bin_dir/saaios-cp-boot-arm64"
 reboot_bootloader="$bin_dir/reboot-bootloader-arm64"
 wpa_supplicant="$artifacts/saaios-wpa_supplicant-arm64"
 wpa_cli="$artifacts/saaios-wpa_cli-arm64"
@@ -59,6 +61,12 @@ mkdir -p "$bin_dir" "$(dirname -- "$output")"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/bt-gatt-probe.c" -o "$bt_gatt_probe"
+
+"$zig" cc -target aarch64-linux-musl -static -Os -s \
+    "$source_dir/modem-probe.c" -o "$modem_probe"
+
+"$zig" cc -target aarch64-linux-musl -static -Os -s \
+    "$source_dir/cp-boot.c" -o "$cp_boot"
 
 "$zig" cc -target aarch64-linux-musl -static -Os -s \
     "$source_dir/reboot-bootloader.c" -o "$reboot_bootloader"
@@ -102,6 +110,8 @@ set -- ramdisk.cpio \
     "add 0755 saaios/bt-scan $bt_scan" \
     "add 0755 saaios/bt-pair $bt_pair" \
     "add 0755 saaios/bt-gatt-probe $bt_gatt_probe" \
+    "add 0755 saaios/modem-probe $modem_probe" \
+    "add 0755 saaios/cp-boot $cp_boot" \
     "add 0755 saaios/wpa_supplicant $wpa_supplicant" \
     "add 0755 saaios/wpa_cli $wpa_cli" \
     "add 0755 saaios/tinyplay $tinyplay" \

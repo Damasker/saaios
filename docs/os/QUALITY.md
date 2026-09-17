@@ -75,3 +75,32 @@
 
 GPU-ускорение принимается только если оно улучшает измерения и не ухудшает
 надёжность fallback. Ощущение плавности дополняет, но не заменяет цифры.
+
+### Panther graphics gate
+
+До проверки на телефоне software renderer обязан пройти детерминированный
+host-preview:
+
+```sh
+bash os/targets/panther/tests/render-preview.sh
+```
+
+Он компилирует тот же `drm-splash.c`, дважды рисует 12 состояний при
+фиксированном времени и требует побайтового совпадения кадров. На телефоне
+запускается read-only проверка:
+
+```sh
+# Copy the repository script to /data/saaios for the acceptance boot.
+sh /data/saaios/graphics-device-check.sh
+```
+
+Приёмка требует:
+
+- в покое нет безусловной перерисовки раз в секунду;
+- обычная публикация кадра не выполняет повторный mode-set;
+- в журнале есть `render_avg_us` и `publish_avg_us`;
+- lock, BGRX, touch targets, power/touch wake проверены физически;
+- software fallback остаётся рабочим при отсутствии render node/GPU.
+
+Dmabuf backend принимается только при наличии неизменного `wl_shm` fallback и
+успешном восстановлении после отказа импорта или потери GPU.
