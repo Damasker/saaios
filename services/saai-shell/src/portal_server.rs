@@ -100,7 +100,13 @@ impl PortalServer {
     ) {
         self.accept_pending();
         self.connections.retain_mut(|connection| {
-            connection.service(apps_by_pid, apps_grants, clipboard, entityd, selected_space_id)
+            connection.service(
+                apps_by_pid,
+                apps_grants,
+                clipboard,
+                entityd,
+                selected_space_id,
+            )
         });
     }
 

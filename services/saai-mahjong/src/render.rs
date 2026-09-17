@@ -112,8 +112,19 @@ pub fn draw_board(
     let fonts = Fonts::load().ok();
 
     if let Some(fonts) = &fonts {
-        let title = if won { "Победа!" } else { "Маджонг" };
-        canvas.text(&fonts.semibold, title, 48.0, layout.margin, layout.board_top.saturating_sub(80).max(60), TEXT);
+        let title = if won {
+            "Победа!"
+        } else {
+            "Маджонг"
+        };
+        canvas.text(
+            &fonts.semibold,
+            title,
+            48.0,
+            layout.margin,
+            layout.board_top.saturating_sub(80).max(60),
+            TEXT,
+        );
     }
 
     for (index, tile) in tiles.iter().enumerate() {
@@ -130,7 +141,11 @@ pub fn draw_board(
         canvas.fill_rect(x, y, w, h, color);
         if let Some(fonts) = &fonts {
             let label = (tile.symbol as char).to_string();
-            let text_color = if selected == Some(index) { BACKGROUND } else { TEXT };
+            let text_color = if selected == Some(index) {
+                BACKGROUND
+            } else {
+                TEXT
+            };
             canvas.text_centered(
                 &fonts.semibold,
                 &label,

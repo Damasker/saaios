@@ -119,7 +119,11 @@ impl SystemSection {
     }
 
     pub fn heading(&self) -> SemanticText {
-        SemanticText::new(self.title.clone(), TextRole::Section, ColorRole::TextPrimary)
+        SemanticText::new(
+            self.title.clone(),
+            TextRole::Section,
+            ColorRole::TextPrimary,
+        )
     }
 
     pub fn divider(&self) -> Divider {
@@ -187,7 +191,11 @@ impl ObjectSummary {
     }
 
     pub fn meta_text(&self) -> SemanticText {
-        SemanticText::new(self.meta.clone(), TextRole::Caption, ColorRole::TextSecondary)
+        SemanticText::new(
+            self.meta.clone(),
+            TextRole::Caption,
+            ColorRole::TextSecondary,
+        )
     }
 
     /// Section 7.3: "name is the object title; value is the meta line."
@@ -379,7 +387,9 @@ mod tests {
         assert_eq!(header.accessibility().name.as_deref(), Some("Archive"));
         assert!(header.lifecycle_accessibility().is_some());
 
-        assert!(ContextHeader::new("Personal").lifecycle_accessibility().is_none());
+        assert!(ContextHeader::new("Personal")
+            .lifecycle_accessibility()
+            .is_none());
     }
 
     #[test]
@@ -388,9 +398,10 @@ mod tests {
         assert!(empty.is_empty());
         assert_eq!(empty.rows.len(), 0);
 
-        let filled = SystemSection::new("Сегодня").with_row(SystemSectionRow::Data(
-            DataRow::new("10:30 Daily", DataRowVariant::Static),
-        ));
+        let filled = SystemSection::new("Сегодня").with_row(SystemSectionRow::Data(DataRow::new(
+            "10:30 Daily",
+            DataRowVariant::Static,
+        )));
         assert!(!filled.is_empty());
         assert_eq!(filled.accessibility().name.as_deref(), Some("Сегодня"));
     }

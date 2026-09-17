@@ -354,14 +354,18 @@ impl AppSupervisor {
                             return Err(error);
                         }
                     };
-                    let child =
-                        match self.spawn(&app_id, &runtime.installed, &runtime.granted, &dbus_address) {
-                            Ok(child) => child,
-                            Err(error) => {
-                                self.apps.insert(app_id.clone(), runtime);
-                                return Err(error);
-                            }
-                        };
+                    let child = match self.spawn(
+                        &app_id,
+                        &runtime.installed,
+                        &runtime.granted,
+                        &dbus_address,
+                    ) {
+                        Ok(child) => child,
+                        Err(error) => {
+                            self.apps.insert(app_id.clone(), runtime);
+                            return Err(error);
+                        }
+                    };
                     let pid = child.id();
                     runtime.children.push(child);
                     events.push(AppEvent {

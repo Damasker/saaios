@@ -382,7 +382,11 @@ pub struct Button {
 }
 
 impl Button {
-    pub fn new(label: impl Into<String>, action: impl Into<String>, variant: ButtonVariant) -> Self {
+    pub fn new(
+        label: impl Into<String>,
+        action: impl Into<String>,
+        variant: ButtonVariant,
+    ) -> Self {
         Self {
             label: label.into(),
             action: action.into(),
@@ -753,9 +757,13 @@ mod tests {
 
     #[test]
     fn semantic_text_accessible_value_ignores_truncation_settings() {
-        let text = SemanticText::new("Очень длинная строка", TextRole::Body, ColorRole::TextPrimary)
-            .with_max_lines(1)
-            .with_overflow(TextOverflow::Ellipsis);
+        let text = SemanticText::new(
+            "Очень длинная строка",
+            TextRole::Body,
+            ColorRole::TextPrimary,
+        )
+        .with_max_lines(1)
+        .with_overflow(TextOverflow::Ellipsis);
         assert_eq!(text.accessible_value(), "Очень длинная строка");
     }
 
@@ -844,8 +852,7 @@ mod tests {
         let one_line = DataRow::new("Яркость", DataRowVariant::Navigation);
         assert_eq!(one_line.min_hit_height(), MIN_TOUCH_TARGET);
 
-        let two_line =
-            DataRow::new("Яркость", DataRowVariant::Navigation).with_secondary("50%");
+        let two_line = DataRow::new("Яркость", DataRowVariant::Navigation).with_secondary("50%");
         assert_eq!(two_line.min_hit_height(), TWO_LINE_ROW_HEIGHT);
     }
 
@@ -917,7 +924,10 @@ mod tests {
         let info = field.accessibility();
         assert_eq!(info.role, AccessibilityRole::TextField);
         assert_eq!(info.name.as_deref(), Some("PIN"));
-        assert_eq!(info.value.as_deref(), Some("\u{2022}\u{2022}\u{2022}\u{2022}"));
+        assert_eq!(
+            info.value.as_deref(),
+            Some("\u{2022}\u{2022}\u{2022}\u{2022}")
+        );
         assert!(!info.disabled);
         assert!(field.disabled().accessibility().disabled);
     }
@@ -943,7 +953,10 @@ mod tests {
         assert_eq!(known.accessibility().value.as_deref(), Some("87 %"));
 
         let unknown = Metric::new("Батарея", MetricValue::Unknown);
-        assert_eq!(unknown.accessibility().value.as_deref(), Some("metric.unknown"));
+        assert_eq!(
+            unknown.accessibility().value.as_deref(),
+            Some("metric.unknown")
+        );
     }
 
     #[test]

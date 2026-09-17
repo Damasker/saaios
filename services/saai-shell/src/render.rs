@@ -1,11 +1,11 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::{
-    Button, ButtonVariant, ColorRole, ContextHeader, ContextColor, DataRow, DataRowVariant,
+    Button, ButtonVariant, ColorRole, ContextColor, ContextHeader, DataRow, DataRowVariant,
     Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize,
     LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary, ObjectSummaryTrailing,
     Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, TextOverflow,
-    TextRole, Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, TextOverflow, TextRole,
+    Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1343,7 +1343,15 @@ fn draw_gallery_icon(canvas: &mut Canvas<'_>, fonts: &Fonts, icon: &Icon, left: 
     };
     let size = physical(icon.size.value()) as f32;
     let glyph = icon.glyph.codepoint().to_string();
-    draw_text(canvas, icon_font, &glyph, size, left, top, theme_color(icon.color));
+    draw_text(
+        canvas,
+        icon_font,
+        &glyph,
+        size,
+        left,
+        top,
+        theme_color(icon.color),
+    );
 }
 
 fn draw_divider(canvas: &mut Canvas<'_>, divider: &Divider, rect: Rect) {
@@ -1367,7 +1375,15 @@ fn draw_status_indicator(
     );
     let (font, size) = fonts.resolve(TextRole::Body);
     let text_left = left + mark_size + physical(SpacingToken::Small.value());
-    draw_text(canvas, font, &indicator.label, size, text_left, top, theme_color(style.color));
+    draw_text(
+        canvas,
+        font,
+        &indicator.label,
+        size,
+        text_left,
+        top,
+        theme_color(style.color),
+    );
     if let Some(reason) = indicator.visible_reason() {
         let (reason_font, reason_size) = fonts.resolve(TextRole::Caption);
         draw_text(
@@ -1430,7 +1446,12 @@ fn draw_gallery_field(canvas: &mut Canvas<'_>, fonts: &Fonts, field: &Field, rec
         theme_color(ColorRole::TextSecondary),
     );
     let box_top = rect.y + physical_line_height(TextRole::Caption);
-    let box_rect = Rect::new(rect.x, box_top, rect.width, rect.height.saturating_sub(box_top - rect.y));
+    let box_rect = Rect::new(
+        rect.x,
+        box_top,
+        rect.width,
+        rect.height.saturating_sub(box_top - rect.y),
+    );
     let box_fill = if field.error.is_some() {
         ColorRole::Critical
     } else {
@@ -1518,7 +1539,13 @@ fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Re
     }
 }
 
-fn draw_gallery_metric(canvas: &mut Canvas<'_>, fonts: &Fonts, metric: &Metric, left: u32, top: u32) {
+fn draw_gallery_metric(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    metric: &Metric,
+    left: u32,
+    top: u32,
+) {
     let (label_font, label_size) = fonts.resolve(TextRole::Caption);
     draw_text(
         canvas,
@@ -1548,7 +1575,12 @@ fn draw_gallery_metric(canvas: &mut Canvas<'_>, fonts: &Fonts, metric: &Metric, 
     );
 }
 
-fn draw_gallery_disclosure(canvas: &mut Canvas<'_>, fonts: &Fonts, disclosure: &Disclosure, rect: Rect) {
+fn draw_gallery_disclosure(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    disclosure: &Disclosure,
+    rect: Rect,
+) {
     let (font, size) = fonts.resolve(TextRole::Body);
     draw_text(
         canvas,
@@ -1567,7 +1599,8 @@ fn draw_gallery_disclosure(canvas: &mut Canvas<'_>, fonts: &Fonts, disclosure: &
             icon_font,
             &glyph,
             icon_size,
-            (rect.x + rect.width).saturating_sub(icon_size as u32 + physical(SpacingToken::Small.value())),
+            (rect.x + rect.width)
+                .saturating_sub(icon_size as u32 + physical(SpacingToken::Small.value())),
             rect.y,
             theme_color(ColorRole::TextSecondary),
         );
@@ -1636,7 +1669,12 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     draw_gallery_progress(
         canvas,
         &progress,
-        Rect::new(margin, rows[5], content_width, physical(Progress::MIN_TRACK_HEIGHT)),
+        Rect::new(
+            margin,
+            rows[5],
+            content_width,
+            physical(Progress::MIN_TRACK_HEIGHT),
+        ),
     );
 
     let Some(fonts) = fonts else {
@@ -1667,7 +1705,14 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     )
     .with_max_lines(2)
     .with_overflow(TextOverflow::Ellipsis);
-    draw_semantic_text(canvas, fonts, &semantic_text, margin, rows[1], content_width);
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &semantic_text,
+        margin,
+        rows[1],
+        content_width,
+    );
 
     let icon = Icon::new(IconGlyph::Wifi, ColorRole::Accent).with_name("Wi-Fi");
     draw_gallery_icon(canvas, fonts, &icon, margin, rows[2]);
@@ -1693,7 +1738,9 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     let field = Field::new("PIN", FieldKind::Password).with_value("4269");
     // Section 6.7: "Minimum hit height: 48 logical units" -- explicit,
     // not an incidental leftover from the row's own budget.
-    let field_height = (rows[8] - rows[7]).min(physical(LogicalUnit::new(90))).max(physical(MIN_TOUCH_TARGET));
+    let field_height = (rows[8] - rows[7])
+        .min(physical(LogicalUnit::new(90)))
+        .max(physical(MIN_TOUCH_TARGET));
     draw_gallery_field(
         canvas,
         fonts,
@@ -1708,7 +1755,12 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         canvas,
         fonts,
         &data_row,
-        Rect::new(margin, rows[8], content_width, physical(TWO_LINE_ROW_HEIGHT)),
+        Rect::new(
+            margin,
+            rows[8],
+            content_width,
+            physical(TWO_LINE_ROW_HEIGHT),
+        ),
     );
 
     let metric = Metric::new("Батарея", MetricValue::Known("87".to_string())).with_unit("%");
@@ -1934,7 +1986,11 @@ pub fn draw_root(
 /// no touch-down tracking feeds it -- so it is read here for
 /// completeness but never actually true today; flagged, not silently
 /// dropped from the type.
-pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, NavigationItem)], fonts: Option<&Fonts>) {
+pub fn draw_tab_bar(
+    canvas: &mut Canvas<'_>,
+    tabs: &[(Rect, NavigationItem)],
+    fonts: Option<&Fonts>,
+) {
     if let Some(tab_bar) = tabs.first().and_then(|(first, _)| {
         tabs.last().map(|(last, _)| {
             Rect::new(
@@ -2088,7 +2144,14 @@ pub fn draw_now(
     // `now_grid_rect`'s own scaling convention for its 2400-scale numbers.
     let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
     let mut cursor_y = content.y + top_inset;
-    draw_semantic_text(canvas, fonts, &header.heading(), content.x + margin, cursor_y, content_width);
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &header.heading(),
+        content.x + margin,
+        cursor_y,
+        content_width,
+    );
     cursor_y += scaled_line_height(TextRole::Title);
 
     // Section 7.1: "a non-default lifecycle is exposed through the
@@ -2181,7 +2244,14 @@ pub fn draw_now(
 
     for section in sections {
         cursor_y += physical(SpacingToken::Medium.value());
-        draw_semantic_text(canvas, fonts, &section.heading(), content.x + margin, cursor_y, content_width);
+        draw_semantic_text(
+            canvas,
+            fonts,
+            &section.heading(),
+            content.x + margin,
+            cursor_y,
+            content_width,
+        );
         cursor_y += scaled_line_height(TextRole::Section);
         let hairline = physical(StrokeToken::Hairline.value()).max(1);
         draw_divider(
@@ -2388,7 +2458,10 @@ fn draw_text_centered(
     color: Pixel,
 ) {
     let size = size * text_scale();
-    let glyphs: Vec<_> = text.chars().map(|character| font.rasterize(character, size)).collect();
+    let glyphs: Vec<_> = text
+        .chars()
+        .map(|character| font.rasterize(character, size))
+        .collect();
     let width = glyphs
         .iter()
         .map(|(metrics, _)| metrics.advance_width)
@@ -2422,7 +2495,10 @@ fn draw_text(
     color: Pixel,
 ) {
     let size = size * text_scale();
-    let glyphs: Vec<_> = text.chars().map(|character| font.rasterize(character, size)).collect();
+    let glyphs: Vec<_> = text
+        .chars()
+        .map(|character| font.rasterize(character, size))
+        .collect();
     let reference_height = reference_glyph_height(&glyphs);
     let mut cursor = left as f32;
     for (metrics, bitmap) in &glyphs {
@@ -2530,10 +2606,7 @@ mod tests {
                     if index == selected_index {
                         item = item.selected();
                     }
-                    (
-                        Rect::new(index as u32 * 270, 2100, 270, 300),
-                        item,
-                    )
+                    (Rect::new(index as u32 * 270, 2100, 270, 300), item)
                 })
                 .collect()
         };
@@ -2605,7 +2678,8 @@ mod tests {
         // the class of error that let `StatusIndicator`'s reason line and
         // `DataRow`'s secondary line collide with the line above them.
         let rows = gallery_row_positions(2400);
-        let min_gap = physical_line_height(TextRole::Body) + physical_line_height(TextRole::Caption);
+        let min_gap =
+            physical_line_height(TextRole::Body) + physical_line_height(TextRole::Caption);
         for pair in rows.windows(2) {
             let gap = pair[1] - pair[0];
             assert!(

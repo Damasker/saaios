@@ -311,7 +311,12 @@ delegate_noop!(AppState: ignore wl_buffer::WlBuffer);
 /// manual unsandboxed launch (host's uncapped `/tmp`) never showed
 /// it. One buffer, resized only when the surface itself resizes,
 /// keeps exactly one frame resident no matter how many taps happen.
-fn redraw(state: &mut AppState, shm: &wl_shm::WlShm, surface: &wl_surface::WlSurface, qh: &QueueHandle<AppState>) {
+fn redraw(
+    state: &mut AppState,
+    shm: &wl_shm::WlShm,
+    surface: &wl_surface::WlSurface,
+    qh: &QueueHandle<AppState>,
+) {
     let width = state.configured_width.max(1);
     let height = state.configured_height.max(1);
     let stride = width * 4;
@@ -353,7 +358,8 @@ fn redraw(state: &mut AppState, shm: &wl_shm::WlShm, surface: &wl_surface::WlSur
         .shm_file
         .as_mut()
         .expect("shm file missing right after (re)creation");
-    file.seek(SeekFrom::Start(0)).expect("failed to seek shm file");
+    file.seek(SeekFrom::Start(0))
+        .expect("failed to seek shm file");
     file.write_all(&pixels).expect("failed to write pixel data");
     file.flush().ok();
 
@@ -418,7 +424,9 @@ fn main() {
 
     let deadline = Instant::now() + Duration::from_secs(8);
     while state.running && !state.configured && Instant::now() < deadline {
-        queue.blocking_dispatch(&mut state).expect("dispatch failed");
+        queue
+            .blocking_dispatch(&mut state)
+            .expect("dispatch failed");
     }
     if !state.configured {
         eprintln!("saai-mahjong: no configure received within 8s, exiting");

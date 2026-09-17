@@ -2753,8 +2753,7 @@ const ACTION_ENTITY_TYPE: &str = "saaios.action";
 fn next_pending_action(entities: &[Entity]) -> Option<&Entity> {
     entities.iter().find(|entity| {
         entity.entity_type == ACTION_ENTITY_TYPE
-            && entity.properties.get("status").and_then(Value::as_str)
-                == Some(TASK_STATUS_PENDING)
+            && entity.properties.get("status").and_then(Value::as_str) == Some(TASK_STATUS_PENDING)
     })
 }
 
@@ -6368,8 +6367,6 @@ impl Shell {
         }
     }
 
-
-
     /// S21: marks a notification `dismissed` rather than deleting it --
     /// same full-replace-properties convention `handle_object_view_
     /// action` already uses for tasks, so `saai-entityd`'s protocol
@@ -6990,9 +6987,8 @@ mod tests {
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
-        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect,
-        RootPage, Space, SpaceColor, SpaceLifecycle, TrustedClientTap, UniversalState,
-        WifiListTap,
+        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage, Space,
+        SpaceColor, SpaceLifecycle, TrustedClientTap, UniversalState, WifiListTap,
         ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
         MANUAL_CONFIDENCE, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
         SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE,
@@ -7455,7 +7451,10 @@ mod tests {
             ),
             Some("open_intent_input")
         );
-        assert_eq!(super::now_footer_action_at((540.0, 400.0), width, height), None);
+        assert_eq!(
+            super::now_footer_action_at((540.0, 400.0), width, height),
+            None
+        );
     }
 
     #[test]
