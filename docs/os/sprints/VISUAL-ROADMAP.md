@@ -456,7 +456,35 @@ truthful home surface before expanding the framework.
   `component-library-v1.md` section 7. Host-verified only (42/42
   `saai-ui-core` tests, clippy clean) -- not yet wired into a real screen,
   that's the next task below.
-- [ ] Compose `Сейчас` so its first viewport answers the five product questions.
+- [x] Compose `Сейчас` so its first viewport answers the five product
+  questions (ADR-112: `Frame::Now`/`render::draw_now`). Real data only --
+  "Сегодня" from enabled `saaios.schedule` entities, "Продолжается" from
+  `saaios.task`s with `status == running`, "Требует внимания" reuses
+  `inbox_rows()` verbatim, "Далее" (next action) from pending
+  `saaios.action` entities (closing the gap the sprint's own inventory
+  task found), object summary from the same "most recently updated
+  entity" `selected_entities.first()` already used. An empty section is
+  never handed to the renderer; a fully empty screen shows one centered
+  "Ничего срочного" per HIA-13's own second mockup.
+
+  Physically verified on the real device with real data (not fixture
+  data): `ContextHeader`, the whole-screen empty state, and (after
+  forcing a redraw to get past a pre-existing "first frame can predate
+  the entityd round-trip" characteristic, not a new bug) real populated
+  `ObjectSummary`/`Продолжается` content, all confirmed against the
+  entity store's actual on-disk JSON. One real rendering bug found and
+  fixed along the way: the header was drawing underneath the status
+  bar's own separate compositor surface. Not verified with real data:
+  no `saaios.schedule`/pending `saaios.action` entity exists anywhere in
+  this environment, so "Сегодня"/"Далее"'s specific `DataRow` call site
+  was not seen populated on a real screen (the underlying draw function
+  itself is already proven via VUI-02's gallery).
+
+  Deliberately dev-gated (`SAAIOS_UI_NOW_COMPOSED`/`/run/saaios/
+  ui-now-composed`), off by default: `RootPage::Now` still renders the
+  existing app grid in production until the next task below (moving that
+  grid behind `Приложения`) ships, so this composition does not silently
+  remove app-grid access in the meantime.
 - [ ] Move the application grid behind an explicit secondary `Приложения`
   entry or sheet without removing application access.
 - [ ] Keep prompt/chat input secondary to direct system actions.

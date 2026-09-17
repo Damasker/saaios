@@ -441,7 +441,11 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .and_then(|entity| entity.properties.get("space_id").and_then(Value::as_str))
         .map(str::to_string)
 }
-use saai_ui_core::{layout, Axis, ContextColor, LayoutNode, Length, Node, Rect, UniversalState};
+use saai_ui_core::{
+    layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
+    Node, ObjectSummary, Rect, StatusIndicator, StatusIndicatorVariant, SystemSection,
+    SystemSectionRow, UniversalState,
+};
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
@@ -629,6 +633,17 @@ const UI_GALLERY_MARKER: &str = "/run/saaios/ui-gallery";
 /// idle timeout configured exactly as before, it simply is not being
 /// asked to act on them right now.
 const DEV_NO_LOCK_MARKER: &str = "/run/saaios/dev-no-lock";
+
+/// Development-only preview gate for VUI-03's composed `Сейчас` (ADR-112):
+/// `RootPage::Now` still renders through `draw_root`'s existing app-grid
+/// scaffold by default -- this flag switches it to the new `Frame::Now`/
+/// `draw_now` composition instead, for physical verification before the
+/// app grid's own relocation (VUI-03's next task) makes that the only
+/// path. Same volatile `/run` gate as every other dev preview this
+/// project has added (`UI_CALIBRATION_MARKER`, `UI_GALLERY_MARKER`,
+/// `DEV_NO_LOCK_MARKER`) -- cannot survive a reboot, cannot become a
+/// persistent setting.
+const NOW_COMPOSED_MARKER: &str = "/run/saaios/ui-now-composed";
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
 /// `ShellSettings`'s own JSON directly without duplicating its parse
@@ -1753,6 +1768,10 @@ const TASK_CONFIRM_BUTTON_HEIGHT: u32 = ROOT_TAB_HEIGHT;
 const TASK_STATUS_WAITING_CONFIRMATION: &str = "waiting_confirmation";
 const TASK_STATUS_RUNNING: &str = "running";
 const TASK_STATUS_CANCELLED: &str = "cancelled";
+/// `saaios.action`'s own recognized value for an Action `saai-taskd` has
+/// created but not yet executed -- same no-cross-runtime-dependency
+/// convention as the three constants above.
+const TASK_STATUS_PENDING: &str = "pending";
 
 /// What `draw()` renders this frame, computed up front from `&self` before
 /// `buffer`/`canvas` take a mutable borrow for the rest of the function.
@@ -1825,6 +1844,17 @@ enum Frame {
         tabs: Vec<(Rect, &'static str)>,
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
+    },
+    /// VUI-03 (ADR-112): the real composed `Сейчас`, behind
+    /// `NOW_COMPOSED_MARKER` while the app grid it will eventually
+    /// replace is still `RootPage::Now`'s default. See that marker's own
+    /// doc comment.
+    Now {
+        content_rect: Rect,
+        tabs: Vec<(Rect, &'static str)>,
+        header: ContextHeader,
+        sections: Vec<SystemSection>,
+        object: Option<ObjectSummary>,
     },
 }
 
@@ -2632,6 +2662,64 @@ fn inbox_notifications(entities: &[Entity]) -> Vec<&Entity> {
         .collect()
 }
 
+/// VUI-03: real schedule entries for the "Сегодня" `SystemSection` --
+/// enabled `saaios.schedule` triggers in the space (ADR-036), the closest
+/// real analogue this project has to a calendar/reminder entry. This
+/// project's schedules are recurring intervals (`every_secs`), not
+/// specific times of day -- "Сегодня" shows what schedule text is
+/// active, never an invented clock time no real data backs.
+const SCHEDULE_ENTITY_TYPE: &str = "saaios.schedule";
+
+fn today_schedules(entities: &[Entity]) -> Vec<&Entity> {
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == SCHEDULE_ENTITY_TYPE
+                && entity
+                    .properties
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+        })
+        .collect()
+}
+
+/// VUI-03: real in-progress system activity for the "Продолжается"
+/// `SystemSection` -- a `saaios.task` genuinely `running` (the status
+/// `handle_object_view_action` writes once the user confirms it), not
+/// merely `waiting_confirmation`: a task still waiting on the user stays
+/// in "Требует внимания" via `inbox_rows` instead, since it needs the
+/// user to act, not the system.
+fn in_progress_work(entities: &[Entity]) -> Vec<&Entity> {
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == "saaios.task"
+                && entity.properties.get("status").and_then(Value::as_str)
+                    == Some(TASK_STATUS_RUNNING)
+        })
+        .collect()
+}
+
+/// VUI-03: the "next action" data source the sprint's own inventory task
+/// found entirely missing -- the first place in this file that reads
+/// `saaios.action` at all. A `pending` Action is one `saai-taskd` created
+/// from a confirmed Task but has not yet executed -- literally the next
+/// thing the system is about to do. `entities` arrives already sorted
+/// newest-`updated_at`-first (see the `EntityResponseResult::Entities`
+/// handler), so `find` returns the most recently touched match, the same
+/// "most recent" convention `selected_entities.first()` already uses for
+/// the current object.
+const ACTION_ENTITY_TYPE: &str = "saaios.action";
+
+fn next_pending_action(entities: &[Entity]) -> Option<&Entity> {
+    entities.iter().find(|entity| {
+        entity.entity_type == ACTION_ENTITY_TYPE
+            && entity.properties.get("status").and_then(Value::as_str)
+                == Some(TASK_STATUS_PENDING)
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InboxRowKind {
     Task,
@@ -2932,6 +3020,11 @@ fn main() {
         dev_no_lock_environment.as_deref(),
         std::path::Path::new(DEV_NO_LOCK_MARKER).exists(),
     );
+    let now_composed_environment = std::env::var("SAAIOS_UI_NOW_COMPOSED").ok();
+    let now_composed = calibration_requested(
+        now_composed_environment.as_deref(),
+        std::path::Path::new(NOW_COMPOSED_MARKER).exists(),
+    );
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
@@ -2978,6 +3071,7 @@ fn main() {
         lock_height: 0,
         locked: !dev_no_lock,
         dev_no_lock,
+        now_composed,
         unlock_pending: false,
         sleeping: false,
         last_activity: Instant::now(),
@@ -3137,6 +3231,8 @@ struct Shell {
     locked: bool,
     /// See `DEV_NO_LOCK_MARKER`'s own doc comment.
     dev_no_lock: bool,
+    /// See `NOW_COMPOSED_MARKER`'s own doc comment.
+    now_composed: bool,
     /// Set on a touch-down that started on the lock surface while
     /// locked; the matching touch-up is what actually unlocks (mirrors
     /// drm-splash.c requiring touch *release* over the lock screen, not
@@ -4281,6 +4377,20 @@ impl Shell {
                 status_line: "Диагностика".to_string(),
                 rows,
             }
+        } else if self.current_page == RootPage::Now && self.now_composed {
+            let view = root_view(width, height);
+            Frame::Now {
+                content_rect: view.children[0].rect,
+                tabs: view.children[1]
+                    .children
+                    .iter()
+                    .zip(ROOT_TABS)
+                    .map(|(node, tab)| (node.rect, tab.label))
+                    .collect::<Vec<_>>(),
+                header: self.now_context_header(),
+                sections: self.now_sections(),
+                object: self.now_object_summary(),
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
@@ -4327,7 +4437,7 @@ impl Shell {
         // ever draws on) and only when the Rollback setting allows it.
         let orb_frame = (!self.calibration_mode
             && self.settings.orb_enabled
-            && matches!(frame, Frame::Root { .. }))
+            && matches!(frame, Frame::Root { .. } | Frame::Now { .. }))
         .then(|| self.build_orb_frame(width, height));
 
         let fonts = self.fonts.as_ref();
@@ -4569,6 +4679,24 @@ impl Shell {
                         fonts,
                         &content_cards,
                         current_page_is_now,
+                    );
+                }
+                Frame::Now {
+                    content_rect,
+                    tabs,
+                    header,
+                    sections,
+                    object,
+                } => {
+                    render::draw_now(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        current_page_index,
+                        &header,
+                        &sections,
+                        object.as_ref(),
+                        fonts,
                     );
                 }
             }
@@ -5701,6 +5829,108 @@ impl Shell {
         cards
     }
 
+    /// VUI-03 (ADR-112): replaces `context_label()`'s own
+    /// name-plus-"(архив)"-suffix string with the real `ContextHeader`
+    /// composite -- a non-default lifecycle becomes a nested
+    /// `StatusIndicator`, not text baked into the name itself.
+    fn now_context_header(&self) -> ContextHeader {
+        let header = ContextHeader::new(space_display_name(&self.spaces, &self.selected_space_id))
+            .with_section_title("Сейчас");
+        if space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+            == SpaceLifecycle::Archived
+        {
+            header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+        } else {
+            header
+        }
+    }
+
+    /// VUI-03 (ADR-112): the same "most recently updated entity in the
+    /// space" the ad hoc `"inspect_selected_entity"` card already used
+    /// (`content_card`'s own doc comment), now returning a real
+    /// `ObjectSummary` instead of a `render::ActionCardView` built by
+    /// string formatting.
+    fn now_object_summary(&self) -> Option<ObjectSummary> {
+        self.selected_entities.first().map(|entity| {
+            ObjectSummary::new(
+                entity.title.clone(),
+                format!("{} · версия {}", entity.entity_type, entity.revision),
+            )
+        })
+    }
+
+    /// VUI-03 (ADR-112): the three `SystemSection`s
+    /// `human-interface-architecture-v2.md` section 13 asks for, each
+    /// built from a real, already-fetched data source -- never a section
+    /// with an invented row. A section that ends up with zero real rows
+    /// is left out of the returned list entirely (never handed to
+    /// `draw_now` empty) -- "Продолжается" and "Далее" (VUI-03's "next
+    /// action") are exactly the two data sources the sprint's own
+    /// inventory task found the shell reading for the first time here.
+    fn now_sections(&self) -> Vec<SystemSection> {
+        let mut sections = Vec::new();
+
+        let mut today = SystemSection::new("Сегодня");
+        for schedule in today_schedules(&self.selected_entities) {
+            let text = schedule
+                .properties
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or(&schedule.title);
+            today = today.with_row(SystemSectionRow::Data(DataRow::new(
+                text.to_string(),
+                DataRowVariant::Static,
+            )));
+        }
+        if !today.is_empty() {
+            sections.push(today);
+        }
+
+        let mut in_progress = SystemSection::new("Продолжается");
+        for entity in in_progress_work(&self.selected_entities) {
+            in_progress = in_progress.with_row(SystemSectionRow::Status(StatusIndicator::new(
+                UniversalState::Running,
+                entity.title.clone(),
+            )));
+        }
+        if !in_progress.is_empty() {
+            sections.push(in_progress);
+        }
+
+        let mut attention = SystemSection::new("Требует внимания");
+        for (kind, entity) in inbox_rows(&self.selected_entities) {
+            let reason = match kind {
+                InboxRowKind::Task => "Ждёт подтверждения",
+                InboxRowKind::Notification => entity
+                    .properties
+                    .get("body")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            };
+            attention = attention.with_row(SystemSectionRow::Status(
+                StatusIndicator::new(UniversalState::Attention, entity.title.clone())
+                    .with_reason(reason)
+                    .with_variant(StatusIndicatorVariant::Normal),
+            ));
+        }
+        if !attention.is_empty() {
+            sections.push(attention);
+        }
+
+        let mut next = SystemSection::new("Далее");
+        if let Some(action) = next_pending_action(&self.selected_entities) {
+            next = next.with_row(SystemSectionRow::Data(DataRow::new(
+                action.title.clone(),
+                DataRowVariant::Static,
+            )));
+        }
+        if !next.is_empty() {
+            sections.push(next);
+        }
+
+        sections
+    }
+
     fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
         if action.action == "inspect_selected_entity" {
             return match self.selected_entities.first() {
@@ -6646,18 +6876,20 @@ mod tests {
     use super::{
         bluetooth_list_action_at, calibration_requested, capability_label, consent_action_at,
         content_action_at, dev_surface_back_tapped, effective_context_space, format_utc_offset,
-        input_idle_for_at_least, intent_action_at, known_surfaces, me_fixed_card_action,
-        next_in_cycle, object_view_action_at, object_view_content, orb_action_at, orb_menu_actions,
-        orb_state, orb_zone_rect, remove_context_source, space_color, space_color_entity,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at,
+        in_progress_work, input_idle_for_at_least, intent_action_at, known_surfaces,
+        me_fixed_card_action, next_in_cycle, next_pending_action, object_view_action_at,
+        object_view_content, orb_action_at, orb_menu_actions, orb_state, orb_zone_rect,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
+        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
         ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, OrbState, Rect,
         RootPage, Space, SpaceColor, SpaceLifecycle, TrustedClientTap, WifiListTap,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE,
+        SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID,
+        WIFI_CONFIDENCE,
     };
     use saai_entity_store::SpaceKind;
     use std::time::Duration;
@@ -6677,6 +6909,64 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    fn today_schedules_only_returns_enabled_schedule_entities() {
+        let mut enabled = serde_json::Map::new();
+        enabled.insert("enabled".into(), serde_json::Value::Bool(true));
+        let mut disabled = serde_json::Map::new();
+        disabled.insert("enabled".into(), serde_json::Value::Bool(false));
+        let entities = vec![
+            test_entity(SCHEDULE_ENTITY_TYPE, enabled),
+            test_entity(SCHEDULE_ENTITY_TYPE, disabled),
+            test_entity(SCHEDULE_ENTITY_TYPE, serde_json::Map::new()),
+            test_entity("saaios.task", serde_json::Map::new()),
+        ];
+        assert_eq!(today_schedules(&entities).len(), 1);
+    }
+
+    #[test]
+    fn in_progress_work_returns_running_tasks_but_not_ones_still_waiting_on_the_user() {
+        let mut running = serde_json::Map::new();
+        running.insert("status".into(), serde_json::Value::String("running".into()));
+        let mut waiting = serde_json::Map::new();
+        waiting.insert(
+            "status".into(),
+            serde_json::Value::String("waiting_confirmation".into()),
+        );
+        let entities = vec![
+            test_entity("saaios.task", running),
+            test_entity("saaios.task", waiting),
+        ];
+        let in_progress = in_progress_work(&entities);
+        assert_eq!(in_progress.len(), 1);
+        assert_eq!(
+            in_progress[0]
+                .properties
+                .get("status")
+                .and_then(serde_json::Value::as_str),
+            Some("running")
+        );
+    }
+
+    #[test]
+    fn next_pending_action_finds_a_pending_action_and_ignores_finished_ones() {
+        let mut done = serde_json::Map::new();
+        done.insert("status".into(), serde_json::Value::String("done".into()));
+        let mut pending = serde_json::Map::new();
+        pending.insert("status".into(), serde_json::Value::String("pending".into()));
+        let entities = vec![
+            test_entity(ACTION_ENTITY_TYPE, done),
+            test_entity(ACTION_ENTITY_TYPE, pending.clone()),
+        ];
+        assert!(next_pending_action(&entities).is_some());
+
+        let none_pending = vec![test_entity(ACTION_ENTITY_TYPE, serde_json::Map::new())];
+        assert!(next_pending_action(&none_pending).is_none());
+
+        let wrong_type = vec![test_entity("saaios.task", pending)];
+        assert!(next_pending_action(&wrong_type).is_none());
     }
 
     #[test]

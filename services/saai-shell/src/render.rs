@@ -1,10 +1,11 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::{
-    Button, ButtonVariant, ColorRole, ContextColor, DataRow, DataRowVariant, Disclosure,
-    Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize, LogicalUnit,
-    Metric, MetricValue, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, StrokeToken, SurfaceScale, TextOverflow, TextRole, Theme,
-    UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    Button, ButtonVariant, ColorRole, ContextHeader, ContextColor, DataRow, DataRowVariant,
+    Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize,
+    LogicalUnit, Metric, MetricValue, ObjectSummary, ObjectSummaryTrailing, Progress, Rect, Rgb,
+    SemanticText, SpacingToken, StatusIndicator, StatusIndicatorVariant, StatusMark, StrokeToken,
+    SurfaceScale, SystemSection, SystemSectionRow, TextOverflow, TextRole, Theme, UniversalState,
+    MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1305,7 +1306,7 @@ fn wrap_text(font: &Font, text: &str, size: f32, max_width: u32) -> Vec<String> 
 /// when set, and appends an ellipsis to the last visible line only when
 /// content was actually cut *and* the caller asked for
 /// `TextOverflow::Ellipsis` -- never invented on a line that already fit.
-fn draw_gallery_semantic_text(
+fn draw_semantic_text(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
     text: &SemanticText,
@@ -1349,11 +1350,11 @@ fn draw_gallery_icon(canvas: &mut Canvas<'_>, fonts: &Fonts, icon: &Icon, left: 
     draw_text(canvas, icon_font, &glyph, size, left, top, theme_color(icon.color));
 }
 
-fn draw_gallery_divider(canvas: &mut Canvas<'_>, divider: &Divider, rect: Rect) {
+fn draw_divider(canvas: &mut Canvas<'_>, divider: &Divider, rect: Rect) {
     canvas.fill_rect(rect, theme_color(divider.color));
 }
 
-fn draw_gallery_status_indicator(
+fn draw_status_indicator(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
     indicator: &StatusIndicator,
@@ -1461,7 +1462,7 @@ fn draw_gallery_field(canvas: &mut Canvas<'_>, fonts: &Fonts, field: &Field, rec
     );
 }
 
-fn draw_gallery_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
+fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
     canvas.fill_rect(rect, theme_color(ColorRole::Surface));
     let inset = physical(SpacingToken::Small.value());
     let top_inset = physical(SpacingToken::XSmall.value());
@@ -1629,7 +1630,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     let rows = gallery_row_positions(height);
 
     let divider = Divider::new();
-    draw_gallery_divider(
+    draw_divider(
         canvas,
         &divider,
         Rect::new(margin, rows[3], content_width, hairline),
@@ -1670,7 +1671,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     )
     .with_max_lines(2)
     .with_overflow(TextOverflow::Ellipsis);
-    draw_gallery_semantic_text(canvas, fonts, &semantic_text, margin, rows[1], content_width);
+    draw_semantic_text(canvas, fonts, &semantic_text, margin, rows[1], content_width);
 
     let icon = Icon::new(IconGlyph::Wifi, ColorRole::Accent).with_name("Wi-Fi");
     draw_gallery_icon(canvas, fonts, &icon, margin, rows[2]);
@@ -1678,7 +1679,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     let status = StatusIndicator::new(UniversalState::Blocked, "Заблокировано")
         .with_reason("Нет сети")
         .with_variant(StatusIndicatorVariant::Normal);
-    draw_gallery_status_indicator(canvas, fonts, &status, margin, rows[4]);
+    draw_status_indicator(canvas, fonts, &status, margin, rows[4]);
 
     let button = Button::new("Сохранить", "gallery:save", ButtonVariant::Primary);
     draw_gallery_button(
@@ -1707,7 +1708,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     let data_row = DataRow::new("Wi-Fi", DataRowVariant::Navigation)
         .with_secondary("Подключено: Wallbox")
         .with_value("99%");
-    draw_gallery_data_row(
+    draw_data_row(
         canvas,
         fonts,
         &data_row,
@@ -1920,6 +1921,14 @@ pub fn draw_root(
         }
     }
 
+    draw_tab_bar(canvas, tabs, selected, fonts);
+}
+
+/// Extracted from `draw_root` (VUI-03): the bottom navigation bar is the
+/// same four-tab strip regardless of what a page draws above it, so
+/// `draw_now` (a real composed screen, not `draw_root`'s diagnostic
+/// scaffold) can share this exact drawing code instead of duplicating it.
+pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, &str)], selected: usize, fonts: Option<&Fonts>) {
     if let Some(tab_bar) = tabs.first().and_then(|(first, _)| {
         tabs.last().map(|last| {
             Rect::new(
@@ -1993,6 +2002,182 @@ pub fn draw_root(
                     theme_color(ColorRole::TextSecondary)
                 },
             );
+        }
+    }
+}
+
+/// VUI-03: the real `Сейчас` composition -- `ContextHeader` +
+/// `SystemSection`s + an optional `ObjectSummary`, replacing `draw_root`'s
+/// diagnostic scaffold (hardcoded rectangles, an ad hoc header string) for
+/// this one page. Built entirely from the section 6/7 primitive/composite
+/// draw functions already used by the gallery -- no new text-rendering
+/// path, matching every ADR in this file since VUI-02.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_now(
+    canvas: &mut Canvas<'_>,
+    content: Rect,
+    tabs: &[(Rect, &str)],
+    selected: usize,
+    header: &ContextHeader,
+    sections: &[SystemSection],
+    object: Option<&ObjectSummary>,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let margin = (content.width / 20).max(12);
+    let content_width = content.width.saturating_sub(margin * 2);
+
+    draw_tab_bar(canvas, tabs, selected, fonts);
+
+    let Some(fonts) = fonts else {
+        return;
+    };
+
+    // `content` spans the full canvas from y=0 -- the status bar is a
+    // separate, always-on-top compositor surface (`layer.set_size(0,
+    // 120)` in `main.rs`), not a reserved inset inside this one. Content
+    // drawn at `content.y` alone renders directly underneath it and is
+    // invisible; `draw_root`'s own header/card rows avoid this with
+    // hardcoded 150/430 (2400-scale) starting offsets -- this scales the
+    // same 150 proportionally instead of repeating the literal, matching
+    // `now_grid_rect`'s own scaling convention for its 2400-scale numbers.
+    let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
+    let mut cursor_y = content.y + top_inset;
+    draw_semantic_text(canvas, fonts, &header.heading(), content.x + margin, cursor_y, content_width);
+    cursor_y += scaled_line_height(TextRole::Title);
+
+    if let Some(object) = object {
+        cursor_y += physical(SpacingToken::Medium.value());
+        draw_semantic_text(
+            canvas,
+            fonts,
+            &object.title_text(),
+            content.x + margin,
+            cursor_y,
+            content_width,
+        );
+        cursor_y += scaled_line_height(TextRole::Body);
+        draw_semantic_text(
+            canvas,
+            fonts,
+            &object.meta_text(),
+            content.x + margin,
+            cursor_y,
+            content_width,
+        );
+        cursor_y += scaled_line_height(TextRole::Caption);
+        if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
+            draw_status_indicator(canvas, fonts, status, content.x + margin, cursor_y);
+            cursor_y += scaled_line_height(TextRole::Body);
+        } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
+            let (value_font, value_size) = fonts.resolve(TextRole::Body);
+            draw_text(
+                canvas,
+                value_font,
+                value,
+                value_size,
+                content.x + margin,
+                cursor_y,
+                theme_color(ColorRole::TextPrimary),
+            );
+            cursor_y += scaled_line_height(TextRole::Body);
+        }
+    }
+
+    if sections.is_empty() && object.is_none() {
+        // HIA-13's own second mockup: "Ничего срочного", centered, no
+        // section chrome at all -- an empty `Сейчас` is a normal, calm
+        // state, not a broken one, and `SystemSection` itself never
+        // invents a placeholder row to fill space (see its own doc
+        // comment), so this is the one place that message can honestly
+        // come from: the whole-screen empty state, not a per-section one.
+        let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
+        draw_text_centered(
+            canvas,
+            empty_font,
+            "Ничего срочного",
+            empty_size,
+            content.x + content.width / 2,
+            content.y + content.height / 2,
+            theme_color(ColorRole::TextSecondary),
+        );
+        return;
+    }
+
+    for section in sections {
+        cursor_y += physical(SpacingToken::Medium.value());
+        draw_semantic_text(canvas, fonts, &section.heading(), content.x + margin, cursor_y, content_width);
+        cursor_y += scaled_line_height(TextRole::Section);
+        let hairline = physical(StrokeToken::Hairline.value()).max(1);
+        draw_divider(
+            canvas,
+            &section.divider(),
+            Rect::new(content.x + margin, cursor_y, content_width, hairline),
+        );
+        cursor_y += physical(SpacingToken::Small.value());
+
+        // "A section with no children renders only its title" -- title
+        // and divider are already drawn above; nothing else to add for
+        // an empty section, and never an invented filler row.
+        if section.is_empty() {
+            continue;
+        }
+
+        for row in &section.rows {
+            match row {
+                SystemSectionRow::Data(data_row) => {
+                    let row_height = physical(data_row.min_hit_height());
+                    draw_data_row(
+                        canvas,
+                        fonts,
+                        data_row,
+                        Rect::new(content.x + margin, cursor_y, content_width, row_height),
+                    );
+                    cursor_y += row_height;
+                }
+                SystemSectionRow::Status(status) => {
+                    draw_status_indicator(canvas, fonts, status, content.x + margin, cursor_y);
+                    cursor_y += scaled_line_height(TextRole::Body);
+                    if status.visible_reason().is_some() {
+                        cursor_y += scaled_line_height(TextRole::Caption);
+                    }
+                }
+                SystemSectionRow::Metric(metric) => {
+                    let (label_font, label_size) = fonts.resolve(TextRole::Caption);
+                    draw_text(
+                        canvas,
+                        label_font,
+                        &metric.label,
+                        label_size,
+                        content.x + margin,
+                        cursor_y,
+                        theme_color(ColorRole::TextSecondary),
+                    );
+                    cursor_y += scaled_line_height(TextRole::Caption);
+                    let value_text = match &metric.value {
+                        MetricValue::Known(value) => match &metric.unit {
+                            Some(unit) => format!("{value} {unit}"),
+                            None => value.clone(),
+                        },
+                        MetricValue::Unknown => "—".to_string(),
+                        MetricValue::Unavailable => "—".to_string(),
+                    };
+                    let (value_font, value_size) = fonts.resolve(TextRole::Body);
+                    draw_text(
+                        canvas,
+                        value_font,
+                        &value_text,
+                        value_size,
+                        content.x + margin,
+                        cursor_y,
+                        theme_color(ColorRole::TextPrimary),
+                    );
+                    cursor_y += scaled_line_height(TextRole::Body);
+                }
+            }
+            if cursor_y >= content.y + content.height {
+                break;
+            }
         }
     }
 }
