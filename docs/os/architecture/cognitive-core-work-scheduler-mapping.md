@@ -81,13 +81,14 @@ USER / schedule / automation
 | Vision name | Maps to today | Boundary |
 |---|---|---|
 | Cognitive Core | Platform `saaios-runtime` / `AiRuntime` diagnose loop; local or remote model | Proposes actions; must not claim success or mutate device without Policy |
-| World Model (v0) | S01 `DeviceContext` / `system.identity` + metrics tools; not a full sensor graph | Facts from local sources only (ADR-006) |
+| World Model (v1) | `saai-observation` (WORLD-01) → later `saai-deviced`; today identity + metrics tools | Facts with source/time/freshness; Stale ≠ Health; no entity telemetry stream |
 | Capability Catalog | `tool-registry` + S07 app sandbox/portals; native risk enum in `saai-taskd` | Evolve registry; do not replace |
 | Policy | Platform `policy-engine` on planner path; native confirmation for explicit dangerous Actions | Authorize only; no execution |
 | Workflow service | Native `saai-taskd` + `saai-entity-store` entities | Owns Task/Action state machine |
 | Work Scheduler | Sub-role of `saai-taskd` (reconcile, schedule tick, bridge, confirm) | Ready selection + budgets; no LLM |
 | Event Bus | Platform in-process bus; native `saai-entityd` Subscribe/Events | Live fan-out; not durable truth |
 | Embodiment UI | `saai-shell` Intent field, `Сейчас`, `TaskConfirm` | Intent metaphor, not chat-home |
+| Memory | Platform `memory-store` JSONL (ADR-038, ADR-125) | Scoped remembered knowledge; not SOM, not World Model, not audit |
 
 Platform Track and OS Track remain two runtimes ([ADR-004](../../adr/ADR-004-os-track.md),
 [ADR-030](../../adr/ADR-030-intent-task-action-native-entities.md)). S10 bridges them
@@ -207,12 +208,17 @@ already fixed: UDS default on device; TLS for remote TCP.
 - Materialized ready-index (optional) still derived from one store
 - Explicit workflow event kinds in audit-log for every Task/Action transition
 - TLS/mTLS for remote TCP control plane; harden UDS credentials
-- Richer World Model beyond identity/metrics
+- Richer World Model beyond identity/metrics — **WORLD-01+**
+  ([WORLD-ROADMAP.md](../sprints/WORLD-ROADMAP.md), ADR-122); Observation
+  types first, not `saai-deviced` in the first slice
 - Multi-action DAG proposals with fan-out caps — **WORK-01+**
   ([WORK-ROADMAP.md](../sprints/WORK-ROADMAP.md), ADR-121); host DAG
   validation first, not S33
 - Standalone Supervisor process (only if multi-process workers prove necessary)
 - Full `Входящие` workflow catalog UI (explicitly out of S09/S10)
+- Typed MemoryRecord / erase / Learning — **MEM-02+**
+  ([MEM-ROADMAP.md](../sprints/MEM-ROADMAP.md), ADR-125); keep Platform
+  `memory-store`, do not make runtime an entityd client
 - ADR-004 convergence (shared tool/policy APIs across tracks)
 - Opportunistic compute / preemption (time-over-compute beyond S11 measurements)
 - Self-repair / code agents — deferred, human-gated forever in v1
@@ -258,5 +264,5 @@ concurrency, or images.
 - [sprints/README.md](../sprints/README.md) — S09–S11 roadmap
 - ADR-002 (hybrid IPC / UDS), ADR-004, ADR-006
 - ADR-030…039 — Intent/Task/Action, planner bridge, schedules, space memory
-- ADR-118–121 — SOM, OAM, IRAB, Work Scheduler v2
+- ADR-118–122 — SOM, OAM, IRAB, Work Scheduler v2, World Model
 - TL decisions 2026-09-06 (Planner/Scheduler split; one store; reject durable queues; audit-log = ledger; UDS/TLS)

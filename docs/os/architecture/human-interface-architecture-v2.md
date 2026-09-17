@@ -1482,6 +1482,11 @@ SaaiOS
 
 Но это **информационная архитектура**, а не обязательно видимое меню.
 
+Attention (ADR-123) не добавляет пункт меню. Это **derived projection**
+над Task / Notification (позже Health): один resolver для NOW
+«Требует внимания», Inbox и Orb. Нет `saaios.attention`. Calm empty
+state остаётся «Ничего срочного».
+
 ---
 
 # 35. Что реально должен видеть пользователь

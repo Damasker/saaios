@@ -82,6 +82,16 @@ Object View (HIA-07) выигрывает от реального Space Graph (H
   [product-visual-target-v1.md](../ui/product-visual-target-v1.md)
   (`Сейчас` / `Пространство` / `Объект` / `Намерение` / `Система` + Orb).
   Это конечная точка первой версии интерфейса, не текущий Pixel screenshot.
+- **World Model (ADR-122)**: Observation/freshness, не Health=`Stale`.
+  `saai-deviced` — WORLD-03. Сейчас не рисуем выдуманное «всё Healthy».
+- **Attention (ADR-123)**: derived projection, не Entity. Не новый HIA
+  sprint. NOW/Inbox/Orb позже читают один resolver; Visual grammar Orb
+  (ADR-116) не меняется.
+- **UAM (ADR-124)**: единый язык authority. Confirmation — evidence, не
+  бессрочный grant. SSH остаётся admin channel. Pixel — AUTH-10.
+- **MLP (ADR-125)**: память остаётся Platform `memory-store`. Не SOM
+  entity. Compact key = `(space_id, key)`. Модель не объявляет факты.
+  Learning — после scoped typed memory. Pixel — MEM-10.
 - **Goal**: пространства образуют граф (parent_of/related_to/
   contains/usually_with/exclusive_with), не плоский список; у
   каждого пространства есть lifecycle (temporary/emerging/stable/

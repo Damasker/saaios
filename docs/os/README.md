@@ -15,8 +15,13 @@ Product and delivery sources of truth:
 - [Development process and Definition of Done](DEVELOPMENT_PROCESS.md)
 - [Quality strategy](QUALITY.md)
 - [Sprint roadmap](sprints/README.md)
+- [Pixel 7 delivery path](sprints/PIXEL-PATH.md)
 - [Visual-system delivery roadmap](sprints/VISUAL-ROADMAP.md)
 - [Work Scheduler v2 delivery roadmap](sprints/WORK-ROADMAP.md)
+- [World Model / Observation delivery roadmap](sprints/WORLD-ROADMAP.md)
+- [Attention projection delivery roadmap](sprints/ATTN-ROADMAP.md)
+- [Unified Authority Model delivery roadmap](sprints/AUTH-ROADMAP.md)
+- [Memory, Learning & Provenance delivery roadmap](sprints/MEM-ROADMAP.md)
 
 ```text
             SaaiOS OS
@@ -40,12 +45,10 @@ userspace. See the [live bring-up record](targets/panther/README.md) and
 ## Current milestone
 
 S00–S32 and the single-device HIA implementation track are complete with their
-documented limitations. The current product milestone is
-[VUI-02: typography, geometry, icons, and base components](sprints/VISUAL-ROADMAP.md).
-VUI-01 established and physically calibrated the semantic palette; VUI-02 now
-builds the reusable SaaiOS graphical component library on that foundation.
-Multi-node PCE work remains deferred until a second physical runtime node
-exists.
+documented limitations. Device delivery follows
+[PIXEL-PATH.md](sprints/PIXEL-PATH.md): **VUI-04** on shell, MEM-01 runtime
+flash as P0. VUI-02 is almost closed (boot-image fonts blocked). Multi-node
+PCE work remains deferred until a second physical runtime node exists.
 
 ## Rules
 

@@ -17,26 +17,33 @@ S00–S32 закрыли базовый трек — рабочий телефо
 ограничениями; голос заблокирован аппаратной авторизацией AoC, а PCE ждёт
 второго физического runtime-узла.
 
-Текущее направление — [Visual Language v1](../architecture/visual-language-v1.md)
-и собственная библиотека графических компонентов. Исполнение разбито в
-[Visual System delivery roadmap](VISUAL-ROADMAP.md): VUI-00 (аудит и контракт)
-и VUI-01 (семантическая, физически проверенная палитра) закрыты;
-**VUI-02 выполняется**. Этот трек не переоткрывает выполненные
-функции S00–S32: он последовательно переносит их на единую визуальную систему,
-сохраняя работающие Wayland/DRM/GPU, touch и rollback-пути.
+Текущее направление на устройство — один путь
+[PIXEL-PATH.md](PIXEL-PATH.md), не восемь параллельных `*-10` weekend'ов.
 
-Отдельно, третьим независимым треком (тоже не смешан с основной
-таблицей, свой Definition of Ready проход): запуск готовых сторонних
-Linux ARM64 и, в перспективе, Android-приложений на этом же устройстве
-без Android как основной ОС —
-[APP-COMPAT-ROADMAP.md](APP-COMPAT-ROADMAP.md).
+**Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
+([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…03 закрыты;
+**выполняется VUI-04** (навигация, status, Orb). VUI-02 остаётся почти
+закрытым (шрифты в boot-image — единственный blocked item). Этот трек
+не переоткрывает S00–S32.
 
-Четвёртый независимый трек — **Work Scheduler v2**
-([WORK-ROADMAP.md](WORK-ROADMAP.md), [ADR-121](../../adr/ADR-121-work-scheduler-v2.md)):
-DAG, derived ready set, Verification, bounded replan внутри существующего
-`saai-taskd`. Это **не S33** и не новый daemon. Visual Language остаётся
-единственным активным hardware-changing экспериментом; WORK-00/01 —
-документация и host-only validation.
+**Service queue (параллельно shell):** прошивка `saaios-runtime` /
+`saai-taskd` не считается вторым DRM-экспериментом. P0 — MEM-01
+same-key Home/Work на уже существующем runtime. Attention, Task
+visibility и Memory review едут **внутри VUI-05/06**, не отдельными
+phone sprints.
+
+Архитектурные ADR остаются справочниками:
+
+- [WORK-ROADMAP.md](WORK-ROADMAP.md) / [ADR-121](../../adr/ADR-121-work-scheduler-v2.md)
+- [WORLD-ROADMAP.md](WORLD-ROADMAP.md) / [ADR-122](../../adr/ADR-122-world-model-observation-layer.md)
+- [ATTN-ROADMAP.md](ATTN-ROADMAP.md) / [ADR-123](../../adr/ADR-123-attention-projection.md)
+- [AUTH-ROADMAP.md](AUTH-ROADMAP.md) / [ADR-124](../../adr/ADR-124-unified-authority-model.md)
+- [MEM-ROADMAP.md](MEM-ROADMAP.md) / [ADR-125](../../adr/ADR-125-memory-learning-provenance-v1.md)
+
+Новых фундаментальных одноустройственных моделей не добавлять.
+
+Отдельно, не в Pixel-пути: запуск сторонних Linux ARM64 / Android-приложений —
+[APP-COMPAT-ROADMAP.md](APP-COMPAT-ROADMAP.md). Голос и PCE ждут железа.
 
 ## Текущее состояние
 
@@ -492,6 +499,10 @@ confirmation; вместо этого `space_id` явно протянут от 
 `home` факт нашёл; `memory.forget` корректно создал tombstone. Два
 независимых `saai-taskd` работали одновременно против одного
 `saaios-runtime`. Все четыре куска S10 закрыты.
+
+MLP v1 ([ADR-125](../../adr/ADR-125-memory-learning-provenance-v1.md),
+[MEM-ROADMAP.md](MEM-ROADMAP.md)) расширяет ADR-038 внутри того же
+Platform store: compact key = `(space_id, key)`. S10 не переоткрывается.
 
 **Acceptance:** модель не может обойти capability -- подтверждено, каждый
 planner-предложенный Action (включая schedule-порождённые) проходит тот же

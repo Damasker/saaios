@@ -1,8 +1,8 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host DAG validation in progress.
-Not an active phone sprint. Visual Language remains the hardware-changing
-track.**
+Status: **WORK-00 complete; WORK-01 host DAG validation in progress.**
+Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
+See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-121](../../adr/ADR-121-work-scheduler-v2.md),
 [cognitive-core mapping](../architecture/cognitive-core-work-scheduler-mapping.md)

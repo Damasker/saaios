@@ -109,9 +109,20 @@ Memory остаётся полностью в Platform Track, как плоск�
   несут -- `console-tui` сегодня не имеет понятия пространства вообще;
   остаётся вне этого среза.
 
+## Связь с MLP v1 (ADR-125)
+
+Этот ADR **остаётся действующим**. Platform/native граница, `space_id`
+от `saai-taskd`, и `origin_correlation_id` как correlation provenance —
+правильные решения. MLP v1 их расширяет, не отменяет:
+
+- compact identity — `(space_id, key)`, не голый `key` (MEM-01);
+- `None` больше не должен означать All для ordinary callers (MEM-02);
+- `MemoryFact` эволюционирует в typed `MemoryRecord` (MEM-03).
+
 ## Ссылки
 
 - ADR-030 -- источник "оба рантайма не делят код", на который здесь
   опирается отклонение native-entity-варианта.
 - ADR-033 -- прецедент явного отклонения кандидата, дублирующего
   границу между Track'ами, применённый здесь по аналогии.
+- ADR-125 -- Memory, Learning & Provenance v1.

@@ -30,10 +30,22 @@ Event              неизменяемая причинная запись
 
 ### `saai-deviced`
 
-- собирает идентичность и состояние hardware adapters;
-- поддерживает единый versioned snapshot;
-- публикует изменения в event bus;
-- не вызывает модель и не принимает продуктовых решений.
+Целевой native owner World Model (ADR-122). Пока сервиса нет: identity
+идёт через `system.identity`, динамика — через `system.metrics` /
+TelemetrySampler. WORLD-01 вводит typed Observation без daemon.
+
+Когда сервис появится (WORLD-03), он:
+
+- собирает identity и состояние hardware adapters;
+- поддерживает versioned snapshot;
+- публикует изменения;
+- не вызывает модель, не исполняет Action, не принимает Policy,
+  не открывает уведомления.
+
+Observation всегда имеет subject, source, timestamp и TTL.
+**Freshness (Fresh/Stale) отделена от HealthState**
+(`Healthy | Degraded | Unhealthy | Unknown`). Stale required evidence
+даёт Health `Unknown`, не `Unhealthy` и не last-known `Healthy`.
 
 ### Capability registry
 
@@ -56,12 +68,29 @@ Event              неизменяемая причинная запись
 - учитывает пользователя, пространство, приложение, риск и scope разрешения;
 - создаёт неподделываемую системную поверхность подтверждения.
 
+UAM (ADR-124) не заменяет этот сервис. Он задаёт общий язык:
+Principal, Grant, scope, Confirmation (OneShot по умолчанию).
+`PolicyVerdict` остаётся Allow / AskUser / Deny. Attention, World Model
+и Planner не выдают grants.
+
 ### Planner
 
 - получает минимальную проекцию DeviceContext, task state и semantic actions;
 - предлагает `PlanProposal`, но не исполняет его и не объявляет успех;
 - не пишет в entity store и не объявляет Verification;
 - может быть локальным, удалённым или полностью отключённым.
+
+### Memory (`memory-store`)
+
+- помнит явное знание пользователя, предпочтения и (позже) гипотезы
+  с provenance и scope (ADR-125);
+- не дублирует SOM, не копирует Observation и не копирует каждый Action;
+- compact identity — `(space_id, key)`; одинаковый key в разных Space
+  сосуществует;
+- значения в model context — data, не `Known facts` и не instructions;
+- модель не объявляет ExplicitFact / ExplicitPreference;
+- Learning не выдаёт grants, не глушит Critical Attention и не пишет
+  SOM / ContextFrame напрямую.
 
 ### Verifier
 
@@ -137,4 +166,6 @@ sysfs, а после повторного чтения яркости с доп�
 4. Action: изменяет одну подсистему через policy и verification.
 5. Workflow: продолжает многошаговую задачу после reboot.
 6. Automation: реагирует на события в рамках budget и capability.
-7. Learning: сохраняет только разрешённую память с provenance и scope.
+7. Learning: сохраняет только разрешённую память с provenance и scope
+   (ADR-125). Гипотеза ≠ факт. Пользователь всегда может исправить или
+   стереть запись.
