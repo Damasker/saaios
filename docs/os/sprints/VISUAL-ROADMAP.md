@@ -315,7 +315,13 @@ real phone interface consistently.
   interprets, the same pattern `Node.action` in this crate's own
   pre-existing layout system already uses -- not business logic, a dispatch
   key.
-- [ ] Primary touch targets are at least 48×48 logical units.
+- [x] Primary touch targets are at least 48×48 logical units. Checked
+  directly (ADR-108), not assumed: `Button` and `Disclosure` were both
+  under the minimum (`Disclosure` was only 32 units), `DataRow` was already
+  correct, `Field` cleared it only incidentally. All four now explicitly
+  sized to `MIN_TOUCH_TARGET`, physically verified. Not a test -- nothing
+  automated stops a future gallery row from being added under the minimum
+  again; this is a one-time review and fix.
 - [ ] Long labels wrap or reflow; they do not clip or overlap navigation.
   Partial (ADR-107): done for `SemanticText` -- real greedy word-wrap plus
   `max_lines`/ellipsis truncation, physically verified. The gallery's own

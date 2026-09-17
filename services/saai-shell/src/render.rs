@@ -4,7 +4,7 @@ use saai_ui_core::{
     Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize, LogicalUnit,
     Metric, MetricValue, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
     StatusIndicatorVariant, StatusMark, StrokeToken, SurfaceScale, TextOverflow, TextRole, Theme,
-    UniversalState, CONTROL_VISUAL_HEIGHT, TWO_LINE_ROW_HEIGHT,
+    UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1672,17 +1672,19 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
             margin,
             rows[6],
             physical(LogicalUnit::new(160)),
-            physical(CONTROL_VISUAL_HEIGHT),
+            physical(MIN_TOUCH_TARGET),
         ),
     );
 
     let field = Field::new("PIN", FieldKind::Password).with_value("4269");
-    let field_row_height = rows[8] - rows[7];
+    // Section 6.7: "Minimum hit height: 48 logical units" -- explicit,
+    // not an incidental leftover from the row's own budget.
+    let field_height = (rows[8] - rows[7]).min(physical(LogicalUnit::new(90))).max(physical(MIN_TOUCH_TARGET));
     draw_gallery_field(
         canvas,
         fonts,
         &field,
-        Rect::new(margin, rows[7], content_width, field_row_height.saturating_sub(20)),
+        Rect::new(margin, rows[7], content_width, field_height),
     );
 
     let data_row = DataRow::new("Wi-Fi", DataRowVariant::Navigation)
@@ -1699,11 +1701,13 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     draw_gallery_metric(canvas, fonts, &metric, margin, rows[9]);
 
     let disclosure = Disclosure::new("Подробности", "diagnostics-panel").expanded();
+    // Section 6.10: "Hit region is at least 48x48 even when the chevron
+    // is 16-20 units" -- was 32 logical units here, short of that floor.
     draw_gallery_disclosure(
         canvas,
         fonts,
         &disclosure,
-        Rect::new(margin, rows[10], content_width, physical(LogicalUnit::new(32))),
+        Rect::new(margin, rows[10], content_width, physical(MIN_TOUCH_TARGET)),
     );
 }
 // S23 added `is_grid` as the 8th plain draw-time knob on an already
