@@ -7,9 +7,9 @@
 mod foundations;
 
 pub use foundations::{
-    FontFamily, FontWeight, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,
-    SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle, TextRole, TextStyle,
-    CONTROL_VISUAL_HEIGHT, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken,
+    SafeInsets, SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle, TextRole,
+    TextStyle, CONTROL_VISUAL_HEIGHT, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 
 /// Backend-independent sRGB color. Renderers are responsible for converting

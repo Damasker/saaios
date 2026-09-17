@@ -189,6 +189,62 @@ impl IconSize {
     }
 }
 
+/// VUI-02's line-icon family (ADR-100): a Feather Icons webfont build,
+/// loaded through the same `fontdue` path as the sans/mono text faces --
+/// an icon is a glyph at a Private Use Area codepoint, drawn with the
+/// renderer's existing text primitives. Product code names a semantic
+/// icon, never a codepoint or the font file, the same boundary
+/// `TextRole` already draws for typography.
+///
+/// Deliberately a small, curated set matched to a real near-term need
+/// (the PIN keypad's backspace key labels itself with the Unicode erase
+/// mark U+232B, which the sans face has no glyph for -- `fontdue` was
+/// rendering its missing-glyph placeholder box there) rather than
+/// importing the source webfont's full ~280-icon set upfront with no
+/// call site yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconGlyph {
+    Backspace,
+    Wifi,
+    WifiOff,
+    Bluetooth,
+    Battery,
+    BatteryCharging,
+    Lock,
+    Check,
+    X,
+    ChevronRight,
+    ChevronLeft,
+    ChevronDown,
+    AlertTriangle,
+    Settings,
+}
+
+impl IconGlyph {
+    /// The codepoint in `FeatherIcons.ttf`'s Private Use Area, taken
+    /// directly from the webfont's own generated `content:` mapping (see
+    /// `os/targets/panther/third_party/README.md`) -- not a SaaiOS
+    /// choice, just where this build placed that glyph.
+    pub const fn codepoint(self) -> char {
+        match self {
+            Self::AlertTriangle => '\u{f105}',
+            Self::BatteryCharging => '\u{f11d}',
+            Self::Battery => '\u{f11e}',
+            Self::Bluetooth => '\u{f121}',
+            Self::Check => '\u{f12e}',
+            Self::ChevronDown => '\u{f12f}',
+            Self::ChevronLeft => '\u{f130}',
+            Self::ChevronRight => '\u{f131}',
+            Self::Backspace => '\u{f156}',
+            Self::Lock => '\u{f190}',
+            Self::Settings => '\u{f1d0}',
+            Self::WifiOff => '\u{f20d}',
+            Self::Wifi => '\u{f20e}',
+            Self::X => '\u{f213}',
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SafeInsets {
     pub top: LogicalUnit,
@@ -356,5 +412,34 @@ mod tests {
         assert_eq!(MotionToken::Selection.milliseconds(false), 180);
         assert_eq!(MotionToken::Context.milliseconds(false), 240);
         assert_eq!(MotionToken::Context.milliseconds(true), 0);
+    }
+
+    #[test]
+    fn every_icon_glyph_is_a_distinct_private_use_area_codepoint() {
+        let glyphs = [
+            IconGlyph::Backspace,
+            IconGlyph::Wifi,
+            IconGlyph::WifiOff,
+            IconGlyph::Bluetooth,
+            IconGlyph::Battery,
+            IconGlyph::BatteryCharging,
+            IconGlyph::Lock,
+            IconGlyph::Check,
+            IconGlyph::X,
+            IconGlyph::ChevronRight,
+            IconGlyph::ChevronLeft,
+            IconGlyph::ChevronDown,
+            IconGlyph::AlertTriangle,
+            IconGlyph::Settings,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for glyph in glyphs {
+            let codepoint = glyph.codepoint();
+            assert!(
+                ('\u{e000}'..='\u{f8ff}').contains(&codepoint),
+                "{codepoint:?} is outside the Private Use Area"
+            );
+            assert!(seen.insert(codepoint), "{codepoint:?} used by two icons");
+        }
     }
 }

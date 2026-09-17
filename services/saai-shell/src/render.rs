@@ -1,7 +1,7 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::{
-    ColorRole, ContextColor, FontFamily, FontWeight, Rect, Rgb, StatusMark, SurfaceScale, TextRole,
-    Theme, UniversalState,
+    ColorRole, ContextColor, FontFamily, FontWeight, IconGlyph, Rect, Rgb, StatusMark,
+    SurfaceScale, TextRole, Theme, UniversalState,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -79,6 +79,7 @@ pub struct Fonts {
     regular: Font,
     semibold: Font,
     mono: Option<Font>,
+    icons: Option<Font>,
 }
 
 #[derive(Clone)]
@@ -129,10 +130,16 @@ impl Fonts {
             "/saaios/fonts/Montserrat-Regular.ttf",
             "/saaios/fonts/Montserrat-SemiBold.ttf",
             "/saaios/fonts/IBMPlexMono-Regular.ttf",
+            "/saaios/fonts/FeatherIcons.ttf",
         )
     }
 
-    fn load(regular_path: &str, semibold_path: &str, mono_path: &str) -> Result<Self, String> {
+    fn load(
+        regular_path: &str,
+        semibold_path: &str,
+        mono_path: &str,
+        icons_path: &str,
+    ) -> Result<Self, String> {
         let regular =
             fs::read(regular_path).map_err(|error| format!("read {regular_path}: {error}"))?;
         let semibold =
@@ -153,12 +160,35 @@ impl Fonts {
                 None
             }
         };
+        // ADR-100: unlike mono text, an icon has no sans fallback that means
+        // anything -- a letter cannot substitute for a wifi/lock/chevron
+        // mark. A missing or invalid icon font simply draws nothing for
+        // whichever icon call sites exist (see `draw_keypad_label`), the
+        // same fail-soft posture, applied at the one place it can actually
+        // be honored instead of a fallback that would be misleading.
+        let icons = match fs::read(icons_path) {
+            Ok(bytes) => match Font::from_bytes(bytes, FontSettings::default()) {
+                Ok(font) => {
+                    eprintln!("saai-shell: loaded optional icon font {icons_path}");
+                    Some(font)
+                }
+                Err(error) => {
+                    eprintln!("saai-shell: parse {icons_path}: {error}; icons will not draw");
+                    None
+                }
+            },
+            Err(error) => {
+                eprintln!("saai-shell: read {icons_path}: {error}; icons will not draw");
+                None
+            }
+        };
         Ok(Self {
             regular: Font::from_bytes(regular, FontSettings::default())
                 .map_err(|error| format!("parse {regular_path}: {error}"))?,
             semibold: Font::from_bytes(semibold, FontSettings::default())
                 .map_err(|error| format!("parse {semibold_path}: {error}"))?,
             mono,
+            icons,
         })
     }
 
@@ -383,9 +413,9 @@ pub fn draw_intent_input(
             rect.height.saturating_sub(8),
         );
         canvas.fill_rect(key, theme_color(ColorRole::Surface));
-        draw_text_centered(
+        draw_keypad_label(
             canvas,
-            &fonts.semibold,
+            fonts,
             label,
             32.0,
             key.x + key.width / 2,
@@ -684,6 +714,31 @@ pub fn draw_row_list(
 /// S24: "Изменить PIN" on "Я" -- same header-plus-keys shape as
 /// `draw_intent_input`, but the preview is masked (a PIN is a secret,
 /// same reasoning as `WifiPasswordInput`'s masked preview) and the
+/// ADR-100: the PIN keypad's backspace key used to label itself with the
+/// Unicode erase mark U+232B ("⌫"), which the sans face has no glyph
+/// for -- `fontdue` silently drew its own missing-glyph placeholder box
+/// there (found via `screencap`, ADR-099's real device screenshot). Draws
+/// through the icon font instead for that one key; every other key (a
+/// plain digit) is unaffected and keeps using the sans face.
+fn draw_keypad_label(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    label: &str,
+    size: f32,
+    center_x: u32,
+    top: u32,
+    color: Pixel,
+) {
+    if label == "⌫" {
+        if let Some(icons) = &fonts.icons {
+            let glyph = IconGlyph::Backspace.codepoint().to_string();
+            draw_text_centered(canvas, icons, &glyph, size, center_x, top, color);
+            return;
+        }
+    }
+    draw_text_centered(canvas, &fonts.semibold, label, size, center_x, top, color);
+}
+
 /// keys come from `pin_keypad_rect`'s numeric layout instead of
 /// ADR-029's letters.
 pub fn draw_pin_setup(
@@ -739,9 +794,9 @@ pub fn draw_pin_setup(
             rect.height.saturating_sub(8),
         );
         canvas.fill_rect(key, theme_color(ColorRole::Surface));
-        draw_text_centered(
+        draw_keypad_label(
             canvas,
-            &fonts.semibold,
+            fonts,
             label,
             32.0,
             key.x + key.width / 2,
@@ -808,9 +863,9 @@ pub fn draw_lock_pin_entry(
             rect.height.saturating_sub(8),
         );
         canvas.fill_rect(key, theme_color(ColorRole::Surface));
-        draw_text_centered(
+        draw_keypad_label(
             canvas,
-            &fonts.semibold,
+            fonts,
             label,
             36.0,
             key.x + key.width / 2,

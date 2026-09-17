@@ -142,6 +142,8 @@ set -- ramdisk.cpio \
     "add 0644 saaios/fonts/Montserrat-OFL.txt $assets_dir/fonts/Montserrat-OFL.txt" \
     "add 0644 saaios/fonts/IBMPlexMono-Regular.ttf $assets_dir/fonts/IBMPlexMono-Regular.ttf" \
     "add 0644 saaios/fonts/IBMPlexMono-OFL.txt $assets_dir/fonts/IBMPlexMono-OFL.txt" \
+    "add 0644 saaios/fonts/FeatherIcons.ttf $assets_dir/fonts/FeatherIcons.ttf" \
+    "add 0644 saaios/fonts/FeatherIcons-LICENSE.txt $assets_dir/fonts/FeatherIcons-LICENSE.txt" \
     "add 0755 saaios/touch-monitor $touch_monitor" \
     "add 0755 saaios/wifi-scan $wifi_scan" \
     "add 0755 saaios/sntp-sync $sntp_sync" \

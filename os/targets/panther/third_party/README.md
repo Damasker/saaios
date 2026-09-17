@@ -31,6 +31,28 @@ is distributed under the SIL Open Font License 1.1, stored as
 The shell falls back to the regular sans face if the optional mono asset is
 missing or invalid, so a packaging error cannot remove all interface text.
 
+## Feather Icons
+
+The line-icon family (VUI-02, ADR-100) is the static `FeatherIcons.ttf`, a
+webfont build of the Feather icon set (Cole Bemis and contributors), loaded
+through the same `fontdue` path as the sans and mono text faces -- an icon is
+just a glyph at a Private Use Area codepoint. Distributed under the MIT
+License, stored as `assets/fonts/FeatherIcons-LICENSE.txt`.
+
+- Icon source and license origin: <https://github.com/feathericons/feather>,
+  commit `3dc050d97405062eba78aa57115c0a15c63abdaa`.
+- Webfont build (the actual `.ttf` shipped here):
+  <https://github.com/niklauslee/feather-webfont>, npm package version
+  `4.22.3`, commit `9e852be2566542ddbfa2ddb9cc55c4f918b9bba5`.
+- Font SHA-256: `f4aee0768b9c35d1269d1e4e79c89a9d03ababd4a88d8063bbad63a5b7d5b679`
+- License SHA-256: `308028e93fcf84972523cdf6e616f73168546b4953895f516d01287f16fe7bee`
+
+`saai-ui-core::IconGlyph` is the product API; callers never name codepoints or
+the font file. There is no meaningful fallback for a missing icon glyph (a
+letter cannot substitute for a wifi/lock/chevron mark) -- a missing or invalid
+asset renders nothing for that one icon rather than failing the whole shell,
+the same fail-soft posture the mono face already has for text.
+
 ## stb_truetype
 
 `stb/stb_truetype.h` is pinned to upstream commit

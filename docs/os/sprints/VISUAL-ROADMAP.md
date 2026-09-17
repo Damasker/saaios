@@ -233,7 +233,11 @@ real phone interface consistently.
   (see ADR-099's "Not verified by this ADR").
 - [ ] Define spacing, radius, stroke, touch-target, safe-inset, and elevation
   tokens in logical units.
-- [ ] Add one coherent line-icon source and a reproducible asset pipeline.
+- [x] Add one coherent line-icon source and a reproducible asset pipeline
+  (ADR-100, Feather Icons -- MIT, static TTF, drawn through the existing
+  `fontdue` text path; a small curated `IconGlyph` set, extendable per real
+  call site). Physically verified: fixed the PIN keypad's backspace tofu-box
+  (ADR-099's own screenshot finding).
 - [ ] Implement shared layout primitives: stack, row, inset, separator, scroll
   region, and focus/order metadata.
 - [ ] Implement visual primitives: semantic text, icon, divider,
