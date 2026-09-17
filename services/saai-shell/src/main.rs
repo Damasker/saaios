@@ -601,6 +601,14 @@ const REMOTE_PAIR_SOCKET_PATH: &str = "/run/saaios/remote-pair.sock";
 /// already uses for Wi-Fi status, storage, and the remote-access
 /// toggle.
 const GLOBAL_LAST_INPUT_PATH: &str = "/run/saaios/last-input";
+/// VUI-01's volatile developer switch. `/run` is recreated on boot, so a
+/// calibration session can survive a supervised shell restart but can never
+/// become a persistent user setting or strand the device after reboot.
+const UI_CALIBRATION_MARKER: &str = "/run/saaios/ui-calibration";
+
+fn calibration_requested(environment: Option<&str>, runtime_marker_exists: bool) -> bool {
+    environment == Some("1") || runtime_marker_exists
+}
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
 /// `ShellSettings`'s own JSON directly without duplicating its parse
@@ -2887,9 +2895,13 @@ fn main() {
     let portal_socket = std::env::var_os("SAAIOS_PORTAL_SOCKET")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "/run/saaios/portal.sock".into());
-    // VUI-01: explicit developer-only calibration fixture. Read once at
-    // startup so normal redraws never touch the process environment.
-    let calibration_mode = std::env::var("SAAIOS_UI_CALIBRATION").as_deref() == Ok("1");
+    // VUI-01: explicit developer-only calibration fixture. Both switches are
+    // read once so normal redraws never touch environment or filesystem.
+    let calibration_environment = std::env::var("SAAIOS_UI_CALIBRATION").ok();
+    let calibration_mode = calibration_requested(
+        calibration_environment.as_deref(),
+        std::path::Path::new(UI_CALIBRATION_MARKER).exists(),
+    );
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
@@ -6573,8 +6585,8 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        bluetooth_list_action_at, capability_label, consent_action_at, content_action_at,
-        dev_surface_back_tapped, effective_context_space, format_utc_offset,
+        bluetooth_list_action_at, calibration_requested, capability_label, consent_action_at,
+        content_action_at, dev_surface_back_tapped, effective_context_space, format_utc_offset,
         input_idle_for_at_least, intent_action_at, known_surfaces, me_fixed_card_action,
         next_in_cycle, object_view_action_at, object_view_content, orb_action_at, orb_menu_actions,
         orb_state, orb_zone_rect, remove_context_source, space_color, space_color_entity,
@@ -6606,6 +6618,14 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    fn calibration_requires_an_explicit_environment_or_runtime_marker() {
+        assert!(!calibration_requested(None, false));
+        assert!(!calibration_requested(Some("0"), false));
+        assert!(calibration_requested(Some("1"), false));
+        assert!(calibration_requested(None, true));
     }
 
     fn lifecycle_entity(space_id: &str, lifecycle: &str) -> Entity {

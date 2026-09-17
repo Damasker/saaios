@@ -773,7 +773,8 @@ pub fn draw_lock_pin_entry(
 
 /// VUI-01's deterministic, device-runnable calibration fixture. It is selected
 /// only by the explicit `SAAIOS_UI_CALIBRATION=1` developer environment switch
-/// in `main.rs`; normal navigation and stored settings cannot open it.
+/// or volatile `/run/saaios/ui-calibration` marker in `main.rs`; normal
+/// navigation and stored settings cannot open it.
 ///
 /// Every swatch comes through the same semantic-role/context/state APIs as the
 /// production shell. The state rows also draw a distinct geometric mark, so a
