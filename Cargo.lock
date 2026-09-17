@@ -1482,6 +1482,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "intent-resolution"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "saai-entity-store",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2291,6 +2302,7 @@ dependencies = [
 name = "saai-entity-protocol"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "saai-entity-store",
  "serde",
  "serde_json",
@@ -2336,6 +2348,23 @@ dependencies = [
  "tempfile",
  "wayland-client",
  "wayland-protocols",
+]
+
+[[package]]
+name = "saai-object-actions"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "policy-engine",
+ "protocol",
+ "saai-entity-store",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tool-registry",
+ "uuid",
 ]
 
 [[package]]
@@ -2416,6 +2445,7 @@ dependencies = [
  "chrono",
  "drm",
  "fontdue",
+ "intent-resolution",
  "nix",
  "saai-app-protocol",
  "saai-entity-protocol",
@@ -2437,8 +2467,10 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "intent-resolution",
  "saai-entity-protocol",
  "saai-entity-store",
+ "saai-object-actions",
  "serde",
  "serde_json",
  "tempfile",

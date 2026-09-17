@@ -5,7 +5,9 @@ use saai_entity_protocol::{
     decode_request, encode_message, ClientRequest, EntitydEvent, ProtocolError, ResponseResult,
     ServerMessage, MAX_WIRE_MESSAGE_BYTES,
 };
-use saai_entity_store::{Entity, EntityStore, StoreError, SCHEMA_VERSION};
+use saai_entity_store::{
+    Entity, EntityStore, Relationship, RelationshipQuery, StoreError, SCHEMA_VERSION,
+};
 use std::fs;
 use std::io;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -186,12 +188,12 @@ async fn serve_client(
                         Ok(result) => result,
                         Err(error) => (
                             store_error_message(request_id, &error),
-                            None,
+                            Vec::new(),
                         ),
                     }
                 };
                 write_message(&mut writer, &response).await?;
-                if let Some(event) = emitted {
+                for event in emitted {
                     let _ = events.send(event);
                 }
             }
@@ -211,9 +213,9 @@ async fn serve_client(
 fn handle_request(
     store: &EntityStore,
     request: ClientRequest,
-) -> Result<(ServerMessage, Option<EntitydEvent>), StoreError> {
+) -> Result<(ServerMessage, Vec<EntitydEvent>), StoreError> {
     let request_id = request.request_id().to_owned();
-    let mut emitted = None;
+    let mut emitted = Vec::new();
     let result = match request {
         ClientRequest::ListSpaces { .. } => ResponseResult::Spaces {
             spaces: store.list_spaces()?,
@@ -225,13 +227,17 @@ fn handle_request(
         },
         ClientRequest::SelectSpace { space_id, .. } => {
             let selection = store.select_space(&space_id)?;
-            emitted = Some(EntitydEvent::SelectionChanged {
+            emitted.push(EntitydEvent::SelectionChanged {
                 selection: selection.clone(),
             });
             ResponseResult::Selection { selection }
         }
         ClientRequest::ListEntities { space_id, .. } => ResponseResult::Entities {
             entities: store.list_entities(&space_id)?,
+            space_id,
+        },
+        ClientRequest::ListSpaceMembers { space_id, .. } => ResponseResult::Entities {
+            entities: store.list_visible_space_members(&space_id)?,
             space_id,
         },
         ClientRequest::CreateEntity {
@@ -254,9 +260,20 @@ fn handle_request(
                 updated_at: now,
             };
             let event = store.create_entity(entity.clone())?;
-            emitted = Some(EntitydEvent::EntityChanged {
+            emitted.push(EntitydEvent::EntityChanged {
                 record: event.clone(),
             });
+            match store.ensure_in_space(&entity) {
+                Ok(Some(membership)) => {
+                    emitted.push(EntitydEvent::RelationshipChanged {
+                        record: membership,
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("saai-entityd: in-space not recorded: {error}");
+                }
+            }
             ResponseResult::Entity { entity, event }
         }
         ClientRequest::UpdateEntity {
@@ -292,7 +309,7 @@ fn handle_request(
                 updated_at: Utc::now(),
             };
             let event = store.update_entity(entity.clone())?;
-            emitted = Some(EntitydEvent::EntityChanged {
+            emitted.push(EntitydEvent::EntityChanged {
                 record: event.clone(),
             });
             ResponseResult::Entity { entity, event }
@@ -317,7 +334,7 @@ fn handle_request(
                 .checked_add(1)
                 .ok_or(StoreError::RevisionExhausted(entity_id))?;
             let event = store.delete_entity(&space_id, entity_id, revision)?;
-            emitted = Some(EntitydEvent::EntityChanged {
+            emitted.push(EntitydEvent::EntityChanged {
                 record: event.clone(),
             });
             ResponseResult::Deleted {
@@ -328,16 +345,144 @@ fn handle_request(
             }
         }
         ClientRequest::Subscribe { .. } => ResponseResult::Subscribed,
+        ClientRequest::ListRelationships {
+            object,
+            direction,
+            relation_type,
+            ..
+        } => ResponseResult::Relationships {
+            relationships: store.list_relationships(&RelationshipQuery {
+                object,
+                direction,
+                relation_type,
+                ..RelationshipQuery::default()
+            })?,
+        },
+        ClientRequest::CreateRelationship {
+            source,
+            target,
+            relation_type,
+            provenance,
+            confidence,
+            valid_from,
+            valid_until,
+            properties,
+            ..
+        } => {
+            let now = Utc::now();
+            let relationship = Relationship {
+                schema: SCHEMA_VERSION,
+                id: Uuid::new_v4(),
+                source,
+                target,
+                relation_type,
+                provenance,
+                confidence,
+                valid_from,
+                valid_until,
+                properties,
+                revision: 1,
+                created_at: now,
+                updated_at: now,
+            };
+            let event = store.create_relationship(relationship.clone())?;
+            emitted.push(EntitydEvent::RelationshipChanged {
+                record: event.clone(),
+            });
+            ResponseResult::Relationship {
+                relationship,
+                event,
+            }
+        }
+        ClientRequest::UpdateRelationship {
+            relationship_id,
+            expected_revision,
+            provenance,
+            confidence,
+            valid_from,
+            valid_until,
+            properties,
+            ..
+        } => {
+            let current = store
+                .get_relationship(relationship_id)?
+                .ok_or(StoreError::RelationshipNotFound(relationship_id))?;
+            if current.revision != expected_revision {
+                return Err(StoreError::RevisionConflict {
+                    expected: current.revision,
+                    actual: expected_revision,
+                });
+            }
+            let relationship = Relationship {
+                schema: SCHEMA_VERSION,
+                id: relationship_id,
+                source: current.source,
+                target: current.target,
+                relation_type: current.relation_type,
+                provenance,
+                confidence,
+                valid_from,
+                valid_until,
+                properties,
+                revision: current
+                    .revision
+                    .checked_add(1)
+                    .ok_or(StoreError::RevisionExhausted(relationship_id))?,
+                created_at: current.created_at,
+                updated_at: Utc::now(),
+            };
+            let event = store.update_relationship(relationship.clone())?;
+            emitted.push(EntitydEvent::RelationshipChanged {
+                record: event.clone(),
+            });
+            ResponseResult::Relationship {
+                relationship,
+                event,
+            }
+        }
+        ClientRequest::DeleteRelationship {
+            relationship_id,
+            expected_revision,
+            ..
+        } => {
+            let current = store
+                .get_relationship(relationship_id)?
+                .ok_or(StoreError::RelationshipNotFound(relationship_id))?;
+            if current.revision != expected_revision {
+                return Err(StoreError::RevisionConflict {
+                    expected: current.revision,
+                    actual: expected_revision,
+                });
+            }
+            let revision = current
+                .revision
+                .checked_add(1)
+                .ok_or(StoreError::RevisionExhausted(relationship_id))?;
+            let event = store.delete_relationship(relationship_id, revision)?;
+            emitted.push(EntitydEvent::RelationshipChanged {
+                record: event.clone(),
+            });
+            ResponseResult::RelationshipDeleted {
+                relationship_id,
+                revision,
+                event,
+            }
+        }
     };
     Ok((ServerMessage::success(request_id, result), emitted))
 }
 
 fn store_error_message(request_id: String, error: &StoreError) -> ServerMessage {
     let code = match error {
-        StoreError::SpaceNotFound(_) | StoreError::EntityNotFound(_) => "not_found",
+        StoreError::SpaceNotFound(_)
+        | StoreError::EntityNotFound(_)
+        | StoreError::RelationshipNotFound(_)
+        | StoreError::MissingRelationshipEndpoint => "not_found",
         StoreError::RevisionConflict { .. } => "revision_conflict",
         StoreError::Validation(_) => "invalid_record",
-        StoreError::CorruptLog { .. } => "store_corrupt",
+        StoreError::CorruptLog { .. } | StoreError::CorruptRelationshipLog { .. } => {
+            "store_corrupt"
+        }
         _ => "entityd_error",
     };
     ServerMessage::error(request_id, code, error.to_string())

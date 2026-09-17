@@ -10,8 +10,14 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod relationship;
 mod store;
 
+pub use relationship::{
+    ObjectRef, Provenance, RelationDirection, Relationship, RelationshipEvent,
+    RelationshipEventPayload, RelationshipQuery, RELATION_EXECUTES, RELATION_IN_SPACE,
+    RELATION_PRODUCES, RELATION_REALIZES, RELATION_RESULT_OF,
+};
 pub use store::{BootstrapResult, EntityStore, StoreError};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -21,6 +27,9 @@ pub const MAX_SPACE_NAME_CHARS: usize = 64;
 pub const MAX_ENTITY_TYPE_BYTES: usize = 96;
 pub const MAX_ENTITY_TITLE_CHARS: usize = 160;
 pub const MAX_ENTITY_PROPERTIES_BYTES: usize = 64 * 1024;
+pub const MAX_RELATION_TYPE_BYTES: usize = 96;
+pub const MAX_RELATIONSHIP_PROPERTIES_BYTES: usize = 64 * 1024;
+pub const MAX_PROVENANCE_SOURCE_BYTES: usize = 160;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -122,6 +131,24 @@ pub enum ValidationError {
     CrossSpaceRecord,
     #[error("updated_at precedes created_at")]
     InvalidTimestampOrder,
+    #[error("invalid relationship id")]
+    InvalidRelationshipId,
+    #[error("invalid object ref")]
+    InvalidObjectRef,
+    #[error("invalid relation type")]
+    InvalidRelationType,
+    #[error("invalid relationship endpoints for this relation type")]
+    InvalidRelationshipEndpoint,
+    #[error("invalid provenance")]
+    InvalidProvenance,
+    #[error(
+        "confidence must be absent for asserted facts and in 0.0..=1.0 for inferred relations"
+    )]
+    InvalidConfidence,
+    #[error("valid_until precedes valid_from")]
+    InvalidValidityWindow,
+    #[error("relationship properties exceed {MAX_RELATIONSHIP_PROPERTIES_BYTES} bytes")]
+    RelationshipPropertiesTooLarge,
 }
 
 impl Space {
@@ -211,7 +238,7 @@ pub fn validate_space_id(value: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-fn validate_schema(record: &'static str, actual: u32) -> Result<(), ValidationError> {
+pub(crate) fn validate_schema(record: &'static str, actual: u32) -> Result<(), ValidationError> {
     if actual != SCHEMA_VERSION {
         return Err(ValidationError::UnsupportedSchema { record, actual });
     }
@@ -253,7 +280,7 @@ fn is_slug(value: &str) -> bool {
     !previous_dash
 }
 
-fn is_dotted_token(value: &str, max_bytes: usize) -> bool {
+pub(crate) fn is_dotted_token(value: &str, max_bytes: usize) -> bool {
     if value.is_empty() || value.len() > max_bytes || !value.is_ascii() {
         return false;
     }

@@ -216,6 +216,11 @@ Entity ↔ Space
 
 many-to-many.
 
+Реализация (ADR-118): `Entity.space_id` остаётся physical partition
+store v1. Semantic membership — Relationship `saaios.in-space`.
+ContextFrame (ADR-087) по-прежнему отвечает «что сейчас релевантно»;
+SOM отвечает «что существует и как связано».
+
 Один объект может быть связан с несколькими контекстами:
 
 ```text

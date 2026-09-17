@@ -142,3 +142,11 @@ Native OS Track не вводит собственную, отдельную о�
   переиспользуемые здесь без изменений.
 - `docs/os/sprints/S10-planner-automation-memory.md` -- Change 1,
   оба вопроса, которые этот ADR закрывает.
+
+## Evolution
+
+IRAB (ADR-120) развивает этот мост, не отменяет его. Free-form
+`diagnose(text, space_id)` остаётся compatibility path, пока
+structured `ResolveIntent` не покроет сценарии. Intent теперь может
+нести captured `ObjectRef`/space; детерминированный resolver не
+вызывает runtime, если semantic action уже известен.

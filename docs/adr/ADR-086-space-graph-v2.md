@@ -128,6 +128,15 @@ Device: подтверждено вживую без пересборки обр
 - `docs/os/sprints/HIA-ROADMAP.md`: HIA-01 отмечен Done со ссылкой на
   этот ADR.
 
+## Evolution
+
+SOM Relationship (ADR-118) становится canonical future representation
+связей, в том числе Space↔Space. Существующие `saaios.space-relation`
+Entity остаются readable на переходный период и **не** удаляются
+автоматически. Двух независимых графов в продуктовом смысле быть не
+должно: на первом этапе читаются оба формата; cleanup — отдельный ADR
+после доказанной миграции. Проверенная вертикаль HIA-01 не ломается.
+
 ## Ссылки
 
 - `services/saai-shell/src/main.rs` -- `SpaceLifecycle`,

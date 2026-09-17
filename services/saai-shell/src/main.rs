@@ -66,16 +66,18 @@ use std::time::{Duration, Instant, SystemTime};
 mod appd_client;
 mod dmabuf_canvas;
 mod entityd_client;
+mod intent_context;
 mod portal_server;
 mod render;
 
+use chrono::Utc;
 use saai_app_protocol::{
     AppSummary, LifecycleEventKind, ResponseResult as AppResponseResult,
     ServerMessage as AppServerMessage,
 };
 use saai_entity_protocol::{
-    Entity, EntitydEvent, ResponseResult as EntityResponseResult,
-    ServerMessage as EntityServerMessage, Space,
+    Entity, EntitydEvent, ObjectRef, Relationship, ResponseResult as EntityResponseResult,
+    ServerMessage as EntityServerMessage, Space, RELATION_REALIZES,
 };
 
 /// HIA-01 (docs/os/sprints/HIA-ROADMAP.md): the builtin system space
@@ -85,9 +87,12 @@ use saai_entity_protocol::{
 /// as `/data/saaios/var/...` config directories one layer down. Space
 /// relations/lifecycle are stored here, not scattered across every
 /// individual space they describe, specifically because
-/// `saai-entityd`'s `ListEntities` is scoped to one space at a
-/// time -- keeping them all in one well-known space is what makes
-/// "list every relation" a single query instead of N.
+/// `saai-entityd`'s `ListEntities` is scoped to one physical space
+/// at a time -- keeping them all in one well-known space is what
+/// makes "list every relation" a single query instead of N. Space
+/// screens themselves now call `list_space_members` so a semantic
+/// `saaios.in-space` member still appears without moving the
+/// object's storage partition.
 const SYSTEM_SPACE_ID: &str = "saaios";
 /// One edge of the space graph. `properties`: `from_space_id`,
 /// `to_space_id`, `kind` (one of the document's own vocabulary --
@@ -1948,34 +1953,31 @@ struct ObjectViewContent {
     actions: Vec<&'static str>,
 }
 
-fn object_view_content(entity: &Entity, selected_entities: &[Entity]) -> ObjectViewContent {
+fn object_view_content(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> ObjectViewContent {
     match entity.entity_type.as_str() {
         "saaios.task" => {
-            // A real related-entity lookup, not a placeholder: every
-            // saaios.task saai-taskd creates carries the intent_id
-            // that produced it (see `confirm_pending_task`'s own old
-            // doc comment, now folded into `handle_object_view_
-            // action`) -- shown here only when that intent is
-            // actually present in the same already-loaded entity list,
-            // never a second round-trip to entityd just for this.
-            let related = entity
-                .properties
-                .get("intent_id")
-                .and_then(Value::as_str)
-                .and_then(|id| id.parse::<Uuid>().ok())
-                .and_then(|id| {
-                    selected_entities.iter().find(|candidate| {
-                        candidate.id == id && candidate.entity_type == "saaios.intent"
-                    })
-                })
-                .map(|intent| format!("Из намерения: {}", intent.title));
+            let related =
+                related_object_line(entity, selected_entities, relationships).or_else(|| {
+                    entity
+                        .properties
+                        .get("intent_id")
+                        .and_then(Value::as_str)
+                        .and_then(|id| id.parse::<Uuid>().ok())
+                        .and_then(|id| {
+                            selected_entities.iter().find(|candidate| {
+                                candidate.id == id && candidate.entity_type == "saaios.intent"
+                            })
+                        })
+                        .map(|intent| format!("Из намерения: {}", intent.title))
+                });
             ObjectViewContent {
                 title: entity.title.clone(),
                 status: "Ждёт подтверждения".to_string(),
                 related,
-                // Same wording the old saaios.task-only confirm
-                // screen already used -- users who saw it shouldn't
-                // see the button text change out from under them.
                 actions: vec!["Подтвердить", "Отклонить"],
             }
         }
@@ -1987,7 +1989,7 @@ fn object_view_content(entity: &Entity, selected_entities: &[Entity]) -> ObjectV
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            related: None,
+            related: related_object_line(entity, selected_entities, relationships),
             actions: vec!["Скрыть"],
         },
         _ => {
@@ -2004,10 +2006,57 @@ fn object_view_content(entity: &Entity, selected_entities: &[Entity]) -> ObjectV
             ObjectViewContent {
                 title: entity.title.clone(),
                 status,
-                related: None,
+                related: related_object_line(entity, selected_entities, relationships),
                 actions: Vec::new(),
             }
         }
+    }
+}
+
+fn related_object_line(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> Option<String> {
+    let now = Utc::now();
+    let mut related = relationships
+        .iter()
+        .filter(|relationship| {
+            relationship.source == ObjectRef::entity(entity.id) && relationship.is_active_at(now)
+        })
+        .collect::<Vec<_>>();
+    related.sort_by_key(|relationship| {
+        (
+            relationship.relation_type != RELATION_REALIZES,
+            relationship.id,
+        )
+    });
+    related
+        .into_iter()
+        .find_map(|relationship| format_related_relationship(relationship, selected_entities))
+}
+
+fn format_related_relationship(
+    relationship: &Relationship,
+    selected_entities: &[Entity],
+) -> Option<String> {
+    let title = match &relationship.target {
+        ObjectRef::Entity { id } => selected_entities
+            .iter()
+            .find(|candidate| candidate.id == *id)
+            .map(|candidate| candidate.title.clone()),
+        ObjectRef::Space { id } => Some(id.clone()),
+    }?;
+    if relationship.provenance.is_inferred() && !relationship.user_confirmed() {
+        let confidence = relationship
+            .confidence
+            .map(|value| format!(" · {:.0}%", value * 100.0))
+            .unwrap_or_default();
+        Some(format!("Возможно связано{confidence} · {title}"))
+    } else if relationship.relation_type == RELATION_REALIZES {
+        Some(format!("Из намерения: {title}"))
+    } else {
+        Some(format!("Связано: {title}"))
     }
 }
 
@@ -3146,6 +3195,7 @@ fn main() {
         calibration_mode,
         gallery_mode,
         selected_entities: Vec::new(),
+        relationships: Vec::new(),
         system_space_entities: Vec::new(),
         context_frame: Vec::new(),
         last_context_signal_refresh: Instant::now(),
@@ -3392,6 +3442,9 @@ struct Shell {
     selected_space_id: String,
     entity_counts: BTreeMap<String, usize>,
     selected_entities: Vec<Entity>,
+    /// First-class SOM edges from `saai-entityd`. Object View reads
+    /// related objects from here and falls back to legacy `intent_id`.
+    relationships: Vec<Relationship>,
     /// HIA-01: `saaios.space-relation`/`saaios.space-lifecycle`
     /// entities all live in the system space (`SYSTEM_SPACE_ID`),
     /// regardless of which space the user currently has selected --
@@ -3899,7 +3952,7 @@ impl TouchHandler for Shell {
                 let action_count = self
                     .viewing_entity()
                     .map(|entity| {
-                        object_view_content(entity, &self.selected_entities)
+                        object_view_content(entity, &self.selected_entities, &self.relationships)
                             .actions
                             .len()
                     })
@@ -4241,7 +4294,7 @@ impl Shell {
                 decline: buttons[1].rect,
             }
         } else if let Some(entity) = self.viewing_entity() {
-            let content = object_view_content(entity, &self.selected_entities);
+            let content = object_view_content(entity, &self.selected_entities, &self.relationships);
             let view = object_view(width, height, content.actions.len());
             let header = view.children[0].rect;
             let actions: Vec<(Rect, &'static str)> = if content.actions.is_empty() {
@@ -5140,6 +5193,36 @@ impl Shell {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        if action == INTENT_SEND_ACTION {
+            let text = self
+                .intent_input
+                .as_ref()
+                .map(|state| state.buffer.trim().to_string())
+                .unwrap_or_default();
+            self.intent_input = None;
+            if !text.is_empty() && self.entityd.is_connected() {
+                let focused = self.viewing_entity().cloned();
+                let context = intent_context::capture_intent_context(
+                    &self.selected_space_id,
+                    &self.context_frame,
+                    focused.as_ref(),
+                );
+                let properties = intent_context::build_orb_intent_properties(&text, &context);
+                // "saaios.intent" -- must match saai-taskd's own
+                // model::INTENT_TYPE (ADR-030). The two crates share
+                // no dependency by design, so this is a convention,
+                // not a compile-time guarantee.
+                self.entityd.create_entity(
+                    self.selected_space_id.clone(),
+                    "saaios.intent",
+                    &text,
+                    properties,
+                );
+                println!("saai-shell: submitted intent \"{text}\"");
+            }
+            self.draw(conn, qh);
+            return;
+        }
         let Some(state) = self.intent_input.as_mut() else {
             return;
         };
@@ -5155,25 +5238,6 @@ impl Shell {
             }
             INTENT_BACKSPACE_ACTION => {
                 state.buffer.pop();
-            }
-            INTENT_SEND_ACTION => {
-                let text = state.buffer.trim().to_string();
-                if !text.is_empty() && self.entityd.is_connected() {
-                    let mut properties = Map::new();
-                    properties.insert("text".into(), json!(text));
-                    // "saaios.intent" -- must match saai-taskd's own
-                    // model::INTENT_TYPE (ADR-030). The two crates share
-                    // no dependency by design, so this is a convention,
-                    // not a compile-time guarantee.
-                    self.entityd.create_entity(
-                        self.selected_space_id.clone(),
-                        "saaios.intent",
-                        &text,
-                        properties,
-                    );
-                    println!("saai-shell: submitted intent \"{text}\"");
-                }
-                self.intent_input = None;
             }
             other => {
                 if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
@@ -6419,13 +6483,13 @@ impl Shell {
                     changed = self.spaces != spaces;
                     self.spaces = spaces;
                     for id in ids {
-                        self.entityd.list_entities(id);
+                        self.entityd.list_space_members(id);
                     }
                 }
                 EntityResponseResult::Selection { selection } => {
                     changed = self.selected_space_id != selection.space_id;
                     self.selected_space_id = selection.space_id.clone();
-                    self.entityd.list_entities(selection.space_id);
+                    self.entityd.list_space_members(selection.space_id);
                 }
                 EntityResponseResult::Entities {
                     space_id,
@@ -6447,13 +6511,19 @@ impl Shell {
                         self.selected_entities = entities;
                     }
                 }
-                EntityResponseResult::Entity { entity, .. } => {
-                    self.entityd.list_entities(entity.space_id);
-                }
-                EntityResponseResult::Deleted { space_id, .. } => {
-                    self.entityd.list_entities(space_id);
+                EntityResponseResult::Entity { .. } | EntityResponseResult::Deleted { .. } => {
+                    self.refresh_visible_entities();
                 }
                 EntityResponseResult::Subscribed => {}
+                EntityResponseResult::Relationships { relationships } => {
+                    changed |= self.relationships != relationships;
+                    self.relationships = relationships;
+                }
+                EntityResponseResult::Relationship { .. }
+                | EntityResponseResult::RelationshipDeleted { .. } => {
+                    self.entityd.list_relationships();
+                    self.refresh_visible_entities();
+                }
             },
             EntityServerMessage::Event {
                 event: EntitydEvent::SelectionChanged { selection },
@@ -6461,12 +6531,19 @@ impl Shell {
             } => {
                 changed = self.selected_space_id != selection.space_id;
                 self.selected_space_id = selection.space_id.clone();
-                self.entityd.list_entities(selection.space_id);
+                self.entityd.list_space_members(selection.space_id);
             }
             EntityServerMessage::Event {
-                event: EntitydEvent::EntityChanged { record },
+                event: EntitydEvent::EntityChanged { .. },
                 ..
-            } => self.entityd.list_entities(record.space_id),
+            } => self.refresh_visible_entities(),
+            EntityServerMessage::Event {
+                event: EntitydEvent::RelationshipChanged { .. },
+                ..
+            } => {
+                self.entityd.list_relationships();
+                self.refresh_visible_entities();
+            }
             EntityServerMessage::Response {
                 ok: false, error, ..
             } => {
@@ -6480,6 +6557,17 @@ impl Shell {
             _ => {}
         }
         changed
+    }
+
+    fn refresh_visible_entities(&mut self) {
+        let ids = self
+            .spaces
+            .iter()
+            .map(|space| space.id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.entityd.list_space_members(id);
+        }
     }
 
     /// Re-locks after `IDLE_TIMEOUT` of no touch activity while
@@ -6995,6 +7083,7 @@ mod tests {
         SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID,
         WIFI_CONFIDENCE,
     };
+    use saai_entity_protocol::{ObjectRef, Provenance, Relationship, RELATION_REALIZES};
     use saai_entity_store::SpaceKind;
     use std::time::Duration;
 
@@ -7965,7 +8054,7 @@ mod tests {
     #[test]
     fn object_view_content_for_a_task_has_no_related_line_without_a_matching_intent() {
         let task = task_entity("Подтвердите: удалить объект", None);
-        let content = object_view_content(&task, &[]);
+        let content = object_view_content(&task, &[], &[]);
         assert_eq!(content.title, "Подтвердите: удалить объект");
         assert_eq!(content.status, "Ждёт подтверждения");
         assert_eq!(content.related, None);
@@ -7977,7 +8066,7 @@ mod tests {
         let intent = intent_entity("Напомни поливать цветы");
         let task = task_entity("Подтвердите: полить цветы", Some(intent.id));
         let selected_entities = vec![intent.clone(), task.clone()];
-        let content = object_view_content(&task, &selected_entities);
+        let content = object_view_content(&task, &selected_entities, &[]);
         assert_eq!(
             content.related,
             Some("Из намерения: Напомни поливать цветы".to_string())
@@ -7987,7 +8076,7 @@ mod tests {
     #[test]
     fn object_view_content_for_a_notification_shows_its_body_and_a_dismiss_action() {
         let notification = notification_entity("Маджонг: победа!", "Хорошая игра");
-        let content = object_view_content(&notification, &[]);
+        let content = object_view_content(&notification, &[], &[]);
         assert_eq!(content.title, "Маджонг: победа!");
         assert_eq!(content.status, "Хорошая игра");
         assert_eq!(content.related, None);
@@ -8008,7 +8097,7 @@ mod tests {
         );
         let mut entity = test_entity("some.unknown.type", properties);
         entity.title = "Загадочный объект".to_string();
-        let content = object_view_content(&entity, &[]);
+        let content = object_view_content(&entity, &[], &[]);
         assert_eq!(content.title, "Загадочный объект");
         assert!(!content.status.is_empty());
         assert!(content.status.contains("some_number"));
@@ -8020,8 +8109,91 @@ mod tests {
     fn object_view_content_for_an_unknown_entity_type_with_no_properties_still_has_a_status_line() {
         let mut entity = test_entity("some.other.unknown", serde_json::Map::new());
         entity.title = "Пустой объект".to_string();
-        let content = object_view_content(&entity, &[]);
+        let content = object_view_content(&entity, &[], &[]);
         assert_eq!(content.status, "Нет дополнительных данных");
+        assert_eq!(content.related, None);
+    }
+
+    fn related_relationship(
+        source: uuid::Uuid,
+        target: ObjectRef,
+        relation_type: &str,
+        provenance: Provenance,
+        confidence: Option<f32>,
+    ) -> Relationship {
+        let now = chrono::Utc::now();
+        Relationship {
+            schema: 1,
+            id: uuid::Uuid::new_v4(),
+            source: ObjectRef::entity(source),
+            target,
+            relation_type: relation_type.into(),
+            provenance,
+            confidence,
+            valid_from: None,
+            valid_until: None,
+            properties: serde_json::Map::new(),
+            revision: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn object_view_content_prefers_som_realizes_over_legacy_intent_id() {
+        let intent = intent_entity("Подготовить демо");
+        let task = task_entity("Подтвердите: демо", Some(uuid::Uuid::new_v4()));
+        let relationship = related_relationship(
+            task.id,
+            ObjectRef::entity(intent.id),
+            RELATION_REALIZES,
+            Provenance::System,
+            None,
+        );
+        let content = object_view_content(&task, &[intent.clone(), task.clone()], &[relationship]);
+        assert_eq!(
+            content.related,
+            Some("Из намерения: Подготовить демо".to_string())
+        );
+    }
+
+    #[test]
+    fn object_view_content_for_unknown_type_shows_generic_related_object() {
+        let other = intent_entity("Сервер");
+        let mut entity = test_entity("device.server", serde_json::Map::new());
+        entity.title = "dev-eks".to_string();
+        let relationship = related_relationship(
+            entity.id,
+            ObjectRef::entity(other.id),
+            "saaios.related-to",
+            Provenance::User,
+            None,
+        );
+        let content = object_view_content(&entity, &[other], &[relationship]);
+        assert_eq!(content.related, Some("Связано: Сервер".to_string()));
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_content_marks_ai_inferred_relations() {
+        let other = intent_entity("dev-eks");
+        let mut entity = test_entity("person.contact", serde_json::Map::new());
+        entity.title = "Андрей".to_string();
+        let relationship = related_relationship(
+            entity.id,
+            ObjectRef::entity(other.id),
+            "saaios.related-to",
+            Provenance::Model {
+                provider: Some("local".into()),
+                model: Some("notes".into()),
+            },
+            Some(0.68),
+        );
+        let content = object_view_content(&entity, &[other], &[relationship]);
+        assert_eq!(
+            content.related,
+            Some("Возможно связано · 68% · dev-eks".to_string())
+        );
     }
 
     #[test]

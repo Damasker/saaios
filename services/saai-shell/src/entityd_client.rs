@@ -31,9 +31,12 @@ impl EntitydClient {
         }
     }
 
-    pub fn list_entities(&mut self, space_id: impl Into<String>) {
+    /// Physical partition plus `saaios.in-space` members. Space UI
+    /// and object lists use this; `list_entities` stays the storage
+    /// boundary on the daemon.
+    pub fn list_space_members(&mut self, space_id: impl Into<String>) {
         let request_id = self.request_id();
-        self.queue(ClientRequest::ListEntities {
+        self.queue(ClientRequest::ListSpaceMembers {
             schema: ENTITYD_WIRE_SCHEMA_V1,
             request_id,
             space_id: space_id.into(),
@@ -90,6 +93,17 @@ impl EntitydClient {
         });
     }
 
+    pub fn list_relationships(&mut self) {
+        let request_id = self.request_id();
+        self.queue(ClientRequest::ListRelationships {
+            schema: ENTITYD_WIRE_SCHEMA_V1,
+            request_id,
+            object: None,
+            direction: None,
+            relation_type: None,
+        });
+    }
+
     pub fn poll(&mut self) -> Vec<ServerMessage> {
         if self.stream.is_none() && Instant::now() >= self.retry_at {
             self.connect();
@@ -127,6 +141,7 @@ impl EntitydClient {
                 self.subscribe();
                 self.list_spaces();
                 self.get_selection();
+                self.list_relationships();
             }
             Err(error) => self.disconnect(error),
         }
@@ -258,7 +273,12 @@ mod tests {
         let server = thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
-            for expected in ["subscribe", "list_spaces", "get_selection"] {
+            for expected in [
+                "subscribe",
+                "list_spaces",
+                "get_selection",
+                "list_relationships",
+            ] {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
                 let request: ClientRequest = serde_json::from_str(&line).unwrap();
@@ -266,6 +286,7 @@ mod tests {
                     ClientRequest::Subscribe { .. } => "subscribe",
                     ClientRequest::ListSpaces { .. } => "list_spaces",
                     ClientRequest::GetSelection { .. } => "get_selection",
+                    ClientRequest::ListRelationships { .. } => "list_relationships",
                     other => panic!("unexpected request: {other:?}"),
                 };
                 assert_eq!(actual, expected);

@@ -18,6 +18,8 @@ members = [
     "crates/saai-app-protocol",
     "crates/saai-entity-store",
     "crates/saai-entity-protocol",
+    "crates/saai-object-actions",
+    "crates/intent-resolution",
     "crates/saai-portal-protocol",
     "crates/saai-ota-manifest",
     "crates/console-tui",
@@ -61,6 +63,8 @@ saai-ui-compiler = { path = "crates/saai-ui-compiler" }
 saai-app-protocol = { path = "crates/saai-app-protocol" }
 saai-entity-store = { path = "crates/saai-entity-store" }
 saai-entity-protocol = { path = "crates/saai-entity-protocol" }
+saai-object-actions = { path = "crates/saai-object-actions" }
+intent-resolution = { path = "crates/intent-resolution" }
 saai-portal-protocol = { path = "crates/saai-portal-protocol" }
 saai-ota-manifest = { path = "crates/saai-ota-manifest" }
 console-tui = { path = "crates/console-tui" }

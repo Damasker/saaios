@@ -1,10 +1,12 @@
 use crate::{
-    validate_space_id, Entity, Event, EventPayload, SelectionSource, Space, SpaceKind,
-    SpaceSelection, ValidationError, BUILTIN_SPACE_IDS, SCHEMA_VERSION,
+    validate_space_id, Entity, Event, EventPayload, ObjectRef, Provenance, Relationship,
+    RelationshipEvent, RelationshipEventPayload, RelationshipQuery, SelectionSource, Space,
+    SpaceKind, SpaceSelection, ValidationError, BUILTIN_SPACE_IDS, SCHEMA_VERSION,
 };
 use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde_json::Map;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -19,6 +21,8 @@ const SPACE_FILE: &str = "space.json";
 const EVENTS_DIR: &str = "events";
 const ENTITIES_DIR: &str = "entities";
 const SELECTION_FILE: &str = "selection.json";
+const RELATIONSHIPS_DIR: &str = "relationships";
+const RECORDS_DIR: &str = "records";
 const BUILTIN_SPACE_NAMES: [&str; 4] = ["Дом", "Работа", "Личное", "SaaiOS"];
 
 #[derive(Debug, Error)]
@@ -43,8 +47,16 @@ pub enum StoreError {
     RevisionConflict { expected: u64, actual: u64 },
     #[error("entity revision is exhausted: {0}")]
     RevisionExhausted(Uuid),
+    #[error("relationship already exists: {0}")]
+    RelationshipExists(Uuid),
+    #[error("relationship not found: {0}")]
+    RelationshipNotFound(Uuid),
+    #[error("relationship source or target does not exist")]
+    MissingRelationshipEndpoint,
     #[error("corrupt event log for {space_id}: {reason}")]
     CorruptLog { space_id: String, reason: String },
+    #[error("corrupt relationship log: {reason}")]
+    CorruptRelationshipLog { reason: String },
     #[error("injected failure after durable event")]
     InjectedAfterEvent,
 }
@@ -67,6 +79,9 @@ impl EntityStore {
         let root = root.as_ref().to_path_buf();
         create_private_dir(&root)?;
         create_private_dir(&root.join(SPACES_DIR))?;
+        create_private_dir(&root.join(RELATIONSHIPS_DIR))?;
+        create_private_dir(&root.join(RELATIONSHIPS_DIR).join(EVENTS_DIR))?;
+        create_private_dir(&root.join(RELATIONSHIPS_DIR).join(RECORDS_DIR))?;
         ensure_store_schema(&root)?;
         let store = Self {
             root,
@@ -363,6 +378,294 @@ impl EntityStore {
         }
     }
 
+    pub fn create_relationship(
+        &self,
+        relationship: Relationship,
+    ) -> Result<RelationshipEvent, StoreError> {
+        self.create_relationship_inner(relationship, false)
+    }
+
+    fn create_relationship_inner(
+        &self,
+        relationship: Relationship,
+        fail_after_event: bool,
+    ) -> Result<RelationshipEvent, StoreError> {
+        relationship.validate()?;
+        if relationship.revision != 1 {
+            return Err(StoreError::RevisionConflict {
+                expected: 1,
+                actual: relationship.revision,
+            });
+        }
+        let _writer = self.writer.lock().expect("entity store writer lock");
+        self.ensure_endpoint_exists(&relationship.source)?;
+        self.ensure_endpoint_exists(&relationship.target)?;
+        let paths = self.relationship_paths();
+        let live = replay_relationship_events(&paths)?;
+        if live.contains_key(&relationship.id) {
+            return Err(StoreError::RelationshipExists(relationship.id));
+        }
+        let event = self.publish_relationship_event(
+            &paths,
+            RelationshipEventPayload::RelationshipCreated {
+                relationship: relationship.clone(),
+            },
+        )?;
+        if fail_after_event {
+            return Err(StoreError::InjectedAfterEvent);
+        }
+        atomic_write_json(
+            &paths.records.join(relationship_filename(relationship.id)),
+            &relationship,
+        )?;
+        Ok(event)
+    }
+
+    pub fn update_relationship(
+        &self,
+        relationship: Relationship,
+    ) -> Result<RelationshipEvent, StoreError> {
+        relationship.validate()?;
+        let _writer = self.writer.lock().expect("entity store writer lock");
+        let paths = self.relationship_paths();
+        let current = replay_relationship_events(&paths)?
+            .remove(&relationship.id)
+            .ok_or(StoreError::RelationshipNotFound(relationship.id))?;
+        let expected = current
+            .revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionExhausted(relationship.id))?;
+        if relationship.revision != expected {
+            return Err(StoreError::RevisionConflict {
+                expected,
+                actual: relationship.revision,
+            });
+        }
+        if relationship.created_at != current.created_at
+            || relationship.source != current.source
+            || relationship.target != current.target
+            || relationship.relation_type != current.relation_type
+        {
+            return Err(corrupt_relationships(
+                "update changed immutable relationship identity",
+            ));
+        }
+        self.ensure_endpoint_exists(&relationship.source)?;
+        self.ensure_endpoint_exists(&relationship.target)?;
+        let event = self.publish_relationship_event(
+            &paths,
+            RelationshipEventPayload::RelationshipUpdated {
+                relationship: relationship.clone(),
+            },
+        )?;
+        atomic_write_json(
+            &paths.records.join(relationship_filename(relationship.id)),
+            &relationship,
+        )?;
+        Ok(event)
+    }
+
+    pub fn delete_relationship(
+        &self,
+        relationship_id: Uuid,
+        revision: u64,
+    ) -> Result<RelationshipEvent, StoreError> {
+        let _writer = self.writer.lock().expect("entity store writer lock");
+        let paths = self.relationship_paths();
+        let current = replay_relationship_events(&paths)?
+            .remove(&relationship_id)
+            .ok_or(StoreError::RelationshipNotFound(relationship_id))?;
+        let expected = current
+            .revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionExhausted(relationship_id))?;
+        if revision != expected {
+            return Err(StoreError::RevisionConflict {
+                expected,
+                actual: revision,
+            });
+        }
+        let event = self.publish_relationship_event(
+            &paths,
+            RelationshipEventPayload::RelationshipDeleted {
+                relationship_id,
+                revision,
+            },
+        )?;
+        let projection = paths.records.join(relationship_filename(relationship_id));
+        match fs::remove_file(projection) {
+            Ok(()) => sync_directory(&paths.records)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        Ok(event)
+    }
+
+    pub fn get_relationship(
+        &self,
+        relationship_id: Uuid,
+    ) -> Result<Option<Relationship>, StoreError> {
+        let path = self
+            .relationship_paths()
+            .records
+            .join(relationship_filename(relationship_id));
+        match read_json::<Relationship>(&path) {
+            Ok(relationship) => {
+                relationship.validate()?;
+                if relationship.id != relationship_id {
+                    return Err(corrupt_relationships("projection identity mismatch"));
+                }
+                Ok(Some(relationship))
+            }
+            Err(StoreError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn list_relationships(
+        &self,
+        query: &RelationshipQuery,
+    ) -> Result<Vec<Relationship>, StoreError> {
+        let mut relationships = Vec::new();
+        for path in json_files(&self.relationship_paths().records)? {
+            let relationship: Relationship = read_json(&path)?;
+            relationship.validate()?;
+            if query.matches(&relationship) {
+                relationships.push(relationship);
+            }
+        }
+        relationships.sort_by_key(|relationship| relationship.id);
+        Ok(relationships)
+    }
+
+    /// Physical `Entity.space_id` is a storage partition. Semantic
+    /// membership is `saaios.in-space` and can name several Spaces.
+    pub fn list_semantic_space_members(&self, space_id: &str) -> Result<Vec<Entity>, StoreError> {
+        validate_space_id(space_id)?;
+        self.space_paths(space_id)?;
+        let query = RelationshipQuery {
+            target: Some(ObjectRef::space(space_id)),
+            relation_type: Some(crate::RELATION_IN_SPACE.into()),
+            active_at: Some(Utc::now()),
+            ..RelationshipQuery::default()
+        };
+        let mut members = Vec::new();
+        let mut seen = BTreeSet::new();
+        for relationship in self.list_relationships(&query)? {
+            let ObjectRef::Entity { id } = relationship.source else {
+                continue;
+            };
+            if !seen.insert(id) {
+                continue;
+            }
+            if let Some(entity) = self.find_entity(id)? {
+                members.push(entity);
+            }
+        }
+        members.sort_by_key(|entity| entity.id);
+        Ok(members)
+    }
+
+    /// What a Space screen should show: physical partition plus
+    /// `saaios.in-space` members. `list_entities` stays the storage
+    /// boundary; this union is display-only.
+    pub fn list_visible_space_members(&self, space_id: &str) -> Result<Vec<Entity>, StoreError> {
+        let mut entities = self.list_entities(space_id)?;
+        let mut seen = entities
+            .iter()
+            .map(|entity| entity.id)
+            .collect::<BTreeSet<_>>();
+        for member in self.list_semantic_space_members(space_id)? {
+            if seen.insert(member.id) {
+                entities.push(member);
+            }
+        }
+        Ok(entities)
+    }
+
+    /// Canonical semantic membership for the physical partition.
+    /// Idempotent: a second call does not write another edge.
+    pub fn ensure_in_space(
+        &self,
+        entity: &Entity,
+    ) -> Result<Option<RelationshipEvent>, StoreError> {
+        let query = RelationshipQuery {
+            source: Some(ObjectRef::entity(entity.id)),
+            target: Some(ObjectRef::space(&entity.space_id)),
+            relation_type: Some(crate::RELATION_IN_SPACE.into()),
+            active_at: Some(Utc::now()),
+            ..RelationshipQuery::default()
+        };
+        if !self.list_relationships(&query)?.is_empty() {
+            return Ok(None);
+        }
+        let now = Utc::now();
+        let relationship = Relationship {
+            schema: SCHEMA_VERSION,
+            id: Uuid::new_v4(),
+            source: ObjectRef::entity(entity.id),
+            target: ObjectRef::space(&entity.space_id),
+            relation_type: crate::RELATION_IN_SPACE.into(),
+            provenance: Provenance::System,
+            confidence: None,
+            valid_from: None,
+            valid_until: None,
+            properties: Map::new(),
+            revision: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        Ok(Some(self.create_relationship(relationship)?))
+    }
+
+    pub fn find_entity(&self, entity_id: Uuid) -> Result<Option<Entity>, StoreError> {
+        for space in self.list_spaces()? {
+            if let Some(entity) = self.get_entity(&space.id, entity_id)? {
+                return Ok(Some(entity));
+            }
+        }
+        Ok(None)
+    }
+
+    fn ensure_endpoint_exists(&self, object: &ObjectRef) -> Result<(), StoreError> {
+        match object {
+            ObjectRef::Space { id } => {
+                self.space_paths(id)?;
+                Ok(())
+            }
+            ObjectRef::Entity { id } => {
+                if self.find_entity(*id)?.is_none() {
+                    Err(StoreError::MissingRelationshipEndpoint)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    fn relationship_paths(&self) -> RelationshipPaths {
+        RelationshipPaths::from_root(&self.root)
+    }
+
+    fn publish_relationship_event(
+        &self,
+        paths: &RelationshipPaths,
+        payload: RelationshipEventPayload,
+    ) -> Result<RelationshipEvent, StoreError> {
+        let events = load_relationship_events(paths)?;
+        let sequence = events.last().map_or(1, |event| event.sequence + 1);
+        let event = RelationshipEvent {
+            schema: SCHEMA_VERSION,
+            id: Uuid::new_v4(),
+            sequence,
+            timestamp: Utc::now(),
+            payload,
+        };
+        event.validate()?;
+        publish_immutable_json(&paths.events, &relationship_event_filename(&event), &event)?;
+        Ok(event)
+    }
+
     pub fn recover_all(&self) -> Result<(), StoreError> {
         let _writer = self.writer.lock().expect("entity store writer lock");
         for directory in visible_directories(&self.root.join(SPACES_DIR))? {
@@ -374,6 +677,7 @@ impl EntityStore {
             let paths = SpacePaths::from_directory(directory);
             recover_space(&paths)?;
         }
+        recover_relationships(&self.relationship_paths())?;
         Ok(())
     }
 
@@ -442,6 +746,115 @@ impl SpacePaths {
             root,
         }
     }
+}
+
+#[derive(Debug)]
+struct RelationshipPaths {
+    events: PathBuf,
+    records: PathBuf,
+}
+
+impl RelationshipPaths {
+    fn from_root(root: &Path) -> Self {
+        let directory = root.join(RELATIONSHIPS_DIR);
+        Self {
+            events: directory.join(EVENTS_DIR),
+            records: directory.join(RECORDS_DIR),
+        }
+    }
+}
+
+fn recover_relationships(paths: &RelationshipPaths) -> Result<(), StoreError> {
+    create_private_dir(&paths.events)?;
+    create_private_dir(&paths.records)?;
+    let expected = replay_relationship_events(paths)?;
+    let mut expected_files = BTreeSet::new();
+    for relationship in expected.values() {
+        let name = relationship_filename(relationship.id);
+        expected_files.insert(name.clone());
+        atomic_write_json(&paths.records.join(&name), relationship)?;
+    }
+    for projection in json_files(&paths.records)? {
+        let name = projection
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if !expected_files.contains(name) {
+            fs::remove_file(projection)?;
+        }
+    }
+    sync_directory(&paths.records)?;
+    Ok(())
+}
+
+fn replay_relationship_events(
+    paths: &RelationshipPaths,
+) -> Result<BTreeMap<Uuid, Relationship>, StoreError> {
+    let events = load_relationship_events(paths)?;
+    let mut relationships = BTreeMap::new();
+    for event in events {
+        match event.payload {
+            RelationshipEventPayload::RelationshipCreated { relationship } => {
+                if relationships
+                    .insert(relationship.id, relationship)
+                    .is_some()
+                {
+                    return Err(corrupt_relationships("duplicate relationship_created"));
+                }
+            }
+            RelationshipEventPayload::RelationshipUpdated { relationship } => {
+                let Some(current) = relationships.get(&relationship.id) else {
+                    return Err(corrupt_relationships("relationship_updated before create"));
+                };
+                if current.revision.checked_add(1) != Some(relationship.revision)
+                    || relationship.created_at != current.created_at
+                {
+                    return Err(corrupt_relationships(
+                        "invalid relationship update revision",
+                    ));
+                }
+                relationships.insert(relationship.id, relationship);
+            }
+            RelationshipEventPayload::RelationshipDeleted {
+                relationship_id,
+                revision,
+            } => {
+                let Some(current) = relationships.remove(&relationship_id) else {
+                    return Err(corrupt_relationships("relationship_deleted before create"));
+                };
+                if current.revision.checked_add(1) != Some(revision) {
+                    return Err(corrupt_relationships(
+                        "invalid relationship delete revision",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(relationships)
+}
+
+fn load_relationship_events(
+    paths: &RelationshipPaths,
+) -> Result<Vec<RelationshipEvent>, StoreError> {
+    let mut events = Vec::new();
+    for path in json_files(&paths.events)? {
+        let event: RelationshipEvent =
+            read_json(&path).map_err(|error| corrupt_relationships(error.to_string()))?;
+        event
+            .validate()
+            .map_err(|error| corrupt_relationships(error.to_string()))?;
+        let expected_sequence = events.len() as u64 + 1;
+        if event.sequence != expected_sequence
+            || path.file_name().and_then(|value| value.to_str())
+                != Some(&relationship_event_filename(&event))
+        {
+            return Err(corrupt_relationships(
+                "relationship event filename or sequence mismatch",
+            ));
+        }
+        events.push(event);
+    }
+    Ok(events)
 }
 
 fn recover_space(paths: &SpacePaths) -> Result<(), StoreError> {
@@ -566,6 +979,14 @@ fn entity_filename(id: Uuid) -> String {
     format!("{id}.json")
 }
 
+fn relationship_filename(id: Uuid) -> String {
+    format!("{id}.json")
+}
+
+fn relationship_event_filename(event: &RelationshipEvent) -> String {
+    format!("{:020}-{}.json", event.sequence, event.id)
+}
+
 fn publish_immutable_json<T: Serialize>(
     directory: &Path,
     name: &str,
@@ -678,6 +1099,12 @@ fn create_private_dir(path: &Path) -> Result<(), StoreError> {
 fn sync_directory(path: &Path) -> Result<(), StoreError> {
     File::open(path)?.sync_all()?;
     Ok(())
+}
+
+fn corrupt_relationships(reason: impl Into<String>) -> StoreError {
+    StoreError::CorruptRelationshipLog {
+        reason: reason.into(),
+    }
 }
 
 fn corrupt(space_id: &str, reason: impl Into<String>) -> StoreError {
@@ -890,5 +1317,262 @@ mod tests {
             store.select_space("missing"),
             Err(StoreError::SpaceNotFound(id)) if id == "missing"
         ));
+    }
+
+    fn relationship(source: Uuid, space_id: &str, id: u128) -> Relationship {
+        Relationship {
+            schema: SCHEMA_VERSION,
+            id: Uuid::from_u128(id),
+            source: ObjectRef::entity(source),
+            target: ObjectRef::space(space_id),
+            relation_type: crate::RELATION_IN_SPACE.into(),
+            provenance: crate::Provenance::User,
+            confidence: None,
+            valid_from: None,
+            valid_until: None,
+            properties: Map::new(),
+            revision: 1,
+            created_at: timestamp(),
+            updated_at: timestamp(),
+        }
+    }
+
+    #[test]
+    fn relationship_create_persists_and_survives_reopen() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let doc = entity("work", 1);
+        store.create_entity(doc.clone()).unwrap();
+        store
+            .create_relationship(relationship(doc.id, "home", 100))
+            .unwrap();
+        store
+            .create_relationship(relationship(doc.id, "work", 101))
+            .unwrap();
+        store
+            .create_relationship(relationship(doc.id, "saaios", 102))
+            .unwrap();
+
+        drop(store);
+        let reopened = EntityStore::open(temp.path()).unwrap();
+        let home = reopened.list_semantic_space_members("home").unwrap();
+        let work = reopened.list_semantic_space_members("work").unwrap();
+        let saaios = reopened.list_semantic_space_members("saaios").unwrap();
+        assert_eq!(home.iter().map(|e| e.id).collect::<Vec<_>>(), [doc.id]);
+        assert_eq!(work.iter().map(|e| e.id).collect::<Vec<_>>(), [doc.id]);
+        assert_eq!(saaios.iter().map(|e| e.id).collect::<Vec<_>>(), [doc.id]);
+        assert!(reopened
+            .list_entities("home")
+            .unwrap()
+            .iter()
+            .all(|entity| entity.id != doc.id));
+        assert_eq!(reopened.list_entities("work").unwrap()[0].id, doc.id);
+        assert_eq!(
+            reopened.list_visible_space_members("home").unwrap()[0].id,
+            doc.id
+        );
+        assert_eq!(
+            reopened.list_visible_space_members("work").unwrap()[0].id,
+            doc.id
+        );
+        assert!(reopened
+            .list_visible_space_members("personal")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn ensure_in_space_is_idempotent_and_system_provenance() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let doc = entity("work", 3);
+        store.create_entity(doc.clone()).unwrap();
+        let first = store.ensure_in_space(&doc).unwrap();
+        assert!(first.is_some());
+        assert!(store.ensure_in_space(&doc).unwrap().is_none());
+        let members = store.list_semantic_space_members("work").unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, doc.id);
+        let links = store
+            .list_relationships(&RelationshipQuery {
+                source: Some(ObjectRef::entity(doc.id)),
+                relation_type: Some(crate::RELATION_IN_SPACE.into()),
+                ..RelationshipQuery::default()
+            })
+            .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].provenance, crate::Provenance::System);
+        assert_eq!(links[0].target, ObjectRef::space("work"));
+    }
+
+    #[test]
+    fn removing_one_space_link_does_not_delete_the_object() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let doc = entity("work", 2);
+        store.create_entity(doc.clone()).unwrap();
+        store
+            .create_relationship(relationship(doc.id, "home", 200))
+            .unwrap();
+        store
+            .create_relationship(relationship(doc.id, "work", 201))
+            .unwrap();
+        store.delete_relationship(Uuid::from_u128(200), 2).unwrap();
+        assert!(store
+            .list_semantic_space_members("home")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store.list_semantic_space_members("work").unwrap()[0].id,
+            doc.id
+        );
+        assert_eq!(
+            store.get_entity("work", doc.id).unwrap().unwrap().id,
+            doc.id
+        );
+    }
+
+    #[test]
+    fn relationship_update_increments_revision_and_rejects_stale_writes() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let doc = entity("work", 3);
+        store.create_entity(doc.clone()).unwrap();
+        let mut rel = relationship(doc.id, "work", 300);
+        store.create_relationship(rel.clone()).unwrap();
+        rel.revision = 2;
+        rel.updated_at = Utc.timestamp_opt(1_788_912_001, 0).unwrap();
+        rel.properties.insert("user_confirmed".into(), json!(true));
+        store.update_relationship(rel.clone()).unwrap();
+        assert_eq!(store.get_relationship(rel.id).unwrap().unwrap().revision, 2);
+        rel.revision = 2;
+        assert!(matches!(
+            store.update_relationship(rel),
+            Err(StoreError::RevisionConflict {
+                expected: 3,
+                actual: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn relationship_delete_is_a_tombstone_and_keeps_prior_events() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let doc = entity("work", 4);
+        store.create_entity(doc.clone()).unwrap();
+        let rel = relationship(doc.id, "work", 400);
+        store.create_relationship(rel.clone()).unwrap();
+        let events = temp.path().join("relationships/events");
+        let before = json_files(&events)
+            .unwrap()
+            .into_iter()
+            .map(|path| (path.clone(), fs::read(path).unwrap()))
+            .collect::<Vec<_>>();
+        store.delete_relationship(rel.id, 2).unwrap();
+        assert!(store.get_relationship(rel.id).unwrap().is_none());
+        assert!(!json_files(&events).unwrap().is_empty());
+        for (path, contents) in before {
+            assert_eq!(fs::read(path).unwrap(), contents);
+        }
+    }
+
+    #[test]
+    fn relationship_replay_repairs_missing_projection() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let doc = entity("work", 5);
+        store.create_entity(doc.clone()).unwrap();
+        let rel = relationship(doc.id, "home", 500);
+        assert!(matches!(
+            store.create_relationship_inner(rel.clone(), true),
+            Err(StoreError::InjectedAfterEvent)
+        ));
+        assert!(store
+            .list_relationships(&RelationshipQuery::default())
+            .unwrap()
+            .is_empty());
+        drop(store);
+        let reopened = EntityStore::open(temp.path()).unwrap();
+        assert_eq!(
+            reopened
+                .list_relationships(&RelationshipQuery::default())
+                .unwrap(),
+            [rel]
+        );
+    }
+
+    #[test]
+    fn missing_endpoint_and_stale_revision_are_rejected() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        assert!(matches!(
+            store.create_relationship(relationship(Uuid::from_u128(99), "work", 600)),
+            Err(StoreError::MissingRelationshipEndpoint)
+        ));
+        let doc = entity("work", 6);
+        store.create_entity(doc.clone()).unwrap();
+        store
+            .create_relationship(relationship(doc.id, "work", 601))
+            .unwrap();
+        assert!(matches!(
+            store.delete_relationship(Uuid::from_u128(601), 9),
+            Err(StoreError::RevisionConflict {
+                expected: 2,
+                actual: 9
+            })
+        ));
+    }
+
+    #[test]
+    fn model_provenance_survives_and_stays_distinct_from_user_facts() {
+        let temp = TempDir::new().unwrap();
+        let store = EntityStore::open(temp.path()).unwrap();
+        store.bootstrap_builtin_spaces(None).unwrap();
+        let person = entity("work", 7);
+        let server = entity("work", 8);
+        store.create_entity(person.clone()).unwrap();
+        store.create_entity(server.clone()).unwrap();
+        let mut inferred = Relationship {
+            schema: SCHEMA_VERSION,
+            id: Uuid::from_u128(700),
+            source: ObjectRef::entity(person.id),
+            target: ObjectRef::entity(server.id),
+            relation_type: "saaios.related-to".into(),
+            provenance: crate::Provenance::Model {
+                provider: Some("local".into()),
+                model: Some("notes".into()),
+            },
+            confidence: Some(0.68),
+            valid_from: None,
+            valid_until: None,
+            properties: Map::from_iter([("user_confirmed".into(), json!(false))]),
+            revision: 1,
+            created_at: timestamp(),
+            updated_at: timestamp(),
+        };
+        store.create_relationship(inferred.clone()).unwrap();
+        let stored = store.get_relationship(inferred.id).unwrap().unwrap();
+        assert!(stored.provenance.is_inferred());
+        assert!(!stored.user_confirmed());
+        inferred.revision = 2;
+        inferred.updated_at = Utc.timestamp_opt(1_788_912_001, 0).unwrap();
+        inferred
+            .properties
+            .insert("user_confirmed".into(), json!(true));
+        store.update_relationship(inferred).unwrap();
+        let confirmed = store
+            .get_relationship(Uuid::from_u128(700))
+            .unwrap()
+            .unwrap();
+        assert_eq!(confirmed.provenance.kind_token(), "model");
+        assert!(confirmed.user_confirmed());
     }
 }

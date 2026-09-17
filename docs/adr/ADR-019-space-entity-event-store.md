@@ -83,6 +83,25 @@ Legacy-файл остаётся без изменений как rollback-вх�
 - event log не является telemetry и не покидает устройство;
 - compaction, cloud sync и multi-device conflict resolution не входят в v1.
 
+## Evolution / superseded semantic constraint
+
+ADR-019 остаётся верным решением для S06: `Entity.space_id` — physical
+persistence boundary store v1, список сущностей по-прежнему требует
+явный `space_id`. SOM (ADR-118) не удаляет это поле и не меняет layout
+`spaces/<id>/entities/`.
+
+Изменяется только **семантика владения**:
+
+```text
+storage constraint retained
+semantic ownership superseded
+```
+
+`Entity.space_id` больше не означает «единственное пространство, которому
+объект принадлежит». Semantic membership/relevance задают Relationship
+`saaios.in-space`. Physical partition можно будет заменить global layout
+отдельным ADR, не этим.
+
 ## Отклонённые альтернативы
 
 ### Хранить всё в состоянии shell

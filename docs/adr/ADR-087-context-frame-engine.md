@@ -111,6 +111,14 @@ Device: подтверждено вживую без пересборки обр
   поведение этой версии, не баг, но стоит иметь в виду при
   дальнейшей работе над HIA-02/HIA-03.
 
+## Evolution
+
+ContextFrame не заменяется SOM (ADR-118). ContextFrame выбирает и
+взвешивает текущий контекст; SOM резолвит Objects и Relationships,
+релевантные этому контексту. `saaios.space-signal` остаётся
+signal/evidence, не Relationship: Wi-Fi SSID — наблюдение, а не
+устойчивая связь двух идентифицируемых объектов.
+
 ## Ссылки
 
 - `services/saai-shell/src/main.rs` -- `ContextFrameEntry`,

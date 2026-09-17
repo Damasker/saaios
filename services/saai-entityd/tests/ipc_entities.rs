@@ -126,6 +126,10 @@ fn daemon_scopes_crud_selection_events_and_restart_recovery() {
         observer.event(),
         EntitydEvent::EntityChanged { record } if record.space_id == "home"
     ));
+    assert!(matches!(
+        observer.event(),
+        EntitydEvent::RelationshipChanged { .. }
+    ));
 
     let work_entity = created_entity(work_client.request(
         "create-work",
@@ -137,6 +141,10 @@ fn daemon_scopes_crud_selection_events_and_restart_recovery() {
     assert!(matches!(
         observer.event(),
         EntitydEvent::EntityChanged { record } if record.space_id == "work"
+    ));
+    assert!(matches!(
+        observer.event(),
+        EntitydEvent::RelationshipChanged { .. }
     ));
 
     let listed_home = home_client.request(
@@ -230,10 +238,175 @@ fn daemon_scopes_crud_selection_events_and_restart_recovery() {
     ));
 }
 
+#[test]
+fn daemon_relationship_crud_events_and_semantic_membership() {
+    let temp = TempDir::new().unwrap();
+    let store = temp.path().join("entities");
+    let legacy = temp.path().join("active-space");
+    let socket = temp.path().join("run/entityd.sock");
+    fs::write(&legacy, b"0\n").unwrap();
+
+    let daemon = spawn_daemon(&store, &legacy, &socket);
+    let mut client = Client::connect(&socket);
+    let mut observer = Client::connect(&socket);
+    assert!(matches!(
+        observer.request(
+            "subscribe",
+            json!({"schema":1,"request_id":"subscribe","command":"subscribe"}),
+        ),
+        ResponseResult::Subscribed
+    ));
+
+    let entity = created_entity(client.request(
+        "create-doc",
+        json!({
+            "schema":1,"request_id":"create-doc","command":"create_entity",
+            "space_id":"work","entity_type":"document.file","title":"notes.pdf"
+        }),
+    ));
+    assert!(matches!(
+        observer.event(),
+        EntitydEvent::EntityChanged { .. }
+    ));
+    assert!(matches!(
+        observer.event(),
+        EntitydEvent::RelationshipChanged { .. }
+    ));
+
+    assert!(matches!(
+        client.request(
+            "auto-work-members",
+            json!({"schema":1,"request_id":"auto-work-members","command":"list_space_members","space_id":"work"}),
+        ),
+        ResponseResult::Entities { entities, .. }
+            if entities.len() == 1 && entities[0].id == entity.id
+    ));
+
+    let home = created_relationship(client.request(
+        "link-home",
+        json!({
+            "schema":1,"request_id":"link-home","command":"create_relationship",
+            "source":{"kind":"entity","id":entity.id},
+            "target":{"kind":"space","id":"home"},
+            "relation_type":"saaios.in-space",
+            "provenance":{"kind":"user"}
+        }),
+    ));
+    assert!(matches!(
+        observer.event(),
+        EntitydEvent::RelationshipChanged { .. }
+    ));
+
+    assert!(matches!(
+        client.request(
+            "physical-home",
+            json!({"schema":1,"request_id":"physical-home","command":"list_entities","space_id":"home"}),
+        ),
+        ResponseResult::Entities { entities, .. } if entities.is_empty()
+    ));
+    assert!(matches!(
+        client.request(
+            "visible-home",
+            json!({"schema":1,"request_id":"visible-home","command":"list_space_members","space_id":"home"}),
+        ),
+        ResponseResult::Entities { entities, .. }
+            if entities.len() == 1 && entities[0].id == entity.id
+    ));
+    assert!(matches!(
+        client.request(
+            "visible-work",
+            json!({"schema":1,"request_id":"visible-work","command":"list_space_members","space_id":"work"}),
+        ),
+        ResponseResult::Entities { entities, .. }
+            if entities.len() == 1 && entities[0].id == entity.id
+    ));
+
+    let listed = client.request(
+        "list-home-links",
+        json!({
+            "schema":1,"request_id":"list-home-links","command":"list_relationships",
+            "object":{"kind":"space","id":"home"},
+            "direction":"to",
+            "relation_type":"saaios.in-space"
+        }),
+    );
+    assert!(matches!(
+        listed,
+        ResponseResult::Relationships { relationships }
+            if relationships.len() == 1 && relationships[0].source == saai_entity_store::ObjectRef::entity(entity.id)
+    ));
+
+    let conflict = client.request_message(json!({
+        "schema":1,"request_id":"rel-conflict","command":"update_relationship",
+        "relationship_id":home.id,"expected_revision":9,
+        "provenance":{"kind":"user"}
+    }));
+    assert!(matches!(
+        conflict,
+        ServerMessage::Response { ok: false, error: Some(error), .. }
+            if error.code == "revision_conflict"
+    ));
+
+    let inferred = client.request_message(json!({
+        "schema":1,"request_id":"bad-confidence","command":"create_relationship",
+        "source":{"kind":"entity","id":entity.id},
+        "target":{"kind":"space","id":"personal"},
+        "relation_type":"saaios.in-space",
+        "provenance":{"kind":"model","provider":"local"},
+        "confidence":1.4
+    }));
+    assert!(matches!(
+        inferred,
+        ServerMessage::Response { ok: false, error: Some(error), .. }
+            if error.code == "invalid_record"
+    ));
+
+    assert!(matches!(
+        client.request(
+            "delete-home-link",
+            json!({
+                "schema":1,"request_id":"delete-home-link","command":"delete_relationship",
+                "relationship_id":home.id,"expected_revision":1
+            }),
+        ),
+        ResponseResult::RelationshipDeleted { relationship_id, revision, .. }
+            if relationship_id == home.id && revision == 2
+    ));
+    let _ = observer.event();
+
+    drop(observer);
+    drop(client);
+    drop(daemon);
+
+    let _restarted = spawn_daemon(&store, &legacy, &socket);
+    let mut client = Client::connect(&socket);
+    let listed = client.request(
+        "after-restart",
+        json!({
+            "schema":1,"request_id":"after-restart","command":"list_relationships",
+            "object":{"kind":"entity","id":entity.id}
+        }),
+    );
+    assert!(matches!(
+        listed,
+        ResponseResult::Relationships { relationships }
+            if relationships.len() == 1
+                && relationships[0].target == saai_entity_store::ObjectRef::space("work")
+                && relationships[0].provenance == saai_entity_store::Provenance::System
+    ));
+}
+
 fn created_entity(result: ResponseResult) -> saai_entity_store::Entity {
     match result {
         ResponseResult::Entity { entity, .. } => entity,
         other => panic!("expected entity response, got {other:?}"),
+    }
+}
+
+fn created_relationship(result: ResponseResult) -> saai_entity_store::Relationship {
+    match result {
+        ResponseResult::Relationship { relationship, .. } => relationship,
+        other => panic!("expected relationship response, got {other:?}"),
     }
 }
 

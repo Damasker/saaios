@@ -1,5 +1,5 @@
 [package]
-name = "saai-entity-protocol"
+name = "saai-object-actions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,9 +7,16 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-chrono.workspace = true
+policy-engine.workspace = true
+protocol.workspace = true
 saai-entity-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tool-registry.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+tokio.workspace = true

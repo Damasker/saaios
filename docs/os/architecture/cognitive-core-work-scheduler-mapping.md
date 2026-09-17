@@ -125,7 +125,10 @@ Workflow status lives in entity `properties` (`pending` /
 Cold-reboot resume is `list_entities` + reconcile — never auto-execute
 confirmation-gated work ([ADR-032](../../adr/ADR-032-change3-dangerous-confirmation-verified.md)).
 
-This is the **one workflow store**. It is the Task table (all states).
+Lineage edges (`saaios.realizes` / `saaios.executes` / `saaios.produces`)
+are written in parallel as SOM Relationships ([ADR-118](../../adr/ADR-118-saai-object-model.md)).
+Legacy `intent_id` / `task_id` properties remain primary until a later
+cleanup ADR. This is still the **one workflow store**. It is the Task table (all states).
 
 ### Derived ready set (not a durable Ready Queue)
 

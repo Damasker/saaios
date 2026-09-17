@@ -8,8 +8,8 @@
 //! instead of reusing that one.
 
 use saai_entity_protocol::{
-    encode_request, ClientRequest, Entity, EntitydEvent, ProtocolError, ResponseResult,
-    ServerMessage, ENTITYD_WIRE_SCHEMA_V1,
+    encode_request, ClientRequest, Entity, EntitydEvent, ObjectRef, ProtocolError, Provenance,
+    ResponseResult, ServerMessage, ENTITYD_WIRE_SCHEMA_V1,
 };
 use serde_json::{Map, Value};
 use std::collections::VecDeque;
@@ -227,6 +227,33 @@ impl EntitydConn {
             .await?
         {
             ResponseResult::Deleted { .. } => Ok(()),
+            other => Err(ClientError::UnexpectedResult(format!("{other:?}"))),
+        }
+    }
+
+    pub async fn create_relationship(
+        &mut self,
+        source: Uuid,
+        target: Uuid,
+        relation_type: &str,
+    ) -> Result<saai_entity_protocol::Relationship, ClientError> {
+        let request_id = self.request_id();
+        match self
+            .call(ClientRequest::CreateRelationship {
+                schema: ENTITYD_WIRE_SCHEMA_V1,
+                request_id,
+                source: ObjectRef::entity(source),
+                target: ObjectRef::entity(target),
+                relation_type: relation_type.to_string(),
+                provenance: Provenance::System,
+                confidence: None,
+                valid_from: None,
+                valid_until: None,
+                properties: Map::new(),
+            })
+            .await?
+        {
+            ResponseResult::Relationship { relationship, .. } => Ok(relationship),
             other => Err(ClientError::UnexpectedResult(format!("{other:?}"))),
         }
     }
