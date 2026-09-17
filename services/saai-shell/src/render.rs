@@ -1,5 +1,5 @@
 use fontdue::{Font, FontSettings};
-use saai_ui_core::Rect;
+use saai_ui_core::{ColorRole, ContextColor, Rect, Rgb, Theme, UniversalState};
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -52,18 +52,25 @@ pub type Pixel = [u8; 4];
 // Saai-displayd currently blits client pixels into the panel's native BGRX
 // scanout buffer without conversion. The physically calibrated panel packing
 // is [X, R, G, B] in little-endian memory (the same mapping as
-// drm-splash.c::panel_color). Keep that quirk behind one logical RGB helper.
-pub const fn rgb(red: u8, green: u8, blue: u8) -> Pixel {
-    [0, red, green, blue]
+// drm-splash.c::panel_color). Keep that quirk behind this backend boundary;
+// product code deals only in saai-ui-core semantic roles.
+const THEME: Theme = Theme::SAAIOS_DARK;
+
+const fn panel_pixel(color: Rgb) -> Pixel {
+    [0, color.red, color.green, color.blue]
 }
 
-pub const BACKGROUND: Pixel = rgb(14, 20, 24);
-pub const SURFACE: Pixel = rgb(25, 33, 38);
-pub const SURFACE_SELECTED: Pixel = rgb(38, 51, 57);
-pub const MUTED: Pixel = rgb(76, 91, 98);
-pub const ACCENT: Pixel = rgb(116, 211, 190);
-pub const TEXT: Pixel = rgb(232, 241, 239);
-pub const TEXT_MUTED: Pixel = rgb(141, 158, 164);
+pub const fn theme_color(role: ColorRole) -> Pixel {
+    panel_pixel(THEME.color(role))
+}
+
+pub const fn context_color(color: ContextColor) -> Pixel {
+    panel_pixel(THEME.context_color(color))
+}
+
+pub const fn state_color(state: UniversalState) -> Pixel {
+    panel_pixel(THEME.state_color(state))
+}
 
 pub struct Fonts {
     regular: Font,
@@ -206,7 +213,7 @@ pub fn draw_consent(
     decline_button: Rect,
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
+    canvas.fill(theme_color(ColorRole::Canvas));
 
     let Some(fonts) = fonts else {
         // No font asset available (missing/unreadable on this build) --
@@ -214,8 +221,8 @@ pub fn draw_consent(
         // at least operable without text, matching this client's existing
         // "color as the physically-verifiable signal" fallback used
         // elsewhere before Inter rendering landed.
-        canvas.fill_rect(accept_button, ACCENT);
-        canvas.fill_rect(decline_button, SURFACE);
+        canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
+        canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
         return;
     };
 
@@ -227,7 +234,7 @@ pub fn draw_consent(
         46.0,
         header.x + margin,
         header.y + 220,
-        TEXT,
+        theme_color(ColorRole::TextPrimary),
     );
 
     let mut row_top = header.y + 340;
@@ -239,11 +246,14 @@ pub fn draw_consent(
             32.0,
             header.x + margin,
             row_top,
-            TEXT_MUTED,
+            theme_color(ColorRole::TextSecondary),
         );
     }
     for capability in capabilities {
-        canvas.fill_rect(Rect::new(header.x + margin, row_top + 10, 16, 16), ACCENT);
+        canvas.fill_rect(
+            Rect::new(header.x + margin, row_top + 10, 16, 16),
+            theme_color(ColorRole::Accent),
+        );
         draw_text(
             canvas,
             &fonts.regular,
@@ -251,13 +261,13 @@ pub fn draw_consent(
             32.0,
             header.x + margin + 44,
             row_top,
-            TEXT_MUTED,
+            theme_color(ColorRole::TextSecondary),
         );
         row_top += 70;
     }
 
-    canvas.fill_rect(accept_button, ACCENT);
-    canvas.fill_rect(decline_button, SURFACE);
+    canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
+    canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
     draw_text_centered(
         canvas,
         &fonts.semibold,
@@ -265,7 +275,7 @@ pub fn draw_consent(
         40.0,
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
-        BACKGROUND,
+        theme_color(ColorRole::Canvas),
     );
     draw_text_centered(
         canvas,
@@ -274,7 +284,7 @@ pub fn draw_consent(
         40.0,
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
-        TEXT,
+        theme_color(ColorRole::TextPrimary),
     );
 }
 
@@ -296,14 +306,14 @@ pub fn draw_intent_input(
     keys: &[(Rect, String)],
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
-    canvas.fill_rect(header, SURFACE);
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.fill_rect(header, theme_color(ColorRole::Surface));
 
     let Some(fonts) = fonts else {
         // Same no-font fallback draw_consent() uses: every key still gets
         // a distinct, tappable rectangle even with no label rendered.
         for (rect, _) in keys {
-            canvas.fill_rect(*rect, SURFACE_SELECTED);
+            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
         }
         return;
     };
@@ -315,12 +325,12 @@ pub fn draw_intent_input(
         42.0,
         header.x + 30,
         header.y + 40,
-        TEXT,
+        theme_color(ColorRole::TextPrimary),
     );
     let (preview, preview_color) = if buffer.is_empty() {
-        ("Наберите текст…", TEXT_MUTED)
+        ("Наберите текст…", theme_color(ColorRole::TextSecondary))
     } else {
-        (buffer, TEXT)
+        (buffer, theme_color(ColorRole::TextPrimary))
     };
     draw_text(
         canvas,
@@ -339,7 +349,7 @@ pub fn draw_intent_input(
             rect.width.saturating_sub(8),
             rect.height.saturating_sub(8),
         );
-        canvas.fill_rect(key, SURFACE);
+        canvas.fill_rect(key, theme_color(ColorRole::Surface));
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -347,7 +357,7 @@ pub fn draw_intent_input(
             32.0,
             key.x + key.width / 2,
             key.y + key.height / 2 - 18,
-            TEXT,
+            theme_color(ColorRole::TextPrimary),
         );
     }
 }
@@ -369,13 +379,20 @@ pub fn draw_object_view(
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
+    canvas.fill(theme_color(ColorRole::Canvas));
     for (index, (rect, _label)) in actions.iter().enumerate() {
         // First button is the primary/accepting action -- holds
         // for a single-button screen too
         // (e.g. a notification's "Скрыть"), where it's the only, and
         // therefore primary, action.
-        canvas.fill_rect(*rect, if index == 0 { ACCENT } else { SURFACE });
+        canvas.fill_rect(
+            *rect,
+            if index == 0 {
+                theme_color(ColorRole::Accent)
+            } else {
+                theme_color(ColorRole::Surface)
+            },
+        );
     }
 
     let Some(fonts) = fonts else {
@@ -383,10 +400,34 @@ pub fn draw_object_view(
     };
 
     let margin = header.width / 22;
-    draw_text(canvas, &fonts.semibold, title, 46.0, header.x + margin, header.y + 220, TEXT);
-    draw_text(canvas, &fonts.regular, status, 32.0, header.x + margin, header.y + 340, TEXT_MUTED);
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        title,
+        46.0,
+        header.x + margin,
+        header.y + 220,
+        theme_color(ColorRole::TextPrimary),
+    );
+    draw_text(
+        canvas,
+        &fonts.regular,
+        status,
+        32.0,
+        header.x + margin,
+        header.y + 340,
+        theme_color(ColorRole::TextSecondary),
+    );
     if let Some(related) = related {
-        draw_text(canvas, &fonts.regular, related, 28.0, header.x + margin, header.y + 460, TEXT_MUTED);
+        draw_text(
+            canvas,
+            &fonts.regular,
+            related,
+            28.0,
+            header.x + margin,
+            header.y + 460,
+            theme_color(ColorRole::TextSecondary),
+        );
     }
 
     for (index, (rect, label)) in actions.iter().enumerate() {
@@ -397,7 +438,11 @@ pub fn draw_object_view(
             40.0,
             rect.x + rect.width / 2,
             rect.y + rect.height / 2 - 20,
-            if index == 0 { BACKGROUND } else { TEXT },
+            if index == 0 {
+                theme_color(ColorRole::Canvas)
+            } else {
+                theme_color(ColorRole::TextPrimary)
+            },
         );
     }
 }
@@ -409,7 +454,7 @@ pub fn draw_object_view(
 /// `menu_rows` is empty in `Idle`/`Attention`; two rows in `Menu`.
 /// HIA-16: `is_attention` draws a real shape difference, not just a
 /// different fill color -- a hollow ring-square (outer `dot_color`
-/// frame, `BACKGROUND`-colored center) instead of the solid square
+/// frame, `canvas background`-colored center) instead of the solid square
 /// every other state uses. `ATTENTION`'s own color (a fixed alert
 /// red, `main.rs`'s `build_orb_frame`) already told a sighted user
 /// something needs them; this is the same signal for anyone who
@@ -426,7 +471,7 @@ pub fn draw_orb(
     fonts: Option<&Fonts>,
 ) {
     for (rect, label) in menu_rows {
-        canvas.fill_rect(*rect, SURFACE_SELECTED);
+        canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
         if let Some(fonts) = fonts {
             draw_text(
                 canvas,
@@ -435,7 +480,7 @@ pub fn draw_orb(
                 32.0,
                 rect.x + 24,
                 rect.y + rect.height / 2 - 16,
-                TEXT,
+                theme_color(ColorRole::TextPrimary),
             );
         }
     }
@@ -451,7 +496,7 @@ pub fn draw_orb(
             dot_rect.width.saturating_sub(border * 2),
             dot_rect.height.saturating_sub(border * 2),
         );
-        canvas.fill_rect(inner, BACKGROUND);
+        canvas.fill_rect(inner, theme_color(ColorRole::Canvas));
     }
 }
 
@@ -469,11 +514,11 @@ pub fn draw_remote_pair(
     decline_button: Rect,
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
+    canvas.fill(theme_color(ColorRole::Canvas));
 
     let Some(fonts) = fonts else {
-        canvas.fill_rect(accept_button, ACCENT);
-        canvas.fill_rect(decline_button, SURFACE);
+        canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
+        canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
         return;
     };
 
@@ -485,7 +530,7 @@ pub fn draw_remote_pair(
         46.0,
         header.x + margin,
         header.y + 200,
-        TEXT,
+        theme_color(ColorRole::TextPrimary),
     );
     draw_text(
         canvas,
@@ -494,7 +539,7 @@ pub fn draw_remote_pair(
         32.0,
         header.x + margin,
         header.y + 310,
-        TEXT_MUTED,
+        theme_color(ColorRole::TextSecondary),
     );
     draw_text(
         canvas,
@@ -503,11 +548,11 @@ pub fn draw_remote_pair(
         26.0,
         header.x + margin,
         header.y + 370,
-        TEXT_MUTED,
+        theme_color(ColorRole::TextSecondary),
     );
 
-    canvas.fill_rect(accept_button, ACCENT);
-    canvas.fill_rect(decline_button, SURFACE);
+    canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
+    canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
     draw_text_centered(
         canvas,
         &fonts.semibold,
@@ -515,7 +560,7 @@ pub fn draw_remote_pair(
         40.0,
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
-        BACKGROUND,
+        theme_color(ColorRole::Canvas),
     );
     draw_text_centered(
         canvas,
@@ -524,7 +569,7 @@ pub fn draw_remote_pair(
         40.0,
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
-        TEXT,
+        theme_color(ColorRole::TextPrimary),
     );
 }
 
@@ -544,12 +589,12 @@ pub fn draw_row_list(
     rows: &[(Rect, String)],
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
-    canvas.fill_rect(header, SURFACE);
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.fill_rect(header, theme_color(ColorRole::Surface));
 
     let Some(fonts) = fonts else {
         for (rect, _) in rows {
-            canvas.fill_rect(*rect, SURFACE_SELECTED);
+            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
         }
         return;
     };
@@ -561,7 +606,7 @@ pub fn draw_row_list(
         42.0,
         header.x + 30,
         header.y + 40,
-        TEXT,
+        theme_color(ColorRole::TextPrimary),
     );
     draw_text(
         canvas,
@@ -570,11 +615,11 @@ pub fn draw_row_list(
         30.0,
         header.x + 30,
         header.y + 130,
-        TEXT_MUTED,
+        theme_color(ColorRole::TextSecondary),
     );
 
     for (rect, label) in rows {
-        canvas.fill_rect(*rect, SURFACE);
+        canvas.fill_rect(*rect, theme_color(ColorRole::Surface));
         draw_text(
             canvas,
             &fonts.regular,
@@ -582,7 +627,7 @@ pub fn draw_row_list(
             32.0,
             rect.x + 30,
             rect.y + rect.height / 2 - 18,
-            TEXT,
+            theme_color(ColorRole::TextPrimary),
         );
     }
 }
@@ -599,12 +644,12 @@ pub fn draw_pin_setup(
     keys: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
-    canvas.fill_rect(header, SURFACE);
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.fill_rect(header, theme_color(ColorRole::Surface));
 
     let Some(fonts) = fonts else {
         for (rect, _) in keys {
-            canvas.fill_rect(*rect, SURFACE_SELECTED);
+            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
         }
         return;
     };
@@ -616,13 +661,16 @@ pub fn draw_pin_setup(
         42.0,
         header.x + 30,
         header.y + 40,
-        TEXT,
+        theme_color(ColorRole::TextPrimary),
     );
     let masked: String = buffer.chars().map(|_| '•').collect();
     let (preview, preview_color) = if masked.is_empty() {
-        ("Введите новый PIN (минимум 4 цифры)".to_string(), TEXT_MUTED)
+        (
+            "Введите новый PIN (минимум 4 цифры)".to_string(),
+            theme_color(ColorRole::TextSecondary),
+        )
     } else {
-        (masked, TEXT)
+        (masked, theme_color(ColorRole::TextPrimary))
     };
     draw_text(
         canvas,
@@ -641,7 +689,7 @@ pub fn draw_pin_setup(
             rect.width.saturating_sub(8),
             rect.height.saturating_sub(8),
         );
-        canvas.fill_rect(key, SURFACE);
+        canvas.fill_rect(key, theme_color(ColorRole::Surface));
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -649,7 +697,7 @@ pub fn draw_pin_setup(
             32.0,
             key.x + key.width / 2,
             key.y + key.height / 2 - 18,
-            TEXT,
+            theme_color(ColorRole::TextPrimary),
         );
     }
 }
@@ -657,7 +705,7 @@ pub fn draw_pin_setup(
 /// S24: the lock surface's own keypad, shown instead of a flat
 /// `LOCK_SCREEN_COLOR` fill whenever `ShellSettings.pin_code` is set
 /// (`present_lock_pin_entry` in `main.rs`). `entered_len` dots are
-/// filled (`ACCENT`), the rest of `pin_len` stay `MUTED` outlines --
+/// filled (`accent`), the rest of `pin_len` stay `border` outlines --
 /// no digits are ever drawn, only progress, since this is what
 /// protects the lock in the first place.
 pub fn draw_lock_pin_entry(
@@ -668,7 +716,7 @@ pub fn draw_lock_pin_entry(
     keys: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
+    canvas.fill(theme_color(ColorRole::Canvas));
 
     let dot_size = 36u32;
     let gap = 30u32;
@@ -678,13 +726,17 @@ pub fn draw_lock_pin_entry(
     let dot_y = 420u32;
     for index in 0..pin_len {
         let x = start_x + index as u32 * (dot_size + gap);
-        let color = if index < entered_len { ACCENT } else { MUTED };
+        let color = if index < entered_len {
+            theme_color(ColorRole::Accent)
+        } else {
+            theme_color(ColorRole::Border)
+        };
         canvas.fill_rect(Rect::new(x, dot_y, dot_size, dot_size), color);
     }
 
     let Some(fonts) = fonts else {
         for (rect, _) in keys {
-            canvas.fill_rect(*rect, SURFACE_SELECTED);
+            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
         }
         return;
     };
@@ -696,7 +748,7 @@ pub fn draw_lock_pin_entry(
         32.0,
         width / 2,
         330,
-        TEXT_MUTED,
+        theme_color(ColorRole::TextSecondary),
     );
 
     for (rect, label) in keys {
@@ -706,7 +758,7 @@ pub fn draw_lock_pin_entry(
             rect.width.saturating_sub(8),
             rect.height.saturating_sub(8),
         );
-        canvas.fill_rect(key, SURFACE);
+        canvas.fill_rect(key, theme_color(ColorRole::Surface));
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -714,7 +766,7 @@ pub fn draw_lock_pin_entry(
             36.0,
             key.x + key.width / 2,
             key.y + key.height / 2 - 20,
-            TEXT,
+            theme_color(ColorRole::TextPrimary),
         );
     }
 }
@@ -735,15 +787,21 @@ pub fn draw_root(
     content_actions: &[(Rect, ActionCardView)],
     is_grid: bool,
 ) {
-    canvas.fill(BACKGROUND);
+    canvas.fill(theme_color(ColorRole::Canvas));
 
     // A stable phone-like content surface. The number of rows changes per
     // root page so page transitions remain visible even if a display pipeline
     // maps two colors too similarly.
     let margin = content.width / 22;
     let card_width = content.width.saturating_sub(margin * 2);
-    canvas.fill_rect(Rect::new(margin, 150, card_width, 190), SURFACE);
-    canvas.fill_rect(Rect::new(margin, 150, 14, 190), ACCENT);
+    canvas.fill_rect(
+        Rect::new(margin, 150, card_width, 190),
+        theme_color(ColorRole::Surface),
+    );
+    canvas.fill_rect(
+        Rect::new(margin, 150, 14, 190),
+        theme_color(ColorRole::Accent),
+    );
     if let (Some(fonts), Some((_, title))) = (fonts, tabs.get(selected)) {
         let header = format!("{context_label} · {title}");
         draw_text_centered(
@@ -753,27 +811,37 @@ pub fn draw_root(
             54.0,
             content.x + content.width / 2,
             210,
-            TEXT,
+            theme_color(ColorRole::TextPrimary),
         );
     }
 
     let row_count = selected.saturating_add(2).min(5);
-    let first_placeholder = if content_actions.is_empty() { 0 } else { row_count };
+    let first_placeholder = if content_actions.is_empty() {
+        0
+    } else {
+        row_count
+    };
     if !is_grid {
         for row in first_placeholder..row_count {
             let y = 430 + row as u32 * 230;
             if y >= content.height {
                 break;
             }
-            canvas.fill_rect(Rect::new(margin, y, card_width, 170), SURFACE);
-            canvas.fill_rect(Rect::new(margin + 34, y + 42, 86, 86), MUTED);
+            canvas.fill_rect(
+                Rect::new(margin, y, card_width, 170),
+                theme_color(ColorRole::Surface),
+            );
+            canvas.fill_rect(
+                Rect::new(margin + 34, y + 42, 86, 86),
+                theme_color(ColorRole::Border),
+            );
             canvas.fill_rect(
                 Rect::new(margin + 154, y + 52, card_width.saturating_sub(210), 24),
-                MUTED,
+                theme_color(ColorRole::Border),
             );
             canvas.fill_rect(
                 Rect::new(margin + 154, y + 96, card_width.saturating_sub(290), 18),
-                MUTED,
+                theme_color(ColorRole::Border),
             );
         }
     }
@@ -783,7 +851,7 @@ pub fn draw_root(
     // original single-column card list below. No real per-app icon
     // asset exists anywhere in the project (no icon pipeline was ever
     // built), so the "icon" is a colored square with the app's own
-    // first letter, same honest placeholder spirit as `MUTED`'s
+    // first letter, same honest placeholder spirit as `border`'s
     // loading skeleton above.
     if is_grid {
         for (rect, card) in content_actions {
@@ -791,7 +859,11 @@ pub fn draw_root(
             let icon_x = rect.x + rect.width.saturating_sub(icon_size) / 2;
             canvas.fill_rect(
                 Rect::new(icon_x, rect.y, icon_size, icon_size),
-                if card.selected { SURFACE_SELECTED } else { ACCENT },
+                if card.selected {
+                    theme_color(ColorRole::Elevated)
+                } else {
+                    theme_color(ColorRole::Accent)
+                },
             );
             if let Some(fonts) = fonts {
                 let initial = card
@@ -807,7 +879,7 @@ pub fn draw_root(
                     54.0,
                     icon_x + icon_size / 2,
                     rect.y + icon_size / 2 - 27,
-                    BACKGROUND,
+                    theme_color(ColorRole::Canvas),
                 );
                 draw_text_centered(
                     canvas,
@@ -816,7 +888,7 @@ pub fn draw_root(
                     26.0,
                     rect.x + rect.width / 2,
                     rect.y + icon_size + 16,
-                    TEXT,
+                    theme_color(ColorRole::TextPrimary),
                 );
             }
         }
@@ -825,9 +897,9 @@ pub fn draw_root(
             canvas.fill_rect(
                 *rect,
                 if card.selected {
-                    SURFACE_SELECTED
+                    theme_color(ColorRole::Elevated)
                 } else {
-                    SURFACE
+                    theme_color(ColorRole::Surface)
                 },
             );
             // S13 Change 5: an empty `action` means this card has nothing to
@@ -835,11 +907,14 @@ pub fn draw_root(
             // "Входящие"'s empty state) -- the icon block and the
             // accent-colored button were drawn unconditionally before, which
             // made every such card look clickable even though nothing
-            // happened when tapped. Text starts at the icon's own left edge
+            // happened when tapped. text starts at the icon's own left edge
             // instead of after it when there's no icon to make room for.
             let has_action = !card.action.is_empty();
             let text_left = if has_action {
-                canvas.fill_rect(Rect::new(rect.x + 34, rect.y + 52, 104, 104), ACCENT);
+                canvas.fill_rect(
+                    Rect::new(rect.x + 34, rect.y + 52, 104, 104),
+                    theme_color(ColorRole::Accent),
+                );
                 rect.x + 174
             } else {
                 rect.x + 34
@@ -852,7 +927,7 @@ pub fn draw_root(
                     button_width,
                     88,
                 );
-                canvas.fill_rect(button, ACCENT);
+                canvas.fill_rect(button, theme_color(ColorRole::Accent));
                 button
             });
             if let Some(fonts) = fonts {
@@ -863,7 +938,7 @@ pub fn draw_root(
                     38.0,
                     text_left,
                     rect.y + 48,
-                    TEXT,
+                    theme_color(ColorRole::TextPrimary),
                 );
                 draw_text(
                     canvas,
@@ -872,7 +947,7 @@ pub fn draw_root(
                     27.0,
                     text_left,
                     rect.y + 108,
-                    TEXT_MUTED,
+                    theme_color(ColorRole::TextSecondary),
                 );
                 if let Some(button) = button {
                     draw_text_centered(
@@ -882,7 +957,7 @@ pub fn draw_root(
                         25.0,
                         button.x + button.width / 2,
                         button.y + 24,
-                        BACKGROUND,
+                        theme_color(ColorRole::Canvas),
                     );
                 }
             }
@@ -902,7 +977,7 @@ pub fn draw_root(
             )
         })
     }) {
-        canvas.fill_rect(tab_bar, SURFACE);
+        canvas.fill_rect(tab_bar, theme_color(ColorRole::Surface));
     }
 
     for (index, (rect, label)) in tabs.iter().copied().enumerate() {
@@ -915,7 +990,7 @@ pub fn draw_root(
                     rect.width.saturating_sub(24),
                     rect.height.saturating_sub(24),
                 ),
-                SURFACE_SELECTED,
+                theme_color(ColorRole::Elevated),
             );
             canvas.fill_rect(
                 Rect::new(
@@ -924,7 +999,7 @@ pub fn draw_root(
                     112.min(rect.width),
                     14,
                 ),
-                ACCENT,
+                theme_color(ColorRole::Accent),
             );
         }
 
@@ -937,7 +1012,11 @@ pub fn draw_root(
                 icon_size,
                 icon_size,
             ),
-            if is_selected { ACCENT } else { MUTED },
+            if is_selected {
+                theme_color(ColorRole::Accent)
+            } else {
+                theme_color(ColorRole::Border)
+            },
         );
 
         if let Some(fonts) = fonts {
@@ -952,7 +1031,11 @@ pub fn draw_root(
                 if is_selected { 31.0 } else { 27.0 },
                 rect.x + rect.width / 2,
                 rect.y + 172,
-                if is_selected { TEXT } else { TEXT_MUTED },
+                if is_selected {
+                    theme_color(ColorRole::TextPrimary)
+                } else {
+                    theme_color(ColorRole::TextSecondary)
+                },
             );
         }
     }
@@ -973,7 +1056,7 @@ pub fn draw_status_bar(
     space_color: Pixel,
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(BACKGROUND);
+    canvas.fill(theme_color(ColorRole::Canvas));
     let margin = width / 30;
     // HIA-03: drawn before the no-fonts early return below, so the
     // dot itself never depends on `Fonts::load_system()` having
@@ -981,7 +1064,7 @@ pub fn draw_status_bar(
     // "always visible", not "visible whenever a font happened to
     // load". A plain square, not a circle -- this file has no
     // circle-drawing primitive, and every other "swatch" here
-    // (`MUTED`'s loading skeleton, `ACCENT`'s selection bar) is
+    // (`border`'s loading skeleton, `accent`'s selection bar) is
     // already a rectangle, not a special case worth adding one for.
     let dot_size = 22;
     let dot_y = height / 2 - dot_size / 2;
@@ -991,10 +1074,22 @@ pub fn draw_status_bar(
     };
     let baseline = height / 2 - 22;
     let time_x = margin + dot_size + 16;
-    draw_text(canvas, &fonts.semibold, time_text, 44.0, time_x, baseline, TEXT);
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        time_text,
+        44.0,
+        time_x,
+        baseline,
+        theme_color(ColorRole::TextPrimary),
+    );
 
     let wifi_label = if wifi_up { "Wi-Fi" } else { "Нет сети" };
-    let wifi_color = if wifi_up { ACCENT } else { TEXT_MUTED };
+    let wifi_color = if wifi_up {
+        theme_color(ColorRole::Accent)
+    } else {
+        theme_color(ColorRole::TextSecondary)
+    };
     let battery_label = battery
         .map(|(percent, charging)| {
             if charging {
@@ -1025,7 +1120,7 @@ pub fn draw_status_bar(
             40.0,
             battery_left.round() as u32,
             baseline,
-            TEXT,
+            theme_color(ColorRole::TextPrimary),
         );
     }
     let wifi_width = text_width(&fonts.regular, wifi_label, 36.0);
@@ -1103,8 +1198,21 @@ fn draw_text(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_contrast_boost, draw_orb, draw_root, Canvas, ACCENT, BACKGROUND, SURFACE};
-    use saai_ui_core::Rect;
+    use super::{
+        apply_contrast_boost, context_color, draw_orb, draw_root, state_color, theme_color, Canvas,
+    };
+    use saai_ui_core::{ColorRole, ContextColor, Rect, UniversalState};
+
+    #[test]
+    fn semantic_colors_use_the_physically_calibrated_panel_packing() {
+        assert_eq!(theme_color(ColorRole::Canvas), [0, 0x07, 0x10, 0x11]);
+        assert_eq!(theme_color(ColorRole::Accent), [0, 0x63, 0xD4, 0xD6]);
+        assert_eq!(context_color(ContextColor::Blue), [0, 0x58, 0x9C, 0xE8]);
+        assert_eq!(
+            state_color(UniversalState::Attention),
+            [0, 0xD4, 0xB6, 0x58]
+        );
+    }
 
     #[test]
     fn contrast_boost_zero_is_a_byte_for_byte_no_op() {
@@ -1145,8 +1253,8 @@ mod tests {
             &[],
             true,
         );
-        assert_eq!(canvas.pixel(135, 2125), ACCENT);
-        assert_eq!(canvas.pixel(945, 2125), SURFACE);
+        assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Accent));
+        assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Surface));
 
         draw_root(
             &mut canvas,
@@ -1158,8 +1266,8 @@ mod tests {
             &[],
             false,
         );
-        assert_eq!(canvas.pixel(135, 2125), SURFACE);
-        assert_eq!(canvas.pixel(945, 2125), ACCENT);
+        assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Surface));
+        assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Accent));
     }
 
     #[test]
@@ -1167,18 +1275,32 @@ mod tests {
         // HIA-16's own acceptance line (HIA-ROADMAP.md): Attention
         // must be distinguishable by shape, not only by color -- the
         // center pixel is the dot's own fill color when solid, and
-        // BACKGROUND (hollowed out) only when is_attention is true.
+        // canvas background (hollowed out) only when is_attention is true.
         let mut pixels = vec![0u8; 200 * 200 * 4];
         let mut canvas = Canvas::new(&mut pixels, 200, 200);
         let dot_rect = Rect::new(50, 50, 100, 100);
 
-        draw_orb(&mut canvas, dot_rect, ACCENT, false, &[], None);
-        assert_eq!(canvas.pixel(100, 100), ACCENT);
+        draw_orb(
+            &mut canvas,
+            dot_rect,
+            theme_color(ColorRole::Accent),
+            false,
+            &[],
+            None,
+        );
+        assert_eq!(canvas.pixel(100, 100), theme_color(ColorRole::Accent));
 
-        draw_orb(&mut canvas, dot_rect, ACCENT, true, &[], None);
-        assert_eq!(canvas.pixel(100, 100), BACKGROUND);
+        draw_orb(
+            &mut canvas,
+            dot_rect,
+            theme_color(ColorRole::Accent),
+            true,
+            &[],
+            None,
+        );
+        assert_eq!(canvas.pixel(100, 100), theme_color(ColorRole::Canvas));
         // Still a ring, not an empty box -- the frame around the
         // hollow center keeps showing the dot's own color.
-        assert_eq!(canvas.pixel(55, 100), ACCENT);
+        assert_eq!(canvas.pixel(55, 100), theme_color(ColorRole::Accent));
     }
 }

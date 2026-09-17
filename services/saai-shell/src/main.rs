@@ -115,7 +115,7 @@ const SPACE_SIGNAL_ENTITY_TYPE: &str = "saaios.space-signal";
 const SPACE_SIGNAL_TYPE_WIFI_SSID: &str = "wifi_ssid";
 /// HIA-03: one record per space that has ever had its status-bar dot
 /// color changed from the default -- `properties`: `space_id`,
-/// `color`. Absence means `SpaceColor::Default` (the plain `ACCENT`
+/// `color`. Absence means `SpaceColor::Default` (the theme's default
 /// teal every space already used before this existed), same "silent
 /// default" shape `SPACE_LIFECYCLE_ENTITY_TYPE`'s own doc comment
 /// already established.
@@ -316,19 +316,20 @@ impl SpaceColor {
         }
     }
 
-    /// `render::ACCENT` for `Default` -- the exact color the status
-    /// bar's accents already used everywhere else before this dot
-    /// existed, so an untouched space's dot doesn't introduce a new
-    /// color into the palette, just repeats one already on screen.
+    /// Context identity is mapped separately from status severity by
+    /// ADR-094. `Default` deliberately matches the theme accent, but
+    /// callers still request it through `ContextColor` so a Space color
+    /// cannot accidentally become a failure/attention state.
     fn pixel(self) -> render::Pixel {
-        match self {
-            SpaceColor::Default => render::ACCENT,
-            SpaceColor::Blue => render::rgb(88, 156, 232),
-            SpaceColor::Green => render::rgb(120, 200, 120),
-            SpaceColor::Orange => render::rgb(230, 160, 80),
-            SpaceColor::Purple => render::rgb(170, 130, 220),
-            SpaceColor::Pink => render::rgb(230, 120, 160),
-        }
+        let context = match self {
+            SpaceColor::Default => ContextColor::Default,
+            SpaceColor::Blue => ContextColor::Blue,
+            SpaceColor::Green => ContextColor::Green,
+            SpaceColor::Orange => ContextColor::Orange,
+            SpaceColor::Purple => ContextColor::Purple,
+            SpaceColor::Pink => ContextColor::Pink,
+        };
+        render::context_color(context)
     }
 }
 
@@ -440,7 +441,7 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .and_then(|entity| entity.properties.get("space_id").and_then(Value::as_str))
         .map(str::to_string)
 }
-use saai_ui_core::{layout, Axis, LayoutNode, Length, Node, Rect};
+use saai_ui_core::{layout, Axis, ContextColor, LayoutNode, Length, Node, Rect, UniversalState};
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
@@ -5911,7 +5912,7 @@ impl Shell {
         let state = orb_state(self.orb_menu_open, has_pending);
         let is_attention = state == OrbState::Attention;
         let dot_color = match state {
-            OrbState::Attention => render::rgb(230, 90, 70),
+            OrbState::Attention => render::state_color(UniversalState::Attention),
             OrbState::Idle | OrbState::Menu => {
                 space_color(&self.system_space_entities, &self.selected_space_id).pixel()
             }
