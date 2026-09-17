@@ -1,5 +1,5 @@
 use protocol::PolicyVerdict;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::sync::Mutex;
 use tool_registry::{RiskLevel, ToolSpec};
@@ -15,6 +15,9 @@ pub struct PolicyDecision {
 pub struct PolicyEngine {
     /// Tools allowed for the remainder of the session after explicit confirmation.
     session_allows: Mutex<HashSet<String>>,
+    /// One-shot confirmation currently waiting. AUTH-04: confirm must
+    /// match this binding; a fresh `PolicyEngine::new()` never sees it.
+    pending: Mutex<Option<PendingConfirmation>>,
 }
 
 impl PolicyEngine {
@@ -111,37 +114,60 @@ impl PolicyEngine {
         )
     }
 
-    pub fn decide_named(tool: &str, spec: Option<&ToolSpec>, args: &Value) -> PolicyDecision {
-        if Self::hard_deny(tool) {
-            return PolicyDecision {
-                verdict: PolicyVerdict::Deny,
-                reason: format!("tool `{tool}` is denied by default policy"),
-            };
-        }
-        // Prompt-injection heuristic: reject shell metacharacters in string args for dangerous tools.
-        if looks_like_injection(args)
-            && matches!(tool, "process.kill_request" | "system.reboot_request")
-        {
-            return PolicyDecision {
-                verdict: PolicyVerdict::Deny,
-                reason: "rejected suspicious arguments".into(),
-            };
-        }
-        if tool == "process.kill_request" {
-            let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
-            if pid <= 1 {
-                return PolicyDecision {
-                    verdict: PolicyVerdict::Deny,
-                    reason: "refusing process.kill_request for pid <= 1".into(),
-                };
+    /// Decide by tool name on **this** engine. Must not construct a
+    /// fresh `PolicyEngine` — that was AUTH-04: session grants vanished.
+    pub fn decide_named(
+        &self,
+        tool: &str,
+        spec: Option<&ToolSpec>,
+        args: &Value,
+    ) -> PolicyDecision {
+        match spec {
+            Some(spec) => self.decide(spec, args),
+            None => {
+                if Self::hard_deny(tool) {
+                    PolicyDecision {
+                        verdict: PolicyVerdict::Deny,
+                        reason: format!("tool `{tool}` is denied by default policy"),
+                    }
+                } else {
+                    PolicyDecision {
+                        verdict: PolicyVerdict::Deny,
+                        reason: format!("unknown tool `{tool}`"),
+                    }
+                }
             }
         }
-        match spec {
-            Some(spec) => PolicyEngine::new().decide(spec, args),
-            None => PolicyDecision {
-                verdict: PolicyVerdict::Deny,
-                reason: format!("unknown tool `{tool}`"),
-            },
+    }
+
+    pub fn note_pending(&self, pending: PendingConfirmation) {
+        if let Ok(mut slot) = self.pending.lock() {
+            *slot = Some(pending);
+        }
+    }
+
+    pub fn pending_confirmation(&self) -> Option<PendingConfirmation> {
+        self.pending.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Consume the pending confirmation only if call/tool/args bind.
+    /// Key order in JSON must not break the match.
+    pub fn take_bound_pending(
+        &self,
+        call_id: Uuid,
+        tool: &str,
+        arguments: &Value,
+    ) -> Result<PendingConfirmation, String> {
+        let mut slot = self
+            .pending
+            .lock()
+            .map_err(|_| "policy lock poisoned".to_string())?;
+        match slot.as_ref() {
+            Some(pending) if pending.binds(call_id, tool, arguments) => {
+                Ok(slot.take().expect("pending present"))
+            }
+            Some(_) => Err("confirmation does not match the pending request".into()),
+            None => Err("no pending confirmation".into()),
         }
     }
 }
@@ -160,6 +186,32 @@ pub struct PendingConfirmation {
     pub tool: String,
     pub arguments: Value,
     pub summary: String,
+}
+
+impl PendingConfirmation {
+    pub fn binds(&self, call_id: Uuid, tool: &str, arguments: &Value) -> bool {
+        self.call_id == call_id
+            && self.tool == tool
+            && canonicalize_json(&self.arguments) == canonicalize_json(arguments)
+    }
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<_> = map.keys().cloned().collect();
+            keys.sort();
+            let mut out = Map::new();
+            for key in keys {
+                if let Some(v) = map.get(&key) {
+                    out.insert(key, canonicalize_json(v));
+                }
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json).collect()),
+        other => other.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -215,7 +267,7 @@ mod tests {
 
     #[test]
     fn denies_format() {
-        let d = PolicyEngine::decide_named("storage.format", None, &json!({}));
+        let d = PolicyEngine::new().decide_named("storage.format", None, &json!({}));
         assert_eq!(d.verdict, PolicyVerdict::Deny);
     }
 
@@ -246,5 +298,70 @@ mod tests {
             engine.decide(&kill_spec(), &json!({"pid": 1})).verdict,
             PolicyVerdict::Deny
         );
+    }
+
+    #[test]
+    fn decide_named_sees_live_session_grant() {
+        let engine = PolicyEngine::new();
+        let args = json!({"pid": 4312});
+        assert_eq!(
+            engine
+                .decide_named("process.kill_request", Some(&kill_spec()), &args)
+                .verdict,
+            PolicyVerdict::AskUser
+        );
+        engine.grant_session("process.kill_request");
+        let d = engine.decide_named("process.kill_request", Some(&kill_spec()), &args);
+        assert_eq!(d.verdict, PolicyVerdict::Allow);
+        assert!(d.reason.contains("session grant"));
+        // A different engine still asks — grants are not global ambient.
+        assert_eq!(
+            PolicyEngine::new()
+                .decide_named("process.kill_request", Some(&kill_spec()), &args)
+                .verdict,
+            PolicyVerdict::AskUser
+        );
+    }
+
+    #[test]
+    fn confirmation_binding_rejects_changed_args() {
+        let engine = PolicyEngine::new();
+        let call_id = Uuid::new_v4();
+        engine.note_pending(PendingConfirmation {
+            call_id,
+            tool: "process.kill_request".into(),
+            arguments: json!({"pid": 4312, "note": "a"}),
+            summary: "kill".into(),
+        });
+        let err = engine
+            .take_bound_pending(
+                call_id,
+                "process.kill_request",
+                &json!({"pid": 9999, "note": "a"}),
+            )
+            .expect_err("mutated pid");
+        assert!(err.contains("does not match"));
+        assert!(engine.pending_confirmation().is_some());
+    }
+
+    #[test]
+    fn confirmation_binding_accepts_canonical_key_order() {
+        let engine = PolicyEngine::new();
+        let call_id = Uuid::new_v4();
+        engine.note_pending(PendingConfirmation {
+            call_id,
+            tool: "process.kill_request".into(),
+            arguments: json!({"note": "a", "pid": 4312}),
+            summary: "kill".into(),
+        });
+        let pending = engine
+            .take_bound_pending(
+                call_id,
+                "process.kill_request",
+                &json!({"pid": 4312, "note": "a"}),
+            )
+            .expect("key order");
+        assert_eq!(pending.call_id, call_id);
+        assert!(engine.pending_confirmation().is_none());
     }
 }

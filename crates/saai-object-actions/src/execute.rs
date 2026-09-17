@@ -28,11 +28,8 @@ pub fn preflight(
     action: &ResolvedAction,
 ) -> PolicyDecision {
     match tools.get(&action.tool_name) {
-        Some(tool) => policy.decide(tool.spec(), &action.arguments),
-        None => PolicyDecision {
-            verdict: PolicyVerdict::Deny,
-            reason: format!("unknown tool `{}`", action.tool_name),
-        },
+        Some(tool) => policy.decide_named(&action.tool_name, Some(tool.spec()), &action.arguments),
+        None => policy.decide_named(&action.tool_name, None, &action.arguments),
     }
 }
 
@@ -58,7 +55,7 @@ pub async fn execute_if_allowed(
     let tool = tools
         .get(&action.tool_name)
         .ok_or_else(|| ExecuteError::UnknownTool(action.tool_name.clone()))?;
-    let decision = policy.decide(tool.spec(), &action.arguments);
+    let decision = policy.decide_named(&action.tool_name, Some(tool.spec()), &action.arguments);
     match decision.verdict {
         PolicyVerdict::Deny => Err(ExecuteError::Denied(decision.reason)),
         PolicyVerdict::AskUser => Err(ExecuteError::NeedsConfirmation(decision.reason)),

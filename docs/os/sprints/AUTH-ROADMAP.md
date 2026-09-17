@@ -1,7 +1,7 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete.** Next valuable phone work is AUTH-04
-(`decide_named` live grants) in the service queue, not AUTH-10 as a new
+Status: **AUTH-00/01 host complete. AUTH-04 in progress (live grants + confirmation binding).**
+Next phone work is still AUTH-04 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-124](../../adr/ADR-124-unified-authority-model.md)
@@ -21,7 +21,7 @@ No ambient authority. No new policyd.
 | AUTH-01 | Principal, AuthorityRequest, scope, reason codes | **Done** (host) | no |
 | AUTH-02 | PolicyEngine adapter (same verdicts) | Backlog | no |
 | AUTH-03 | Scoped session grants (not tool-name HashSet) | Backlog | no |
-| AUTH-04 | Fix `decide_named` live grants; confirmation binding | Backlog | no |
+| AUTH-04 | Fix `decide_named` live grants; confirmation binding | **In progress** (host) | no |
 | AUTH-05 | OAM/IRAB Principal on AuthorityRequest | Backlog | no |
 | AUTH-06 | Worker DelegationEnvelope | Backlog | no |
 | AUTH-07 | Automation Principal | Backlog | no |
@@ -39,3 +39,18 @@ binding differs when target/args change, hard-deny is not a grant).
 **Rollback:** drop `crates/saai-authority`.
 
 **Threat:** none — unused types until AUTH-02.
+
+## AUTH-04
+
+**Goal:** `decide_named` uses the live `PolicyEngine` (session grants
+visible). One-shot confirm is bound to call/tool/canonical args.
+
+**Change:** instance `decide_named`; `note_pending` / `take_bound_pending`;
+runtime confirm consumes the binding. AUTH-03 scoped grants stay later.
+
+**Test:** grant then `decide_named` Allows; a fresh engine still Asks;
+mutated pid is rejected; key order does not break the bind.
+
+**Rollback:** revert `policy-engine` + `ai-runtime` confirm gate.
+
+**Threat:** forged confirm with different args no longer executes.

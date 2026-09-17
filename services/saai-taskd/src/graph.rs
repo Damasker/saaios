@@ -3,7 +3,7 @@
 //!
 //! This module does not dispatch work, does not write a Ready status,
 //! and does not talk to the model. Linear S09/S10 Intent → one Task
-//! remains the live path until WORK-02.
+//! remains the live path until WORK-02's derived ready set admits work.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

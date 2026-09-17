@@ -34,6 +34,7 @@ pub mod client;
 pub mod graph;
 pub mod model;
 pub mod runtime_bridge;
+pub mod scheduler;
 
 use chrono::Utc;
 use client::{ClientError, EntitydConn};

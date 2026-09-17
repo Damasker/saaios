@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host DAG validation in progress.**
+Status: **WORK-00 complete; WORK-01 host DAG validation done; WORK-02 derived ready set in progress.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -23,8 +23,8 @@ Planner the scheduler.
 | ID | Result | State | Phone? |
 |---|---|---|---|
 | WORK-00 | ADR-121 + mapping + this roadmap | **Done** | no |
-| WORK-01 | Task dependency model + DAG validation | **In progress** (host) | no |
-| WORK-02 | Derived ready set + concurrency = 1 | Backlog | no |
+| WORK-01 | Task dependency model + DAG validation | **Done** (host) | no |
+| WORK-02 | Derived ready set + concurrency = 1 | **In progress** (host) | no |
 | WORK-03 | Verification lifecycle (`Verifying`) | Backlog | no |
 | WORK-04 | Read-only bounded parallelism | Backlog | measure first |
 | WORK-05 | Priority scheduling | Backlog | no |
@@ -59,6 +59,21 @@ linear S09/S10 path unchanged.
 
 **Threat:** none — no new network, no executor, no phone binary change
 required to accept the module.
+
+## WORK-02
+
+**Goal:** Ready is derived from the store; mutating concurrency is 1.
+
+**Change:** `scheduler.rs` — `derive_ready_set` / `admit_frontier`. No
+`ready` status. WaitingConfirmation is not admitted. Linear S09/S10
+one-task path unchanged.
+
+**Test:** child blocked until parent Done; failed parent blocks; two
+Pending with one Running admits nothing; reboot snapshot matches.
+
+**Rollback:** drop `scheduler.rs`.
+
+**Threat:** none — no dispatch change, no new queue.
 
 ## Non-goals until later IDs
 

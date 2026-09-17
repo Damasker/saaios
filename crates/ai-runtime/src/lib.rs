@@ -236,7 +236,9 @@ impl AiRuntime {
             .tools
             .get(tool)
             .ok_or_else(|| anyhow!("unknown tool {tool}"))?;
-        let decision = self.policy.decide(spec.spec(), &arguments);
+        let decision = self
+            .policy
+            .decide_named(tool, Some(spec.spec()), &arguments);
 
         let tool_env = Envelope::new(
             MessageKind::ToolCall,
@@ -440,31 +442,7 @@ impl AiRuntime {
                 events.push(ev);
 
                 let spec = self.tools.get(&tool_name).map(|t| t.spec().clone());
-                let decision = if let Some(spec) = spec.as_ref() {
-                    if PolicyEngine::hard_deny(&tool_name) {
-                        policy_engine::PolicyDecision {
-                            verdict: PolicyVerdict::Deny,
-                            reason: format!("tool `{tool_name}` hard-denied"),
-                        }
-                    } else if looks_like_injection(&args)
-                        && matches!(
-                            tool_name.as_str(),
-                            "process.kill_request" | "system.reboot_request"
-                        )
-                    {
-                        policy_engine::PolicyDecision {
-                            verdict: PolicyVerdict::Deny,
-                            reason: "rejected suspicious arguments".into(),
-                        }
-                    } else {
-                        self.policy.decide(spec, &args)
-                    }
-                } else {
-                    policy_engine::PolicyDecision {
-                        verdict: PolicyVerdict::Deny,
-                        reason: format!("unknown tool `{tool_name}`"),
-                    }
-                };
+                let decision = self.policy.decide_named(&tool_name, spec.as_ref(), &args);
 
                 let decision_env = Envelope::new(
                     MessageKind::PolicyDecision,
@@ -532,6 +510,8 @@ impl AiRuntime {
                             arguments: args.clone(),
                             summary: summary.clone(),
                         });
+                        self.policy
+                            .note_pending(pending.clone().expect("pending just assigned"));
                         diagnose.proposed_action = Some(ProposedAction {
                             tool: tool_name.clone(),
                             arguments: args.clone(),
@@ -699,6 +679,9 @@ impl AiRuntime {
         );
         async move {
             let confirmed = !matches!(scope, ConfirmScope::Cancel);
+            self.policy
+                .take_bound_pending(call_id, tool, &arguments)
+                .map_err(|error| anyhow!(error))?;
             let conf_env = Envelope::new(
                 MessageKind::ConfirmationResponse,
                 correlation_id,
@@ -890,11 +873,6 @@ fn top_process(value: &Value) -> Option<(u32, String)> {
     best.map(|(pid, name, _)| (pid, name))
 }
 
-fn looks_like_injection(args: &Value) -> bool {
-    let s = args.to_string().to_lowercase();
-    s.contains("ignore policies") || s.contains("kill -9 1") || s.contains("rm -rf")
-}
-
 const SYSTEM_PROMPT: &str = r#"
 You are the system intelligence of the currently running SaaiOS instance, not
 a generic chat assistant and not an external support bot. The local
@@ -1035,16 +1013,18 @@ pub async fn diagnose_slow_with_mock_planner(
     ))?;
 
     let _ = bus;
+    let pending_confirmation = PendingConfirmation {
+        call_id,
+        tool: "process.kill_request".into(),
+        arguments: kill_args,
+        summary: proposed.summary,
+    };
+    policy.note_pending(pending_confirmation.clone());
     Ok(HandleOutcome {
         correlation_id,
         session_id: Uuid::new_v4(),
         diagnose,
-        pending_confirmation: Some(PendingConfirmation {
-            call_id,
-            tool: "process.kill_request".into(),
-            arguments: kill_args,
-            summary: proposed.summary,
-        }),
+        pending_confirmation: Some(pending_confirmation),
         events: vec![],
     })
 }

@@ -319,6 +319,44 @@ async fn session_grant_skips_second_confirmation() {
 }
 
 #[tokio::test]
+async fn confirmation_rejects_mutated_arguments() {
+    use protocol::ConfirmScope;
+
+    let dir = tempdir().unwrap();
+    let audit = Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap());
+    let mut registry = ToolRegistry::new();
+    install_mock_system_tools(&mut registry);
+    let tools = Arc::new(registry);
+    let policy = Arc::new(PolicyEngine::new());
+    let runtime = AiRuntime::new(
+        tools,
+        policy,
+        audit,
+        EventBus::new(32),
+        Arc::new(MockModelProvider),
+    );
+
+    let first = runtime
+        .handle_user_text("Почему тормозит?")
+        .await
+        .expect("first");
+    let pending = first.pending_confirmation.expect("pending");
+    let mut mutated = pending.arguments.clone();
+    mutated["pid"] = json!(1);
+    let err = runtime
+        .confirm(
+            first.correlation_id,
+            pending.call_id,
+            &pending.tool,
+            mutated,
+            ConfirmScope::Once,
+        )
+        .await
+        .expect_err("mutated args");
+    assert!(err.to_string().contains("does not match"));
+}
+
+#[tokio::test]
 async fn high_cpu_diagnose_emits_automation_events() {
     use automation_engine::AutomationEngine;
 

@@ -22,11 +22,11 @@ vertical slices в существующие процессы и VUI-04…09.
 | Слой | ADR | Host сейчас | На телефоне |
 |---|---|---|---|
 | SOM / OAM / IRAB | 118–120 | crates + entityd | не прошито как продукт |
-| Work Scheduler v2 | 121 | DAG validation в `saai-taskd` | WORK-01 не закрыт |
+| Work Scheduler v2 | 121 | DAG + derived ready set в `saai-taskd` | WORK-02 host; не прошито |
 | World Model | 122 | `saai-observation` types | нет `saai-deviced`, не нужно для P0 |
 | Attention | 123 | `saai-attention` projection | shell ещё `inbox_rows()` |
-| UAM | 124 | `saai-authority` types | `TaskConfirm` уже живой; AUTH-10 — регрессия |
-| Memory MLP | 125 | `(space,key)` + labelled context | runtime не прошит |
+| UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
+| Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
 | Visual | 111–116 | VUI-00…03 Done, **VUI-04 in progress** | текущий shell image |
 
 ## Две очереди, не девять
@@ -51,11 +51,12 @@ SERVICE QUEUE (можно шить параллельно shell)
 APP-COMPAT, Learning (MEM-09), голос, PCE, `saai-deviced` — **не в этом
 пути**. Их не планировать, пока P0–P2 не пощупаны на panther.
 
-## P0 — эта неделя (быстрее всего увидеть на телефоне)
+## P0 — закрыто на panther (2026-09-18)
 
-1. Закончить VUI-04 на shell (status bar, Context Light remainder).
-2. Прошить **только** `saaios-runtime` с MEM-01/02/05.
-3. Pixel: один key в Home и Work, reboot, recall не смешивается.
+1. VUI-04 на shell — remainder (status bar / Context Light).
+2. Прошит `saaios-runtime` MEM-01/02/05 (`cc5f9913…`, reboot `-f`).
+3. Pixel: `p0_same_key` Home=`home-value` / Work=`work-value`; default
+   recall пуст; `all=true` не смешивает; модель без `memory.remember`.
 
 Это закрывает дыру ADR-038, уже живущую на устройстве. Не ждать MEM-10.
 
@@ -71,6 +72,9 @@ APP-COMPAT, Learning (MEM-09), голос, PCE, `saai-deviced` — **не в э�
 
 Pixel smoke: remember из Work не течёт в Home; модель не создаёт
 authoritative fact; опасный Action по-прежнему через `TaskConfirm`.
+AUTH-04 runtime прошит 2026-09-18 (`af90a6b3…`): confirm без pending —
+`no pending confirmation`. `saai-taskd` не в native-init, WORK-02 пока
+host-only derived view.
 
 ## P2 — едет на VUI, не отдельным треком
 
