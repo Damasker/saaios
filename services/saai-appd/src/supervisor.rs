@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::io;
 use std::io::Write as _;
 use std::os::unix::process::CommandExt;
@@ -88,6 +89,12 @@ struct AppRuntime {
     /// not silently re-derive it from whatever the grant store says at
     /// the moment it happens to crash).
     granted: Vec<Capability>,
+    /// ADR-097: this app's own private session-D-Bus daemon, if one has
+    /// been started -- never in `children` on purpose (crash/restart/
+    /// pid-reporting logic there is about the app process itself; this
+    /// is supervisor-owned plumbing, not something `list`'s pids or the
+    /// crash-limiter should ever see).
+    dbus_daemon: Option<Child>,
 }
 
 impl AppRuntime {
@@ -98,6 +105,7 @@ impl AppRuntime {
             failures: VecDeque::new(),
             crash_limited: false,
             granted: Vec::new(),
+            dbus_daemon: None,
         }
     }
 
@@ -124,6 +132,13 @@ pub struct AppSupervisor {
     allow_unsandboxed: bool,
     policy: SupervisorPolicy,
     apps: HashMap<String, AppRuntime>,
+    /// ADR-097: where the (optional, prebuilt Alpine) session `dbus-daemon`
+    /// binary and its `lib/`/`share/dbus-1/session.conf` live. Defaulted,
+    /// not required -- `ensure_dbus_daemon` degrades to "no bus for this
+    /// launch" when nothing is deployed at this path (host tests, an
+    /// image that hasn't staged it), the same tolerance `bundled_fonts`
+    /// already has for a per-app resource that is not always present.
+    dbus_binary_dir: PathBuf,
 }
 
 impl AppSupervisor {
@@ -141,6 +156,7 @@ impl AppSupervisor {
             allow_unsandboxed: false,
             policy: SupervisorPolicy::default(),
             apps: HashMap::new(),
+            dbus_binary_dir: PathBuf::from("/data/saaios/system/dbus"),
         }
     }
 
@@ -162,6 +178,7 @@ impl AppSupervisor {
             allow_unsandboxed: false,
             policy,
             apps: HashMap::new(),
+            dbus_binary_dir: PathBuf::from("/data/saaios/system/dbus"),
         })
     }
 
@@ -169,6 +186,15 @@ impl AppSupervisor {
     /// callers must keep the secure default (`false`).
     pub fn with_unsandboxed_host_fallback(mut self, enabled: bool) -> Self {
         self.allow_unsandboxed = enabled;
+        self
+    }
+
+    /// ADR-097: overrides where the session `dbus-daemon` binary/libs/
+    /// config live. Production's default (`/data/saaios/system/dbus`)
+    /// covers the real image; this exists for tests and for a build that
+    /// stages the binary somewhere else.
+    pub fn with_dbus_binary_dir(mut self, dir: impl AsRef<Path>) -> Self {
+        self.dbus_binary_dir = dir.as_ref().to_path_buf();
         self
     }
 
@@ -205,7 +231,8 @@ impl AppSupervisor {
             runtime.crash_limited = false;
         }
         runtime.granted = granted.to_vec();
-        let child = self.spawn(app_id, &runtime.installed, &runtime.granted)?;
+        let dbus_address = self.ensure_dbus_daemon(&mut runtime, app_id)?;
+        let child = self.spawn(app_id, &runtime.installed, &runtime.granted, &dbus_address)?;
         let pid = child.id();
         runtime.children.push(child);
         self.apps.insert(app_id.to_owned(), runtime);
@@ -221,6 +248,8 @@ impl AppSupervisor {
             self.apps.insert(app_id.to_owned(), runtime);
             return Err(error);
         }
+        stop_dbus_daemon(&mut runtime.dbus_daemon);
+        let _ = fs::remove_file(self.dbus_socket_path(app_id));
         runtime.crash_limited = false;
         runtime.failures.clear();
         self.apps.insert(app_id.to_owned(), runtime);
@@ -318,13 +347,21 @@ impl AppSupervisor {
                 }
             } else {
                 for _ in 0..restart_count {
-                    let child = match self.spawn(&app_id, &runtime.installed, &runtime.granted) {
-                        Ok(child) => child,
+                    let dbus_address = match self.ensure_dbus_daemon(&mut runtime, &app_id) {
+                        Ok(address) => address,
                         Err(error) => {
                             self.apps.insert(app_id.clone(), runtime);
                             return Err(error);
                         }
                     };
+                    let child =
+                        match self.spawn(&app_id, &runtime.installed, &runtime.granted, &dbus_address) {
+                            Ok(child) => child,
+                            Err(error) => {
+                                self.apps.insert(app_id.clone(), runtime);
+                                return Err(error);
+                            }
+                        };
                     let pid = child.id();
                     runtime.children.push(child);
                     events.push(AppEvent {
@@ -369,11 +406,90 @@ impl AppSupervisor {
         Ok(())
     }
 
+    /// ADR-097: deterministic per-app path -- no bookkeeping needed to
+    /// find an app's own bus back later (`stop()` derives the same path
+    /// to clean up), and distinct apps never collide.
+    fn dbus_socket_path(&self, app_id: &str) -> PathBuf {
+        PathBuf::from(format!("/run/saaios/dbus/{app_id}.sock"))
+    }
+
+    /// ADR-097: starts this app's own private session `dbus-daemon` if
+    /// one is not already running, and returns its socket path either
+    /// way. Never shared across apps -- a fresh daemon per app_id, torn
+    /// down in `stop()`, is what keeps this from becoming a real
+    /// inter-app channel (see `SandboxPaths::dbus_socket`'s doc comment).
+    ///
+    /// Tolerant, not fail-closed: if `dbus_binary_dir` has nothing staged
+    /// (host tests, an image that hasn't shipped it yet), this returns
+    /// the socket path anyway with no daemon behind it -- an app that
+    /// hard-requires D-Bus fails exactly as it already did before this
+    /// change, every other app is unaffected.
+    fn ensure_dbus_daemon(
+        &self,
+        runtime: &mut AppRuntime,
+        app_id: &str,
+    ) -> Result<PathBuf, SupervisorError> {
+        let socket_path = self.dbus_socket_path(app_id);
+        let alive = runtime
+            .dbus_daemon
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+        if alive {
+            return Ok(socket_path);
+        }
+        runtime.dbus_daemon = None;
+
+        let binary = self.dbus_binary_dir.join("bin/dbus-daemon");
+        if !binary.is_file() {
+            return Ok(socket_path);
+        }
+
+        if let Some(parent) = socket_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| SupervisorError::Process {
+                operation: "create dbus runtime dir",
+                app_id: app_id.to_owned(),
+                source,
+            })?;
+        }
+        let _ = fs::remove_file(&socket_path);
+
+        let config_file = self.dbus_binary_dir.join("share/dbus-1/session.conf");
+        let lib_dir = self.dbus_binary_dir.join("lib");
+        let child = Command::new(&binary)
+            .env_clear()
+            .env("LD_LIBRARY_PATH", &lib_dir)
+            .arg("--nofork")
+            .arg(format!("--config-file={}", config_file.display()))
+            .arg(format!("--address=unix:path={}", socket_path.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|source| SupervisorError::Process {
+                operation: "start session dbus",
+                app_id: app_id.to_owned(),
+                source,
+            })?;
+        runtime.dbus_daemon = Some(child);
+
+        // `--nofork` creates its listening socket essentially immediately
+        // (no chroot/heavy init -- ADR-097's manual spike measured well
+        // under this) -- a short bounded poll keeps the common case fast
+        // and still fails safe (an unrevealed socket, same as the
+        // tolerant path above) if it never appears.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while !socket_path.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(socket_path)
+    }
+
     fn spawn(
         &self,
         app_id: &str,
         installed: &InstalledApp,
         granted: &[Capability],
+        dbus_address: &Path,
     ) -> Result<Child, SupervisorError> {
         let executable = installed.code_dir.join(&installed.manifest.exec);
         // S08 Change 6: mirrors the FONTCONFIG_PATH convention below --
@@ -391,6 +507,7 @@ impl AppSupervisor {
             data_dir: installed.data_dir.clone(),
             wayland_socket: self.runtime_dir.join(&self.wayland_display),
             portal_socket: PathBuf::from("/run/saaios/portal.sock"),
+            dbus_socket: dbus_address.to_path_buf(),
             lib_dir,
         };
         let granted = granted.to_vec();
@@ -418,6 +535,18 @@ impl AppSupervisor {
             .env("QT_QPA_PLATFORM", "wayland")
             .env("GTK_A11Y", "none")
             .env("NO_AT_BRIDGE", "1")
+            // ADR-097: set unconditionally, like the vars above -- a
+            // toolkit that never looks at D-Bus ignores this exactly as
+            // it ignores QT_QPA_PLATFORM on GTK. When no daemon could be
+            // started (dbus_socket_path with nothing listening on it),
+            // this points at a dead socket, which is exactly the launch
+            // behavior an app hard-requiring D-Bus already had before
+            // this change -- no new failure mode, just a real fix when
+            // the binary is deployed.
+            .env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}", dbus_address.display()),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -468,7 +597,20 @@ impl Drop for AppSupervisor {
                 let _ = child.wait();
             }
             runtime.children.clear();
+            stop_dbus_daemon(&mut runtime.dbus_daemon);
         }
+    }
+}
+
+/// ADR-097: shared by `stop()` and `Drop` -- kills and reaps this app's
+/// private session-D-Bus daemon, if it has one. Leaves the socket file
+/// itself for the caller (`stop()` removes it explicitly; `Drop` runs at
+/// process exit, where the whole `/run/saaios/dbus` tree either outlives
+/// nothing meaningful or is cleaned up by the next boot regardless).
+fn stop_dbus_daemon(dbus_daemon: &mut Option<Child>) {
+    if let Some(mut child) = dbus_daemon.take() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 

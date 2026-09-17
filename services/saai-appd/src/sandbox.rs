@@ -18,6 +18,16 @@ pub struct SandboxPaths {
     pub data_dir: PathBuf,
     pub wayland_socket: PathBuf,
     pub portal_socket: PathBuf,
+    /// ADR-097: a per-app session D-Bus socket, started and torn down by
+    /// `saai-appd`'s own supervisor (never shared between apps -- each
+    /// app gets a fresh `dbus-daemon` listening only on its own path, so
+    /// this reveals no inter-app channel, only satisfies toolkits that
+    /// hard-require a bus for single-instance checks, e.g. PCManFM-Qt).
+    /// The path is always set, but only actually bind-mounted if the
+    /// socket file exists yet -- the daemon binary may not be deployed
+    /// on every build (host tests, an image without it staged), the
+    /// same "guarded by existence" convention `reveal_fonts` below uses.
+    pub dbus_socket: PathBuf,
     /// S08 Change 6: a dynamically-linked runtime (GTK4/Qt via Alpine's
     /// prebuilt musl packages, ADR-021) needs its own copy of
     /// `ld-musl-aarch64.so.1` and every shared library it links against --
@@ -93,12 +103,17 @@ pub fn apply(
     let data_pin = scratch_root.join("data");
     let wayland_pin = scratch_root.join("wayland");
     let portal_pin = scratch_root.join("portal");
+    let dbus_pin = scratch_root.join("dbus");
     let lib_pin = scratch_root.join("lib");
     let fonts_pin = scratch_root.join("fonts");
     pin_directory(&paths.code_dir, &code_pin)?;
     pin_directory(&paths.data_dir, &data_pin)?;
     pin_file(&paths.wayland_socket, &wayland_pin)?;
     pin_file(&paths.portal_socket, &portal_pin)?;
+    let reveal_dbus = paths.dbus_socket.exists();
+    if reveal_dbus {
+        pin_file(&paths.dbus_socket, &dbus_pin)?;
+    }
     if let Some(lib_dir) = &paths.lib_dir {
         pin_directory(lib_dir, &lib_pin)?;
     }
@@ -122,11 +137,15 @@ pub fn apply(
     reveal_directory(&code_pin, &paths.code_dir, true)?;
     reveal_directory(&data_pin, &paths.data_dir, false)?;
 
-    // `/run` contains privileged appd/entityd sockets. Only Wayland and the
-    // capability-checking portal cross the application boundary.
+    // `/run` contains privileged appd/entityd sockets. Only Wayland, the
+    // capability-checking portal, and (when running) this app's own
+    // private session-D-Bus socket cross the application boundary.
     mask_tmpfs(Path::new("/run"), "mode=0755,size=4m", true)?;
     reveal_file(&wayland_pin, &paths.wayland_socket)?;
     reveal_file(&portal_pin, &paths.portal_socket)?;
+    if reveal_dbus {
+        reveal_file(&dbus_pin, &paths.dbus_socket)?;
+    }
 
     for path in ["/metadata", "/proc", "/sys", "/saaios"] {
         mask_if_present(Path::new(path))?;
@@ -452,6 +471,7 @@ mod tests {
             data_dir: PathBuf::from("/nonexistent/var/apps/org.saaios.example"),
             wayland_socket: PathBuf::from("/nonexistent/run/wayland-1"),
             portal_socket: PathBuf::from("/nonexistent/run/portal.sock"),
+            dbus_socket: PathBuf::from("/nonexistent/run/dbus.sock"),
             lib_dir: None,
         };
         let error = apply(&paths, &[Capability::NetInternet], false).unwrap_err();
