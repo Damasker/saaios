@@ -443,8 +443,8 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
 }
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
-    Node, ObjectSummary, Rect, StatusIndicator, StatusIndicatorVariant, SystemSection,
-    SystemSectionRow, UniversalState,
+    NavigationItem, Node, ObjectSummary, OrbHost, Rect, StatusIndicator, StatusIndicatorVariant,
+    StatusMark, SystemSection, SystemSectionRow, UniversalState,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1831,7 +1831,7 @@ enum Frame {
     },
     Root {
         content_rect: Rect,
-        tabs: Vec<(Rect, &'static str)>,
+        tabs: Vec<(Rect, NavigationItem)>,
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
     },
@@ -1840,7 +1840,7 @@ enum Frame {
     /// "Приложения" row (ADR-113/`apps_open`).
     Now {
         content_rect: Rect,
-        tabs: Vec<(Rect, &'static str)>,
+        tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
         sections: Vec<SystemSection>,
         object: Option<ObjectSummary>,
@@ -2028,33 +2028,6 @@ const ORB_TOGGLE_ACTION: &str = "orb:toggle";
 const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
 const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
 const ORB_MENU_BLUETOOTH_ACTION: &str = "orb-menu:bluetooth";
-/// HIA-04a's spike (ADR-090) proved the mechanics; this is the
-/// permanent shape. `Idle`/`Attention` are silent (no menu drawn),
-/// `Menu` is the one state a tap actually opens. `Listening`/
-/// `ControlLayer` (source document section 55) are deliberately not
-/// built yet -- HIA-ROADMAP.md defers both to Phase 3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OrbState {
-    Idle,
-    Menu,
-    Attention,
-}
-
-/// Pure decision, no `Shell` needed -- `Menu` wins outright (it's a
-/// deliberate user action in progress), otherwise `Attention` reflects
-/// a real, already-live signal (`inbox_notifications`, S21/S30, now
-/// also fed by ADR-089's failed-task notifications) rather than a
-/// synthetic flag invented for this feature alone.
-fn orb_state(menu_open: bool, has_pending_notifications: bool) -> OrbState {
-    if menu_open {
-        OrbState::Menu
-    } else if has_pending_notifications {
-        OrbState::Attention
-    } else {
-        OrbState::Idle
-    }
-}
-
 /// Square, not a circle -- same reasoning as `draw_status_bar`'s HIA-03
 /// dot: no circle-drawing primitive exists in `render.rs`.
 fn orb_dot_size(width: u32, height: u32) -> u32 {
@@ -2214,10 +2187,10 @@ fn orb_action_at(
 struct OrbFrame {
     dot: Rect,
     dot_color: render::Pixel,
-    /// HIA-16: drives `draw_orb`'s non-color signal -- a hollow ring
-    /// instead of a solid square, so `Attention` is distinguishable
-    /// by shape alone, not only by its fixed alert color.
-    is_attention: bool,
+    /// HIA-16/VUI-04 (ADR-116): drives `draw_orb`'s non-color signal --
+    /// `OrbHost::mark()`'s real `StatusMark` shape, not just a hollow
+    /// ring for `Attention` alone.
+    mark: StatusMark,
     menu_rows: Vec<(Rect, &'static str)>,
 }
 
@@ -2680,6 +2653,38 @@ fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
 /// defaults to absent/false, same "missing means no" convention
 /// `saaios.task`'s own `status` lookup already uses.
 const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
+
+/// VUI-04 (ADR-116): the Orb dot's own real state, independent of
+/// whether its menu happens to be open right now (that's a separate
+/// interaction-mode concern -- the menu rows themselves already carry
+/// it). Pure, no `Shell` needed, same shape the `OrbState`/`orb_state`
+/// pair this replaces used to have. Priority, most urgent first:
+/// `Offline` (a live connection is required to trust any signal below
+/// it -- without one this shell cannot honestly claim to know whether
+/// there is real pending attention or real in-progress work either),
+/// `Attention` (undismissed notifications, S21/S30/ADR-089), `Running`
+/// (`in_progress_work`, the same VUI-03 query "Продолжается" already
+/// uses), `Active` (the menu is open -- the user is deliberately
+/// engaging it right now), else `Idle`.
+fn orb_visual_state(
+    appd_connected: bool,
+    entityd_connected: bool,
+    has_pending_notifications: bool,
+    has_in_progress_work: bool,
+    menu_open: bool,
+) -> UniversalState {
+    if !appd_connected || !entityd_connected {
+        UniversalState::Offline
+    } else if has_pending_notifications {
+        UniversalState::Attention
+    } else if has_in_progress_work {
+        UniversalState::Running
+    } else if menu_open {
+        UniversalState::Active
+    } else {
+        UniversalState::Idle
+    }
+}
 
 fn inbox_notifications(entities: &[Entity]) -> Vec<&Entity> {
     entities
@@ -4441,12 +4446,7 @@ impl Shell {
             let view = root_view(width, height);
             Frame::Now {
                 content_rect: view.children[0].rect,
-                tabs: view.children[1]
-                    .children
-                    .iter()
-                    .zip(ROOT_TABS)
-                    .map(|(node, tab)| (node.rect, tab.label))
-                    .collect::<Vec<_>>(),
+                tabs: self.root_navigation_items(width, height),
                 header: self.now_context_header(),
                 sections: self.now_sections(),
                 object: self.now_object_summary(),
@@ -4455,12 +4455,7 @@ impl Shell {
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
-            let tabs = view.children[1]
-                .children
-                .iter()
-                .zip(ROOT_TABS)
-                .map(|(node, tab)| (node.rect, tab.label))
-                .collect::<Vec<_>>();
+            let tabs = self.root_navigation_items(width, height);
             let content_cards = if self.current_page == RootPage::Inbox {
                 self.inbox_content_cards(width, height)
             } else if self.current_page == RootPage::Me {
@@ -4754,7 +4749,6 @@ impl Shell {
                         &mut render::Canvas::new(canvas, width, height),
                         content_rect,
                         &tabs,
-                        current_page_index,
                         &header,
                         &sections,
                         object.as_ref(),
@@ -4772,7 +4766,7 @@ impl Shell {
                     &mut render::Canvas::new(canvas, width, height),
                     orb.dot,
                     orb.dot_color,
-                    orb.is_attention,
+                    orb.mark,
                     &orb.menu_rows,
                     fonts,
                 );
@@ -5902,6 +5896,34 @@ impl Shell {
     /// fetched (possibly nothing, possibly stale), so this shell cannot
     /// honestly claim to know the space's *current* lifecycle either.
     /// Offline is the more urgent, more global fact.
+    /// VUI-04 (ADR-116): the shared `BottomNavigation` data every root
+    /// page now draws through -- real `selected` (matches the current
+    /// page), real `badge`/`attention` for "Входящие" (the same
+    /// `inbox_rows` count "Входящие" itself lists, not a separate
+    /// tally that could drift from it). `pressed`/`disabled` stay at
+    /// their default `false`: no touch-down tracking feeds `pressed`
+    /// yet, and no tab is ever actually disabled today -- both are
+    /// real contract fields with no real trigger yet, not silently
+    /// dropped.
+    fn root_navigation_items(&self, width: u32, height: u32) -> Vec<(Rect, NavigationItem)> {
+        let inbox_badge = inbox_rows(&self.selected_entities).len() as u32;
+        root_view(width, height).children[1]
+            .children
+            .iter()
+            .zip(ROOT_TABS)
+            .map(|(node, tab)| {
+                let mut item = NavigationItem::new(tab.id, tab.label);
+                if page_from_id(tab.id) == Some(self.current_page) {
+                    item = item.selected();
+                }
+                if tab.id == "inbox" && inbox_badge > 0 {
+                    item = item.with_badge(inbox_badge).with_attention();
+                }
+                (node.rect, item)
+            })
+            .collect()
+    }
+
     fn now_context_header(&self) -> ContextHeader {
         let header = ContextHeader::new(space_display_name(&self.spaces, &self.selected_space_id))
             .with_section_title("Сейчас");
@@ -6303,20 +6325,32 @@ impl Shell {
             Vec::new()
         };
         let view = orb_view(width, height, &menu_actions);
-        let has_pending = !inbox_notifications(&self.selected_entities).is_empty();
-        let state = orb_state(self.orb_menu_open, has_pending);
-        let is_attention = state == OrbState::Attention;
-        let dot_color = match state {
-            OrbState::Attention => render::state_color(UniversalState::Attention),
-            OrbState::Idle | OrbState::Menu => {
+        let orb_host = OrbHost::new(orb_visual_state(
+            self.appd.is_connected(),
+            self.entityd.is_connected(),
+            !inbox_notifications(&self.selected_entities).is_empty(),
+            !in_progress_work(&self.selected_entities).is_empty(),
+            self.orb_menu_open,
+        ));
+        // Context Light: color still means context (the selected
+        // Space's own color) for the two states that are not urgent
+        // enough to override it -- `Idle`/`Active` -- matching this
+        // grammar's own "context=color, state=shape" split (state is
+        // already fully carried by `orb_host.mark()` below,
+        // independent of this choice). Every other state is urgent
+        // enough that its own semantic color takes over, the same way
+        // `Attention` already did before this ADR.
+        let dot_color = match orb_host.state {
+            UniversalState::Idle | UniversalState::Active => {
                 space_color(&self.system_space_entities, &self.selected_space_id).pixel()
             }
+            other => render::state_color(other),
         };
         if menu_actions.is_empty() {
             return OrbFrame {
                 dot: view.rect,
                 dot_color,
-                is_attention,
+                mark: orb_host.mark(),
                 menu_rows: Vec::new(),
             };
         }
@@ -6329,10 +6363,12 @@ impl Shell {
         OrbFrame {
             dot: dot_rect,
             dot_color,
-            is_attention,
+            mark: orb_host.mark(),
             menu_rows,
         }
     }
+
+
 
     /// S21: marks a notification `dismissed` rather than deleting it --
     /// same full-replace-properties convention `handle_object_view_
@@ -6949,13 +6985,14 @@ mod tests {
         content_action_at, dev_surface_back_tapped, effective_context_space, format_utc_offset,
         in_progress_work, input_idle_for_at_least, intent_action_at, known_surfaces,
         me_fixed_card_action, next_in_cycle, next_pending_action, object_view_action_at,
-        object_view_content, orb_action_at, orb_menu_actions, orb_state, orb_zone_rect,
+        object_view_content, orb_action_at, orb_menu_actions, orb_visual_state, orb_zone_rect,
         remove_context_source, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
-        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, OrbState, Rect,
-        RootPage, Space, SpaceColor, SpaceLifecycle, TrustedClientTap, WifiListTap,
+        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect,
+        RootPage, Space, SpaceColor, SpaceLifecycle, TrustedClientTap, UniversalState,
+        WifiListTap,
         ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
         MANUAL_CONFIDENCE, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
         SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE,
@@ -8002,15 +8039,35 @@ mod tests {
     }
 
     #[test]
-    fn orb_state_prefers_menu_over_attention() {
-        assert_eq!(orb_state(true, true), OrbState::Menu);
-        assert_eq!(orb_state(true, false), OrbState::Menu);
+    fn orb_visual_state_priority_offline_beats_attention_beats_running_beats_active() {
+        assert_eq!(
+            orb_visual_state(false, true, true, true, true),
+            UniversalState::Offline
+        );
+        assert_eq!(
+            orb_visual_state(true, false, true, true, true),
+            UniversalState::Offline
+        );
+        assert_eq!(
+            orb_visual_state(true, true, true, true, true),
+            UniversalState::Attention
+        );
+        assert_eq!(
+            orb_visual_state(true, true, false, true, true),
+            UniversalState::Running
+        );
+        assert_eq!(
+            orb_visual_state(true, true, false, false, true),
+            UniversalState::Active
+        );
     }
 
     #[test]
-    fn orb_state_falls_back_from_attention_to_idle() {
-        assert_eq!(orb_state(false, true), OrbState::Attention);
-        assert_eq!(orb_state(false, false), OrbState::Idle);
+    fn orb_visual_state_is_idle_only_when_connected_and_nothing_else_is_true() {
+        assert_eq!(
+            orb_visual_state(true, true, false, false, false),
+            UniversalState::Idle
+        );
     }
 
     #[test]

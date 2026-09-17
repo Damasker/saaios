@@ -2,10 +2,10 @@ use fontdue::{Font, FontSettings};
 use saai_ui_core::{
     Button, ButtonVariant, ColorRole, ContextHeader, ContextColor, DataRow, DataRowVariant,
     Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize,
-    LogicalUnit, Metric, MetricValue, ObjectSummary, ObjectSummaryTrailing, Progress, Rect, Rgb,
-    SemanticText, SpacingToken, StatusIndicator, StatusIndicatorVariant, StatusMark, StrokeToken,
-    SurfaceScale, SystemSection, SystemSectionRow, TextOverflow, TextRole, Theme, UniversalState,
-    MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary, ObjectSummaryTrailing,
+    Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator, StatusIndicatorVariant,
+    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, TextOverflow,
+    TextRole, Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -537,11 +537,20 @@ pub fn draw_object_view(
 /// document section 52) -- a colorblind user, or a photo/screen-
 /// share that's lost its color fidelity, still sees "hollow" as
 /// distinct from "solid" regardless of hue.
+/// VUI-04 (ADR-116): `mark` is the Orb's own `OrbHost::mark()` --
+/// `draw_calibration_mark` already renders a distinct shape per
+/// `StatusMark` variant (used by `StatusIndicator`'s own compact mark
+/// and the calibration fixture), so every real Orb state
+/// (Idle/Active/Running/Attention/Offline) now gets a shape of its own
+/// instead of the old binary filled-square-or-hollow-ring. Non-color by
+/// construction: `dot_color` and `mark` are computed independently by
+/// the caller, so a state is legible even for a viewer who cannot use
+/// `dot_color` at all.
 pub fn draw_orb(
     canvas: &mut Canvas<'_>,
     dot_rect: Rect,
     dot_color: Pixel,
-    is_attention: bool,
+    mark: StatusMark,
     menu_rows: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
@@ -559,20 +568,7 @@ pub fn draw_orb(
             );
         }
     }
-    canvas.fill_rect(dot_rect, dot_color);
-    if is_attention {
-        // A quarter of the side (minimum 6px so it stays visible even
-        // on the smallest panel `orb_dot_size` ever produces) left as
-        // a visible frame all the way around.
-        let border = (dot_rect.width / 4).max(6);
-        let inner = Rect::new(
-            dot_rect.x + border,
-            dot_rect.y + border,
-            dot_rect.width.saturating_sub(border * 2),
-            dot_rect.height.saturating_sub(border * 2),
-        );
-        canvas.fill_rect(inner, theme_color(ColorRole::Canvas));
-    }
+    draw_calibration_mark(canvas, dot_rect, mark, dot_color);
 }
 
 /// The "adb"-style pairing prompt for a new SSH client -- same
@@ -1737,7 +1733,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
 pub fn draw_root(
     canvas: &mut Canvas<'_>,
     content: Rect,
-    tabs: &[(Rect, &str)],
+    tabs: &[(Rect, NavigationItem)],
     selected: usize,
     context_label: &str,
     fonts: Option<&Fonts>,
@@ -1760,7 +1756,7 @@ pub fn draw_root(
         theme_color(ColorRole::Accent),
     );
     if let (Some(fonts), Some((_, title))) = (fonts, tabs.get(selected)) {
-        let header = format!("{context_label} · {title}");
+        let header = format!("{context_label} · {}", title.label);
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -1921,32 +1917,40 @@ pub fn draw_root(
         }
     }
 
-    draw_tab_bar(canvas, tabs, selected, fonts);
+    draw_tab_bar(canvas, tabs, fonts);
 }
 
 /// Extracted from `draw_root` (VUI-03): the bottom navigation bar is the
 /// same four-tab strip regardless of what a page draws above it, so
 /// `draw_now` (a real composed screen, not `draw_root`'s diagnostic
 /// scaffold) can share this exact drawing code instead of duplicating it.
-pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, &str)], selected: usize, fonts: Option<&Fonts>) {
+/// VUI-04 (ADR-116): `tabs` now carries a real `NavigationItem` per
+/// destination instead of a bare label -- `selected`/`disabled`/`badge`
+/// all come from that item's own data, not a separate index parameter
+/// (which `draw_root` still needs for its own unrelated title-lookup/
+/// row-count logic, so it keeps its own `selected: usize`, just no
+/// longer forwards it here). `pressed` is part of the contract
+/// (`NavigationItem::pressed`) but has no real trigger anywhere yet --
+/// no touch-down tracking feeds it -- so it is read here for
+/// completeness but never actually true today; flagged, not silently
+/// dropped from the type.
+pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, NavigationItem)], fonts: Option<&Fonts>) {
     if let Some(tab_bar) = tabs.first().and_then(|(first, _)| {
-        tabs.last().map(|last| {
+        tabs.last().map(|(last, _)| {
             Rect::new(
                 first.x,
                 first.y,
-                last.0
-                    .x
-                    .saturating_add(last.0.width)
-                    .saturating_sub(first.x),
-                first.height.max(last.0.height),
+                last.x.saturating_add(last.width).saturating_sub(first.x),
+                first.height.max(last.height),
             )
         })
     }) {
         canvas.fill_rect(tab_bar, theme_color(ColorRole::Surface));
     }
 
-    for (index, (rect, label)) in tabs.iter().copied().enumerate() {
-        let is_selected = index == selected;
+    for (rect, item) in tabs {
+        let rect = *rect;
+        let is_selected = item.selected;
         if is_selected {
             canvas.fill_rect(
                 Rect::new(
@@ -1969,15 +1973,18 @@ pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, &str)], selected: us
         }
 
         let icon_size = if is_selected { 76 } else { 54 };
+        let icon_rect = Rect::new(
+            rect.x
+                .saturating_add(rect.width.saturating_sub(icon_size) / 2),
+            rect.y.saturating_add(70),
+            icon_size,
+            icon_size,
+        );
         canvas.fill_rect(
-            Rect::new(
-                rect.x
-                    .saturating_add(rect.width.saturating_sub(icon_size) / 2),
-                rect.y.saturating_add(70),
-                icon_size,
-                icon_size,
-            ),
-            if is_selected {
+            icon_rect,
+            if item.disabled {
+                theme_color(ColorRole::DisabledSurface)
+            } else if is_selected {
                 theme_color(ColorRole::Accent)
             } else {
                 theme_color(ColorRole::Border)
@@ -1985,6 +1992,13 @@ pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, &str)], selected: us
         );
 
         if let Some(fonts) = fonts {
+            let text_color = if item.disabled {
+                theme_color(ColorRole::DisabledText)
+            } else if is_selected {
+                theme_color(ColorRole::TextPrimary)
+            } else {
+                theme_color(ColorRole::TextSecondary)
+            };
             draw_text_centered(
                 canvas,
                 if is_selected {
@@ -1992,16 +2006,43 @@ pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, &str)], selected: us
                 } else {
                     &fonts.regular
                 },
-                label,
+                &item.label,
                 if is_selected { 31.0 } else { 27.0 },
                 rect.x + rect.width / 2,
                 rect.y + 172,
-                if is_selected {
-                    theme_color(ColorRole::TextPrimary)
-                } else {
-                    theme_color(ColorRole::TextSecondary)
-                },
+                text_color,
             );
+
+            // Section 7.4: "a real count ... never a decorative dot" --
+            // drawn only when `badge` actually carries one. `attention`
+            // picks the alert color for it; a badge without `attention`
+            // set (not exercised by any real call site yet) would still
+            // show in the same neutral accent as a selected tab's own
+            // accent mark.
+            if let Some(count) = item.badge.filter(|count| *count > 0) {
+                let badge_color = if item.attention {
+                    theme_color(ColorRole::Attention)
+                } else {
+                    theme_color(ColorRole::Accent)
+                };
+                let badge_size = 40;
+                let badge_rect = Rect::new(
+                    icon_rect.x + icon_rect.width.saturating_sub(badge_size * 2 / 3),
+                    icon_rect.y.saturating_sub(badge_size / 3),
+                    badge_size,
+                    badge_size,
+                );
+                canvas.fill_rect(badge_rect, badge_color);
+                draw_text_centered(
+                    canvas,
+                    &fonts.semibold,
+                    &count.to_string(),
+                    24.0,
+                    badge_rect.x + badge_rect.width / 2,
+                    badge_rect.y + badge_rect.height / 2 - 12,
+                    theme_color(ColorRole::HighContrastText),
+                );
+            }
         }
     }
 }
@@ -2016,8 +2057,7 @@ pub fn draw_tab_bar(canvas: &mut Canvas<'_>, tabs: &[(Rect, &str)], selected: us
 pub fn draw_now(
     canvas: &mut Canvas<'_>,
     content: Rect,
-    tabs: &[(Rect, &str)],
-    selected: usize,
+    tabs: &[(Rect, NavigationItem)],
     header: &ContextHeader,
     sections: &[SystemSection],
     object: Option<&ObjectSummary>,
@@ -2028,7 +2068,7 @@ pub fn draw_now(
     let margin = (content.width / 20).max(12);
     let content_width = content.width.saturating_sub(margin * 2);
 
-    draw_tab_bar(canvas, tabs, selected, fonts);
+    draw_tab_bar(canvas, tabs, fonts);
 
     let Some(fonts) = fonts else {
         return;
@@ -2408,7 +2448,9 @@ mod tests {
         apply_contrast_boost, context_color, draw_calibration, draw_gallery, draw_orb, draw_root,
         gallery_row_positions, physical_line_height, state_color, theme_color, Canvas,
     };
-    use saai_ui_core::{ColorRole, ContextColor, Rect, TextRole, UniversalState};
+    use saai_ui_core::{
+        ColorRole, ContextColor, NavigationItem, Rect, StatusMark, TextRole, UniversalState,
+    };
 
     #[test]
     fn semantic_colors_use_the_physically_calibrated_panel_packing() {
@@ -2478,17 +2520,28 @@ mod tests {
     #[test]
     fn selected_indicator_moves_between_edge_tabs() {
         let mut pixels = vec![0; 1080 * 2400 * 4];
-        let tabs = [
-            (Rect::new(0, 2100, 270, 300), "Сейчас"),
-            (Rect::new(270, 2100, 270, 300), "Входящие"),
-            (Rect::new(540, 2100, 270, 300), "Пространства"),
-            (Rect::new(810, 2100, 270, 300), "Я"),
-        ];
+        let labels = ["Сейчас", "Входящие", "Пространства", "Я"];
+        let make_tabs = |selected_index: usize| -> Vec<(Rect, NavigationItem)> {
+            labels
+                .iter()
+                .enumerate()
+                .map(|(index, label)| {
+                    let mut item = NavigationItem::new(*label, *label);
+                    if index == selected_index {
+                        item = item.selected();
+                    }
+                    (
+                        Rect::new(index as u32 * 270, 2100, 270, 300),
+                        item,
+                    )
+                })
+                .collect()
+        };
         let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
         draw_root(
             &mut canvas,
             Rect::new(0, 0, 1080, 2100),
-            &tabs,
+            &make_tabs(0),
             0,
             "Дом",
             None,
@@ -2501,7 +2554,7 @@ mod tests {
         draw_root(
             &mut canvas,
             Rect::new(0, 0, 1080, 2100),
-            &tabs,
+            &make_tabs(3),
             3,
             "Дом",
             None,
@@ -2513,37 +2566,34 @@ mod tests {
     }
 
     #[test]
-    fn orb_is_hollow_only_when_attention_is_true() {
-        // HIA-16's own acceptance line (HIA-ROADMAP.md): Attention
-        // must be distinguishable by shape, not only by color -- the
-        // center pixel is the dot's own fill color when solid, and
-        // canvas background (hollowed out) only when is_attention is true.
-        let mut pixels = vec![0u8; 200 * 200 * 4];
-        let mut canvas = Canvas::new(&mut pixels, 200, 200);
-        let dot_rect = Rect::new(50, 50, 100, 100);
-
-        draw_orb(
-            &mut canvas,
-            dot_rect,
-            theme_color(ColorRole::Accent),
-            false,
-            &[],
-            None,
-        );
-        assert_eq!(canvas.pixel(100, 100), theme_color(ColorRole::Accent));
-
-        draw_orb(
-            &mut canvas,
-            dot_rect,
-            theme_color(ColorRole::Accent),
-            true,
-            &[],
-            None,
-        );
-        assert_eq!(canvas.pixel(100, 100), theme_color(ColorRole::Canvas));
-        // Still a ring, not an empty box -- the frame around the
-        // hollow center keeps showing the dot's own color.
-        assert_eq!(canvas.pixel(55, 100), theme_color(ColorRole::Accent));
+    fn orb_mark_shapes_differ_between_states() {
+        // HIA-16's own acceptance line (HIA-ROADMAP.md), now carried by
+        // VUI-04's real `StatusMark` per state (ADR-116) instead of a
+        // binary solid-square-or-hollow-ring: every state must be
+        // distinguishable by shape, not only by color. Compares whole
+        // rendered buffers rather than hand-picked pixel coordinates,
+        // since each `StatusMark` variant's exact geometry is
+        // `draw_calibration_mark`'s own concern, not this test's.
+        let render_mark = |mark: StatusMark| -> Vec<u8> {
+            let mut pixels = vec![0u8; 200 * 200 * 4];
+            let mut canvas = Canvas::new(&mut pixels, 200, 200);
+            let dot_rect = Rect::new(50, 50, 100, 100);
+            draw_orb(
+                &mut canvas,
+                dot_rect,
+                theme_color(ColorRole::Accent),
+                mark,
+                &[],
+                None,
+            );
+            pixels
+        };
+        let idle = render_mark(StatusMark::Outline);
+        let attention = render_mark(StatusMark::Alert);
+        let offline = render_mark(StatusMark::Offline);
+        assert_ne!(idle, attention);
+        assert_ne!(idle, offline);
+        assert_ne!(attention, offline);
     }
 
     #[test]

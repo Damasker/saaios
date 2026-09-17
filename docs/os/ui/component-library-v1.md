@@ -45,9 +45,10 @@ in VUI-09; privileged system composites are not automatically public.
 | Layout | `Stack`, `Row`, `Inset`, `Separator`, `ScrollRegion`, focus order | Experimental | component gallery |
 | Primitive | `SemanticText`, `Icon`, `Divider`, `StatusIndicator` | Experimental | gallery and `Сейчас` |
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
-| Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Deferred to VUI-03 | `Сейчас` |
+| Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
+| Composite | `BottomNavigation`, `OrbHost` | Experimental (VUI-04) | shell navigation, Orb |
 | Composite | `IntentSummary`, `TaskSummary`, `AgentSummary` | Deferred to VUI-05 | entity surfaces |
-| Composite | `EventRow`, `DecisionOverlay`, `BottomNavigation`, `OrbHost` | Deferred to VUI-04/05 | shell surfaces |
+| Composite | `EventRow`, `DecisionOverlay` | Deferred to VUI-04/05 | shell surfaces |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
 ## 4. Shared state contract
@@ -291,6 +292,39 @@ remain deferred to VUI-04/05.
 - Accessibility: name is the object title; value is the meta line; a trailing
   status uses the universal state mapping when present, never an invented
   local color.
+
+### 7.4 `BottomNavigation`
+
+- Anatomy: an ordered list of `NavigationItem`s, each with a label, an
+  optional icon, and independent `selected`/`pressed`/`disabled`/
+  `attention`/`badge` state -- section 4's shared interaction-state
+  contract, applied to a navigation destination instead of a control.
+- `badge` is a real count (e.g. unread items); never a decorative dot with
+  no number behind it -- this document's own rule against invented data
+  applies to composites as much as primitives.
+- Shared, not per-page: one navigation strip, drawn identically regardless
+  of what a specific destination shows above it.
+- First real consumer: replaces the four-tab strip every root page already
+  draws.
+- Accessibility: each item exposes its own name/value (the badge count,
+  when present)/disabled state independently; `BottomNavigation` itself
+  does not flatten them into one combined string, the same never-flatten
+  rule every other composite in this document follows.
+
+### 7.5 `OrbHost`
+
+- Anatomy: a single `UniversalState` (quiet/active/progress/attention/
+  offline map onto `Idle`/`Active`/`Running`/`Attention`/`Offline` --
+  section 4's own rule against inventing a parallel state vocabulary)
+  plus a `reduced_motion` flag.
+- `reduced_motion` is a rendering modifier, not a sixth state: matches
+  `Progress`'s "restrained motion" and `StatusIndicator`'s "reduced
+  motion shows the static activity mark" -- neither of those primitives
+  invents a separate state for reduced motion either.
+- "Understandable without animation": the state's own non-color mark and
+  `label_key` are always present regardless of whether a renderer is
+  currently animating anything.
+- First real consumer: the existing Orb dot/menu.
 
 ## 8. Required gallery matrix
 

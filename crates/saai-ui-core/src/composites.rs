@@ -1,14 +1,15 @@
 //! Composite contracts from `docs/os/ui/component-library-v1.md` section 7
 //! -- built entirely from section 6 primitives, per that section's own
 //! rule: composites never draw their own text or own a rendering path a
-//! primitive does not already provide. Scoped to VUI-03's three
-//! (`ContextHeader`, `SystemSection`, `ObjectSummary`) per section 3's
-//! inventory table; `EventRow`/`IntentSummary`/`TaskSummary`/`AgentSummary`
-//! remain deferred to VUI-04/05 and do not exist here.
+//! primitive does not already provide. VUI-03's three
+//! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's two
+//! (`BottomNavigation`, `OrbHost`) per section 3's inventory table;
+//! `EventRow`/`IntentSummary`/`TaskSummary`/`AgentSummary` remain
+//! deferred to VUI-05 and do not exist here.
 
 use crate::{
-    AccessibilityInfo, AccessibilityRole, ColorRole, DataRow, Divider, Metric, SemanticText,
-    StatusIndicator, TextRole,
+    AccessibilityInfo, AccessibilityRole, ColorRole, DataRow, Divider, IconGlyph, Metric,
+    SemanticText, StatusIndicator, StatusMark, TextRole, UniversalState,
 };
 
 /// Section 7.1. Anatomy: an active-context label, an optional current-
@@ -209,6 +210,150 @@ impl ObjectSummary {
     }
 }
 
+/// Section 7.4. One destination in the bottom navigation strip. `icon` is
+/// optional rather than required: this project's current icon set
+/// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
+/// Feather build) has no glyph yet for any of these destinations, so a
+/// renderer's existing placeholder mark stays honest instead of this type
+/// pretending an icon exists when it does not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationItem {
+    pub id: String,
+    pub label: String,
+    pub icon: Option<IconGlyph>,
+    pub selected: bool,
+    pub pressed: bool,
+    pub disabled: bool,
+    pub attention: bool,
+    /// A real count (e.g. unread items), never a decorative dot -- this
+    /// crate's own top-level rule against invented data applies to
+    /// composites as much as primitives.
+    pub badge: Option<u32>,
+}
+
+impl NavigationItem {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            selected: false,
+            pressed: false,
+            disabled: false,
+            attention: false,
+            badge: None,
+        }
+    }
+
+    pub fn with_icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn selected(mut self) -> Self {
+        self.selected = true;
+        self
+    }
+
+    pub fn pressed(mut self) -> Self {
+        self.pressed = true;
+        self
+    }
+
+    pub fn disabled(mut self) -> Self {
+        self.disabled = true;
+        self
+    }
+
+    pub fn with_attention(mut self) -> Self {
+        self.attention = true;
+        self
+    }
+
+    pub fn with_badge(mut self, count: u32) -> Self {
+        self.badge = Some(count);
+        self
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.label.clone()),
+            value: self.badge.map(|count| count.to_string()),
+            disabled: self.disabled,
+            ..AccessibilityInfo::new(AccessibilityRole::Button)
+        }
+    }
+}
+
+/// Section 7.4. A caller builds exactly one `NavigationItem` per real
+/// destination; this type does not invent extras and does not enforce
+/// "exactly one selected" itself (`selected_index` reports what it
+/// actually finds, including zero or more than one, so a bug in the
+/// caller's own state is visible instead of silently normalized away).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BottomNavigation {
+    pub items: Vec<NavigationItem>,
+}
+
+impl BottomNavigation {
+    pub fn new(items: Vec<NavigationItem>) -> Self {
+        Self { items }
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.items.iter().position(|item| item.selected)
+    }
+}
+
+/// Section 7.5. VUI-04's Orb host contract: quiet/active/progress/
+/// attention/offline map directly onto the existing `UniversalState`
+/// vocabulary (`Idle`/`Active`/`Running`/`Attention`/`Offline`) rather
+/// than inventing a parallel enum -- section 4's own rule ("controls do
+/// not invent local ... meanings") applies here as much as to any
+/// primitive. `reduced_motion` is a separate flag, not a sixth state:
+/// every other primitive in this crate already treats reduced motion as
+/// a rendering modifier on top of a state, never a state of its own
+/// (`Progress`'s "restrained motion" note, `StatusIndicator`'s "reduced
+/// motion shows the static activity mark").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OrbHost {
+    pub state: UniversalState,
+    pub reduced_motion: bool,
+}
+
+impl OrbHost {
+    pub fn new(state: UniversalState) -> Self {
+        Self {
+            state,
+            reduced_motion: false,
+        }
+    }
+
+    pub fn with_reduced_motion(mut self, reduced: bool) -> Self {
+        self.reduced_motion = reduced;
+        self
+    }
+
+    pub fn mark(&self) -> StatusMark {
+        self.state.style().mark
+    }
+
+    pub fn color(&self) -> ColorRole {
+        self.state.style().color
+    }
+
+    /// Section 7.5: "understandable without animation" -- `value` always
+    /// exposes the real state via its `label_key`, independent of
+    /// whether a renderer happens to be animating anything right now.
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            value: Some(self.state.style().label_key.to_string()),
+            busy: self.state == UniversalState::Running && !self.reduced_motion,
+            ..AccessibilityInfo::new(AccessibilityRole::Status)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +409,43 @@ mod tests {
     fn object_summary_with_value_trailing_has_no_separate_trailing_accessibility() {
         let summary = ObjectSummary::new("Батарея", "Metric").with_value("87%");
         assert!(summary.trailing_accessibility().is_none());
+    }
+
+    #[test]
+    fn bottom_navigation_selected_index_finds_the_one_real_selection() {
+        let nav = BottomNavigation::new(vec![
+            NavigationItem::new("now", "Сейчас").selected(),
+            NavigationItem::new("inbox", "Входящие").with_badge(3),
+            NavigationItem::new("spaces", "Пространства"),
+            NavigationItem::new("system", "Система").disabled(),
+        ]);
+        assert_eq!(nav.selected_index(), Some(0));
+        assert_eq!(nav.items[1].accessibility().value.as_deref(), Some("3"));
+        assert!(nav.items[3].accessibility().disabled);
+    }
+
+    #[test]
+    fn bottom_navigation_selected_index_is_none_when_nothing_is_selected() {
+        let nav = BottomNavigation::new(vec![
+            NavigationItem::new("now", "Сейчас"),
+            NavigationItem::new("inbox", "Входящие"),
+        ]);
+        assert_eq!(nav.selected_index(), None);
+    }
+
+    #[test]
+    fn orb_host_reuses_universal_state_and_is_busy_only_when_running_and_not_reduced() {
+        let running = OrbHost::new(UniversalState::Running);
+        assert!(running.accessibility().busy);
+
+        let running_reduced = OrbHost::new(UniversalState::Running).with_reduced_motion(true);
+        assert!(!running_reduced.accessibility().busy);
+
+        let attention = OrbHost::new(UniversalState::Attention);
+        assert!(!attention.accessibility().busy);
+        assert_eq!(
+            attention.accessibility().value.as_deref(),
+            Some("state.attention")
+        );
     }
 }

@@ -84,7 +84,7 @@ contains:
 | VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
-| VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | Backlog |
+| VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
 | VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
 | VUI-06 | `Система` information architecture and settings components | Backlog |
 | VUI-07 | Remaining system surfaces and state patterns | Backlog |
@@ -648,7 +648,7 @@ to the pre-VUI-03 app-grid-default behavior (ADR-115).
 
 ## VUI-04 — Navigation, status, Context Light, and Orb
 
-**Status:** Backlog
+**Status:** In progress (ADR-116)
 
 **Depends on:** VUI-03
 
@@ -657,15 +657,44 @@ turning the Orb into a launcher or assistant avatar.
 
 ### Tasks
 
-- [ ] Implement shared bottom-navigation and system-status components with safe
-  insets and stable layering.
+- [ ] Implement shared bottom-navigation and system-status components with
+  safe insets and stable layering. Bottom navigation done (ADR-116):
+  `BottomNavigation`/`NavigationItem` in `saai-ui-core`, `Shell::
+  root_navigation_items` shared by both `Frame::Root` and `Frame::Now`, one
+  navigation strip rather than two implementations. **Not done**: a
+  `system-status` composite for the status bar itself -- `draw_status_bar`
+  is still the original hardcoded-pixel-position renderer from S13, not
+  built on any `saai-ui-core` primitive/composite. Safe insets/stable
+  layering not separately audited yet.
 - [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
   only when the destination content is truthful.
-- [ ] Add explicit selected, pressed, disabled, attention, and badge states.
+- [x] Add explicit selected, pressed, disabled, attention, and badge states
+  (ADR-116). Four of five have a real trigger today: `selected` (current
+  page), `disabled`/`attention` (rendered correctly when set, tested),
+  `badge` (a real count -- "Входящие"'s own `inbox_rows().len()`, not a
+  separate tally). `pressed` is a real field `draw_tab_bar` already reads,
+  but nothing in `saai-shell` sets it yet -- no touch-down tracking feeds
+  it, so it is always `false` in practice. Flagged, not silently dropped.
 - [ ] Apply Context Light grammar: context=color, state=shape,
-  activity=motion, quantity=arc/fill, attention=ring.
-- [ ] Integrate a restrained Orb host with quiet, active, progress, attention,
-  offline, and reduced-motion states.
+  activity=motion, quantity=arc/fill, attention=ring. Two of five axes
+  live so far (ADR-116, on the Orb only): state=shape (every
+  `UniversalState` gets its own `StatusMark`) and context=color (the
+  Space's own color for `Idle`/`Active`, the state's own semantic color
+  otherwise). activity=motion, quantity=arc/fill, and attention=ring are
+  not yet built -- `MotionCue`/reduced-motion wiring, a real arc/fill
+  quantity visual, and a dedicated ring cue beyond the `Alert` mark all
+  remain open.
+- [x] Integrate a restrained Orb host with quiet, active, progress, attention,
+  offline, and reduced-motion states (ADR-116). All five real states
+  reuse `UniversalState` (`Idle`/`Active`/`Running`/`Attention`/`Offline`)
+  with real triggers -- `Offline` from real `appd`/`entityd` connection
+  checks, `Attention` from undismissed notifications, `Running` from the
+  same `in_progress_work` query VUI-03's "Продолжается" already uses,
+  `Active` from the menu being open. **Not done**: `reduced_motion` is a
+  real field `OrbHost`/`draw_calibration_mark`'s caller can read, but no
+  `ShellSettings` field or system setting exists anywhere yet to actually
+  set it -- always `false` in practice, same honesty gap as `pressed`
+  above.
 - [ ] Retain direct tab navigation during Orb work; do not make the Orb the only
   route.
 - [ ] Make status/navigation layers independent of scrolling content damage.
