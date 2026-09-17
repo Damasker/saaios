@@ -83,7 +83,7 @@ contains:
 | VUI-00 | Audit, product contract, and delivery plan | **Done** |
 | VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
-| VUI-03 | Reference `Сейчас` surface | Backlog |
+| VUI-03 | Reference `Сейчас` surface | **In progress** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | Backlog |
 | VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
 | VUI-06 | `Система` information architecture and settings components | Backlog |
@@ -404,7 +404,7 @@ screen migration is accepted.
 
 ## VUI-03 — Reference `Сейчас` surface
 
-**Status:** Backlog
+**Status:** In progress
 
 **Depends on:** VUI-02
 
@@ -413,8 +413,35 @@ truthful home surface before expanding the framework.
 
 ### Tasks
 
-- [ ] Inventory the real sources for active Space, current Intent/Task, system
-  activity, attention, and next action.
+- [x] Inventory the real sources for active Space, current Intent/Task, system
+  activity, attention, and next action. Findings, by source:
+  - **Active Space** -- fully real and mature. `saai-entity-store::Space`
+    served over `entityd_client.rs`; lifecycle/relation/color/signal are
+    separate `saaios.space-*` entity-type conventions already read by
+    `space_lifecycle()`, `space_relation_targets()`, `space_color()`,
+    `context_label()` in `main.rs`.
+  - **Current Intent/Task** -- real per ADR-030/031: `saaios.intent`/
+    `saaios.task`/`saaios.action` entity types, `saai-taskd` turns an
+    Intent into a Task+Action. Shell already reads pending tasks
+    (`inbox_pending_tasks()`) and a task's linked intent
+    (`object_view_content()`). Gap: the only "what am I doing" signal
+    today is `selected_entities.first()` (most-recently-updated entity in
+    the space) -- not a real current-work view.
+  - **System activity** -- thin. Only `app_state_label()` over
+    `installed_apps` exists; no "N of M steps done" in-progress concept
+    anywhere in code. Needs a new query pattern (tasks/actions with a
+    non-terminal status), not new wire plumbing.
+  - **Attention** -- real and already wired to the Orb.
+    `saaios.notification` entities, `inbox_notifications()`, merged with
+    pending tasks by `inbox_rows()`, drives `orb_state()`'s `Attention`
+    state (low-battery and failed-task notifications already flow through
+    this). Solid foundation, just not surfaced as Now-screen content yet.
+  - **Next action** -- the real gap. `saaios.action` is a defined entity
+    type (ADR-030) but no code anywhere in `main.rs` filters or reads
+    `entity_type == "saaios.action"` -- confirmed via a full-file search,
+    zero matches, unlike every other entity type above which each has a
+    dedicated filter function. This needs a genuinely new query/view, not
+    just new UI over data the shell already fetches.
 - [ ] Design `ContextHeader`, `SystemSection`, object/work summary, event row,
   and next-action components from actual data.
 - [ ] Compose `Сейчас` so its first viewport answers the five product questions.
