@@ -667,11 +667,11 @@ turning the Orb into a launcher or assistant avatar.
   safe insets and stable layering. Bottom navigation done (ADR-116):
   `BottomNavigation`/`NavigationItem` in `saai-ui-core`, `Shell::
   root_navigation_items` shared by both `Frame::Root` and `Frame::Now`, one
-  navigation strip rather than two implementations. **Not done**: a
-  `system-status` composite for the status bar itself -- `draw_status_bar`
-  is still the original hardcoded-pixel-position renderer from S13, not
-  built on any `saai-ui-core` primitive/composite. Safe insets/stable
-  layering not separately audited yet.
+  navigation strip rather than two implementations. **system-status (host):**
+  `SystemStatus` in `saai-ui-core` owns Context Light / clock / network /
+  battery facts; `draw_status_bar` paints that composite (missing battery
+  is absent, not `0%`; Space color is `ContextColor`, never severity).
+  Safe insets/stable layering not separately audited yet.
 - [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
   only when the destination content is truthful.
 - [x] Add explicit selected, pressed, disabled, attention, and badge states

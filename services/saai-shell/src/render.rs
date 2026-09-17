@@ -4,8 +4,8 @@ use saai_ui_core::{
     Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize,
     LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary, ObjectSummaryTrailing,
     Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, TextOverflow, TextRole,
-    Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, SystemStatus,
+    TextOverflow, TextRole, Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -2360,33 +2360,25 @@ pub fn draw_now(
 }
 
 /// The permanent system layer's real content (S13 Change 1) -- time on
-/// the left, network and battery state on the right. Replaces the
-/// solid-color placeholder that namespace's own `"...-test"` suffix
-/// (`main.rs`) had been honestly admitting to since ADR-015.
-#[allow(clippy::too_many_arguments)]
+/// the left, network and battery state on the right. The facts come from
+/// `SystemStatus` (VUI-04); this function only paints them. Context Light
+/// is a square of the Space color, drawn before the font early-return so
+/// the dot stays visible if `Fonts::load_system()` failed.
 pub fn draw_status_bar(
     canvas: &mut Canvas<'_>,
     width: u32,
     height: u32,
-    time_text: &str,
-    wifi_up: bool,
-    battery: Option<(u8, bool)>,
-    space_color: Pixel,
+    status: &SystemStatus,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     let margin = width / 30;
-    // HIA-03: drawn before the no-fonts early return below, so the
-    // dot itself never depends on `Fonts::load_system()` having
-    // succeeded -- HIA-ROADMAP.md's own acceptance line asks for
-    // "always visible", not "visible whenever a font happened to
-    // load". A plain square, not a circle -- this file has no
-    // circle-drawing primitive, and every other "swatch" here
-    // (`border`'s loading skeleton, `accent`'s selection bar) is
-    // already a rectangle, not a special case worth adding one for.
     let dot_size = 22;
     let dot_y = height / 2 - dot_size / 2;
-    canvas.fill_rect(Rect::new(margin, dot_y, dot_size, dot_size), space_color);
+    canvas.fill_rect(
+        Rect::new(margin, dot_y, dot_size, dot_size),
+        context_color(status.context),
+    );
     let Some(fonts) = fonts else {
         return;
     };
@@ -2395,33 +2387,21 @@ pub fn draw_status_bar(
     draw_text(
         canvas,
         &fonts.semibold,
-        time_text,
+        &status.time_text,
         44.0,
         time_x,
         baseline,
         theme_color(ColorRole::TextPrimary),
     );
 
-    let wifi_label = if wifi_up { "Wi-Fi" } else { "Нет сети" };
-    let wifi_color = if wifi_up {
+    let wifi_label = status.network_label();
+    let wifi_color = if status.network_up {
         theme_color(ColorRole::Accent)
     } else {
         theme_color(ColorRole::TextSecondary)
     };
-    let battery_label = battery
-        .map(|(percent, charging)| {
-            if charging {
-                format!("{percent}% +")
-            } else {
-                format!("{percent}%")
-            }
-        })
-        .unwrap_or_default();
+    let battery_label = status.battery_label().unwrap_or_default();
 
-    // Right-aligned: battery flush with the margin, Wi-Fi immediately to
-    // its left with a fixed gap -- same "measure, then place" approach
-    // `draw_text_centered` already uses, just anchored from the right
-    // edge instead of a center point.
     let gap = 40.0;
     let battery_width = text_width(&fonts.semibold, &battery_label, 40.0 * text_scale());
     let battery_left = width as f32 - margin as f32 - battery_width;
@@ -2554,10 +2534,12 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, context_color, draw_calibration, draw_gallery, draw_orb, draw_root,
-        gallery_row_positions, physical_line_height, state_color, theme_color, Canvas,
+        draw_status_bar, gallery_row_positions, physical_line_height, state_color, theme_color,
+        Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, NavigationItem, Rect, StatusMark, TextRole, UniversalState,
+        ColorRole, ContextColor, NavigationItem, Rect, StatusMark, SystemStatus, TextRole,
+        UniversalState,
     };
 
     #[test]
@@ -2623,6 +2605,33 @@ mod tests {
         assert!(pixels[0] < 100);
         assert_eq!(pixels[1], 128);
         assert!(pixels[2] > 200);
+    }
+
+    #[test]
+    fn status_bar_paints_context_light_without_fonts_and_never_uses_severity() {
+        let width = 1080;
+        let height = 80;
+        let mut pixels = vec![0; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let status = SystemStatus::new(ContextColor::Orange, "09:42");
+        draw_status_bar(canvas, width, height, &status, None);
+        let margin = width / 30;
+        assert_eq!(
+            canvas.pixel(margin + 2, height / 2),
+            context_color(ContextColor::Orange)
+        );
+        assert_ne!(
+            canvas.pixel(margin + 2, height / 2),
+            theme_color(ColorRole::Attention)
+        );
+        assert_ne!(
+            canvas.pixel(margin + 2, height / 2),
+            theme_color(ColorRole::Critical)
+        );
+        assert_ne!(
+            canvas.pixel(margin + 2, height / 2),
+            context_color(ContextColor::Default)
+        );
     }
 
     #[test]

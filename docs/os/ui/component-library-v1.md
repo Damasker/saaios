@@ -46,7 +46,7 @@ in VUI-09; privileged system composites are not automatically public.
 | Primitive | `SemanticText`, `Icon`, `Divider`, `StatusIndicator` | Experimental | gallery and `Сейчас` |
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
-| Composite | `BottomNavigation`, `OrbHost` | Experimental (VUI-04) | shell navigation, Orb |
+| Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
 | Composite | `IntentSummary`, `TaskSummary`, `AgentSummary` | Deferred to VUI-05 | entity surfaces |
 | Composite | `EventRow`, `DecisionOverlay` | Deferred to VUI-04/05 | shell surfaces |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |

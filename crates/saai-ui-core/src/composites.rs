@@ -2,14 +2,14 @@
 //! -- built entirely from section 6 primitives, per that section's own
 //! rule: composites never draw their own text or own a rendering path a
 //! primitive does not already provide. VUI-03's three
-//! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's two
-//! (`BottomNavigation`, `OrbHost`) per section 3's inventory table;
-//! `EventRow`/`IntentSummary`/`TaskSummary`/`AgentSummary` remain
-//! deferred to VUI-05 and do not exist here.
+//! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's
+//! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
+//! inventory table; `EventRow`/`IntentSummary`/`TaskSummary`/`AgentSummary`
+//! remain deferred to VUI-05 and do not exist here.
 
 use crate::{
-    AccessibilityInfo, AccessibilityRole, ColorRole, DataRow, Divider, IconGlyph, Metric,
-    SemanticText, StatusIndicator, StatusMark, TextRole, UniversalState,
+    AccessibilityInfo, AccessibilityRole, ColorRole, ContextColor, DataRow, Divider, IconGlyph,
+    Metric, SemanticText, StatusIndicator, StatusMark, TextRole, UniversalState,
 };
 
 /// Section 7.1. Anatomy: an active-context label, an optional current-
@@ -370,6 +370,81 @@ impl OrbHost {
     }
 }
 
+/// VUI-04 system-status composite for the persistent status layer.
+/// Describes the same facts `draw_status_bar` already paints: Context
+/// Light (a Space color, never a severity color), clock, network, battery.
+/// Missing battery is absent, not `0%`. A Space with no color is
+/// `ContextColor::Default`, never an empty/missing dot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemStatus {
+    pub context: ContextColor,
+    pub time_text: String,
+    pub network_up: bool,
+    pub battery_percent: Option<u8>,
+    pub battery_charging: bool,
+}
+
+impl SystemStatus {
+    pub fn new(context: ContextColor, time_text: impl Into<String>) -> Self {
+        Self {
+            context,
+            time_text: time_text.into(),
+            network_up: false,
+            battery_percent: None,
+            battery_charging: false,
+        }
+    }
+
+    pub fn with_network_up(mut self, up: bool) -> Self {
+        self.network_up = up;
+        self
+    }
+
+    pub fn with_battery(mut self, percent: u8, charging: bool) -> Self {
+        self.battery_percent = Some(percent);
+        self.battery_charging = charging;
+        self
+    }
+
+    pub fn time(&self) -> SemanticText {
+        SemanticText::new(
+            self.time_text.clone(),
+            TextRole::Title,
+            ColorRole::TextPrimary,
+        )
+    }
+
+    pub fn network_label(&self) -> &'static str {
+        if self.network_up {
+            "Wi-Fi"
+        } else {
+            "Нет сети"
+        }
+    }
+
+    pub fn battery_label(&self) -> Option<String> {
+        self.battery_percent.map(|percent| {
+            if self.battery_charging {
+                format!("{percent}% +")
+            } else {
+                format!("{percent}%")
+            }
+        })
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        let mut parts = vec![self.time_text.clone(), self.network_label().to_string()];
+        if let Some(battery) = self.battery_label() {
+            parts.push(battery);
+        }
+        AccessibilityInfo {
+            name: Some("system status".into()),
+            value: Some(parts.join(" · ")),
+            ..AccessibilityInfo::new(AccessibilityRole::Status)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,5 +545,32 @@ mod tests {
         assert!(!OrbHost::new(UniversalState::Idle).attention_ring());
         assert!(!OrbHost::new(UniversalState::Running).attention_ring());
         assert!(!OrbHost::new(UniversalState::Offline).attention_ring());
+    }
+
+    #[test]
+    fn system_status_does_not_invent_battery_or_a_missing_context_dot() {
+        let status = SystemStatus::new(ContextColor::Default, "09:42");
+        assert!(status.battery_label().is_none());
+        assert!(!status.network_up);
+        assert_eq!(status.network_label(), "Нет сети");
+        assert_eq!(status.context, ContextColor::Default);
+    }
+
+    #[test]
+    fn system_status_context_is_not_a_severity_color() {
+        let status = SystemStatus::new(ContextColor::Orange, "09:42").with_network_up(true);
+        assert_ne!(status.context, ContextColor::Default);
+        assert_eq!(status.network_label(), "Wi-Fi");
+        assert_eq!(
+            status.with_battery(87, true).battery_label().as_deref(),
+            Some("87% +")
+        );
+        assert_eq!(
+            SystemStatus::new(ContextColor::Green, "09:42")
+                .with_battery(12, false)
+                .battery_label()
+                .as_deref(),
+            Some("12%")
+        );
     }
 }

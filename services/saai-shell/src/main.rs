@@ -325,16 +325,19 @@ impl SpaceColor {
     /// ADR-094. `Default` deliberately matches the theme accent, but
     /// callers still request it through `ContextColor` so a Space color
     /// cannot accidentally become a failure/attention state.
-    fn pixel(self) -> render::Pixel {
-        let context = match self {
+    fn context(self) -> ContextColor {
+        match self {
             SpaceColor::Default => ContextColor::Default,
             SpaceColor::Blue => ContextColor::Blue,
             SpaceColor::Green => ContextColor::Green,
             SpaceColor::Orange => ContextColor::Orange,
             SpaceColor::Purple => ContextColor::Purple,
             SpaceColor::Pink => ContextColor::Pink,
-        };
-        render::context_color(context)
+        }
+    }
+
+    fn pixel(self) -> render::Pixel {
+        render::context_color(self.context())
     }
 }
 
@@ -450,7 +453,7 @@ use saai_attention::{has_orb_attention, project_from_entities};
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
     NavigationItem, Node, ObjectSummary, OrbHost, Rect, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, SystemSection, SystemSectionRow, UniversalState,
+    StatusMark, SystemSection, SystemSectionRow, SystemStatus, UniversalState,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -2259,10 +2262,7 @@ struct OrbFrame {
 /// reset every second by a repaint nothing asked for.
 #[derive(Clone, PartialEq)]
 struct StatusBarSnapshot {
-    time_text: String,
-    wifi_up: bool,
-    battery: Option<(u8, bool)>,
-    dot_color: render::Pixel,
+    status: SystemStatus,
 }
 
 fn intent_key_action(ch: char) -> String {
@@ -6632,12 +6632,15 @@ impl Shell {
             return;
         }
 
-        let snapshot = StatusBarSnapshot {
-            time_text: current_time_string(self.settings.utc_offset_minutes),
-            wifi_up: wifi_is_up(),
-            battery: read_battery(),
-            dot_color: space_color(&self.system_space_entities, &self.selected_space_id).pixel(),
-        };
+        let mut status = SystemStatus::new(
+            space_color(&self.system_space_entities, &self.selected_space_id).context(),
+            current_time_string(self.settings.utc_offset_minutes),
+        )
+        .with_network_up(wifi_is_up());
+        if let Some((percent, charging)) = read_battery() {
+            status = status.with_battery(percent, charging);
+        }
+        let snapshot = StatusBarSnapshot { status };
         // ADR-093 follow-up: skip the redraw+commit entirely when nothing
         // visible has changed since the last real paint. `current_time_
         // string` only ticks once a minute, so this is the common case --
@@ -6687,10 +6690,7 @@ impl Shell {
                             &mut render::Canvas::new(canvas, width, height),
                             width,
                             height,
-                            &snapshot.time_text,
-                            snapshot.wifi_up,
-                            snapshot.battery,
-                            snapshot.dot_color,
+                            &snapshot.status,
                             fonts,
                         );
                         render::apply_contrast_boost(canvas, contrast_pct);
@@ -6756,10 +6756,7 @@ impl Shell {
             &mut render::Canvas::new(canvas, width, height),
             width,
             height,
-            &snapshot.time_text,
-            snapshot.wifi_up,
-            snapshot.battery,
-            snapshot.dot_color,
+            &snapshot.status,
             self.fonts.as_ref(),
         );
         render::apply_contrast_boost(canvas, self.settings.contrast_pct);
