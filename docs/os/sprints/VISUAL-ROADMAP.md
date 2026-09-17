@@ -501,8 +501,48 @@ truthful home surface before expanding the framework.
   ADR-112's own `now_composed` dev marker is set -- with it off,
   `RootPage::Now` is completely unaffected by this task, exactly as
   before.
-- [ ] Keep prompt/chat input secondary to direct system actions.
-- [ ] Implement honest quiet, empty, stale, offline, blocked, and failed states.
+- [x] Keep prompt/chat input secondary to direct system actions. Audited
+  rather than built new: `self.intent_input: Option<IntentInputState>` is
+  the only prompt-like input mechanism anywhere in `saai-shell` (confirmed
+  via a full-file search for any other chat/prompt surface -- none
+  exists) and it is strictly on-demand, never persistent chrome -- there
+  is no always-visible input bar to make secondary in the first place.
+  Every path that opens it is already a small, equally-weighted entry
+  point, not an elevated one: the old app grid's "Новое намерение" card
+  (one icon among several, no special size or position), ADR-113's own
+  "Новое намерение" footer row (same visual weight as "Приложения",
+  positioned below all real system-activity content on the composed
+  screen), and the Orb's own `OpenIntent` menu action (the Orb is
+  explicitly "restrained" per its own VUI-04 title). No change needed;
+  this criterion was already met by the existing architecture, both
+  before and after this sprint's own composed-screen work -- documented
+  here rather than silently left unchecked with no explanation.
+- [x] Implement honest quiet, empty, stale, offline, blocked, and failed
+  states (ADR-114), five of six covered, one deliberately not:
+  - **Empty/quiet**: ADR-112's own whole-screen "Ничего срочного"
+    fallback, matching HIA-13's second mockup.
+  - **Offline**: real gap found and fixed -- `now_context_header()`
+    now checks `self.entityd.is_connected()` before the space's own
+    lifecycle, showing "Нет связи" (`ContextHeader.lifecycle`) and the
+    whole-screen message becomes "Нет связи с пространствами" instead of
+    the misleading default. Physically verified with a real
+    `saai-entityd` disconnect (repeated-kill loop), not simulated.
+  - **Blocked**: the pre-existing archived-space case, same
+    `ContextHeader.lifecycle` slot.
+  - **Failed**: audited, not built -- already honest per ADR-089's own
+    `notify_task_failed()` path, which "Требует внимания" already
+    surfaces by reusing `inbox_rows()` verbatim.
+  - A second, smaller gap found while fixing the first: `ContextHeader.
+    lifecycle` (ADR-111) was computed but never actually drawn on
+    screen since ADR-112 shipped -- only ever consulted indirectly for
+    the empty-state message. Fixed by drawing it as a real, always-
+    visible compact `StatusIndicator`, independent of whether the
+    empty-state branch fires.
+  - **Stale**: not built. No code anywhere in this project tracks "time
+    since last successful entityd sync" as its own concept; a genuine
+    staleness indicator for a live-but-quiet connection is new plumbing
+    this pass's scope did not cover. Flagged as real follow-up, not
+    claimed done.
 - [ ] Validate progressive disclosure for developer and diagnostic details.
 - [ ] Extract only components with a confirmed second use; document candidates
   that intentionally remain reference-screen private.

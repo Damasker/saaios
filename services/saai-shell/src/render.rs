@@ -2051,6 +2051,19 @@ pub fn draw_now(
     draw_semantic_text(canvas, fonts, &header.heading(), content.x + margin, cursor_y, content_width);
     cursor_y += scaled_line_height(TextRole::Title);
 
+    // Section 7.1: "a non-default lifecycle is exposed through the
+    // nested `StatusIndicator`'s own state, not a second accessible
+    // string glued onto the header's name" -- drawn here as a real,
+    // always-visible compact mark, not just consulted for the
+    // whole-screen empty-state message below. Without this, an offline
+    // signal (or an archived-space one) would be silently invisible
+    // whenever `sections`/`object` still have real, possibly-stale
+    // content to show.
+    if let Some(lifecycle) = &header.lifecycle {
+        draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
+        cursor_y += scaled_line_height(TextRole::Body);
+    }
+
     if let Some(object) = object {
         cursor_y += physical(SpacingToken::Medium.value());
         draw_semantic_text(
@@ -2096,11 +2109,28 @@ pub fn draw_now(
         // invents a placeholder row to fill space (see its own doc
         // comment), so this is the one place that message can honestly
         // come from: the whole-screen empty state, not a per-section one.
+        //
+        // VUI-03 (ADR-114): that message is only true when this shell
+        // actually knows there is nothing pending. When `ContextHeader`
+        // itself is reporting `Offline` (no `saai-entityd` connection --
+        // see `now_context_header`), an empty `sections`/`object` means
+        // "cannot tell," not "confirmed calm," and saying otherwise
+        // would be the exact dishonest empty state VUI-03's own
+        // acceptance criteria rule out.
+        let offline = matches!(
+            header.lifecycle.as_ref().map(|status| status.state),
+            Some(UniversalState::Offline)
+        );
+        let message = if offline {
+            "Нет связи с пространствами"
+        } else {
+            "Ничего срочного"
+        };
         let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
         draw_text_centered(
             canvas,
             empty_font,
-            "Ничего срочного",
+            message,
             empty_size,
             content.x + content.width / 2,
             content.y + content.height / 2,

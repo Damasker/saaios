@@ -5921,10 +5921,18 @@ impl Shell {
     /// name-plus-"(архив)"-suffix string with the real `ContextHeader`
     /// composite -- a non-default lifecycle becomes a nested
     /// `StatusIndicator`, not text baked into the name itself.
+    /// VUI-03 (ADR-114): "Нет связи" takes priority over the space's own
+    /// lifecycle when `saai-entityd` is unreachable -- without a live
+    /// connection, `self.selected_entities` is whatever was last
+    /// fetched (possibly nothing, possibly stale), so this shell cannot
+    /// honestly claim to know the space's *current* lifecycle either.
+    /// Offline is the more urgent, more global fact.
     fn now_context_header(&self) -> ContextHeader {
         let header = ContextHeader::new(space_display_name(&self.spaces, &self.selected_space_id))
             .with_section_title("Сейчас");
-        if space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+        if !self.entityd.is_connected() {
+            header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+        } else if space_lifecycle(&self.system_space_entities, &self.selected_space_id)
             == SpaceLifecycle::Archived
         {
             header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
