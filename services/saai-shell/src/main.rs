@@ -4340,7 +4340,9 @@ impl Shell {
                     height,
                     fonts,
                 );
-                render::apply_contrast_boost(canvas, contrast_pct);
+                // The fixture must show the source tokens exactly. The user's
+                // optional accessibility post-process is validated on normal
+                // screens, not baked into physical palette calibration.
                 return;
             }
             match frame {
