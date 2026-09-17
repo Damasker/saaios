@@ -4,6 +4,282 @@
 //! `.sui` compiler will produce this tree; shells and apps do not implement a
 //! second set of rectangles for touch handling.
 
+/// Backend-independent sRGB color. Renderers are responsible for converting
+/// this logical value to their native pixel/scanout packing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rgb {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+impl Rgb {
+    pub const fn new(red: u8, green: u8, blue: u8) -> Self {
+        Self { red, green, blue }
+    }
+
+    pub const fn from_hex(value: u32) -> Self {
+        Self::new(
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        )
+    }
+}
+
+/// Product meaning requested by a component. These are intentionally not
+/// storage names or backend colors: one complete Theme owns the mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorRole {
+    Canvas,
+    Surface,
+    Elevated,
+    Accent,
+    AccentHighlight,
+    TextPrimary,
+    TextSecondary,
+    Success,
+    Attention,
+    Critical,
+    Border,
+    Grid,
+    Pressed,
+    Focus,
+    DisabledSurface,
+    DisabledText,
+    HighContrastText,
+}
+
+/// HIA context colors live in a separate namespace from semantic status.
+/// A Space color must never be interpreted as severity or action affordance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContextColor {
+    Default,
+    Blue,
+    Green,
+    Orange,
+    Purple,
+    Pink,
+}
+
+/// States shared by tasks, agents, objects, services, and system components.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UniversalState {
+    Idle,
+    Active,
+    Running,
+    Waiting,
+    Blocked,
+    Attention,
+    Failed,
+    Complete,
+    Offline,
+}
+
+/// Shape/icon cue paired with status color so color never carries the only
+/// meaning. VUI-02 maps these semantic marks to the selected icon family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusMark {
+    Outline,
+    ActiveDot,
+    Activity,
+    Waiting,
+    Blocked,
+    Alert,
+    Failure,
+    Complete,
+    Offline,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MotionCue {
+    None,
+    ActivityPulse,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StateStyle {
+    pub color: ColorRole,
+    pub label_key: &'static str,
+    pub mark: StatusMark,
+    pub motion: MotionCue,
+}
+
+impl UniversalState {
+    pub const fn style(self) -> StateStyle {
+        match self {
+            Self::Idle => StateStyle {
+                color: ColorRole::TextSecondary,
+                label_key: "state.idle",
+                mark: StatusMark::Outline,
+                motion: MotionCue::None,
+            },
+            Self::Active => StateStyle {
+                color: ColorRole::Accent,
+                label_key: "state.active",
+                mark: StatusMark::ActiveDot,
+                motion: MotionCue::None,
+            },
+            Self::Running => StateStyle {
+                color: ColorRole::Accent,
+                label_key: "state.running",
+                mark: StatusMark::Activity,
+                motion: MotionCue::ActivityPulse,
+            },
+            Self::Waiting => StateStyle {
+                color: ColorRole::TextSecondary,
+                label_key: "state.waiting",
+                mark: StatusMark::Waiting,
+                motion: MotionCue::None,
+            },
+            Self::Blocked => StateStyle {
+                color: ColorRole::Attention,
+                label_key: "state.blocked",
+                mark: StatusMark::Blocked,
+                motion: MotionCue::None,
+            },
+            Self::Attention => StateStyle {
+                color: ColorRole::Attention,
+                label_key: "state.attention",
+                mark: StatusMark::Alert,
+                motion: MotionCue::None,
+            },
+            Self::Failed => StateStyle {
+                color: ColorRole::Critical,
+                label_key: "state.failed",
+                mark: StatusMark::Failure,
+                motion: MotionCue::None,
+            },
+            Self::Complete => StateStyle {
+                color: ColorRole::Success,
+                label_key: "state.complete",
+                mark: StatusMark::Complete,
+                motion: MotionCue::None,
+            },
+            Self::Offline => StateStyle {
+                color: ColorRole::TextSecondary,
+                label_key: "state.offline",
+                mark: StatusMark::Offline,
+                motion: MotionCue::None,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThemeColors {
+    pub canvas: Rgb,
+    pub surface: Rgb,
+    pub elevated: Rgb,
+    pub accent: Rgb,
+    pub accent_highlight: Rgb,
+    pub text_primary: Rgb,
+    pub text_secondary: Rgb,
+    pub success: Rgb,
+    pub attention: Rgb,
+    pub critical: Rgb,
+    pub border: Rgb,
+    pub grid: Rgb,
+    pub pressed: Rgb,
+    pub focus: Rgb,
+    pub disabled_surface: Rgb,
+    pub disabled_text: Rgb,
+    pub high_contrast_text: Rgb,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContextPalette {
+    pub default: Rgb,
+    pub blue: Rgb,
+    pub green: Rgb,
+    pub orange: Rgb,
+    pub purple: Rgb,
+    pub pink: Rgb,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Theme {
+    pub colors: ThemeColors,
+    pub contexts: ContextPalette,
+}
+
+impl Theme {
+    /// Visual Language v1. Raw channels are intentionally centralized here;
+    /// production screen code requests roles instead of constructing colors.
+    pub const SAAIOS_DARK: Self = Self {
+        colors: ThemeColors {
+            canvas: Rgb::from_hex(0x071011),
+            surface: Rgb::from_hex(0x0D181A),
+            elevated: Rgb::from_hex(0x142326),
+            accent: Rgb::from_hex(0x63D4D6),
+            accent_highlight: Rgb::from_hex(0xA1EEF0),
+            text_primary: Rgb::from_hex(0xD7E2DF),
+            text_secondary: Rgb::from_hex(0x829796),
+            success: Rgb::from_hex(0x6FB79A),
+            attention: Rgb::from_hex(0xD4B658),
+            critical: Rgb::from_hex(0xC7514B),
+            border: Rgb::from_hex(0x315054),
+            grid: Rgb::from_hex(0x20383A),
+            pressed: Rgb::from_hex(0xA1EEF0),
+            focus: Rgb::from_hex(0xA1EEF0),
+            disabled_surface: Rgb::from_hex(0x0D181A),
+            disabled_text: Rgb::from_hex(0x829796),
+            high_contrast_text: Rgb::from_hex(0xFFFFFF),
+        },
+        // These six HIA context identities preserve the physically accepted
+        // pre-VUI choices while moving them behind a typed, non-status API.
+        contexts: ContextPalette {
+            default: Rgb::from_hex(0x63D4D6),
+            blue: Rgb::from_hex(0x589CE8),
+            green: Rgb::from_hex(0x78C878),
+            orange: Rgb::from_hex(0xE6A050),
+            purple: Rgb::from_hex(0xAA82DC),
+            pink: Rgb::from_hex(0xE678A0),
+        },
+    };
+
+    pub const fn color(self, role: ColorRole) -> Rgb {
+        match role {
+            ColorRole::Canvas => self.colors.canvas,
+            ColorRole::Surface => self.colors.surface,
+            ColorRole::Elevated => self.colors.elevated,
+            ColorRole::Accent => self.colors.accent,
+            ColorRole::AccentHighlight => self.colors.accent_highlight,
+            ColorRole::TextPrimary => self.colors.text_primary,
+            ColorRole::TextSecondary => self.colors.text_secondary,
+            ColorRole::Success => self.colors.success,
+            ColorRole::Attention => self.colors.attention,
+            ColorRole::Critical => self.colors.critical,
+            ColorRole::Border => self.colors.border,
+            ColorRole::Grid => self.colors.grid,
+            ColorRole::Pressed => self.colors.pressed,
+            ColorRole::Focus => self.colors.focus,
+            ColorRole::DisabledSurface => self.colors.disabled_surface,
+            ColorRole::DisabledText => self.colors.disabled_text,
+            ColorRole::HighContrastText => self.colors.high_contrast_text,
+        }
+    }
+
+    pub const fn context_color(self, color: ContextColor) -> Rgb {
+        match color {
+            ContextColor::Default => self.contexts.default,
+            ContextColor::Blue => self.contexts.blue,
+            ContextColor::Green => self.contexts.green,
+            ContextColor::Orange => self.contexts.orange,
+            ContextColor::Purple => self.contexts.purple,
+            ContextColor::Pink => self.contexts.pink,
+        }
+    }
+
+    pub const fn state_style(self, state: UniversalState) -> StateStyle {
+        state.style()
+    }
+
+    pub const fn state_color(self, state: UniversalState) -> Rgb {
+        self.color(self.state_style(state).color)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
     Horizontal,
@@ -211,7 +487,10 @@ fn cross_size(length: Length, available: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{layout, Axis, Length, Node, Rect};
+    use super::{
+        layout, Axis, ColorRole, ContextColor, Length, MotionCue, Node, Rect, Rgb, StatusMark,
+        Theme, UniversalState,
+    };
 
     fn four_tabs() -> Node {
         Node::linear(
@@ -245,5 +524,55 @@ mod tests {
         let tree = layout(&root, Rect::new(0, 0, 1080, 2400));
         assert_eq!(tree.children[0].rect, Rect::new(0, 0, 1080, 2100));
         assert_eq!(tree.children[1].rect, Rect::new(0, 2100, 1080, 300));
+    }
+
+    #[test]
+    fn visual_v1_core_palette_matches_the_contract() {
+        let theme = Theme::SAAIOS_DARK;
+        assert_eq!(theme.color(ColorRole::Canvas), Rgb::from_hex(0x071011));
+        assert_eq!(theme.color(ColorRole::Surface), Rgb::from_hex(0x0D181A));
+        assert_eq!(theme.color(ColorRole::Elevated), Rgb::from_hex(0x142326));
+        assert_eq!(theme.color(ColorRole::Accent), Rgb::from_hex(0x63D4D6));
+        assert_eq!(theme.color(ColorRole::TextPrimary), Rgb::from_hex(0xD7E2DF));
+        assert_eq!(theme.color(ColorRole::Success), Rgb::from_hex(0x6FB79A));
+        assert_eq!(theme.color(ColorRole::Attention), Rgb::from_hex(0xD4B658));
+        assert_eq!(theme.color(ColorRole::Critical), Rgb::from_hex(0xC7514B));
+        assert_eq!(theme.color(ColorRole::Border), Rgb::from_hex(0x315054));
+        assert_eq!(theme.color(ColorRole::Grid), Rgb::from_hex(0x20383A));
+    }
+
+    #[test]
+    fn context_colors_are_not_semantic_status_roles() {
+        let theme = Theme::SAAIOS_DARK;
+        assert_eq!(
+            theme.context_color(ContextColor::Default),
+            theme.color(ColorRole::Accent)
+        );
+        assert_eq!(
+            theme.context_color(ContextColor::Blue),
+            Rgb::from_hex(0x589CE8)
+        );
+        assert_ne!(
+            theme.context_color(ContextColor::Orange),
+            theme.state_color(UniversalState::Attention)
+        );
+    }
+
+    #[test]
+    fn universal_states_have_non_color_cues_and_stable_keys() {
+        let running = UniversalState::Running.style();
+        assert_eq!(running.color, ColorRole::Accent);
+        assert_eq!(running.label_key, "state.running");
+        assert_eq!(running.mark, StatusMark::Activity);
+        assert_eq!(running.motion, MotionCue::ActivityPulse);
+
+        let failed = UniversalState::Failed.style();
+        assert_eq!(failed.color, ColorRole::Critical);
+        assert_eq!(failed.mark, StatusMark::Failure);
+        assert_eq!(failed.motion, MotionCue::None);
+
+        assert_eq!(UniversalState::Blocked.style().color, ColorRole::Attention);
+        assert_eq!(UniversalState::Complete.style().color, ColorRole::Success);
+        assert_eq!(UniversalState::Offline.style().mark, StatusMark::Offline);
     }
 }
