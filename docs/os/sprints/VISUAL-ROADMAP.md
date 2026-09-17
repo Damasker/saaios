@@ -332,8 +332,29 @@ real phone interface consistently.
   separate, not-yet-implemented wrap behavior per their own
   component-library-v1.md anatomy notes, so this criterion is not yet met
   for the component set as a whole.
-- [ ] The sans and mono faces survive the actual Pixel boot-image asset path.
-- [ ] Components look like one family at normal and increased text scale.
+- [ ] The sans and mono faces survive the actual Pixel boot-image asset
+  path. Blocked in this environment, not merely deferred: verifying this
+  requires running `build-native-c-image.sh`, which needs a real
+  `STOCK_INIT_BOOT`/`STOCK_VENDOR_BOOT` (proprietary Pixel factory
+  firmware) and a `SAAIOS_PANTHER_ARTIFACTS` "secure local" artifact
+  directory (see `os/targets/panther/README.md`); confirmed via a full
+  filesystem search that none of these exist anywhere on the build server.
+  The font-asset wiring itself (`add 0644 saaios/fonts/...` lines in the
+  build script) is already in place and was reviewed by reading the
+  script, but the actual boot-image build has never been exercised.
+- [x] Components look like one family at normal and increased text scale
+  (ADR-110). Verified with real device screenshots at `text_scale_pct: 100`
+  and `150`: found and fixed a real bug where `SemanticText`'s wrap
+  measurement and the shared line-stacking offset (also used by
+  `StatusIndicator`'s reason line and `DataRow`'s secondary line) did not
+  account for the accessibility text-scale multiplier, and a second,
+  unrelated bug in the persistent status bar where "Wi-Fi" and the battery
+  percentage overlapped at 150%. Known open edge case, not claimed solved:
+  the gallery's row-to-row layout budget (`gallery_row_positions`) is still
+  a fixed, scale-independent fraction of screen height, so a sufficiently
+  long wrapped string at a high enough scale could still make one row's
+  content collide with the row below it -- not exercised by the current
+  demo strings up to 150%, see ADR-110's Consequences section.
 - [ ] Component gallery is runnable on device and clearly labels fixture data.
 - [ ] No scrolling or frame-pacing regression against the VUI-01 baseline.
 

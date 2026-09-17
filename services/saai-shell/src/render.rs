@@ -1253,6 +1253,23 @@ fn physical_line_height(role: TextRole) -> u32 {
     SurfaceScale::PIXEL_7.logical_to_physical(role.style().line_height)
 }
 
+/// `physical_line_height` scaled by the user's current accessibility text
+/// scale -- for actually stacking a second rendered line under a first
+/// one. Kept a separate function rather than folding `text_scale()` into
+/// `physical_line_height` itself: that function backs a pinned host test
+/// (`physical_line_height_matches_the_pixel_7_scale`) that must stay
+/// deterministic regardless of the process-global, mutable
+/// `TEXT_SCALE_BITS` (`render::set_text_scale`) -- and `gallery_row_
+/// positions`'s own between-row budget is intentionally scale-independent
+/// (a fixed fraction of screen height), so it has no reason to call this.
+/// Found missing, not designed in from the start: a real 150% text-scale
+/// screenshot showed `SemanticText`'s wrapped second line clipping off the
+/// right edge of the screen, because `wrap_text` was measuring against the
+/// unscaled size while `draw_text` renders at the scaled one.
+fn scaled_line_height(role: TextRole) -> u32 {
+    (physical_line_height(role) as f32 * text_scale()).round() as u32
+}
+
 fn physical(value: LogicalUnit) -> u32 {
     SurfaceScale::PIXEL_7.logical_to_physical(value)
 }
@@ -1297,13 +1314,13 @@ fn draw_gallery_semantic_text(
     max_width: u32,
 ) {
     let (font, size) = fonts.resolve(text.role);
-    let lines = wrap_text(font, &text.content, size, max_width);
+    let lines = wrap_text(font, &text.content, size * text_scale(), max_width);
     let visible_count = text
         .max_lines
         .map(|max| (max as usize).min(lines.len()).max(1))
         .unwrap_or(lines.len());
     let truncated = lines.len() > visible_count;
-    let line_height = physical_line_height(text.role);
+    let line_height = scaled_line_height(text.role);
     for (index, line) in lines.iter().take(visible_count).enumerate() {
         let is_last_visible = index + 1 == visible_count;
         let display = if is_last_visible && truncated && text.overflow == TextOverflow::Ellipsis {
@@ -1362,7 +1379,7 @@ fn draw_gallery_status_indicator(
             reason,
             reason_size,
             text_left,
-            top + physical_line_height(TextRole::Body),
+            top + scaled_line_height(TextRole::Body),
             theme_color(ColorRole::TextSecondary),
         );
     }
@@ -1482,7 +1499,7 @@ fn draw_gallery_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, 
             secondary,
             secondary_size,
             cursor_x,
-            rect.y + top_inset + physical_line_height(TextRole::Body),
+            rect.y + top_inset + scaled_line_height(TextRole::Body),
             theme_color(ColorRole::TextSecondary),
         );
     }
@@ -2044,7 +2061,7 @@ pub fn draw_status_bar(
     // `draw_text_centered` already uses, just anchored from the right
     // edge instead of a center point.
     let gap = 40.0;
-    let battery_width = text_width(&fonts.semibold, &battery_label, 40.0);
+    let battery_width = text_width(&fonts.semibold, &battery_label, 40.0 * text_scale());
     let battery_left = width as f32 - margin as f32 - battery_width;
     if !battery_label.is_empty() {
         draw_text(
@@ -2057,7 +2074,7 @@ pub fn draw_status_bar(
             theme_color(ColorRole::TextPrimary),
         );
     }
-    let wifi_width = text_width(&fonts.regular, wifi_label, 36.0);
+    let wifi_width = text_width(&fonts.regular, wifi_label, 36.0 * text_scale());
     let wifi_left = battery_left - gap - wifi_width;
     draw_text(
         canvas,
