@@ -305,7 +305,16 @@ real phone interface consistently.
 
 ### Acceptance
 
-- [ ] Public primitives contain no shell-specific business logic.
+- [x] Public primitives contain no shell-specific business logic. Verified
+  2026-09-17: `saai-ui-core/Cargo.toml` has zero dependencies, so nothing in
+  it can reference `saai-shell` or any other crate even by accident --
+  structural, not just a review claim. Manually read all 11 public types in
+  `components.rs`: none names a SaaiOS-specific concept (no Wi-Fi,
+  Bluetooth, HIA entity, or screen name anywhere). `Button.action`/
+  `DataRow.action`/`Disclosure.target` are opaque strings a consumer
+  interprets, the same pattern `Node.action` in this crate's own
+  pre-existing layout system already uses -- not business logic, a dispatch
+  key.
 - [ ] Primary touch targets are at least 48×48 logical units.
 - [ ] Long labels wrap or reflow; they do not clip or overlap navigation.
   Partial (ADR-107): done for `SemanticText` -- real greedy word-wrap plus
