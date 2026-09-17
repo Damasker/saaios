@@ -1,6 +1,6 @@
 # SaaiOS Visual System — delivery roadmap
 
-Status: **VUI-00 complete (planning); VUI-01 ready**
+Status: **VUI-00 complete (planning); VUI-01 in progress**
 
 Target device: Pixel 7 (`panther`)
 
@@ -81,7 +81,7 @@ contains:
 | Sprint | Result | Status |
 |---|---|---|
 | VUI-00 | Audit, product contract, and delivery plan | **Done** |
-| VUI-01 | Semantic tokens and physically calibrated palette | **Ready** |
+| VUI-01 | Semantic tokens and physically calibrated palette | **In progress** |
 | VUI-02 | Typography, geometry, icons, and base component library | Backlog |
 | VUI-03 | Reference `Сейчас` surface | Backlog |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | Backlog |
@@ -128,7 +128,8 @@ conflict-resolved product target.
 
 ## VUI-01 — Semantic tokens and calibrated palette
 
-**Status:** Ready
+**Status:** In progress — implementation and supervised restart complete;
+physical visual/interaction sign-off and cold reboot remain
 
 **Depends on:** VUI-00
 
@@ -137,28 +138,43 @@ without changing the information architecture or layout.
 
 ### Tasks
 
-- [ ] Write an ADR for theme ownership, compatibility, and the temporary
+- [x] Write an ADR for theme ownership, compatibility, and the temporary
   hardcoded-value allowlist.
-- [ ] Introduce typed color tokens from Visual Language v1 in `saai-ui-core`.
-- [ ] Define typed universal state values: `IDLE`, `ACTIVE`, `RUNNING`,
+- [x] Introduce typed color tokens from Visual Language v1 in `saai-ui-core`.
+- [x] Define typed universal state values: `IDLE`, `ACTIVE`, `RUNNING`,
   `WAITING`, `BLOCKED`, `ATTENTION`, `FAILED`, `COMPLETE`, and `OFFLINE`.
-- [ ] Map universal states to color plus text/icon/shape cues.
-- [ ] Keep Context Light/Orb context color separate from semantic status color.
-- [ ] Replace the renderer's seven global constants with the theme interface.
-- [ ] Move local shell RGB values behind theme or the documented context-color
+- [x] Map universal states to color plus text/icon/shape cues.
+- [x] Keep Context Light/Orb context color separate from semantic status color.
+- [x] Replace the renderer's seven global constants with the theme interface.
+- [x] Move local shell RGB values behind theme or the documented context-color
   boundary.
-- [ ] Add pressed, focused, disabled, and high-contrast derived tokens.
-- [ ] Create a full-screen palette/state calibration fixture.
-- [ ] Add deterministic token and state-mapping tests.
+- [x] Add pressed, focused, disabled, and high-contrast derived tokens.
+- [x] Create a full-screen palette/state calibration fixture.
+- [x] Add deterministic token and state-mapping tests.
 - [ ] Capture a reference render and physical Pixel 7 photographs under normal
   indoor light; record display-pipeline adjustments separately from tokens.
-- [ ] Document migration and rollback.
+- [x] Document migration and rollback.
+
+### Implementation evidence (pending physical sign-off)
+
+- ADR-094 defines ownership, backend boundaries, allowlist, verification, and
+  rollback.
+- Commits `c2e2c08`, `dc1672a`, `5b9b23b`, `04507e8`, and `01552e6` implement
+  the core contract, shell migration, calibration fixture, volatile session
+  switch, and raw-token calibration behavior.
+- `cargo test -p saai-ui-core`: 5/5; `cargo test -p saai-shell`: 87/87;
+  strict clippy passes for both packages; the workspace test/clippy gate passes.
+- Pixel 7 ARM64 static build SHA-256:
+  `cfef42da13e0a0d46c70c70b86535b048ea1610189e27f731d232d8b10a1ec8d`.
+- The binary was atomically installed with the previous shell preserved as
+  `/data/saaios/system/saai-shell.pre-vui01`; supervised restart, 1080×2400
+  DMA-BUF commit, and calibration-mode startup are confirmed in live logs.
 
 ### Acceptance
 
-- [ ] Existing screen geometry and navigation behavior are unchanged.
-- [ ] No migrated component creates ad-hoc RGB values.
-- [ ] Every state remains distinguishable without color.
+- [x] Existing screen geometry and navigation code are unchanged.
+- [x] No migrated component creates ad-hoc RGB values.
+- [x] Every state has a non-color mark in addition to its color role.
 - [ ] Text and controls meet the agreed contrast checks on actual surfaces.
 - [ ] Pixel 7 shows the intended neutral dark/cyan palette without channel
   swap, crushing, or unintended warm cast.
@@ -566,7 +582,7 @@ After each completed task group, report:
 
 ## Next action
 
-Start **VUI-01**. It changes only theme/state foundations and a calibration
-fixture; it must not redesign navigation or content yet. That produces a small,
-measurable first implementation step and the base required by the full SaaiOS
-graphical component library.
+Finish **VUI-01** physical sign-off: review and photograph the raw calibration
+fixture, remove the volatile marker, verify normal navigation/touch/scrolling,
+then cold reboot and repeat the smoke test. Only after that gate should VUI-02
+begin drawing and implementing the base graphical component library.
