@@ -329,6 +329,8 @@ the native shell and future third-party surfaces without copying shell code.
 
 Every public component defines:
 
+- a reviewed visual specification showing anatomy, measurements, variants,
+  states, and responsive behavior before its API is declared stable;
 - semantic purpose and when not to use it;
 - inputs, emitted actions, and state model;
 - layout, touch, focus, and scroll behavior;
@@ -338,6 +340,11 @@ Every public component defines:
 - motion and haptic behavior;
 - golden/reference render and interaction tests;
 - whether it is stable, experimental, or shell-private.
+
+Specifications may begin as wireframes, but the approved version must use the
+real palette, type roles, spacing, iconography, Russian labels, and Pixel 7
+viewport. They are stored with the library documentation and updated in the
+same commit whenever a public component's appearance or behavior changes.
 
 ### 10.3 Ownership and boundaries
 

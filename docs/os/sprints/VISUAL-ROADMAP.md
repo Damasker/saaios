@@ -59,6 +59,8 @@ pause all product work for a monolithic UI rewrite.
 The component library is built across the roadmap and is complete only when it
 contains:
 
+- a component inventory and reviewed visual specification sheets covering
+  anatomy, measurements, variants, responsive behavior, and every state;
 - versioned semantic design tokens;
 - type roles and verified sans/mono assets;
 - layout, safe-inset, scrolling, focus, and hit-test primitives;
@@ -182,6 +184,8 @@ real phone interface consistently.
 
 ### Tasks
 
+- [ ] Draw and review the component inventory and state sheets for every base
+  primitive before declaring its API stable.
 - [ ] Add semantic typography roles independent of font filenames and raw
   point sizes.
 - [ ] Compare the current Montserrat build with candidate UI faces on Pixel 7;
@@ -314,6 +318,8 @@ visual grammar.
 
 ### Tasks
 
+- [ ] Draw and review anatomy, relationship, long-content, and full state sheets
+  for each Object/Intent/Task/Agent composite before implementation.
 - [ ] Implement `ObjectSummary`, `IntentSummary`, `TaskSummary`, `AgentSummary`,
   action row, observation/evidence row, and relationship path components.
 - [ ] Show `Intent → Tasks → Agents → Actions` with navigable relationships.
@@ -492,7 +498,7 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [ ] Stabilize and document the public component subset for third-party SaaiOS
   applications; keep privileged composites capability-gated.
 - [ ] Publish component API docs, gallery, examples, stability labels,
-  deprecation policy, and migration guide.
+  visual specification sheets, deprecation policy, and migration guide.
 - [ ] Remove the hardcoded color/metric allowlist and duplicated migrated
   shell components.
 - [ ] Run complete visual, accessibility, interaction, performance, service
