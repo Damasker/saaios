@@ -4,8 +4,12 @@
 //! `.sui` compiler will produce this tree; shells and apps do not implement a
 //! second set of rectangles for touch handling.
 
+mod components;
 mod foundations;
 
+pub use components::{
+    Divider, Icon, SemanticText, StatusIndicator, StatusIndicatorVariant, TextOverflow,
+};
 pub use foundations::{
     FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken,
     SafeInsets, SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle, TextRole,

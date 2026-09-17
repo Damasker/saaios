@@ -247,6 +247,10 @@ real phone interface consistently.
   deliberately not folded into the same change.
 - [ ] Implement visual primitives: semantic text, icon, divider,
   `StatusIndicator`, progress, button, field, `DataRow`, metric, and disclosure.
+  First row done as Experimental contracts (ADR-102): `SemanticText`, `Icon`,
+  `Divider`, `StatusIndicator` -- component-library-v1.md sections 6.1-6.4,
+  unit-tested, not yet wired into any `saai-shell` screen or gallery.
+  Remaining: `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure`.
 - [ ] Make visual and hit-test bounds consume the same layout output.
 - [ ] Define component accessibility names, roles, values, disabled states, and
   non-color cues.
