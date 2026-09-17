@@ -4,6 +4,14 @@
 //! `.sui` compiler will produce this tree; shells and apps do not implement a
 //! second set of rectangles for touch handling.
 
+mod foundations;
+
+pub use foundations::{
+    FontFamily, FontWeight, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,
+    SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle, TextRole, TextStyle,
+    CONTROL_VISUAL_HEIGHT, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+};
+
 /// Backend-independent sRGB color. Renderers are responsible for converting
 /// this logical value to their native pixel/scanout packing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
