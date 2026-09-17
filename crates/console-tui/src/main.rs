@@ -94,16 +94,32 @@ enum ClientRequest {
         value: String,
         #[serde(default)]
         tags: Vec<String>,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        global: bool,
     },
     MemoryRecall {
         #[serde(default)]
         query: String,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        all: bool,
     },
     MemoryTail {
         limit: usize,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        all: bool,
     },
     MemoryForget {
         key: String,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        global: bool,
     },
     Status,
     EventsTail {
@@ -602,7 +618,16 @@ async fn show_events(app: &mut App) -> Result<()> {
 }
 
 async fn show_memory(app: &mut App) -> Result<()> {
-    match request(&app.endpoint, &ClientRequest::MemoryTail { limit: 20 }).await {
+    match request(
+        &app.endpoint,
+        &ClientRequest::MemoryTail {
+            limit: 20,
+            space_id: None,
+            all: false,
+        },
+    )
+    .await
+    {
         Ok(resp) => {
             if let Some(err) = resp.error {
                 app.lines.push(format!("memory error: {err}"));
@@ -623,6 +648,41 @@ async fn show_memory(app: &mut App) -> Result<()> {
     Ok(())
 }
 
+struct MemoryFlags {
+    all: bool,
+    global: bool,
+    space_id: Option<String>,
+    rest: String,
+}
+
+fn parse_memory_flags(input: &str) -> MemoryFlags {
+    let mut all = false;
+    let mut global = false;
+    let mut space_id = None;
+    let mut rest_parts = Vec::new();
+    let mut words = input.split_whitespace();
+    while let Some(word) = words.next() {
+        match word {
+            "--all" => all = true,
+            "--global" => global = true,
+            "--space" => space_id = words.next().map(String::from),
+            other => {
+                if let Some(value) = other.strip_prefix("--space=") {
+                    space_id = Some(value.to_string());
+                } else {
+                    rest_parts.push(other.to_string());
+                }
+            }
+        }
+    }
+    MemoryFlags {
+        all,
+        global,
+        space_id,
+        rest: rest_parts.join(" "),
+    }
+}
+
 async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
     let mut parts = text.splitn(2, char::is_whitespace);
     let cmd = parts.next().unwrap_or("");
@@ -638,8 +698,11 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
             app.status = "session=new".into();
         }
         "/remember" => {
-            let Some((key, value)) = rest.split_once('=') else {
-                app.lines.push("usage: /remember key=value".into());
+            let flags = parse_memory_flags(rest);
+            let Some((key, value)) = flags.rest.split_once('=') else {
+                app.lines.push(
+                    "usage: /remember --space NAME key=value | /remember --global key=value".into(),
+                );
                 return Ok(());
             };
             match request(
@@ -648,6 +711,8 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
                     key: key.trim().to_string(),
                     value: value.trim().to_string(),
                     tags: vec![],
+                    space_id: flags.space_id,
+                    global: flags.global,
                 },
             )
             .await
@@ -664,10 +729,13 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
             }
         }
         "/recall" => {
+            let flags = parse_memory_flags(rest);
             match request(
                 &app.endpoint,
                 &ClientRequest::MemoryRecall {
-                    query: rest.to_string(),
+                    query: flags.rest,
+                    space_id: flags.space_id,
+                    all: flags.all,
                 },
             )
             .await
@@ -682,7 +750,11 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
                         for item in facts {
                             let key = item.get("key").and_then(|v| v.as_str()).unwrap_or("?");
                             let value = item.get("value").and_then(|v| v.as_str()).unwrap_or("?");
-                            app.lines.push(format!("{key} = {value}"));
+                            let space = item
+                                .get("space_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("global");
+                            app.lines.push(format!("[{space}] {key} = {value}"));
                         }
                     }
                 }
@@ -690,14 +762,18 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
             }
         }
         "/forget" => {
-            if rest.is_empty() {
-                app.lines.push("usage: /forget key".into());
+            let flags = parse_memory_flags(rest);
+            if flags.rest.is_empty() {
+                app.lines
+                    .push("usage: /forget --space NAME key | /forget --global key".into());
                 return Ok(());
             }
             match request(
                 &app.endpoint,
                 &ClientRequest::MemoryForget {
-                    key: rest.to_string(),
+                    key: flags.rest.clone(),
+                    space_id: flags.space_id,
+                    global: flags.global,
                 },
             )
             .await
@@ -706,7 +782,7 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
                     if let Some(err) = resp.error {
                         app.lines.push(format!("forget error: {err}"));
                     } else {
-                        app.lines.push(format!("forgot {rest}"));
+                        app.lines.push(format!("forgot {}", flags.rest));
                     }
                 }
                 Err(e) => app.lines.push(format!("forget failed: {e:#}")),

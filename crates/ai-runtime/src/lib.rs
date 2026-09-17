@@ -325,7 +325,10 @@ impl AiRuntime {
             system.push_str("\n</device_context>\n");
         }
         if let Some(mem) = &self.memory {
-            match mem.format_context(12, space_id.as_deref()) {
+            match mem.format_context(
+                12,
+                &memory_store::MemoryAccessScope::from_caller(space_id.as_deref()),
+            ) {
                 Ok(ctx) if !ctx.is_empty() => system.push_str(&ctx),
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, "failed to load memory context"),

@@ -6,7 +6,7 @@ use chrono::Utc;
 use clap::Parser;
 use config::{resolve, CliOverrides};
 use event_bus::EventBus;
-use memory_store::{install_memory_tools, MemoryFact, MemoryStore};
+use memory_store::{install_memory_tools, MemoryAccessScope, MemoryFact, MemoryStore};
 use model_provider::{build_provider, ProviderKind};
 use policy_engine::PolicyEngine;
 use protocol::{ConfirmScope, Envelope, MessageKind};
@@ -123,11 +123,9 @@ enum ClientRequest {
         /// When true, respond with NDJSON progress frames then a final `done` object.
         #[serde(default)]
         stream: bool,
-        /// S10 (ADR-038): which space this request was made on behalf of.
-        /// Absent for a plain console session (no regression -- it sees
-        /// every memory fact, exactly as before this field existed);
-        /// `saai-taskd`'s planner bridge (ADR-033/034) is the one caller
-        /// that sends its own known space.
+        /// S10 (ADR-038) / MLP (ADR-125): which space this request was
+        /// made on behalf of. Absent means Global fallback only, not
+        /// every space. `saai-taskd` sends its known space.
         #[serde(default)]
         space_id: Option<String>,
     },
@@ -156,17 +154,35 @@ enum ClientRequest {
         value: String,
         #[serde(default)]
         tags: Vec<String>,
+        #[serde(default)]
+        space_id: Option<String>,
+        /// Explicit global write. Required when `space_id` is absent.
+        #[serde(default)]
+        global: bool,
     },
     MemoryRecall {
         #[serde(default)]
         query: String,
+        #[serde(default)]
+        space_id: Option<String>,
+        /// Trusted admin/debug: every identity. Ordinary callers omit this.
+        #[serde(default)]
+        all: bool,
     },
     MemoryTail {
         #[serde(default = "default_tail")]
         limit: usize,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        all: bool,
     },
     MemoryForget {
         key: String,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        global: bool,
     },
     Status,
     EventsTail {
@@ -184,6 +200,34 @@ fn default_once() -> ConfirmScope {
 
 fn default_tail() -> usize {
     20
+}
+
+fn memory_read_access(space_id: Option<&str>, all: bool) -> MemoryAccessScope {
+    if all {
+        MemoryAccessScope::All
+    } else {
+        MemoryAccessScope::from_caller(space_id)
+    }
+}
+
+fn memory_write_space(space_id: Option<&str>, global: bool) -> Result<Option<String>, String> {
+    match (space_id, global) {
+        (Some(space), false) if !space.is_empty() => Ok(Some(space.to_string())),
+        (None, true) | (Some(""), true) => Ok(None),
+        (Some(_), true) => Err("pass space_id or global, not both".into()),
+        _ => Err("ambiguous memory write: pass space_id or global=true".into()),
+    }
+}
+
+fn memory_forget_access(space_id: Option<&str>, global: bool) -> Result<MemoryAccessScope, String> {
+    match (space_id, global) {
+        (Some(space), false) if !space.is_empty() => {
+            Ok(MemoryAccessScope::Context(space.to_string()))
+        }
+        (None, true) | (Some(""), true) => Ok(MemoryAccessScope::Global),
+        (Some(_), true) => Err("pass space_id or global, not both".into()),
+        _ => Err("ambiguous memory forget: pass space_id or global=true".into()),
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -844,15 +888,54 @@ where
                 ..Default::default()
             },
         },
-        ClientRequest::MemoryRemember { key, value, tags } => match runtime.memory() {
+        ClientRequest::MemoryRemember {
+            key,
+            value,
+            tags,
+            space_id,
+            global,
+        } => match runtime.memory() {
+            Some(store) => match memory_write_space(space_id.as_deref(), global) {
+                Ok(scope) => {
+                    let mut fact = MemoryFact::new(key, value);
+                    fact.tags = tags;
+                    fact.source = Some("console".into());
+                    fact.space_id = scope;
+                    match store.remember(fact) {
+                        Ok(fact) => ClientResponse {
+                            ok: true,
+                            memory_facts: Some(vec![fact]),
+                            ..Default::default()
+                        },
+                        Err(e) => ClientResponse {
+                            ok: false,
+                            error: Some(e.to_string()),
+                            ..Default::default()
+                        },
+                    }
+                }
+                Err(msg) => ClientResponse {
+                    ok: false,
+                    error: Some(msg),
+                    ..Default::default()
+                },
+            },
+            None => ClientResponse {
+                ok: false,
+                error: Some("memory disabled (--no-memory)".into()),
+                ..Default::default()
+            },
+        },
+        ClientRequest::MemoryRecall {
+            query,
+            space_id,
+            all,
+        } => match runtime.memory() {
             Some(store) => {
-                let mut fact = MemoryFact::new(key, value);
-                fact.tags = tags;
-                fact.source = Some("console".into());
-                match store.remember(fact) {
-                    Ok(fact) => ClientResponse {
+                match store.recall(&query, &memory_read_access(space_id.as_deref(), all)) {
+                    Ok(facts) => ClientResponse {
                         ok: true,
-                        memory_facts: Some(vec![fact]),
+                        memory_facts: Some(facts),
                         ..Default::default()
                     },
                     Err(e) => ClientResponse {
@@ -868,59 +951,57 @@ where
                 ..Default::default()
             },
         },
-        ClientRequest::MemoryRecall { query } => match runtime.memory() {
-            Some(store) => match store.recall(&query, None) {
-                Ok(facts) => ClientResponse {
-                    ok: true,
-                    memory_facts: Some(facts),
-                    ..Default::default()
-                },
-                Err(e) => ClientResponse {
-                    ok: false,
-                    error: Some(e.to_string()),
-                    ..Default::default()
-                },
-            },
+        ClientRequest::MemoryTail {
+            limit,
+            space_id,
+            all,
+        } => match runtime.memory() {
+            Some(store) => {
+                match store.list_recent(limit, &memory_read_access(space_id.as_deref(), all)) {
+                    Ok(facts) => ClientResponse {
+                        ok: true,
+                        memory_facts: Some(facts),
+                        ..Default::default()
+                    },
+                    Err(e) => ClientResponse {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    },
+                }
+            }
             None => ClientResponse {
                 ok: false,
                 error: Some("memory disabled (--no-memory)".into()),
                 ..Default::default()
             },
         },
-        ClientRequest::MemoryTail { limit } => match runtime.memory() {
-            Some(store) => match store.list_recent(limit, None) {
-                Ok(facts) => ClientResponse {
-                    ok: true,
-                    memory_facts: Some(facts),
-                    ..Default::default()
+        ClientRequest::MemoryForget {
+            key,
+            space_id,
+            global,
+        } => match runtime.memory() {
+            Some(store) => match memory_forget_access(space_id.as_deref(), global) {
+                Ok(access) => match store.forget(&key, &access) {
+                    Ok(Some(_)) => ClientResponse {
+                        ok: true,
+                        memory_facts: Some(vec![]),
+                        ..Default::default()
+                    },
+                    Ok(None) => ClientResponse {
+                        ok: false,
+                        error: Some(format!("no fact for key={key}")),
+                        ..Default::default()
+                    },
+                    Err(e) => ClientResponse {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    },
                 },
-                Err(e) => ClientResponse {
+                Err(msg) => ClientResponse {
                     ok: false,
-                    error: Some(e.to_string()),
-                    ..Default::default()
-                },
-            },
-            None => ClientResponse {
-                ok: false,
-                error: Some("memory disabled (--no-memory)".into()),
-                ..Default::default()
-            },
-        },
-        ClientRequest::MemoryForget { key } => match runtime.memory() {
-            Some(store) => match store.forget(&key, None) {
-                Ok(Some(_)) => ClientResponse {
-                    ok: true,
-                    memory_facts: Some(vec![]),
-                    ..Default::default()
-                },
-                Ok(None) => ClientResponse {
-                    ok: false,
-                    error: Some(format!("no fact for key={key}")),
-                    ..Default::default()
-                },
-                Err(e) => ClientResponse {
-                    ok: false,
-                    error: Some(e.to_string()),
+                    error: Some(msg),
                     ..Default::default()
                 },
             },

@@ -29,9 +29,11 @@ is MEM-06.
 
 | Tool | Risk | Role |
 |---|---|---|
-| `memory.remember` | Low | Write key/value (+ optional tags). Origin is runtime-assigned. Model-originated writes must not become ExplicitFact/Preference (MEM-05). |
-| `memory.recall` | Low | Substring search within the caller scope |
-| `memory.forget` | Medium | Soft-delete by `(scope, key)` |
+| `memory.recall` | Low | Substring search within caller scope. Missing space = Global only. |
+
+`memory.remember` / `memory.forget` are **not** model tools (MEM-05).
+Explicit writes go through the console/IRAB wire ops with `space_id` or
+`global=true`.
 
 Recent records (up to 12) are projected into the model context as labelled
 `<memory_records>` data — not as `Known facts`. Values are data, not
@@ -40,13 +42,20 @@ instructions.
 ## Console / UDS
 
 ```
-/remember host.role=pi5 appliance
-/recall pi5
-/forget host.role
-m          # memory tail
+/remember --space work ui.detail=technical
+/recall --space work pi5
+/forget --global host.role
+m          # global tail only
 ```
 
-Ops: `MemoryRemember`, `MemoryRecall`, `MemoryTail`, `MemoryForget`.
+Default write is not silently Global. Console:
 
-Legacy no-space console still sees every identity (ADR-038). MEM-02
-retires that implicit All for ordinary callers.
+```
+/remember --space work ui.detail=technical
+/remember --global host.role=pi5
+/recall --space work ui
+/recall --all
+/forget --space work ui.detail
+```
+
+`m` (memory tail) is Global only, not all Spaces.

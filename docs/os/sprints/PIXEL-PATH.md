@@ -42,7 +42,7 @@ SHELL QUEUE (один hardware-changing эксперимент)
   VUI-07…09
 
 SERVICE QUEUE (можно шить параллельно shell)
-  P0  saaios-runtime     MEM-01 same-key Home/Work
+  P0  saaios-runtime     MEM-01 same-key + MEM-02 None≠All + MEM-05 no model write
   P1  runtime + taskd    MEM-02/05, AUTH-04 decide_named, WORK ready-set
   P2  runtime            MEM-03/06 typed record + erase
   P3  later              WORLD cache; daemon только по доказанному IPC
@@ -54,7 +54,7 @@ APP-COMPAT, Learning (MEM-09), голос, PCE, `saai-deviced` — **не в э�
 ## P0 — эта неделя (быстрее всего увидеть на телефоне)
 
 1. Закончить VUI-04 на shell (status bar, Context Light remainder).
-2. Прошить **только** `saaios-runtime` с MEM-01.
+2. Прошить **только** `saaios-runtime` с MEM-01/02/05.
 3. Pixel: один key в Home и Work, reboot, recall не смешивается.
 
 Это закрывает дыру ADR-038, уже живущую на устройстве. Не ждать MEM-10.
