@@ -446,6 +446,7 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .and_then(|entity| entity.properties.get("space_id").and_then(Value::as_str))
         .map(str::to_string)
 }
+use saai_attention::{has_orb_attention, project_from_entities};
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
     NavigationItem, Node, ObjectSummary, OrbHost, Rect, StatusIndicator, StatusIndicatorVariant,
@@ -2240,6 +2241,8 @@ struct OrbFrame {
     /// `OrbHost::mark()`'s real `StatusMark` shape, not just a hollow
     /// ring for `Attention` alone.
     mark: StatusMark,
+    /// Context Light attention=ring, from `OrbHost::attention_ring()`.
+    attention_ring: bool,
     menu_rows: Vec<(Rect, &'static str)>,
 }
 
@@ -2711,20 +2714,21 @@ const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
 /// `Offline` (a live connection is required to trust any signal below
 /// it -- without one this shell cannot honestly claim to know whether
 /// there is real pending attention or real in-progress work either),
-/// `Attention` (undismissed notifications, S21/S30/ADR-089), `Running`
+/// `Attention` (`saai-attention` projection: waiting-confirmation
+/// Tasks and undismissed Notifications), `Running`
 /// (`in_progress_work`, the same VUI-03 query "Продолжается" already
 /// uses), `Active` (the menu is open -- the user is deliberately
 /// engaging it right now), else `Idle`.
 fn orb_visual_state(
     appd_connected: bool,
     entityd_connected: bool,
-    has_pending_notifications: bool,
+    has_orb_attention: bool,
     has_in_progress_work: bool,
     menu_open: bool,
 ) -> UniversalState {
     if !appd_connected || !entityd_connected {
         UniversalState::Offline
-    } else if has_pending_notifications {
+    } else if has_orb_attention {
         UniversalState::Attention
     } else if has_in_progress_work {
         UniversalState::Running
@@ -2733,6 +2737,10 @@ fn orb_visual_state(
     } else {
         UniversalState::Idle
     }
+}
+
+fn orb_attention_from_entities(entities: &[Entity]) -> bool {
+    has_orb_attention(&project_from_entities(entities))
 }
 
 fn inbox_notifications(entities: &[Entity]) -> Vec<&Entity> {
@@ -4819,6 +4827,7 @@ impl Shell {
                     orb.dot,
                     orb.dot_color,
                     orb.mark,
+                    orb.attention_ring,
                     &orb.menu_rows,
                     fonts,
                 );
@@ -6391,7 +6400,7 @@ impl Shell {
         let orb_host = OrbHost::new(orb_visual_state(
             self.appd.is_connected(),
             self.entityd.is_connected(),
-            !inbox_notifications(&self.selected_entities).is_empty(),
+            orb_attention_from_entities(&self.selected_entities),
             !in_progress_work(&self.selected_entities).is_empty(),
             self.orb_menu_open,
         ));
@@ -6414,6 +6423,7 @@ impl Shell {
                 dot: view.rect,
                 dot_color,
                 mark: orb_host.mark(),
+                attention_ring: orb_host.attention_ring(),
                 menu_rows: Vec::new(),
             };
         }
@@ -6427,6 +6437,7 @@ impl Shell {
             dot: dot_rect,
             dot_color,
             mark: orb_host.mark(),
+            attention_ring: orb_host.attention_ring(),
             menu_rows,
         }
     }
@@ -7070,10 +7081,10 @@ mod tests {
         content_action_at, dev_surface_back_tapped, effective_context_space, format_utc_offset,
         in_progress_work, input_idle_for_at_least, intent_action_at, known_surfaces,
         me_fixed_card_action, next_in_cycle, next_pending_action, object_view_action_at,
-        object_view_content, orb_action_at, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
-        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        object_view_content, orb_action_at, orb_attention_from_entities, orb_menu_actions,
+        orb_visual_state, orb_zone_rect, remove_context_source, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
         ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage, Space,
         SpaceColor, SpaceLifecycle, TrustedClientTap, UniversalState, WifiListTap,
@@ -8239,6 +8250,39 @@ mod tests {
             orb_visual_state(true, true, false, false, false),
             UniversalState::Idle
         );
+    }
+
+    #[test]
+    fn waiting_confirmation_task_lights_orb_without_a_notification() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        assert!(orb_attention_from_entities(&[waiting.clone()]));
+        assert_eq!(
+            orb_visual_state(
+                true,
+                true,
+                orb_attention_from_entities(&[waiting]),
+                false,
+                false
+            ),
+            UniversalState::Attention
+        );
+    }
+
+    #[test]
+    fn running_task_alone_does_not_light_orb_attention() {
+        let mut running = task_entity("Работает", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        assert!(!orb_attention_from_entities(&[running]));
+    }
+
+    #[test]
+    fn dismissed_notification_does_not_light_orb() {
+        let mut gone = notification_entity("Notice", "body");
+        gone.properties
+            .insert("dismissed".into(), serde_json::Value::Bool(true));
+        assert!(!orb_attention_from_entities(&[gone]));
     }
 
     #[test]

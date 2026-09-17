@@ -687,9 +687,12 @@ turning the Orb into a launcher or assistant avatar.
   `UniversalState` gets its own `StatusMark`) and context=color (the
   Space's own color for `Idle`/`Active`, the state's own semantic color
   otherwise). activity=motion, quantity=arc/fill, and attention=ring are
-  not yet built -- `MotionCue`/reduced-motion wiring, a real arc/fill
-  quantity visual, and a dedicated ring cue beyond the `Alert` mark all
-  remain open.
+  not yet fully built -- `MotionCue`/reduced-motion wiring and a real
+  arc/fill quantity visual remain open. **Attention ring (v1):**
+  `OrbHost::attention_ring()` is true only for `UniversalState::Attention`,
+  and the shell lights that state from `saai-attention` (WaitingConfirmation
+  Tasks and undismissed Notifications), then `draw_orb` paints a
+  `StrokeToken::Focus` square ring around the mark. Not a launcher avatar.
 - [x] Integrate a restrained Orb host with quiet, active, progress, attention,
   offline, and reduced-motion states (ADR-116). All five real states
   reuse `UniversalState` (`Idle`/`Active`/`Running`/`Attention`/`Offline`)

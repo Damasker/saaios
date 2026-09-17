@@ -551,6 +551,7 @@ pub fn draw_orb(
     dot_rect: Rect,
     dot_color: Pixel,
     mark: StatusMark,
+    attention_ring: bool,
     menu_rows: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
@@ -569,6 +570,37 @@ pub fn draw_orb(
         }
     }
     draw_calibration_mark(canvas, dot_rect, mark, dot_color);
+    if attention_ring {
+        draw_attention_ring(canvas, dot_rect, dot_color);
+    }
+}
+
+fn draw_attention_ring(canvas: &mut Canvas<'_>, rect: Rect, color: Pixel) {
+    let thickness = StrokeToken::Focus.value().get() as u32;
+    let thickness = thickness.max(1);
+    if rect.width <= thickness * 2 || rect.height <= thickness * 2 {
+        return;
+    }
+    canvas.fill_rect(Rect::new(rect.x, rect.y, rect.width, thickness), color);
+    canvas.fill_rect(
+        Rect::new(
+            rect.x,
+            rect.y + rect.height.saturating_sub(thickness),
+            rect.width,
+            thickness,
+        ),
+        color,
+    );
+    canvas.fill_rect(Rect::new(rect.x, rect.y, thickness, rect.height), color);
+    canvas.fill_rect(
+        Rect::new(
+            rect.x + rect.width.saturating_sub(thickness),
+            rect.y,
+            thickness,
+            rect.height,
+        ),
+        color,
+    );
 }
 
 /// The "adb"-style pairing prompt for a new SSH client -- same
@@ -2656,6 +2688,7 @@ mod tests {
                 dot_rect,
                 theme_color(ColorRole::Accent),
                 mark,
+                false,
                 &[],
                 None,
             );
@@ -2667,6 +2700,25 @@ mod tests {
         assert_ne!(idle, attention);
         assert_ne!(idle, offline);
         assert_ne!(attention, offline);
+    }
+
+    #[test]
+    fn attention_ring_is_drawn_beyond_the_alert_mark() {
+        let render = |ring: bool| -> Vec<u8> {
+            let mut pixels = vec![0u8; 200 * 200 * 4];
+            let mut canvas = Canvas::new(&mut pixels, 200, 200);
+            draw_orb(
+                &mut canvas,
+                Rect::new(50, 50, 100, 100),
+                theme_color(ColorRole::Accent),
+                StatusMark::Alert,
+                ring,
+                &[],
+                None,
+            );
+            pixels
+        };
+        assert_ne!(render(true), render(false));
     }
 
     #[test]

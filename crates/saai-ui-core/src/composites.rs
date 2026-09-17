@@ -346,6 +346,14 @@ impl OrbHost {
         self.state.style().mark
     }
 
+    /// Context Light attention=ring: a dedicated cue beyond `mark()`,
+    /// only when the Orb's own state is Attention. Not a second
+    /// notification model — the caller decides Attention from
+    /// `saai-attention`.
+    pub fn attention_ring(&self) -> bool {
+        self.state == UniversalState::Attention
+    }
+
     pub fn color(&self) -> ColorRole {
         self.state.style().color
     }
@@ -458,5 +466,9 @@ mod tests {
             attention.accessibility().value.as_deref(),
             Some("state.attention")
         );
+        assert!(attention.attention_ring());
+        assert!(!OrbHost::new(UniversalState::Idle).attention_ring());
+        assert!(!OrbHost::new(UniversalState::Running).attention_ring());
+        assert!(!OrbHost::new(UniversalState::Offline).attention_ring());
     }
 }
