@@ -2021,6 +2021,7 @@ pub fn draw_now(
     header: &ContextHeader,
     sections: &[SystemSection],
     object: Option<&ObjectSummary>,
+    footer_actions: &[(Rect, DataRow)],
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
@@ -2032,6 +2033,10 @@ pub fn draw_now(
     let Some(fonts) = fonts else {
         return;
     };
+
+    for (rect, row) in footer_actions {
+        draw_data_row(canvas, fonts, row, *rect);
+    }
 
     // `content` spans the full canvas from y=0 -- the status bar is a
     // separate, always-on-top compositor surface (`layer.set_size(0,

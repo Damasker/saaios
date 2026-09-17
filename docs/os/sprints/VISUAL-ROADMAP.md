@@ -485,8 +485,22 @@ truthful home surface before expanding the framework.
   existing app grid in production until the next task below (moving that
   grid behind `Приложения`) ships, so this composition does not silently
   remove app-grid access in the meantime.
-- [ ] Move the application grid behind an explicit secondary `Приложения`
-  entry or sheet without removing application access.
+- [x] Move the application grid behind an explicit secondary `Приложения`
+  entry or sheet without removing application access (ADR-113). Two new
+  fixed footer rows on the composed screen -- "Приложения" opens the
+  existing, completely unmodified app-grid rendering/touch-handling path
+  (`now_content_cards`/`now_grid_rect`/`now_action_at`); "Новое намерение"
+  reuses the existing intent-input entry point directly. Closed by
+  re-tapping the already-selected "Сейчас" tab.
+
+  Physically verified end-to-end with real device taps: opened the grid
+  (saw the real installed apps plus the two legacy `root.sui` cards,
+  confirming application access is intact, not removed), closed it back
+  to the composed screen with its real content still correct, and opened
+  the intent-input keyboard from its new row. Only reachable while
+  ADR-112's own `now_composed` dev marker is set -- with it off,
+  `RootPage::Now` is completely unaffected by this task, exactly as
+  before.
 - [ ] Keep prompt/chat input secondary to direct system actions.
 - [ ] Implement honest quiet, empty, stale, offline, blocked, and failed states.
 - [ ] Validate progressive disclosure for developer and diagnostic details.

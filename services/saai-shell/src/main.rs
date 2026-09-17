@@ -1855,6 +1855,7 @@ enum Frame {
         header: ContextHeader,
         sections: Vec<SystemSection>,
         object: Option<ObjectSummary>,
+        footer_actions: Vec<(Rect, DataRow)>,
     },
 }
 
@@ -2628,6 +2629,49 @@ fn now_grid_rect(index: usize, width: u32, height: u32) -> Rect {
     )
 }
 
+/// VUI-03 (ADR-113): "Приложения" (behind which the app grid moves) and
+/// "Новое намерение" -- the two persistent navigation rows the composed
+/// `Сейчас` keeps reachable regardless of section content, fixed just
+/// above the tab bar rather than interleaved with `SystemSection` rows so
+/// their position never depends on how much real data is above them.
+/// Same "pure function shared by rendering and hit-testing" pattern
+/// `now_grid_rect`/`stacked_row_rect` already use.
+fn now_footer_action_rect(index: usize, width: u32, height: u32) -> Rect {
+    let margin = width / 22;
+    let content_rect = root_view(width, height).children[0].rect;
+    let row_height = ((160_u64 * u64::from(height)) / 2400) as u32;
+    let bottom = content_rect.y + content_rect.height;
+    let top = bottom.saturating_sub(row_height * (2 - index) as u32);
+    Rect::new(margin, top, width.saturating_sub(margin * 2), row_height)
+}
+
+const NOW_FOOTER_OPEN_APPS_ACTION: &str = "open_apps";
+
+fn now_footer_action_views(width: u32, height: u32) -> Vec<(Rect, DataRow)> {
+    vec![
+        (
+            now_footer_action_rect(0, width, height),
+            DataRow::new("Приложения", DataRowVariant::Navigation)
+                .with_action(NOW_FOOTER_OPEN_APPS_ACTION),
+        ),
+        (
+            now_footer_action_rect(1, width, height),
+            DataRow::new("Новое намерение", DataRowVariant::Navigation)
+                .with_action("open_intent_input"),
+        ),
+    ]
+}
+
+fn now_footer_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
+    if now_footer_action_rect(0, width, height).contains(pos.0, pos.1) {
+        Some(NOW_FOOTER_OPEN_APPS_ACTION)
+    } else if now_footer_action_rect(1, width, height).contains(pos.0, pos.1) {
+        Some("open_intent_input")
+    } else {
+        None
+    }
+}
+
 fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top_2400 = 430 + index as u32 * 220;
@@ -3072,6 +3116,7 @@ fn main() {
         locked: !dev_no_lock,
         dev_no_lock,
         now_composed,
+        apps_open: false,
         unlock_pending: false,
         sleeping: false,
         last_activity: Instant::now(),
@@ -3233,6 +3278,14 @@ struct Shell {
     dev_no_lock: bool,
     /// See `NOW_COMPOSED_MARKER`'s own doc comment.
     now_composed: bool,
+    /// VUI-03 (ADR-113): true while the app grid is showing over the
+    /// composed `Сейчас`, opened via the "Приложения" footer row and
+    /// closed by re-tapping the already-selected `Сейчас` tab. Only ever
+    /// meaningful when `now_composed` is set -- with it off, `RootPage::
+    /// Now` already always shows the grid, so this flag has nothing to
+    /// add. Reset to `false` on every root tab switch so leaving and
+    /// returning to `Сейчас` never re-opens the grid unexpectedly.
+    apps_open: bool,
     /// Set on a touch-down that started on the lock surface while
     /// locked; the matching touch-up is what actually unlocks (mirrors
     /// drm-splash.c requiring touch *release* over the lock screen, not
@@ -3998,6 +4051,15 @@ impl TouchHandler for Shell {
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
+                    self.apps_open = false;
+                    self.draw(conn, qh);
+                } else if page == RootPage::Now && self.apps_open {
+                    // VUI-03 (ADR-113): re-tapping the already-selected
+                    // "Сейчас" tab is the app grid's "Назад" -- same
+                    // touch this tab already accepts a no-op tap from,
+                    // now doing something the first time it's pressed
+                    // while the grid is open over the composed screen.
+                    self.apps_open = false;
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Inbox {
@@ -4020,13 +4082,36 @@ impl TouchHandler for Shell {
                     self.viewing_entity_id = Some(id);
                     self.draw(conn, qh);
                 }
+            } else if self.current_page == RootPage::Now
+                && self.now_composed
+                && !self.apps_open
+            {
+                // VUI-03 (ADR-113): the composed screen's own two footer
+                // rows -- everything else on it (SystemSection rows,
+                // ObjectSummary) is informational only in this pass, not
+                // yet tappable.
+                if let Some(action) =
+                    now_footer_action_at(self.last_touch_pos, self.width, self.height)
+                {
+                    if action == NOW_FOOTER_OPEN_APPS_ACTION {
+                        self.apps_open = true;
+                        self.draw(conn, qh);
+                    } else if action == "open_intent_input" {
+                        self.intent_input = Some(IntentInputState::default());
+                        self.draw(conn, qh);
+                    }
+                }
             } else if self.current_page == RootPage::Now {
                 // S13 Change 4: same reasoning as "Входящие" above --
                 // the app-list rows have no `root.sui` entries, so
                 // `content_action_at` alone can't find them (or, now,
                 // even correctly locate the two cards that remain
                 // static, since they're repositioned below the
-                // runtime-sized app list).
+                // runtime-sized app list). Also reached with
+                // `now_composed` set once "Приложения" has opened the
+                // grid (`self.apps_open`) -- same grid, same handling,
+                // whether it's the permanent page or a temporary
+                // overlay above the composed screen.
                 if let Some(action_str) = now_action_at(
                     self.last_touch_pos,
                     self.width,
@@ -4377,7 +4462,7 @@ impl Shell {
                 status_line: "Диагностика".to_string(),
                 rows,
             }
-        } else if self.current_page == RootPage::Now && self.now_composed {
+        } else if self.current_page == RootPage::Now && self.now_composed && !self.apps_open {
             let view = root_view(width, height);
             Frame::Now {
                 content_rect: view.children[0].rect,
@@ -4390,6 +4475,7 @@ impl Shell {
                 header: self.now_context_header(),
                 sections: self.now_sections(),
                 object: self.now_object_summary(),
+                footer_actions: now_footer_action_views(width, height),
             }
         } else {
             let view = root_view(width, height);
@@ -4687,6 +4773,7 @@ impl Shell {
                     header,
                     sections,
                     object,
+                    footer_actions,
                 } => {
                     render::draw_now(
                         &mut render::Canvas::new(canvas, width, height),
@@ -4696,6 +4783,7 @@ impl Shell {
                         &header,
                         &sections,
                         object.as_ref(),
+                        &footer_actions,
                         fonts,
                     );
                 }
@@ -7305,6 +7393,49 @@ mod tests {
         // margin, below row 0.
         assert_eq!(cell_3.x, cell_0.x);
         assert!(cell_3.y > cell_0.y);
+    }
+
+    #[test]
+    fn now_footer_action_rows_stack_above_the_tab_bar_in_order() {
+        let width = 1080;
+        let height = 2400;
+        let apps_row = super::now_footer_action_rect(0, width, height);
+        let intent_row = super::now_footer_action_rect(1, width, height);
+        // "Приложения" sits directly above "Новое намерение", both
+        // above the tab bar itself.
+        assert!(apps_row.y < intent_row.y);
+        assert_eq!(
+            apps_row.y + apps_row.height,
+            intent_row.y,
+            "the two footer rows must be flush, not overlapping or gapped"
+        );
+        let tab_bar_top = super::root_view(width, height).children[1].rect.y;
+        assert!(intent_row.y + intent_row.height <= tab_bar_top);
+    }
+
+    #[test]
+    fn now_footer_action_at_finds_each_row_and_misses_above_them() {
+        let width = 1080;
+        let height = 2400;
+        let apps_row = super::now_footer_action_rect(0, width, height);
+        let intent_row = super::now_footer_action_rect(1, width, height);
+        assert_eq!(
+            super::now_footer_action_at(
+                (apps_row.x as f64 + 10.0, apps_row.y as f64 + 10.0),
+                width,
+                height
+            ),
+            Some(super::NOW_FOOTER_OPEN_APPS_ACTION)
+        );
+        assert_eq!(
+            super::now_footer_action_at(
+                (intent_row.x as f64 + 10.0, intent_row.y as f64 + 10.0),
+                width,
+                height
+            ),
+            Some("open_intent_input")
+        );
+        assert_eq!(super::now_footer_action_at((540.0, 400.0), width, height), None);
     }
 
     #[test]
