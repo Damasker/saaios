@@ -245,12 +245,12 @@ real phone interface consistently.
   -- the harder, correctness-sensitive piece (`hit_test` needs to stop
   matching children scrolled outside their viewport) -- remains open,
   deliberately not folded into the same change.
-- [ ] Implement visual primitives: semantic text, icon, divider,
+- [x] Implement visual primitives: semantic text, icon, divider,
   `StatusIndicator`, progress, button, field, `DataRow`, metric, and disclosure.
-  First row done as Experimental contracts (ADR-102): `SemanticText`, `Icon`,
-  `Divider`, `StatusIndicator` -- component-library-v1.md sections 6.1-6.4,
-  unit-tested, not yet wired into any `saai-shell` screen or gallery.
-  Remaining: `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure`.
+  Done as Experimental contracts (ADR-102, ADR-103) -- component-library-v1.md
+  sections 6.1-6.10, all ten unit-tested. Not yet wired into any `saai-shell`
+  screen or gallery -- that, plus promoting any of them to Stable per section
+  9's checklist, is separate follow-up work.
 - [ ] Make visual and hit-test bounds consume the same layout output.
 - [ ] Define component accessibility names, roles, values, disabled states, and
   non-color cues.
