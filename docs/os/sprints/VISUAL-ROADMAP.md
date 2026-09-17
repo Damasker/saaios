@@ -1,6 +1,6 @@
 # SaaiOS Visual System — delivery roadmap
 
-Status: **VUI-00 and VUI-01 complete; VUI-02 in progress**
+Status: **VUI-00 and VUI-01 complete; VUI-02 Task List complete, Acceptance checklist complete except one item blocked by the environment (see "The sans and mono faces survive the actual Pixel boot-image asset path" below)**
 
 Target device: Pixel 7 (`panther`)
 
@@ -82,7 +82,7 @@ contains:
 |---|---|---|
 | VUI-00 | Audit, product contract, and delivery plan | **Done** |
 | VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
-| VUI-02 | Typography, geometry, icons, and base component library | **In progress** |
+| VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | Backlog |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | Backlog |
 | VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
@@ -355,8 +355,27 @@ real phone interface consistently.
   long wrapped string at a high enough scale could still make one row's
   content collide with the row below it -- not exercised by the current
   demo strings up to 150%, see ADR-110's Consequences section.
-- [ ] Component gallery is runnable on device and clearly labels fixture data.
-- [ ] No scrolling or frame-pacing regression against the VUI-01 baseline.
+- [x] Component gallery is runnable on device and clearly labels fixture
+  data. Runnable via the same volatile marker pattern as calibration mode
+  (`SAAIOS_UI_GALLERY`/`/run/saaios/ui-gallery`, ADR-105). Labeled by its
+  own header, drawn first, above every primitive demo:
+  "SaaiOS Component Gallery · VUI-02" -- identifies the whole screen as a
+  gallery rather than live shell content, the same way the values it shows
+  (a `Field` fixture PIN of "4269", a fixture Wi-Fi network named
+  "Wallbox", a fixture 87% battery) are recognizably demo data, not read
+  from any real device state or settings file.
+- [x] No scrolling or frame-pacing regression against the VUI-01 baseline.
+  Re-ran S04's own baseline method on the real device: recorded
+  `/run/saai-displayd.log` and `/run/touch.log` line counts, had 25 real
+  taps done across all four root tabs (`Now`/`Inbox`/`Spaces`/`Me`,
+  repeated in mixed order), then diffed both logs. Every single touch
+  produced exactly one `saai-shell: switched to <tab>` followed immediately
+  by exactly one `commit on surface` + blit pair -- the same "one commit,
+  no flood of repeats, no multi-second gap" signature the frame-pacing fix
+  in `d604e95` (cited in S04) established as the passing baseline. No
+  VUI-02 change (components, gallery, dev_no_lock, text-scale fix) touches
+  the event loop or commit-triggering code, and this re-run confirms
+  nothing regressed it in practice, not just by code inspection.
 
 ### Physical review evidence (ADR-099)
 
