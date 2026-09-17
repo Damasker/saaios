@@ -617,6 +617,18 @@ fn calibration_requested(environment: Option<&str>, runtime_marker_exists: bool)
 /// survives a reboot, and setting it can never become a persistent user
 /// setting).
 const UI_GALLERY_MARKER: &str = "/run/saaios/ui-gallery";
+
+/// Development-only escape hatch: skips both the boot-time session lock
+/// and `check_idle_timeout`'s own re-lock, so repeated shell restarts
+/// during active development do not each require unlocking by hand before
+/// the next screenshot/test can proceed. Same volatile gate as
+/// `UI_CALIBRATION_MARKER`/`UI_GALLERY_MARKER` -- `/run` never survives a
+/// reboot, and this can never become a persistent user setting. Does not
+/// touch `ShellSettings.pin_code`, `idle_timeout_secs`, or any other real
+/// setting; a device with this marker present still has its PIN and its
+/// idle timeout configured exactly as before, it simply is not being
+/// asked to act on them right now.
+const DEV_NO_LOCK_MARKER: &str = "/run/saaios/dev-no-lock";
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
 /// `ShellSettings`'s own JSON directly without duplicating its parse
@@ -2915,6 +2927,11 @@ fn main() {
         gallery_environment.as_deref(),
         std::path::Path::new(UI_GALLERY_MARKER).exists(),
     );
+    let dev_no_lock_environment = std::env::var("SAAIOS_DEV_NO_LOCK").ok();
+    let dev_no_lock = calibration_requested(
+        dev_no_lock_environment.as_deref(),
+        std::path::Path::new(DEV_NO_LOCK_MARKER).exists(),
+    );
     let settings = ShellSettings::load();
     apply_brightness(settings.brightness_pct);
     apply_volume(settings.volume_pct);
@@ -2959,7 +2976,8 @@ fn main() {
         lock_dmabuf: lock_dmabuf_canvas,
         lock_width: 0,
         lock_height: 0,
-        locked: true,
+        locked: !dev_no_lock,
+        dev_no_lock,
         unlock_pending: false,
         sleeping: false,
         last_activity: Instant::now(),
@@ -3029,13 +3047,19 @@ fn main() {
     // Boots locked, matching drm-splash.c's own `bool locked = true` at
     // the top of its main loop -- a phone that boots straight to an
     // unlocked launcher would be a real regression, not a simplification.
-    shell.session_lock = Some(
-        shell
-            .session_lock_state
-            .lock(&qh)
-            .expect("ext-session-lock-v1 not supported by saai-displayd"),
-    );
-    println!("saai-shell: session lock requested");
+    // `dev_no_lock` is the one deliberate, volatile, developer-only
+    // exception -- see `DEV_NO_LOCK_MARKER`'s own doc comment.
+    if shell.dev_no_lock {
+        println!("saai-shell: dev_no_lock enabled, skipping boot-time session lock");
+    } else {
+        shell.session_lock = Some(
+            shell
+                .session_lock_state
+                .lock(&qh)
+                .expect("ext-session-lock-v1 not supported by saai-displayd"),
+        );
+        println!("saai-shell: session lock requested");
+    }
 
     while !shell.exit {
         event_loop
@@ -3111,6 +3135,8 @@ struct Shell {
     /// (rather than round-tripping through the server) is enough to
     /// drive the idle timer and the touch-to-unlock gesture.
     locked: bool,
+    /// See `DEV_NO_LOCK_MARKER`'s own doc comment.
+    dev_no_lock: bool,
     /// Set on a touch-down that started on the lock surface while
     /// locked; the matching touch-up is what actually unlocks (mirrors
     /// drm-splash.c requiring touch *release* over the lock screen, not
@@ -6127,6 +6153,9 @@ impl Shell {
     /// just driven by this event loop's existing 16ms tick instead of a
     /// separate timer source.
     fn check_idle_timeout(&mut self, qh: &QueueHandle<Self>) {
+        if self.dev_no_lock {
+            return;
+        }
         let idle_timeout = Duration::from_secs(self.settings.idle_timeout_secs);
         if self.locked || self.last_activity.elapsed() < idle_timeout {
             return;
