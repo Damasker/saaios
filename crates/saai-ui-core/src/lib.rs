@@ -326,6 +326,48 @@ impl Rect {
     }
 }
 
+/// Padding for one `Node`, in the same physical-pixel space `Rect`/
+/// `Length::Px` already use here -- deliberately not `foundations::
+/// SafeInsets` (logical units), since this layout tree has no `SurfaceScale`
+/// to convert with today (`layout()` takes none). Reconciling the two unit
+/// domains is future work, likely alongside VUI-09's compiled shared layout
+/// output; this stays self-contained and consistent with what every other
+/// field in this tree already assumes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EdgeInsets {
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+    pub left: u32,
+}
+
+impl EdgeInsets {
+    pub const ZERO: Self = Self {
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+    };
+
+    pub const fn all(value: u32) -> Self {
+        Self {
+            top: value,
+            right: value,
+            bottom: value,
+            left: value,
+        }
+    }
+
+    pub const fn symmetric(horizontal: u32, vertical: u32) -> Self {
+        Self {
+            top: vertical,
+            right: horizontal,
+            bottom: vertical,
+            left: horizontal,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeKind {
     Leaf,
@@ -339,6 +381,12 @@ pub struct Node {
     pub kind: NodeKind,
     pub width: Length,
     pub height: Length,
+    pub padding: EdgeInsets,
+    /// Tab/switch-navigation order (VUI-02's accessibility metadata task).
+    /// `None` means this node is not a focus stop; two nodes may share an
+    /// order value, in which case traversal order between them is
+    /// unspecified -- callers that care assign distinct values.
+    pub focus_order: Option<u32>,
     pub action: Option<String>,
     pub children: Vec<Node>,
 }
@@ -350,6 +398,8 @@ impl Node {
             kind: NodeKind::Leaf,
             width: Length::Fill,
             height: Length::Fill,
+            padding: EdgeInsets::ZERO,
+            focus_order: None,
             action: None,
             children: Vec::new(),
         }
@@ -361,14 +411,39 @@ impl Node {
             kind: NodeKind::Linear(axis),
             width: Length::Fill,
             height: Length::Fill,
+            padding: EdgeInsets::ZERO,
+            focus_order: None,
             action: None,
             children,
+        }
+    }
+
+    /// A fixed-thickness divider (`StrokeToken::Hairline`) sized to fill the
+    /// cross axis of the container it will sit inside -- `axis` is that
+    /// container's own axis (a divider between vertically stacked rows
+    /// takes `Axis::Vertical`, matching the stack's own axis, not the line's
+    /// visual direction).
+    pub fn separator(id: impl Into<String>, axis: Axis) -> Self {
+        let thickness = Length::Px(StrokeToken::Hairline.value().get() as u32);
+        match axis {
+            Axis::Vertical => Self::leaf(id).with_size(Length::Fill, thickness),
+            Axis::Horizontal => Self::leaf(id).with_size(thickness, Length::Fill),
         }
     }
 
     pub fn with_size(mut self, width: Length, height: Length) -> Self {
         self.width = width;
         self.height = height;
+        self
+    }
+
+    pub fn with_padding(mut self, padding: EdgeInsets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn with_focus_order(mut self, order: u32) -> Self {
+        self.focus_order = Some(order);
         self
     }
 
@@ -382,6 +457,7 @@ impl Node {
 pub struct LayoutNode {
     pub id: String,
     pub rect: Rect,
+    pub focus_order: Option<u32>,
     pub action: Option<String>,
     pub children: Vec<LayoutNode>,
 }
@@ -406,14 +482,16 @@ pub fn layout(root: &Node, bounds: Rect) -> LayoutNode {
 }
 
 fn layout_node(node: &Node, bounds: Rect) -> LayoutNode {
+    let inner = inset_rect(bounds, node.padding);
     let child_rects = match node.kind {
         NodeKind::Leaf => Vec::new(),
-        NodeKind::Stack => vec![bounds; node.children.len()],
-        NodeKind::Linear(axis) => linear_rects(&node.children, bounds, axis),
+        NodeKind::Stack => vec![inner; node.children.len()],
+        NodeKind::Linear(axis) => linear_rects(&node.children, inner, axis),
     };
     LayoutNode {
         id: node.id.clone(),
         rect: bounds,
+        focus_order: node.focus_order,
         action: node.action.clone(),
         children: node
             .children
@@ -422,6 +500,17 @@ fn layout_node(node: &Node, bounds: Rect) -> LayoutNode {
             .map(|(child, rect)| layout_node(child, rect))
             .collect(),
     }
+}
+
+fn inset_rect(bounds: Rect, padding: EdgeInsets) -> Rect {
+    let horizontal = padding.left.saturating_add(padding.right);
+    let vertical = padding.top.saturating_add(padding.bottom);
+    Rect::new(
+        bounds.x.saturating_add(padding.left),
+        bounds.y.saturating_add(padding.top),
+        bounds.width.saturating_sub(horizontal),
+        bounds.height.saturating_sub(vertical),
+    )
 }
 
 fn linear_rects(children: &[Node], bounds: Rect, axis: Axis) -> Vec<Rect> {
@@ -496,8 +585,8 @@ fn cross_size(length: Length, available: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        layout, Axis, ColorRole, ContextColor, Length, MotionCue, Node, Rect, Rgb, StatusMark,
-        Theme, UniversalState,
+        layout, Axis, ColorRole, ContextColor, EdgeInsets, Length, MotionCue, Node, Rect, Rgb,
+        StatusMark, Theme, UniversalState,
     };
 
     fn four_tabs() -> Node {
@@ -532,6 +621,83 @@ mod tests {
         let tree = layout(&root, Rect::new(0, 0, 1080, 2400));
         assert_eq!(tree.children[0].rect, Rect::new(0, 0, 1080, 2100));
         assert_eq!(tree.children[1].rect, Rect::new(0, 2100, 1080, 300));
+    }
+
+    #[test]
+    fn padding_shrinks_only_the_children_not_the_node_own_rect() {
+        let root = Node::linear("card", Axis::Vertical, vec![Node::leaf("body")])
+            .with_padding(EdgeInsets::all(20));
+        let tree = layout(&root, Rect::new(0, 0, 300, 300));
+        assert_eq!(tree.rect, Rect::new(0, 0, 300, 300));
+        assert_eq!(tree.children[0].rect, Rect::new(20, 20, 260, 260));
+    }
+
+    #[test]
+    fn asymmetric_padding_offsets_each_edge_independently() {
+        let root = Node::linear("card", Axis::Vertical, vec![Node::leaf("body")]).with_padding(
+            EdgeInsets {
+                top: 10,
+                right: 20,
+                bottom: 30,
+                left: 40,
+            },
+        );
+        let tree = layout(&root, Rect::new(0, 0, 300, 300));
+        assert_eq!(tree.children[0].rect, Rect::new(40, 10, 240, 260));
+    }
+
+    #[test]
+    fn padding_wider_than_bounds_never_underflows() {
+        let root = Node::leaf("card").with_padding(EdgeInsets::all(1000));
+        let tree = layout(&root, Rect::new(0, 0, 100, 100));
+        assert_eq!(tree.rect, Rect::new(0, 0, 100, 100));
+    }
+
+    #[test]
+    fn separator_is_a_hairline_across_the_cross_axis() {
+        let column = Node::linear(
+            "list",
+            Axis::Vertical,
+            vec![
+                Node::leaf("row-a"),
+                Node::separator("div", Axis::Vertical),
+                Node::leaf("row-b"),
+            ],
+        );
+        let tree = layout(&column, Rect::new(0, 0, 1080, 401));
+        assert_eq!(tree.children[1].rect.width, 1080);
+        assert_eq!(tree.children[1].rect.height, 1);
+
+        let row = Node::linear(
+            "toolbar",
+            Axis::Horizontal,
+            vec![
+                Node::leaf("left"),
+                Node::separator("div", Axis::Horizontal),
+                Node::leaf("right"),
+            ],
+        );
+        let tree = layout(&row, Rect::new(0, 0, 401, 100));
+        assert_eq!(tree.children[1].rect.width, 1);
+        assert_eq!(tree.children[1].rect.height, 100);
+    }
+
+    #[test]
+    fn focus_order_defaults_to_none_and_survives_layout() {
+        let plain = Node::leaf("a");
+        assert_eq!(plain.focus_order, None);
+
+        let root = Node::linear(
+            "form",
+            Axis::Vertical,
+            vec![
+                Node::leaf("first").with_focus_order(0),
+                Node::leaf("second").with_focus_order(1),
+            ],
+        );
+        let tree = layout(&root, Rect::new(0, 0, 100, 100));
+        assert_eq!(tree.children[0].focus_order, Some(0));
+        assert_eq!(tree.children[1].focus_order, Some(1));
     }
 
     #[test]

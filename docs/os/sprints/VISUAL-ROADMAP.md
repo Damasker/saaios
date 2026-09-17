@@ -239,7 +239,12 @@ real phone interface consistently.
   call site). Physically verified: fixed the PIN keypad's backspace tofu-box
   (ADR-099's own screenshot finding).
 - [ ] Implement shared layout primitives: stack, row, inset, separator, scroll
-  region, and focus/order metadata.
+  region, and focus/order metadata. Partially done (ADR-101): stack/row
+  already existed as `Node::linear` + `Axis`; inset (`EdgeInsets`),
+  `Node::separator`, and `Node::focus_order` metadata added. Scroll region
+  -- the harder, correctness-sensitive piece (`hit_test` needs to stop
+  matching children scrolled outside their viewport) -- remains open,
+  deliberately not folded into the same change.
 - [ ] Implement visual primitives: semantic text, icon, divider,
   `StatusIndicator`, progress, button, field, `DataRow`, metric, and disclosure.
 - [ ] Make visual and hit-test bounds consume the same layout output.
