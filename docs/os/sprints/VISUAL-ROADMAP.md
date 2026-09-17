@@ -442,8 +442,20 @@ truthful home surface before expanding the framework.
     zero matches, unlike every other entity type above which each has a
     dedicated filter function. This needs a genuinely new query/view, not
     just new UI over data the shell already fetches.
-- [ ] Design `ContextHeader`, `SystemSection`, object/work summary, event row,
-  and next-action components from actual data.
+- [x] Design `ContextHeader`, `SystemSection`, and `ObjectSummary` composite
+  components from actual data (ADR-111). Scope corrected against
+  `component-library-v1.md` section 3 (the reviewed design boundary),
+  which this task list line had drifted from: that inventory table scopes
+  VUI-03 to exactly these three composites and explicitly defers `EventRow`
+  to VUI-04/05 (alongside `IntentSummary`/`TaskSummary`/`AgentSummary`,
+  deferred to VUI-05). No separate "next-action" composite is named
+  there either. Today's events and next action are represented with the
+  existing primitives (`DataRow`, `StatusIndicator`) composed inside
+  `SystemSection`/`ObjectSummary`, not a new composite type. Implemented
+  in `crates/saai-ui-core/src/composites.rs`, specified in
+  `component-library-v1.md` section 7. Host-verified only (42/42
+  `saai-ui-core` tests, clippy clean) -- not yet wired into a real screen,
+  that's the next task below.
 - [ ] Compose `Сейчас` so its first viewport answers the five product questions.
 - [ ] Move the application grid behind an explicit secondary `Приложения`
   entry or sheet without removing application access.

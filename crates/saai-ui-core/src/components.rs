@@ -43,6 +43,10 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccessibilityRole {
     Text,
+    /// A composite's own titling text (`ContextHeader`, `SystemSection`) --
+    /// distinct from `Text` so a renderer's accessibility tree can group a
+    /// section's children under it the way a real heading would.
+    Heading,
     Image,
     Button,
     TextField,
@@ -67,7 +71,10 @@ pub struct AccessibilityInfo {
 }
 
 impl AccessibilityInfo {
-    fn new(role: AccessibilityRole) -> Self {
+    /// `pub(crate)`, not private: section 7's composites live in a sibling
+    /// module (`composites.rs`) and build their own `AccessibilityInfo`
+    /// values the same way every primitive here does.
+    pub(crate) fn new(role: AccessibilityRole) -> Self {
         Self {
             role,
             name: None,

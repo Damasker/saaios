@@ -229,7 +229,70 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - Expansion updates focus order and accessibility state atomically with
   layout. Reduced motion removes the transition, not the state cue.
 
-## 7. Required gallery matrix
+## 7. Composite specification sheets
+
+Composites compose primitives (section 6); they never draw their own text or
+own a rendering path a primitive does not already provide. Scoped per section
+3's inventory table: `ContextHeader`, `SystemSection`, and `ObjectSummary` are
+VUI-03's three; `EventRow`, `IntentSummary`, `TaskSummary`, and `AgentSummary`
+remain deferred to VUI-04/05.
+
+### 7.1 `ContextHeader`
+
+- Anatomy: active-context label (the selected Space's display name, including
+  a non-default lifecycle suffix such as an archived marker), optional
+  current-section title, optional trailing `StatusIndicator` compact mark for
+  a non-default lifecycle.
+- Built entirely from `SemanticText` (title role for the Space name, label
+  role for the section title) plus the optional `StatusIndicator`.
+- Layout: a single left-aligned header row; a long Space name wraps to a
+  second line rather than truncating silently (section 1's "long Russian
+  text ... normal input" rule applies to this header as much as any body
+  text).
+- First real consumer: replaces `services/saai-shell/src/render.rs`'s
+  `draw_root`, which today centers a raw `format!("{context_label} · {title}")`
+  string over a fixed pixel offset -- same information, a real component
+  instead of ad hoc text concatenation.
+- Accessibility: name is the Space name plus section title; a non-default
+  lifecycle is exposed through the nested `StatusIndicator`'s own state, not
+  a second accessible string glued onto the header's name.
+
+### 7.2 `SystemSection`
+
+- Anatomy: section title (`SemanticText`, section role), a `Divider`
+  immediately below it, and zero or more child rows whose type it does not
+  own -- any `DataRow`/`StatusIndicator`/`Metric` a caller composes into it.
+- Empty state: a section with no children renders only its title (or is
+  omitted entirely by the caller); `SystemSection` never invents a placeholder
+  row to fill space. Matches `human-interface-architecture-v2.md` section 13's
+  own worked example directly -- "Сегодня" / "Продолжается" / "Требует
+  внимания" are three `SystemSection`s, each with a different, possibly zero,
+  child-row count.
+- First real consumer: the three labelled groups on `Сейчас`.
+- Accessibility: title is exposed as a heading; children keep their own
+  individual accessibility contracts -- `SystemSection` never flattens them
+  into one combined string.
+
+### 7.3 `ObjectSummary`
+
+- Anatomy: primary label (object title), one secondary meta line (type and a
+  distinguishing detail -- version, count, or similar), optional trailing
+  value/status.
+- Distinct from `DataRow`: a `DataRow` is a generic list item whose meaning a
+  caller assembles by position; `ObjectSummary` has one fixed semantic
+  meaning -- "this is the object I am currently working with" (section 14's
+  OBJECT) -- so its meta line always reads as identity information, never an
+  arbitrary second string a caller could repurpose.
+- First real consumer: formalizes the `"inspect_selected_entity"` case
+  `main.rs`'s `content_card()` already builds ad hoc today (entity title,
+  `"{entity_type} · версия {revision}"`, `"Локально"`) into a reusable
+  contract, so VUI-05's Object View can share it instead of re-deriving the
+  same string formatting.
+- Accessibility: name is the object title; value is the meta line; a trailing
+  status uses the universal state mapping when present, never an invented
+  local color.
+
+## 8. Required gallery matrix
 
 The first device gallery uses labelled fixture data and contains no fake
 runtime telemetry. Each applicable primitive is rendered in:
@@ -245,7 +308,7 @@ The gallery must expose layout bounds and hit bounds in an optional developer
 overlay. Golden renders verify visual output; structural tests verify geometry,
 hit targets, overflow, focus order, and state transitions independently.
 
-## 8. API ownership
+## 9. API ownership
 
 - `saai-ui-core`: semantic tokens, logical geometry, layout result, component
   contracts/state, hit testing, and backend-independent accessibility data.
@@ -256,7 +319,7 @@ hit targets, overflow, focus order, and state transitions independently.
 - `.sui` compiler: declarative syntax that produces the same core types after
   the vocabulary is proven; it does not implement another layout engine.
 
-## 9. Promotion checklist
+## 10. Promotion checklist
 
 A component can move from Experimental to Stable only when:
 

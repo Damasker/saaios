@@ -5,12 +5,16 @@
 //! second set of rectangles for touch handling.
 
 mod components;
+mod composites;
 mod foundations;
 
 pub use components::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, DataRow, DataRowVariant,
     Disclosure, DisclosureState, Divider, Field, FieldKind, Icon, Metric, MetricValue, Progress,
     SemanticText, StatusIndicator, StatusIndicatorVariant, TextOverflow,
+};
+pub use composites::{
+    ContextHeader, ObjectSummary, ObjectSummaryTrailing, SystemSection, SystemSectionRow,
 };
 pub use foundations::{
     FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken,
