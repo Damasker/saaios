@@ -251,7 +251,21 @@ real phone interface consistently.
   sections 6.1-6.10, all ten unit-tested. Not yet wired into any `saai-shell`
   screen or gallery -- that, plus promoting any of them to Stable per section
   9's checklist, is separate follow-up work.
-- [ ] Make visual and hit-test bounds consume the same layout output.
+- [x] Make visual and hit-test bounds consume the same layout output.
+  Audited every `saai-shell` screen with both a draw path and a touch path
+  (2026-09-17): each one already routes both sides through exactly one
+  shared computation -- either the `Node`/`layout()` tree (`root_view`,
+  `task_confirm_view`, `object_view`, `orb_view`, `intent_view`,
+  `consent_view`, all called identically by their `*_action_at` touch
+  function and by draw code) or one shared helper function called
+  identically by both sides (`now_grid_rect`, `stacked_row_rect` -- 43 call
+  sites across the Wi-Fi/Bluetooth/trusted-clients/inbox/"Я" lists,
+  `scrolled_row_rect`/`me_scroll_offset`, `content_action_rect`,
+  `pin_keypad_rect` for the lock screen and PIN setup, a documented
+  exception to the `Node` tree since the lock surface has none of its own,
+  but still one function on both sides). No independent/duplicated rect
+  arithmetic found anywhere -- this task was already structurally satisfied
+  by the codebase's existing convention, not a new change.
 - [ ] Define component accessibility names, roles, values, disabled states, and
   non-color cues.
 - [ ] Build the first device component-gallery surface covering all primitive
