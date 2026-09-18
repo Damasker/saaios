@@ -3,10 +3,10 @@
 ## Статус
 
 Принято, 2026-09-19. «Новый PIN-код» sits under a real `ContextHeader`
-instead of a Surface header fill. Host-green; panther hash follows
-flash. Do not type digits. Do not tap **Готово**. Leave with
-**Отмена**. Lock-surface unlock stays `draw_lock_pin_entry` dots.
-Remote pairing and Space detail are not this slice.
+instead of a Surface header fill. Host-green; panther `e8b215aa…`.
+Do not type digits. Do not tap **Готово**. Leave with **Отмена**.
+Lock-surface unlock stays `draw_lock_pin_entry` dots. Remote pairing
+and Space detail are not this slice.
 
 ## Нумерация
 
