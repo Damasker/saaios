@@ -53,8 +53,8 @@ APP-COMPAT, Learning (MEM-09), голос, PCE, `saai-deviced` — **не в э�
 
 ## P0 — закрыто на panther (2026-09-18)
 
-1. VUI-04 на shell — remainder (Context Light motion/quantity; `Я`→`Система`;
-   insets). Status bar `SystemStatus` на host.
+1. VUI-04 на shell — remainder (`Я`→`Система`; SafeInsets tokens;
+   rotation/keyboard tests). Context Light quantity+motion на host.
 2. Прошит `saaios-runtime` MEM-01/02/05 (`cc5f9913…`, reboot `-f`).
 3. Pixel: `p0_same_key` Home=`home-value` / Work=`work-value`; default
    recall пуст; `all=true` не смешивает; модель без `memory.remember`.
@@ -83,7 +83,7 @@ host-only derived view.
 
 | VUI slice | Берёт с собой |
 |---|---|
-| VUI-04 remainder | `SystemStatus` status bar (host); Orb attention ring читает `saai-attention` |
+| VUI-04 remainder | `Я`→`Система`; SafeInsets; rotation/keyboard tests. Quantity fill + still-frame pulse already on host |
 | VUI-05 | NOW «Требует внимания» = ATTN-02; видимость Task = WORK-08 |
 | VUI-06 `Система` | ручной Memory list/correct/erase без модели = MEM-08 |
 

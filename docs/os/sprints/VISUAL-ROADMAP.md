@@ -685,17 +685,16 @@ turning the Orb into a launcher or assistant avatar.
   `ColorRole::Pressed` plus a bottom hairline without changing icon size.
   `disabled` still has no real trigger -- no tab is actually disabled.
 - [ ] Apply Context Light grammar: context=color, state=shape,
-  activity=motion, quantity=arc/fill, attention=ring. Two of five axes
-  live so far (ADR-116, on the Orb only): state=shape (every
-  `UniversalState` gets its own `StatusMark`) and context=color (the
-  Space's own color for `Idle`/`Active`, the state's own semantic color
-  otherwise). activity=motion, quantity=arc/fill, and attention=ring are
-  not yet fully built -- `MotionCue` and a real arc/fill quantity visual
-  remain open. **Attention ring (v1):**
-  `OrbHost::attention_ring()` is true only for `UniversalState::Attention`,
-  and the shell lights that state from `saai-attention` (WaitingConfirmation
-  Tasks and undismissed Notifications), then `draw_orb` paints a
-  `StrokeToken::Focus` square ring around the mark. Not a launcher avatar.
+  activity=motion, quantity=arc/fill, attention=ring. Four of five axes
+  live on the Orb (host): state=shape (`StatusMark`), context=color
+  (Space color for `Idle`/`Active`, semantic color otherwise),
+  **attention=ring** (`WaitingConfirmation` / undismissed Notifications),
+  **quantity=fill** (determinate battery `Progress`; missing reading is
+  absent, not `0%`; Border token, never severity), **activity=motion**
+  (`MotionCue::ActivityPulse` only for Running and not reduced-motion;
+  still-frame inset hairline until VUI-08). A circular arc is not drawn
+  — this file has no circle primitive; fill is the honest square analogue.
+  `Я`→`Система` remains blocked on truthful destination content.
 - [x] Integrate a restrained Orb host with quiet, active, progress, attention,
   offline, and reduced-motion states (ADR-116). All five real states
   reuse `UniversalState` (`Idle`/`Active`/`Running`/`Attention`/`Offline`)

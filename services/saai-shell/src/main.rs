@@ -452,8 +452,9 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
 use saai_attention::{has_orb_attention, project_from_entities};
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
-    NavigationItem, Node, ObjectSummary, OrbHost, Rect, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, SystemSection, SystemSectionRow, SystemStatus, UniversalState,
+    MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, SystemSection, SystemSectionRow, SystemStatus,
+    UniversalState,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -2298,6 +2299,11 @@ struct OrbFrame {
     mark: StatusMark,
     /// Context Light attention=ring, from `OrbHost::attention_ring()`.
     attention_ring: bool,
+    /// Context Light quantity=fill, determinate battery percent.
+    /// `None` if `read_battery` has no reading — not `0`.
+    quantity: Option<u8>,
+    /// Context Light activity=motion, still-frame stand-in until VUI-08.
+    activity_pulse: bool,
     menu_rows: Vec<(Rect, &'static str)>,
 }
 
@@ -4907,6 +4913,8 @@ impl Shell {
                     orb.dot_color,
                     orb.mark,
                     orb.attention_ring,
+                    orb.quantity,
+                    orb.activity_pulse,
                     &orb.menu_rows,
                     fonts,
                 );
@@ -6520,6 +6528,11 @@ impl Shell {
             self.orb_menu_open,
         ))
         .with_reduced_motion(self.settings.reduced_motion);
+        let orb_host = if let Some((percent, _)) = read_battery() {
+            orb_host.with_quantity(Progress::determinate(percent))
+        } else {
+            orb_host
+        };
         // Context Light: color still means context (the selected
         // Space's own color) for the two states that are not urgent
         // enough to override it -- `Idle`/`Active` -- matching this
@@ -6540,6 +6553,8 @@ impl Shell {
                 dot_color,
                 mark: orb_host.mark(),
                 attention_ring: orb_host.attention_ring(),
+                quantity: orb_host.quantity_percent(),
+                activity_pulse: orb_host.motion() == MotionCue::ActivityPulse,
                 menu_rows: Vec::new(),
             };
         }
@@ -6554,6 +6569,8 @@ impl Shell {
             dot_color,
             mark: orb_host.mark(),
             attention_ring: orb_host.attention_ring(),
+            quantity: orb_host.quantity_percent(),
+            activity_pulse: orb_host.motion() == MotionCue::ActivityPulse,
             menu_rows,
         }
     }

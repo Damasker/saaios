@@ -9,7 +9,8 @@
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, ColorRole, ContextColor, DataRow, Divider, IconGlyph,
-    Metric, SemanticText, StatusIndicator, StatusMark, TextRole, UniversalState,
+    Metric, MotionCue, Progress, SemanticText, StatusIndicator, StatusMark, TextRole,
+    UniversalState,
 };
 
 /// Section 7.1. Anatomy: an active-context label, an optional current-
@@ -327,6 +328,10 @@ impl BottomNavigation {
 pub struct OrbHost {
     pub state: UniversalState,
     pub reduced_motion: bool,
+    /// Context Light quantity=arc/fill. `None` means the quantity is
+    /// unknown, not `0`. Callers pass a determinate `Progress` from a
+    /// real reading (battery today).
+    pub quantity: Option<Progress>,
 }
 
 impl OrbHost {
@@ -334,11 +339,17 @@ impl OrbHost {
         Self {
             state,
             reduced_motion: false,
+            quantity: None,
         }
     }
 
     pub fn with_reduced_motion(mut self, reduced: bool) -> Self {
         self.reduced_motion = reduced;
+        self
+    }
+
+    pub fn with_quantity(mut self, progress: Progress) -> Self {
+        self.quantity = Some(progress);
         self
     }
 
@@ -352,6 +363,22 @@ impl OrbHost {
     /// `saai-attention`.
     pub fn attention_ring(&self) -> bool {
         self.state == UniversalState::Attention
+    }
+
+    /// Context Light activity=motion. Reduced motion is a rendering
+    /// modifier, not a sixth state: Running still exists, it just
+    /// does not pulse.
+    pub fn motion(&self) -> MotionCue {
+        if self.reduced_motion {
+            MotionCue::None
+        } else {
+            self.state.style().motion
+        }
+    }
+
+    /// Determinate percent only. Missing quantity stays `None`.
+    pub fn quantity_percent(&self) -> Option<u8> {
+        self.quantity.and_then(|progress| progress.percent())
     }
 
     pub fn color(&self) -> ColorRole {
@@ -545,6 +572,26 @@ mod tests {
         assert!(!OrbHost::new(UniversalState::Idle).attention_ring());
         assert!(!OrbHost::new(UniversalState::Running).attention_ring());
         assert!(!OrbHost::new(UniversalState::Offline).attention_ring());
+        assert_eq!(
+            OrbHost::new(UniversalState::Running).motion(),
+            MotionCue::ActivityPulse
+        );
+        assert_eq!(
+            OrbHost::new(UniversalState::Running)
+                .with_reduced_motion(true)
+                .motion(),
+            MotionCue::None
+        );
+        assert_eq!(OrbHost::new(UniversalState::Idle).motion(), MotionCue::None);
+        assert!(OrbHost::new(UniversalState::Idle)
+            .quantity_percent()
+            .is_none());
+        assert_eq!(
+            OrbHost::new(UniversalState::Idle)
+                .with_quantity(Progress::determinate(87))
+                .quantity_percent(),
+            Some(87)
+        );
     }
 
     #[test]

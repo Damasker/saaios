@@ -573,12 +573,15 @@ pub fn draw_object_view(
 /// construction: `dot_color` and `mark` are computed independently by
 /// the caller, so a state is legible even for a viewer who cannot use
 /// `dot_color` at all.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_orb(
     canvas: &mut Canvas<'_>,
     dot_rect: Rect,
     dot_color: Pixel,
     mark: StatusMark,
     attention_ring: bool,
+    quantity: Option<u8>,
+    activity_pulse: bool,
     menu_rows: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
@@ -597,13 +600,56 @@ pub fn draw_orb(
         }
     }
     draw_calibration_mark(canvas, dot_rect, mark, dot_color);
+    if activity_pulse {
+        let inset = physical(StrokeToken::Focus.value()).max(1);
+        if dot_rect.width > inset * 2 && dot_rect.height > inset * 2 {
+            draw_square_ring(
+                canvas,
+                Rect::new(
+                    dot_rect.x + inset,
+                    dot_rect.y + inset,
+                    dot_rect.width - inset * 2,
+                    dot_rect.height - inset * 2,
+                ),
+                physical(StrokeToken::Hairline.value()).max(1),
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
     if attention_ring {
-        draw_attention_ring(canvas, dot_rect, dot_color);
+        draw_square_ring(
+            canvas,
+            dot_rect,
+            physical(StrokeToken::Focus.value()).max(1),
+            dot_color,
+        );
+    }
+    if let Some(percent) = quantity {
+        draw_quantity_fill(canvas, dot_rect, percent);
     }
 }
 
-fn draw_attention_ring(canvas: &mut Canvas<'_>, rect: Rect, color: Pixel) {
-    let thickness = StrokeToken::Focus.value().get() as u32;
+fn draw_quantity_fill(canvas: &mut Canvas<'_>, rect: Rect, percent: u8) {
+    let track_height = physical(Progress::MIN_TRACK_HEIGHT).max(1);
+    if rect.height <= track_height {
+        return;
+    }
+    let filled_width = (u64::from(rect.width) * u64::from(percent.min(100)) / 100) as u32;
+    if filled_width == 0 {
+        return;
+    }
+    canvas.fill_rect(
+        Rect::new(
+            rect.x,
+            rect.y + rect.height.saturating_sub(track_height),
+            filled_width,
+            track_height,
+        ),
+        theme_color(ColorRole::Border),
+    );
+}
+
+fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: Pixel) {
     let thickness = thickness.max(1);
     if rect.width <= thickness * 2 || rect.height <= thickness * 2 {
         return;
@@ -2578,12 +2624,12 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, context_color, draw_calibration, draw_gallery, draw_orb, draw_root,
-        draw_status_bar, draw_tab_bar, gallery_row_positions, physical_line_height, state_color,
-        theme_color, Canvas,
+        draw_status_bar, draw_tab_bar, gallery_row_positions, physical, physical_line_height,
+        state_color, theme_color, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, NavigationItem, Rect, StatusMark, SystemStatus, TextRole,
-        UniversalState,
+        ColorRole, ContextColor, NavigationItem, Progress, Rect, StatusMark, SystemStatus,
+        TextRole, UniversalState,
     };
 
     #[test]
@@ -2796,6 +2842,8 @@ mod tests {
                 theme_color(ColorRole::Accent),
                 mark,
                 false,
+                None,
+                false,
                 &[],
                 None,
             );
@@ -2820,12 +2868,96 @@ mod tests {
                 theme_color(ColorRole::Accent),
                 StatusMark::Alert,
                 ring,
+                None,
+                false,
                 &[],
                 None,
             );
             pixels
         };
         assert_ne!(render(true), render(false));
+    }
+
+    #[test]
+    fn quantity_fill_uses_border_not_severity_and_missing_stays_absent() {
+        let rect = Rect::new(50, 50, 100, 100);
+        let render = |quantity: Option<u8>| -> Vec<u8> {
+            let mut pixels = vec![0u8; 200 * 200 * 4];
+            let mut canvas = Canvas::new(&mut pixels, 200, 200);
+            draw_orb(
+                &mut canvas,
+                rect,
+                theme_color(ColorRole::Accent),
+                StatusMark::Outline,
+                false,
+                quantity,
+                false,
+                &[],
+                None,
+            );
+            pixels
+        };
+        let missing = render(None);
+        let filled = render(Some(87));
+        assert_ne!(missing, filled);
+        let mut filled_pixels = filled;
+        let canvas = Canvas::new(&mut filled_pixels, 200, 200);
+        let track_y = rect.y + rect.height - physical(Progress::MIN_TRACK_HEIGHT).max(1);
+        assert_eq!(
+            canvas.pixel(rect.x + 10, track_y),
+            theme_color(ColorRole::Border)
+        );
+        assert_ne!(
+            canvas.pixel(rect.x + 10, track_y),
+            theme_color(ColorRole::Attention)
+        );
+        assert_ne!(
+            canvas.pixel(rect.x + 10, track_y),
+            theme_color(ColorRole::Critical)
+        );
+        let mut missing_pixels = missing;
+        let missing_canvas = Canvas::new(&mut missing_pixels, 200, 200);
+        assert_ne!(
+            missing_canvas.pixel(rect.x + 10, track_y),
+            theme_color(ColorRole::Border)
+        );
+    }
+
+    #[test]
+    fn activity_pulse_is_a_static_inset_not_an_attention_ring() {
+        let render = |pulse: bool| -> Vec<u8> {
+            let mut pixels = vec![0u8; 200 * 200 * 4];
+            let mut canvas = Canvas::new(&mut pixels, 200, 200);
+            draw_orb(
+                &mut canvas,
+                Rect::new(50, 50, 100, 100),
+                theme_color(ColorRole::Accent),
+                StatusMark::Activity,
+                false,
+                None,
+                pulse,
+                &[],
+                None,
+            );
+            pixels
+        };
+        assert_ne!(render(true), render(false));
+        assert_ne!(render(true), {
+            let mut pixels = vec![0u8; 200 * 200 * 4];
+            let mut canvas = Canvas::new(&mut pixels, 200, 200);
+            draw_orb(
+                &mut canvas,
+                Rect::new(50, 50, 100, 100),
+                theme_color(ColorRole::Accent),
+                StatusMark::Activity,
+                true,
+                None,
+                false,
+                &[],
+                None,
+            );
+            pixels
+        });
     }
 
     #[test]
