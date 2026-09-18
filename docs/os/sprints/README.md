@@ -25,7 +25,7 @@ S00–S32 закрыли базовый трек — рабочий телефо
 VUI-04 remainder и VUI-06 на panther; **выполняется VUI-07** (Inbox
 `EventRow`, Spaces list, Wi-Fi list, Bluetooth list, trusted clients,
 Wi-Fi password, PIN setup, lock idle, intent input и developer
-surface на panther). VUI-02 остаётся почти закрытым (шрифты в boot-image —
+surface на panther; Object View host-green ADR-137). VUI-02 остаётся почти закрытым (шрифты в boot-image —
 единственный blocked item). Этот трек не переоткрывает S00–S32.
 
 **Service queue (параллельно shell):** прошивка `saaios-runtime` /

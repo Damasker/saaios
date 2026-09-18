@@ -310,11 +310,10 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   meaning -- "this is the object I am currently working with" (section 14's
   OBJECT) -- so its meta line always reads as identity information, never an
   arbitrary second string a caller could repurpose.
-- First real consumer: formalizes the `"inspect_selected_entity"` case
-  `main.rs`'s `content_card()` already builds ad hoc today (entity title,
-  `"{entity_type} · версия {revision}"`, `"Локально"`) into a reusable
-  contract, so VUI-05's Object View can share it instead of re-deriving the
-  same string formatting.
+- First real consumer: NOW (`now_object_summary`) and Object View
+  (ADR-137). Meta is `{entity_type} · версия {revision}`. Object
+  View trailing is the live workflow `StatusIndicator`, not a second
+  copy of the title. A tap on the NOW summary opens Object View.
 - Accessibility: name is the object title; value is the meta line; a trailing
   status uses the universal state mapping when present, never an invented
   local color.

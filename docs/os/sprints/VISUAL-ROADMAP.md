@@ -93,7 +93,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface on panther) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface on panther; Object View host-green) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -889,7 +889,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…` on panther; Object View host-green ADR-137)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -942,7 +942,11 @@ big-bang rewrite.
   status layer; 7-tap gesture unchanged. Object View / consent /
   remote pairing / PIN keypad chrome still later. Flashed
   `bbc11a30…`.
-- [ ] Migrate Object View, consent, remote pairing, and root fallback.
+- [x] Migrate Object View onto `ObjectSummary`. ADR-137: identity
+  meta is type/version; trailing is live status; NOW summary tap
+  opens the same HIA-07 screen. Consent / remote pairing / PIN
+  keypad chrome still later. Host-green; panther pending.
+- [ ] Migrate consent, remote pairing, and root fallback.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
@@ -1101,11 +1105,11 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (PIN keypad chrome, Object
-View, Space detail). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07** remaining surfaces (PIN keypad chrome, consent,
+remote pairing, Space detail). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
 (`6239bebd…`), and developer surface (`bbc11a30…`) are on panther.
-Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Object View is host-green (ADR-137). Space detail still deferred.
+MEM-08 stays omitted until a shell-legal memory read exists.

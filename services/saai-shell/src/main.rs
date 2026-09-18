@@ -461,10 +461,9 @@ use saai_object_actions::{
 use saai_ui_core::{
     layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
     DataRowVariant, DecisionOverlay, EventRow, Field, FieldKind, IntentSummary, LayoutNode, Length,
-    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
-    SafeInsets, SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark,
-    SurfaceScale, SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow,
-    UniversalState, WifiRow, MIN_TOUCH_TARGET,
+    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant,
+    StatusMark, SurfaceScale, SystemSection, SystemSectionRow, SystemStatus, TaskSummary,
+    TrustedClientRow, UniversalState, WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1949,16 +1948,13 @@ enum Frame {
         accept: Rect,
         decline: Rect,
     },
-    /// HIA-07: replaces the old task-only `TaskConfirm` -- one
-    /// variant for any entity, `actions` sized to whatever
-    /// `ObjectViewContent::actions` produced (0-2 today). `state` is
-    /// the shared UniversalState mapping; `details` are the optional
-    /// activity / observation / blocker / consequence lines that
-    /// actually exist. History is omitted until entity events load.
+    /// HIA-07: one variant for any entity. ADR-137: identity is an
+    /// `ObjectSummary` (title + type/version + trailing status);
+    /// `details` are the optional activity / observation / blocker /
+    /// consequence lines that actually exist. History is omitted until
+    /// entity events load.
     ObjectView {
-        title: String,
-        state: UniversalState,
-        status: String,
+        summary: ObjectSummary,
         related: Option<String>,
         details: Vec<String>,
         header: Rect,
@@ -2074,9 +2070,8 @@ const OBJECT_VIEW_ACTION_PREFIX: &str = "object-view-action:";
 /// (`action_count` comes from `ObjectViewContent::actions`' own
 /// length at the call site). No separate "related" leaf -- like
 /// `task_confirm_view`, this is one header leaf plus an optional
-/// button row; `draw_object_view` places title/status/related at
-/// fixed offsets within the header rect itself, the same pattern
-/// the old task-only draw function already used for title alone.
+/// button row; `draw_object_view` places the `ObjectSummary` below the
+/// status layer within the header rect itself.
 fn object_view(width: u32, height: u32, action_count: usize) -> LayoutNode {
     let mut children = vec![Node::leaf(OBJECT_VIEW_HEADER_ID)];
     if action_count > 0 {
@@ -2242,6 +2237,17 @@ fn object_view_content(
             }
         }
     }
+}
+
+/// ADR-137: Object View identity is the same `ObjectSummary` NOW
+/// already shows. Meta is type/version, never the workflow status
+/// string — that belongs on trailing `StatusIndicator`.
+fn object_view_summary(entity: &Entity, content: &ObjectViewContent) -> ObjectSummary {
+    ObjectSummary::new(
+        content.title.clone(),
+        format!("{} · версия {}", entity.entity_type, entity.revision),
+    )
+    .with_status(StatusIndicator::new(content.state, content.status.clone()))
 }
 
 fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
@@ -2993,6 +2999,17 @@ fn now_footer_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'st
     } else {
         None
     }
+}
+
+fn now_object_tapped(
+    pos: (f64, f64),
+    content: Rect,
+    has_lifecycle: bool,
+    object: Option<&ObjectSummary>,
+) -> bool {
+    object.is_some_and(|summary| {
+        render::now_object_summary_rect(content, has_lifecycle, summary).contains(pos.0, pos.1)
+    })
 }
 
 fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
@@ -5116,13 +5133,13 @@ struct Shell {
     /// `last_statusbar_refresh`/`last_apps_refresh` just below.
     last_context_signal_refresh: Instant,
     /// HIA-07: which entity Object View is currently showing --
-    /// `Some` only after the user taps a row on "Входящие" (S13
-    /// Change 2 / S21), `None` again once its action is taken
+    /// `Some` after the user taps a row on "Входящие" or the NOW
+    /// `ObjectSummary` (ADR-137), `None` again once its action is taken
     /// (`handle_object_view_action`) or it turns out stale
     /// (`viewing_entity`). Was `confirming_task_id`/`saaios.task`-only
     /// before this; same "explicit, page-scoped entry point, no
-    /// auto-popup" shape S13 Change 2 already established, now
-    /// covering any entity_type "Входящие" ever lists a row for.
+    /// auto-popup" shape S13 Change 2 already established, covering
+    /// any entity_type "Входящие" or NOW ever names.
     viewing_entity_id: Option<Uuid>,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
@@ -5613,8 +5630,8 @@ impl TouchHandler for Shell {
                 // Modal, same as consent: Object View owns every
                 // touch while it's showing (S09 Change 3 / ADR-031's
                 // follow-up, generalized past `saaios.task` alone by
-                // HIA-07). Only reachable by first tapping a row on
-                // "Входящие" (S13 Change 2 / S21) -- no auto-popup.
+                // HIA-07). Reachable by tapping a row on "Входящие"
+                // or the NOW `ObjectSummary` (ADR-137) -- no auto-popup.
                 // Button count varies by entity_type, so it has to be
                 // recomputed here, same "read fresh" reasoning
                 // `object_view_content` itself already documents.
@@ -5801,11 +5818,22 @@ impl TouchHandler for Shell {
                     self.invoke_select_space(&space_id);
                 }
             } else if self.current_page == RootPage::Now && !self.apps_open {
-                // VUI-03 (ADR-113): the composed screen's own two footer
-                // rows -- everything else on it (SystemSection rows,
-                // ObjectSummary) is informational only in this pass, not
-                // yet tappable.
-                if let Some(action) =
+                // VUI-03 (ADR-113): footer rows stay tappable. ADR-137:
+                // the ObjectSummary is the same HIA-07 entry as an Inbox
+                // row -- explicit tap, not auto-popup.
+                let content_rect = root_view(self.width, self.height).children[0].rect;
+                let has_lifecycle = self.now_context_header().lifecycle.is_some();
+                if now_object_tapped(
+                    self.last_touch_pos,
+                    content_rect,
+                    has_lifecycle,
+                    self.now_object_summary().as_ref(),
+                ) {
+                    if let Some(id) = self.selected_entities.first().map(|entity| entity.id) {
+                        self.viewing_entity_id = Some(id);
+                        self.draw(conn, qh);
+                    }
+                } else if let Some(action) =
                     now_footer_action_at(self.last_touch_pos, self.width, self.height)
                 {
                     if action == NOW_FOOTER_OPEN_APPS_ACTION {
@@ -6010,9 +6038,7 @@ impl Shell {
             };
             let details = object_view_details(&content);
             Frame::ObjectView {
-                title: content.title,
-                state: content.state,
-                status: content.status,
+                summary: object_view_summary(entity, &content),
                 related: content.related,
                 details,
                 header,
@@ -6333,9 +6359,7 @@ impl Shell {
                     );
                 }
                 Frame::ObjectView {
-                    title,
-                    state,
-                    status,
+                    summary,
                     related,
                     details,
                     header,
@@ -6343,9 +6367,7 @@ impl Shell {
                 } => {
                     render::draw_object_view(
                         &mut render::Canvas::new(canvas, width, height),
-                        &title,
-                        state,
-                        &status,
+                        &summary,
                         related.as_deref(),
                         &details,
                         header,
@@ -8747,21 +8769,22 @@ mod tests {
         effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
         in_progress_work, input_idle_for_at_least, intent_action_at, intent_input_field,
         known_surfaces, lock_idle_view, me_fixture_facts, me_system_sections, next_in_cycle,
-        next_pending_action, object_view_action_at, object_view_content, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
-        upsert_context_entry, wifi_card_from_row, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
-        ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        next_pending_action, now_object_tapped, object_view_action_at, object_view_content,
+        object_view_summary, orb_action_at, orb_attention_from_entities, orb_menu_actions,
+        orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
+        today_schedules, trusted_client_action_at, trusted_client_card_from_row,
+        trusted_client_list_rows, upsert_context_entry, wifi_card_from_row, wifi_list_action_at,
+        wifi_list_rows, wifi_password_field, AgentSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
+        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
+        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -8770,6 +8793,7 @@ mod tests {
         RELATION_REALIZES,
     };
     use saai_entity_store::SpaceKind;
+    use saai_ui_core::ObjectSummaryTrailing;
     use std::time::Duration;
 
     fn test_entity(
@@ -11312,6 +11336,46 @@ mod tests {
     #[test]
     fn diagnostic_status_line_names_the_real_row_count() {
         assert_eq!(diagnostic_status_line(8), "8 показателей");
+    }
+
+    #[test]
+    fn object_view_summary_keeps_identity_apart_from_status() {
+        let intent = intent_entity("Пустое намерение");
+        let content = object_view_content(&intent, &[intent.clone()], &[]);
+        let summary = object_view_summary(&intent, &content);
+        assert_eq!(summary.title, "Пустое намерение");
+        assert_eq!(
+            summary.meta,
+            format!("saaios.intent · версия {}", intent.revision)
+        );
+        assert!(!summary.meta.contains("Нет задачи"));
+        let Some(ObjectSummaryTrailing::Status(status)) = summary.trailing else {
+            panic!("workflow status belongs on trailing, not meta");
+        };
+        assert_eq!(status.state, UniversalState::Idle);
+        assert_eq!(status.label, "Нет задачи");
+    }
+
+    #[test]
+    fn now_object_tapped_finds_the_summary_and_misses_the_footer() {
+        let width = 1080;
+        let height = 2400;
+        let content = super::root_view(width, height).children[0].rect;
+        let summary = ObjectSummary::new("vnnnmb", "saaios.intent · версия 1");
+        let object_rect = crate::render::now_object_summary_rect(content, false, &summary);
+        let center = (
+            f64::from(object_rect.x + object_rect.width / 2),
+            f64::from(object_rect.y + object_rect.height / 2),
+        );
+        assert!(now_object_tapped(center, content, false, Some(&summary)));
+        let footer = super::now_footer_action_rect(1, width, height);
+        assert!(!now_object_tapped(
+            (f64::from(footer.x + 10), f64::from(footer.y + 10)),
+            content,
+            false,
+            Some(&summary)
+        ));
+        assert!(!now_object_tapped(center, content, false, None));
     }
 
     #[test]

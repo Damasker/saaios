@@ -558,11 +558,73 @@ pub fn draw_wifi_password(
 /// `actions` is empty for an entity_type with no type-specific
 /// behavior (HIA-ROADMAP.md's own negative scenario: still a real,
 /// non-empty screen, just without a button row).
+/// ADR-137: identity paint shared by NOW and Object View. Returns the
+/// y just below the trailing status/value, matching the cursor math
+/// `now_object_summary_rect` uses for hit-testing.
+fn draw_object_summary(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    object: &ObjectSummary,
+    left: u32,
+    top: u32,
+    max_width: u32,
+) -> u32 {
+    let mut y = top;
+    draw_semantic_text(canvas, fonts, &object.title_text(), left, y, max_width);
+    y += scaled_line_height(TextRole::Body);
+    draw_semantic_text(canvas, fonts, &object.meta_text(), left, y, max_width);
+    y += scaled_line_height(TextRole::Caption);
+    if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
+        draw_status_indicator(canvas, fonts, status, left, y);
+        y += scaled_line_height(TextRole::Body);
+    } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
+        let (value_font, value_size) = fonts.resolve(TextRole::Body);
+        draw_text(
+            canvas,
+            value_font,
+            value,
+            value_size,
+            left,
+            y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        y += scaled_line_height(TextRole::Body);
+    }
+    y
+}
+
+/// Hit rect for the NOW `ObjectSummary`, same stacking as `draw_now`.
+pub fn now_object_summary_rect(content: Rect, has_lifecycle: bool, object: &ObjectSummary) -> Rect {
+    let margin = (content.width / 20).max(12);
+    let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
+    let mut y = content.y + top_inset;
+    y += scaled_line_height(TextRole::Title);
+    if has_lifecycle {
+        y += scaled_line_height(TextRole::Body);
+    }
+    y += physical(SpacingToken::Medium.value());
+    let start = y;
+    y += scaled_line_height(TextRole::Body);
+    y += scaled_line_height(TextRole::Caption);
+    if object.trailing.is_some() {
+        y += scaled_line_height(TextRole::Body);
+    }
+    let height = y.saturating_sub(start).max(physical(MIN_TOUCH_TARGET));
+    Rect::new(
+        content.x + margin,
+        start,
+        content.width.saturating_sub(margin.saturating_mul(2)),
+        height,
+    )
+}
+
+/// VUI-07 (ADR-137): identity is an `ObjectSummary` (title + type/
+/// version meta + trailing status), not raw title/status `draw_text`.
+/// Status layer is 120px; identity starts at `+140` like the other
+/// migrated headers. Related/details stay optional lines below.
 pub fn draw_object_view(
     canvas: &mut Canvas<'_>,
-    title: &str,
-    state: UniversalState,
-    status: &str,
+    summary: &ObjectSummary,
     related: Option<&str>,
     details: &[String],
     header: Rect,
@@ -590,26 +652,17 @@ pub fn draw_object_view(
     };
 
     let margin = header.width / 22;
-    draw_text(
+    let content_width = header.width.saturating_sub(margin.saturating_mul(2));
+    let mut y = draw_object_summary(
         canvas,
-        &fonts.semibold,
-        title,
-        46.0,
+        fonts,
+        summary,
         header.x + margin,
-        header.y + 220,
-        theme_color(ColorRole::TextPrimary),
+        header.y + 140,
+        content_width,
     );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        status,
-        32.0,
-        header.x + margin,
-        header.y + 340,
-        state_color(state),
-    );
-    let mut y = header.y + 460;
     if let Some(related) = related {
+        y = y.saturating_add(physical(SpacingToken::Medium.value()));
         draw_text(
             canvas,
             &fonts.regular,
@@ -619,7 +672,7 @@ pub fn draw_object_view(
             y,
             theme_color(ColorRole::TextSecondary),
         );
-        y = y.saturating_add(90);
+        y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
     for detail in details {
         if y + 40 >= header.y + header.height {
@@ -634,7 +687,7 @@ pub fn draw_object_view(
             y,
             theme_color(ColorRole::TextSecondary),
         );
-        y = y.saturating_add(90);
+        y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
 
     for (index, (rect, label)) in actions.iter().enumerate() {
@@ -2704,40 +2757,14 @@ pub fn draw_now(
 
         if let Some(object) = object {
             cursor_y += physical(SpacingToken::Medium.value());
-            draw_semantic_text(
+            cursor_y = draw_object_summary(
                 canvas,
                 fonts,
-                &object.title_text(),
+                object,
                 content.x + margin,
                 cursor_y,
                 content_width,
             );
-            cursor_y += scaled_line_height(TextRole::Body);
-            draw_semantic_text(
-                canvas,
-                fonts,
-                &object.meta_text(),
-                content.x + margin,
-                cursor_y,
-                content_width,
-            );
-            cursor_y += scaled_line_height(TextRole::Caption);
-            if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
-                draw_status_indicator(canvas, fonts, status, content.x + margin, cursor_y);
-                cursor_y += scaled_line_height(TextRole::Body);
-            } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
-                let (value_font, value_size) = fonts.resolve(TextRole::Body);
-                draw_text(
-                    canvas,
-                    value_font,
-                    value,
-                    value_size,
-                    content.x + margin,
-                    cursor_y,
-                    theme_color(ColorRole::TextPrimary),
-                );
-                cursor_y += scaled_line_height(TextRole::Body);
-            }
         }
 
         if sections.is_empty() && object.is_none() {
@@ -3111,8 +3138,8 @@ mod tests {
         physical_line_height, state_color, theme_color, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, NavigationItem, Progress, Rect, StatusMark, SystemStatus,
-        TextRole, UniversalState, MIN_TOUCH_TARGET,
+        ColorRole, ContextColor, NavigationItem, ObjectSummary, Progress, Rect, StatusMark,
+        SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -3505,6 +3532,19 @@ mod tests {
         // rather than only implied.
         assert_eq!(physical_line_height(TextRole::Body), 72);
         assert_eq!(physical_line_height(TextRole::Caption), 48);
+    }
+
+    #[test]
+    fn now_object_summary_rect_sits_below_the_header_and_above_the_footer() {
+        let content = Rect::new(0, 0, 1080, 2160);
+        let object = ObjectSummary::new("vnnnmb", "saaios.intent · версия 1");
+        let rect = super::now_object_summary_rect(content, false, &object);
+        assert!(rect.y >= 150);
+        assert!(rect.height >= physical(MIN_TOUCH_TARGET));
+        assert!(rect.y + rect.height < 1800);
+        let mid_y = rect.y + rect.height / 2;
+        assert!(rect.contains(540.0, f64::from(mid_y)));
+        assert!(!rect.contains(540.0, 2000.0));
     }
 
     #[test]
