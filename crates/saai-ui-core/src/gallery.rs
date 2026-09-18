@@ -1,8 +1,8 @@
 //! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
-//! `EventRow`. No live telemetry.
+//! `EventRow`/`SpaceRow`. No live telemetry.
 
 use crate::{
-    AgentSummary, ContextHeader, DecisionOverlay, EventRow, IntentSummary, ObjectSummary,
+    AgentSummary, ContextHeader, DecisionOverlay, EventRow, IntentSummary, ObjectSummary, SpaceRow,
     StatusIndicator, TaskSummary, UniversalState,
 };
 
@@ -17,6 +17,8 @@ pub struct CompositeGalleryFixtures {
     pub decision: DecisionOverlay,
     pub event_decision: EventRow,
     pub event_notice: EventRow,
+    pub space_selected: SpaceRow,
+    pub space_other: SpaceRow,
     pub states: [StatusIndicator; 9],
 }
 
@@ -37,6 +39,8 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
             .with_scope("работа"),
         event_decision: EventRow::decision("Подтвердите удаление"),
         event_notice: EventRow::notice("Notice", "body"),
+        space_selected: SpaceRow::open("Дом", "Объектов: 3", "select_space:home", true),
+        space_other: SpaceRow::open("Работа", "Объектов: 1", "select_space:work", false),
         states: UniversalState::ALL
             .map(|state| StatusIndicator::new(state, state_fixture_label(state))),
     }
@@ -100,8 +104,10 @@ mod tests {
         assert_eq!(fixtures.decision.decline.label, "Отклонить");
         assert_eq!(fixtures.event_decision.row.primary, "Подтвердите удаление");
         assert_eq!(fixtures.event_notice.row.value.as_deref(), Some("body"));
+        assert!(fixtures.space_selected.selected);
+        assert!(!fixtures.space_other.selected);
         let blob = format!(
-            "{} {} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {} {} {}",
             fixtures.title,
             fixtures.header.context_name,
             fixtures.object.title,
@@ -109,7 +115,9 @@ mod tests {
             fixtures.intent.title,
             fixtures.agent_assigned.detail_line(),
             fixtures.event_decision.row.primary,
-            fixtures.event_notice.row.primary
+            fixtures.event_notice.row.primary,
+            fixtures.space_selected.row.primary,
+            fixtures.space_other.row.primary
         );
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));

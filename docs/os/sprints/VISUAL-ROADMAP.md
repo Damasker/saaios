@@ -93,7 +93,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (ADR-127 Inbox `EventRow` on panther `c1547c02…`) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox on panther; Spaces list host ADR-128) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -903,8 +903,11 @@ big-bang rewrite.
   attention projection; empty vs store-offline named separately; tab
   stays. Flattened to `ActionCardView`. No invented timestamps.
   DataRow paint still later VUI-07. Flashed `c1547c02…`.
-- [ ] Migrate `Пространства` and Space detail while preserving HIA graph
-  semantics.
+- [x] Migrate `Пространства` list while preserving HIA graph
+  semantics. ADR-128: `SpaceRow` from live `entityd` spaces; tap
+  selects, retap cycles lifecycle; object count plus at most one
+  lifecycle/relation; empty vs «Нет связи». Space detail (people /
+  members) still later. Flattened to `ActionCardView`.
 - [ ] Migrate Object View, consent, remote pairing, intent input, Wi-Fi list and
   password, Bluetooth list, trusted clients, PIN setup, developer surface, and
   root fallback.
@@ -1065,6 +1068,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (Spaces, Wi-Fi/BT lists, lock).
-Inbox EventRow is on panther (`c1547c02…`). MEM-08 stays omitted until
-a shell-legal memory read exists.
+Continue **VUI-07** remaining surfaces (Space detail, Wi-Fi/BT lists,
+lock). Inbox EventRow is on panther (`c1547c02…`). Spaces list is
+host-only until flashed. MEM-08 stays omitted until a shell-legal
+memory read exists.

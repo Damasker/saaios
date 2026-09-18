@@ -462,8 +462,8 @@ use saai_ui_core::{
     layout, AgentSummary, Axis, CapabilityRow, ContextColor, ContextHeader, DataRow,
     DataRowVariant, DecisionOverlay, EventRow, IntentSummary, LayoutNode, Length, LogicalUnit,
     MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets,
-    SettingRow, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection,
-    SystemSectionRow, SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
+    SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale,
+    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -3833,6 +3833,76 @@ fn inbox_card_from_event(event: &EventRow) -> render::ActionCardView {
     render::ActionCardView::new(event.row.primary.clone(), status, action)
 }
 
+/// HIA-01 status line: object count, then at most one of lifecycle
+/// or first relation target. Unwrapped on a fixed-width card.
+fn space_card_status(
+    space_id: &str,
+    store_connected: bool,
+    entity_counts: &BTreeMap<String, usize>,
+    spaces: &[Space],
+    system_entities: &[Entity],
+) -> String {
+    let mut status = if store_connected {
+        match entity_counts.get(space_id) {
+            Some(count) => format!("Объектов: {count}"),
+            None => "Загрузка объектов…".into(),
+        }
+    } else {
+        "Сервис пространств недоступен".into()
+    };
+    if let Some(label) = space_lifecycle(system_entities, space_id).label() {
+        status.push_str(" · ");
+        status.push_str(label);
+    } else if let Some((target, _kind)) = space_relation_targets(system_entities, space_id).first()
+    {
+        status.push_str(" · → ");
+        status.push_str(&space_display_name(spaces, target));
+    }
+    status
+}
+
+/// VUI-07 (ADR-128): Пространства lists live `Space` records, not the
+/// four `root.sui` ids. Store-down is «Нет связи». No people row.
+fn space_list_rows(
+    spaces: &[Space],
+    selected_space_id: &str,
+    store_connected: bool,
+    entity_counts: &BTreeMap<String, usize>,
+    system_entities: &[Entity],
+) -> Vec<SpaceRow> {
+    if !store_connected {
+        return vec![SpaceRow::offline()];
+    }
+    if spaces.is_empty() {
+        return vec![SpaceRow::empty()];
+    }
+    spaces
+        .iter()
+        .map(|space| {
+            SpaceRow::open(
+                space.name.clone(),
+                space_card_status(&space.id, true, entity_counts, spaces, system_entities),
+                format!("select_space:{}", space.id),
+                space.id == selected_space_id,
+            )
+        })
+        .collect()
+}
+
+fn space_card_from_row(row: &SpaceRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        if row.selected {
+            "Выбрано"
+        } else {
+            "Открыть"
+        }
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.selected)
+}
+
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
 /// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
@@ -3880,6 +3950,23 @@ fn inbox_row_at(
         .enumerate()
         .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
         .map(|(_, (kind, entity))| (kind, entity.id))
+}
+
+fn space_row_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    spaces: &[Space],
+    store_connected: bool,
+) -> Option<String> {
+    if !store_connected {
+        return None;
+    }
+    spaces
+        .iter()
+        .enumerate()
+        .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
+        .map(|(_, space)| space.id.clone())
 }
 
 /// S13 Change 4: "Сейчас"'s hit-test, mirroring `content_action_at`
@@ -5492,6 +5579,16 @@ impl TouchHandler for Shell {
                     self.viewing_entity_id = Some(id);
                     self.draw(conn, qh);
                 }
+            } else if self.current_page == RootPage::Spaces {
+                if let Some(space_id) = space_row_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    &self.spaces,
+                    self.entityd.is_connected(),
+                ) {
+                    self.invoke_select_space(&space_id);
+                }
             } else if self.current_page == RootPage::Now && !self.apps_open {
                 // VUI-03 (ADR-113): the composed screen's own two footer
                 // rows -- everything else on it (SystemSection rows,
@@ -5906,6 +6003,8 @@ impl Shell {
             let tabs = self.root_navigation_items(width, height);
             let content_cards = if self.current_page == RootPage::Inbox {
                 self.inbox_content_cards(width, height)
+            } else if self.current_page == RootPage::Spaces {
+                self.spaces_content_cards(width, height)
             } else if self.current_page == RootPage::Me {
                 self.me_content_cards(width, height)
             } else if self.current_page == RootPage::Now {
@@ -6401,6 +6500,21 @@ impl Shell {
         }
     }
 
+    fn invoke_select_space(&mut self, space_id: &str) {
+        if !self.entityd.is_connected() {
+            return;
+        }
+        // HIA-01: tapping the space that's already selected cycles
+        // lifecycle. Nothing on the card explains the gesture --
+        // status has no room (confirmed live).
+        if space_id == self.selected_space_id {
+            self.cycle_space_lifecycle(space_id);
+        } else {
+            self.upsert_manual_context(space_id);
+            self.entityd.select_space(space_id);
+        }
+    }
+
     fn invoke_content_action(
         &mut self,
         action: ContentActionDefinition,
@@ -6412,25 +6526,7 @@ impl Shell {
             action.id, action.action
         );
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
-            if !self.entityd.is_connected() {
-                return;
-            }
-            // HIA-01: tapping the space that's already selected has
-            // no other effect today (re-selecting a no-op selection),
-            // so it's repurposed into the lifecycle-cycle gesture --
-            // no new hit-test geometry needed on a page whose four
-            // cards are still the static `root.sui` layout (S04).
-            // Known rough edge: nothing on the card hints at this
-            // gesture at all before the first tap -- the button
-            // itself still just says "Выбрано" (its status line has
-            // no room to explain a gesture, confirmed live: an
-            // earlier version tried and overflowed the card).
-            if space_id == self.selected_space_id {
-                self.cycle_space_lifecycle(space_id);
-            } else {
-                self.upsert_manual_context(space_id);
-                self.entityd.select_space(space_id);
-            }
+            self.invoke_select_space(space_id);
             return;
         }
         if action.action == "open_intent_input" {
@@ -7064,6 +7160,25 @@ impl Shell {
             .collect()
     }
 
+    fn spaces_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        space_list_rows(
+            &self.spaces,
+            &self.selected_space_id,
+            self.entityd.is_connected(),
+            &self.entity_counts,
+            &self.system_space_entities,
+        )
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            (
+                stacked_row_rect(index, width, height),
+                space_card_from_row(&row),
+            )
+        })
+        .collect()
+    }
+
     /// S13 Change 3: "Я" -- a device/apps summary built entirely from
     /// state this client already tracks (`spaces`, `entity_counts`,
     /// `installed_apps`) plus each app's currently granted
@@ -7434,34 +7549,15 @@ impl Shell {
         }
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
             let selected = space_id == self.selected_space_id;
-            let mut status = if self.entityd.is_connected() {
-                match self.entity_counts.get(space_id) {
-                    Some(count) => format!("Объектов: {count}"),
-                    None => "Загрузка объектов…".into(),
-                }
-            } else {
-                "Сервис пространств недоступен".into()
-            };
-            // HIA-01: lifecycle only shown when it's not the silent
-            // default (`SpaceLifecycle::label`'s own doc comment),
-            // relation target only when at least one real edge
-            // exists -- an untouched space's card looks exactly like
-            // it always has. At most one of the two, not both at
-            // once: this line is drawn unwrapped in a fixed-width
-            // strip (confirmed live -- the first version tried to
-            // show both and overflowed the card).
-            if let Some(label) = space_lifecycle(&self.system_space_entities, space_id).label() {
-                status.push_str(" · ");
-                status.push_str(label);
-            } else if let Some((target, _kind)) =
-                space_relation_targets(&self.system_space_entities, space_id).first()
-            {
-                status.push_str(" · → ");
-                status.push_str(&space_display_name(&self.spaces, target));
-            }
             return render::ActionCardView::new(
                 action.label,
-                status,
+                space_card_status(
+                    space_id,
+                    self.entityd.is_connected(),
+                    &self.entity_counts,
+                    &self.spaces,
+                    &self.system_space_entities,
+                ),
                 if selected {
                     "Выбрано"
                 } else {
@@ -8426,16 +8522,16 @@ mod tests {
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pressed_tab_from_touch, remove_context_source, space_color, space_color_entity,
         space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, upsert_context_entry, wifi_list_action_at, AgentSummary,
-        BluetoothListTap, ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect,
-        RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow,
-        TrustedClientTap, UniversalState, WifiListTap, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        space_list_rows, space_relation_targets, space_row_at, stacked_row_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at, upsert_context_entry,
+        wifi_list_action_at, AgentSummary, BluetoothListTap, ContextFrameEntry, ContextSource,
+        Entity, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
+        SpaceLifecycle, SystemSectionRow, TrustedClientTap, UniversalState, WifiListTap,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -8671,6 +8767,16 @@ mod tests {
         properties.insert("to_space_id".into(), serde_json::Value::String(to.into()));
         properties.insert("kind".into(), serde_json::Value::String(kind.into()));
         test_entity(SPACE_RELATION_ENTITY_TYPE, properties)
+    }
+
+    fn test_space(id: &str, name: &str) -> Space {
+        Space {
+            schema: 1,
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: SpaceKind::User,
+            created_at: chrono::Utc::now(),
+        }
     }
 
     fn wifi_signal_entity(space_id: &str, ssid: &str) -> Entity {
@@ -9321,7 +9427,7 @@ mod tests {
         // now has exactly the two entries that were always meant to
         // stay static (the app list itself is runtime data, handled by
         // `now_action_at`/`now_content_cards`, not this table).
-        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 6);
+        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 2);
         assert_eq!(
             content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
             Some("selected-entity")
@@ -9334,18 +9440,8 @@ mod tests {
     }
 
     #[test]
-    fn space_actions_and_selected_entity_come_from_sui_markup() {
-        for (point, expected) in [
-            ((540.0, 500.0), "space-home"),
-            ((540.0, 720.0), "space-work"),
-            ((540.0, 940.0), "space-personal"),
-            ((540.0, 1160.0), "space-saaios"),
-        ] {
-            assert_eq!(
-                content_action_at(RootPage::Spaces, point, 1080, 2400).map(|action| action.id),
-                Some(expected)
-            );
-        }
+    fn space_actions_come_from_live_spaces_not_sui_markup() {
+        assert!(content_action_at(RootPage::Spaces, (540.0, 500.0), 1080, 2400).is_none());
         assert_eq!(
             content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
             Some("selected-entity")
@@ -9612,6 +9708,60 @@ mod tests {
         assert_eq!(space_display_name(&spaces, "car"), "Машина");
         assert_eq!(space_display_name(&spaces, "work"), "Работа");
         assert_eq!(space_display_name(&spaces, "unknown-id"), "unknown-id");
+    }
+
+    #[test]
+    fn space_list_rows_use_live_spaces_and_name_offline() {
+        let spaces = vec![
+            test_space("home", "Дом"),
+            test_space("work", "Работа"),
+            test_space("car", "Машина"),
+        ];
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert("home".into(), 3usize);
+        counts.insert("work".into(), 1usize);
+        let system = vec![
+            lifecycle_entity("home", "archived"),
+            relation_entity("home", "work", "related_to"),
+            relation_entity("car", "home", "usually_with"),
+        ];
+
+        let live = space_list_rows(&spaces, "home", true, &counts, &system);
+        assert_eq!(live.len(), 3);
+        assert_eq!(live[0].row.primary, "Дом");
+        assert!(live[0].selected);
+        assert_eq!(
+            live[0].row.value.as_deref(),
+            Some("Объектов: 3 · Архивировано")
+        );
+        assert_eq!(live[1].row.primary, "Работа");
+        assert!(!live[1].selected);
+        assert_eq!(live[2].row.primary, "Машина");
+        assert_eq!(
+            live[2].row.value.as_deref(),
+            Some("Загрузка объектов… · → Дом")
+        );
+        assert!(!live.iter().any(|row| row.row.primary.contains("Люди")
+            || row.row.value.as_deref().unwrap_or("").contains("Люди")));
+
+        let offline = space_list_rows(&spaces, "home", false, &counts, &system);
+        assert_eq!(offline.len(), 1);
+        assert_eq!(offline[0].row.primary, "Нет связи");
+        assert!(!offline[0].row.is_actionable());
+        assert!(space_row_at((540.0, 500.0), 1080, 2400, &spaces, false).is_none());
+
+        let empty = space_list_rows(&[], "home", true, &counts, &system);
+        assert_eq!(empty[0].row.primary, "Нет пространств");
+
+        let first = stacked_row_rect(0, 1080, 2400);
+        let point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            space_row_at(point, 1080, 2400, &spaces, true).as_deref(),
+            Some("home")
+        );
     }
 
     #[test]

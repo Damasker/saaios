@@ -17,7 +17,7 @@ pub use components::{
 pub use composites::{
     AgentAssignment, AgentSummary, BottomNavigation, CapabilityRow, ContextHeader, DecisionOverlay,
     EventRow, IntentSummary, NavigationItem, ObjectSummary, ObjectSummaryTrailing, OrbHost,
-    SettingRow, SystemSection, SystemSectionRow, SystemStatus, TaskSummary,
+    SettingRow, SpaceRow, SystemSection, SystemSectionRow, SystemStatus, TaskSummary,
 };
 pub use foundations::{
     FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,

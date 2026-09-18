@@ -1,6 +1,6 @@
 # Путь на Pixel 7 — один очередь, не шесть выходных
 
-Status: **active sequence after ADR-118…127.**
+Status: **active sequence after ADR-118…128.**
 Visual Language remains the only hardware-changing *shell* experiment.
 Service binaries (`saaios-runtime`, `saai-taskd`, `saai-entityd`) могут
 прошиваться в ту же неделю — это не второй DRM/GPU эксперимент.
@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116, 126–127 | VUI-00…03 Done, VUI-04 remainder `Я`→`Система` **на panther**, **VUI-05 ATTN-03+WORK-08**, VUI-06 grouping + honest states + scroll-cache + label **на panther**, VUI-07 EventRow Inbox **на panther** (`c1547c02…`) | **saai-shell `c1547c02…` прошит** (`Система` + Inbox EventRow) |
+| Visual | 111–116, 126–128 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **host** | **saai-shell `c1547c02…` прошит**; Spaces list not flashed |
 
 ## Две очереди, не девять
 
@@ -87,6 +87,7 @@ host-only derived view.
 | VUI-05 | NOW ATTN-02, Inbox ATTN-03, WORK-08 **на panther** (`63b8b64` then current shell); Object View + offline + `AgentSummary` + gallery **host** |
 | VUI-06 `Система` | inventory + domain grouping + honest missing/offline + scroll-cache + tab rename **на panther** (`1d191d7a…`); MEM-08 still blocked |
 | VUI-07 Inbox | `EventRow` + empty vs offline **на panther** (`c1547c02…`) |
+| VUI-07 Spaces | live `SpaceRow` list **host** (ADR-128); Space detail later; not flashed |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

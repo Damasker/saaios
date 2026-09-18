@@ -50,6 +50,7 @@ in VUI-09; privileged system composites are not automatically public.
 | Composite | `IntentSummary`, `TaskSummary`, `DecisionOverlay`, `AgentSummary` | Experimental (VUI-05) | Object View |
 | Composite | `SettingRow`, `CapabilityRow` | Experimental (VUI-06) | `Я` / `Система` |
 | Composite | `EventRow` | Experimental (VUI-07) | `Входящие` |
+| Composite | `SpaceRow` | Experimental (VUI-07) | `Пространства` |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
 ## 4. Shared state contract
@@ -241,7 +242,7 @@ VUI-03's three; `BottomNavigation`, `OrbHost`, and `SystemStatus` are VUI-04;
 in VUI-05 on Object View confirmation. `AgentSummary` lands in VUI-05
 only from a real `saaios.action` (otherwise unassigned/unavailable).
 `SettingRow`/`CapabilityRow` land in VUI-06. `EventRow` lands in VUI-07
-on Inbox.
+on Inbox. `SpaceRow` lands in VUI-07 on the Пространства tab list.
 
 ### 7.1 `ContextHeader`
 
@@ -438,12 +439,25 @@ on Inbox.
   Inbox tab stays (`inbox` / `RootPage::Inbox`).
 - Accessibility: delegated to the nested `DataRow`.
 
+### 7.13 `SpaceRow`
+
+- Anatomy: a `DataRow` for one live Space on the Пространства tab.
+  Navigation with `select_space:{id}`. `selected` marks the current
+  context. Status is object count plus at most one of lifecycle or
+  first relation target (ADR-086).
+- Empty: static «Нет пространств». Offline: static «Нет связи».
+- Not a people list, not an app drawer, not Space detail. Members
+  stay on Object View / NOW until that surface exists.
+- First real consumer: `space_list_rows` (ADR-128). Flattened to
+  `ActionCardView`. Tab id stays `spaces`.
+- Accessibility: delegated to the nested `DataRow`.
+
 ## 8. Required gallery matrix
 
 The first device gallery uses labelled fixture data and contains no fake
 runtime telemetry. VUI-02 covers the ten primitives (default state).
 VUI-05 adds a second page with composites and every `UniversalState`.
-VUI-07 adds `EventRow` fixtures (decision and notice); that page does
+VUI-07 adds `EventRow` and `SpaceRow` fixtures; that page does
 not grow a new layout slot in this slice. Tap switches pages.
 
 1. default, pressed, focused, disabled, and busy interaction states;

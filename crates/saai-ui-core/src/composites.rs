@@ -6,7 +6,7 @@
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
-//! `CapabilityRow`. VUI-07 adds `EventRow`.
+//! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
@@ -630,6 +630,50 @@ impl EventRow {
     }
 }
 
+/// Section 7.13. One destination on the Пространства tab: a live
+/// Space name, a status value, and whether it is the current context.
+/// Empty and offline are honest absences. No people list, no app
+/// drawer — those are not this composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpaceRow {
+    pub row: DataRow,
+    pub selected: bool,
+}
+
+impl SpaceRow {
+    pub fn open(
+        name: impl Into<String>,
+        status: impl Into<String>,
+        action: impl Into<String>,
+        selected: bool,
+    ) -> Self {
+        Self {
+            row: DataRow::new(name, DataRowVariant::Navigation)
+                .with_value(status)
+                .with_action(action),
+            selected,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет пространств", DataRowVariant::Static),
+            selected: false,
+        }
+    }
+
+    pub fn offline() -> Self {
+        Self {
+            row: DataRow::new("Нет связи", DataRowVariant::Static),
+            selected: false,
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
 /// Section 7.4. One destination in the bottom navigation strip. `icon` is
 /// optional rather than required: this project's current icon set
 /// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
@@ -1207,5 +1251,32 @@ mod tests {
         );
         assert!(!blob.contains("10:"));
         assert!(!blob.contains("Система"));
+    }
+
+    #[test]
+    fn space_row_does_not_invent_people_or_an_app_drawer() {
+        let selected = SpaceRow::open("Дом", "Объектов: 3", "select_space:home", true);
+        assert_eq!(selected.row.variant, DataRowVariant::Navigation);
+        assert!(selected.selected);
+        assert!(selected.row.is_actionable());
+        assert_eq!(selected.row.action.as_deref(), Some("select_space:home"));
+
+        let other = SpaceRow::open("Работа", "Объектов: 1", "select_space:work", false);
+        assert!(!other.selected);
+
+        let empty = SpaceRow::empty();
+        assert_eq!(empty.row.primary, "Нет пространств");
+        assert!(!empty.row.is_actionable());
+
+        let offline = SpaceRow::offline();
+        assert_eq!(offline.row.primary, "Нет связи");
+        assert!(!offline.selected);
+
+        let blob = format!(
+            "{} {} {} {}",
+            selected.row.primary, other.row.primary, empty.row.primary, offline.row.primary
+        );
+        assert!(!blob.contains("Люди"));
+        assert!(!blob.contains("Приложения"));
     }
 }
