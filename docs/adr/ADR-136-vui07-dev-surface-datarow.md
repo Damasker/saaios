@@ -3,9 +3,11 @@
 ## Статус
 
 Принято, 2026-09-18. Hidden HIA-20 «Диагностика» lists live facts
-through static `DataRow`, flattened to `ActionCardView`. Host-green;
-panther hash follows flash. Object View, consent, remote pairing,
-PIN keypad chrome, and Space detail are not this slice.
+through static `DataRow`, flattened to `ActionCardView`. Flashed
+panther `bbc11a30…`: title below the status layer, `11 показателей`,
+live space/build/model/kernel/uptime rows, `ContextFrame` `пусто`,
+trailing «Назад» below the fold. Object View, consent, remote
+pairing, PIN keypad chrome, and Space detail are not this slice.
 
 ## Нумерация
 
@@ -50,6 +52,7 @@ trailing «Назад» closes; no values are changed for the screenshot.
 ## Verification
 
 Host: Static `DataRow`; label and value stay apart; card action is
-empty; status names the row count. Panther: 7 silent taps on the
-Me build-id card open «Диагностика» below the clock with live
-facts and «Назад». No setting is cycled. PIN is not saved.
+empty; status names the row count. Panther `bbc11a30…` pid 30950:
+«Диагностика» below the clock, `11 показателей`, `Пространство`
+`Дом (home)`, `Сборка` `f5814718df45`. No setting was cycled. PIN
+was not saved.
