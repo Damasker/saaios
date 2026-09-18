@@ -1331,7 +1331,10 @@ fn bluetooth_pair_result() -> Option<String> {
 /// Prefers a pairing result in progress/just finished over the scan
 /// state, so tapping a device to pair immediately starts showing
 /// that outcome instead of being silently overwritten by scan status
-/// text.
+/// text. ADR-145: the Surface subtitle that consumed this left the
+/// Bluetooth header; kept for the remaining `draw_action_row_list`
+/// lists and for a later scan-status row.
+#[allow(dead_code)]
 fn bluetooth_status_summary() -> String {
     if let Some(result) = bluetooth_pair_result() {
         return result;
@@ -1992,9 +1995,12 @@ enum Frame {
         status_line: String,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
+    /// ADR-145: Bluetooth is no longer `draw_action_row_list` Surface
+    /// chrome. Header is a real `ContextHeader`; rows stay live
+    /// `BluetoothRow` cards plus scan/refresh/back.
     BluetoothList {
-        header: Rect,
-        status_line: String,
+        content_rect: Rect,
+        header: ContextHeader,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     TrustedClients {
@@ -4348,6 +4354,12 @@ fn remote_pair_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("SSH")
 }
 
+/// ADR-145: section title is always `Bluetooth`. No invented
+/// lifecycle — scan/empty/paired facts stay on the live rows.
+fn bluetooth_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Bluetooth")
+}
+
 /// Live client name only. Fingerprint is wrapped separately so the
 /// full `SHA256:` string stays readable.
 fn remote_pair_content_cards(
@@ -6305,8 +6317,8 @@ impl Shell {
             }
         } else if self.bluetooth_list_open {
             // S20 / ADR-130: runtime-sized BluetoothRow list plus
-            // trailing scan/refresh/back cards.
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            // trailing scan/refresh/back cards. ADR-145: header is a
+            // real `ContextHeader`, not a Surface strip.
             let (devices, done) = bluetooth_scan_results();
             let saved = bluetooth_saved_names();
             let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved);
@@ -6334,8 +6346,11 @@ impl Shell {
                 render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::BluetoothList {
-                header,
-                status_line: bluetooth_status_summary(),
+                content_rect: Rect::new(0, 0, width, height),
+                header: bluetooth_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 rows,
             }
         } else if self.trusted_clients_open {
@@ -6690,16 +6705,17 @@ impl Shell {
                     );
                 }
                 Frame::BluetoothList {
+                    content_rect,
                     header,
-                    status_line,
                     rows,
                 } => {
-                    render::draw_action_row_list(
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Bluetooth устройства",
-                        &status_line,
-                        header,
+                        content_rect,
+                        &[],
+                        &header,
                         &rows,
+                        false,
                         fonts,
                     );
                 }
@@ -9057,7 +9073,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row,
+        apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
         bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
         consent_action_at, consent_content_cards, consent_header, content_action_at,
         dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
@@ -9977,6 +9993,13 @@ mod tests {
     fn remote_pair_header_names_the_section() {
         let header = remote_pair_header("Работа");
         assert_eq!(header.heading_text(), "Работа · SSH");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn bluetooth_header_names_the_section() {
+        let header = bluetooth_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Bluetooth");
         assert!(header.lifecycle.is_none());
     }
 
