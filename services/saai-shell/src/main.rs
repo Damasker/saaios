@@ -1942,10 +1942,14 @@ const DEPENDS_ON_PROPERTY: &str = "depends_on_task_ids";
 /// What `draw()` renders this frame, computed up front from `&self` before
 /// `buffer`/`canvas` take a mutable borrow for the rest of the function.
 enum Frame {
+    /// ADR-142: app-consent is no longer a free-floating title at
+    /// `header.y+220`. Header is a real `ContextHeader`; requested
+    /// capabilities are Static `DataRow` cards. Accept/decline rects
+    /// stay `consent_view`.
     Consent {
-        app_name: String,
-        labels: Vec<String>,
-        header: Rect,
+        content_rect: Rect,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
         accept: Rect,
         decline: Rect,
     },
@@ -4316,6 +4320,40 @@ fn me_header(space_name: &str, entityd_connected: bool, archived: bool) -> Conte
     }
 }
 
+/// ADR-142: section title is always `Разрешение`. No invented
+/// lifecycle — consent names requested capabilities, not store health.
+fn consent_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Разрешение")
+}
+
+/// First card is the live app name. Then each requested capability
+/// label. Empty requested set is named, not omitted.
+fn consent_content_cards(
+    app_name: &str,
+    labels: &[String],
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, render::ActionCardView)> {
+    let mut rows = vec![(
+        stacked_row_rect(0, width, height),
+        render::ActionCardView::new(app_name, "запрашивает доступ", ""),
+    )];
+    if labels.is_empty() {
+        rows.push((
+            stacked_row_rect(1, width, height),
+            render::ActionCardView::new("Без дополнительных разрешений", "", ""),
+        ));
+        return rows;
+    }
+    for (index, label) in labels.iter().enumerate() {
+        rows.push((
+            stacked_row_rect(index + 1, width, height),
+            render::ActionCardView::new(label, "", ""),
+        ));
+    }
+    rows
+}
+
 /// How far a touch has to move (in either direction, on this
 /// 1080x2400 panel) before `TouchHandler::up` treats it as a real
 /// drag on "Я" rather than a tap that merely twitched a few pixels --
@@ -6104,7 +6142,7 @@ impl Shell {
         // label()` need the whole of `self`, not just those two fields.
         let frame = if let Some(pending) = &self.pending_consent {
             let view = consent_view(width, height);
-            let header = view.children[0].rect;
+            let content_rect = view.children[0].rect;
             let buttons = &view.children[1].children;
             let labels = pending
                 .requested
@@ -6112,9 +6150,9 @@ impl Shell {
                 .map(|name| capability_label(name).to_owned())
                 .collect::<Vec<_>>();
             Frame::Consent {
-                app_name: pending.app_name.clone(),
-                labels,
-                header,
+                content_rect,
+                header: consent_header(&space_display_name(&self.spaces, &self.selected_space_id)),
+                rows: consent_content_cards(&pending.app_name, &labels, width, height),
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
@@ -6498,17 +6536,17 @@ impl Shell {
             }
             match frame {
                 Frame::Consent {
-                    app_name,
-                    labels,
+                    content_rect,
                     header,
+                    rows,
                     accept,
                     decline,
                 } => {
                     render::draw_consent(
                         &mut render::Canvas::new(canvas, width, height),
-                        &app_name,
-                        &labels,
-                        header,
+                        content_rect,
+                        &header,
+                        &rows,
                         accept,
                         decline,
                         fonts,
@@ -8971,29 +9009,29 @@ mod tests {
     use super::{
         apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row,
         bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
-        consent_action_at, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
-        diagnostic_row, diagnostic_status_line, effective_context_space, ensure_me_row_cache,
-        flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
-        input_idle_for_at_least, intent_action_at, intent_input_field, known_surfaces,
-        lock_idle_view, me_fixture_facts, me_header, me_system_sections, next_in_cycle,
-        next_pending_action, now_action_at, now_object_tapped, object_view_action_at,
-        object_view_content, object_view_summary, orb_action_at, orb_attention_from_entities,
-        orb_menu_actions, orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows, upsert_context_entry,
-        wifi_card_from_row, wifi_list_action_at, wifi_list_rows, wifi_password_field, AgentSummary,
-        AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource,
-        DataRowVariant, Entity, FieldKind, KeyboardMode, ObjectSummary, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        consent_action_at, consent_content_cards, consent_header, content_action_at,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
+        effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
+        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
+        intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts, me_header,
+        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
+        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
+        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
+        upsert_context_entry, wifi_card_from_row, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
+        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
+        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
+        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -9868,6 +9906,24 @@ mod tests {
                 .map(|status| status.label.as_str()),
             Some("Нет связи")
         );
+    }
+
+    #[test]
+    fn consent_header_names_the_section() {
+        let header = consent_header("Работа");
+        assert_eq!(header.heading_text(), "Работа · Разрешение");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn consent_rows_name_the_app_and_requested_or_empty() {
+        let requested =
+            consent_content_cards("Saai Demo", &["Доступ в интернет".to_string()], 1080, 2400);
+        assert_eq!(requested[0].1.label, "Saai Demo");
+        assert_eq!(requested[0].1.status, "запрашивает доступ");
+        assert_eq!(requested[1].1.label, "Доступ в интернет");
+        let empty = consent_content_cards("Saai Demo", &[], 1080, 2400);
+        assert_eq!(empty[1].1.label, "Без дополнительных разрешений");
     }
 
     fn test_app(id: &str, name: &str) -> AppSummary {

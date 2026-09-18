@@ -276,8 +276,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   text ... normal input" rule applies to this header as much as any body
   text).
 - First real consumer: `Сейчас` (ADR-112), the `Приложения` grid
-  (ADR-138), Inbox (ADR-139), Пространства (ADR-140), and Система
-  (ADR-141). All four root tabs use `ContextHeader`.
+  (ADR-138), Inbox (ADR-139), Пространства (ADR-140), Система
+  (ADR-141), and app-consent (ADR-142).
 - Accessibility: name is the Space name plus section title; a non-default
   lifecycle is exposed through the nested `StatusIndicator`'s own state, not
   a second accessible string glued onto the header's name.
@@ -393,8 +393,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Missing facts are omitted. The overlay does not invent whether the
   action itself can be undone; reversibility is the pair of choices.
 - Distinct from `TaskSummary`: this is the confirmation surface, not a
-  list row. Distinct from app-consent: that names capabilities, this
-  names a workflow/OAM decision.
+  list row. Distinct from app-consent (ADR-142): that names requested
+  capabilities through `ContextHeader` + Static `DataRow`, this names a
+  workflow/OAM decision.
 - Built from `SemanticText` plus two `Button`s. No local color, no
   invented agent actor.
 - First real consumer: Object View while a Task/Action is

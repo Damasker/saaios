@@ -93,7 +93,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header on panther) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header + Система header on panther; consent pending flash) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -889,7 +889,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header pending flash on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -964,7 +964,11 @@ big-bang rewrite.
   scroll still does not repaint the tab bar. Do not 7-tap build-id.
   Consent / remote pairing / PIN keypad chrome still later. Flashed
   `15fc3487…`.
-- [ ] Migrate consent, remote pairing, and remaining lock chrome.
+- [x] Migrate app-consent off the free-floating title. ADR-142:
+  `ContextHeader` section `Разрешение`; requested capabilities as
+  Static `DataRow`. Do not tap Разрешить. Remote pairing / PIN keypad
+  chrome still later.
+- [ ] Migrate remote pairing and remaining lock chrome.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
@@ -1123,13 +1127,14 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (PIN keypad chrome, consent,
-remote pairing, Space detail). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07** remaining surfaces (PIN keypad chrome, remote
+pairing, Space detail). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
 (`6239bebd…`), developer surface (`bbc11a30…`), Object View
 (`e2081d84…`), apps grid (`a57da14a…`), Inbox header
-(`75f1f054…`), Spaces header (`464c0e92…`), and Система header
-(`15fc3487…`) are on panther. Space detail still
-deferred. MEM-08 stays omitted until a shell-legal memory read exists.
+(`75f1f054…`), Spaces header (`464c0e92…`), Система header
+(`15fc3487…`), and consent header (ADR-142, hash after flash) are on
+panther. Space detail still deferred. MEM-08 stays omitted until a
+shell-legal memory read exists.

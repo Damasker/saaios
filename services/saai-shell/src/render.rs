@@ -301,76 +301,34 @@ impl<'a> Canvas<'a> {
     }
 }
 
-/// The ADR-020 consent screen (S07 Change 4): full-screen, replaces
-/// `draw_root` entirely while a launch is blocked on consent -- same
-/// `Canvas`/`Fonts` primitives, a second top-level entry point rather than
-/// a mode bolted onto `draw_root`, since the two share no layout beyond
-/// both being full-screen.
+/// ADR-142: app-consent through `ContextHeader` and Static `DataRow`
+/// cards. Accept/decline rects stay the `consent_view` hit targets.
+/// No concatenated `draw_root` Surface bar, no accent-square bullets.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_consent(
     canvas: &mut Canvas<'_>,
-    app_name: &str,
-    capabilities: &[String],
-    header: Rect,
+    content: Rect,
+    header: &ContextHeader,
+    rows: &[(Rect, ActionCardView)],
     accept_button: Rect,
     decline_button: Rect,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-
-    let Some(fonts) = fonts else {
-        // No font asset available (missing/unreadable on this build) --
-        // still show the two buttons in distinct colors so the screen is
-        // at least operable without text, matching this client's existing
-        // "color as the physically-verifiable signal" fallback used
-        // elsewhere before Inter rendering landed.
-        canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
-        canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
-        return;
-    };
-
-    let margin = header.width / 22;
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        &format!("{app_name} запрашивает доступ"),
-        46.0,
-        header.x + margin,
-        header.y + 220,
-        theme_color(ColorRole::TextPrimary),
-    );
-
-    let mut row_top = header.y + 340;
-    if capabilities.is_empty() {
-        draw_text(
-            canvas,
-            &fonts.regular,
-            "Без дополнительных разрешений",
-            32.0,
-            header.x + margin,
-            row_top,
-            theme_color(ColorRole::TextSecondary),
-        );
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
     }
-    for capability in capabilities {
-        canvas.fill_rect(
-            Rect::new(header.x + margin, row_top + 10, 16, 16),
-            theme_color(ColorRole::Accent),
-        );
-        draw_text(
-            canvas,
-            &fonts.regular,
-            capability,
-            32.0,
-            header.x + margin + 44,
-            row_top,
-            theme_color(ColorRole::TextSecondary),
-        );
-        row_top += 70;
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
     }
+    canvas.set_clip(None);
 
     canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
     canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
+    let Some(fonts) = fonts else {
+        return;
+    };
     draw_text_centered(
         canvas,
         &fonts.semibold,
@@ -3243,7 +3201,7 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
-        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery,
+        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
         draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_root, draw_status_bar,
         draw_tab_bar, gallery_row_positions, physical, physical_line_height, state_color,
         theme_color, ActionCardView, Canvas,
@@ -3776,6 +3734,37 @@ mod tests {
             None,
         );
         assert_eq!(canvas.pixel(135, 2125), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn consent_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2100);
+        let header = ContextHeader::new("Работа").with_section_title("Разрешение");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(
+            row,
+            ActionCardView::new("Saai Demo", "запрашивает доступ", ""),
+        )];
+        draw_consent(
+            canvas,
+            content,
+            &header,
+            &rows,
+            Rect::new(0, 2100, 540, 300),
+            Rect::new(540, 2100, 540, 300),
+            None,
+        );
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+        assert_eq!(canvas.pixel(270, 2250), theme_color(ColorRole::Accent));
+        assert_eq!(canvas.pixel(810, 2250), theme_color(ColorRole::Surface));
     }
 
     #[test]
