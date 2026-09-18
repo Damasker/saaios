@@ -4,9 +4,10 @@
 
 Принято, 2026-09-18. Object View paints identity through
 `ObjectSummary`. A tap on the NOW summary opens the same HIA-07
-screen (Inbox remains an entry). Host-green; panther hash follows
-flash. Consent, remote pairing, PIN keypad chrome, and Space detail
-are not this slice.
+screen (Inbox remains an entry). Flashed panther `e2081d84…`:
+`vnnnmb` below the clock, `saaios.intent · версия 1`, trailing
+`Нет задачи`, `Нет исполнения`. Consent, remote pairing, PIN keypad
+chrome, and Space detail are not this slice.
 
 ## Нумерация
 
@@ -53,6 +54,7 @@ this slice (zero-action entities stay as they are).
 
 Host: meta is identity, not the status string; trailing carries the
 workflow status; NOW object rect hits and misses the footer.
-Panther: unlock, `Сейчас`, tap the live summary, Object View shows
-title below the clock with type/version and a real status. Do not
-tap Object View actions for the screenshot.
+Panther `e2081d84…` pid 32060: unlock, `Сейчас`, tap the live
+summary; Object View shows `vnnnmb` below the clock with
+`saaios.intent · версия 1` and `Нет задачи`. Object View actions
+were not tapped.
