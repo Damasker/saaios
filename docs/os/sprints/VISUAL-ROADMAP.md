@@ -1,6 +1,6 @@
 # SaaiOS Visual System — delivery roadmap
 
-Status: **VUI-00, VUI-01, and VUI-03 complete; VUI-02 Task List complete, Acceptance checklist complete except one item blocked by the environment (see "The sans and mono faces survive the actual Pixel boot-image asset path" below)**
+Status: **VUI-00, VUI-01, and VUI-03 recorded complete; VUI-02 has open implementation and acceptance work; VUI-04 in progress.**
 
 Target device: Pixel 7 (`panther`)
 
@@ -82,7 +82,7 @@ contains:
 |---|---|---|
 | VUI-00 | Audit, product contract, and delivery plan | **Done** |
 | VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
-| VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
+| VUI-02 | Typography, geometry, icons, and base component library | **In progress: implementation gaps and image verification outstanding** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
 | VUI-05 | Object, Intent, Task, and real Agent components | Backlog |
@@ -208,10 +208,10 @@ protocol, storage, or authorization changes are included.
 
 ## VUI-02 — Typography, geometry, icons, and base components
 
-**Status:** In progress — base component contract reviewed; typography and
-mono font shipped and re-verified (ADR-096, ADR-099); a real device
-screenshot tool now exists for physical review; foundation tokens and device
-gallery remain
+**Status:** In progress — typography, tokens, primitive contracts, and a first
+gallery exist. Shared scrolling, full gallery state coverage, and long-label
+handling across controls remain incomplete. Clean boot-image font verification
+is outstanding.
 
 **Depends on:** VUI-01
 
@@ -231,8 +231,9 @@ real phone interface consistently.
   fallback, and boot-image packaging verified; exercising a real SSH
   pairing fingerprint in the mono role, and increased text scale, remain
   (see ADR-099's "Not verified by this ADR").
-- [ ] Define spacing, radius, stroke, touch-target, safe-inset, and elevation
-  tokens in logical units.
+- [x] Define spacing, radius, stroke, touch-target, safe-inset, and elevation
+  tokens in logical units (`foundations.rs`, commit `5aff7fd`). Integration
+  into every legacy renderer is separate and remains incremental.
 - [x] Add one coherent line-icon source and a reproducible asset pipeline
   (ADR-100, Feather Icons -- MIT, static TTF, drawn through the existing
   `fontdue` text path; a small curated `IconGlyph` set, extendable per real
@@ -274,7 +275,7 @@ real phone interface consistently.
   an unnamed `Divider`). Non-color cues needed no new work -- already
   satisfied, since every primitive that carries meaning already does so
   through text or an enum, never color alone.
-- [x] Build the first device component-gallery surface covering all primitive
+- [ ] Build the first device component-gallery surface covering all primitive
   states, long Russian strings, and scaled text. First pass done (ADR-105):
   `render::draw_gallery`, one instance of each of the ten ADR-102/103
   primitives, default state only, physically verified via a real device
@@ -286,7 +287,7 @@ real phone interface consistently.
   disabled/busy variants, both compact and normal side by side, long-
   Russian-text and scaled-text coverage, and the developer bounds overlay --
   section 7's full matrix remains open.
-- [x] Add golden render, layout, hit-test, press-state, and overflow tests.
+- [ ] Add golden render, layout, hit-test, press-state, and overflow tests.
   Layout and golden-pixel tests done (ADR-106): `gallery_row_positions`
   extracted as a pure, host-testable function, with a real regression test
   that already caught one genuine spacing bug (the title-to-first-row gap).
@@ -668,7 +669,7 @@ turning the Orb into a launcher or assistant avatar.
   layering not separately audited yet.
 - [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
   only when the destination content is truthful.
-- [x] Add explicit selected, pressed, disabled, attention, and badge states
+- [ ] Add explicit selected, pressed, disabled, attention, and badge states
   (ADR-116). Four of five have a real trigger today: `selected` (current
   page), `disabled`/`attention` (rendered correctly when set, tested),
   `badge` (a real count -- "Входящие"'s own `inbox_rows().len()`, not a
@@ -684,7 +685,7 @@ turning the Orb into a launcher or assistant avatar.
   not yet built -- `MotionCue`/reduced-motion wiring, a real arc/fill
   quantity visual, and a dedicated ring cue beyond the `Alert` mark all
   remain open.
-- [x] Integrate a restrained Orb host with quiet, active, progress, attention,
+- [ ] Integrate a restrained Orb host with quiet, active, progress, attention,
   offline, and reduced-motion states (ADR-116). All five real states
   reuse `UniversalState` (`Idle`/`Active`/`Running`/`Attention`/`Offline`)
   with real triggers -- `Offline` from real `appd`/`entityd` connection
@@ -695,8 +696,17 @@ turning the Orb into a launcher or assistant avatar.
   `ShellSettings` field or system setting exists anywhere yet to actually
   set it -- always `false` in practice, same honesty gap as `pressed`
   above.
-- [ ] Retain direct tab navigation during Orb work; do not make the Orb the only
-  route.
+- [x] Retain direct tab navigation during Orb work; do not make the Orb the
+  only route. Audited, not modified: already true by construction.
+  `orb_action_at` (the Orb's own hit-test) only ever returns `Some` for a
+  touch inside `orb_zone_rect`, and that zone's own geometry (`bottom =
+  410` out of 2400 units, even with its menu open) never reaches the tab
+  bar's own row (`y` in roughly [2100, 2400]) -- confirmed both by the
+  geometry itself and by the pre-existing
+  `orb_zone_never_reaches_where_cards_start` test. Tab taps are handled
+  by a completely separate `tab_at` branch in the touch dispatch, reached
+  whenever `orb_action_at` returns `None`, independent of whether the
+  Orb's menu happens to be open.
 - [ ] Make status/navigation layers independent of scrolling content damage.
 - [ ] Add rotation/inset/keyboard and rapid-tab-switch interaction tests.
 
@@ -975,7 +985,10 @@ After each completed task group, report:
 
 ## Next action
 
-Finish **VUI-01** physical sign-off: review and photograph the raw calibration
-fixture, remove the volatile marker, verify normal navigation/touch/scrolling,
-then cold reboot and repeat the smoke test. Only after that gate should VUI-02
-begin drawing and implementing the base graphical component library.
+Continue **VUI-04**: wire real touch press/cancel feedback, introduce the shared
+status component, complete Context Light and reduced-motion behavior, then
+verify scrolling, rapid tab switches, insets, keyboard interaction, restart,
+and cold boot. Keep **VUI-02** open for the gallery matrix, shared scroll-region
+work, long-label reflow, and clean-image font verification. VUI-05 starts after
+these navigation and rendering gates pass; source-only evidence does not close
+a physical acceptance item.

@@ -2007,6 +2007,9 @@ pub fn draw_tab_bar(
     for (rect, item) in tabs {
         let rect = *rect;
         let is_selected = item.selected;
+        if item.pressed && !item.disabled {
+            canvas.fill_rect(rect, theme_color(ColorRole::Elevated));
+        }
         if is_selected {
             canvas.fill_rect(
                 Rect::new(
@@ -2040,6 +2043,8 @@ pub fn draw_tab_bar(
             icon_rect,
             if item.disabled {
                 theme_color(ColorRole::DisabledSurface)
+            } else if item.pressed {
+                theme_color(ColorRole::AccentHighlight)
             } else if is_selected {
                 theme_color(ColorRole::Accent)
             } else {

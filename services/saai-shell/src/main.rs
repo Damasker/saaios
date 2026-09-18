@@ -3110,6 +3110,7 @@ fn main() {
         current_page: RootPage::Now,
         last_touch_pos: (0.0, 0.0),
         tab_touch_pending: false,
+        navigation_touch: None,
         layer,
         layer_width: 0,
         layer_height: 120,
@@ -3294,6 +3295,9 @@ struct Shell {
     /// (same "release, not press" rule as `unlock_pending`, so a drag
     /// through the tab bar doesn't switch pages by accident).
     tab_touch_pending: bool,
+    /// Capture the initiating finger and tab. Moving outside cancels the
+    /// press permanently; a second finger cannot retarget navigation.
+    navigation_touch: Option<(i32, RootPage, bool)>,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -3741,15 +3745,18 @@ impl SeatHandler for Shell {
 impl TouchHandler for Shell {
     fn down(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
         surface: wl_surface::WlSurface,
-        _id: i32,
+        id: i32,
         position: (f64, f64),
     ) {
+        if self.navigation_touch.is_some() {
+            return;
+        }
         self.last_activity = Instant::now();
         self.last_touch_pos = position;
         if self.sleeping {
@@ -3774,6 +3781,14 @@ impl TouchHandler for Shell {
                 .any(|ls| *ls.wl_surface() == surface);
         self.tab_touch_pending =
             !self.locked && !self.calibration_mode && surface == *self.window.wl_surface();
+        if self.tab_touch_pending && !self.gallery_mode && !self.any_modal_open() {
+            if let Some(page) = tab_at(position, self.width, self.height) {
+                self.navigation_touch = Some((id, page, true));
+                self.me_drag = None;
+                self.draw(conn, qh);
+                return;
+            }
+        }
         // Real drag-to-scroll for "Я" (replacing this shell's old
         // Ещё/Назад pagination, back when it had no drag gesture
         // recognition at all): armed only when this touch starts
@@ -3802,8 +3817,28 @@ impl TouchHandler for Shell {
         _touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
-        _id: i32,
+        id: i32,
     ) {
+        if let Some((finger, page, armed)) = self.navigation_touch {
+            if finger != id {
+                return;
+            }
+            self.navigation_touch = None;
+            self.tab_touch_pending = false;
+            self.me_drag = None;
+            if armed && !self.locked && !self.any_modal_open() {
+                if page != self.current_page {
+                    self.current_page = page;
+                    self.apps_open = false;
+                    println!("saai-shell: switched to {page:?}");
+                } else if page == RootPage::Now {
+                    self.apps_open = false;
+                }
+            }
+            self.last_activity = Instant::now();
+            self.draw(conn, qh);
+            return;
+        }
         self.last_activity = Instant::now();
         // Taken (not just read) here, once, regardless of which
         // branch below actually runs -- `down()` always sets a fresh
@@ -4131,13 +4166,20 @@ impl TouchHandler for Shell {
 
     fn motion(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _time: u32,
-        _id: i32,
+        id: i32,
         position: (f64, f64),
     ) {
+        if let Some((finger, page, armed)) = self.navigation_touch {
+            if finger == id && armed && tab_at(position, self.width, self.height) != Some(page) {
+                self.navigation_touch = Some((finger, page, false));
+                self.draw(conn, qh);
+            }
+            return;
+        }
         self.last_touch_pos = position;
         if let Some((start_y, start_offset)) = self.me_drag {
             let content_rect = root_view(self.width, self.height).children[0].rect;
@@ -4177,10 +4219,13 @@ impl TouchHandler for Shell {
     ) {
     }
 
-    fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
+    fn cancel(&mut self, conn: &Connection, qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
         self.unlock_pending = false;
         self.tab_touch_pending = false;
         self.me_drag = None;
+        if self.navigation_touch.take().is_some() {
+            self.draw(conn, qh);
+        }
     }
 }
 
@@ -5912,6 +5957,9 @@ impl Shell {
             .zip(ROOT_TABS)
             .map(|(node, tab)| {
                 let mut item = NavigationItem::new(tab.id, tab.label);
+                item.pressed = self
+                    .navigation_touch
+                    .is_some_and(|(_, page, armed)| armed && page_from_id(tab.id) == Some(page));
                 if page_from_id(tab.id) == Some(self.current_page) {
                     item = item.selected();
                 }
