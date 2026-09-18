@@ -2,9 +2,9 @@
 
 ## Статус
 
-Принято, 2026-09-18. Destination grouping is on panther (`ad53551f…`).
-Tab rename `Я`→`Система` is the remaining host label change; internal
-id stays `me` / `select_root:me`. MEM-08 omitted.
+Принято, 2026-09-18. Destination grouping, scroll-cache, and the
+`Я`→`Система` label are on panther (`1d191d7a…`). Internal id stays
+`me` / `select_root:me`. MEM-08 omitted.
 
 ## Нумерация
 

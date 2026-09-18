@@ -92,8 +92,8 @@ contains:
 | VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
-| VUI-06 | `Система` information architecture and settings components | **Host complete** (rename host; panther still shows `Я` until flash) |
-| VUI-07 | Remaining system surfaces and state patterns | Backlog |
+| VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (ADR-127 Inbox `EventRow` on panther `c1547c02…`) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -806,7 +806,7 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
   Second gallery page (tap to switch) draws labelled `saai-ui-core`
   fixtures: header, object, task, empty intent, unassigned/assigned
   `AgentSummary`, decision choices, all nine `UniversalState`s.
-  `EventRow` still deferred. No fake workers or live telemetry.
+  `EventRow` fixtures land in VUI-07. No fake workers or live telemetry.
 
 ### Acceptance
 
@@ -825,10 +825,9 @@ types and preserve protocol compatibility.
 
 ## VUI-06 — `Система` and device control
 
-**Status:** Host complete (ADR-126: inventory, domain grouping, honest
-missing/offline, scroll-cache on panther `ad53551f…`, tab label
-`Система`. MEM-08 omitted — no shell-legal memory read. Rename not yet
-flashed.)
+**Status:** Host + panther complete (ADR-126: inventory, domain grouping,
+honest missing/offline, scroll-cache, tab label `Система` on panther
+`1d191d7a…`. MEM-08 omitted — no shell-legal memory read.)
 
 **Depends on:** VUI-04; may run after core VUI-05 primitives stabilize
 
@@ -850,7 +849,7 @@ a concise engineering-oriented surface.
   `ActionCardView` so scroll/nav stay the accepted path.
 - [x] Rename `Я` to `Система` when the migrated information architecture is
   complete. Visible label in `root.sui`; `select_root:me` unchanged.
-  Panther still shows `Я` until the next shell flash.
+  Panther shows `Система` (`1d191d7a…`).
 - [x] Show healthy summaries first; disclose raw logs and identifiers on demand.
   Host: `Устройство` leads with model+storage; kernel/uptime/entity
   counts/boot attempts live on `DevSurface` (HIA-20). No invented health
@@ -890,7 +889,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** Backlog
+**Status:** In progress (ADR-127 Inbox `EventRow` on panther `c1547c02…`)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -899,7 +898,11 @@ big-bang rewrite.
 
 ### Tasks
 
-- [ ] Migrate `Входящие` to an event stream and decision-request model.
+- [x] Migrate `Входящие` to an event stream and decision-request model.
+  ADR-127: `EventRow` wraps `DataRow`; decision vs notice from the
+  attention projection; empty vs store-offline named separately; tab
+  stays. Flattened to `ActionCardView`. No invented timestamps.
+  DataRow paint still later VUI-07. Flashed `c1547c02…`.
 - [ ] Migrate `Пространства` and Space detail while preserving HIA graph
   semantics.
 - [ ] Migrate Object View, consent, remote pairing, intent input, Wi-Fi list and
@@ -1062,6 +1065,6 @@ After each completed task group, report:
 
 ## Next action
 
-Start **VUI-07** remaining surfaces (Входящие as event stream, Spaces,
-Wi-Fi/BT lists, lock). Flash the `Система` tab when asked. MEM-08 stays
-omitted until a shell-legal memory read exists.
+Continue **VUI-07** remaining surfaces (Spaces, Wi-Fi/BT lists, lock).
+Inbox EventRow is on panther (`c1547c02…`). MEM-08 stays omitted until
+a shell-legal memory read exists.

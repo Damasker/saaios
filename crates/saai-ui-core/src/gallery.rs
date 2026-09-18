@@ -1,9 +1,9 @@
-//! Labelled fixture data for the VUI-05 composite gallery.
-//! No live telemetry. `EventRow` is still deferred.
+//! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
+//! `EventRow`. No live telemetry.
 
 use crate::{
-    AgentSummary, ContextHeader, DecisionOverlay, IntentSummary, ObjectSummary, StatusIndicator,
-    TaskSummary, UniversalState,
+    AgentSummary, ContextHeader, DecisionOverlay, EventRow, IntentSummary, ObjectSummary,
+    StatusIndicator, TaskSummary, UniversalState,
 };
 
 pub struct CompositeGalleryFixtures {
@@ -15,6 +15,8 @@ pub struct CompositeGalleryFixtures {
     pub agent_unassigned: AgentSummary,
     pub agent_assigned: AgentSummary,
     pub decision: DecisionOverlay,
+    pub event_decision: EventRow,
+    pub event_notice: EventRow,
     pub states: [StatusIndicator; 9],
 }
 
@@ -33,6 +35,8 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
             .with_actor("Система")
             .with_action("files.delete")
             .with_scope("работа"),
+        event_decision: EventRow::decision("Подтвердите удаление"),
+        event_notice: EventRow::notice("Notice", "body"),
         states: UniversalState::ALL
             .map(|state| StatusIndicator::new(state, state_fixture_label(state))),
     }
@@ -94,14 +98,18 @@ mod tests {
         );
         assert_eq!(fixtures.decision.accept.label, "Подтвердить");
         assert_eq!(fixtures.decision.decline.label, "Отклонить");
+        assert_eq!(fixtures.event_decision.row.primary, "Подтвердите удаление");
+        assert_eq!(fixtures.event_notice.row.value.as_deref(), Some("body"));
         let blob = format!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {}",
             fixtures.title,
             fixtures.header.context_name,
             fixtures.object.title,
             fixtures.task.title,
             fixtures.intent.title,
-            fixtures.agent_assigned.detail_line()
+            fixtures.agent_assigned.detail_line(),
+            fixtures.event_decision.row.primary,
+            fixtures.event_notice.row.primary
         );
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));

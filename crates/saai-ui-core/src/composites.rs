@@ -6,7 +6,7 @@
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
-//! `CapabilityRow`. `EventRow` remains deferred.
+//! `CapabilityRow`. VUI-07 adds `EventRow`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
@@ -588,6 +588,48 @@ impl CapabilityRow {
     }
 }
 
+/// Section 7.12. One Inbox item as a `DataRow`: a waiting decision or a
+/// notice, plus honest empty/offline absences. No invented time, actor,
+/// or object — those live on `DecisionOverlay` in Object View.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventRow {
+    pub row: DataRow,
+}
+
+impl EventRow {
+    pub fn decision(title: impl Into<String>) -> Self {
+        Self {
+            row: DataRow::new(title, DataRowVariant::Navigation)
+                .with_value("Ждёт подтверждения")
+                .with_action("open_object"),
+        }
+    }
+
+    pub fn notice(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            row: DataRow::new(title, DataRowVariant::Navigation)
+                .with_value(body)
+                .with_action("open_object"),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет новых задач и уведомлений", DataRowVariant::Static),
+        }
+    }
+
+    pub fn offline() -> Self {
+        Self {
+            row: DataRow::new("Нет связи", DataRowVariant::Static),
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
 /// Section 7.4. One destination in the bottom navigation strip. `icon` is
 /// optional rather than required: this project's current icon set
 /// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
@@ -1135,5 +1177,35 @@ mod tests {
         assert_eq!(row.row.value.as_deref(), Some("остановлено"));
         assert_eq!(row.row.secondary.as_deref(), Some("без разрешений"));
         assert!(!row.row.primary.contains("Android VM"));
+    }
+
+    #[test]
+    fn event_row_kinds_do_not_invent_time_or_actor() {
+        let decision = EventRow::decision("Подтвердите удаление");
+        assert_eq!(decision.row.variant, DataRowVariant::Navigation);
+        assert_eq!(decision.row.value.as_deref(), Some("Ждёт подтверждения"));
+        assert_eq!(decision.row.action.as_deref(), Some("open_object"));
+        assert!(decision.row.is_actionable());
+        assert!(decision.row.secondary.is_none());
+
+        let notice = EventRow::notice("Notice", "body");
+        assert_eq!(notice.row.value.as_deref(), Some("body"));
+        assert!(notice.row.is_actionable());
+
+        let empty = EventRow::empty();
+        assert_eq!(empty.row.variant, DataRowVariant::Static);
+        assert_eq!(empty.row.primary, "Нет новых задач и уведомлений");
+        assert!(!empty.row.is_actionable());
+
+        let offline = EventRow::offline();
+        assert_eq!(offline.row.primary, "Нет связи");
+        assert!(!offline.row.is_actionable());
+
+        let blob = format!(
+            "{} {} {} {}",
+            decision.row.primary, notice.row.primary, empty.row.primary, offline.row.primary
+        );
+        assert!(!blob.contains("10:"));
+        assert!(!blob.contains("Система"));
     }
 }

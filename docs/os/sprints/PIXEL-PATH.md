@@ -1,6 +1,6 @@
 # Путь на Pixel 7 — один очередь, не шесть выходных
 
-Status: **active sequence after ADR-118…125.**
+Status: **active sequence after ADR-118…127.**
 Visual Language remains the only hardware-changing *shell* experiment.
 Service binaries (`saaios-runtime`, `saai-taskd`, `saai-entityd`) могут
 прошиваться в ту же неделю — это не второй DRM/GPU эксперимент.
@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116, 126 | VUI-00…03 Done, VUI-04 remainder `Я`→`Система` **host**, **VUI-05 ATTN-03+WORK-08**, VUI-06 grouping + honest states + scroll-cache **на panther** (`ad53551f…`); tab rename **host** | **saai-shell `ad53551f…` прошит** (label still `Я` until rename flash) |
+| Visual | 111–116, 126–127 | VUI-00…03 Done, VUI-04 remainder `Я`→`Система` **на panther**, **VUI-05 ATTN-03+WORK-08**, VUI-06 grouping + honest states + scroll-cache + label **на panther**, VUI-07 EventRow Inbox **на panther** (`c1547c02…`) | **saai-shell `c1547c02…` прошит** (`Система` + Inbox EventRow) |
 
 ## Две очереди, не девять
 
@@ -53,8 +53,8 @@ APP-COMPAT, Learning (MEM-09), голос, PCE, `saai-deviced` — **не в э�
 
 ## P0 — закрыто на panther (2026-09-18)
 
-1. VUI-04 на shell — remainder (`Я`→`Система` host rename in this
-   slice). SafeInsets + rotation/keyboard/rapid-tab на host.
+1. VUI-04 на shell — remainder (`Я`→`Система` **на panther**,
+   `1d191d7a…`). SafeInsets + rotation/keyboard/rapid-tab на host.
 2. Прошит `saaios-runtime` MEM-01/02/05 (`cc5f9913…`, reboot `-f`).
 3. Pixel: `p0_same_key` Home=`home-value` / Work=`work-value`; default
    recall пуст; `all=true` не смешивает; модель без `memory.remember`.
@@ -83,9 +83,10 @@ host-only derived view.
 
 | VUI slice | Берёт с собой |
 |---|---|
-| VUI-04 remainder | `Я`→`Система` host label. SafeInsets, rotation, keyboard, rapid-tab on host |
+| VUI-04 remainder | `Я`→`Система` **на panther** (`1d191d7a…`). SafeInsets, rotation, keyboard, rapid-tab on host |
 | VUI-05 | NOW ATTN-02, Inbox ATTN-03, WORK-08 **на panther** (`63b8b64` then current shell); Object View + offline + `AgentSummary` + gallery **host** |
-| VUI-06 `Система` | inventory + domain grouping + honest missing/offline + scroll-cache **на panther** (`ad53551f…`); tab rename **host**; MEM-08 still blocked |
+| VUI-06 `Система` | inventory + domain grouping + honest missing/offline + scroll-cache + tab rename **на panther** (`1d191d7a…`); MEM-08 still blocked |
+| VUI-07 Inbox | `EventRow` + empty vs offline **на panther** (`c1547c02…`) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

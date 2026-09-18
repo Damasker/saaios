@@ -460,9 +460,9 @@ use saai_object_actions::{
 };
 use saai_ui_core::{
     layout, AgentSummary, Axis, CapabilityRow, ContextColor, ContextHeader, DataRow,
-    DataRowVariant, DecisionOverlay, IntentSummary, LayoutNode, Length, LogicalUnit, MotionCue,
-    NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow,
-    StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection,
+    DataRowVariant, DecisionOverlay, EventRow, IntentSummary, LayoutNode, Length, LogicalUnit,
+    MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets,
+    SettingRow, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection,
     SystemSectionRow, SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
@@ -3793,6 +3793,46 @@ fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
         .collect()
 }
 
+fn inbox_notification_body(entity: &Entity) -> &str {
+    entity
+        .properties
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+/// VUI-07 (ADR-127): Inbox cards are `EventRow`s over the same
+/// attention projection `inbox_rows` already uses. Store-down is
+/// «Нет связи», not a fake empty inbox. Empty stays the existing
+/// copy. No invented timestamps.
+fn inbox_event_rows(entities: &[Entity], store_connected: bool) -> Vec<EventRow> {
+    if !store_connected {
+        return vec![EventRow::offline()];
+    }
+    let rows = inbox_rows(entities);
+    if rows.is_empty() {
+        return vec![EventRow::empty()];
+    }
+    rows.into_iter()
+        .map(|(kind, entity)| match kind {
+            InboxRowKind::Task => EventRow::decision(entity.title.clone()),
+            InboxRowKind::Notification => {
+                EventRow::notice(entity.title.clone(), inbox_notification_body(entity))
+            }
+        })
+        .collect()
+}
+
+fn inbox_card_from_event(event: &EventRow) -> render::ActionCardView {
+    let status = event.row.value.clone().unwrap_or_default();
+    let action = if event.row.is_actionable() {
+        "Открыть"
+    } else {
+        ""
+    };
+    render::ActionCardView::new(event.row.primary.clone(), status, action)
+}
+
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
 /// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
@@ -3830,7 +3870,11 @@ fn inbox_row_at(
     width: u32,
     height: u32,
     entities: &[Entity],
+    store_connected: bool,
 ) -> Option<(InboxRowKind, Uuid)> {
+    if !store_connected {
+        return None;
+    }
     inbox_rows(entities)
         .into_iter()
         .enumerate()
@@ -5437,6 +5481,7 @@ impl TouchHandler for Shell {
                     self.width,
                     self.height,
                     &self.selected_entities,
+                    self.entityd.is_connected(),
                 ) {
                     // HIA-07: every row, task or notification alike,
                     // opens the same Object View now -- a task's own
@@ -7007,36 +7052,13 @@ impl Shell {
     /// otherwise draw for a page with zero real cards -- Acceptance
     /// criteria explicitly called this out during the DoR.
     fn inbox_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let rows = inbox_rows(&self.selected_entities);
-        if rows.is_empty() {
-            return vec![(
-                stacked_row_rect(0, width, height),
-                render::ActionCardView::new("Нет новых задач и уведомлений", "", ""),
-            )];
-        }
-        rows.into_iter()
+        inbox_event_rows(&self.selected_entities, self.entityd.is_connected())
+            .into_iter()
             .enumerate()
-            .map(|(index, (kind, entity))| {
-                // HIA-07: both kinds now open the same Object View
-                // on tap (see the touch-dispatch site), so both rows
-                // say "Открыть" -- a notification's "Скрыть" moved
-                // into that screen's own action row, it no longer
-                // happens directly from this list.
-                let status = match kind {
-                    InboxRowKind::Task => "Ждёт подтверждения",
-                    // S21: the notification's own `body` property is
-                    // its message; the title is used as the card
-                    // label, same split as a task's title/status.
-                    InboxRowKind::Notification => entity
-                        .properties
-                        .get("body")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                };
-                let action = "Открыть";
+            .map(|(index, event)| {
                 (
                     stacked_row_rect(index, width, height),
-                    render::ActionCardView::new(entity.title.clone(), status, action),
+                    inbox_card_from_event(&event),
                 )
             })
             .collect()
@@ -10329,6 +10351,43 @@ mod tests {
         assert_eq!(
             rows.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
             projected.iter().map(|(_, id)| *id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn inbox_event_rows_name_offline_instead_of_pretending_empty() {
+        let offline = super::inbox_event_rows(&[], false);
+        assert_eq!(offline.len(), 1);
+        assert_eq!(offline[0].row.primary, "Нет связи");
+        assert!(!offline[0].row.is_actionable());
+
+        let empty = super::inbox_event_rows(&[], true);
+        assert_eq!(empty[0].row.primary, "Нет новых задач и уведомлений");
+        assert!(!empty[0].row.is_actionable());
+
+        let waiting = task_entity("Подтвердите удаление", None);
+        let note = notification_entity("Notice", "body");
+        let stale = super::inbox_event_rows(std::slice::from_ref(&waiting), false);
+        assert_eq!(stale[0].row.primary, "Нет связи");
+        assert!(
+            super::inbox_row_at((540.0, 500.0), 1080, 2400, &[waiting.clone()], false).is_none()
+        );
+
+        let live = super::inbox_event_rows(&[waiting.clone(), note], true);
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.value.as_deref(), Some("Ждёт подтверждения"));
+        assert_eq!(live[1].row.value.as_deref(), Some("body"));
+        assert!(live.iter().all(|row| row.row.is_actionable()));
+        assert_eq!(super::inbox_card_from_event(&live[0]).action, "Открыть");
+        assert_eq!(super::inbox_card_from_event(&empty[0]).action, "");
+        let first = stacked_row_rect(0, 1080, 2400);
+        let point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            super::inbox_row_at(point, 1080, 2400, &[waiting], true).map(|(kind, _)| kind),
+            Some(super::InboxRowKind::Task)
         );
     }
 

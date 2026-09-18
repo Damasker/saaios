@@ -49,7 +49,7 @@ in VUI-09; privileged system composites are not automatically public.
 | Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
 | Composite | `IntentSummary`, `TaskSummary`, `DecisionOverlay`, `AgentSummary` | Experimental (VUI-05) | Object View |
 | Composite | `SettingRow`, `CapabilityRow` | Experimental (VUI-06) | `Я` / `Система` |
-| Composite | `EventRow` | Deferred to VUI-04/05 | shell surfaces |
+| Composite | `EventRow` | Experimental (VUI-07) | `Входящие` |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
 ## 4. Shared state contract
@@ -240,7 +240,8 @@ VUI-03's three; `BottomNavigation`, `OrbHost`, and `SystemStatus` are VUI-04;
 `IntentSummary` and `TaskSummary` land in VUI-05. `DecisionOverlay` lands
 in VUI-05 on Object View confirmation. `AgentSummary` lands in VUI-05
 only from a real `saaios.action` (otherwise unassigned/unavailable).
-`EventRow` remains deferred.
+`SettingRow`/`CapabilityRow` land in VUI-06. `EventRow` lands in VUI-07
+on Inbox.
 
 ### 7.1 `ContextHeader`
 
@@ -421,12 +422,29 @@ only from a real `saaios.action` (otherwise unassigned/unavailable).
 - First real consumer: `me_system_sections` installed-app rows.
 - Accessibility: delegated to the nested `DataRow`.
 
+### 7.12 `EventRow`
+
+- Anatomy: a `DataRow` for one Inbox item. Live kinds: decision
+  (navigation, value «Ждёт подтверждения») and notice (navigation,
+  value = notification body). Absences: empty (static «Нет новых задач
+  и уведомлений») and offline (static «Нет связи»).
+- No invented timestamp, actor, object, or consequence. Those facts
+  stay on `DecisionOverlay` in Object View.
+- Distinct from `TaskSummary` (work identity) and `SettingRow` (device
+  control). Distinct from NOW «Требует внимания», which stays a
+  `StatusIndicator` in a `SystemSection`.
+- First real consumer: `inbox_event_rows` (ADR-127). Still flattened
+  to `ActionCardView` for `draw_root`; DataRow paint is later VUI-07.
+  Inbox tab stays (`inbox` / `RootPage::Inbox`).
+- Accessibility: delegated to the nested `DataRow`.
+
 ## 8. Required gallery matrix
 
 The first device gallery uses labelled fixture data and contains no fake
 runtime telemetry. VUI-02 covers the ten primitives (default state).
 VUI-05 adds a second page with composites and every `UniversalState`.
-Tap switches pages. `EventRow` is omitted until it exists.
+VUI-07 adds `EventRow` fixtures (decision and notice); that page does
+not grow a new layout slot in this slice. Tap switches pages.
 
 1. default, pressed, focused, disabled, and busy interaction states;
 2. compact and normal variants;

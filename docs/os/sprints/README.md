@@ -21,10 +21,10 @@ S00–S32 закрыли базовый трек — рабочий телефо
 [PIXEL-PATH.md](PIXEL-PATH.md), не восемь параллельных `*-10` weekend'ов.
 
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
-([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…03 закрыты;
-**выполняется VUI-04** (навигация, status, Orb). VUI-02 остаётся почти
-закрытым (шрифты в boot-image — единственный blocked item). Этот трек
-не переоткрывает S00–S32.
+([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;
+VUI-04 remainder и VUI-06 на panther; **выполняется VUI-07** (Inbox
+`EventRow`). VUI-02 остаётся почти закрытым (шрифты в boot-image —
+единственный blocked item). Этот трек не переоткрывает S00–S32.
 
 **Service queue (параллельно shell):** прошивка `saaios-runtime` /
 `saai-taskd` не считается вторым DRM-экспериментом. P0 — MEM-01
