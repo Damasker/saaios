@@ -2,10 +2,11 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: «Новое намерение» previews the
-draft through `Field` (`FieldKind::Text`). Keyboard tree, Cancel /
-Send / 123, and persist-vs-KeepDraft are not this slice. Pixel flash
-with the rest of VUI-07.
+Принято, 2026-09-18. «Новое намерение» previews the draft through
+`Field` (`FieldKind::Text`). Flashed panther `6239bebd…`: title
+below the status layer, empty placeholder `Наберите текст…`,
+keyboard unchanged, intent not sent. Consent, remote pairing,
+Object View, and PIN keypad chrome are not this slice.
 
 ## Нумерация
 
@@ -53,6 +54,6 @@ doc comment).
 ## Verification
 
 Host: field is Text; empty is distinct from the placeholder; offline
-help is `Нет связи` not an error. Physical Pixel with the rest of
-VUI-07: title visible below the clock, placeholder when empty,
-keyboard typeable. Do not send an intent for the screenshot.
+help is `Нет связи` not an error. Panther `6239bebd…`: `Новое
+намерение` below the clock, placeholder `Наберите текст…`, keyboard
+typeable. Intent was not sent for the screenshot.

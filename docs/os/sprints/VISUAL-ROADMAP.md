@@ -93,7 +93,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle on panther; intent input host ADR-135) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input on panther) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -889,7 +889,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…` on panther; intent input host ADR-135)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…` on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -936,7 +936,7 @@ big-bang rewrite.
 - [x] Migrate intent input onto `Field`. ADR-135: `FieldKind::Text`;
   title below the status layer; placeholder distinct from empty;
   offline `Нет связи` as help not error; keyboard unchanged. Do not
-  send an intent for the screenshot. Not flashed.
+  send an intent for the screenshot. Flashed `6239bebd…`.
 - [ ] Migrate Object View, consent, remote pairing,
   developer surface, and root fallback.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
@@ -1101,6 +1101,6 @@ Continue **VUI-07** remaining surfaces (PIN keypad chrome, Object
 View, Space detail). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
-setup (`eb4cb508…`), and lock idle (`a19327cb…`) are on panther.
-Intent input is host-only until flashed. Space detail still deferred.
-MEM-08 stays omitted until a shell-legal memory read exists.
+setup (`eb4cb508…`), lock idle (`a19327cb…`), and intent input
+(`6239bebd…`) are on panther. Space detail still deferred. MEM-08
+stays omitted until a shell-legal memory read exists.
