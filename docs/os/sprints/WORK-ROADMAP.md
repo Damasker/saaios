@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host DAG validation done; WORK-02 derived ready set in progress.**
+Status: **WORK-00 complete; WORK-01 host DAG validation done; WORK-02 derived ready set host; WORK-08 visibility host in progress.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -24,13 +24,13 @@ Planner the scheduler.
 |---|---|---|---|
 | WORK-00 | ADR-121 + mapping + this roadmap | **Done** | no |
 | WORK-01 | Task dependency model + DAG validation | **Done** (host) | no |
-| WORK-02 | Derived ready set + concurrency = 1 | **In progress** (host) | no |
+| WORK-02 | Derived ready set + concurrency = 1 | **Done** (host) | no |
 | WORK-03 | Verification lifecycle (`Verifying`) | Backlog | no |
 | WORK-04 | Read-only bounded parallelism | Backlog | measure first |
 | WORK-05 | Priority scheduling | Backlog | no |
 | WORK-06 | Retry + failure taxonomy | Backlog | no |
 | WORK-07 | Bounded ReplanRequest | Backlog | no |
-| WORK-08 | Сейчас / Orb / Object View visibility | Backlog | **yes** |
+| WORK-08 | Сейчас / Orb / Object View visibility | **In progress** (host) | **yes** |
 | WORK-09 | Pixel measurements + tuned budgets | Backlog | **yes** |
 
 ## WORK-00
@@ -74,6 +74,24 @@ Pending with one Running admits nothing; reboot snapshot matches.
 **Rollback:** drop `scheduler.rs`.
 
 **Threat:** none — no dispatch change, no new queue.
+
+## WORK-08
+
+**Goal:** Сейчас, Orb and Object View show real Task state. They do
+not become a scheduler dashboard, worker counter, or second inbox.
+
+**Change:** Object View reads the Task's own status (confirm only when
+`waiting_confirmation`). Intent Object View names the related Task.
+NOW ObjectSummary trails live work. «Далее» is a pending Action or
+the first derived-ready Task (same `depends_on_task_ids` rule as
+WORK-02). Orb still uses Running from `in_progress_work` plus ATTN-04.
+
+**Test:** running Task has no confirm buttons; Intent shows related
+Task; blocked child is omitted from «Далее»; finished related work
+does not trail on the object.
+
+**Rollback:** restore hardcoded «Ждёт подтверждения» and Action-only
+«Далее».
 
 ## Non-goals until later IDs
 

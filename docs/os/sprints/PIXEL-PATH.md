@@ -84,7 +84,7 @@ host-only derived view.
 | VUI slice | Берёт с собой |
 |---|---|
 | VUI-04 remainder | `Я`→`Система` (blocked). SafeInsets, rotation, keyboard, rapid-tab on host |
-| VUI-05 | NOW ATTN-02 **на panther**; Inbox ATTN-03 host; WORK-08 open |
+| VUI-05 | NOW ATTN-02 **на panther**; Inbox ATTN-03 host; WORK-08 host |
 | VUI-06 `Система` | ручной Memory list/correct/erase без модели = MEM-08 |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
