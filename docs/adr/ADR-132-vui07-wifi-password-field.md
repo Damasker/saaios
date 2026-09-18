@@ -2,10 +2,12 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: «Пароль для «SSID»» previews the
-PSK through `Field` (`FieldKind::Password`, not revealed). Keyboard
-tree, connect handlers, PIN setup, intent input, and lock restyle
-are not this slice. Pixel flash with the rest of VUI-07.
+Принято, 2026-09-18. «Пароль для «SSID»» previews the PSK through
+`Field` (`FieldKind::Password`, not revealed). Flashed panther
+`0eeb36d3…`: title below the status layer, empty placeholder
+`Введите пароль…` for Wallbox, keyboard unchanged, no PSK on
+screen. PIN setup, intent input, and lock restyle are not this
+slice.
 
 ## Нумерация
 
@@ -47,5 +49,6 @@ Keep connect behavior: Cancel closes; Send still calls
 
 Host: field is Password and not revealed; accessible value is bullets
 not the PSK; empty is distinct from the placeholder; SSID stays in
-the label. Physical Pixel with the rest of VUI-07: title visible
-below the clock, preview masked, keyboard still typeable.
+the label. Panther `0eeb36d3…`: `Пароль для «Wallbox»` below the
+clock, placeholder `Введите пароль…`, keyboard typeable, no PSK
+painted.
