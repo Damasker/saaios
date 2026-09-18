@@ -82,6 +82,17 @@ pub struct ObjectActionSpec {
     pub arguments: Vec<ArgumentBinding>,
     pub required_properties: Vec<String>,
     pub provider_id: String,
+    /// Whether resolving this action must pause for a live confirmation
+    /// (the same `WaitingConfirmation` gate `saai-taskd`'s existing
+    /// dangerous-intent path already uses) rather than being recorded as
+    /// `Done` immediately. This crate's own module doc says "risk,
+    /// confirmation and schemas stay on `ToolSpec`" -- true once a real
+    /// tool-registry integration exists, but until then this is the one
+    /// field standing between a future mutating spec and the same
+    /// silent fake-completion `display_inspect_spec` was never at risk
+    /// of (it has none). Defaults are never assumed here: every spec
+    /// constructor must set this explicitly.
+    pub requires_confirmation: bool,
 }
 
 impl ObjectActionSpec {
@@ -226,6 +237,10 @@ pub fn display_inspect_spec() -> ObjectActionSpec {
         arguments: Vec::new(),
         required_properties: Vec::new(),
         provider_id: "saai.local-system".into(),
+        // Genuinely read-only (see its own description above) -- the
+        // one spec today allowed to auto-complete without a live
+        // confirmation.
+        requires_confirmation: false,
     }
 }
 

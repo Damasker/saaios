@@ -116,6 +116,7 @@ mod tests {
             arguments,
             required_properties: required,
             provider_id: provider.into(),
+            requires_confirmation: false,
         }
     }
 
