@@ -857,6 +857,106 @@ pub fn draw_row_list(
     }
 }
 
+fn draw_action_card(
+    canvas: &mut Canvas<'_>,
+    rect: Rect,
+    card: &ActionCardView,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill_rect(rect, theme_color(ColorRole::Surface));
+    let has_action = !card.action.is_empty();
+    let text_left = if has_action {
+        canvas.fill_rect(
+            Rect::new(rect.x + 34, rect.y + 52, 104, 104),
+            theme_color(ColorRole::Accent),
+        );
+        rect.x + 174
+    } else {
+        rect.x + 34
+    };
+    let button = has_action.then(|| {
+        let button_width = 250.min(rect.width / 3);
+        let button = Rect::new(
+            rect.x + rect.width.saturating_sub(button_width + 34),
+            rect.y + 58,
+            button_width,
+            88,
+        );
+        canvas.fill_rect(button, theme_color(ColorRole::Accent));
+        button
+    });
+    let Some(fonts) = fonts else {
+        return;
+    };
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        &card.label,
+        38.0,
+        text_left,
+        rect.y + 48,
+        theme_color(ColorRole::TextPrimary),
+    );
+    draw_text(
+        canvas,
+        &fonts.regular,
+        &card.status,
+        27.0,
+        text_left,
+        rect.y + 108,
+        theme_color(ColorRole::TextSecondary),
+    );
+    if let Some(button) = button {
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            &card.action,
+            25.0,
+            button.x + button.width / 2,
+            button.y + 24,
+            theme_color(ColorRole::Canvas),
+        );
+    }
+}
+
+/// ADR-129: same header as `draw_row_list`, rows are `ActionCardView`
+/// (SSID + scan facts + connect button) instead of one concatenated
+/// label. Bluetooth / trusted clients still use `draw_row_list`.
+pub fn draw_action_row_list(
+    canvas: &mut Canvas<'_>,
+    title: &str,
+    status_line: &str,
+    header: Rect,
+    rows: &[(Rect, ActionCardView)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.fill_rect(header, theme_color(ColorRole::Surface));
+    if let Some(fonts) = fonts {
+        draw_text(
+            canvas,
+            &fonts.semibold,
+            title,
+            42.0,
+            header.x + 30,
+            header.y + 40,
+            theme_color(ColorRole::TextPrimary),
+        );
+        draw_text(
+            canvas,
+            &fonts.regular,
+            status_line,
+            30.0,
+            header.x + 30,
+            header.y + 130,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
+    }
+}
+
 /// S24: "Изменить PIN" on "Я" -- same header-plus-keys shape as
 /// `draw_intent_input`, but the preview is masked (a PIN is a secret,
 /// same reasoning as `WifiPasswordInput`'s masked preview) and the

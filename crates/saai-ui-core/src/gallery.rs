@@ -1,9 +1,9 @@
 //! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
-//! `EventRow`/`SpaceRow`. No live telemetry.
+//! `EventRow`/`SpaceRow`/`WifiRow`. No live telemetry.
 
 use crate::{
     AgentSummary, ContextHeader, DecisionOverlay, EventRow, IntentSummary, ObjectSummary, SpaceRow,
-    StatusIndicator, TaskSummary, UniversalState,
+    StatusIndicator, TaskSummary, UniversalState, WifiRow,
 };
 
 pub struct CompositeGalleryFixtures {
@@ -19,6 +19,9 @@ pub struct CompositeGalleryFixtures {
     pub event_notice: EventRow,
     pub space_selected: SpaceRow,
     pub space_other: SpaceRow,
+    pub wifi_connected: WifiRow,
+    pub wifi_other: WifiRow,
+    pub wifi_empty: WifiRow,
     pub states: [StatusIndicator; 9],
 }
 
@@ -41,6 +44,9 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
         event_notice: EventRow::notice("Notice", "body"),
         space_selected: SpaceRow::open("Дом", "Объектов: 3", "select_space:home", true),
         space_other: SpaceRow::open("Работа", "Объектов: 1", "select_space:work", false),
+        wifi_connected: WifiRow::open("Wallbox", "защищена · -42 dBm", true),
+        wifi_other: WifiRow::open("Guest", "открыта · -70 dBm", false),
+        wifi_empty: WifiRow::empty(),
         states: UniversalState::ALL
             .map(|state| StatusIndicator::new(state, state_fixture_label(state))),
     }
@@ -106,8 +112,11 @@ mod tests {
         assert_eq!(fixtures.event_notice.row.value.as_deref(), Some("body"));
         assert!(fixtures.space_selected.selected);
         assert!(!fixtures.space_other.selected);
+        assert!(fixtures.wifi_connected.connected);
+        assert!(!fixtures.wifi_other.connected);
+        assert_eq!(fixtures.wifi_empty.row.primary, "Нет сетей");
         let blob = format!(
-            "{} {} {} {} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {} {} {} {} {}",
             fixtures.title,
             fixtures.header.context_name,
             fixtures.object.title,
@@ -117,7 +126,9 @@ mod tests {
             fixtures.event_decision.row.primary,
             fixtures.event_notice.row.primary,
             fixtures.space_selected.row.primary,
-            fixtures.space_other.row.primary
+            fixtures.space_other.row.primary,
+            fixtures.wifi_connected.row.primary,
+            fixtures.wifi_empty.row.primary
         );
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));

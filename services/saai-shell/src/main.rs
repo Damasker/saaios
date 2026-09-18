@@ -463,7 +463,8 @@ use saai_ui_core::{
     DataRowVariant, DecisionOverlay, EventRow, IntentSummary, LayoutNode, Length, LogicalUnit,
     MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets,
     SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale,
-    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
+    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, UniversalState, WifiRow,
+    MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1785,16 +1786,26 @@ struct PinSetupState {
 /// One row of `wifi_scan_results()`'s output, or a fixed trailing
 /// "Обновить"/"Назад" control row -- returned by `wifi_list_action_at`
 /// the same way `InboxRowKind` disambiguates "Входящие"'s rows.
+/// Empty scan occupies one non-tappable `WifiRow`, so Refresh/Back
+/// sit after `wifi_list_row_count`, not after a zero-length list.
 enum WifiListTap {
     Network(usize),
     Refresh,
     Back,
 }
 
+fn wifi_list_row_count(network_count: usize) -> usize {
+    if network_count == 0 {
+        1
+    } else {
+        network_count
+    }
+}
+
 /// Same reasoning as `me_action_at`: `network_count` is runtime-sized
 /// (like `installed_apps.len()` elsewhere), so this can't be a
 /// `root.sui` entry -- two more `stacked_row_rect` slots after the
-/// networks are the fixed "Обновить"/"Назад" controls.
+/// `WifiRow` list are the fixed "Обновить"/"Назад" controls.
 fn wifi_list_action_at(
     pos: (f64, f64),
     width: u32,
@@ -1806,10 +1817,11 @@ fn wifi_list_action_at(
             return Some(WifiListTap::Network(index));
         }
     }
-    if stacked_row_rect(network_count, width, height).contains(pos.0, pos.1) {
+    let controls = wifi_list_row_count(network_count);
+    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
         return Some(WifiListTap::Refresh);
     }
-    if stacked_row_rect(network_count + 1, width, height).contains(pos.0, pos.1) {
+    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
         return Some(WifiListTap::Back);
     }
     None
@@ -1962,7 +1974,7 @@ enum Frame {
     WifiList {
         header: Rect,
         status_line: String,
-        rows: Vec<(Rect, String)>,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
     BluetoothList {
         header: Rect,
@@ -3901,6 +3913,50 @@ fn space_card_from_row(row: &SpaceRow) -> render::ActionCardView {
         ""
     };
     render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.selected)
+}
+
+/// VUI-07 (ADR-129): «Wi-Fi сети» lists live scan rows, not a
+/// concatenated one-line label. Empty scan is «Нет сетей».
+fn wifi_network_status(network: &WifiNetwork) -> String {
+    format!(
+        "{} · {} dBm",
+        if network.secured {
+            "защищена"
+        } else {
+            "открыта"
+        },
+        network.signal_dbm
+    )
+}
+
+fn wifi_list_rows(networks: &[WifiNetwork], connected_ssid: Option<&str>) -> Vec<WifiRow> {
+    if networks.is_empty() {
+        return vec![WifiRow::empty()];
+    }
+    networks
+        .iter()
+        .map(|network| {
+            WifiRow::open(
+                network.ssid.clone(),
+                wifi_network_status(network),
+                connected_ssid == Some(network.ssid.as_str()),
+            )
+        })
+        .collect()
+}
+
+fn wifi_card_from_row(row: &WifiRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        if row.connected {
+            "Подключено"
+        } else {
+            "Подключить"
+        }
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.connected)
 }
 
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
@@ -5860,34 +5916,29 @@ impl Shell {
                 keys,
             }
         } else if let Some(networks) = &self.wifi_list {
-            // S19: runtime-sized, like "Входящие"/"Сейчас" -- see
-            // `wifi_list_action_at`'s own doc comment for why this
-            // uses `stacked_row_rect` instead of a `root.sui` entry.
+            // S19 / ADR-129: runtime-sized WifiRow list plus trailing
+            // refresh/back cards -- see `wifi_list_action_at`.
             let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
-            let mut rows: Vec<(Rect, String)> = networks
+            let connected = wifi_connected_ssid();
+            let wifi_rows = wifi_list_rows(networks, connected.as_deref());
+            let mut rows: Vec<(Rect, render::ActionCardView)> = wifi_rows
                 .iter()
                 .enumerate()
-                .map(|(index, network)| {
-                    let label = format!(
-                        "{}   ·   {}   ·   {} dBm",
-                        network.ssid,
-                        if network.secured {
-                            "защищена"
-                        } else {
-                            "открыта"
-                        },
-                        network.signal_dbm
-                    );
-                    (stacked_row_rect(index, width, height), label)
+                .map(|(index, row)| {
+                    (
+                        stacked_row_rect(index, width, height),
+                        wifi_card_from_row(row),
+                    )
                 })
                 .collect();
+            let controls = rows.len();
             rows.push((
-                stacked_row_rect(networks.len(), width, height),
-                "Обновить".to_string(),
+                stacked_row_rect(controls, width, height),
+                render::ActionCardView::new("Обновить", "", "Обновить"),
             ));
             rows.push((
-                stacked_row_rect(networks.len() + 1, width, height),
-                "Назад".to_string(),
+                stacked_row_rect(controls + 1, width, height),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::WifiList {
                 header,
@@ -6226,7 +6277,7 @@ impl Shell {
                     status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_action_row_list(
                         &mut render::Canvas::new(canvas, width, height),
                         "Wi-Fi сети",
                         &status_line,
@@ -8524,14 +8575,15 @@ mod tests {
         space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
         space_list_rows, space_relation_targets, space_row_at, stacked_row_rect, tab_at,
         task_confirm_action_at, today_schedules, trusted_client_action_at, upsert_context_entry,
-        wifi_list_action_at, AgentSummary, BluetoothListTap, ContextFrameEntry, ContextSource,
-        Entity, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceLifecycle, SystemSectionRow, TrustedClientTap, UniversalState, WifiListTap,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        wifi_card_from_row, wifi_list_action_at, wifi_list_rows, AgentSummary, BluetoothListTap,
+        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClientTap,
+        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -8924,6 +8976,24 @@ mod tests {
         let width = 1080;
         let height = 2400;
         assert!(wifi_list_action_at((10.0, 10.0), width, height, 0).is_none());
+        let empty = stacked_row_rect(0, width, height);
+        let refresh = stacked_row_rect(1, width, height);
+        let back = stacked_row_rect(2, width, height);
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        assert!(wifi_list_action_at(center(empty), width, height, 0).is_none());
+        assert!(matches!(
+            wifi_list_action_at(center(refresh), width, height, 0),
+            Some(WifiListTap::Refresh)
+        ));
+        assert!(matches!(
+            wifi_list_action_at(center(back), width, height, 0),
+            Some(WifiListTap::Back)
+        ));
     }
 
     #[test]
@@ -9762,6 +9832,40 @@ mod tests {
             space_row_at(point, 1080, 2400, &spaces, true).as_deref(),
             Some("home")
         );
+    }
+
+    #[test]
+    fn wifi_list_rows_use_scan_facts_and_name_empty() {
+        let networks = vec![
+            WifiNetwork {
+                ssid: "Wallbox".into(),
+                secured: true,
+                signal_dbm: -42,
+            },
+            WifiNetwork {
+                ssid: "Guest".into(),
+                secured: false,
+                signal_dbm: -70,
+            },
+        ];
+        let live = wifi_list_rows(&networks, Some("Wallbox"));
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.primary, "Wallbox");
+        assert!(live[0].connected);
+        assert_eq!(live[0].row.value.as_deref(), Some("защищена · -42 dBm"));
+        assert_eq!(wifi_card_from_row(&live[0]).action, "Подключено");
+        assert_eq!(live[1].row.primary, "Guest");
+        assert!(!live[1].connected);
+        assert_eq!(live[1].row.value.as_deref(), Some("открыта · -70 dBm"));
+        assert_eq!(wifi_card_from_row(&live[1]).action, "Подключить");
+        assert!(!live.iter().any(|row| row.row.primary.contains("▮")
+            || row.row.value.as_deref().unwrap_or("").contains("привязать")));
+
+        let empty = wifi_list_rows(&[], None);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].row.primary, "Нет сетей");
+        assert!(!empty[0].row.is_actionable());
+        assert_eq!(wifi_card_from_row(&empty[0]).action, "");
     }
 
     #[test]

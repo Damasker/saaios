@@ -6,7 +6,7 @@
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
-//! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`.
+//! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`/`WifiRow`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
@@ -674,6 +674,38 @@ impl SpaceRow {
     }
 }
 
+/// Section 7.14. One scanned SSID on «Wi-Fi сети»: the name, a
+/// secured/open plus dBm value from scan, and whether this BSS is
+/// associated. Empty is an honest absence. No RSSI bars, no Space
+/// binding — those are not this composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WifiRow {
+    pub row: DataRow,
+    pub connected: bool,
+}
+
+impl WifiRow {
+    pub fn open(ssid: impl Into<String>, status: impl Into<String>, connected: bool) -> Self {
+        Self {
+            row: DataRow::new(ssid, DataRowVariant::Navigation)
+                .with_value(status)
+                .with_action("connect_wifi"),
+            connected,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет сетей", DataRowVariant::Static),
+            connected: false,
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
 /// Section 7.4. One destination in the bottom navigation strip. `icon` is
 /// optional rather than required: this project's current icon set
 /// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
@@ -1278,5 +1310,36 @@ mod tests {
         );
         assert!(!blob.contains("Люди"));
         assert!(!blob.contains("Приложения"));
+    }
+
+    #[test]
+    fn wifi_row_does_not_invent_bars_or_a_space_binding() {
+        let connected = WifiRow::open("Wallbox", "защищена · -42 dBm", true);
+        assert_eq!(connected.row.variant, DataRowVariant::Navigation);
+        assert!(connected.connected);
+        assert!(connected.row.is_actionable());
+        assert_eq!(connected.row.action.as_deref(), Some("connect_wifi"));
+        assert_eq!(connected.row.value.as_deref(), Some("защищена · -42 dBm"));
+
+        let open = WifiRow::open("Guest", "открыта · -70 dBm", false);
+        assert!(!open.connected);
+        assert_eq!(open.row.primary, "Guest");
+
+        let empty = WifiRow::empty();
+        assert_eq!(empty.row.primary, "Нет сетей");
+        assert!(!empty.row.is_actionable());
+        assert!(!empty.connected);
+
+        let blob = format!(
+            "{} {} {} {} {}",
+            connected.row.primary,
+            open.row.primary,
+            empty.row.primary,
+            connected.row.value.as_deref().unwrap_or(""),
+            open.row.value.as_deref().unwrap_or("")
+        );
+        assert!(!blob.contains("▮"));
+        assert!(!blob.contains("привязать"));
+        assert!(!blob.contains("Дом"));
     }
 }

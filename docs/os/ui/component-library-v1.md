@@ -51,6 +51,7 @@ in VUI-09; privileged system composites are not automatically public.
 | Composite | `SettingRow`, `CapabilityRow` | Experimental (VUI-06) | `Я` / `Система` |
 | Composite | `EventRow` | Experimental (VUI-07) | `Входящие` |
 | Composite | `SpaceRow` | Experimental (VUI-07) | `Пространства` |
+| Composite | `WifiRow` | Experimental (VUI-07) | `Wi-Fi сети` |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
 ## 4. Shared state contract
@@ -243,6 +244,7 @@ in VUI-05 on Object View confirmation. `AgentSummary` lands in VUI-05
 only from a real `saaios.action` (otherwise unassigned/unavailable).
 `SettingRow`/`CapabilityRow` land in VUI-06. `EventRow` lands in VUI-07
 on Inbox. `SpaceRow` lands in VUI-07 on the Пространства tab list.
+`WifiRow` lands in VUI-07 on «Wi-Fi сети».
 
 ### 7.1 `ContextHeader`
 
@@ -452,13 +454,26 @@ on Inbox. `SpaceRow` lands in VUI-07 on the Пространства tab list.
   `ActionCardView`. Tab id stays `spaces`.
 - Accessibility: delegated to the nested `DataRow`.
 
+### 7.14 `WifiRow`
+
+- Anatomy: a `DataRow` for one scanned SSID on «Wi-Fi сети».
+  Navigation. Status is `защищена` or `открыта` plus the real scan
+  `signal_dbm`. `connected` marks the associated BSS.
+- Empty: static «Нет сетей». Missing adapter is named on Система
+  («Нет адаптера») and does not open this list.
+- Not a password field, not a Bluetooth list, not a Space binding.
+- First real consumer: `wifi_list_rows` (ADR-129). Flattened to
+  `ActionCardView`. «Обновить» / «Назад» stay trailing control cards.
+- Accessibility: delegated to the nested `DataRow`.
+
 ## 8. Required gallery matrix
 
 The first device gallery uses labelled fixture data and contains no fake
 runtime telemetry. VUI-02 covers the ten primitives (default state).
 VUI-05 adds a second page with composites and every `UniversalState`.
-VUI-07 adds `EventRow` and `SpaceRow` fixtures; that page does
-not grow a new layout slot in this slice. Tap switches pages.
+VUI-07 adds `EventRow`, `SpaceRow`, and `WifiRow` fixtures; that
+page does not grow a new layout slot in this slice. Tap switches
+pages.
 
 1. default, pressed, focused, disabled, and busy interaction states;
 2. compact and normal variants;
