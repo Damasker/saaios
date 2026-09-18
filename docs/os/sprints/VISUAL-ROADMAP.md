@@ -675,20 +675,19 @@ turning the Orb into a launcher or assistant avatar.
 - [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
   only when the destination content is truthful.
 - [x] Add explicit selected, pressed, disabled, attention, and badge states
-  (ADR-116). Four of five have a real trigger today: `selected` (current
-  page), `disabled`/`attention` (rendered correctly when set, tested),
-  `badge` (a real count -- "Входящие"'s own `inbox_rows().len()`, not a
-  separate tally). `pressed` is a real field `draw_tab_bar` already reads,
-  but nothing in `saai-shell` sets it yet -- no touch-down tracking feeds
-  it, so it is always `false` in practice. Flagged, not silently dropped.
+  (ADR-116). `selected` is the current page; `badge`/`attention` come from
+  `inbox_rows().len()`; `pressed` is the live finger on that tab
+  (`pressed_tab_from_touch` / `Shell::pressed_tab`) and paints
+  `ColorRole::Pressed` plus a bottom hairline without changing icon size.
+  `disabled` still has no real trigger -- no tab is actually disabled.
 - [ ] Apply Context Light grammar: context=color, state=shape,
   activity=motion, quantity=arc/fill, attention=ring. Two of five axes
   live so far (ADR-116, on the Orb only): state=shape (every
   `UniversalState` gets its own `StatusMark`) and context=color (the
   Space's own color for `Idle`/`Active`, the state's own semantic color
   otherwise). activity=motion, quantity=arc/fill, and attention=ring are
-  not yet fully built -- `MotionCue`/reduced-motion wiring and a real
-  arc/fill quantity visual remain open. **Attention ring (v1):**
+  not yet fully built -- `MotionCue` and a real arc/fill quantity visual
+  remain open. **Attention ring (v1):**
   `OrbHost::attention_ring()` is true only for `UniversalState::Attention`,
   and the shell lights that state from `saai-attention` (WaitingConfirmation
   Tasks and undismissed Notifications), then `draw_orb` paints a
@@ -699,11 +698,9 @@ turning the Orb into a launcher or assistant avatar.
   with real triggers -- `Offline` from real `appd`/`entityd` connection
   checks, `Attention` from undismissed notifications, `Running` from the
   same `in_progress_work` query VUI-03's "Продолжается" already uses,
-  `Active` from the menu being open. **Not done**: `reduced_motion` is a
-  real field `OrbHost`/`draw_calibration_mark`'s caller can read, but no
-  `ShellSettings` field or system setting exists anywhere yet to actually
-  set it -- always `false` in practice, same honesty gap as `pressed`
-  above.
+  `Active` from the menu being open. `reduced_motion` is
+  `ShellSettings.reduced_motion` (Я → «Меньше движения»), passed into
+  `OrbHost::with_reduced_motion` so Running is not busy when set.
 - [ ] Retain direct tab navigation during Orb work; do not make the Orb the only
   route.
 - [ ] Make status/navigation layers independent of scrolling content damage.

@@ -2013,11 +2013,10 @@ pub fn draw_root(
 /// all come from that item's own data, not a separate index parameter
 /// (which `draw_root` still needs for its own unrelated title-lookup/
 /// row-count logic, so it keeps its own `selected: usize`, just no
-/// longer forwards it here). `pressed` is part of the contract
-/// (`NavigationItem::pressed`) but has no real trigger anywhere yet --
-/// no touch-down tracking feeds it -- so it is read here for
-/// completeness but never actually true today; flagged, not silently
-/// dropped from the type.
+/// longer forwards it here). `pressed` is a real touch-down on that
+/// tab (`Shell::pressed_tab`); it uses the pressed token and a bottom
+/// hairline so color is never the only cue, and it does not change
+/// icon size or move neighbors.
 pub fn draw_tab_bar(
     canvas: &mut Canvas<'_>,
     tabs: &[(Rect, NavigationItem)],
@@ -2039,16 +2038,27 @@ pub fn draw_tab_bar(
     for (rect, item) in tabs {
         let rect = *rect;
         let is_selected = item.selected;
-        if is_selected {
+        let inner = Rect::new(
+            rect.x.saturating_add(12),
+            rect.y.saturating_add(12),
+            rect.width.saturating_sub(24),
+            rect.height.saturating_sub(24),
+        );
+        if item.pressed && !item.disabled {
+            canvas.fill_rect(inner, theme_color(ColorRole::Pressed));
             canvas.fill_rect(
                 Rect::new(
-                    rect.x.saturating_add(12),
-                    rect.y.saturating_add(12),
-                    rect.width.saturating_sub(24),
-                    rect.height.saturating_sub(24),
+                    inner.x,
+                    inner.y + inner.height.saturating_sub(8),
+                    inner.width,
+                    8,
                 ),
-                theme_color(ColorRole::Elevated),
+                theme_color(ColorRole::TextSecondary),
             );
+        } else if is_selected {
+            canvas.fill_rect(inner, theme_color(ColorRole::Elevated));
+        }
+        if is_selected {
             canvas.fill_rect(
                 Rect::new(
                     rect.x.saturating_add(rect.width.saturating_sub(112) / 2),
@@ -2534,8 +2544,8 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, context_color, draw_calibration, draw_gallery, draw_orb, draw_root,
-        draw_status_bar, gallery_row_positions, physical_line_height, state_color, theme_color,
-        Canvas,
+        draw_status_bar, draw_tab_bar, gallery_row_positions, physical_line_height, state_color,
+        theme_color, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, NavigationItem, Rect, StatusMark, SystemStatus, TextRole,
@@ -2677,6 +2687,43 @@ mod tests {
         );
         assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Surface));
         assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Accent));
+    }
+
+    #[test]
+    fn pressed_tab_uses_pressed_token_without_shifting_neighbors() {
+        let tabs = |pressed_inbox: bool| -> Vec<(Rect, NavigationItem)> {
+            let mut inbox = NavigationItem::new("inbox", "Входящие");
+            if pressed_inbox {
+                inbox = inbox.pressed();
+            }
+            vec![
+                (
+                    Rect::new(0, 2100, 270, 300),
+                    NavigationItem::new("now", "Сейчас").selected(),
+                ),
+                (Rect::new(270, 2100, 270, 300), inbox),
+            ]
+        };
+        let mut idle = vec![0; 1080 * 2400 * 4];
+        let mut down = vec![0; 1080 * 2400 * 4];
+        draw_tab_bar(&mut Canvas::new(&mut idle, 1080, 2400), &tabs(false), None);
+        draw_tab_bar(&mut Canvas::new(&mut down, 1080, 2400), &tabs(true), None);
+        assert_eq!(
+            Canvas::new(&mut down, 1080, 2400).pixel(292, 2122),
+            theme_color(ColorRole::Pressed)
+        );
+        assert_ne!(
+            Canvas::new(&mut idle, 1080, 2400).pixel(292, 2122),
+            theme_color(ColorRole::Pressed)
+        );
+        assert_eq!(
+            Canvas::new(&mut down, 1080, 2400).pixel(135, 2125),
+            theme_color(ColorRole::Accent)
+        );
+        assert_eq!(
+            Canvas::new(&mut idle, 1080, 2400).pixel(135, 2125),
+            theme_color(ColorRole::Accent)
+        );
     }
 
     #[test]
