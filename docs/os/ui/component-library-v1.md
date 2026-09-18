@@ -48,6 +48,7 @@ in VUI-09; privileged system composites are not automatically public.
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
 | Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
 | Composite | `IntentSummary`, `TaskSummary`, `DecisionOverlay`, `AgentSummary` | Experimental (VUI-05) | Object View |
+| Composite | `SettingRow`, `CapabilityRow` | Experimental (VUI-06) | `Я` / `Система` |
 | Composite | `EventRow` | Deferred to VUI-04/05 | shell surfaces |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
@@ -395,6 +396,30 @@ only from a real `saaios.action` (otherwise unassigned/unavailable).
   Notifications and unknown types omit the composite entirely.
 - Accessibility: unassigned/unavailable name is the caption; assigned
   name is the Action title and value is the nested state's `label_key`.
+
+### 7.10 `SettingRow`
+
+- Anatomy: a `DataRow` with a setting label and the current value.
+  Variants: readout (static), cycle (toggle), open (navigation), silent
+  (looks static, still has a dispatch key for HIA-20).
+- Not a gauge. Continuous `Metric`/`Progress` is only for values that
+  inform a decision; brightness/volume stay cycle rows.
+- Missing hardware, denied permission, or unverified effect is the
+  real value string or an omitted row — never a painted healthy cluster.
+- Distinct from `CapabilityRow`: this is a device setting, not an app
+  grant list.
+- First real consumer: `me_system_sections` (ADR-126). Still flattened
+  to `ActionCardView` for `draw_root`; DataRow paint is VUI-07.
+- Accessibility: delegated to the nested `DataRow`.
+
+### 7.11 `CapabilityRow`
+
+- Anatomy: app name, lifecycle/state value, granted capabilities as
+  secondary text. Static. No revoke action (no protocol).
+- Empty grant set is «без разрешений», not invented scopes.
+- Omit the parent `Приложения` section when there are no apps.
+- First real consumer: `me_system_sections` installed-app rows.
+- Accessibility: delegated to the nested `DataRow`.
 
 ## 8. Required gallery matrix
 

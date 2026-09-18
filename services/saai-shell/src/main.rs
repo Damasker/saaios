@@ -459,11 +459,11 @@ use saai_object_actions::{
     ObjectActionRegistry,
 };
 use saai_ui_core::{
-    layout, AgentSummary, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant,
-    DecisionOverlay, IntentSummary, LayoutNode, Length, LogicalUnit, MotionCue, NavigationItem,
-    Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection, SystemSectionRow,
-    SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
+    layout, AgentSummary, Axis, CapabilityRow, ContextColor, ContextHeader, DataRow,
+    DataRowVariant, DecisionOverlay, IntentSummary, LayoutNode, Length, LogicalUnit, MotionCue,
+    NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow,
+    StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection,
+    SystemSectionRow, SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -3912,44 +3912,326 @@ fn me_max_scroll_offset(total_rows: usize, width: u32, height: u32, content_rect
     let content_bottom = content_rect.y + content_rect.height;
     (last_row_bottom as i32 - content_bottom as i32).max(0)
 }
-/// Count of `me_all_card_views`'s fixed (non-app) entries -- kept as
-/// one literal here rather than derived from that function's return
-/// length, since `me_fixed_card_action` has to agree with it and
-/// there's no way to assert two functions' lengths match at compile
-/// time anyway.
-const ME_FIXED_CARD_COUNT: usize = 19;
-
 /// HIA-20: how many silent taps on the build-id card
-/// (`me_fixed_card_action`'s index 1) open the hidden diagnostic
-/// screen -- same number as Android's own well-known "tap build
-/// number" developer-options unlock.
+/// (`tap_build_info`) open the hidden diagnostic screen -- same
+/// number as Android's own well-known "tap build number"
+/// developer-options unlock.
 const DEV_SURFACE_TAP_THRESHOLD: u32 = 7;
 
-/// The `me_all_card_views`'s logical index -> tap action mapping.
-/// `None` for the two purely read-only info rows (device summary,
-/// storage), "Обновления" (S22, read-only by design), and every
-/// installed-app row (info-only on "Я", unlike "Сейчас"'s `now_
-/// action_at`). Index 1 (build info) looks read-only too -- its tap
-/// action is silent by design, see `DEV_SURFACE_TAP_THRESHOLD`.
-fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
-    match logical_index {
-        1 => Some("tap_build_info"),
-        3 => Some("cycle_brightness"),
-        4 => Some("cycle_idle_timeout"),
-        5 => Some("cycle_deep_idle_timeout"),
-        6 => Some("cycle_timezone"),
-        8 => Some("cycle_volume"),
-        9 => Some("open_wifi_list"),
-        10 => Some("open_bluetooth_list"),
-        11 => Some("open_pin_setup"),
-        12 => Some("cycle_text_scale"),
-        13 => Some("cycle_contrast"),
-        14 => Some("toggle_remote_access"),
-        15 => Some("open_trusted_clients"),
-        16 => Some("cycle_space_color"),
-        17 => Some("toggle_orb"),
-        18 => Some("toggle_reduced_motion"),
+/// ADR-126: one installed app on `Я`, already labelled. Owned strings
+/// so `me_system_sections` is host-testable without a live `Shell`.
+struct MeAppFact {
+    name: String,
+    state: String,
+    grants: String,
+}
+
+/// Snapshot of every real `Я` fact `me_system_sections` needs.
+/// Memory, Android VM, and battery-as-a-page-gauge are intentionally
+/// absent (ADR-126).
+struct MeFacts {
+    space_count: usize,
+    entity_count: usize,
+    build_id: String,
+    model: String,
+    kernel: String,
+    uptime: String,
+    storage: String,
+    brightness_pct: u8,
+    idle_timeout_secs: u64,
+    deep_idle_timeout_secs: u64,
+    utc_offset_minutes: i32,
+    boot_slot: String,
+    boot_attempts: u32,
+    volume_pct: u8,
+    wifi_status: String,
+    bluetooth_paired: usize,
+    pin_set: bool,
+    text_scale_pct: u8,
+    contrast_pct: u8,
+    remote_access: bool,
+    trusted_client_count: usize,
+    space_color_label: String,
+    space_name: String,
+    orb_enabled: bool,
+    reduced_motion: bool,
+    apps: Vec<MeAppFact>,
+}
+
+struct MeRow {
+    card: render::ActionCardView,
+    dispatch: Option<&'static str>,
+}
+
+fn me_section_data(title: &'static str, rows: Vec<DataRow>) -> SystemSection {
+    let mut section = SystemSection::new(title);
+    for row in rows {
+        section = section.with_row(SystemSectionRow::Data(row));
+    }
+    section
+}
+
+/// ADR-126: group the existing `Я` controls by device domain.
+/// Empty `Приложения` is omitted. Memory is not a row.
+fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
+    let pin_status = if facts.pin_set {
+        "Установлен"
+    } else {
+        "Не установлен -- разблокировка тапом"
+    };
+    let contrast_status = if facts.contrast_pct == 0 {
+        "Обычный".to_string()
+    } else {
+        format!("Повышенный ({}%)", facts.contrast_pct)
+    };
+    let remote_status = if facts.remote_access {
+        "Включён -- новые устройства могут запросить доступ"
+    } else {
+        "Выключен"
+    };
+    let orb_status = if facts.orb_enabled {
+        "Включён"
+    } else {
+        "Выключен -- только таб-бар"
+    };
+    let motion_status = if facts.reduced_motion {
+        "Включено -- Running не busy"
+    } else {
+        "Выключено"
+    };
+
+    let mut sections = vec![
+        me_section_data(
+            "Устройство",
+            vec![
+                SettingRow::readout(
+                    "Это устройство",
+                    format!(
+                        "Пространств: {} · Объектов: {}",
+                        facts.space_count, facts.entity_count
+                    ),
+                )
+                .row,
+                SettingRow::silent(
+                    format!("SaaiOS · сборка {}", facts.build_id),
+                    format!(
+                        "{} · ядро {} · работает {}",
+                        facts.model, facts.kernel, facts.uptime
+                    ),
+                    "tap_build_info",
+                )
+                .row,
+                SettingRow::readout("Хранилище", facts.storage.clone()).row,
+                SettingRow::readout(
+                    "Обновления",
+                    format!(
+                        "Слот {} · попыток загрузки: {}",
+                        facts.boot_slot, facts.boot_attempts
+                    ),
+                )
+                .row,
+                SettingRow::cycle(
+                    "Часовой пояс",
+                    format_utc_offset(facts.utc_offset_minutes),
+                    "cycle_timezone",
+                )
+                .row,
+            ],
+        ),
+        me_section_data(
+            "Экран",
+            vec![
+                SettingRow::cycle(
+                    "Яркость экрана",
+                    format!("{}%", facts.brightness_pct),
+                    "cycle_brightness",
+                )
+                .row,
+                SettingRow::cycle(
+                    "Блокировка экрана",
+                    format!("через {} с бездействия", facts.idle_timeout_secs),
+                    "cycle_idle_timeout",
+                )
+                .row,
+                SettingRow::cycle(
+                    "Гашение экрана",
+                    format!("через {} с после блокировки", facts.deep_idle_timeout_secs),
+                    "cycle_deep_idle_timeout",
+                )
+                .row,
+                SettingRow::cycle(
+                    "Размер текста",
+                    format!("{}%", facts.text_scale_pct),
+                    "cycle_text_scale",
+                )
+                .row,
+                SettingRow::cycle("Контраст", contrast_status, "cycle_contrast").row,
+            ],
+        ),
+        me_section_data(
+            "Звук",
+            vec![
+                SettingRow::cycle(
+                    "Громкость",
+                    format!("{}%", facts.volume_pct),
+                    "cycle_volume",
+                )
+                .row,
+            ],
+        ),
+        me_section_data(
+            "Связь",
+            vec![
+                SettingRow::open("Wi-Fi", facts.wifi_status.clone(), "open_wifi_list").row,
+                SettingRow::open(
+                    "Bluetooth",
+                    format!("Сопряжено устройств: {}", facts.bluetooth_paired),
+                    "open_bluetooth_list",
+                )
+                .row,
+                SettingRow::cycle(
+                    "Удалённый доступ (SSH)",
+                    remote_status,
+                    "toggle_remote_access",
+                )
+                .row,
+                SettingRow::open(
+                    "Доверенные клиенты",
+                    format!("{} ключей", facts.trusted_client_count),
+                    "open_trusted_clients",
+                )
+                .row,
+            ],
+        ),
+        me_section_data(
+            "Приватность",
+            vec![SettingRow::open("PIN-код", pin_status, "open_pin_setup").row],
+        ),
+        me_section_data(
+            "Пространство",
+            vec![
+                SettingRow::cycle(
+                    "Цвет пространства",
+                    format!("{} · {}", facts.space_color_label, facts.space_name),
+                    "cycle_space_color",
+                )
+                .row,
+            ],
+        ),
+        me_section_data(
+            "Интерфейс",
+            vec![
+                SettingRow::cycle("Orb", orb_status, "toggle_orb").row,
+                SettingRow::cycle("Меньше движения", motion_status, "toggle_reduced_motion").row,
+            ],
+        ),
+    ];
+    if !facts.apps.is_empty() {
+        let rows = facts
+            .apps
+            .iter()
+            .map(|app| {
+                CapabilityRow::new(app.name.clone(), app.state.clone(), app.grants.clone()).row
+            })
+            .collect();
+        sections.push(me_section_data("Приложения", rows));
+    }
+    sections
+}
+
+fn intern_me_action(action: Option<&str>) -> Option<&'static str> {
+    match action {
+        Some("tap_build_info") => Some("tap_build_info"),
+        Some("cycle_brightness") => Some("cycle_brightness"),
+        Some("cycle_idle_timeout") => Some("cycle_idle_timeout"),
+        Some("cycle_deep_idle_timeout") => Some("cycle_deep_idle_timeout"),
+        Some("cycle_timezone") => Some("cycle_timezone"),
+        Some("cycle_volume") => Some("cycle_volume"),
+        Some("open_wifi_list") => Some("open_wifi_list"),
+        Some("open_bluetooth_list") => Some("open_bluetooth_list"),
+        Some("open_pin_setup") => Some("open_pin_setup"),
+        Some("cycle_text_scale") => Some("cycle_text_scale"),
+        Some("cycle_contrast") => Some("cycle_contrast"),
+        Some("toggle_remote_access") => Some("toggle_remote_access"),
+        Some("open_trusted_clients") => Some("open_trusted_clients"),
+        Some("cycle_space_color") => Some("cycle_space_color"),
+        Some("toggle_orb") => Some("toggle_orb"),
+        Some("toggle_reduced_motion") => Some("toggle_reduced_motion"),
         _ => None,
+    }
+}
+
+fn me_button_label(action: Option<&str>) -> &'static str {
+    match action {
+        Some("open_wifi_list") => "Сети",
+        Some("open_bluetooth_list") => "Устройства",
+        Some("open_trusted_clients") => "Открыть",
+        Some("tap_build_info") | None => "",
+        Some(_) => "Изменить",
+    }
+}
+
+fn me_card_status(row: &DataRow) -> String {
+    match (&row.value, &row.secondary) {
+        (Some(value), Some(secondary)) => format!("{value} · {secondary}"),
+        (Some(value), None) => value.clone(),
+        (None, Some(secondary)) => secondary.clone(),
+        (None, None) => String::new(),
+    }
+}
+
+fn flatten_me_rows(sections: &[SystemSection]) -> Vec<MeRow> {
+    let mut rows = Vec::new();
+    for section in sections {
+        rows.push(MeRow {
+            card: render::ActionCardView::new(section.title.clone(), "", ""),
+            dispatch: None,
+        });
+        for child in &section.rows {
+            if let SystemSectionRow::Data(data) = child {
+                let action = intern_me_action(data.action.as_deref());
+                rows.push(MeRow {
+                    card: render::ActionCardView::new(
+                        data.primary.clone(),
+                        me_card_status(data),
+                        me_button_label(action),
+                    ),
+                    dispatch: action,
+                });
+            }
+        }
+    }
+    rows
+}
+
+fn me_fixture_facts() -> MeFacts {
+    MeFacts {
+        space_count: 2,
+        entity_count: 4,
+        build_id: "test".into(),
+        model: "panther".into(),
+        kernel: "6.1".into(),
+        uptime: "1 ч".into(),
+        storage: "12 ГБ свободно".into(),
+        brightness_pct: 50,
+        idle_timeout_secs: 60,
+        deep_idle_timeout_secs: 30,
+        utc_offset_minutes: 180,
+        boot_slot: "A".into(),
+        boot_attempts: 1,
+        volume_pct: 40,
+        wifi_status: "Wallbox".into(),
+        bluetooth_paired: 0,
+        pin_set: false,
+        text_scale_pct: 100,
+        contrast_pct: 0,
+        remote_access: false,
+        trusted_client_count: 0,
+        space_color_label: "Обычный".into(),
+        space_name: "Дом".into(),
+        orb_enabled: true,
+        reduced_motion: false,
+        apps: Vec::new(),
     }
 }
 
@@ -4472,7 +4754,7 @@ struct Shell {
     /// of any pending notification underneath it.
     orb_menu_open: bool,
     /// HIA-20: silent, un-hinted tap counter on the build-id card
-    /// (`me_fixed_card_action`'s index 1, "tap_build_info") -- the
+    /// (`tap_build_info`) -- the
     /// same well-known convention Android's own "tap build number"
     /// developer-options unlock uses. Never shown anywhere; resets to
     /// 0 the moment it actually opens `dev_surface_open`, per HIA-
@@ -5207,7 +5489,7 @@ impl TouchHandler for Shell {
         self.last_touch_pos = position;
         if let Some((start_y, start_offset)) = self.me_drag {
             let content_rect = root_view(self.width, self.height).children[0].rect;
-            let total = ME_FIXED_CARD_COUNT + self.installed_apps.len();
+            let total = self.me_all_rows().len();
             let max_offset = me_max_scroll_offset(total, self.width, self.height, content_rect);
             // Finger moving up (position.1 decreasing) scrolls the
             // content down (offset increases) -- the usual touch-
@@ -6125,14 +6407,12 @@ impl Shell {
         }
     }
 
-    /// A method now (not a free function) since it needs
-    /// `self.installed_apps.len()` (total row count) and
-    /// `self.me_scroll_offset` (current drag position) -- the same
-    /// two pieces `me_content_cards` below needs to build the
-    /// matching rects, so the two can never disagree about where a
-    /// row actually is.
+    /// Hit-test uses the same flattened `me_all_rows` list
+    /// `me_content_cards` draws, so section headers stay inert and
+    /// dispatch keys do not depend on a frozen index table.
     fn me_action_at(&self, pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
-        let total = ME_FIXED_CARD_COUNT + self.installed_apps.len();
+        let all = self.me_all_rows();
+        let total = all.len();
         let content_rect = root_view(width, height).children[0].rect;
         let offset = self
             .me_scroll_offset
@@ -6140,7 +6420,7 @@ impl Shell {
         (0..total).find_map(|index| {
             scrolled_row_rect(index, width, height, offset, content_rect)
                 .filter(|rect| rect.contains(pos.0, pos.1))
-                .and_then(|_| me_fixed_card_action(index))
+                .and_then(|_| all.get(index).and_then(|row| row.dispatch))
         })
     }
 
@@ -6714,12 +6994,12 @@ impl Shell {
     /// ADR-054's notes on `saai-app-protocol`), so there is nothing
     /// for a tap here to do yet.
     /// Real drag-to-scroll (`TouchHandler::down`/`motion`/`up`) --
-    /// every row of `me_all_card_views` that currently fits inside
+    /// every row of `me_all_rows` that currently fits inside
     /// the content area at `self.me_scroll_offset`, positioned by
     /// `scrolled_row_rect`. No more "Ещё"/"Назад" nav rows to append:
     /// the scroll gesture itself is the navigation now.
     fn me_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let all = self.me_all_card_views();
+        let all = self.me_all_rows();
         let content_rect = root_view(width, height).children[0].rect;
         let offset = self.me_scroll_offset.clamp(
             0,
@@ -6727,216 +7007,81 @@ impl Shell {
         );
         all.into_iter()
             .enumerate()
-            .filter_map(|(index, card)| {
+            .filter_map(|(index, row)| {
                 scrolled_row_rect(index, width, height, offset, content_rect)
-                    .map(|rect| (rect, card))
+                    .map(|rect| (rect, row.card))
             })
             .collect()
     }
 
-    /// The full, unpaginated logical list "Я" shows -- same order and
-    /// content as before pagination existed, just without rects
-    /// (`me_content_cards` assigns those per-page).
-    fn me_all_card_views(&self) -> Vec<render::ActionCardView> {
+    fn me_facts(&self) -> MeFacts {
         let total_entities: usize = self.entity_counts.values().sum();
-        let mut cards = vec![
-            render::ActionCardView::new(
-                "Это устройство",
-                format!(
-                    "Пространств: {} · Объектов: {total_entities}",
-                    self.spaces.len()
-                ),
-                "",
-            ),
-            // S14: "О телефоне" -- build id is compiled in (`build.rs`);
-            // model/kernel/uptime are read fresh every draw since uptime
-            // obviously changes and the other two are cheap enough not
-            // to bother caching.
-            render::ActionCardView::new(
-                format!("SaaiOS · сборка {}", env!("SAAIOS_BUILD_ID")),
-                format!(
-                    "{} · ядро {} · работает {}",
-                    hardware_model(),
-                    kernel_release(),
-                    uptime_string()
-                ),
-                "",
-            ),
-            // S15: `/data` usage -- the one partition apps/user state
-            // actually lives on (S05's `--data-root`), a more useful
-            // number here than the read-only system image's own size.
-            render::ActionCardView::new("Хранилище", storage_string(), ""),
-            // S16: first three tap-to-cycle settings cards -- see
-            // `me_fixed_card_action` for the matching hit-test.
-            render::ActionCardView::new(
-                "Яркость экрана",
-                format!("{}%", self.settings.brightness_pct),
-                "Изменить",
-            ),
-            render::ActionCardView::new(
-                "Блокировка экрана",
-                format!("через {} с бездействия", self.settings.idle_timeout_secs),
-                "Изменить",
-            ),
-            render::ActionCardView::new(
-                "Гашение экрана",
-                format!(
-                    "через {} с после блокировки",
-                    self.settings.deep_idle_timeout_secs
-                ),
-                "Изменить",
-            ),
-            // S17: no timezone concept existed before this ADR-061 --
-            // see `current_time_string`'s own doc comment for why this
-            // is a curated UTC-offset cycle, not full IANA tzdata.
-            render::ActionCardView::new(
-                "Часовой пояс",
-                format_utc_offset(self.settings.utc_offset_minutes),
-                "Изменить",
-            ),
-            // S22: read-only -- see the doc comment on `boot_slot` for
-            // why there's no "проверить обновления" action here yet.
-            render::ActionCardView::new(
-                "Обновления",
-                format!(
-                    "Слот {} · попыток загрузки: {}",
-                    boot_slot(),
-                    boot_attempts()
-                ),
-                "",
-            ),
-            // S18: see `apply_volume`'s doc comment -- persistence/UI
-            // real, hardware effect unverified.
-            render::ActionCardView::new(
-                "Громкость",
-                format!("{}%", self.settings.volume_pct),
-                "Изменить",
-            ),
-            // S19: real, unlike S18's volume -- see `wifi_status_line`/
-            // `wifi_scan_results`' doc comments. Opens "Wi-Fi сети".
-            render::ActionCardView::new("Wi-Fi", wifi_status_line(), "Сети"),
-            // S20: real, same shape as S19 -- see `bluetooth_scan_
-            // results`/`bluetooth_pair`'s doc comments. Opens
-            // "Bluetooth устройства".
-            render::ActionCardView::new(
-                "Bluetooth",
-                format!("Сопряжено устройств: {}", bluetooth_paired_count()),
-                "Устройства",
-            ),
-            // S24: opt-in -- see `ShellSettings.pin_code`'s doc
-            // comment. Default (`None`) keeps unlock as "any tap",
-            // unchanged from before this sprint.
-            render::ActionCardView::new(
-                "PIN-код",
-                if self.settings.pin_code.is_some() {
-                    "Установлен"
-                } else {
-                    "Не установлен -- разблокировка тапом"
-                },
-                "Изменить",
-            ),
-            // S25: process-global, see `render::set_text_scale`'s doc
-            // comment for why -- not a per-card local effect, this
-            // changes every screen's text at once.
-            render::ActionCardView::new(
-                "Размер текста",
-                format!("{}%", self.settings.text_scale_pct),
-                "Изменить",
-            ),
-            // S25: `render::apply_contrast_boost`'s doc comment
-            // explains why this is a post-process stretch, not a
-            // second color palette.
-            render::ActionCardView::new(
-                "Контраст",
-                if self.settings.contrast_pct == 0 {
-                    "Обычный".to_string()
-                } else {
-                    format!("Повышенный ({}%)", self.settings.contrast_pct)
-                },
-                "Изменить",
-            ),
-            // Policy layer for SSH pairing (`pair-recv.c`/`dropbear`)
-            // -- see `apply_remote_access`'s doc comment. Off by
-            // default, same "opt-in, never silent" convention as
-            // `pin_code`.
-            render::ActionCardView::new(
-                "Удалённый доступ (SSH)",
-                if self.settings.remote_access_enabled {
-                    "Включён -- новые устройства могут запросить доступ"
-                } else {
-                    "Выключен"
-                },
-                "Изменить",
-            ),
-            render::ActionCardView::new(
-                "Доверенные клиенты",
-                format!("{} ключей", trusted_clients().len()),
-                "Открыть",
-            ),
-            // HIA-03: cycles the CURRENTLY SELECTED space's color --
-            // same "acts on selected_space_id" scoping the status bar
-            // dot itself already has, nothing app-global about this
-            // one card despite living among device-wide settings.
-            render::ActionCardView::new(
-                "Цвет пространства",
-                format!(
-                    "{} · {}",
-                    space_color(&self.system_space_entities, &self.selected_space_id).label(),
-                    space_display_name(&self.spaces, &self.selected_space_id)
-                ),
-                "Изменить",
-            ),
-            // HIA-04b's own Rollback: a real escape hatch back to
-            // tab-bar-only navigation.
-            render::ActionCardView::new(
-                "Orb",
-                if self.settings.orb_enabled {
-                    "Включён"
-                } else {
-                    "Выключен -- только таб-бар"
-                },
-                "Изменить",
-            ),
-            render::ActionCardView::new(
-                "Меньше движения",
-                if self.settings.reduced_motion {
-                    "Включено -- Running не busy"
-                } else {
-                    "Выключено"
-                },
-                "Изменить",
-            ),
-        ];
-        debug_assert_eq!(cards.len(), ME_FIXED_CARD_COUNT);
-        for app in self.installed_apps.values() {
-            let grants = self
-                .apps_grants
-                .get(&app.id)
-                .map(|granted| {
-                    if granted.is_empty() {
-                        "без разрешений".to_string()
-                    } else {
-                        granted
-                            .iter()
-                            .map(|name| capability_label(name))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    }
-                })
-                .unwrap_or_else(|| "без разрешений".to_string());
-            cards.push(render::ActionCardView::new(
-                app.name.clone(),
-                format!("{} · {grants}", app_state_label(&app.state)),
-                "",
-            ));
+        let apps = self
+            .installed_apps
+            .values()
+            .map(|app| {
+                let grants = self
+                    .apps_grants
+                    .get(&app.id)
+                    .map(|granted| {
+                        if granted.is_empty() {
+                            "без разрешений".to_string()
+                        } else {
+                            granted
+                                .iter()
+                                .map(|name| capability_label(name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    })
+                    .unwrap_or_else(|| "без разрешений".to_string());
+                MeAppFact {
+                    name: app.name.clone(),
+                    state: app_state_label(&app.state).to_string(),
+                    grants,
+                }
+            })
+            .collect();
+        MeFacts {
+            space_count: self.spaces.len(),
+            entity_count: total_entities,
+            build_id: env!("SAAIOS_BUILD_ID").to_string(),
+            model: hardware_model(),
+            kernel: kernel_release(),
+            uptime: uptime_string(),
+            storage: storage_string(),
+            brightness_pct: self.settings.brightness_pct,
+            idle_timeout_secs: self.settings.idle_timeout_secs,
+            deep_idle_timeout_secs: self.settings.deep_idle_timeout_secs,
+            utc_offset_minutes: self.settings.utc_offset_minutes,
+            boot_slot: boot_slot(),
+            boot_attempts: boot_attempts(),
+            volume_pct: self.settings.volume_pct,
+            wifi_status: wifi_status_line(),
+            bluetooth_paired: bluetooth_paired_count(),
+            pin_set: self.settings.pin_code.is_some(),
+            text_scale_pct: self.settings.text_scale_pct,
+            contrast_pct: self.settings.contrast_pct,
+            remote_access: self.settings.remote_access_enabled,
+            trusted_client_count: trusted_clients().len(),
+            space_color_label: space_color(&self.system_space_entities, &self.selected_space_id)
+                .label()
+                .to_string(),
+            space_name: space_display_name(&self.spaces, &self.selected_space_id),
+            orb_enabled: self.settings.orb_enabled,
+            reduced_motion: self.settings.reduced_motion,
+            apps,
         }
-        cards
+    }
+
+    fn me_all_rows(&self) -> Vec<MeRow> {
+        flatten_me_rows(&me_system_sections(&self.me_facts()))
     }
 
     /// HIA-20: the hidden diagnostic screen's own content -- real,
     /// live values read fresh off `self` every time this is called
     /// (same "no cached snapshot" convention `trusted_clients()`/
-    /// `me_all_card_views`'s own app-grants loop already follow),
+    /// `me_facts`'s own app-grants loop already follow),
     /// never a placeholder string. Doc sections 37/47 named
     /// "active ContextFrame, capabilities, policy decisions" --
     /// `context_frame` is the first verbatim, and in this project's
@@ -8174,22 +8319,23 @@ impl Shell {
 mod tests {
     use super::{
         bluetooth_list_action_at, calibration_requested, capability_label, consent_action_at,
-        content_action_at, dev_surface_back_tapped, effective_context_space, format_utc_offset,
-        in_progress_work, input_idle_for_at_least, intent_action_at, known_surfaces,
-        me_fixed_card_action, next_in_cycle, next_pending_action, object_view_action_at,
-        object_view_content, orb_action_at, orb_attention_from_entities, orb_menu_actions,
-        orb_visual_state, orb_zone_rect, pressed_tab_from_touch, remove_context_source,
-        space_color, space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at, upsert_context_entry,
-        wifi_list_action_at, AgentSummary, BluetoothListTap, ContextFrameEntry, ContextSource,
-        Entity, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceLifecycle, SystemSectionRow, TrustedClientTap, UniversalState, WifiListTap,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        content_action_at, dev_surface_back_tapped, effective_context_space, flatten_me_rows,
+        format_utc_offset, in_progress_work, input_idle_for_at_least, intent_action_at,
+        known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle, next_pending_action,
+        object_view_action_at, object_view_content, orb_action_at, orb_attention_from_entities,
+        orb_menu_actions, orb_visual_state, orb_zone_rect, pressed_tab_from_touch,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
+        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, upsert_context_entry, wifi_list_action_at, AgentSummary,
+        BluetoothListTap, ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect,
+        RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow,
+        TrustedClientTap, UniversalState, WifiListTap, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -8865,7 +9011,8 @@ mod tests {
         let height = 2400;
         let content = super::root_content_rect(width, height);
         let nav = super::root_navigation_rect(width, height);
-        let total = super::ME_FIXED_CARD_COUNT;
+        let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
+        let total = rows.len();
         let max_offset = super::me_max_scroll_offset(total, width, height, content);
         for offset in [0, max_offset / 2, max_offset] {
             for index in 0..total {
@@ -8896,13 +9043,12 @@ mod tests {
             super::me_max_scroll_offset(0, width, height, content_rect),
             0
         );
-        // ME_FIXED_CARD_COUNT real rows at this row height
-        // comfortably overflows a 1700px-tall content area -- this
-        // asserts the clamp actually engages, not a specific number.
-        assert!(
-            super::me_max_scroll_offset(super::ME_FIXED_CARD_COUNT, width, height, content_rect)
-                > 0
-        );
+        // Domain-grouped `Я` rows at this row height comfortably
+        // overflow a 1700px-tall content area -- this asserts the
+        // clamp actually engages, not a specific number.
+        let total =
+            super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts())).len();
+        assert!(super::me_max_scroll_offset(total, width, height, content_rect) > 0);
     }
 
     #[test]
@@ -10252,12 +10398,67 @@ mod tests {
     }
 
     #[test]
-    fn me_fixed_card_action_index_1_is_the_silent_build_info_tap() {
-        // HIA-20's own hidden entry point -- confirm it sits at
-        // exactly the index the build-id card occupies in `me_all_
-        // card_views`, not silently lost to some future edit there.
-        assert_eq!(me_fixed_card_action(1), Some("tap_build_info"));
-        assert_eq!(me_fixed_card_action(18), Some("toggle_reduced_motion"));
+    fn me_system_sections_group_by_domain_and_keep_silent_build_tap() {
+        let sections = me_system_sections(&me_fixture_facts());
+        let titles: Vec<_> = sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Устройство",
+                "Экран",
+                "Звук",
+                "Связь",
+                "Приватность",
+                "Пространство",
+                "Интерфейс",
+            ]
+        );
+        assert!(!titles.contains(&"Память"));
+        assert!(!titles.contains(&"Android"));
+        assert!(!titles.contains(&"Приложения"));
+
+        let blob = format!("{titles:?}");
+        assert!(!blob.contains("Memory"));
+        assert!(!blob.contains("Android VM"));
+
+        let rows = flatten_me_rows(&sections);
+        let build = rows
+            .iter()
+            .find(|row| row.dispatch == Some("tap_build_info"))
+            .expect("build-info silent tap");
+        assert!(build.card.action.is_empty());
+        assert!(rows
+            .iter()
+            .any(|row| row.dispatch == Some("toggle_reduced_motion")));
+        assert!(rows
+            .iter()
+            .any(|row| row.card.label == "Устройство" && row.dispatch.is_none()));
+        assert!(!rows.iter().any(|row| row.card.label.contains("Память")));
+    }
+
+    #[test]
+    fn me_system_sections_omit_apps_until_one_exists() {
+        let mut facts = me_fixture_facts();
+        facts.apps.push(super::MeAppFact {
+            name: "Камера".into(),
+            state: "остановлено".into(),
+            grants: "без разрешений".into(),
+        });
+        let sections = me_system_sections(&facts);
+        assert_eq!(
+            sections.last().map(|section| section.title.as_str()),
+            Some("Приложения")
+        );
+        let rows = flatten_me_rows(&sections);
+        let app = rows
+            .iter()
+            .find(|row| row.card.label == "Камера")
+            .expect("app row");
+        assert!(app.dispatch.is_none());
+        assert!(app.card.status.contains("без разрешений"));
     }
 
     #[test]

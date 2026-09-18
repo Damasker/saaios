@@ -5,11 +5,12 @@
 //! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
-//! `DecisionOverlay`/`AgentSummary`. `EventRow` remains deferred.
+//! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
+//! `CapabilityRow`. `EventRow` remains deferred.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
-    Divider, IconGlyph, Metric, MotionCue, Progress, SemanticText, StatusIndicator,
+    DataRowVariant, Divider, IconGlyph, Metric, MotionCue, Progress, SemanticText, StatusIndicator,
     StatusIndicatorVariant, StatusMark, TextRole, UniversalState,
 };
 
@@ -503,6 +504,87 @@ impl AgentSummary {
                 ..AccessibilityInfo::new(AccessibilityRole::ListItem)
             },
         }
+    }
+}
+
+/// Section 7.10. A device setting as a `DataRow`: label, current value,
+/// optional dispatch. No gauge. Silent rows look static but still carry
+/// a hidden action (HIA-20 build-info).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingRow {
+    pub row: DataRow,
+}
+
+impl SettingRow {
+    pub fn readout(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            row: DataRow::new(label, DataRowVariant::Static).with_value(value),
+        }
+    }
+
+    pub fn cycle(
+        label: impl Into<String>,
+        value: impl Into<String>,
+        action: impl Into<String>,
+    ) -> Self {
+        Self {
+            row: DataRow::new(label, DataRowVariant::Toggle)
+                .with_value(value)
+                .with_action(action),
+        }
+    }
+
+    pub fn open(
+        label: impl Into<String>,
+        value: impl Into<String>,
+        action: impl Into<String>,
+    ) -> Self {
+        Self {
+            row: DataRow::new(label, DataRowVariant::Navigation)
+                .with_value(value)
+                .with_action(action),
+        }
+    }
+
+    pub fn silent(
+        label: impl Into<String>,
+        value: impl Into<String>,
+        action: impl Into<String>,
+    ) -> Self {
+        Self {
+            row: DataRow::new(label, DataRowVariant::Static)
+                .with_value(value)
+                .with_action(action),
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
+/// Section 7.11. One installed app and its granted capabilities.
+/// Read-only: there is no revoke protocol on this surface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityRow {
+    pub row: DataRow,
+}
+
+impl CapabilityRow {
+    pub fn new(
+        name: impl Into<String>,
+        state: impl Into<String>,
+        grants: impl Into<String>,
+    ) -> Self {
+        Self {
+            row: DataRow::new(name, DataRowVariant::Static)
+                .with_value(state)
+                .with_secondary(grants),
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
     }
 }
 
@@ -1017,5 +1099,41 @@ mod tests {
         );
         assert!(!running.detail_line().contains("Воркеры"));
         assert!(!running.caption().content.contains("ResearchAgent"));
+    }
+
+    #[test]
+    fn setting_row_variants_do_not_invent_a_gauge() {
+        let readout = SettingRow::readout("Хранилище", "12 ГБ свободно");
+        assert_eq!(readout.row.variant, DataRowVariant::Static);
+        assert!(readout.row.action.is_none());
+        assert!(!readout.row.is_actionable());
+
+        let cycle = SettingRow::cycle("Яркость экрана", "50%", "cycle_brightness");
+        assert_eq!(cycle.row.variant, DataRowVariant::Toggle);
+        assert_eq!(cycle.row.action.as_deref(), Some("cycle_brightness"));
+        assert!(cycle.row.is_actionable());
+
+        let open = SettingRow::open("Wi-Fi", "Wallbox", "open_wifi_list");
+        assert_eq!(open.row.variant, DataRowVariant::Navigation);
+        assert_eq!(open.row.value.as_deref(), Some("Wallbox"));
+
+        let silent = SettingRow::silent("SaaiOS · сборка abc", "panther", "tap_build_info");
+        assert_eq!(silent.row.variant, DataRowVariant::Static);
+        assert_eq!(silent.row.action.as_deref(), Some("tap_build_info"));
+        assert!(!silent.row.is_actionable());
+        assert_eq!(
+            silent.accessibility().name.as_deref(),
+            Some("SaaiOS · сборка abc")
+        );
+    }
+
+    #[test]
+    fn capability_row_is_read_only_and_keeps_empty_grants_honest() {
+        let row = CapabilityRow::new("Камера", "остановлено", "без разрешений");
+        assert_eq!(row.row.variant, DataRowVariant::Static);
+        assert!(row.row.action.is_none());
+        assert_eq!(row.row.value.as_deref(), Some("остановлено"));
+        assert_eq!(row.row.secondary.as_deref(), Some("без разрешений"));
+        assert!(!row.row.primary.contains("Android VM"));
     }
 }
