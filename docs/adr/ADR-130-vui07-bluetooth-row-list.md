@@ -2,10 +2,12 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: «Bluetooth устройства» lists live
-`bt-scan` log rows through `BluetoothRow`. Trusted clients, Wi-Fi
-password, and lock restyle are not this slice. Pixel flash with the
-rest of VUI-07.
+Принято, 2026-09-18. «Bluetooth устройства» lists live `bt-scan` log
+rows through `BluetoothRow`. Flashed panther `5b37c5bc…`: title
+below the status layer, scan-in-progress with no empty placeholder,
+then `Поиск завершён: найдено 2` with `X5` BLE and `OBDII` CLASSIC
+(`Сопрячь`), Scan ≠ Refresh ≠ Back. Trusted clients, Wi-Fi password,
+and lock restyle are not this slice.
 
 ## Нумерация
 
@@ -53,4 +55,5 @@ trusted clients or the password keyboard in the same slice.
 
 Host: BluetoothRow constructors; live list order and paired button;
 empty only after `DONE`; Scan/Refresh/Back after the row list; no
-invented RSSI. Physical Pixel with the rest of VUI-07.
+invented RSSI. Panther `5b37c5bc…`: X5 BLE + OBDII CLASSIC after
+DONE; empty placeholder only after DONE (not during `Идёт поиск`).
