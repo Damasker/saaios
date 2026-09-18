@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116, 126–128 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **host** | **saai-shell `c1547c02…` прошит**; Spaces list not flashed |
+| Visual | 111–116, 126–128 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`) | **saai-shell `9bb75db5…` прошит** |
 
 ## Две очереди, не девять
 
@@ -87,7 +87,7 @@ host-only derived view.
 | VUI-05 | NOW ATTN-02, Inbox ATTN-03, WORK-08 **на panther** (`63b8b64` then current shell); Object View + offline + `AgentSummary` + gallery **host** |
 | VUI-06 `Система` | inventory + domain grouping + honest missing/offline + scroll-cache + tab rename **на panther** (`1d191d7a…`); MEM-08 still blocked |
 | VUI-07 Inbox | `EventRow` + empty vs offline **на panther** (`c1547c02…`) |
-| VUI-07 Spaces | live `SpaceRow` list **host** (ADR-128); Space detail later; not flashed |
+| VUI-07 Spaces | live `SpaceRow` list **на panther** (`9bb75db5…`); Space detail later |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

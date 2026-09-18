@@ -2,9 +2,9 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: Spaces tab lists `entityd` spaces.
-Space detail (people / members / focus work) is not this slice.
-Pixel flash later.
+Принято, 2026-09-18. Host + panther (`9bb75db5…`): Spaces tab lists
+`entityd` spaces. Space detail (people / members / focus work) is
+not this slice.
 
 ## Нумерация
 
@@ -52,4 +52,6 @@ Space-detail frame.
 
 Host: SpaceRow constructors; live list order and selected button;
 lifecycle/relation still at most one extra; offline vs empty; markup
-no longer hit-tests Spaces. Physical Pixel with the rest of VUI-07.
+no longer hit-tests Spaces. Panther `9bb75db5…`: tab `Дом · Пространства`
+shows live rows (Дом selected, Личное / SaaiOS / Работа), not the four
+markup cards. Space detail still later.
