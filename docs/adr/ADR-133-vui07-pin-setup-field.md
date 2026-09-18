@@ -2,11 +2,12 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: «Новый PIN-код» previews digits
-through `Field` (`FieldKind::Password`, not revealed). Keypad
-geometry, save/clear handlers, lock-surface PIN entry, intent input,
-and lock restyle are not this slice. Pixel flash with the rest of
-VUI-07.
+Принято, 2026-09-18. «Новый PIN-код» previews digits through
+`Field` (`FieldKind::Password`, not revealed). Flashed panther
+`eb4cb508…`: title below the status layer, empty placeholder
+`Введите новый PIN (минимум 4 цифры)`, keypad unchanged, PIN not
+saved. Lock-surface unlock stays dots. Intent input and lock
+restyle are not this slice.
 
 ## Нумерация
 
@@ -49,7 +50,7 @@ Keep setup behavior: digits accumulate; Готово saves at length ≥ 4;
 ## Verification
 
 Host: field is Password and not revealed; accessible value is bullets
-not the digits; empty is distinct from the placeholder. Physical
-Pixel with the rest of VUI-07: title visible below the clock,
-placeholder when empty, keypad still typeable. Do not save a PIN
-just to take the screenshot.
+not the digits; empty is distinct from the placeholder. Panther
+`eb4cb508…`: `Новый PIN-код` below the clock, empty placeholder,
+numeric keypad with Отмена/Готово, no Убрать PIN (code unset). PIN
+was not saved for the screenshot.
