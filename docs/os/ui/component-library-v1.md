@@ -47,7 +47,8 @@ in VUI-09; privileged system composites are not automatically public.
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
 | Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
-| Composite | `IntentSummary`, `TaskSummary`, `AgentSummary` | Deferred to VUI-05 | entity surfaces |
+| Composite | `IntentSummary`, `TaskSummary` | Experimental (VUI-05) | `Сейчас` work rows |
+| Composite | `AgentSummary` | Deferred to VUI-05 | only with a real runtime entity |
 | Composite | `EventRow`, `DecisionOverlay` | Deferred to VUI-04/05 | shell surfaces |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
@@ -235,8 +236,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 Composites compose primitives (section 6); they never draw their own text or
 own a rendering path a primitive does not already provide. Scoped per section
 3's inventory table: `ContextHeader`, `SystemSection`, and `ObjectSummary` are
-VUI-03's three; `EventRow`, `IntentSummary`, `TaskSummary`, and `AgentSummary`
-remain deferred to VUI-04/05.
+VUI-03's three; `BottomNavigation`, `OrbHost`, and `SystemStatus` are VUI-04;
+`IntentSummary` and `TaskSummary` land in VUI-05. `EventRow` and `AgentSummary`
+remain deferred — `AgentSummary` only when a real runtime entity exists.
 
 ### 7.1 `ContextHeader`
 
@@ -262,7 +264,8 @@ remain deferred to VUI-04/05.
 
 - Anatomy: section title (`SemanticText`, section role), a `Divider`
   immediately below it, and zero or more child rows whose type it does not
-  own -- any `DataRow`/`StatusIndicator`/`Metric` a caller composes into it.
+  own -- any `DataRow`/`StatusIndicator`/`Metric`/`TaskSummary`/`IntentSummary`
+  a caller composes into it.
 - Empty state: a section with no children renders only its title (or is
   omitted entirely by the caller); `SystemSection` never invents a placeholder
   row to fill space. Matches `human-interface-architecture-v2.md` section 13's
@@ -325,6 +328,42 @@ remain deferred to VUI-04/05.
   `label_key` are always present regardless of whether a renderer is
   currently animating anything.
 - First real consumer: the existing Orb dot/menu.
+
+### 7.6 `TaskSummary`
+
+- Anatomy: task title, a `StatusIndicator` using the universal state
+  mapping, optional reason (the same status text Object View already
+  shows), optional related caption (originating Intent title).
+- Distinct from `ObjectSummary`: identity vs current work. Distinct from
+  a bare `StatusIndicator` row: the related Intent is a separate caption,
+  never merged into the status label.
+- Built entirely from `SemanticText` + `StatusIndicator`. No local color,
+  no worker count, no invented progress.
+- Long Russian titles wrap; they do not truncate silently.
+- Empty related caption is omitted, never a placeholder «без намерения».
+- First real consumer: `Сейчас` «Продолжается» and a derived-ready
+  «Далее» Task row.
+- Accessibility: name is the task title; value is the nested
+  `StatusIndicator`'s `label_key`; related caption is a separate string,
+  not flattened into the name.
+
+### 7.7 `IntentSummary`
+
+- Anatomy: intent title plus at most one nested `TaskSummary` (the
+  primary related Task from WORK-08). No Task → truthful caption
+  «Нет задачи».
+- Does not own a worker list. Board «Воркеры» is 0–1 disposable
+  execution already visible as `TaskSummary` `Running`; this composite
+  must not invent `Воркеры (3)` or an Agent personality.
+- Ready-set size is not a badge here — that would turn `Сейчас` into a
+  scheduler dashboard (HIA / WORK-08).
+- Built from `SemanticText` + optional nested `TaskSummary`.
+- First real consumer: `intent_summary_from_entity` in `saai-shell`
+  (WORK-08 related Task). Painted NOW Intent card waits until Object
+  View shares this type; this slice does not add a second identity
+  card next to `ObjectSummary`.
+- Accessibility: name is the intent title; nested task keeps its own
+  contract; missing task is a separate caption.
 
 ## 8. Required gallery matrix
 

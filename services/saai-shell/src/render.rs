@@ -475,8 +475,10 @@ pub fn draw_intent_input(
 pub fn draw_object_view(
     canvas: &mut Canvas<'_>,
     title: &str,
+    state: UniversalState,
     status: &str,
     related: Option<&str>,
+    details: &[String],
     header: Rect,
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
@@ -518,8 +520,9 @@ pub fn draw_object_view(
         32.0,
         header.x + margin,
         header.y + 340,
-        theme_color(ColorRole::TextSecondary),
+        state_color(state),
     );
+    let mut y = header.y + 460;
     if let Some(related) = related {
         draw_text(
             canvas,
@@ -527,9 +530,25 @@ pub fn draw_object_view(
             related,
             28.0,
             header.x + margin,
-            header.y + 460,
+            y,
             theme_color(ColorRole::TextSecondary),
         );
+        y = y.saturating_add(90);
+    }
+    for detail in details {
+        if y + 40 >= header.y + header.height {
+            break;
+        }
+        draw_text(
+            canvas,
+            &fonts.regular,
+            detail,
+            28.0,
+            header.x + margin,
+            y,
+            theme_color(ColorRole::TextSecondary),
+        );
+        y = y.saturating_add(90);
     }
 
     for (index, (rect, label)) in actions.iter().enumerate() {
@@ -2401,6 +2420,66 @@ pub fn draw_now(
                             );
                             cursor_y += scaled_line_height(TextRole::Body);
                             if status.visible_reason().is_some() {
+                                cursor_y += scaled_line_height(TextRole::Caption);
+                            }
+                        }
+                        SystemSectionRow::Task(task) => {
+                            let status = task.status();
+                            draw_status_indicator(
+                                canvas,
+                                fonts,
+                                &status,
+                                content.x + margin,
+                                cursor_y,
+                            );
+                            cursor_y += scaled_line_height(TextRole::Body);
+                            if status.visible_reason().is_some() {
+                                cursor_y += scaled_line_height(TextRole::Caption);
+                            }
+                            if let Some(related) = task.related_text() {
+                                draw_semantic_text(
+                                    canvas,
+                                    fonts,
+                                    &related,
+                                    content.x + margin,
+                                    cursor_y,
+                                    content_width,
+                                );
+                                cursor_y += scaled_line_height(TextRole::Caption);
+                            }
+                        }
+                        SystemSectionRow::Intent(intent) => {
+                            draw_semantic_text(
+                                canvas,
+                                fonts,
+                                &intent.heading(),
+                                content.x + margin,
+                                cursor_y,
+                                content_width,
+                            );
+                            cursor_y += scaled_line_height(TextRole::Body);
+                            if let Some(task) = &intent.task {
+                                let status = task.status();
+                                draw_status_indicator(
+                                    canvas,
+                                    fonts,
+                                    &status,
+                                    content.x + margin,
+                                    cursor_y,
+                                );
+                                cursor_y += scaled_line_height(TextRole::Body);
+                                if status.visible_reason().is_some() {
+                                    cursor_y += scaled_line_height(TextRole::Caption);
+                                }
+                            } else if let Some(missing) = intent.missing_task_text() {
+                                draw_semantic_text(
+                                    canvas,
+                                    fonts,
+                                    &missing,
+                                    content.x + margin,
+                                    cursor_y,
+                                    content_width,
+                                );
                                 cursor_y += scaled_line_height(TextRole::Caption);
                             }
                         }

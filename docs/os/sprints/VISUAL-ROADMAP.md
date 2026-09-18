@@ -91,7 +91,7 @@ contains:
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
-| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **In progress** (ATTN-03+WORK-08 panther) |
+| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **In progress** (TaskSummary host) |
 | VUI-06 | `Система` information architecture and settings components | Backlog |
 | VUI-07 | Remaining system surfaces and state patterns | Backlog |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
@@ -743,7 +743,8 @@ navigation passes restart and cold-boot testing.
 ## VUI-05 — Object, Intent, Task, and Worker components
 
 **Status:** In progress (ATTN-02/03 + WORK-08 on panther shell
-`63b8b64`. `IntentSummary`/`TaskSummary` remain open.)
+`63b8b64`. `TaskSummary`/`IntentSummary` host types; Object View
+lineage + universal state host; AgentSummary deferred.)
 
 **Depends on:** VUI-04 and the relevant HIA entity/runtime support
 
@@ -765,14 +766,20 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
   (confirm/decline only while `waiting_confirmation`); Intent names
   the related Task; NOW ObjectSummary trails live work; «Далее» is a
   pending Action or a derived-ready Task. No invented worker count.
-- [ ] Draw and review anatomy, relationship, long-content, and full state sheets
-  for each Object/Intent/Task/Agent composite before implementation.
-- [ ] Implement `ObjectSummary`, `IntentSummary`, `TaskSummary`, `AgentSummary`,
-  action row, observation/evidence row, and relationship path components.
-- [ ] Show `Intent → Tasks → Actions → Result` with navigable SOM relationships.
-      Queue/worker counts come from workflow store (WORK-08); do not invent Agent entities.
-- [ ] Present universal state, current activity, last verified observation,
-  blocker, permissions, consequences, and history consistently.
+- [x] Draw anatomy sheets for `IntentSummary` and `TaskSummary`
+  (`component-library-v1.md` §7.6–7.7). `AgentSummary` stays deferred
+  until a real runtime entity exists.
+- [x] Implement `TaskSummary` and `IntentSummary` in `saai-ui-core`.
+  `Сейчас` «Продолжается» and a derived-ready «Далее» Task use
+  `TaskSummary`. No worker count. `ObjectSummary` already exists (VUI-03).
+- [x] Show `Intent → Tasks → Actions → Result` with navigable SOM
+  relationships on Object View. Missing hops omitted. One follow
+  button (`Открыть задачу/намерение/действие/результат`); waiting
+  confirmation keeps Confirm/Decline. No invented worker count.
+- [x] Present universal state, current activity or last verified
+  observation, blocker, and confirmation consequence on Object View.
+  Missing fields omitted. Permission/history wait for OAM overlay and
+  entity events.
 - [ ] Gate actions by capability and policy; explain unavailable actions.
 - [ ] Implement decision and confirmation overlays that name actor, action,
   object, scope, consequence, and reversibility.

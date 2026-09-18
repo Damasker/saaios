@@ -4,13 +4,13 @@
 //! primitive does not already provide. VUI-03's three
 //! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
-//! inventory table; `EventRow`/`IntentSummary`/`TaskSummary`/`AgentSummary`
-//! remain deferred to VUI-05 and do not exist here.
+//! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`.
+//! `EventRow`/`AgentSummary` remain deferred and do not exist here.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, ColorRole, ContextColor, DataRow, Divider, IconGlyph,
-    Metric, MotionCue, Progress, SemanticText, StatusIndicator, StatusMark, TextRole,
-    UniversalState,
+    Metric, MotionCue, Progress, SemanticText, StatusIndicator, StatusIndicatorVariant, StatusMark,
+    TextRole, UniversalState,
 };
 
 /// Section 7.1. Anatomy: an active-context label, an optional current-
@@ -77,13 +77,16 @@ impl ContextHeader {
 }
 
 /// A `SystemSection` does not own the type of its own children -- section
-/// 7.2: "any `DataRow`/`StatusIndicator`/`Metric` a caller composes into
-/// it." This enum is that composition boundary, not a fourth primitive.
+/// 7.2: "any `DataRow`/`StatusIndicator`/`Metric`/`TaskSummary`/
+/// `IntentSummary` a caller composes into it." This enum is that
+/// composition boundary, not a fourth primitive.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SystemSectionRow {
     Data(DataRow),
     Status(StatusIndicator),
     Metric(Metric),
+    Task(TaskSummary),
+    Intent(IntentSummary),
 }
 
 /// Section 7.2. Anatomy: a section title, a `Divider` immediately below
@@ -215,6 +218,116 @@ impl ObjectSummary {
         match self.trailing.as_ref()? {
             ObjectSummaryTrailing::Value(_) => None,
             ObjectSummaryTrailing::Status(status) => Some(status.accessibility()),
+        }
+    }
+}
+
+/// Section 7.6. Current work, not identity: title + universal-state
+/// `StatusIndicator` + optional reason + optional originating Intent
+/// caption. No worker count.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskSummary {
+    pub title: String,
+    pub state: UniversalState,
+    pub reason: Option<String>,
+    pub related: Option<String>,
+}
+
+impl TaskSummary {
+    pub fn new(title: impl Into<String>, state: UniversalState) -> Self {
+        Self {
+            title: title.into(),
+            state,
+            reason: None,
+            related: None,
+        }
+    }
+
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
+
+    pub fn with_related(mut self, related: impl Into<String>) -> Self {
+        self.related = Some(related.into());
+        self
+    }
+
+    pub fn status(&self) -> StatusIndicator {
+        let mut indicator = StatusIndicator::new(self.state, self.title.clone());
+        if let Some(reason) = &self.reason {
+            indicator = indicator
+                .with_reason(reason.clone())
+                .with_variant(StatusIndicatorVariant::Normal);
+        }
+        indicator
+    }
+
+    pub fn related_text(&self) -> Option<SemanticText> {
+        Some(SemanticText::new(
+            self.related.as_ref()?.clone(),
+            TextRole::Caption,
+            ColorRole::TextSecondary,
+        ))
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.title.clone()),
+            value: Some(self.state.style().label_key.to_string()),
+            ..AccessibilityInfo::new(AccessibilityRole::ListItem)
+        }
+    }
+
+    pub fn related_accessibility(&self) -> Option<AccessibilityInfo> {
+        Some(AccessibilityInfo {
+            name: Some(self.related.as_ref()?.clone()),
+            ..AccessibilityInfo::new(AccessibilityRole::Text)
+        })
+    }
+}
+
+/// Section 7.7. Intent title plus at most one nested `TaskSummary`.
+/// Missing work is «Нет задачи». No worker list, no Agent personality.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntentSummary {
+    pub title: String,
+    pub task: Option<TaskSummary>,
+}
+
+impl IntentSummary {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            task: None,
+        }
+    }
+
+    pub fn with_task(mut self, task: TaskSummary) -> Self {
+        self.task = Some(task);
+        self
+    }
+
+    pub fn heading(&self) -> SemanticText {
+        SemanticText::new(self.title.clone(), TextRole::Body, ColorRole::TextPrimary)
+    }
+
+    pub fn missing_task_text(&self) -> Option<SemanticText> {
+        if self.task.is_some() {
+            None
+        } else {
+            Some(SemanticText::new(
+                "Нет задачи",
+                TextRole::Caption,
+                ColorRole::TextSecondary,
+            ))
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.title.clone()),
+            ..AccessibilityInfo::new(AccessibilityRole::ListItem)
         }
     }
 }
@@ -530,6 +643,45 @@ mod tests {
     fn object_summary_with_value_trailing_has_no_separate_trailing_accessibility() {
         let summary = ObjectSummary::new("Батарея", "Metric").with_value("87%");
         assert!(summary.trailing_accessibility().is_none());
+    }
+
+    #[test]
+    fn task_summary_uses_universal_state_and_keeps_related_caption_separate() {
+        let task = TaskSummary::new("Копирует файлы", UniversalState::Running)
+            .with_reason("Выполняется")
+            .with_related("Подготовить демо");
+        let status = task.status();
+        assert_eq!(status.state, UniversalState::Running);
+        assert_eq!(status.label, "Копирует файлы");
+        assert_eq!(status.visible_reason(), Some("Выполняется"));
+        assert_eq!(
+            task.related_text().map(|text| text.content),
+            Some("Подготовить демо".into())
+        );
+        assert_eq!(task.accessibility().value.as_deref(), Some("state.running"));
+        assert!(task.related_accessibility().is_some());
+        assert!(TaskSummary::new("Ожидает", UniversalState::Waiting)
+            .related_text()
+            .is_none());
+    }
+
+    #[test]
+    fn intent_summary_without_a_task_is_truthful_and_has_no_worker_count() {
+        let empty = IntentSummary::new("Пустое намерение");
+        assert!(empty.task.is_none());
+        assert_eq!(
+            empty.missing_task_text().map(|text| text.content),
+            Some("Нет задачи".into())
+        );
+        let with_task = IntentSummary::new("Подготовить демо").with_task(TaskSummary::new(
+            "Подтвердите: демо",
+            UniversalState::Attention,
+        ));
+        assert!(with_task.missing_task_text().is_none());
+        assert_eq!(
+            with_task.task.as_ref().map(|task| task.title.as_str()),
+            Some("Подтвердите: демо")
+        );
     }
 
     #[test]
