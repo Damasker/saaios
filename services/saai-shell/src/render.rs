@@ -1205,6 +1205,45 @@ pub fn draw_lock_pin_entry(
     }
 }
 
+/// VUI-07 (ADR-134): no-PIN lock. Canvas instead of the S04 diagnostic
+/// red fill. Time and hint are passed in; this does not invent
+/// attention or Inbox content. PIN unlock stays `draw_lock_pin_entry`.
+pub fn draw_lock_idle(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    height: u32,
+    time: &str,
+    hint: &str,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let Some(fonts) = fonts else {
+        return;
+    };
+    let time_size = physical(TextRole::Display.style().size) as f32;
+    let hint_size = physical(TextRole::Body.style().size) as f32;
+    let time_y = ((height as u64 * 480) / 2400) as u32;
+    let hint_y = time_y + physical_line_height(TextRole::Display) + physical(LogicalUnit::new(16));
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        time,
+        time_size,
+        width / 2,
+        time_y,
+        theme_color(ColorRole::TextPrimary),
+    );
+    draw_text_centered(
+        canvas,
+        &fonts.regular,
+        hint,
+        hint_size,
+        width / 2,
+        hint_y,
+        theme_color(ColorRole::TextSecondary),
+    );
+}
+
 /// VUI-01's deterministic, device-runnable calibration fixture. It is selected
 /// only by the explicit `SAAIOS_UI_CALIBRATION=1` developer environment switch
 /// or volatile `/run/saaios/ui-calibration` marker in `main.rs`; normal
@@ -3065,9 +3104,9 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
-        context_color, draw_calibration, draw_composite_gallery, draw_gallery, draw_orb, draw_root,
-        draw_status_bar, draw_tab_bar, gallery_row_positions, physical, physical_line_height,
-        state_color, theme_color, Canvas,
+        context_color, draw_calibration, draw_composite_gallery, draw_gallery, draw_lock_idle,
+        draw_orb, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions, physical,
+        physical_line_height, state_color, theme_color, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, NavigationItem, Progress, Rect, StatusMark, SystemStatus,
@@ -3464,6 +3503,24 @@ mod tests {
         // rather than only implied.
         assert_eq!(physical_line_height(TextRole::Body), 72);
         assert_eq!(physical_line_height(TextRole::Caption), 48);
+    }
+
+    #[test]
+    fn lock_idle_fill_is_canvas_not_the_diagnostic_red() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        draw_lock_idle(
+            canvas,
+            width,
+            height,
+            "22:46",
+            "Коснитесь, чтобы разблокировать",
+            None,
+        );
+        assert_eq!(canvas.pixel(540, 1200), theme_color(ColorRole::Canvas));
+        assert_ne!(canvas.pixel(540, 1200), [0x00, 0xd0, 0x00, 0x00]);
     }
 
     #[test]

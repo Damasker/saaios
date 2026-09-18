@@ -907,23 +907,12 @@ impl ShellSettings {
         let _ = std::fs::write(SETTINGS_PATH, text);
     }
 }
-/// Bright red -- deliberately unmistakable against the toplevel's dark
-/// slate placeholder, so a photo of the panel makes it obvious which
-/// surface is actually receiving the compositor's output while locked.
-///
-/// Byte order here is [0x00, 0xd0, 0x00, 0x00], *not* the [B, G, R, X] a
-/// standard XRGB8888 LE layout would predict for red. A three-band
-/// on-device diagnostic (one solid color per byte position, read back
-/// directly from this pool's memfd via /proc/<pid>/fd to confirm the
-/// client-side write itself before ever trusting the photo) proved this
-/// panel's pipeline reads R from byte-index 1 and G from byte-index 2 --
-/// swapped from the conventional B,G,R,X -- while byte-index 0 produced
-/// no visible output at all in the same test (untested whether that's a
-/// true "blue" that just read as too dark to name, or genuinely unused;
-/// not re-verified here since only red was needed for that milestone).
-/// Root cause on the DRM/driver side not identified -- no standard
-/// fourcc swaps R and G while leaving B in place, so this is applied as
-/// an empirically-verified byte order, not a fourcc fix.
+/// Bright red -- S04 diagnostic so a photo showed which surface the
+/// compositor was scanning out while locked. VUI-07 (ADR-134) no longer
+/// paints this for the idle lock; kept for rollback of
+/// `present_lock_surface(LOCK_SCREEN_COLOR)`. Byte order is empirical
+/// (R at byte-index 1, G at 2), not a standard XRGB8888 LE layout.
+#[allow(dead_code)]
 const LOCK_SCREEN_COLOR: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
 /// Plain black -- every byte-order permutation of all-zero reads as
 /// black, so this needs none of `LOCK_SCREEN_COLOR`'s empirical care.
@@ -3990,6 +3979,21 @@ fn wifi_password_field(ssid: &str, buffer: &str) -> Field {
         .with_placeholder("Введите пароль…")
 }
 
+/// VUI-07 (ADR-134): no-PIN lock copy. Time is passed in from
+/// `current_time_string`; the hint is the real tap-to-unlock
+/// affordance, not invented attention. PIN entry does not use this.
+struct LockIdleView {
+    time: String,
+    hint: &'static str,
+}
+
+fn lock_idle_view(time: &str) -> LockIdleView {
+    LockIdleView {
+        time: time.to_string(),
+        hint: "Коснитесь, чтобы разблокировать",
+    }
+}
+
 /// VUI-07 (ADR-133): PIN-setup preview is a `Field`, not a second
 /// hand-rolled mask. Revealed stays false; digits never become the
 /// accessible value. Lock-surface unlock stays `draw_lock_pin_entry`.
@@ -4767,6 +4771,7 @@ fn main() {
         dmabuf: dmabuf_canvas,
         last_statusbar_snapshot: None,
         last_statusbar_refresh: Instant::now(),
+        last_lock_idle_time: None,
         low_battery_notified: false,
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
@@ -4972,6 +4977,10 @@ struct Shell {
     /// S13 Change 1: throttles `refresh_statusbar_if_due` the same way
     /// `last_apps_refresh` throttles `refresh_apps_if_due`.
     last_statusbar_refresh: Instant,
+    /// VUI-07 (ADR-134): last clock string painted on the no-PIN lock,
+    /// so a status tick can skip the lock commit until the minute
+    /// changes. `None` until the first idle lock paint.
+    last_lock_idle_time: Option<String>,
     /// S21: guards `check_low_battery` against creating a fresh
     /// notification every second while the battery stays low.
     low_battery_notified: bool,
@@ -8361,8 +8370,24 @@ impl Shell {
         if self.last_statusbar_refresh.elapsed() >= STATUSBAR_REFRESH_INTERVAL {
             self.present_status_bar(qh);
             self.check_low_battery();
+            self.refresh_lock_idle_if_due(qh);
             self.last_statusbar_refresh = Instant::now();
         }
+    }
+
+    /// VUI-07 (ADR-134): the lock surface is the visible clock while
+    /// locked (displayd ignores status commits). Repaint only when the
+    /// minute string changes, never over the deep-idle blank, and never
+    /// on the PIN keypad.
+    fn refresh_lock_idle_if_due(&mut self, qh: &QueueHandle<Self>) {
+        if !self.locked || self.sleeping || self.settings.pin_code.is_some() {
+            return;
+        }
+        let time = current_time_string(self.settings.utc_offset_minutes);
+        if self.last_lock_idle_time.as_deref() == Some(time.as_str()) {
+            return;
+        }
+        self.present_lock_pin_entry(qh);
     }
 
     /// S21: first real notification producer, entirely client-side --
@@ -8497,20 +8522,17 @@ impl Shell {
         surface.commit();
     }
 
-    /// S24: what actually gets shown on the lock surface each time it
-    /// needs repainting -- the flat `LOCK_SCREEN_COLOR` this always
-    /// showed before this sprint when no PIN is set (delegates
-    /// straight to `present_lock_surface`, no change in that case),
-    /// or a numeric keypad plus filled-dot progress indicators when
-    /// `settings.pin_code` is set. Never called for the
+    /// S24 / VUI-07 (ADR-134): what actually gets shown on the lock
+    /// surface each time it needs repainting -- Canvas + clock + tap
+    /// hint when no PIN is set, or a numeric keypad plus filled-dot
+    /// progress when `settings.pin_code` is set. Never called for the
     /// `SLEEP_INDICATOR_COLOR` deep-idle blank (`check_deep_idle`
     /// keeps calling `present_lock_surface` directly for that) --
     /// screen-off should stay screen-off regardless of PIN.
     fn present_lock_pin_entry(&mut self, qh: &QueueHandle<Self>) {
-        let Some(pin_code) = self.settings.pin_code.clone() else {
-            self.present_lock_surface(qh, LOCK_SCREEN_COLOR);
+        if self.sleeping {
             return;
-        };
+        }
         let width = self.lock_width;
         let height = self.lock_height;
         if width == 0 || height == 0 {
@@ -8521,14 +8543,26 @@ impl Shell {
         };
         let stride = width as i32 * 4;
 
-        let keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
-            .iter()
-            .enumerate()
-            .filter(|(_, label)| !label.is_empty())
-            .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
-            .collect();
+        let pin_code = self.settings.pin_code.clone();
+        let idle = lock_idle_view(&current_time_string(self.settings.utc_offset_minutes));
+        if pin_code.is_none() {
+            self.last_lock_idle_time = Some(idle.time.clone());
+        }
+        let keys: Vec<(Rect, &'static str)> = if pin_code.is_some() {
+            PIN_KEYPAD_DIGIT_LABELS
+                .iter()
+                .enumerate()
+                .filter(|(_, label)| !label.is_empty())
+                .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let entered_len = self.pin_entry_buffer.len();
-        let pin_len = pin_code.len();
+        let pin_len = pin_code.as_ref().map(|code| code.len()).unwrap_or(0);
+        let has_pin = pin_code.is_some();
+        let idle_time = idle.time;
+        let idle_hint = idle.hint;
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
 
@@ -8551,14 +8585,21 @@ impl Shell {
                     .as_mut()
                     .expect("just confirmed ready above");
                 match lock_dmabuf.paint(|canvas| {
-                    render::draw_lock_pin_entry(
-                        &mut render::Canvas::new(canvas, width, height),
-                        width,
-                        entered_len,
-                        pin_len,
-                        &keys,
-                        fonts,
-                    );
+                    let mut frame = render::Canvas::new(canvas, width, height);
+                    if has_pin {
+                        render::draw_lock_pin_entry(
+                            &mut frame,
+                            width,
+                            entered_len,
+                            pin_len,
+                            &keys,
+                            fonts,
+                        );
+                    } else {
+                        render::draw_lock_idle(
+                            &mut frame, width, height, &idle_time, idle_hint, fonts,
+                        );
+                    }
                     render::apply_contrast_boost(canvas, contrast_pct);
                 }) {
                     Ok(wl_buffer) => {
@@ -8615,14 +8656,12 @@ impl Shell {
             }
         };
 
-        render::draw_lock_pin_entry(
-            &mut render::Canvas::new(canvas, width, height),
-            width,
-            entered_len,
-            pin_len,
-            &keys,
-            fonts,
-        );
+        let mut frame = render::Canvas::new(canvas, width, height);
+        if has_pin {
+            render::draw_lock_pin_entry(&mut frame, width, entered_len, pin_len, &keys, fonts);
+        } else {
+            render::draw_lock_idle(&mut frame, width, height, &idle_time, idle_hint, fonts);
+        }
         render::apply_contrast_boost(canvas, contrast_pct);
 
         let surface = lock_surface.wl_surface();
@@ -8664,21 +8703,22 @@ mod tests {
         calibration_requested, capability_label, consent_action_at, content_action_at,
         dev_surface_back_tapped, effective_context_space, ensure_me_row_cache, flatten_me_rows,
         format_utc_offset, in_progress_work, input_idle_for_at_least, intent_action_at,
-        known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle, next_pending_action,
-        object_view_action_at, object_view_content, orb_action_at, orb_attention_from_entities,
-        orb_menu_actions, orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
-        today_schedules, trusted_client_action_at, trusted_client_card_from_row,
-        trusted_client_list_rows, upsert_context_entry, wifi_card_from_row, wifi_list_action_at,
-        wifi_list_rows, wifi_password_field, AgentSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, Entity, FieldKind, KeyboardMode, OrbAction, Rect,
-        RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        known_surfaces, lock_idle_view, me_fixture_facts, me_system_sections, next_in_cycle,
+        next_pending_action, object_view_action_at, object_view_content, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
+        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
+        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
+        upsert_context_entry, wifi_card_from_row, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, Entity, FieldKind, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets,
+        Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
+        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -10020,6 +10060,15 @@ mod tests {
             Some("Введите новый PIN (минимум 4 цифры)")
         );
         assert_eq!(empty.accessible_value(), "");
+    }
+
+    #[test]
+    fn lock_idle_view_keeps_the_passed_time_and_names_tap_unlock() {
+        let view = lock_idle_view("22:46");
+        assert_eq!(view.time, "22:46");
+        assert_eq!(view.hint, "Коснитесь, чтобы разблокировать");
+        assert!(!view.hint.contains("Входящие"));
+        assert!(!lock_idle_view("").time.contains("Входящие"));
     }
 
     #[test]
