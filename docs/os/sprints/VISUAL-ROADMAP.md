@@ -742,9 +742,9 @@ navigation passes restart and cold-boot testing.
 
 ## VUI-05 — Object, Intent, Task, and Worker components
 
-**Status:** In progress (ATTN-02/03 + WORK-08 on panther shell
-`63b8b64`. `TaskSummary`/`IntentSummary` host types; Object View
-lineage + universal state host; AgentSummary deferred.)
+**Status:** Host complete (ATTN-02/03 + WORK-08 on panther shell
+`63b8b64`. Object View + offline manuals + `AgentSummary` + gallery
+page **host**. Physical gallery/Object View flash still pending.)
 
 **Depends on:** VUI-04 and the relevant HIA entity/runtime support
 
@@ -767,8 +767,8 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
   the related Task; NOW ObjectSummary trails live work; «Далее» is a
   pending Action or a derived-ready Task. No invented worker count.
 - [x] Draw anatomy sheets for `IntentSummary` and `TaskSummary`
-  (`component-library-v1.md` §7.6–7.7). `AgentSummary` stays deferred
-  until a real runtime entity exists.
+  (`component-library-v1.md` §7.6–7.7). `AgentSummary` is §7.9 from a
+  real `saaios.action`.
 - [x] Implement `TaskSummary` and `IntentSummary` in `saai-ui-core`.
   `Сейчас` «Продолжается» and a derived-ready «Далее» Task use
   `TaskSummary`. No worker count. `ObjectSummary` already exists (VUI-03).
@@ -784,13 +784,27 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
   Unavailable/deny is a permission line, not an invented button.
   Allow/AskUser do not execute from the shell (taskd remains the
   path). `display.inspect` is the first real spec.
-- [ ] Implement decision and confirmation overlays that name actor, action,
-  object, scope, consequence, and reversibility.
-- [ ] Add manual paths for supported work when AI is offline.
-- [ ] Integrate Agent visuals only with a real runtime entity/source; otherwise
+- [x] Implement `DecisionOverlay` naming actor, action, object, scope,
+  consequence, and reversible choices. Missing facts omitted. Object
+  View `waiting_confirmation` is the first consumer. Action undo is
+  not invented.
+- [x] Add manual paths for supported work when AI is offline.
+  Shell does not probe `saaios-runtime` (ADR-030). Apps, `Я`,
+  Confirm/Decline, and dismiss stay usable without a model. Intent
+  send keeps the draft when the store is down instead of pretending
+  success. AI-down after persist is already a failed-task
+  notification (ADR-089).
+- [x] Integrate Agent visuals only with a real runtime entity/source; otherwise
   present a truthful unassigned/unavailable state.
-- [ ] Expand the gallery and golden/interaction tests for every composite and
+  `AgentSummary` is assigned from `saaios.action` only. No Action →
+  «Нет исполнения». Notifications omit it. No `saaios.worker` entity
+  and no invented personality.
+- [x] Expand the gallery and golden/interaction tests for every composite and
   universal state.
+  Second gallery page (tap to switch) draws labelled `saai-ui-core`
+  fixtures: header, object, task, empty intent, unassigned/assigned
+  `AgentSummary`, decision choices, all nine `UniversalState`s.
+  `EventRow` still deferred. No fake workers or live telemetry.
 
 ### Acceptance
 

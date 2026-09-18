@@ -7,6 +7,7 @@
 mod components;
 mod composites;
 mod foundations;
+mod gallery;
 
 pub use components::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, DataRow, DataRowVariant,
@@ -14,14 +15,16 @@ pub use components::{
     SemanticText, StatusIndicator, StatusIndicatorVariant, TextOverflow,
 };
 pub use composites::{
-    BottomNavigation, ContextHeader, IntentSummary, NavigationItem, ObjectSummary,
-    ObjectSummaryTrailing, OrbHost, SystemSection, SystemSectionRow, SystemStatus, TaskSummary,
+    AgentAssignment, AgentSummary, BottomNavigation, ContextHeader, DecisionOverlay, IntentSummary,
+    NavigationItem, ObjectSummary, ObjectSummaryTrailing, OrbHost, SystemSection, SystemSectionRow,
+    SystemStatus, TaskSummary,
 };
 pub use foundations::{
     FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,
     SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle, TextRole, TextStyle,
     CONTROL_VISUAL_HEIGHT, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
+pub use gallery::{composite_gallery_fixtures, CompositeGalleryFixtures};
 
 /// Backend-independent sRGB color. Renderers are responsible for converting
 /// this logical value to their native pixel/scanout packing.
@@ -125,6 +128,18 @@ pub struct StateStyle {
 }
 
 impl UniversalState {
+    pub const ALL: [Self; 9] = [
+        Self::Idle,
+        Self::Active,
+        Self::Running,
+        Self::Waiting,
+        Self::Blocked,
+        Self::Attention,
+        Self::Failed,
+        Self::Complete,
+        Self::Offline,
+    ];
+
     pub const fn style(self) -> StateStyle {
         match self {
             Self::Idle => StateStyle {
@@ -788,5 +803,9 @@ mod tests {
         assert_eq!(UniversalState::Blocked.style().color, ColorRole::Attention);
         assert_eq!(UniversalState::Complete.style().color, ColorRole::Success);
         assert_eq!(UniversalState::Offline.style().mark, StatusMark::Offline);
+        assert_eq!(UniversalState::ALL.len(), 9);
+        for state in UniversalState::ALL {
+            assert!(!state.style().label_key.is_empty());
+        }
     }
 }

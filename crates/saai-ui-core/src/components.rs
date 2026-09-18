@@ -54,6 +54,9 @@ pub enum AccessibilityRole {
     Disclosure,
     ProgressIndicator,
     Status,
+    /// A confirmation/decision surface that names the choice, not a
+    /// generic list row (`DecisionOverlay`).
+    Dialog,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

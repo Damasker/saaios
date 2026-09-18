@@ -47,9 +47,8 @@ in VUI-09; privileged system composites are not automatically public.
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
 | Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
-| Composite | `IntentSummary`, `TaskSummary` | Experimental (VUI-05) | `Сейчас` work rows |
-| Composite | `AgentSummary` | Deferred to VUI-05 | only with a real runtime entity |
-| Composite | `EventRow`, `DecisionOverlay` | Deferred to VUI-04/05 | shell surfaces |
+| Composite | `IntentSummary`, `TaskSummary`, `DecisionOverlay`, `AgentSummary` | Experimental (VUI-05) | Object View |
+| Composite | `EventRow` | Deferred to VUI-04/05 | shell surfaces |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
 ## 4. Shared state contract
@@ -237,8 +236,10 @@ Composites compose primitives (section 6); they never draw their own text or
 own a rendering path a primitive does not already provide. Scoped per section
 3's inventory table: `ContextHeader`, `SystemSection`, and `ObjectSummary` are
 VUI-03's three; `BottomNavigation`, `OrbHost`, and `SystemStatus` are VUI-04;
-`IntentSummary` and `TaskSummary` land in VUI-05. `EventRow` and `AgentSummary`
-remain deferred — `AgentSummary` only when a real runtime entity exists.
+`IntentSummary` and `TaskSummary` land in VUI-05. `DecisionOverlay` lands
+in VUI-05 on Object View confirmation. `AgentSummary` lands in VUI-05
+only from a real `saaios.action` (otherwise unassigned/unavailable).
+`EventRow` remains deferred.
 
 ### 7.1 `ContextHeader`
 
@@ -365,10 +366,42 @@ remain deferred — `AgentSummary` only when a real runtime entity exists.
 - Accessibility: name is the intent title; nested task keeps its own
   contract; missing task is a separate caption.
 
+### 7.8 `DecisionOverlay`
+
+- Anatomy: actor, intended action, affected object, scope, optional
+  consequence, and two reversible choices (`Подтвердить` / `Отклонить`).
+- Missing facts are omitted. The overlay does not invent whether the
+  action itself can be undone; reversibility is the pair of choices.
+- Distinct from `TaskSummary`: this is the confirmation surface, not a
+  list row. Distinct from app-consent: that names capabilities, this
+  names a workflow/OAM decision.
+- Built from `SemanticText` plus two `Button`s. No local color, no
+  invented agent actor.
+- First real consumer: Object View while a Task/Action is
+  `waiting_confirmation`.
+- Accessibility: name is the object; value is the action id when
+  present; role is dialog. Each button keeps its own contract.
+
+### 7.9 `AgentSummary`
+
+- Anatomy: one disposable execution (`saaios.action`) or a truthful
+  unassigned/unavailable caption. No personality name, no worker count.
+- Distinct from `TaskSummary`: this is the execution slot, not the Task.
+  Distinct from `IntentSummary`: that does not own a worker list.
+- Assigned only from a real Action entity. Missing Action → «Нет
+  исполнения». Source that cannot be read → «Исполнение недоступно».
+- Built from `SemanticText` plus optional `StatusIndicator`.
+- First real consumer: Object View on Intent/Task/Action/Result.
+  Notifications and unknown types omit the composite entirely.
+- Accessibility: unassigned/unavailable name is the caption; assigned
+  name is the Action title and value is the nested state's `label_key`.
+
 ## 8. Required gallery matrix
 
 The first device gallery uses labelled fixture data and contains no fake
-runtime telemetry. Each applicable primitive is rendered in:
+runtime telemetry. VUI-02 covers the ten primitives (default state).
+VUI-05 adds a second page with composites and every `UniversalState`.
+Tap switches pages. `EventRow` is omitted until it exists.
 
 1. default, pressed, focused, disabled, and busy interaction states;
 2. compact and normal variants;

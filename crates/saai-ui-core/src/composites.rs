@@ -4,13 +4,13 @@
 //! primitive does not already provide. VUI-03's three
 //! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
-//! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`.
-//! `EventRow`/`AgentSummary` remain deferred and do not exist here.
+//! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
+//! `DecisionOverlay`/`AgentSummary`. `EventRow` remains deferred.
 
 use crate::{
-    AccessibilityInfo, AccessibilityRole, ColorRole, ContextColor, DataRow, Divider, IconGlyph,
-    Metric, MotionCue, Progress, SemanticText, StatusIndicator, StatusIndicatorVariant, StatusMark,
-    TextRole, UniversalState,
+    AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
+    Divider, IconGlyph, Metric, MotionCue, Progress, SemanticText, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, TextRole, UniversalState,
 };
 
 /// Section 7.1. Anatomy: an active-context label, an optional current-
@@ -332,6 +332,180 @@ impl IntentSummary {
     }
 }
 
+/// Section 7.8. A decision names actor, intended action, affected
+/// object, scope, optional consequence, and two reversible choices
+/// (accept/decline). Missing facts are omitted. The overlay does not
+/// invent whether the *action* can be undone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecisionOverlay {
+    pub actor: Option<String>,
+    pub action: Option<String>,
+    pub object: String,
+    pub scope: Option<String>,
+    pub consequence: Option<String>,
+    pub accept: Button,
+    pub decline: Button,
+}
+
+impl DecisionOverlay {
+    pub fn new(object: impl Into<String>) -> Self {
+        Self {
+            actor: None,
+            action: None,
+            object: object.into(),
+            scope: None,
+            consequence: None,
+            accept: Button::new("Подтвердить", "confirm", ButtonVariant::Primary),
+            decline: Button::new("Отклонить", "decline", ButtonVariant::Secondary),
+        }
+    }
+
+    pub fn with_actor(mut self, actor: impl Into<String>) -> Self {
+        self.actor = Some(actor.into());
+        self
+    }
+
+    pub fn with_action(mut self, action: impl Into<String>) -> Self {
+        self.action = Some(action.into());
+        self
+    }
+
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
+        self
+    }
+
+    pub fn with_consequence(mut self, consequence: impl Into<String>) -> Self {
+        self.consequence = Some(consequence.into());
+        self
+    }
+
+    pub fn fact_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(actor) = &self.actor {
+            lines.push(format!("Актёр: {actor}"));
+        }
+        if let Some(action) = &self.action {
+            lines.push(format!("Действие: {action}"));
+        }
+        lines.push(format!("Объект: {}", self.object));
+        if let Some(scope) = &self.scope {
+            lines.push(format!("Область: {scope}"));
+        }
+        if let Some(consequence) = &self.consequence {
+            lines.push(format!("Последствие: {consequence}"));
+        }
+        lines
+    }
+
+    pub fn heading(&self) -> SemanticText {
+        SemanticText::new(self.object.clone(), TextRole::Title, ColorRole::TextPrimary)
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.object.clone()),
+            value: self.action.clone(),
+            ..AccessibilityInfo::new(AccessibilityRole::Dialog)
+        }
+    }
+}
+
+/// Section 7.9. Disposable execution slot (ADR-121 Worker), not a
+/// persistent Agent personality. Assigned only from a real `saaios.action`.
+/// Unassigned / unavailable are captions, never a fake cluster or
+/// `Воркеры (3)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentAssignment {
+    Unassigned,
+    Unavailable,
+    Execution {
+        title: String,
+        state: UniversalState,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentSummary {
+    pub assignment: AgentAssignment,
+}
+
+impl AgentSummary {
+    pub fn unassigned() -> Self {
+        Self {
+            assignment: AgentAssignment::Unassigned,
+        }
+    }
+
+    pub fn unavailable() -> Self {
+        Self {
+            assignment: AgentAssignment::Unavailable,
+        }
+    }
+
+    pub fn from_execution(title: impl Into<String>, state: UniversalState) -> Self {
+        Self {
+            assignment: AgentAssignment::Execution {
+                title: title.into(),
+                state,
+            },
+        }
+    }
+
+    pub fn caption(&self) -> SemanticText {
+        match &self.assignment {
+            AgentAssignment::Unassigned => SemanticText::new(
+                "Нет исполнения",
+                TextRole::Caption,
+                ColorRole::TextSecondary,
+            ),
+            AgentAssignment::Unavailable => SemanticText::new(
+                "Исполнение недоступно",
+                TextRole::Caption,
+                ColorRole::TextSecondary,
+            ),
+            AgentAssignment::Execution { title, .. } => {
+                SemanticText::new(title.clone(), TextRole::Body, ColorRole::TextPrimary)
+            }
+        }
+    }
+
+    pub fn status(&self) -> Option<StatusIndicator> {
+        match &self.assignment {
+            AgentAssignment::Execution { title, state } => {
+                Some(StatusIndicator::new(*state, title.clone()))
+            }
+            AgentAssignment::Unassigned | AgentAssignment::Unavailable => None,
+        }
+    }
+
+    pub fn detail_line(&self) -> String {
+        match &self.assignment {
+            AgentAssignment::Unassigned => "Нет исполнения".to_string(),
+            AgentAssignment::Unavailable => "Исполнение недоступно".to_string(),
+            AgentAssignment::Execution { title, .. } => format!("Исполнение: {title}"),
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        match &self.assignment {
+            AgentAssignment::Unassigned => AccessibilityInfo {
+                name: Some("Нет исполнения".into()),
+                ..AccessibilityInfo::new(AccessibilityRole::Text)
+            },
+            AgentAssignment::Unavailable => AccessibilityInfo {
+                name: Some("Исполнение недоступно".into()),
+                ..AccessibilityInfo::new(AccessibilityRole::Text)
+            },
+            AgentAssignment::Execution { title, state } => AccessibilityInfo {
+                name: Some(title.clone()),
+                value: Some(state.style().label_key.to_string()),
+                ..AccessibilityInfo::new(AccessibilityRole::ListItem)
+            },
+        }
+    }
+}
+
 /// Section 7.4. One destination in the bottom navigation strip. `icon` is
 /// optional rather than required: this project's current icon set
 /// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
@@ -588,7 +762,7 @@ impl SystemStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DataRowVariant, UniversalState};
+    use crate::{AccessibilityRole, DataRowVariant, UniversalState};
 
     #[test]
     fn context_header_heading_text_matches_draw_roots_current_format() {
@@ -771,5 +945,77 @@ mod tests {
                 .as_deref(),
             Some("12%")
         );
+    }
+
+    #[test]
+    fn decision_overlay_names_facts_and_omits_missing_ones() {
+        let overlay = DecisionOverlay::new("Подтвердите: убить процесс")
+            .with_actor("Система")
+            .with_action("process.kill_request")
+            .with_scope("work")
+            .with_consequence("Завершить процесс 999");
+        assert_eq!(
+            overlay.fact_lines(),
+            vec![
+                "Актёр: Система".to_string(),
+                "Действие: process.kill_request".to_string(),
+                "Объект: Подтвердите: убить процесс".to_string(),
+                "Область: work".to_string(),
+                "Последствие: Завершить процесс 999".to_string(),
+            ]
+        );
+        assert_eq!(overlay.accept.label, "Подтвердить");
+        assert_eq!(overlay.decline.label, "Отклонить");
+        assert!(overlay.accept.can_activate());
+        assert_eq!(overlay.accessibility().role, AccessibilityRole::Dialog);
+        assert_eq!(
+            overlay.accessibility().value.as_deref(),
+            Some("process.kill_request")
+        );
+
+        let sparse = DecisionOverlay::new("Задача");
+        assert_eq!(sparse.fact_lines(), vec!["Объект: Задача".to_string()]);
+        assert!(sparse.action.is_none());
+        assert!(sparse.consequence.is_none());
+    }
+
+    #[test]
+    fn agent_summary_is_unassigned_or_unavailable_without_inventing_a_personality() {
+        let empty = AgentSummary::unassigned();
+        assert_eq!(empty.assignment, AgentAssignment::Unassigned);
+        assert_eq!(empty.caption().content, "Нет исполнения");
+        assert!(empty.status().is_none());
+        assert_eq!(empty.detail_line(), "Нет исполнения");
+        assert_eq!(
+            empty.accessibility().name.as_deref(),
+            Some("Нет исполнения")
+        );
+
+        let down = AgentSummary::unavailable();
+        assert_eq!(down.assignment, AgentAssignment::Unavailable);
+        assert_eq!(down.caption().content, "Исполнение недоступно");
+        assert!(down.status().is_none());
+        assert_eq!(down.detail_line(), "Исполнение недоступно");
+
+        let running = AgentSummary::from_execution("Экспорт PDF", UniversalState::Running);
+        assert_eq!(
+            running.assignment,
+            AgentAssignment::Execution {
+                title: "Экспорт PDF".into(),
+                state: UniversalState::Running,
+            }
+        );
+        assert_eq!(running.caption().content, "Экспорт PDF");
+        assert_eq!(
+            running.status().map(|status| status.state),
+            Some(UniversalState::Running)
+        );
+        assert_eq!(running.detail_line(), "Исполнение: Экспорт PDF");
+        assert_eq!(
+            running.accessibility().value.as_deref(),
+            Some("state.running")
+        );
+        assert!(!running.detail_line().contains("Воркеры"));
+        assert!(!running.caption().content.contains("ResearchAgent"));
     }
 }

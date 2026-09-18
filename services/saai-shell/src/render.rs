@@ -1,11 +1,12 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::{
-    Button, ButtonVariant, ColorRole, ContextColor, ContextHeader, DataRow, DataRowVariant,
-    Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize,
-    LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary, ObjectSummaryTrailing,
-    Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, SystemStatus,
-    TextOverflow, TextRole, Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
+    DataRow, DataRowVariant, Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon,
+    IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
+    ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow,
+    SystemStatus, TextOverflow, TextRole, Theme, UniversalState, MIN_TOUCH_TARGET,
+    TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -399,11 +400,13 @@ pub fn draw_consent(
 /// `title` is a parameter (S19) rather than a hardcoded "Новое
 /// намерение" -- `saai-shell` reuses this same keyboard tree verbatim
 /// for the Wi-Fi password screen (see `WifiPasswordState`'s doc
-/// comment), which needs its own header text.
+/// comment), which needs its own header text. `status` is store-offline
+/// on the intent screen (`Нет связи`); Wi-Fi password passes `None`.
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
     title: &str,
     buffer: &str,
+    status: Option<&str>,
     header: Rect,
     keys: &[(Rect, String)],
     fonts: Option<&Fonts>,
@@ -429,6 +432,17 @@ pub fn draw_intent_input(
         header.y + 40,
         theme_color(ColorRole::TextPrimary),
     );
+    if let Some(status) = status {
+        draw_text(
+            canvas,
+            &fonts.regular,
+            status,
+            28.0,
+            header.x + 30,
+            header.y + 88,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
     let (preview, preview_color) = if buffer.is_empty() {
         ("Наберите текст…", theme_color(ColorRole::TextSecondary))
     } else {
@@ -1737,26 +1751,55 @@ fn draw_gallery_disclosure(
 /// was a layout-math error a host test on exactly this function would have
 /// caught before a physical screenshot had to.
 const GALLERY_ROW_COUNT: usize = 11;
+const COMPOSITE_GALLERY_ROW_COUNT: usize = 12;
 
-fn gallery_row_positions(height: u32) -> [u32; GALLERY_ROW_COUNT] {
+fn stacked_gallery_row_positions<const N: usize>(height: u32) -> [u32; N] {
     // Same clearance `draw_calibration`'s own `palette_top` uses -- the
     // separately-composited status bar overlay sits above the main
     // surface regardless of which fixture this surface draws, so both
     // fixtures need the same top clearance to avoid it.
     let mut cursor_y = height / 10;
-    let mut rows = [0u32; GALLERY_ROW_COUNT];
+    let mut rows = [0u32; N];
     rows[0] = cursor_y;
     // Same minimum clearance every other row gets below it (one Body line
     // height plus one Caption line height) -- the title is smaller than a
     // full row's own content, but there is no reason its own gap should be
     // held to a looser standard than every row after it.
     cursor_y += physical_line_height(TextRole::Body) + physical_line_height(TextRole::Caption);
-    let row_height = (height.saturating_sub(cursor_y) / 10).max(140);
+    let remaining = (N - 1) as u32;
+    let row_height = (height.saturating_sub(cursor_y) / remaining).max(140);
     for slot in rows.iter_mut().skip(1) {
         *slot = cursor_y;
         cursor_y += row_height;
     }
     rows
+}
+
+fn gallery_row_positions(height: u32) -> [u32; GALLERY_ROW_COUNT] {
+    stacked_gallery_row_positions(height)
+}
+
+fn composite_gallery_row_positions(height: u32) -> [u32; COMPOSITE_GALLERY_ROW_COUNT] {
+    stacked_gallery_row_positions(height)
+}
+
+fn composite_gallery_decision_buttons(width: u32, height: u32) -> (Rect, Rect) {
+    let rows = composite_gallery_row_positions(height);
+    let margin = (width / 20).max(12);
+    let content_width = width.saturating_sub(margin * 2);
+    let gap = physical(SpacingToken::Small.value());
+    let button_width = content_width.saturating_sub(gap) / 2;
+    let button_height = physical(MIN_TOUCH_TARGET);
+    let top = rows[8];
+    (
+        Rect::new(margin, top, button_width, button_height),
+        Rect::new(
+            margin + button_width + gap,
+            top,
+            button_width,
+            button_height,
+        ),
+    )
 }
 
 /// VUI-02's first device component gallery (component-library-v1.md
@@ -1899,6 +1942,133 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         &disclosure,
         Rect::new(margin, rows[10], content_width, physical(MIN_TOUCH_TARGET)),
     );
+}
+
+/// VUI-05 composite page of the same developer gallery. Labelled fixture
+/// data from `saai-ui-core` -- no live telemetry. `Divider` is skipped
+/// here; state marks and the two decision buttons still draw without a
+/// font so host tests can see geometry.
+pub fn draw_composite_gallery(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    height: u32,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let margin = (width / 20).max(12);
+    let content_width = width.saturating_sub(margin * 2);
+    let rows = composite_gallery_row_positions(height);
+    let fixtures = composite_gallery_fixtures();
+    let (accept, decline) = composite_gallery_decision_buttons(width, height);
+
+    canvas.fill_rect(accept, theme_color(ColorRole::Accent));
+    canvas.fill_rect(decline, theme_color(ColorRole::Elevated));
+
+    let mark_size = physical(IconSize::Medium.value());
+    let cell_width = content_width / 3;
+    for (index, indicator) in fixtures.states.iter().enumerate() {
+        let row = 9 + index / 3;
+        let column = index % 3;
+        let left = margin + column as u32 * cell_width;
+        draw_calibration_mark(
+            canvas,
+            Rect::new(left, rows[row], mark_size, mark_size),
+            indicator.mark(),
+            theme_color(indicator.state.style().color),
+        );
+    }
+
+    let Some(fonts) = fonts else {
+        return;
+    };
+
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        fixtures.title,
+        32.0,
+        margin,
+        rows[0],
+        theme_color(ColorRole::TextPrimary),
+    );
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &fixtures.header.heading(),
+        margin,
+        rows[1],
+        content_width,
+    );
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &fixtures.object.title_text(),
+        margin,
+        rows[2],
+        content_width,
+    );
+    draw_status_indicator(canvas, fonts, &fixtures.task.status(), margin, rows[3]);
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &fixtures.intent.heading(),
+        margin,
+        rows[4],
+        content_width,
+    );
+    if let Some(missing) = fixtures.intent.missing_task_text() {
+        draw_semantic_text(
+            canvas,
+            fonts,
+            &missing,
+            margin,
+            rows[4] + physical_line_height(TextRole::Caption),
+            content_width,
+        );
+    }
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &fixtures.agent_unassigned.caption(),
+        margin,
+        rows[5],
+        content_width,
+    );
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &fixtures.agent_assigned.caption(),
+        margin,
+        rows[6],
+        content_width,
+    );
+    let facts = fixtures.decision.fact_lines().join(" · ");
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &SemanticText::new(facts, TextRole::Caption, ColorRole::TextSecondary),
+        margin,
+        rows[7],
+        content_width,
+    );
+    draw_gallery_button(canvas, fonts, &fixtures.decision.accept, accept);
+    draw_gallery_button(canvas, fonts, &fixtures.decision.decline, decline);
+    for (index, indicator) in fixtures.states.iter().enumerate() {
+        let row = 9 + index / 3;
+        let column = index % 3;
+        let left =
+            margin + column as u32 * cell_width + mark_size + physical(SpacingToken::Small.value());
+        let (font, size) = fonts.resolve(TextRole::Caption);
+        draw_text(
+            canvas,
+            font,
+            &indicator.label,
+            size,
+            left,
+            rows[row],
+            theme_color(indicator.state.style().color),
+        );
+    }
 }
 // S23 added `is_grid` as the 8th plain draw-time knob on an already
 // data-only function (no behavior to extract into a struct without
@@ -2702,13 +2872,14 @@ fn draw_text(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_contrast_boost, context_color, draw_calibration, draw_gallery, draw_orb, draw_root,
+        apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
+        context_color, draw_calibration, draw_composite_gallery, draw_gallery, draw_orb, draw_root,
         draw_status_bar, draw_tab_bar, gallery_row_positions, physical, physical_line_height,
         state_color, theme_color, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, NavigationItem, Progress, Rect, StatusMark, SystemStatus,
-        TextRole, UniversalState,
+        TextRole, UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -3106,6 +3277,61 @@ mod tests {
         assert_eq!(
             canvas.pixel(width - margin - 4, rows[5] + 2),
             theme_color(ColorRole::Grid)
+        );
+    }
+
+    #[test]
+    fn composite_gallery_rows_never_overlap() {
+        let rows = composite_gallery_row_positions(2400);
+        let min_gap =
+            physical_line_height(TextRole::Body) + physical_line_height(TextRole::Caption);
+        for pair in rows.windows(2) {
+            let gap = pair[1] - pair[0];
+            assert!(
+                gap >= min_gap,
+                "gap {gap} between composite rows at {} and {} is smaller than {min_gap}",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert!(*rows.last().unwrap() < 2400);
+    }
+
+    #[test]
+    fn composite_gallery_decision_buttons_meet_min_touch_and_do_not_overlap() {
+        let (accept, decline) = composite_gallery_decision_buttons(1080, 2400);
+        assert!(accept.width >= physical(MIN_TOUCH_TARGET));
+        assert!(accept.height >= physical(MIN_TOUCH_TARGET));
+        assert!(decline.width >= physical(MIN_TOUCH_TARGET));
+        assert!(decline.height >= physical(MIN_TOUCH_TARGET));
+        assert!(accept.x + accept.width <= decline.x);
+        assert!(decline.x + decline.width <= 1080);
+        assert!(accept.y + accept.height < 2400);
+    }
+
+    #[test]
+    fn composite_gallery_state_marks_and_buttons_draw_without_a_loaded_font() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        draw_composite_gallery(canvas, width, height, None);
+
+        let (accept, decline) = composite_gallery_decision_buttons(width, height);
+        assert_eq!(
+            canvas.pixel(accept.x + 4, accept.y + 4),
+            theme_color(ColorRole::Accent)
+        );
+        assert_eq!(
+            canvas.pixel(decline.x + 4, decline.y + 4),
+            theme_color(ColorRole::Elevated)
+        );
+
+        let rows = composite_gallery_row_positions(height);
+        let margin = (width / 20).max(12);
+        assert_ne!(
+            canvas.pixel(margin + 4, rows[9] + 4),
+            theme_color(ColorRole::Canvas)
         );
     }
 }
