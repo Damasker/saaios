@@ -220,6 +220,7 @@ pub struct Canvas<'a> {
     pixels: &'a mut [u8],
     width: u32,
     height: u32,
+    clip: Option<Rect>,
 }
 
 impl<'a> Canvas<'a> {
@@ -229,20 +230,32 @@ impl<'a> Canvas<'a> {
             pixels,
             width,
             height,
+            clip: None,
         }
     }
 
+    pub fn set_clip(&mut self, clip: Option<Rect>) {
+        self.clip = clip;
+    }
+
     pub fn fill(&mut self, color: Pixel) {
+        if let Some(clip) = self.clip {
+            self.fill_rect(clip, color);
+            return;
+        }
         for pixel in self.pixels.chunks_exact_mut(4) {
             pixel.copy_from_slice(&color);
         }
     }
 
     pub fn fill_rect(&mut self, rect: Rect, color: Pixel) {
-        let left = rect.x.min(self.width);
-        let top = rect.y.min(self.height);
-        let right = rect.x.saturating_add(rect.width).min(self.width);
-        let bottom = rect.y.saturating_add(rect.height).min(self.height);
+        let Some(rect) = self.clipped(rect) else {
+            return;
+        };
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x.saturating_add(rect.width);
+        let bottom = rect.y.saturating_add(rect.height);
         for y in top..bottom {
             let start = (y as usize * self.width as usize + left as usize) * 4;
             let end = (y as usize * self.width as usize + right as usize) * 4;
@@ -252,9 +265,23 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    fn clipped(&self, rect: Rect) -> Option<Rect> {
+        let bounds = Rect::new(0, 0, self.width, self.height);
+        let clipped = match self.clip {
+            Some(clip) => rect.intersection(clip)?,
+            None => rect,
+        };
+        clipped.intersection(bounds)
+    }
+
     fn blend(&mut self, x: i32, y: i32, color: Pixel, alpha: u8) {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 || alpha == 0 {
             return;
+        }
+        if let Some(clip) = self.clip {
+            if !clip.contains(x as f64, y as f64) {
+                return;
+            }
         }
         let start = (y as usize * self.width as usize + x as usize) * 4;
         let inverse = 255 - alpha as u16;
@@ -1825,6 +1852,7 @@ pub fn draw_root(
     is_grid: bool,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.set_clip(Some(content));
 
     // A stable phone-like content surface. The number of rows changes per
     // root page so page transitions remain visible even if a display pipeline
@@ -2001,6 +2029,7 @@ pub fn draw_root(
         }
     }
 
+    canvas.set_clip(None);
     draw_tab_bar(canvas, tabs, fonts);
 }
 
@@ -2165,208 +2194,213 @@ pub fn draw_now(
     canvas.fill(theme_color(ColorRole::Canvas));
     let margin = (content.width / 20).max(12);
     let content_width = content.width.saturating_sub(margin * 2);
+    canvas.set_clip(Some(content));
 
-    draw_tab_bar(canvas, tabs, fonts);
+    if let Some(fonts) = fonts {
+        for (rect, row) in footer_actions {
+            draw_data_row(canvas, fonts, row, *rect);
+        }
 
-    let Some(fonts) = fonts else {
-        return;
-    };
-
-    for (rect, row) in footer_actions {
-        draw_data_row(canvas, fonts, row, *rect);
-    }
-
-    // `content` spans the full canvas from y=0 -- the status bar is a
-    // separate, always-on-top compositor surface (`layer.set_size(0,
-    // 120)` in `main.rs`), not a reserved inset inside this one. Content
-    // drawn at `content.y` alone renders directly underneath it and is
-    // invisible; `draw_root`'s own header/card rows avoid this with
-    // hardcoded 150/430 (2400-scale) starting offsets -- this scales the
-    // same 150 proportionally instead of repeating the literal, matching
-    // `now_grid_rect`'s own scaling convention for its 2400-scale numbers.
-    let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
-    let mut cursor_y = content.y + top_inset;
-    draw_semantic_text(
-        canvas,
-        fonts,
-        &header.heading(),
-        content.x + margin,
-        cursor_y,
-        content_width,
-    );
-    cursor_y += scaled_line_height(TextRole::Title);
-
-    // Section 7.1: "a non-default lifecycle is exposed through the
-    // nested `StatusIndicator`'s own state, not a second accessible
-    // string glued onto the header's name" -- drawn here as a real,
-    // always-visible compact mark, not just consulted for the
-    // whole-screen empty-state message below. Without this, an offline
-    // signal (or an archived-space one) would be silently invisible
-    // whenever `sections`/`object` still have real, possibly-stale
-    // content to show.
-    if let Some(lifecycle) = &header.lifecycle {
-        draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
-        cursor_y += scaled_line_height(TextRole::Body);
-    }
-
-    if let Some(object) = object {
-        cursor_y += physical(SpacingToken::Medium.value());
+        // `content` spans the full canvas from y=0 -- the status bar is a
+        // separate, always-on-top compositor surface (`layer.set_size(0,
+        // 120)` in `main.rs`), not a reserved inset inside this one. Content
+        // drawn at `content.y` alone renders directly underneath it and is
+        // invisible; `draw_root`'s own header/card rows avoid this with
+        // hardcoded 150/430 (2400-scale) starting offsets -- this scales the
+        // same 150 proportionally instead of repeating the literal, matching
+        // `now_grid_rect`'s own scaling convention for its 2400-scale numbers.
+        let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
+        let mut cursor_y = content.y + top_inset;
         draw_semantic_text(
             canvas,
             fonts,
-            &object.title_text(),
+            &header.heading(),
             content.x + margin,
             cursor_y,
             content_width,
         );
-        cursor_y += scaled_line_height(TextRole::Body);
-        draw_semantic_text(
-            canvas,
-            fonts,
-            &object.meta_text(),
-            content.x + margin,
-            cursor_y,
-            content_width,
-        );
-        cursor_y += scaled_line_height(TextRole::Caption);
-        if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
-            draw_status_indicator(canvas, fonts, status, content.x + margin, cursor_y);
+        cursor_y += scaled_line_height(TextRole::Title);
+
+        // Section 7.1: "a non-default lifecycle is exposed through the
+        // nested `StatusIndicator`'s own state, not a second accessible
+        // string glued onto the header's name" -- drawn here as a real,
+        // always-visible compact mark, not just consulted for the
+        // whole-screen empty-state message below. Without this, an offline
+        // signal (or an archived-space one) would be silently invisible
+        // whenever `sections`/`object` still have real, possibly-stale
+        // content to show.
+        if let Some(lifecycle) = &header.lifecycle {
+            draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
             cursor_y += scaled_line_height(TextRole::Body);
-        } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
-            let (value_font, value_size) = fonts.resolve(TextRole::Body);
-            draw_text(
+        }
+
+        if let Some(object) = object {
+            cursor_y += physical(SpacingToken::Medium.value());
+            draw_semantic_text(
                 canvas,
-                value_font,
-                value,
-                value_size,
+                fonts,
+                &object.title_text(),
                 content.x + margin,
                 cursor_y,
-                theme_color(ColorRole::TextPrimary),
+                content_width,
             );
             cursor_y += scaled_line_height(TextRole::Body);
+            draw_semantic_text(
+                canvas,
+                fonts,
+                &object.meta_text(),
+                content.x + margin,
+                cursor_y,
+                content_width,
+            );
+            cursor_y += scaled_line_height(TextRole::Caption);
+            if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
+                draw_status_indicator(canvas, fonts, status, content.x + margin, cursor_y);
+                cursor_y += scaled_line_height(TextRole::Body);
+            } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
+                let (value_font, value_size) = fonts.resolve(TextRole::Body);
+                draw_text(
+                    canvas,
+                    value_font,
+                    value,
+                    value_size,
+                    content.x + margin,
+                    cursor_y,
+                    theme_color(ColorRole::TextPrimary),
+                );
+                cursor_y += scaled_line_height(TextRole::Body);
+            }
         }
-    }
 
-    if sections.is_empty() && object.is_none() {
-        // HIA-13's own second mockup: "Ничего срочного", centered, no
-        // section chrome at all -- an empty `Сейчас` is a normal, calm
-        // state, not a broken one, and `SystemSection` itself never
-        // invents a placeholder row to fill space (see its own doc
-        // comment), so this is the one place that message can honestly
-        // come from: the whole-screen empty state, not a per-section one.
-        //
-        // VUI-03 (ADR-114): that message is only true when this shell
-        // actually knows there is nothing pending. When `ContextHeader`
-        // itself is reporting `Offline` (no `saai-entityd` connection --
-        // see `now_context_header`), an empty `sections`/`object` means
-        // "cannot tell," not "confirmed calm," and saying otherwise
-        // would be the exact dishonest empty state VUI-03's own
-        // acceptance criteria rule out.
-        let offline = matches!(
-            header.lifecycle.as_ref().map(|status| status.state),
-            Some(UniversalState::Offline)
-        );
-        let message = if offline {
-            "Нет связи с пространствами"
+        if sections.is_empty() && object.is_none() {
+            // HIA-13's own second mockup: "Ничего срочного", centered, no
+            // section chrome at all -- an empty `Сейчас` is a normal, calm
+            // state, not a broken one, and `SystemSection` itself never
+            // invents a placeholder row to fill space (see its own doc
+            // comment), so this is the one place that message can honestly
+            // come from: the whole-screen empty state, not a per-section one.
+            //
+            // VUI-03 (ADR-114): that message is only true when this shell
+            // actually knows there is nothing pending. When `ContextHeader`
+            // itself is reporting `Offline` (no `saai-entityd` connection --
+            // see `now_context_header`), an empty `sections`/`object` means
+            // "cannot tell," not "confirmed calm," and saying otherwise
+            // would be the exact dishonest empty state VUI-03's own
+            // acceptance criteria rule out.
+            let offline = matches!(
+                header.lifecycle.as_ref().map(|status| status.state),
+                Some(UniversalState::Offline)
+            );
+            let message = if offline {
+                "Нет связи с пространствами"
+            } else {
+                "Ничего срочного"
+            };
+            let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
+            draw_text_centered(
+                canvas,
+                empty_font,
+                message,
+                empty_size,
+                content.x + content.width / 2,
+                content.y + content.height / 2,
+                theme_color(ColorRole::TextSecondary),
+            );
         } else {
-            "Ничего срочного"
-        };
-        let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
-        draw_text_centered(
-            canvas,
-            empty_font,
-            message,
-            empty_size,
-            content.x + content.width / 2,
-            content.y + content.height / 2,
-            theme_color(ColorRole::TextSecondary),
-        );
-        return;
-    }
+            for section in sections {
+                cursor_y += physical(SpacingToken::Medium.value());
+                draw_semantic_text(
+                    canvas,
+                    fonts,
+                    &section.heading(),
+                    content.x + margin,
+                    cursor_y,
+                    content_width,
+                );
+                cursor_y += scaled_line_height(TextRole::Section);
+                let hairline = physical(StrokeToken::Hairline.value()).max(1);
+                draw_divider(
+                    canvas,
+                    &section.divider(),
+                    Rect::new(content.x + margin, cursor_y, content_width, hairline),
+                );
+                cursor_y += physical(SpacingToken::Small.value());
 
-    for section in sections {
-        cursor_y += physical(SpacingToken::Medium.value());
-        draw_semantic_text(
-            canvas,
-            fonts,
-            &section.heading(),
-            content.x + margin,
-            cursor_y,
-            content_width,
-        );
-        cursor_y += scaled_line_height(TextRole::Section);
-        let hairline = physical(StrokeToken::Hairline.value()).max(1);
-        draw_divider(
-            canvas,
-            &section.divider(),
-            Rect::new(content.x + margin, cursor_y, content_width, hairline),
-        );
-        cursor_y += physical(SpacingToken::Small.value());
-
-        // "A section with no children renders only its title" -- title
-        // and divider are already drawn above; nothing else to add for
-        // an empty section, and never an invented filler row.
-        if section.is_empty() {
-            continue;
-        }
-
-        for row in &section.rows {
-            match row {
-                SystemSectionRow::Data(data_row) => {
-                    let row_height = physical(data_row.min_hit_height());
-                    draw_data_row(
-                        canvas,
-                        fonts,
-                        data_row,
-                        Rect::new(content.x + margin, cursor_y, content_width, row_height),
-                    );
-                    cursor_y += row_height;
+                // "A section with no children renders only its title" -- title
+                // and divider are already drawn above; nothing else to add for
+                // an empty section, and never an invented filler row.
+                if section.is_empty() {
+                    continue;
                 }
-                SystemSectionRow::Status(status) => {
-                    draw_status_indicator(canvas, fonts, status, content.x + margin, cursor_y);
-                    cursor_y += scaled_line_height(TextRole::Body);
-                    if status.visible_reason().is_some() {
-                        cursor_y += scaled_line_height(TextRole::Caption);
+
+                for row in &section.rows {
+                    match row {
+                        SystemSectionRow::Data(data_row) => {
+                            let row_height = physical(data_row.min_hit_height());
+                            draw_data_row(
+                                canvas,
+                                fonts,
+                                data_row,
+                                Rect::new(content.x + margin, cursor_y, content_width, row_height),
+                            );
+                            cursor_y += row_height;
+                        }
+                        SystemSectionRow::Status(status) => {
+                            draw_status_indicator(
+                                canvas,
+                                fonts,
+                                status,
+                                content.x + margin,
+                                cursor_y,
+                            );
+                            cursor_y += scaled_line_height(TextRole::Body);
+                            if status.visible_reason().is_some() {
+                                cursor_y += scaled_line_height(TextRole::Caption);
+                            }
+                        }
+                        SystemSectionRow::Metric(metric) => {
+                            let (label_font, label_size) = fonts.resolve(TextRole::Caption);
+                            draw_text(
+                                canvas,
+                                label_font,
+                                &metric.label,
+                                label_size,
+                                content.x + margin,
+                                cursor_y,
+                                theme_color(ColorRole::TextSecondary),
+                            );
+                            cursor_y += scaled_line_height(TextRole::Caption);
+                            let value_text = match &metric.value {
+                                MetricValue::Known(value) => match &metric.unit {
+                                    Some(unit) => format!("{value} {unit}"),
+                                    None => value.clone(),
+                                },
+                                MetricValue::Unknown => "—".to_string(),
+                                MetricValue::Unavailable => "—".to_string(),
+                            };
+                            let (value_font, value_size) = fonts.resolve(TextRole::Body);
+                            draw_text(
+                                canvas,
+                                value_font,
+                                &value_text,
+                                value_size,
+                                content.x + margin,
+                                cursor_y,
+                                theme_color(ColorRole::TextPrimary),
+                            );
+                            cursor_y += scaled_line_height(TextRole::Body);
+                        }
+                    }
+                    if cursor_y >= content.y + content.height {
+                        break;
                     }
                 }
-                SystemSectionRow::Metric(metric) => {
-                    let (label_font, label_size) = fonts.resolve(TextRole::Caption);
-                    draw_text(
-                        canvas,
-                        label_font,
-                        &metric.label,
-                        label_size,
-                        content.x + margin,
-                        cursor_y,
-                        theme_color(ColorRole::TextSecondary),
-                    );
-                    cursor_y += scaled_line_height(TextRole::Caption);
-                    let value_text = match &metric.value {
-                        MetricValue::Known(value) => match &metric.unit {
-                            Some(unit) => format!("{value} {unit}"),
-                            None => value.clone(),
-                        },
-                        MetricValue::Unknown => "—".to_string(),
-                        MetricValue::Unavailable => "—".to_string(),
-                    };
-                    let (value_font, value_size) = fonts.resolve(TextRole::Body);
-                    draw_text(
-                        canvas,
-                        value_font,
-                        &value_text,
-                        value_size,
-                        content.x + margin,
-                        cursor_y,
-                        theme_color(ColorRole::TextPrimary),
-                    );
-                    cursor_y += scaled_line_height(TextRole::Body);
-                }
-            }
-            if cursor_y >= content.y + content.height {
-                break;
             }
         }
     }
+
+    canvas.set_clip(None);
+    draw_tab_bar(canvas, tabs, fonts);
 }
 
 /// The permanent system layer's real content (S13 Change 1) -- time on
@@ -2724,6 +2758,23 @@ mod tests {
             Canvas::new(&mut idle, 1080, 2400).pixel(135, 2125),
             theme_color(ColorRole::Accent)
         );
+    }
+
+    #[test]
+    fn content_clip_cannot_paint_over_the_navigation_strip() {
+        let mut pixels = vec![0; 1080 * 2400 * 4];
+        let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
+        canvas.fill(theme_color(ColorRole::Surface));
+        canvas.set_clip(Some(Rect::new(0, 0, 1080, 2100)));
+        canvas.fill(theme_color(ColorRole::Canvas));
+        canvas.fill_rect(
+            Rect::new(0, 2000, 1080, 400),
+            theme_color(ColorRole::Accent),
+        );
+        canvas.set_clip(None);
+        assert_eq!(canvas.pixel(540, 1000), theme_color(ColorRole::Canvas));
+        assert_eq!(canvas.pixel(540, 2200), theme_color(ColorRole::Surface));
+        assert_ne!(canvas.pixel(540, 2050), theme_color(ColorRole::Surface));
     }
 
     #[test]

@@ -671,7 +671,11 @@ turning the Orb into a launcher or assistant avatar.
   `SystemStatus` in `saai-ui-core` owns Context Light / clock / network /
   battery facts; `draw_status_bar` paints that composite (missing battery
   is absent, not `0%`; Space color is `ContextColor`, never severity).
-  Safe insets/stable layering not separately audited yet.
+  Stable layering (host): status is a top overlay layer; content and nav
+  split from `root_view` and do not overlap; content paint is clipped to
+  the content pane. Not a second Wayland nav layer — displayd still has
+  no layer-surface touch routing. Safe-inset audit vs `SafeInsets` tokens
+  remains open.
 - [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
   only when the destination content is truthful.
 - [x] Add explicit selected, pressed, disabled, attention, and badge states
@@ -701,9 +705,16 @@ turning the Orb into a launcher or assistant avatar.
   `Active` from the menu being open. `reduced_motion` is
   `ShellSettings.reduced_motion` (Я → «Меньше движения»), passed into
   `OrbHost::with_reduced_motion` so Running is not busy when set.
-- [ ] Retain direct tab navigation during Orb work; do not make the Orb the only
-  route.
-- [ ] Make status/navigation layers independent of scrolling content damage.
+- [x] Retain direct tab navigation during Orb work; do not make the Orb the only
+  route. `tab_at` still resolves the four tabs while an Orb menu is open;
+  `orb_action_at` does not occupy the tab strip (host).
+- [x] Make status/navigation layers independent of scrolling content damage.
+  Status is already a separate `wlr-layer-shell` surface and is not committed
+  from `draw()`. Navigation stays on the toplevel (displayd still does not
+  route touch to layer surfaces), but scroll frames `damage_buffer` only
+  `root_content_rect`, content paint is clipped to that pane, and `draw_tab_bar`
+  runs last so a long `Сейчас` list cannot cover the strip. Host tests:
+  content∩nav is empty; scrolled "Я" rows never enter the strip.
 - [ ] Add rotation/inset/keyboard and rapid-tab-switch interaction tests.
 
 ### Acceptance

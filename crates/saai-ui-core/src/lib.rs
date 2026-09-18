@@ -335,6 +335,24 @@ impl Rect {
             && x < self.x.saturating_add(self.width) as f64
             && y < self.y.saturating_add(self.height) as f64
     }
+
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = self
+            .x
+            .saturating_add(self.width)
+            .min(other.x.saturating_add(other.width));
+        let bottom = self
+            .y
+            .saturating_add(self.height)
+            .min(other.y.saturating_add(other.height));
+        if right > left && bottom > top {
+            Some(Self::new(left, top, right - left, bottom - top))
+        } else {
+            None
+        }
+    }
 }
 
 /// Padding for one `Node`, in the same physical-pixel space `Rect`/
@@ -632,6 +650,17 @@ mod tests {
         let tree = layout(&root, Rect::new(0, 0, 1080, 2400));
         assert_eq!(tree.children[0].rect, Rect::new(0, 0, 1080, 2100));
         assert_eq!(tree.children[1].rect, Rect::new(0, 2100, 1080, 300));
+    }
+
+    #[test]
+    fn rect_intersection_is_none_when_regions_only_touch_or_miss() {
+        let content = Rect::new(0, 0, 1080, 2100);
+        let nav = Rect::new(0, 2100, 1080, 300);
+        assert!(content.intersection(nav).is_none());
+        assert_eq!(
+            content.intersection(Rect::new(0, 2000, 100, 200)),
+            Some(Rect::new(0, 2000, 100, 100))
+        );
     }
 
     #[test]

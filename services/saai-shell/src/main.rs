@@ -990,6 +990,31 @@ fn root_view(width: u32, height: u32) -> LayoutNode {
     layout(&root, Rect::new(0, 0, width, height))
 }
 
+/// Content pane of the root layout — everything except the bottom
+/// navigation strip. Status is a separate layer surface, not an inset
+/// in this tree (ADR-112).
+fn root_content_rect(width: u32, height: u32) -> Rect {
+    if width == 0 || height == 0 {
+        return Rect::new(0, 0, width, height);
+    }
+    root_view(width, height).children[0].rect
+}
+
+/// Bottom navigation strip from the same tree `tab_at` uses.
+fn root_navigation_rect(width: u32, height: u32) -> Rect {
+    if width == 0 || height == 0 {
+        return Rect::new(0, 0, 0, 0);
+    }
+    root_view(width, height).children[1].rect
+}
+
+/// Damage region for a "Я" scroll frame: content only, never the
+/// navigation strip. Status is a different Wayland surface and is
+/// not committed from `draw()` at all.
+fn scroll_surface_damage(width: u32, height: u32) -> Rect {
+    root_content_rect(width, height)
+}
+
 fn page_from_id(id: &str) -> Option<RootPage> {
     match id {
         "now" => Some(RootPage::Now),
@@ -3221,6 +3246,7 @@ fn main() {
         me_scroll_offset: 0,
         me_drag: None,
         me_scroll_dirty: false,
+        scroll_content_only: false,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -3478,6 +3504,9 @@ struct Shell {
     /// currently queued input batch and a free dma-buf slot is available,
     /// coalescing arbitrarily many stale finger positions into one frame.
     me_scroll_dirty: bool,
+    /// Next `draw()` is a "Я" scroll frame: damage only the content
+    /// pane so navigation pixels are not part of the scroll commit.
+    scroll_content_only: bool,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -4309,6 +4338,7 @@ impl Shell {
             return;
         }
         self.me_scroll_dirty = false;
+        self.scroll_content_only = true;
         self.draw(conn, qh);
     }
 
@@ -4322,6 +4352,12 @@ impl Shell {
         let width = self.width;
         let height = self.height;
         let stride = width as i32 * 4;
+        let content_only = std::mem::take(&mut self.scroll_content_only);
+        let surface_damage = if content_only {
+            scroll_surface_damage(width, height)
+        } else {
+            Rect::new(0, 0, width, height)
+        };
 
         // Every `&self` read this frame needs (content cards, context
         // label, consent labels) happens here, before `buffer`/`canvas`
@@ -4887,7 +4923,12 @@ impl Shell {
                 Ok(wl_buffer) => {
                     let surface = self.window.wl_surface();
                     surface.attach(Some(wl_buffer), 0, 0);
-                    surface.damage_buffer(0, 0, width as i32, height as i32);
+                    surface.damage_buffer(
+                        surface_damage.x as i32,
+                        surface_damage.y as i32,
+                        surface_damage.width as i32,
+                        surface_damage.height as i32,
+                    );
                     self.window.commit();
                 }
                 Err(error) => {
@@ -4930,9 +4971,12 @@ impl Shell {
 
         paint_frame(canvas);
 
-        self.window
-            .wl_surface()
-            .damage_buffer(0, 0, width as i32, height as i32);
+        self.window.wl_surface().damage_buffer(
+            surface_damage.x as i32,
+            surface_damage.y as i32,
+            surface_damage.width as i32,
+            surface_damage.height as i32,
+        );
         buffer
             .attach_to(self.window.wl_surface())
             .expect("buffer attach");
@@ -7541,6 +7585,56 @@ mod tests {
             super::scrolled_row_rect(row_index, width, height, needed_offset, content_rect)
                 .expect("row 10 should fit once scrolled down far enough");
         assert_eq!(scrolled.y + scrolled.height, content_bottom);
+    }
+
+    #[test]
+    fn root_content_and_navigation_do_not_overlap() {
+        for (width, height) in [(1080, 2400), (800, 480), (1440, 3120)] {
+            let content = super::root_content_rect(width, height);
+            let nav = super::root_navigation_rect(width, height);
+            assert!(
+                content.intersection(nav).is_none(),
+                "content {content:?} overlaps nav {nav:?} at {width}x{height}"
+            );
+            assert_eq!(content.x, 0);
+            assert_eq!(nav.x, 0);
+            assert_eq!(content.width, width);
+            assert_eq!(nav.width, width);
+            assert_eq!(content.y + content.height, nav.y);
+            assert_eq!(nav.y + nav.height, height);
+            assert_eq!(super::scroll_surface_damage(width, height), content);
+            assert!(super::scroll_surface_damage(width, height)
+                .intersection(nav)
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn scrolled_me_rows_never_enter_the_navigation_strip() {
+        let width = 1080;
+        let height = 2400;
+        let content = super::root_content_rect(width, height);
+        let nav = super::root_navigation_rect(width, height);
+        let total = super::ME_FIXED_CARD_COUNT;
+        let max_offset = super::me_max_scroll_offset(total, width, height, content);
+        for offset in [0, max_offset / 2, max_offset] {
+            for index in 0..total {
+                if let Some(row) = super::scrolled_row_rect(index, width, height, offset, content) {
+                    assert!(
+                        row.intersection(nav).is_none(),
+                        "row {index} at offset {offset} overlaps nav"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tab_at_still_finds_tabs_when_orb_menu_is_open() {
+        let tab = (135.0, 2250.0);
+        let actions = orb_menu_actions(false, true);
+        assert!(orb_action_at(tab, 1080, 2400, &actions).is_none());
+        assert_eq!(tab_at(tab, 1080, 2400), Some(RootPage::Now));
     }
 
     #[test]
