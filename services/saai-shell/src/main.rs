@@ -1965,10 +1965,15 @@ enum Frame {
         header: Rect,
         actions: Vec<(Rect, &'static str)>,
     },
+    /// ADR-144: SSH pairing is no longer a free-floating title.
+    /// Header is a real `ContextHeader`; the live client name is a
+    /// Static `DataRow`. Fingerprint stays wrapped mono text. Buttons
+    /// stay `task_confirm_view`.
     RemotePairing {
-        client_name: String,
+        content_rect: Rect,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
         fingerprint: String,
-        header: Rect,
         accept: Rect,
         decline: Rect,
     },
@@ -4337,6 +4342,25 @@ fn pin_setup_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("PIN")
 }
 
+/// ADR-144: section title is always `SSH`. No invented lifecycle —
+/// pairing names the prompt, not store health.
+fn remote_pair_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("SSH")
+}
+
+/// Live client name only. Fingerprint is wrapped separately so the
+/// full `SHA256:` string stays readable.
+fn remote_pair_content_cards(
+    client_name: &str,
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, render::ActionCardView)> {
+    vec![(
+        stacked_row_rect(0, width, height),
+        render::ActionCardView::new(client_name, "", ""),
+    )]
+}
+
 /// First card is the live app name. Then each requested capability
 /// label. Empty requested set is named, not omitted.
 fn consent_content_cards(
@@ -6193,14 +6217,19 @@ impl Shell {
         } else if let Some(pending) = &self.pending_pair_request {
             // Reuses task_confirm_view's geometry verbatim (same
             // header-plus-two-buttons shape) -- only the drawn text
-            // and the touch handler's meaning differ.
+            // and the touch handler's meaning differ. ADR-144: the
+            // header leaf is `content_rect` for `ContextHeader`.
             let view = task_confirm_view(width, height);
-            let header = view.children[0].rect;
+            let content_rect = view.children[0].rect;
             let buttons = &view.children[1].children;
             Frame::RemotePairing {
-                client_name: pending.client_name.clone(),
+                content_rect,
+                header: remote_pair_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
+                rows: remote_pair_content_cards(&pending.client_name, width, height),
                 fingerprint: key_fingerprint(&pending.public_key),
-                header,
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
@@ -6585,17 +6614,19 @@ impl Shell {
                     );
                 }
                 Frame::RemotePairing {
-                    client_name,
-                    fingerprint,
+                    content_rect,
                     header,
+                    rows,
+                    fingerprint,
                     accept,
                     decline,
                 } => {
                     render::draw_remote_pair(
                         &mut render::Canvas::new(canvas, width, height),
-                        &client_name,
+                        content_rect,
+                        &header,
+                        &rows,
                         &fingerprint,
-                        header,
                         accept,
                         decline,
                         fonts,
@@ -9036,21 +9067,22 @@ mod tests {
         me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remove_context_source,
-        space_color, space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
-        upsert_context_entry, wifi_card_from_row, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
-        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
-        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
-        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remote_pair_content_cards,
+        remote_pair_header, remove_context_source, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
+        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_rows, upsert_context_entry,
+        wifi_card_from_row, wifi_list_action_at, wifi_list_rows, wifi_password_field, AgentSummary,
+        AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource,
+        DataRowVariant, Entity, FieldKind, KeyboardMode, ObjectSummary, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -9939,6 +9971,20 @@ mod tests {
         let header = pin_setup_header("Работа");
         assert_eq!(header.heading_text(), "Работа · PIN");
         assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn remote_pair_header_names_the_section() {
+        let header = remote_pair_header("Работа");
+        assert_eq!(header.heading_text(), "Работа · SSH");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn remote_pair_row_names_the_live_client() {
+        let rows = remote_pair_content_cards("test-client", 1080, 2400);
+        assert_eq!(rows[0].1.label, "test-client");
+        assert!(rows[0].1.status.is_empty());
     }
 
     #[test]

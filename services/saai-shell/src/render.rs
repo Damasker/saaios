@@ -792,75 +792,68 @@ fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: 
     );
 }
 
-/// The "adb"-style pairing prompt for a new SSH client -- same
-/// header-plus-two-buttons shape `draw_object_view` also uses (built
-/// from the exact same `task_confirm_view` geometry, see `main.rs`'s
-/// frame-building code), just with the pairing-specific text and
-/// button labels instead of a generic entity's own.
+/// ADR-144: SSH pairing through `ContextHeader`. The live client name
+/// is a Static `DataRow`; the fingerprint stays wrapped mono text so
+/// the full `SHA256:` string remains readable. Buttons stay
+/// `task_confirm_view`. Lock unlock stays `draw_lock_pin_entry`.
 pub fn draw_remote_pair(
     canvas: &mut Canvas<'_>,
-    client_name: &str,
+    content: Rect,
+    header: &ContextHeader,
+    rows: &[(Rect, ActionCardView)],
     fingerprint: &str,
-    header: Rect,
     accept_button: Rect,
     decline_button: Rect,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-
-    let Some(fonts) = fonts else {
-        canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
-        canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
-        return;
-    };
-
-    let margin = header.width / 22;
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        "Разрешить SSH-доступ?",
-        46.0,
-        header.x + margin,
-        header.y + 200,
-        theme_color(ColorRole::TextPrimary),
-    );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        client_name,
-        32.0,
-        header.x + margin,
-        header.y + 310,
-        theme_color(ColorRole::TextSecondary),
-    );
-    let (mono, mono_size) = fonts.resolve(TextRole::MonoBody);
-    let scaled_size = mono_size * text_scale();
-    let glyph_width = mono.metrics('0', scaled_size).advance_width.max(1.0);
-    let available_width = header.width.saturating_sub(margin * 2) as f32;
-    let chars_per_line = (available_width / glyph_width).floor().max(1.0) as usize;
-    let line_height = SurfaceScale::PIXEL_7
-        .logical_to_physical(TextRole::MonoBody.style().line_height) as f32
-        * text_scale();
-    for (line, chunk) in fingerprint
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(chars_per_line)
-        .enumerate()
-    {
-        let chunk = chunk.iter().collect::<String>();
-        draw_text(
-            canvas,
-            mono,
-            &chunk,
-            mono_size,
-            header.x + margin,
-            header.y + 370 + (line as f32 * line_height).round() as u32,
-            theme_color(ColorRole::TextSecondary),
-        );
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
     }
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
+    }
+    if let Some(fonts) = fonts {
+        let margin = (content.width / 22).max(12);
+        let top = rows
+            .first()
+            .map(|(rect, _)| rect.y + rect.height + 24)
+            .unwrap_or(content.y + 430);
+        let (mono, mono_size) = fonts.resolve(TextRole::MonoBody);
+        let scaled_size = mono_size * text_scale();
+        let glyph_width = mono.metrics('0', scaled_size).advance_width.max(1.0);
+        let available_width = content.width.saturating_sub(margin * 2) as f32;
+        let chars_per_line = (available_width / glyph_width).floor().max(1.0) as usize;
+        let line_height = SurfaceScale::PIXEL_7
+            .logical_to_physical(TextRole::MonoBody.style().line_height)
+            as f32
+            * text_scale();
+        for (line, chunk) in fingerprint
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(chars_per_line)
+            .enumerate()
+        {
+            let chunk = chunk.iter().collect::<String>();
+            draw_text(
+                canvas,
+                mono,
+                &chunk,
+                mono_size,
+                content.x + margin,
+                top + (line as f32 * line_height).round() as u32,
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+    canvas.set_clip(None);
 
     canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
     canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
+    let Some(fonts) = fonts else {
+        return;
+    };
     draw_text_centered(
         canvas,
         &fonts.semibold,
@@ -3176,9 +3169,9 @@ mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
-        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_pin_setup, draw_root,
-        draw_status_bar, draw_tab_bar, gallery_row_positions, physical, physical_line_height,
-        state_color, theme_color, ActionCardView, Canvas,
+        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_pin_setup,
+        draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions,
+        physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, ContextHeader, Field, FieldKind, NavigationItem, ObjectSummary,
@@ -3756,6 +3749,35 @@ mod tests {
         draw_pin_setup(canvas, content, &header, &field, field_rect, &keys, None);
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
+    }
+
+    #[test]
+    fn remote_pair_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2100);
+        let header = ContextHeader::new("Работа").with_section_title("SSH");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("test-client", "", ""))];
+        draw_remote_pair(
+            canvas,
+            content,
+            &header,
+            &rows,
+            "SHA256:OuaL+poCXsAtdU50sBMBwOUNL+faDqJqWTmiE3baoOI",
+            Rect::new(0, 2100, 540, 300),
+            Rect::new(540, 2100, 540, 300),
+            None,
+        );
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+        assert_eq!(canvas.pixel(270, 2250), theme_color(ColorRole::Accent));
+        assert_eq!(canvas.pixel(810, 2250), theme_color(ColorRole::Surface));
     }
 
     #[test]
