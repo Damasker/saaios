@@ -932,6 +932,9 @@ pub fn draw_action_row_list(
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.fill_rect(header, theme_color(ColorRole::Surface));
+    // Status layer is 120px (PIXEL_7 top inset). `draw_row_list`'s
+    // 40/130 offsets hide the title under the clock; both lines sit
+    // in this header below that layer.
     if let Some(fonts) = fonts {
         draw_text(
             canvas,
@@ -939,7 +942,7 @@ pub fn draw_action_row_list(
             title,
             42.0,
             header.x + 30,
-            header.y + 40,
+            header.y + 140,
             theme_color(ColorRole::TextPrimary),
         );
         draw_text(
@@ -948,7 +951,7 @@ pub fn draw_action_row_list(
             status_line,
             30.0,
             header.x + 30,
-            header.y + 130,
+            header.y + 200,
             theme_color(ColorRole::TextSecondary),
         );
     }
