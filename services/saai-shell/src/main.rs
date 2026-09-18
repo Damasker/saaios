@@ -459,11 +459,12 @@ use saai_object_actions::{
     ObjectActionRegistry,
 };
 use saai_ui_core::{
-    layout, AgentSummary, Axis, CapabilityRow, ContextColor, ContextHeader, DataRow,
-    DataRowVariant, DecisionOverlay, IntentSummary, LayoutNode, Length, LogicalUnit, MotionCue,
-    NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow,
-    StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection,
-    SystemSectionRow, SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
+    layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
+    DataRowVariant, DecisionOverlay, EventRow, Field, FieldKind, IntentSummary, LayoutNode, Length,
+    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
+    SafeInsets, SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark,
+    SurfaceScale, SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow,
+    UniversalState, WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -906,23 +907,12 @@ impl ShellSettings {
         let _ = std::fs::write(SETTINGS_PATH, text);
     }
 }
-/// Bright red -- deliberately unmistakable against the toplevel's dark
-/// slate placeholder, so a photo of the panel makes it obvious which
-/// surface is actually receiving the compositor's output while locked.
-///
-/// Byte order here is [0x00, 0xd0, 0x00, 0x00], *not* the [B, G, R, X] a
-/// standard XRGB8888 LE layout would predict for red. A three-band
-/// on-device diagnostic (one solid color per byte position, read back
-/// directly from this pool's memfd via /proc/<pid>/fd to confirm the
-/// client-side write itself before ever trusting the photo) proved this
-/// panel's pipeline reads R from byte-index 1 and G from byte-index 2 --
-/// swapped from the conventional B,G,R,X -- while byte-index 0 produced
-/// no visible output at all in the same test (untested whether that's a
-/// true "blue" that just read as too dark to name, or genuinely unused;
-/// not re-verified here since only red was needed for that milestone).
-/// Root cause on the DRM/driver side not identified -- no standard
-/// fourcc swaps R and G while leaving B in place, so this is applied as
-/// an empirically-verified byte order, not a fourcc fix.
+/// Bright red -- S04 diagnostic so a photo showed which surface the
+/// compositor was scanning out while locked. VUI-07 (ADR-134) no longer
+/// paints this for the idle lock; kept for rollback of
+/// `present_lock_surface(LOCK_SCREEN_COLOR)`. Byte order is empirical
+/// (R at byte-index 1, G at 2), not a standard XRGB8888 LE layout.
+#[allow(dead_code)]
 const LOCK_SCREEN_COLOR: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
 /// Plain black -- every byte-order permutation of all-zero reads as
 /// black, so this needs none of `LOCK_SCREEN_COLOR`'s empirical care.
@@ -1341,7 +1331,10 @@ fn bluetooth_pair_result() -> Option<String> {
 /// Prefers a pairing result in progress/just finished over the scan
 /// state, so tapping a device to pair immediately starts showing
 /// that outcome instead of being silently overwritten by scan status
-/// text.
+/// text. ADR-145: the Surface subtitle that consumed this left the
+/// Bluetooth header; kept for the remaining `draw_action_row_list`
+/// lists and for a later scan-status row.
+#[allow(dead_code)]
 fn bluetooth_status_summary() -> String {
     if let Some(result) = bluetooth_pair_result() {
         return result;
@@ -1358,13 +1351,17 @@ fn bluetooth_status_summary() -> String {
 }
 
 fn bluetooth_paired_count() -> usize {
+    bluetooth_saved_names().len()
+}
+
+fn bluetooth_saved_names() -> Vec<String> {
     std::fs::read_to_string(BT_SAVED_LOG_PATH)
         .map(|text| {
             text.lines()
-                .filter(|line| line.starts_with("SAVED\t"))
-                .count()
+                .filter_map(|line| line.strip_prefix("SAVED\t").map(str::to_string))
+                .collect()
         })
-        .unwrap_or(0)
+        .unwrap_or_default()
 }
 
 /// The fuel gauge's own power_supply node is named `maxfg`, not
@@ -1785,16 +1782,26 @@ struct PinSetupState {
 /// One row of `wifi_scan_results()`'s output, or a fixed trailing
 /// "Обновить"/"Назад" control row -- returned by `wifi_list_action_at`
 /// the same way `InboxRowKind` disambiguates "Входящие"'s rows.
+/// Empty scan occupies one non-tappable `WifiRow`, so Refresh/Back
+/// sit after `wifi_list_row_count`, not after a zero-length list.
 enum WifiListTap {
     Network(usize),
     Refresh,
     Back,
 }
 
+fn wifi_list_row_count(network_count: usize) -> usize {
+    if network_count == 0 {
+        1
+    } else {
+        network_count
+    }
+}
+
 /// Same reasoning as `me_action_at`: `network_count` is runtime-sized
 /// (like `installed_apps.len()` elsewhere), so this can't be a
 /// `root.sui` entry -- two more `stacked_row_rect` slots after the
-/// networks are the fixed "Обновить"/"Назад" controls.
+/// `WifiRow` list are the fixed "Обновить"/"Назад" controls.
 fn wifi_list_action_at(
     pos: (f64, f64),
     width: u32,
@@ -1806,10 +1813,11 @@ fn wifi_list_action_at(
             return Some(WifiListTap::Network(index));
         }
     }
-    if stacked_row_rect(network_count, width, height).contains(pos.0, pos.1) {
+    let controls = wifi_list_row_count(network_count);
+    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
         return Some(WifiListTap::Refresh);
     }
-    if stacked_row_rect(network_count + 1, width, height).contains(pos.0, pos.1) {
+    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
         return Some(WifiListTap::Back);
     }
     None
@@ -1828,24 +1836,34 @@ enum BluetoothListTap {
     Back,
 }
 
+fn bluetooth_list_row_count(device_count: usize, scan_done: bool) -> usize {
+    if device_count == 0 && scan_done {
+        1
+    } else {
+        device_count
+    }
+}
+
 fn bluetooth_list_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     device_count: usize,
+    scan_done: bool,
 ) -> Option<BluetoothListTap> {
     for index in 0..device_count {
         if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
             return Some(BluetoothListTap::Device(index));
         }
     }
-    if stacked_row_rect(device_count, width, height).contains(pos.0, pos.1) {
+    let controls = bluetooth_list_row_count(device_count, scan_done);
+    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
         return Some(BluetoothListTap::Scan);
     }
-    if stacked_row_rect(device_count + 1, width, height).contains(pos.0, pos.1) {
+    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
         return Some(BluetoothListTap::Refresh);
     }
-    if stacked_row_rect(device_count + 2, width, height).contains(pos.0, pos.1) {
+    if stacked_row_rect(controls + 2, width, height).contains(pos.0, pos.1) {
         return Some(BluetoothListTap::Back);
     }
     None
@@ -1860,6 +1878,14 @@ enum TrustedClientTap {
     Back,
 }
 
+fn trusted_client_list_row_count(client_count: usize) -> usize {
+    if client_count == 0 {
+        1
+    } else {
+        client_count
+    }
+}
+
 fn trusted_client_action_at(
     pos: (f64, f64),
     width: u32,
@@ -1871,7 +1897,8 @@ fn trusted_client_action_at(
             return Some(TrustedClientTap::Revoke(index));
         }
     }
-    if stacked_row_rect(client_count, width, height).contains(pos.0, pos.1) {
+    let controls = trusted_client_list_row_count(client_count);
+    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
         return Some(TrustedClientTap::Back);
     }
     None
@@ -1918,73 +1945,92 @@ const DEPENDS_ON_PROPERTY: &str = "depends_on_task_ids";
 /// What `draw()` renders this frame, computed up front from `&self` before
 /// `buffer`/`canvas` take a mutable borrow for the rest of the function.
 enum Frame {
+    /// ADR-142: app-consent is no longer a free-floating title at
+    /// `header.y+220`. Header is a real `ContextHeader`; requested
+    /// capabilities are Static `DataRow` cards. Accept/decline rects
+    /// stay `consent_view`.
     Consent {
-        app_name: String,
-        labels: Vec<String>,
-        header: Rect,
+        content_rect: Rect,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
         accept: Rect,
         decline: Rect,
     },
-    /// HIA-07: replaces the old task-only `TaskConfirm` -- one
-    /// variant for any entity, `actions` sized to whatever
-    /// `ObjectViewContent::actions` produced (0-2 today). `state` is
-    /// the shared UniversalState mapping; `details` are the optional
-    /// activity / observation / blocker / consequence lines that
-    /// actually exist. History is omitted until entity events load.
+    /// HIA-07: one variant for any entity. ADR-137: identity is an
+    /// `ObjectSummary` (title + type/version + trailing status);
+    /// `details` are the optional activity / observation / blocker /
+    /// consequence lines that actually exist. History is omitted until
+    /// entity events load.
     ObjectView {
-        title: String,
-        state: UniversalState,
-        status: String,
+        summary: ObjectSummary,
         related: Option<String>,
         details: Vec<String>,
         header: Rect,
         actions: Vec<(Rect, &'static str)>,
     },
+    /// ADR-144: SSH pairing is no longer a free-floating title.
+    /// Header is a real `ContextHeader`; the live client name is a
+    /// Static `DataRow`. Fingerprint stays wrapped mono text. Buttons
+    /// stay `task_confirm_view`.
     RemotePairing {
-        client_name: String,
+        content_rect: Rect,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
         fingerprint: String,
-        header: Rect,
         accept: Rect,
         decline: Rect,
     },
     IntentInput {
-        buffer: String,
-        status: Option<String>,
+        field: Field,
         header: Rect,
         keys: Vec<(Rect, String)>,
     },
     WifiPasswordInput {
-        ssid: String,
-        buffer: String,
+        field: Field,
         header: Rect,
         keys: Vec<(Rect, String)>,
     },
+    /// ADR-146: Wi-Fi is no longer `draw_action_row_list` Surface
+    /// chrome. Header is a real `ContextHeader`; rows stay live
+    /// `WifiRow` cards plus refresh/back.
     WifiList {
-        header: Rect,
-        status_line: String,
-        rows: Vec<(Rect, String)>,
+        content_rect: Rect,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
+    /// ADR-145: Bluetooth is no longer `draw_action_row_list` Surface
+    /// chrome. Header is a real `ContextHeader`; rows stay live
+    /// `BluetoothRow` cards plus scan/refresh/back.
     BluetoothList {
-        header: Rect,
-        status_line: String,
-        rows: Vec<(Rect, String)>,
+        content_rect: Rect,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
+    /// ADR-147: trusted clients is no longer `draw_action_row_list`
+    /// Surface chrome. Header is a real `ContextHeader`; rows stay
+    /// live `TrustedClientRow` cards plus back.
     TrustedClients {
-        header: Rect,
-        status_line: String,
-        rows: Vec<(Rect, String)>,
+        content_rect: Rect,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// HIA-20: the hidden diagnostic screen -- same row-list shape as
     /// `TrustedClients` just above, reused verbatim rather than
     /// inventing new geometry for a screen that's read-only text.
+    /// ADR-136: rows are `ActionCardView` from Static `DataRow`.
     DevSurface {
         header: Rect,
         status_line: String,
-        rows: Vec<(Rect, String)>,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
+    /// ADR-143: PIN setup is no longer a Surface header fill.
+    /// Header is a real `ContextHeader`; the Password `Field` sits in
+    /// the first stacked row. Keys stay `pin_keypad_rect`.
     PinSetup {
-        buffer: String,
-        header: Rect,
+        content_rect: Rect,
+        header: ContextHeader,
+        field: Field,
+        field_rect: Rect,
         keys: Vec<(Rect, &'static str)>,
     },
     Root {
@@ -1992,6 +2038,45 @@ enum Frame {
         tabs: Vec<(Rect, NavigationItem)>,
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
+        paint_navigation: bool,
+    },
+    /// ADR-138: the `Приложения` grid is no longer `Frame::Root`.
+    /// Header is a real `ContextHeader`; tiles are only live
+    /// `installed_apps` (the old `root.sui` inspect/intent cells stay
+    /// on the NOW footer).
+    AppsGrid {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        apps: Vec<(Rect, render::ActionCardView)>,
+        empty_message: Option<&'static str>,
+    },
+    /// ADR-139: Inbox is no longer `Frame::Root`. Header is a real
+    /// `ContextHeader`; rows stay live `EventRow` cards.
+    Inbox {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
+    },
+    /// ADR-140: Пространства is no longer `Frame::Root`. Header is a
+    /// real `ContextHeader`; rows stay live `SpaceRow` cards. Space
+    /// detail stays deferred.
+    Spaces {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
+    },
+    /// ADR-141: `Система` is no longer `Frame::Root`. Header is a real
+    /// `ContextHeader`; rows stay the scrolled SettingRow list.
+    /// `paint_navigation` is false on a content-only scroll frame so
+    /// the tab bar is not redrawn.
+    Me {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
         paint_navigation: bool,
     },
     /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
@@ -2051,9 +2136,8 @@ const OBJECT_VIEW_ACTION_PREFIX: &str = "object-view-action:";
 /// (`action_count` comes from `ObjectViewContent::actions`' own
 /// length at the call site). No separate "related" leaf -- like
 /// `task_confirm_view`, this is one header leaf plus an optional
-/// button row; `draw_object_view` places title/status/related at
-/// fixed offsets within the header rect itself, the same pattern
-/// the old task-only draw function already used for title alone.
+/// button row; `draw_object_view` places the `ObjectSummary` below the
+/// status layer within the header rect itself.
 fn object_view(width: u32, height: u32, action_count: usize) -> LayoutNode {
     let mut children = vec![Node::leaf(OBJECT_VIEW_HEADER_ID)];
     if action_count > 0 {
@@ -2219,6 +2303,17 @@ fn object_view_content(
             }
         }
     }
+}
+
+/// ADR-137: Object View identity is the same `ObjectSummary` NOW
+/// already shows. Meta is type/version, never the workflow status
+/// string — that belongs on trailing `StatusIndicator`.
+fn object_view_summary(entity: &Entity, content: &ObjectViewContent) -> ObjectSummary {
+    ObjectSummary::new(
+        content.title.clone(),
+        format!("{} · версия {}", entity.entity_type, entity.revision),
+    )
+    .with_status(StatusIndicator::new(content.state, content.status.clone()))
 }
 
 fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
@@ -2970,6 +3065,17 @@ fn now_footer_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'st
     } else {
         None
     }
+}
+
+fn now_object_tapped(
+    pos: (f64, f64),
+    content: Rect,
+    has_lifecycle: bool,
+    object: Option<&ObjectSummary>,
+) -> bool {
+    object.is_some_and(|summary| {
+        render::now_object_summary_rect(content, has_lifecycle, summary).contains(pos.0, pos.1)
+    })
 }
 
 fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
@@ -3793,6 +3899,297 @@ fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
         .collect()
 }
 
+fn inbox_notification_body(entity: &Entity) -> &str {
+    entity
+        .properties
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+/// VUI-07 (ADR-127): Inbox cards are `EventRow`s over the same
+/// attention projection `inbox_rows` already uses. Store-down is
+/// «Нет связи», not a fake empty inbox. Empty stays the existing
+/// copy. No invented timestamps.
+fn inbox_event_rows(entities: &[Entity], store_connected: bool) -> Vec<EventRow> {
+    if !store_connected {
+        return vec![EventRow::offline()];
+    }
+    let rows = inbox_rows(entities);
+    if rows.is_empty() {
+        return vec![EventRow::empty()];
+    }
+    rows.into_iter()
+        .map(|(kind, entity)| match kind {
+            InboxRowKind::Task => EventRow::decision(entity.title.clone()),
+            InboxRowKind::Notification => {
+                EventRow::notice(entity.title.clone(), inbox_notification_body(entity))
+            }
+        })
+        .collect()
+}
+
+fn inbox_card_from_event(event: &EventRow) -> render::ActionCardView {
+    let status = event.row.value.clone().unwrap_or_default();
+    let action = if event.row.is_actionable() {
+        "Открыть"
+    } else {
+        ""
+    };
+    render::ActionCardView::new(event.row.primary.clone(), status, action)
+}
+
+/// HIA-01 status line: object count, then at most one of lifecycle
+/// or first relation target. Unwrapped on a fixed-width card.
+fn space_card_status(
+    space_id: &str,
+    store_connected: bool,
+    entity_counts: &BTreeMap<String, usize>,
+    spaces: &[Space],
+    system_entities: &[Entity],
+) -> String {
+    let mut status = if store_connected {
+        match entity_counts.get(space_id) {
+            Some(count) => format!("Объектов: {count}"),
+            None => "Загрузка объектов…".into(),
+        }
+    } else {
+        "Сервис пространств недоступен".into()
+    };
+    if let Some(label) = space_lifecycle(system_entities, space_id).label() {
+        status.push_str(" · ");
+        status.push_str(label);
+    } else if let Some((target, _kind)) = space_relation_targets(system_entities, space_id).first()
+    {
+        status.push_str(" · → ");
+        status.push_str(&space_display_name(spaces, target));
+    }
+    status
+}
+
+/// VUI-07 (ADR-128): Пространства lists live `Space` records, not the
+/// four `root.sui` ids. Store-down is «Нет связи». No people row.
+fn space_list_rows(
+    spaces: &[Space],
+    selected_space_id: &str,
+    store_connected: bool,
+    entity_counts: &BTreeMap<String, usize>,
+    system_entities: &[Entity],
+) -> Vec<SpaceRow> {
+    if !store_connected {
+        return vec![SpaceRow::offline()];
+    }
+    if spaces.is_empty() {
+        return vec![SpaceRow::empty()];
+    }
+    spaces
+        .iter()
+        .map(|space| {
+            SpaceRow::open(
+                space.name.clone(),
+                space_card_status(&space.id, true, entity_counts, spaces, system_entities),
+                format!("select_space:{}", space.id),
+                space.id == selected_space_id,
+            )
+        })
+        .collect()
+}
+
+fn space_card_from_row(row: &SpaceRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        if row.selected {
+            "Выбрано"
+        } else {
+            "Открыть"
+        }
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.selected)
+}
+
+/// VUI-07 (ADR-129): «Wi-Fi сети» lists live scan rows, not a
+/// concatenated one-line label. Empty scan is «Нет сетей».
+fn wifi_network_status(network: &WifiNetwork) -> String {
+    format!(
+        "{} · {} dBm",
+        if network.secured {
+            "защищена"
+        } else {
+            "открыта"
+        },
+        network.signal_dbm
+    )
+}
+
+fn wifi_list_rows(networks: &[WifiNetwork], connected_ssid: Option<&str>) -> Vec<WifiRow> {
+    if networks.is_empty() {
+        return vec![WifiRow::empty()];
+    }
+    networks
+        .iter()
+        .map(|network| {
+            WifiRow::open(
+                network.ssid.clone(),
+                wifi_network_status(network),
+                connected_ssid == Some(network.ssid.as_str()),
+            )
+        })
+        .collect()
+}
+
+fn wifi_card_from_row(row: &WifiRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        if row.connected {
+            "Подключено"
+        } else {
+            "Подключить"
+        }
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.connected)
+}
+
+/// VUI-07 (ADR-132): password preview is a `Field`, not a second
+/// hand-rolled mask. Revealed stays false; the PSK never becomes the
+/// accessible value.
+fn wifi_password_field(ssid: &str, buffer: &str) -> Field {
+    Field::new(format!("Пароль для «{ssid}»"), FieldKind::Password)
+        .with_value(buffer)
+        .with_placeholder("Введите пароль…")
+}
+
+/// VUI-07 (ADR-135): intent draft preview is a `Field`, not a
+/// hand-rolled placeholder string. Text, not Password. Offline is
+/// `help` (`Нет связи`), not `error`.
+fn intent_input_field(buffer: &str, store_connected: bool) -> Field {
+    let mut field = Field::new("Новое намерение", FieldKind::Text)
+        .with_value(buffer)
+        .with_placeholder("Наберите текст…");
+    if let Some(status) = intent_input_status(store_connected) {
+        field.help = Some(status.to_string());
+    }
+    field
+}
+
+/// VUI-07 (ADR-134): no-PIN lock copy. Time is passed in from
+/// `current_time_string`; the hint is the real tap-to-unlock
+/// affordance, not invented attention. PIN entry does not use this.
+struct LockIdleView {
+    time: String,
+    hint: &'static str,
+}
+
+fn lock_idle_view(time: &str) -> LockIdleView {
+    LockIdleView {
+        time: time.to_string(),
+        hint: "Коснитесь, чтобы разблокировать",
+    }
+}
+
+/// VUI-07 (ADR-133): PIN-setup preview is a `Field`, not a second
+/// hand-rolled mask. Revealed stays false; digits never become the
+/// accessible value. Lock-surface unlock stays `draw_lock_pin_entry`.
+fn pin_setup_field(buffer: &str) -> Field {
+    Field::new("Новый PIN-код", FieldKind::Password)
+        .with_value(buffer)
+        .with_placeholder("Введите новый PIN (минимум 4 цифры)")
+}
+
+/// VUI-07 (ADR-130): «Bluetooth устройства» lists live `bt-scan`
+/// rows. Empty only after `DONE`. Paired is a SAVED name.
+fn bluetooth_list_rows(
+    devices: &[BluetoothDevice],
+    scan_done: bool,
+    saved: &[String],
+) -> Vec<BluetoothRow> {
+    if devices.is_empty() {
+        if scan_done {
+            return vec![BluetoothRow::empty()];
+        }
+        return Vec::new();
+    }
+    devices
+        .iter()
+        .map(|device| {
+            BluetoothRow::open(
+                device.name.clone(),
+                device.transport.clone(),
+                saved.iter().any(|name| name == &device.name),
+            )
+        })
+        .collect()
+}
+
+fn bluetooth_card_from_row(row: &BluetoothRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        if row.paired {
+            "Сопряжено"
+        } else {
+            "Сопрячь"
+        }
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.paired)
+}
+
+/// VUI-07 (ADR-131): «Доверенные клиенты» lists live
+/// `authorized_keys` rows. Empty is «Нет клиентов». Fingerprint is
+/// the ADR-083 prefix, not the raw key.
+fn trusted_client_fingerprint_label(fingerprint: &str) -> String {
+    let prefix = fingerprint.get(..24).unwrap_or(fingerprint);
+    format!("{prefix}…")
+}
+
+fn trusted_client_list_rows(clients: &[TrustedClient]) -> Vec<TrustedClientRow> {
+    if clients.is_empty() {
+        return vec![TrustedClientRow::empty()];
+    }
+    clients
+        .iter()
+        .map(|client| {
+            TrustedClientRow::open(
+                client.client_name.clone(),
+                trusted_client_fingerprint_label(&client.fingerprint),
+            )
+        })
+        .collect()
+}
+
+fn trusted_client_card_from_row(row: &TrustedClientRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        "Отозвать"
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action)
+}
+
+/// ADR-136: one live diagnostic fact as a Static `DataRow`. Not a
+/// button -- HIA-20's only tap target on this screen is trailing
+/// «Назад».
+fn diagnostic_row(label: impl Into<String>, value: impl Into<String>) -> DataRow {
+    DataRow::new(label, DataRowVariant::Static).with_value(value)
+}
+
+fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
+    render::ActionCardView::new(
+        row.primary.clone(),
+        row.value.clone().unwrap_or_default(),
+        "",
+    )
+}
+
+fn diagnostic_status_line(row_count: usize) -> String {
+    format!("{row_count} показателей")
+}
+
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
 /// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
@@ -3830,7 +4227,11 @@ fn inbox_row_at(
     width: u32,
     height: u32,
     entities: &[Entity],
+    store_connected: bool,
 ) -> Option<(InboxRowKind, Uuid)> {
+    if !store_connected {
+        return None;
+    }
     inbox_rows(entities)
         .into_iter()
         .enumerate()
@@ -3838,15 +4239,27 @@ fn inbox_row_at(
         .map(|(_, (kind, entity))| (kind, entity.id))
 }
 
-/// S13 Change 4: "Сейчас"'s hit-test, mirroring `content_action_at`
-/// but for a page that mixes a runtime-sized app list (cells
-/// 0..apps.len()) with the two remaining static `root.sui` cards
-/// (cells apps.len()..). S23 moved this from `stacked_row_rect`'s
-/// single column to `now_grid_rect`'s 3-column grid -- the index
-/// math is unchanged, only which rect function turns an index into a
-/// screen position. Returns the same `action` string either
-/// kind of card would carry, so the caller dispatches identically to
-/// how `invoke_content_action` used to.
+fn space_row_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    spaces: &[Space],
+    store_connected: bool,
+) -> Option<String> {
+    if !store_connected {
+        return None;
+    }
+    spaces
+        .iter()
+        .enumerate()
+        .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
+        .map(|(_, space)| space.id.clone())
+}
+
+/// ADR-138: the apps grid only hits live `installed_apps`. The two
+/// leftover `root.sui` NOW cards (`inspect_selected_entity`,
+/// `open_intent_input`) live on the composed footer, not as extra
+/// tiles. S23 still owns the 3-column `now_grid_rect` math.
 fn now_action_at(
     pos: (f64, f64),
     width: u32,
@@ -3858,13 +4271,152 @@ fn now_action_at(
             return Some(format!("manage_app:{}", app.id));
         }
     }
-    let base = installed_apps.len();
-    ROOT_CONTENT_ACTIONS
-        .iter()
-        .filter(|action| action.page == "now")
-        .enumerate()
-        .find(|(offset, _)| now_grid_rect(base + offset, width, height).contains(pos.0, pos.1))
-        .map(|(_, action)| action.action.to_string())
+    None
+}
+
+/// ADR-138: section title is always `Приложения`. Offline `appd`
+/// names `Нет связи` and wins over the space's own archived mark --
+/// without a live app daemon this shell cannot honestly claim the
+/// grid is an archived-space view either.
+fn apps_grid_header(space_name: &str, appd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Приложения");
+    if !appd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
+/// Connected and empty is `Нет приложений`. Offline and empty is
+/// `Нет связи`. A non-zero count (including a stale last-known list
+/// while `appd` is down) is not an empty state -- those tiles stay.
+fn apps_grid_empty_message(appd_connected: bool, app_count: usize) -> Option<&'static str> {
+    if app_count > 0 {
+        None
+    } else if appd_connected {
+        Some("Нет приложений")
+    } else {
+        Some("Нет связи")
+    }
+}
+
+/// ADR-139: section title is always `Входящие`. Offline `entityd`
+/// names `Нет связи` and wins over the space's own archived mark.
+fn inbox_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Входящие");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
+/// ADR-140: section title is always `Пространства`. Offline `entityd`
+/// names `Нет связи` and wins over the selected space's archived mark.
+fn spaces_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Пространства");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
+/// ADR-141: section title is always `Система` (the live tab label).
+/// Offline `entityd` names `Нет связи` and wins over the selected
+/// space's archived mark.
+fn me_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Система");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
+/// ADR-142: section title is always `Разрешение`. No invented
+/// lifecycle — consent names requested capabilities, not store health.
+fn consent_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Разрешение")
+}
+
+/// ADR-143: section title is always `PIN`. No invented lifecycle —
+/// setup names the keypad, not store health.
+fn pin_setup_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("PIN")
+}
+
+/// ADR-144: section title is always `SSH`. No invented lifecycle —
+/// pairing names the prompt, not store health.
+fn remote_pair_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("SSH")
+}
+
+/// ADR-145: section title is always `Bluetooth`. No invented
+/// lifecycle — scan/empty/paired facts stay on the live rows.
+fn bluetooth_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Bluetooth")
+}
+
+/// ADR-146: section title is always `Wi-Fi`. No invented lifecycle —
+/// connected/empty/scan facts stay on the live rows.
+fn wifi_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Wi-Fi")
+}
+
+/// ADR-147: section title is always `Ключи`. No invented lifecycle —
+/// name/fingerprint/empty facts stay on the live rows.
+fn trusted_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Ключи")
+}
+
+/// Live client name only. Fingerprint is wrapped separately so the
+/// full `SHA256:` string stays readable.
+fn remote_pair_content_cards(
+    client_name: &str,
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, render::ActionCardView)> {
+    vec![(
+        stacked_row_rect(0, width, height),
+        render::ActionCardView::new(client_name, "", ""),
+    )]
+}
+
+/// First card is the live app name. Then each requested capability
+/// label. Empty requested set is named, not omitted.
+fn consent_content_cards(
+    app_name: &str,
+    labels: &[String],
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, render::ActionCardView)> {
+    let mut rows = vec![(
+        stacked_row_rect(0, width, height),
+        render::ActionCardView::new(app_name, "запрашивает доступ", ""),
+    )];
+    if labels.is_empty() {
+        rows.push((
+            stacked_row_rect(1, width, height),
+            render::ActionCardView::new("Без дополнительных разрешений", "", ""),
+        ));
+        return rows;
+    }
+    for (index, label) in labels.iter().enumerate() {
+        rows.push((
+            stacked_row_rect(index + 1, width, height),
+            render::ActionCardView::new(label, "", ""),
+        ));
+    }
+    rows
 }
 
 /// How far a touch has to move (in either direction, on this
@@ -4468,6 +5020,7 @@ fn main() {
         dmabuf: dmabuf_canvas,
         last_statusbar_snapshot: None,
         last_statusbar_refresh: Instant::now(),
+        last_lock_idle_time: None,
         low_battery_notified: false,
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
@@ -4673,6 +5226,10 @@ struct Shell {
     /// S13 Change 1: throttles `refresh_statusbar_if_due` the same way
     /// `last_apps_refresh` throttles `refresh_apps_if_due`.
     last_statusbar_refresh: Instant,
+    /// VUI-07 (ADR-134): last clock string painted on the no-PIN lock,
+    /// so a status tick can skip the lock commit until the minute
+    /// changes. `None` until the first idle lock paint.
+    last_lock_idle_time: Option<String>,
     /// S21: guards `check_low_battery` against creating a fresh
     /// notification every second while the battery stays low.
     low_battery_notified: bool,
@@ -4776,13 +5333,13 @@ struct Shell {
     /// `last_statusbar_refresh`/`last_apps_refresh` just below.
     last_context_signal_refresh: Instant,
     /// HIA-07: which entity Object View is currently showing --
-    /// `Some` only after the user taps a row on "Входящие" (S13
-    /// Change 2 / S21), `None` again once its action is taken
+    /// `Some` after the user taps a row on "Входящие" or the NOW
+    /// `ObjectSummary` (ADR-137), `None` again once its action is taken
     /// (`handle_object_view_action`) or it turns out stale
     /// (`viewing_entity`). Was `confirming_task_id`/`saaios.task`-only
     /// before this; same "explicit, page-scoped entry point, no
-    /// auto-popup" shape S13 Change 2 already established, now
-    /// covering any entity_type "Входящие" ever lists a row for.
+    /// auto-popup" shape S13 Change 2 already established, covering
+    /// any entity_type "Входящие" or NOW ever names.
     viewing_entity_id: Option<Uuid>,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
@@ -5273,8 +5830,8 @@ impl TouchHandler for Shell {
                 // Modal, same as consent: Object View owns every
                 // touch while it's showing (S09 Change 3 / ADR-031's
                 // follow-up, generalized past `saaios.task` alone by
-                // HIA-07). Only reachable by first tapping a row on
-                // "Входящие" (S13 Change 2 / S21) -- no auto-popup.
+                // HIA-07). Reachable by tapping a row on "Входящие"
+                // or the NOW `ObjectSummary` (ADR-137) -- no auto-popup.
                 // Button count varies by entity_type, so it has to be
                 // recomputed here, same "read fresh" reasoning
                 // `object_view_content` itself already documents.
@@ -5346,12 +5903,14 @@ impl TouchHandler for Shell {
                 // while "Bluetooth устройства" is open. Recomputes the
                 // device count fresh (see `bluetooth_list_open`'s doc
                 // comment) rather than reading a stored snapshot.
-                let device_count = bluetooth_scan_results().0.len();
+                let (devices, done) = bluetooth_scan_results();
+                let device_count = devices.len();
                 if let Some(tap) = bluetooth_list_action_at(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     device_count,
+                    done,
                 ) {
                     self.handle_bluetooth_list_tap(tap, conn, qh);
                 }
@@ -5437,6 +5996,7 @@ impl TouchHandler for Shell {
                     self.width,
                     self.height,
                     &self.selected_entities,
+                    self.entityd.is_connected(),
                 ) {
                     // HIA-07: every row, task or notification alike,
                     // opens the same Object View now -- a task's own
@@ -5447,12 +6007,33 @@ impl TouchHandler for Shell {
                     self.viewing_entity_id = Some(id);
                     self.draw(conn, qh);
                 }
+            } else if self.current_page == RootPage::Spaces {
+                if let Some(space_id) = space_row_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    &self.spaces,
+                    self.entityd.is_connected(),
+                ) {
+                    self.invoke_select_space(&space_id);
+                }
             } else if self.current_page == RootPage::Now && !self.apps_open {
-                // VUI-03 (ADR-113): the composed screen's own two footer
-                // rows -- everything else on it (SystemSection rows,
-                // ObjectSummary) is informational only in this pass, not
-                // yet tappable.
-                if let Some(action) =
+                // VUI-03 (ADR-113): footer rows stay tappable. ADR-137:
+                // the ObjectSummary is the same HIA-07 entry as an Inbox
+                // row -- explicit tap, not auto-popup.
+                let content_rect = root_view(self.width, self.height).children[0].rect;
+                let has_lifecycle = self.now_context_header().lifecycle.is_some();
+                if now_object_tapped(
+                    self.last_touch_pos,
+                    content_rect,
+                    has_lifecycle,
+                    self.now_object_summary().as_ref(),
+                ) {
+                    if let Some(id) = self.selected_entities.first().map(|entity| entity.id) {
+                        self.viewing_entity_id = Some(id);
+                        self.draw(conn, qh);
+                    }
+                } else if let Some(action) =
                     now_footer_action_at(self.last_touch_pos, self.width, self.height)
                 {
                     if action == NOW_FOOTER_OPEN_APPS_ACTION {
@@ -5626,7 +6207,7 @@ impl Shell {
         // label()` need the whole of `self`, not just those two fields.
         let frame = if let Some(pending) = &self.pending_consent {
             let view = consent_view(width, height);
-            let header = view.children[0].rect;
+            let content_rect = view.children[0].rect;
             let buttons = &view.children[1].children;
             let labels = pending
                 .requested
@@ -5634,9 +6215,9 @@ impl Shell {
                 .map(|name| capability_label(name).to_owned())
                 .collect::<Vec<_>>();
             Frame::Consent {
-                app_name: pending.app_name.clone(),
-                labels,
-                header,
+                content_rect,
+                header: consent_header(&space_display_name(&self.spaces, &self.selected_space_id)),
+                rows: consent_content_cards(&pending.app_name, &labels, width, height),
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
@@ -5657,9 +6238,7 @@ impl Shell {
             };
             let details = object_view_details(&content);
             Frame::ObjectView {
-                title: content.title,
-                state: content.state,
-                status: content.status,
+                summary: object_view_summary(entity, &content),
                 related: content.related,
                 details,
                 header,
@@ -5668,27 +6247,30 @@ impl Shell {
         } else if let Some(pending) = &self.pending_pair_request {
             // Reuses task_confirm_view's geometry verbatim (same
             // header-plus-two-buttons shape) -- only the drawn text
-            // and the touch handler's meaning differ.
+            // and the touch handler's meaning differ. ADR-144: the
+            // header leaf is `content_rect` for `ContextHeader`.
             let view = task_confirm_view(width, height);
-            let header = view.children[0].rect;
+            let content_rect = view.children[0].rect;
             let buttons = &view.children[1].children;
             Frame::RemotePairing {
-                client_name: pending.client_name.clone(),
+                content_rect,
+                header: remote_pair_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
+                rows: remote_pair_content_cards(&pending.client_name, width, height),
                 fingerprint: key_fingerprint(&pending.public_key),
-                header,
                 accept: buttons[0].rect,
                 decline: buttons[1].rect,
             }
         } else if let Some(state) = &self.intent_input {
             let (header, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::IntentInput {
-                buffer: state.buffer.clone(),
-                status: intent_input_status(self.entityd.is_connected()).map(str::to_string),
+                field: intent_input_field(&state.buffer, self.entityd.is_connected()),
                 header,
                 keys,
             }
         } else if let Some(state) = &self.pin_setup {
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
             let has_existing_pin = self.settings.pin_code.is_some();
             let mut keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
                 .iter()
@@ -5703,8 +6285,13 @@ impl Shell {
                     .map(|(offset, label)| (pin_keypad_rect(12 + offset, width, height), label)),
             );
             Frame::PinSetup {
-                buffer: state.buffer.clone(),
-                header,
+                content_rect: Rect::new(0, 0, width, height),
+                header: pin_setup_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
+                field: pin_setup_field(&state.buffer),
+                field_rect: stacked_row_rect(0, width, height),
                 keys,
             }
         } else if let Some(state) = &self.wifi_password {
@@ -5712,116 +6299,104 @@ impl Shell {
             // see `WifiPasswordState`'s doc comment.
             let (header, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::WifiPasswordInput {
-                ssid: state.ssid.clone(),
-                buffer: state.buffer.clone(),
+                field: wifi_password_field(&state.ssid, &state.buffer),
                 header,
                 keys,
             }
         } else if let Some(networks) = &self.wifi_list {
-            // S19: runtime-sized, like "Входящие"/"Сейчас" -- see
-            // `wifi_list_action_at`'s own doc comment for why this
-            // uses `stacked_row_rect` instead of a `root.sui` entry.
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
-            let mut rows: Vec<(Rect, String)> = networks
+            // S19 / ADR-129: runtime-sized WifiRow list plus trailing
+            // refresh/back cards -- see `wifi_list_action_at`.
+            // ADR-146: header is a real `ContextHeader`, not a Surface
+            // strip.
+            let connected = wifi_connected_ssid();
+            let wifi_rows = wifi_list_rows(networks, connected.as_deref());
+            let mut rows: Vec<(Rect, render::ActionCardView)> = wifi_rows
                 .iter()
                 .enumerate()
-                .map(|(index, network)| {
-                    let label = format!(
-                        "{}   ·   {}   ·   {} dBm",
-                        network.ssid,
-                        if network.secured {
-                            "защищена"
-                        } else {
-                            "открыта"
-                        },
-                        network.signal_dbm
-                    );
-                    (stacked_row_rect(index, width, height), label)
+                .map(|(index, row)| {
+                    (
+                        stacked_row_rect(index, width, height),
+                        wifi_card_from_row(row),
+                    )
                 })
                 .collect();
+            let controls = rows.len();
             rows.push((
-                stacked_row_rect(networks.len(), width, height),
-                "Обновить".to_string(),
+                stacked_row_rect(controls, width, height),
+                render::ActionCardView::new("Обновить", "", "Обновить"),
             ));
             rows.push((
-                stacked_row_rect(networks.len() + 1, width, height),
-                "Назад".to_string(),
+                stacked_row_rect(controls + 1, width, height),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::WifiList {
-                header,
-                status_line: wifi_status_line(),
+                content_rect: Rect::new(0, 0, width, height),
+                header: wifi_header(&space_display_name(&self.spaces, &self.selected_space_id)),
                 rows,
             }
         } else if self.bluetooth_list_open {
-            // S20: same runtime-sized-list shape as the Wi-Fi branch
-            // above, but rows/status are recomputed straight from
-            // disk each time (see `bluetooth_list_open`'s doc
-            // comment) instead of reading a stored snapshot.
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
-            let (devices, _done) = bluetooth_scan_results();
-            let mut rows: Vec<(Rect, String)> = devices
+            // S20 / ADR-130: runtime-sized BluetoothRow list plus
+            // trailing scan/refresh/back cards. ADR-145: header is a
+            // real `ContextHeader`, not a Surface strip.
+            let (devices, done) = bluetooth_scan_results();
+            let saved = bluetooth_saved_names();
+            let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved);
+            let mut rows: Vec<(Rect, render::ActionCardView)> = bluetooth_rows
                 .iter()
                 .enumerate()
-                .map(|(index, device)| {
-                    let label = if device.transport.is_empty() {
-                        device.name.clone()
-                    } else {
-                        format!("{}   ·   {}", device.name, device.transport)
-                    };
-                    (stacked_row_rect(index, width, height), label)
+                .map(|(index, row)| {
+                    (
+                        stacked_row_rect(index, width, height),
+                        bluetooth_card_from_row(row),
+                    )
                 })
                 .collect();
+            let controls = rows.len();
             rows.push((
-                stacked_row_rect(devices.len(), width, height),
-                "Искать устройства (~8 с)".to_string(),
+                stacked_row_rect(controls, width, height),
+                render::ActionCardView::new("Искать устройства", "~8 с", "Искать"),
             ));
             rows.push((
-                stacked_row_rect(devices.len() + 1, width, height),
-                "Обновить список".to_string(),
+                stacked_row_rect(controls + 1, width, height),
+                render::ActionCardView::new("Обновить список", "", "Обновить"),
             ));
             rows.push((
-                stacked_row_rect(devices.len() + 2, width, height),
-                "Назад".to_string(),
+                stacked_row_rect(controls + 2, width, height),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::BluetoothList {
-                header,
-                status_line: bluetooth_status_summary(),
+                content_rect: Rect::new(0, 0, width, height),
+                header: bluetooth_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 rows,
             }
         } else if self.trusted_clients_open {
             // Same runtime-sized-list shape as the Bluetooth branch
             // above -- `trusted_clients()`'s own doc comment explains
             // why this reads straight from disk instead of a cached
-            // snapshot.
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            // snapshot. ADR-147: header is a real `ContextHeader`,
+            // not a Surface strip.
             let clients = trusted_clients();
-            let mut rows: Vec<(Rect, String)> = clients
+            let trusted_rows = trusted_client_list_rows(&clients);
+            let mut rows: Vec<(Rect, render::ActionCardView)> = trusted_rows
                 .iter()
                 .enumerate()
-                .map(|(index, client)| {
-                    // Truncated the same way `key_fingerprint` itself
-                    // used to be before ADR-083 -- full 44-char
-                    // SHA256 fingerprints don't fit a row alongside a
-                    // name, but enough of the prefix still lets two
-                    // same-named clients be told apart.
-                    let short_fingerprint =
-                        client.fingerprint.get(..24).unwrap_or(&client.fingerprint);
+                .map(|(index, row)| {
                     (
                         stacked_row_rect(index, width, height),
-                        format!(
-                            "{}   ·   {short_fingerprint}…   ·   Отозвать",
-                            client.client_name
-                        ),
+                        trusted_client_card_from_row(row),
                     )
                 })
                 .collect();
             rows.push((
-                stacked_row_rect(clients.len(), width, height),
-                "Назад".to_string(),
+                stacked_row_rect(trusted_rows.len(), width, height),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::TrustedClients {
-                header,
-                status_line: format!("{} доверенных ключей", clients.len()),
+                content_rect: Rect::new(0, 0, width, height),
+                header: trusted_header(&space_display_name(&self.spaces, &self.selected_space_id)),
                 rows,
             }
         } else if self.dev_surface_open {
@@ -5831,18 +6406,23 @@ impl Shell {
             // explains why this is always read fresh, never cached.
             let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
             let data_rows = self.dev_surface_rows();
-            let mut rows: Vec<(Rect, String)> = data_rows
+            let mut rows: Vec<(Rect, render::ActionCardView)> = data_rows
                 .iter()
                 .enumerate()
-                .map(|(index, text)| (stacked_row_rect(index, width, height), text.clone()))
+                .map(|(index, row)| {
+                    (
+                        stacked_row_rect(index, width, height),
+                        diagnostic_card_from_row(row),
+                    )
+                })
                 .collect();
             rows.push((
                 stacked_row_rect(data_rows.len(), width, height),
-                "Назад".to_string(),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::DevSurface {
                 header,
-                status_line: "Диагностика".to_string(),
+                status_line: diagnostic_status_line(data_rows.len()),
                 rows,
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
@@ -5855,28 +6435,81 @@ impl Shell {
                 object: self.now_object_summary(),
                 footer_actions: now_footer_action_views(width, height),
             }
+        } else if self.current_page == RootPage::Now && self.apps_open {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::AppsGrid {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: apps_grid_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.appd.is_connected(),
+                    archived,
+                ),
+                apps: self.apps_grid_cards(width, height),
+                empty_message: apps_grid_empty_message(
+                    self.appd.is_connected(),
+                    self.installed_apps.len(),
+                ),
+            }
+        } else if self.current_page == RootPage::Inbox {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::Inbox {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: inbox_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.entityd.is_connected(),
+                    archived,
+                ),
+                rows: self.inbox_content_cards(width, height),
+            }
+        } else if self.current_page == RootPage::Spaces {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::Spaces {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: spaces_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.entityd.is_connected(),
+                    archived,
+                ),
+                rows: self.spaces_content_cards(width, height),
+            }
+        } else if self.current_page == RootPage::Me {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::Me {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: me_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.entityd.is_connected(),
+                    archived,
+                ),
+                rows: self.me_content_cards(width, height),
+                paint_navigation: !content_only,
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
             let tabs = self.root_navigation_items(width, height);
-            let content_cards = if self.current_page == RootPage::Inbox {
-                self.inbox_content_cards(width, height)
-            } else if self.current_page == RootPage::Me {
-                self.me_content_cards(width, height)
-            } else if self.current_page == RootPage::Now {
-                self.now_content_cards(width, height)
-            } else {
-                ROOT_CONTENT_ACTIONS
-                    .iter()
-                    .filter(|action| action.page == self.current_page.id())
-                    .map(|action| {
-                        (
-                            content_action_rect(action, width, height),
-                            self.content_card(action),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let content_cards = ROOT_CONTENT_ACTIONS
+                .iter()
+                .filter(|action| action.page == self.current_page.id())
+                .map(|action| {
+                    (
+                        content_action_rect(action, width, height),
+                        self.content_card(action),
+                    )
+                })
+                .collect::<Vec<_>>();
             let context_label = self.context_label();
             Frame::Root {
                 content_rect,
@@ -5898,7 +6531,15 @@ impl Shell {
         let orb_frame = (!content_only
             && !self.calibration_mode
             && self.settings.orb_enabled
-            && matches!(frame, Frame::Root { .. } | Frame::Now { .. }))
+            && matches!(
+                frame,
+                Frame::Root { .. }
+                    | Frame::Now { .. }
+                    | Frame::AppsGrid { .. }
+                    | Frame::Inbox { .. }
+                    | Frame::Spaces { .. }
+                    | Frame::Me { .. }
+            ))
         .then(|| self.build_orb_frame(width, height));
 
         let fonts = self.fonts.as_ref();
@@ -5973,26 +6614,24 @@ impl Shell {
             }
             match frame {
                 Frame::Consent {
-                    app_name,
-                    labels,
+                    content_rect,
                     header,
+                    rows,
                     accept,
                     decline,
                 } => {
                     render::draw_consent(
                         &mut render::Canvas::new(canvas, width, height),
-                        &app_name,
-                        &labels,
-                        header,
+                        content_rect,
+                        &header,
+                        &rows,
                         accept,
                         decline,
                         fonts,
                     );
                 }
                 Frame::ObjectView {
-                    title,
-                    state,
-                    status,
+                    summary,
                     related,
                     details,
                     header,
@@ -6000,9 +6639,7 @@ impl Shell {
                 } => {
                     render::draw_object_view(
                         &mut render::Canvas::new(canvas, width, height),
-                        &title,
-                        state,
-                        &status,
+                        &summary,
                         related.as_deref(),
                         &details,
                         header,
@@ -6011,111 +6648,109 @@ impl Shell {
                     );
                 }
                 Frame::RemotePairing {
-                    client_name,
-                    fingerprint,
+                    content_rect,
                     header,
+                    rows,
+                    fingerprint,
                     accept,
                     decline,
                 } => {
                     render::draw_remote_pair(
                         &mut render::Canvas::new(canvas, width, height),
-                        &client_name,
+                        content_rect,
+                        &header,
+                        &rows,
                         &fingerprint,
-                        header,
                         accept,
                         decline,
                         fonts,
                     );
                 }
                 Frame::IntentInput {
-                    buffer,
-                    status,
+                    field,
                     header,
                     keys,
                 } => {
                     render::draw_intent_input(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Новое намерение",
-                        &buffer,
-                        status.as_deref(),
+                        &field,
                         header,
                         &keys,
                         fonts,
                     );
                 }
                 Frame::PinSetup {
-                    buffer,
+                    content_rect,
                     header,
+                    field,
+                    field_rect,
                     keys,
                 } => {
                     render::draw_pin_setup(
                         &mut render::Canvas::new(canvas, width, height),
-                        &buffer,
-                        header,
+                        content_rect,
+                        &header,
+                        &field,
+                        field_rect,
                         &keys,
                         fonts,
                     );
                 }
                 Frame::WifiPasswordInput {
-                    ssid,
-                    buffer,
+                    field,
                     header,
                     keys,
                 } => {
-                    // Password preview is masked (unlike the intent
-                    // keyboard's plaintext echo) -- what's actually typed
-                    // stays in `buffer`/`state.buffer`, only the on-screen
-                    // preview substitutes a dot per character.
-                    let masked: String = buffer.chars().map(|_| '•').collect();
-                    render::draw_intent_input(
+                    render::draw_wifi_password(
                         &mut render::Canvas::new(canvas, width, height),
-                        &format!("Пароль для «{ssid}»"),
-                        &masked,
-                        None,
+                        &field,
                         header,
                         &keys,
                         fonts,
                     );
                 }
                 Frame::WifiList {
+                    content_rect,
                     header,
-                    status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Wi-Fi сети",
-                        &status_line,
-                        header,
+                        content_rect,
+                        &[],
+                        &header,
                         &rows,
+                        false,
                         fonts,
                     );
                 }
                 Frame::BluetoothList {
+                    content_rect,
                     header,
-                    status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Bluetooth устройства",
-                        &status_line,
-                        header,
+                        content_rect,
+                        &[],
+                        &header,
                         &rows,
+                        false,
                         fonts,
                     );
                 }
                 Frame::TrustedClients {
+                    content_rect,
                     header,
-                    status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Доверенные клиенты",
-                        &status_line,
-                        header,
+                        content_rect,
+                        &[],
+                        &header,
                         &rows,
+                        false,
                         fonts,
                     );
                 }
@@ -6124,7 +6759,7 @@ impl Shell {
                     status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_action_row_list(
                         &mut render::Canvas::new(canvas, width, height),
                         "Диагностика",
                         &status_line,
@@ -6168,6 +6803,72 @@ impl Shell {
                         &sections,
                         object.as_ref(),
                         &footer_actions,
+                        fonts,
+                    );
+                }
+                Frame::AppsGrid {
+                    content_rect,
+                    tabs,
+                    header,
+                    apps,
+                    empty_message,
+                } => {
+                    render::draw_apps_grid(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &apps,
+                        empty_message,
+                        fonts,
+                    );
+                }
+                Frame::Inbox {
+                    content_rect,
+                    tabs,
+                    header,
+                    rows,
+                } => {
+                    render::draw_context_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &rows,
+                        true,
+                        fonts,
+                    );
+                }
+                Frame::Spaces {
+                    content_rect,
+                    tabs,
+                    header,
+                    rows,
+                } => {
+                    render::draw_context_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &rows,
+                        true,
+                        fonts,
+                    );
+                }
+                Frame::Me {
+                    content_rect,
+                    tabs,
+                    header,
+                    rows,
+                    paint_navigation,
+                } => {
+                    render::draw_context_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &rows,
+                        paint_navigation,
                         fonts,
                     );
                 }
@@ -6356,6 +7057,21 @@ impl Shell {
         }
     }
 
+    fn invoke_select_space(&mut self, space_id: &str) {
+        if !self.entityd.is_connected() {
+            return;
+        }
+        // HIA-01: tapping the space that's already selected cycles
+        // lifecycle. Nothing on the card explains the gesture --
+        // status has no room (confirmed live).
+        if space_id == self.selected_space_id {
+            self.cycle_space_lifecycle(space_id);
+        } else {
+            self.upsert_manual_context(space_id);
+            self.entityd.select_space(space_id);
+        }
+    }
+
     fn invoke_content_action(
         &mut self,
         action: ContentActionDefinition,
@@ -6367,25 +7083,7 @@ impl Shell {
             action.id, action.action
         );
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
-            if !self.entityd.is_connected() {
-                return;
-            }
-            // HIA-01: tapping the space that's already selected has
-            // no other effect today (re-selecting a no-op selection),
-            // so it's repurposed into the lifecycle-cycle gesture --
-            // no new hit-test geometry needed on a page whose four
-            // cards are still the static `root.sui` layout (S04).
-            // Known rough edge: nothing on the card hints at this
-            // gesture at all before the first tap -- the button
-            // itself still just says "Выбрано" (its status line has
-            // no room to explain a gesture, confirmed live: an
-            // earlier version tried and overflowed the card).
-            if space_id == self.selected_space_id {
-                self.cycle_space_lifecycle(space_id);
-            } else {
-                self.upsert_manual_context(space_id);
-                self.entityd.select_space(space_id);
-            }
+            self.invoke_select_space(space_id);
             return;
         }
         if action.action == "open_intent_input" {
@@ -7007,39 +7705,35 @@ impl Shell {
     /// otherwise draw for a page with zero real cards -- Acceptance
     /// criteria explicitly called this out during the DoR.
     fn inbox_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let rows = inbox_rows(&self.selected_entities);
-        if rows.is_empty() {
-            return vec![(
-                stacked_row_rect(0, width, height),
-                render::ActionCardView::new("Нет новых задач и уведомлений", "", ""),
-            )];
-        }
-        rows.into_iter()
+        inbox_event_rows(&self.selected_entities, self.entityd.is_connected())
+            .into_iter()
             .enumerate()
-            .map(|(index, (kind, entity))| {
-                // HIA-07: both kinds now open the same Object View
-                // on tap (see the touch-dispatch site), so both rows
-                // say "Открыть" -- a notification's "Скрыть" moved
-                // into that screen's own action row, it no longer
-                // happens directly from this list.
-                let status = match kind {
-                    InboxRowKind::Task => "Ждёт подтверждения",
-                    // S21: the notification's own `body` property is
-                    // its message; the title is used as the card
-                    // label, same split as a task's title/status.
-                    InboxRowKind::Notification => entity
-                        .properties
-                        .get("body")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                };
-                let action = "Открыть";
+            .map(|(index, event)| {
                 (
                     stacked_row_rect(index, width, height),
-                    render::ActionCardView::new(entity.title.clone(), status, action),
+                    inbox_card_from_event(&event),
                 )
             })
             .collect()
+    }
+
+    fn spaces_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        space_list_rows(
+            &self.spaces,
+            &self.selected_space_id,
+            self.entityd.is_connected(),
+            &self.entity_counts,
+            &self.system_space_entities,
+        )
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            (
+                stacked_row_rect(index, width, height),
+                space_card_from_row(&row),
+            )
+        })
+        .collect()
     }
 
     /// S13 Change 3: "Я" -- a device/apps summary built entirely from
@@ -7155,40 +7849,49 @@ impl Shell {
     /// capability set IS the policy decision for that app; there is
     /// no separate PolicyDecision log to show, so this doesn't invent
     /// one just to look more like the aspirational document.
-    fn dev_surface_rows(&self) -> Vec<String> {
+    fn dev_surface_rows(&self) -> Vec<DataRow> {
         let mut rows = vec![
-            format!(
-                "Пространство: {} ({})",
-                space_display_name(&self.spaces, &self.selected_space_id),
-                self.selected_space_id
+            diagnostic_row(
+                "Пространство",
+                format!(
+                    "{} ({})",
+                    space_display_name(&self.spaces, &self.selected_space_id),
+                    self.selected_space_id
+                ),
             ),
-            format!("Сборка: {}", env!("SAAIOS_BUILD_ID")),
-            format!("Модель: {}", hardware_model()),
-            format!("Ядро: {}", kernel_release()),
-            format!("Работает: {}", uptime_string()),
-            format!(
-                "Пространств: {} · объектов: {}",
-                self.spaces.len(),
-                self.entity_counts.values().sum::<usize>()
+            diagnostic_row("Сборка", env!("SAAIOS_BUILD_ID")),
+            diagnostic_row("Модель", hardware_model()),
+            diagnostic_row("Ядро", kernel_release()),
+            diagnostic_row("Работает", uptime_string()),
+            diagnostic_row(
+                "Пространств",
+                format!(
+                    "{} · объектов: {}",
+                    self.spaces.len(),
+                    self.entity_counts.values().sum::<usize>()
+                ),
             ),
-            format!("Попыток загрузки: {}", boot_attempts()),
+            diagnostic_row("Попыток загрузки", boot_attempts().to_string()),
         ];
         if self.context_frame.is_empty() {
-            rows.push("ContextFrame: пусто".to_string());
+            rows.push(diagnostic_row("ContextFrame", "пусто"));
         } else {
             for entry in &self.context_frame {
                 let source = match entry.source {
                     ContextSource::Manual => "manual",
                     ContextSource::Wifi => "wifi",
                 };
-                rows.push(format!(
-                    "ContextFrame: {} · увер. {} · {source}",
-                    entry.space_id, entry.confidence
+                rows.push(diagnostic_row(
+                    "ContextFrame",
+                    format!("{} · увер. {} · {source}", entry.space_id, entry.confidence),
                 ));
             }
         }
         if self.installed_apps.is_empty() {
-            rows.push("Возможности: нет установленных приложений".to_string());
+            rows.push(diagnostic_row(
+                "Возможности",
+                "нет установленных приложений",
+            ));
         } else {
             for app in self.installed_apps.values() {
                 let grants = self
@@ -7206,21 +7909,17 @@ impl Shell {
                         }
                     })
                     .unwrap_or_else(|| "без разрешений".to_string());
-                rows.push(format!("{}: {grants}", app.name));
+                rows.push(diagnostic_row(app.name.clone(), grants));
             }
         }
         rows
     }
 
-    /// S13 Change 4: "Сейчас"'s content -- one card per installed app
-    /// (replacing the old single hardcoded demo card), followed by the
-    /// two still-static `root.sui` cards for this page
-    /// ("Объект пространства", "Новое намерение"), positioned right
-    /// after the app list instead of at their old fixed `root.sui`
-    /// coordinates -- `now_action_at` computes hit rects the same way.
-    fn now_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let mut cards: Vec<(Rect, render::ActionCardView)> = self
-            .installed_apps
+    /// ADR-138: one letter-square tile per live installed app. The
+    /// leftover `root.sui` NOW cards are not tiles -- intent lives on
+    /// the composed footer, object inspect on the NOW summary.
+    fn apps_grid_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        self.installed_apps
             .values()
             .enumerate()
             .map(|(index, app)| {
@@ -7237,19 +7936,7 @@ impl Shell {
                     ),
                 )
             })
-            .collect();
-        let base = self.installed_apps.len();
-        for (offset, action) in ROOT_CONTENT_ACTIONS
-            .iter()
-            .filter(|action| action.page == "now")
-            .enumerate()
-        {
-            cards.push((
-                now_grid_rect(base + offset, width, height),
-                self.content_card(action),
-            ));
-        }
-        cards
+            .collect()
     }
 
     /// VUI-03 (ADR-112): replaces `context_label()`'s own
@@ -7412,34 +8099,15 @@ impl Shell {
         }
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
             let selected = space_id == self.selected_space_id;
-            let mut status = if self.entityd.is_connected() {
-                match self.entity_counts.get(space_id) {
-                    Some(count) => format!("Объектов: {count}"),
-                    None => "Загрузка объектов…".into(),
-                }
-            } else {
-                "Сервис пространств недоступен".into()
-            };
-            // HIA-01: lifecycle only shown when it's not the silent
-            // default (`SpaceLifecycle::label`'s own doc comment),
-            // relation target only when at least one real edge
-            // exists -- an untouched space's card looks exactly like
-            // it always has. At most one of the two, not both at
-            // once: this line is drawn unwrapped in a fixed-width
-            // strip (confirmed live -- the first version tried to
-            // show both and overflowed the card).
-            if let Some(label) = space_lifecycle(&self.system_space_entities, space_id).label() {
-                status.push_str(" · ");
-                status.push_str(label);
-            } else if let Some((target, _kind)) =
-                space_relation_targets(&self.system_space_entities, space_id).first()
-            {
-                status.push_str(" · → ");
-                status.push_str(&space_display_name(&self.spaces, target));
-            }
             return render::ActionCardView::new(
                 action.label,
-                status,
+                space_card_status(
+                    space_id,
+                    self.entityd.is_connected(),
+                    &self.entity_counts,
+                    &self.spaces,
+                    &self.system_space_entities,
+                ),
                 if selected {
                     "Выбрано"
                 } else {
@@ -8097,8 +8765,24 @@ impl Shell {
         if self.last_statusbar_refresh.elapsed() >= STATUSBAR_REFRESH_INTERVAL {
             self.present_status_bar(qh);
             self.check_low_battery();
+            self.refresh_lock_idle_if_due(qh);
             self.last_statusbar_refresh = Instant::now();
         }
+    }
+
+    /// VUI-07 (ADR-134): the lock surface is the visible clock while
+    /// locked (displayd ignores status commits). Repaint only when the
+    /// minute string changes, never over the deep-idle blank, and never
+    /// on the PIN keypad.
+    fn refresh_lock_idle_if_due(&mut self, qh: &QueueHandle<Self>) {
+        if !self.locked || self.sleeping || self.settings.pin_code.is_some() {
+            return;
+        }
+        let time = current_time_string(self.settings.utc_offset_minutes);
+        if self.last_lock_idle_time.as_deref() == Some(time.as_str()) {
+            return;
+        }
+        self.present_lock_pin_entry(qh);
     }
 
     /// S21: first real notification producer, entirely client-side --
@@ -8233,20 +8917,17 @@ impl Shell {
         surface.commit();
     }
 
-    /// S24: what actually gets shown on the lock surface each time it
-    /// needs repainting -- the flat `LOCK_SCREEN_COLOR` this always
-    /// showed before this sprint when no PIN is set (delegates
-    /// straight to `present_lock_surface`, no change in that case),
-    /// or a numeric keypad plus filled-dot progress indicators when
-    /// `settings.pin_code` is set. Never called for the
+    /// S24 / VUI-07 (ADR-134): what actually gets shown on the lock
+    /// surface each time it needs repainting -- Canvas + clock + tap
+    /// hint when no PIN is set, or a numeric keypad plus filled-dot
+    /// progress when `settings.pin_code` is set. Never called for the
     /// `SLEEP_INDICATOR_COLOR` deep-idle blank (`check_deep_idle`
     /// keeps calling `present_lock_surface` directly for that) --
     /// screen-off should stay screen-off regardless of PIN.
     fn present_lock_pin_entry(&mut self, qh: &QueueHandle<Self>) {
-        let Some(pin_code) = self.settings.pin_code.clone() else {
-            self.present_lock_surface(qh, LOCK_SCREEN_COLOR);
+        if self.sleeping {
             return;
-        };
+        }
         let width = self.lock_width;
         let height = self.lock_height;
         if width == 0 || height == 0 {
@@ -8257,14 +8938,26 @@ impl Shell {
         };
         let stride = width as i32 * 4;
 
-        let keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
-            .iter()
-            .enumerate()
-            .filter(|(_, label)| !label.is_empty())
-            .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
-            .collect();
+        let pin_code = self.settings.pin_code.clone();
+        let idle = lock_idle_view(&current_time_string(self.settings.utc_offset_minutes));
+        if pin_code.is_none() {
+            self.last_lock_idle_time = Some(idle.time.clone());
+        }
+        let keys: Vec<(Rect, &'static str)> = if pin_code.is_some() {
+            PIN_KEYPAD_DIGIT_LABELS
+                .iter()
+                .enumerate()
+                .filter(|(_, label)| !label.is_empty())
+                .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let entered_len = self.pin_entry_buffer.len();
-        let pin_len = pin_code.len();
+        let pin_len = pin_code.as_ref().map(|code| code.len()).unwrap_or(0);
+        let has_pin = pin_code.is_some();
+        let idle_time = idle.time;
+        let idle_hint = idle.hint;
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
 
@@ -8287,14 +8980,21 @@ impl Shell {
                     .as_mut()
                     .expect("just confirmed ready above");
                 match lock_dmabuf.paint(|canvas| {
-                    render::draw_lock_pin_entry(
-                        &mut render::Canvas::new(canvas, width, height),
-                        width,
-                        entered_len,
-                        pin_len,
-                        &keys,
-                        fonts,
-                    );
+                    let mut frame = render::Canvas::new(canvas, width, height);
+                    if has_pin {
+                        render::draw_lock_pin_entry(
+                            &mut frame,
+                            width,
+                            entered_len,
+                            pin_len,
+                            &keys,
+                            fonts,
+                        );
+                    } else {
+                        render::draw_lock_idle(
+                            &mut frame, width, height, &idle_time, idle_hint, fonts,
+                        );
+                    }
                     render::apply_contrast_boost(canvas, contrast_pct);
                 }) {
                     Ok(wl_buffer) => {
@@ -8351,14 +9051,12 @@ impl Shell {
             }
         };
 
-        render::draw_lock_pin_entry(
-            &mut render::Canvas::new(canvas, width, height),
-            width,
-            entered_len,
-            pin_len,
-            &keys,
-            fonts,
-        );
+        let mut frame = render::Canvas::new(canvas, width, height);
+        if has_pin {
+            render::draw_lock_pin_entry(&mut frame, width, entered_len, pin_len, &keys, fonts);
+        } else {
+            render::draw_lock_idle(&mut frame, width, height, &idle_time, idle_hint, fonts);
+        }
         render::apply_contrast_boost(canvas, contrast_pct);
 
         let surface = lock_surface.wl_surface();
@@ -8396,30 +9094,39 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        bluetooth_list_action_at, calibration_requested, capability_label, consent_action_at,
-        content_action_at, dev_surface_back_tapped, effective_context_space, ensure_me_row_cache,
-        flatten_me_rows, format_utc_offset, in_progress_work, input_idle_for_at_least,
-        intent_action_at, known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle,
-        next_pending_action, object_view_action_at, object_view_content, orb_action_at,
+        apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
+        bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
+        consent_action_at, consent_content_cards, consent_header, content_action_at,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
+        effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
+        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
+        intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts, me_header,
+        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pressed_tab_from_touch, remove_context_source, space_color, space_color_entity,
+        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remote_pair_content_cards,
+        remote_pair_header, remove_context_source, space_color, space_color_entity,
         space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, upsert_context_entry, wifi_list_action_at, AgentSummary,
-        BluetoothListTap, ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect,
-        RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow,
-        TrustedClientTap, UniversalState, WifiListTap, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
+        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
+        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
+        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
+        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
+        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
         RELATION_REALIZES,
     };
     use saai_entity_store::SpaceKind;
+    use saai_ui_core::ObjectSummaryTrailing;
     use std::time::Duration;
 
     fn test_entity(
@@ -8651,6 +9358,16 @@ mod tests {
         test_entity(SPACE_RELATION_ENTITY_TYPE, properties)
     }
 
+    fn test_space(id: &str, name: &str) -> Space {
+        Space {
+            schema: 1,
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: SpaceKind::User,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
     fn wifi_signal_entity(space_id: &str, ssid: &str) -> Entity {
         let mut properties = serde_json::Map::new();
         properties.insert(
@@ -8796,6 +9513,24 @@ mod tests {
         let width = 1080;
         let height = 2400;
         assert!(wifi_list_action_at((10.0, 10.0), width, height, 0).is_none());
+        let empty = stacked_row_rect(0, width, height);
+        let refresh = stacked_row_rect(1, width, height);
+        let back = stacked_row_rect(2, width, height);
+        let center = |rect: Rect| {
+            (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            )
+        };
+        assert!(wifi_list_action_at(center(empty), width, height, 0).is_none());
+        assert!(matches!(
+            wifi_list_action_at(center(refresh), width, height, 0),
+            Some(WifiListTap::Refresh)
+        ));
+        assert!(matches!(
+            wifi_list_action_at(center(back), width, height, 0),
+            Some(WifiListTap::Back)
+        ));
     }
 
     #[test]
@@ -9130,6 +9865,237 @@ mod tests {
     }
 
     #[test]
+    fn apps_grid_header_names_the_section_and_offline() {
+        let online = apps_grid_header("Дом", true, false);
+        assert_eq!(online.heading_text(), "Дом · Приложения");
+        assert!(online.lifecycle.is_none());
+        let offline = apps_grid_header("Дом", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = apps_grid_header("Дом", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = apps_grid_header("Дом", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn apps_grid_empty_message_names_connected_vs_offline() {
+        assert_eq!(apps_grid_empty_message(true, 1), None);
+        assert_eq!(apps_grid_empty_message(true, 0), Some("Нет приложений"));
+        assert_eq!(apps_grid_empty_message(false, 0), Some("Нет связи"));
+        assert_eq!(apps_grid_empty_message(false, 1), None);
+    }
+
+    #[test]
+    fn inbox_header_names_the_section_and_offline() {
+        let online = inbox_header("Дом", true, false);
+        assert_eq!(online.heading_text(), "Дом · Входящие");
+        assert!(online.lifecycle.is_none());
+        let offline = inbox_header("Дом", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = inbox_header("Дом", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = inbox_header("Дом", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn spaces_header_names_the_section_and_offline() {
+        let online = spaces_header("Дом", true, false);
+        assert_eq!(online.heading_text(), "Дом · Пространства");
+        assert!(online.lifecycle.is_none());
+        let offline = spaces_header("Дом", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = spaces_header("Дом", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = spaces_header("Дом", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn me_header_names_the_section_and_offline() {
+        let online = me_header("Работа", true, false);
+        assert_eq!(online.heading_text(), "Работа · Система");
+        assert!(online.lifecycle.is_none());
+        let offline = me_header("Работа", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = me_header("Работа", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = me_header("Работа", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn consent_header_names_the_section() {
+        let header = consent_header("Работа");
+        assert_eq!(header.heading_text(), "Работа · Разрешение");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn pin_setup_header_names_the_section() {
+        let header = pin_setup_header("Работа");
+        assert_eq!(header.heading_text(), "Работа · PIN");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn remote_pair_header_names_the_section() {
+        let header = remote_pair_header("Работа");
+        assert_eq!(header.heading_text(), "Работа · SSH");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn bluetooth_header_names_the_section() {
+        let header = bluetooth_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Bluetooth");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn wifi_header_names_the_section() {
+        let header = wifi_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Wi-Fi");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn trusted_header_names_the_section() {
+        let header = trusted_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Ключи");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn remote_pair_row_names_the_live_client() {
+        let rows = remote_pair_content_cards("test-client", 1080, 2400);
+        assert_eq!(rows[0].1.label, "test-client");
+        assert!(rows[0].1.status.is_empty());
+    }
+
+    #[test]
+    fn consent_rows_name_the_app_and_requested_or_empty() {
+        let requested =
+            consent_content_cards("Saai Demo", &["Доступ в интернет".to_string()], 1080, 2400);
+        assert_eq!(requested[0].1.label, "Saai Demo");
+        assert_eq!(requested[0].1.status, "запрашивает доступ");
+        assert_eq!(requested[1].1.label, "Доступ в интернет");
+        let empty = consent_content_cards("Saai Demo", &[], 1080, 2400);
+        assert_eq!(empty[1].1.label, "Без дополнительных разрешений");
+    }
+
+    fn test_app(id: &str, name: &str) -> AppSummary {
+        AppSummary {
+            id: id.to_string(),
+            name: name.to_string(),
+            version: "1".to_string(),
+            state: "stopped".to_string(),
+            pids: Vec::new(),
+            requested_capabilities: Vec::new(),
+            consent_needed: false,
+            granted_capabilities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn now_action_at_only_hits_installed_apps() {
+        let mut apps = std::collections::BTreeMap::new();
+        apps.insert("demo".to_string(), test_app("demo", "Saai Demo"));
+        let first = super::now_grid_rect(0, 1080, 2400);
+        assert_eq!(
+            now_action_at(
+                (f64::from(first.x + 10), f64::from(first.y + 10)),
+                1080,
+                2400,
+                &apps
+            ),
+            Some("manage_app:demo".to_string())
+        );
+        let leftover = super::now_grid_rect(1, 1080, 2400);
+        assert_eq!(
+            now_action_at(
+                (f64::from(leftover.x + 10), f64::from(leftover.y + 10)),
+                1080,
+                2400,
+                &apps
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn now_grid_rect_lays_out_three_columns_per_row() {
         let width = 1080;
         let height = 2400;
@@ -9210,20 +10176,31 @@ mod tests {
             )
         };
         assert!(matches!(
-            bluetooth_list_action_at(center(device_0), width, height, device_count),
+            bluetooth_list_action_at(center(device_0), width, height, device_count, false),
             Some(BluetoothListTap::Device(0))
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(scan), width, height, device_count),
+            bluetooth_list_action_at(center(scan), width, height, device_count, false),
             Some(BluetoothListTap::Scan)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(refresh), width, height, device_count),
+            bluetooth_list_action_at(center(refresh), width, height, device_count, false),
             Some(BluetoothListTap::Refresh)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(back), width, height, device_count),
+            bluetooth_list_action_at(center(back), width, height, device_count, false),
             Some(BluetoothListTap::Back)
+        ));
+        let empty = stacked_row_rect(0, width, height);
+        let scan_empty = stacked_row_rect(1, width, height);
+        assert!(bluetooth_list_action_at(center(empty), width, height, 0, true).is_none());
+        assert!(matches!(
+            bluetooth_list_action_at(center(scan_empty), width, height, 0, true),
+            Some(BluetoothListTap::Scan)
+        ));
+        assert!(matches!(
+            bluetooth_list_action_at(center(empty), width, height, 0, false),
+            Some(BluetoothListTap::Scan)
         ));
     }
 
@@ -9249,6 +10226,13 @@ mod tests {
             Some(TrustedClientTap::Back)
         ));
         assert!(trusted_client_action_at((10.0, 10.0), width, height, client_count).is_none());
+        let empty = stacked_row_rect(0, width, height);
+        let back_empty = stacked_row_rect(1, width, height);
+        assert!(trusted_client_action_at(center(empty), width, height, 0).is_none());
+        assert!(matches!(
+            trusted_client_action_at(center(back_empty), width, height, 0),
+            Some(TrustedClientTap::Back)
+        ));
     }
 
     #[test]
@@ -9298,8 +10282,8 @@ mod tests {
         // S13 Change 4 removed the compiled-in demo-app card -- "Сейчас"
         // now has exactly the two entries that were always meant to
         // stay static (the app list itself is runtime data, handled by
-        // `now_action_at`/`now_content_cards`, not this table).
-        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 6);
+        // `now_action_at`/`apps_grid_cards`, not this table).
+        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 2);
         assert_eq!(
             content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
             Some("selected-entity")
@@ -9312,18 +10296,8 @@ mod tests {
     }
 
     #[test]
-    fn space_actions_and_selected_entity_come_from_sui_markup() {
-        for (point, expected) in [
-            ((540.0, 500.0), "space-home"),
-            ((540.0, 720.0), "space-work"),
-            ((540.0, 940.0), "space-personal"),
-            ((540.0, 1160.0), "space-saaios"),
-        ] {
-            assert_eq!(
-                content_action_at(RootPage::Spaces, point, 1080, 2400).map(|action| action.id),
-                Some(expected)
-            );
-        }
+    fn space_actions_come_from_live_spaces_not_sui_markup() {
+        assert!(content_action_at(RootPage::Spaces, (540.0, 500.0), 1080, 2400).is_none());
         assert_eq!(
             content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
             Some("selected-entity")
@@ -9590,6 +10564,235 @@ mod tests {
         assert_eq!(space_display_name(&spaces, "car"), "Машина");
         assert_eq!(space_display_name(&spaces, "work"), "Работа");
         assert_eq!(space_display_name(&spaces, "unknown-id"), "unknown-id");
+    }
+
+    #[test]
+    fn space_list_rows_use_live_spaces_and_name_offline() {
+        let spaces = vec![
+            test_space("home", "Дом"),
+            test_space("work", "Работа"),
+            test_space("car", "Машина"),
+        ];
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert("home".into(), 3usize);
+        counts.insert("work".into(), 1usize);
+        let system = vec![
+            lifecycle_entity("home", "archived"),
+            relation_entity("home", "work", "related_to"),
+            relation_entity("car", "home", "usually_with"),
+        ];
+
+        let live = space_list_rows(&spaces, "home", true, &counts, &system);
+        assert_eq!(live.len(), 3);
+        assert_eq!(live[0].row.primary, "Дом");
+        assert!(live[0].selected);
+        assert_eq!(
+            live[0].row.value.as_deref(),
+            Some("Объектов: 3 · Архивировано")
+        );
+        assert_eq!(live[1].row.primary, "Работа");
+        assert!(!live[1].selected);
+        assert_eq!(live[2].row.primary, "Машина");
+        assert_eq!(
+            live[2].row.value.as_deref(),
+            Some("Загрузка объектов… · → Дом")
+        );
+        assert!(!live.iter().any(|row| row.row.primary.contains("Люди")
+            || row.row.value.as_deref().unwrap_or("").contains("Люди")));
+
+        let offline = space_list_rows(&spaces, "home", false, &counts, &system);
+        assert_eq!(offline.len(), 1);
+        assert_eq!(offline[0].row.primary, "Нет связи");
+        assert!(!offline[0].row.is_actionable());
+        assert!(space_row_at((540.0, 500.0), 1080, 2400, &spaces, false).is_none());
+
+        let empty = space_list_rows(&[], "home", true, &counts, &system);
+        assert_eq!(empty[0].row.primary, "Нет пространств");
+
+        let first = stacked_row_rect(0, 1080, 2400);
+        let point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            space_row_at(point, 1080, 2400, &spaces, true).as_deref(),
+            Some("home")
+        );
+    }
+
+    #[test]
+    fn wifi_list_rows_use_scan_facts_and_name_empty() {
+        let networks = vec![
+            WifiNetwork {
+                ssid: "Wallbox".into(),
+                secured: true,
+                signal_dbm: -42,
+            },
+            WifiNetwork {
+                ssid: "Guest".into(),
+                secured: false,
+                signal_dbm: -70,
+            },
+        ];
+        let live = wifi_list_rows(&networks, Some("Wallbox"));
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.primary, "Wallbox");
+        assert!(live[0].connected);
+        assert_eq!(live[0].row.value.as_deref(), Some("защищена · -42 dBm"));
+        assert_eq!(wifi_card_from_row(&live[0]).action, "Подключено");
+        assert_eq!(live[1].row.primary, "Guest");
+        assert!(!live[1].connected);
+        assert_eq!(live[1].row.value.as_deref(), Some("открыта · -70 dBm"));
+        assert_eq!(wifi_card_from_row(&live[1]).action, "Подключить");
+        assert!(!live.iter().any(|row| row.row.primary.contains("▮")
+            || row.row.value.as_deref().unwrap_or("").contains("привязать")));
+
+        let empty = wifi_list_rows(&[], None);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].row.primary, "Нет сетей");
+        assert!(!empty[0].row.is_actionable());
+        assert_eq!(wifi_card_from_row(&empty[0]).action, "");
+    }
+
+    #[test]
+    fn wifi_password_field_masks_psk_and_keeps_ssid_in_the_label() {
+        let field = wifi_password_field("Wallbox", "secret");
+        assert_eq!(field.kind, FieldKind::Password);
+        assert!(!field.revealed);
+        assert_eq!(field.label, "Пароль для «Wallbox»");
+        assert_eq!(field.value, "secret");
+        assert_eq!(
+            field.accessible_value(),
+            "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"
+        );
+        assert!(!field.accessible_value().contains("secret"));
+        assert!(!field.label.contains("secret"));
+
+        let empty = wifi_password_field("Guest", "");
+        assert!(empty.is_empty());
+        assert_eq!(empty.placeholder.as_deref(), Some("Введите пароль…"));
+        assert_eq!(empty.accessible_value(), "");
+    }
+
+    #[test]
+    fn pin_setup_field_masks_digits_and_keeps_placeholder() {
+        let field = pin_setup_field("4269");
+        assert_eq!(field.kind, FieldKind::Password);
+        assert!(!field.revealed);
+        assert_eq!(field.label, "Новый PIN-код");
+        assert_eq!(field.value, "4269");
+        assert_eq!(field.accessible_value(), "\u{2022}\u{2022}\u{2022}\u{2022}");
+        assert!(!field.accessible_value().contains("4269"));
+
+        let empty = pin_setup_field("");
+        assert!(empty.is_empty());
+        assert_eq!(
+            empty.placeholder.as_deref(),
+            Some("Введите новый PIN (минимум 4 цифры)")
+        );
+        assert_eq!(empty.accessible_value(), "");
+    }
+
+    #[test]
+    fn intent_input_field_keeps_placeholder_and_names_offline_as_help() {
+        let field = intent_input_field("купить хлеб", true);
+        assert_eq!(field.kind, FieldKind::Text);
+        assert_eq!(field.label, "Новое намерение");
+        assert_eq!(field.value, "купить хлеб");
+        assert_eq!(field.accessible_value(), "купить хлеб");
+        assert_eq!(field.placeholder.as_deref(), Some("Наберите текст…"));
+        assert!(field.help.is_none());
+        assert!(field.error.is_none());
+
+        let empty = intent_input_field("", true);
+        assert!(empty.is_empty());
+        assert_eq!(empty.placeholder.as_deref(), Some("Наберите текст…"));
+        assert!(empty.help.is_none());
+        assert_eq!(empty.accessible_value(), "");
+
+        let offline = intent_input_field("", false);
+        assert!(offline.is_empty());
+        assert_eq!(offline.placeholder.as_deref(), Some("Наберите текст…"));
+        assert_eq!(offline.help.as_deref(), Some("Нет связи"));
+        assert!(offline.error.is_none());
+    }
+
+    #[test]
+    fn lock_idle_view_keeps_the_passed_time_and_names_tap_unlock() {
+        let view = lock_idle_view("22:46");
+        assert_eq!(view.time, "22:46");
+        assert_eq!(view.hint, "Коснитесь, чтобы разблокировать");
+        assert!(!view.hint.contains("Входящие"));
+        assert!(!lock_idle_view("").time.contains("Входящие"));
+    }
+
+    #[test]
+    fn bluetooth_list_rows_use_scan_facts_and_name_empty_only_after_done() {
+        let devices = vec![
+            BluetoothDevice {
+                name: "Pixel Buds".into(),
+                transport: "BLE".into(),
+            },
+            BluetoothDevice {
+                name: "Speaker".into(),
+                transport: String::new(),
+            },
+        ];
+        let saved = vec!["Pixel Buds".to_string()];
+        let live = bluetooth_list_rows(&devices, true, &saved);
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.primary, "Pixel Buds");
+        assert!(live[0].paired);
+        assert_eq!(live[0].row.value.as_deref(), Some("BLE"));
+        assert_eq!(bluetooth_card_from_row(&live[0]).action, "Сопряжено");
+        assert_eq!(live[1].row.primary, "Speaker");
+        assert!(!live[1].paired);
+        assert!(live[1].row.value.is_none());
+        assert_eq!(bluetooth_card_from_row(&live[1]).action, "Сопрячь");
+        assert!(!live.iter().any(|row| row.row.primary.contains("dBm")
+            || row.row.value.as_deref().unwrap_or("").contains("RSSI")));
+
+        let pending = bluetooth_list_rows(&[], false, &saved);
+        assert!(pending.is_empty());
+        let empty = bluetooth_list_rows(&[], true, &saved);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].row.primary, "Нет устройств");
+        assert!(!empty[0].row.is_actionable());
+        assert_eq!(bluetooth_card_from_row(&empty[0]).action, "");
+    }
+
+    #[test]
+    fn trusted_client_list_rows_use_name_and_fingerprint_prefix() {
+        let clients = vec![
+            TrustedClient {
+                client_name: "home-mike".into(),
+                fingerprint: "SHA256:abcdefghijklmnopqrstuvwx".into(),
+            },
+            TrustedClient {
+                client_name: "(без имени)".into(),
+                fingerprint: "short".into(),
+            },
+        ];
+        let live = trusted_client_list_rows(&clients);
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.primary, "home-mike");
+        assert_eq!(
+            live[0].row.value.as_deref(),
+            Some("SHA256:abcdefghijklmnopq…")
+        );
+        assert_eq!(trusted_client_card_from_row(&live[0]).action, "Отозвать");
+        assert_eq!(live[1].row.primary, "(без имени)");
+        assert_eq!(live[1].row.value.as_deref(), Some("short…"));
+        assert!(!live
+            .iter()
+            .any(|row| row.row.primary.contains("ssh-ed25519")
+                || row.row.value.as_deref().unwrap_or("").contains("BEGIN")));
+
+        let empty = trusted_client_list_rows(&[]);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].row.primary, "Нет клиентов");
+        assert!(!empty[0].row.is_actionable());
+        assert_eq!(trusted_client_card_from_row(&empty[0]).action, "");
     }
 
     #[test]
@@ -10333,6 +11536,43 @@ mod tests {
     }
 
     #[test]
+    fn inbox_event_rows_name_offline_instead_of_pretending_empty() {
+        let offline = super::inbox_event_rows(&[], false);
+        assert_eq!(offline.len(), 1);
+        assert_eq!(offline[0].row.primary, "Нет связи");
+        assert!(!offline[0].row.is_actionable());
+
+        let empty = super::inbox_event_rows(&[], true);
+        assert_eq!(empty[0].row.primary, "Нет новых задач и уведомлений");
+        assert!(!empty[0].row.is_actionable());
+
+        let waiting = task_entity("Подтвердите удаление", None);
+        let note = notification_entity("Notice", "body");
+        let stale = super::inbox_event_rows(std::slice::from_ref(&waiting), false);
+        assert_eq!(stale[0].row.primary, "Нет связи");
+        assert!(
+            super::inbox_row_at((540.0, 500.0), 1080, 2400, &[waiting.clone()], false).is_none()
+        );
+
+        let live = super::inbox_event_rows(&[waiting.clone(), note], true);
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.value.as_deref(), Some("Ждёт подтверждения"));
+        assert_eq!(live[1].row.value.as_deref(), Some("body"));
+        assert!(live.iter().all(|row| row.row.is_actionable()));
+        assert_eq!(super::inbox_card_from_event(&live[0]).action, "Открыть");
+        assert_eq!(super::inbox_card_from_event(&empty[0]).action, "");
+        let first = stacked_row_rect(0, 1080, 2400);
+        let point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            super::inbox_row_at(point, 1080, 2400, &[waiting], true).map(|(kind, _)| kind),
+            Some(super::InboxRowKind::Task)
+        );
+    }
+
+    #[test]
     fn orb_zone_never_reaches_where_cards_start() {
         // HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb
         // must never occupy hit-test space the tab-bar/cards already
@@ -10642,6 +11882,64 @@ mod tests {
             panic!("Я scroll must not respawn wpa_cli/df")
         });
         assert_eq!(again, len);
+    }
+
+    #[test]
+    fn diagnostic_card_from_row_keeps_label_and_value_apart() {
+        let row = diagnostic_row("Сборка", "abc123");
+        assert_eq!(row.variant, DataRowVariant::Static);
+        assert!(!row.is_actionable());
+        assert_eq!(row.primary, "Сборка");
+        assert_eq!(row.value.as_deref(), Some("abc123"));
+        let card = diagnostic_card_from_row(&row);
+        assert_eq!(card.label, "Сборка");
+        assert_eq!(card.status, "abc123");
+        assert_eq!(card.action, "");
+    }
+
+    #[test]
+    fn diagnostic_status_line_names_the_real_row_count() {
+        assert_eq!(diagnostic_status_line(8), "8 показателей");
+    }
+
+    #[test]
+    fn object_view_summary_keeps_identity_apart_from_status() {
+        let intent = intent_entity("Пустое намерение");
+        let content = object_view_content(&intent, &[intent.clone()], &[]);
+        let summary = object_view_summary(&intent, &content);
+        assert_eq!(summary.title, "Пустое намерение");
+        assert_eq!(
+            summary.meta,
+            format!("saaios.intent · версия {}", intent.revision)
+        );
+        assert!(!summary.meta.contains("Нет задачи"));
+        let Some(ObjectSummaryTrailing::Status(status)) = summary.trailing else {
+            panic!("workflow status belongs on trailing, not meta");
+        };
+        assert_eq!(status.state, UniversalState::Idle);
+        assert_eq!(status.label, "Нет задачи");
+    }
+
+    #[test]
+    fn now_object_tapped_finds_the_summary_and_misses_the_footer() {
+        let width = 1080;
+        let height = 2400;
+        let content = super::root_view(width, height).children[0].rect;
+        let summary = ObjectSummary::new("vnnnmb", "saaios.intent · версия 1");
+        let object_rect = crate::render::now_object_summary_rect(content, false, &summary);
+        let center = (
+            f64::from(object_rect.x + object_rect.width / 2),
+            f64::from(object_rect.y + object_rect.height / 2),
+        );
+        assert!(now_object_tapped(center, content, false, Some(&summary)));
+        let footer = super::now_footer_action_rect(1, width, height);
+        assert!(!now_object_tapped(
+            (f64::from(footer.x + 10), f64::from(footer.y + 10)),
+            content,
+            false,
+            Some(&summary)
+        ));
+        assert!(!now_object_tapped(center, content, false, None));
     }
 
     #[test]

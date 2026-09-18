@@ -301,76 +301,34 @@ impl<'a> Canvas<'a> {
     }
 }
 
-/// The ADR-020 consent screen (S07 Change 4): full-screen, replaces
-/// `draw_root` entirely while a launch is blocked on consent -- same
-/// `Canvas`/`Fonts` primitives, a second top-level entry point rather than
-/// a mode bolted onto `draw_root`, since the two share no layout beyond
-/// both being full-screen.
+/// ADR-142: app-consent through `ContextHeader` and Static `DataRow`
+/// cards. Accept/decline rects stay the `consent_view` hit targets.
+/// No concatenated `draw_root` Surface bar, no accent-square bullets.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_consent(
     canvas: &mut Canvas<'_>,
-    app_name: &str,
-    capabilities: &[String],
-    header: Rect,
+    content: Rect,
+    header: &ContextHeader,
+    rows: &[(Rect, ActionCardView)],
     accept_button: Rect,
     decline_button: Rect,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-
-    let Some(fonts) = fonts else {
-        // No font asset available (missing/unreadable on this build) --
-        // still show the two buttons in distinct colors so the screen is
-        // at least operable without text, matching this client's existing
-        // "color as the physically-verifiable signal" fallback used
-        // elsewhere before Inter rendering landed.
-        canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
-        canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
-        return;
-    };
-
-    let margin = header.width / 22;
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        &format!("{app_name} запрашивает доступ"),
-        46.0,
-        header.x + margin,
-        header.y + 220,
-        theme_color(ColorRole::TextPrimary),
-    );
-
-    let mut row_top = header.y + 340;
-    if capabilities.is_empty() {
-        draw_text(
-            canvas,
-            &fonts.regular,
-            "Без дополнительных разрешений",
-            32.0,
-            header.x + margin,
-            row_top,
-            theme_color(ColorRole::TextSecondary),
-        );
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
     }
-    for capability in capabilities {
-        canvas.fill_rect(
-            Rect::new(header.x + margin, row_top + 10, 16, 16),
-            theme_color(ColorRole::Accent),
-        );
-        draw_text(
-            canvas,
-            &fonts.regular,
-            capability,
-            32.0,
-            header.x + margin + 44,
-            row_top,
-            theme_color(ColorRole::TextSecondary),
-        );
-        row_top += 70;
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
     }
+    canvas.set_clip(None);
 
     canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
     canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
+    let Some(fonts) = fonts else {
+        return;
+    };
     draw_text_centered(
         canvas,
         &fonts.semibold,
@@ -404,9 +362,7 @@ pub fn draw_consent(
 /// on the intent screen (`Нет связи`); Wi-Fi password passes `None`.
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
-    title: &str,
-    buffer: &str,
-    status: Option<&str>,
+    field: &Field,
     header: Rect,
     keys: &[(Rect, String)],
     fonts: Option<&Fonts>,
@@ -426,35 +382,109 @@ pub fn draw_intent_input(
     draw_text(
         canvas,
         &fonts.semibold,
-        title,
+        &field.label,
         42.0,
         header.x + 30,
-        header.y + 40,
+        header.y + 140,
         theme_color(ColorRole::TextPrimary),
     );
-    if let Some(status) = status {
-        draw_text(
-            canvas,
-            &fonts.regular,
-            status,
-            28.0,
-            header.x + 30,
-            header.y + 88,
-            theme_color(ColorRole::TextSecondary),
-        );
-    }
-    let (preview, preview_color) = if buffer.is_empty() {
-        ("Наберите текст…", theme_color(ColorRole::TextSecondary))
+    let empty = field.is_empty();
+    let preview = if empty {
+        field
+            .help
+            .clone()
+            .or_else(|| field.placeholder.clone())
+            .unwrap_or_else(|| "Наберите текст…".to_string())
     } else {
-        (buffer, theme_color(ColorRole::TextPrimary))
+        field.accessible_value()
+    };
+    let preview_color = if empty {
+        theme_color(ColorRole::TextSecondary)
+    } else {
+        theme_color(ColorRole::TextPrimary)
     };
     draw_text(
         canvas,
         &fonts.regular,
-        preview,
+        &preview,
         34.0,
         header.x + 30,
-        header.y + 130,
+        header.y + 200,
+        preview_color,
+    );
+
+    for (rect, label) in keys {
+        let key = Rect::new(
+            rect.x.saturating_add(4),
+            rect.y.saturating_add(4),
+            rect.width.saturating_sub(8),
+            rect.height.saturating_sub(8),
+        );
+        canvas.fill_rect(key, theme_color(ColorRole::Surface));
+        draw_keypad_label(
+            canvas,
+            fonts,
+            label,
+            32.0,
+            key.x + key.width / 2,
+            key.y + key.height / 2 - 18,
+            theme_color(ColorRole::TextPrimary),
+        );
+    }
+}
+
+/// VUI-07 (ADR-132): Wi-Fi password reuses the intent keyboard keys
+/// but previews a `Field` (masked unless revealed) and sits both
+/// lines below the 120px PIXEL_7 status layer, same inset as
+/// `draw_action_row_list`. Intent input uses the same inset via
+/// ADR-135's `Field`.
+pub fn draw_wifi_password(
+    canvas: &mut Canvas<'_>,
+    field: &Field,
+    header: Rect,
+    keys: &[(Rect, String)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.fill_rect(header, theme_color(ColorRole::Surface));
+
+    let Some(fonts) = fonts else {
+        for (rect, _) in keys {
+            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
+        }
+        return;
+    };
+
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        &field.label,
+        42.0,
+        header.x + 30,
+        header.y + 140,
+        theme_color(ColorRole::TextPrimary),
+    );
+    let empty = field.is_empty();
+    let preview = if empty {
+        field
+            .placeholder
+            .clone()
+            .unwrap_or_else(|| "Введите пароль…".to_string())
+    } else {
+        field.accessible_value()
+    };
+    let preview_color = if empty {
+        theme_color(ColorRole::TextSecondary)
+    } else {
+        theme_color(ColorRole::TextPrimary)
+    };
+    draw_text(
+        canvas,
+        &fonts.regular,
+        &preview,
+        34.0,
+        header.x + 30,
+        header.y + 200,
         preview_color,
     );
 
@@ -486,11 +516,73 @@ pub fn draw_intent_input(
 /// `actions` is empty for an entity_type with no type-specific
 /// behavior (HIA-ROADMAP.md's own negative scenario: still a real,
 /// non-empty screen, just without a button row).
+/// ADR-137: identity paint shared by NOW and Object View. Returns the
+/// y just below the trailing status/value, matching the cursor math
+/// `now_object_summary_rect` uses for hit-testing.
+fn draw_object_summary(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    object: &ObjectSummary,
+    left: u32,
+    top: u32,
+    max_width: u32,
+) -> u32 {
+    let mut y = top;
+    draw_semantic_text(canvas, fonts, &object.title_text(), left, y, max_width);
+    y += scaled_line_height(TextRole::Body);
+    draw_semantic_text(canvas, fonts, &object.meta_text(), left, y, max_width);
+    y += scaled_line_height(TextRole::Caption);
+    if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
+        draw_status_indicator(canvas, fonts, status, left, y);
+        y += scaled_line_height(TextRole::Body);
+    } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
+        let (value_font, value_size) = fonts.resolve(TextRole::Body);
+        draw_text(
+            canvas,
+            value_font,
+            value,
+            value_size,
+            left,
+            y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        y += scaled_line_height(TextRole::Body);
+    }
+    y
+}
+
+/// Hit rect for the NOW `ObjectSummary`, same stacking as `draw_now`.
+pub fn now_object_summary_rect(content: Rect, has_lifecycle: bool, object: &ObjectSummary) -> Rect {
+    let margin = (content.width / 20).max(12);
+    let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
+    let mut y = content.y + top_inset;
+    y += scaled_line_height(TextRole::Title);
+    if has_lifecycle {
+        y += scaled_line_height(TextRole::Body);
+    }
+    y += physical(SpacingToken::Medium.value());
+    let start = y;
+    y += scaled_line_height(TextRole::Body);
+    y += scaled_line_height(TextRole::Caption);
+    if object.trailing.is_some() {
+        y += scaled_line_height(TextRole::Body);
+    }
+    let height = y.saturating_sub(start).max(physical(MIN_TOUCH_TARGET));
+    Rect::new(
+        content.x + margin,
+        start,
+        content.width.saturating_sub(margin.saturating_mul(2)),
+        height,
+    )
+}
+
+/// VUI-07 (ADR-137): identity is an `ObjectSummary` (title + type/
+/// version meta + trailing status), not raw title/status `draw_text`.
+/// Status layer is 120px; identity starts at `+140` like the other
+/// migrated headers. Related/details stay optional lines below.
 pub fn draw_object_view(
     canvas: &mut Canvas<'_>,
-    title: &str,
-    state: UniversalState,
-    status: &str,
+    summary: &ObjectSummary,
     related: Option<&str>,
     details: &[String],
     header: Rect,
@@ -518,26 +610,17 @@ pub fn draw_object_view(
     };
 
     let margin = header.width / 22;
-    draw_text(
+    let content_width = header.width.saturating_sub(margin.saturating_mul(2));
+    let mut y = draw_object_summary(
         canvas,
-        &fonts.semibold,
-        title,
-        46.0,
+        fonts,
+        summary,
         header.x + margin,
-        header.y + 220,
-        theme_color(ColorRole::TextPrimary),
+        header.y + 140,
+        content_width,
     );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        status,
-        32.0,
-        header.x + margin,
-        header.y + 340,
-        state_color(state),
-    );
-    let mut y = header.y + 460;
     if let Some(related) = related {
+        y = y.saturating_add(physical(SpacingToken::Medium.value()));
         draw_text(
             canvas,
             &fonts.regular,
@@ -547,7 +630,7 @@ pub fn draw_object_view(
             y,
             theme_color(ColorRole::TextSecondary),
         );
-        y = y.saturating_add(90);
+        y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
     for detail in details {
         if y + 40 >= header.y + header.height {
@@ -562,7 +645,7 @@ pub fn draw_object_view(
             y,
             theme_color(ColorRole::TextSecondary),
         );
-        y = y.saturating_add(90);
+        y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
 
     for (index, (rect, label)) in actions.iter().enumerate() {
@@ -709,75 +792,68 @@ fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: 
     );
 }
 
-/// The "adb"-style pairing prompt for a new SSH client -- same
-/// header-plus-two-buttons shape `draw_object_view` also uses (built
-/// from the exact same `task_confirm_view` geometry, see `main.rs`'s
-/// frame-building code), just with the pairing-specific text and
-/// button labels instead of a generic entity's own.
+/// ADR-144: SSH pairing through `ContextHeader`. The live client name
+/// is a Static `DataRow`; the fingerprint stays wrapped mono text so
+/// the full `SHA256:` string remains readable. Buttons stay
+/// `task_confirm_view`. Lock unlock stays `draw_lock_pin_entry`.
 pub fn draw_remote_pair(
     canvas: &mut Canvas<'_>,
-    client_name: &str,
+    content: Rect,
+    header: &ContextHeader,
+    rows: &[(Rect, ActionCardView)],
     fingerprint: &str,
-    header: Rect,
     accept_button: Rect,
     decline_button: Rect,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-
-    let Some(fonts) = fonts else {
-        canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
-        canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
-        return;
-    };
-
-    let margin = header.width / 22;
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        "Разрешить SSH-доступ?",
-        46.0,
-        header.x + margin,
-        header.y + 200,
-        theme_color(ColorRole::TextPrimary),
-    );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        client_name,
-        32.0,
-        header.x + margin,
-        header.y + 310,
-        theme_color(ColorRole::TextSecondary),
-    );
-    let (mono, mono_size) = fonts.resolve(TextRole::MonoBody);
-    let scaled_size = mono_size * text_scale();
-    let glyph_width = mono.metrics('0', scaled_size).advance_width.max(1.0);
-    let available_width = header.width.saturating_sub(margin * 2) as f32;
-    let chars_per_line = (available_width / glyph_width).floor().max(1.0) as usize;
-    let line_height = SurfaceScale::PIXEL_7
-        .logical_to_physical(TextRole::MonoBody.style().line_height) as f32
-        * text_scale();
-    for (line, chunk) in fingerprint
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(chars_per_line)
-        .enumerate()
-    {
-        let chunk = chunk.iter().collect::<String>();
-        draw_text(
-            canvas,
-            mono,
-            &chunk,
-            mono_size,
-            header.x + margin,
-            header.y + 370 + (line as f32 * line_height).round() as u32,
-            theme_color(ColorRole::TextSecondary),
-        );
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
     }
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
+    }
+    if let Some(fonts) = fonts {
+        let margin = (content.width / 22).max(12);
+        let top = rows
+            .first()
+            .map(|(rect, _)| rect.y + rect.height + 24)
+            .unwrap_or(content.y + 430);
+        let (mono, mono_size) = fonts.resolve(TextRole::MonoBody);
+        let scaled_size = mono_size * text_scale();
+        let glyph_width = mono.metrics('0', scaled_size).advance_width.max(1.0);
+        let available_width = content.width.saturating_sub(margin * 2) as f32;
+        let chars_per_line = (available_width / glyph_width).floor().max(1.0) as usize;
+        let line_height = SurfaceScale::PIXEL_7
+            .logical_to_physical(TextRole::MonoBody.style().line_height)
+            as f32
+            * text_scale();
+        for (line, chunk) in fingerprint
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(chars_per_line)
+            .enumerate()
+        {
+            let chunk = chunk.iter().collect::<String>();
+            draw_text(
+                canvas,
+                mono,
+                &chunk,
+                mono_size,
+                content.x + margin,
+                top + (line as f32 * line_height).round() as u32,
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+    canvas.set_clip(None);
 
     canvas.fill_rect(accept_button, theme_color(ColorRole::Accent));
     canvas.fill_rect(decline_button, theme_color(ColorRole::Surface));
+    let Some(fonts) = fonts else {
+        return;
+    };
     draw_text_centered(
         canvas,
         &fonts.semibold,
@@ -806,6 +882,10 @@ pub fn draw_remote_pair(
 /// rows instead of a button row. S20 generalized this from a
 /// Wi-Fi-only `draw_wifi_list` to also draw "Bluetooth устройства" --
 /// same shape both times, only the title and row contents differ.
+/// ADR-136: last caller (`Frame::DevSurface`) moved to
+/// `draw_action_row_list`. Kept until the VUI-07 primitives-cleanup
+/// slice deletes it.
+#[allow(dead_code)]
 pub fn draw_row_list(
     canvas: &mut Canvas<'_>,
     title: &str,
@@ -857,6 +937,116 @@ pub fn draw_row_list(
     }
 }
 
+fn draw_action_card(
+    canvas: &mut Canvas<'_>,
+    rect: Rect,
+    card: &ActionCardView,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill_rect(
+        rect,
+        if card.selected {
+            theme_color(ColorRole::Elevated)
+        } else {
+            theme_color(ColorRole::Surface)
+        },
+    );
+    let has_action = !card.action.is_empty();
+    let text_left = if has_action {
+        canvas.fill_rect(
+            Rect::new(rect.x + 34, rect.y + 52, 104, 104),
+            theme_color(ColorRole::Accent),
+        );
+        rect.x + 174
+    } else {
+        rect.x + 34
+    };
+    let button = has_action.then(|| {
+        let button_width = 250.min(rect.width / 3);
+        let button = Rect::new(
+            rect.x + rect.width.saturating_sub(button_width + 34),
+            rect.y + 58,
+            button_width,
+            88,
+        );
+        canvas.fill_rect(button, theme_color(ColorRole::Accent));
+        button
+    });
+    let Some(fonts) = fonts else {
+        return;
+    };
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        &card.label,
+        38.0,
+        text_left,
+        rect.y + 48,
+        theme_color(ColorRole::TextPrimary),
+    );
+    draw_text(
+        canvas,
+        &fonts.regular,
+        &card.status,
+        27.0,
+        text_left,
+        rect.y + 108,
+        theme_color(ColorRole::TextSecondary),
+    );
+    if let Some(button) = button {
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            &card.action,
+            25.0,
+            button.x + button.width / 2,
+            button.y + 24,
+            theme_color(ColorRole::Canvas),
+        );
+    }
+}
+
+/// ADR-129: same header as `draw_row_list`, rows are `ActionCardView`
+/// (SSID + scan facts + connect button) instead of one concatenated
+/// label. ADR-136: DevSurface uses this too.
+pub fn draw_action_row_list(
+    canvas: &mut Canvas<'_>,
+    title: &str,
+    status_line: &str,
+    header: Rect,
+    rows: &[(Rect, ActionCardView)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.fill_rect(header, theme_color(ColorRole::Surface));
+    // Status layer is 120px (PIXEL_7 top inset). `draw_row_list`'s
+    // 40/130 offsets hide the title under the clock; both lines sit
+    // in this header below that layer.
+    if let Some(fonts) = fonts {
+        draw_text(
+            canvas,
+            &fonts.semibold,
+            title,
+            42.0,
+            header.x + 30,
+            header.y + 140,
+            theme_color(ColorRole::TextPrimary),
+        );
+        draw_text(
+            canvas,
+            &fonts.regular,
+            status_line,
+            30.0,
+            header.x + 30,
+            header.y + 200,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
+    }
+}
+
 /// S24: "Изменить PIN" on "Я" -- same header-plus-keys shape as
 /// `draw_intent_input`, but the preview is masked (a PIN is a secret,
 /// same reasoning as `WifiPasswordInput`'s masked preview) and the
@@ -885,17 +1075,26 @@ fn draw_keypad_label(
     draw_text_centered(canvas, &fonts.semibold, label, size, center_x, top, color);
 }
 
-/// keys come from `pin_keypad_rect`'s numeric layout instead of
-/// ADR-029's letters.
+/// ADR-143: PIN setup through `ContextHeader`. The Password `Field`
+/// sits in the first stacked row below the status layer. Keys stay
+/// `pin_keypad_rect`. No Surface header bar. Lock unlock stays
+/// `draw_lock_pin_entry`.
 pub fn draw_pin_setup(
     canvas: &mut Canvas<'_>,
-    buffer: &str,
-    header: Rect,
+    content: Rect,
+    header: &ContextHeader,
+    field: &Field,
+    field_rect: Rect,
     keys: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
+        draw_gallery_field(canvas, fonts, field, field_rect);
+    }
+    canvas.set_clip(None);
 
     let Some(fonts) = fonts else {
         for (rect, _) in keys {
@@ -903,34 +1102,6 @@ pub fn draw_pin_setup(
         }
         return;
     };
-
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        "Новый PIN-код",
-        42.0,
-        header.x + 30,
-        header.y + 40,
-        theme_color(ColorRole::TextPrimary),
-    );
-    let masked: String = buffer.chars().map(|_| '•').collect();
-    let (preview, preview_color) = if masked.is_empty() {
-        (
-            "Введите новый PIN (минимум 4 цифры)".to_string(),
-            theme_color(ColorRole::TextSecondary),
-        )
-    } else {
-        (masked, theme_color(ColorRole::TextPrimary))
-    };
-    draw_text(
-        canvas,
-        &fonts.regular,
-        &preview,
-        34.0,
-        header.x + 30,
-        header.y + 130,
-        preview_color,
-    );
 
     for (rect, label) in keys {
         let key = Rect::new(
@@ -1019,6 +1190,45 @@ pub fn draw_lock_pin_entry(
             theme_color(ColorRole::TextPrimary),
         );
     }
+}
+
+/// VUI-07 (ADR-134): no-PIN lock. Canvas instead of the S04 diagnostic
+/// red fill. Time and hint are passed in; this does not invent
+/// attention or Inbox content. PIN unlock stays `draw_lock_pin_entry`.
+pub fn draw_lock_idle(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    height: u32,
+    time: &str,
+    hint: &str,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let Some(fonts) = fonts else {
+        return;
+    };
+    let time_size = physical(TextRole::Display.style().size) as f32;
+    let hint_size = physical(TextRole::Body.style().size) as f32;
+    let time_y = ((height as u64 * 480) / 2400) as u32;
+    let hint_y = time_y + physical_line_height(TextRole::Display) + physical(LogicalUnit::new(16));
+    draw_text_centered(
+        canvas,
+        &fonts.semibold,
+        time,
+        time_size,
+        width / 2,
+        time_y,
+        theme_color(ColorRole::TextPrimary),
+    );
+    draw_text_centered(
+        canvas,
+        &fonts.regular,
+        hint,
+        hint_size,
+        width / 2,
+        hint_y,
+        theme_color(ColorRole::TextSecondary),
+    );
 }
 
 /// VUI-01's deterministic, device-runnable calibration fixture. It is selected
@@ -2152,52 +2362,11 @@ pub fn draw_root(
         }
     }
 
-    // S23: "Сейчас"'s icon grid (phone-style: square icon, label
-    // below, no description/button) -- every other page keeps the
-    // original single-column card list below. No real per-app icon
-    // asset exists anywhere in the project (no icon pipeline was ever
-    // built), so the "icon" is a colored square with the app's own
-    // first letter, same honest placeholder spirit as `border`'s
-    // loading skeleton above.
+    // ADR-138: the live apps grid paints through `draw_apps_grid`.
+    // `is_grid` stays for the leftover `draw_root` path if a caller
+    // still asks for letter-square tiles.
     if is_grid {
-        for (rect, card) in content_actions {
-            let icon_size = rect.width.min(rect.height.saturating_sub(70)).min(180);
-            let icon_x = rect.x + rect.width.saturating_sub(icon_size) / 2;
-            canvas.fill_rect(
-                Rect::new(icon_x, rect.y, icon_size, icon_size),
-                if card.selected {
-                    theme_color(ColorRole::Elevated)
-                } else {
-                    theme_color(ColorRole::Accent)
-                },
-            );
-            if let Some(fonts) = fonts {
-                let initial = card
-                    .label
-                    .chars()
-                    .next()
-                    .map(|ch| ch.to_uppercase().to_string())
-                    .unwrap_or_default();
-                draw_text_centered(
-                    canvas,
-                    &fonts.semibold,
-                    &initial,
-                    54.0,
-                    icon_x + icon_size / 2,
-                    rect.y + icon_size / 2 - 27,
-                    theme_color(ColorRole::Canvas),
-                );
-                draw_text_centered(
-                    canvas,
-                    &fonts.regular,
-                    &card.label,
-                    26.0,
-                    rect.x + rect.width / 2,
-                    rect.y + icon_size + 16,
-                    theme_color(ColorRole::TextPrimary),
-                );
-            }
-        }
+        draw_app_icon_grid(canvas, fonts, content_actions);
     } else {
         for (rect, card) in content_actions {
             canvas.fill_rect(
@@ -2270,6 +2439,150 @@ pub fn draw_root(
         }
     }
 
+    canvas.set_clip(None);
+    if paint_navigation {
+        draw_tab_bar(canvas, tabs, fonts);
+    }
+}
+
+fn paint_context_header(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    content: Rect,
+    header: &ContextHeader,
+) {
+    let margin = (content.width / 20).max(12);
+    let content_width = content.width.saturating_sub(margin * 2);
+    let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
+    let mut cursor_y = content.y + top_inset;
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &header.heading(),
+        content.x + margin,
+        cursor_y,
+        content_width,
+    );
+    cursor_y += scaled_line_height(TextRole::Title);
+    if let Some(lifecycle) = &header.lifecycle {
+        draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
+    }
+}
+
+/// S23 letter-square tiles: no per-app icon asset exists, so the
+/// "icon" is a colored square with the app's first letter.
+fn draw_app_icon_grid(
+    canvas: &mut Canvas<'_>,
+    fonts: Option<&Fonts>,
+    apps: &[(Rect, ActionCardView)],
+) {
+    for (rect, card) in apps {
+        let icon_size = rect.width.min(rect.height.saturating_sub(70)).min(180);
+        let icon_x = rect.x + rect.width.saturating_sub(icon_size) / 2;
+        canvas.fill_rect(
+            Rect::new(icon_x, rect.y, icon_size, icon_size),
+            if card.selected {
+                theme_color(ColorRole::Elevated)
+            } else {
+                theme_color(ColorRole::Accent)
+            },
+        );
+        if let Some(fonts) = fonts {
+            let initial = card
+                .label
+                .chars()
+                .next()
+                .map(|ch| ch.to_uppercase().to_string())
+                .unwrap_or_default();
+            draw_text_centered(
+                canvas,
+                &fonts.semibold,
+                &initial,
+                54.0,
+                icon_x + icon_size / 2,
+                rect.y + icon_size / 2 - 27,
+                theme_color(ColorRole::Canvas),
+            );
+            draw_text_centered(
+                canvas,
+                &fonts.regular,
+                &card.label,
+                26.0,
+                rect.x + rect.width / 2,
+                rect.y + icon_size + 16,
+                theme_color(ColorRole::TextPrimary),
+            );
+        }
+    }
+}
+
+/// ADR-138: `Приложения` through `ContextHeader`, same status-layer
+/// inset as `draw_now`. No concatenated `draw_root` Surface bar. No
+/// skeleton tiles. Empty is a named message, not invented icons.
+pub fn draw_apps_grid(
+    canvas: &mut Canvas<'_>,
+    content: Rect,
+    tabs: &[(Rect, NavigationItem)],
+    header: &ContextHeader,
+    apps: &[(Rect, ActionCardView)],
+    empty_message: Option<&str>,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.set_clip(Some(content));
+
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
+    }
+
+    draw_app_icon_grid(canvas, fonts, apps);
+
+    if apps.is_empty() {
+        if let (Some(fonts), Some(message)) = (fonts, empty_message) {
+            let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
+            draw_text_centered(
+                canvas,
+                empty_font,
+                message,
+                empty_size,
+                content.x + content.width / 2,
+                content.y + content.height / 2,
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+
+    canvas.set_clip(None);
+    draw_tab_bar(canvas, tabs, fonts);
+}
+
+/// ADR-139/140/141: Inbox, Spaces, and Система through
+/// `ContextHeader`, same status-layer inset as `draw_now` /
+/// `draw_apps_grid`. Live cards keep their stacked rects. No
+/// concatenated `draw_root` Surface bar. `paint_navigation` is false
+/// on a content-only Me scroll frame so the tab strip is not redrawn.
+pub fn draw_context_row_list(
+    canvas: &mut Canvas<'_>,
+    content: Rect,
+    tabs: &[(Rect, NavigationItem)],
+    header: &ContextHeader,
+    rows: &[(Rect, ActionCardView)],
+    paint_navigation: bool,
+    fonts: Option<&Fonts>,
+) {
+    if paint_navigation {
+        canvas.fill(theme_color(ColorRole::Canvas));
+    } else {
+        canvas.set_clip(Some(content));
+        canvas.fill(theme_color(ColorRole::Canvas));
+    }
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
+    }
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
+    }
     canvas.set_clip(None);
     if paint_navigation {
         draw_tab_bar(canvas, tabs, fonts);
@@ -2479,40 +2792,14 @@ pub fn draw_now(
 
         if let Some(object) = object {
             cursor_y += physical(SpacingToken::Medium.value());
-            draw_semantic_text(
+            cursor_y = draw_object_summary(
                 canvas,
                 fonts,
-                &object.title_text(),
+                object,
                 content.x + margin,
                 cursor_y,
                 content_width,
             );
-            cursor_y += scaled_line_height(TextRole::Body);
-            draw_semantic_text(
-                canvas,
-                fonts,
-                &object.meta_text(),
-                content.x + margin,
-                cursor_y,
-                content_width,
-            );
-            cursor_y += scaled_line_height(TextRole::Caption);
-            if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
-                draw_status_indicator(canvas, fonts, status, content.x + margin, cursor_y);
-                cursor_y += scaled_line_height(TextRole::Body);
-            } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
-                let (value_font, value_size) = fonts.resolve(TextRole::Body);
-                draw_text(
-                    canvas,
-                    value_font,
-                    value,
-                    value_size,
-                    content.x + margin,
-                    cursor_y,
-                    theme_color(ColorRole::TextPrimary),
-                );
-                cursor_y += scaled_line_height(TextRole::Body);
-            }
         }
 
         if sections.is_empty() && object.is_none() {
@@ -2881,13 +3168,14 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
-        context_color, draw_calibration, draw_composite_gallery, draw_gallery, draw_orb, draw_root,
-        draw_status_bar, draw_tab_bar, gallery_row_positions, physical, physical_line_height,
-        state_color, theme_color, Canvas,
+        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
+        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_pin_setup,
+        draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions,
+        physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, NavigationItem, Progress, Rect, StatusMark, SystemStatus,
-        TextRole, UniversalState, MIN_TOUCH_TARGET,
+        ColorRole, ContextColor, ContextHeader, Field, FieldKind, NavigationItem, ObjectSummary,
+        Progress, Rect, StatusMark, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -3280,6 +3568,288 @@ mod tests {
         // rather than only implied.
         assert_eq!(physical_line_height(TextRole::Body), 72);
         assert_eq!(physical_line_height(TextRole::Caption), 48);
+    }
+
+    #[test]
+    fn now_object_summary_rect_sits_below_the_header_and_above_the_footer() {
+        let content = Rect::new(0, 0, 1080, 2160);
+        let object = ObjectSummary::new("vnnnmb", "saaios.intent · версия 1");
+        let rect = super::now_object_summary_rect(content, false, &object);
+        assert!(rect.y >= 150);
+        assert!(rect.height >= physical(MIN_TOUCH_TARGET));
+        assert!(rect.y + rect.height < 1800);
+        let mid_y = rect.y + rect.height / 2;
+        assert!(rect.contains(540.0, f64::from(mid_y)));
+        assert!(!rect.contains(540.0, 2000.0));
+    }
+
+    #[test]
+    fn apps_grid_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Приложения");
+        let cell = Rect::new(49, 430, 310, 300);
+        let apps = vec![(cell, ActionCardView::new("Saai Demo", "", "Запустить"))];
+        draw_apps_grid(canvas, content, &[], &header, &apps, None, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(cell.x + cell.width / 2, cell.y + 40),
+            theme_color(ColorRole::Accent)
+        );
+    }
+
+    #[test]
+    fn apps_grid_empty_does_not_invent_tiles() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Приложения");
+        draw_apps_grid(
+            canvas,
+            content,
+            &[],
+            &header,
+            &[],
+            Some("Нет приложений"),
+            None,
+        );
+        assert_eq!(canvas.pixel(200, 430), theme_color(ColorRole::Canvas));
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+    }
+
+    #[test]
+    fn inbox_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Входящие");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(
+            row,
+            ActionCardView::new("Нет новых задач и уведомлений", "", ""),
+        )];
+        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn spaces_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Пространства");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(
+            row,
+            ActionCardView::new("Дом", "Объектов: 1", "").selected(true),
+        )];
+        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Elevated)
+        );
+    }
+
+    #[test]
+    fn me_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Работа").with_section_title("Система");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("Pixel 7", "Это устройство", ""))];
+        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn me_scroll_does_not_repaint_navigation() {
+        let mut pixels = vec![0; 1080 * 2400 * 4];
+        let tabs = vec![(
+            Rect::new(0, 2100, 270, 300),
+            NavigationItem::new("me", "Система").selected(),
+        )];
+        let header = ContextHeader::new("Работа").with_section_title("Система");
+        let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
+        draw_context_row_list(
+            &mut canvas,
+            Rect::new(0, 0, 1080, 2100),
+            &tabs,
+            &header,
+            &[],
+            false,
+            None,
+        );
+        assert_eq!(canvas.pixel(135, 2125), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn consent_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2100);
+        let header = ContextHeader::new("Работа").with_section_title("Разрешение");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(
+            row,
+            ActionCardView::new("Saai Demo", "запрашивает доступ", ""),
+        )];
+        draw_consent(
+            canvas,
+            content,
+            &header,
+            &rows,
+            Rect::new(0, 2100, 540, 300),
+            Rect::new(540, 2100, 540, 300),
+            None,
+        );
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+        assert_eq!(canvas.pixel(270, 2250), theme_color(ColorRole::Accent));
+        assert_eq!(canvas.pixel(810, 2250), theme_color(ColorRole::Surface));
+    }
+
+    #[test]
+    fn pin_setup_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Работа").with_section_title("PIN");
+        let field = Field::new("Новый PIN-код", FieldKind::Password)
+            .with_placeholder("Введите новый PIN (минимум 4 цифры)");
+        let field_rect = Rect::new(49, 430, 982, 190);
+        let keys = vec![(Rect::new(108, 900, 264, 240), "1")];
+        draw_pin_setup(canvas, content, &header, &field, field_rect, &keys, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
+    }
+
+    #[test]
+    fn remote_pair_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2100);
+        let header = ContextHeader::new("Работа").with_section_title("SSH");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("test-client", "", ""))];
+        draw_remote_pair(
+            canvas,
+            content,
+            &header,
+            &rows,
+            "SHA256:OuaL+poCXsAtdU50sBMBwOUNL+faDqJqWTmiE3baoOI",
+            Rect::new(0, 2100, 540, 300),
+            Rect::new(540, 2100, 540, 300),
+            None,
+        );
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+        assert_eq!(canvas.pixel(270, 2250), theme_color(ColorRole::Accent));
+        assert_eq!(canvas.pixel(810, 2250), theme_color(ColorRole::Surface));
+    }
+
+    #[test]
+    fn bluetooth_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Дом").with_section_title("Bluetooth");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("Нет устройств", "", ""))];
+        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn wifi_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Дом").with_section_title("Wi-Fi");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("Нет сетей", "", ""))];
+        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn trusted_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Дом").with_section_title("Ключи");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("Нет клиентов", "", ""))];
+        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn lock_idle_fill_is_canvas_not_the_diagnostic_red() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        draw_lock_idle(
+            canvas,
+            width,
+            height,
+            "22:46",
+            "Коснитесь, чтобы разблокировать",
+            None,
+        );
+        assert_eq!(canvas.pixel(540, 1200), theme_color(ColorRole::Canvas));
+        assert_ne!(canvas.pixel(540, 1200), [0x00, 0xd0, 0x00, 0x00]);
     }
 
     #[test]

@@ -1,9 +1,10 @@
-//! Labelled fixture data for the VUI-05 composite gallery.
-//! No live telemetry. `EventRow` is still deferred.
+//! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
+//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`. No live telemetry.
 
 use crate::{
-    AgentSummary, ContextHeader, DecisionOverlay, IntentSummary, ObjectSummary, StatusIndicator,
-    TaskSummary, UniversalState,
+    AgentSummary, BluetoothRow, ContextHeader, DecisionOverlay, EventRow, IntentSummary,
+    ObjectSummary, SpaceRow, StatusIndicator, TaskSummary, TrustedClientRow, UniversalState,
+    WifiRow,
 };
 
 pub struct CompositeGalleryFixtures {
@@ -15,6 +16,18 @@ pub struct CompositeGalleryFixtures {
     pub agent_unassigned: AgentSummary,
     pub agent_assigned: AgentSummary,
     pub decision: DecisionOverlay,
+    pub event_decision: EventRow,
+    pub event_notice: EventRow,
+    pub space_selected: SpaceRow,
+    pub space_other: SpaceRow,
+    pub wifi_connected: WifiRow,
+    pub wifi_other: WifiRow,
+    pub wifi_empty: WifiRow,
+    pub bluetooth_paired: BluetoothRow,
+    pub bluetooth_other: BluetoothRow,
+    pub bluetooth_empty: BluetoothRow,
+    pub trusted_named: TrustedClientRow,
+    pub trusted_empty: TrustedClientRow,
     pub states: [StatusIndicator; 9],
 }
 
@@ -33,6 +46,18 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
             .with_actor("Система")
             .with_action("files.delete")
             .with_scope("работа"),
+        event_decision: EventRow::decision("Подтвердите удаление"),
+        event_notice: EventRow::notice("Notice", "body"),
+        space_selected: SpaceRow::open("Дом", "Объектов: 3", "select_space:home", true),
+        space_other: SpaceRow::open("Работа", "Объектов: 1", "select_space:work", false),
+        wifi_connected: WifiRow::open("Wallbox", "защищена · -42 dBm", true),
+        wifi_other: WifiRow::open("Guest", "открыта · -70 dBm", false),
+        wifi_empty: WifiRow::empty(),
+        bluetooth_paired: BluetoothRow::open("Pixel Buds", "BLE", true),
+        bluetooth_other: BluetoothRow::open("Speaker", "CLASSIC", false),
+        bluetooth_empty: BluetoothRow::empty(),
+        trusted_named: TrustedClientRow::open("home-mike", "SHA256:abcdabcdabcdabcdabcdabcd…"),
+        trusted_empty: TrustedClientRow::empty(),
         states: UniversalState::ALL
             .map(|state| StatusIndicator::new(state, state_fixture_label(state))),
     }
@@ -94,14 +119,34 @@ mod tests {
         );
         assert_eq!(fixtures.decision.accept.label, "Подтвердить");
         assert_eq!(fixtures.decision.decline.label, "Отклонить");
+        assert_eq!(fixtures.event_decision.row.primary, "Подтвердите удаление");
+        assert_eq!(fixtures.event_notice.row.value.as_deref(), Some("body"));
+        assert!(fixtures.space_selected.selected);
+        assert!(!fixtures.space_other.selected);
+        assert!(fixtures.wifi_connected.connected);
+        assert!(!fixtures.wifi_other.connected);
+        assert_eq!(fixtures.wifi_empty.row.primary, "Нет сетей");
+        assert!(fixtures.bluetooth_paired.paired);
+        assert!(!fixtures.bluetooth_other.paired);
+        assert_eq!(fixtures.bluetooth_empty.row.primary, "Нет устройств");
+        assert_eq!(fixtures.trusted_named.row.primary, "home-mike");
+        assert_eq!(fixtures.trusted_empty.row.primary, "Нет клиентов");
         let blob = format!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {} {} {} {} {} {} {}",
             fixtures.title,
             fixtures.header.context_name,
             fixtures.object.title,
             fixtures.task.title,
             fixtures.intent.title,
-            fixtures.agent_assigned.detail_line()
+            fixtures.agent_assigned.detail_line(),
+            fixtures.event_decision.row.primary,
+            fixtures.event_notice.row.primary,
+            fixtures.space_selected.row.primary,
+            fixtures.space_other.row.primary,
+            fixtures.wifi_connected.row.primary,
+            fixtures.wifi_empty.row.primary,
+            fixtures.bluetooth_paired.row.primary,
+            fixtures.trusted_named.row.primary
         );
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));

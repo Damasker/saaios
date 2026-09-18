@@ -6,7 +6,8 @@
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
-//! `CapabilityRow`. `EventRow` remains deferred.
+//! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`/`WifiRow`/
+//! `BluetoothRow`/`TrustedClientRow`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
@@ -588,6 +589,187 @@ impl CapabilityRow {
     }
 }
 
+/// Section 7.12. One Inbox item as a `DataRow`: a waiting decision or a
+/// notice, plus honest empty/offline absences. No invented time, actor,
+/// or object — those live on `DecisionOverlay` in Object View.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventRow {
+    pub row: DataRow,
+}
+
+impl EventRow {
+    pub fn decision(title: impl Into<String>) -> Self {
+        Self {
+            row: DataRow::new(title, DataRowVariant::Navigation)
+                .with_value("Ждёт подтверждения")
+                .with_action("open_object"),
+        }
+    }
+
+    pub fn notice(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            row: DataRow::new(title, DataRowVariant::Navigation)
+                .with_value(body)
+                .with_action("open_object"),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет новых задач и уведомлений", DataRowVariant::Static),
+        }
+    }
+
+    pub fn offline() -> Self {
+        Self {
+            row: DataRow::new("Нет связи", DataRowVariant::Static),
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
+/// Section 7.13. One destination on the Пространства tab: a live
+/// Space name, a status value, and whether it is the current context.
+/// Empty and offline are honest absences. No people list, no app
+/// drawer — those are not this composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpaceRow {
+    pub row: DataRow,
+    pub selected: bool,
+}
+
+impl SpaceRow {
+    pub fn open(
+        name: impl Into<String>,
+        status: impl Into<String>,
+        action: impl Into<String>,
+        selected: bool,
+    ) -> Self {
+        Self {
+            row: DataRow::new(name, DataRowVariant::Navigation)
+                .with_value(status)
+                .with_action(action),
+            selected,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет пространств", DataRowVariant::Static),
+            selected: false,
+        }
+    }
+
+    pub fn offline() -> Self {
+        Self {
+            row: DataRow::new("Нет связи", DataRowVariant::Static),
+            selected: false,
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
+/// Section 7.14. One scanned SSID on «Wi-Fi сети»: the name, a
+/// secured/open plus dBm value from scan, and whether this BSS is
+/// associated. Empty is an honest absence. No RSSI bars, no Space
+/// binding — those are not this composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WifiRow {
+    pub row: DataRow,
+    pub connected: bool,
+}
+
+impl WifiRow {
+    pub fn open(ssid: impl Into<String>, status: impl Into<String>, connected: bool) -> Self {
+        Self {
+            row: DataRow::new(ssid, DataRowVariant::Navigation)
+                .with_value(status)
+                .with_action("connect_wifi"),
+            connected,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет сетей", DataRowVariant::Static),
+            connected: false,
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
+/// Section 7.15. One scanned Bluetooth device: the name, optional
+/// CLASSIC/BLE transport from `bt-scan`, and whether that name is in
+/// the saved paired list. Empty after a finished scan is an honest
+/// absence. No RSSI, no live-connection bit — those are not this
+/// composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BluetoothRow {
+    pub row: DataRow,
+    pub paired: bool,
+}
+
+impl BluetoothRow {
+    pub fn open(name: impl Into<String>, transport: impl Into<String>, paired: bool) -> Self {
+        let transport = transport.into();
+        let mut row = DataRow::new(name, DataRowVariant::Navigation).with_action("pair_bluetooth");
+        if !transport.is_empty() {
+            row = row.with_value(transport);
+        }
+        Self { row, paired }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет устройств", DataRowVariant::Static),
+            paired: false,
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
+/// Section 7.16. One `authorized_keys` line: comment-field name and
+/// the ADR-083 fingerprint prefix. Empty is an honest absence. No
+/// live-session bit, no raw key — those are not this composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrustedClientRow {
+    pub row: DataRow,
+}
+
+impl TrustedClientRow {
+    pub fn open(name: impl Into<String>, fingerprint: impl Into<String>) -> Self {
+        let fingerprint = fingerprint.into();
+        let mut row =
+            DataRow::new(name, DataRowVariant::Navigation).with_action("revoke_trusted_client");
+        if !fingerprint.is_empty() {
+            row = row.with_value(fingerprint);
+        }
+        Self { row }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет клиентов", DataRowVariant::Static),
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
 /// Section 7.4. One destination in the bottom navigation strip. `icon` is
 /// optional rather than required: this project's current icon set
 /// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
@@ -1135,5 +1317,153 @@ mod tests {
         assert_eq!(row.row.value.as_deref(), Some("остановлено"));
         assert_eq!(row.row.secondary.as_deref(), Some("без разрешений"));
         assert!(!row.row.primary.contains("Android VM"));
+    }
+
+    #[test]
+    fn event_row_kinds_do_not_invent_time_or_actor() {
+        let decision = EventRow::decision("Подтвердите удаление");
+        assert_eq!(decision.row.variant, DataRowVariant::Navigation);
+        assert_eq!(decision.row.value.as_deref(), Some("Ждёт подтверждения"));
+        assert_eq!(decision.row.action.as_deref(), Some("open_object"));
+        assert!(decision.row.is_actionable());
+        assert!(decision.row.secondary.is_none());
+
+        let notice = EventRow::notice("Notice", "body");
+        assert_eq!(notice.row.value.as_deref(), Some("body"));
+        assert!(notice.row.is_actionable());
+
+        let empty = EventRow::empty();
+        assert_eq!(empty.row.variant, DataRowVariant::Static);
+        assert_eq!(empty.row.primary, "Нет новых задач и уведомлений");
+        assert!(!empty.row.is_actionable());
+
+        let offline = EventRow::offline();
+        assert_eq!(offline.row.primary, "Нет связи");
+        assert!(!offline.row.is_actionable());
+
+        let blob = format!(
+            "{} {} {} {}",
+            decision.row.primary, notice.row.primary, empty.row.primary, offline.row.primary
+        );
+        assert!(!blob.contains("10:"));
+        assert!(!blob.contains("Система"));
+    }
+
+    #[test]
+    fn space_row_does_not_invent_people_or_an_app_drawer() {
+        let selected = SpaceRow::open("Дом", "Объектов: 3", "select_space:home", true);
+        assert_eq!(selected.row.variant, DataRowVariant::Navigation);
+        assert!(selected.selected);
+        assert!(selected.row.is_actionable());
+        assert_eq!(selected.row.action.as_deref(), Some("select_space:home"));
+
+        let other = SpaceRow::open("Работа", "Объектов: 1", "select_space:work", false);
+        assert!(!other.selected);
+
+        let empty = SpaceRow::empty();
+        assert_eq!(empty.row.primary, "Нет пространств");
+        assert!(!empty.row.is_actionable());
+
+        let offline = SpaceRow::offline();
+        assert_eq!(offline.row.primary, "Нет связи");
+        assert!(!offline.selected);
+
+        let blob = format!(
+            "{} {} {} {}",
+            selected.row.primary, other.row.primary, empty.row.primary, offline.row.primary
+        );
+        assert!(!blob.contains("Люди"));
+        assert!(!blob.contains("Приложения"));
+    }
+
+    #[test]
+    fn wifi_row_does_not_invent_bars_or_a_space_binding() {
+        let connected = WifiRow::open("Wallbox", "защищена · -42 dBm", true);
+        assert_eq!(connected.row.variant, DataRowVariant::Navigation);
+        assert!(connected.connected);
+        assert!(connected.row.is_actionable());
+        assert_eq!(connected.row.action.as_deref(), Some("connect_wifi"));
+        assert_eq!(connected.row.value.as_deref(), Some("защищена · -42 dBm"));
+
+        let open = WifiRow::open("Guest", "открыта · -70 dBm", false);
+        assert!(!open.connected);
+        assert_eq!(open.row.primary, "Guest");
+
+        let empty = WifiRow::empty();
+        assert_eq!(empty.row.primary, "Нет сетей");
+        assert!(!empty.row.is_actionable());
+        assert!(!empty.connected);
+
+        let blob = format!(
+            "{} {} {} {} {}",
+            connected.row.primary,
+            open.row.primary,
+            empty.row.primary,
+            connected.row.value.as_deref().unwrap_or(""),
+            open.row.value.as_deref().unwrap_or("")
+        );
+        assert!(!blob.contains("▮"));
+        assert!(!blob.contains("привязать"));
+        assert!(!blob.contains("Дом"));
+    }
+
+    #[test]
+    fn bluetooth_row_does_not_invent_rssi_or_live_connection() {
+        let paired = BluetoothRow::open("Pixel Buds", "BLE", true);
+        assert_eq!(paired.row.variant, DataRowVariant::Navigation);
+        assert!(paired.paired);
+        assert!(paired.row.is_actionable());
+        assert_eq!(paired.row.action.as_deref(), Some("pair_bluetooth"));
+        assert_eq!(paired.row.value.as_deref(), Some("BLE"));
+
+        let pending = BluetoothRow::open("Speaker", "", false);
+        assert!(!pending.paired);
+        assert!(pending.row.value.is_none());
+
+        let empty = BluetoothRow::empty();
+        assert_eq!(empty.row.primary, "Нет устройств");
+        assert!(!empty.row.is_actionable());
+        assert!(!empty.paired);
+
+        let blob = format!(
+            "{} {} {} {}",
+            paired.row.primary,
+            pending.row.primary,
+            empty.row.primary,
+            paired.row.value.as_deref().unwrap_or("")
+        );
+        assert!(!blob.contains("dBm"));
+        assert!(!blob.contains("подключено сейчас"));
+        assert!(!blob.contains("RSSI"));
+    }
+
+    #[test]
+    fn trusted_client_row_does_not_invent_session_or_raw_key() {
+        let named = TrustedClientRow::open("home-mike", "SHA256:abcdabcdabcdabcdabcdabcd…");
+        assert_eq!(named.row.variant, DataRowVariant::Navigation);
+        assert!(named.row.is_actionable());
+        assert_eq!(named.row.action.as_deref(), Some("revoke_trusted_client"));
+        assert_eq!(
+            named.row.value.as_deref(),
+            Some("SHA256:abcdabcdabcdabcdabcdabcd…")
+        );
+
+        let unnamed = TrustedClientRow::open("(без имени)", "");
+        assert!(unnamed.row.value.is_none());
+
+        let empty = TrustedClientRow::empty();
+        assert_eq!(empty.row.primary, "Нет клиентов");
+        assert!(!empty.row.is_actionable());
+
+        let blob = format!(
+            "{} {} {} {}",
+            named.row.primary,
+            unnamed.row.primary,
+            empty.row.primary,
+            named.row.value.as_deref().unwrap_or("")
+        );
+        assert!(!blob.contains("ssh-ed25519"));
+        assert!(!blob.contains("сессия сейчас"));
+        assert!(!blob.contains("BEGIN"));
     }
 }
