@@ -889,7 +889,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header pending flash on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -959,8 +959,11 @@ big-bang rewrite.
   section `Пространства`; live `SpaceRow`s unchanged; empty and
   offline stay named. Do not tap a row. Me / consent / remote pairing /
   PIN keypad chrome still later. Flashed `464c0e92…`.
-- [ ] Migrate consent, remote pairing, and remaining root fallback
-  (Me chrome).
+- [x] Migrate Система off `draw_root`. ADR-141: `ContextHeader` section
+  `Система`; live SettingRow / CapabilityRow list unchanged; drag
+  scroll still does not repaint the tab bar. Do not 7-tap build-id.
+  Consent / remote pairing / PIN keypad chrome still later.
+- [ ] Migrate consent, remote pairing, and remaining lock chrome.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
@@ -1125,8 +1128,7 @@ remote pairing, Space detail). Inbox EventRow (`c1547c02…`), Spaces list
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
 (`6239bebd…`), developer surface (`bbc11a30…`), Object View
-(`e2081d84…`), apps grid (`a57da14a…`), and Inbox header
 (`e2081d84…`), apps grid (`a57da14a…`), Inbox header
-(`75f1f054…`), and Spaces header (`464c0e92…`) are on panther. Space
-detail still deferred. MEM-08 stays omitted until a shell-legal
-memory read exists.
+(`75f1f054…`), Spaces header (`464c0e92…`), and Система header
+(ADR-141, hash after flash) are on panther. Space detail still
+deferred. MEM-08 stays omitted until a shell-legal memory read exists.

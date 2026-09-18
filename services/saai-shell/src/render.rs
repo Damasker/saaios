@@ -2631,18 +2631,26 @@ pub fn draw_apps_grid(
     draw_tab_bar(canvas, tabs, fonts);
 }
 
-/// ADR-139/140: Inbox and Spaces through `ContextHeader`, same
-/// status-layer inset as `draw_now` / `draw_apps_grid`. Live cards keep
-/// their stacked rects. No concatenated `draw_root` Surface bar.
+/// ADR-139/140/141: Inbox, Spaces, and Система through
+/// `ContextHeader`, same status-layer inset as `draw_now` /
+/// `draw_apps_grid`. Live cards keep their stacked rects. No
+/// concatenated `draw_root` Surface bar. `paint_navigation` is false
+/// on a content-only Me scroll frame so the tab strip is not redrawn.
 pub fn draw_context_row_list(
     canvas: &mut Canvas<'_>,
     content: Rect,
     tabs: &[(Rect, NavigationItem)],
     header: &ContextHeader,
     rows: &[(Rect, ActionCardView)],
+    paint_navigation: bool,
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(theme_color(ColorRole::Canvas));
+    if paint_navigation {
+        canvas.fill(theme_color(ColorRole::Canvas));
+    } else {
+        canvas.set_clip(Some(content));
+        canvas.fill(theme_color(ColorRole::Canvas));
+    }
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
         paint_context_header(canvas, fonts, content, header);
@@ -2651,7 +2659,9 @@ pub fn draw_context_row_list(
         draw_action_card(canvas, *rect, card, fonts);
     }
     canvas.set_clip(None);
-    draw_tab_bar(canvas, tabs, fonts);
+    if paint_navigation {
+        draw_tab_bar(canvas, tabs, fonts);
+    }
 }
 
 /// Extracted from `draw_root` (VUI-03): the bottom navigation bar is the
@@ -3700,7 +3710,7 @@ mod tests {
             row,
             ActionCardView::new("Нет новых задач и уведомлений", "", ""),
         )];
-        draw_context_row_list(canvas, content, &[], &header, &rows, None);
+        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
@@ -3721,12 +3731,51 @@ mod tests {
             row,
             ActionCardView::new("Дом", "Объектов: 1", "").selected(true),
         )];
-        draw_context_row_list(canvas, content, &[], &header, &rows, None);
+        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
             theme_color(ColorRole::Elevated)
         );
+    }
+
+    #[test]
+    fn me_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Работа").with_section_title("Система");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("Pixel 7", "Это устройство", ""))];
+        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn me_scroll_does_not_repaint_navigation() {
+        let mut pixels = vec![0; 1080 * 2400 * 4];
+        let tabs = vec![(
+            Rect::new(0, 2100, 270, 300),
+            NavigationItem::new("me", "Система").selected(),
+        )];
+        let header = ContextHeader::new("Работа").with_section_title("Система");
+        let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
+        draw_context_row_list(
+            &mut canvas,
+            Rect::new(0, 0, 1080, 2100),
+            &tabs,
+            &header,
+            &[],
+            false,
+            None,
+        );
+        assert_eq!(canvas.pixel(135, 2125), [0, 0, 0, 0]);
     }
 
     #[test]

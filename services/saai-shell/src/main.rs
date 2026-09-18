@@ -2017,7 +2017,7 @@ enum Frame {
     /// ADR-138: the `Приложения` grid is no longer `Frame::Root`.
     /// Header is a real `ContextHeader`; tiles are only live
     /// `installed_apps` (the old `root.sui` inspect/intent cells stay
-    /// on the NOW footer). Me still uses `Root`.
+    /// on the NOW footer).
     AppsGrid {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
@@ -2026,8 +2026,7 @@ enum Frame {
         empty_message: Option<&'static str>,
     },
     /// ADR-139: Inbox is no longer `Frame::Root`. Header is a real
-    /// `ContextHeader`; rows stay live `EventRow` cards. Me still
-    /// uses `Root`.
+    /// `ContextHeader`; rows stay live `EventRow` cards.
     Inbox {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
@@ -2042,6 +2041,17 @@ enum Frame {
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
         rows: Vec<(Rect, render::ActionCardView)>,
+    },
+    /// ADR-141: `Система` is no longer `Frame::Root`. Header is a real
+    /// `ContextHeader`; rows stay the scrolled SettingRow list.
+    /// `paint_navigation` is false on a content-only scroll frame so
+    /// the tab bar is not redrawn.
+    Me {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
+        paint_navigation: bool,
     },
     /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
     /// Now`'s only content now, the app grid relocated behind its own
@@ -4292,6 +4302,20 @@ fn spaces_header(space_name: &str, entityd_connected: bool, archived: bool) -> C
     }
 }
 
+/// ADR-141: section title is always `Система` (the live tab label).
+/// Offline `entityd` names `Нет связи` and wins over the selected
+/// space's archived mark.
+fn me_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Система");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
 /// How far a touch has to move (in either direction, on this
 /// 1080x2400 panel) before `TouchHandler::up` treats it as a real
 /// drag on "Я" rather than a tap that merely twitched a few pixels --
@@ -6341,24 +6365,35 @@ impl Shell {
                 ),
                 rows: self.spaces_content_cards(width, height),
             }
+        } else if self.current_page == RootPage::Me {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::Me {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: me_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.entityd.is_connected(),
+                    archived,
+                ),
+                rows: self.me_content_cards(width, height),
+                paint_navigation: !content_only,
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
             let tabs = self.root_navigation_items(width, height);
-            let content_cards = if self.current_page == RootPage::Me {
-                self.me_content_cards(width, height)
-            } else {
-                ROOT_CONTENT_ACTIONS
-                    .iter()
-                    .filter(|action| action.page == self.current_page.id())
-                    .map(|action| {
-                        (
-                            content_action_rect(action, width, height),
-                            self.content_card(action),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let content_cards = ROOT_CONTENT_ACTIONS
+                .iter()
+                .filter(|action| action.page == self.current_page.id())
+                .map(|action| {
+                    (
+                        content_action_rect(action, width, height),
+                        self.content_card(action),
+                    )
+                })
+                .collect::<Vec<_>>();
             let context_label = self.context_label();
             Frame::Root {
                 content_rect,
@@ -6387,6 +6422,7 @@ impl Shell {
                     | Frame::AppsGrid { .. }
                     | Frame::Inbox { .. }
                     | Frame::Spaces { .. }
+                    | Frame::Me { .. }
             ))
         .then(|| self.build_orb_frame(width, height));
 
@@ -6674,6 +6710,7 @@ impl Shell {
                         &tabs,
                         &header,
                         &rows,
+                        true,
                         fonts,
                     );
                 }
@@ -6689,6 +6726,24 @@ impl Shell {
                         &tabs,
                         &header,
                         &rows,
+                        true,
+                        fonts,
+                    );
+                }
+                Frame::Me {
+                    content_rect,
+                    tabs,
+                    header,
+                    rows,
+                    paint_navigation,
+                } => {
+                    render::draw_context_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &rows,
+                        paint_navigation,
                         fonts,
                     );
                 }
@@ -8920,10 +8975,10 @@ mod tests {
         diagnostic_row, diagnostic_status_line, effective_context_space, ensure_me_row_cache,
         flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
         input_idle_for_at_least, intent_action_at, intent_input_field, known_surfaces,
-        lock_idle_view, me_fixture_facts, me_system_sections, next_in_cycle, next_pending_action,
-        now_action_at, now_object_tapped, object_view_action_at, object_view_content,
-        object_view_summary, orb_action_at, orb_attention_from_entities, orb_menu_actions,
-        orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
+        lock_idle_view, me_fixture_facts, me_header, me_system_sections, next_in_cycle,
+        next_pending_action, now_action_at, now_object_tapped, object_view_action_at,
+        object_view_content, object_view_summary, orb_action_at, orb_attention_from_entities,
+        orb_menu_actions, orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
         remove_context_source, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
         space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
@@ -9775,6 +9830,37 @@ mod tests {
             Some("Архив")
         );
         let offline_archived = spaces_header("Дом", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn me_header_names_the_section_and_offline() {
+        let online = me_header("Работа", true, false);
+        assert_eq!(online.heading_text(), "Работа · Система");
+        assert!(online.lifecycle.is_none());
+        let offline = me_header("Работа", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = me_header("Работа", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = me_header("Работа", false, true);
         assert_eq!(
             offline_archived
                 .lifecycle
