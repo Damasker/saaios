@@ -91,7 +91,7 @@ contains:
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
-| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | Backlog |
+| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **In progress** (ATTN-02 host) |
 | VUI-06 | `Система` information architecture and settings components | Backlog |
 | VUI-07 | Remaining system surfaces and state patterns | Backlog |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
@@ -742,7 +742,9 @@ navigation passes restart and cold-boot testing.
 
 ## VUI-05 — Object, Intent, Task, and Worker components
 
-**Status:** Backlog
+**Status:** In progress (ATTN-02 host: NOW «Требует внимания» reads
+`saai-attention` `now_items()`. Inbox still `inbox_rows` until ATTN-03.
+`IntentSummary`/`TaskSummary` and WORK-08 visibility remain open.)
 
 **Depends on:** VUI-04 and the relevant HIA entity/runtime support
 
@@ -755,6 +757,9 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
 
 ### Tasks
 
+- [x] NOW «Требует внимания» uses `saai-attention` `now_items()` (ATTN-02
+  host). Waiting-confirmation and undismissed notifications only; empty
+  section omitted. Inbox page still uses `inbox_rows` until ATTN-03.
 - [ ] Draw and review anatomy, relationship, long-content, and full state sheets
   for each Object/Intent/Task/Agent composite before implementation.
 - [ ] Implement `ObjectSummary`, `IntentSummary`, `TaskSummary`, `AgentSummary`,

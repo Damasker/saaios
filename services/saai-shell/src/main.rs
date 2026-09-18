@@ -449,7 +449,10 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .and_then(|entity| entity.properties.get("space_id").and_then(Value::as_str))
         .map(str::to_string)
 }
-use saai_attention::{has_orb_attention, project_from_entities};
+use saai_attention::{
+    has_orb_attention, project_from_entities, AttentionActionability, AttentionItem,
+    AttentionProjection,
+};
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
     LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
@@ -2859,8 +2862,8 @@ fn today_schedules(entities: &[Entity]) -> Vec<&Entity> {
 /// `SystemSection` -- a `saaios.task` genuinely `running` (the status
 /// `handle_object_view_action` writes once the user confirms it), not
 /// merely `waiting_confirmation`: a task still waiting on the user stays
-/// in "Требует внимания" via `inbox_rows` instead, since it needs the
-/// user to act, not the system.
+/// in "Требует внимания" via the attention projection instead, since it
+/// needs the user to act, not the system.
 fn in_progress_work(entities: &[Entity]) -> Vec<&Entity> {
     entities
         .iter()
@@ -2911,6 +2914,37 @@ fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
             .map(|entity| (InboxRowKind::Notification, entity)),
     );
     rows
+}
+
+/// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
+/// `now_items()`, not a second copy of `inbox_rows`. Inbox still uses
+/// `inbox_rows` until ATTN-03. Empty stays omitted, never a placeholder.
+fn now_attention_section(entities: &[Entity]) -> Option<SystemSection> {
+    attention_section_from_projection(&project_from_entities(entities))
+}
+
+fn attention_section_from_projection(projection: &AttentionProjection) -> Option<SystemSection> {
+    let mut attention = SystemSection::new("Требует внимания");
+    for item in projection.now_items() {
+        attention = attention.with_row(now_attention_row(item));
+    }
+    if attention.is_empty() {
+        None
+    } else {
+        Some(attention)
+    }
+}
+
+fn now_attention_row(item: &AttentionItem) -> SystemSectionRow {
+    let reason = match item.actionability {
+        AttentionActionability::RequiresDecision => "Ждёт подтверждения".to_string(),
+        _ => item.summary.clone().unwrap_or_default(),
+    };
+    SystemSectionRow::Status(
+        StatusIndicator::new(UniversalState::Attention, item.title.clone())
+            .with_reason(reason)
+            .with_variant(StatusIndicatorVariant::Normal),
+    )
 }
 
 fn inbox_row_at(
@@ -6203,23 +6237,7 @@ impl Shell {
             sections.push(in_progress);
         }
 
-        let mut attention = SystemSection::new("Требует внимания");
-        for (kind, entity) in inbox_rows(&self.selected_entities) {
-            let reason = match kind {
-                InboxRowKind::Task => "Ждёт подтверждения",
-                InboxRowKind::Notification => entity
-                    .properties
-                    .get("body")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            };
-            attention = attention.with_row(SystemSectionRow::Status(
-                StatusIndicator::new(UniversalState::Attention, entity.title.clone())
-                    .with_reason(reason)
-                    .with_variant(StatusIndicatorVariant::Normal),
-            ));
-        }
-        if !attention.is_empty() {
+        if let Some(attention) = now_attention_section(&self.selected_entities) {
             sections.push(attention);
         }
 
@@ -7236,12 +7254,12 @@ mod tests {
         task_confirm_action_at, today_schedules, trusted_client_action_at, upsert_context_entry,
         wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
         KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
-        TrustedClientTap, UniversalState, WifiListTap, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT,
-        SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE,
-        SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID,
-        WIFI_CONFIDENCE,
+        SystemSectionRow, TrustedClientTap, UniversalState, WifiListTap, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{ObjectRef, Provenance, Relationship, RELATION_REALIZES};
     use saai_entity_store::SpaceKind;
@@ -8610,6 +8628,48 @@ mod tests {
         gone.properties
             .insert("dismissed".into(), serde_json::Value::Bool(true));
         assert!(!orb_attention_from_entities(&[gone]));
+    }
+
+    #[test]
+    fn now_attention_section_uses_projection_not_a_second_inbox() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let mut running = task_entity("Работает", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let note = notification_entity("Notice", "body");
+        let mut gone = notification_entity("Gone", "old");
+        gone.properties
+            .insert("dismissed".into(), serde_json::Value::Bool(true));
+        let section = super::now_attention_section(&[running.clone(), waiting, gone, note])
+            .expect("real attention rows");
+        assert_eq!(section.title, "Требует внимания");
+        assert_eq!(section.rows.len(), 2);
+        match &section.rows[0] {
+            SystemSectionRow::Status(status) => {
+                assert_eq!(status.label, "Подтвердите удаление");
+                assert_eq!(status.reason.as_deref(), Some("Ждёт подтверждения"));
+                assert_eq!(status.state, UniversalState::Attention);
+            }
+            other => panic!("expected status row, got {other:?}"),
+        }
+        match &section.rows[1] {
+            SystemSectionRow::Status(status) => {
+                assert_eq!(status.label, "Notice");
+                assert_eq!(status.reason.as_deref(), Some("body"));
+            }
+            other => panic!("expected status row, got {other:?}"),
+        }
+        assert!(super::now_attention_section(&[running]).is_none());
+    }
+
+    #[test]
+    fn now_attention_omits_items_not_surfaced_on_now() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let mut projection = super::project_from_entities(std::slice::from_ref(&waiting));
+        projection.items[0].surfaces.now = false;
+        assert!(super::attention_section_from_projection(&projection).is_none());
+        assert!(super::now_attention_section(&[waiting]).is_some());
     }
 
     #[test]

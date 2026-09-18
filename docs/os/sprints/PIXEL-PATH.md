@@ -24,10 +24,10 @@ vertical slices в существующие процессы и VUI-04…09.
 | SOM / OAM / IRAB | 118–120 | crates + entityd | не прошито как продукт |
 | Work Scheduler v2 | 121 | DAG + derived ready set в `saai-taskd` | WORK-02 host; не прошито |
 | World Model | 122 | `saai-observation` types | нет `saai-deviced`, не нужно для P0 |
-| Attention | 123 | `saai-attention` projection | Orb Attention читает projection (host) |
+| Attention | 123 | `saai-attention` projection | Orb + NOW «Требует внимания» (host) |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116 | VUI-00…03 Done, **VUI-04 in progress** | текущий shell image |
+| Visual | 111–116 | VUI-00…03 Done, VUI-04 host remainder `Я`→`Система`, **VUI-05 started** | текущий shell image |
 
 ## Две очереди, не девять
 
@@ -84,7 +84,7 @@ host-only derived view.
 | VUI slice | Берёт с собой |
 |---|---|
 | VUI-04 remainder | `Я`→`Система` (blocked). SafeInsets, rotation, keyboard, rapid-tab on host |
-| VUI-05 | NOW «Требует внимания» = ATTN-02; видимость Task = WORK-08 |
+| VUI-05 | NOW «Требует внимания» = ATTN-02 (host); видимость Task = WORK-08 |
 | VUI-06 `Система` | ручной Memory list/correct/erase без модели = MEM-08 |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
