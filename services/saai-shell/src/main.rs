@@ -2006,9 +2006,12 @@ enum Frame {
         header: ContextHeader,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
+    /// ADR-147: trusted clients is no longer `draw_action_row_list`
+    /// Surface chrome. Header is a real `ContextHeader`; rows stay
+    /// live `TrustedClientRow` cards plus back.
     TrustedClients {
-        header: Rect,
-        status_line: String,
+        content_rect: Rect,
+        header: ContextHeader,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// HIA-20: the hidden diagnostic screen -- same row-list shape as
@@ -4369,6 +4372,12 @@ fn wifi_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("Wi-Fi")
 }
 
+/// ADR-147: section title is always `Ключи`. No invented lifecycle —
+/// name/fingerprint/empty facts stay on the live rows.
+fn trusted_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Ключи")
+}
+
 /// Live client name only. Fingerprint is wrapped separately so the
 /// full `SHA256:` string stays readable.
 fn remote_pair_content_cards(
@@ -6367,8 +6376,8 @@ impl Shell {
             // Same runtime-sized-list shape as the Bluetooth branch
             // above -- `trusted_clients()`'s own doc comment explains
             // why this reads straight from disk instead of a cached
-            // snapshot.
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            // snapshot. ADR-147: header is a real `ContextHeader`,
+            // not a Surface strip.
             let clients = trusted_clients();
             let trusted_rows = trusted_client_list_rows(&clients);
             let mut rows: Vec<(Rect, render::ActionCardView)> = trusted_rows
@@ -6386,8 +6395,8 @@ impl Shell {
                 render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::TrustedClients {
-                header,
-                status_line: format!("{} доверенных ключей", clients.len()),
+                content_rect: Rect::new(0, 0, width, height),
+                header: trusted_header(&space_display_name(&self.spaces, &self.selected_space_id)),
                 rows,
             }
         } else if self.dev_surface_open {
@@ -6731,16 +6740,17 @@ impl Shell {
                     );
                 }
                 Frame::TrustedClients {
+                    content_rect,
                     header,
-                    status_line,
                     rows,
                 } => {
-                    render::draw_action_row_list(
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Доверенные клиенты",
-                        &status_line,
-                        header,
+                        content_rect,
+                        &[],
+                        &header,
                         &rows,
+                        false,
                         fonts,
                     );
                 }
@@ -9099,15 +9109,15 @@ mod tests {
         space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
         space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
         tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows, upsert_context_entry,
-        wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows, wifi_password_field,
-        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
-        ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode, ObjectSummary, OrbAction,
-        Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow,
-        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
+        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
+        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
+        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
+        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
         SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
         SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -10018,6 +10028,13 @@ mod tests {
     fn wifi_header_names_the_section() {
         let header = wifi_header("Дом");
         assert_eq!(header.heading_text(), "Дом · Wi-Fi");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn trusted_header_names_the_section() {
+        let header = trusted_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Ключи");
         assert!(header.lifecycle.is_none());
     }
 
