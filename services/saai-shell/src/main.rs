@@ -461,9 +461,10 @@ use saai_object_actions::{
 use saai_ui_core::{
     layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
     DataRowVariant, DecisionOverlay, EventRow, Field, FieldKind, IntentSummary, LayoutNode, Length,
-    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, SurfaceScale, SystemSection, SystemSectionRow, SystemStatus, TaskSummary,
-    TrustedClientRow, UniversalState, WifiRow, MIN_TOUCH_TARGET,
+    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
+    SafeInsets, SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark,
+    SurfaceScale, SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow,
+    UniversalState, WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -2012,6 +2013,17 @@ enum Frame {
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
         paint_navigation: bool,
+    },
+    /// ADR-138: the `Приложения` grid is no longer `Frame::Root`.
+    /// Header is a real `ContextHeader`; tiles are only live
+    /// `installed_apps` (the old `root.sui` inspect/intent cells stay
+    /// on the NOW footer). Inbox / Spaces / Me still use `Root`.
+    AppsGrid {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        apps: Vec<(Rect, render::ActionCardView)>,
+        empty_message: Option<&'static str>,
     },
     /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
     /// Now`'s only content now, the app grid relocated behind its own
@@ -4190,15 +4202,10 @@ fn space_row_at(
         .map(|(_, space)| space.id.clone())
 }
 
-/// S13 Change 4: "Сейчас"'s hit-test, mirroring `content_action_at`
-/// but for a page that mixes a runtime-sized app list (cells
-/// 0..apps.len()) with the two remaining static `root.sui` cards
-/// (cells apps.len()..). S23 moved this from `stacked_row_rect`'s
-/// single column to `now_grid_rect`'s 3-column grid -- the index
-/// math is unchanged, only which rect function turns an index into a
-/// screen position. Returns the same `action` string either
-/// kind of card would carry, so the caller dispatches identically to
-/// how `invoke_content_action` used to.
+/// ADR-138: the apps grid only hits live `installed_apps`. The two
+/// leftover `root.sui` NOW cards (`inspect_selected_entity`,
+/// `open_intent_input`) live on the composed footer, not as extra
+/// tiles. S23 still owns the 3-column `now_grid_rect` math.
 fn now_action_at(
     pos: (f64, f64),
     width: u32,
@@ -4210,13 +4217,35 @@ fn now_action_at(
             return Some(format!("manage_app:{}", app.id));
         }
     }
-    let base = installed_apps.len();
-    ROOT_CONTENT_ACTIONS
-        .iter()
-        .filter(|action| action.page == "now")
-        .enumerate()
-        .find(|(offset, _)| now_grid_rect(base + offset, width, height).contains(pos.0, pos.1))
-        .map(|(_, action)| action.action.to_string())
+    None
+}
+
+/// ADR-138: section title is always `Приложения`. Offline `appd`
+/// names `Нет связи` and wins over the space's own archived mark --
+/// without a live app daemon this shell cannot honestly claim the
+/// grid is an archived-space view either.
+fn apps_grid_header(space_name: &str, appd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Приложения");
+    if !appd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
+/// Connected and empty is `Нет приложений`. Offline and empty is
+/// `Нет связи`. A non-zero count (including a stale last-known list
+/// while `appd` is down) is not an empty state -- those tiles stay.
+fn apps_grid_empty_message(appd_connected: bool, app_count: usize) -> Option<&'static str> {
+    if app_count > 0 {
+        None
+    } else if appd_connected {
+        Some("Нет приложений")
+    } else {
+        Some("Нет связи")
+    }
 }
 
 /// How far a touch has to move (in either direction, on this
@@ -6222,6 +6251,24 @@ impl Shell {
                 object: self.now_object_summary(),
                 footer_actions: now_footer_action_views(width, height),
             }
+        } else if self.current_page == RootPage::Now && self.apps_open {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::AppsGrid {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: apps_grid_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.appd.is_connected(),
+                    archived,
+                ),
+                apps: self.apps_grid_cards(width, height),
+                empty_message: apps_grid_empty_message(
+                    self.appd.is_connected(),
+                    self.installed_apps.len(),
+                ),
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
@@ -6232,8 +6279,6 @@ impl Shell {
                 self.spaces_content_cards(width, height)
             } else if self.current_page == RootPage::Me {
                 self.me_content_cards(width, height)
-            } else if self.current_page == RootPage::Now {
-                self.now_content_cards(width, height)
             } else {
                 ROOT_CONTENT_ACTIONS
                     .iter()
@@ -6267,7 +6312,10 @@ impl Shell {
         let orb_frame = (!content_only
             && !self.calibration_mode
             && self.settings.orb_enabled
-            && matches!(frame, Frame::Root { .. } | Frame::Now { .. }))
+            && matches!(
+                frame,
+                Frame::Root { .. } | Frame::Now { .. } | Frame::AppsGrid { .. }
+            ))
         .then(|| self.build_orb_frame(width, height));
 
         let fonts = self.fonts.as_ref();
@@ -6522,6 +6570,23 @@ impl Shell {
                         &sections,
                         object.as_ref(),
                         &footer_actions,
+                        fonts,
+                    );
+                }
+                Frame::AppsGrid {
+                    content_rect,
+                    tabs,
+                    header,
+                    apps,
+                    empty_message,
+                } => {
+                    render::draw_apps_grid(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &apps,
+                        empty_message,
                         fonts,
                     );
                 }
@@ -7568,15 +7633,11 @@ impl Shell {
         rows
     }
 
-    /// S13 Change 4: "Сейчас"'s content -- one card per installed app
-    /// (replacing the old single hardcoded demo card), followed by the
-    /// two still-static `root.sui` cards for this page
-    /// ("Объект пространства", "Новое намерение"), positioned right
-    /// after the app list instead of at their old fixed `root.sui`
-    /// coordinates -- `now_action_at` computes hit rects the same way.
-    fn now_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let mut cards: Vec<(Rect, render::ActionCardView)> = self
-            .installed_apps
+    /// ADR-138: one letter-square tile per live installed app. The
+    /// leftover `root.sui` NOW cards are not tiles -- intent lives on
+    /// the composed footer, object inspect on the NOW summary.
+    fn apps_grid_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
+        self.installed_apps
             .values()
             .enumerate()
             .map(|(index, app)| {
@@ -7593,19 +7654,7 @@ impl Shell {
                     ),
                 )
             })
-            .collect();
-        let base = self.installed_apps.len();
-        for (offset, action) in ROOT_CONTENT_ACTIONS
-            .iter()
-            .filter(|action| action.page == "now")
-            .enumerate()
-        {
-            cards.push((
-                now_grid_rect(base + offset, width, height),
-                self.content_card(action),
-            ));
-        }
-        cards
+            .collect()
     }
 
     /// VUI-03 (ADR-112): replaces `context_label()`'s own
@@ -8763,30 +8812,30 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        bluetooth_card_from_row, bluetooth_list_action_at, bluetooth_list_rows,
-        calibration_requested, capability_label, consent_action_at, content_action_at,
-        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
-        effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
-        in_progress_work, input_idle_for_at_least, intent_action_at, intent_input_field,
-        known_surfaces, lock_idle_view, me_fixture_facts, me_system_sections, next_in_cycle,
-        next_pending_action, now_object_tapped, object_view_action_at, object_view_content,
-        object_view_summary, orb_action_at, orb_attention_from_entities, orb_menu_actions,
-        orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
-        today_schedules, trusted_client_action_at, trusted_client_card_from_row,
-        trusted_client_list_rows, upsert_context_entry, wifi_card_from_row, wifi_list_action_at,
-        wifi_list_rows, wifi_password_field, AgentSummary, BluetoothDevice, BluetoothListTap,
+        apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row,
+        bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
+        consent_action_at, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
+        diagnostic_row, diagnostic_status_line, effective_context_space, ensure_me_row_cache,
+        flatten_me_rows, format_utc_offset, in_progress_work, input_idle_for_at_least,
+        intent_action_at, intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts,
+        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
+        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
+        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
+        upsert_context_entry, wifi_card_from_row, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
         ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
-        SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
-        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
+        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
+        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -9532,6 +9581,84 @@ mod tests {
     }
 
     #[test]
+    fn apps_grid_header_names_the_section_and_offline() {
+        let online = apps_grid_header("Дом", true, false);
+        assert_eq!(online.heading_text(), "Дом · Приложения");
+        assert!(online.lifecycle.is_none());
+        let offline = apps_grid_header("Дом", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = apps_grid_header("Дом", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = apps_grid_header("Дом", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn apps_grid_empty_message_names_connected_vs_offline() {
+        assert_eq!(apps_grid_empty_message(true, 1), None);
+        assert_eq!(apps_grid_empty_message(true, 0), Some("Нет приложений"));
+        assert_eq!(apps_grid_empty_message(false, 0), Some("Нет связи"));
+        assert_eq!(apps_grid_empty_message(false, 1), None);
+    }
+
+    fn test_app(id: &str, name: &str) -> AppSummary {
+        AppSummary {
+            id: id.to_string(),
+            name: name.to_string(),
+            version: "1".to_string(),
+            state: "stopped".to_string(),
+            pids: Vec::new(),
+            requested_capabilities: Vec::new(),
+            consent_needed: false,
+            granted_capabilities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn now_action_at_only_hits_installed_apps() {
+        let mut apps = std::collections::BTreeMap::new();
+        apps.insert("demo".to_string(), test_app("demo", "Saai Demo"));
+        let first = super::now_grid_rect(0, 1080, 2400);
+        assert_eq!(
+            now_action_at(
+                (f64::from(first.x + 10), f64::from(first.y + 10)),
+                1080,
+                2400,
+                &apps
+            ),
+            Some("manage_app:demo".to_string())
+        );
+        let leftover = super::now_grid_rect(1, 1080, 2400);
+        assert_eq!(
+            now_action_at(
+                (f64::from(leftover.x + 10), f64::from(leftover.y + 10)),
+                1080,
+                2400,
+                &apps
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn now_grid_rect_lays_out_three_columns_per_row() {
         let width = 1080;
         let height = 2400;
@@ -9718,7 +9845,7 @@ mod tests {
         // S13 Change 4 removed the compiled-in demo-app card -- "Сейчас"
         // now has exactly the two entries that were always meant to
         // stay static (the app list itself is runtime data, handled by
-        // `now_action_at`/`now_content_cards`, not this table).
+        // `now_action_at`/`apps_grid_cards`, not this table).
         assert_eq!(ROOT_CONTENT_ACTIONS.len(), 2);
         assert_eq!(
             content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),

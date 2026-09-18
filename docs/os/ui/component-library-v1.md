@@ -275,10 +275,10 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   second line rather than truncating silently (section 1's "long Russian
   text ... normal input" rule applies to this header as much as any body
   text).
-- First real consumer: replaces `services/saai-shell/src/render.rs`'s
-  `draw_root`, which today centers a raw `format!("{context_label} · {title}")`
-  string over a fixed pixel offset -- same information, a real component
-  instead of ad hoc text concatenation.
+- First real consumer: `Сейчас` (ADR-112) and the `Приложения` grid
+  (ADR-138). Inbox / Spaces / Me still concatenate through `draw_root`
+  (`format!("{context_label} · {title}")` at a fixed offset) until
+  those pages get their own header slice.
 - Accessibility: name is the Space name plus section title; a non-default
   lifecycle is exposed through the nested `StatusIndicator`'s own state, not
   a second accessible string glued onto the header's name.

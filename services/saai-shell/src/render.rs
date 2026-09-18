@@ -2430,52 +2430,11 @@ pub fn draw_root(
         }
     }
 
-    // S23: "Сейчас"'s icon grid (phone-style: square icon, label
-    // below, no description/button) -- every other page keeps the
-    // original single-column card list below. No real per-app icon
-    // asset exists anywhere in the project (no icon pipeline was ever
-    // built), so the "icon" is a colored square with the app's own
-    // first letter, same honest placeholder spirit as `border`'s
-    // loading skeleton above.
+    // ADR-138: the live apps grid paints through `draw_apps_grid`.
+    // `is_grid` stays for the leftover `draw_root` path if a caller
+    // still asks for letter-square tiles.
     if is_grid {
-        for (rect, card) in content_actions {
-            let icon_size = rect.width.min(rect.height.saturating_sub(70)).min(180);
-            let icon_x = rect.x + rect.width.saturating_sub(icon_size) / 2;
-            canvas.fill_rect(
-                Rect::new(icon_x, rect.y, icon_size, icon_size),
-                if card.selected {
-                    theme_color(ColorRole::Elevated)
-                } else {
-                    theme_color(ColorRole::Accent)
-                },
-            );
-            if let Some(fonts) = fonts {
-                let initial = card
-                    .label
-                    .chars()
-                    .next()
-                    .map(|ch| ch.to_uppercase().to_string())
-                    .unwrap_or_default();
-                draw_text_centered(
-                    canvas,
-                    &fonts.semibold,
-                    &initial,
-                    54.0,
-                    icon_x + icon_size / 2,
-                    rect.y + icon_size / 2 - 27,
-                    theme_color(ColorRole::Canvas),
-                );
-                draw_text_centered(
-                    canvas,
-                    &fonts.regular,
-                    &card.label,
-                    26.0,
-                    rect.x + rect.width / 2,
-                    rect.y + icon_size + 16,
-                    theme_color(ColorRole::TextPrimary),
-                );
-            }
-        }
+        draw_app_icon_grid(canvas, fonts, content_actions);
     } else {
         for (rect, card) in content_actions {
             canvas.fill_rect(
@@ -2552,6 +2511,108 @@ pub fn draw_root(
     if paint_navigation {
         draw_tab_bar(canvas, tabs, fonts);
     }
+}
+
+/// S23 letter-square tiles: no per-app icon asset exists, so the
+/// "icon" is a colored square with the app's first letter.
+fn draw_app_icon_grid(
+    canvas: &mut Canvas<'_>,
+    fonts: Option<&Fonts>,
+    apps: &[(Rect, ActionCardView)],
+) {
+    for (rect, card) in apps {
+        let icon_size = rect.width.min(rect.height.saturating_sub(70)).min(180);
+        let icon_x = rect.x + rect.width.saturating_sub(icon_size) / 2;
+        canvas.fill_rect(
+            Rect::new(icon_x, rect.y, icon_size, icon_size),
+            if card.selected {
+                theme_color(ColorRole::Elevated)
+            } else {
+                theme_color(ColorRole::Accent)
+            },
+        );
+        if let Some(fonts) = fonts {
+            let initial = card
+                .label
+                .chars()
+                .next()
+                .map(|ch| ch.to_uppercase().to_string())
+                .unwrap_or_default();
+            draw_text_centered(
+                canvas,
+                &fonts.semibold,
+                &initial,
+                54.0,
+                icon_x + icon_size / 2,
+                rect.y + icon_size / 2 - 27,
+                theme_color(ColorRole::Canvas),
+            );
+            draw_text_centered(
+                canvas,
+                &fonts.regular,
+                &card.label,
+                26.0,
+                rect.x + rect.width / 2,
+                rect.y + icon_size + 16,
+                theme_color(ColorRole::TextPrimary),
+            );
+        }
+    }
+}
+
+/// ADR-138: `Приложения` through `ContextHeader`, same status-layer
+/// inset as `draw_now`. No concatenated `draw_root` Surface bar. No
+/// skeleton tiles. Empty is a named message, not invented icons.
+pub fn draw_apps_grid(
+    canvas: &mut Canvas<'_>,
+    content: Rect,
+    tabs: &[(Rect, NavigationItem)],
+    header: &ContextHeader,
+    apps: &[(Rect, ActionCardView)],
+    empty_message: Option<&str>,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let margin = (content.width / 20).max(12);
+    let content_width = content.width.saturating_sub(margin * 2);
+    canvas.set_clip(Some(content));
+
+    if let Some(fonts) = fonts {
+        let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
+        let mut cursor_y = content.y + top_inset;
+        draw_semantic_text(
+            canvas,
+            fonts,
+            &header.heading(),
+            content.x + margin,
+            cursor_y,
+            content_width,
+        );
+        cursor_y += scaled_line_height(TextRole::Title);
+        if let Some(lifecycle) = &header.lifecycle {
+            draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
+        }
+    }
+
+    draw_app_icon_grid(canvas, fonts, apps);
+
+    if apps.is_empty() {
+        if let (Some(fonts), Some(message)) = (fonts, empty_message) {
+            let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
+            draw_text_centered(
+                canvas,
+                empty_font,
+                message,
+                empty_size,
+                content.x + content.width / 2,
+                content.y + content.height / 2,
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+
+    canvas.set_clip(None);
+    draw_tab_bar(canvas, tabs, fonts);
 }
 
 /// Extracted from `draw_root` (VUI-03): the bottom navigation bar is the
@@ -3133,13 +3194,13 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
-        context_color, draw_calibration, draw_composite_gallery, draw_gallery, draw_lock_idle,
-        draw_orb, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions, physical,
-        physical_line_height, state_color, theme_color, Canvas,
+        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_gallery,
+        draw_lock_idle, draw_orb, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions,
+        physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, NavigationItem, ObjectSummary, Progress, Rect, StatusMark,
-        SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
+        ColorRole, ContextColor, ContextHeader, NavigationItem, ObjectSummary, Progress, Rect,
+        StatusMark, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -3545,6 +3606,45 @@ mod tests {
         let mid_y = rect.y + rect.height / 2;
         assert!(rect.contains(540.0, f64::from(mid_y)));
         assert!(!rect.contains(540.0, 2000.0));
+    }
+
+    #[test]
+    fn apps_grid_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Приложения");
+        let cell = Rect::new(49, 430, 310, 300);
+        let apps = vec![(cell, ActionCardView::new("Saai Demo", "", "Запустить"))];
+        draw_apps_grid(canvas, content, &[], &header, &apps, None, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(cell.x + cell.width / 2, cell.y + 40),
+            theme_color(ColorRole::Accent)
+        );
+    }
+
+    #[test]
+    fn apps_grid_empty_does_not_invent_tiles() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Приложения");
+        draw_apps_grid(
+            canvas,
+            content,
+            &[],
+            &header,
+            &[],
+            Some("Нет приложений"),
+            None,
+        );
+        assert_eq!(canvas.pixel(200, 430), theme_color(ColorRole::Canvas));
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
     }
 
     #[test]
