@@ -407,12 +407,94 @@ impl Daemon {
         Ok(())
     }
 
+    /// Whether `action_id` is safe to auto-complete without a live
+    /// confirmation. Looks the id back up in the same OAM registry
+    /// `allowed_context_for` already built the resolution against
+    /// (`builtin_oam()`, cheap and stateless -- matches that function's
+    /// own style, not a new caching concern to get right). `None` (the
+    /// spec vanished, or was never real) is treated as "cannot confirm
+    /// this is safe," the same fail-closed direction the check itself
+    /// takes for a spec found with `requires_confirmation: true` --
+    /// never fail-open into auto-completing something this function
+    /// cannot vouch for.
+    fn action_requires_confirmation(action_id: &str) -> bool {
+        builtin_oam()
+            .spec_for(action_id)
+            .is_none_or(|spec| spec.requires_confirmation)
+    }
+
+    /// Creates the Task/Action pair for a semantic action whose spec
+    /// requires confirmation, and stops -- same shape as
+    /// `process_dangerous_intent`'s own delete-entity path, generalized
+    /// to any OAM action id. Both start (and stay) at
+    /// `WaitingConfirmation`; nothing here executes anything or
+    /// fabricates a `Result`. A real "confirm and dispatch" path for
+    /// semantic actions does not exist yet (only `delete_entity`'s own
+    /// hand-built confirm handler does) -- this function's job is only
+    /// to stop the false "Done" from ever being written, not to build
+    /// that dispatcher.
+    async fn process_action_requiring_confirmation(
+        &mut self,
+        intent: &Entity,
+        action: &intent_resolution::ActionResolution,
+    ) -> Result<(), ClientError> {
+        let title = format!(
+            "Подтвердите: {} → {}",
+            target_label(&action.target),
+            action.action_id
+        );
+        eprintln!(
+            "saai-taskd: intent {} resolved to {} which requires confirmation, pausing",
+            intent.id, action.action_id
+        );
+        let task = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                TASK_TYPE,
+                &safe_title(&title, "Задача"),
+                task_properties(intent.id, WorkflowStatus::WaitingConfirmation),
+            )
+            .await?;
+        self.remember_task(task.clone());
+        self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+            .await;
+        let action_input = json!({
+            "semantic_action_id": action.action_id,
+            "target": action.target,
+            "parameters": action.parameters,
+            "target_revision": action.target_revision,
+        });
+        let stored_action = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                ACTION_TYPE,
+                &safe_title(&format!("Действие: {}", action.action_id), "Действие"),
+                action_properties(
+                    task.id,
+                    SEMANTIC_ACTION_KIND,
+                    WorkflowStatus::WaitingConfirmation,
+                    &action_input,
+                    None,
+                ),
+            )
+            .await?;
+        self.record_lineage(stored_action.id, task.id, RELATION_EXECUTES)
+            .await;
+        eprintln!("saai-taskd: task {} waiting for confirmation", task.id);
+        Ok(())
+    }
+
     async fn process_resolved_action(
         &mut self,
         intent: &Entity,
         text: &str,
         action: &intent_resolution::ActionResolution,
     ) -> Result<(), ClientError> {
+        if Self::action_requires_confirmation(&action.action_id) {
+            return self.process_action_requiring_confirmation(intent, action).await;
+        }
         let task = self
             .conn
             .create_entity(
@@ -1088,5 +1170,30 @@ fn target_label(target: &saai_entity_store::ObjectRef) -> String {
     match target {
         saai_entity_store::ObjectRef::Entity { id } => short_id(*id),
         saai_entity_store::ObjectRef::Space { id } => id.clone(),
+    }
+}
+
+#[cfg(test)]
+mod confirmation_gate_tests {
+    use super::Daemon;
+
+    #[test]
+    fn a_registered_read_only_action_does_not_require_confirmation() {
+        // `display.inspect`'s own spec sets `requires_confirmation:
+        // false` -- it is genuinely read-only (see its own
+        // description). This is the one real gap the original
+        // `process_resolved_action` had: nothing distinguished this
+        // case from a future mutating one, so both would have
+        // auto-completed identically.
+        assert!(!Daemon::action_requires_confirmation("display.inspect"));
+    }
+
+    #[test]
+    fn an_unregistered_action_id_fails_closed_into_requiring_confirmation() {
+        // Never fail-open: an action id this lookup cannot vouch for
+        // must be treated the same as one that explicitly requires
+        // confirmation, not the same as one explicitly cleared for
+        // auto-completion.
+        assert!(Daemon::action_requires_confirmation("storage.delete_everything"));
     }
 }

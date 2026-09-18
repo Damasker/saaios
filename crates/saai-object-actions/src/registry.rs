@@ -48,6 +48,20 @@ impl ObjectActionRegistry {
         ids
     }
 
+    /// The full spec behind a resolved `action_id` -- `ActionResolution`
+    /// (`intent-resolution`'s own type) only carries the id string, so
+    /// a caller that needs anything else about the action (today:
+    /// `requires_confirmation`, so `saai-taskd` can decide whether it
+    /// may auto-complete) looks it back up here. `None` is a real,
+    /// checked case, not an invariant violation: the id came from a
+    /// snapshot of this same registry, but nothing prevents it from
+    /// changing between resolution and this lookup in a longer-lived
+    /// process -- callers must treat it as "cannot confirm this is
+    /// safe," never as "must be fine."
+    pub fn spec_for(&self, action_id: &str) -> Option<&ObjectActionSpec> {
+        self.specs.iter().find(|spec| spec.action_id == action_id)
+    }
+
     pub fn resolve_for(
         &self,
         object: &Entity,
