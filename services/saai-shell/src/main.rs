@@ -452,9 +452,9 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
 use saai_attention::{has_orb_attention, project_from_entities};
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
-    MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, SystemSection, SystemSectionRow, SystemStatus,
-    UniversalState,
+    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
+    SafeInsets, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection,
+    SystemSectionRow, SystemStatus, UniversalState, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -972,8 +972,26 @@ impl RootPage {
     }
 }
 
+fn physical_unit(value: LogicalUnit) -> u32 {
+    SurfaceScale::PIXEL_7.logical_to_physical(value)
+}
+
+/// Status overlay height is the surface-provided top inset, not a
+/// framebuffer magic number. Pixel 7: 40 logical → 120 physical.
+fn status_layer_height() -> u32 {
+    physical_unit(SafeInsets::PIXEL_7_PORTRAIT.top)
+}
+
+/// Navigation hit-region: design-canvas tab height scaled to the
+/// panel, never below `MIN_TOUCH_TARGET`. Landscape 2400×1080 would
+/// otherwise shrink the strip under 48 logical units.
+fn navigation_hit_height(panel_height: u32) -> u32 {
+    let scaled = ((panel_height as u64 * ROOT_TAB_HEIGHT as u64) / 2400) as u32;
+    scaled.max(physical_unit(MIN_TOUCH_TARGET))
+}
+
 fn root_view(width: u32, height: u32) -> LayoutNode {
-    let tab_height = ((height as u64 * ROOT_TAB_HEIGHT as u64) / 2400) as u32;
+    let tab_height = navigation_hit_height(height);
     let tabs = Node::linear(
         ROOT_TABS_ID,
         Axis::Horizontal,
@@ -3130,7 +3148,7 @@ fn main() {
         None,
     );
     layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
-    layer.set_size(0, 120);
+    layer.set_size(0, status_layer_height());
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     // Initial commit with no attached buffer -- required by the
     // protocol before the compositor will send the first configure
@@ -3229,7 +3247,7 @@ fn main() {
         pressed_tab: None,
         layer,
         layer_width: 0,
-        layer_height: 120,
+        layer_height: status_layer_height(),
         layer_pool: None,
         layer_buffer: None,
         dmabuf_global,
@@ -7217,12 +7235,13 @@ mod tests {
         space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
         task_confirm_action_at, today_schedules, trusted_client_action_at, upsert_context_entry,
         wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
-        KeyboardMode, OrbAction, Rect, RootPage, Space, SpaceColor, SpaceLifecycle,
+        KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
         TrustedClientTap, UniversalState, WifiListTap, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, NOTIFICATION_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT,
+        SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE,
+        SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID,
+        WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{ObjectRef, Provenance, Relationship, RELATION_REALIZES};
     use saai_entity_store::SpaceKind;
@@ -7623,6 +7642,114 @@ mod tests {
             assert!(super::scroll_surface_damage(width, height)
                 .intersection(nav)
                 .is_none());
+        }
+    }
+
+    #[test]
+    fn status_and_nav_insets_come_from_safe_insets_tokens() {
+        assert_eq!(
+            super::status_layer_height(),
+            super::physical_unit(SafeInsets::PIXEL_7_PORTRAIT.top)
+        );
+        assert_eq!(super::status_layer_height(), 120);
+        assert_eq!(
+            ROOT_TAB_HEIGHT,
+            super::physical_unit(SafeInsets::PIXEL_7_PORTRAIT.bottom)
+        );
+        let portrait = super::root_navigation_rect(1080, 2400);
+        assert_eq!(
+            portrait.height,
+            super::physical_unit(SafeInsets::PIXEL_7_PORTRAIT.bottom)
+        );
+        assert!(portrait.height >= super::physical_unit(MIN_TOUCH_TARGET));
+    }
+
+    #[test]
+    fn rotation_keeps_tab_hits_and_min_touch_nav() {
+        let min_touch = super::physical_unit(MIN_TOUCH_TARGET);
+        for (width, height) in [(1080, 2400), (2400, 1080)] {
+            let nav = super::root_navigation_rect(width, height);
+            assert!(
+                nav.height >= min_touch,
+                "nav height {} < min touch {min_touch} at {width}x{height}",
+                nav.height
+            );
+            assert_eq!(super::navigation_hit_height(height), nav.height);
+            let content = super::root_content_rect(width, height);
+            assert!(content.intersection(nav).is_none());
+            assert_eq!(
+                super::tab_at(
+                    (width as f64 / 2.0, content.height as f64 / 2.0),
+                    width,
+                    height
+                ),
+                None
+            );
+            for (index, expected) in [
+                RootPage::Now,
+                RootPage::Inbox,
+                RootPage::Spaces,
+                RootPage::Me,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let tab_width = nav.width / 4;
+                let x = tab_width * index as u32 + tab_width / 2;
+                let y = nav.y + nav.height / 2;
+                assert_eq!(
+                    super::tab_at((x as f64, y as f64), width, height),
+                    Some(expected),
+                    "tab {index} at {width}x{height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rapid_tab_switch_pressed_follows_the_live_finger() {
+        let now = (135.0, 2250.0);
+        let me = (945.0, 2250.0);
+        assert_eq!(
+            pressed_tab_from_touch(true, false, false, now, 1080, 2400),
+            Some(RootPage::Now)
+        );
+        assert_eq!(
+            pressed_tab_from_touch(true, false, false, me, 1080, 2400),
+            Some(RootPage::Me)
+        );
+        assert_eq!(
+            pressed_tab_from_touch(false, false, false, me, 1080, 2400),
+            None
+        );
+        assert_eq!(tab_at(me, 1080, 2400), Some(RootPage::Me));
+    }
+
+    #[test]
+    fn intent_keyboard_stays_below_its_header_and_keys_meet_min_touch() {
+        let min_touch = super::physical_unit(MIN_TOUCH_TARGET);
+        for (width, height) in [(1080, 2400), (2400, 1080)] {
+            let view = super::intent_view(width, height, KeyboardMode::Letters);
+            let header = view.children[0].rect;
+            let keyboard = view.children[1].rect;
+            assert!(
+                header.intersection(keyboard).is_none(),
+                "keyboard overlaps header at {width}x{height}"
+            );
+            assert_eq!(header.y + header.height, keyboard.y);
+            let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
+            assert!(!keys.is_empty());
+            for (rect, label) in &keys {
+                assert!(
+                    rect.height >= min_touch,
+                    "key {label} height {} < min touch {min_touch} at {width}x{height}",
+                    rect.height
+                );
+                assert!(
+                    rect.intersection(header).is_none(),
+                    "key {label} intersects header at {width}x{height}"
+                );
+            }
         }
     }
 

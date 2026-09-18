@@ -663,7 +663,7 @@ turning the Orb into a launcher or assistant avatar.
 
 ### Tasks
 
-- [ ] Implement shared bottom-navigation and system-status components with
+- [x] Implement shared bottom-navigation and system-status components with
   safe insets and stable layering. Bottom navigation done (ADR-116):
   `BottomNavigation`/`NavigationItem` in `saai-ui-core`, `Shell::
   root_navigation_items` shared by both `Frame::Root` and `Frame::Now`, one
@@ -674,8 +674,12 @@ turning the Orb into a launcher or assistant avatar.
   Stable layering (host): status is a top overlay layer; content and nav
   split from `root_view` and do not overlap; content paint is clipped to
   the content pane. Not a second Wayland nav layer — displayd still has
-  no layer-surface touch routing. Safe-inset audit vs `SafeInsets` tokens
-  remains open.
+  no layer-surface touch routing. **Safe insets (host):**
+  `SafeInsets::PIXEL_7_PORTRAIT` is the surface-provided inset (top =
+  status overlay, bottom = nav strip, sides 0). Status layer height is
+  `physical(top)` not a magic 120; nav hit-region scales from the design
+  canvas and never drops below `MIN_TOUCH_TARGET` (portrait 1080×2400 and
+  landscape 2400×1080).
 - [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
   only when the destination content is truthful.
 - [x] Add explicit selected, pressed, disabled, attention, and badge states
@@ -714,7 +718,11 @@ turning the Orb into a launcher or assistant avatar.
   `root_content_rect`, content paint is clipped to that pane, and `draw_tab_bar`
   runs last so a long `Сейчас` list cannot cover the strip. Host tests:
   content∩nav is empty; scrolled "Я" rows never enter the strip.
-- [ ] Add rotation/inset/keyboard and rapid-tab-switch interaction tests.
+- [x] Add rotation/inset/keyboard and rapid-tab-switch interaction tests.
+  Portrait and landscape: four tabs hit, content is not a tab, nav ≥
+  `MIN_TOUCH_TARGET`. Intent keyboard stays below its header and every
+  key meets the min touch on both orientations. Rapid tab switch:
+  `pressed` follows the live finger and clears on up.
 
 ### Acceptance
 

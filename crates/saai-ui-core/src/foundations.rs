@@ -271,6 +271,17 @@ impl SafeInsets {
             left: horizontal,
         }
     }
+
+    /// Pixel 7 portrait surface insets on the 360×800 logical canvas.
+    /// Top is the status overlay (camera punch-hole plus clock row).
+    /// Bottom is the navigation strip. Left/right stay 0 until a real
+    /// side cutout is observed — components must not invent one.
+    pub const PIXEL_7_PORTRAIT: Self = Self {
+        top: CONTROL_VISUAL_HEIGHT,
+        right: LogicalUnit::ZERO,
+        bottom: LogicalUnit::new(100),
+        left: LogicalUnit::ZERO,
+    };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -393,6 +404,18 @@ mod tests {
     fn primary_touch_target_is_larger_than_the_visual_control() {
         assert_eq!(MIN_TOUCH_TARGET, LogicalUnit::new(48));
         assert!(MIN_TOUCH_TARGET > CONTROL_VISUAL_HEIGHT);
+    }
+
+    #[test]
+    fn pixel_7_portrait_insets_match_the_reference_canvas() {
+        let insets = SafeInsets::PIXEL_7_PORTRAIT;
+        let scale = SurfaceScale::PIXEL_7;
+        assert_eq!(scale.logical_to_physical(insets.top), 120);
+        assert_eq!(scale.logical_to_physical(insets.bottom), 300);
+        assert_eq!(scale.logical_to_physical(insets.left), 0);
+        assert_eq!(scale.logical_to_physical(insets.right), 0);
+        assert!(insets.bottom >= MIN_TOUCH_TARGET);
+        assert_eq!(insets.top, CONTROL_VISUAL_HEIGHT);
     }
 
     #[test]
