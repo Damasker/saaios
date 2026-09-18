@@ -450,8 +450,8 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .map(str::to_string)
 }
 use saai_attention::{
-    has_orb_attention, project_from_entities, AttentionActionability, AttentionItem,
-    AttentionProjection,
+    has_orb_attention, inbox_source_ids, project_from_entities, AttentionActionability,
+    AttentionItem, AttentionProjection, AttentionSource,
 };
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
@@ -2676,19 +2676,9 @@ fn content_action_at(
 /// S13 Change 2: "Входящие" has no `root.sui` entries at all -- unlike
 /// every other page's content, the task list's length is runtime data
 /// (however many tasks `saai-taskd` currently has waiting), not
-/// something `build.rs` can bake in from markup. These three functions
-/// are this page's own equivalent of `ROOT_CONTENT_ACTIONS`/
-/// `content_action_rect`/`content_action_at`.
-fn inbox_pending_tasks(entities: &[Entity]) -> Vec<&Entity> {
-    entities
-        .iter()
-        .filter(|entity| {
-            entity.entity_type == "saaios.task"
-                && entity.properties.get("status").and_then(Value::as_str)
-                    == Some(TASK_STATUS_WAITING_CONFIRMATION)
-        })
-        .collect()
-}
+/// something `build.rs` can bake in from markup. These functions are
+/// this page's own equivalent of `ROOT_CONTENT_ACTIONS` /
+/// `content_action_rect` / `content_action_at`.
 
 /// Same 190-tall/220-apart stacking `root.sui`'s "Пространства" cards
 /// use (`space-home` top=430, `space-work` top=650, ...), just computed
@@ -2822,20 +2812,6 @@ fn orb_attention_from_entities(entities: &[Entity]) -> bool {
     has_orb_attention(&project_from_entities(entities))
 }
 
-fn inbox_notifications(entities: &[Entity]) -> Vec<&Entity> {
-    entities
-        .iter()
-        .filter(|entity| {
-            entity.entity_type == NOTIFICATION_ENTITY_TYPE
-                && !entity
-                    .properties
-                    .get("dismissed")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-        })
-        .collect()
-}
-
 /// VUI-03: real schedule entries for the "Сегодня" `SystemSection` --
 /// enabled `saaios.schedule` triggers in the space (ADR-036), the closest
 /// real analogue this project has to a calendar/reminder entry. This
@@ -2893,7 +2869,7 @@ fn next_pending_action(entities: &[Entity]) -> Option<&Entity> {
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InboxRowKind {
     Task,
     Notification,
@@ -2901,24 +2877,29 @@ enum InboxRowKind {
 
 /// Tasks first, notifications after -- a task needing confirmation is
 /// more actionable than an informational notice, not sorted by
-/// recency. Shared by rendering (`inbox_content_cards`) and hit-testing
+/// recency. ATTN-03: order and membership come from
+/// `inbox_source_ids()`, the same projection NOW and Orb already use.
+/// Shared by rendering (`inbox_content_cards`) and hit-testing
 /// (`inbox_row_at`) so the two can never disagree about row order.
 fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
-    let mut rows: Vec<(InboxRowKind, &Entity)> = inbox_pending_tasks(entities)
+    let by_id: BTreeMap<_, _> = entities.iter().map(|entity| (entity.id, entity)).collect();
+    inbox_source_ids(entities)
         .into_iter()
-        .map(|entity| (InboxRowKind::Task, entity))
-        .collect();
-    rows.extend(
-        inbox_notifications(entities)
-            .into_iter()
-            .map(|entity| (InboxRowKind::Notification, entity)),
-    );
-    rows
+        .filter_map(|(source, id)| {
+            let entity = *by_id.get(&id)?;
+            let kind = match source {
+                AttentionSource::WorkflowTask { .. } => InboxRowKind::Task,
+                AttentionSource::Notification { .. } => InboxRowKind::Notification,
+            };
+            Some((kind, entity))
+        })
+        .collect()
 }
 
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
-/// `now_items()`, not a second copy of `inbox_rows`. Inbox still uses
-/// `inbox_rows` until ATTN-03. Empty stays omitted, never a placeholder.
+/// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
+/// same projection via `inbox_source_ids` (ATTN-03). Empty stays
+/// omitted, never a placeholder.
 fn now_attention_section(entities: &[Entity]) -> Option<SystemSection> {
     attention_section_from_projection(&project_from_entities(entities))
 }
@@ -8670,6 +8651,34 @@ mod tests {
         projection.items[0].surfaces.now = false;
         assert!(super::attention_section_from_projection(&projection).is_none());
         assert!(super::now_attention_section(&[waiting]).is_some());
+    }
+
+    #[test]
+    fn inbox_rows_follow_the_attention_projection() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let mut running = task_entity("Работает", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let note = notification_entity("Notice", "body");
+        let mut gone = notification_entity("Gone", "old");
+        gone.properties
+            .insert("dismissed".into(), serde_json::Value::Bool(true));
+        let entities = vec![running, waiting.clone(), gone, note.clone()];
+        let rows: Vec<_> = super::inbox_rows(&entities)
+            .into_iter()
+            .map(|(kind, entity)| (kind, entity.id))
+            .collect();
+        let projected: Vec<_> = super::inbox_source_ids(&entities);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, super::InboxRowKind::Task);
+        assert_eq!(rows[0].1, waiting.id);
+        assert_eq!(rows[1].0, super::InboxRowKind::Notification);
+        assert_eq!(rows[1].1, note.id);
+        assert_eq!(
+            rows.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+            projected.iter().map(|(_, id)| *id).collect::<Vec<_>>()
+        );
     }
 
     #[test]

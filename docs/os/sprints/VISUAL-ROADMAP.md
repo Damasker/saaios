@@ -742,9 +742,10 @@ navigation passes restart and cold-boot testing.
 
 ## VUI-05 — Object, Intent, Task, and Worker components
 
-**Status:** In progress (ATTN-02 host: NOW «Требует внимания» reads
-`saai-attention` `now_items()`. Inbox still `inbox_rows` until ATTN-03.
-`IntentSummary`/`TaskSummary` and WORK-08 visibility remain open.)
+**Status:** In progress (ATTN-02 on panther: NOW «Требует внимания»
+reads `saai-attention` `now_items()`. ATTN-03 Inbox uses the same
+projection on host. `IntentSummary`/`TaskSummary` and WORK-08 remain
+open.)
 
 **Depends on:** VUI-04 and the relevant HIA entity/runtime support
 
@@ -758,8 +759,10 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
 ### Tasks
 
 - [x] NOW «Требует внимания» uses `saai-attention` `now_items()` (ATTN-02
-  host). Waiting-confirmation and undismissed notifications only; empty
-  section omitted. Inbox page still uses `inbox_rows` until ATTN-03.
+  host + panther shell `8b3503e`). Waiting-confirmation and undismissed
+  notifications only; empty section omitted.
+- [x] Inbox uses the same projection (`inbox_source_ids`, ATTN-03 host).
+  Hit-test and cards share `inbox_rows`.
 - [ ] Draw and review anatomy, relationship, long-content, and full state sheets
   for each Object/Intent/Task/Agent composite before implementation.
 - [ ] Implement `ObjectSummary`, `IntentSummary`, `TaskSummary`, `AgentSummary`,

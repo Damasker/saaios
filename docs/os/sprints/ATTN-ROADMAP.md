@@ -1,7 +1,7 @@
 # SaaiOS Attention & Proactive Context — delivery roadmap
 
-Status: **ATTN-00/01 host complete. ATTN-02/04 host complete.** Phone:
-ATTN-02 rides VUI-05; ATTN-04 rides VUI-04. See [PIXEL-PATH.md](PIXEL-PATH.md).
+Status: **ATTN-00/01/02/03/04 host complete. ATTN-02 shell прошит.**
+Phone: ATTN-02 rides VUI-05; ATTN-04 rides VUI-04. See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-123](../../adr/ADR-123-attention-projection.md)
 
@@ -19,7 +19,7 @@ No second notification subsystem. No attention database.
 | ATTN-00 | ADR-123 + this roadmap | **Done** | no |
 | ATTN-01 | Pure crate: Task + Notification candidates; inbox parity tests | **Done** (host) | no |
 | ATTN-02 | NOW «Требует внимания» uses projection | **Done** (host) | **yes (VUI-05)** |
-| ATTN-03 | Inbox uses same projection | Backlog | **yes** |
+| ATTN-03 | Inbox uses same projection | **Done** (host) | **yes** |
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
 | ATTN-05 | Context relevance (no AI) | Backlog | no |
 | ATTN-06 | One World Model Health adapter | Backlog | after WORLD Health |
@@ -43,10 +43,21 @@ No second notification subsystem. No attention database.
 **Goal:** NOW «Требует внимания» is `now_items()` from the same projection
 Orb already reads. Not a second `inbox_rows` filter.
 
-**Change:** `now_attention_section` in `saai-shell`. Inbox still uses
-`inbox_rows` until ATTN-03.
+**Change:** `now_attention_section` in `saai-shell`. Inbox follows in ATTN-03.
 
 **Test:** waiting-confirmation + notification rows; running/dismissed
 omitted; `surfaces.now = false` omitted.
 
 **Rollback:** restore the `inbox_rows` loop in `now_sections`.
+
+## ATTN-03
+
+**Goal:** Inbox membership and order are `inbox_source_ids()` from the
+same projection. Hit-test and cards cannot drift.
+
+**Change:** `inbox_rows` is a lookup over the projection, not a second
+Task/Notification filter.
+
+**Test:** `inbox_rows_follow_the_attention_projection`.
+
+**Rollback:** restore the local Task-then-Notification filters.
