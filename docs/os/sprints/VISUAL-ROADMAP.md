@@ -780,7 +780,10 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
   observation, blocker, and confirmation consequence on Object View.
   Missing fields omitted. Permission/history wait for OAM overlay and
   entity events.
-- [ ] Gate actions by capability and policy; explain unavailable actions.
+- [x] Gate Object View actions by OAM + live policy preflight.
+  Unavailable/deny is a permission line, not an invented button.
+  Allow/AskUser do not execute from the shell (taskd remains the
+  path). `display.inspect` is the first real spec.
 - [ ] Implement decision and confirmation overlays that name actor, action,
   object, scope, consequence, and reversibility.
 - [ ] Add manual paths for supported work when AI is offline.

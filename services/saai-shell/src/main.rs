@@ -454,6 +454,10 @@ use saai_attention::{
     has_orb_attention, inbox_source_ids, project_from_entities, AttentionActionability,
     AttentionItem, AttentionProjection, AttentionSource,
 };
+use saai_object_actions::{
+    display_inspect_spec, preflight, ActionAvailability, ActionResolution, ActionResolveContext,
+    ObjectActionRegistry,
+};
 use saai_ui_core::{
     layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, IntentSummary, LayoutNode,
     Length, LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
@@ -2037,8 +2041,8 @@ fn object_view_action_at(
 /// own negative scenario: still a real title and a non-empty status
 /// line, never blank, never a crash, just no type-specific actions.
 /// `state` is the shared UniversalState mapping; optional facts are
-/// omitted rather than invented. Permission/history wait for OAM
-/// and entity events.
+/// omitted rather than invented. Permission is OAM/policy: unavailable
+/// or deny, never an invented button. History waits for entity events.
 struct ObjectViewContent {
     title: String,
     state: UniversalState,
@@ -2048,6 +2052,7 @@ struct ObjectViewContent {
     observation: Option<String>,
     blocker: Option<String>,
     consequence: Option<String>,
+    permission: Option<String>,
     actions: Vec<&'static str>,
 }
 
@@ -2118,6 +2123,7 @@ fn object_view_content(
             observation: None,
             blocker: None,
             consequence: None,
+            permission: object_view_permission(entity),
             actions: vec!["Скрыть"],
         },
         _ => {
@@ -2140,6 +2146,7 @@ fn object_view_content(
                 observation: None,
                 blocker: None,
                 consequence: None,
+                permission: object_view_permission(entity),
                 actions: Vec::new(),
             }
         }
@@ -2152,10 +2159,77 @@ fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
         content.observation.clone(),
         content.blocker.clone(),
         content.consequence.clone(),
+        content.permission.clone(),
     ]
     .into_iter()
     .flatten()
     .collect()
+}
+
+fn builtin_object_actions() -> ObjectActionRegistry {
+    let mut registry = ObjectActionRegistry::new();
+    let _ = registry.register(display_inspect_spec());
+    registry
+}
+
+fn object_view_permission(entity: &Entity) -> Option<String> {
+    object_view_permission_with(
+        entity,
+        &builtin_object_actions(),
+        &tool_registry::ToolRegistry::new(),
+        &policy_engine::PolicyEngine::new(),
+    )
+}
+
+fn object_view_permission_with(
+    entity: &Entity,
+    registry: &ObjectActionRegistry,
+    tools: &tool_registry::ToolRegistry,
+    policy: &policy_engine::PolicyEngine,
+) -> Option<String> {
+    let context = ActionResolveContext {
+        space_id: Some(entity.space_id.clone()),
+    };
+    let mut permission = None;
+    for resolution in registry.resolve_for(entity, &context, tools) {
+        let line = match resolution {
+            ActionResolution::Ambiguous { action_id, .. } => {
+                Some(format!("Неоднозначно: {action_id}"))
+            }
+            ActionResolution::Resolved(action) => match action.availability {
+                ActionAvailability::Unavailable { reason } => {
+                    Some(format!("{}: {}", action.title, explain_oam_reason(&reason)))
+                }
+                ActionAvailability::Available => {
+                    let decision = preflight(policy, tools, &action);
+                    match decision.verdict {
+                        protocol::PolicyVerdict::Deny => Some(format!(
+                            "{}: {}",
+                            action.title,
+                            explain_oam_reason(&decision.reason)
+                        )),
+                        protocol::PolicyVerdict::AskUser | protocol::PolicyVerdict::Allow => None,
+                    }
+                }
+            },
+        };
+        if permission.is_none() {
+            permission = line;
+        }
+    }
+    permission
+}
+
+fn explain_oam_reason(reason: &str) -> String {
+    if reason == "provider tool unavailable" {
+        "нет инструмента".to_string()
+    } else if reason.starts_with("missing object property:") {
+        "нет данных объекта".to_string()
+    } else if reason.starts_with("missing context space_id") {
+        "нет пространства".to_string()
+    } else {
+        reason.to_string()
+    }
 }
 
 fn related_object_line(
@@ -3371,6 +3445,7 @@ fn finish_workflow_view(
             .task
             .and_then(|task| task_blocker_caption(task, entities)),
         consequence: workflow_consequence(entity, &lineage),
+        permission: object_view_permission(entity),
         actions,
     }
 }
@@ -9269,6 +9344,7 @@ mod tests {
         assert_eq!(content.observation, None);
         assert_eq!(content.blocker, None);
         assert_eq!(content.consequence, None);
+        assert_eq!(content.permission, None);
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
     }
 
@@ -9450,6 +9526,27 @@ mod tests {
             content.consequence.as_deref(),
             Some("Завершить процесс 999")
         );
+        assert_eq!(content.permission, None);
+        assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+    }
+
+    #[test]
+    fn object_view_explains_unavailable_oam_without_inventing_a_button() {
+        let mut display = test_entity("saaios.display", serde_json::Map::new());
+        display.title = "Экран".to_string();
+        let content = object_view_content(&display, &[display.clone()], &[]);
+        assert_eq!(
+            content.permission.as_deref(),
+            Some("Состояние экрана: нет инструмента")
+        );
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_omits_oam_permission_when_no_spec_applies() {
+        let task = task_entity("Обычная задача", None);
+        let content = object_view_content(&task, &[task.clone()], &[]);
+        assert_eq!(content.permission, None);
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
     }
 

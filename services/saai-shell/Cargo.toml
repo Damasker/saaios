@@ -27,6 +27,10 @@ chrono.workspace = true
 saai-portal-protocol.workspace = true
 saai-ui-core.workspace = true
 saai-attention.workspace = true
+saai-object-actions.workspace = true
+policy-engine.workspace = true
+protocol.workspace = true
+tool-registry.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 # xkbcommon disabled: no physical keyboard on this device (ADR-012 made
