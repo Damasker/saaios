@@ -69,8 +69,11 @@ gauge on this page.
    name, state, grants; no revoke button. No new draw path.
 2. **`me_system_sections`** groups the same 19 controls into device
    domains: Устройство, Экран, Звук, Связь, Приватность, Пространство,
-   Интерфейс, and Приложения only when apps exist. Empty sections
-   omitted. Existing `SystemSection` is the grouping composite.
+   Интерфейс, and Приложения when apps exist or `appd` is down
+   («Нет связи»). Empty-and-connected omits the section. Missing
+   Wi-Fi/Bluetooth hardware is «Нет адаптера»; store down makes space
+   color a readout. Empty sections omitted otherwise. Existing
+   `SystemSection` is the grouping composite.
 3. **Hit-test by dispatch key** carried on the row, not
    `me_fixed_card_action(index)`. Section headers are inert.
 4. **Flatten to `ActionCardView`** for the current `draw_root` list so

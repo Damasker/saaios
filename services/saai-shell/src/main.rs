@@ -1101,6 +1101,14 @@ fn wifi_is_up() -> bool {
         .unwrap_or(false)
 }
 
+fn wifi_adapter_present() -> bool {
+    std::path::Path::new("/sys/class/net/wlan0").exists()
+}
+
+fn bluetooth_adapter_present() -> bool {
+    std::path::Path::new(BT_SCAN_BIN).exists()
+}
+
 /// S19: real, unlike S18's `apply_volume`. `native-init.c`'s
 /// `setup_wifi` already starts a live `wpa_supplicant` against
 /// `/saaios/wpa_supplicant.conf` (`update_config=1`) with its control
@@ -3946,7 +3954,9 @@ struct MeFacts {
     boot_attempts: u32,
     volume_pct: u8,
     wifi_status: String,
+    wifi_present: bool,
     bluetooth_paired: usize,
+    bluetooth_present: bool,
     pin_set: bool,
     text_scale_pct: u8,
     contrast_pct: u8,
@@ -3956,6 +3966,8 @@ struct MeFacts {
     space_name: String,
     orb_enabled: bool,
     reduced_motion: bool,
+    entityd_connected: bool,
+    appd_connected: bool,
     apps: Vec<MeAppFact>,
 }
 
@@ -4069,13 +4081,21 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         me_section_data(
             "Связь",
             vec![
-                SettingRow::open("Wi-Fi", facts.wifi_status.clone(), "open_wifi_list").row,
-                SettingRow::open(
-                    "Bluetooth",
-                    format!("Сопряжено устройств: {}", facts.bluetooth_paired),
-                    "open_bluetooth_list",
-                )
-                .row,
+                if facts.wifi_present {
+                    SettingRow::open("Wi-Fi", facts.wifi_status.clone(), "open_wifi_list").row
+                } else {
+                    SettingRow::readout("Wi-Fi", "Нет адаптера").row
+                },
+                if facts.bluetooth_present {
+                    SettingRow::open(
+                        "Bluetooth",
+                        format!("Сопряжено устройств: {}", facts.bluetooth_paired),
+                        "open_bluetooth_list",
+                    )
+                    .row
+                } else {
+                    SettingRow::readout("Bluetooth", "Нет адаптера").row
+                },
                 SettingRow::cycle(
                     "Удалённый доступ (SSH)",
                     remote_status,
@@ -4096,14 +4116,16 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         ),
         me_section_data(
             "Пространство",
-            vec![
+            vec![if facts.entityd_connected {
                 SettingRow::cycle(
                     "Цвет пространства",
                     format!("{} · {}", facts.space_color_label, facts.space_name),
                     "cycle_space_color",
                 )
-                .row,
-            ],
+                .row
+            } else {
+                SettingRow::readout("Цвет пространства", "Нет связи").row
+            }],
         ),
         me_section_data(
             "Интерфейс",
@@ -4122,6 +4144,11 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
             })
             .collect();
         sections.push(me_section_data("Приложения", rows));
+    } else if !facts.appd_connected {
+        sections.push(me_section_data(
+            "Приложения",
+            vec![SettingRow::readout("Приложения", "Нет связи").row],
+        ));
     }
     sections
 }
@@ -4208,7 +4235,9 @@ fn me_fixture_facts() -> MeFacts {
         boot_attempts: 1,
         volume_pct: 40,
         wifi_status: "Wallbox".into(),
+        wifi_present: true,
         bluetooth_paired: 0,
+        bluetooth_present: true,
         pin_set: false,
         text_scale_pct: 100,
         contrast_pct: 0,
@@ -4218,6 +4247,8 @@ fn me_fixture_facts() -> MeFacts {
         space_name: "Дом".into(),
         orb_enabled: true,
         reduced_motion: false,
+        entityd_connected: true,
+        appd_connected: true,
         apps: Vec::new(),
     }
 }
@@ -7045,7 +7076,9 @@ impl Shell {
             boot_attempts: boot_attempts(),
             volume_pct: self.settings.volume_pct,
             wifi_status: wifi_status_line(),
+            wifi_present: wifi_adapter_present(),
             bluetooth_paired: bluetooth_paired_count(),
+            bluetooth_present: bluetooth_adapter_present(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
             contrast_pct: self.settings.contrast_pct,
@@ -7057,6 +7090,8 @@ impl Shell {
             space_name: space_display_name(&self.spaces, &self.selected_space_id),
             orb_enabled: self.settings.orb_enabled,
             reduced_motion: self.settings.reduced_motion,
+            entityd_connected: self.entityd.is_connected(),
+            appd_connected: self.appd.is_connected(),
             apps,
         }
     }
@@ -10438,7 +10473,9 @@ mod tests {
             .expect("build-info silent tap");
         assert!(build.card.action.is_empty());
         assert!(!build.card.status.contains("ядро"));
-        assert!(!rows.iter().any(|row| row.card.status.contains("попыток загрузки")));
+        assert!(!rows
+            .iter()
+            .any(|row| row.card.status.contains("попыток загрузки")));
         assert!(rows
             .iter()
             .any(|row| row.dispatch == Some("toggle_reduced_motion")));
@@ -10468,6 +10505,85 @@ mod tests {
             .expect("app row");
         assert!(app.dispatch.is_none());
         assert!(app.card.status.contains("без разрешений"));
+    }
+
+    #[test]
+    fn me_system_sections_name_missing_hardware_and_offline_services() {
+        let mut facts = me_fixture_facts();
+        facts.wifi_present = false;
+        facts.bluetooth_present = false;
+        facts.entityd_connected = false;
+        facts.appd_connected = false;
+        let rows = flatten_me_rows(&me_system_sections(&facts));
+        let wifi = rows
+            .iter()
+            .find(|row| row.card.label == "Wi-Fi")
+            .expect("wifi");
+        assert_eq!(wifi.card.status, "Нет адаптера");
+        assert!(wifi.dispatch.is_none());
+        let bluetooth = rows
+            .iter()
+            .find(|row| row.card.label == "Bluetooth")
+            .expect("bt");
+        assert_eq!(bluetooth.card.status, "Нет адаптера");
+        assert!(bluetooth.dispatch.is_none());
+        let color = rows
+            .iter()
+            .find(|row| row.card.label == "Цвет пространства")
+            .expect("space color");
+        assert_eq!(color.card.status, "Нет связи");
+        assert!(color.dispatch.is_none());
+        let apps = rows
+            .iter()
+            .find(|row| row.card.label == "Приложения" && row.card.status == "Нет связи")
+            .expect("apps offline");
+        assert!(apps.dispatch.is_none());
+        assert!(!rows
+            .iter()
+            .any(|row| row.dispatch == Some("open_wifi_list")));
+        assert!(!rows
+            .iter()
+            .any(|row| row.dispatch == Some("cycle_space_color")));
+    }
+
+    #[test]
+    fn me_system_sections_keep_cycle_rows_instead_of_gauges() {
+        let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
+        let blob = rows
+            .iter()
+            .map(|row| format!("{} {}", row.card.label, row.card.status))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(blob.contains("Яркость экрана"));
+        assert!(blob.contains("Громкость"));
+        assert!(!blob.contains("Progress"));
+        assert!(!blob.contains("% CPU"));
+        assert!(rows
+            .iter()
+            .any(|row| row.dispatch == Some("cycle_brightness")));
+        assert!(rows.iter().any(|row| row.dispatch == Some("cycle_volume")));
+    }
+
+    #[test]
+    fn me_long_app_list_can_scroll_without_entering_nav() {
+        let mut facts = me_fixture_facts();
+        facts.apps = (0..20)
+            .map(|index| super::MeAppFact {
+                name: format!("Приложение {index}"),
+                state: "остановлено".into(),
+                grants: "без разрешений".into(),
+            })
+            .collect();
+        let total = flatten_me_rows(&me_system_sections(&facts)).len();
+        let width = 1080;
+        let height = 2400;
+        let content = super::root_content_rect(width, height);
+        let nav = super::root_navigation_rect(width, height);
+        let max_offset = super::me_max_scroll_offset(total, width, height, content);
+        assert!(max_offset > 0);
+        if let Some(row) = super::scrolled_row_rect(total - 1, width, height, max_offset, content) {
+            assert!(row.intersection(nav).is_none());
+        }
     }
 
     #[test]

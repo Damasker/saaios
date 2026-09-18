@@ -85,7 +85,7 @@ host-only derived view.
 |---|---|
 | VUI-04 remainder | `Я`→`Система` (blocked). SafeInsets, rotation, keyboard, rapid-tab on host |
 | VUI-05 | NOW ATTN-02, Inbox ATTN-03, WORK-08 **на panther** (`63b8b64`); Object View + offline + `AgentSummary` + gallery **host** |
-| VUI-06 `Система` | inventory + domain grouping **host** (ADR-126); MEM-08 still blocked (no shell-legal memory read) |
+| VUI-06 `Система` | inventory + domain grouping + honest missing/offline **host** (ADR-126); MEM-08 still blocked; tab still `Я` |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

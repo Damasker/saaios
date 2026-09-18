@@ -851,13 +851,22 @@ a concise engineering-oriented surface.
   Host: `Устройство` leads with model+storage; kernel/uptime/entity
   counts/boot attempts live on `DevSurface` (HIA-20). No invented health
   cluster.
-- [ ] Use gauges only when a continuous value informs a real decision.
-- [ ] Provide explicit states for missing hardware, denied permission, offline
+- [x] Use gauges only when a continuous value informs a real decision.
+  Brightness and volume stay cycle rows. Battery stays on the status
+  layer. No Progress/Metric on `Я`.
+- [x] Provide explicit states for missing hardware, denied permission, offline
   service, stale telemetry, and restart/recovery.
-- [ ] Preserve the accepted coalesced drag behavior and fixed status/navigation
-  layers.
-- [ ] Add tests for long lists, rapid drag, interruption, service restart, and
+  Host: missing Wi-Fi/Bluetooth adapter → «Нет адаптера» (no list).
+  `entityd`/`appd` down → «Нет связи» (space color; Приложения).
+  Empty grants stay «без разрешений». No stale clock (no source).
+  Recovery is the existing Wi-Fi/Bluetooth/PIN/SSH frames, not a reboot
+  row.
+- [x] Preserve the accepted coalesced drag behavior and fixed status/navigation
+  layers. Unchanged `me_scroll_dirty` path; long app list still misses nav.
+- [x] Add tests for long lists, rapid drag, interruption, service restart, and
   actions that change device state.
+  Host: long app list scroll + missing-adapter/offline rows + existing
+  rapid-tab and `next_in_cycle`. Service restart remains a device check.
 
 ### Acceptance
 
@@ -1049,6 +1058,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-06**: healthy summaries / progressive disclosure on `Я`,
-then rename `Я`→`Система` only when that destination is truthful.
-MEM-08 stays omitted until a shell-legal memory read exists.
+Finish **VUI-06** destination: rename `Я`→`Система` only when the page
+is accepted as truthful on Pixel. MEM-08 stays omitted until a
+shell-legal memory read exists. Remaining: explicit unavailable states
+on device, then the rename.
