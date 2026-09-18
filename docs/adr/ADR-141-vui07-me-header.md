@@ -4,7 +4,7 @@
 
 Принято, 2026-09-19. «Система» paints through `ContextHeader`
 instead of `draw_root`'s concatenated `context · title` bar.
-Host-green; panther hash follows flash. Consent, remote pairing,
+Host-green; panther `15fc3487…`. Consent, remote pairing,
 PIN keypad chrome, and Space detail are not this slice.
 
 ## Нумерация
