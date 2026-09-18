@@ -478,6 +478,80 @@ pub fn draw_intent_input(
     }
 }
 
+/// VUI-07 (ADR-132): Wi-Fi password reuses the intent keyboard keys
+/// but previews a `Field` (masked unless revealed) and sits both
+/// lines below the 120px PIXEL_7 status layer, same inset as
+/// `draw_action_row_list`. Intent input keeps `draw_intent_input`.
+pub fn draw_wifi_password(
+    canvas: &mut Canvas<'_>,
+    field: &Field,
+    header: Rect,
+    keys: &[(Rect, String)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.fill_rect(header, theme_color(ColorRole::Surface));
+
+    let Some(fonts) = fonts else {
+        for (rect, _) in keys {
+            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
+        }
+        return;
+    };
+
+    draw_text(
+        canvas,
+        &fonts.semibold,
+        &field.label,
+        42.0,
+        header.x + 30,
+        header.y + 140,
+        theme_color(ColorRole::TextPrimary),
+    );
+    let empty = field.is_empty();
+    let preview = if empty {
+        field
+            .placeholder
+            .clone()
+            .unwrap_or_else(|| "Введите пароль…".to_string())
+    } else {
+        field.accessible_value()
+    };
+    let preview_color = if empty {
+        theme_color(ColorRole::TextSecondary)
+    } else {
+        theme_color(ColorRole::TextPrimary)
+    };
+    draw_text(
+        canvas,
+        &fonts.regular,
+        &preview,
+        34.0,
+        header.x + 30,
+        header.y + 200,
+        preview_color,
+    );
+
+    for (rect, label) in keys {
+        let key = Rect::new(
+            rect.x.saturating_add(4),
+            rect.y.saturating_add(4),
+            rect.width.saturating_sub(8),
+            rect.height.saturating_sub(8),
+        );
+        canvas.fill_rect(key, theme_color(ColorRole::Surface));
+        draw_keypad_label(
+            canvas,
+            fonts,
+            label,
+            32.0,
+            key.x + key.width / 2,
+            key.y + key.height / 2 - 18,
+            theme_color(ColorRole::TextPrimary),
+        );
+    }
+}
+
 /// HIA-07: one screen for any entity, instead of a dedicated view per
 /// `entity_type` (this replaced the previous, `saaios.task`-only
 /// `draw_task_confirm`, same header-plus-buttons shape and

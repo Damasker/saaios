@@ -460,11 +460,11 @@ use saai_object_actions::{
 };
 use saai_ui_core::{
     layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
-    DataRowVariant, DecisionOverlay, EventRow, IntentSummary, LayoutNode, Length, LogicalUnit,
-    MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets,
-    SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale,
-    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState,
-    WifiRow, MIN_TOUCH_TARGET,
+    DataRowVariant, DecisionOverlay, EventRow, Field, FieldKind, IntentSummary, LayoutNode, Length,
+    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
+    SafeInsets, SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark,
+    SurfaceScale, SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow,
+    UniversalState, WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1989,8 +1989,7 @@ enum Frame {
         keys: Vec<(Rect, String)>,
     },
     WifiPasswordInput {
-        ssid: String,
-        buffer: String,
+        field: Field,
         header: Rect,
         keys: Vec<(Rect, String)>,
     },
@@ -3980,6 +3979,15 @@ fn wifi_card_from_row(row: &WifiRow) -> render::ActionCardView {
         ""
     };
     render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.connected)
+}
+
+/// VUI-07 (ADR-132): password preview is a `Field`, not a second
+/// hand-rolled mask. Revealed stays false; the PSK never becomes the
+/// accessible value.
+fn wifi_password_field(ssid: &str, buffer: &str) -> Field {
+    Field::new(format!("Пароль для «{ssid}»"), FieldKind::Password)
+        .with_value(buffer)
+        .with_placeholder("Введите пароль…")
 }
 
 /// VUI-07 (ADR-130): «Bluetooth устройства» lists live `bt-scan`
@@ -6007,8 +6015,7 @@ impl Shell {
             // see `WifiPasswordState`'s doc comment.
             let (header, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::WifiPasswordInput {
-                ssid: state.ssid.clone(),
-                buffer: state.buffer.clone(),
+                field: wifi_password_field(&state.ssid, &state.buffer),
                 header,
                 keys,
             }
@@ -6339,21 +6346,13 @@ impl Shell {
                     );
                 }
                 Frame::WifiPasswordInput {
-                    ssid,
-                    buffer,
+                    field,
                     header,
                     keys,
                 } => {
-                    // Password preview is masked (unlike the intent
-                    // keyboard's plaintext echo) -- what's actually typed
-                    // stays in `buffer`/`state.buffer`, only the on-screen
-                    // preview substitutes a dot per character.
-                    let masked: String = buffer.chars().map(|_| '•').collect();
-                    render::draw_intent_input(
+                    render::draw_wifi_password(
                         &mut render::Canvas::new(canvas, width, height),
-                        &format!("Пароль для «{ssid}»"),
-                        &masked,
-                        None,
+                        &field,
                         header,
                         &keys,
                         fonts,
@@ -8664,13 +8663,13 @@ mod tests {
         space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
         today_schedules, trusted_client_action_at, trusted_client_card_from_row,
         trusted_client_list_rows, upsert_context_entry, wifi_card_from_row, wifi_list_action_at,
-        wifi_list_rows, AgentSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
-        ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space,
-        SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
-        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        wifi_list_rows, wifi_password_field, AgentSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, Entity, FieldKind, KeyboardMode, OrbAction, Rect,
+        RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -9973,6 +9972,26 @@ mod tests {
         assert_eq!(empty[0].row.primary, "Нет сетей");
         assert!(!empty[0].row.is_actionable());
         assert_eq!(wifi_card_from_row(&empty[0]).action, "");
+    }
+
+    #[test]
+    fn wifi_password_field_masks_psk_and_keeps_ssid_in_the_label() {
+        let field = wifi_password_field("Wallbox", "secret");
+        assert_eq!(field.kind, FieldKind::Password);
+        assert!(!field.revealed);
+        assert_eq!(field.label, "Пароль для «Wallbox»");
+        assert_eq!(field.value, "secret");
+        assert_eq!(
+            field.accessible_value(),
+            "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"
+        );
+        assert!(!field.accessible_value().contains("secret"));
+        assert!(!field.label.contains("secret"));
+
+        let empty = wifi_password_field("Guest", "");
+        assert!(empty.is_empty());
+        assert_eq!(empty.placeholder.as_deref(), Some("Введите пароль…"));
+        assert_eq!(empty.accessible_value(), "");
     }
 
     #[test]
