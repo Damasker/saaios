@@ -1,9 +1,9 @@
 //! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
-//! `EventRow`/`SpaceRow`/`WifiRow`. No live telemetry.
+//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`. No live telemetry.
 
 use crate::{
-    AgentSummary, ContextHeader, DecisionOverlay, EventRow, IntentSummary, ObjectSummary, SpaceRow,
-    StatusIndicator, TaskSummary, UniversalState, WifiRow,
+    AgentSummary, BluetoothRow, ContextHeader, DecisionOverlay, EventRow, IntentSummary,
+    ObjectSummary, SpaceRow, StatusIndicator, TaskSummary, UniversalState, WifiRow,
 };
 
 pub struct CompositeGalleryFixtures {
@@ -22,6 +22,9 @@ pub struct CompositeGalleryFixtures {
     pub wifi_connected: WifiRow,
     pub wifi_other: WifiRow,
     pub wifi_empty: WifiRow,
+    pub bluetooth_paired: BluetoothRow,
+    pub bluetooth_other: BluetoothRow,
+    pub bluetooth_empty: BluetoothRow,
     pub states: [StatusIndicator; 9],
 }
 
@@ -47,6 +50,9 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
         wifi_connected: WifiRow::open("Wallbox", "защищена · -42 dBm", true),
         wifi_other: WifiRow::open("Guest", "открыта · -70 dBm", false),
         wifi_empty: WifiRow::empty(),
+        bluetooth_paired: BluetoothRow::open("Pixel Buds", "BLE", true),
+        bluetooth_other: BluetoothRow::open("Speaker", "CLASSIC", false),
+        bluetooth_empty: BluetoothRow::empty(),
         states: UniversalState::ALL
             .map(|state| StatusIndicator::new(state, state_fixture_label(state))),
     }
@@ -115,8 +121,11 @@ mod tests {
         assert!(fixtures.wifi_connected.connected);
         assert!(!fixtures.wifi_other.connected);
         assert_eq!(fixtures.wifi_empty.row.primary, "Нет сетей");
+        assert!(fixtures.bluetooth_paired.paired);
+        assert!(!fixtures.bluetooth_other.paired);
+        assert_eq!(fixtures.bluetooth_empty.row.primary, "Нет устройств");
         let blob = format!(
-            "{} {} {} {} {} {} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {} {} {} {} {} {}",
             fixtures.title,
             fixtures.header.context_name,
             fixtures.object.title,
@@ -128,7 +137,8 @@ mod tests {
             fixtures.space_selected.row.primary,
             fixtures.space_other.row.primary,
             fixtures.wifi_connected.row.primary,
-            fixtures.wifi_empty.row.primary
+            fixtures.wifi_empty.row.primary,
+            fixtures.bluetooth_paired.row.primary
         );
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));

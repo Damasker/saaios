@@ -459,7 +459,7 @@ use saai_object_actions::{
     ObjectActionRegistry,
 };
 use saai_ui_core::{
-    layout, AgentSummary, Axis, CapabilityRow, ContextColor, ContextHeader, DataRow,
+    layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
     DataRowVariant, DecisionOverlay, EventRow, IntentSummary, LayoutNode, Length, LogicalUnit,
     MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets,
     SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale,
@@ -1359,13 +1359,17 @@ fn bluetooth_status_summary() -> String {
 }
 
 fn bluetooth_paired_count() -> usize {
+    bluetooth_saved_names().len()
+}
+
+fn bluetooth_saved_names() -> Vec<String> {
     std::fs::read_to_string(BT_SAVED_LOG_PATH)
         .map(|text| {
             text.lines()
-                .filter(|line| line.starts_with("SAVED\t"))
-                .count()
+                .filter_map(|line| line.strip_prefix("SAVED\t").map(str::to_string))
+                .collect()
         })
-        .unwrap_or(0)
+        .unwrap_or_default()
 }
 
 /// The fuel gauge's own power_supply node is named `maxfg`, not
@@ -1840,24 +1844,34 @@ enum BluetoothListTap {
     Back,
 }
 
+fn bluetooth_list_row_count(device_count: usize, scan_done: bool) -> usize {
+    if device_count == 0 && scan_done {
+        1
+    } else {
+        device_count
+    }
+}
+
 fn bluetooth_list_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     device_count: usize,
+    scan_done: bool,
 ) -> Option<BluetoothListTap> {
     for index in 0..device_count {
         if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
             return Some(BluetoothListTap::Device(index));
         }
     }
-    if stacked_row_rect(device_count, width, height).contains(pos.0, pos.1) {
+    let controls = bluetooth_list_row_count(device_count, scan_done);
+    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
         return Some(BluetoothListTap::Scan);
     }
-    if stacked_row_rect(device_count + 1, width, height).contains(pos.0, pos.1) {
+    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
         return Some(BluetoothListTap::Refresh);
     }
-    if stacked_row_rect(device_count + 2, width, height).contains(pos.0, pos.1) {
+    if stacked_row_rect(controls + 2, width, height).contains(pos.0, pos.1) {
         return Some(BluetoothListTap::Back);
     }
     None
@@ -1979,7 +1993,7 @@ enum Frame {
     BluetoothList {
         header: Rect,
         status_line: String,
-        rows: Vec<(Rect, String)>,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
     TrustedClients {
         header: Rect,
@@ -3959,6 +3973,45 @@ fn wifi_card_from_row(row: &WifiRow) -> render::ActionCardView {
     render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.connected)
 }
 
+/// VUI-07 (ADR-130): «Bluetooth устройства» lists live `bt-scan`
+/// rows. Empty only after `DONE`. Paired is a SAVED name.
+fn bluetooth_list_rows(
+    devices: &[BluetoothDevice],
+    scan_done: bool,
+    saved: &[String],
+) -> Vec<BluetoothRow> {
+    if devices.is_empty() {
+        if scan_done {
+            return vec![BluetoothRow::empty()];
+        }
+        return Vec::new();
+    }
+    devices
+        .iter()
+        .map(|device| {
+            BluetoothRow::open(
+                device.name.clone(),
+                device.transport.clone(),
+                saved.iter().any(|name| name == &device.name),
+            )
+        })
+        .collect()
+}
+
+fn bluetooth_card_from_row(row: &BluetoothRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        if row.paired {
+            "Сопряжено"
+        } else {
+            "Сопрячь"
+        }
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.paired)
+}
+
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
 /// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
@@ -5533,12 +5586,14 @@ impl TouchHandler for Shell {
                 // while "Bluetooth устройства" is open. Recomputes the
                 // device count fresh (see `bluetooth_list_open`'s doc
                 // comment) rather than reading a stored snapshot.
-                let device_count = bluetooth_scan_results().0.len();
+                let (devices, done) = bluetooth_scan_results();
+                let device_count = devices.len();
                 if let Some(tap) = bluetooth_list_action_at(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     device_count,
+                    done,
                 ) {
                     self.handle_bluetooth_list_tap(tap, conn, qh);
                 }
@@ -5946,35 +6001,34 @@ impl Shell {
                 rows,
             }
         } else if self.bluetooth_list_open {
-            // S20: same runtime-sized-list shape as the Wi-Fi branch
-            // above, but rows/status are recomputed straight from
-            // disk each time (see `bluetooth_list_open`'s doc
-            // comment) instead of reading a stored snapshot.
+            // S20 / ADR-130: runtime-sized BluetoothRow list plus
+            // trailing scan/refresh/back cards.
             let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
-            let (devices, _done) = bluetooth_scan_results();
-            let mut rows: Vec<(Rect, String)> = devices
+            let (devices, done) = bluetooth_scan_results();
+            let saved = bluetooth_saved_names();
+            let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved);
+            let mut rows: Vec<(Rect, render::ActionCardView)> = bluetooth_rows
                 .iter()
                 .enumerate()
-                .map(|(index, device)| {
-                    let label = if device.transport.is_empty() {
-                        device.name.clone()
-                    } else {
-                        format!("{}   ·   {}", device.name, device.transport)
-                    };
-                    (stacked_row_rect(index, width, height), label)
+                .map(|(index, row)| {
+                    (
+                        stacked_row_rect(index, width, height),
+                        bluetooth_card_from_row(row),
+                    )
                 })
                 .collect();
+            let controls = rows.len();
             rows.push((
-                stacked_row_rect(devices.len(), width, height),
-                "Искать устройства (~8 с)".to_string(),
+                stacked_row_rect(controls, width, height),
+                render::ActionCardView::new("Искать устройства", "~8 с", "Искать"),
             ));
             rows.push((
-                stacked_row_rect(devices.len() + 1, width, height),
-                "Обновить список".to_string(),
+                stacked_row_rect(controls + 1, width, height),
+                render::ActionCardView::new("Обновить список", "", "Обновить"),
             ));
             rows.push((
-                stacked_row_rect(devices.len() + 2, width, height),
-                "Назад".to_string(),
+                stacked_row_rect(controls + 2, width, height),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::BluetoothList {
                 header,
@@ -6291,7 +6345,7 @@ impl Shell {
                     status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_action_row_list(
                         &mut render::Canvas::new(canvas, width, height),
                         "Bluetooth устройства",
                         &status_line,
@@ -8565,17 +8619,18 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        bluetooth_list_action_at, calibration_requested, capability_label, consent_action_at,
-        content_action_at, dev_surface_back_tapped, effective_context_space, ensure_me_row_cache,
-        flatten_me_rows, format_utc_offset, in_progress_work, input_idle_for_at_least,
-        intent_action_at, known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle,
-        next_pending_action, object_view_action_at, object_view_content, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pressed_tab_from_touch, remove_context_source, space_color, space_color_entity,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_list_rows, space_relation_targets, space_row_at, stacked_row_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at, upsert_context_entry,
-        wifi_card_from_row, wifi_list_action_at, wifi_list_rows, AgentSummary, BluetoothListTap,
+        bluetooth_card_from_row, bluetooth_list_action_at, bluetooth_list_rows,
+        calibration_requested, capability_label, consent_action_at, content_action_at,
+        dev_surface_back_tapped, effective_context_space, ensure_me_row_cache, flatten_me_rows,
+        format_utc_offset, in_progress_work, input_idle_for_at_least, intent_action_at,
+        known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle, next_pending_action,
+        object_view_action_at, object_view_content, orb_action_at, orb_attention_from_entities,
+        orb_menu_actions, orb_visual_state, orb_zone_rect, pressed_tab_from_touch,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
+        today_schedules, trusted_client_action_at, upsert_context_entry, wifi_card_from_row,
+        wifi_list_action_at, wifi_list_rows, AgentSummary, BluetoothDevice, BluetoothListTap,
         ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage,
         SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClientTap,
         UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
@@ -9408,20 +9463,31 @@ mod tests {
             )
         };
         assert!(matches!(
-            bluetooth_list_action_at(center(device_0), width, height, device_count),
+            bluetooth_list_action_at(center(device_0), width, height, device_count, false),
             Some(BluetoothListTap::Device(0))
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(scan), width, height, device_count),
+            bluetooth_list_action_at(center(scan), width, height, device_count, false),
             Some(BluetoothListTap::Scan)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(refresh), width, height, device_count),
+            bluetooth_list_action_at(center(refresh), width, height, device_count, false),
             Some(BluetoothListTap::Refresh)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(back), width, height, device_count),
+            bluetooth_list_action_at(center(back), width, height, device_count, false),
             Some(BluetoothListTap::Back)
+        ));
+        let empty = stacked_row_rect(0, width, height);
+        let scan_empty = stacked_row_rect(1, width, height);
+        assert!(bluetooth_list_action_at(center(empty), width, height, 0, true).is_none());
+        assert!(matches!(
+            bluetooth_list_action_at(center(scan_empty), width, height, 0, true),
+            Some(BluetoothListTap::Scan)
+        ));
+        assert!(matches!(
+            bluetooth_list_action_at(center(empty), width, height, 0, false),
+            Some(BluetoothListTap::Scan)
         ));
     }
 
@@ -9866,6 +9932,41 @@ mod tests {
         assert_eq!(empty[0].row.primary, "Нет сетей");
         assert!(!empty[0].row.is_actionable());
         assert_eq!(wifi_card_from_row(&empty[0]).action, "");
+    }
+
+    #[test]
+    fn bluetooth_list_rows_use_scan_facts_and_name_empty_only_after_done() {
+        let devices = vec![
+            BluetoothDevice {
+                name: "Pixel Buds".into(),
+                transport: "BLE".into(),
+            },
+            BluetoothDevice {
+                name: "Speaker".into(),
+                transport: String::new(),
+            },
+        ];
+        let saved = vec!["Pixel Buds".to_string()];
+        let live = bluetooth_list_rows(&devices, true, &saved);
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.primary, "Pixel Buds");
+        assert!(live[0].paired);
+        assert_eq!(live[0].row.value.as_deref(), Some("BLE"));
+        assert_eq!(bluetooth_card_from_row(&live[0]).action, "Сопряжено");
+        assert_eq!(live[1].row.primary, "Speaker");
+        assert!(!live[1].paired);
+        assert!(live[1].row.value.is_none());
+        assert_eq!(bluetooth_card_from_row(&live[1]).action, "Сопрячь");
+        assert!(!live.iter().any(|row| row.row.primary.contains("dBm")
+            || row.row.value.as_deref().unwrap_or("").contains("RSSI")));
+
+        let pending = bluetooth_list_rows(&[], false, &saved);
+        assert!(pending.is_empty());
+        let empty = bluetooth_list_rows(&[], true, &saved);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].row.primary, "Нет устройств");
+        assert!(!empty[0].row.is_actionable());
+        assert_eq!(bluetooth_card_from_row(&empty[0]).action, "");
     }
 
     #[test]

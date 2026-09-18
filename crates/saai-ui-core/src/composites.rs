@@ -6,7 +6,8 @@
 //! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
-//! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`/`WifiRow`.
+//! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`/`WifiRow`/
+//! `BluetoothRow`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
@@ -706,6 +707,39 @@ impl WifiRow {
     }
 }
 
+/// Section 7.15. One scanned Bluetooth device: the name, optional
+/// CLASSIC/BLE transport from `bt-scan`, and whether that name is in
+/// the saved paired list. Empty after a finished scan is an honest
+/// absence. No RSSI, no live-connection bit — those are not this
+/// composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BluetoothRow {
+    pub row: DataRow,
+    pub paired: bool,
+}
+
+impl BluetoothRow {
+    pub fn open(name: impl Into<String>, transport: impl Into<String>, paired: bool) -> Self {
+        let transport = transport.into();
+        let mut row = DataRow::new(name, DataRowVariant::Navigation).with_action("pair_bluetooth");
+        if !transport.is_empty() {
+            row = row.with_value(transport);
+        }
+        Self { row, paired }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет устройств", DataRowVariant::Static),
+            paired: false,
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
 /// Section 7.4. One destination in the bottom navigation strip. `icon` is
 /// optional rather than required: this project's current icon set
 /// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
@@ -1341,5 +1375,35 @@ mod tests {
         assert!(!blob.contains("▮"));
         assert!(!blob.contains("привязать"));
         assert!(!blob.contains("Дом"));
+    }
+
+    #[test]
+    fn bluetooth_row_does_not_invent_rssi_or_live_connection() {
+        let paired = BluetoothRow::open("Pixel Buds", "BLE", true);
+        assert_eq!(paired.row.variant, DataRowVariant::Navigation);
+        assert!(paired.paired);
+        assert!(paired.row.is_actionable());
+        assert_eq!(paired.row.action.as_deref(), Some("pair_bluetooth"));
+        assert_eq!(paired.row.value.as_deref(), Some("BLE"));
+
+        let pending = BluetoothRow::open("Speaker", "", false);
+        assert!(!pending.paired);
+        assert!(pending.row.value.is_none());
+
+        let empty = BluetoothRow::empty();
+        assert_eq!(empty.row.primary, "Нет устройств");
+        assert!(!empty.row.is_actionable());
+        assert!(!empty.paired);
+
+        let blob = format!(
+            "{} {} {} {}",
+            paired.row.primary,
+            pending.row.primary,
+            empty.row.primary,
+            paired.row.value.as_deref().unwrap_or("")
+        );
+        assert!(!blob.contains("dBm"));
+        assert!(!blob.contains("подключено сейчас"));
+        assert!(!blob.contains("RSSI"));
     }
 }

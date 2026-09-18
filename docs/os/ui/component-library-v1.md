@@ -52,6 +52,9 @@ in VUI-09; privileged system composites are not automatically public.
 | Composite | `EventRow` | Experimental (VUI-07) | `Входящие` |
 | Composite | `SpaceRow` | Experimental (VUI-07) | `Пространства` |
 | Composite | `WifiRow` | Experimental (VUI-07) | `Wi-Fi сети` |
+| Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
+| Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
+| Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
 
 ## 4. Shared state contract
@@ -244,7 +247,10 @@ in VUI-05 on Object View confirmation. `AgentSummary` lands in VUI-05
 only from a real `saaios.action` (otherwise unassigned/unavailable).
 `SettingRow`/`CapabilityRow` land in VUI-06. `EventRow` lands in VUI-07
 on Inbox. `SpaceRow` lands in VUI-07 on the Пространства tab list.
-`WifiRow` lands in VUI-07 on «Wi-Fi сети».
+`WifiRow` lands in VUI-07 on «Wi-Fi сети». `BluetoothRow` lands in
+VUI-07 on «Bluetooth устройства». `BluetoothRow` lands in
+VUI-07 on «Bluetooth устройства». `BluetoothRow` lands in
+VUI-07 on «Bluetooth устройства».
 
 ### 7.1 `ContextHeader`
 
@@ -466,14 +472,27 @@ on Inbox. `SpaceRow` lands in VUI-07 on the Пространства tab list.
   `ActionCardView`. «Обновить» / «Назад» stay trailing control cards.
 - Accessibility: delegated to the nested `DataRow`.
 
+### 7.15 `BluetoothRow`
+
+- Anatomy: a `DataRow` for one `bt-scan` device on «Bluetooth
+  устройства». Navigation. Value is `CLASSIC`/`BLE` when present.
+  `paired` is a `SAVED` name, not live connection.
+- Empty after a finished scan: static «Нет устройств». While a scan
+  has not finished, no placeholder — status line names that. Missing
+  adapter is named on Система and does not open this list.
+- Not RSSI, not a trusted-client row, not a Space binding.
+- First real consumer: `bluetooth_list_rows` (ADR-130). Flattened to
+  `ActionCardView`. Scan / Refresh / Back stay trailing control cards.
+- Accessibility: delegated to the nested `DataRow`.
+
 ## 8. Required gallery matrix
 
 The first device gallery uses labelled fixture data and contains no fake
 runtime telemetry. VUI-02 covers the ten primitives (default state).
 VUI-05 adds a second page with composites and every `UniversalState`.
-VUI-07 adds `EventRow`, `SpaceRow`, and `WifiRow` fixtures; that
-page does not grow a new layout slot in this slice. Tap switches
-pages.
+VUI-07 adds `EventRow`, `SpaceRow`, `WifiRow`, and `BluetoothRow`
+fixtures; that page does not grow a new layout slot in this slice.
+Tap switches pages.
 
 1. default, pressed, focused, disabled, and busy interaction states;
 2. compact and normal variants;
