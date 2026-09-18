@@ -3929,6 +3929,7 @@ struct MeAppFact {
 /// Snapshot of every real `Я` fact `me_system_sections` needs.
 /// Memory, Android VM, and battery-as-a-page-gauge are intentionally
 /// absent (ADR-126).
+#[allow(dead_code)] // kernel/uptime/counts/boot attempts belong on DevSurface
 struct MeFacts {
     space_count: usize,
     entity_count: usize,
@@ -4006,30 +4007,16 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
             vec![
                 SettingRow::readout(
                     "Это устройство",
-                    format!(
-                        "Пространств: {} · Объектов: {}",
-                        facts.space_count, facts.entity_count
-                    ),
+                    format!("{} · {}", facts.model, facts.storage),
                 )
                 .row,
                 SettingRow::silent(
                     format!("SaaiOS · сборка {}", facts.build_id),
-                    format!(
-                        "{} · ядро {} · работает {}",
-                        facts.model, facts.kernel, facts.uptime
-                    ),
+                    String::new(),
                     "tap_build_info",
                 )
                 .row,
-                SettingRow::readout("Хранилище", facts.storage.clone()).row,
-                SettingRow::readout(
-                    "Обновления",
-                    format!(
-                        "Слот {} · попыток загрузки: {}",
-                        facts.boot_slot, facts.boot_attempts
-                    ),
-                )
-                .row,
+                SettingRow::readout("Обновления", format!("Слот {}", facts.boot_slot)).row,
                 SettingRow::cycle(
                     "Часовой пояс",
                     format_utc_offset(facts.utc_offset_minutes),
@@ -7090,11 +7077,23 @@ impl Shell {
     /// no separate PolicyDecision log to show, so this doesn't invent
     /// one just to look more like the aspirational document.
     fn dev_surface_rows(&self) -> Vec<String> {
-        let mut rows = vec![format!(
-            "Пространство: {} ({})",
-            space_display_name(&self.spaces, &self.selected_space_id),
-            self.selected_space_id
-        )];
+        let mut rows = vec![
+            format!(
+                "Пространство: {} ({})",
+                space_display_name(&self.spaces, &self.selected_space_id),
+                self.selected_space_id
+            ),
+            format!("Сборка: {}", env!("SAAIOS_BUILD_ID")),
+            format!("Модель: {}", hardware_model()),
+            format!("Ядро: {}", kernel_release()),
+            format!("Работает: {}", uptime_string()),
+            format!(
+                "Пространств: {} · объектов: {}",
+                self.spaces.len(),
+                self.entity_counts.values().sum::<usize>()
+            ),
+            format!("Попыток загрузки: {}", boot_attempts()),
+        ];
         if self.context_frame.is_empty() {
             rows.push("ContextFrame: пусто".to_string());
         } else {
@@ -10425,11 +10424,21 @@ mod tests {
         assert!(!blob.contains("Android VM"));
 
         let rows = flatten_me_rows(&sections);
+        let device = rows
+            .iter()
+            .find(|row| row.card.label == "Это устройство")
+            .expect("healthy device summary");
+        assert!(device.card.status.contains("panther"));
+        assert!(device.card.status.contains("12 ГБ"));
+        assert!(!device.card.status.contains("Пространств"));
+        assert!(!rows.iter().any(|row| row.card.label == "Хранилище"));
         let build = rows
             .iter()
             .find(|row| row.dispatch == Some("tap_build_info"))
             .expect("build-info silent tap");
         assert!(build.card.action.is_empty());
+        assert!(!build.card.status.contains("ядро"));
+        assert!(!rows.iter().any(|row| row.card.status.contains("попыток загрузки")));
         assert!(rows
             .iter()
             .any(|row| row.dispatch == Some("toggle_reduced_motion")));

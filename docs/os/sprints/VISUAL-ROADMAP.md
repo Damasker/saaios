@@ -847,7 +847,10 @@ a concise engineering-oriented surface.
   `ActionCardView` so scroll/nav stay the accepted path.
 - [ ] Rename `Я` to `Система` when the migrated information architecture is
   complete.
-- [ ] Show healthy summaries first; disclose raw logs and identifiers on demand.
+- [x] Show healthy summaries first; disclose raw logs and identifiers on demand.
+  Host: `Устройство` leads with model+storage; kernel/uptime/entity
+  counts/boot attempts live on `DevSurface` (HIA-20). No invented health
+  cluster.
 - [ ] Use gauges only when a continuous value informs a real decision.
 - [ ] Provide explicit states for missing hardware, denied permission, offline
   service, stale telemetry, and restart/recovery.
