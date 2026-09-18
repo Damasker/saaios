@@ -4,7 +4,7 @@
 
 Принято, 2026-09-19. The SSH pairing prompt sits under a real
 `ContextHeader` instead of `header.y+200` title text. Host-green;
-panther hash follows flash. Do not tap **Разрешить**. Leave with
+panther `4a1f7553…`. Do not tap **Разрешить**. Leave with
 **Отклонить**. Lock unlock stays `draw_lock_pin_entry` dots. Space
 detail is not this slice.
 
