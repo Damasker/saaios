@@ -3799,6 +3799,24 @@ mod tests {
     }
 
     #[test]
+    fn wifi_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Дом").with_section_title("Wi-Fi");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("Нет сетей", "", ""))];
+        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
     fn lock_idle_fill_is_canvas_not_the_diagnostic_red() {
         let width = 1080;
         let height = 2400;

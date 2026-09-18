@@ -1990,9 +1990,12 @@ enum Frame {
         header: Rect,
         keys: Vec<(Rect, String)>,
     },
+    /// ADR-146: Wi-Fi is no longer `draw_action_row_list` Surface
+    /// chrome. Header is a real `ContextHeader`; rows stay live
+    /// `WifiRow` cards plus refresh/back.
     WifiList {
-        header: Rect,
-        status_line: String,
+        content_rect: Rect,
+        header: ContextHeader,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-145: Bluetooth is no longer `draw_action_row_list` Surface
@@ -4360,6 +4363,12 @@ fn bluetooth_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("Bluetooth")
 }
 
+/// ADR-146: section title is always `Wi-Fi`. No invented lifecycle —
+/// connected/empty/scan facts stay on the live rows.
+fn wifi_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Wi-Fi")
+}
+
 /// Live client name only. Fingerprint is wrapped separately so the
 /// full `SHA256:` string stays readable.
 fn remote_pair_content_cards(
@@ -6288,7 +6297,8 @@ impl Shell {
         } else if let Some(networks) = &self.wifi_list {
             // S19 / ADR-129: runtime-sized WifiRow list plus trailing
             // refresh/back cards -- see `wifi_list_action_at`.
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            // ADR-146: header is a real `ContextHeader`, not a Surface
+            // strip.
             let connected = wifi_connected_ssid();
             let wifi_rows = wifi_list_rows(networks, connected.as_deref());
             let mut rows: Vec<(Rect, render::ActionCardView)> = wifi_rows
@@ -6311,8 +6321,8 @@ impl Shell {
                 render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::WifiList {
-                header,
-                status_line: wifi_status_line(),
+                content_rect: Rect::new(0, 0, width, height),
+                header: wifi_header(&space_display_name(&self.spaces, &self.selected_space_id)),
                 rows,
             }
         } else if self.bluetooth_list_open {
@@ -6691,16 +6701,17 @@ impl Shell {
                     );
                 }
                 Frame::WifiList {
+                    content_rect,
                     header,
-                    status_line,
                     rows,
                 } => {
-                    render::draw_action_row_list(
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Wi-Fi сети",
-                        &status_line,
-                        header,
+                        content_rect,
+                        &[],
+                        &header,
                         &rows,
+                        false,
                         fonts,
                     );
                 }
@@ -9089,16 +9100,16 @@ mod tests {
         space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
         tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
         trusted_client_card_from_row, trusted_client_list_rows, upsert_context_entry,
-        wifi_card_from_row, wifi_list_action_at, wifi_list_rows, wifi_password_field, AgentSummary,
-        AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource,
-        DataRowVariant, Entity, FieldKind, KeyboardMode, ObjectSummary, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows, wifi_password_field,
+        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode, ObjectSummary, OrbAction,
+        Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow,
+        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -10000,6 +10011,13 @@ mod tests {
     fn bluetooth_header_names_the_section() {
         let header = bluetooth_header("Дом");
         assert_eq!(header.heading_text(), "Дом · Bluetooth");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn wifi_header_names_the_section() {
+        let header = wifi_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Wi-Fi");
         assert!(header.lifecycle.is_none());
     }
 
