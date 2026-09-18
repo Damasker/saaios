@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host DAG validation done; WORK-02 derived ready set host; WORK-08 visibility host in progress.**
+Status: **WORK-00 complete; WORK-01/02 host; WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -30,7 +30,7 @@ Planner the scheduler.
 | WORK-05 | Priority scheduling | Backlog | no |
 | WORK-06 | Retry + failure taxonomy | Backlog | no |
 | WORK-07 | Bounded ReplanRequest | Backlog | no |
-| WORK-08 | Сейчас / Orb / Object View visibility | **In progress** (host) | **yes** |
+| WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther) | **yes** |
 | WORK-09 | Pixel measurements + tuned budgets | Backlog | **yes** |
 
 ## WORK-00

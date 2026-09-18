@@ -91,7 +91,7 @@ contains:
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
-| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **In progress** (ATTN-02 panther, WORK-08 host) |
+| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **In progress** (ATTN-03+WORK-08 panther) |
 | VUI-06 | `Система` information architecture and settings components | Backlog |
 | VUI-07 | Remaining system surfaces and state patterns | Backlog |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
@@ -742,11 +742,8 @@ navigation passes restart and cold-boot testing.
 
 ## VUI-05 — Object, Intent, Task, and Worker components
 
-**Status:** In progress (ATTN-02 on panther: NOW «Требует внимания»
-reads `saai-attention` `now_items()`. ATTN-03 Inbox uses the same
-projection on host. WORK-08: Object View / NOW trail live Task state;
-«Далее» uses derived-ready Tasks. `IntentSummary`/`TaskSummary`
-remain open.)
+**Status:** In progress (ATTN-02/03 + WORK-08 on panther shell
+`63b8b64`. `IntentSummary`/`TaskSummary` remain open.)
 
 **Depends on:** VUI-04 and the relevant HIA entity/runtime support
 
@@ -760,11 +757,11 @@ Concept target: [`product-visual-target-v1.md`](../ui/product-visual-target-v1.m
 ### Tasks
 
 - [x] NOW «Требует внимания» uses `saai-attention` `now_items()` (ATTN-02
-  host + panther shell `8b3503e`). Waiting-confirmation and undismissed
+  panther `63b8b64`). Waiting-confirmation and undismissed
   notifications only; empty section omitted.
-- [x] Inbox uses the same projection (`inbox_source_ids`, ATTN-03 host).
-  Hit-test and cards share `inbox_rows`.
-- [x] WORK-08 host: Task Object View status is the entity status
+- [x] Inbox uses the same projection (`inbox_source_ids`, ATTN-03
+  panther `63b8b64`). Hit-test and cards share `inbox_rows`.
+- [x] WORK-08 panther: Task Object View status is the entity status
   (confirm/decline only while `waiting_confirmation`); Intent names
   the related Task; NOW ObjectSummary trails live work; «Далее» is a
   pending Action or a derived-ready Task. No invented worker count.
