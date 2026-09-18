@@ -2,10 +2,12 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: «Доверенные клиенты» lists live
-`authorized_keys` rows through `TrustedClientRow`. Wi-Fi password
-and lock restyle are not this slice. Pixel flash with the rest of
-VUI-07.
+Принято, 2026-09-18. «Доверенные клиенты» lists live `authorized_keys`
+rows through `TrustedClientRow`. Flashed panther `cd207b18…`: title
+below the status layer, `3 доверенных ключей`, `test-client` /
+`home-server-test` / `fast-attempt-5` with SHA256 prefixes and
+`Отозвать`, trailing «Назад». Wi-Fi password and lock restyle are
+not this slice.
 
 ## Нумерация
 
@@ -55,5 +57,5 @@ on `draw_row_list`.
 
 Host: TrustedClientRow constructors; live list order and revoke
 button; empty names the absence and is not tappable; Back after the
-row list; no invented session/key material. Physical Pixel with the
-rest of VUI-07.
+row list; no invented session/key material. Panther `cd207b18…`:
+three live keys with SHA256 prefixes, no raw key material.
