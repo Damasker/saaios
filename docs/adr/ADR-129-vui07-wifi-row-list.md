@@ -2,10 +2,9 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: «Wi-Fi сети» lists live `wpa_cli
-scan_results` through `WifiRow`. Password keyboard, Bluetooth list,
-and lock restyle are not this slice. Pixel flash with the rest of
-VUI-07.
+Принято, 2026-09-18. Host + panther (`c80bb666…`): «Wi-Fi сети»
+lists live `wpa_cli scan_results` through `WifiRow`. Password
+keyboard, Bluetooth list, and lock restyle are not this slice.
 
 ## Нумерация
 
@@ -55,4 +54,6 @@ clients in the same slice — they still share `draw_row_list`.
 
 Host: WifiRow constructors; live list order and connected button;
 empty vs networks; Refresh/Back after the row list; no invented
-bars. Physical Pixel with the rest of VUI-07.
+bars. Panther `c80bb666…`: «Wi-Fi сети», status `Подключено: Wallbox`,
+connected row `защищена · -42 dBm` / `Подключено`. Password keyboard
+still later.
