@@ -4,7 +4,7 @@
 
 Принято, 2026-09-19. App-consent paints through `ContextHeader` and
 Static `DataRow`s instead of a free-floating title at `header.y+220`
-and accent-square bullets. Host-green; panther hash follows flash.
+and accent-square bullets. Host-green; panther `cff22339…`.
 Do not tap **Разрешить**. Screenshot via live launch, then **Отклонить**.
 Remote pairing, PIN keypad chrome, and Space detail are not this slice.
 
