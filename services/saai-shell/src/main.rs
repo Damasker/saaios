@@ -6212,7 +6212,6 @@ impl Shell {
                 keys,
             }
         } else if let Some(state) = &self.pin_setup {
-            let keys_top = pin_keypad_rect(0, width, height).y;
             let has_existing_pin = self.settings.pin_code.is_some();
             let mut keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
                 .iter()
@@ -6227,7 +6226,7 @@ impl Shell {
                     .map(|(offset, label)| (pin_keypad_rect(12 + offset, width, height), label)),
             );
             Frame::PinSetup {
-                content_rect: Rect::new(0, 0, width, keys_top),
+                content_rect: Rect::new(0, 0, width, height),
                 header: pin_setup_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,

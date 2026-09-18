@@ -3747,7 +3747,7 @@ mod tests {
         let height = 2400;
         let mut pixels = vec![0u8; width as usize * height as usize * 4];
         let canvas = &mut Canvas::new(&mut pixels, width, height);
-        let content = Rect::new(0, 0, width, 900);
+        let content = Rect::new(0, 0, width, height);
         let header = ContextHeader::new("Работа").with_section_title("PIN");
         let field = Field::new("Новый PIN-код", FieldKind::Password)
             .with_placeholder("Введите новый PIN (минимум 4 цифры)");
