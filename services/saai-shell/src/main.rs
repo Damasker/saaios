@@ -2006,9 +2006,14 @@ enum Frame {
         status_line: String,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
+    /// ADR-143: PIN setup is no longer a Surface header fill.
+    /// Header is a real `ContextHeader`; the Password `Field` sits in
+    /// the first stacked row. Keys stay `pin_keypad_rect`.
     PinSetup {
+        content_rect: Rect,
+        header: ContextHeader,
         field: Field,
-        header: Rect,
+        field_rect: Rect,
         keys: Vec<(Rect, &'static str)>,
     },
     Root {
@@ -4326,6 +4331,12 @@ fn consent_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("Разрешение")
 }
 
+/// ADR-143: section title is always `PIN`. No invented lifecycle —
+/// setup names the keypad, not store health.
+fn pin_setup_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("PIN")
+}
+
 /// First card is the live app name. Then each requested capability
 /// label. Empty requested set is named, not omitted.
 fn consent_content_cards(
@@ -6201,7 +6212,7 @@ impl Shell {
                 keys,
             }
         } else if let Some(state) = &self.pin_setup {
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            let keys_top = pin_keypad_rect(0, width, height).y;
             let has_existing_pin = self.settings.pin_code.is_some();
             let mut keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
                 .iter()
@@ -6216,8 +6227,13 @@ impl Shell {
                     .map(|(offset, label)| (pin_keypad_rect(12 + offset, width, height), label)),
             );
             Frame::PinSetup {
+                content_rect: Rect::new(0, 0, width, keys_top),
+                header: pin_setup_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 field: pin_setup_field(&state.buffer),
-                header,
+                field_rect: stacked_row_rect(0, width, height),
                 keys,
             }
         } else if let Some(state) = &self.wifi_password {
@@ -6600,14 +6616,18 @@ impl Shell {
                     );
                 }
                 Frame::PinSetup {
-                    field,
+                    content_rect,
                     header,
+                    field,
+                    field_rect,
                     keys,
                 } => {
                     render::draw_pin_setup(
                         &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &header,
                         &field,
-                        header,
+                        field_rect,
                         &keys,
                         fonts,
                     );
@@ -9017,8 +9037,8 @@ mod tests {
         me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remove_context_source,
+        space_color, space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
         spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
@@ -9912,6 +9932,13 @@ mod tests {
     fn consent_header_names_the_section() {
         let header = consent_header("Работа");
         assert_eq!(header.heading_text(), "Работа · Разрешение");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn pin_setup_header_names_the_section() {
+        let header = pin_setup_header("Работа");
+        assert_eq!(header.heading_text(), "Работа · PIN");
         assert!(header.lifecycle.is_none());
     }
 

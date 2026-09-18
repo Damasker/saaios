@@ -277,7 +277,7 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   text).
 - First real consumer: `Сейчас` (ADR-112), the `Приложения` grid
   (ADR-138), Inbox (ADR-139), Пространства (ADR-140), Система
-  (ADR-141), and app-consent (ADR-142).
+  (ADR-141), app-consent (ADR-142), and PIN setup (ADR-143).
 - Accessibility: name is the Space name plus section title; a non-default
   lifecycle is exposed through the nested `StatusIndicator`'s own state, not
   a second accessible string glued onto the header's name.

@@ -1082,19 +1082,26 @@ fn draw_keypad_label(
     draw_text_centered(canvas, &fonts.semibold, label, size, center_x, top, color);
 }
 
-/// keys come from `pin_keypad_rect`'s numeric layout instead of
-/// ADR-029's letters. VUI-07 (ADR-133): preview is a `Field`, same
-/// status-layer inset as `draw_wifi_password`. Lock unlock stays
+/// ADR-143: PIN setup through `ContextHeader`. The Password `Field`
+/// sits in the first stacked row below the status layer. Keys stay
+/// `pin_keypad_rect`. No Surface header bar. Lock unlock stays
 /// `draw_lock_pin_entry`.
 pub fn draw_pin_setup(
     canvas: &mut Canvas<'_>,
+    content: Rect,
+    header: &ContextHeader,
     field: &Field,
-    header: Rect,
+    field_rect: Rect,
     keys: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
+        draw_gallery_field(canvas, fonts, field, field_rect);
+    }
+    canvas.set_clip(None);
 
     let Some(fonts) = fonts else {
         for (rect, _) in keys {
@@ -1102,39 +1109,6 @@ pub fn draw_pin_setup(
         }
         return;
     };
-
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        &field.label,
-        42.0,
-        header.x + 30,
-        header.y + 140,
-        theme_color(ColorRole::TextPrimary),
-    );
-    let empty = field.is_empty();
-    let preview = if empty {
-        field
-            .placeholder
-            .clone()
-            .unwrap_or_else(|| "Введите новый PIN (минимум 4 цифры)".to_string())
-    } else {
-        field.accessible_value()
-    };
-    let preview_color = if empty {
-        theme_color(ColorRole::TextSecondary)
-    } else {
-        theme_color(ColorRole::TextPrimary)
-    };
-    draw_text(
-        canvas,
-        &fonts.regular,
-        &preview,
-        34.0,
-        header.x + 30,
-        header.y + 200,
-        preview_color,
-    );
 
     for (rect, label) in keys {
         let key = Rect::new(
@@ -3202,13 +3176,13 @@ mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
-        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_root, draw_status_bar,
-        draw_tab_bar, gallery_row_positions, physical, physical_line_height, state_color,
-        theme_color, ActionCardView, Canvas,
+        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_pin_setup, draw_root,
+        draw_status_bar, draw_tab_bar, gallery_row_positions, physical, physical_line_height,
+        state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, ContextHeader, NavigationItem, ObjectSummary, Progress, Rect,
-        StatusMark, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
+        ColorRole, ContextColor, ContextHeader, Field, FieldKind, NavigationItem, ObjectSummary,
+        Progress, Rect, StatusMark, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -3765,6 +3739,23 @@ mod tests {
         );
         assert_eq!(canvas.pixel(270, 2250), theme_color(ColorRole::Accent));
         assert_eq!(canvas.pixel(810, 2250), theme_color(ColorRole::Surface));
+    }
+
+    #[test]
+    fn pin_setup_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 900);
+        let header = ContextHeader::new("Работа").with_section_title("PIN");
+        let field = Field::new("Новый PIN-код", FieldKind::Password)
+            .with_placeholder("Введите новый PIN (минимум 4 цифры)");
+        let field_rect = Rect::new(49, 430, 982, 190);
+        let keys = vec![(Rect::new(108, 900, 264, 240), "1")];
+        draw_pin_setup(canvas, content, &header, &field, field_rect, &keys, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
     }
 
     #[test]
