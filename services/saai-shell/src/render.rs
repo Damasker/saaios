@@ -2513,6 +2513,30 @@ pub fn draw_root(
     }
 }
 
+fn paint_context_header(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    content: Rect,
+    header: &ContextHeader,
+) {
+    let margin = (content.width / 20).max(12);
+    let content_width = content.width.saturating_sub(margin * 2);
+    let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
+    let mut cursor_y = content.y + top_inset;
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &header.heading(),
+        content.x + margin,
+        cursor_y,
+        content_width,
+    );
+    cursor_y += scaled_line_height(TextRole::Title);
+    if let Some(lifecycle) = &header.lifecycle {
+        draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
+    }
+}
+
 /// S23 letter-square tiles: no per-app icon asset exists, so the
 /// "icon" is a colored square with the app's first letter.
 fn draw_app_icon_grid(
@@ -2573,25 +2597,10 @@ pub fn draw_apps_grid(
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-    let margin = (content.width / 20).max(12);
-    let content_width = content.width.saturating_sub(margin * 2);
     canvas.set_clip(Some(content));
 
     if let Some(fonts) = fonts {
-        let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
-        let mut cursor_y = content.y + top_inset;
-        draw_semantic_text(
-            canvas,
-            fonts,
-            &header.heading(),
-            content.x + margin,
-            cursor_y,
-            content_width,
-        );
-        cursor_y += scaled_line_height(TextRole::Title);
-        if let Some(lifecycle) = &header.lifecycle {
-            draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
-        }
+        paint_context_header(canvas, fonts, content, header);
     }
 
     draw_app_icon_grid(canvas, fonts, apps);
@@ -2611,6 +2620,29 @@ pub fn draw_apps_grid(
         }
     }
 
+    canvas.set_clip(None);
+    draw_tab_bar(canvas, tabs, fonts);
+}
+
+/// ADR-139: Inbox through `ContextHeader`, same status-layer inset as
+/// `draw_now` / `draw_apps_grid`. Live EventRow cards keep their
+/// stacked rects. No concatenated `draw_root` Surface bar.
+pub fn draw_inbox(
+    canvas: &mut Canvas<'_>,
+    content: Rect,
+    tabs: &[(Rect, NavigationItem)],
+    header: &ContextHeader,
+    rows: &[(Rect, ActionCardView)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
+    }
+    for (rect, card) in rows {
+        draw_action_card(canvas, *rect, card, fonts);
+    }
     canvas.set_clip(None);
     draw_tab_bar(canvas, tabs, fonts);
 }
@@ -3195,8 +3227,9 @@ mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_gallery,
-        draw_lock_idle, draw_orb, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions,
-        physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
+        draw_inbox, draw_lock_idle, draw_orb, draw_root, draw_status_bar, draw_tab_bar,
+        gallery_row_positions, physical, physical_line_height, state_color, theme_color,
+        ActionCardView, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, ContextHeader, NavigationItem, ObjectSummary, Progress, Rect,
@@ -3645,6 +3678,27 @@ mod tests {
         );
         assert_eq!(canvas.pixel(200, 430), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+    }
+
+    #[test]
+    fn inbox_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Входящие");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(
+            row,
+            ActionCardView::new("Нет новых задач и уведомлений", "", ""),
+        )];
+        draw_inbox(canvas, content, &[], &header, &rows, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
     }
 
     #[test]

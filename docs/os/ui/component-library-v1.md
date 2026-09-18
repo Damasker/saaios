@@ -275,10 +275,10 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   second line rather than truncating silently (section 1's "long Russian
   text ... normal input" rule applies to this header as much as any body
   text).
-- First real consumer: `Сейчас` (ADR-112) and the `Приложения` grid
-  (ADR-138). Inbox / Spaces / Me still concatenate through `draw_root`
-  (`format!("{context_label} · {title}")` at a fixed offset) until
-  those pages get their own header slice.
+- First real consumer: `Сейчас` (ADR-112), the `Приложения` grid
+  (ADR-138), and Inbox (ADR-139). Spaces / Me still concatenate
+  through `draw_root` (`format!("{context_label} · {title}")` at a
+  fixed offset) until those pages get their own header slice.
 - Accessibility: name is the Space name plus section title; a non-default
   lifecycle is exposed through the nested `StatusIndicator`'s own state, not
   a second accessible string glued onto the header's name.
@@ -452,9 +452,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Distinct from `TaskSummary` (work identity) and `SettingRow` (device
   control). Distinct from NOW «Требует внимания», which stays a
   `StatusIndicator` in a `SystemSection`.
-- First real consumer: `inbox_event_rows` (ADR-127). Still flattened
-  to `ActionCardView` for `draw_root`; DataRow paint is later VUI-07.
-  Inbox tab stays (`inbox` / `RootPage::Inbox`).
+- First real consumer: `inbox_event_rows` (ADR-127). Flattened to
+  `ActionCardView`. Header is `ContextHeader` (ADR-139), not
+  `draw_root`. Inbox tab stays (`inbox` / `RootPage::Inbox`).
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.13 `SpaceRow`

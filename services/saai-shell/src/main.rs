@@ -2017,13 +2017,22 @@ enum Frame {
     /// ADR-138: the `Приложения` grid is no longer `Frame::Root`.
     /// Header is a real `ContextHeader`; tiles are only live
     /// `installed_apps` (the old `root.sui` inspect/intent cells stay
-    /// on the NOW footer). Inbox / Spaces / Me still use `Root`.
+    /// on the NOW footer). Spaces / Me still use `Root`.
     AppsGrid {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
         apps: Vec<(Rect, render::ActionCardView)>,
         empty_message: Option<&'static str>,
+    },
+    /// ADR-139: Inbox is no longer `Frame::Root`. Header is a real
+    /// `ContextHeader`; rows stay live `EventRow` cards. Spaces / Me
+    /// still use `Root`.
+    Inbox {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
     /// Now`'s only content now, the app grid relocated behind its own
@@ -4248,6 +4257,19 @@ fn apps_grid_empty_message(appd_connected: bool, app_count: usize) -> Option<&'s
     }
 }
 
+/// ADR-139: section title is always `Входящие`. Offline `entityd`
+/// names `Нет связи` and wins over the space's own archived mark.
+fn inbox_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Входящие");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
 /// How far a touch has to move (in either direction, on this
 /// 1080x2400 panel) before `TouchHandler::up` treats it as a real
 /// drag on "Я" rather than a tap that merely twitched a few pixels --
@@ -6269,13 +6291,25 @@ impl Shell {
                     self.installed_apps.len(),
                 ),
             }
+        } else if self.current_page == RootPage::Inbox {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::Inbox {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: inbox_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.entityd.is_connected(),
+                    archived,
+                ),
+                rows: self.inbox_content_cards(width, height),
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
             let tabs = self.root_navigation_items(width, height);
-            let content_cards = if self.current_page == RootPage::Inbox {
-                self.inbox_content_cards(width, height)
-            } else if self.current_page == RootPage::Spaces {
+            let content_cards = if self.current_page == RootPage::Spaces {
                 self.spaces_content_cards(width, height)
             } else if self.current_page == RootPage::Me {
                 self.me_content_cards(width, height)
@@ -6314,7 +6348,10 @@ impl Shell {
             && self.settings.orb_enabled
             && matches!(
                 frame,
-                Frame::Root { .. } | Frame::Now { .. } | Frame::AppsGrid { .. }
+                Frame::Root { .. }
+                    | Frame::Now { .. }
+                    | Frame::AppsGrid { .. }
+                    | Frame::Inbox { .. }
             ))
         .then(|| self.build_orb_frame(width, height));
 
@@ -6587,6 +6624,21 @@ impl Shell {
                         &header,
                         &apps,
                         empty_message,
+                        fonts,
+                    );
+                }
+                Frame::Inbox {
+                    content_rect,
+                    tabs,
+                    header,
+                    rows,
+                } => {
+                    render::draw_inbox(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &rows,
                         fonts,
                     );
                 }
@@ -8816,26 +8868,27 @@ mod tests {
         bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
         consent_action_at, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
         diagnostic_row, diagnostic_status_line, effective_context_space, ensure_me_row_cache,
-        flatten_me_rows, format_utc_offset, in_progress_work, input_idle_for_at_least,
-        intent_action_at, intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts,
-        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
-        upsert_context_entry, wifi_card_from_row, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
-        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
-        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
-        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
+        input_idle_for_at_least, intent_action_at, intent_input_field, known_surfaces,
+        lock_idle_view, me_fixture_facts, me_system_sections, next_in_cycle, next_pending_action,
+        now_action_at, now_object_tapped, object_view_action_at, object_view_content,
+        object_view_summary, orb_action_at, orb_attention_from_entities, orb_menu_actions,
+        orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
+        today_schedules, trusted_client_action_at, trusted_client_card_from_row,
+        trusted_client_list_rows, upsert_context_entry, wifi_card_from_row, wifi_list_action_at,
+        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
+        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
+        KeyboardMode, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
+        SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
+        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -9617,6 +9670,37 @@ mod tests {
         assert_eq!(apps_grid_empty_message(true, 0), Some("Нет приложений"));
         assert_eq!(apps_grid_empty_message(false, 0), Some("Нет связи"));
         assert_eq!(apps_grid_empty_message(false, 1), None);
+    }
+
+    #[test]
+    fn inbox_header_names_the_section_and_offline() {
+        let online = inbox_header("Дом", true, false);
+        assert_eq!(online.heading_text(), "Дом · Входящие");
+        assert!(online.lifecycle.is_none());
+        let offline = inbox_header("Дом", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = inbox_header("Дом", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = inbox_header("Дом", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
     }
 
     fn test_app(id: &str, name: &str) -> AppSummary {
