@@ -2085,8 +2085,14 @@ pub fn draw_root(
     fonts: Option<&Fonts>,
     content_actions: &[(Rect, ActionCardView)],
     is_grid: bool,
+    paint_navigation: bool,
 ) {
-    canvas.fill(theme_color(ColorRole::Canvas));
+    if paint_navigation {
+        canvas.fill(theme_color(ColorRole::Canvas));
+    } else {
+        canvas.set_clip(Some(content));
+        canvas.fill(theme_color(ColorRole::Canvas));
+    }
     canvas.set_clip(Some(content));
 
     // A stable phone-like content surface. The number of rows changes per
@@ -2265,7 +2271,9 @@ pub fn draw_root(
     }
 
     canvas.set_clip(None);
-    draw_tab_bar(canvas, tabs, fonts);
+    if paint_navigation {
+        draw_tab_bar(canvas, tabs, fonts);
+    }
 }
 
 /// Extracted from `draw_root` (VUI-03): the bottom navigation bar is the
@@ -3001,6 +3009,7 @@ mod tests {
             None,
             &[],
             true,
+            true,
         );
         assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Accent));
         assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Surface));
@@ -3014,9 +3023,32 @@ mod tests {
             None,
             &[],
             false,
+            true,
         );
         assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Surface));
         assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Accent));
+    }
+
+    #[test]
+    fn scroll_frame_does_not_repaint_navigation() {
+        let mut pixels = vec![0; 1080 * 2400 * 4];
+        let tabs = vec![(
+            Rect::new(0, 2100, 270, 300),
+            NavigationItem::new("me", "Я").selected(),
+        )];
+        let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
+        draw_root(
+            &mut canvas,
+            Rect::new(0, 0, 1080, 2100),
+            &tabs,
+            3,
+            "Дом",
+            None,
+            &[],
+            false,
+            false,
+        );
+        assert_eq!(canvas.pixel(135, 2125), [0, 0, 0, 0]);
     }
 
     #[test]

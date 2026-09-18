@@ -1992,6 +1992,7 @@ enum Frame {
         tabs: Vec<(Rect, NavigationItem)>,
         content_cards: Vec<(Rect, render::ActionCardView)>,
         context_label: String,
+        paint_navigation: bool,
     },
     /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
     /// Now`'s only content now, the app grid relocated behind its own
@@ -3971,9 +3972,19 @@ struct MeFacts {
     apps: Vec<MeAppFact>,
 }
 
+#[derive(Clone)]
 struct MeRow {
     card: render::ActionCardView,
     dispatch: Option<&'static str>,
+}
+
+/// Hold the flattened `Я` list across a drag so motion/draw do not
+/// spawn `wpa_cli`/`df` on every event. Rebuilds only when empty.
+fn ensure_me_row_cache(
+    cache: &mut Option<Vec<MeRow>>,
+    build: impl FnOnce() -> Vec<MeRow>,
+) -> usize {
+    cache.get_or_insert_with(build).len()
 }
 
 fn me_section_data(title: &'static str, rows: Vec<DataRow>) -> SystemSection {
@@ -4474,6 +4485,7 @@ fn main() {
         me_drag: None,
         me_scroll_dirty: false,
         scroll_content_only: false,
+        me_row_cache: None,
         entityd: entityd_client::EntitydClient::new(entityd_socket),
         spaces: Vec::new(),
         selected_space_id: "home".into(),
@@ -4735,6 +4747,11 @@ struct Shell {
     /// Next `draw()` is a "Я" scroll frame: damage only the content
     /// pane so navigation pixels are not part of the scroll commit.
     scroll_content_only: bool,
+    /// Flattened `Я` rows captured at touch-down and reused until the
+    /// gesture ends or a setting actually changes. `me_facts()` shells
+    /// out to `wpa_cli` and `df` — that is fine once per tap, not on
+    /// every motion event.
+    me_row_cache: Option<Vec<MeRow>>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -5145,6 +5162,8 @@ impl TouchHandler for Shell {
                 .rect
                 .contains(position.0, position.1)
         {
+            self.me_row_cache = None;
+            self.capture_me_rows();
             Some((position.1, self.me_scroll_offset))
         } else {
             None
@@ -5507,7 +5526,7 @@ impl TouchHandler for Shell {
         self.last_touch_pos = position;
         if let Some((start_y, start_offset)) = self.me_drag {
             let content_rect = root_view(self.width, self.height).children[0].rect;
-            let total = self.me_all_rows().len();
+            let total = self.capture_me_rows();
             let max_offset = me_max_scroll_offset(total, self.width, self.height, content_rect);
             // Finger moving up (position.1 decreasing) scrolls the
             // content down (offset increases) -- the usual touch-
@@ -5548,6 +5567,7 @@ impl TouchHandler for Shell {
         self.unlock_pending = false;
         self.tab_touch_pending = false;
         self.me_drag = None;
+        self.me_row_cache = None;
         if self.pressed_tab.take().is_some() {
             self.draw(conn, qh);
         }
@@ -5574,9 +5594,12 @@ impl Shell {
         {
             return;
         }
-        self.me_scroll_dirty = false;
         self.scroll_content_only = true;
         self.draw(conn, qh);
+        self.me_scroll_dirty = false;
+        if self.me_drag.is_none() {
+            self.me_row_cache = None;
+        }
     }
 
     /// Renders the active root section's placeholder content plus the
@@ -5860,6 +5883,7 @@ impl Shell {
                 tabs,
                 content_cards,
                 context_label,
+                paint_navigation: !content_only,
             }
         };
 
@@ -5871,7 +5895,8 @@ impl Shell {
         // this function's own top comment already gives for `frame`.
         // Only ever `Some` on `Frame::Root` (the only frame the Orb
         // ever draws on) and only when the Rollback setting allows it.
-        let orb_frame = (!self.calibration_mode
+        let orb_frame = (!content_only
+            && !self.calibration_mode
             && self.settings.orb_enabled
             && matches!(frame, Frame::Root { .. } | Frame::Now { .. }))
         .then(|| self.build_orb_frame(width, height));
@@ -6113,6 +6138,7 @@ impl Shell {
                     tabs,
                     content_cards,
                     context_label,
+                    paint_navigation,
                 } => {
                     render::draw_root(
                         &mut render::Canvas::new(canvas, width, height),
@@ -6123,6 +6149,7 @@ impl Shell {
                         fonts,
                         &content_cards,
                         current_page_is_now,
+                        paint_navigation,
                     );
                 }
                 Frame::Now {
@@ -6425,6 +6452,17 @@ impl Shell {
         }
     }
 
+    fn capture_me_rows(&mut self) -> usize {
+        if self.me_row_cache.is_none() {
+            let rows = flatten_me_rows(&me_system_sections(&self.me_facts()));
+            self.me_row_cache = Some(rows);
+        }
+        self.me_row_cache
+            .as_ref()
+            .map(|rows| rows.len())
+            .unwrap_or(0)
+    }
+
     /// Hit-test uses the same flattened `me_all_rows` list
     /// `me_content_cards` draws, so section headers stay inert and
     /// dispatch keys do not depend on a frozen index table.
@@ -6443,6 +6481,7 @@ impl Shell {
     }
 
     fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
+        self.me_row_cache = None;
         match action {
             "tap_build_info" => {
                 // HIA-20: no toast, no counter shown anywhere -- see
@@ -7097,6 +7136,11 @@ impl Shell {
     }
 
     fn me_all_rows(&self) -> Vec<MeRow> {
+        if self.me_drag.is_some() || self.me_scroll_dirty {
+            if let Some(rows) = &self.me_row_cache {
+                return rows.clone();
+            }
+        }
         flatten_me_rows(&me_system_sections(&self.me_facts()))
     }
 
@@ -8353,14 +8397,14 @@ impl Shell {
 mod tests {
     use super::{
         bluetooth_list_action_at, calibration_requested, capability_label, consent_action_at,
-        content_action_at, dev_surface_back_tapped, effective_context_space, flatten_me_rows,
-        format_utc_offset, in_progress_work, input_idle_for_at_least, intent_action_at,
-        known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle, next_pending_action,
-        object_view_action_at, object_view_content, orb_action_at, orb_attention_from_entities,
-        orb_menu_actions, orb_visual_state, orb_zone_rect, pressed_tab_from_touch,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
-        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        content_action_at, dev_surface_back_tapped, effective_context_space, ensure_me_row_cache,
+        flatten_me_rows, format_utc_offset, in_progress_work, input_idle_for_at_least,
+        intent_action_at, known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle,
+        next_pending_action, object_view_action_at, object_view_content, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pressed_tab_from_touch, remove_context_source, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_relation_targets, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, upsert_context_entry, wifi_list_action_at, AgentSummary,
         BluetoothListTap, ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect,
         RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow,
@@ -10584,6 +10628,19 @@ mod tests {
         if let Some(row) = super::scrolled_row_rect(total - 1, width, height, max_offset, content) {
             assert!(row.intersection(nav).is_none());
         }
+    }
+
+    #[test]
+    fn me_row_cache_does_not_rebuild_facts_during_scroll() {
+        let mut cache = None;
+        let len = ensure_me_row_cache(&mut cache, || {
+            flatten_me_rows(&me_system_sections(&me_fixture_facts()))
+        });
+        assert!(len > 0);
+        let again = ensure_me_row_cache(&mut cache, || {
+            panic!("Я scroll must not respawn wpa_cli/df")
+        });
+        assert_eq!(again, len);
     }
 
     #[test]
