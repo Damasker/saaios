@@ -276,9 +276,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   text ... normal input" rule applies to this header as much as any body
   text).
 - First real consumer: `Сейчас` (ADR-112), the `Приложения` grid
-  (ADR-138), and Inbox (ADR-139). Spaces / Me still concatenate
-  through `draw_root` (`format!("{context_label} · {title}")` at a
-  fixed offset) until those pages get their own header slice.
+  (ADR-138), Inbox (ADR-139), and Пространства (ADR-140). Me still
+  concatenates through `draw_root` (`format!("{context_label} · {title}")`
+  at a fixed offset) until that page gets its own header slice.
 - Accessibility: name is the Space name plus section title; a non-default
   lifecycle is exposed through the nested `StatusIndicator`'s own state, not
   a second accessible string glued onto the header's name.
@@ -467,7 +467,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Not a people list, not an app drawer, not Space detail. Members
   stay on Object View / NOW until that surface exists.
 - First real consumer: `space_list_rows` (ADR-128). Flattened to
-  `ActionCardView`. Tab id stays `spaces`.
+  `ActionCardView`. Header is `ContextHeader` (ADR-140), not
+  `draw_root`. Tab id stays `spaces`. Space detail still later.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.14 `WifiRow`

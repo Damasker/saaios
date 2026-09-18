@@ -992,7 +992,14 @@ fn draw_action_card(
     card: &ActionCardView,
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill_rect(rect, theme_color(ColorRole::Surface));
+    canvas.fill_rect(
+        rect,
+        if card.selected {
+            theme_color(ColorRole::Elevated)
+        } else {
+            theme_color(ColorRole::Surface)
+        },
+    );
     let has_action = !card.action.is_empty();
     let text_left = if has_action {
         canvas.fill_rect(
@@ -2624,10 +2631,10 @@ pub fn draw_apps_grid(
     draw_tab_bar(canvas, tabs, fonts);
 }
 
-/// ADR-139: Inbox through `ContextHeader`, same status-layer inset as
-/// `draw_now` / `draw_apps_grid`. Live EventRow cards keep their
-/// stacked rects. No concatenated `draw_root` Surface bar.
-pub fn draw_inbox(
+/// ADR-139/140: Inbox and Spaces through `ContextHeader`, same
+/// status-layer inset as `draw_now` / `draw_apps_grid`. Live cards keep
+/// their stacked rects. No concatenated `draw_root` Surface bar.
+pub fn draw_context_row_list(
     canvas: &mut Canvas<'_>,
     content: Rect,
     tabs: &[(Rect, NavigationItem)],
@@ -3226,10 +3233,10 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
-        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_gallery,
-        draw_inbox, draw_lock_idle, draw_orb, draw_root, draw_status_bar, draw_tab_bar,
-        gallery_row_positions, physical, physical_line_height, state_color, theme_color,
-        ActionCardView, Canvas,
+        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery,
+        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_root, draw_status_bar,
+        draw_tab_bar, gallery_row_positions, physical, physical_line_height, state_color,
+        theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, ContextHeader, NavigationItem, ObjectSummary, Progress, Rect,
@@ -3693,11 +3700,32 @@ mod tests {
             row,
             ActionCardView::new("Нет новых задач и уведомлений", "", ""),
         )];
-        draw_inbox(canvas, content, &[], &header, &rows, None);
+        draw_context_row_list(canvas, content, &[], &header, &rows, None);
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
             theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn spaces_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, 2160);
+        let header = ContextHeader::new("Дом").with_section_title("Пространства");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(
+            row,
+            ActionCardView::new("Дом", "Объектов: 1", "").selected(true),
+        )];
+        draw_context_row_list(canvas, content, &[], &header, &rows, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Elevated)
         );
     }
 

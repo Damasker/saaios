@@ -2017,7 +2017,7 @@ enum Frame {
     /// ADR-138: the `Приложения` grid is no longer `Frame::Root`.
     /// Header is a real `ContextHeader`; tiles are only live
     /// `installed_apps` (the old `root.sui` inspect/intent cells stay
-    /// on the NOW footer). Spaces / Me still use `Root`.
+    /// on the NOW footer). Me still uses `Root`.
     AppsGrid {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
@@ -2026,9 +2026,18 @@ enum Frame {
         empty_message: Option<&'static str>,
     },
     /// ADR-139: Inbox is no longer `Frame::Root`. Header is a real
-    /// `ContextHeader`; rows stay live `EventRow` cards. Spaces / Me
-    /// still use `Root`.
+    /// `ContextHeader`; rows stay live `EventRow` cards. Me still
+    /// uses `Root`.
     Inbox {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
+    },
+    /// ADR-140: Пространства is no longer `Frame::Root`. Header is a
+    /// real `ContextHeader`; rows stay live `SpaceRow` cards. Space
+    /// detail stays deferred.
+    Spaces {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
@@ -4270,6 +4279,19 @@ fn inbox_header(space_name: &str, entityd_connected: bool, archived: bool) -> Co
     }
 }
 
+/// ADR-140: section title is always `Пространства`. Offline `entityd`
+/// names `Нет связи` and wins over the selected space's archived mark.
+fn spaces_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Пространства");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
 /// How far a touch has to move (in either direction, on this
 /// 1080x2400 panel) before `TouchHandler::up` treats it as a real
 /// drag on "Я" rather than a tap that merely twitched a few pixels --
@@ -6305,13 +6327,25 @@ impl Shell {
                 ),
                 rows: self.inbox_content_cards(width, height),
             }
+        } else if self.current_page == RootPage::Spaces {
+            let view = root_view(width, height);
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::Spaces {
+                content_rect: view.children[0].rect,
+                tabs: self.root_navigation_items(width, height),
+                header: spaces_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    self.entityd.is_connected(),
+                    archived,
+                ),
+                rows: self.spaces_content_cards(width, height),
+            }
         } else {
             let view = root_view(width, height);
             let content_rect = view.children[0].rect;
             let tabs = self.root_navigation_items(width, height);
-            let content_cards = if self.current_page == RootPage::Spaces {
-                self.spaces_content_cards(width, height)
-            } else if self.current_page == RootPage::Me {
+            let content_cards = if self.current_page == RootPage::Me {
                 self.me_content_cards(width, height)
             } else {
                 ROOT_CONTENT_ACTIONS
@@ -6352,6 +6386,7 @@ impl Shell {
                     | Frame::Now { .. }
                     | Frame::AppsGrid { .. }
                     | Frame::Inbox { .. }
+                    | Frame::Spaces { .. }
             ))
         .then(|| self.build_orb_frame(width, height));
 
@@ -6633,7 +6668,22 @@ impl Shell {
                     header,
                     rows,
                 } => {
-                    render::draw_inbox(
+                    render::draw_context_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &rows,
+                        fonts,
+                    );
+                }
+                Frame::Spaces {
+                    content_rect,
+                    tabs,
+                    header,
+                    rows,
+                } => {
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
                         content_rect,
                         &tabs,
@@ -8876,17 +8926,17 @@ mod tests {
         orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
         remove_context_source, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
-        today_schedules, trusted_client_action_at, trusted_client_card_from_row,
-        trusted_client_list_rows, upsert_context_entry, wifi_card_from_row, wifi_list_action_at,
-        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
-        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
-        KeyboardMode, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
-        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_rows, upsert_context_entry,
+        wifi_card_from_row, wifi_list_action_at, wifi_list_rows, wifi_password_field, AgentSummary,
+        AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource,
+        DataRowVariant, Entity, FieldKind, KeyboardMode, ObjectSummary, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -9694,6 +9744,37 @@ mod tests {
             Some("Архив")
         );
         let offline_archived = inbox_header("Дом", false, true);
+        assert_eq!(
+            offline_archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn spaces_header_names_the_section_and_offline() {
+        let online = spaces_header("Дом", true, false);
+        assert_eq!(online.heading_text(), "Дом · Пространства");
+        assert!(online.lifecycle.is_none());
+        let offline = spaces_header("Дом", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+        let archived = spaces_header("Дом", true, true);
+        assert_eq!(
+            archived
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Архив")
+        );
+        let offline_archived = spaces_header("Дом", false, true);
         assert_eq!(
             offline_archived
                 .lifecycle
