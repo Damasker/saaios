@@ -226,6 +226,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   action. A value remains visually distinct from secondary explanation.
 - Long content reflows vertically. Technical identifiers may use mono body and
   expose a copy action when useful.
+- First diagnostic consumer of a bare Static `DataRow`: HIA-20
+  «Диагностика» (ADR-136). Flattened to `ActionCardView`. «Назад»
+  stays a trailing control card. The 7-tap gesture is unchanged.
 
 ### 6.9 `Metric`
 

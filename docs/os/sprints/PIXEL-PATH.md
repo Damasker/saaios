@@ -1,6 +1,6 @@
 # Путь на Pixel 7 — один очередь, не шесть выходных
 
-Status: **active sequence after ADR-118…135.**
+Status: **active sequence after ADR-118…136.**
 Visual Language remains the only hardware-changing *shell* experiment.
 Service binaries (`saaios-runtime`, `saai-taskd`, `saai-entityd`) могут
 прошиваться в ту же неделю — это не второй DRM/GPU эксперимент.
@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116, 126–135 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`); VUI-07 PIN setup **на panther** (`eb4cb508…`); VUI-07 lock idle **на panther** (`a19327cb…`); VUI-07 intent input **на panther** (`6239bebd…`) | **saai-shell `6239bebd…` прошит** |
+| Visual | 111–116, 126–136 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`); VUI-07 PIN setup **на panther** (`eb4cb508…`); VUI-07 lock idle **на panther** (`a19327cb…`); VUI-07 intent input **на panther** (`6239bebd…`); VUI-07 developer surface host-green (ADR-136) | **saai-shell `6239bebd…` прошит**; ADR-136 pending flash |
 
 ## Две очереди, не девять
 
@@ -95,6 +95,7 @@ host-only derived view.
 | VUI-07 PIN setup | `Field` masked preview **на panther** (`eb4cb508…`) |
 | VUI-07 lock idle | Canvas + clock + tap hint **на panther** (`a19327cb…`) |
 | VUI-07 intent input | `Field` text preview **на panther** (`6239bebd…`) |
+| VUI-07 developer surface | live Static `DataRow` list host-green (ADR-136); panther pending |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

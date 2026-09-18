@@ -1999,10 +1999,11 @@ enum Frame {
     /// HIA-20: the hidden diagnostic screen -- same row-list shape as
     /// `TrustedClients` just above, reused verbatim rather than
     /// inventing new geometry for a screen that's read-only text.
+    /// ADR-136: rows are `ActionCardView` from Static `DataRow`.
     DevSurface {
         header: Rect,
         status_line: String,
-        rows: Vec<(Rect, String)>,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
     PinSetup {
         field: Field,
@@ -4087,6 +4088,25 @@ fn trusted_client_card_from_row(row: &TrustedClientRow) -> render::ActionCardVie
     render::ActionCardView::new(row.row.primary.clone(), status, action)
 }
 
+/// ADR-136: one live diagnostic fact as a Static `DataRow`. Not a
+/// button -- HIA-20's only tap target on this screen is trailing
+/// «Назад».
+fn diagnostic_row(label: impl Into<String>, value: impl Into<String>) -> DataRow {
+    DataRow::new(label, DataRowVariant::Static).with_value(value)
+}
+
+fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
+    render::ActionCardView::new(
+        row.primary.clone(),
+        row.value.clone().unwrap_or_default(),
+        "",
+    )
+}
+
+fn diagnostic_status_line(row_count: usize) -> String {
+    format!("{row_count} показателей")
+}
+
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
 /// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
@@ -6147,18 +6167,23 @@ impl Shell {
             // explains why this is always read fresh, never cached.
             let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
             let data_rows = self.dev_surface_rows();
-            let mut rows: Vec<(Rect, String)> = data_rows
+            let mut rows: Vec<(Rect, render::ActionCardView)> = data_rows
                 .iter()
                 .enumerate()
-                .map(|(index, text)| (stacked_row_rect(index, width, height), text.clone()))
+                .map(|(index, row)| {
+                    (
+                        stacked_row_rect(index, width, height),
+                        diagnostic_card_from_row(row),
+                    )
+                })
                 .collect();
             rows.push((
                 stacked_row_rect(data_rows.len(), width, height),
-                "Назад".to_string(),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::DevSurface {
                 header,
-                status_line: "Диагностика".to_string(),
+                status_line: diagnostic_status_line(data_rows.len()),
                 rows,
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
@@ -6431,7 +6456,7 @@ impl Shell {
                     status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_action_row_list(
                         &mut render::Canvas::new(canvas, width, height),
                         "Диагностика",
                         &status_line,
@@ -7455,40 +7480,49 @@ impl Shell {
     /// capability set IS the policy decision for that app; there is
     /// no separate PolicyDecision log to show, so this doesn't invent
     /// one just to look more like the aspirational document.
-    fn dev_surface_rows(&self) -> Vec<String> {
+    fn dev_surface_rows(&self) -> Vec<DataRow> {
         let mut rows = vec![
-            format!(
-                "Пространство: {} ({})",
-                space_display_name(&self.spaces, &self.selected_space_id),
-                self.selected_space_id
+            diagnostic_row(
+                "Пространство",
+                format!(
+                    "{} ({})",
+                    space_display_name(&self.spaces, &self.selected_space_id),
+                    self.selected_space_id
+                ),
             ),
-            format!("Сборка: {}", env!("SAAIOS_BUILD_ID")),
-            format!("Модель: {}", hardware_model()),
-            format!("Ядро: {}", kernel_release()),
-            format!("Работает: {}", uptime_string()),
-            format!(
-                "Пространств: {} · объектов: {}",
-                self.spaces.len(),
-                self.entity_counts.values().sum::<usize>()
+            diagnostic_row("Сборка", env!("SAAIOS_BUILD_ID")),
+            diagnostic_row("Модель", hardware_model()),
+            diagnostic_row("Ядро", kernel_release()),
+            diagnostic_row("Работает", uptime_string()),
+            diagnostic_row(
+                "Пространств",
+                format!(
+                    "{} · объектов: {}",
+                    self.spaces.len(),
+                    self.entity_counts.values().sum::<usize>()
+                ),
             ),
-            format!("Попыток загрузки: {}", boot_attempts()),
+            diagnostic_row("Попыток загрузки", boot_attempts().to_string()),
         ];
         if self.context_frame.is_empty() {
-            rows.push("ContextFrame: пусто".to_string());
+            rows.push(diagnostic_row("ContextFrame", "пусто"));
         } else {
             for entry in &self.context_frame {
                 let source = match entry.source {
                     ContextSource::Manual => "manual",
                     ContextSource::Wifi => "wifi",
                 };
-                rows.push(format!(
-                    "ContextFrame: {} · увер. {} · {source}",
-                    entry.space_id, entry.confidence
+                rows.push(diagnostic_row(
+                    "ContextFrame",
+                    format!("{} · увер. {} · {source}", entry.space_id, entry.confidence),
                 ));
             }
         }
         if self.installed_apps.is_empty() {
-            rows.push("Возможности: нет установленных приложений".to_string());
+            rows.push(diagnostic_row(
+                "Возможности",
+                "нет установленных приложений",
+            ));
         } else {
             for app in self.installed_apps.values() {
                 let grants = self
@@ -7506,7 +7540,7 @@ impl Shell {
                         }
                     })
                     .unwrap_or_else(|| "без разрешений".to_string());
-                rows.push(format!("{}: {grants}", app.name));
+                rows.push(diagnostic_row(app.name.clone(), grants));
             }
         }
         rows
@@ -8709,24 +8743,25 @@ mod tests {
     use super::{
         bluetooth_card_from_row, bluetooth_list_action_at, bluetooth_list_rows,
         calibration_requested, capability_label, consent_action_at, content_action_at,
-        dev_surface_back_tapped, effective_context_space, ensure_me_row_cache, flatten_me_rows,
-        format_utc_offset, in_progress_work, input_idle_for_at_least, intent_action_at,
-        intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts, me_system_sections,
-        next_in_cycle, next_pending_action, object_view_action_at, object_view_content,
-        orb_action_at, orb_attention_from_entities, orb_menu_actions, orb_visual_state,
-        orb_zone_rect, pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
+        effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
+        in_progress_work, input_idle_for_at_least, intent_action_at, intent_input_field,
+        known_surfaces, lock_idle_view, me_fixture_facts, me_system_sections, next_in_cycle,
+        next_pending_action, object_view_action_at, object_view_content, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
         space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
         upsert_context_entry, wifi_card_from_row, wifi_list_action_at, wifi_list_rows,
         wifi_password_field, AgentSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
-        ContextSource, Entity, FieldKind, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets,
-        Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
-        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -11259,6 +11294,24 @@ mod tests {
             panic!("Я scroll must not respawn wpa_cli/df")
         });
         assert_eq!(again, len);
+    }
+
+    #[test]
+    fn diagnostic_card_from_row_keeps_label_and_value_apart() {
+        let row = diagnostic_row("Сборка", "abc123");
+        assert_eq!(row.variant, DataRowVariant::Static);
+        assert!(!row.is_actionable());
+        assert_eq!(row.primary, "Сборка");
+        assert_eq!(row.value.as_deref(), Some("abc123"));
+        let card = diagnostic_card_from_row(&row);
+        assert_eq!(card.label, "Сборка");
+        assert_eq!(card.status, "abc123");
+        assert_eq!(card.action, "");
+    }
+
+    #[test]
+    fn diagnostic_status_line_names_the_real_row_count() {
+        assert_eq!(diagnostic_status_line(8), "8 показателей");
     }
 
     #[test]

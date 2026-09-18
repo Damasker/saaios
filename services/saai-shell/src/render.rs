@@ -878,6 +878,10 @@ pub fn draw_remote_pair(
 /// rows instead of a button row. S20 generalized this from a
 /// Wi-Fi-only `draw_wifi_list` to also draw "Bluetooth устройства" --
 /// same shape both times, only the title and row contents differ.
+/// ADR-136: last caller (`Frame::DevSurface`) moved to
+/// `draw_action_row_list`. Kept until the VUI-07 primitives-cleanup
+/// slice deletes it.
+#[allow(dead_code)]
 pub fn draw_row_list(
     canvas: &mut Canvas<'_>,
     title: &str,
@@ -993,7 +997,7 @@ fn draw_action_card(
 
 /// ADR-129: same header as `draw_row_list`, rows are `ActionCardView`
 /// (SSID + scan facts + connect button) instead of one concatenated
-/// label. Dev surface still uses `draw_row_list`.
+/// label. ADR-136: DevSurface uses this too.
 pub fn draw_action_row_list(
     canvas: &mut Canvas<'_>,
     title: &str,

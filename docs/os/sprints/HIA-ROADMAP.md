@@ -390,8 +390,8 @@ Object View (HIA-07) выигрывает от реального Space Graph (H
   "Я" (`me_fixed_card_action`'s индекс 1, тот же well-known приём,
   что у Android'а собственного "tap build number"), без единого
   визуального намёка/счётчика до самого открытия. `Frame::DevSurface`
-  переиспользует `draw_row_list` (тот же паттерн, что WifiList/
-  BluetoothList/TrustedClients) с реальными live-данными:
+  переиспользует `draw_action_row_list` (тот же паттерн, что WifiList/
+  BluetoothList/TrustedClients; ADR-136 Static `DataRow`) с реальными live-данными:
   `selected_space_id`, полный `context_frame` (HIA-02), и
   capability-гранты каждого установленного приложения -- ничего
   статичного/заглушечного. Подтверждено вживую: 7 тапов открыли
