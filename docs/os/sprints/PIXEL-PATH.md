@@ -1,6 +1,6 @@
 # Путь на Pixel 7 — один очередь, не шесть выходных
 
-Status: **active sequence after ADR-118…132.**
+Status: **active sequence after ADR-118…133.**
 Visual Language remains the only hardware-changing *shell* experiment.
 Service binaries (`saaios-runtime`, `saai-taskd`, `saai-entityd`) могут
 прошиваться в ту же неделю — это не второй DRM/GPU эксперимент.
@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116, 126–132 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`) | **saai-shell `0eeb36d3…` прошит** |
+| Visual | 111–116, 126–133 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`); VUI-07 PIN setup **host** (ADR-133) | **saai-shell `0eeb36d3…` прошит**; PIN setup not flashed |
 
 ## Две очереди, не девять
 
@@ -91,7 +91,8 @@ host-only derived view.
 | VUI-07 Wi-Fi | live `WifiRow` list **на panther** (`c80bb666…`); password keyboard unchanged |
 | VUI-07 Bluetooth | live `BluetoothRow` list **на panther** (`5b37c5bc…`) |
 | VUI-07 trusted clients | live `TrustedClientRow` list **на panther** (`cd207b18…`) |
-| VUI-07 Wi-Fi password | `Field` masked preview **на panther** (`0eeb36d3…`); PIN / lock later |
+| VUI-07 Wi-Fi password | `Field` masked preview **на panther** (`0eeb36d3…`) |
+| VUI-07 PIN setup | `Field` masked preview **host** (ADR-133); not flashed |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

@@ -205,8 +205,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - Password/PIN variants never expose their value through logs or accessibility
   unless the user explicitly reveals it.
 - First real consumer of `FieldKind::Password`: Wi-Fi password screen
-  (ADR-132). Preview and accessibility use `accessible_value()`. No
-  reveal control in this slice. PIN setup stays on its own keypad.
+  (ADR-132) and PIN setup (ADR-133). Preview and accessibility use
+  `accessible_value()`. No reveal control in this slice. Lock-surface
+  unlock still paints progress dots, not the digits.
 
 ### 6.8 `DataRow`
 
@@ -253,7 +254,7 @@ on Inbox. `SpaceRow` lands in VUI-07 on the Пространства tab list.
 `WifiRow` lands in VUI-07 on «Wi-Fi сети». `BluetoothRow` lands in
 VUI-07 on «Bluetooth устройства». `TrustedClientRow` lands in
 VUI-07 on «Доверенные клиенты». `FieldKind::Password` lands in
-VUI-07 on the Wi-Fi password keyboard.
+VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 
 ### 7.1 `ContextHeader`
 

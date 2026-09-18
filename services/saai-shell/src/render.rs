@@ -1063,10 +1063,12 @@ fn draw_keypad_label(
 }
 
 /// keys come from `pin_keypad_rect`'s numeric layout instead of
-/// ADR-029's letters.
+/// ADR-029's letters. VUI-07 (ADR-133): preview is a `Field`, same
+/// status-layer inset as `draw_wifi_password`. Lock unlock stays
+/// `draw_lock_pin_entry`.
 pub fn draw_pin_setup(
     canvas: &mut Canvas<'_>,
-    buffer: &str,
+    field: &Field,
     header: Rect,
     keys: &[(Rect, &str)],
     fonts: Option<&Fonts>,
@@ -1084,20 +1086,25 @@ pub fn draw_pin_setup(
     draw_text(
         canvas,
         &fonts.semibold,
-        "Новый PIN-код",
+        &field.label,
         42.0,
         header.x + 30,
-        header.y + 40,
+        header.y + 140,
         theme_color(ColorRole::TextPrimary),
     );
-    let masked: String = buffer.chars().map(|_| '•').collect();
-    let (preview, preview_color) = if masked.is_empty() {
-        (
-            "Введите новый PIN (минимум 4 цифры)".to_string(),
-            theme_color(ColorRole::TextSecondary),
-        )
+    let empty = field.is_empty();
+    let preview = if empty {
+        field
+            .placeholder
+            .clone()
+            .unwrap_or_else(|| "Введите новый PIN (минимум 4 цифры)".to_string())
     } else {
-        (masked, theme_color(ColorRole::TextPrimary))
+        field.accessible_value()
+    };
+    let preview_color = if empty {
+        theme_color(ColorRole::TextSecondary)
+    } else {
+        theme_color(ColorRole::TextPrimary)
     };
     draw_text(
         canvas,
@@ -1105,7 +1112,7 @@ pub fn draw_pin_setup(
         &preview,
         34.0,
         header.x + 30,
-        header.y + 130,
+        header.y + 200,
         preview_color,
     );
 

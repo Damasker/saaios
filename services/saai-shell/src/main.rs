@@ -2017,7 +2017,7 @@ enum Frame {
         rows: Vec<(Rect, String)>,
     },
     PinSetup {
-        buffer: String,
+        field: Field,
         header: Rect,
         keys: Vec<(Rect, &'static str)>,
     },
@@ -3988,6 +3988,15 @@ fn wifi_password_field(ssid: &str, buffer: &str) -> Field {
     Field::new(format!("Пароль для «{ssid}»"), FieldKind::Password)
         .with_value(buffer)
         .with_placeholder("Введите пароль…")
+}
+
+/// VUI-07 (ADR-133): PIN-setup preview is a `Field`, not a second
+/// hand-rolled mask. Revealed stays false; digits never become the
+/// accessible value. Lock-surface unlock stays `draw_lock_pin_entry`.
+fn pin_setup_field(buffer: &str) -> Field {
+    Field::new("Новый PIN-код", FieldKind::Password)
+        .with_value(buffer)
+        .with_placeholder("Введите новый PIN (минимум 4 цифры)")
 }
 
 /// VUI-07 (ADR-130): «Bluetooth устройства» lists live `bt-scan`
@@ -6006,7 +6015,7 @@ impl Shell {
                     .map(|(offset, label)| (pin_keypad_rect(12 + offset, width, height), label)),
             );
             Frame::PinSetup {
-                buffer: state.buffer.clone(),
+                field: pin_setup_field(&state.buffer),
                 header,
                 keys,
             }
@@ -6333,13 +6342,13 @@ impl Shell {
                     );
                 }
                 Frame::PinSetup {
-                    buffer,
+                    field,
                     header,
                     keys,
                 } => {
                     render::draw_pin_setup(
                         &mut render::Canvas::new(canvas, width, height),
-                        &buffer,
+                        &field,
                         header,
                         &keys,
                         fonts,
@@ -8657,7 +8666,7 @@ mod tests {
         format_utc_offset, in_progress_work, input_idle_for_at_least, intent_action_at,
         known_surfaces, me_fixture_facts, me_system_sections, next_in_cycle, next_pending_action,
         object_view_action_at, object_view_content, orb_action_at, orb_attention_from_entities,
-        orb_menu_actions, orb_visual_state, orb_zone_rect, pressed_tab_from_touch,
+        orb_menu_actions, orb_visual_state, orb_zone_rect, pin_setup_field, pressed_tab_from_touch,
         remove_context_source, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
         space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
@@ -9991,6 +10000,25 @@ mod tests {
         let empty = wifi_password_field("Guest", "");
         assert!(empty.is_empty());
         assert_eq!(empty.placeholder.as_deref(), Some("Введите пароль…"));
+        assert_eq!(empty.accessible_value(), "");
+    }
+
+    #[test]
+    fn pin_setup_field_masks_digits_and_keeps_placeholder() {
+        let field = pin_setup_field("4269");
+        assert_eq!(field.kind, FieldKind::Password);
+        assert!(!field.revealed);
+        assert_eq!(field.label, "Новый PIN-код");
+        assert_eq!(field.value, "4269");
+        assert_eq!(field.accessible_value(), "\u{2022}\u{2022}\u{2022}\u{2022}");
+        assert!(!field.accessible_value().contains("4269"));
+
+        let empty = pin_setup_field("");
+        assert!(empty.is_empty());
+        assert_eq!(
+            empty.placeholder.as_deref(),
+            Some("Введите новый PIN (минимум 4 цифры)")
+        );
         assert_eq!(empty.accessible_value(), "");
     }
 
