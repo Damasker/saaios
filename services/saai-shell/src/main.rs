@@ -1972,8 +1972,7 @@ enum Frame {
         decline: Rect,
     },
     IntentInput {
-        buffer: String,
-        status: Option<String>,
+        field: Field,
         header: Rect,
         keys: Vec<(Rect, String)>,
     },
@@ -3977,6 +3976,19 @@ fn wifi_password_field(ssid: &str, buffer: &str) -> Field {
     Field::new(format!("Пароль для «{ssid}»"), FieldKind::Password)
         .with_value(buffer)
         .with_placeholder("Введите пароль…")
+}
+
+/// VUI-07 (ADR-135): intent draft preview is a `Field`, not a
+/// hand-rolled placeholder string. Text, not Password. Offline is
+/// `help` (`Нет связи`), not `error`.
+fn intent_input_field(buffer: &str, store_connected: bool) -> Field {
+    let mut field = Field::new("Новое намерение", FieldKind::Text)
+        .with_value(buffer)
+        .with_placeholder("Наберите текст…");
+    if let Some(status) = intent_input_status(store_connected) {
+        field.help = Some(status.to_string());
+    }
+    field
 }
 
 /// VUI-07 (ADR-134): no-PIN lock copy. Time is passed in from
@@ -6003,8 +6015,7 @@ impl Shell {
         } else if let Some(state) = &self.intent_input {
             let (header, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::IntentInput {
-                buffer: state.buffer.clone(),
-                status: intent_input_status(self.entityd.is_connected()).map(str::to_string),
+                field: intent_input_field(&state.buffer, self.entityd.is_connected()),
                 header,
                 keys,
             }
@@ -6335,16 +6346,13 @@ impl Shell {
                     );
                 }
                 Frame::IntentInput {
-                    buffer,
-                    status,
+                    field,
                     header,
                     keys,
                 } => {
                     render::draw_intent_input(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Новое намерение",
-                        &buffer,
-                        status.as_deref(),
+                        &field,
                         header,
                         &keys,
                         fonts,
@@ -8703,10 +8711,10 @@ mod tests {
         calibration_requested, capability_label, consent_action_at, content_action_at,
         dev_surface_back_tapped, effective_context_space, ensure_me_row_cache, flatten_me_rows,
         format_utc_offset, in_progress_work, input_idle_for_at_least, intent_action_at,
-        known_surfaces, lock_idle_view, me_fixture_facts, me_system_sections, next_in_cycle,
-        next_pending_action, object_view_action_at, object_view_content, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
+        intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts, me_system_sections,
+        next_in_cycle, next_pending_action, object_view_action_at, object_view_content,
+        orb_action_at, orb_attention_from_entities, orb_menu_actions, orb_visual_state,
+        orb_zone_rect, pin_setup_field, pressed_tab_from_touch, remove_context_source, space_color,
         space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
@@ -10060,6 +10068,30 @@ mod tests {
             Some("Введите новый PIN (минимум 4 цифры)")
         );
         assert_eq!(empty.accessible_value(), "");
+    }
+
+    #[test]
+    fn intent_input_field_keeps_placeholder_and_names_offline_as_help() {
+        let field = intent_input_field("купить хлеб", true);
+        assert_eq!(field.kind, FieldKind::Text);
+        assert_eq!(field.label, "Новое намерение");
+        assert_eq!(field.value, "купить хлеб");
+        assert_eq!(field.accessible_value(), "купить хлеб");
+        assert_eq!(field.placeholder.as_deref(), Some("Наберите текст…"));
+        assert!(field.help.is_none());
+        assert!(field.error.is_none());
+
+        let empty = intent_input_field("", true);
+        assert!(empty.is_empty());
+        assert_eq!(empty.placeholder.as_deref(), Some("Наберите текст…"));
+        assert!(empty.help.is_none());
+        assert_eq!(empty.accessible_value(), "");
+
+        let offline = intent_input_field("", false);
+        assert!(offline.is_empty());
+        assert_eq!(offline.placeholder.as_deref(), Some("Наберите текст…"));
+        assert_eq!(offline.help.as_deref(), Some("Нет связи"));
+        assert!(offline.error.is_none());
     }
 
     #[test]

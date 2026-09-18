@@ -404,9 +404,7 @@ pub fn draw_consent(
 /// on the intent screen (`Нет связи`); Wi-Fi password passes `None`.
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
-    title: &str,
-    buffer: &str,
-    status: Option<&str>,
+    field: &Field,
     header: Rect,
     keys: &[(Rect, String)],
     fonts: Option<&Fonts>,
@@ -426,35 +424,34 @@ pub fn draw_intent_input(
     draw_text(
         canvas,
         &fonts.semibold,
-        title,
+        &field.label,
         42.0,
         header.x + 30,
-        header.y + 40,
+        header.y + 140,
         theme_color(ColorRole::TextPrimary),
     );
-    if let Some(status) = status {
-        draw_text(
-            canvas,
-            &fonts.regular,
-            status,
-            28.0,
-            header.x + 30,
-            header.y + 88,
-            theme_color(ColorRole::TextSecondary),
-        );
-    }
-    let (preview, preview_color) = if buffer.is_empty() {
-        ("Наберите текст…", theme_color(ColorRole::TextSecondary))
+    let empty = field.is_empty();
+    let preview = if empty {
+        field
+            .help
+            .clone()
+            .or_else(|| field.placeholder.clone())
+            .unwrap_or_else(|| "Наберите текст…".to_string())
     } else {
-        (buffer, theme_color(ColorRole::TextPrimary))
+        field.accessible_value()
+    };
+    let preview_color = if empty {
+        theme_color(ColorRole::TextSecondary)
+    } else {
+        theme_color(ColorRole::TextPrimary)
     };
     draw_text(
         canvas,
         &fonts.regular,
-        preview,
+        &preview,
         34.0,
         header.x + 30,
-        header.y + 130,
+        header.y + 200,
         preview_color,
     );
 
@@ -481,7 +478,8 @@ pub fn draw_intent_input(
 /// VUI-07 (ADR-132): Wi-Fi password reuses the intent keyboard keys
 /// but previews a `Field` (masked unless revealed) and sits both
 /// lines below the 120px PIXEL_7 status layer, same inset as
-/// `draw_action_row_list`. Intent input keeps `draw_intent_input`.
+/// `draw_action_row_list`. Intent input uses the same inset via
+/// ADR-135's `Field`.
 pub fn draw_wifi_password(
     canvas: &mut Canvas<'_>,
     field: &Field,

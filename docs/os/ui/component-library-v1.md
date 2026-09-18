@@ -208,6 +208,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   (ADR-132) and PIN setup (ADR-133). Preview and accessibility use
   `accessible_value()`. No reveal control in this slice. Lock-surface
   unlock still paints progress dots, not the digits.
+- First real consumer of `FieldKind::Text`: intent composer (ADR-135).
+  Placeholder `Наберите текст…` is distinct from empty. Offline is
+  `help` (`Нет связи`), not `error`.
 
 ### 6.8 `DataRow`
 
@@ -255,6 +258,7 @@ on Inbox. `SpaceRow` lands in VUI-07 on the Пространства tab list.
 VUI-07 on «Bluetooth устройства». `TrustedClientRow` lands in
 VUI-07 on «Доверенные клиенты». `FieldKind::Password` lands in
 VUI-07 on the Wi-Fi password keyboard and on PIN setup.
+`FieldKind::Text` lands in VUI-07 on intent input.
 
 ### 7.1 `ContextHeader`
 
