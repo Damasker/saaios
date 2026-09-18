@@ -2,9 +2,9 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host-only. Tab still named `Я` until the migrated
-information architecture is complete (Visual Language 3.4 / VUI-04
-remainder). Physical Pixel flash is not this slice.
+Принято, 2026-09-18. Destination grouping is on panther (`ad53551f…`).
+Tab rename `Я`→`Система` is the remaining host label change; internal
+id stays `me` / `select_root:me`. MEM-08 omitted.
 
 ## Нумерация
 
@@ -18,7 +18,7 @@ track. `Я` today is a flat 19-row settings dump plus installed-app
 grant lines. Concept boards and Visual Language 9.5 group by device
 domain, not by the sprint that added the card.
 
-`Я`→`Система` rename stays blocked until this destination is truthful.
+`Я`→`Система` rename waited until this destination was truthful.
 
 ## Inventory (current `Я` and adjacent frames)
 
@@ -79,7 +79,9 @@ gauge on this page.
 4. **Flatten to `ActionCardView`** for the current `draw_root` list so
    coalesced drag, `scrolled_row_rect`, and status/nav layering stay
    the accepted `Я` path. Migrating paint to `draw_data_row` is VUI-07.
-5. **Do not rename the tab.** `ROOT_TABS` stays `Я`.
+5. **Rename the tab to `Система`.** Visible label only. `ROOT_TABS`
+   id/`select_root:me`/`RootPage::Me` stay. «Пространства» is already
+   the longest label; `Система` fits the same strip.
 
 ## Consequences
 

@@ -90,9 +90,9 @@ contains:
 | VUI-01 | Semantic tokens and physically calibrated palette | **Done** |
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
-| VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
+| VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
-| VUI-06 | `Система` information architecture and settings components | **In progress** (inventory + domain grouping host) |
+| VUI-06 | `Система` information architecture and settings components | **Host complete** (rename host; panther still shows `Я` until flash) |
 | VUI-07 | Remaining system surfaces and state patterns | Backlog |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
@@ -680,8 +680,9 @@ turning the Orb into a launcher or assistant avatar.
   `physical(top)` not a magic 120; nav hit-region scales from the design
   canvas and never drops below `MIN_TOUCH_TARGET` (portrait 1080×2400 and
   landscape 2400×1080).
-- [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
-  only when the destination content is truthful.
+- [x] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
+  only when the destination content is truthful. Visible label is now
+  `Система`; id stays `me` / `select_root:me`.
 - [x] Add explicit selected, pressed, disabled, attention, and badge states
   (ADR-116). `selected` is the current page; `badge`/`attention` come from
   `inbox_rows().len()`; `pressed` is the live finger on that tab
@@ -698,7 +699,8 @@ turning the Orb into a launcher or assistant avatar.
   (`MotionCue::ActivityPulse` only for Running and not reduced-motion;
   still-frame inset hairline until VUI-08). A circular arc is not drawn
   — this file has no circle primitive; fill is the honest square analogue.
-  `Я`→`Система` remains blocked on truthful destination content.
+  `Я`→`Система` is the visible tab label (VUI-06); destination content
+  was accepted on Pixel before the rename.
 - [x] Integrate a restrained Orb host with quiet, active, progress, attention,
   offline, and reduced-motion states (ADR-116). All five real states
   reuse `UniversalState` (`Idle`/`Active`/`Running`/`Attention`/`Offline`)
@@ -823,9 +825,10 @@ types and preserve protocol compatibility.
 
 ## VUI-06 — `Система` and device control
 
-**Status:** In progress (ADR-126 host: inventory, `SettingRow`/`CapabilityRow`,
-domain-grouped `Я`. Tab still `Я`. MEM-08 omitted — no shell-legal memory
-read. Physical flash pending.)
+**Status:** Host complete (ADR-126: inventory, domain grouping, honest
+missing/offline, scroll-cache on panther `ad53551f…`, tab label
+`Система`. MEM-08 omitted — no shell-legal memory read. Rename not yet
+flashed.)
 
 **Depends on:** VUI-04; may run after core VUI-05 primitives stabilize
 
@@ -845,8 +848,9 @@ a concise engineering-oriented surface.
 - [x] Reorganize content by device domain rather than implementation service.
   Host: `me_system_sections` groups the same 19 controls. Flattened to
   `ActionCardView` so scroll/nav stay the accepted path.
-- [ ] Rename `Я` to `Система` when the migrated information architecture is
-  complete.
+- [x] Rename `Я` to `Система` when the migrated information architecture is
+  complete. Visible label in `root.sui`; `select_root:me` unchanged.
+  Panther still shows `Я` until the next shell flash.
 - [x] Show healthy summaries first; disclose raw logs and identifiers on demand.
   Host: `Устройство` leads with model+storage; kernel/uptime/entity
   counts/boot attempts live on `DevSurface` (HIA-20). No invented health
@@ -1058,7 +1062,6 @@ After each completed task group, report:
 
 ## Next action
 
-Finish **VUI-06** destination: rename `Я`→`Система` only when the page
-is accepted as truthful on Pixel. MEM-08 stays omitted until a
-shell-legal memory read exists. Remaining: explicit unavailable states
-on device, then the rename.
+Start **VUI-07** remaining surfaces (Входящие as event stream, Spaces,
+Wi-Fi/BT lists, lock). Flash the `Система` tab when asked. MEM-08 stays
+omitted until a shell-legal memory read exists.

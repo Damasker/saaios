@@ -47,7 +47,7 @@
 //! silently dropped.
 //!
 //! Change step 6 ports drm-splash.c's four root sections (`root_page()`,
-//! `render_root_controls()`): "Сейчас"/"Входящие"/"Пространства"/"Я",
+//! `render_root_controls()`): "Сейчас"/"Входящие"/"Пространства"/"Система",
 //! navigable via a bottom tab bar. No real per-section content yet
 //! (placeholder-only is explicitly in scope for this step, per the S04
 //! sprint doc) and no text rendering exists in this client at all
@@ -9255,6 +9255,7 @@ mod tests {
     fn root_tabs_come_from_sui_markup() {
         assert_eq!(ROOT_TABS.len(), 4);
         assert_eq!(ROOT_TABS[0].label, "Сейчас");
+        assert_eq!(ROOT_TABS[3].label, "Система");
         assert_eq!(ROOT_TABS[3].icon, "person");
         assert_eq!(ROOT_TABS[3].action, "select_root:me");
     }

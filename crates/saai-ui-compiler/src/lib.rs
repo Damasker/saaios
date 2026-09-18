@@ -358,7 +358,7 @@ mod tests {
             content id=content fill
             tabs id=root-tabs height=300 {
               tab now label="Сейчас" icon=now action=select_root:now
-              tab me label="Я" icon=person action=select_root:me
+              tab me label="Система" icon=person action=select_root:me
             }
           }
         }

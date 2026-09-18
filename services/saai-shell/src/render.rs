@@ -2985,7 +2985,7 @@ mod tests {
     #[test]
     fn selected_indicator_moves_between_edge_tabs() {
         let mut pixels = vec![0; 1080 * 2400 * 4];
-        let labels = ["Сейчас", "Входящие", "Пространства", "Я"];
+        let labels = ["Сейчас", "Входящие", "Пространства", "Система"];
         let make_tabs = |selected_index: usize| -> Vec<(Rect, NavigationItem)> {
             labels
                 .iter()
@@ -3034,7 +3034,7 @@ mod tests {
         let mut pixels = vec![0; 1080 * 2400 * 4];
         let tabs = vec![(
             Rect::new(0, 2100, 270, 300),
-            NavigationItem::new("me", "Я").selected(),
+            NavigationItem::new("me", "Система").selected(),
         )];
         let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
         draw_root(
