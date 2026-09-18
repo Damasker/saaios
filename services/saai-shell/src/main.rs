@@ -463,8 +463,8 @@ use saai_ui_core::{
     DataRowVariant, DecisionOverlay, EventRow, IntentSummary, LayoutNode, Length, LogicalUnit,
     MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets,
     SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale,
-    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, UniversalState, WifiRow,
-    MIN_TOUCH_TARGET,
+    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState,
+    WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1886,6 +1886,14 @@ enum TrustedClientTap {
     Back,
 }
 
+fn trusted_client_list_row_count(client_count: usize) -> usize {
+    if client_count == 0 {
+        1
+    } else {
+        client_count
+    }
+}
+
 fn trusted_client_action_at(
     pos: (f64, f64),
     width: u32,
@@ -1897,7 +1905,8 @@ fn trusted_client_action_at(
             return Some(TrustedClientTap::Revoke(index));
         }
     }
-    if stacked_row_rect(client_count, width, height).contains(pos.0, pos.1) {
+    let controls = trusted_client_list_row_count(client_count);
+    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
         return Some(TrustedClientTap::Back);
     }
     None
@@ -1998,7 +2007,7 @@ enum Frame {
     TrustedClients {
         header: Rect,
         status_line: String,
-        rows: Vec<(Rect, String)>,
+        rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// HIA-20: the hidden diagnostic screen -- same row-list shape as
     /// `TrustedClients` just above, reused verbatim rather than
@@ -4010,6 +4019,39 @@ fn bluetooth_card_from_row(row: &BluetoothRow) -> render::ActionCardView {
         ""
     };
     render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.paired)
+}
+
+/// VUI-07 (ADR-131): «Доверенные клиенты» lists live
+/// `authorized_keys` rows. Empty is «Нет клиентов». Fingerprint is
+/// the ADR-083 prefix, not the raw key.
+fn trusted_client_fingerprint_label(fingerprint: &str) -> String {
+    let prefix = fingerprint.get(..24).unwrap_or(fingerprint);
+    format!("{prefix}…")
+}
+
+fn trusted_client_list_rows(clients: &[TrustedClient]) -> Vec<TrustedClientRow> {
+    if clients.is_empty() {
+        return vec![TrustedClientRow::empty()];
+    }
+    clients
+        .iter()
+        .map(|client| {
+            TrustedClientRow::open(
+                client.client_name.clone(),
+                trusted_client_fingerprint_label(&client.fingerprint),
+            )
+        })
+        .collect()
+}
+
+fn trusted_client_card_from_row(row: &TrustedClientRow) -> render::ActionCardView {
+    let status = row.row.value.clone().unwrap_or_default();
+    let action = if row.row.is_actionable() {
+        "Отозвать"
+    } else {
+        ""
+    };
+    render::ActionCardView::new(row.row.primary.clone(), status, action)
 }
 
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
@@ -6042,29 +6084,20 @@ impl Shell {
             // snapshot.
             let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
             let clients = trusted_clients();
-            let mut rows: Vec<(Rect, String)> = clients
+            let trusted_rows = trusted_client_list_rows(&clients);
+            let mut rows: Vec<(Rect, render::ActionCardView)> = trusted_rows
                 .iter()
                 .enumerate()
-                .map(|(index, client)| {
-                    // Truncated the same way `key_fingerprint` itself
-                    // used to be before ADR-083 -- full 44-char
-                    // SHA256 fingerprints don't fit a row alongside a
-                    // name, but enough of the prefix still lets two
-                    // same-named clients be told apart.
-                    let short_fingerprint =
-                        client.fingerprint.get(..24).unwrap_or(&client.fingerprint);
+                .map(|(index, row)| {
                     (
                         stacked_row_rect(index, width, height),
-                        format!(
-                            "{}   ·   {short_fingerprint}…   ·   Отозвать",
-                            client.client_name
-                        ),
+                        trusted_client_card_from_row(row),
                     )
                 })
                 .collect();
             rows.push((
-                stacked_row_rect(clients.len(), width, height),
-                "Назад".to_string(),
+                stacked_row_rect(trusted_rows.len(), width, height),
+                render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::TrustedClients {
                 header,
@@ -6359,7 +6392,7 @@ impl Shell {
                     status_line,
                     rows,
                 } => {
-                    render::draw_row_list(
+                    render::draw_action_row_list(
                         &mut render::Canvas::new(canvas, width, height),
                         "Доверенные клиенты",
                         &status_line,
@@ -8629,10 +8662,11 @@ mod tests {
         remove_context_source, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
         space_relation_targets, space_row_at, stacked_row_rect, tab_at, task_confirm_action_at,
-        today_schedules, trusted_client_action_at, upsert_context_entry, wifi_card_from_row,
-        wifi_list_action_at, wifi_list_rows, AgentSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClientTap,
+        today_schedules, trusted_client_action_at, trusted_client_card_from_row,
+        trusted_client_list_rows, upsert_context_entry, wifi_card_from_row, wifi_list_action_at,
+        wifi_list_rows, AgentSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
         UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
         INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
         NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
@@ -9513,6 +9547,13 @@ mod tests {
             Some(TrustedClientTap::Back)
         ));
         assert!(trusted_client_action_at((10.0, 10.0), width, height, client_count).is_none());
+        let empty = stacked_row_rect(0, width, height);
+        let back_empty = stacked_row_rect(1, width, height);
+        assert!(trusted_client_action_at(center(empty), width, height, 0).is_none());
+        assert!(matches!(
+            trusted_client_action_at(center(back_empty), width, height, 0),
+            Some(TrustedClientTap::Back)
+        ));
     }
 
     #[test]
@@ -9967,6 +10008,40 @@ mod tests {
         assert_eq!(empty[0].row.primary, "Нет устройств");
         assert!(!empty[0].row.is_actionable());
         assert_eq!(bluetooth_card_from_row(&empty[0]).action, "");
+    }
+
+    #[test]
+    fn trusted_client_list_rows_use_name_and_fingerprint_prefix() {
+        let clients = vec![
+            TrustedClient {
+                client_name: "home-mike".into(),
+                fingerprint: "SHA256:abcdefghijklmnopqrstuvwx".into(),
+            },
+            TrustedClient {
+                client_name: "(без имени)".into(),
+                fingerprint: "short".into(),
+            },
+        ];
+        let live = trusted_client_list_rows(&clients);
+        assert_eq!(live.len(), 2);
+        assert_eq!(live[0].row.primary, "home-mike");
+        assert_eq!(
+            live[0].row.value.as_deref(),
+            Some("SHA256:abcdefghijklmnopq…")
+        );
+        assert_eq!(trusted_client_card_from_row(&live[0]).action, "Отозвать");
+        assert_eq!(live[1].row.primary, "(без имени)");
+        assert_eq!(live[1].row.value.as_deref(), Some("short…"));
+        assert!(!live
+            .iter()
+            .any(|row| row.row.primary.contains("ssh-ed25519")
+                || row.row.value.as_deref().unwrap_or("").contains("BEGIN")));
+
+        let empty = trusted_client_list_rows(&[]);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].row.primary, "Нет клиентов");
+        assert!(!empty[0].row.is_actionable());
+        assert_eq!(trusted_client_card_from_row(&empty[0]).action, "");
     }
 
     #[test]

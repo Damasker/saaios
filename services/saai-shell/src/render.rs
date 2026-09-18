@@ -921,7 +921,7 @@ fn draw_action_card(
 
 /// ADR-129: same header as `draw_row_list`, rows are `ActionCardView`
 /// (SSID + scan facts + connect button) instead of one concatenated
-/// label. Bluetooth / trusted clients still use `draw_row_list`.
+/// label. Dev surface still uses `draw_row_list`.
 pub fn draw_action_row_list(
     canvas: &mut Canvas<'_>,
     title: &str,

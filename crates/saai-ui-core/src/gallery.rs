@@ -1,9 +1,10 @@
 //! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
-//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`. No live telemetry.
+//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`. No live telemetry.
 
 use crate::{
     AgentSummary, BluetoothRow, ContextHeader, DecisionOverlay, EventRow, IntentSummary,
-    ObjectSummary, SpaceRow, StatusIndicator, TaskSummary, UniversalState, WifiRow,
+    ObjectSummary, SpaceRow, StatusIndicator, TaskSummary, TrustedClientRow, UniversalState,
+    WifiRow,
 };
 
 pub struct CompositeGalleryFixtures {
@@ -25,6 +26,8 @@ pub struct CompositeGalleryFixtures {
     pub bluetooth_paired: BluetoothRow,
     pub bluetooth_other: BluetoothRow,
     pub bluetooth_empty: BluetoothRow,
+    pub trusted_named: TrustedClientRow,
+    pub trusted_empty: TrustedClientRow,
     pub states: [StatusIndicator; 9],
 }
 
@@ -53,6 +56,8 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
         bluetooth_paired: BluetoothRow::open("Pixel Buds", "BLE", true),
         bluetooth_other: BluetoothRow::open("Speaker", "CLASSIC", false),
         bluetooth_empty: BluetoothRow::empty(),
+        trusted_named: TrustedClientRow::open("home-mike", "SHA256:abcdabcdabcdabcdabcdabcd…"),
+        trusted_empty: TrustedClientRow::empty(),
         states: UniversalState::ALL
             .map(|state| StatusIndicator::new(state, state_fixture_label(state))),
     }
@@ -124,8 +129,10 @@ mod tests {
         assert!(fixtures.bluetooth_paired.paired);
         assert!(!fixtures.bluetooth_other.paired);
         assert_eq!(fixtures.bluetooth_empty.row.primary, "Нет устройств");
+        assert_eq!(fixtures.trusted_named.row.primary, "home-mike");
+        assert_eq!(fixtures.trusted_empty.row.primary, "Нет клиентов");
         let blob = format!(
-            "{} {} {} {} {} {} {} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {} {} {} {} {} {} {}",
             fixtures.title,
             fixtures.header.context_name,
             fixtures.object.title,
@@ -138,7 +145,8 @@ mod tests {
             fixtures.space_other.row.primary,
             fixtures.wifi_connected.row.primary,
             fixtures.wifi_empty.row.primary,
-            fixtures.bluetooth_paired.row.primary
+            fixtures.bluetooth_paired.row.primary,
+            fixtures.trusted_named.row.primary
         );
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));

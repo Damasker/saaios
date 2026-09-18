@@ -485,13 +485,27 @@ VUI-07 on «Bluetooth устройства».
   `ActionCardView`. Scan / Refresh / Back stay trailing control cards.
 - Accessibility: delegated to the nested `DataRow`.
 
+### 7.16 `TrustedClientRow`
+
+- Anatomy: a `DataRow` for one `authorized_keys` line on «Доверенные
+  клиенты». Navigation. Primary is the comment-field name. Value is
+  the ADR-083 SHA256 prefix (24 characters plus ellipsis), not the
+  raw key. Action is `revoke_trusted_client`.
+- Empty file: static «Нет клиентов». Missing file is the same empty
+  list. Not a live-session flag, not a pairing frame, not a Space
+  binding.
+- First real consumer: `trusted_client_list_rows` (ADR-131). Flattened
+  to `ActionCardView`. «Назад» stays a trailing control card.
+- Accessibility: delegated to the nested `DataRow`.
+
 ## 8. Required gallery matrix
 
 The first device gallery uses labelled fixture data and contains no fake
 runtime telemetry. VUI-02 covers the ten primitives (default state).
 VUI-05 adds a second page with composites and every `UniversalState`.
-VUI-07 adds `EventRow`, `SpaceRow`, `WifiRow`, and `BluetoothRow`
-fixtures; that page does not grow a new layout slot in this slice.
+VUI-07 adds `EventRow`, `SpaceRow`, `WifiRow`, `BluetoothRow`, and
+`TrustedClientRow` fixtures; that page does not grow a new layout
+slot in this slice.
 Tap switches pages.
 
 1. default, pressed, focused, disabled, and busy interaction states;

@@ -18,7 +18,7 @@ pub use composites::{
     AgentAssignment, AgentSummary, BluetoothRow, BottomNavigation, CapabilityRow, ContextHeader,
     DecisionOverlay, EventRow, IntentSummary, NavigationItem, ObjectSummary, ObjectSummaryTrailing,
     OrbHost, SettingRow, SpaceRow, SystemSection, SystemSectionRow, SystemStatus, TaskSummary,
-    WifiRow,
+    TrustedClientRow, WifiRow,
 };
 pub use foundations::{
     FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,

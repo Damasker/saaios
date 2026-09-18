@@ -93,7 +93,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth on panther) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth on panther; trusted clients host ADR-131) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -889,7 +889,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…` on panther; trusted clients host ADR-131)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -917,9 +917,12 @@ big-bang rewrite.
   `BluetoothRow` from `bt-scan`; paired from `SAVED` names; empty
   only after `DONE`. Flattened to `ActionCardView`. Trusted clients /
   lock still later. Flashed `5b37c5bc…` (X5 BLE + OBDII CLASSIC).
+- [x] Migrate `Доверенные клиенты` to live `authorized_keys` rows.
+  ADR-131: `TrustedClientRow` from the file; SHA256 prefix not the
+  raw key; empty «Нет клиентов». Flattened to `ActionCardView`.
+  Wi-Fi password / lock still later.
 - [ ] Migrate Object View, consent, remote pairing, intent input, Wi-Fi
-  password, trusted clients, PIN setup, developer surface, and
-  root fallback.
+  password, PIN setup, developer surface, and root fallback.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle lock screen and wake-on-touch states without exposing sensitive
@@ -1077,8 +1080,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (Wi-Fi password, trusted
-clients, lock, Space detail). Inbox EventRow (`c1547c02…`), Spaces
-list (`9bb75db5…`), Wi-Fi list (`c80bb666…`), and Bluetooth list
-(`5b37c5bc…`) are on panther. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Continue **VUI-07** remaining surfaces (Wi-Fi password, lock, Space
+detail). Inbox EventRow (`c1547c02…`), Spaces list (`9bb75db5…`),
+Wi-Fi list (`c80bb666…`), and Bluetooth list (`5b37c5bc…`) are on
+panther. Trusted clients list is host-only until flashed. MEM-08
+stays omitted until a shell-legal memory read exists.

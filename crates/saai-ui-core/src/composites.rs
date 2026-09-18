@@ -7,7 +7,7 @@
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
 //! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`/`WifiRow`/
-//! `BluetoothRow`.
+//! `BluetoothRow`/`TrustedClientRow`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
@@ -740,6 +740,36 @@ impl BluetoothRow {
     }
 }
 
+/// Section 7.16. One `authorized_keys` line: comment-field name and
+/// the ADR-083 fingerprint prefix. Empty is an honest absence. No
+/// live-session bit, no raw key — those are not this composite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrustedClientRow {
+    pub row: DataRow,
+}
+
+impl TrustedClientRow {
+    pub fn open(name: impl Into<String>, fingerprint: impl Into<String>) -> Self {
+        let fingerprint = fingerprint.into();
+        let mut row =
+            DataRow::new(name, DataRowVariant::Navigation).with_action("revoke_trusted_client");
+        if !fingerprint.is_empty() {
+            row = row.with_value(fingerprint);
+        }
+        Self { row }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: DataRow::new("Нет клиентов", DataRowVariant::Static),
+        }
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        self.row.accessibility()
+    }
+}
+
 /// Section 7.4. One destination in the bottom navigation strip. `icon` is
 /// optional rather than required: this project's current icon set
 /// (`docs/os/architecture/../../os/targets/panther/third_party/README.md`'s
@@ -1405,5 +1435,35 @@ mod tests {
         assert!(!blob.contains("dBm"));
         assert!(!blob.contains("подключено сейчас"));
         assert!(!blob.contains("RSSI"));
+    }
+
+    #[test]
+    fn trusted_client_row_does_not_invent_session_or_raw_key() {
+        let named = TrustedClientRow::open("home-mike", "SHA256:abcdabcdabcdabcdabcdabcd…");
+        assert_eq!(named.row.variant, DataRowVariant::Navigation);
+        assert!(named.row.is_actionable());
+        assert_eq!(named.row.action.as_deref(), Some("revoke_trusted_client"));
+        assert_eq!(
+            named.row.value.as_deref(),
+            Some("SHA256:abcdabcdabcdabcdabcdabcd…")
+        );
+
+        let unnamed = TrustedClientRow::open("(без имени)", "");
+        assert!(unnamed.row.value.is_none());
+
+        let empty = TrustedClientRow::empty();
+        assert_eq!(empty.row.primary, "Нет клиентов");
+        assert!(!empty.row.is_actionable());
+
+        let blob = format!(
+            "{} {} {} {}",
+            named.row.primary,
+            unnamed.row.primary,
+            empty.row.primary,
+            named.row.value.as_deref().unwrap_or("")
+        );
+        assert!(!blob.contains("ssh-ed25519"));
+        assert!(!blob.contains("сессия сейчас"));
+        assert!(!blob.contains("BEGIN"));
     }
 }
