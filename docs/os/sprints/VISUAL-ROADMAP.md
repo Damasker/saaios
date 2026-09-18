@@ -2,6 +2,26 @@
 
 Status: **VUI-00, VUI-01, and VUI-03 complete; VUI-02 Task List complete, Acceptance checklist complete except one item blocked by the environment (see "The sans and mono faces survive the actual Pixel boot-image asset path" below)**
 
+**A note on `[x]` in VUI-04 through VUI-06 below**: VUI-00 through VUI-03
+held one consistent rule -- `[x]` means confirmed on the real Pixel 7, not
+merely implemented. VUI-04/05/06's own Task List checkboxes drifted from
+that rule during a period of autonomous, mostly host-side work: many are
+marked `[x]` for real, tested, host-verified (`cargo test`/`cargo build`)
+functionality that has **not** been re-flashed and physically confirmed
+since commit `63b8b64` -- several sections say so explicitly in their own
+prose ("Physical gallery/Object View flash still pending," "Rename not
+yet flashed"), but nothing at this level flagged that the checkbox's own
+meaning had quietly changed. Found and logged 2026-09-19 while auditing
+this work before resuming it.
+
+Until each section is re-verified on device and its own Status line
+updated to say so plainly, read a `[x]` in VUI-04/05/06 as "implemented
+and host-tested," not as "confirmed on hardware" -- that section's own
+`### Acceptance` checklist (still honestly `[ ]` throughout all three)
+remains the real gate for physical confirmation, exactly as it always
+has been. This note itself is removed once VUI-04/05/06 have each been
+re-flashed and re-confirmed, and their own Status lines say so.
+
 Target device: Pixel 7 (`panther`)
 
 Product contract: [`visual-language-v1.md`](../architecture/visual-language-v1.md)
