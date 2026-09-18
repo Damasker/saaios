@@ -93,7 +93,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup on panther; lock idle host ADR-134) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle on panther) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -889,7 +889,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…` on panther; lock idle host ADR-134)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…` on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -931,7 +931,8 @@ big-bang rewrite.
   later. Flashed `eb4cb508…`.
 - [x] Restyle the no-PIN lock off the S04 diagnostic red fill. ADR-134:
   Canvas + live clock + `Коснитесь, чтобы разблокировать`. PIN unlock
-  stays dots. Deep-idle stays black. No Inbox content. Not flashed.
+  stays dots. Deep-idle stays black. No Inbox content. Flashed
+  `a19327cb…`.
 - [ ] Migrate Object View, consent, remote pairing, intent input,
   developer surface, and root fallback.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
@@ -1092,10 +1093,10 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (lock chrome, Space detail).
-Inbox EventRow (`c1547c02…`), Spaces list (`9bb75db5…`), Wi-Fi list
-(`c80bb666…`), Bluetooth list (`5b37c5bc…`), trusted clients
-(`cd207b18…`), Wi-Fi password (`0eeb36d3…`), and PIN setup
-(`eb4cb508…`) are on panther. Lock idle is host-only until flashed.
+Continue **VUI-07** remaining surfaces (PIN keypad chrome, intent
+input, Space detail). Inbox EventRow (`c1547c02…`), Spaces list
+(`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
+trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
+setup (`eb4cb508…`), and lock idle (`a19327cb…`) are on panther.
 Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.

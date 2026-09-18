@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116, 126–134 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`); VUI-07 PIN setup **на panther** (`eb4cb508…`); VUI-07 lock idle **host** (ADR-134) | **saai-shell `eb4cb508…` прошит**; lock idle not flashed |
+| Visual | 111–116, 126–134 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`); VUI-07 PIN setup **на panther** (`eb4cb508…`); VUI-07 lock idle **на panther** (`a19327cb…`) | **saai-shell `a19327cb…` прошит** |
 
 ## Две очереди, не девять
 
@@ -93,7 +93,7 @@ host-only derived view.
 | VUI-07 trusted clients | live `TrustedClientRow` list **на panther** (`cd207b18…`) |
 | VUI-07 Wi-Fi password | `Field` masked preview **на panther** (`0eeb36d3…`) |
 | VUI-07 PIN setup | `Field` masked preview **на panther** (`eb4cb508…`) |
-| VUI-07 lock idle | Canvas + clock + tap hint **host** (ADR-134); not flashed |
+| VUI-07 lock idle | Canvas + clock + tap hint **на panther** (`a19327cb…`) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

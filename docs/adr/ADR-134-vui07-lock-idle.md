@@ -2,10 +2,11 @@
 
 ## Статус
 
-Принято, 2026-09-18. Host slice: no-PIN lock paints Canvas, the live
-clock, and a tap-unlock hint. PIN entry stays `draw_lock_pin_entry`
-dots. Deep-idle stays black. Inbox content and lock restyle of the
-keypad are not this slice. Pixel flash with the rest of VUI-07.
+Принято, 2026-09-18. No-PIN lock paints Canvas, the live clock, and
+a tap-unlock hint. Flashed panther `a19327cb…`: `23:02` and
+`Коснитесь, чтобы разблокировать`, no diagnostic red, no Inbox
+content. PIN entry stays `draw_lock_pin_entry` dots. Deep-idle stays
+black. Intent input and Space detail are not this slice.
 
 ## Нумерация
 
@@ -47,6 +48,6 @@ do not log a PIN, do not change unlock or deep-idle.
 ## Verification
 
 Host: idle view keeps the passed time; hint names tap-unlock; fill
-is Canvas, not the diagnostic red. Physical Pixel: dark Canvas,
-clock below the punch-hole, hint visible, any-tap still unlocks.
-Do not set a PIN for the screenshot.
+is Canvas, not the diagnostic red. Panther `a19327cb…`: dark Canvas,
+clock `23:02` below the punch-hole, hint visible, no Inbox bodies.
+PIN was not set for the screenshot.
