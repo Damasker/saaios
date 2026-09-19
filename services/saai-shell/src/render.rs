@@ -356,125 +356,51 @@ pub fn draw_consent(
     );
 }
 
-/// S09 Change 2 / ADR-030: the bespoke touch-hit-test on-screen keyboard
-/// ADR-029 proved on a throwaway spike, now the real, committed way to
-/// type a `saaios.intent`'s text. `keys` is already laid out and
-/// hit-tested by `main.rs`'s `intent_view()` -- this only draws the
-/// rectangles it's handed, the same "no second set of rectangles" rule
-/// `draw_root()` follows for the tab bar and content cards.
-/// `title` is a parameter (S19) rather than a hardcoded "Новое
-/// намерение" -- `saai-shell` reuses this same keyboard tree verbatim
-/// for the Wi-Fi password screen (see `WifiPasswordState`'s doc
-/// comment), which needs its own header text. `status` is store-offline
-/// on the intent screen (`Нет связи`); Wi-Fi password passes `None`.
+/// ADR-161: Intent compose through `ContextHeader`. The Text `Field`
+/// sits immediately above the docked QWERTY. Keys stay the ADR-029
+/// rectangles from `intent_view()`. No Surface fill of the Fill slot.
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
+    content: Rect,
+    header: &ContextHeader,
     field: &Field,
-    header: Rect,
+    field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-
-    let Some(fonts) = fonts else {
-        paint_keyboard_keys(canvas, None, keys, pressed_key);
-        return;
-    };
-
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        &field.label,
-        42.0,
-        header.x + 30,
-        header.y + 140,
-        theme_color(ColorRole::TextPrimary),
-    );
-    let empty = field.is_empty();
-    let preview = if empty {
-        field
-            .help
-            .clone()
-            .or_else(|| field.placeholder.clone())
-            .unwrap_or_else(|| "Наберите текст…".to_string())
-    } else {
-        field.accessible_value()
-    };
-    let preview_color = if empty {
-        theme_color(ColorRole::TextSecondary)
-    } else {
-        theme_color(ColorRole::TextPrimary)
-    };
-    draw_text(
-        canvas,
-        &fonts.regular,
-        &preview,
-        34.0,
-        header.x + 30,
-        header.y + 200,
-        preview_color,
-    );
-
-    paint_keyboard_keys(canvas, Some(fonts), keys, pressed_key);
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
+        draw_gallery_field(canvas, fonts, field, field_rect);
+    }
+    canvas.set_clip(None);
+    paint_keyboard_keys(canvas, fonts, keys, pressed_key);
 }
 
-/// VUI-07 (ADR-132): Wi-Fi password reuses the intent keyboard keys
-/// but previews a `Field` (masked unless revealed) and sits both
-/// lines below the 120px PIXEL_7 status layer, same inset as
-/// `draw_action_row_list`. Intent input uses the same inset via
-/// ADR-135's `Field`.
+/// ADR-161: Wi-Fi password is the same avoidance layout as Intent.
+/// The Password `Field` still masks; SSID stays on the Field label.
 pub fn draw_wifi_password(
     canvas: &mut Canvas<'_>,
+    content: Rect,
+    header: &ContextHeader,
     field: &Field,
-    header: Rect,
+    field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-
-    let Some(fonts) = fonts else {
-        paint_keyboard_keys(canvas, None, keys, pressed_key);
-        return;
-    };
-
-    draw_text(
+    draw_intent_input(
         canvas,
-        &fonts.semibold,
-        &field.label,
-        42.0,
-        header.x + 30,
-        header.y + 140,
-        theme_color(ColorRole::TextPrimary),
+        content,
+        header,
+        field,
+        field_rect,
+        keys,
+        pressed_key,
+        fonts,
     );
-    let empty = field.is_empty();
-    let preview = if empty {
-        field
-            .placeholder
-            .clone()
-            .unwrap_or_else(|| "Введите пароль…".to_string())
-    } else {
-        field.accessible_value()
-    };
-    let preview_color = if empty {
-        theme_color(ColorRole::TextSecondary)
-    } else {
-        theme_color(ColorRole::TextPrimary)
-    };
-    draw_text(
-        canvas,
-        &fonts.regular,
-        &preview,
-        34.0,
-        header.x + 30,
-        header.y + 200,
-        preview_color,
-    );
-
-    paint_keyboard_keys(canvas, Some(fonts), keys, pressed_key);
 }
 
 /// HIA-07: one screen for any entity, instead of a dedicated view per
@@ -3251,11 +3177,11 @@ mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_action_card, draw_apps_grid, draw_calibration, draw_composite_gallery,
-        draw_consent, draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry,
-        draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup, draw_remote_pair, draw_root,
-        draw_status_bar, draw_surface_pattern, draw_tab_bar, gallery_row_positions,
-        now_empty_pattern, physical, physical_line_height, state_color, theme_color,
-        ActionCardView, Canvas,
+        draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
+        draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
+        draw_remote_pair, draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar,
+        gallery_row_positions, now_empty_pattern, physical, physical_line_height, state_color,
+        theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field, FieldKind, IconSize,
@@ -3895,6 +3821,25 @@ mod tests {
         );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
+    }
+
+    #[test]
+    fn intent_input_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Дом").with_section_title("Намерение");
+        let field =
+            Field::new("Новое намерение", FieldKind::Text).with_placeholder("Наберите текст…");
+        let field_rect = Rect::new(49, 1490, 982, 190);
+        let keys = vec![(Rect::new(108, 1700, 96, 144), "Q".to_string())];
+        draw_intent_input(
+            canvas, content, &header, &field, field_rect, &keys, None, None,
+        );
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(canvas.pixel(156, 1772), theme_color(ColorRole::Elevated));
     }
 
     #[test]

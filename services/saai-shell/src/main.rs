@@ -1922,14 +1922,21 @@ enum Frame {
         accept: Rect,
         decline: Rect,
     },
+    /// ADR-161: Field sits immediately above the docked QWERTY.
+    /// Header is a real `ContextHeader`, not a Surface fill of the
+    /// Fill slot ADR-150 left above the keys.
     IntentInput {
+        content_rect: Rect,
+        header: ContextHeader,
         field: Field,
-        header: Rect,
+        field_rect: Rect,
         keys: Vec<(Rect, String)>,
     },
     WifiPasswordInput {
+        content_rect: Rect,
+        header: ContextHeader,
         field: Field,
-        header: Rect,
+        field_rect: Rect,
         keys: Vec<(Rect, String)>,
     },
     /// ADR-146: Wi-Fi is no longer `draw_action_row_list` Surface
@@ -2706,6 +2713,22 @@ fn intent_keyboard_keys(
         keys.push((key_node.rect, label));
     }
     (header, keys)
+}
+
+/// ADR-161: one stacked-row card whose bottom meets the docked
+/// keyboard. Shared by Intent and Wi-Fi password. Clamped so it
+/// cannot climb into the first stacked slot (the ContextHeader band).
+fn intent_field_rect(width: u32, height: u32, mode: KeyboardMode) -> Rect {
+    let view = intent_view(width, height, mode);
+    let keyboard = view.children[1].rect;
+    let template = stacked_row_rect(0, width, height);
+    let y = keyboard.y.saturating_sub(template.height);
+    Rect::new(
+        template.x,
+        y.max(template.y),
+        template.width,
+        template.height,
+    )
 }
 
 #[cfg(test)]
@@ -4715,6 +4738,18 @@ fn pin_setup_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("PIN")
 }
 
+/// ADR-161: section title is always `Намерение`. Draft text stays on
+/// the Field; store-offline is Field help, not a lifecycle.
+fn intent_compose_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Намерение")
+}
+
+/// ADR-161: section title is always `Пароль`. SSID stays on the Field
+/// label; the PSK never becomes the heading.
+fn wifi_password_compose_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Пароль")
+}
+
 /// ADR-144: section title is always `SSH`. No invented lifecycle —
 /// pairing names the prompt, not store health.
 fn remote_pair_header(space_name: &str) -> ContextHeader {
@@ -6682,10 +6717,15 @@ impl Shell {
                 decline: buttons[1].rect,
             }
         } else if let Some(state) = &self.intent_input {
-            let (header, keys) = intent_keyboard_keys(width, height, state.mode);
+            let (_split, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::IntentInput {
+                content_rect: Rect::new(0, 0, width, height),
+                header: intent_compose_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 field: intent_input_field(&state.buffer, self.entityd.is_connected()),
-                header,
+                field_rect: intent_field_rect(width, height, state.mode),
                 keys,
             }
         } else if let Some(state) = &self.pin_setup {
@@ -6707,12 +6747,15 @@ impl Shell {
                 ),
             }
         } else if let Some(state) = &self.wifi_password {
-            // Same tree as `intent_input` above, reused verbatim --
-            // see `WifiPasswordState`'s doc comment.
-            let (header, keys) = intent_keyboard_keys(width, height, state.mode);
+            let (_split, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::WifiPasswordInput {
+                content_rect: Rect::new(0, 0, width, height),
+                header: wifi_password_compose_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 field: wifi_password_field(&state.ssid, &state.buffer),
-                header,
+                field_rect: intent_field_rect(width, height, state.mode),
                 keys,
             }
         } else if let Some(networks) = &self.wifi_list {
@@ -7087,14 +7130,18 @@ impl Shell {
                     );
                 }
                 Frame::IntentInput {
-                    field,
+                    content_rect,
                     header,
+                    field,
+                    field_rect,
                     keys,
                 } => {
                     render::draw_intent_input(
                         &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &header,
                         &field,
-                        header,
+                        field_rect,
                         &keys,
                         pressed_key.as_deref(),
                         fonts,
@@ -7119,14 +7166,18 @@ impl Shell {
                     );
                 }
                 Frame::WifiPasswordInput {
-                    field,
+                    content_rect,
                     header,
+                    field,
+                    field_rect,
                     keys,
                 } => {
                     render::draw_wifi_password(
                         &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &header,
                         &field,
-                        header,
+                        field_rect,
                         &keys,
                         pressed_key.as_deref(),
                         fonts,
@@ -9629,10 +9680,10 @@ mod tests {
         dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
         diagnostic_status_line, effective_context_space, ensure_me_row_cache, flatten_me_rows,
         format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
-        intent_action_at, intent_input_field, known_surfaces, lock_attention_tap,
-        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
-        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
-        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        intent_action_at, intent_compose_header, intent_field_rect, intent_input_field,
+        known_surfaces, lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
+        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header,
+        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_details,
         object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
@@ -9644,16 +9695,16 @@ mod tests {
         task_confirm_action_at, today_schedules, trusted_client_action_at,
         trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
         upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
-        SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
+        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
+        Entity, FieldKind, KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction,
+        Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern,
+        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
+        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -10567,6 +10618,41 @@ mod tests {
         let header = pin_setup_header("Работа");
         assert_eq!(header.heading_text(), "Работа · PIN");
         assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn intent_compose_header_names_the_section() {
+        let header = intent_compose_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Намерение");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn wifi_password_compose_header_names_the_section() {
+        let header = wifi_password_compose_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Пароль");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn intent_field_rect_sits_on_the_keyboard_and_misses_keys() {
+        for (width, height) in [(1080, 2400), (2400, 1080)] {
+            let view = super::intent_view(width, height, KeyboardMode::Letters);
+            let keyboard = view.children[1].rect;
+            let field = intent_field_rect(width, height, KeyboardMode::Letters);
+            assert!(
+                field.intersection(keyboard).is_none(),
+                "field overlaps keyboard at {width}x{height}"
+            );
+            assert_eq!(field.y + field.height, keyboard.y);
+            let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
+            for (rect, label) in &keys {
+                assert!(
+                    field.intersection(*rect).is_none(),
+                    "field overlaps key {label} at {width}x{height}"
+                );
+            }
+        }
     }
 
     #[test]

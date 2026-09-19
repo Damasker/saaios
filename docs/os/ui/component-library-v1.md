@@ -220,7 +220,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   occupancy is dummy length, never `pin_code`.
 - First real consumer of `FieldKind::Text`: intent composer (ADR-135).
   Placeholder `Наберите текст…` is distinct from empty. Offline is
-  `help` (`Нет связи`), not `error`.
+  `help` (`Нет связи`), not `error`. ADR-161 parks the Field on the
+  docked QWERTY under `ContextHeader` «Намерение»; Wi-Fi password
+  reuses that avoidance as «Пароль».
 - Keyboard keys (ADR-151): pressed fill is `ColorRole::Pressed` while
   the finger is down; one `KeyTick` haptic on down. Release still
   emits the key. Size does not change.

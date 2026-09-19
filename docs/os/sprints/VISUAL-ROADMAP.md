@@ -1065,6 +1065,9 @@ big-bang rewrite.
 - [x] Scroll DevSurface facts above docked «Назад». ADR-160:
   `scrolled_row_rect` + drag. 7-tap, swipe; leave with Назад.
   Flashed `bbde1ab2…`. Keyboard avoidance and focus order later.
+- [x] Park compose Field above docked QWERTY. ADR-161: Intent/Wi-Fi
+  `ContextHeader` + `intent_field_rect`. Do not send. Leave Отмена.
+  Flashed `3d289b66…`.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.
