@@ -41,7 +41,7 @@
 //! - **Haptic feedback on unlock.** drm-splash opened `/dev/input/haptic`
 //!   directly. Unlock still has no tick. Keyboard `KeyPress` goes
 //!   through `haptic_intent_for` (ADR-171). Main-surface commits log
-//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172). Displayd
+//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173). Displayd
 //!   still has no haptic protocol; this slice does not flash it.
 //!
 //! Both are logged as known limitations in the S04 sprint doc, not
@@ -11812,6 +11812,12 @@ mod tests {
         assert_eq!(frame_reason(true, true), FrameReason::Scroll);
         assert_eq!(frame_reason(false, true), FrameReason::Motion);
         assert_eq!(frame_reason(false, false), FrameReason::Input);
+    }
+
+    #[test]
+    fn scroll_p95_limit_is_fifty_milliseconds() {
+        use saai_ui_core::FRAME_PACE_P95_LIMIT_MS;
+        assert_eq!(FRAME_PACE_P95_LIMIT_MS, 50);
     }
 
     #[test]

@@ -386,7 +386,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   duration reused). Reduced motion keeps the `StatusMark` only.
 - ADR-172: `FramePace` is a diagnostic ring, not a visible component.
   The shell writes the last commit line to `/run/saaios/shell-frame.last`.
-  No CI threshold in this slice.
+  ADR-173 adds `p95_scroll` / `p95_ok` for scroll samples against 50 ms.
+  The live shell does not abort when over the limit.
 
 ### 7.6 `TaskSummary`
 

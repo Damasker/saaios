@@ -30,6 +30,7 @@ ADR-169 compose Field Focus on panther.
 ADR-170 Orb ActivityPulse on panther.
 ADR-171 haptic policy on panther.
 ADR-172 FramePace commit log on panther.
+ADR-173 50 ms scroll p95 on panther.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

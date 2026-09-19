@@ -114,7 +114,7 @@ contains:
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
-| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–172 on panther; CI thresholds remain) |
+| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–173 on panther; reduced-motion/traces remain) |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
 ---
@@ -1105,8 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through FramePace
-(ADR-167–172) on panther. Frame-pacing CI thresholds remain.
+**Status:** In progress — MotionClock through scroll p95
+(ADR-167–173) on panther. Remaining: reduced-motion coverage, traces.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1128,12 +1128,13 @@ into a measured regression contract.
   separately measured change is accepted.
 - [ ] Add performance traces for `Система` drag, fast tab switching, lists,
   keyboard, overlays, and Orb activity.
-- [ ] Set CI/device thresholds from the accepted baseline and document hardware
-  variance.
+- [x] Set CI/device thresholds from the accepted baseline (scroll p95 ≤ 50 ms,
+  ADR-173). Hardware variance is the live `/run/saaios/shell-frame.last`
+  `p95_scroll` line; the shell does not abort.
 
 ### Acceptance
 
-- [ ] Continuous drag p95 frame production is at or below 50 ms on the reference
+- [x] Continuous drag p95 frame production is at or below 50 ms on the reference
   build, with no unbounded input backlog and no disappearing layer.
 - [ ] First visible touch feedback is prompt and no worse than the VUI-07
   baseline.
@@ -1237,7 +1238,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: set CI/device thresholds from the FramePace
-baseline (50 ms drag p95). ADR-167–172 are on panther. Space detail
-still deferred. MEM-08 stays omitted until a shell-legal memory read
-exists.
+Continue **VUI-08**: reduced-motion on every remaining animated
+component, then performance traces. ADR-167–173 are on panther.
+Space detail still deferred. MEM-08 stays omitted until a
+shell-legal memory read exists.

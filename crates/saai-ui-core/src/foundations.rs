@@ -432,6 +432,8 @@ impl MotionClock {
 }
 
 pub const FRAME_PACE_CAP: usize = 32;
+/// VUI-08 drag gate (ADR-173). Compared only to scroll samples.
+pub const FRAME_PACE_P95_LIMIT_MS: u32 = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameReason {
@@ -517,12 +519,28 @@ impl FramePace {
     }
 
     pub fn p95_produce_ms(&self) -> Option<u32> {
+        self.p95_produce_ms_matching(|_| true)
+    }
+
+    pub fn p95_produce_ms_for(&self, reason: FrameReason) -> Option<u32> {
+        self.p95_produce_ms_matching(|sample| sample.reason == reason)
+    }
+
+    /// `None` when the ring has no scroll commit yet.
+    pub fn scroll_p95_within_limit(&self) -> Option<bool> {
+        self.p95_produce_ms_for(FrameReason::Scroll)
+            .map(|ms| ms <= FRAME_PACE_P95_LIMIT_MS)
+    }
+
+    fn p95_produce_ms_matching(&self, keep: impl Fn(&FrameSample) -> bool) -> Option<u32> {
         let mut values = [0u32; FRAME_PACE_CAP];
         let mut n = 0usize;
         for slot in &self.samples {
             if let Some(sample) = slot {
-                values[n] = sample.produce_ms;
-                n += 1;
+                if keep(sample) {
+                    values[n] = sample.produce_ms;
+                    n += 1;
+                }
             }
         }
         if n == 0 {
@@ -538,8 +556,17 @@ impl FramePace {
             .input_to_commit_ms
             .map(|ms| ms.to_string())
             .unwrap_or_else(|| "-".into());
+        let p95_scroll = self
+            .p95_produce_ms_for(FrameReason::Scroll)
+            .map(|ms| ms.to_string())
+            .unwrap_or_else(|| "-".into());
+        let p95_ok = match self.scroll_p95_within_limit() {
+            Some(true) => "1",
+            Some(false) => "0",
+            None => "-",
+        };
         Some(format!(
-            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={}",
+            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} p95_scroll={} p95_ok={}",
             sample.produce_ms,
             input,
             u8::from(sample.requested_frame),
@@ -547,6 +574,8 @@ impl FramePace {
             sample.dropped,
             sample.coalesced,
             sample.reason.as_str(),
+            p95_scroll,
+            p95_ok,
         ))
     }
 }
@@ -763,9 +792,57 @@ mod tests {
         assert!(line.contains("dropped=1"));
         assert!(line.contains("coalesced=2"));
         assert!(line.contains("reason=motion"));
+        assert!(line.contains("p95_scroll=-"));
+        assert!(line.contains("p95_ok=-"));
         assert_eq!(frame_reason(true, true), FrameReason::Scroll);
         assert_eq!(frame_reason(false, true), FrameReason::Motion);
         assert_eq!(frame_reason(false, false), FrameReason::Input);
+    }
+
+    fn record_scroll(pace: &mut FramePace, produce_ms: u32) {
+        pace.record(FrameSample {
+            produce_ms,
+            input_to_commit_ms: None,
+            requested_frame: false,
+            pending_depth: 1,
+            dropped: 0,
+            coalesced: 0,
+            reason: FrameReason::Scroll,
+        });
+    }
+
+    #[test]
+    fn scroll_p95_gate_ignores_input_frames_and_uses_the_50ms_limit() {
+        let mut pace = FramePace::new();
+        assert_eq!(pace.scroll_p95_within_limit(), None);
+        for _ in 0..18 {
+            pace.record(FrameSample {
+                produce_ms: 80,
+                input_to_commit_ms: Some(20),
+                requested_frame: false,
+                pending_depth: 0,
+                dropped: 0,
+                coalesced: 0,
+                reason: FrameReason::Input,
+            });
+            record_scroll(&mut pace, 10);
+        }
+        record_scroll(&mut pace, 40);
+        record_scroll(&mut pace, 40);
+        assert_eq!(pace.p95_produce_ms_for(FrameReason::Scroll), Some(40));
+        assert_eq!(pace.scroll_p95_within_limit(), Some(true));
+        assert!(pace.line().expect("recorded").contains("p95_ok=1"));
+
+        let mut slow = FramePace::new();
+        for _ in 0..18 {
+            record_scroll(&mut slow, 10);
+        }
+        record_scroll(&mut slow, 80);
+        record_scroll(&mut slow, 80);
+        assert_eq!(slow.p95_produce_ms_for(FrameReason::Scroll), Some(80));
+        assert_eq!(slow.scroll_p95_within_limit(), Some(false));
+        assert!(slow.line().expect("recorded").contains("p95_ok=0"));
+        assert_eq!(FRAME_PACE_P95_LIMIT_MS, 50);
     }
 
     #[test]
