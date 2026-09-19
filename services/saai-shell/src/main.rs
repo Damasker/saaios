@@ -3160,7 +3160,12 @@ fn dev_surface_scroll_content(width: u32, height: u32, row_count: usize) -> Rect
 /// `intent_view()`, with dialer rows instead of Latin letters. Space
 /// in the last digit row is the blank cell (no action). Setup adds
 /// Отмена/Готово/Убрать PIN as one more Fill row, the same way
-/// `intent_view()` appends `INTENT_CONTROLS`.
+/// `intent_view()` appends `INTENT_CONTROLS`. ADR-164 docks that
+/// setup tree at the bottom and parks the Field on it.
+const PIN_SETUP_SCREEN_ID: &str = "pin-setup";
+const PIN_SETUP_HEADER_ID: &str = "pin-header";
+const PIN_SETUP_FIELD_ID: &str = "pin-field";
+const PIN_ROWS_ID: &str = "pin-rows";
 const PIN_KEY_ROWS: [&str; 4] = ["123", "456", "789", " 0⌫"];
 
 #[derive(Clone, Copy)]
@@ -3213,41 +3218,77 @@ fn intern_pin_action(action: &str) -> Option<&'static str> {
     LABELS.iter().copied().find(|label| *label == action)
 }
 
+fn pin_setup_keyboard_height(panel_height: u32) -> u32 {
+    let row = physical_unit(MIN_TOUCH_TARGET);
+    let pad = physical_unit(SpacingToken::XSmall.value()).saturating_mul(2);
+    let wanted = row.saturating_mul(5).saturating_add(pad);
+    let keep_field = row.saturating_mul(2);
+    wanted.min(panel_height.saturating_sub(keep_field)).max(row)
+}
+
 fn pin_keypad_node(controls: &[&str]) -> Node {
-    let mut rows: Vec<Node> = PIN_KEY_ROWS
-        .iter()
-        .enumerate()
-        .map(|(row_index, letters)| {
-            Node::linear(
-                format!("pin-row-{row_index}"),
-                Axis::Horizontal,
-                letters
-                    .chars()
-                    .map(|ch| {
-                        let leaf = Node::leaf(format!("pin-key-{row_index}-{ch}"));
-                        match pin_key_action(ch) {
-                            Some(action) => leaf.with_action(action),
-                            None => leaf,
-                        }
-                    })
-                    .collect(),
-            )
-        })
-        .collect();
+    let mut focus = 1u32;
+    let mut rows: Vec<Node> = Vec::new();
+    for (row_index, letters) in PIN_KEY_ROWS.iter().enumerate() {
+        let mut keys = Vec::new();
+        for ch in letters.chars() {
+            let mut leaf = Node::leaf(format!("pin-key-{row_index}-{ch}"));
+            if let Some(action) = pin_key_action(ch) {
+                leaf = leaf.with_action(action).with_focus_order(focus);
+                focus += 1;
+            }
+            keys.push(leaf);
+        }
+        rows.push(Node::linear(
+            format!("pin-row-{row_index}"),
+            Axis::Horizontal,
+            keys,
+        ));
+    }
     if !controls.is_empty() {
+        let mut control_leaves = Vec::new();
+        for (index, label) in controls.iter().enumerate() {
+            control_leaves.push(
+                Node::leaf(format!("pin-control-{index}"))
+                    .with_action(*label)
+                    .with_focus_order(focus),
+            );
+            focus += 1;
+        }
         rows.push(Node::linear(
             "pin-controls",
             Axis::Horizontal,
-            controls
-                .iter()
-                .enumerate()
-                .map(|(index, label)| {
-                    Node::leaf(format!("pin-control-{index}")).with_action(*label)
-                })
-                .collect(),
+            control_leaves,
         ));
     }
-    Node::linear("pin-rows", Axis::Vertical, rows)
+    Node::linear(PIN_ROWS_ID, Axis::Vertical, rows)
+}
+
+fn pin_setup_view(width: u32, height: u32, forget: bool) -> LayoutNode {
+    let pad = physical_unit(SpacingToken::XSmall.value());
+    let keyboard = pin_keypad_node(&pin_setup_controls(forget))
+        .with_size(Length::Fill, Length::Px(pin_setup_keyboard_height(height)))
+        .with_padding(EdgeInsets::all(pad));
+    let field_height = stacked_row_rect(0, width, height).height;
+    let margin = width / 22;
+    let field = Node::linear(
+        "pin-field-row",
+        Axis::Horizontal,
+        vec![Node::leaf(PIN_SETUP_FIELD_ID).with_focus_order(0)],
+    )
+    .with_size(Length::Fill, Length::Px(field_height))
+    .with_padding(EdgeInsets {
+        top: 0,
+        right: margin,
+        bottom: 0,
+        left: margin,
+    });
+    let root = Node::linear(
+        PIN_SETUP_SCREEN_ID,
+        Axis::Vertical,
+        vec![Node::leaf(PIN_SETUP_HEADER_ID), field, keyboard],
+    );
+    layout(&root, Rect::new(0, 0, width, height))
 }
 
 fn pin_keyboard_bounds(width: u32, height: u32, kind: PinKeyboardKind) -> Rect {
@@ -3259,10 +3300,24 @@ fn pin_keyboard_bounds(width: u32, height: u32, kind: PinKeyboardKind) -> Rect {
             height.saturating_sub(INTENT_HEADER_HEIGHT),
         ),
         PinKeyboardKind::Setup { .. } => {
-            let field = stacked_row_rect(0, width, height);
-            let top = field.y.saturating_add(field.height);
-            Rect::new(0, top, width, height.saturating_sub(top))
+            let keyboard_height = pin_setup_keyboard_height(height);
+            Rect::new(
+                0,
+                height.saturating_sub(keyboard_height),
+                width,
+                keyboard_height,
+            )
         }
+    }
+}
+
+fn pin_layout(width: u32, height: u32, kind: PinKeyboardKind) -> LayoutNode {
+    match kind {
+        PinKeyboardKind::Unlock => layout(
+            &pin_keypad_node(&[]),
+            pin_keyboard_bounds(width, height, kind),
+        ),
+        PinKeyboardKind::Setup { forget } => pin_setup_view(width, height, forget),
     }
 }
 
@@ -3271,13 +3326,11 @@ fn pin_keyboard_keys(width: u32, height: u32, kind: PinKeyboardKind) -> Vec<(Rec
         return Vec::new();
     }
     let controls = pin_keyboard_controls(kind);
-    let view = layout(
-        &pin_keypad_node(&controls),
-        pin_keyboard_bounds(width, height, kind),
-    );
+    let view = pin_layout(width, height, kind);
+    let keyboard = layout_node_by_id(&view, PIN_ROWS_ID).unwrap_or(&view);
     let mut keys = Vec::new();
     for (row_index, letters) in PIN_KEY_ROWS.iter().enumerate() {
-        let row_node = &view.children[row_index];
+        let row_node = &keyboard.children[row_index];
         for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
             if pin_key_action(ch).is_some() {
                 keys.push((key_node.rect, ch.to_string()));
@@ -3285,7 +3338,7 @@ fn pin_keyboard_keys(width: u32, height: u32, kind: PinKeyboardKind) -> Vec<(Rec
         }
     }
     if !controls.is_empty() {
-        let controls_node = &view.children[PIN_KEY_ROWS.len()];
+        let controls_node = &keyboard.children[PIN_KEY_ROWS.len()];
         for (key_node, label) in controls_node.children.iter().zip(controls.iter()) {
             keys.push((key_node.rect, (*label).to_string()));
         }
@@ -3302,13 +3355,9 @@ fn pin_action_at(
     if width == 0 || height == 0 {
         return None;
     }
-    let controls = pin_keyboard_controls(kind);
-    layout(
-        &pin_keypad_node(&controls),
-        pin_keyboard_bounds(width, height, kind),
-    )
-    .hit_test(pos.0, pos.1)
-    .and_then(|node| node.action.as_deref().and_then(intern_pin_action))
+    pin_layout(width, height, kind)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref().and_then(intern_pin_action))
 }
 
 fn pin_keypad_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
@@ -3329,6 +3378,15 @@ fn pin_setup_action_at(
             forget: has_existing_pin,
         },
     )
+}
+
+fn pin_setup_field_rect(width: u32, height: u32, has_existing_pin: bool) -> Rect {
+    layout_node_by_id(
+        &pin_setup_view(width, height, has_existing_pin),
+        PIN_SETUP_FIELD_ID,
+    )
+    .map(|node| node.rect)
+    .unwrap_or_else(|| stacked_row_rect(0, width, height))
 }
 
 #[cfg(test)]
@@ -6794,7 +6852,7 @@ impl Shell {
                     &self.selected_space_id,
                 )),
                 field: pin_setup_field(&state.buffer),
-                field_rect: stacked_row_rect(0, width, height),
+                field_rect: pin_setup_field_rect(width, height, has_existing_pin),
                 keys: pin_keyboard_keys(
                     width,
                     height,
@@ -11700,6 +11758,64 @@ mod tests {
         }
         let field = super::lock_pin_field_rect(width);
         assert!(field.y + field.height <= super::INTENT_HEADER_HEIGHT);
+    }
+
+    #[test]
+    fn pin_setup_field_rect_sits_on_the_dialer_and_misses_keys() {
+        let min_touch = super::physical_unit(MIN_TOUCH_TARGET);
+        for (width, height) in [(1080, 2400), (2400, 1080)] {
+            let field = super::pin_setup_field_rect(width, height, false);
+            let keys = super::pin_keyboard_keys(
+                width,
+                height,
+                super::PinKeyboardKind::Setup { forget: false },
+            );
+            let keyboard = super::pin_keyboard_bounds(
+                width,
+                height,
+                super::PinKeyboardKind::Setup { forget: false },
+            );
+            assert_eq!(field.y + field.height, keyboard.y);
+            for (rect, label) in &keys {
+                assert!(
+                    field.intersection(*rect).is_none(),
+                    "field overlaps key {label} at {width}x{height}"
+                );
+                assert!(
+                    rect.height >= min_touch,
+                    "key {label} height {} < min touch at {width}x{height}",
+                    rect.height
+                );
+            }
+            let cancel = keys.iter().find(|(_, label)| label == "Отмена").unwrap().0;
+            assert_eq!(
+                super::pin_setup_action_at(
+                    (
+                        cancel.x as f64 + cancel.width as f64 / 2.0,
+                        cancel.y as f64 + cancel.height as f64 / 2.0
+                    ),
+                    width,
+                    height,
+                    false
+                ),
+                Some("Отмена")
+            );
+        }
+    }
+
+    #[test]
+    fn pin_setup_focus_order_starts_at_the_field_and_ends_at_done() {
+        let view = super::pin_setup_view(1080, 2400, false);
+        let stops = super::layout_focus_stops(&view);
+        assert_eq!(
+            stops.first().map(|(_, id)| id.as_str()),
+            Some(super::PIN_SETUP_FIELD_ID)
+        );
+        assert_eq!(
+            stops.last().map(|(_, id)| id.as_str()),
+            Some("pin-control-1")
+        );
+        assert!(!stops.iter().any(|(_, id)| id == super::PIN_SETUP_HEADER_ID));
     }
 
     #[test]

@@ -225,6 +225,8 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   reuses that avoidance as «Пароль». ADR-162 puts the Field in the
   `intent_view` tree as focus stop 0. ADR-163 commits a key only when
   down and up hit the same action; pressed still follows the finger.
+  ADR-164 docks the PIN setup dialer the same way; lock unlock is
+  unchanged.
 - Keyboard keys (ADR-151): pressed fill is `ColorRole::Pressed` while
   the finger is down; one `KeyTick` haptic on down. Release still
   emits the key. Size does not change.
