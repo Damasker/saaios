@@ -22,11 +22,10 @@ S00–S32 закрыли базовый трек — рабочий телефо
 
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
 ([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;
-VUI-04 remainder и VUI-06 на panther; **выполняется VUI-07** (Inbox
-`EventRow`, Spaces list, Wi-Fi list, Bluetooth list, trusted clients,
-Wi-Fi password, PIN setup, lock idle, intent input, developer
-surface, Object View, apps grid, Inbox header, Spaces header, Система header, consent header, PIN setup header, remote pairing header, Bluetooth header, Wi-Fi header, trusted-clients header, lock attention, lock/PIN keyboard, compact QWERTY, keyboard press, DevSurface header, lock device state, lock sleep AOD, empty/loading/offline, blocked/failed, confirmation, permission/recovery, overflow Назад, DevSurface scroll, keyboard avoidance, focus order, interrupted key и PIN setup avoidance на panther). VUI-02 остаётся почти закрытым (шрифты в boot-image —
-единственный blocked item). Этот трек не переоткрывает S00–S32.
+VUI-04 remainder и VUI-06 на panther; **VUI-07 закрыт** на panther
+(`693e77c7…`; Space detail deferred, MEM-08 omitted). Дальше VUI-08.
+VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
+blocked item). Этот трек не переоткрывает S00–S32.
 
 **Service queue (параллельно shell):** прошивка `saaios-runtime` /
 `saai-taskd` не считается вторым DRM-экспериментом. P0 — MEM-01

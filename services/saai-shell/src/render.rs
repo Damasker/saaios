@@ -821,69 +821,6 @@ pub fn draw_remote_pair(
     );
 }
 
-/// S19: "Wi-Fi сети" -- one row per `wifi_scan_results()` entry plus
-/// the fixed trailing control rows already baked into `rows` by the
-/// caller (see `wifi_list_action_at`'s doc comment for why the row
-/// count is runtime-sized rather than a `root.sui` screen). Same
-/// simple header-plus-list shape as `draw_object_view`, just with N
-/// rows instead of a button row. S20 generalized this from a
-/// Wi-Fi-only `draw_wifi_list` to also draw "Bluetooth устройства" --
-/// same shape both times, only the title and row contents differ.
-/// ADR-136: last caller (`Frame::DevSurface`) moved to
-/// `draw_action_row_list`. Kept until the VUI-07 primitives-cleanup
-/// slice deletes it.
-#[allow(dead_code)]
-pub fn draw_row_list(
-    canvas: &mut Canvas<'_>,
-    title: &str,
-    status_line: &str,
-    header: Rect,
-    rows: &[(Rect, String)],
-    fonts: Option<&Fonts>,
-) {
-    canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-
-    let Some(fonts) = fonts else {
-        for (rect, _) in rows {
-            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
-        }
-        return;
-    };
-
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        title,
-        42.0,
-        header.x + 30,
-        header.y + 40,
-        theme_color(ColorRole::TextPrimary),
-    );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        status_line,
-        30.0,
-        header.x + 30,
-        header.y + 130,
-        theme_color(ColorRole::TextSecondary),
-    );
-
-    for (rect, label) in rows {
-        canvas.fill_rect(*rect, theme_color(ColorRole::Surface));
-        draw_text(
-            canvas,
-            &fonts.regular,
-            label,
-            32.0,
-            rect.x + 30,
-            rect.y + rect.height / 2 - 18,
-            theme_color(ColorRole::TextPrimary),
-        );
-    }
-}
-
 fn draw_action_card(
     canvas: &mut Canvas<'_>,
     rect: Rect,
@@ -959,50 +896,6 @@ fn draw_action_card(
             button.y + 24,
             theme_color(ColorRole::Canvas),
         );
-    }
-}
-
-/// ADR-129: same header as `draw_row_list`, rows are `ActionCardView`
-/// (SSID + scan facts + connect button) instead of one concatenated
-/// label. ADR-152: last caller (`Frame::DevSurface`) moved to
-/// `draw_context_row_list`. Kept until the VUI-07 primitives-cleanup
-/// slice deletes it.
-#[allow(dead_code)]
-pub fn draw_action_row_list(
-    canvas: &mut Canvas<'_>,
-    title: &str,
-    status_line: &str,
-    header: Rect,
-    rows: &[(Rect, ActionCardView)],
-    fonts: Option<&Fonts>,
-) {
-    canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-    // Status layer is 120px (PIXEL_7 top inset). `draw_row_list`'s
-    // 40/130 offsets hide the title under the clock; both lines sit
-    // in this header below that layer.
-    if let Some(fonts) = fonts {
-        draw_text(
-            canvas,
-            &fonts.semibold,
-            title,
-            42.0,
-            header.x + 30,
-            header.y + 140,
-            theme_color(ColorRole::TextPrimary),
-        );
-        draw_text(
-            canvas,
-            &fonts.regular,
-            status_line,
-            30.0,
-            header.x + 30,
-            header.y + 200,
-            theme_color(ColorRole::TextSecondary),
-        );
-    }
-    for (rect, card) in rows {
-        draw_action_card(canvas, *rect, card, fonts);
     }
 }
 
@@ -1947,7 +1840,7 @@ fn draw_gallery_disclosure(
 /// was a layout-math error a host test on exactly this function would have
 /// caught before a physical screenshot had to.
 const GALLERY_ROW_COUNT: usize = 11;
-const COMPOSITE_GALLERY_ROW_COUNT: usize = 12;
+const COMPOSITE_GALLERY_ROW_COUNT: usize = 13;
 
 fn stacked_gallery_row_positions<const N: usize>(height: u32) -> [u32; N] {
     // Same clearance `draw_calibration`'s own `palette_top` uses -- the
@@ -2171,6 +2064,20 @@ pub fn draw_composite_gallery(
             Rect::new(left, rows[row], mark_size, mark_size),
             indicator.mark(),
             theme_color(indicator.state.style().color),
+        );
+    }
+
+    let pattern_cell = content_width / fixtures.patterns.len() as u32;
+    for (index, pattern) in fixtures.patterns.iter().enumerate() {
+        if !pattern.paints_mark() {
+            continue;
+        }
+        let left = margin + index as u32 * pattern_cell;
+        draw_calibration_mark(
+            canvas,
+            Rect::new(left, rows[12], mark_size, mark_size),
+            pattern.state.style().mark,
+            theme_color(pattern.state.style().color),
         );
     }
 
@@ -3184,9 +3091,10 @@ mod tests {
         theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field, FieldKind, IconSize,
-        LogicalUnit, NavigationItem, ObjectSummary, Progress, Rect, SpacingToken, StatusIndicator,
-        StatusMark, SurfacePattern, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
+        composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,
+        FieldKind, IconSize, LogicalUnit, NavigationItem, ObjectSummary, Progress, Rect,
+        SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus, TextRole,
+        UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -4172,8 +4080,29 @@ mod tests {
 
         let rows = composite_gallery_row_positions(height);
         let margin = (width / 20).max(12);
+        let content_width = width.saturating_sub(margin * 2);
         assert_ne!(
             canvas.pixel(margin + 4, rows[9] + 4),
+            theme_color(ColorRole::Canvas)
+        );
+
+        let fixtures = composite_gallery_fixtures();
+        let pattern_cell = content_width / fixtures.patterns.len() as u32;
+        let mark_size = physical(IconSize::Medium.value());
+        let empty_x = margin + 4;
+        let loading_x = margin + pattern_cell + mark_size / 2;
+        let failed_x = margin + 4 * pattern_cell + mark_size / 2;
+        let sample_y = rows[12] + mark_size / 2;
+        assert_eq!(
+            canvas.pixel(empty_x, sample_y),
+            theme_color(ColorRole::Canvas)
+        );
+        assert_ne!(
+            canvas.pixel(loading_x, sample_y),
+            theme_color(ColorRole::Canvas)
+        );
+        assert_ne!(
+            canvas.pixel(failed_x, sample_y),
             theme_color(ColorRole::Canvas)
         );
     }

@@ -249,7 +249,8 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   «Диагностика» (ADR-136, header ADR-152). Flattened to `ActionCardView`.
   Overflowing «Назад» docks on-screen (`stacked_control_rect`, ADR-159).
   Facts that do not fit above it scroll (`scrolled_row_rect`, ADR-160).
-  The 7-tap gesture is unchanged.
+  Wi-Fi / Bluetooth / trusted trailing controls dock as a cluster
+  (`stacked_trailing_rect`, ADR-165). The 7-tap gesture is unchanged.
 
 ### 6.9 `Metric`
 

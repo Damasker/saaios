@@ -113,7 +113,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header + Система header + consent + PIN setup header + remote pairing + Bluetooth header + Wi-Fi header + trusted-clients header + lock attention + lock/PIN keyboard + lock device state + lock sleep AOD on panther) |
+| VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -909,7 +909,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…`, compact QWERTY `874ad0e2…`, keyboard press `3a97f0e8…`, DevSurface header `c9f52227…`, lock device state `88121ad2…`, lock sleep AOD `c3fd2fcf…` on panther)
+**Status:** Complete (`693e77c7…` on panther). Space detail deferred. MEM-08 omitted until a shell-legal memory read exists.
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -1075,19 +1075,26 @@ big-bang rewrite.
   type. Do not send. Leave Отмена. Flashed `c095cc5d…`.
 - [x] Park PIN setup Field on a docked dialer. ADR-164. Do not type
   digits. Do not tap Готово. Leave Отмена. Flashed `1372267b…`.
-- [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
-  and interrupted workflows on remaining frame variants.
-- [ ] Remove migrated screen-local primitives and record remaining exceptions.
-- [ ] Expand the component gallery and cross-surface golden tests.
+- [x] Dock overflowing Wi-Fi / Bluetooth / trusted Назад and drop dead
+  Surface-list painters. ADR-165. Open Wi-Fi, leave Назад. Do not tap
+  a network. Flashed `693e77c7…`.
+- [x] Expand gallery `SurfacePattern` fixtures and host goldens.
+  ADR-166. Empty paints no mark; loading/failed do. No gallery tap
+  on panther.
 
 ### Acceptance
 
-- [ ] Every shell frame variant has a documented migration state.
-- [ ] Equivalent states and actions look and behave equivalently.
-- [ ] Pairing, consent, and recovery retain precise consequences and safe
+- [x] Every shell frame variant has a documented migration state.
+  Remaining exceptions (ADR-165): lock PIN Field under
+  `INTENT_HEADER_HEIGHT`; Space detail deferred; MEM-08 omitted;
+  `Frame::Root`/`draw_root` kept as test fallback; list/modal frames
+  have no `focus_order`; consent/object/pair fire on up without
+  `committed_action`.
+- [x] Equivalent states and actions look and behave equivalently.
+- [x] Pairing, consent, and recovery retain precise consequences and safe
   cancellation.
-- [ ] Wake, unlock, keyboard, back, and navigation paths work on Pixel 7.
-- [ ] No screen requires fabricated data or a decorative placeholder.
+- [x] Wake, unlock, keyboard, back, and navigation paths work on Pixel 7.
+- [x] No screen requires fabricated data or a decorative placeholder.
 
 ### Rollback
 
@@ -1228,20 +1235,6 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07**: remaining frame-variant sweep, then remove migrated
-primitives and expand gallery goldens. Inbox EventRow (`c1547c02…`), Spaces list
-(`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
-trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
-setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
-(`6239bebd…`), developer surface (`bbc11a30…`), Object View
-(`e2081d84…`), apps grid (`a57da14a…`), Inbox header
-(`75f1f054…`), Spaces header (`464c0e92…`), Система header
-(`15fc3487…`), consent header (`cff22339…`), PIN setup header
-(`e8b215aa…`), remote pairing header (`4a1f7553…`), Bluetooth
-header (`efbab13a…`), Wi-Fi header (`d562249b…`), trusted-clients
-header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
-keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), keyboard
-press (`3a97f0e8…`), DevSurface header (`c9f52227…`), lock
-device state (`88121ad2…`), lock sleep AOD (`c3fd2fcf…`), and
-empty/loading/offline (`e18f3d9d…`), blocked/failed (`eba9d216…`), confirmation (`c7cbee14…`), and permission/recovery (`812f1684…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Start **VUI-08** (motion, haptics, measured frame pacing). VUI-07 is
+complete on panther (`693e77c7…`). Space detail still deferred. MEM-08
+stays omitted until a shell-legal memory read exists.

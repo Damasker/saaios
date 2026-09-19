@@ -1751,17 +1751,19 @@ fn wifi_list_action_at(
     height: u32,
     network_count: usize,
 ) -> Option<WifiListTap> {
+    let data = wifi_list_row_count(network_count);
+    let refresh_index = data;
+    let back_index = data + 1;
+    if stacked_trailing_rect(back_index, back_index, width, height).contains(pos.0, pos.1) {
+        return Some(WifiListTap::Back);
+    }
+    if stacked_trailing_rect(refresh_index, back_index, width, height).contains(pos.0, pos.1) {
+        return Some(WifiListTap::Refresh);
+    }
     for index in 0..network_count {
         if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
             return Some(WifiListTap::Network(index));
         }
-    }
-    let controls = wifi_list_row_count(network_count);
-    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
-        return Some(WifiListTap::Refresh);
-    }
-    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
-        return Some(WifiListTap::Back);
     }
     None
 }
@@ -1790,20 +1792,23 @@ fn bluetooth_list_action_at(
     device_count: usize,
     status_rows: usize,
 ) -> Option<BluetoothListTap> {
+    let data = bluetooth_list_row_count(device_count, status_rows);
+    let scan_index = data;
+    let refresh_index = data + 1;
+    let back_index = data + 2;
+    if stacked_trailing_rect(back_index, back_index, width, height).contains(pos.0, pos.1) {
+        return Some(BluetoothListTap::Back);
+    }
+    if stacked_trailing_rect(refresh_index, back_index, width, height).contains(pos.0, pos.1) {
+        return Some(BluetoothListTap::Refresh);
+    }
+    if stacked_trailing_rect(scan_index, back_index, width, height).contains(pos.0, pos.1) {
+        return Some(BluetoothListTap::Scan);
+    }
     for index in 0..device_count {
         if stacked_row_rect(status_rows + index, width, height).contains(pos.0, pos.1) {
             return Some(BluetoothListTap::Device(index));
         }
-    }
-    let controls = bluetooth_list_row_count(device_count, status_rows);
-    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Scan);
-    }
-    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Refresh);
-    }
-    if stacked_row_rect(controls + 2, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Back);
     }
     None
 }
@@ -1831,14 +1836,14 @@ fn trusted_client_action_at(
     height: u32,
     client_count: usize,
 ) -> Option<TrustedClientTap> {
+    let back_index = trusted_client_list_row_count(client_count);
+    if stacked_trailing_rect(back_index, back_index, width, height).contains(pos.0, pos.1) {
+        return Some(TrustedClientTap::Back);
+    }
     for index in 0..client_count {
         if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
             return Some(TrustedClientTap::Revoke(index));
         }
-    }
-    let controls = trusted_client_list_row_count(client_count);
-    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
-        return Some(TrustedClientTap::Back);
     }
     None
 }
@@ -3142,6 +3147,26 @@ fn stacked_control_rect(index: usize, width: u32, height: u32) -> Rect {
             desired.height,
         )
     }
+}
+
+fn stacked_row_pitch(height: u32) -> u32 {
+    ((220_u64 * height as u64) / 2400) as u32
+}
+
+/// ADR-165: trailing list controls dock as a cluster whose last row
+/// (Назад) stays on-screen. Same x/height as `stacked_row_rect`.
+fn stacked_trailing_rect(index: usize, last_index: usize, width: u32, height: u32) -> Rect {
+    let back = stacked_control_rect(last_index, width, height);
+    let steps = last_index.saturating_sub(index) as u32;
+    let y = back
+        .y
+        .saturating_sub(steps.saturating_mul(stacked_row_pitch(height)));
+    Rect::new(
+        back.x,
+        y.max(stacked_row_rect(0, width, height).y),
+        back.width,
+        back.height,
+    )
 }
 
 fn stacked_row_fits_above(row: Rect, back: Rect) -> bool {
@@ -4668,11 +4693,6 @@ fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
         row.value.clone().unwrap_or_default(),
         "",
     )
-}
-
-#[allow(dead_code)]
-fn diagnostic_status_line(row_count: usize) -> String {
-    format!("{row_count} показателей")
 }
 
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
@@ -6891,12 +6911,13 @@ impl Shell {
                 })
                 .collect();
             let controls = rows.len();
+            let back_index = controls + 1;
             rows.push((
-                stacked_row_rect(controls, width, height),
+                stacked_trailing_rect(controls, back_index, width, height),
                 render::ActionCardView::new("Обновить", "", "Обновить"),
             ));
             rows.push((
-                stacked_row_rect(controls + 1, width, height),
+                stacked_trailing_rect(back_index, back_index, width, height),
                 render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::WifiList {
@@ -6923,16 +6944,17 @@ impl Shell {
                 })
                 .collect();
             let controls = rows.len();
+            let back_index = controls + 2;
             rows.push((
-                stacked_row_rect(controls, width, height),
+                stacked_trailing_rect(controls, back_index, width, height),
                 render::ActionCardView::new("Искать устройства", "~8 с", "Искать"),
             ));
             rows.push((
-                stacked_row_rect(controls + 1, width, height),
+                stacked_trailing_rect(controls + 1, back_index, width, height),
                 render::ActionCardView::new("Обновить список", "", "Обновить"),
             ));
             rows.push((
-                stacked_row_rect(controls + 2, width, height),
+                stacked_trailing_rect(back_index, back_index, width, height),
                 render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::BluetoothList {
@@ -6962,7 +6984,7 @@ impl Shell {
                 })
                 .collect();
             rows.push((
-                stacked_row_rect(trusted_rows.len(), width, height),
+                stacked_trailing_rect(trusted_rows.len(), trusted_rows.len(), width, height),
                 render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::TrustedClients {
@@ -9812,27 +9834,28 @@ impl Shell {
 mod tests {
     use super::{
         apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
-        bluetooth_list_action_at, bluetooth_list_pattern, bluetooth_list_rows,
-        bluetooth_pair_error_from, bluetooth_scan_pattern, calibration_requested, capability_label,
-        consent_action_at, consent_content_cards, consent_header, content_action_at,
-        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
-        diagnostic_status_line, effective_context_space, ensure_me_row_cache, flatten_me_rows,
-        format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
-        intent_action_at, intent_compose_header, intent_field_rect, intent_input_field,
-        known_surfaces, lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
-        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header,
-        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_details,
-        object_view_permission_pattern, object_view_summary, orb_action_at,
+        bluetooth_list_action_at, bluetooth_list_pattern, bluetooth_list_row_count,
+        bluetooth_list_rows, bluetooth_pair_error_from, bluetooth_scan_pattern,
+        calibration_requested, capability_label, consent_action_at, consent_content_cards,
+        consent_header, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
+        diagnostic_header, diagnostic_row, effective_context_space, ensure_me_row_cache,
+        flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
+        input_idle_for_at_least, intent_action_at, intent_compose_header, intent_field_rect,
+        intent_input_field, known_surfaces, lock_attention_tap, lock_attention_view,
+        lock_device_view, lock_idle_view, lock_pin_entry_field, lock_sleep_view, lock_wake_tap,
+        me_fixture_facts, me_header, me_system_sections, next_in_cycle, next_pending_action,
+        now_action_at, now_object_tapped, object_view_action_at, object_view_content,
+        object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
         remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
         space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        spaces_header, stacked_control_rect, stacked_row_fits_above, stacked_row_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
-        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
+        spaces_header, stacked_control_rect, stacked_row_fits_above, stacked_row_rect,
+        stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
+        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
+        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
         wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
         BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
         Entity, FieldKind, KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction,
@@ -10252,6 +10275,26 @@ mod tests {
         ));
         assert!(matches!(
             wifi_list_action_at(center(back), width, height, 0),
+            Some(WifiListTap::Back)
+        ));
+    }
+
+    #[test]
+    fn wifi_list_back_docks_on_screen_when_networks_overflow() {
+        let width = 1080;
+        let height = 2400;
+        let network_count = 20;
+        let back_index = wifi_list_row_count(network_count) + 1;
+        let desired = stacked_row_rect(back_index, width, height);
+        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        assert!(desired.y + desired.height > height);
+        assert!(back.y + back.height <= height);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(matches!(
+            wifi_list_action_at(center, width, height, network_count),
             Some(WifiListTap::Back)
         ));
     }
@@ -11040,6 +11083,26 @@ mod tests {
     }
 
     #[test]
+    fn bluetooth_list_back_docks_on_screen_when_devices_overflow() {
+        let width = 1080;
+        let height = 2400;
+        let device_count = 20;
+        let back_index = bluetooth_list_row_count(device_count, 0) + 2;
+        let desired = stacked_row_rect(back_index, width, height);
+        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        assert!(desired.y + desired.height > height);
+        assert!(back.y + back.height <= height);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(matches!(
+            bluetooth_list_action_at(center, width, height, device_count, 0),
+            Some(BluetoothListTap::Back)
+        ));
+    }
+
+    #[test]
     fn trusted_client_action_at_finds_clients_then_back() {
         let width = 1080;
         let height = 2400;
@@ -11066,6 +11129,24 @@ mod tests {
         assert!(trusted_client_action_at(center(empty), width, height, 0).is_none());
         assert!(matches!(
             trusted_client_action_at(center(back_empty), width, height, 0),
+            Some(TrustedClientTap::Back)
+        ));
+    }
+
+    #[test]
+    fn trusted_client_back_docks_on_screen_when_clients_overflow() {
+        let width = 1080;
+        let height = 2400;
+        let client_count = 20;
+        let back_index = trusted_client_list_row_count(client_count);
+        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        assert!(back.y + back.height <= height);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(matches!(
+            trusted_client_action_at(center, width, height, client_count),
             Some(TrustedClientTap::Back)
         ));
     }
@@ -13006,11 +13087,6 @@ mod tests {
         assert_eq!(card.label, "Сборка");
         assert_eq!(card.status, "abc123");
         assert_eq!(card.action, "");
-    }
-
-    #[test]
-    fn diagnostic_status_line_names_the_real_row_count() {
-        assert_eq!(diagnostic_status_line(8), "8 показателей");
     }
 
     #[test]
