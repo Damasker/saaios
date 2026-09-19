@@ -39,6 +39,7 @@ ADR-177 idle main-surface seq on panther.
 ADR-178 dma-buf / wl_shm backend tag on panther.
 ADR-179 haptic acceptance closeout on panther.
 ADR-180 `.sui` v2 vocabulary (host; v1 root chrome unchanged).
+ADR-181 `.sui` v2 grammar (host; `compile()` stays v1).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

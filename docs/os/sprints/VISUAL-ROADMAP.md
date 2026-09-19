@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180 vocabulary; `sui 1` only) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–181; `compile()` stays v1) |
 
 ---
 
@@ -1160,8 +1160,9 @@ component state remains fully usable.
 
 ## VUI-09 — `.sui` v2, public library, cleanup, and release gate
 
-**Status:** In progress — `.sui` v2 vocabulary (ADR-180). Grammar,
-public subset, and cleanup remain.
+**Status:** In progress — `.sui` v2 vocabulary and composition grammar
+(ADR-180–181). Tokens, insets, scroll, loc, focus, a11y, public
+subset, and cleanup remain.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1174,7 +1175,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (ADR-180; `sui 1` remains the only compiled document).
 - [ ] Add versioned semantic roles, token references, component composition,
   safe insets, list/scroll behavior, localization, focus, and accessibility
-  metadata to the schema/compiler.
+  metadata to the schema/compiler. ADR-181 adds named `component`
+  composition; properties stay for later slices.
 - [ ] Preserve `.sui` v1 parsing or provide a deterministic migration tool and
   rollback artifact.
 - [ ] Move root layout and hit testing to compiled shared layout output.
@@ -1249,6 +1251,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-09**: versioned `.sui` v2 grammar from the ADR-180
-vocabulary. Do not parse `sui 2` until that ADR. Space detail still
-deferred. MEM-08 stays omitted until a shell-legal memory read exists.
+Continue **VUI-09**: token, inset, scroll, loc, focus, and
+accessibility properties on the ADR-181 `component {}` blocks. Do not
+point `root.sui` at `compile_v2()`. Space detail still deferred.
+MEM-08 stays omitted until a shell-legal memory read exists.

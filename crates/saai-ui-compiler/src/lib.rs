@@ -1,12 +1,13 @@
 //! Build-time parser for the versioned `.sui` format (ADR-017).
 //!
 //! ADR-180 names the `.sui` v2 vocabulary. `compile()` still accepts
-//! only `sui 1`.
+//! only `sui 1`. ADR-181 parses `sui 2` through `compile_v2()`.
 
 mod vocabulary;
 
 pub use vocabulary::{
-    sui_v2_composites, sui_v2_deferred, sui_v2_primitives, sui_v2_privileged, sui_v2_surfaces,
+    sui_v2_composites, sui_v2_deferred, sui_v2_is_component, sui_v2_is_deferred,
+    sui_v2_is_privileged, sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged, sui_v2_surfaces,
 };
 
 use std::fmt;
@@ -37,6 +38,24 @@ pub struct TabSpec {
     pub label: String,
     pub icon: String,
     pub action: String,
+}
+
+/// ADR-181: a `sui 2` screen is an ordered list of vocabulary components.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SuiV2Screen {
+    pub id: String,
+    pub components: Vec<SuiV2Component>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SuiV2Component {
+    pub type_name: String,
+}
+
+impl SuiV2Component {
+    pub fn is_privileged(&self) -> bool {
+        sui_v2_is_privileged(&self.type_name)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,6 +91,11 @@ struct Token {
 pub fn compile(source: &str) -> Result<ScreenSpec, CompileError> {
     let tokens = tokenize(source)?;
     Parser { tokens, cursor: 0 }.screen()
+}
+
+pub fn compile_v2(source: &str) -> Result<SuiV2Screen, CompileError> {
+    let tokens = tokenize(source)?;
+    Parser { tokens, cursor: 0 }.v2_screen()
 }
 
 fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
@@ -118,7 +142,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                         .next()
                         .ok_or_else(|| error(start, "invalid UTF-8"))?;
                     if ch == '\\' {
-                        return Err(error(cursor, "escapes are not supported in SUI v1"));
+                        return Err(error(cursor, "escapes are not supported"));
                     }
                     value.push(ch);
                     cursor += ch.len_utf8();
@@ -279,6 +303,45 @@ impl Parser {
         })
     }
 
+    fn v2_screen(mut self) -> Result<SuiV2Screen, CompileError> {
+        self.keyword("sui")?;
+        let version = self.number()?;
+        if version != 2 {
+            return Err(self.fail(format!("compile_v2 expected version 2, got {version}")));
+        }
+        self.keyword("screen")?;
+        let id = self.ident()?;
+        if !sui_v2_is_surface(&id) {
+            return Err(self.fail(format!("unknown SUI v2 surface `{id}`")));
+        }
+        self.kind(TokenKind::LBrace)?;
+        let mut components = Vec::new();
+        while !self.next_is(&TokenKind::RBrace) {
+            self.keyword("component")?;
+            let type_name = self.ident()?;
+            if sui_v2_is_deferred(&type_name) {
+                return Err(self.fail(format!("deferred SUI v2 name `{type_name}`")));
+            }
+            if !sui_v2_is_component(&type_name) {
+                return Err(self.fail(format!("unknown SUI v2 component `{type_name}`")));
+            }
+            self.kind(TokenKind::LBrace)?;
+            if !self.next_is(&TokenKind::RBrace) {
+                return Err(self.fail("SUI v2 component properties are not in this slice"));
+            }
+            self.kind(TokenKind::RBrace)?;
+            components.push(SuiV2Component { type_name });
+        }
+        self.kind(TokenKind::RBrace)?;
+        if self.cursor != self.tokens.len() {
+            return Err(self.fail("trailing tokens"));
+        }
+        if components.is_empty() {
+            return Err(self.fail("SUI v2 screen must name a component"));
+        }
+        Ok(SuiV2Screen { id, components })
+    }
+
     fn keyword(&mut self, expected: &str) -> Result<(), CompileError> {
         let offset = self.offset();
         match self.take() {
@@ -358,7 +421,7 @@ fn error(offset: usize, message: impl Into<String>) -> CompileError {
 
 #[cfg(test)]
 mod tests {
-    use super::compile;
+    use super::{compile, compile_v2};
 
     const VALID: &str = r#"
         sui 1
@@ -370,6 +433,15 @@ mod tests {
               tab me label="Система" icon=person action=select_root:me
             }
           }
+        }
+    "#;
+
+    const VALID_V2: &str = r#"
+        sui 2
+        screen now {
+          component ContextHeader {}
+          component ObjectSummary {}
+          component BottomNavigation {}
         }
     "#;
 
@@ -418,5 +490,111 @@ mod tests {
     fn rejects_duplicate_tab_ids() {
         let error = compile(&VALID.replace("tab me", "tab now")).unwrap_err();
         assert!(error.to_string().contains("duplicate tab id"));
+    }
+
+    #[test]
+    fn compile_v2_names_proven_now_chrome() {
+        let screen = compile_v2(VALID_V2).unwrap();
+        assert_eq!(screen.id, "now");
+        let names: Vec<&str> = screen
+            .components
+            .iter()
+            .map(|component| component.type_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["ContextHeader", "ObjectSummary", "BottomNavigation"]
+        );
+        assert!(screen
+            .components
+            .iter()
+            .all(|component| !component.is_privileged()));
+    }
+
+    #[test]
+    fn compile_v2_marks_privileged_components() {
+        let source = r#"
+            sui 2
+            screen now {
+              component OrbHost {}
+            }
+        "#;
+        let screen = compile_v2(source).unwrap();
+        assert!(screen.components[0].is_privileged());
+    }
+
+    #[test]
+    fn compile_v2_rejects_deferred_and_unknown_names() {
+        let deferred = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component SpaceDetail {}
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(deferred
+            .to_string()
+            .contains("deferred SUI v2 name `SpaceDetail`"));
+        let unknown = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component WidgetCard {}
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(unknown
+            .to_string()
+            .contains("unknown SUI v2 component `WidgetCard`"));
+        let surface = compile_v2(
+            r#"
+            sui 2
+            screen root {
+              component ContextHeader {}
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(surface
+            .to_string()
+            .contains("unknown SUI v2 surface `root`"));
+    }
+
+    #[test]
+    fn compile_v2_rejects_properties_and_empty_screens() {
+        let props = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader { role = heading }
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(props
+            .to_string()
+            .contains("SUI v2 component properties are not in this slice"));
+        let empty = compile_v2(
+            r#"
+            sui 2
+            screen now {
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(empty
+            .to_string()
+            .contains("SUI v2 screen must name a component"));
+    }
+
+    #[test]
+    fn compile_stays_on_version_one() {
+        let error = compile(VALID_V2).unwrap_err();
+        assert!(error.to_string().contains("unsupported SUI version 2"));
+        let error = compile_v2(VALID).unwrap_err();
+        assert!(error.to_string().contains("compile_v2 expected version 2"));
     }
 }

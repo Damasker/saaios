@@ -1,7 +1,7 @@
-//! ADR-180: names `.sui` v2 may eventually compile.
+//! ADR-180/181: names `.sui` v2 may compile.
 //!
-//! This is not a parser. `compile()` still accepts only `sui 1`.
-//! Space detail, Memory review, chat, and widgets are omitted.
+//! `compile()` still accepts only `sui 1`. `compile_v2()` uses these
+//! lists. Space detail, Memory review, chat, and widgets are omitted.
 
 /// Primitive contracts from `saai-ui-core`. PascalCase matches the
 /// Rust type. Not a markup keyword table.
@@ -87,10 +87,28 @@ pub fn sui_v2_privileged() -> &'static [&'static str] {
     ]
 }
 
+pub fn sui_v2_is_component(name: &str) -> bool {
+    sui_v2_primitives().contains(&name) || sui_v2_composites().contains(&name)
+}
+
+pub fn sui_v2_is_surface(id: &str) -> bool {
+    sui_v2_surfaces().contains(&id)
+}
+
+pub fn sui_v2_is_deferred(name: &str) -> bool {
+    sui_v2_deferred().contains(&name)
+}
+
+pub fn sui_v2_is_privileged(name: &str) -> bool {
+    sui_v2_privileged().contains(&name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        sui_v2_composites, sui_v2_deferred, sui_v2_primitives, sui_v2_privileged, sui_v2_surfaces,
+        sui_v2_composites, sui_v2_deferred, sui_v2_is_component, sui_v2_is_deferred,
+        sui_v2_is_privileged, sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged,
+        sui_v2_surfaces,
     };
     use std::collections::HashSet;
 
@@ -133,5 +151,17 @@ mod tests {
         for name in sui_v2_privileged() {
             assert!(named.contains(name), "{name} is privileged but unnamed");
         }
+    }
+
+    #[test]
+    fn lookup_helpers_follow_the_lists() {
+        assert!(sui_v2_is_component("ContextHeader"));
+        assert!(sui_v2_is_component("Field"));
+        assert!(sui_v2_is_surface("now"));
+        assert!(sui_v2_is_surface("wifi-password"));
+        assert!(sui_v2_is_privileged("OrbHost"));
+        assert!(sui_v2_is_deferred("SpaceDetail"));
+        assert!(!sui_v2_is_component("SpaceDetail"));
+        assert!(!sui_v2_is_surface("root"));
     }
 }

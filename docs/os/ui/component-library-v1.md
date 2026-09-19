@@ -401,7 +401,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   without changing either path. ADR-179 closes VUI-08 haptics on that
   same KeyPress map: rate-limited, silent for tabs and Orb.
   ADR-180 lists the `.sui` v2 component/surface vocabulary; it does not
-  compile `sui 2`.
+  compile `sui 2`. ADR-181 parses `sui 2` component composition through
+  `compile_v2()`; `compile()` still builds only `root.sui`.
 
 ### 7.6 `TaskSummary`
 
