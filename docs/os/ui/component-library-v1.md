@@ -414,7 +414,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Built from `SemanticText` plus two `Button`s. No local color, no
   invented agent actor.
 - First real consumer: Object View while a Task/Action is
-  `waiting_confirmation`.
+  `waiting_confirmation` (ADR-157). Facts paint as Body; identity stays
+  `ObjectSummary`. Buttons are the overlay's `accept` / `decline`.
 - Accessibility: name is the object; value is the action id when
   present; role is dialog. Each button keeps its own contract.
 
@@ -535,8 +536,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   those states' marks. Message is Body.
 - First consumers: NOW empty/offline (ADR-114 copy), apps-grid
   empty/offline (ADR-138 copy), Bluetooth scan loading / empty
-  (ADR-155), Bluetooth `PAIR-ERROR` failed (ADR-156). Permission,
-  confirmation, recovery later.
+  (ADR-155), Bluetooth `PAIR-ERROR` failed (ADR-156). Confirmation is
+  `DecisionOverlay` on Object View (ADR-157). Permission and recovery
+  later.
 - Accessibility: `Status`; busy only while Waiting.
 
 ## 8. Required gallery matrix

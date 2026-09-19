@@ -1,11 +1,11 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::{
     composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
-    DataRow, DataRowVariant, Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon,
-    IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
-    ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, StrokeToken, SurfacePattern, SurfaceScale, SystemSection,
-    SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
+    DataRow, DataRowVariant, DecisionOverlay, Disclosure, Divider, Field, FieldKind, FontFamily,
+    FontWeight, Icon, IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem,
+    ObjectSummary, ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken,
+    StatusIndicator, StatusIndicatorVariant, StatusMark, StrokeToken, SurfacePattern, SurfaceScale,
+    SystemSection, SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
@@ -481,6 +481,9 @@ pub fn draw_wifi_password(
 /// ADR-137: identity paint shared by NOW and Object View. Returns the
 /// y just below the trailing status/value, matching the cursor math
 /// `now_object_summary_rect` uses for hit-testing.
+/// ADR-157: `waiting_confirmation` paints `DecisionOverlay` facts as
+/// Body, not the same Caption dump as activity/OAM. Identity stays
+/// `ObjectSummary`; overlay `heading()` is not painted.
 fn draw_object_summary(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -547,6 +550,7 @@ pub fn draw_object_view(
     summary: &ObjectSummary,
     related: Option<&str>,
     details: &[String],
+    decision: Option<&DecisionOverlay>,
     header: Rect,
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
@@ -594,6 +598,22 @@ pub fn draw_object_view(
         );
         y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
+    if let Some(overlay) = decision {
+        for fact in overlay.fact_lines() {
+            if y + 40 >= header.y + header.height {
+                break;
+            }
+            draw_semantic_text(
+                canvas,
+                fonts,
+                &SemanticText::new(fact, TextRole::Body, ColorRole::TextPrimary),
+                header.x + margin,
+                y,
+                content_width,
+            );
+            y = y.saturating_add(scaled_line_height(TextRole::Body));
+        }
+    }
     for detail in details {
         if y + 40 >= header.y + header.height {
             break;
@@ -610,11 +630,20 @@ pub fn draw_object_view(
         y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
 
+    let overlay_labels: Option<[&str; 2]> = decision.map(|overlay| {
+        [
+            overlay.accept.label.as_str(),
+            overlay.decline.label.as_str(),
+        ]
+    });
     for (index, (rect, label)) in actions.iter().enumerate() {
+        let text = overlay_labels
+            .and_then(|labels| labels.get(index).copied())
+            .unwrap_or(*label);
         draw_text_centered(
             canvas,
             &fonts.semibold,
-            label,
+            text,
             40.0,
             rect.x + rect.width / 2,
             rect.y + rect.height / 2 - 20,
@@ -3184,14 +3213,14 @@ mod tests {
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
         draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_lock_sleep,
-        draw_orb, draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar,
+        draw_object_view, draw_orb, draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar,
         draw_surface_pattern, draw_tab_bar, gallery_row_positions, now_empty_pattern, physical,
         physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, ContextHeader, Field, FieldKind, IconSize, LogicalUnit,
-        NavigationItem, ObjectSummary, Progress, Rect, SpacingToken, StatusIndicator, StatusMark,
-        SurfacePattern, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
+        ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field, FieldKind, IconSize,
+        LogicalUnit, NavigationItem, ObjectSummary, Progress, Rect, SpacingToken, StatusIndicator,
+        StatusMark, SurfacePattern, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -4161,6 +4190,37 @@ mod tests {
         assert_ne!(
             canvas.pixel(margin + 4, rows[9] + 4),
             theme_color(ColorRole::Canvas)
+        );
+    }
+
+    #[test]
+    fn object_view_decision_buttons_use_accent_and_surface_without_a_font() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let accept = Rect::new(0, 2200, 540, 200);
+        let decline = Rect::new(540, 2200, 540, 200);
+        let overlay = DecisionOverlay::new("Подтвердите: убить процесс")
+            .with_actor("Система")
+            .with_action("process.kill_request");
+        draw_object_view(
+            canvas,
+            &ObjectSummary::new("Подтвердите: убить процесс", "saaios.task · версия 1"),
+            None,
+            &[],
+            Some(&overlay),
+            Rect::new(0, 0, width, 2200),
+            &[(accept, "Подтвердить"), (decline, "Отклонить")],
+            None,
+        );
+        assert_eq!(
+            canvas.pixel(accept.x + 4, accept.y + 4),
+            theme_color(ColorRole::Accent)
+        );
+        assert_eq!(
+            canvas.pixel(decline.x + 4, decline.y + 4),
+            theme_color(ColorRole::Surface)
         );
     }
 }

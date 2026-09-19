@@ -1897,12 +1897,14 @@ enum Frame {
     /// HIA-07: one variant for any entity. ADR-137: identity is an
     /// `ObjectSummary` (title + type/version + trailing status);
     /// `details` are the optional activity / observation / blocker /
-    /// consequence lines that actually exist. History is omitted until
-    /// entity events load.
+    /// consequence lines that actually exist. ADR-157: confirmation
+    /// is `DecisionOverlay`, not flattened into `details`. History is
+    /// omitted until entity events load.
     ObjectView {
         summary: ObjectSummary,
         related: Option<String>,
         details: Vec<String>,
+        decision: Option<DecisionOverlay>,
         header: Rect,
         actions: Vec<(Rect, &'static str)>,
     },
@@ -2254,24 +2256,17 @@ fn object_view_summary(entity: &Entity, content: &ObjectViewContent) -> ObjectSu
 }
 
 fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
-    let mut lines = content
-        .decision
-        .as_ref()
-        .map(DecisionOverlay::fact_lines)
-        .unwrap_or_default();
-    lines.extend(
-        [
-            content.agent.as_ref().map(AgentSummary::detail_line),
-            content.activity.clone(),
-            content.observation.clone(),
-            content.blocker.clone(),
-            content.consequence.clone(),
-            content.permission.clone(),
-        ]
-        .into_iter()
-        .flatten(),
-    );
-    lines
+    [
+        content.agent.as_ref().map(AgentSummary::detail_line),
+        content.activity.clone(),
+        content.observation.clone(),
+        content.blocker.clone(),
+        content.consequence.clone(),
+        content.permission.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn builtin_object_actions() -> ObjectActionRegistry {
@@ -6597,6 +6592,7 @@ impl Shell {
                 summary: object_view_summary(entity, &content),
                 related: content.related,
                 details,
+                decision: content.decision,
                 header,
                 actions,
             }
@@ -6987,6 +6983,7 @@ impl Shell {
                     summary,
                     related,
                     details,
+                    decision,
                     header,
                     actions,
                 } => {
@@ -6995,6 +6992,7 @@ impl Shell {
                         &summary,
                         related.as_deref(),
                         &details,
+                        decision.as_ref(),
                         header,
                         &actions,
                         fonts,
@@ -9565,25 +9563,26 @@ mod tests {
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
         lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
         next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
-        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
-        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
-        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
-        KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow,
-        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        object_view_action_at, object_view_content, object_view_details, object_view_summary,
+        orb_action_at, orb_attention_from_entities, orb_menu_actions, orb_visual_state,
+        orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
+        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
+        LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -11861,7 +11860,10 @@ mod tests {
         let content = object_view_content(&task, &[task.clone(), action.clone()], &[]);
         assert_eq!(content.state, UniversalState::Attention);
         assert_eq!(content.consequence, None);
-        let decision = content.decision.expect("waiting task shows a decision");
+        let decision = content
+            .decision
+            .as_ref()
+            .expect("waiting task shows a decision");
         assert_eq!(decision.actor.as_deref(), Some("Система"));
         assert_eq!(decision.action.as_deref(), Some("process.kill_request"));
         assert_eq!(decision.object, "Подтвердите: убить процесс");
@@ -11880,6 +11882,13 @@ mod tests {
             Some("Исполнение: process.kill_request".into())
         );
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+        let details = object_view_details(&content);
+        assert!(!details.iter().any(|line| line.starts_with("Актёр:")));
+        assert!(!details.iter().any(|line| line.starts_with("Последствие:")));
+        assert_eq!(
+            details,
+            vec!["Исполнение: process.kill_request".to_string()]
+        );
     }
 
     #[test]
