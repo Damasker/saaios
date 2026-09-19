@@ -404,7 +404,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   compile `sui 2`. ADR-181 parses `sui 2` component composition through
   `compile_v2()`; `compile()` still builds only `root.sui`. ADR-182
   adds `text`/`color`/`spacing`/`inset`/`scroll`/`loc`/`focus`/`a11y`
-  on those blocks from live `saai-ui-core` names.
+  on those blocks from live `saai-ui-core` names. ADR-183 keeps
+  `root.sui` compiled through `compile()` as the v1 rollback artifact.
 
 ### 7.6 `TaskSummary`
 

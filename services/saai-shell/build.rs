@@ -29,6 +29,7 @@ fn main() {
     let source_path = "ui/root.sui";
     println!("cargo:rerun-if-changed={source_path}");
     let source = fs::read_to_string(source_path).expect("read root.sui");
+    // ADR-183: v1 rollback. Do not switch this call to compile_v2().
     let screen = saai_ui_compiler::compile(&source).expect("compile root.sui");
     let tabs = screen
         .tabs
