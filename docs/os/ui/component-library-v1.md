@@ -132,6 +132,8 @@ Rules:
 Sans and mono are semantic families. Font filenames are backend assets and may
 change without changing component callers. No-PIN lock idle (ADR-153) paints
 device state as Caption of the live fuel-gauge; missing reading omits.
+AOD / deep-idle (ADR-154) paints only the Display-role clock; wake is not
+unlock.
 
 ### 6.2 `Icon`
 

@@ -1197,6 +1197,32 @@ pub fn draw_lock_idle(
     }
 }
 
+/// ADR-154: HIA-38 AOD. Canvas and the Display-role clock at the same
+/// `time_y` as lock idle, so wake does not jump the digits. No hint,
+/// no battery, no Inbox. PIN unlock stays `draw_lock_pin_entry`.
+pub fn draw_lock_sleep(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    height: u32,
+    time: &str,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let time_y = ((height as u64 * 480) / 2400) as u32;
+    if let Some(fonts) = fonts {
+        let time_size = physical(TextRole::Display.style().size) as f32;
+        draw_text_centered(
+            canvas,
+            &fonts.semibold,
+            time,
+            time_size,
+            width / 2,
+            time_y,
+            theme_color(ColorRole::TextPrimary),
+        );
+    }
+}
+
 /// VUI-01's deterministic, device-runnable calibration fixture. It is selected
 /// only by the explicit `SAAIOS_UI_CALIBRATION=1` developer environment switch
 /// or volatile `/run/saaios/ui-calibration` marker in `main.rs`; normal
@@ -3135,8 +3161,8 @@ mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
-        draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_orb,
-        draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar,
+        draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_lock_sleep,
+        draw_orb, draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar,
         gallery_row_positions, physical, physical_line_height, state_color, theme_color,
         ActionCardView, Canvas,
     };
@@ -3840,6 +3866,19 @@ mod tests {
         );
         assert_eq!(canvas.pixel(540, 1200), theme_color(ColorRole::Canvas));
         assert_ne!(canvas.pixel(540, 1200), [0x00, 0xd0, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn lock_sleep_fill_is_canvas_not_the_diagnostic_red() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        draw_lock_sleep(canvas, width, height, "22:46", None);
+        assert_eq!(canvas.pixel(540, 1200), theme_color(ColorRole::Canvas));
+        assert_ne!(canvas.pixel(540, 1200), [0x00, 0xd0, 0x00, 0x00]);
+        assert_ne!(canvas.pixel(540, 1200), [0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
     }
 
     #[test]

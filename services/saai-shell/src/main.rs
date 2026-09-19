@@ -925,6 +925,7 @@ const LOCK_SCREEN_COLOR: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
 /// nothing made the panel visibly go dark before suspending, so there
 /// was no reliable cue for when it was actually safe -- or necessary --
 /// to press power.
+#[allow(dead_code)]
 const SLEEP_INDICATOR_COLOR: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4273,6 +4274,18 @@ fn lock_idle_view(time: &str) -> LockIdleView {
     }
 }
 
+/// ADR-154: HIA-38 AOD. Time only — not the unlock hint, not charge,
+/// never Inbox. Wake paints lock idle / PIN, not this view.
+struct LockSleepView {
+    time: String,
+}
+
+fn lock_sleep_view(time: &str) -> LockSleepView {
+    LockSleepView {
+        time: time.to_string(),
+    }
+}
+
 /// ADR-148: lock-state disclosure. Booleans in, never titles or
 /// bodies. Compact status only; `reason` does not exist on this type.
 struct LockAttentionView {
@@ -4328,6 +4341,22 @@ fn lock_attention_tap(locked: bool) -> LockAttentionTap {
         LockAttentionTap::UnlockRequired
     } else {
         LockAttentionTap::ViewAllowed
+    }
+}
+
+/// ADR-154: first tap after pseudo-sleep shows the lock; it is not
+/// unlock. The existing down-handler still consumes that touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LockWakeTap {
+    ShowLock,
+    Continue,
+}
+
+fn lock_wake_tap(sleeping: bool) -> LockWakeTap {
+    if sleeping {
+        LockWakeTap::ShowLock
+    } else {
+        LockWakeTap::Continue
     }
 }
 
@@ -5487,12 +5516,8 @@ struct Shell {
     /// just a touch-start, so a drag-through or accidental brush
     /// doesn't unlock).
     unlock_pending: bool,
-    /// Set once `check_deep_idle` blanks the lock surface to
-    /// `SLEEP_INDICATOR_COLOR`; cleared by the next touch, which wakes
-    /// the screen back to `LOCK_SCREEN_COLOR` instead of unlocking --
-    /// unlocking still needs its own separate tap-and-release on the
-    /// now-visible lock screen, same two-step as pressing a real
-    /// phone's power button before swiping to unlock.
+    /// Set once `check_deep_idle` paints AOD (ADR-154); cleared by the
+    /// next touch, which wakes to the full lock instead of unlocking.
     sleeping: bool,
     last_activity: Instant,
     /// Currently visible root section (Change step 6).
@@ -5998,12 +6023,10 @@ impl TouchHandler for Shell {
     ) {
         self.last_activity = Instant::now();
         self.last_touch_pos = position;
-        if self.sleeping {
-            // First touch after the screen went dark just wakes it back
-            // to the lock screen -- it does not also unlock, matching a
-            // real phone's press-then-swipe two-step. Consumes this
-            // touch entirely so a stray drag can't fall through into
-            // unlock_pending below.
+        if lock_wake_tap(self.sleeping) == LockWakeTap::ShowLock {
+            // First touch after AOD just wakes the lock — it does not
+            // also unlock. Consumes this touch entirely so a stray
+            // drag can't fall through into unlock_pending below.
             self.sleeping = false;
             self.unlock_pending = false;
             self.tab_touch_pending = false;
@@ -9143,15 +9166,25 @@ impl Shell {
         }
     }
 
-    /// VUI-07 (ADR-134 / ADR-148 / ADR-153): the lock surface is the
-    /// visible clock while locked (displayd ignores status commits).
-    /// Repaint when the minute, attention key, or battery key changes,
-    /// never over the deep-idle blank, and never on the PIN keypad.
+    /// VUI-07 (ADR-134 / ADR-148 / ADR-153 / ADR-154): the lock surface
+    /// is the visible clock while locked. Repaint when the minute,
+    /// attention key, or battery key changes. AOD (sleeping) only
+    /// follows the minute. Never on the PIN keypad unless sleeping.
     fn refresh_lock_idle_if_due(&mut self, qh: &QueueHandle<Self>) {
-        if !self.locked || self.sleeping || self.settings.pin_code.is_some() {
+        if !self.locked {
             return;
         }
         let time = current_time_string(self.settings.utc_offset_minutes);
+        if self.sleeping {
+            if self.last_lock_idle_time.as_deref() == Some(time.as_str()) {
+                return;
+            }
+            self.present_lock_pin_entry(qh);
+            return;
+        }
+        if self.settings.pin_code.is_some() {
+            return;
+        }
         let attention = lock_attention_view(
             self.entityd.is_connected(),
             orb_attention_from_entities(&self.selected_entities),
@@ -9197,6 +9230,7 @@ impl Shell {
         );
     }
 
+    #[allow(dead_code)]
     fn present_lock_surface(&mut self, qh: &QueueHandle<Self>, color: [u8; 4]) {
         let width = self.lock_width;
         let height = self.lock_height;
@@ -9299,14 +9333,11 @@ impl Shell {
         surface.commit();
     }
 
-    /// S24 / VUI-07 (ADR-134 / ADR-149): no-PIN lock is clock + hint
-    /// (+ ADR-148 attention). PIN unlock paints a Password `Field` of
-    /// occupancy plus the keypad, never the secret. Deep-idle stays
-    /// `present_lock_surface(SLEEP_INDICATOR_COLOR)`.
+    /// S24 / VUI-07 (ADR-134 / ADR-149 / ADR-154): no-PIN lock is clock
+    /// + hint (+ attention + battery). PIN unlock paints a Password
+    /// `Field` of occupancy plus the keypad, never the secret. AOD
+    /// (sleeping) paints the clock only.
     fn present_lock_pin_entry(&mut self, qh: &QueueHandle<Self>) {
-        if self.sleeping {
-            return;
-        }
         let width = self.lock_width;
         let height = self.lock_height;
         if width == 0 || height == 0 {
@@ -9317,9 +9348,15 @@ impl Shell {
         };
         let stride = width as i32 * 4;
 
+        let sleeping = self.sleeping;
         let pin_code = self.settings.pin_code.clone();
-        let idle = lock_idle_view(&current_time_string(self.settings.utc_offset_minutes));
-        let (attention, device_label) = if pin_code.is_none() {
+        let time = current_time_string(self.settings.utc_offset_minutes);
+        let idle = lock_idle_view(&time);
+        let sleep = lock_sleep_view(&time);
+        let (attention, device_label) = if sleeping {
+            self.last_lock_idle_time = Some(sleep.time.clone());
+            (None, None)
+        } else if pin_code.is_none() {
             let view = lock_attention_view(
                 self.entityd.is_connected(),
                 orb_attention_from_entities(&self.selected_entities),
@@ -9335,7 +9372,7 @@ impl Shell {
         } else {
             (None, None)
         };
-        let keys = if pin_code.is_some() {
+        let keys = if !sleeping && pin_code.is_some() {
             pin_keyboard_keys(width, height, PinKeyboardKind::Unlock)
         } else {
             Vec::new()
@@ -9343,8 +9380,8 @@ impl Shell {
         let pressed_key = self.pressed_key.clone();
         let pin_field = lock_pin_entry_field(self.pin_entry_buffer.len());
         let pin_field_rect = lock_pin_field_rect(width);
-        let has_pin = pin_code.is_some();
-        let idle_time = idle.time;
+        let has_pin = !sleeping && pin_code.is_some();
+        let idle_time = if sleeping { sleep.time } else { idle.time };
         let idle_hint = idle.hint;
         let idle_device = device_label;
         let fonts = self.fonts.as_ref();
@@ -9370,7 +9407,9 @@ impl Shell {
                     .expect("just confirmed ready above");
                 match lock_dmabuf.paint(|canvas| {
                     let mut frame = render::Canvas::new(canvas, width, height);
-                    if has_pin {
+                    if sleeping {
+                        render::draw_lock_sleep(&mut frame, width, height, &idle_time, fonts);
+                    } else if has_pin {
                         render::draw_lock_pin_entry(
                             &mut frame,
                             &pin_field,
@@ -9448,7 +9487,9 @@ impl Shell {
         };
 
         let mut frame = render::Canvas::new(canvas, width, height);
-        if has_pin {
+        if sleeping {
+            render::draw_lock_sleep(&mut frame, width, height, &idle_time, fonts);
+        } else if has_pin {
             render::draw_lock_pin_entry(
                 &mut frame,
                 &pin_field,
@@ -9499,7 +9540,7 @@ impl Shell {
         }
         println!("saai-shell: deep idle timeout, screen off");
         self.sleeping = true;
-        self.present_lock_surface(qh, SLEEP_INDICATOR_COLOR);
+        self.present_lock_pin_entry(qh);
     }
 }
 
@@ -9514,25 +9555,25 @@ mod tests {
         format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
         intent_action_at, intent_input_field, known_surfaces, lock_attention_tap,
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
-        me_fixture_facts, me_header, me_system_sections, next_in_cycle, next_pending_action,
-        now_action_at, now_object_tapped, object_view_action_at, object_view_content,
-        object_view_summary, orb_action_at, orb_attention_from_entities, orb_menu_actions,
-        orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
-        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
-        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        LockAttentionTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
-        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
+        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
+        remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
+        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
+        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
+        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
+        KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -11167,6 +11208,22 @@ mod tests {
         assert_eq!(view.hint, "Коснитесь, чтобы разблокировать");
         assert!(!view.hint.contains("Входящие"));
         assert!(!lock_idle_view("").time.contains("Входящие"));
+    }
+
+    #[test]
+    fn lock_sleep_view_keeps_the_passed_time_and_has_no_unlock_copy() {
+        let view = lock_sleep_view("22:46");
+        assert_eq!(view.time, "22:46");
+        assert!(!view.time.contains("Входящие"));
+        assert!(!view.time.contains("Коснитесь"));
+        assert!(!view.time.contains("Заряд"));
+    }
+
+    #[test]
+    fn lock_wake_tap_shows_lock_without_unlocking() {
+        assert_eq!(lock_wake_tap(true), LockWakeTap::ShowLock);
+        assert_eq!(lock_wake_tap(false), LockWakeTap::Continue);
+        assert_ne!(lock_wake_tap(true), lock_wake_tap(false));
     }
 
     #[test]

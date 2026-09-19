@@ -113,7 +113,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header + Система header + consent + PIN setup header + remote pairing + Bluetooth header + Wi-Fi header + trusted-clients header + lock attention + lock/PIN keyboard + lock device state on panther) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header + Система header + consent + PIN setup header + remote pairing + Bluetooth header + Wi-Fi header + trusted-clients header + lock attention + lock/PIN keyboard + lock device state + lock sleep AOD on panther) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -1037,9 +1037,12 @@ big-bang rewrite.
   `Заряд N%` / `Зарядка N%` from `read_battery()`; omit when missing;
   no Progress track, no StatusIndicator color. PIN keypad unchanged.
   Do not set a PIN. Tap-unlock. Flashed `88121ad2…`.
+- [x] Restyle remaining lock and wake-on-touch states. ADR-154: AOD
+  is Canvas + Display clock; `lock_wake_tap` is `ShowLock`, not
+  unlock. First tap restores hint + battery still locked. Do not set
+  a PIN. Flashed `c3fd2fcf…`.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
-- [ ] Restyle remaining lock and wake-on-touch states without triggering privileged actions.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.
@@ -1193,8 +1196,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (wake-on-touch / deep-idle
-chrome). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07** remaining surfaces (empty / loading / offline
+patterns). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
@@ -1206,6 +1209,6 @@ setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
 header (`efbab13a…`), Wi-Fi header (`d562249b…`), trusted-clients
 header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
 keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), keyboard
-press (`3a97f0e8…`), DevSurface header (`c9f52227…`), and lock
-device state (`88121ad2…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
+press (`3a97f0e8…`), DevSurface header (`c9f52227…`), lock
+device state (`88121ad2…`), and lock sleep AOD (`c3fd2fcf…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.
