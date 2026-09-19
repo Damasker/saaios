@@ -463,11 +463,11 @@ use saai_object_actions::{
 use saai_ui_core::{
     layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
     DataRowVariant, DecisionOverlay, EdgeInsets, EventRow, Field, FieldKind, IntentSummary,
-    LayoutNode, Length, LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost,
-    Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale, SystemSection,
-    SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow,
-    MIN_TOUCH_TARGET,
+    LayoutNode, Length, LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node,
+    ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken,
+    StatusIndicator, StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale,
+    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState,
+    WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -2705,6 +2705,20 @@ fn committed_action(down: Option<&str>, up: Option<&str>) -> Option<String> {
     match (down, up) {
         (Some(start), Some(end)) if start == end => Some(end.to_string()),
         _ => None,
+    }
+}
+
+/// ADR-167: after release, keep the pressed key only while the micro
+/// clock still needs a frame. Finger-down always wins.
+fn retain_pressed_key_for_micro_feedback(
+    pressed: Option<String>,
+    clock: Option<&MotionClock>,
+    finger_down: bool,
+) -> Option<String> {
+    if finger_down || clock.is_some_and(|clock| clock.needs_frame()) {
+        pressed
+    } else {
+        None
     }
 }
 
@@ -5535,8 +5549,11 @@ fn main() {
         tab_touch_pending: false,
         pressed_tab: None,
         pressed_key: None,
+        key_finger_down: false,
         touch_down_action: None,
         haptic: haptic::HapticMotor::open(),
+        motion_clock: None,
+        motion_last_tick: Instant::now(),
         layer,
         layer_width: 0,
         layer_height: status_layer_height(),
@@ -5639,6 +5656,7 @@ fn main() {
         shell.poll_portal();
         shell.check_idle_timeout(&qh);
         shell.check_deep_idle(&conn, &qh);
+        shell.tick_motion(&conn, &qh);
     }
 }
 
@@ -5729,12 +5747,19 @@ struct Shell {
     /// finger is not on a tab.
     pressed_tab: Option<RootPage>,
     /// Keyboard key under a live finger (ADR-151). Drawn as
-    /// `ColorRole::Pressed`. Cleared on up/cancel/sleep-wake.
+    /// `ColorRole::Pressed`. After up, ADR-167 keeps it until
+    /// `MotionClock` finishes `MicroFeedback`, unless reduced motion.
     pressed_key: Option<String>,
+    /// Finger is still down on a keyboard/PIN key.
+    key_finger_down: bool,
     /// Action under the finger at `down()` on a keyboard/PIN frame.
     /// `up()` commits only when it still names this action (ADR-163).
     touch_down_action: Option<String>,
     haptic: haptic::HapticMotor,
+    /// ADR-167: in-flight `MotionToken` clock. `None` when idle so
+    /// `draw()` does not request another compositor frame.
+    motion_clock: Option<MotionClock>,
+    motion_last_tick: Instant,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -5994,13 +6019,15 @@ impl CompositorHandler for Shell {
 
     fn frame(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        // The shell is event-driven. Presentation feedback must not
-        // redraw an unchanged full-screen scene forever.
+        if *self.window.wl_surface() != *surface {
+            return;
+        }
+        self.tick_motion(conn, qh);
     }
 
     fn surface_enter(
@@ -6228,6 +6255,8 @@ impl TouchHandler for Shell {
             self.tab_touch_pending = false;
             self.pressed_tab = None;
             self.pressed_key = None;
+            self.key_finger_down = false;
+            self.motion_clock = None;
             self.touch_down_action = None;
             self.me_drag = None;
             self.pin_entry_buffer.clear();
@@ -6289,7 +6318,11 @@ impl TouchHandler for Shell {
             (self.last_touch_pos.1 - start_y).abs() > ME_DRAG_TAP_SLOP_PX
         });
         let had_pressed_tab = self.pressed_tab.take().is_some();
-        let had_pressed_key = self.pressed_key.take().is_some();
+        let had_pressed_key = self.pressed_key.is_some();
+        self.key_finger_down = false;
+        if !self.motion_clock.is_some_and(MotionClock::needs_frame) {
+            self.pressed_key = None;
+        }
         let down_action = self.touch_down_action.take();
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
@@ -6724,6 +6757,8 @@ impl TouchHandler for Shell {
         self.me_drag = None;
         self.me_row_cache = None;
         self.touch_down_action = None;
+        self.key_finger_down = false;
+        self.motion_clock = None;
         let had_pressed = self.pressed_tab.take().is_some() || self.pressed_key.take().is_some();
         if had_pressed {
             if self.locked {
@@ -6736,6 +6771,37 @@ impl TouchHandler for Shell {
 }
 
 impl Shell {
+    /// ADR-167: advance the in-flight `MotionClock` and redraw only while
+    /// it still needs a frame. Instant is the time source; compositor
+    /// `frame` timestamps are not trusted.
+    fn tick_motion(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        let Some(clock) = self.motion_clock.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        let dt_ms = now
+            .saturating_duration_since(self.motion_last_tick)
+            .as_millis() as u32;
+        if dt_ms < 8 {
+            return;
+        }
+        self.motion_last_tick = now;
+        clock.advance(dt_ms);
+        if !clock.needs_frame() {
+            self.motion_clock = None;
+            self.pressed_key = retain_pressed_key_for_micro_feedback(
+                self.pressed_key.take(),
+                None,
+                self.key_finger_down,
+            );
+        }
+        if self.locked {
+            self.present_lock_pin_entry(qh);
+        } else {
+            self.draw(conn, qh);
+        }
+    }
+
     /// Present at most one coalesced "Я" scroll frame after a complete
     /// Wayland dispatch batch. If both dma-buf slots are still owned by
     /// the compositor, keep the latest position dirty and retry after the
@@ -7520,6 +7586,9 @@ impl Shell {
                         surface_damage.width as i32,
                         surface_damage.height as i32,
                     );
+                    if self.motion_clock.is_some_and(MotionClock::needs_frame) {
+                        surface.frame(qh, surface.clone());
+                    }
                     self.window.commit();
                 }
                 Err(error) => {
@@ -7568,6 +7637,10 @@ impl Shell {
             surface_damage.width as i32,
             surface_damage.height as i32,
         );
+        if self.motion_clock.is_some_and(MotionClock::needs_frame) {
+            let surface = self.window.wl_surface();
+            surface.frame(qh, surface.clone());
+        }
         buffer
             .attach_to(self.window.wl_surface())
             .expect("buffer attach");
@@ -7821,8 +7894,17 @@ impl Shell {
         }
         let tick = next.is_some();
         self.pressed_key = next;
+        self.key_finger_down = tick;
         if tick {
             self.haptic.play(haptic::haptic_intent_for_key_press());
+            if !self.settings.reduced_motion {
+                self.motion_clock = Some(MotionClock::one_shot(MotionToken::MicroFeedback, false));
+                self.motion_last_tick = Instant::now();
+            } else {
+                self.motion_clock = None;
+            }
+        } else {
+            self.motion_clock = None;
         }
         if self.locked {
             self.present_lock_pin_entry(qh);
@@ -9848,22 +9930,23 @@ mod tests {
         object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        spaces_header, stacked_control_rect, stacked_row_fits_above, stacked_row_rect,
-        stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
-        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
-        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
-        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
-        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
-        Entity, FieldKind, KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction,
-        Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern,
-        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
-        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
-        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        remote_pair_content_cards, remote_pair_header, remove_context_source,
+        retain_pressed_key_for_micro_feedback, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
+        stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
+        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode, LockAttentionTap,
+        LockWakeTap, MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow,
+        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
         SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
         SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -11409,6 +11492,29 @@ mod tests {
         assert_eq!(
             super::committed_action(cancel_action.as_deref(), cancel_action.as_deref()),
             cancel_action
+        );
+    }
+
+    #[test]
+    fn pressed_key_holds_after_release_only_while_the_micro_clock_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::MicroFeedback, false);
+        assert_eq!(
+            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&clock), false).as_deref(),
+            Some("Q")
+        );
+        clock.advance(120);
+        assert_eq!(
+            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&clock), false),
+            None
+        );
+        assert_eq!(
+            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&clock), true).as_deref(),
+            Some("Q")
+        );
+        let reduced = MotionClock::one_shot(MotionToken::MicroFeedback, true);
+        assert_eq!(
+            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&reduced), false),
+            None
         );
     }
 

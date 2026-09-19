@@ -228,8 +228,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   ADR-164 docks the PIN setup dialer the same way; lock unlock is
   unchanged.
 - Keyboard keys (ADR-151): pressed fill is `ColorRole::Pressed` while
-  the finger is down; one `KeyTick` haptic on down. Release still
-  emits the key. Size does not change.
+  the finger is down; one `KeyTick` haptic on down. ADR-167 keeps
+  `Pressed` for `MotionToken::MicroFeedback` after release unless
+  reduced motion. Release still emits the key. Size does not change.
 
 ### 6.8 `DataRow`
 

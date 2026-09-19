@@ -337,6 +337,53 @@ impl MotionToken {
     }
 }
 
+/// One in-flight motion. Elapsed time is injected so host tests do not
+/// depend on a wall clock. The shell copies `Instant` deltas into
+/// `advance`. Reduced motion never asks for another frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MotionClock {
+    token: MotionToken,
+    reduced_motion: bool,
+    elapsed_ms: u32,
+}
+
+impl MotionClock {
+    pub fn one_shot(token: MotionToken, reduced_motion: bool) -> Self {
+        Self {
+            token,
+            reduced_motion,
+            elapsed_ms: 0,
+        }
+    }
+
+    pub fn duration_ms(self) -> u16 {
+        self.token.milliseconds(self.reduced_motion)
+    }
+
+    pub fn advance(&mut self, dt_ms: u32) {
+        if self.reduced_motion {
+            return;
+        }
+        let cap = u32::from(self.duration_ms());
+        self.elapsed_ms = self.elapsed_ms.saturating_add(dt_ms).min(cap);
+    }
+
+    pub fn progress_percent(self) -> u8 {
+        let duration = u32::from(self.duration_ms());
+        if duration == 0 {
+            return 100;
+        }
+        ((self.elapsed_ms.saturating_mul(100)) / duration).min(100) as u8
+    }
+
+    pub fn needs_frame(self) -> bool {
+        if self.reduced_motion {
+            return false;
+        }
+        self.elapsed_ms < u32::from(self.duration_ms())
+    }
+}
+
 pub const MIN_TOUCH_TARGET: LogicalUnit = LogicalUnit::new(48);
 pub const CONTROL_VISUAL_HEIGHT: LogicalUnit = LogicalUnit::new(40);
 pub const TWO_LINE_ROW_HEIGHT: LogicalUnit = LogicalUnit::new(64);
@@ -435,6 +482,30 @@ mod tests {
         assert_eq!(MotionToken::Selection.milliseconds(false), 180);
         assert_eq!(MotionToken::Context.milliseconds(false), 240);
         assert_eq!(MotionToken::Context.milliseconds(true), 0);
+    }
+
+    #[test]
+    fn motion_clock_one_shot_needs_a_frame_until_the_token_duration() {
+        let mut clock = MotionClock::one_shot(MotionToken::MicroFeedback, false);
+        assert!(clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 0);
+        clock.advance(60);
+        assert!(clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 50);
+        clock.advance(60);
+        assert!(!clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 100);
+        clock.advance(40);
+        assert_eq!(clock.progress_percent(), 100);
+    }
+
+    #[test]
+    fn motion_clock_reduced_motion_never_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::MicroFeedback, true);
+        assert!(!clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 100);
+        clock.advance(120);
+        assert!(!clock.needs_frame());
     }
 
     #[test]

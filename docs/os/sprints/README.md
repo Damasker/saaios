@@ -23,7 +23,8 @@ S00–S32 закрыли базовый трек — рабочий телефо
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
 ([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;
 VUI-04 remainder и VUI-06 на panther; **VUI-07 закрыт** на panther
-(`693e77c7…`; Space detail deferred, MEM-08 omitted). Дальше VUI-08.
+(`693e77c7…`; Space detail deferred, MEM-08 omitted). VUI-08 started:
+ADR-167 MotionClock + keyboard micro hold on panther.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
