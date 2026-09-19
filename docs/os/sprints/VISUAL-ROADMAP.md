@@ -114,7 +114,7 @@ contains:
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
-| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–169 on panther) |
+| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–170 on panther) |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
 ---
@@ -715,9 +715,9 @@ turning the Orb into a launcher or assistant avatar.
   (Space color for `Idle`/`Active`, semantic color otherwise),
   **attention=ring** (`WaitingConfirmation` / undismissed Notifications),
   **quantity=fill** (determinate battery `Progress`; missing reading is
-  absent, not `0%`; Border token, never severity), **activity=motion**
+  absent, not `0%`; Border token, never severity),   **activity=motion**
   (`MotionCue::ActivityPulse` only for Running and not reduced-motion;
-  still-frame inset hairline until VUI-08). A circular arc is not drawn
+  ADR-170 loops the inset hairline 240 ms on / 240 ms off). A circular arc is not drawn
   — this file has no circle primitive; fill is the honest square analogue.
   `Я`→`Система` is the visible tab label (VUI-06); destination content
   was accepted on Pixel before the rename.
@@ -1106,8 +1106,8 @@ legacy renderer only after its replacement and fallback path are verified.
 ## VUI-08 — Motion, haptics, and frame pacing
 
 **Status:** In progress — MotionClock, keyboard micro hold, tab Selection,
-and compose Field Focus (ADR-167–169) on panther. Orb pulse, haptics
-policy, and CI thresholds remain.
+compose Field Focus, and Orb ActivityPulse (ADR-167–170) on panther.
+Haptics policy and CI thresholds remain.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1237,6 +1237,6 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: Orb `ActivityPulse`, haptic policy, frame-pacing
-instrumentation. ADR-167–169 are on panther. Space detail still
-deferred. MEM-08 stays omitted until a shell-legal memory read exists.
+Continue **VUI-08**: haptic policy, frame-pacing instrumentation.
+ADR-167–170 are on panther. Space detail still deferred. MEM-08 stays
+omitted until a shell-legal memory read exists.

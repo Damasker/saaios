@@ -340,11 +340,14 @@ impl MotionToken {
 /// One in-flight motion. Elapsed time is injected so host tests do not
 /// depend on a wall clock. The shell copies `Instant` deltas into
 /// `advance`. Reduced motion never asks for another frame.
+/// ADR-170: `looping` wraps at two token windows so Orb activity can
+/// pulse without a new duration number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MotionClock {
     token: MotionToken,
     reduced_motion: bool,
     elapsed_ms: u32,
+    looping: bool,
 }
 
 impl MotionClock {
@@ -353,6 +356,16 @@ impl MotionClock {
             token,
             reduced_motion,
             elapsed_ms: 0,
+            looping: false,
+        }
+    }
+
+    pub fn looping(token: MotionToken, reduced_motion: bool) -> Self {
+        Self {
+            token,
+            reduced_motion,
+            elapsed_ms: 0,
+            looping: true,
         }
     }
 
@@ -364,8 +377,24 @@ impl MotionClock {
         self.token
     }
 
+    pub fn is_looping(self) -> bool {
+        self.looping
+    }
+
+    fn cycle_ms(self) -> u32 {
+        u32::from(self.duration_ms()).saturating_mul(2)
+    }
+
     pub fn advance(&mut self, dt_ms: u32) {
         if self.reduced_motion {
+            return;
+        }
+        if self.looping {
+            let cycle = self.cycle_ms();
+            if cycle == 0 {
+                return;
+            }
+            self.elapsed_ms = self.elapsed_ms.saturating_add(dt_ms) % cycle;
             return;
         }
         let cap = u32::from(self.duration_ms());
@@ -377,11 +406,25 @@ impl MotionClock {
         if duration == 0 {
             return 100;
         }
+        if self.looping {
+            return ((self.elapsed_ms.saturating_mul(100)) / duration).min(100) as u8;
+        }
         ((self.elapsed_ms.saturating_mul(100)) / duration).min(100) as u8
     }
 
     pub fn needs_frame(self) -> bool {
         if self.reduced_motion {
+            return false;
+        }
+        if self.looping {
+            return self.cycle_ms() > 0;
+        }
+        self.elapsed_ms < u32::from(self.duration_ms())
+    }
+
+    /// ADR-170: inset on for the first token window, off for the second.
+    pub fn pulse_visible(self) -> bool {
+        if self.reduced_motion || !self.looping {
             return false;
         }
         self.elapsed_ms < u32::from(self.duration_ms())
@@ -511,6 +554,28 @@ mod tests {
         assert_eq!(clock.progress_percent(), 100);
         clock.advance(120);
         assert!(!clock.needs_frame());
+    }
+
+    #[test]
+    fn motion_clock_looping_needs_a_frame_and_pulse_toggles_once_per_token() {
+        let mut clock = MotionClock::looping(MotionToken::Context, false);
+        assert!(clock.is_looping());
+        assert!(clock.needs_frame());
+        assert!(clock.pulse_visible());
+        clock.advance(239);
+        assert!(clock.pulse_visible());
+        clock.advance(1);
+        assert!(clock.needs_frame());
+        assert!(!clock.pulse_visible());
+        clock.advance(240);
+        assert!(clock.needs_frame());
+        assert!(clock.pulse_visible());
+        let mut reduced = MotionClock::looping(MotionToken::Context, true);
+        assert!(!reduced.needs_frame());
+        assert!(!reduced.pulse_visible());
+        reduced.advance(240);
+        assert!(!reduced.needs_frame());
+        assert!(!MotionClock::one_shot(MotionToken::Context, false).pulse_visible());
     }
 
     #[test]

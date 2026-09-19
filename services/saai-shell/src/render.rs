@@ -667,6 +667,7 @@ pub fn draw_orb(
     }
     draw_calibration_mark(canvas, dot_rect, mark, dot_color);
     if activity_pulse {
+        // ADR-170: inset hairline is the on-phase of the activity loop.
         let inset = physical(StrokeToken::Focus.value()).max(1);
         if dot_rect.width > inset * 2 && dot_rect.height > inset * 2 {
             draw_square_ring(
@@ -3432,7 +3433,7 @@ mod tests {
     }
 
     #[test]
-    fn activity_pulse_is_a_static_inset_not_an_attention_ring() {
+    fn activity_pulse_inset_is_not_an_attention_ring() {
         let render = |pulse: bool| -> Vec<u8> {
             let mut pixels = vec![0u8; 200 * 200 * 4];
             let mut canvas = Canvas::new(&mut pixels, 200, 200);

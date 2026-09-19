@@ -380,6 +380,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `label_key` are always present regardless of whether a renderer is
   currently animating anything.
 - First real consumer: the existing Orb dot/menu.
+- ADR-170: while `motion()` is `ActivityPulse`, the inset hairline
+  follows a looping `MotionClock` (on 240 ms / off 240 ms, Context
+  duration reused). Reduced motion keeps the `StatusMark` only.
 
 ### 7.6 `TaskSummary`
 

@@ -2585,7 +2585,8 @@ struct OrbFrame {
     /// Context Light quantity=fill, determinate battery percent.
     /// `None` if `read_battery` has no reading — not `0`.
     quantity: Option<u8>,
-    /// Context Light activity=motion, still-frame stand-in until VUI-08.
+    /// Context Light activity=motion, ADR-170: inset on the activity
+    /// clock's visible phase. Still-frame when reduced motion.
     activity_pulse: bool,
     menu_rows: Vec<(Rect, &'static str)>,
 }
@@ -2723,9 +2724,18 @@ fn retain_pressed_while_clock<T>(
 }
 
 /// ADR-169: the compose Field shows Focus only while the in-flight
-/// clock is still a live `Context` token.
+/// interaction clock is still a live one-shot `Context` token.
 fn field_shows_context_focus(clock: Option<&MotionClock>) -> bool {
-    clock.is_some_and(|clock| clock.token() == MotionToken::Context && clock.needs_frame())
+    clock.is_some_and(|clock| {
+        clock.token() == MotionToken::Context && clock.needs_frame() && !clock.is_looping()
+    })
+}
+
+/// ADR-170: Orb inset hairline follows the activity loop's on-phase.
+/// No clock and no Running work stays still. Reduced motion never
+/// starts a loop, so `wants` is already false.
+fn orb_shows_activity_pulse(wants: bool, clock: Option<&MotionClock>) -> bool {
+    wants && clock.is_some_and(|clock| clock.pulse_visible())
 }
 
 /// Builds both the header rect and the drawn `(Rect, label)` pairs for
@@ -5560,6 +5570,7 @@ fn main() {
         touch_down_action: None,
         haptic: haptic::HapticMotor::open(),
         motion_clock: None,
+        activity_clock: None,
         motion_last_tick: Instant::now(),
         layer,
         layer_width: 0,
@@ -5766,9 +5777,12 @@ struct Shell {
     /// `up()` commits only when it still names this action (ADR-163).
     touch_down_action: Option<String>,
     haptic: haptic::HapticMotor,
-    /// ADR-167: in-flight `MotionToken` clock. `None` when idle so
-    /// `draw()` does not request another compositor frame.
+    /// ADR-167: in-flight one-shot `MotionToken` clock. `None` when
+    /// idle so `draw()` does not request another compositor frame.
     motion_clock: Option<MotionClock>,
+    /// ADR-170: looping activity clock while Orb is Running. Separate
+    /// from `motion_clock` so compose Focus cannot see it.
+    activity_clock: Option<MotionClock>,
     motion_last_tick: Instant,
 
     layer: LayerSurface,
@@ -6127,6 +6141,7 @@ impl SessionLockHandler for Shell {
     fn locked(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, session_lock: SessionLock) {
         println!("saai-shell: session locked, creating lock surface(s)");
         self.locked = true;
+        self.activity_clock = None;
         for output in self.output_state.outputs() {
             let surface = self.compositor.create_surface(qh);
             let lock_surface = session_lock.create_lock_surface(surface, &output, qh);
@@ -6268,6 +6283,7 @@ impl TouchHandler for Shell {
             self.pressed_key = None;
             self.key_finger_down = false;
             self.motion_clock = None;
+            self.activity_clock = None;
             self.touch_down_action = None;
             self.me_drag = None;
             self.pin_entry_buffer.clear();
@@ -6788,34 +6804,95 @@ impl TouchHandler for Shell {
 }
 
 impl Shell {
-    /// ADR-167: advance the in-flight `MotionClock` and redraw only while
-    /// it still needs a frame. Instant is the time source; compositor
-    /// `frame` timestamps are not trusted.
+    /// ADR-167/170: advance in-flight clocks and redraw only while
+    /// either still needs a frame. Instant is the time source;
+    /// compositor `frame` timestamps are not trusted.
     fn tick_motion(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
-        let Some(clock) = self.motion_clock.as_mut() else {
+        let activity_changed = self.sync_activity_clock();
+        if self.motion_clock.is_none() && self.activity_clock.is_none() && !activity_changed {
             return;
-        };
+        }
         let now = Instant::now();
         let dt_ms = now
             .saturating_duration_since(self.motion_last_tick)
             .as_millis() as u32;
-        if dt_ms < 8 {
+        if dt_ms < 8 && !activity_changed {
             return;
         }
-        self.motion_last_tick = now;
-        clock.advance(dt_ms);
-        if !clock.needs_frame() {
-            self.motion_clock = None;
-            self.pressed_key =
-                retain_pressed_while_clock(self.pressed_key.take(), None, self.key_finger_down);
-            self.pressed_tab =
-                retain_pressed_while_clock(self.pressed_tab.take(), None, self.tab_finger_down);
+        if dt_ms >= 8 {
+            self.motion_last_tick = now;
+        }
+        let mut dirty = activity_changed;
+        if dt_ms >= 8 {
+            if let Some(clock) = self.activity_clock.as_mut() {
+                let was = clock.pulse_visible();
+                clock.advance(dt_ms);
+                dirty |= was != clock.pulse_visible();
+            }
+            if let Some(clock) = self.motion_clock.as_mut() {
+                clock.advance(dt_ms);
+                dirty = true;
+                if !clock.needs_frame() {
+                    self.motion_clock = None;
+                    self.pressed_key = retain_pressed_while_clock(
+                        self.pressed_key.take(),
+                        None,
+                        self.key_finger_down,
+                    );
+                    self.pressed_tab = retain_pressed_while_clock(
+                        self.pressed_tab.take(),
+                        None,
+                        self.tab_finger_down,
+                    );
+                }
+            }
+        }
+        if !dirty {
+            return;
         }
         if self.locked {
             self.present_lock_pin_entry(qh);
         } else {
             self.draw(conn, qh);
         }
+    }
+
+    fn orb_wants_activity_pulse(&self) -> bool {
+        if self.locked
+            || self.sleeping
+            || self.settings.reduced_motion
+            || !self.settings.orb_enabled
+        {
+            return false;
+        }
+        OrbHost::new(orb_visual_state(
+            self.appd.is_connected(),
+            self.entityd.is_connected(),
+            orb_attention_from_entities(&self.selected_entities),
+            !in_progress_work(&self.selected_entities).is_empty(),
+            self.orb_menu_open,
+        ))
+        .motion()
+            == MotionCue::ActivityPulse
+    }
+
+    fn sync_activity_clock(&mut self) -> bool {
+        if !self.orb_wants_activity_pulse() {
+            return self.activity_clock.take().is_some();
+        }
+        if self.activity_clock.is_none() {
+            self.activity_clock = Some(MotionClock::looping(MotionToken::Context, false));
+            if self.motion_clock.is_none() {
+                self.motion_last_tick = Instant::now();
+            }
+            return true;
+        }
+        false
+    }
+
+    fn clocks_need_frame(&self) -> bool {
+        self.motion_clock.is_some_and(MotionClock::needs_frame)
+            || self.activity_clock.is_some_and(MotionClock::needs_frame)
     }
 
     /// Present at most one coalesced "Я" scroll frame after a complete
@@ -6862,7 +6939,7 @@ impl Shell {
     fn end_compose_context(&mut self) {
         if self
             .motion_clock
-            .is_some_and(|clock| clock.token() == MotionToken::Context)
+            .is_some_and(|clock| clock.token() == MotionToken::Context && !clock.is_looping())
         {
             self.motion_clock = None;
         }
@@ -6886,6 +6963,7 @@ impl Shell {
         } else {
             Rect::new(0, 0, width, height)
         };
+        self.sync_activity_clock();
 
         // Every `&self` read this frame needs (content cards, context
         // label, consent labels) happens here, before `buffer`/`canvas`
@@ -7244,6 +7322,7 @@ impl Shell {
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
         let field_focused = field_shows_context_focus(self.motion_clock.as_ref());
+        let need_frame = self.clocks_need_frame();
         let current_page_index = self.current_page.index();
         let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
@@ -7627,7 +7706,7 @@ impl Shell {
                         surface_damage.width as i32,
                         surface_damage.height as i32,
                     );
-                    if self.motion_clock.is_some_and(MotionClock::needs_frame) {
+                    if need_frame {
                         surface.frame(qh, surface.clone());
                     }
                     self.window.commit();
@@ -7678,7 +7757,7 @@ impl Shell {
             surface_damage.width as i32,
             surface_damage.height as i32,
         );
-        if self.motion_clock.is_some_and(MotionClock::needs_frame) {
+        if need_frame {
             let surface = self.window.wl_surface();
             surface.frame(qh, surface.clone());
         }
@@ -9241,7 +9320,10 @@ impl Shell {
                 mark: orb_host.mark(),
                 attention_ring: orb_host.attention_ring(),
                 quantity: orb_host.quantity_percent(),
-                activity_pulse: orb_host.motion() == MotionCue::ActivityPulse,
+                activity_pulse: orb_shows_activity_pulse(
+                    orb_host.motion() == MotionCue::ActivityPulse,
+                    self.activity_clock.as_ref(),
+                ),
                 menu_rows: Vec::new(),
             };
         }
@@ -9257,7 +9339,10 @@ impl Shell {
             mark: orb_host.mark(),
             attention_ring: orb_host.attention_ring(),
             quantity: orb_host.quantity_percent(),
-            activity_pulse: orb_host.motion() == MotionCue::ActivityPulse,
+            activity_pulse: orb_shows_activity_pulse(
+                orb_host.motion() == MotionCue::ActivityPulse,
+                self.activity_clock.as_ref(),
+            ),
             menu_rows,
         }
     }
@@ -9974,6 +10059,8 @@ impl Shell {
         }
         println!("saai-shell: deep idle timeout, screen off");
         self.sleeping = true;
+        self.activity_clock = None;
+        self.motion_clock = None;
         self.present_lock_pin_entry(qh);
     }
 }
@@ -9995,12 +10082,12 @@ mod tests {
         next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_details,
         object_view_permission_pattern, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source,
-        retain_pressed_while_clock, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
+        orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_visual_state,
+        orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, retain_pressed_while_clock, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
         stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect, tab_at,
         task_confirm_action_at, today_schedules, trusted_client_action_at,
         trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
@@ -11626,6 +11713,22 @@ mod tests {
         let reduced = MotionClock::one_shot(MotionToken::Context, true);
         assert!(!field_shows_context_focus(Some(&reduced)));
         assert!(!field_shows_context_focus(None));
+        let looping = MotionClock::looping(MotionToken::Context, false);
+        assert!(!field_shows_context_focus(Some(&looping)));
+    }
+
+    #[test]
+    fn orb_shows_activity_pulse_only_on_the_looping_on_phase() {
+        let mut clock = MotionClock::looping(MotionToken::Context, false);
+        assert!(orb_shows_activity_pulse(true, Some(&clock)));
+        clock.advance(240);
+        assert!(!orb_shows_activity_pulse(true, Some(&clock)));
+        clock.advance(240);
+        assert!(orb_shows_activity_pulse(true, Some(&clock)));
+        assert!(!orb_shows_activity_pulse(false, Some(&clock)));
+        assert!(!orb_shows_activity_pulse(true, None));
+        let reduced = MotionClock::looping(MotionToken::Context, true);
+        assert!(!orb_shows_activity_pulse(true, Some(&reduced)));
     }
 
     #[test]
