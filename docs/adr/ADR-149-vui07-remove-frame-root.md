@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted, 2026-09-19. Host-verified only (full workspace test +
-clippy). Not yet physically re-confirmed on Pixel 7 -- see Verification.
+Accepted, 2026-09-19. Host-verified (full workspace test + clippy) and
+physically confirmed on Pixel 7 -- see Verification.
 
 ## Context
 
@@ -111,14 +111,17 @@ now-nonexistent `Frame::Root` arm from the list itself.
 - `cargo test --workspace`: unchanged pass count everywhere else (77
   test-result blocks, all `ok`).
 - Hot-swapped onto the live device (backup `saai-shell.pre-frameroot`,
-  hash-verified). **Not yet physically re-confirmed**: this change
-  removes only unreachable code paths -- every real screen already
-  routed through its own dedicated `Frame` before this ADR, so it
-  should be visually and behaviorally a no-op on-device. A same-day
-  spot check (Сейчас/Входящие/Пространства/Я/lock idle) is the
-  proportionate verification for a pure dead-code removal, not a full
+  hash-verified). **Physically confirmed** (2026-09-19): this
+  session's own `screencap` capture of Сейчас after the swap matched
+  the pre-change render exactly (header, orb, footer rows, tab bar
+  selected state), and the device owner directly tapped through
+  Входящие/Пространства/Я on the Pixel 7 and confirmed all three still
+  render and behave as before. This change only removed unreachable
+  code paths -- every real screen already routed through its own
+  dedicated `Frame` before this ADR -- so this spot check (not a full
   re-walk of every VUI-07 screen this sprint already flashed
-  individually.
+  individually) is the proportionate verification for a pure dead-code
+  removal.
 
 ## Consequences
 

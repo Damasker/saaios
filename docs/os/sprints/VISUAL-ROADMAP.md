@@ -909,7 +909,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock PIN entry scaling `58b7a9b…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock PIN entry scaling `58b7a9b…`, Frame::Root removal `d277d27…` on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -1044,10 +1044,11 @@ big-bang rewrite.
   dispatch test that only ever exercised dead code. Host: full
   workspace `cargo test`/`clippy --all-targets -D warnings` clean
   (191/193 saai-shell tests -- see ADR-149 for the exact accounting).
-  Not yet physically re-confirmed; pure dead-code removal, so a same-
-  day spot check across Сейчас/Входящие/Пространства/Я/lock idle is
-  the proportionate verification, not a full re-walk of every screen
-  this sprint already flashed individually.
+  Physically confirmed 2026-09-19 -- this session's own `screencap`
+  capture of Сейчас after the swap matched the pre-change render
+  exactly, and the device owner tapped through Входящие/Пространства/Я
+  on the Pixel 7 directly and confirmed all three still render and
+  behave as before.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
