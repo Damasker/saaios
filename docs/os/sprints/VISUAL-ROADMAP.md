@@ -1057,7 +1057,11 @@ big-bang rewrite.
 - [x] Apply shared permission and recovery patterns. ADR-158: Object
   View OAM line is `SurfacePattern::blocked`; Failed Bluetooth cards
   keep the Failed mark; «Искать» is the recovery control. Do not tap
-  Сопрячь or Разрешить. Flashed `812f1684…`.
+  Сопряжь or Разрешить. Flashed `812f1684…`.
+- [x] Dock overflowing stacked «Назад» on screen. ADR-159:
+  `stacked_control_rect` on DevSurface. 7-tap allowed; leave with
+  Назад. Flashed `b06c0bb1…`. Keyboard avoidance, Me scroll, focus
+  order later.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.

@@ -1848,7 +1848,7 @@ fn trusted_client_action_at(
 /// `trusted_client_action_at`'s own `Back` variant already uses, just
 /// without the per-row action this screen has no need for.
 fn dev_surface_back_tapped(pos: (f64, f64), width: u32, height: u32, row_count: usize) -> bool {
-    stacked_row_rect(row_count, width, height).contains(pos.0, pos.1)
+    stacked_control_rect(row_count, width, height).contains(pos.0, pos.1)
 }
 
 const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
@@ -3060,6 +3060,26 @@ fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
         width.saturating_sub(margin.saturating_mul(2)),
         row_height,
     )
+}
+
+/// ADR-159: trailing list controls that would paint below the fold
+/// dock to the last on-screen row. Same x/height as `stacked_row_rect`.
+fn stacked_control_rect(index: usize, width: u32, height: u32) -> Rect {
+    let desired = stacked_row_rect(index, width, height);
+    if desired.y.saturating_add(desired.height) <= height {
+        desired
+    } else {
+        Rect::new(
+            desired.x,
+            height.saturating_sub(desired.height),
+            desired.width,
+            desired.height,
+        )
+    }
+}
+
+fn stacked_row_fits_above(row: Rect, back: Rect) -> bool {
+    row.y.saturating_add(row.height) <= back.y
 }
 
 /// ADR-149: the same `Node`/`layout()`/`hit_test()` keyboard as
@@ -6764,20 +6784,17 @@ impl Shell {
             // ADR-152: header is a real `ContextHeader`, not a Surface
             // strip. `dev_surface_rows()` is always read fresh.
             let data_rows = self.dev_surface_rows();
+            let back = stacked_control_rect(data_rows.len(), width, height);
             let mut rows: Vec<(Rect, render::ActionCardView)> = data_rows
                 .iter()
                 .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        diagnostic_card_from_row(row),
-                    )
+                .filter_map(|(index, row)| {
+                    let rect = stacked_row_rect(index, width, height);
+                    stacked_row_fits_above(rect, back)
+                        .then(|| (rect, diagnostic_card_from_row(row)))
                 })
                 .collect();
-            rows.push((
-                stacked_row_rect(data_rows.len(), width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            rows.push((back, render::ActionCardView::new("Назад", "", "Назад")));
             Frame::DevSurface {
                 content_rect: Rect::new(0, 0, width, height),
                 header: diagnostic_header(&space_display_name(
@@ -9584,19 +9601,20 @@ mod tests {
         remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
         space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
-        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
-        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
-        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
-        KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow,
-        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        spaces_header, stacked_control_rect, stacked_row_fits_above, stacked_row_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
+        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
+        LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -12646,9 +12664,42 @@ mod tests {
             )
         };
         let data_row = center(stacked_row_rect(1, width, height));
-        let back_row = center(stacked_row_rect(row_count, width, height));
+        let back_row = center(stacked_control_rect(row_count, width, height));
         assert!(!dev_surface_back_tapped(data_row, width, height, row_count));
         assert!(dev_surface_back_tapped(back_row, width, height, row_count));
+    }
+
+    #[test]
+    fn stacked_control_rect_docks_overflowing_back_on_screen() {
+        let width = 1080;
+        let height = 2400;
+        let row_count = 9;
+        let desired = stacked_row_rect(row_count, width, height);
+        let back = stacked_control_rect(row_count, width, height);
+        assert!(desired.y + desired.height > height);
+        assert!(back.y + back.height <= height);
+        assert_eq!(back.x, desired.x);
+        assert_eq!(back.height, desired.height);
+        let last_visible = stacked_row_rect(7, width, height);
+        assert!(stacked_row_fits_above(last_visible, back));
+        assert!(!stacked_row_fits_above(
+            stacked_row_rect(8, width, height),
+            back
+        ));
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(dev_surface_back_tapped(center, width, height, row_count));
+        assert!(!dev_surface_back_tapped(
+            (
+                (last_visible.x + last_visible.width / 2) as f64,
+                (last_visible.y + last_visible.height / 2) as f64,
+            ),
+            width,
+            height,
+            row_count
+        ));
     }
 }
 

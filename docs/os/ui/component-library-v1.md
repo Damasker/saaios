@@ -240,8 +240,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - Long content reflows vertically. Technical identifiers may use mono body and
   expose a copy action when useful.
 - First diagnostic consumer of a bare Static `DataRow`: HIA-20
-  «Диагностика» (ADR-136, header ADR-152). Flattened to `ActionCardView`. «Назад»
-  stays a trailing control card. The 7-tap gesture is unchanged.
+  «Диагностика» (ADR-136, header ADR-152). Flattened to `ActionCardView`.
+  Overflowing «Назад» docks on-screen (`stacked_control_rect`, ADR-159).
+  The 7-tap gesture is unchanged.
 
 ### 6.9 `Metric`
 
