@@ -485,6 +485,22 @@ impl FrameSurface {
     }
 }
 
+/// Staging path that attached the main-surface buffer (ADR-178).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameBackend {
+    Dmabuf,
+    Shm,
+}
+
+impl FrameBackend {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dmabuf => "dmabuf",
+            Self::Shm => "shm",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameSample {
     pub produce_ms: u32,
@@ -495,6 +511,7 @@ pub struct FrameSample {
     pub coalesced: u32,
     pub reason: FrameReason,
     pub surface: FrameSurface,
+    pub backend: FrameBackend,
 }
 
 /// Ring of recent main-surface commits. Elapsed times are injected.
@@ -583,9 +600,10 @@ impl FramePace {
                 .map(|ms| ms.to_string())
                 .unwrap_or_else(|| "-".into());
             out.push_str(&format!(
-                "surface={} reason={} produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={}\n",
+                "surface={} reason={} backend={} produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={}\n",
                 sample.surface.as_str(),
                 sample.reason.as_str(),
+                sample.backend.as_str(),
                 sample.produce_ms,
                 input,
                 u8::from(sample.requested_frame),
@@ -674,7 +692,7 @@ impl FramePace {
             None => "-",
         };
         Some(format!(
-            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} p95_scroll={} p95_ok={} input_ok={} seq={} idle_ok={}",
+            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} backend={} p95_scroll={} p95_ok={} input_ok={} seq={} idle_ok={}",
             sample.produce_ms,
             input,
             u8::from(sample.requested_frame),
@@ -683,6 +701,7 @@ impl FramePace {
             sample.coalesced,
             sample.reason.as_str(),
             sample.surface.as_str(),
+            sample.backend.as_str(),
             p95_scroll,
             p95_ok,
             input_ok,
@@ -883,6 +902,7 @@ mod tests {
             coalesced: 0,
             reason,
             surface,
+            backend: FrameBackend::Dmabuf,
         }
     }
 
@@ -1010,8 +1030,8 @@ mod tests {
         assert!(
             me < inbox && inbox < list && list < keyboard && keyboard < overlay && overlay < orb
         );
-        assert!(trace.contains("reason=scroll produce_ms=12"));
-        assert!(trace.contains("reason=input produce_ms=6"));
+        assert!(trace.contains("reason=scroll backend=dmabuf produce_ms=12"));
+        assert!(trace.contains("reason=input backend=dmabuf produce_ms=6"));
     }
 
     #[test]
@@ -1058,6 +1078,23 @@ mod tests {
         let line = pace.line().expect("recorded");
         assert!(line.contains("seq=2"));
         assert!(line.contains("idle_ok=1"));
+    }
+
+    #[test]
+    fn frame_backend_names_dmabuf_and_shm_on_the_line() {
+        let mut pace = FramePace::new();
+        pace.record(sample(6, FrameReason::Input, FrameSurface::Now));
+        assert!(pace.line().expect("recorded").contains("backend=dmabuf"));
+        let mut shm = sample(9, FrameReason::Input, FrameSurface::Now);
+        shm.backend = FrameBackend::Shm;
+        pace.record(shm);
+        let line = pace.line().expect("recorded");
+        assert!(line.contains("backend=shm"));
+        let trace = pace.trace();
+        assert!(trace.contains("backend=dmabuf"));
+        assert!(trace.contains("backend=shm"));
+        assert_eq!(FrameBackend::Dmabuf.as_str(), "dmabuf");
+        assert_eq!(FrameBackend::Shm.as_str(), "shm");
     }
 
     #[test]

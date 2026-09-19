@@ -396,6 +396,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   against 50 ms so first visible Pressed is the down commit.
   ADR-177 counts commits as `seq` and `idle_ok` so a quiet Сейчас is
   a still main surface.
+  ADR-178 names the attached buffer `backend=dmabuf` or `backend=shm`
+  without changing either path.
 
 ### 7.6 `TaskSummary`
 

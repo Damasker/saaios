@@ -35,6 +35,7 @@ ADR-174 reduced motion is immediate on panther.
 ADR-175 FramePace surface traces on panther.
 ADR-176 first visible down commit on panther.
 ADR-177 idle main-surface seq on panther.
+ADR-178 dma-buf / wl_shm backend tag on panther.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

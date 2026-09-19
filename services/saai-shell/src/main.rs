@@ -45,6 +45,8 @@
 //!   `/run/saaios/shell-frame.trace` (ADR-175). First visible
 //!   `input_ok` is the down commit, not a token delay (ADR-176).
 //!   Idle Сейчас must keep `seq` still (ADR-177).
+//!   Main-surface commits name `backend=dmabuf` or `backend=shm`
+//!   (ADR-178) without changing either path.
 //!   Reduced motion drops in-flight clocks on the same tap (ADR-174).
 //!   Displayd still has no haptic protocol; this slice does not flash it.
 //!
@@ -467,12 +469,12 @@ use saai_object_actions::{
 use saai_ui_core::{
     frame_reason, frame_surface, layout, AgentSummary, Axis, BluetoothRow, CapabilityRow,
     ContextColor, ContextHeader, DataRow, DataRowVariant, DecisionOverlay, EdgeInsets, EventRow,
-    Field, FieldKind, FramePace, FrameSample, FrameSurface, IntentSummary, LayoutNode, Length,
-    LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node, ObjectSummary, OrbHost,
-    Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale, SystemSection,
-    SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow,
-    MIN_TOUCH_TARGET,
+    Field, FieldKind, FrameBackend, FramePace, FrameSample, FrameSurface, IntentSummary,
+    LayoutNode, Length, LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node,
+    ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken,
+    StatusIndicator, StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale,
+    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState,
+    WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -6964,8 +6966,15 @@ impl Shell {
 
     /// ADR-172: stamp one commit into `FramePace` and refresh the last
     /// line plus the chronological trace. `requested_frame` is the
-    /// pre-paint `clocks_need_frame`.
-    fn finish_frame(&mut self, produce_ms: u32, requested_frame: bool, scrolled: bool) {
+    /// pre-paint `clocks_need_frame`. `backend` is the buffer that
+    /// actually attached (ADR-178).
+    fn finish_frame(
+        &mut self,
+        produce_ms: u32,
+        requested_frame: bool,
+        scrolled: bool,
+        backend: FrameBackend,
+    ) {
         let input_to_commit_ms = self.frame_input_at.take().map(|at| {
             u32::try_from(Instant::now().saturating_duration_since(at).as_millis())
                 .unwrap_or(u32::MAX)
@@ -6980,6 +6989,7 @@ impl Shell {
             coalesced: 0,
             reason: frame_reason(scrolled, requested_frame),
             surface: self.current_frame_surface(scrolled),
+            backend,
         });
         if let Some(line) = self.frame_pace.line() {
             write_frame_pace_last(&line);
@@ -7826,7 +7836,7 @@ impl Shell {
                         surface.frame(qh, surface.clone());
                     }
                     self.window.commit();
-                    self.finish_frame(produce_ms, need_frame, content_only);
+                    self.finish_frame(produce_ms, need_frame, content_only, FrameBackend::Dmabuf);
                 }
                 Err(error) => {
                     eprintln!(
@@ -7885,7 +7895,7 @@ impl Shell {
             .attach_to(self.window.wl_surface())
             .expect("buffer attach");
         self.window.commit();
-        self.finish_frame(produce_ms, need_frame, content_only);
+        self.finish_frame(produce_ms, need_frame, content_only, FrameBackend::Shm);
     }
 
     /// The lifecycle-cycle gesture's actual write path -- full-replace
@@ -11946,7 +11956,7 @@ mod tests {
 
     #[test]
     fn frame_pace_idle_ok_is_the_inverse_of_requested_frame() {
-        use saai_ui_core::{FramePace, FrameReason, FrameSample, FrameSurface};
+        use saai_ui_core::{FrameBackend, FramePace, FrameReason, FrameSample, FrameSurface};
         let mut pace = FramePace::new();
         pace.record(FrameSample {
             produce_ms: 6,
@@ -11957,10 +11967,19 @@ mod tests {
             coalesced: 0,
             reason: FrameReason::Input,
             surface: FrameSurface::Now,
+            backend: FrameBackend::Dmabuf,
         });
         assert_eq!(pace.seq(), 1);
         assert_eq!(pace.idle_ok(), Some(true));
         assert!(pace.line().expect("recorded").contains("idle_ok=1"));
+        assert!(pace.line().expect("recorded").contains("backend=dmabuf"));
+    }
+
+    #[test]
+    fn frame_backend_names_the_two_staging_paths() {
+        use saai_ui_core::FrameBackend;
+        assert_eq!(FrameBackend::Dmabuf.as_str(), "dmabuf");
+        assert_eq!(FrameBackend::Shm.as_str(), "shm");
     }
 
     #[test]

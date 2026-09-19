@@ -114,7 +114,7 @@ contains:
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
-| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–174 on panther; traces remain) |
+| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–178 on panther; haptic closeout remains) |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
 ---
@@ -1105,8 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through idle seq
-(ADR-167–177) on panther. Remaining: SHM/Vulkan unless measured.
+**Status:** In progress — MotionClock through dma-buf/SHM backend
+tag (ADR-167–178) on panther. Remaining: haptic acceptance closeout.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1126,8 +1126,9 @@ into a measured regression contract.
 - [x] Instrument input-to-feedback, render production, submission, pending-work
   depth, and dropped/coalesced frames (`FramePace`, ADR-172). Presentation
   timestamps stay omitted.
-- [ ] Preserve software-render staging and Vulkan composition behavior unless a
-  separately measured change is accepted.
+- [x] Preserve software-render staging and Vulkan composition behavior unless a
+  separately measured change is accepted (`FrameBackend` on the main
+  surface, ADR-178). Lock/status fallbacks are unchanged.
 - [x] Add performance traces for `Система` drag, fast tab switching, lists,
   keyboard, overlays, and Orb activity (`FrameSurface` +
   `/run/saaios/shell-frame.trace`, ADR-175). Overlay/Orb without a live
@@ -1244,6 +1245,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: preserve SHM/Vulkan unless a separately measured
-change is accepted. ADR-167–177 are on panther. Space detail still
-deferred. MEM-08 stays omitted until a shell-legal memory read exists.
+Continue **VUI-08**: haptic acceptance is already on panther
+(ADR-171) — record it as the closeout. ADR-167–178 are on panther.
+Space detail still deferred. MEM-08 stays omitted until a
+shell-legal memory read exists.
