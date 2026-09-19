@@ -1062,6 +1062,9 @@ big-bang rewrite.
   `stacked_control_rect` on DevSurface. 7-tap allowed; leave with
   Назад. Flashed `b06c0bb1…`. Keyboard avoidance, Me scroll, focus
   order later.
+- [x] Scroll DevSurface facts above docked «Назад». ADR-160:
+  `scrolled_row_rect` + drag. 7-tap, swipe; leave with Назад.
+  Flashed `bbde1ab2…`. Keyboard avoidance and focus order later.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.

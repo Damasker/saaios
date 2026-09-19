@@ -25,7 +25,7 @@ S00–S32 закрыли базовый трек — рабочий телефо
 VUI-04 remainder и VUI-06 на panther; **выполняется VUI-07** (Inbox
 `EventRow`, Spaces list, Wi-Fi list, Bluetooth list, trusted clients,
 Wi-Fi password, PIN setup, lock idle, intent input, developer
-surface, Object View, apps grid, Inbox header, Spaces header, Система header, consent header, PIN setup header, remote pairing header, Bluetooth header, Wi-Fi header, trusted-clients header, lock attention, lock/PIN keyboard, compact QWERTY, keyboard press, DevSurface header, lock device state, lock sleep AOD, empty/loading/offline, blocked/failed, confirmation, permission/recovery и overflow Назад на panther). VUI-02 остаётся почти закрытым (шрифты в boot-image —
+surface, Object View, apps grid, Inbox header, Spaces header, Система header, consent header, PIN setup header, remote pairing header, Bluetooth header, Wi-Fi header, trusted-clients header, lock attention, lock/PIN keyboard, compact QWERTY, keyboard press, DevSurface header, lock device state, lock sleep AOD, empty/loading/offline, blocked/failed, confirmation, permission/recovery, overflow Назад и DevSurface scroll на panther). VUI-02 остаётся почти закрытым (шрифты в boot-image —
 единственный blocked item). Этот трек не переоткрывает S00–S32.
 
 **Service queue (параллельно shell):** прошивка `saaios-runtime` /

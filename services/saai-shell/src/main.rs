@@ -3082,6 +3082,14 @@ fn stacked_row_fits_above(row: Rect, back: Rect) -> bool {
     row.y.saturating_add(row.height) <= back.y
 }
 
+/// ADR-160: DevSurface data rows scroll between the first stacked
+/// row and the docked back card. Назад itself is not in this rect.
+fn dev_surface_scroll_content(width: u32, height: u32, row_count: usize) -> Rect {
+    let back = stacked_control_rect(row_count, width, height);
+    let top = stacked_row_rect(0, width, height).y;
+    Rect::new(0, top, width, back.y.saturating_sub(top))
+}
+
 /// ADR-149: the same `Node`/`layout()`/`hit_test()` keyboard as
 /// `intent_view()`, with dialer rows instead of Latin letters. Space
 /// in the last digit row is the blank cell (no action). Setup adds
@@ -6081,7 +6089,9 @@ impl TouchHandler for Shell {
         // `me_scroll_offset` from here on while it stays `Some`, and
         // `up` uses the stored start position to tell a real drag
         // apart from a tap.
-        self.me_drag = if self.tab_touch_pending
+        self.me_drag = if self.tab_touch_pending && self.dev_surface_open {
+            Some((position.1, self.me_scroll_offset))
+        } else if self.tab_touch_pending
             && self.current_page == RootPage::Me
             && !self.any_modal_open()
             && root_view(self.width, self.height).children[0]
@@ -6305,12 +6315,22 @@ impl TouchHandler for Shell {
             } else if self.dev_surface_open {
                 // HIA-20: modal, same as the others -- every row here
                 // is read-only diagnostic text, only "Назад" (the row
-                // right after them) does anything.
-                let row_count = self.dev_surface_rows().len();
-                if dev_surface_back_tapped(self.last_touch_pos, self.width, self.height, row_count)
-                {
-                    self.dev_surface_open = false;
-                    self.draw(conn, qh);
+                // right after them) does anything. A drag that ends
+                // over that card is still a scroll, not an exit.
+                if was_me_drag {
+                    self.me_scroll_dirty = true;
+                } else {
+                    let row_count = self.dev_surface_rows().len();
+                    if dev_surface_back_tapped(
+                        self.last_touch_pos,
+                        self.width,
+                        self.height,
+                        row_count,
+                    ) {
+                        self.dev_surface_open = false;
+                        self.me_scroll_offset = 0;
+                        self.draw(conn, qh);
+                    }
                 }
             } else if was_me_drag {
                 // A scroll may end over the bottom navigation bar. Consume
@@ -6480,8 +6500,18 @@ impl TouchHandler for Shell {
     ) {
         self.last_touch_pos = position;
         if let Some((start_y, start_offset)) = self.me_drag {
-            let content_rect = root_view(self.width, self.height).children[0].rect;
-            let total = self.capture_me_rows();
+            let (total, content_rect) = if self.dev_surface_open {
+                let total = self.dev_surface_rows().len();
+                (
+                    total,
+                    dev_surface_scroll_content(self.width, self.height, total),
+                )
+            } else {
+                (
+                    self.capture_me_rows(),
+                    root_view(self.width, self.height).children[0].rect,
+                )
+            };
             let max_offset = me_max_scroll_offset(total, self.width, self.height, content_rect);
             // Finger moving up (position.1 decreasing) scrolls the
             // content down (offset increases) -- the usual touch-
@@ -6544,7 +6574,11 @@ impl Shell {
         if !self.me_scroll_dirty {
             return;
         }
-        if self.current_page != RootPage::Me || self.locked || self.sleeping {
+        if self.locked || self.sleeping {
+            self.me_scroll_dirty = false;
+            return;
+        }
+        if !self.dev_surface_open && self.current_page != RootPage::Me {
             self.me_scroll_dirty = false;
             return;
         }
@@ -6785,13 +6819,17 @@ impl Shell {
             // strip. `dev_surface_rows()` is always read fresh.
             let data_rows = self.dev_surface_rows();
             let back = stacked_control_rect(data_rows.len(), width, height);
+            let content = dev_surface_scroll_content(width, height, data_rows.len());
+            let offset = self.me_scroll_offset.clamp(
+                0,
+                me_max_scroll_offset(data_rows.len(), width, height, content),
+            );
             let mut rows: Vec<(Rect, render::ActionCardView)> = data_rows
                 .iter()
                 .enumerate()
                 .filter_map(|(index, row)| {
-                    let rect = stacked_row_rect(index, width, height);
-                    stacked_row_fits_above(rect, back)
-                        .then(|| (rect, diagnostic_card_from_row(row)))
+                    scrolled_row_rect(index, width, height, offset, content)
+                        .map(|rect| (rect, diagnostic_card_from_row(row)))
                 })
                 .collect();
             rows.push((back, render::ActionCardView::new("Назад", "", "Назад")));
@@ -7622,6 +7660,7 @@ impl Shell {
                 if self.dev_surface_tap_count >= DEV_SURFACE_TAP_THRESHOLD {
                     self.dev_surface_tap_count = 0;
                     self.dev_surface_open = true;
+                    self.me_scroll_offset = 0;
                 }
                 self.draw(conn, qh);
                 return;
@@ -12700,6 +12739,29 @@ mod tests {
             height,
             row_count
         ));
+    }
+
+    #[test]
+    fn dev_surface_overflow_rows_scroll_above_docked_back() {
+        let width = 1080;
+        let height = 2400;
+        let row_count = 9;
+        let back = stacked_control_rect(row_count, width, height);
+        let content = super::dev_surface_scroll_content(width, height, row_count);
+        assert_eq!(content.y, stacked_row_rect(0, width, height).y);
+        assert_eq!(content.y + content.height, back.y);
+        let max_offset = super::me_max_scroll_offset(row_count, width, height, content);
+        assert!(max_offset > 0);
+        assert!(super::scrolled_row_rect(8, width, height, 0, content).is_none());
+        let last = super::scrolled_row_rect(8, width, height, max_offset, content);
+        assert!(last.is_some());
+        assert!(stacked_row_fits_above(last.unwrap(), back));
+        assert_eq!(stacked_control_rect(row_count, width, height), back);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(dev_surface_back_tapped(center, width, height, row_count));
     }
 }
 
