@@ -44,6 +44,7 @@
 //!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173) and
 //!   `/run/saaios/shell-frame.trace` (ADR-175). First visible
 //!   `input_ok` is the down commit, not a token delay (ADR-176).
+//!   Idle Сейчас must keep `seq` still (ADR-177).
 //!   Reduced motion drops in-flight clocks on the same tap (ADR-174).
 //!   Displayd still has no haptic protocol; this slice does not flash it.
 //!
@@ -11941,6 +11942,25 @@ mod tests {
     fn first_feedback_limit_is_fifty_milliseconds() {
         use saai_ui_core::FIRST_FEEDBACK_LIMIT_MS;
         assert_eq!(FIRST_FEEDBACK_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn frame_pace_idle_ok_is_the_inverse_of_requested_frame() {
+        use saai_ui_core::{FramePace, FrameReason, FrameSample, FrameSurface};
+        let mut pace = FramePace::new();
+        pace.record(FrameSample {
+            produce_ms: 6,
+            input_to_commit_ms: None,
+            requested_frame: false,
+            pending_depth: 0,
+            dropped: 0,
+            coalesced: 0,
+            reason: FrameReason::Input,
+            surface: FrameSurface::Now,
+        });
+        assert_eq!(pace.seq(), 1);
+        assert_eq!(pace.idle_ok(), Some(true));
+        assert!(pace.line().expect("recorded").contains("idle_ok=1"));
     }
 
     #[test]

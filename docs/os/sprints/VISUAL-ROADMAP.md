@@ -1105,9 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through first-visible touch
-(ADR-167–176) on panther. Remaining: idle redraw, SHM/Vulkan unless
-measured.
+**Status:** In progress — MotionClock through idle seq
+(ADR-167–177) on panther. Remaining: SHM/Vulkan unless measured.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1143,7 +1142,9 @@ into a measured regression contract.
   build, with no unbounded input backlog and no disappearing layer.
 - [x] First visible touch feedback is prompt and no worse than the VUI-07
   baseline (non-scroll `input_to_commit` ≤ 50 ms, `input_ok`, ADR-176).
-- [ ] Idle UI does not redraw continuously without a state reason.
+- [x] Idle UI does not redraw continuously without a state reason
+  (`seq` holds on a quiet Сейчас, `idle_ok`, ADR-177). The status
+  layer may still tick once a second.
 - [x] Reduced-motion mode communicates every state without animation.
 - [ ] Haptics are consistent, rate-limited, and absent for passive decoration.
 
@@ -1243,7 +1244,6 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: idle UI does not redraw without a state reason;
-preserve SHM/Vulkan unless measured. ADR-167–176 are on panther.
-Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Continue **VUI-08**: preserve SHM/Vulkan unless a separately measured
+change is accepted. ADR-167–177 are on panther. Space detail still
+deferred. MEM-08 stays omitted until a shell-legal memory read exists.

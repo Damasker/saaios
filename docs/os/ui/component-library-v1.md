@@ -394,6 +394,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `/run/saaios/shell-frame.trace`.
   ADR-176 remembers the last non-scroll `input_to_commit` as `input_ok`
   against 50 ms so first visible Pressed is the down commit.
+  ADR-177 counts commits as `seq` and `idle_ok` so a quiet Сейчас is
+  a still main surface.
 
 ### 7.6 `TaskSummary`
 

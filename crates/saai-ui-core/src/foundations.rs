@@ -508,6 +508,7 @@ pub struct FramePace {
     dropped: u32,
     coalesced: u32,
     last_feedback_ms: Option<u32>,
+    seq: u32,
 }
 
 impl Default for FramePace {
@@ -525,6 +526,7 @@ impl FramePace {
             dropped: 0,
             coalesced: 0,
             last_feedback_ms: None,
+            seq: 0,
         }
     }
 
@@ -544,6 +546,7 @@ impl FramePace {
                 self.last_feedback_ms = Some(ms);
             }
         }
+        self.seq = self.seq.saturating_add(1);
         self.samples[self.next] = Some(sample);
         self.next = (self.next + 1) % FRAME_PACE_CAP;
         if self.count < FRAME_PACE_CAP {
@@ -615,6 +618,18 @@ impl FramePace {
             .map(|ms| ms <= FIRST_FEEDBACK_LIMIT_MS)
     }
 
+    /// ADR-177: total main-surface commits, including those that wrapped
+    /// out of the ring.
+    pub fn seq(&self) -> u32 {
+        self.seq
+    }
+
+    /// `None` with no samples. `Some(true)` when the last commit did
+    /// not request `wl_surface.frame`.
+    pub fn idle_ok(&self) -> Option<bool> {
+        self.last().map(|sample| !sample.requested_frame)
+    }
+
     fn p95_produce_ms_matching(&self, keep: impl Fn(&FrameSample) -> bool) -> Option<u32> {
         let mut values = [0u32; FRAME_PACE_CAP];
         let mut n = 0usize;
@@ -653,8 +668,13 @@ impl FramePace {
             Some(false) => "0",
             None => "-",
         };
+        let idle_ok = match self.idle_ok() {
+            Some(true) => "1",
+            Some(false) => "0",
+            None => "-",
+        };
         Some(format!(
-            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} p95_scroll={} p95_ok={} input_ok={}",
+            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} p95_scroll={} p95_ok={} input_ok={} seq={} idle_ok={}",
             sample.produce_ms,
             input,
             u8::from(sample.requested_frame),
@@ -666,6 +686,8 @@ impl FramePace {
             p95_scroll,
             p95_ok,
             input_ok,
+            self.seq,
+            idle_ok,
         ))
     }
 }
@@ -898,6 +920,8 @@ mod tests {
         assert!(line.contains("p95_scroll=-"));
         assert!(line.contains("p95_ok=-"));
         assert!(line.contains("input_ok=1"));
+        assert!(line.contains("seq="));
+        assert!(line.contains("idle_ok=1"));
         assert_eq!(frame_reason(true, true), FrameReason::Scroll);
         assert_eq!(frame_reason(false, true), FrameReason::Motion);
         assert_eq!(frame_reason(false, false), FrameReason::Input);
@@ -1015,6 +1039,25 @@ mod tests {
         assert_eq!(slow.first_feedback_within_limit(), Some(false));
         assert!(slow.line().expect("recorded").contains("input_ok=0"));
         assert_eq!(FIRST_FEEDBACK_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn idle_ok_follows_requested_frame_and_seq_counts_wraps() {
+        let mut pace = FramePace::new();
+        assert_eq!(pace.seq(), 0);
+        assert_eq!(pace.idle_ok(), None);
+        let mut clock = sample(8, FrameReason::Motion, FrameSurface::Now);
+        clock.requested_frame = true;
+        pace.record(clock);
+        assert_eq!(pace.seq(), 1);
+        assert_eq!(pace.idle_ok(), Some(false));
+        assert!(pace.line().expect("recorded").contains("idle_ok=0"));
+        pace.record(sample(5, FrameReason::Input, FrameSurface::Now));
+        assert_eq!(pace.seq(), 2);
+        assert_eq!(pace.idle_ok(), Some(true));
+        let line = pace.line().expect("recorded");
+        assert!(line.contains("seq=2"));
+        assert!(line.contains("idle_ok=1"));
     }
 
     #[test]
