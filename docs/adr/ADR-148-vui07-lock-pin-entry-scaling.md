@@ -84,16 +84,12 @@ pre-existing clippy debt this same file had accumulated (`cargo clippy
   fixed in this same pass since this file was already open).
 - `cargo test --workspace`: unchanged pass count everywhere else.
 - Hot-swapped onto the live device (backup `saai-shell.pre-lockfix`,
-  hash-verified). **Not physically confirmed**: reproducing this screen
-  requires a real PIN configured (`ShellSettings.pin_code`), and the
-  development device currently has none set (`pin_code: null`) --
-  confirmed by reading the live settings file rather than assumed.
-  Setting one specifically to screenshot this fix was judged a
-  disproportionate, real change to the device's actual security
-  configuration for a scaling-only fix already caught precisely by a
-  two-height host test. `draw_lock_idle` (the currently-reachable lock
-  screen with no PIN set) was screenshotted and confirmed unaffected --
-  same canvas fill, same clock/hint layout as before this ADR.
+  hash-verified). **Physically confirmed** (2026-09-19): the device
+  owner configured a real PIN and confirmed directly on the Pixel 7 that
+  the entry screen renders and unlocks correctly. `draw_lock_idle` (the
+  no-PIN lock screen) was separately screenshotted by this session and
+  confirmed unaffected -- same canvas fill, same clock/hint layout as
+  before this ADR.
 
 ## Consequences
 
@@ -102,12 +98,8 @@ pre-existing clippy debt this same file had accumulated (`cargo clippy
   fix, not just a lint satisfaction.
 - This file's `cargo clippy --all-targets -D warnings` is clean again,
   restoring the bar this project has held throughout its own history.
-- **Known gap, flagged rather than silently closed**: this screen has
-  not been seen on a real device since this fix. If a PIN is ever
-  configured on the development device for other testing, re-running
-  `cargo test`'s own two-height check is not a substitute for one real
-  screenshot -- add it then, and update this ADR's own Verification
-  section rather than opening a new one for the same fix.
+- Physically confirmed by the device owner directly, closing the one
+  gap this ADR originally flagged.
 - The four `#[allow(dead_code)]` functions remain a real, open question
   for whoever next has context on what they were staged for -- wire them
   in, or remove them and their tests together, next time this specific
