@@ -43,7 +43,7 @@ in VUI-09; privileged system composites are not automatically public.
 |---|---|---:|---|
 | Foundation | color, type, spacing, radius, stroke, elevation, motion, safe inset | Experimental | all surfaces |
 | Layout | `Stack`, `Row`, `Inset`, `Separator`, `ScrollRegion`, focus order | Experimental | component gallery |
-| Primitive | `SemanticText`, `Icon`, `Divider`, `StatusIndicator` | Experimental | gallery and `Сейчас` |
+| Primitive | `SemanticText`, `Icon`, `Divider`, `StatusIndicator` | Experimental | gallery, `Сейчас`, no-PIN lock |
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
 | Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
@@ -161,6 +161,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - Inputs: `UniversalState`, localized label, optional concise reason.
 - Compact variant: mark plus label; normal variant may add reason.
 - The mark comes from `StatusMark`; the color comes from the state style.
+- First lock consumer: no-PIN lock idle (ADR-148) paints compact
+  `Offline` / `Attention` from store and ATTN booleans. The view type
+  cannot hold a title or body; `visible_reason()` stays empty.
 - `RUNNING` may use the shared quiet activity motion; reduced motion shows the
   static activity mark.
 - A reason wraps below the label rather than shrinking it.

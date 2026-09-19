@@ -4090,6 +4090,64 @@ fn lock_idle_view(time: &str) -> LockIdleView {
     }
 }
 
+/// ADR-148: lock-state disclosure. Booleans in, never titles or
+/// bodies. Compact status only; `reason` does not exist on this type.
+struct LockAttentionView {
+    state: UniversalState,
+    label: &'static str,
+}
+
+impl LockAttentionView {
+    fn indicator(&self) -> StatusIndicator {
+        StatusIndicator::new(self.state, self.label)
+    }
+
+    fn key(&self) -> u8 {
+        match self.state {
+            UniversalState::Offline => 1,
+            _ => 2,
+        }
+    }
+}
+
+fn lock_attention_view(store_connected: bool, has_attention: bool) -> Option<LockAttentionView> {
+    if !store_connected {
+        return Some(LockAttentionView {
+            state: UniversalState::Offline,
+            label: "Нет связи",
+        });
+    }
+    if has_attention {
+        return Some(LockAttentionView {
+            state: UniversalState::Attention,
+            label: "Требует внимания",
+        });
+    }
+    None
+}
+
+fn lock_attention_key(view: &Option<LockAttentionView>) -> u8 {
+    view.as_ref().map(LockAttentionView::key).unwrap_or(0)
+}
+
+/// ADR-148: re-check on tap. Locked lock never reveals details.
+/// Not a new hit-target — existing tap-to-unlock stays.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LockAttentionTap {
+    UnlockRequired,
+    ViewAllowed,
+}
+
+#[allow(dead_code)]
+fn lock_attention_tap(locked: bool) -> LockAttentionTap {
+    if locked {
+        LockAttentionTap::UnlockRequired
+    } else {
+        LockAttentionTap::ViewAllowed
+    }
+}
+
 /// VUI-07 (ADR-133): PIN-setup preview is a `Field`, not a second
 /// hand-rolled mask. Revealed stays false; digits never become the
 /// accessible value. Lock-surface unlock stays `draw_lock_pin_entry`.
@@ -5021,6 +5079,7 @@ fn main() {
         last_statusbar_snapshot: None,
         last_statusbar_refresh: Instant::now(),
         last_lock_idle_time: None,
+        last_lock_attention_key: None,
         low_battery_notified: false,
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
@@ -5230,6 +5289,10 @@ struct Shell {
     /// so a status tick can skip the lock commit until the minute
     /// changes. `None` until the first idle lock paint.
     last_lock_idle_time: Option<String>,
+    /// ADR-148: last lock-state attention key (quiet / offline /
+    /// attention). Minute-only refresh would leave a newly arrived
+    /// essential signal invisible until the next clock change.
+    last_lock_attention_key: Option<u8>,
     /// S21: guards `check_low_battery` against creating a fresh
     /// notification every second while the battery stays low.
     low_battery_notified: bool,
@@ -8770,16 +8833,23 @@ impl Shell {
         }
     }
 
-    /// VUI-07 (ADR-134): the lock surface is the visible clock while
-    /// locked (displayd ignores status commits). Repaint only when the
-    /// minute string changes, never over the deep-idle blank, and never
-    /// on the PIN keypad.
+    /// VUI-07 (ADR-134 / ADR-148): the lock surface is the visible
+    /// clock while locked (displayd ignores status commits). Repaint
+    /// when the minute *or* the attention key changes, never over the
+    /// deep-idle blank, and never on the PIN keypad.
     fn refresh_lock_idle_if_due(&mut self, qh: &QueueHandle<Self>) {
         if !self.locked || self.sleeping || self.settings.pin_code.is_some() {
             return;
         }
         let time = current_time_string(self.settings.utc_offset_minutes);
-        if self.last_lock_idle_time.as_deref() == Some(time.as_str()) {
+        let attention = lock_attention_view(
+            self.entityd.is_connected(),
+            orb_attention_from_entities(&self.selected_entities),
+        );
+        let key = lock_attention_key(&attention);
+        if self.last_lock_idle_time.as_deref() == Some(time.as_str())
+            && self.last_lock_attention_key == Some(key)
+        {
             return;
         }
         self.present_lock_pin_entry(qh);
@@ -8940,9 +9010,17 @@ impl Shell {
 
         let pin_code = self.settings.pin_code.clone();
         let idle = lock_idle_view(&current_time_string(self.settings.utc_offset_minutes));
-        if pin_code.is_none() {
+        let attention = if pin_code.is_none() {
+            let view = lock_attention_view(
+                self.entityd.is_connected(),
+                orb_attention_from_entities(&self.selected_entities),
+            );
             self.last_lock_idle_time = Some(idle.time.clone());
-        }
+            self.last_lock_attention_key = Some(lock_attention_key(&view));
+            view.map(|view| view.indicator())
+        } else {
+            None
+        };
         let keys: Vec<(Rect, &'static str)> = if pin_code.is_some() {
             PIN_KEYPAD_DIGIT_LABELS
                 .iter()
@@ -8992,7 +9070,13 @@ impl Shell {
                         );
                     } else {
                         render::draw_lock_idle(
-                            &mut frame, width, height, &idle_time, idle_hint, fonts,
+                            &mut frame,
+                            width,
+                            height,
+                            &idle_time,
+                            idle_hint,
+                            attention.as_ref(),
+                            fonts,
                         );
                     }
                     render::apply_contrast_boost(canvas, contrast_pct);
@@ -9055,7 +9139,15 @@ impl Shell {
         if has_pin {
             render::draw_lock_pin_entry(&mut frame, width, entered_len, pin_len, &keys, fonts);
         } else {
-            render::draw_lock_idle(&mut frame, width, height, &idle_time, idle_hint, fonts);
+            render::draw_lock_idle(
+                &mut frame,
+                width,
+                height,
+                &idle_time,
+                idle_hint,
+                attention.as_ref(),
+                fonts,
+            );
         }
         render::apply_contrast_boost(canvas, contrast_pct);
 
@@ -9100,26 +9192,28 @@ mod tests {
         dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
         effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
         in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
-        intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts, me_header,
-        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remote_pair_content_cards,
-        remote_pair_header, remove_context_source, space_color, space_color_entity,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
-        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
+        intent_input_field, known_surfaces, lock_attention_tap, lock_attention_view,
+        lock_idle_view, me_fixture_facts, me_header, me_system_sections, next_in_cycle,
+        next_pending_action, now_action_at, now_object_tapped, object_view_action_at,
+        object_view_content, object_view_summary, orb_action_at, orb_attention_from_entities,
+        orb_menu_actions, orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
         trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
         upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
         wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
         ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
-        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
-        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
-        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        LockAttentionTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
+        SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
+        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -10724,6 +10818,29 @@ mod tests {
         assert_eq!(view.hint, "Коснитесь, чтобы разблокировать");
         assert!(!view.hint.contains("Входящие"));
         assert!(!lock_idle_view("").time.contains("Входящие"));
+    }
+
+    #[test]
+    fn lock_attention_view_never_carries_titles_or_bodies() {
+        let offline = lock_attention_view(false, true).expect("offline");
+        assert_eq!(offline.state, UniversalState::Offline);
+        assert_eq!(offline.label, "Нет связи");
+        assert!(offline.indicator().visible_reason().is_none());
+        assert!(!offline.label.contains("Входящие"));
+
+        let attention = lock_attention_view(true, true).expect("attention");
+        assert_eq!(attention.state, UniversalState::Attention);
+        assert_eq!(attention.label, "Требует внимания");
+        assert!(attention.indicator().visible_reason().is_none());
+        assert!(!attention.label.contains("Входящие"));
+
+        assert!(lock_attention_view(true, false).is_none());
+    }
+
+    #[test]
+    fn lock_attention_tap_requires_unlock_while_locked() {
+        assert_eq!(lock_attention_tap(true), LockAttentionTap::UnlockRequired);
+        assert_eq!(lock_attention_tap(false), LockAttentionTap::ViewAllowed);
     }
 
     #[test]
