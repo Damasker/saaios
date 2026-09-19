@@ -431,6 +431,136 @@ impl MotionClock {
     }
 }
 
+pub const FRAME_PACE_CAP: usize = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameReason {
+    Input,
+    Motion,
+    Scroll,
+}
+
+impl FrameReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Motion => "motion",
+            Self::Scroll => "scroll",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameSample {
+    pub produce_ms: u32,
+    pub input_to_commit_ms: Option<u32>,
+    pub requested_frame: bool,
+    pub pending_depth: u8,
+    pub dropped: u32,
+    pub coalesced: u32,
+    pub reason: FrameReason,
+}
+
+/// Ring of recent main-surface commits. Elapsed times are injected.
+/// Presentation timestamps are out of scope (compositor time is not
+/// trusted).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FramePace {
+    samples: [Option<FrameSample>; FRAME_PACE_CAP],
+    next: usize,
+    count: usize,
+    dropped: u32,
+    coalesced: u32,
+}
+
+impl Default for FramePace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FramePace {
+    pub fn new() -> Self {
+        Self {
+            samples: [None; FRAME_PACE_CAP],
+            next: 0,
+            count: 0,
+            dropped: 0,
+            coalesced: 0,
+        }
+    }
+
+    pub fn note_dropped(&mut self) {
+        self.dropped = self.dropped.saturating_add(1);
+    }
+
+    pub fn note_coalesced(&mut self) {
+        self.coalesced = self.coalesced.saturating_add(1);
+    }
+
+    pub fn record(&mut self, mut sample: FrameSample) {
+        sample.dropped = self.dropped;
+        sample.coalesced = self.coalesced;
+        self.samples[self.next] = Some(sample);
+        self.next = (self.next + 1) % FRAME_PACE_CAP;
+        if self.count < FRAME_PACE_CAP {
+            self.count += 1;
+        }
+    }
+
+    pub fn last(&self) -> Option<FrameSample> {
+        if self.count == 0 {
+            return None;
+        }
+        let index = (self.next + FRAME_PACE_CAP - 1) % FRAME_PACE_CAP;
+        self.samples[index]
+    }
+
+    pub fn p95_produce_ms(&self) -> Option<u32> {
+        let mut values = [0u32; FRAME_PACE_CAP];
+        let mut n = 0usize;
+        for slot in &self.samples {
+            if let Some(sample) = slot {
+                values[n] = sample.produce_ms;
+                n += 1;
+            }
+        }
+        if n == 0 {
+            return None;
+        }
+        values[..n].sort_unstable();
+        Some(values[(n - 1) * 95 / 100])
+    }
+
+    pub fn line(&self) -> Option<String> {
+        let sample = self.last()?;
+        let input = sample
+            .input_to_commit_ms
+            .map(|ms| ms.to_string())
+            .unwrap_or_else(|| "-".into());
+        Some(format!(
+            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={}",
+            sample.produce_ms,
+            input,
+            u8::from(sample.requested_frame),
+            sample.pending_depth,
+            sample.dropped,
+            sample.coalesced,
+            sample.reason.as_str(),
+        ))
+    }
+}
+
+pub fn frame_reason(scroll: bool, motion: bool) -> FrameReason {
+    if scroll {
+        FrameReason::Scroll
+    } else if motion {
+        FrameReason::Motion
+    } else {
+        FrameReason::Input
+    }
+}
+
 pub const MIN_TOUCH_TARGET: LogicalUnit = LogicalUnit::new(48);
 pub const CONTROL_VISUAL_HEIGHT: LogicalUnit = LogicalUnit::new(40);
 pub const TWO_LINE_ROW_HEIGHT: LogicalUnit = LogicalUnit::new(64);
@@ -576,6 +706,66 @@ mod tests {
         reduced.advance(240);
         assert!(!reduced.needs_frame());
         assert!(!MotionClock::one_shot(MotionToken::Context, false).pulse_visible());
+    }
+
+    #[test]
+    fn frame_pace_p95_and_last_line_use_injected_samples() {
+        let mut pace = FramePace::new();
+        assert!(pace.last().is_none());
+        assert!(pace.p95_produce_ms().is_none());
+        for _ in 0..18 {
+            pace.record(FrameSample {
+                produce_ms: 10,
+                input_to_commit_ms: Some(20),
+                requested_frame: false,
+                pending_depth: 1,
+                dropped: 0,
+                coalesced: 0,
+                reason: FrameReason::Input,
+            });
+        }
+        pace.record(FrameSample {
+            produce_ms: 50,
+            input_to_commit_ms: Some(20),
+            requested_frame: true,
+            pending_depth: 1,
+            dropped: 0,
+            coalesced: 0,
+            reason: FrameReason::Input,
+        });
+        pace.record(FrameSample {
+            produce_ms: 50,
+            input_to_commit_ms: Some(20),
+            requested_frame: true,
+            pending_depth: 1,
+            dropped: 0,
+            coalesced: 0,
+            reason: FrameReason::Input,
+        });
+        assert_eq!(pace.last().map(|sample| sample.produce_ms), Some(50));
+        assert_eq!(pace.p95_produce_ms(), Some(50));
+        pace.note_dropped();
+        pace.note_coalesced();
+        pace.note_coalesced();
+        pace.record(FrameSample {
+            produce_ms: 8,
+            input_to_commit_ms: None,
+            requested_frame: false,
+            pending_depth: 0,
+            dropped: 0,
+            coalesced: 0,
+            reason: FrameReason::Motion,
+        });
+        let line = pace.line().expect("recorded");
+        assert!(line.contains("produce_ms=8"));
+        assert!(line.contains("input_ms=-"));
+        assert!(line.contains("frame=0"));
+        assert!(line.contains("dropped=1"));
+        assert!(line.contains("coalesced=2"));
+        assert!(line.contains("reason=motion"));
+        assert_eq!(frame_reason(true, true), FrameReason::Scroll);
+        assert_eq!(frame_reason(false, true), FrameReason::Motion);
+        assert_eq!(frame_reason(false, false), FrameReason::Input);
     }
 
     #[test]

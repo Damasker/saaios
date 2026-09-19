@@ -384,6 +384,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - ADR-170: while `motion()` is `ActivityPulse`, the inset hairline
   follows a looping `MotionClock` (on 240 ms / off 240 ms, Context
   duration reused). Reduced motion keeps the `StatusMark` only.
+- ADR-172: `FramePace` is a diagnostic ring, not a visible component.
+  The shell writes the last commit line to `/run/saaios/shell-frame.last`.
+  No CI threshold in this slice.
 
 ### 7.6 `TaskSummary`
 

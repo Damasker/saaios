@@ -114,7 +114,7 @@ contains:
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
-| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–171 on panther) |
+| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–172 on panther; CI thresholds remain) |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
 ---
@@ -1105,8 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through haptic policy
-(ADR-167–171) on panther. Frame-pacing CI thresholds remain.
+**Status:** In progress — MotionClock through FramePace
+(ADR-167–172) on panther. Frame-pacing CI thresholds remain.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1121,8 +1121,9 @@ into a measured regression contract.
 - [ ] Add reduced-motion behavior for every animated component.
 - [x] Centralize haptic intents; map components to policy instead of direct motor
   control.
-- [ ] Instrument input-to-feedback, render production, submission, presentation,
-  dropped/coalesced frames, and pending-work depth.
+- [x] Instrument input-to-feedback, render production, submission, pending-work
+  depth, and dropped/coalesced frames (`FramePace`, ADR-172). Presentation
+  timestamps stay omitted.
 - [ ] Preserve software-render staging and Vulkan composition behavior unless a
   separately measured change is accepted.
 - [ ] Add performance traces for `Система` drag, fast tab switching, lists,
@@ -1236,6 +1237,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: frame-pacing instrumentation. ADR-167–171 are on
-panther. Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Continue **VUI-08**: set CI/device thresholds from the FramePace
+baseline (50 ms drag p95). ADR-167–172 are on panther. Space detail
+still deferred. MEM-08 stays omitted until a shell-legal memory read
+exists.

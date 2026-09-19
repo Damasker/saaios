@@ -40,8 +40,9 @@
 //!   dim-then-blank sequence.
 //! - **Haptic feedback on unlock.** drm-splash opened `/dev/input/haptic`
 //!   directly. Unlock still has no tick. Keyboard `KeyPress` goes
-//!   through `haptic_intent_for` (ADR-171). Displayd still has no
-//!   haptic protocol; this slice does not flash it.
+//!   through `haptic_intent_for` (ADR-171). Main-surface commits log
+//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172). Displayd
+//!   still has no haptic protocol; this slice does not flash it.
 //!
 //! Both are logged as known limitations in the S04 sprint doc, not
 //! silently dropped.
@@ -460,13 +461,13 @@ use saai_object_actions::{
     ObjectActionRegistry,
 };
 use saai_ui_core::{
-    layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
-    DataRowVariant, DecisionOverlay, EdgeInsets, EventRow, Field, FieldKind, IntentSummary,
-    LayoutNode, Length, LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node,
-    ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken,
-    StatusIndicator, StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale,
-    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState,
-    WifiRow, MIN_TOUCH_TARGET,
+    frame_reason, layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor,
+    ContextHeader, DataRow, DataRowVariant, DecisionOverlay, EdgeInsets, EventRow, Field,
+    FieldKind, FramePace, FrameSample, IntentSummary, LayoutNode, Length, LogicalUnit, MotionClock,
+    MotionCue, MotionToken, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
+    SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator, StatusIndicatorVariant,
+    StatusMark, SurfacePattern, SurfaceScale, SystemSection, SystemSectionRow, SystemStatus,
+    TaskSummary, TrustedClientRow, UniversalState, WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -659,6 +660,14 @@ fn next_gallery_page(show_composites: bool) -> bool {
 /// idle timeout configured exactly as before, it simply is not being
 /// asked to act on them right now.
 const DEV_NO_LOCK_MARKER: &str = "/run/saaios/dev-no-lock";
+
+/// ADR-172: last main-surface commit sample. Missing `/run` is a
+/// silent no-op so host tests do not fail.
+const FRAME_PACE_PATH: &str = "/run/saaios/shell-frame.last";
+
+fn write_frame_pace_last(line: &str) {
+    let _ = std::fs::write(FRAME_PACE_PATH, format!("{line}\n"));
+}
 
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
@@ -5589,6 +5598,8 @@ fn main() {
         motion_clock: None,
         activity_clock: None,
         motion_last_tick: Instant::now(),
+        frame_pace: FramePace::new(),
+        frame_input_at: None,
         layer,
         layer_width: 0,
         layer_height: status_layer_height(),
@@ -5801,6 +5812,12 @@ struct Shell {
     /// from `motion_clock` so compose Focus cannot see it.
     activity_clock: Option<MotionClock>,
     motion_last_tick: Instant,
+    /// ADR-172: last 32 main-surface commits. Written to
+    /// `FRAME_PACE_PATH` after each commit.
+    frame_pace: FramePace,
+    /// Instant of the latest `down()`. Taken on the next main commit
+    /// so later Selection holds log `input_ms=-`.
+    frame_input_at: Option<Instant>,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -6287,6 +6304,7 @@ impl TouchHandler for Shell {
         position: (f64, f64),
     ) {
         self.last_activity = Instant::now();
+        self.frame_input_at = Some(self.last_activity);
         self.last_touch_pos = position;
         if lock_wake_tap(self.sleeping) == LockWakeTap::ShowLock {
             // First touch after AOD just wakes the lock — it does not
@@ -6912,6 +6930,28 @@ impl Shell {
             || self.activity_clock.is_some_and(MotionClock::needs_frame)
     }
 
+    /// ADR-172: stamp one commit into `FramePace` and refresh the last
+    /// line. `requested_frame` is the pre-paint `clocks_need_frame`.
+    fn finish_frame(&mut self, produce_ms: u32, requested_frame: bool, scrolled: bool) {
+        let input_to_commit_ms = self.frame_input_at.take().map(|at| {
+            u32::try_from(Instant::now().saturating_duration_since(at).as_millis())
+                .unwrap_or(u32::MAX)
+        });
+        let pending_depth = u8::from(self.clocks_need_frame()) + u8::from(self.me_scroll_dirty);
+        self.frame_pace.record(FrameSample {
+            produce_ms,
+            input_to_commit_ms,
+            requested_frame,
+            pending_depth,
+            dropped: 0,
+            coalesced: 0,
+            reason: frame_reason(scrolled, requested_frame),
+        });
+        if let Some(line) = self.frame_pace.line() {
+            write_frame_pace_last(&line);
+        }
+    }
+
     /// Present at most one coalesced "Я" scroll frame after a complete
     /// Wayland dispatch batch. If both dma-buf slots are still owned by
     /// the compositor, keep the latest position dirty and retry after the
@@ -6933,6 +6973,7 @@ impl Shell {
             .as_ref()
             .is_some_and(|canvas| !canvas.has_free_slot())
         {
+            self.frame_pace.note_coalesced();
             return;
         }
         self.scroll_content_only = true;
@@ -7709,12 +7750,15 @@ impl Shell {
         };
 
         if dmabuf_ready {
+            let produce_started = Instant::now();
             let main_dmabuf = self
                 .main_dmabuf
                 .as_mut()
                 .expect("just confirmed ready above");
             match main_dmabuf.paint(paint_frame) {
                 Ok(wl_buffer) => {
+                    let produce_ms =
+                        u32::try_from(produce_started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     let surface = self.window.wl_surface();
                     surface.attach(Some(wl_buffer), 0, 0);
                     surface.damage_buffer(
@@ -7727,6 +7771,7 @@ impl Shell {
                         surface.frame(qh, surface.clone());
                     }
                     self.window.commit();
+                    self.finish_frame(produce_ms, need_frame, content_only);
                 }
                 Err(error) => {
                     eprintln!(
@@ -7763,10 +7808,13 @@ impl Shell {
         // is current by then. Drag scrolling avoids reaching this path
         // while its dma-buf slots are busy (`draw_pending_scroll`).
         let Some(canvas) = self.pool.canvas(buffer) else {
+            self.frame_pace.note_dropped();
             return;
         };
 
+        let produce_started = Instant::now();
         paint_frame(canvas);
+        let produce_ms = u32::try_from(produce_started.elapsed().as_millis()).unwrap_or(u32::MAX);
 
         self.window.wl_surface().damage_buffer(
             surface_damage.x as i32,
@@ -7782,6 +7830,7 @@ impl Shell {
             .attach_to(self.window.wl_surface())
             .expect("buffer attach");
         self.window.commit();
+        self.finish_frame(produce_ms, need_frame, content_only);
     }
 
     /// The lifecycle-cycle gesture's actual write path -- full-replace
@@ -11755,6 +11804,14 @@ mod tests {
         assert!(!orb_shows_activity_pulse(true, None));
         let reduced = MotionClock::looping(MotionToken::Context, true);
         assert!(!orb_shows_activity_pulse(true, Some(&reduced)));
+    }
+
+    #[test]
+    fn frame_reason_prefers_scroll_then_motion() {
+        use saai_ui_core::{frame_reason, FrameReason};
+        assert_eq!(frame_reason(true, true), FrameReason::Scroll);
+        assert_eq!(frame_reason(false, true), FrameReason::Motion);
+        assert_eq!(frame_reason(false, false), FrameReason::Input);
     }
 
     #[test]
