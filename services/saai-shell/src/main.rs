@@ -1023,6 +1023,13 @@ fn root_content_rect(width: u32, height: u32) -> Rect {
 }
 
 /// Bottom navigation strip from the same tree `tab_at` uses.
+/// Host-tested (`root_navigation_rect_*` tests) but not yet called from
+/// any real paint/hit-test path -- flagged rather than deleted, since a
+/// tested-but-unwired function is a staged piece of work, not dead
+/// code, and pre-merge review found no evidence either way about which
+/// this is. Wire it in (or remove it and its tests together) the next
+/// time this specific navigation-rect geometry is touched.
+#[allow(dead_code)]
 fn root_navigation_rect(width: u32, height: u32) -> Rect {
     if width == 0 || height == 0 {
         return Rect::new(0, 0, 0, 0);
@@ -2991,12 +2998,6 @@ fn content_action_at(
 /// something `build.rs` can bake in from markup. These functions are
 /// this page's own equivalent of `ROOT_CONTENT_ACTIONS` /
 /// `content_action_rect` / `content_action_at`.
-
-/// Same 190-tall/220-apart stacking `root.sui`'s "Пространства" cards
-/// use (`space-home` top=430, `space-work` top=650, ...), just computed
-/// per-index instead of read from compiled-in constants. Shared by
-/// every page whose card count is runtime data -- "Входящие" (S13
-/// Change 2) and "Я" (S13 Change 3) so far.
 /// S23: "Сейчас"'s icon grid -- 3 columns, phone-style, replacing the
 /// single-column list every other page still uses (`stacked_row_
 /// rect`). Same 1080x2400 reference-canvas convention as that
@@ -3078,6 +3079,11 @@ fn now_object_tapped(
     })
 }
 
+/// Same 190-tall/220-apart stacking `root.sui`'s "Пространства" cards
+/// use (`space-home` top=430, `space-work` top=650, ...), just computed
+/// per-index instead of read from compiled-in constants. Shared by
+/// every page whose card count is runtime data -- "Входящие" (S13
+/// Change 2) and "Я" (S13 Change 3) so far.
 fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let top_2400 = 430 + index as u32 * 220;
@@ -3848,6 +3854,10 @@ fn task_summary_from_entity(
     summary
 }
 
+/// Host-tested (`intent_summary_from_entity_nests_the_related_task_or_
+/// stays_empty`) but not yet called from any real composition path --
+/// same staged-not-dead reasoning as `root_navigation_rect` above.
+#[allow(dead_code)]
 fn intent_summary_from_entity(
     entity: &Entity,
     entities: &[Entity],
@@ -4532,6 +4542,10 @@ struct MeRow {
 
 /// Hold the flattened `Я` list across a drag so motion/draw do not
 /// spawn `wpa_cli`/`df` on every event. Rebuilds only when empty.
+/// Host-tested (`ensure_me_row_cache_*` tests) but `Shell`'s own drag/
+/// draw path does not call it yet -- same staged-not-dead reasoning as
+/// `root_navigation_rect` above.
+#[allow(dead_code)]
 fn ensure_me_row_cache(
     cache: &mut Option<Vec<MeRow>>,
     build: impl FnOnce() -> Vec<MeRow>,
@@ -4781,6 +4795,12 @@ fn flatten_me_rows(sections: &[SystemSection]) -> Vec<MeRow> {
     rows
 }
 
+/// Fixture `MeFacts` shared by this file's own `Система` host tests.
+/// Not called from any real code path (`Shell` always builds a real
+/// `MeFacts` from live data) -- this exists purely for tests, which is
+/// a legitimate, common reason a function is test-only, not evidence of
+/// abandonment.
+#[allow(dead_code)]
 fn me_fixture_facts() -> MeFacts {
     MeFacts {
         space_count: 2,
@@ -8985,6 +9005,7 @@ impl Shell {
                         render::draw_lock_pin_entry(
                             &mut frame,
                             width,
+                            height,
                             entered_len,
                             pin_len,
                             &keys,
@@ -9053,7 +9074,7 @@ impl Shell {
 
         let mut frame = render::Canvas::new(canvas, width, height);
         if has_pin {
-            render::draw_lock_pin_entry(&mut frame, width, entered_len, pin_len, &keys, fonts);
+            render::draw_lock_pin_entry(&mut frame, width, height, entered_len, pin_len, &keys, fonts);
         } else {
             render::draw_lock_idle(&mut frame, width, height, &idle_time, idle_hint, fonts);
         }
@@ -9292,7 +9313,7 @@ mod tests {
     #[test]
     fn intent_summary_from_entity_nests_the_related_task_or_stays_empty() {
         let intent = intent_entity("Подготовить демо");
-        let empty = super::intent_summary_from_entity(&intent, &[intent.clone()], &[]);
+        let empty = super::intent_summary_from_entity(&intent, std::slice::from_ref(&intent), &[]);
         assert!(empty.task.is_none());
         assert!(empty.missing_task_text().is_some());
 
@@ -11003,7 +11024,7 @@ mod tests {
         let mut task = task_entity("Копирует файлы", None);
         task.properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let content = object_view_content(&task, &[task.clone()], &[]);
+        let content = object_view_content(&task, std::slice::from_ref(&task), &[]);
         assert_eq!(content.state, UniversalState::Running);
         assert_eq!(content.status, "Выполняется");
         assert_eq!(content.activity, None);
@@ -11035,7 +11056,7 @@ mod tests {
     #[test]
     fn object_view_content_for_an_intent_without_a_task_stays_truthful() {
         let intent = intent_entity("Пустое намерение");
-        let content = object_view_content(&intent, &[intent.clone()], &[]);
+        let content = object_view_content(&intent, std::slice::from_ref(&intent), &[]);
         assert_eq!(content.state, UniversalState::Idle);
         assert_eq!(content.status, "Нет задачи");
         assert_eq!(content.related, None);
@@ -11237,7 +11258,7 @@ mod tests {
     #[test]
     fn object_view_omits_oam_permission_when_no_spec_applies() {
         let task = task_entity("Обычная задача", None);
-        let content = object_view_content(&task, &[task.clone()], &[]);
+        let content = object_view_content(&task, std::slice::from_ref(&task), &[]);
         assert_eq!(content.permission, None);
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
     }
@@ -11435,7 +11456,7 @@ mod tests {
     #[test]
     fn waiting_confirmation_task_lights_orb_without_a_notification() {
         let waiting = task_entity("Подтвердите удаление", None);
-        assert!(orb_attention_from_entities(&[waiting.clone()]));
+        assert!(orb_attention_from_entities(std::slice::from_ref(&waiting)));
         assert_eq!(
             orb_visual_state(
                 true,
@@ -11551,7 +11572,7 @@ mod tests {
         let stale = super::inbox_event_rows(std::slice::from_ref(&waiting), false);
         assert_eq!(stale[0].row.primary, "Нет связи");
         assert!(
-            super::inbox_row_at((540.0, 500.0), 1080, 2400, &[waiting.clone()], false).is_none()
+            super::inbox_row_at((540.0, 500.0), 1080, 2400, std::slice::from_ref(&waiting), false).is_none()
         );
 
         let live = super::inbox_event_rows(&[waiting.clone(), note], true);
@@ -11905,7 +11926,7 @@ mod tests {
     #[test]
     fn object_view_summary_keeps_identity_apart_from_status() {
         let intent = intent_entity("Пустое намерение");
-        let content = object_view_content(&intent, &[intent.clone()], &[]);
+        let content = object_view_content(&intent, std::slice::from_ref(&intent), &[]);
         let summary = object_view_summary(&intent, &content);
         assert_eq!(summary.title, "Пустое намерение");
         assert_eq!(

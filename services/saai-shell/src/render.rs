@@ -796,6 +796,7 @@ fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: 
 /// is a Static `DataRow`; the fingerprint stays wrapped mono text so
 /// the full `SHA256:` string remains readable. Buttons stay
 /// `task_confirm_view`. Lock unlock stays `draw_lock_pin_entry`.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_remote_pair(
     canvas: &mut Canvas<'_>,
     content: Rect,
@@ -1132,6 +1133,7 @@ pub fn draw_pin_setup(
 pub fn draw_lock_pin_entry(
     canvas: &mut Canvas<'_>,
     width: u32,
+    height: u32,
     entered_len: usize,
     pin_len: usize,
     keys: &[(Rect, &str)],
@@ -1139,12 +1141,21 @@ pub fn draw_lock_pin_entry(
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
 
+    // VUI-07: "restyle remaining lock chrome" -- `dot_y`/the title's own
+    // y both used to be bare 2400-reference literals (420/330) that
+    // never scaled with a real `height`, unlike this function's own
+    // `pin_keypad_rect`-computed `keys` (already `(index, width,
+    // height)`-aware) and its sibling `draw_lock_idle` (already scales
+    // `time_y`/`hint_y` off `height`). Sizes (`dot_size`/`gap`/the
+    // title's `32.0`) are left as literals on purpose -- this fixes the
+    // real scaling gap, not the reference-device visual, which stays
+    // pixel-identical at `height == 2400`.
     let dot_size = 36u32;
     let gap = 30u32;
     let count = pin_len.max(1) as u32;
     let total_width = count * dot_size + count.saturating_sub(1) * gap;
     let start_x = width.saturating_sub(total_width) / 2;
-    let dot_y = 420u32;
+    let dot_y = ((height as u64 * 420) / 2400) as u32;
     for index in 0..pin_len {
         let x = start_x + index as u32 * (dot_size + gap);
         let color = if index < entered_len {
@@ -1162,13 +1173,14 @@ pub fn draw_lock_pin_entry(
         return;
     };
 
+    let title_y = ((height as u64 * 330) / 2400) as u32;
     draw_text_centered(
         canvas,
         &fonts.regular,
         "Введите PIN",
         32.0,
         width / 2,
-        330,
+        title_y,
         theme_color(ColorRole::TextSecondary),
     );
 
@@ -3169,7 +3181,8 @@ mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
-        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_pin_setup,
+        draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_orb,
+        draw_pin_setup,
         draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions,
         physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
@@ -3391,6 +3404,35 @@ mod tests {
         assert_eq!(canvas.pixel(540, 1000), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(540, 2200), theme_color(ColorRole::Surface));
         assert_ne!(canvas.pixel(540, 2050), theme_color(ColorRole::Surface));
+    }
+
+    #[test]
+    fn lock_pin_entry_dots_scale_with_height_not_a_2400_reference_literal() {
+        // VUI-07: `dot_y`/the title's own y used to be bare 2400-
+        // reference literals, unlike `pin_keypad_rect` (already
+        // `(index, width, height)`-aware) and this function's own
+        // sibling `draw_lock_idle`. Renders at two different heights
+        // and confirms the entered dot lands at the height-scaled
+        // position in both, not just at the reference 2400.
+        let width = 1080u32;
+        for height in [2400u32, 1200u32] {
+            let mut pixels = vec![0u8; width as usize * height as usize * 4];
+            let mut canvas = Canvas::new(&mut pixels, width, height);
+            draw_lock_pin_entry(&mut canvas, width, height, 1, 4, &[], None);
+
+            let dot_size = 36u32;
+            let gap = 30u32;
+            let total_width = 4 * dot_size + 3 * gap;
+            let start_x = width.saturating_sub(total_width) / 2;
+            let expected_dot_y = ((height as u64 * 420) / 2400) as u32;
+            let sample_x = start_x + dot_size / 2;
+            let sample_y = expected_dot_y + dot_size / 2;
+            assert_eq!(
+                canvas.pixel(sample_x, sample_y),
+                theme_color(ColorRole::Accent),
+                "entered dot should be Accent-colored at the height-scaled position for height={height}"
+            );
+        }
     }
 
     #[test]

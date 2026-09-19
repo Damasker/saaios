@@ -1011,7 +1011,23 @@ big-bang rewrite.
   `ContextHeader` section `Ключи`; live TrustedClientRow cards plus
   Назад unchanged. Do not tap Отозвать. Leave with Назад. DevSurface
   chrome still later. Flashed `b73f9433…`.
-- [ ] Restyle remaining lock chrome.
+- [x] Restyle remaining lock chrome (ADR-148, host). `draw_lock_pin_entry`'s
+  dot row and title used bare 2400-reference literals that never scaled
+  with a real `height`, unlike its own `pin_keypad_rect`-computed keys and
+  its sibling `draw_lock_idle`. Fixed proportionally; sizes stay literal
+  (pixel-identical at Pixel 7's own `height == 2400`). Deliberately does
+  not add a `ContextHeader` here -- pre-auth, same "no Space name/Inbox
+  content before unlock" boundary `draw_lock_idle` already established.
+  Host: two-height regression test. **Not device-confirmed**: no PIN is
+  currently configured on the development device (`pin_code: null`,
+  confirmed by reading the live settings file); setting one specifically
+  to screenshot this fix was judged disproportionate for a scaling-only
+  change already caught precisely by the host test. `draw_lock_idle`
+  itself (the currently-reachable lock screen) was screenshotted and
+  confirmed unaffected. Also cleared this file's own `cargo clippy
+  --all-targets -D warnings` debt in the same pass (dead-code/arg-count/
+  redundant-clone/doc-comment-drift findings, unrelated to lock chrome
+  but found while this file was open) -- see ADR-148.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
