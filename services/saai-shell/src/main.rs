@@ -1886,6 +1886,22 @@ fn trusted_client_list_row_count(client_count: usize) -> usize {
     }
 }
 
+/// ADR-150: two-tap arm/confirm for `TrustedClientTap::Revoke`. First
+/// tap on a row arms it (returns `(Some(tapped), false)`); a second tap
+/// on that *same* index confirms (`(None, true)`); a tap on any other
+/// index re-arms that one instead of revoking the previously-armed row
+/// (`(Some(tapped), false)` again, just a different index). Mirrors the
+/// tap-to-arm/tap-to-confirm shape `SpaceRow`'s own retap-cycles-
+/// lifecycle gesture already uses elsewhere (ADR-128) rather than
+/// inventing a new confirmation shape for this one screen.
+fn trusted_client_revoke_decision(pending: Option<usize>, tapped: usize) -> (Option<usize>, bool) {
+    if pending == Some(tapped) {
+        (None, true)
+    } else {
+        (Some(tapped), false)
+    }
+}
+
 fn trusted_client_action_at(
     pos: (f64, f64),
     width: u32,
@@ -4134,7 +4150,18 @@ fn trusted_client_list_rows(clients: &[TrustedClient]) -> Vec<TrustedClientRow> 
         .collect()
 }
 
-fn trusted_client_card_from_row(row: &TrustedClientRow) -> render::ActionCardView {
+fn trusted_client_card_from_row(row: &TrustedClientRow, armed: bool) -> render::ActionCardView {
+    if armed {
+        // ADR-150: replaces the fingerprint with the confirm prompt --
+        // showing both would crowd a row already this narrow, and the
+        // warning is what the user needs to read before tapping again.
+        return render::ActionCardView::new(
+            row.row.primary.clone(),
+            "Нажмите ещё раз, чтобы отозвать",
+            "Отозвать?",
+        )
+        .selected(true);
+    }
     let status = row.row.value.clone().unwrap_or_default();
     let action = if row.row.is_actionable() {
         "Отозвать"
@@ -5015,6 +5042,7 @@ fn main() {
         wifi_list: None,
         bluetooth_list_open: false,
         trusted_clients_open: false,
+        pending_revoke_trusted_client: None,
         pin_setup: None,
         pin_entry_buffer: String::new(),
         me_scroll_offset: 0,
@@ -5251,6 +5279,12 @@ struct Shell {
     /// (opened from "Я") has no cached rows either, `trusted_clients()`
     /// is read fresh from `authorized_keys` on every touch/draw.
     trusted_clients_open: bool,
+    /// ADR-150: which row, if any, is armed waiting for a confirming
+    /// second tap before `revoke_trusted_client` actually runs -- a
+    /// revoke is irreversible and can cut off the very SSH connection
+    /// an admin is using to reach this device right now, so a single
+    /// accidental tap in a scrollable list must never fire it.
+    pending_revoke_trusted_client: Option<usize>,
     /// S24: set while "Изменить PIN" (opened from "Я") is composing a
     /// new PIN. Modal, same as the others.
     pin_setup: Option<PinSetupState>,
@@ -6361,9 +6395,10 @@ impl Shell {
                 .iter()
                 .enumerate()
                 .map(|(index, row)| {
+                    let armed = self.pending_revoke_trusted_client == Some(index);
                     (
                         stacked_row_rect(index, width, height),
-                        trusted_client_card_from_row(row),
+                        trusted_client_card_from_row(row, armed),
                     )
                 })
                 .collect();
@@ -7195,6 +7230,7 @@ impl Shell {
             "open_trusted_clients" => {
                 // Same reasoning as "open_wifi_list" above.
                 self.trusted_clients_open = true;
+                self.pending_revoke_trusted_client = None;
                 self.draw(conn, qh);
                 return;
             }
@@ -7435,10 +7471,16 @@ impl Shell {
     ) {
         match tap {
             TrustedClientTap::Revoke(index) => {
-                revoke_trusted_client(index);
+                let (pending, confirmed) =
+                    trusted_client_revoke_decision(self.pending_revoke_trusted_client, index);
+                self.pending_revoke_trusted_client = pending;
+                if confirmed {
+                    revoke_trusted_client(index);
+                }
             }
             TrustedClientTap::Back => {
                 self.trusted_clients_open = false;
+                self.pending_revoke_trusted_client = None;
             }
         }
         self.draw(conn, qh);
@@ -8965,7 +9007,8 @@ mod tests {
         space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
         space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
         tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
+        trusted_client_card_from_row, trusted_client_list_rows,
+        trusted_client_revoke_decision, trusted_header,
         upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
         wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
         ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
@@ -10624,7 +10667,7 @@ mod tests {
             live[0].row.value.as_deref(),
             Some("SHA256:abcdefghijklmnopq…")
         );
-        assert_eq!(trusted_client_card_from_row(&live[0]).action, "Отозвать");
+        assert_eq!(trusted_client_card_from_row(&live[0], false).action, "Отозвать");
         assert_eq!(live[1].row.primary, "(без имени)");
         assert_eq!(live[1].row.value.as_deref(), Some("short…"));
         assert!(!live
@@ -10636,7 +10679,45 @@ mod tests {
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].row.primary, "Нет клиентов");
         assert!(!empty[0].row.is_actionable());
-        assert_eq!(trusted_client_card_from_row(&empty[0]).action, "");
+        assert_eq!(trusted_client_card_from_row(&empty[0], false).action, "");
+    }
+
+    #[test]
+    fn trusted_client_revoke_needs_a_second_tap_on_the_same_row() {
+        // ADR-150: a bare first tap arms, it never revokes by itself.
+        assert_eq!(trusted_client_revoke_decision(None, 2), (Some(2), false));
+    }
+
+    #[test]
+    fn trusted_client_revoke_confirms_on_the_matching_second_tap() {
+        assert_eq!(trusted_client_revoke_decision(Some(2), 2), (None, true));
+    }
+
+    #[test]
+    fn trusted_client_revoke_a_different_row_rearms_instead_of_revoking() {
+        // Tapping row 0 while row 2 is armed must not revoke row 2 --
+        // it re-arms row 0 instead, same "leaving cancels" safety this
+        // screen's Back handling already gives.
+        assert_eq!(trusted_client_revoke_decision(Some(2), 0), (Some(0), false));
+    }
+
+    #[test]
+    fn armed_trusted_client_card_reads_as_a_confirm_prompt() {
+        let clients = vec![TrustedClient {
+            client_name: "home-mike".into(),
+            fingerprint: "SHA256:abcdefghijklmnopqrstuvwx".into(),
+        }];
+        let live = trusted_client_list_rows(&clients);
+        let armed = trusted_client_card_from_row(&live[0], true);
+        assert_eq!(armed.label, "home-mike");
+        assert_eq!(armed.status, "Нажмите ещё раз, чтобы отозвать");
+        assert_eq!(armed.action, "Отозвать?");
+        assert!(armed.selected);
+        // Unarmed still reads the plain fingerprint/action pair.
+        let unarmed = trusted_client_card_from_row(&live[0], false);
+        assert_eq!(unarmed.status, "SHA256:abcdefghijklmnopq…");
+        assert_eq!(unarmed.action, "Отозвать");
+        assert!(!unarmed.selected);
     }
 
     #[test]

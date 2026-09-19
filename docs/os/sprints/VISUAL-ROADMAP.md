@@ -1050,7 +1050,18 @@ big-bang rewrite.
   on the Pixel 7 directly and confirmed all three still render and
   behave as before.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
-  confirmation, and recovery patterns.
+  confirmation, and recovery patterns. In progress -- audited every
+  screen ADR-127 through ADR-149 migrated (ADR-114 already audited
+  `Сейчас` itself) against this same list. **Fixed** (ADR-150):
+  revoking a trusted SSH client fired on one tap anywhere on its row --
+  now needs a confirming second tap on the same row, reusing `SpaceRow`'s
+  own retap gesture shape (ADR-128) rather than a new one. **Found,
+  not yet fixed**: Wi-Fi list conflates "no networks" with "wpa_
+  supplicant unreachable" (same bug class ADR-114 fixed for `Сейчас`);
+  Bluetooth pairing failure is parsed into real Russian text
+  (`bluetooth_pair_result`) but has zero callers in the live draw path
+  (same shape as ADR-114's own second finding). Both recorded in
+  ADR-150's Consequences, not silently dropped.
 - [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
   chrome, essential attention without exposing bodies) without
   triggering privileged actions.
