@@ -4331,6 +4331,43 @@ fn lock_attention_tap(locked: bool) -> LockAttentionTap {
     }
 }
 
+/// ADR-153: lock-state device disclosure. Live fuel-gauge only —
+/// never Inbox titles. Color is not charge (that collides with
+/// attention). Host `read_battery()` is `None`; omit, do not invent 0.
+struct LockDeviceView {
+    percent: u8,
+    charging: bool,
+    label: String,
+}
+
+impl LockDeviceView {
+    fn key(&self) -> u16 {
+        let mut key = u16::from(self.percent) + 1;
+        if self.charging {
+            key += 200;
+        }
+        key
+    }
+}
+
+fn lock_device_view(battery: Option<(u8, bool)>) -> Option<LockDeviceView> {
+    let (percent, charging) = battery?;
+    let label = if charging {
+        format!("Зарядка {percent}%")
+    } else {
+        format!("Заряд {percent}%")
+    };
+    Some(LockDeviceView {
+        percent,
+        charging,
+        label,
+    })
+}
+
+fn lock_device_key(view: &Option<LockDeviceView>) -> u16 {
+    view.as_ref().map(LockDeviceView::key).unwrap_or(0)
+}
+
 /// VUI-07 (ADR-133): PIN-setup preview is a `Field`, not a second
 /// hand-rolled mask. Revealed stays false; digits never become the
 /// accessible value.
@@ -5288,6 +5325,7 @@ fn main() {
         last_statusbar_snapshot: None,
         last_statusbar_refresh: Instant::now(),
         last_lock_idle_time: None,
+        last_lock_device_key: None,
         last_lock_attention_key: None,
         low_battery_notified: false,
         fonts,
@@ -5506,6 +5544,9 @@ struct Shell {
     /// attention). Minute-only refresh would leave a newly arrived
     /// essential signal invisible until the next clock change.
     last_lock_attention_key: Option<u8>,
+    /// ADR-153: last painted battery key (omitted / percent / charging).
+    /// Minute+attention refresh would leave a charge change invisible.
+    last_lock_device_key: Option<u16>,
     /// S21: guards `check_low_battery` against creating a fresh
     /// notification every second while the battery stays low.
     low_battery_notified: bool,
@@ -9102,10 +9143,10 @@ impl Shell {
         }
     }
 
-    /// VUI-07 (ADR-134 / ADR-148): the lock surface is the visible
-    /// clock while locked (displayd ignores status commits). Repaint
-    /// when the minute *or* the attention key changes, never over the
-    /// deep-idle blank, and never on the PIN keypad.
+    /// VUI-07 (ADR-134 / ADR-148 / ADR-153): the lock surface is the
+    /// visible clock while locked (displayd ignores status commits).
+    /// Repaint when the minute, attention key, or battery key changes,
+    /// never over the deep-idle blank, and never on the PIN keypad.
     fn refresh_lock_idle_if_due(&mut self, qh: &QueueHandle<Self>) {
         if !self.locked || self.sleeping || self.settings.pin_code.is_some() {
             return;
@@ -9116,8 +9157,10 @@ impl Shell {
             orb_attention_from_entities(&self.selected_entities),
         );
         let key = lock_attention_key(&attention);
+        let device = lock_device_key(&lock_device_view(read_battery()));
         if self.last_lock_idle_time.as_deref() == Some(time.as_str())
             && self.last_lock_attention_key == Some(key)
+            && self.last_lock_device_key == Some(device)
         {
             return;
         }
@@ -9276,16 +9319,21 @@ impl Shell {
 
         let pin_code = self.settings.pin_code.clone();
         let idle = lock_idle_view(&current_time_string(self.settings.utc_offset_minutes));
-        let attention = if pin_code.is_none() {
+        let (attention, device_label) = if pin_code.is_none() {
             let view = lock_attention_view(
                 self.entityd.is_connected(),
                 orb_attention_from_entities(&self.selected_entities),
             );
+            let device = lock_device_view(read_battery());
             self.last_lock_idle_time = Some(idle.time.clone());
             self.last_lock_attention_key = Some(lock_attention_key(&view));
-            view.map(|view| view.indicator())
+            self.last_lock_device_key = Some(lock_device_key(&device));
+            (
+                view.map(|view| view.indicator()),
+                device.map(|view| view.label),
+            )
         } else {
-            None
+            (None, None)
         };
         let keys = if pin_code.is_some() {
             pin_keyboard_keys(width, height, PinKeyboardKind::Unlock)
@@ -9298,6 +9346,7 @@ impl Shell {
         let has_pin = pin_code.is_some();
         let idle_time = idle.time;
         let idle_hint = idle.hint;
+        let idle_device = device_label;
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
 
@@ -9337,6 +9386,7 @@ impl Shell {
                             height,
                             &idle_time,
                             idle_hint,
+                            idle_device.as_deref(),
                             attention.as_ref(),
                             fonts,
                         );
@@ -9414,6 +9464,7 @@ impl Shell {
                 height,
                 &idle_time,
                 idle_hint,
+                idle_device.as_deref(),
                 attention.as_ref(),
                 fonts,
             );
@@ -9462,22 +9513,23 @@ mod tests {
         diagnostic_status_line, effective_context_space, ensure_me_row_cache, flatten_me_rows,
         format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
         intent_action_at, intent_input_field, known_surfaces, lock_attention_tap,
-        lock_attention_view, lock_idle_view, lock_pin_entry_field, me_fixture_facts, me_header,
-        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
-        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
-        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
-        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
-        KeyboardMode, LockAttentionTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets,
-        Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
-        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
+        me_fixture_facts, me_header, me_system_sections, next_in_cycle, next_pending_action,
+        now_action_at, now_object_tapped, object_view_action_at, object_view_content,
+        object_view_summary, orb_action_at, orb_attention_from_entities, orb_menu_actions,
+        orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
+        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
+        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
+        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
+        LockAttentionTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
+        SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
+        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
         INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
         NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
         ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
@@ -11138,6 +11190,23 @@ mod tests {
     fn lock_attention_tap_requires_unlock_while_locked() {
         assert_eq!(lock_attention_tap(true), LockAttentionTap::UnlockRequired);
         assert_eq!(lock_attention_tap(false), LockAttentionTap::ViewAllowed);
+    }
+
+    #[test]
+    fn lock_device_view_omits_missing_and_names_charge() {
+        assert!(lock_device_view(None).is_none());
+
+        let idle = lock_device_view(Some((87, false))).expect("idle");
+        assert_eq!(idle.percent, 87);
+        assert!(!idle.charging);
+        assert_eq!(idle.label, "Заряд 87%");
+        assert!(!idle.label.contains("Входящие"));
+
+        let charging = lock_device_view(Some((12, true))).expect("charging");
+        assert_eq!(charging.percent, 12);
+        assert!(charging.charging);
+        assert_eq!(charging.label, "Зарядка 12%");
+        assert!(!charging.label.contains("Входящие"));
     }
 
     #[test]

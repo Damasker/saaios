@@ -130,7 +130,8 @@ Rules:
 | Accessibility | preserves the full untruncated string |
 
 Sans and mono are semantic families. Font filenames are backend assets and may
-change without changing component callers.
+change without changing component callers. No-PIN lock idle (ADR-153) paints
+device state as Caption of the live fuel-gauge; missing reading omits.
 
 ### 6.2 `Icon`
 
@@ -164,6 +165,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - First lock consumer: no-PIN lock idle (ADR-148) paints compact
   `Offline` / `Attention` from store and ATTN booleans. The view type
   cannot hold a title or body; `visible_reason()` stays empty.
+- Lock device state (ADR-153) is Caption `SemanticText` of the live
+  fuel-gauge (`Заряд N%` / `Зарядка N%`), not a `StatusIndicator`
+  color and not a determinate `Progress` track. Missing reading omits.
 - `RUNNING` may use the shared quiet activity motion; reduced motion shows the
   static activity mark.
 - A reason wraps below the label rather than shrinking it.

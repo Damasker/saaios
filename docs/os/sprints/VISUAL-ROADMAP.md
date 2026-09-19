@@ -113,7 +113,7 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header + Система header + consent + PIN setup header + remote pairing + Bluetooth header + Wi-Fi header + trusted-clients header + lock attention + lock/PIN keyboard on panther) |
+| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header + Система header + consent + PIN setup header + remote pairing + Bluetooth header + Wi-Fi header + trusted-clients header + lock attention + lock/PIN keyboard + lock device state on panther) |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
@@ -1033,7 +1033,10 @@ big-bang rewrite.
   ADR-152: `ContextHeader` section `Диагностика`; live Static
   `DataRow` cards plus Назад unchanged. 7-tap gesture unchanged.
   Leave with Назад. Space detail still deferred. Flashed `c9f52227…`.
-- [ ] Restyle remaining lock chrome if any after the shared keyboard.
+- [x] Paint live device state on the no-PIN lock. ADR-153: Caption
+  `Заряд N%` / `Зарядка N%` from `read_battery()`; omit when missing;
+  no Progress track, no StatusIndicator color. PIN keypad unchanged.
+  Do not set a PIN. Tap-unlock. Flashed `88121ad2…`.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle remaining lock and wake-on-touch states without triggering privileged actions.
@@ -1190,8 +1193,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (lock chrome after the shared
-keyboard). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07** remaining surfaces (wake-on-touch / deep-idle
+chrome). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
@@ -1203,5 +1206,6 @@ setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
 header (`efbab13a…`), Wi-Fi header (`d562249b…`), trusted-clients
 header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
 keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), keyboard
-press (`3a97f0e8…`), and DevSurface header (`c9f52227…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
+press (`3a97f0e8…`), DevSurface header (`c9f52227…`), and lock
+device state (`88121ad2…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.
