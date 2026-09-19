@@ -1052,13 +1052,23 @@ big-bang rewrite.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns. In progress -- audited every
   screen ADR-127 through ADR-149 migrated (ADR-114 already audited
-  `Сейчас` itself) against this same list. **Fixed** (ADR-150):
-  revoking a trusted SSH client fired on one tap anywhere on its row --
-  now needs a confirming second tap on the same row, reusing `SpaceRow`'s
-  own retap gesture shape (ADR-128) rather than a new one. **Found,
-  not yet fixed**: Wi-Fi list conflates "no networks" with "wpa_
-  supplicant unreachable" (same bug class ADR-114 fixed for `Сейчас`);
-  Bluetooth pairing failure is parsed into real Russian text
+  `Сейчас` itself) against this same list. **Fixed, physically
+  confirmed** (ADR-150): revoking a trusted SSH client fired on one tap
+  anywhere on its row -- now needs a confirming second tap on the same
+  row, reusing `SpaceRow`'s own retap gesture shape (ADR-128) rather
+  than a new one. Physical check on panther surfaced a real incident
+  the gate was built to prevent, and a real recovery: the device owner
+  armed-then-confirmed the wrong same-prefixed row (`home-server-
+  reconnect`, this session's own working key, mistaken for a spare test
+  entry) -- the gate worked exactly as designed against an accidental
+  tap, but did nothing against a confident tap on the wrong row.
+  Recovered within a minute via the existing remote-pairing flow
+  (ADR-074, unrelated to this ADR, already built). Follow-up recorded
+  in ADR-150's own Consequences: nothing on this screen marks which key
+  is the one authenticating the *current* session. **Found, not yet
+  fixed**: Wi-Fi list conflates "no networks" with "wpa_supplicant
+  unreachable" (same bug class ADR-114 fixed for `Сейчас`); Bluetooth
+  pairing failure is parsed into real Russian text
   (`bluetooth_pair_result`) but has zero callers in the live draw path
   (same shape as ADR-114's own second finding). Both recorded in
   ADR-150's Consequences, not silently dropped.

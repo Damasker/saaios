@@ -2,9 +2,11 @@
 
 ## Status
 
-Accepted, 2026-09-19. Host-verified only (4 new tests, full workspace
-test + clippy clean). Not yet physically re-confirmed on Pixel 7 -- see
-Verification.
+Accepted, 2026-09-19. Host-verified (4 new tests, full workspace test
++ clippy clean) and physically confirmed on Pixel 7 -- see Verification,
+including a real incident this confirmation gate was specifically built
+to prevent, and recovered from cleanly via the existing remote-pairing
+flow (ADR-074).
 
 ## Context
 
@@ -99,17 +101,45 @@ not built, flagged" section.
   deliberately factored into the pure, directly-tested
   `trusted_client_revoke_decision` function above specifically so this
   logic wouldn't be untestable by construction.
-- Not yet physically re-confirmed: this changes real touch behavior
-  (a revoke used to fire on tap 1, now needs tap 2 on the same row), so
-  unlike ADR-149's pure dead-code removal this needs an actual on-device
-  tap-through, not just a screenshot -- see Consequences for what that
-  check should cover.
+- **Physically confirmed** (2026-09-19), including a real incident:
+  the device owner tapped a row once, saw the arm warning render
+  correctly, tapped Back to cancel per the first ask -- confirming the
+  gate holds on a single tap and leaving does cancel. On a second,
+  separate check intended to exercise a disposable test entry, the
+  device owner tapped a row twice (arm, then confirm) believing it was
+  a spare test key; it was actually `home-server-reconnect`, this
+  session's own working SSH key, and the second tap revoked it exactly
+  as designed -- the gate did its job (a mis-identified row, not an
+  accidental single tap, is what caused this), but it is worth naming
+  plainly: two rows in this list currently start with the identical
+  `home-server-` prefix (`home-server-test`, `home-server-reconnect`),
+  and nothing besides the trailing name distinguishes them at a glance.
+  Recovery used the existing, already-built remote-pairing flow
+  (ADR-074): a fresh `PAIR home-server-reconnect\n<pubkey>\n` request
+  to `pair-recv` on port 7779 showed the on-device consent screen, the
+  device owner tapped Разрешить, and SSH access was restored within
+  the same minute, `authorized_keys` back to its expected three
+  entries. No data lost, no rollback needed -- but this is the second
+  time in this same ADR that "which row is which" mattered more than
+  the tap count. See Consequences for the follow-up this suggests.
 
 ## Consequences
 
 - Revoking a trusted SSH client on this screen now needs two
   deliberate taps on the same row -- a single mis-tap while scrolling
   can no longer cut off a live admin session.
+- **New follow-up finding, from the physical confirmation itself**: the
+  arm/confirm gate stops an accidental single tap, but does nothing
+  about confidently tapping the *wrong* row on purpose -- confirmed
+  live when the device owner armed-then-confirmed `home-server-
+  reconnect` while intending a same-prefixed test entry. `TrustedClient`
+  only carries `client_name`/`fingerprint`; nothing about "is this the
+  connection you're using right now" is visible. Worth its own pass
+  (not this ADR -- a different failure shape again, per this ADR's own
+  Context on why the Wi-Fi/Bluetooth findings weren't bundled in
+  either): e.g. surfacing which key authenticated the *current* SSH
+  session, if that is knowable from `dropbear`, so that row can be
+  marked and never silently revocable at all.
 - The Wi-Fi offline/empty conflation and the invisible Bluetooth
   pairing failure remain open findings from this same audit pass,
   intentionally left for a following ADR rather than bundled in here.
