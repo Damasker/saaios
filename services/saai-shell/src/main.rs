@@ -46,7 +46,8 @@
 //!   `input_ok` is the down commit, not a token delay (ADR-176).
 //!   Idle Сейчас must keep `seq` still (ADR-177).
 //!   Main-surface commits name `backend=dmabuf` or `backend=shm`
-//!   (ADR-178) without changing either path.
+//!   (ADR-178) without changing either path. VUI-08 haptic
+//!   acceptance is that same KeyPress map (ADR-179).
 //!   Reduced motion drops in-flight clocks on the same tap (ADR-174).
 //!   Displayd still has no haptic protocol; this slice does not flash it.
 //!
@@ -13624,6 +13625,46 @@ mod tests {
         assert!(rows
             .iter()
             .any(|row| row.dispatch == Some("toggle_haptics")));
+    }
+
+    #[test]
+    fn haptic_switch_lives_in_sound_not_interface() {
+        let sections = me_system_sections(&me_fixture_facts());
+        let sound = sections
+            .iter()
+            .find(|section| section.title == "Звук")
+            .expect("sound section");
+        let sound_rows = flatten_me_rows(std::slice::from_ref(sound));
+        let haptic = sound_rows
+            .iter()
+            .find(|row| row.card.label == "Виброотклик")
+            .expect("haptic row");
+        assert_eq!(haptic.dispatch, Some("toggle_haptics"));
+        assert_eq!(haptic.card.status, "Вкл");
+        let interface = sections
+            .iter()
+            .find(|section| section.title == "Интерфейс")
+            .expect("interface");
+        let interface_rows = flatten_me_rows(std::slice::from_ref(interface));
+        assert!(!interface_rows
+            .iter()
+            .any(|row| row.dispatch == Some("toggle_haptics")));
+        assert!(interface_rows
+            .iter()
+            .any(|row| row.dispatch == Some("toggle_reduced_motion")));
+        let mut off = me_fixture_facts();
+        off.haptics_enabled = false;
+        off.reduced_motion = true;
+        let off_rows = flatten_me_rows(&me_system_sections(&off));
+        let haptic_off = off_rows
+            .iter()
+            .find(|row| row.dispatch == Some("toggle_haptics"))
+            .expect("haptic off");
+        assert_eq!(haptic_off.card.status, "Выкл");
+        assert!(off_rows.iter().any(|row| {
+            row.dispatch == Some("toggle_reduced_motion")
+                && row.card.status.contains("без анимации")
+        }));
     }
 
     #[test]

@@ -397,7 +397,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   ADR-177 counts commits as `seq` and `idle_ok` so a quiet Сейчас is
   a still main surface.
   ADR-178 names the attached buffer `backend=dmabuf` or `backend=shm`
-  without changing either path.
+  without changing either path. ADR-179 closes VUI-08 haptics on that
+  same KeyPress map: rate-limited, silent for tabs and Orb.
 
 ### 7.6 `TaskSummary`
 

@@ -114,7 +114,7 @@ contains:
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
-| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–178 on panther; haptic closeout remains) |
+| VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
 ---
@@ -1105,8 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through dma-buf/SHM backend
-tag (ADR-167–178) on panther. Remaining: haptic acceptance closeout.
+**Status:** Complete — MotionClock through haptic acceptance
+(ADR-167–179) on panther.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1147,7 +1147,9 @@ into a measured regression contract.
   (`seq` holds on a quiet Сейчас, `idle_ok`, ADR-177). The status
   layer may still tick once a second.
 - [x] Reduced-motion mode communicates every state without animation.
-- [ ] Haptics are consistent, rate-limited, and absent for passive decoration.
+- [x] Haptics are consistent, rate-limited, and absent for passive decoration
+  (`haptic_intent_for`, 15 ms replay, tabs/Orb/`Виброотклик` in Звук,
+  ADR-179).
 
 ### Rollback
 
@@ -1245,7 +1247,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: haptic acceptance is already on panther
-(ADR-171) — record it as the closeout. ADR-167–178 are on panther.
-Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+VUI-08 is closed on panther (ADR-167–179). Next is **VUI-09** backlog
+(`.sui` v2 / public library). Do not start it until asked. Space
+detail still deferred. MEM-08 stays omitted until a shell-legal
+memory read exists.

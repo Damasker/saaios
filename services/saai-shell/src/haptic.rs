@@ -1,4 +1,4 @@
-//! Haptic policy for ADR-151 / ADR-171.
+//! Haptic policy for ADR-151 / ADR-171 / ADR-179.
 //!
 //! Components name a `HapticEvent`. Policy returns a `HapticIntent`.
 //! Only `HapticMotor` talks to `/dev/input/haptic`. Displayd still
@@ -280,5 +280,18 @@ mod tests {
         assert!(!haptic_rate_limit_allows(14));
         assert!(haptic_rate_limit_allows(15));
         assert!(haptic_rate_limit_allows(120));
+    }
+
+    #[test]
+    fn vui08_haptics_are_consistent_rate_limited_and_silent_for_decoration() {
+        assert_eq!(
+            haptic_intent_for(HapticEvent::KeyPress, true),
+            Some(HapticIntent::KeyTick)
+        );
+        assert_eq!(haptic_intent_for(HapticEvent::KeyPress, false), None);
+        assert_eq!(haptic_intent_for(HapticEvent::TabPress, true), None);
+        assert_eq!(haptic_intent_for(HapticEvent::OrbActivity, true), None);
+        assert!(!haptic_rate_limit_allows(14));
+        assert!(haptic_rate_limit_allows(u32::from(KEY_TICK_REPLAY_MS)));
     }
 }
