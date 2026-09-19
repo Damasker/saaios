@@ -41,8 +41,9 @@
 //! - **Haptic feedback on unlock.** drm-splash opened `/dev/input/haptic`
 //!   directly. Unlock still has no tick. Keyboard `KeyPress` goes
 //!   through `haptic_intent_for` (ADR-171). Main-surface commits log
-//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173). Displayd
-//!   still has no haptic protocol; this slice does not flash it.
+//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173).
+//!   Reduced motion drops in-flight clocks on the same tap (ADR-174).
+//!   Displayd still has no haptic protocol; this slice does not flash it.
 //!
 //! Both are logged as known limitations in the S04 sprint doc, not
 //! silently dropped.
@@ -2740,6 +2741,27 @@ fn retain_pressed_while_clock<T>(
     }
 }
 
+/// ADR-174: reduced motion never occupies a clock slot.
+fn motion_clock_for(token: MotionToken, reduced: bool) -> Option<MotionClock> {
+    (!reduced).then(|| MotionClock::one_shot(token, false))
+}
+
+fn activity_clock_for(wants: bool) -> Option<MotionClock> {
+    wants.then(|| MotionClock::looping(MotionToken::Context, false))
+}
+
+fn drop_clocks_if_reduced(
+    reduced: bool,
+    motion: Option<MotionClock>,
+    activity: Option<MotionClock>,
+) -> (Option<MotionClock>, Option<MotionClock>) {
+    if reduced {
+        (None, None)
+    } else {
+        (motion, activity)
+    }
+}
+
 /// ADR-169: the compose Field shows Focus only while the in-flight
 /// interaction clock is still a live one-shot `Context` token.
 fn field_shows_context_focus(clock: Option<&MotionClock>) -> bool {
@@ -5142,9 +5164,9 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         "Выключен -- только таб-бар"
     };
     let motion_status = if facts.reduced_motion {
-        "Включено -- Running не busy"
+        "Вкл -- без анимации"
     } else {
-        "Выключено"
+        "Выкл"
     };
     let haptic_status = if facts.haptics_enabled {
         "Вкл"
@@ -6916,7 +6938,7 @@ impl Shell {
             return self.activity_clock.take().is_some();
         }
         if self.activity_clock.is_none() {
-            self.activity_clock = Some(MotionClock::looping(MotionToken::Context, false));
+            self.activity_clock = activity_clock_for(true);
             if self.motion_clock.is_none() {
                 self.motion_last_tick = Instant::now();
             }
@@ -6986,12 +7008,10 @@ impl Shell {
 
     /// ADR-169: entering a compose overlay is a Context transition.
     fn begin_compose_context(&mut self) {
-        if self.settings.reduced_motion {
-            self.motion_clock = None;
-            return;
+        self.motion_clock = motion_clock_for(MotionToken::Context, self.settings.reduced_motion);
+        if self.motion_clock.is_some() {
+            self.motion_last_tick = Instant::now();
         }
-        self.motion_clock = Some(MotionClock::one_shot(MotionToken::Context, false));
-        self.motion_last_tick = Instant::now();
     }
 
     fn end_compose_context(&mut self) {
@@ -8023,11 +8043,10 @@ impl Shell {
         self.pressed_tab = next;
         self.tab_finger_down = tick;
         if tick {
-            if !self.settings.reduced_motion {
-                self.motion_clock = Some(MotionClock::one_shot(MotionToken::Selection, false));
+            self.motion_clock =
+                motion_clock_for(MotionToken::Selection, self.settings.reduced_motion);
+            if self.motion_clock.is_some() {
                 self.motion_last_tick = Instant::now();
-            } else {
-                self.motion_clock = None;
             }
         } else {
             self.motion_clock = None;
@@ -8102,11 +8121,10 @@ impl Shell {
             ) {
                 self.haptic.play(intent);
             }
-            if !self.settings.reduced_motion {
-                self.motion_clock = Some(MotionClock::one_shot(MotionToken::MicroFeedback, false));
+            self.motion_clock =
+                motion_clock_for(MotionToken::MicroFeedback, self.settings.reduced_motion);
+            if self.motion_clock.is_some() {
                 self.motion_last_tick = Instant::now();
-            } else {
-                self.motion_clock = None;
             }
         } else {
             self.motion_clock = None;
@@ -8236,6 +8254,21 @@ impl Shell {
             }
             "toggle_reduced_motion" => {
                 self.settings.reduced_motion = !self.settings.reduced_motion;
+                let (motion, activity) = drop_clocks_if_reduced(
+                    self.settings.reduced_motion,
+                    self.motion_clock.take(),
+                    self.activity_clock.take(),
+                );
+                self.motion_clock = motion;
+                self.activity_clock = activity;
+                if self.settings.reduced_motion {
+                    if !self.tab_finger_down {
+                        self.pressed_tab = None;
+                    }
+                    if !self.key_finger_down {
+                        self.pressed_key = None;
+                    }
+                }
             }
             "toggle_haptics" => {
                 self.settings.haptics_enabled = !self.settings.haptics_enabled;
@@ -10143,19 +10176,19 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
-        bluetooth_list_action_at, bluetooth_list_pattern, bluetooth_list_row_count,
-        bluetooth_list_rows, bluetooth_pair_error_from, bluetooth_scan_pattern,
-        calibration_requested, capability_label, consent_action_at, consent_content_cards,
-        consent_header, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
-        diagnostic_header, diagnostic_row, effective_context_space, ensure_me_row_cache,
-        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
-        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
-        intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
-        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
-        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
-        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_details,
+        activity_clock_for, apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row,
+        bluetooth_header, bluetooth_list_action_at, bluetooth_list_pattern,
+        bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
+        bluetooth_scan_pattern, calibration_requested, capability_label, consent_action_at,
+        consent_content_cards, consent_header, content_action_at, dev_surface_back_tapped,
+        diagnostic_card_from_row, diagnostic_header, diagnostic_row, drop_clocks_if_reduced,
+        effective_context_space, ensure_me_row_cache, field_shows_context_focus, flatten_me_rows,
+        format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
+        intent_action_at, intent_compose_header, intent_field_rect, intent_input_field,
+        known_surfaces, lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
+        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header,
+        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
+        now_object_tapped, object_view_action_at, object_view_content, object_view_details,
         object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_visual_state,
         orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
@@ -11807,6 +11840,27 @@ mod tests {
     }
 
     #[test]
+    fn motion_clock_for_is_absent_when_reduced_and_drop_clears_both() {
+        assert!(motion_clock_for(MotionToken::Selection, true).is_none());
+        assert!(
+            motion_clock_for(MotionToken::Selection, false).is_some_and(MotionClock::needs_frame)
+        );
+        assert!(activity_clock_for(true).is_some_and(MotionClock::needs_frame));
+        assert!(activity_clock_for(false).is_none());
+        let (motion, activity) = drop_clocks_if_reduced(
+            true,
+            motion_clock_for(MotionToken::MicroFeedback, false),
+            activity_clock_for(true),
+        );
+        assert!(motion.is_none());
+        assert!(activity.is_none());
+        let keep_motion = motion_clock_for(MotionToken::Context, false);
+        let (motion, activity) = drop_clocks_if_reduced(false, keep_motion, None);
+        assert!(motion.is_some());
+        assert!(activity.is_none());
+    }
+
+    #[test]
     fn frame_reason_prefers_scroll_then_motion() {
         use saai_ui_core::{frame_reason, FrameReason};
         assert_eq!(frame_reason(true, true), FrameReason::Scroll);
@@ -13364,6 +13418,18 @@ mod tests {
         assert!(rows
             .iter()
             .any(|row| row.dispatch == Some("toggle_reduced_motion")));
+        let motion = rows
+            .iter()
+            .find(|row| row.dispatch == Some("toggle_reduced_motion"))
+            .expect("reduced motion");
+        assert_eq!(motion.card.status, "Выкл");
+        let mut reduced_facts = me_fixture_facts();
+        reduced_facts.reduced_motion = true;
+        let reduced_rows = flatten_me_rows(&me_system_sections(&reduced_facts));
+        assert!(reduced_rows.iter().any(|row| {
+            row.dispatch == Some("toggle_reduced_motion")
+                && row.card.status.contains("без анимации")
+        }));
         assert!(rows
             .iter()
             .any(|row| row.card.label == "Устройство" && row.dispatch.is_none()));

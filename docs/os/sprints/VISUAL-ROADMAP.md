@@ -114,7 +114,7 @@ contains:
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
-| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–173 on panther; reduced-motion/traces remain) |
+| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–174 on panther; traces remain) |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
 ---
@@ -1105,8 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through scroll p95
-(ADR-167–173) on panther. Remaining: reduced-motion coverage, traces.
+**Status:** In progress — MotionClock through immediate reduced motion
+(ADR-167–174) on panther. Remaining: performance traces.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1118,7 +1118,7 @@ into a measured regression contract.
 - [x] Add a shared transition clock and compositor/frame-callback integration.
 - [ ] Implement 80–150 ms micro, 150–220 ms panel, and 200–300 ms context
   transitions only where they clarify state.
-- [ ] Add reduced-motion behavior for every animated component.
+- [x] Add reduced-motion behavior for every animated component.
 - [x] Centralize haptic intents; map components to policy instead of direct motor
   control.
 - [x] Instrument input-to-feedback, render production, submission, pending-work
@@ -1139,7 +1139,7 @@ into a measured regression contract.
 - [ ] First visible touch feedback is prompt and no worse than the VUI-07
   baseline.
 - [ ] Idle UI does not redraw continuously without a state reason.
-- [ ] Reduced-motion mode communicates every state without animation.
+- [x] Reduced-motion mode communicates every state without animation.
 - [ ] Haptics are consistent, rate-limited, and absent for passive decoration.
 
 ### Rollback
@@ -1238,7 +1238,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: reduced-motion on every remaining animated
-component, then performance traces. ADR-167–173 are on panther.
+Continue **VUI-08**: performance traces for Система drag, fast tabs,
+lists, keyboard, overlays, and Orb. ADR-167–174 are on panther.
 Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.

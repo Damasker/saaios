@@ -235,7 +235,8 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   the finger is down; one `KeyTick` haptic on down if
   `haptics_enabled` (ADR-171). Tabs and Orb do not tick. ADR-167 keeps
   `Pressed` for `MotionToken::MicroFeedback` after release unless
-  reduced motion. Release still emits the key. Size does not change.
+  reduced motion (ADR-174 drops that clock on the same tap as
+  «Меньше движения»). Release still emits the key. Size does not change.
 
 ### 6.8 `DataRow`
 
@@ -384,6 +385,7 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - ADR-170: while `motion()` is `ActivityPulse`, the inset hairline
   follows a looping `MotionClock` (on 240 ms / off 240 ms, Context
   duration reused). Reduced motion keeps the `StatusMark` only.
+  ADR-174 drops the looping clock when «Меньше движения» turns on.
 - ADR-172: `FramePace` is a diagnostic ring, not a visible component.
   The shell writes the last commit line to `/run/saaios/shell-frame.last`.
   ADR-173 adds `p95_scroll` / `p95_ok` for scroll samples against 50 ms.
