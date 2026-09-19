@@ -360,6 +360,10 @@ impl MotionClock {
         self.token.milliseconds(self.reduced_motion)
     }
 
+    pub fn token(self) -> MotionToken {
+        self.token
+    }
+
     pub fn advance(&mut self, dt_ms: u32) {
         if self.reduced_motion {
             return;
@@ -497,6 +501,7 @@ mod tests {
         assert_eq!(clock.progress_percent(), 100);
         clock.advance(40);
         assert_eq!(clock.progress_percent(), 100);
+        assert_eq!(clock.token(), MotionToken::MicroFeedback);
     }
 
     #[test]

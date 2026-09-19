@@ -2722,6 +2722,12 @@ fn retain_pressed_while_clock<T>(
     }
 }
 
+/// ADR-169: the compose Field shows Focus only while the in-flight
+/// clock is still a live `Context` token.
+fn field_shows_context_focus(clock: Option<&MotionClock>) -> bool {
+    clock.is_some_and(|clock| clock.token() == MotionToken::Context && clock.needs_frame())
+}
+
 /// Builds both the header rect and the drawn `(Rect, label)` pairs for
 /// every key -- letters/digits uppercased for display the same way a
 /// real keyboard shows capital letter-caps while typing lowercase,
@@ -6645,6 +6651,7 @@ impl TouchHandler for Shell {
                         self.draw(conn, qh);
                     } else if action == "open_intent_input" {
                         self.intent_input = Some(IntentInputState::default());
+                        self.begin_compose_context();
                         self.draw(conn, qh);
                     }
                 }
@@ -6669,6 +6676,7 @@ impl TouchHandler for Shell {
                         self.invoke_app_launch(&app_id, conn, qh);
                     } else if action_str == "open_intent_input" {
                         self.intent_input = Some(IntentInputState::default());
+                        self.begin_compose_context();
                         self.draw(conn, qh);
                     }
                     // "inspect_selected_entity" has no tap behavior --
@@ -6839,6 +6847,27 @@ impl Shell {
         if self.me_drag.is_none() {
             self.me_row_cache = None;
         }
+    }
+
+    /// ADR-169: entering a compose overlay is a Context transition.
+    fn begin_compose_context(&mut self) {
+        if self.settings.reduced_motion {
+            self.motion_clock = None;
+            return;
+        }
+        self.motion_clock = Some(MotionClock::one_shot(MotionToken::Context, false));
+        self.motion_last_tick = Instant::now();
+    }
+
+    fn end_compose_context(&mut self) {
+        if self
+            .motion_clock
+            .is_some_and(|clock| clock.token() == MotionToken::Context)
+        {
+            self.motion_clock = None;
+        }
+        self.pressed_key = None;
+        self.key_finger_down = false;
     }
 
     /// Renders the active root section's placeholder content plus the
@@ -7214,6 +7243,7 @@ impl Shell {
 
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
+        let field_focused = field_shows_context_focus(self.motion_clock.as_ref());
         let current_page_index = self.current_page.index();
         let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
@@ -7355,6 +7385,7 @@ impl Shell {
                         field_rect,
                         &keys,
                         pressed_key.as_deref(),
+                        field_focused,
                         fonts,
                     );
                 }
@@ -7373,6 +7404,7 @@ impl Shell {
                         field_rect,
                         &keys,
                         pressed_key.as_deref(),
+                        field_focused,
                         fonts,
                     );
                 }
@@ -7391,6 +7423,7 @@ impl Shell {
                         field_rect,
                         &keys,
                         pressed_key.as_deref(),
+                        field_focused,
                         fonts,
                     );
                 }
@@ -7781,6 +7814,7 @@ impl Shell {
         }
         if action.action == "open_intent_input" {
             self.intent_input = Some(IntentInputState::default());
+            self.begin_compose_context();
             self.draw(conn, qh);
         }
     }
@@ -8023,6 +8057,7 @@ impl Shell {
             "open_pin_setup" => {
                 // Same reasoning as "open_wifi_list" above.
                 self.pin_setup = Some(PinSetupState::default());
+                self.begin_compose_context();
                 self.draw(conn, qh);
                 return;
             }
@@ -8087,6 +8122,7 @@ impl Shell {
             match intent_submit(self.entityd.is_connected(), &text) {
                 IntentSubmit::Persist => {
                     self.intent_input = None;
+                    self.end_compose_context();
                     let focused = self.viewing_entity().cloned();
                     let context = intent_context::capture_intent_context(
                         &self.selected_space_id,
@@ -8108,6 +8144,7 @@ impl Shell {
                 }
                 IntentSubmit::CloseEmpty => {
                     self.intent_input = None;
+                    self.end_compose_context();
                 }
                 IntentSubmit::KeepDraft => {}
             }
@@ -8120,6 +8157,7 @@ impl Shell {
         match action {
             INTENT_CANCEL_ACTION => {
                 self.intent_input = None;
+                self.end_compose_context();
             }
             INTENT_MODE_TOGGLE_ACTION => {
                 state.mode = state.mode.toggled();
@@ -8154,6 +8192,7 @@ impl Shell {
         match key {
             "Отмена" => {
                 self.pin_setup = None;
+                self.end_compose_context();
             }
             "⌫" => {
                 state.buffer.pop();
@@ -8164,6 +8203,7 @@ impl Shell {
                     self.settings.pin_code = Some(pin);
                     self.settings.save();
                     self.pin_setup = None;
+                    self.end_compose_context();
                 }
                 // Too short: stays open, same as before the tap --
                 // no error UI, but also no silent partial save.
@@ -8172,6 +8212,7 @@ impl Shell {
                 self.settings.pin_code = None;
                 self.settings.save();
                 self.pin_setup = None;
+                self.end_compose_context();
             }
             digit => {
                 state.buffer.push_str(digit);
@@ -8196,6 +8237,7 @@ impl Shell {
         match action {
             INTENT_CANCEL_ACTION => {
                 self.wifi_password = None;
+                self.end_compose_context();
             }
             INTENT_MODE_TOGGLE_ACTION => {
                 state.mode = state.mode.toggled();
@@ -8215,6 +8257,7 @@ impl Shell {
                 }
                 self.wifi_password = None;
                 self.wifi_list = None;
+                self.end_compose_context();
             }
             other => {
                 if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
@@ -8247,6 +8290,7 @@ impl Shell {
                         buffer: String::new(),
                         mode: KeyboardMode::Letters,
                     });
+                    self.begin_compose_context();
                 } else {
                     let ssid = network.ssid.clone();
                     wifi_connect_open(&ssid);
@@ -9136,6 +9180,7 @@ impl Shell {
             OrbAction::OpenIntent => {
                 self.orb_menu_open = false;
                 self.intent_input = Some(IntentInputState::default());
+                self.begin_compose_context();
             }
             OrbAction::OpenBluetooth => {
                 self.orb_menu_open = false;
@@ -9942,13 +9987,14 @@ mod tests {
         calibration_requested, capability_label, consent_action_at, consent_content_cards,
         consent_header, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
         diagnostic_header, diagnostic_row, effective_context_space, ensure_me_row_cache,
-        flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
-        input_idle_for_at_least, intent_action_at, intent_compose_header, intent_field_rect,
-        intent_input_field, known_surfaces, lock_attention_tap, lock_attention_view,
-        lock_device_view, lock_idle_view, lock_pin_entry_field, lock_sleep_view, lock_wake_tap,
-        me_fixture_facts, me_header, me_system_sections, next_in_cycle, next_pending_action,
-        now_action_at, now_object_tapped, object_view_action_at, object_view_content,
-        object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
+        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
+        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
+        intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
+        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
+        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
+        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_details,
+        object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
         remote_pair_content_cards, remote_pair_header, remove_context_source,
@@ -11565,6 +11611,21 @@ mod tests {
             retain_pressed_while_clock(Some(RootPage::Inbox), Some(&reduced), false),
             None
         );
+    }
+
+    #[test]
+    fn field_shows_context_focus_only_while_the_context_clock_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::Context, false);
+        assert!(field_shows_context_focus(Some(&clock)));
+        clock.advance(239);
+        assert!(field_shows_context_focus(Some(&clock)));
+        clock.advance(1);
+        assert!(!field_shows_context_focus(Some(&clock)));
+        let selection = MotionClock::one_shot(MotionToken::Selection, false);
+        assert!(!field_shows_context_focus(Some(&selection)));
+        let reduced = MotionClock::one_shot(MotionToken::Context, true);
+        assert!(!field_shows_context_focus(Some(&reduced)));
+        assert!(!field_shows_context_focus(None));
     }
 
     #[test]

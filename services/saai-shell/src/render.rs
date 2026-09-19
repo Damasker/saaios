@@ -367,13 +367,14 @@ pub fn draw_intent_input(
     field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
+    field_focused: bool,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
         paint_context_header(canvas, fonts, content, header);
-        draw_gallery_field(canvas, fonts, field, field_rect);
+        draw_gallery_field(canvas, fonts, field, field_rect, field_focused);
     }
     canvas.set_clip(None);
     paint_keyboard_keys(canvas, fonts, keys, pressed_key);
@@ -389,6 +390,7 @@ pub fn draw_wifi_password(
     field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
+    field_focused: bool,
     fonts: Option<&Fonts>,
 ) {
     draw_intent_input(
@@ -399,6 +401,7 @@ pub fn draw_wifi_password(
         field_rect,
         keys,
         pressed_key,
+        field_focused,
         fonts,
     );
 }
@@ -938,13 +941,14 @@ pub fn draw_pin_setup(
     field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
+    field_focused: bool,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
         paint_context_header(canvas, fonts, content, header);
-        draw_gallery_field(canvas, fonts, field, field_rect);
+        draw_gallery_field(canvas, fonts, field, field_rect, field_focused);
     }
     canvas.set_clip(None);
     paint_keyboard_keys(canvas, fonts, keys, pressed_key);
@@ -963,7 +967,7 @@ pub fn draw_lock_pin_entry(
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     if let Some(fonts) = fonts {
-        draw_gallery_field(canvas, fonts, field, field_rect);
+        draw_gallery_field(canvas, fonts, field, field_rect, false);
     }
     paint_keyboard_keys(canvas, fonts, keys, pressed_key);
 }
@@ -1661,7 +1665,13 @@ fn draw_gallery_button(canvas: &mut Canvas<'_>, fonts: &Fonts, button: &Button, 
     );
 }
 
-fn draw_gallery_field(canvas: &mut Canvas<'_>, fonts: &Fonts, field: &Field, rect: Rect) {
+fn draw_gallery_field(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    field: &Field,
+    rect: Rect,
+    focused: bool,
+) {
     let (label_font, label_size) = fonts.resolve(TextRole::Caption);
     draw_text(
         canvas,
@@ -1685,6 +1695,14 @@ fn draw_gallery_field(canvas: &mut Canvas<'_>, fonts: &Fonts, field: &Field, rec
         ColorRole::Surface
     };
     canvas.fill_rect(box_rect, theme_color(box_fill));
+    if focused {
+        draw_square_ring(
+            canvas,
+            box_rect,
+            physical(StrokeToken::Focus.value()).max(1),
+            theme_color(ColorRole::Focus),
+        );
+    }
     let (value_font, value_size) = fonts.resolve(TextRole::Body);
     let inset = physical(SpacingToken::Small.value());
     let (display, color): (String, ColorRole) = if field.is_empty() {
@@ -2002,6 +2020,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         fonts,
         &field,
         Rect::new(margin, rows[7], content_width, field_height),
+        false,
     );
 
     let data_row = DataRow::new("Wi-Fi", DataRowVariant::Navigation)
@@ -3725,7 +3744,7 @@ mod tests {
         let field_rect = Rect::new(49, 430, 982, 190);
         let keys = vec![(Rect::new(108, 900, 264, 240), "1".to_string())];
         draw_pin_setup(
-            canvas, content, &header, &field, field_rect, &keys, None, None,
+            canvas, content, &header, &field, field_rect, &keys, None, false, None,
         );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
@@ -3744,7 +3763,7 @@ mod tests {
         let field_rect = Rect::new(49, 1490, 982, 190);
         let keys = vec![(Rect::new(108, 1700, 96, 144), "Q".to_string())];
         draw_intent_input(
-            canvas, content, &header, &field, field_rect, &keys, None, None,
+            canvas, content, &header, &field, field_rect, &keys, None, false, None,
         );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(156, 1772), theme_color(ColorRole::Elevated));
