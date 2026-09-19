@@ -1518,6 +1518,7 @@ fn key_fingerprint(public_key: &str) -> String {
 
 const INTENT_SCREEN_ID: &str = "intent-input";
 const INTENT_HEADER_ID: &str = "intent-header";
+const INTENT_FIELD_ID: &str = "intent-field";
 const INTENT_ROWS_ID: &str = "intent-rows";
 const INTENT_CANCEL_ACTION: &str = "intent:cancel";
 const INTENT_MODE_TOGGLE_ACTION: &str = "intent:mode:toggle";
@@ -2612,56 +2613,68 @@ fn intent_key_action(ch: char) -> String {
 fn intent_view(width: u32, height: u32, mode: KeyboardMode) -> LayoutNode {
     let side = intent_side_key_width(width);
     let modifier = intent_mod_key_width();
-    let mut rows: Vec<Node> = keyboard_rows_for_mode(mode)
-        .iter()
-        .enumerate()
-        .map(|(row_index, letters)| {
-            let inset = intent_row_inset(letters, width);
-            Node::linear(
-                format!("intent-row-{row_index}"),
-                Axis::Horizontal,
-                letters
-                    .chars()
-                    .map(|ch| {
-                        Node::leaf(format!("intent-key-{ch}")).with_action(intent_key_action(ch))
-                    })
-                    .collect(),
-            )
-            .with_padding(EdgeInsets {
-                top: 0,
-                right: inset,
-                bottom: 0,
-                left: inset,
-            })
-        })
-        .collect();
-    rows.push(Node::linear(
-        "intent-controls",
-        Axis::Horizontal,
-        INTENT_CONTROLS
-            .iter()
-            .map(|control| {
-                let leaf = Node::leaf(control.id).with_action(control.action);
-                if control.action == INTENT_SPACE_ACTION {
-                    leaf.with_size(Length::Fill, Length::Fill)
-                } else if control.action == INTENT_CANCEL_ACTION
-                    || control.action == INTENT_SEND_ACTION
-                {
-                    leaf.with_size(Length::Px(side), Length::Fill)
-                } else {
-                    leaf.with_size(Length::Px(modifier), Length::Fill)
-                }
-            })
-            .collect(),
-    ));
+    let mut focus = 1u32;
+    let mut rows: Vec<Node> = Vec::new();
+    for (row_index, letters) in keyboard_rows_for_mode(mode).iter().enumerate() {
+        let inset = intent_row_inset(letters, width);
+        let mut keys = Vec::new();
+        for ch in letters.chars() {
+            keys.push(
+                Node::leaf(format!("intent-key-{ch}"))
+                    .with_action(intent_key_action(ch))
+                    .with_focus_order(focus),
+            );
+            focus += 1;
+        }
+        rows.push(
+            Node::linear(format!("intent-row-{row_index}"), Axis::Horizontal, keys).with_padding(
+                EdgeInsets {
+                    top: 0,
+                    right: inset,
+                    bottom: 0,
+                    left: inset,
+                },
+            ),
+        );
+    }
+    let mut controls = Vec::new();
+    for control in &INTENT_CONTROLS {
+        let mut leaf = Node::leaf(control.id)
+            .with_action(control.action)
+            .with_focus_order(focus);
+        focus += 1;
+        if control.action == INTENT_SPACE_ACTION {
+            leaf = leaf.with_size(Length::Fill, Length::Fill);
+        } else if control.action == INTENT_CANCEL_ACTION || control.action == INTENT_SEND_ACTION {
+            leaf = leaf.with_size(Length::Px(side), Length::Fill);
+        } else {
+            leaf = leaf.with_size(Length::Px(modifier), Length::Fill);
+        }
+        controls.push(leaf);
+    }
+    rows.push(Node::linear("intent-controls", Axis::Horizontal, controls));
     let pad = physical_unit(SpacingToken::XSmall.value());
     let keyboard = Node::linear(INTENT_ROWS_ID, Axis::Vertical, rows)
         .with_size(Length::Fill, Length::Px(intent_keyboard_height(height)))
         .with_padding(EdgeInsets::all(pad));
+    let field_height = stacked_row_rect(0, width, height).height;
+    let margin = width / 22;
+    let field = Node::linear(
+        "intent-field-row",
+        Axis::Horizontal,
+        vec![Node::leaf(INTENT_FIELD_ID).with_focus_order(0)],
+    )
+    .with_size(Length::Fill, Length::Px(field_height))
+    .with_padding(EdgeInsets {
+        top: 0,
+        right: margin,
+        bottom: 0,
+        left: margin,
+    });
     let root = Node::linear(
         INTENT_SCREEN_ID,
         Axis::Vertical,
-        vec![Node::leaf(INTENT_HEADER_ID), keyboard],
+        vec![Node::leaf(INTENT_HEADER_ID), field, keyboard],
     );
     layout(&root, Rect::new(0, 0, width, height))
 }
@@ -2693,8 +2706,11 @@ fn intent_keyboard_keys(
     mode: KeyboardMode,
 ) -> (Rect, Vec<(Rect, String)>) {
     let view = intent_view(width, height, mode);
-    let header = view.children[0].rect;
-    let keyboard_rows = &view.children[1].children;
+    let header = layout_node_by_id(&view, INTENT_HEADER_ID)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| view.children[0].rect);
+    let keyboard = layout_node_by_id(&view, INTENT_ROWS_ID).expect("intent keyboard");
+    let keyboard_rows = &keyboard.children;
     let rows = keyboard_rows_for_mode(mode);
     let mut keys = Vec::new();
     for (row_index, letters) in rows.iter().enumerate() {
@@ -2715,20 +2731,37 @@ fn intent_keyboard_keys(
     (header, keys)
 }
 
-/// ADR-161: one stacked-row card whose bottom meets the docked
-/// keyboard. Shared by Intent and Wi-Fi password. Clamped so it
-/// cannot climb into the first stacked slot (the ContextHeader band).
+/// ADR-161/162: the compose Field is the `intent-field` leaf in
+/// `intent_view`, immediately above the docked keyboard.
 fn intent_field_rect(width: u32, height: u32, mode: KeyboardMode) -> Rect {
-    let view = intent_view(width, height, mode);
-    let keyboard = view.children[1].rect;
-    let template = stacked_row_rect(0, width, height);
-    let y = keyboard.y.saturating_sub(template.height);
-    Rect::new(
-        template.x,
-        y.max(template.y),
-        template.width,
-        template.height,
-    )
+    layout_node_by_id(&intent_view(width, height, mode), INTENT_FIELD_ID)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| stacked_row_rect(0, width, height))
+}
+
+fn layout_node_by_id<'a>(node: &'a LayoutNode, id: &str) -> Option<&'a LayoutNode> {
+    if node.id == id {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| layout_node_by_id(child, id))
+}
+
+fn layout_focus_stops(node: &LayoutNode) -> Vec<(u32, String)> {
+    let mut stops = Vec::new();
+    collect_focus_stops(node, &mut stops);
+    stops.sort_by_key(|(order, _)| *order);
+    stops
+}
+
+fn collect_focus_stops(node: &LayoutNode, stops: &mut Vec<(u32, String)>) {
+    if let Some(order) = node.focus_order {
+        stops.push((order, node.id.clone()));
+    }
+    for child in &node.children {
+        collect_focus_stops(child, stops);
+    }
 }
 
 #[cfg(test)]
@@ -10353,13 +10386,24 @@ mod tests {
         let min_touch = super::physical_unit(MIN_TOUCH_TARGET);
         for (width, height) in [(1080, 2400), (2400, 1080)] {
             let view = super::intent_view(width, height, KeyboardMode::Letters);
-            let header = view.children[0].rect;
-            let keyboard = view.children[1].rect;
+            let header = super::layout_node_by_id(&view, super::INTENT_HEADER_ID)
+                .expect("intent header")
+                .rect;
+            let keyboard = super::layout_node_by_id(&view, super::INTENT_ROWS_ID)
+                .expect("intent keyboard")
+                .rect;
+            let field = super::layout_node_by_id(&view, super::INTENT_FIELD_ID)
+                .expect("intent field")
+                .rect;
             assert!(
                 header.intersection(keyboard).is_none(),
                 "keyboard overlaps header at {width}x{height}"
             );
-            assert_eq!(header.y + header.height, keyboard.y);
+            assert!(
+                field.intersection(keyboard).is_none(),
+                "keyboard overlaps field at {width}x{height}"
+            );
+            assert_eq!(field.y + field.height, keyboard.y);
             let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
             assert!(!keys.is_empty());
             for (rect, label) in &keys {
@@ -10638,7 +10682,9 @@ mod tests {
     fn intent_field_rect_sits_on_the_keyboard_and_misses_keys() {
         for (width, height) in [(1080, 2400), (2400, 1080)] {
             let view = super::intent_view(width, height, KeyboardMode::Letters);
-            let keyboard = view.children[1].rect;
+            let keyboard = super::layout_node_by_id(&view, super::INTENT_ROWS_ID)
+                .expect("intent keyboard")
+                .rect;
             let field = intent_field_rect(width, height, KeyboardMode::Letters);
             assert!(
                 field.intersection(keyboard).is_none(),
@@ -10653,6 +10699,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn intent_focus_order_starts_at_the_field_and_ends_at_send() {
+        let view = super::intent_view(1080, 2400, KeyboardMode::Letters);
+        let stops = super::layout_focus_stops(&view);
+        assert_eq!(
+            stops.first().map(|(_, id)| id.as_str()),
+            Some(super::INTENT_FIELD_ID)
+        );
+        assert_eq!(stops.last().map(|(_, id)| id.as_str()), Some("intent-send"));
+        let ids: Vec<&str> = stops.iter().map(|(_, id)| id.as_str()).collect();
+        let cancel = ids.iter().position(|id| *id == "intent-cancel").unwrap();
+        let send = ids.iter().position(|id| *id == "intent-send").unwrap();
+        let q = ids.iter().position(|id| *id == "intent-key-q").unwrap();
+        assert!(q > 0);
+        assert!(cancel > q);
+        assert!(send > cancel);
+        assert!(!ids.iter().any(|id| *id == super::INTENT_HEADER_ID));
     }
 
     #[test]
@@ -11085,7 +11150,9 @@ mod tests {
         let width = 1080;
         let height = 2400;
         let view = super::intent_view(width, height, KeyboardMode::Letters);
-        let keyboard = view.children[1].rect;
+        let keyboard = super::layout_node_by_id(&view, super::INTENT_ROWS_ID)
+            .expect("intent keyboard")
+            .rect;
         assert!(keyboard.y >= height / 2);
         assert!(keyboard.height <= height / 2);
         let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);

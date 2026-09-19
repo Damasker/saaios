@@ -1064,10 +1064,12 @@ big-bang rewrite.
   order later.
 - [x] Scroll DevSurface facts above docked «Назад». ADR-160:
   `scrolled_row_rect` + drag. 7-tap, swipe; leave with Назад.
-  Flashed `bbde1ab2…`. Keyboard avoidance and focus order later.
+  Flashed `bbde1ab2…`.
 - [x] Park compose Field above docked QWERTY. ADR-161: Intent/Wi-Fi
   `ContextHeader` + `intent_field_rect`. Do not send. Leave Отмена.
   Flashed `3d289b66…`.
+- [x] Put compose Field in the intent layout tree with `focus_order`.
+  ADR-162. Do not send. Leave Отмена. Flashed `6d465506…`.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.
@@ -1221,8 +1223,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (keyboard avoidance / scroll /
-back / focus). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07**: verify keyboard/scroll/back/focus/interrupted on
+every frame variant, then remove migrated primitives. Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
