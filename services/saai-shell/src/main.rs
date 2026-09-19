@@ -41,7 +41,8 @@
 //! - **Haptic feedback on unlock.** drm-splash opened `/dev/input/haptic`
 //!   directly. Unlock still has no tick. Keyboard `KeyPress` goes
 //!   through `haptic_intent_for` (ADR-171). Main-surface commits log
-//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173).
+//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173) and
+//!   `/run/saaios/shell-frame.trace` (ADR-175).
 //!   Reduced motion drops in-flight clocks on the same tap (ADR-174).
 //!   Displayd still has no haptic protocol; this slice does not flash it.
 //!
@@ -462,13 +463,14 @@ use saai_object_actions::{
     ObjectActionRegistry,
 };
 use saai_ui_core::{
-    frame_reason, layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor,
-    ContextHeader, DataRow, DataRowVariant, DecisionOverlay, EdgeInsets, EventRow, Field,
-    FieldKind, FramePace, FrameSample, IntentSummary, LayoutNode, Length, LogicalUnit, MotionClock,
-    MotionCue, MotionToken, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
-    SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, SurfacePattern, SurfaceScale, SystemSection, SystemSectionRow, SystemStatus,
-    TaskSummary, TrustedClientRow, UniversalState, WifiRow, MIN_TOUCH_TARGET,
+    frame_reason, frame_surface, layout, AgentSummary, Axis, BluetoothRow, CapabilityRow,
+    ContextColor, ContextHeader, DataRow, DataRowVariant, DecisionOverlay, EdgeInsets, EventRow,
+    Field, FieldKind, FramePace, FrameSample, FrameSurface, IntentSummary, LayoutNode, Length,
+    LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node, ObjectSummary, OrbHost,
+    Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale, SystemSection,
+    SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow,
+    MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -665,9 +667,15 @@ const DEV_NO_LOCK_MARKER: &str = "/run/saaios/dev-no-lock";
 /// ADR-172: last main-surface commit sample. Missing `/run` is a
 /// silent no-op so host tests do not fail.
 const FRAME_PACE_PATH: &str = "/run/saaios/shell-frame.last";
+/// ADR-175: chronological ring dump of the same samples.
+const FRAME_TRACE_PATH: &str = "/run/saaios/shell-frame.trace";
 
 fn write_frame_pace_last(line: &str) {
     let _ = std::fs::write(FRAME_PACE_PATH, format!("{line}\n"));
+}
+
+fn write_frame_pace_trace(trace: &str) {
+    let _ = std::fs::write(FRAME_TRACE_PATH, trace);
 }
 
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
@@ -5835,7 +5843,7 @@ struct Shell {
     activity_clock: Option<MotionClock>,
     motion_last_tick: Instant,
     /// ADR-172: last 32 main-surface commits. Written to
-    /// `FRAME_PACE_PATH` after each commit.
+    /// `FRAME_PACE_PATH` / `FRAME_TRACE_PATH` after each commit.
     frame_pace: FramePace,
     /// Instant of the latest `down()`. Taken on the next main commit
     /// so later Selection holds log `input_ms=-`.
@@ -6953,7 +6961,8 @@ impl Shell {
     }
 
     /// ADR-172: stamp one commit into `FramePace` and refresh the last
-    /// line. `requested_frame` is the pre-paint `clocks_need_frame`.
+    /// line plus the chronological trace. `requested_frame` is the
+    /// pre-paint `clocks_need_frame`.
     fn finish_frame(&mut self, produce_ms: u32, requested_frame: bool, scrolled: bool) {
         let input_to_commit_ms = self.frame_input_at.take().map(|at| {
             u32::try_from(Instant::now().saturating_duration_since(at).as_millis())
@@ -6968,10 +6977,34 @@ impl Shell {
             dropped: 0,
             coalesced: 0,
             reason: frame_reason(scrolled, requested_frame),
+            surface: self.current_frame_surface(scrolled),
         });
         if let Some(line) = self.frame_pace.line() {
             write_frame_pace_last(&line);
         }
+        write_frame_pace_trace(&self.frame_pace.trace());
+    }
+
+    /// ADR-175: classify the chrome that produced this commit.
+    fn current_frame_surface(&self, scrolled: bool) -> FrameSurface {
+        let overlay = self.pending_consent.is_some()
+            || self.pending_pair_request.is_some()
+            || self.viewing_entity_id.is_some();
+        let keyboard =
+            self.intent_input.is_some() || self.wifi_password.is_some() || self.pin_setup.is_some();
+        let list = self.wifi_list.is_some()
+            || self.bluetooth_list_open
+            || self.trusted_clients_open
+            || self.dev_surface_open
+            || self.apps_open;
+        let orb = !scrolled && self.activity_clock.is_some_and(MotionClock::needs_frame);
+        let tab = match self.current_page {
+            RootPage::Now => FrameSurface::Now,
+            RootPage::Inbox => FrameSurface::Inbox,
+            RootPage::Spaces => FrameSurface::Spaces,
+            RootPage::Me => FrameSurface::Me,
+        };
+        frame_surface(self.locked, overlay, keyboard, list, orb, tab)
     }
 
     /// Present at most one coalesced "Я" scroll frame after a complete
@@ -11866,6 +11899,35 @@ mod tests {
         assert_eq!(frame_reason(true, true), FrameReason::Scroll);
         assert_eq!(frame_reason(false, true), FrameReason::Motion);
         assert_eq!(frame_reason(false, false), FrameReason::Input);
+    }
+
+    #[test]
+    fn frame_surface_names_lock_overlay_keyboard_list_orb_then_tab() {
+        use saai_ui_core::{frame_surface, FrameSurface};
+        assert_eq!(
+            frame_surface(true, false, false, false, false, FrameSurface::Now),
+            FrameSurface::Lock
+        );
+        assert_eq!(
+            frame_surface(false, true, false, false, false, FrameSurface::Now),
+            FrameSurface::Overlay
+        );
+        assert_eq!(
+            frame_surface(false, false, true, false, false, FrameSurface::Now),
+            FrameSurface::Keyboard
+        );
+        assert_eq!(
+            frame_surface(false, false, false, true, false, FrameSurface::Now),
+            FrameSurface::List
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, true, FrameSurface::Now),
+            FrameSurface::Orb
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, false, FrameSurface::Spaces),
+            FrameSurface::Spaces
+        );
     }
 
     #[test]

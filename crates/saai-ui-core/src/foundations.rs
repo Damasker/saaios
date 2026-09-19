@@ -452,6 +452,36 @@ impl FrameReason {
     }
 }
 
+/// Visible chrome that produced a main-surface commit (ADR-175).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameSurface {
+    Now,
+    Inbox,
+    Spaces,
+    Me,
+    List,
+    Keyboard,
+    Overlay,
+    Orb,
+    Lock,
+}
+
+impl FrameSurface {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Now => "now",
+            Self::Inbox => "inbox",
+            Self::Spaces => "spaces",
+            Self::Me => "me",
+            Self::List => "list",
+            Self::Keyboard => "keyboard",
+            Self::Overlay => "overlay",
+            Self::Orb => "orb",
+            Self::Lock => "lock",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameSample {
     pub produce_ms: u32,
@@ -461,6 +491,7 @@ pub struct FrameSample {
     pub dropped: u32,
     pub coalesced: u32,
     pub reason: FrameReason,
+    pub surface: FrameSurface,
 }
 
 /// Ring of recent main-surface commits. Elapsed times are injected.
@@ -518,6 +549,41 @@ impl FramePace {
         self.samples[index]
     }
 
+    /// Oldest to newest. Wrap-around starts at `next` once the ring is full.
+    pub fn chronological(&self) -> Vec<FrameSample> {
+        let start = if self.count < FRAME_PACE_CAP {
+            0
+        } else {
+            self.next
+        };
+        (0..self.count)
+            .filter_map(|i| self.samples[(start + i) % FRAME_PACE_CAP])
+            .collect()
+    }
+
+    /// ADR-175: one line per sample, oldest first. Empty ring is empty.
+    pub fn trace(&self) -> String {
+        let mut out = String::new();
+        for sample in self.chronological() {
+            let input = sample
+                .input_to_commit_ms
+                .map(|ms| ms.to_string())
+                .unwrap_or_else(|| "-".into());
+            out.push_str(&format!(
+                "surface={} reason={} produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={}\n",
+                sample.surface.as_str(),
+                sample.reason.as_str(),
+                sample.produce_ms,
+                input,
+                u8::from(sample.requested_frame),
+                sample.pending_depth,
+                sample.dropped,
+                sample.coalesced,
+            ));
+        }
+        out
+    }
+
     pub fn p95_produce_ms(&self) -> Option<u32> {
         self.p95_produce_ms_matching(|_| true)
     }
@@ -566,7 +632,7 @@ impl FramePace {
             None => "-",
         };
         Some(format!(
-            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} p95_scroll={} p95_ok={}",
+            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} p95_scroll={} p95_ok={}",
             sample.produce_ms,
             input,
             u8::from(sample.requested_frame),
@@ -574,6 +640,7 @@ impl FramePace {
             sample.dropped,
             sample.coalesced,
             sample.reason.as_str(),
+            sample.surface.as_str(),
             p95_scroll,
             p95_ok,
         ))
@@ -587,6 +654,30 @@ pub fn frame_reason(scroll: bool, motion: bool) -> FrameReason {
         FrameReason::Motion
     } else {
         FrameReason::Input
+    }
+}
+
+/// ADR-175: lock, overlay, keyboard, list, then Orb activity, then the tab.
+pub fn frame_surface(
+    locked: bool,
+    overlay: bool,
+    keyboard: bool,
+    list: bool,
+    orb: bool,
+    tab: FrameSurface,
+) -> FrameSurface {
+    if locked {
+        FrameSurface::Lock
+    } else if overlay {
+        FrameSurface::Overlay
+    } else if keyboard {
+        FrameSurface::Keyboard
+    } else if list {
+        FrameSurface::List
+    } else if orb {
+        FrameSurface::Orb
+    } else {
+        tab
     }
 }
 
@@ -737,54 +828,42 @@ mod tests {
         assert!(!MotionClock::one_shot(MotionToken::Context, false).pulse_visible());
     }
 
+    fn sample(produce_ms: u32, reason: FrameReason, surface: FrameSurface) -> FrameSample {
+        FrameSample {
+            produce_ms,
+            input_to_commit_ms: None,
+            requested_frame: false,
+            pending_depth: 0,
+            dropped: 0,
+            coalesced: 0,
+            reason,
+            surface,
+        }
+    }
+
     #[test]
     fn frame_pace_p95_and_last_line_use_injected_samples() {
         let mut pace = FramePace::new();
         assert!(pace.last().is_none());
         assert!(pace.p95_produce_ms().is_none());
         for _ in 0..18 {
-            pace.record(FrameSample {
-                produce_ms: 10,
-                input_to_commit_ms: Some(20),
-                requested_frame: false,
-                pending_depth: 1,
-                dropped: 0,
-                coalesced: 0,
-                reason: FrameReason::Input,
-            });
+            let mut input = sample(10, FrameReason::Input, FrameSurface::Now);
+            input.input_to_commit_ms = Some(20);
+            input.pending_depth = 1;
+            pace.record(input);
         }
-        pace.record(FrameSample {
-            produce_ms: 50,
-            input_to_commit_ms: Some(20),
-            requested_frame: true,
-            pending_depth: 1,
-            dropped: 0,
-            coalesced: 0,
-            reason: FrameReason::Input,
-        });
-        pace.record(FrameSample {
-            produce_ms: 50,
-            input_to_commit_ms: Some(20),
-            requested_frame: true,
-            pending_depth: 1,
-            dropped: 0,
-            coalesced: 0,
-            reason: FrameReason::Input,
-        });
+        let mut high = sample(50, FrameReason::Input, FrameSurface::Now);
+        high.input_to_commit_ms = Some(20);
+        high.requested_frame = true;
+        high.pending_depth = 1;
+        pace.record(high);
+        pace.record(high);
         assert_eq!(pace.last().map(|sample| sample.produce_ms), Some(50));
         assert_eq!(pace.p95_produce_ms(), Some(50));
         pace.note_dropped();
         pace.note_coalesced();
         pace.note_coalesced();
-        pace.record(FrameSample {
-            produce_ms: 8,
-            input_to_commit_ms: None,
-            requested_frame: false,
-            pending_depth: 0,
-            dropped: 0,
-            coalesced: 0,
-            reason: FrameReason::Motion,
-        });
+        pace.record(sample(8, FrameReason::Motion, FrameSurface::Orb));
         let line = pace.line().expect("recorded");
         assert!(line.contains("produce_ms=8"));
         assert!(line.contains("input_ms=-"));
@@ -792,6 +871,7 @@ mod tests {
         assert!(line.contains("dropped=1"));
         assert!(line.contains("coalesced=2"));
         assert!(line.contains("reason=motion"));
+        assert!(line.contains("surface=orb"));
         assert!(line.contains("p95_scroll=-"));
         assert!(line.contains("p95_ok=-"));
         assert_eq!(frame_reason(true, true), FrameReason::Scroll);
@@ -800,15 +880,9 @@ mod tests {
     }
 
     fn record_scroll(pace: &mut FramePace, produce_ms: u32) {
-        pace.record(FrameSample {
-            produce_ms,
-            input_to_commit_ms: None,
-            requested_frame: false,
-            pending_depth: 1,
-            dropped: 0,
-            coalesced: 0,
-            reason: FrameReason::Scroll,
-        });
+        let mut scroll = sample(produce_ms, FrameReason::Scroll, FrameSurface::Me);
+        scroll.pending_depth = 1;
+        pace.record(scroll);
     }
 
     #[test]
@@ -816,15 +890,9 @@ mod tests {
         let mut pace = FramePace::new();
         assert_eq!(pace.scroll_p95_within_limit(), None);
         for _ in 0..18 {
-            pace.record(FrameSample {
-                produce_ms: 80,
-                input_to_commit_ms: Some(20),
-                requested_frame: false,
-                pending_depth: 0,
-                dropped: 0,
-                coalesced: 0,
-                reason: FrameReason::Input,
-            });
+            let mut input = sample(80, FrameReason::Input, FrameSurface::Inbox);
+            input.input_to_commit_ms = Some(20);
+            pace.record(input);
             record_scroll(&mut pace, 10);
         }
         record_scroll(&mut pace, 40);
@@ -832,6 +900,7 @@ mod tests {
         assert_eq!(pace.p95_produce_ms_for(FrameReason::Scroll), Some(40));
         assert_eq!(pace.scroll_p95_within_limit(), Some(true));
         assert!(pace.line().expect("recorded").contains("p95_ok=1"));
+        assert!(pace.line().expect("recorded").contains("surface=me"));
 
         let mut slow = FramePace::new();
         for _ in 0..18 {
@@ -843,6 +912,58 @@ mod tests {
         assert_eq!(slow.scroll_p95_within_limit(), Some(false));
         assert!(slow.line().expect("recorded").contains("p95_ok=0"));
         assert_eq!(FRAME_PACE_P95_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn frame_surface_prefers_lock_then_overlay_keyboard_list_orb_then_tab() {
+        assert_eq!(
+            frame_surface(true, true, true, true, true, FrameSurface::Me),
+            FrameSurface::Lock
+        );
+        assert_eq!(
+            frame_surface(false, true, true, true, true, FrameSurface::Me),
+            FrameSurface::Overlay
+        );
+        assert_eq!(
+            frame_surface(false, false, true, true, true, FrameSurface::Me),
+            FrameSurface::Keyboard
+        );
+        assert_eq!(
+            frame_surface(false, false, false, true, true, FrameSurface::Me),
+            FrameSurface::List
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, true, FrameSurface::Now),
+            FrameSurface::Orb
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, false, FrameSurface::Inbox),
+            FrameSurface::Inbox
+        );
+    }
+
+    #[test]
+    fn frame_pace_trace_is_chronological_and_names_each_surface() {
+        let mut pace = FramePace::new();
+        assert!(pace.trace().is_empty());
+        pace.record(sample(12, FrameReason::Scroll, FrameSurface::Me));
+        pace.record(sample(6, FrameReason::Input, FrameSurface::Inbox));
+        pace.record(sample(7, FrameReason::Input, FrameSurface::List));
+        pace.record(sample(9, FrameReason::Motion, FrameSurface::Keyboard));
+        pace.record(sample(5, FrameReason::Motion, FrameSurface::Overlay));
+        pace.record(sample(4, FrameReason::Motion, FrameSurface::Orb));
+        let trace = pace.trace();
+        let me = trace.find("surface=me ").expect("me");
+        let inbox = trace.find("surface=inbox ").expect("inbox");
+        let list = trace.find("surface=list ").expect("list");
+        let keyboard = trace.find("surface=keyboard ").expect("keyboard");
+        let overlay = trace.find("surface=overlay ").expect("overlay");
+        let orb = trace.find("surface=orb ").expect("orb");
+        assert!(
+            me < inbox && inbox < list && list < keyboard && keyboard < overlay && overlay < orb
+        );
+        assert!(trace.contains("reason=scroll produce_ms=12"));
+        assert!(trace.contains("reason=input produce_ms=6"));
     }
 
     #[test]

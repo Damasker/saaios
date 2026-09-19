@@ -390,6 +390,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   The shell writes the last commit line to `/run/saaios/shell-frame.last`.
   ADR-173 adds `p95_scroll` / `p95_ok` for scroll samples against 50 ms.
   The live shell does not abort when over the limit.
+  ADR-175 tags each sample with `FrameSurface` and dumps the ring to
+  `/run/saaios/shell-frame.trace`.
 
 ### 7.6 `TaskSummary`
 

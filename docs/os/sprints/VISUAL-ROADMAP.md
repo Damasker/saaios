@@ -1105,8 +1105,10 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through immediate reduced motion
-(ADR-167–174) on panther. Remaining: performance traces.
+**Status:** In progress — MotionClock through FramePace traces
+(ADR-167–175) on panther. Remaining: token durations only where they
+clarify state, first-visible touch, idle redraw, SHM/Vulkan unless
+measured.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1126,8 +1128,10 @@ into a measured regression contract.
   timestamps stay omitted.
 - [ ] Preserve software-render staging and Vulkan composition behavior unless a
   separately measured change is accepted.
-- [ ] Add performance traces for `Система` drag, fast tab switching, lists,
-  keyboard, overlays, and Orb activity.
+- [x] Add performance traces for `Система` drag, fast tab switching, lists,
+  keyboard, overlays, and Orb activity (`FrameSurface` +
+  `/run/saaios/shell-frame.trace`, ADR-175). Overlay/Orb without a live
+  Running task stay host-injected; panther covers me/tabs/list/keyboard.
 - [x] Set CI/device thresholds from the accepted baseline (scroll p95 ≤ 50 ms,
   ADR-173). Hardware variance is the live `/run/saaios/shell-frame.last`
   `p95_scroll` line; the shell does not abort.
@@ -1238,7 +1242,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: performance traces for Система drag, fast tabs,
-lists, keyboard, overlays, and Orb. ADR-167–174 are on panther.
-Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Continue **VUI-08**: 80–150 ms micro / 150–220 panel / 200–300 context
+only where they clarify state; first visible touch; idle does not
+redraw without a reason. Preserve SHM/Vulkan unless measured.
+ADR-167–175 are on panther. Space detail still deferred. MEM-08 stays
+omitted until a shell-legal memory read exists.
