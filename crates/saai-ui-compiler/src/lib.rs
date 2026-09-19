@@ -1,4 +1,13 @@
 //! Build-time parser for the versioned `.sui` format (ADR-017).
+//!
+//! ADR-180 names the `.sui` v2 vocabulary. `compile()` still accepts
+//! only `sui 1`.
+
+mod vocabulary;
+
+pub use vocabulary::{
+    sui_v2_composites, sui_v2_deferred, sui_v2_primitives, sui_v2_privileged, sui_v2_surfaces,
+};
 
 use std::fmt;
 
@@ -392,6 +401,17 @@ mod tests {
     fn rejects_unknown_version() {
         let error = compile(&VALID.replace("sui 1", "sui 2")).unwrap_err();
         assert!(error.to_string().contains("unsupported SUI version 2"));
+    }
+
+    #[test]
+    fn production_root_sui_is_still_version_one() {
+        let screen = compile(include_str!("../../../services/saai-shell/ui/root.sui")).unwrap();
+        assert_eq!(screen.id, "root");
+        let labels: Vec<&str> = screen.tabs.iter().map(|tab| tab.label.as_str()).collect();
+        assert_eq!(labels, ["Сейчас", "Входящие", "Пространства", "Система"]);
+        assert_eq!(screen.content_actions.len(), 2);
+        assert_eq!(screen.content_actions[0].action, "inspect_selected_entity");
+        assert_eq!(screen.content_actions[1].action, "open_intent_input");
     }
 
     #[test]

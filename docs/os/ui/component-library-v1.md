@@ -8,8 +8,9 @@ Delivery source: [Visual System roadmap](../sprints/VISUAL-ROADMAP.md)
 
 This document is the reviewed design boundary for the first reusable SaaiOS
 components. It defines meaning and behavior before public Rust or `.sui` APIs
-are made stable. It is not a gallery of decoration and it does not move shell
-business logic into the library.
+are made stable. ADR-180 names the `.sui` v2 vocabulary from these contracts;
+`sui 1` is still the only compiled document. It is not a gallery of decoration
+and it does not move shell business logic into the library.
 
 ## 1. Reference surface and coordinate model
 
@@ -399,6 +400,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   ADR-178 names the attached buffer `backend=dmabuf` or `backend=shm`
   without changing either path. ADR-179 closes VUI-08 haptics on that
   same KeyPress map: rate-limited, silent for tabs and Orb.
+  ADR-180 lists the `.sui` v2 component/surface vocabulary; it does not
+  compile `sui 2`.
 
 ### 7.6 `TaskSummary`
 

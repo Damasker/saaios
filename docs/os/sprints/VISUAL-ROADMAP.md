@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180 vocabulary; `sui 1` only) |
 
 ---
 
@@ -1160,7 +1160,8 @@ component state remains fully usable.
 
 ## VUI-09 — `.sui` v2, public library, cleanup, and release gate
 
-**Status:** Backlog
+**Status:** In progress — `.sui` v2 vocabulary (ADR-180). Grammar,
+public subset, and cleanup remain.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1169,7 +1170,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 
 ### Tasks
 
-- [ ] Write the `.sui` v2 ADR from the proven screen/component vocabulary.
+- [x] Write the `.sui` v2 ADR from the proven screen/component vocabulary
+  (ADR-180; `sui 1` remains the only compiled document).
 - [ ] Add versioned semantic roles, token references, component composition,
   safe insets, list/scroll behavior, localization, focus, and accessibility
   metadata to the schema/compiler.
@@ -1247,7 +1249,6 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-08 is closed on panther (ADR-167–179). Next is **VUI-09** backlog
-(`.sui` v2 / public library). Do not start it until asked. Space
-detail still deferred. MEM-08 stays omitted until a shell-legal
-memory read exists.
+Continue **VUI-09**: versioned `.sui` v2 grammar from the ADR-180
+vocabulary. Do not parse `sui 2` until that ADR. Space detail still
+deferred. MEM-08 stays omitted until a shell-legal memory read exists.
