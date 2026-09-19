@@ -359,6 +359,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   when present)/disabled state independently; `BottomNavigation` itself
   does not flatten them into one combined string, the same never-flatten
   rule every other composite in this document follows.
+- ADR-168: `pressed` holds `ColorRole::Pressed` for `MotionToken::
+  Selection` after release unless reduced motion. Size does not change.
 
 ### 7.5 `OrbHost`
 

@@ -2708,13 +2708,13 @@ fn committed_action(down: Option<&str>, up: Option<&str>) -> Option<String> {
     }
 }
 
-/// ADR-167: after release, keep the pressed key only while the micro
-/// clock still needs a frame. Finger-down always wins.
-fn retain_pressed_key_for_micro_feedback(
-    pressed: Option<String>,
+/// ADR-167/168: after release, keep the pressed key or tab only while
+/// the in-flight clock still needs a frame. Finger-down always wins.
+fn retain_pressed_while_clock<T>(
+    pressed: Option<T>,
     clock: Option<&MotionClock>,
     finger_down: bool,
-) -> Option<String> {
+) -> Option<T> {
     if finger_down || clock.is_some_and(|clock| clock.needs_frame()) {
         pressed
     } else {
@@ -5548,6 +5548,7 @@ fn main() {
         last_touch_pos: (0.0, 0.0),
         tab_touch_pending: false,
         pressed_tab: None,
+        tab_finger_down: false,
         pressed_key: None,
         key_finger_down: false,
         touch_down_action: None,
@@ -5743,9 +5744,12 @@ struct Shell {
     /// through the tab bar doesn't switch pages by accident).
     tab_touch_pending: bool,
     /// Tab currently under a live finger -- feeds `NavigationItem::
-    /// pressed`. Cleared on up/cancel/sleep-wake. `None` when the
-    /// finger is not on a tab.
+    /// pressed`. After up, ADR-168 keeps it until `MotionClock`
+    /// finishes `Selection`, unless reduced motion. `None` when the
+    /// finger is not on a tab and the clock does not need a frame.
     pressed_tab: Option<RootPage>,
+    /// Finger is still down on a tab.
+    tab_finger_down: bool,
     /// Keyboard key under a live finger (ADR-151). Drawn as
     /// `ColorRole::Pressed`. After up, ADR-167 keeps it until
     /// `MotionClock` finishes `MicroFeedback`, unless reduced motion.
@@ -6254,6 +6258,7 @@ impl TouchHandler for Shell {
             self.unlock_pending = false;
             self.tab_touch_pending = false;
             self.pressed_tab = None;
+            self.tab_finger_down = false;
             self.pressed_key = None;
             self.key_finger_down = false;
             self.motion_clock = None;
@@ -6317,12 +6322,15 @@ impl TouchHandler for Shell {
         let was_me_drag = me_drag.is_some_and(|(start_y, _)| {
             (self.last_touch_pos.1 - start_y).abs() > ME_DRAG_TAP_SLOP_PX
         });
-        let had_pressed_tab = self.pressed_tab.take().is_some();
-        let had_pressed_key = self.pressed_key.is_some();
+        self.tab_finger_down = false;
         self.key_finger_down = false;
-        if !self.motion_clock.is_some_and(MotionClock::needs_frame) {
-            self.pressed_key = None;
-        }
+        let clock = self.motion_clock;
+        let had_pressed_tab = self.pressed_tab.is_some();
+        let had_pressed_key = self.pressed_key.is_some();
+        self.pressed_tab =
+            retain_pressed_while_clock(self.pressed_tab.take(), clock.as_ref(), false);
+        self.pressed_key =
+            retain_pressed_while_clock(self.pressed_key.take(), clock.as_ref(), false);
         let down_action = self.touch_down_action.take();
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
@@ -6758,6 +6766,7 @@ impl TouchHandler for Shell {
         self.me_row_cache = None;
         self.touch_down_action = None;
         self.key_finger_down = false;
+        self.tab_finger_down = false;
         self.motion_clock = None;
         let had_pressed = self.pressed_tab.take().is_some() || self.pressed_key.take().is_some();
         if had_pressed {
@@ -6789,11 +6798,10 @@ impl Shell {
         clock.advance(dt_ms);
         if !clock.needs_frame() {
             self.motion_clock = None;
-            self.pressed_key = retain_pressed_key_for_micro_feedback(
-                self.pressed_key.take(),
-                None,
-                self.key_finger_down,
-            );
+            self.pressed_key =
+                retain_pressed_while_clock(self.pressed_key.take(), None, self.key_finger_down);
+            self.pressed_tab =
+                retain_pressed_while_clock(self.pressed_tab.take(), None, self.tab_finger_down);
         }
         if self.locked {
             self.present_lock_pin_entry(qh);
@@ -7829,10 +7837,23 @@ impl Shell {
             self.width,
             self.height,
         );
-        if next != self.pressed_tab {
-            self.pressed_tab = next;
-            self.draw(conn, qh);
+        if next == self.pressed_tab {
+            return;
         }
+        let tick = next.is_some();
+        self.pressed_tab = next;
+        self.tab_finger_down = tick;
+        if tick {
+            if !self.settings.reduced_motion {
+                self.motion_clock = Some(MotionClock::one_shot(MotionToken::Selection, false));
+                self.motion_last_tick = Instant::now();
+            } else {
+                self.motion_clock = None;
+            }
+        } else {
+            self.motion_clock = None;
+        }
+        self.draw(conn, qh);
     }
 
     fn live_keyboard_keys(&self) -> Vec<(Rect, String)> {
@@ -9931,7 +9952,7 @@ mod tests {
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
         remote_pair_content_cards, remote_pair_header, remove_context_source,
-        retain_pressed_key_for_micro_feedback, space_color, space_color_entity, space_display_name,
+        retain_pressed_while_clock, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
         space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
         stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect, tab_at,
@@ -11499,21 +11520,49 @@ mod tests {
     fn pressed_key_holds_after_release_only_while_the_micro_clock_needs_a_frame() {
         let mut clock = MotionClock::one_shot(MotionToken::MicroFeedback, false);
         assert_eq!(
-            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&clock), false).as_deref(),
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&clock), false).as_deref(),
             Some("Q")
         );
         clock.advance(120);
         assert_eq!(
-            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&clock), false),
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&clock), false),
             None
         );
         assert_eq!(
-            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&clock), true).as_deref(),
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&clock), true).as_deref(),
             Some("Q")
         );
         let reduced = MotionClock::one_shot(MotionToken::MicroFeedback, true);
         assert_eq!(
-            retain_pressed_key_for_micro_feedback(Some("Q".into()), Some(&reduced), false),
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&reduced), false),
+            None
+        );
+    }
+
+    #[test]
+    fn pressed_tab_holds_after_release_only_while_the_selection_clock_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::Selection, false);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), false),
+            Some(RootPage::Inbox)
+        );
+        clock.advance(179);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), false),
+            Some(RootPage::Inbox)
+        );
+        clock.advance(1);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), false),
+            None
+        );
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), true),
+            Some(RootPage::Inbox)
+        );
+        let reduced = MotionClock::one_shot(MotionToken::Selection, true);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&reduced), false),
             None
         );
     }
