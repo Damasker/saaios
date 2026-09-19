@@ -114,7 +114,7 @@ contains:
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
-| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–170 on panther) |
+| VUI-08 | Motion, haptics, and measured frame pacing | In progress (ADR-167–171 on panther) |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
 
 ---
@@ -1105,9 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock, keyboard micro hold, tab Selection,
-compose Field Focus, and Orb ActivityPulse (ADR-167–170) on panther.
-Haptics policy and CI thresholds remain.
+**Status:** In progress — MotionClock through haptic policy
+(ADR-167–171) on panther. Frame-pacing CI thresholds remain.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1120,7 +1119,7 @@ into a measured regression contract.
 - [ ] Implement 80–150 ms micro, 150–220 ms panel, and 200–300 ms context
   transitions only where they clarify state.
 - [ ] Add reduced-motion behavior for every animated component.
-- [ ] Centralize haptic intents; map components to policy instead of direct motor
+- [x] Centralize haptic intents; map components to policy instead of direct motor
   control.
 - [ ] Instrument input-to-feedback, render production, submission, presentation,
   dropped/coalesced frames, and pending-work depth.
@@ -1237,6 +1236,6 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: haptic policy, frame-pacing instrumentation.
-ADR-167–170 are on panther. Space detail still deferred. MEM-08 stays
-omitted until a shell-legal memory read exists.
+Continue **VUI-08**: frame-pacing instrumentation. ADR-167–171 are on
+panther. Space detail still deferred. MEM-08 stays omitted until a
+shell-legal memory read exists.

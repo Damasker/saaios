@@ -232,7 +232,8 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   while that clock needs a frame, unless reduced motion. Lock PIN
   stays without it. Size does not change.
 - Keyboard keys (ADR-151): pressed fill is `ColorRole::Pressed` while
-  the finger is down; one `KeyTick` haptic on down. ADR-167 keeps
+  the finger is down; one `KeyTick` haptic on down if
+  `haptics_enabled` (ADR-171). Tabs and Orb do not tick. ADR-167 keeps
   `Pressed` for `MotionToken::MicroFeedback` after release unless
   reduced motion. Release still emits the key. Size does not change.
 

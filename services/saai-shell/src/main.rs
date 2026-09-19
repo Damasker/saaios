@@ -39,10 +39,9 @@
 //!   surface indefinitely instead of the phone-realistic
 //!   dim-then-blank sequence.
 //! - **Haptic feedback on unlock.** drm-splash opened `/dev/input/haptic`
-//!   directly. Unlock still has no tick. ADR-151 keyboard keys request
-//!   `HapticIntent::KeyTick` through `HapticMotor` (same device, same
-//!   15 ms pulse). Displayd still has no haptic protocol; VUI-08 may
-//!   move the write.
+//!   directly. Unlock still has no tick. Keyboard `KeyPress` goes
+//!   through `haptic_intent_for` (ADR-171). Displayd still has no
+//!   haptic protocol; this slice does not flash it.
 //!
 //! Both are logged as known limitations in the S04 sprint doc, not
 //! silently dropped.
@@ -798,6 +797,9 @@ struct ShellSettings {
     /// keeps today's static frames; when true, `OrbHost` stops
     /// advertising Running as busy.
     reduced_motion: bool,
+    /// ADR-171: independent of `reduced_motion`. Missing JSON key stays
+    /// on so existing devices keep keyboard ticks.
+    haptics_enabled: bool,
 }
 
 impl ShellSettings {
@@ -825,6 +827,7 @@ impl ShellSettings {
             remote_access_enabled: false,
             orb_enabled: true,
             reduced_motion: false,
+            haptics_enabled: true,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -884,6 +887,10 @@ impl ShellSettings {
                 .get("reduced_motion")
                 .and_then(Value::as_bool)
                 .unwrap_or(default.reduced_motion),
+            haptics_enabled: value
+                .get("haptics_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(default.haptics_enabled),
         }
     }
 
@@ -900,6 +907,7 @@ impl ShellSettings {
             "remote_access_enabled": self.remote_access_enabled,
             "orb_enabled": self.orb_enabled,
             "reduced_motion": self.reduced_motion,
+            "haptics_enabled": self.haptics_enabled,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -5072,6 +5080,7 @@ struct MeFacts {
     space_name: String,
     orb_enabled: bool,
     reduced_motion: bool,
+    haptics_enabled: bool,
     entityd_connected: bool,
     appd_connected: bool,
     apps: Vec<MeAppFact>,
@@ -5127,6 +5136,11 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         "Включено -- Running не busy"
     } else {
         "Выключено"
+    };
+    let haptic_status = if facts.haptics_enabled {
+        "Вкл"
+    } else {
+        "Выкл"
     };
 
     let mut sections = vec![
@@ -5192,6 +5206,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                     "cycle_volume",
                 )
                 .row,
+                SettingRow::cycle("Виброотклик", haptic_status, "toggle_haptics").row,
             ],
         ),
         me_section_data(
@@ -5287,6 +5302,7 @@ fn intern_me_action(action: Option<&str>) -> Option<&'static str> {
         Some("cycle_space_color") => Some("cycle_space_color"),
         Some("toggle_orb") => Some("toggle_orb"),
         Some("toggle_reduced_motion") => Some("toggle_reduced_motion"),
+        Some("toggle_haptics") => Some("toggle_haptics"),
         _ => None,
     }
 }
@@ -5363,6 +5379,7 @@ fn me_fixture_facts() -> MeFacts {
         space_name: "Дом".into(),
         orb_enabled: true,
         reduced_motion: false,
+        haptics_enabled: true,
         entityd_connected: true,
         appd_connected: true,
         apps: Vec::new(),
@@ -8030,7 +8047,12 @@ impl Shell {
         self.pressed_key = next;
         self.key_finger_down = tick;
         if tick {
-            self.haptic.play(haptic::haptic_intent_for_key_press());
+            if let Some(intent) = haptic::haptic_intent_for(
+                haptic::HapticEvent::KeyPress,
+                self.settings.haptics_enabled,
+            ) {
+                self.haptic.play(intent);
+            }
             if !self.settings.reduced_motion {
                 self.motion_clock = Some(MotionClock::one_shot(MotionToken::MicroFeedback, false));
                 self.motion_last_tick = Instant::now();
@@ -8165,6 +8187,9 @@ impl Shell {
             }
             "toggle_reduced_motion" => {
                 self.settings.reduced_motion = !self.settings.reduced_motion;
+            }
+            "toggle_haptics" => {
+                self.settings.haptics_enabled = !self.settings.haptics_enabled;
             }
             "toggle_remote_access" => {
                 self.settings.remote_access_enabled = !self.settings.remote_access_enabled;
@@ -8731,6 +8756,7 @@ impl Shell {
             space_name: space_display_name(&self.spaces, &self.selected_space_id),
             orb_enabled: self.settings.orb_enabled,
             reduced_motion: self.settings.reduced_motion,
+            haptics_enabled: self.settings.haptics_enabled,
             entityd_connected: self.entityd.is_connected(),
             appd_connected: self.appd.is_connected(),
             apps,
@@ -13358,6 +13384,9 @@ mod tests {
             .iter()
             .any(|row| row.dispatch == Some("cycle_brightness")));
         assert!(rows.iter().any(|row| row.dispatch == Some("cycle_volume")));
+        assert!(rows
+            .iter()
+            .any(|row| row.dispatch == Some("toggle_haptics")));
     }
 
     #[test]
