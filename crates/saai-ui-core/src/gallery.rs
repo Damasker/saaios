@@ -26,6 +26,7 @@ pub struct CompositeGalleryFixtures {
     pub bluetooth_paired: BluetoothRow,
     pub bluetooth_other: BluetoothRow,
     pub bluetooth_empty: BluetoothRow,
+    pub bluetooth_loading: BluetoothRow,
     pub trusted_named: TrustedClientRow,
     pub trusted_empty: TrustedClientRow,
     pub states: [StatusIndicator; 9],
@@ -56,6 +57,7 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
         bluetooth_paired: BluetoothRow::open("Pixel Buds", "BLE", true),
         bluetooth_other: BluetoothRow::open("Speaker", "CLASSIC", false),
         bluetooth_empty: BluetoothRow::empty(),
+        bluetooth_loading: BluetoothRow::loading(),
         trusted_named: TrustedClientRow::open("home-mike", "SHA256:abcdabcdabcdabcdabcdabcd…"),
         trusted_empty: TrustedClientRow::empty(),
         states: UniversalState::ALL
@@ -129,6 +131,7 @@ mod tests {
         assert!(fixtures.bluetooth_paired.paired);
         assert!(!fixtures.bluetooth_other.paired);
         assert_eq!(fixtures.bluetooth_empty.row.primary, "Нет устройств");
+        assert_eq!(fixtures.bluetooth_loading.row.primary, "Сканирование…");
         assert_eq!(fixtures.trusted_named.row.primary, "home-mike");
         assert_eq!(fixtures.trusted_empty.row.primary, "Нет клиентов");
         let blob = format!(

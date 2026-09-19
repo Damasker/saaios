@@ -4,9 +4,9 @@ use saai_ui_core::{
     DataRow, DataRowVariant, Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon,
     IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
     ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow,
-    SystemStatus, TextOverflow, TextRole, Theme, UniversalState, MIN_TOUCH_TARGET,
-    TWO_LINE_ROW_HEIGHT,
+    StatusIndicatorVariant, StatusMark, StrokeToken, SurfacePattern, SurfaceScale, SystemSection,
+    SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
+    MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -2510,14 +2510,14 @@ fn draw_app_icon_grid(
 
 /// ADR-138: `Приложения` through `ContextHeader`, same status-layer
 /// inset as `draw_now`. No concatenated `draw_root` Surface bar. No
-/// skeleton tiles. Empty is a named message, not invented icons.
+/// skeleton tiles. Empty is a named `SurfacePattern`, not invented icons.
 pub fn draw_apps_grid(
     canvas: &mut Canvas<'_>,
     content: Rect,
     tabs: &[(Rect, NavigationItem)],
     header: &ContextHeader,
     apps: &[(Rect, ActionCardView)],
-    empty_message: Option<&str>,
+    empty_pattern: Option<&SurfacePattern>,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
@@ -2530,17 +2530,8 @@ pub fn draw_apps_grid(
     draw_app_icon_grid(canvas, fonts, apps);
 
     if apps.is_empty() {
-        if let (Some(fonts), Some(message)) = (fonts, empty_message) {
-            let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
-            draw_text_centered(
-                canvas,
-                empty_font,
-                message,
-                empty_size,
-                content.x + content.width / 2,
-                content.y + content.height / 2,
-                theme_color(ColorRole::TextSecondary),
-            );
+        if let Some(pattern) = empty_pattern {
+            draw_surface_pattern(canvas, fonts, content, pattern);
         }
     }
 
@@ -2813,21 +2804,7 @@ pub fn draw_now(
                 header.lifecycle.as_ref().map(|status| status.state),
                 Some(UniversalState::Offline)
             );
-            let message = if offline {
-                "Нет связи с пространствами"
-            } else {
-                "Ничего срочного"
-            };
-            let (empty_font, empty_size) = fonts.resolve(TextRole::Body);
-            draw_text_centered(
-                canvas,
-                empty_font,
-                message,
-                empty_size,
-                content.x + content.width / 2,
-                content.y + content.height / 2,
-                theme_color(ColorRole::TextSecondary),
-            );
+            draw_surface_pattern(canvas, Some(fonts), content, &now_empty_pattern(offline));
         } else {
             for section in sections {
                 cursor_y += physical(SpacingToken::Medium.value());
@@ -3086,6 +3063,51 @@ fn reference_glyph_height(glyphs: &[(fontdue::Metrics, Vec<u8>)]) -> i32 {
         .unwrap_or(0)
 }
 
+fn now_empty_pattern(offline: bool) -> SurfacePattern {
+    if offline {
+        SurfacePattern::offline("Нет связи с пространствами")
+    } else {
+        SurfacePattern::empty("Ничего срочного")
+    }
+}
+
+/// ADR-155: centered Body copy for empty / loading / offline. Idle
+/// keeps the mark off so a calm empty stays text-only.
+fn draw_surface_pattern(
+    canvas: &mut Canvas<'_>,
+    fonts: Option<&Fonts>,
+    content: Rect,
+    pattern: &SurfacePattern,
+) {
+    let center_x = content.x + content.width / 2;
+    let center_y = content.y + content.height / 2;
+    if pattern.paints_mark() {
+        let mark_size = physical(IconSize::Medium.value());
+        let spacing = physical(SpacingToken::Small.value());
+        let mark_left = center_x.saturating_sub(mark_size / 2);
+        let mark_top = center_y.saturating_sub(mark_size + spacing);
+        draw_calibration_mark(
+            canvas,
+            Rect::new(mark_left, mark_top, mark_size, mark_size),
+            pattern.state.style().mark,
+            theme_color(pattern.state.style().color),
+        );
+    }
+    if let Some(fonts) = fonts {
+        let text = pattern.message_text();
+        let (font, size) = fonts.resolve(text.role);
+        draw_text_centered(
+            canvas,
+            font,
+            &text.content,
+            size,
+            center_x,
+            center_y,
+            theme_color(text.color),
+        );
+    }
+}
+
 fn draw_text_centered(
     canvas: &mut Canvas<'_>,
     font: &Font,
@@ -3162,14 +3184,14 @@ mod tests {
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
         draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_lock_sleep,
-        draw_orb, draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar,
-        gallery_row_positions, physical, physical_line_height, state_color, theme_color,
-        ActionCardView, Canvas,
+        draw_orb, draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar,
+        draw_surface_pattern, draw_tab_bar, gallery_row_positions, now_empty_pattern, physical,
+        physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, ContextHeader, Field, FieldKind, IconSize, LogicalUnit,
-        NavigationItem, ObjectSummary, Progress, Rect, StatusIndicator, StatusMark, SystemStatus,
-        TextRole, UniversalState, MIN_TOUCH_TARGET,
+        NavigationItem, ObjectSummary, Progress, Rect, SpacingToken, StatusIndicator, StatusMark,
+        SurfacePattern, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -3609,11 +3631,70 @@ mod tests {
             &[],
             &header,
             &[],
-            Some("Нет приложений"),
+            Some(&SurfacePattern::empty("Нет приложений")),
             None,
         );
         assert_eq!(canvas.pixel(200, 430), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+    }
+
+    #[test]
+    fn now_empty_pattern_is_idle_when_connected_and_offline_when_not() {
+        let calm = now_empty_pattern(false);
+        assert_eq!(calm.state, UniversalState::Idle);
+        assert!(!calm.paints_mark());
+        assert_eq!(calm.message, "Ничего срочного");
+        let offline = now_empty_pattern(true);
+        assert_eq!(offline.state, UniversalState::Offline);
+        assert!(offline.paints_mark());
+        assert_eq!(offline.message, "Нет связи с пространствами");
+    }
+
+    #[test]
+    fn surface_pattern_loading_paints_a_mark_empty_does_not() {
+        let width = 1080;
+        let height = 2400;
+        let content = Rect::new(0, 0, width, 2160);
+        let mark_size = physical(IconSize::Medium.value());
+        let spacing = physical(SpacingToken::Small.value());
+        let mark_x = content.x + content.width / 2 - mark_size / 2;
+        let mark_y = content.y + content.height / 2 - mark_size - spacing;
+        let sample_x = mark_x;
+        let sample_y = mark_y + (mark_size / 4).max(2);
+
+        let mut empty_pixels = vec![0u8; width as usize * height as usize * 4];
+        {
+            let canvas = &mut Canvas::new(&mut empty_pixels, width, height);
+            canvas.fill(theme_color(ColorRole::Canvas));
+            draw_surface_pattern(
+                canvas,
+                None,
+                content,
+                &SurfacePattern::empty("Ничего срочного"),
+            );
+        }
+        let empty = Canvas::new(&mut empty_pixels, width, height);
+        assert_eq!(
+            empty.pixel(sample_x, sample_y),
+            theme_color(ColorRole::Canvas)
+        );
+
+        let mut loading_pixels = vec![0u8; width as usize * height as usize * 4];
+        {
+            let canvas = &mut Canvas::new(&mut loading_pixels, width, height);
+            canvas.fill(theme_color(ColorRole::Canvas));
+            draw_surface_pattern(
+                canvas,
+                None,
+                content,
+                &SurfacePattern::loading("Сканирование…"),
+            );
+        }
+        let loading = Canvas::new(&mut loading_pixels, width, height);
+        assert_eq!(
+            loading.pixel(sample_x, sample_y),
+            theme_color(ColorRole::TextSecondary)
+        );
     }
 
     #[test]

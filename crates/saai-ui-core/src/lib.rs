@@ -12,7 +12,7 @@ mod gallery;
 pub use components::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, DataRow, DataRowVariant,
     Disclosure, DisclosureState, Divider, Field, FieldKind, Icon, Metric, MetricValue, Progress,
-    SemanticText, StatusIndicator, StatusIndicatorVariant, TextOverflow,
+    SemanticText, StatusIndicator, StatusIndicatorVariant, SurfacePattern, TextOverflow,
 };
 pub use composites::{
     AgentAssignment, AgentSummary, BluetoothRow, BottomNavigation, CapabilityRow, ContextHeader,

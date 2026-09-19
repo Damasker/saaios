@@ -465,8 +465,9 @@ use saai_ui_core::{
     DataRowVariant, DecisionOverlay, EdgeInsets, EventRow, Field, FieldKind, IntentSummary,
     LayoutNode, Length, LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost,
     Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection, SystemSectionRow,
-    SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow, MIN_TOUCH_TARGET,
+    StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale, SystemSection,
+    SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow,
+    MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1795,8 +1796,8 @@ enum BluetoothListTap {
     Back,
 }
 
-fn bluetooth_list_row_count(device_count: usize, scan_done: bool) -> usize {
-    if device_count == 0 && scan_done {
+fn bluetooth_list_row_count(device_count: usize, _scan_done: bool) -> usize {
+    if device_count == 0 {
         1
     } else {
         device_count
@@ -2007,7 +2008,7 @@ enum Frame {
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
         apps: Vec<(Rect, render::ActionCardView)>,
-        empty_message: Option<&'static str>,
+        empty_pattern: Option<SurfacePattern>,
     },
     /// ADR-139: Inbox is no longer `Frame::Root`. Header is a real
     /// `ContextHeader`; rows stay live `EventRow` cards.
@@ -4423,18 +4424,29 @@ fn lock_pin_field_rect(width: u32) -> Rect {
     )
 }
 
-/// VUI-07 (ADR-130): «Bluetooth устройства» lists live `bt-scan`
-/// rows. Empty only after `DONE`. Paired is a SAVED name.
+/// VUI-07 (ADR-130/155): «Bluetooth устройства» lists live `bt-scan`
+/// rows. Empty only after `DONE`. Scan-in-progress with no devices is
+/// `SurfacePattern::loading`, not a blank. Paired is a SAVED name.
+fn bluetooth_scan_pattern(device_count: usize, scan_done: bool) -> Option<SurfacePattern> {
+    if device_count > 0 {
+        None
+    } else if scan_done {
+        Some(SurfacePattern::empty("Нет устройств"))
+    } else {
+        Some(SurfacePattern::loading("Сканирование…"))
+    }
+}
+
 fn bluetooth_list_rows(
     devices: &[BluetoothDevice],
     scan_done: bool,
     saved: &[String],
 ) -> Vec<BluetoothRow> {
     if devices.is_empty() {
-        if scan_done {
-            return vec![BluetoothRow::empty()];
-        }
-        return Vec::new();
+        return bluetooth_scan_pattern(0, scan_done)
+            .into_iter()
+            .map(|pattern| BluetoothRow::from_pattern(&pattern))
+            .collect();
     }
     devices
         .iter()
@@ -4617,13 +4629,13 @@ fn apps_grid_header(space_name: &str, appd_connected: bool, archived: bool) -> C
 /// Connected and empty is `Нет приложений`. Offline and empty is
 /// `Нет связи`. A non-zero count (including a stale last-known list
 /// while `appd` is down) is not an empty state -- those tiles stay.
-fn apps_grid_empty_message(appd_connected: bool, app_count: usize) -> Option<&'static str> {
+fn apps_grid_empty_pattern(appd_connected: bool, app_count: usize) -> Option<SurfacePattern> {
     if app_count > 0 {
         None
     } else if appd_connected {
-        Some("Нет приложений")
+        Some(SurfacePattern::empty("Нет приложений"))
     } else {
-        Some("Нет связи")
+        Some(SurfacePattern::offline("Нет связи"))
     }
 }
 
@@ -6794,7 +6806,7 @@ impl Shell {
                     archived,
                 ),
                 apps: self.apps_grid_cards(width, height),
-                empty_message: apps_grid_empty_message(
+                empty_pattern: apps_grid_empty_pattern(
                     self.appd.is_connected(),
                     self.installed_apps.len(),
                 ),
@@ -7161,7 +7173,7 @@ impl Shell {
                     tabs,
                     header,
                     apps,
-                    empty_message,
+                    empty_pattern,
                 } => {
                     render::draw_apps_grid(
                         &mut render::Canvas::new(canvas, width, height),
@@ -7169,7 +7181,7 @@ impl Shell {
                         &tabs,
                         &header,
                         &apps,
-                        empty_message,
+                        empty_pattern.as_ref(),
                         fonts,
                     );
                 }
@@ -9547,16 +9559,16 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
-        bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
-        consent_action_at, consent_content_cards, consent_header, content_action_at,
-        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
-        diagnostic_status_line, effective_context_space, ensure_me_row_cache, flatten_me_rows,
-        format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
-        intent_action_at, intent_input_field, known_surfaces, lock_attention_tap,
-        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
-        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
-        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
+        bluetooth_list_action_at, bluetooth_list_rows, bluetooth_scan_pattern,
+        calibration_requested, capability_label, consent_action_at, consent_content_cards,
+        consent_header, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
+        diagnostic_header, diagnostic_row, diagnostic_status_line, effective_context_space,
+        ensure_me_row_cache, flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
+        input_idle_for_at_least, intent_action_at, intent_input_field, known_surfaces,
+        lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
+        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header,
+        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
@@ -9569,13 +9581,13 @@ mod tests {
         wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
         BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
         KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow,
+        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -10325,11 +10337,30 @@ mod tests {
     }
 
     #[test]
-    fn apps_grid_empty_message_names_connected_vs_offline() {
-        assert_eq!(apps_grid_empty_message(true, 1), None);
-        assert_eq!(apps_grid_empty_message(true, 0), Some("Нет приложений"));
-        assert_eq!(apps_grid_empty_message(false, 0), Some("Нет связи"));
-        assert_eq!(apps_grid_empty_message(false, 1), None);
+    fn apps_grid_empty_pattern_names_connected_vs_offline() {
+        assert_eq!(apps_grid_empty_pattern(true, 1), None);
+        assert_eq!(
+            apps_grid_empty_pattern(true, 0),
+            Some(SurfacePattern::empty("Нет приложений"))
+        );
+        assert_eq!(
+            apps_grid_empty_pattern(false, 0),
+            Some(SurfacePattern::offline("Нет связи"))
+        );
+        assert_eq!(apps_grid_empty_pattern(false, 1), None);
+    }
+
+    #[test]
+    fn bluetooth_scan_pattern_is_loading_until_done() {
+        assert_eq!(bluetooth_scan_pattern(1, false), None);
+        assert_eq!(
+            bluetooth_scan_pattern(0, false),
+            Some(SurfacePattern::loading("Сканирование…"))
+        );
+        assert_eq!(
+            bluetooth_scan_pattern(0, true),
+            Some(SurfacePattern::empty("Нет устройств"))
+        );
     }
 
     #[test]
@@ -10634,8 +10665,9 @@ mod tests {
             bluetooth_list_action_at(center(scan_empty), width, height, 0, true),
             Some(BluetoothListTap::Scan)
         ));
+        assert!(bluetooth_list_action_at(center(empty), width, height, 0, false).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(empty), width, height, 0, false),
+            bluetooth_list_action_at(center(scan_empty), width, height, 0, false),
             Some(BluetoothListTap::Scan)
         ));
     }
@@ -11340,7 +11372,10 @@ mod tests {
             || row.row.value.as_deref().unwrap_or("").contains("RSSI")));
 
         let pending = bluetooth_list_rows(&[], false, &saved);
-        assert!(pending.is_empty());
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].row.primary, "Сканирование…");
+        assert!(!pending[0].row.is_actionable());
+        assert_eq!(bluetooth_card_from_row(&pending[0]).action, "");
         let empty = bluetooth_list_rows(&[], true, &saved);
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].row.primary, "Нет устройств");

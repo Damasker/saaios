@@ -12,7 +12,7 @@
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
     DataRowVariant, Divider, IconGlyph, Metric, MotionCue, Progress, SemanticText, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, TextRole, UniversalState,
+    StatusIndicatorVariant, StatusMark, SurfacePattern, TextRole, UniversalState,
 };
 
 /// Section 7.1. Anatomy: an active-context label, an optional current-
@@ -729,8 +729,16 @@ impl BluetoothRow {
     }
 
     pub fn empty() -> Self {
+        Self::from_pattern(&SurfacePattern::empty("Нет устройств"))
+    }
+
+    pub fn loading() -> Self {
+        Self::from_pattern(&SurfacePattern::loading("Сканирование…"))
+    }
+
+    pub fn from_pattern(pattern: &SurfacePattern) -> Self {
         Self {
-            row: DataRow::new("Нет устройств", DataRowVariant::Static),
+            row: DataRow::new(pattern.message.clone(), DataRowVariant::Static),
             paired: false,
         }
     }
@@ -1424,6 +1432,11 @@ mod tests {
         assert_eq!(empty.row.primary, "Нет устройств");
         assert!(!empty.row.is_actionable());
         assert!(!empty.paired);
+
+        let loading = BluetoothRow::loading();
+        assert_eq!(loading.row.primary, "Сканирование…");
+        assert!(!loading.row.is_actionable());
+        assert!(!loading.paired);
 
         let blob = format!(
             "{} {} {} {}",

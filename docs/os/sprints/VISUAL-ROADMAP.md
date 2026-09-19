@@ -909,7 +909,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…`, compact QWERTY `874ad0e2…`, keyboard press `3a97f0e8…`, DevSurface header `c9f52227…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…`, compact QWERTY `874ad0e2…`, keyboard press `3a97f0e8…`, DevSurface header `c9f52227…`, lock device state `88121ad2…`, lock sleep AOD `c3fd2fcf…` on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -1041,8 +1041,13 @@ big-bang rewrite.
   is Canvas + Display clock; `lock_wake_tap` is `ShowLock`, not
   unlock. First tap restores hint + battery still locked. Do not set
   a PIN. Flashed `c3fd2fcf…`.
-- [ ] Apply shared empty, loading, offline, blocked, failed, permission,
-  confirmation, and recovery patterns.
+- [x] Apply shared empty, loading, and offline patterns. ADR-155:
+  `SurfacePattern`; NOW empty/offline, apps-grid empty/offline, and
+  Bluetooth scan loading «Сканирование…» instead of a blank. Blocked,
+  failed, permission, confirmation, recovery later. Do not tap Сопрячь.
+  Leave Bluetooth with Назад. Flashed `e18f3d9d…`.
+- [ ] Apply shared blocked, failed, permission, confirmation, and
+  recovery patterns.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.
@@ -1196,8 +1201,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (empty / loading / offline
-patterns). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07** remaining surfaces (blocked / failed / permission /
+confirmation / recovery patterns). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
@@ -1210,5 +1215,6 @@ header (`efbab13a…`), Wi-Fi header (`d562249b…`), trusted-clients
 header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
 keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), keyboard
 press (`3a97f0e8…`), DevSurface header (`c9f52227…`), lock
-device state (`88121ad2…`), and lock sleep AOD (`c3fd2fcf…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
+device state (`88121ad2…`), lock sleep AOD (`c3fd2fcf…`), and
+empty/loading/offline (`e18f3d9d…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.

@@ -286,7 +286,63 @@ impl StatusIndicator {
         self.variant = variant;
         self
     }
+}
 
+/// VUI-07 (ADR-155): whole-surface empty / loading / offline. The
+/// message is caller-supplied (this crate still does not embed a
+/// display-language string). Idle empty paints no mark; Waiting and
+/// Offline keep color from being the only cue via `StatusMark`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SurfacePattern {
+    pub state: UniversalState,
+    pub message: String,
+}
+
+impl SurfacePattern {
+    pub fn empty(message: impl Into<String>) -> Self {
+        Self {
+            state: UniversalState::Idle,
+            message: message.into(),
+        }
+    }
+
+    pub fn loading(message: impl Into<String>) -> Self {
+        Self {
+            state: UniversalState::Waiting,
+            message: message.into(),
+        }
+    }
+
+    pub fn offline(message: impl Into<String>) -> Self {
+        Self {
+            state: UniversalState::Offline,
+            message: message.into(),
+        }
+    }
+
+    pub fn paints_mark(&self) -> bool {
+        !matches!(self.state, UniversalState::Idle)
+    }
+
+    pub fn message_text(&self) -> SemanticText {
+        SemanticText::new(
+            self.message.clone(),
+            TextRole::Body,
+            self.state.style().color,
+        )
+    }
+
+    pub fn accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.message.clone()),
+            value: Some(self.state.style().label_key.to_string()),
+            busy: matches!(self.state, UniversalState::Waiting),
+            ..AccessibilityInfo::new(AccessibilityRole::Status)
+        }
+    }
+}
+
+impl StatusIndicator {
     pub fn mark(&self) -> StatusMark {
         self.state.style().mark
     }
@@ -973,5 +1029,27 @@ mod tests {
             collapsed.toggled().accessibility().value.as_deref(),
             Some("disclosure.expanded")
         );
+    }
+
+    #[test]
+    fn surface_pattern_empty_has_no_mark_loading_and_offline_do() {
+        let empty = SurfacePattern::empty("Ничего срочного");
+        assert_eq!(empty.state, UniversalState::Idle);
+        assert!(!empty.paints_mark());
+        assert_eq!(empty.message_text().role, TextRole::Body);
+        assert!(!empty.accessibility().busy);
+        assert_eq!(empty.accessibility().role, AccessibilityRole::Status);
+
+        let loading = SurfacePattern::loading("Сканирование…");
+        assert_eq!(loading.state, UniversalState::Waiting);
+        assert!(loading.paints_mark());
+        assert!(loading.accessibility().busy);
+        assert_eq!(loading.state.style().mark, StatusMark::Waiting);
+
+        let offline = SurfacePattern::offline("Нет связи");
+        assert_eq!(offline.state, UniversalState::Offline);
+        assert!(offline.paints_mark());
+        assert!(!offline.accessibility().busy);
+        assert_eq!(offline.state.style().mark, StatusMark::Offline);
     }
 }
