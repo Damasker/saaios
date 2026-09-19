@@ -61,6 +61,7 @@
 //! receive the taps that switch pages.
 
 use std::collections::BTreeMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::time::{Duration, Instant, SystemTime};
 
 mod appd_client;
@@ -1577,6 +1578,69 @@ struct PendingPairRequest {
 /// doesn't even parse as `<type> <base64> [comment]` -- still shows
 /// something rather than nothing on a screen that exists specifically
 /// so a human can refuse.
+const DROPBEAR_LOG_PATH: &str = "/run/dropbear.log";
+/// Only the last 64 KiB, never the whole file -- ADR-151: this log is
+/// unbounded and append-only (no rotation), and by the time this was
+/// written a single work session had already grown it past 14 MB /
+/// 147000 lines. Reading it in full on every trusted-clients draw
+/// would be a real, easily-hit cost; the last 64 KiB is comfortably
+/// enough to catch "used within the last while" for any realistic
+/// connection cadence, including a burst of many quick one-command SSH
+/// invocations like this project's own dev sessions produce.
+const DROPBEAR_LOG_TAIL_BYTES: u64 = 65536;
+
+/// ADR-151: which key fingerprints have a "Pubkey auth succeeded" line
+/// anywhere in the log's recent tail -- a recency proxy for "this key
+/// is in active use right now", not a precise "is a session still
+/// open" check (dropbear's own Exit lines would answer that, but this
+/// project's own SSH usage is almost all quick single-command
+/// connections that open and close within the same second, so "still
+/// open" would almost never actually be true for the key currently
+/// managing this device at the moment this function runs). Fails to
+/// an empty `Vec` on any read error -- nothing gets specially
+/// protected, the ordinary two-tap confirm still applies, never the
+/// other way around.
+fn recently_authenticated_key_fingerprints() -> Vec<String> {
+    let Ok(mut file) = std::fs::File::open(DROPBEAR_LOG_PATH) else {
+        return Vec::new();
+    };
+    let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let start = len.saturating_sub(DROPBEAR_LOG_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut fingerprints = Vec::new();
+    for line in text.lines() {
+        if !line.contains("Pubkey auth succeeded") {
+            continue;
+        }
+        if let Some(at) = line.find("SHA256:") {
+            let fingerprint: String = line[at..]
+                .chars()
+                .take_while(|c| !c.is_whitespace())
+                .collect();
+            fingerprints.push(fingerprint);
+        }
+    }
+    fingerprints
+}
+
+/// ADR-151: never let the key currently managing this device (per
+/// `recently_authenticated_key_fingerprints` above) be armed or
+/// revoked -- the real incident ADR-150 recorded was exactly this,
+/// survived only because the existing remote-pairing flow (ADR-074)
+/// could re-add a key from scratch. Kept pure and separate from both
+/// the fingerprint lookup and `trusted_client_revoke_decision` so each
+/// stays independently testable.
+fn trusted_client_is_protected(fingerprint: &str, recent: &[String]) -> bool {
+    recent.iter().any(|candidate| candidate == fingerprint)
+}
+
 fn key_fingerprint(public_key: &str) -> String {
     use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
     use base64::Engine as _;
@@ -4150,7 +4214,21 @@ fn trusted_client_list_rows(clients: &[TrustedClient]) -> Vec<TrustedClientRow> 
         .collect()
 }
 
-fn trusted_client_card_from_row(row: &TrustedClientRow, armed: bool) -> render::ActionCardView {
+fn trusted_client_card_from_row(
+    row: &TrustedClientRow,
+    armed: bool,
+    protected: bool,
+) -> render::ActionCardView {
+    if protected {
+        // ADR-151: no action label at all -- same "nothing to tap"
+        // convention `is_actionable() == false` rows (offline/empty)
+        // already use elsewhere on this exact screen.
+        return render::ActionCardView::new(
+            row.row.primary.clone(),
+            "Ключ этой сессии — нельзя отозвать",
+            "",
+        );
+    }
     if armed {
         // ADR-150: replaces the fingerprint with the confirm prompt --
         // showing both would crowd a row already this narrow, and the
@@ -6391,14 +6469,18 @@ impl Shell {
             // not a Surface strip.
             let clients = trusted_clients();
             let trusted_rows = trusted_client_list_rows(&clients);
+            let recent_fingerprints = recently_authenticated_key_fingerprints();
             let mut rows: Vec<(Rect, render::ActionCardView)> = trusted_rows
                 .iter()
                 .enumerate()
                 .map(|(index, row)| {
                     let armed = self.pending_revoke_trusted_client == Some(index);
+                    let protected = clients.get(index).is_some_and(|client| {
+                        trusted_client_is_protected(&client.fingerprint, &recent_fingerprints)
+                    });
                     (
                         stacked_row_rect(index, width, height),
-                        trusted_client_card_from_row(row, armed),
+                        trusted_client_card_from_row(row, armed, protected),
                     )
                 })
                 .collect();
@@ -7471,11 +7553,18 @@ impl Shell {
     ) {
         match tap {
             TrustedClientTap::Revoke(index) => {
-                let (pending, confirmed) =
-                    trusted_client_revoke_decision(self.pending_revoke_trusted_client, index);
-                self.pending_revoke_trusted_client = pending;
-                if confirmed {
-                    revoke_trusted_client(index);
+                let clients = trusted_clients();
+                let recent = recently_authenticated_key_fingerprints();
+                let protected = clients
+                    .get(index)
+                    .is_some_and(|client| trusted_client_is_protected(&client.fingerprint, &recent));
+                if !protected {
+                    let (pending, confirmed) =
+                        trusted_client_revoke_decision(self.pending_revoke_trusted_client, index);
+                    self.pending_revoke_trusted_client = pending;
+                    if confirmed {
+                        revoke_trusted_client(index);
+                    }
                 }
             }
             TrustedClientTap::Back => {
@@ -9007,8 +9096,8 @@ mod tests {
         space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
         space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
         tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows,
-        trusted_client_revoke_decision, trusted_header,
+        trusted_client_card_from_row, trusted_client_is_protected,
+        trusted_client_list_rows, trusted_client_revoke_decision, trusted_header,
         upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
         wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
         ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
@@ -10667,7 +10756,10 @@ mod tests {
             live[0].row.value.as_deref(),
             Some("SHA256:abcdefghijklmnopq…")
         );
-        assert_eq!(trusted_client_card_from_row(&live[0], false).action, "Отозвать");
+        assert_eq!(
+            trusted_client_card_from_row(&live[0], false, false).action,
+            "Отозвать"
+        );
         assert_eq!(live[1].row.primary, "(без имени)");
         assert_eq!(live[1].row.value.as_deref(), Some("short…"));
         assert!(!live
@@ -10679,7 +10771,7 @@ mod tests {
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].row.primary, "Нет клиентов");
         assert!(!empty[0].row.is_actionable());
-        assert_eq!(trusted_client_card_from_row(&empty[0], false).action, "");
+        assert_eq!(trusted_client_card_from_row(&empty[0], false, false).action, "");
     }
 
     #[test]
@@ -10708,16 +10800,41 @@ mod tests {
             fingerprint: "SHA256:abcdefghijklmnopqrstuvwx".into(),
         }];
         let live = trusted_client_list_rows(&clients);
-        let armed = trusted_client_card_from_row(&live[0], true);
+        let armed = trusted_client_card_from_row(&live[0], true, false);
         assert_eq!(armed.label, "home-mike");
         assert_eq!(armed.status, "Нажмите ещё раз, чтобы отозвать");
         assert_eq!(armed.action, "Отозвать?");
         assert!(armed.selected);
         // Unarmed still reads the plain fingerprint/action pair.
-        let unarmed = trusted_client_card_from_row(&live[0], false);
+        let unarmed = trusted_client_card_from_row(&live[0], false, false);
         assert_eq!(unarmed.status, "SHA256:abcdefghijklmnopq…");
         assert_eq!(unarmed.action, "Отозвать");
         assert!(!unarmed.selected);
+    }
+
+    #[test]
+    fn protected_trusted_client_card_has_no_action_regardless_of_armed() {
+        // ADR-151: protected wins even if somehow also armed -- a row
+        // that can never be revoked must never render "tap again".
+        let clients = vec![TrustedClient {
+            client_name: "home-server-reconnect".into(),
+            fingerprint: "SHA256:abcdefghijklmnopqrstuvwx".into(),
+        }];
+        let live = trusted_client_list_rows(&clients);
+        for armed in [false, true] {
+            let protected = trusted_client_card_from_row(&live[0], armed, true);
+            assert_eq!(protected.label, "home-server-reconnect");
+            assert_eq!(protected.action, "");
+            assert!(!protected.selected);
+        }
+    }
+
+    #[test]
+    fn trusted_client_is_protected_matches_only_a_recent_fingerprint() {
+        let recent = vec!["SHA256:aaa".to_string(), "SHA256:bbb".to_string()];
+        assert!(trusted_client_is_protected("SHA256:aaa", &recent));
+        assert!(!trusted_client_is_protected("SHA256:ccc", &recent));
+        assert!(!trusted_client_is_protected("SHA256:aaa", &[]));
     }
 
     #[test]

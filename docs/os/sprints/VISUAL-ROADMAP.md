@@ -1063,9 +1063,15 @@ big-bang rewrite.
   entry) -- the gate worked exactly as designed against an accidental
   tap, but did nothing against a confident tap on the wrong row.
   Recovered within a minute via the existing remote-pairing flow
-  (ADR-074, unrelated to this ADR, already built). Follow-up recorded
-  in ADR-150's own Consequences: nothing on this screen marks which key
-  is the one authenticating the *current* session. **Found, not yet
+  (ADR-074, unrelated to this ADR, already built). **Fixed** (ADR-151):
+  `recently_authenticated_key_fingerprints()` reads the last 64 KiB of
+  `/run/dropbear.log` (never the whole file -- it was already past
+  14 MB / 147000 lines from this session's own SSH usage) for any key
+  with a recent successful auth; that key's row becomes non-actionable
+  ("Ключ этой сессии — нельзя отозвать") and `handle_trusted_client_tap`
+  refuses to arm or revoke it at all, regardless of tap count -- the
+  exact incident above cannot recur through this screen. Host: 2 new
+  tests, full workspace test/clippy clean. **Found, not yet
   fixed**: Wi-Fi list conflates "no networks" with "wpa_supplicant
   unreachable" (same bug class ADR-114 fixed for `Сейчас`); Bluetooth
   pairing failure is parsed into real Russian text
