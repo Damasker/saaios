@@ -970,7 +970,10 @@ fn draw_action_card(
 
 /// ADR-129: same header as `draw_row_list`, rows are `ActionCardView`
 /// (SSID + scan facts + connect button) instead of one concatenated
-/// label. ADR-136: DevSurface uses this too.
+/// label. ADR-152: last caller (`Frame::DevSurface`) moved to
+/// `draw_context_row_list`. Kept until the VUI-07 primitives-cleanup
+/// slice deletes it.
+#[allow(dead_code)]
 pub fn draw_action_row_list(
     canvas: &mut Canvas<'_>,
     title: &str,
@@ -3777,6 +3780,24 @@ mod tests {
         let header = ContextHeader::new("Дом").with_section_title("Ключи");
         let row = Rect::new(49, 430, 982, 190);
         let rows = vec![(row, ActionCardView::new("Нет клиентов", "", ""))];
+        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(
+            canvas.pixel(row.x + 40, row.y + 40),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn diagnostic_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Дом").with_section_title("Диагностика");
+        let row = Rect::new(49, 430, 982, 190);
+        let rows = vec![(row, ActionCardView::new("Сборка", "abc123", ""))];
         draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(

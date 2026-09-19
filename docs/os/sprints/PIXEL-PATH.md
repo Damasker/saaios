@@ -1,6 +1,6 @@
 # Путь на Pixel 7 — один очередь, не шесть выходных
 
-Status: **active sequence after ADR-118…151.**
+Status: **active sequence after ADR-118…152.**
 Visual Language remains the only hardware-changing *shell* experiment.
 Service binaries (`saaios-runtime`, `saai-taskd`, `saai-entityd`) могут
 прошиваться в ту же неделю — это не второй DRM/GPU эксперимент.
@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116, 126–151 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`); VUI-07 PIN setup **на panther** (`eb4cb508…`); VUI-07 lock idle **на panther** (`a19327cb…`); VUI-07 intent input **на panther** (`6239bebd…`); VUI-07 developer surface **на panther** (`bbc11a30…`); VUI-07 Object View **на panther** (`e2081d84…`); VUI-07 apps grid **на panther** (`a57da14a…`); VUI-07 Inbox header **на panther** (`75f1f054…`); VUI-07 Spaces header **на panther** (`464c0e92…`); VUI-07 Система header **на panther** (`15fc3487…`); VUI-07 consent header **на panther** (`cff22339…`); VUI-07 PIN setup header **на panther** (`e8b215aa…`); VUI-07 remote pairing header **на panther** (`4a1f7553…`); VUI-07 Bluetooth header **на panther** (`efbab13a…`); VUI-07 Wi-Fi header **на panther** (`d562249b…`); VUI-07 trusted-clients header **на panther** (`b73f9433…`); VUI-07 lock attention **на panther** (`55f7bd25…`); VUI-07 lock/PIN keyboard **на panther** (`32d50a67…`); VUI-07 compact QWERTY **на panther** (`874ad0e2…`); VUI-07 keyboard press **на panther** (`3a97f0e8…`) | **saai-shell `3a97f0e8…` прошит** |
+| Visual | 111–116, 126–152 | VUI-00…06 on panther; VUI-07 EventRow Inbox **на panther** (`c1547c02…`); VUI-07 Spaces list **на panther** (`9bb75db5…`); VUI-07 Wi-Fi list **на panther** (`c80bb666…`); VUI-07 Bluetooth list **на panther** (`5b37c5bc…`); VUI-07 trusted clients **на panther** (`cd207b18…`); VUI-07 Wi-Fi password **на panther** (`0eeb36d3…`); VUI-07 PIN setup **на panther** (`eb4cb508…`); VUI-07 lock idle **на panther** (`a19327cb…`); VUI-07 intent input **на panther** (`6239bebd…`); VUI-07 developer surface **на panther** (`bbc11a30…`); VUI-07 Object View **на panther** (`e2081d84…`); VUI-07 apps grid **на panther** (`a57da14a…`); VUI-07 Inbox header **на panther** (`75f1f054…`); VUI-07 Spaces header **на panther** (`464c0e92…`); VUI-07 Система header **на panther** (`15fc3487…`); VUI-07 consent header **на panther** (`cff22339…`); VUI-07 PIN setup header **на panther** (`e8b215aa…`); VUI-07 remote pairing header **на panther** (`4a1f7553…`); VUI-07 Bluetooth header **на panther** (`efbab13a…`); VUI-07 Wi-Fi header **на panther** (`d562249b…`); VUI-07 trusted-clients header **на panther** (`b73f9433…`); VUI-07 lock attention **на panther** (`55f7bd25…`); VUI-07 lock/PIN keyboard **на panther** (`32d50a67…`); VUI-07 compact QWERTY **на panther** (`874ad0e2…`); VUI-07 keyboard press **на panther** (`3a97f0e8…`); VUI-07 DevSurface header **на panther** (`c9f52227…`) | **saai-shell `c9f52227…` прошит** |
 
 ## Две очереди, не девять
 
@@ -111,6 +111,7 @@ host-only derived view.
 | VUI-07 lock/PIN keyboard | ADR-029 `Node`/`hit_test()` keys + Password occupancy **на panther** (`32d50a67…`; PIN unset, left via Отмена) |
 | VUI-07 compact QWERTY | bottom-docked staggered ADR-029 keys **на panther** (`874ad0e2…`; left via Отмена) |
 | VUI-07 keyboard press | `ColorRole::Pressed` + `KeyTick` **на panther** (`3a97f0e8…`; left via Отмена) |
+| VUI-07 DevSurface header | `ContextHeader` + live diagnostic DataRow **на panther** (`c9f52227…`; 7-tap, Назад below fold) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

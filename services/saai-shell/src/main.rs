@@ -1343,8 +1343,7 @@ fn bluetooth_pair_result() -> Option<String> {
 /// state, so tapping a device to pair immediately starts showing
 /// that outcome instead of being silently overwritten by scan status
 /// text. ADR-145: the Surface subtitle that consumed this left the
-/// Bluetooth header; kept for the remaining `draw_action_row_list`
-/// lists and for a later scan-status row.
+/// Bluetooth header; kept for a later scan-status row.
 #[allow(dead_code)]
 fn bluetooth_status_summary() -> String {
     if let Some(result) = bluetooth_pair_result() {
@@ -1973,13 +1972,12 @@ enum Frame {
         header: ContextHeader,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
-    /// HIA-20: the hidden diagnostic screen -- same row-list shape as
-    /// `TrustedClients` just above, reused verbatim rather than
-    /// inventing new geometry for a screen that's read-only text.
-    /// ADR-136: rows are `ActionCardView` from Static `DataRow`.
+    /// ADR-152: DevSurface is no longer `draw_action_row_list`
+    /// Surface chrome. Header is a real `ContextHeader`; rows stay
+    /// live Static `DataRow` cards plus back.
     DevSurface {
-        header: Rect,
-        status_line: String,
+        content_rect: Rect,
+        header: ContextHeader,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-143/149: PIN setup is no longer a Surface header fill.
@@ -4446,6 +4444,7 @@ fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
     )
 }
 
+#[allow(dead_code)]
 fn diagnostic_status_line(row_count: usize) -> String {
     format!("{row_count} показателей")
 }
@@ -4636,6 +4635,12 @@ fn wifi_header(space_name: &str) -> ContextHeader {
 /// name/fingerprint/empty facts stay on the live rows.
 fn trusted_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("Ключи")
+}
+
+/// ADR-152: section title is always `Диагностика`. No invented
+/// lifecycle — live facts stay on the Static `DataRow`s.
+fn diagnostic_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Диагностика")
 }
 
 /// Live client name only. Fingerprint is wrapped separately so the
@@ -6675,11 +6680,10 @@ impl Shell {
                 rows,
             }
         } else if self.dev_surface_open {
-            // HIA-20: same runtime-sized-list shape as the two
-            // branches above, read-only text rows plus one trailing
-            // "Назад" -- `dev_surface_rows()`'s own doc comment
-            // explains why this is always read fresh, never cached.
-            let header = Rect::new(0, 0, width, INTENT_HEADER_HEIGHT);
+            // HIA-20: same runtime-sized-list shape as trusted
+            // clients, read-only text rows plus one trailing "Назад".
+            // ADR-152: header is a real `ContextHeader`, not a Surface
+            // strip. `dev_surface_rows()` is always read fresh.
             let data_rows = self.dev_surface_rows();
             let mut rows: Vec<(Rect, render::ActionCardView)> = data_rows
                 .iter()
@@ -6696,8 +6700,11 @@ impl Shell {
                 render::ActionCardView::new("Назад", "", "Назад"),
             ));
             Frame::DevSurface {
-                header,
-                status_line: diagnostic_status_line(data_rows.len()),
+                content_rect: Rect::new(0, 0, width, height),
+                header: diagnostic_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 rows,
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
@@ -7033,16 +7040,17 @@ impl Shell {
                     );
                 }
                 Frame::DevSurface {
+                    content_rect,
                     header,
-                    status_line,
                     rows,
                 } => {
-                    render::draw_action_row_list(
+                    render::draw_context_row_list(
                         &mut render::Canvas::new(canvas, width, height),
-                        "Диагностика",
-                        &status_line,
-                        header,
+                        content_rect,
+                        &[],
+                        &header,
                         &rows,
+                        false,
                         fonts,
                     );
                 }
@@ -9450,12 +9458,12 @@ mod tests {
         apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
         bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
         consent_action_at, consent_content_cards, consent_header, content_action_at,
-        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
-        effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
-        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
-        intent_input_field, known_surfaces, lock_attention_tap, lock_attention_view,
-        lock_idle_view, lock_pin_entry_field, me_fixture_facts, me_header, me_system_sections,
-        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
+        diagnostic_status_line, effective_context_space, ensure_me_row_cache, flatten_me_rows,
+        format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
+        intent_action_at, intent_input_field, known_surfaces, lock_attention_tap,
+        lock_attention_view, lock_idle_view, lock_pin_entry_field, me_fixture_facts, me_header,
+        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
@@ -10363,6 +10371,13 @@ mod tests {
     fn trusted_header_names_the_section() {
         let header = trusted_header("Дом");
         assert_eq!(header.heading_text(), "Дом · Ключи");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn diagnostic_header_names_the_section() {
+        let header = diagnostic_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Диагностика");
         assert!(header.lifecycle.is_none());
     }
 

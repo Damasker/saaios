@@ -909,7 +909,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…`, compact QWERTY `874ad0e2…`, keyboard press `3a97f0e8…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…`, compact QWERTY `874ad0e2…`, keyboard press `3a97f0e8…`, DevSurface header `c9f52227…` on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -1029,6 +1029,10 @@ big-bang rewrite.
   ADR-151: same `paint_keyboard_keys` for Intent/Wi-Fi/PIN; motor in
   `HapticMotor` until VUI-08. Do not type a PSK. Do not send an
   intent. Do not type PIN digits. Leave with Отмена. Flashed `3a97f0e8…`.
+- [x] Migrate the hidden developer surface off the Surface header fill.
+  ADR-152: `ContextHeader` section `Диагностика`; live Static
+  `DataRow` cards plus Назад unchanged. 7-tap gesture unchanged.
+  Leave with Назад. Space detail still deferred. Flashed `c9f52227…`.
 - [ ] Restyle remaining lock chrome if any after the shared keyboard.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
@@ -1186,8 +1190,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (DevSurface chrome, Space
-detail). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07** remaining surfaces (lock chrome after the shared
+keyboard). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
@@ -1198,6 +1202,6 @@ setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
 (`e8b215aa…`), remote pairing header (`4a1f7553…`), Bluetooth
 header (`efbab13a…`), Wi-Fi header (`d562249b…`), trusted-clients
 header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
-keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), and keyboard
-press (`3a97f0e8…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
+keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), keyboard
+press (`3a97f0e8…`), and DevSurface header (`c9f52227…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.
