@@ -402,7 +402,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   same KeyPress map: rate-limited, silent for tabs and Orb.
   ADR-180 lists the `.sui` v2 component/surface vocabulary; it does not
   compile `sui 2`. ADR-181 parses `sui 2` component composition through
-  `compile_v2()`; `compile()` still builds only `root.sui`.
+  `compile_v2()`; `compile()` still builds only `root.sui`. ADR-182
+  adds `text`/`color`/`spacing`/`inset`/`scroll`/`loc`/`focus`/`a11y`
+  on those blocks from live `saai-ui-core` names.
 
 ### 7.6 `TaskSummary`
 

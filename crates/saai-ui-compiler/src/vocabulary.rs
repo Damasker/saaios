@@ -103,12 +103,76 @@ pub fn sui_v2_is_privileged(name: &str) -> bool {
     sui_v2_privileged().contains(&name)
 }
 
+pub fn sui_v2_property_keys() -> &'static [&'static str] {
+    &[
+        "text", "color", "spacing", "inset", "scroll", "loc", "focus", "a11y",
+    ]
+}
+
+pub fn sui_v2_text_roles() -> &'static [&'static str] {
+    &[
+        "Display", "Title", "Section", "Body", "Label", "Caption", "MonoBody",
+    ]
+}
+
+pub fn sui_v2_color_roles() -> &'static [&'static str] {
+    &[
+        "Canvas",
+        "Surface",
+        "Elevated",
+        "Accent",
+        "AccentHighlight",
+        "TextPrimary",
+        "TextSecondary",
+        "Success",
+        "Attention",
+        "Critical",
+        "Border",
+        "Grid",
+        "Pressed",
+        "Focus",
+        "DisabledSurface",
+        "DisabledText",
+        "HighContrastText",
+    ]
+}
+
+pub fn sui_v2_spacing_tokens() -> &'static [&'static str] {
+    &[
+        "None", "XSmall", "Small", "Medium", "Large", "XLarge", "XXLarge",
+    ]
+}
+
+pub fn sui_v2_inset_values() -> &'static [&'static str] {
+    &["none", "safe"]
+}
+
+pub fn sui_v2_scroll_values() -> &'static [&'static str] {
+    &["none", "region"]
+}
+
+pub fn sui_v2_a11y_roles() -> &'static [&'static str] {
+    &[
+        "Text",
+        "Heading",
+        "Image",
+        "Button",
+        "TextField",
+        "ListItem",
+        "Disclosure",
+        "ProgressIndicator",
+        "Status",
+        "Dialog",
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        sui_v2_composites, sui_v2_deferred, sui_v2_is_component, sui_v2_is_deferred,
-        sui_v2_is_privileged, sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged,
-        sui_v2_surfaces,
+        sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred,
+        sui_v2_inset_values, sui_v2_is_component, sui_v2_is_deferred, sui_v2_is_privileged,
+        sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged, sui_v2_property_keys,
+        sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_surfaces, sui_v2_text_roles,
     };
     use std::collections::HashSet;
 
@@ -163,5 +227,13 @@ mod tests {
         assert!(sui_v2_is_deferred("SpaceDetail"));
         assert!(!sui_v2_is_component("SpaceDetail"));
         assert!(!sui_v2_is_surface("root"));
+        assert_eq!(sui_v2_property_keys().len(), 8);
+        assert!(sui_v2_text_roles().contains(&"Title"));
+        assert!(sui_v2_color_roles().contains(&"TextPrimary"));
+        assert!(sui_v2_spacing_tokens().contains(&"Medium"));
+        assert_eq!(sui_v2_inset_values(), &["none", "safe"]);
+        assert_eq!(sui_v2_scroll_values(), &["none", "region"]);
+        assert!(sui_v2_a11y_roles().contains(&"Heading"));
+        assert!(!sui_v2_text_roles().contains(&"Headline"));
     }
 }

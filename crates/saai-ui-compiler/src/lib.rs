@@ -1,13 +1,15 @@
 //! Build-time parser for the versioned `.sui` format (ADR-017).
 //!
 //! ADR-180 names the `.sui` v2 vocabulary. `compile()` still accepts
-//! only `sui 1`. ADR-181 parses `sui 2` through `compile_v2()`.
+//! only `sui 1`. ADR-181/182 parse `sui 2` through `compile_v2()`.
 
 mod vocabulary;
 
 pub use vocabulary::{
-    sui_v2_composites, sui_v2_deferred, sui_v2_is_component, sui_v2_is_deferred,
-    sui_v2_is_privileged, sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged, sui_v2_surfaces,
+    sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred, sui_v2_inset_values,
+    sui_v2_is_component, sui_v2_is_deferred, sui_v2_is_privileged, sui_v2_is_surface,
+    sui_v2_primitives, sui_v2_privileged, sui_v2_property_keys, sui_v2_scroll_values,
+    sui_v2_spacing_tokens, sui_v2_surfaces, sui_v2_text_roles,
 };
 
 use std::fmt;
@@ -47,9 +49,22 @@ pub struct SuiV2Screen {
     pub components: Vec<SuiV2Component>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SuiV2Props {
+    pub text: Option<String>,
+    pub color: Option<String>,
+    pub spacing: Option<String>,
+    pub inset: Option<String>,
+    pub scroll: Option<String>,
+    pub loc: Option<String>,
+    pub focus: Option<u32>,
+    pub a11y: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SuiV2Component {
     pub type_name: String,
+    pub props: SuiV2Props,
 }
 
 impl SuiV2Component {
@@ -326,11 +341,9 @@ impl Parser {
                 return Err(self.fail(format!("unknown SUI v2 component `{type_name}`")));
             }
             self.kind(TokenKind::LBrace)?;
-            if !self.next_is(&TokenKind::RBrace) {
-                return Err(self.fail("SUI v2 component properties are not in this slice"));
-            }
+            let props = self.v2_props()?;
             self.kind(TokenKind::RBrace)?;
-            components.push(SuiV2Component { type_name });
+            components.push(SuiV2Component { type_name, props });
         }
         self.kind(TokenKind::RBrace)?;
         if self.cursor != self.tokens.len() {
@@ -340,6 +353,53 @@ impl Parser {
             return Err(self.fail("SUI v2 screen must name a component"));
         }
         Ok(SuiV2Screen { id, components })
+    }
+
+    fn v2_props(&mut self) -> Result<SuiV2Props, CompileError> {
+        let mut props = SuiV2Props::default();
+        let mut seen = std::collections::HashSet::new();
+        while !self.next_is(&TokenKind::RBrace) {
+            let key = self.ident()?;
+            if !sui_v2_property_keys().contains(&key.as_str()) {
+                return Err(self.fail(format!("unknown SUI v2 property `{key}`")));
+            }
+            if !seen.insert(key.clone()) {
+                return Err(self.fail(format!("duplicate SUI v2 property `{key}`")));
+            }
+            self.kind(TokenKind::Equals)?;
+            match key.as_str() {
+                "text" => props.text = Some(self.v2_named_value("text", sui_v2_text_roles())?),
+                "color" => props.color = Some(self.v2_named_value("color", sui_v2_color_roles())?),
+                "spacing" => {
+                    props.spacing = Some(self.v2_named_value("spacing", sui_v2_spacing_tokens())?)
+                }
+                "inset" => props.inset = Some(self.v2_named_value("inset", sui_v2_inset_values())?),
+                "scroll" => {
+                    props.scroll = Some(self.v2_named_value("scroll", sui_v2_scroll_values())?)
+                }
+                "a11y" => props.a11y = Some(self.v2_named_value("a11y", sui_v2_a11y_roles())?),
+                "loc" => props.loc = Some(self.v2_loc()?),
+                "focus" => props.focus = Some(self.number()?),
+                _ => return Err(self.fail(format!("unknown SUI v2 property `{key}`"))),
+            }
+        }
+        Ok(props)
+    }
+
+    fn v2_named_value(&mut self, key: &str, allowed: &[&str]) -> Result<String, CompileError> {
+        let value = self.ident()?;
+        if !allowed.contains(&value.as_str()) {
+            return Err(self.fail(format!("unknown SUI v2 {key} `{value}`")));
+        }
+        Ok(value)
+    }
+
+    fn v2_loc(&mut self) -> Result<String, CompileError> {
+        match self.tokens.get(self.cursor).map(|token| &token.kind) {
+            Some(TokenKind::Ident(_)) => self.ident(),
+            Some(TokenKind::String(_)) => self.string(),
+            _ => Err(self.fail("expected loc identifier or string")),
+        }
     }
 
     fn keyword(&mut self, expected: &str) -> Result<(), CompileError> {
@@ -439,9 +499,25 @@ mod tests {
     const VALID_V2: &str = r#"
         sui 2
         screen now {
-          component ContextHeader {}
-          component ObjectSummary {}
-          component BottomNavigation {}
+          component ContextHeader {
+            text = Title
+            a11y = Heading
+            loc = now.header
+            focus = 0
+            inset = safe
+          }
+          component ObjectSummary {
+            text = Body
+            color = TextPrimary
+            a11y = Status
+            loc = "now.object"
+          }
+          component BottomNavigation {
+            a11y = Button
+            focus = 1
+            scroll = none
+            inset = safe
+          }
         }
     "#;
 
@@ -509,6 +585,22 @@ mod tests {
             .components
             .iter()
             .all(|component| !component.is_privileged()));
+        let header = &screen.components[0];
+        assert_eq!(header.props.text.as_deref(), Some("Title"));
+        assert_eq!(header.props.a11y.as_deref(), Some("Heading"));
+        assert_eq!(header.props.loc.as_deref(), Some("now.header"));
+        assert_eq!(header.props.focus, Some(0));
+        assert_eq!(header.props.inset.as_deref(), Some("safe"));
+        assert_eq!(
+            screen.components[1].props.loc.as_deref(),
+            Some("now.object")
+        );
+        assert_eq!(
+            screen.components[1].props.color.as_deref(),
+            Some("TextPrimary")
+        );
+        assert_eq!(screen.components[2].props.focus, Some(1));
+        assert_eq!(screen.components[2].props.scroll.as_deref(), Some("none"));
     }
 
     #[test]
@@ -564,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_v2_rejects_properties_and_empty_screens() {
+    fn compile_v2_rejects_unknown_properties_and_empty_screens() {
         let props = compile_v2(
             r#"
             sui 2
@@ -574,9 +666,27 @@ mod tests {
         "#,
         )
         .unwrap_err();
-        assert!(props
-            .to_string()
-            .contains("SUI v2 component properties are not in this slice"));
+        assert!(props.to_string().contains("unknown SUI v2 property `role`"));
+        let text = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader { text = Headline }
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(text.to_string().contains("unknown SUI v2 text `Headline`"));
+        let dup = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader { text = Title text = Body }
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(dup.to_string().contains("duplicate SUI v2 property `text`"));
         let empty = compile_v2(
             r#"
             sui 2
