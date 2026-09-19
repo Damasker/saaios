@@ -55,8 +55,8 @@ in VUI-09; privileged system composites are not automatically public.
 | Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
 | Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
 | Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
-| Pattern | empty, loading, offline | Experimental (VUI-07 ADR-155) | NOW, apps grid, Bluetooth scan |
-| Pattern | blocked, failed, confirmation, permission, recovery | Deferred to VUI-07 | system surfaces |
+| Pattern | empty, loading, offline, blocked, failed | Experimental (VUI-07 ADR-155/156) | NOW, apps grid, Bluetooth scan/pair |
+| Pattern | confirmation, permission, recovery | Deferred to VUI-07 | system surfaces |
 
 ## 4. Shared state contract
 
@@ -505,10 +505,12 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `paired` is a `SAVED` name, not live connection.
 - Empty after a finished scan: `SurfacePattern` empty «Нет устройств»
   as a static card. While a scan has not finished: `SurfacePattern`
-  loading «Сканирование…» as a static card, not a blank. Missing
-  adapter is named on Система and does not open this list.
+  loading «Сканирование…» as a static card, not a blank. A `PAIR-ERROR`
+  log line is `SurfacePattern` failed «Ошибка сопряжения: …» in slot 0,
+  not Сопрячь. Missing adapter is named on Система and does not open
+  this list.
 - Not RSSI, not a trusted-client row, not a Space binding.
-- First real consumer: `bluetooth_list_rows` (ADR-130/155). Flattened to
+- First real consumer: `bluetooth_list_rows` (ADR-130/155/156). Flattened to
   `ActionCardView`. Scan / Refresh / Back stay trailing control cards.
 - Accessibility: delegated to the nested `DataRow`.
 
@@ -525,14 +527,16 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   to `ActionCardView`. «Назад» stays a trailing control card.
 - Accessibility: delegated to the nested `DataRow`.
 
-### SurfacePattern (empty / loading / offline)
+### SurfacePattern (empty / loading / offline / blocked / failed)
 
 - Anatomy: `UniversalState` plus a caller-supplied message. Empty is
   Idle and paints no mark. Loading is Waiting plus the Waiting mark.
-  Offline is Offline plus the Offline mark. Message is Body.
+  Offline is Offline plus the Offline mark. Blocked and Failed use
+  those states' marks. Message is Body.
 - First consumers: NOW empty/offline (ADR-114 copy), apps-grid
   empty/offline (ADR-138 copy), Bluetooth scan loading / empty
-  (ADR-155). Blocked, failed, permission, confirmation, recovery later.
+  (ADR-155), Bluetooth `PAIR-ERROR` failed (ADR-156). Permission,
+  confirmation, recovery later.
 - Accessibility: `Status`; busy only while Waiting.
 
 ## 8. Required gallery matrix

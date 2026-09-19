@@ -1325,41 +1325,23 @@ fn bluetooth_pair(index: usize) {
     spawn_detached(BT_PAIR_BIN, &[&index.to_string()], BT_PAIR_LOG_PATH);
 }
 
-/// `bt-pair <index>`'s own result line, if the background pairing
-/// attempt has reached one yet (`None` while only its initial
-/// "PAIRING" line is present, or before it's been run at all).
-fn bluetooth_pair_result() -> Option<String> {
-    let text = std::fs::read_to_string(BT_PAIR_LOG_PATH).ok()?;
-    for line in text.lines() {
-        if let Some(name) = line.strip_prefix("PAIRED\t") {
-            return Some(format!("Сопряжено: {name}"));
-        }
+/// First result line from `bt-pair`'s log. `PAIR-ERROR` is a Failed
+/// pattern. `PAIRED` first is success on the device row, not a
+/// surface pattern.
+fn bluetooth_pair_error_from(log: &str) -> Option<String> {
+    for line in log.lines() {
         if let Some(reason) = line.strip_prefix("PAIR-ERROR\t") {
-            return Some(format!("Ошибка сопряжения: {reason}"));
+            return Some(reason.to_string());
+        }
+        if line.starts_with("PAIRED\t") {
+            return None;
         }
     }
     None
 }
 
-/// Prefers a pairing result in progress/just finished over the scan
-/// state, so tapping a device to pair immediately starts showing
-/// that outcome instead of being silently overwritten by scan status
-/// text. ADR-145: the Surface subtitle that consumed this left the
-/// Bluetooth header; kept for a later scan-status row.
-#[allow(dead_code)]
-fn bluetooth_status_summary() -> String {
-    if let Some(result) = bluetooth_pair_result() {
-        return result;
-    }
-    if !std::path::Path::new(BT_SCAN_LOG_PATH).exists() {
-        return "Поиск ещё не запускался".to_string();
-    }
-    let (devices, done) = bluetooth_scan_results();
-    if done {
-        format!("Поиск завершён: найдено {}", devices.len())
-    } else {
-        "Идёт поиск... (~8 с)".to_string()
-    }
+fn bluetooth_pair_error_reason() -> Option<String> {
+    bluetooth_pair_error_from(&std::fs::read_to_string(BT_PAIR_LOG_PATH).ok()?)
 }
 
 fn bluetooth_paired_count() -> usize {
@@ -1796,12 +1778,8 @@ enum BluetoothListTap {
     Back,
 }
 
-fn bluetooth_list_row_count(device_count: usize, _scan_done: bool) -> usize {
-    if device_count == 0 {
-        1
-    } else {
-        device_count
-    }
+fn bluetooth_list_row_count(device_count: usize, status_rows: usize) -> usize {
+    device_count + status_rows
 }
 
 fn bluetooth_list_action_at(
@@ -1809,14 +1787,14 @@ fn bluetooth_list_action_at(
     width: u32,
     height: u32,
     device_count: usize,
-    scan_done: bool,
+    status_rows: usize,
 ) -> Option<BluetoothListTap> {
     for index in 0..device_count {
-        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
+        if stacked_row_rect(status_rows + index, width, height).contains(pos.0, pos.1) {
             return Some(BluetoothListTap::Device(index));
         }
     }
-    let controls = bluetooth_list_row_count(device_count, scan_done);
+    let controls = bluetooth_list_row_count(device_count, status_rows);
     if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
         return Some(BluetoothListTap::Scan);
     }
@@ -4424,9 +4402,14 @@ fn lock_pin_field_rect(width: u32) -> Rect {
     )
 }
 
-/// VUI-07 (ADR-130/155): «Bluetooth устройства» lists live `bt-scan`
-/// rows. Empty only after `DONE`. Scan-in-progress with no devices is
-/// `SurfacePattern::loading`, not a blank. Paired is a SAVED name.
+/// VUI-07 (ADR-130/155/156): «Bluetooth устройства» lists live
+/// `bt-scan` rows. Empty only after `DONE`. Scan-in-progress with no
+/// devices is loading. `PAIR-ERROR` is Failed and wins over scan.
+/// Paired is a SAVED name. Slot 0 of a pattern is not Сопрячь.
+fn bluetooth_failed_pattern(reason: &str) -> SurfacePattern {
+    SurfacePattern::failed(format!("Ошибка сопряжения: {reason}"))
+}
+
 fn bluetooth_scan_pattern(device_count: usize, scan_done: bool) -> Option<SurfacePattern> {
     if device_count > 0 {
         None
@@ -4437,27 +4420,35 @@ fn bluetooth_scan_pattern(device_count: usize, scan_done: bool) -> Option<Surfac
     }
 }
 
+fn bluetooth_list_pattern(
+    device_count: usize,
+    scan_done: bool,
+    pair_error: Option<&str>,
+) -> Option<SurfacePattern> {
+    if let Some(reason) = pair_error {
+        return Some(bluetooth_failed_pattern(reason));
+    }
+    bluetooth_scan_pattern(device_count, scan_done)
+}
+
 fn bluetooth_list_rows(
     devices: &[BluetoothDevice],
     scan_done: bool,
     saved: &[String],
+    pair_error: Option<&str>,
 ) -> Vec<BluetoothRow> {
-    if devices.is_empty() {
-        return bluetooth_scan_pattern(0, scan_done)
-            .into_iter()
-            .map(|pattern| BluetoothRow::from_pattern(&pattern))
-            .collect();
-    }
-    devices
-        .iter()
-        .map(|device| {
-            BluetoothRow::open(
-                device.name.clone(),
-                device.transport.clone(),
-                saved.iter().any(|name| name == &device.name),
-            )
-        })
-        .collect()
+    let mut rows: Vec<BluetoothRow> = bluetooth_list_pattern(devices.len(), scan_done, pair_error)
+        .into_iter()
+        .map(|pattern| BluetoothRow::from_pattern(&pattern))
+        .collect();
+    rows.extend(devices.iter().map(|device| {
+        BluetoothRow::open(
+            device.name.clone(),
+            device.transport.clone(),
+            saved.iter().any(|name| name == &device.name),
+        )
+    }));
+    rows
 }
 
 fn bluetooth_card_from_row(row: &BluetoothRow) -> render::ActionCardView {
@@ -6260,12 +6251,15 @@ impl TouchHandler for Shell {
                 // comment) rather than reading a stored snapshot.
                 let (devices, done) = bluetooth_scan_results();
                 let device_count = devices.len();
+                let pair_error = bluetooth_pair_error_reason();
+                let status_rows = bluetooth_list_pattern(device_count, done, pair_error.as_deref())
+                    .is_some() as usize;
                 if let Some(tap) = bluetooth_list_action_at(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     device_count,
-                    done,
+                    status_rows,
                 ) {
                     self.handle_bluetooth_list_tap(tap, conn, qh);
                 }
@@ -6696,7 +6690,8 @@ impl Shell {
             // real `ContextHeader`, not a Surface strip.
             let (devices, done) = bluetooth_scan_results();
             let saved = bluetooth_saved_names();
-            let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved);
+            let pair_error = bluetooth_pair_error_reason();
+            let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved, pair_error.as_deref());
             let mut rows: Vec<(Rect, render::ActionCardView)> = bluetooth_rows
                 .iter()
                 .enumerate()
@@ -9560,15 +9555,16 @@ impl Shell {
 mod tests {
     use super::{
         apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
-        bluetooth_list_action_at, bluetooth_list_rows, bluetooth_scan_pattern,
-        calibration_requested, capability_label, consent_action_at, consent_content_cards,
-        consent_header, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
-        diagnostic_header, diagnostic_row, diagnostic_status_line, effective_context_space,
-        ensure_me_row_cache, flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
-        input_idle_for_at_least, intent_action_at, intent_input_field, known_surfaces,
-        lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
-        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header,
-        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        bluetooth_list_action_at, bluetooth_list_pattern, bluetooth_list_rows,
+        bluetooth_pair_error_from, bluetooth_scan_pattern, calibration_requested, capability_label,
+        consent_action_at, consent_content_cards, consent_header, content_action_at,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
+        diagnostic_status_line, effective_context_space, ensure_me_row_cache, flatten_me_rows,
+        format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
+        intent_action_at, intent_input_field, known_surfaces, lock_attention_tap,
+        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
+        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
+        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
         pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
@@ -10364,6 +10360,36 @@ mod tests {
     }
 
     #[test]
+    fn bluetooth_pair_error_is_failed_and_not_a_device_row() {
+        assert_eq!(bluetooth_pair_error_from("PAIRING\n"), None);
+        assert_eq!(bluetooth_pair_error_from("PAIRED\tPixel Buds\n"), None);
+        assert_eq!(
+            bluetooth_pair_error_from("PAIR-ERROR\ttimeout\n"),
+            Some("timeout".to_string())
+        );
+        assert_eq!(
+            bluetooth_list_pattern(0, false, Some("timeout")),
+            Some(SurfacePattern::failed("Ошибка сопряжения: timeout"))
+        );
+        let saved: Vec<String> = Vec::new();
+        let failed = bluetooth_list_rows(&[], false, &saved, Some("timeout"));
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].row.primary, "Ошибка сопряжения: timeout");
+        assert!(!failed[0].row.is_actionable());
+        assert_eq!(bluetooth_card_from_row(&failed[0]).action, "");
+        let devices = vec![BluetoothDevice {
+            name: "Speaker".into(),
+            transport: String::new(),
+        }];
+        let with_device = bluetooth_list_rows(&devices, true, &saved, Some("timeout"));
+        assert_eq!(with_device.len(), 2);
+        assert_eq!(with_device[0].row.primary, "Ошибка сопряжения: timeout");
+        assert!(!with_device[0].row.is_actionable());
+        assert_eq!(with_device[1].row.primary, "Speaker");
+        assert_eq!(bluetooth_card_from_row(&with_device[1]).action, "Сопрячь");
+    }
+
+    #[test]
     fn inbox_header_names_the_section_and_offline() {
         let online = inbox_header("Дом", true, false);
         assert_eq!(online.heading_text(), "Дом · Входящие");
@@ -10643,31 +10669,43 @@ mod tests {
             )
         };
         assert!(matches!(
-            bluetooth_list_action_at(center(device_0), width, height, device_count, false),
+            bluetooth_list_action_at(center(device_0), width, height, device_count, 0),
             Some(BluetoothListTap::Device(0))
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(scan), width, height, device_count, false),
+            bluetooth_list_action_at(center(scan), width, height, device_count, 0),
             Some(BluetoothListTap::Scan)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(refresh), width, height, device_count, false),
+            bluetooth_list_action_at(center(refresh), width, height, device_count, 0),
             Some(BluetoothListTap::Refresh)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(back), width, height, device_count, false),
+            bluetooth_list_action_at(center(back), width, height, device_count, 0),
             Some(BluetoothListTap::Back)
         ));
         let empty = stacked_row_rect(0, width, height);
         let scan_empty = stacked_row_rect(1, width, height);
-        assert!(bluetooth_list_action_at(center(empty), width, height, 0, true).is_none());
+        assert!(bluetooth_list_action_at(center(empty), width, height, 0, 1).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(scan_empty), width, height, 0, true),
+            bluetooth_list_action_at(center(scan_empty), width, height, 0, 1),
             Some(BluetoothListTap::Scan)
         ));
-        assert!(bluetooth_list_action_at(center(empty), width, height, 0, false).is_none());
+        assert!(bluetooth_list_action_at(center(empty), width, height, 0, 1).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(scan_empty), width, height, 0, false),
+            bluetooth_list_action_at(center(scan_empty), width, height, 0, 1),
+            Some(BluetoothListTap::Scan)
+        ));
+        let failed = stacked_row_rect(0, width, height);
+        let device_after_failed = stacked_row_rect(1, width, height);
+        let scan_after_failed = stacked_row_rect(2, width, height);
+        assert!(bluetooth_list_action_at(center(failed), width, height, 1, 1).is_none());
+        assert!(matches!(
+            bluetooth_list_action_at(center(device_after_failed), width, height, 1, 1),
+            Some(BluetoothListTap::Device(0))
+        ));
+        assert!(matches!(
+            bluetooth_list_action_at(center(scan_after_failed), width, height, 1, 1),
             Some(BluetoothListTap::Scan)
         ));
     }
@@ -11358,7 +11396,7 @@ mod tests {
             },
         ];
         let saved = vec!["Pixel Buds".to_string()];
-        let live = bluetooth_list_rows(&devices, true, &saved);
+        let live = bluetooth_list_rows(&devices, true, &saved, None);
         assert_eq!(live.len(), 2);
         assert_eq!(live[0].row.primary, "Pixel Buds");
         assert!(live[0].paired);
@@ -11371,12 +11409,12 @@ mod tests {
         assert!(!live.iter().any(|row| row.row.primary.contains("dBm")
             || row.row.value.as_deref().unwrap_or("").contains("RSSI")));
 
-        let pending = bluetooth_list_rows(&[], false, &saved);
+        let pending = bluetooth_list_rows(&[], false, &saved, None);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].row.primary, "Сканирование…");
         assert!(!pending[0].row.is_actionable());
         assert_eq!(bluetooth_card_from_row(&pending[0]).action, "");
-        let empty = bluetooth_list_rows(&[], true, &saved);
+        let empty = bluetooth_list_rows(&[], true, &saved, None);
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].row.primary, "Нет устройств");
         assert!(!empty[0].row.is_actionable());

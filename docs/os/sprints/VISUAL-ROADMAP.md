@@ -1046,8 +1046,11 @@ big-bang rewrite.
   Bluetooth scan loading «Сканирование…» instead of a blank. Blocked,
   failed, permission, confirmation, recovery later. Do not tap Сопрячь.
   Leave Bluetooth with Назад. Flashed `e18f3d9d…`.
-- [ ] Apply shared blocked, failed, permission, confirmation, and
-  recovery patterns.
+- [x] Apply shared blocked and failed patterns. ADR-156:
+  `SurfacePattern::blocked` / `failed`; Bluetooth `PAIR-ERROR` occupies
+  slot 0 and is not Сопрячь. Permission, confirmation, recovery later.
+  Do not tap Сопрячь. Leave Bluetooth with Назад. Flashed `eba9d216…`.
+- [ ] Apply shared permission, confirmation, and recovery patterns.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.
@@ -1201,8 +1204,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (blocked / failed / permission /
-confirmation / recovery patterns). Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07** remaining surfaces (permission / confirmation /
+recovery patterns). Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
@@ -1216,5 +1219,5 @@ header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
 keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), keyboard
 press (`3a97f0e8…`), DevSurface header (`c9f52227…`), lock
 device state (`88121ad2…`), lock sleep AOD (`c3fd2fcf…`), and
-empty/loading/offline (`e18f3d9d…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
+empty/loading/offline (`e18f3d9d…`), and blocked/failed (`eba9d216…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.

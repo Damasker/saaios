@@ -288,10 +288,11 @@ impl StatusIndicator {
     }
 }
 
-/// VUI-07 (ADR-155): whole-surface empty / loading / offline. The
-/// message is caller-supplied (this crate still does not embed a
-/// display-language string). Idle empty paints no mark; Waiting and
-/// Offline keep color from being the only cue via `StatusMark`.
+/// VUI-07 (ADR-155/156): whole-surface empty / loading / offline /
+/// blocked / failed. The message is caller-supplied (this crate still
+/// does not embed a display-language string). Idle empty paints no
+/// mark; the other states keep color from being the only cue via
+/// `StatusMark`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SurfacePattern {
     pub state: UniversalState,
@@ -316,6 +317,20 @@ impl SurfacePattern {
     pub fn offline(message: impl Into<String>) -> Self {
         Self {
             state: UniversalState::Offline,
+            message: message.into(),
+        }
+    }
+
+    pub fn blocked(message: impl Into<String>) -> Self {
+        Self {
+            state: UniversalState::Blocked,
+            message: message.into(),
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self {
+            state: UniversalState::Failed,
             message: message.into(),
         }
     }
@@ -1051,5 +1066,18 @@ mod tests {
         assert!(offline.paints_mark());
         assert!(!offline.accessibility().busy);
         assert_eq!(offline.state.style().mark, StatusMark::Offline);
+
+        let blocked = SurfacePattern::blocked("Нет адаптера");
+        assert_eq!(blocked.state, UniversalState::Blocked);
+        assert!(blocked.paints_mark());
+        assert_eq!(blocked.state.style().mark, StatusMark::Blocked);
+        assert_eq!(blocked.state.style().color, ColorRole::Attention);
+
+        let failed = SurfacePattern::failed("Ошибка сопряжения: timeout");
+        assert_eq!(failed.state, UniversalState::Failed);
+        assert!(failed.paints_mark());
+        assert!(!failed.accessibility().busy);
+        assert_eq!(failed.state.style().mark, StatusMark::Failure);
+        assert_eq!(failed.state.style().color, ColorRole::Critical);
     }
 }
