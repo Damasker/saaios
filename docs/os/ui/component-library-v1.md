@@ -508,7 +508,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   as a static card. While a scan has not finished: `SurfacePattern`
   loading «Сканирование…» as a static card, not a blank. A `PAIR-ERROR`
   log line is `SurfacePattern` failed «Ошибка сопряжения: …» in slot 0,
-  not Сопрячь. Missing adapter is named on Система and does not open
+  with the Failed mark and without Сопрячь. «Искать» is the recovery
+  control. Missing adapter is named on Система and does not open
   this list.
 - Not RSSI, not a trusted-client row, not a Space binding.
 - First real consumer: `bluetooth_list_rows` (ADR-130/155/156). Flattened to
@@ -537,8 +538,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - First consumers: NOW empty/offline (ADR-114 copy), apps-grid
   empty/offline (ADR-138 copy), Bluetooth scan loading / empty
   (ADR-155), Bluetooth `PAIR-ERROR` failed (ADR-156). Confirmation is
-  `DecisionOverlay` on Object View (ADR-157). Permission and recovery
-  later.
+  `DecisionOverlay` on Object View (ADR-157). Permission is Object View
+  `SurfacePattern::blocked` (ADR-158). Recovery is the Failed mark plus
+  Bluetooth «Искать».
 - Accessibility: `Status`; busy only while Waiting.
 
 ## 8. Required gallery matrix

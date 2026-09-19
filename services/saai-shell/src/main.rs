@@ -1898,13 +1898,15 @@ enum Frame {
     /// `ObjectSummary` (title + type/version + trailing status);
     /// `details` are the optional activity / observation / blocker /
     /// consequence lines that actually exist. ADR-157: confirmation
-    /// is `DecisionOverlay`, not flattened into `details`. History is
-    /// omitted until entity events load.
+    /// is `DecisionOverlay`, not flattened into `details`. ADR-158:
+    /// OAM permission is `SurfacePattern::blocked`, not a Caption dump.
+    /// History is omitted until entity events load.
     ObjectView {
         summary: ObjectSummary,
         related: Option<String>,
         details: Vec<String>,
         decision: Option<DecisionOverlay>,
+        permission: Option<SurfacePattern>,
         header: Rect,
         actions: Vec<(Rect, &'static str)>,
     },
@@ -2262,11 +2264,14 @@ fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
         content.observation.clone(),
         content.blocker.clone(),
         content.consequence.clone(),
-        content.permission.clone(),
     ]
     .into_iter()
     .flatten()
     .collect()
+}
+
+fn object_view_permission_pattern(content: &ObjectViewContent) -> Option<SurfacePattern> {
+    content.permission.clone().map(SurfacePattern::blocked)
 }
 
 fn builtin_object_actions() -> ObjectActionRegistry {
@@ -4457,7 +4462,12 @@ fn bluetooth_card_from_row(row: &BluetoothRow) -> render::ActionCardView {
     } else {
         ""
     };
-    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.paired)
+    let mut card =
+        render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.paired);
+    if let Some(indicator) = row.indicator.clone() {
+        card = card.with_indicator(indicator);
+    }
+    card
 }
 
 /// VUI-07 (ADR-131): «Доверенные клиенты» lists live
@@ -6588,11 +6598,13 @@ impl Shell {
                     .collect()
             };
             let details = object_view_details(&content);
+            let permission = object_view_permission_pattern(&content);
             Frame::ObjectView {
                 summary: object_view_summary(entity, &content),
                 related: content.related,
                 details,
                 decision: content.decision,
+                permission,
                 header,
                 actions,
             }
@@ -6984,6 +6996,7 @@ impl Shell {
                     related,
                     details,
                     decision,
+                    permission,
                     header,
                     actions,
                 } => {
@@ -6993,6 +7006,7 @@ impl Shell {
                         related.as_deref(),
                         &details,
                         decision.as_ref(),
+                        permission.as_ref(),
                         header,
                         &actions,
                         fonts,
@@ -9563,26 +9577,26 @@ mod tests {
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
         lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
         next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_details, object_view_summary,
-        orb_action_at, orb_attention_from_entities, orb_menu_actions, orb_visual_state,
-        orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
-        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
-        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
-        SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        object_view_action_at, object_view_content, object_view_details,
+        object_view_permission_pattern, object_view_summary, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
+        remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
+        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
+        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
+        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
+        KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow,
+        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -10375,7 +10389,10 @@ mod tests {
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].row.primary, "Ошибка сопряжения: timeout");
         assert!(!failed[0].row.is_actionable());
-        assert_eq!(bluetooth_card_from_row(&failed[0]).action, "");
+        assert!(failed[0].indicator.is_some());
+        let failed_card = bluetooth_card_from_row(&failed[0]);
+        assert_eq!(failed_card.action, "");
+        assert!(failed_card.indicator.is_some());
         let devices = vec![BluetoothDevice {
             name: "Speaker".into(),
             transport: String::new(),
@@ -11901,6 +11918,12 @@ mod tests {
             Some("Состояние экрана: нет инструмента")
         );
         assert!(content.actions.is_empty());
+        let details = object_view_details(&content);
+        assert!(!details.iter().any(|line| line.contains("нет инструмента")));
+        assert_eq!(
+            object_view_permission_pattern(&content),
+            Some(SurfacePattern::blocked("Состояние экрана: нет инструмента"))
+        );
     }
 
     #[test]

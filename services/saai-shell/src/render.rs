@@ -93,6 +93,7 @@ pub struct ActionCardView {
     pub status: String,
     pub action: String,
     pub selected: bool,
+    pub indicator: Option<StatusIndicator>,
 }
 
 impl ActionCardView {
@@ -106,11 +107,17 @@ impl ActionCardView {
             status: status.into(),
             action: action.into(),
             selected: false,
+            indicator: None,
         }
     }
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    pub fn with_indicator(mut self, indicator: StatusIndicator) -> Self {
+        self.indicator = Some(indicator);
         self
     }
 }
@@ -551,6 +558,7 @@ pub fn draw_object_view(
     related: Option<&str>,
     details: &[String],
     decision: Option<&DecisionOverlay>,
+    permission: Option<&SurfacePattern>,
     header: Rect,
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
@@ -607,6 +615,28 @@ pub fn draw_object_view(
                 canvas,
                 fonts,
                 &SemanticText::new(fact, TextRole::Body, ColorRole::TextPrimary),
+                header.x + margin,
+                y,
+                content_width,
+            );
+            y = y.saturating_add(scaled_line_height(TextRole::Body));
+        }
+    }
+    if let Some(pattern) = permission {
+        if y + 40 < header.y + header.height {
+            if pattern.paints_mark() {
+                let mark_size = physical(IconSize::Medium.value());
+                draw_calibration_mark(
+                    canvas,
+                    Rect::new(header.x + margin, y, mark_size, mark_size),
+                    pattern.state.style().mark,
+                    theme_color(pattern.state.style().color),
+                );
+            }
+            draw_semantic_text(
+                canvas,
+                fonts,
+                &pattern.message_text(),
                 header.x + margin,
                 y,
                 content_width,
@@ -949,6 +979,15 @@ fn draw_action_card(
             theme_color(ColorRole::Accent),
         );
         rect.x + 174
+    } else if let Some(indicator) = &card.indicator {
+        let mark_size = physical(IconSize::Medium.value());
+        draw_calibration_mark(
+            canvas,
+            Rect::new(rect.x + 34, rect.y + 72, mark_size, mark_size),
+            indicator.mark(),
+            theme_color(indicator.color()),
+        );
+        rect.x + 34 + mark_size + physical(SpacingToken::Small.value())
     } else {
         rect.x + 34
     };
@@ -3211,11 +3250,12 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
-        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
-        draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_lock_sleep,
-        draw_object_view, draw_orb, draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar,
-        draw_surface_pattern, draw_tab_bar, gallery_row_positions, now_empty_pattern, physical,
-        physical_line_height, state_color, theme_color, ActionCardView, Canvas,
+        context_color, draw_action_card, draw_apps_grid, draw_calibration, draw_composite_gallery,
+        draw_consent, draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry,
+        draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup, draw_remote_pair, draw_root,
+        draw_status_bar, draw_surface_pattern, draw_tab_bar, gallery_row_positions,
+        now_empty_pattern, physical, physical_line_height, state_color, theme_color,
+        ActionCardView, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field, FieldKind, IconSize,
@@ -4210,6 +4250,7 @@ mod tests {
             None,
             &[],
             Some(&overlay),
+            None,
             Rect::new(0, 0, width, 2200),
             &[(accept, "Подтвердить"), (decline, "Отклонить")],
             None,
@@ -4221,6 +4262,25 @@ mod tests {
         assert_eq!(
             canvas.pixel(decline.x + 4, decline.y + 4),
             theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn failed_action_card_paints_a_mark_and_is_not_a_pair_button() {
+        let mut pixels = vec![0u8; 1080 * 2400 * 4];
+        let canvas = &mut Canvas::new(&mut pixels, 1080, 2400);
+        let rect = Rect::new(40, 430, 1000, 200);
+        let card = ActionCardView::new("Ошибка сопряжения: timeout", "", "").with_indicator(
+            StatusIndicator::new(UniversalState::Failed, "Ошибка сопряжения: timeout"),
+        );
+        draw_action_card(canvas, rect, &card, None);
+        assert_ne!(
+            canvas.pixel(rect.x + 40, rect.y + 80),
+            theme_color(ColorRole::Canvas)
+        );
+        assert_ne!(
+            canvas.pixel(rect.x + 40, rect.y + 80),
+            theme_color(ColorRole::Accent)
         );
     }
 }
