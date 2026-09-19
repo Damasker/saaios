@@ -371,11 +371,7 @@ pub fn draw_intent_input(
     canvas.fill_rect(header, theme_color(ColorRole::Surface));
 
     let Some(fonts) = fonts else {
-        // Same no-font fallback draw_consent() uses: every key still gets
-        // a distinct, tappable rectangle even with no label rendered.
-        for (rect, _) in keys {
-            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
-        }
+        paint_keyboard_keys(canvas, None, keys);
         return;
     };
 
@@ -413,24 +409,7 @@ pub fn draw_intent_input(
         preview_color,
     );
 
-    for (rect, label) in keys {
-        let key = Rect::new(
-            rect.x.saturating_add(4),
-            rect.y.saturating_add(4),
-            rect.width.saturating_sub(8),
-            rect.height.saturating_sub(8),
-        );
-        canvas.fill_rect(key, theme_color(ColorRole::Surface));
-        draw_keypad_label(
-            canvas,
-            fonts,
-            label,
-            32.0,
-            key.x + key.width / 2,
-            key.y + key.height / 2 - 18,
-            theme_color(ColorRole::TextPrimary),
-        );
-    }
+    paint_keyboard_keys(canvas, Some(fonts), keys);
 }
 
 /// VUI-07 (ADR-132): Wi-Fi password reuses the intent keyboard keys
@@ -449,9 +428,7 @@ pub fn draw_wifi_password(
     canvas.fill_rect(header, theme_color(ColorRole::Surface));
 
     let Some(fonts) = fonts else {
-        for (rect, _) in keys {
-            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
-        }
+        paint_keyboard_keys(canvas, None, keys);
         return;
     };
 
@@ -488,24 +465,7 @@ pub fn draw_wifi_password(
         preview_color,
     );
 
-    for (rect, label) in keys {
-        let key = Rect::new(
-            rect.x.saturating_add(4),
-            rect.y.saturating_add(4),
-            rect.width.saturating_sub(8),
-            rect.height.saturating_sub(8),
-        );
-        canvas.fill_rect(key, theme_color(ColorRole::Surface));
-        draw_keypad_label(
-            canvas,
-            fonts,
-            label,
-            32.0,
-            key.x + key.width / 2,
-            key.y + key.height / 2 - 18,
-            theme_color(ColorRole::TextPrimary),
-        );
-    }
+    paint_keyboard_keys(canvas, Some(fonts), keys);
 }
 
 /// HIA-07: one screen for any entity, instead of a dedicated view per
@@ -1075,17 +1035,16 @@ fn draw_keypad_label(
     draw_text_centered(canvas, &fonts.semibold, label, size, center_x, top, color);
 }
 
-/// ADR-143: PIN setup through `ContextHeader`. The Password `Field`
-/// sits in the first stacked row below the status layer. Keys stay
-/// `pin_keypad_rect`. No Surface header bar. Lock unlock stays
-/// `draw_lock_pin_entry`.
+/// ADR-143/149: PIN setup through `ContextHeader`. The Password `Field`
+/// sits in the first stacked row below the status layer. Keys are the
+/// same ADR-029 keyboard paint as Intent and Wi-Fi. No Surface header bar.
 pub fn draw_pin_setup(
     canvas: &mut Canvas<'_>,
     content: Rect,
     header: &ContextHeader,
     field: &Field,
     field_rect: Rect,
-    keys: &[(Rect, &str)],
+    keys: &[(Rect, String)],
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
@@ -1095,14 +1054,35 @@ pub fn draw_pin_setup(
         draw_gallery_field(canvas, fonts, field, field_rect);
     }
     canvas.set_clip(None);
+    paint_keyboard_keys(canvas, fonts, keys);
+}
 
+/// ADR-149: lock unlock. Password `Field` occupancy in the keyboard
+/// header slot, then the shared key paint. Never the secret. PIN
+/// setup stays `draw_pin_setup`.
+pub fn draw_lock_pin_entry(
+    canvas: &mut Canvas<'_>,
+    field: &Field,
+    field_rect: Rect,
+    keys: &[(Rect, String)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    if let Some(fonts) = fonts {
+        draw_gallery_field(canvas, fonts, field, field_rect);
+    }
+    paint_keyboard_keys(canvas, fonts, keys);
+}
+
+/// One key painter for Intent, Wi-Fi password, PIN setup, and lock
+/// unlock. Rects come from `layout()`; this only fills them.
+fn paint_keyboard_keys(canvas: &mut Canvas<'_>, fonts: Option<&Fonts>, keys: &[(Rect, String)]) {
     let Some(fonts) = fonts else {
         for (rect, _) in keys {
             canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
         }
         return;
     };
-
     for (rect, label) in keys {
         let key = Rect::new(
             rect.x.saturating_add(4),
@@ -1118,75 +1098,6 @@ pub fn draw_pin_setup(
             32.0,
             key.x + key.width / 2,
             key.y + key.height / 2 - 18,
-            theme_color(ColorRole::TextPrimary),
-        );
-    }
-}
-
-/// S24: the lock surface's own keypad, shown instead of a flat
-/// `LOCK_SCREEN_COLOR` fill whenever `ShellSettings.pin_code` is set
-/// (`present_lock_pin_entry` in `main.rs`). `entered_len` dots are
-/// filled (`accent`), the rest of `pin_len` stay `border` outlines --
-/// no digits are ever drawn, only progress, since this is what
-/// protects the lock in the first place.
-pub fn draw_lock_pin_entry(
-    canvas: &mut Canvas<'_>,
-    width: u32,
-    entered_len: usize,
-    pin_len: usize,
-    keys: &[(Rect, &str)],
-    fonts: Option<&Fonts>,
-) {
-    canvas.fill(theme_color(ColorRole::Canvas));
-
-    let dot_size = 36u32;
-    let gap = 30u32;
-    let count = pin_len.max(1) as u32;
-    let total_width = count * dot_size + count.saturating_sub(1) * gap;
-    let start_x = width.saturating_sub(total_width) / 2;
-    let dot_y = 420u32;
-    for index in 0..pin_len {
-        let x = start_x + index as u32 * (dot_size + gap);
-        let color = if index < entered_len {
-            theme_color(ColorRole::Accent)
-        } else {
-            theme_color(ColorRole::Border)
-        };
-        canvas.fill_rect(Rect::new(x, dot_y, dot_size, dot_size), color);
-    }
-
-    let Some(fonts) = fonts else {
-        for (rect, _) in keys {
-            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
-        }
-        return;
-    };
-
-    draw_text_centered(
-        canvas,
-        &fonts.regular,
-        "Введите PIN",
-        32.0,
-        width / 2,
-        330,
-        theme_color(ColorRole::TextSecondary),
-    );
-
-    for (rect, label) in keys {
-        let key = Rect::new(
-            rect.x.saturating_add(4),
-            rect.y.saturating_add(4),
-            rect.width.saturating_sub(8),
-            rect.height.saturating_sub(8),
-        );
-        canvas.fill_rect(key, theme_color(ColorRole::Surface));
-        draw_keypad_label(
-            canvas,
-            fonts,
-            label,
-            36.0,
-            key.x + key.width / 2,
-            key.y + key.height / 2 - 20,
             theme_color(ColorRole::TextPrimary),
         );
     }
@@ -3185,9 +3096,10 @@ mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
-        draw_context_row_list, draw_gallery, draw_lock_idle, draw_orb, draw_pin_setup,
-        draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions,
-        physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
+        draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_orb,
+        draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar,
+        gallery_row_positions, physical, physical_line_height, state_color, theme_color,
+        ActionCardView, Canvas,
     };
     use saai_ui_core::{
         ColorRole, ContextColor, ContextHeader, Field, FieldKind, IconSize, LogicalUnit,
@@ -3762,7 +3674,7 @@ mod tests {
         let field = Field::new("Новый PIN-код", FieldKind::Password)
             .with_placeholder("Введите новый PIN (минимум 4 цифры)");
         let field_rect = Rect::new(49, 430, 982, 190);
-        let keys = vec![(Rect::new(108, 900, 264, 240), "1")];
+        let keys = vec![(Rect::new(108, 900, 264, 240), "1".to_string())];
         draw_pin_setup(canvas, content, &header, &field, field_rect, &keys, None);
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
@@ -3898,6 +3810,21 @@ mod tests {
         );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(540, 1200), theme_color(ColorRole::Canvas));
+    }
+
+    #[test]
+    fn lock_pin_entry_fill_is_canvas_and_keys_are_not_a_surface_header() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let field = Field::new("Введите PIN", FieldKind::Password).with_value("0000");
+        let field_rect = Rect::new(49, 24, 982, 212);
+        let key = Rect::new(108, 900, 264, 240);
+        draw_lock_pin_entry(canvas, &field, field_rect, &[(key, "1".to_string())], None);
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_ne!(canvas.pixel(540, 1200), [0x00, 0xd0, 0x00, 0x00]);
+        assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
     }
 
     #[test]

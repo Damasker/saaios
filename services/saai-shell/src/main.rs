@@ -1464,83 +1464,6 @@ fn format_utc_offset(minutes: i32) -> String {
     format!("UTC{sign}{:02}:{:02}", abs_minutes / 60, abs_minutes % 60)
 }
 
-/// S24: a real numeric keypad, not ADR-029's letters-only keyboard
-/// (`INTENT_KEY_ROWS` has no digit keys at all). Plain
-/// `stacked_row_rect`-style index-to-rect math (see `now_grid_rect`),
-/// not a `Node`/`layout()` tree -- this needs to render both on the
-/// normal toplevel surface ("Я"'s "Изменить PIN") and on the
-/// session-lock surface (`present_lock_surface`), and the lock
-/// surface has no `Node` tree infrastructure of its own at all.
-/// Layout: 1-9, then a blank cell, 0, and backspace -- same shape as
-/// a phone dialer. Two more slots (indices 12-13, an extra row) are
-/// "Отмена"/"Готово" controls, used only by the PIN-setup screen
-/// (`pin_setup_action_at`), never during unlock.
-const PIN_KEYPAD_COLUMNS: u32 = 3;
-const PIN_KEYPAD_DIGIT_LABELS: [&str; 12] =
-    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"];
-
-fn pin_keypad_rect(index: usize, width: u32, height: u32) -> Rect {
-    let margin = width / 10;
-    let columns = PIN_KEYPAD_COLUMNS;
-    let gap = margin / 3;
-    let usable_width = width.saturating_sub(margin * 2);
-    let cell_width = usable_width.saturating_sub(gap * (columns - 1)) / columns;
-    let cell_height_2400 = 240u32;
-    let row = index as u32 / columns;
-    let column = index as u32 % columns;
-    let top_2400 = 900 + row * (cell_height_2400 + 30);
-    let top = ((u64::from(top_2400) * u64::from(height)) / 2400) as u32;
-    let cell_height = ((u64::from(cell_height_2400) * u64::from(height)) / 2400) as u32;
-    Rect::new(
-        margin + column * (cell_width + gap),
-        top,
-        cell_width,
-        cell_height,
-    )
-}
-
-/// Digit ("0".."9") or "⌫" for backspace -- `None` for a miss or the
-/// deliberately blank cell at index 9. Shared by both the lock
-/// surface and the PIN-setup screen: same keys mean the same thing
-/// in both places.
-fn pin_keypad_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
-    PIN_KEYPAD_DIGIT_LABELS
-        .iter()
-        .enumerate()
-        .find(|(index, label)| {
-            !label.is_empty() && pin_keypad_rect(*index, width, height).contains(pos.0, pos.1)
-        })
-        .map(|(_, label)| *label)
-}
-
-/// S24: "Отмена"/"Готово" (plus "Убрать PIN" when a PIN is already
-/// set) for the PIN-setup screen only -- laid out as one more
-/// `pin_keypad_rect` row (indices 12.. ) below the digit grid, not a
-/// separate geometry system.
-fn pin_setup_controls(has_existing_pin: bool) -> Vec<&'static str> {
-    if has_existing_pin {
-        vec!["Отмена", "Готово", "Убрать PIN"]
-    } else {
-        vec!["Отмена", "Готово"]
-    }
-}
-
-fn pin_setup_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    has_existing_pin: bool,
-) -> Option<&'static str> {
-    if let Some(digit) = pin_keypad_action_at(pos, width, height) {
-        return Some(digit);
-    }
-    pin_setup_controls(has_existing_pin)
-        .into_iter()
-        .enumerate()
-        .find(|(offset, _)| pin_keypad_rect(12 + offset, width, height).contains(pos.0, pos.1))
-        .map(|(_, label)| label)
-}
-
 const CONSENT_SCREEN_ID: &str = "consent";
 const CONSENT_HEADER_ID: &str = "consent-header";
 const CONSENT_BUTTONS_ID: &str = "consent-buttons";
@@ -1771,9 +1694,9 @@ struct WifiPasswordState {
     mode: KeyboardMode,
 }
 
-/// S24: "Изменить PIN" on "Я" -- see `PIN_KEYPAD_DIGIT_LABELS`'s doc
-/// comment for why this is a dedicated numeric keypad, not the
-/// ADR-029 letters keyboard `WifiPasswordState` reuses.
+/// S24/ADR-149: "Изменить PIN" on "Я" -- digit rows on the same
+/// ADR-029 `Node`/`layout()`/`hit_test()` keyboard Intent and Wi-Fi
+/// password already use. Not a second painter.
 #[derive(Default)]
 struct PinSetupState {
     buffer: String,
@@ -2023,15 +1946,15 @@ enum Frame {
         status_line: String,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
-    /// ADR-143: PIN setup is no longer a Surface header fill.
+    /// ADR-143/149: PIN setup is no longer a Surface header fill.
     /// Header is a real `ContextHeader`; the Password `Field` sits in
-    /// the first stacked row. Keys stay `pin_keypad_rect`.
+    /// the first stacked row. Keys are the ADR-029 keyboard tree.
     PinSetup {
         content_rect: Rect,
         header: ContextHeader,
         field: Field,
         field_rect: Rect,
-        keys: Vec<(Rect, &'static str)>,
+        keys: Vec<(Rect, String)>,
     },
     Root {
         content_rect: Rect,
@@ -3089,6 +3012,198 @@ fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
         width.saturating_sub(margin.saturating_mul(2)),
         row_height,
     )
+}
+
+/// ADR-149: the same `Node`/`layout()`/`hit_test()` keyboard as
+/// `intent_view()`, with dialer rows instead of Latin letters. Space
+/// in the last digit row is the blank cell (no action). Setup adds
+/// Отмена/Готово/Убрать PIN as one more Fill row, the same way
+/// `intent_view()` appends `INTENT_CONTROLS`.
+const PIN_KEY_ROWS: [&str; 4] = ["123", "456", "789", " 0⌫"];
+
+#[derive(Clone, Copy)]
+enum PinKeyboardKind {
+    Unlock,
+    Setup { forget: bool },
+}
+
+fn pin_setup_controls(has_existing_pin: bool) -> Vec<&'static str> {
+    if has_existing_pin {
+        vec!["Отмена", "Готово", "Убрать PIN"]
+    } else {
+        vec!["Отмена", "Готово"]
+    }
+}
+
+fn pin_keyboard_controls(kind: PinKeyboardKind) -> Vec<&'static str> {
+    match kind {
+        PinKeyboardKind::Unlock => Vec::new(),
+        PinKeyboardKind::Setup { forget } => pin_setup_controls(forget),
+    }
+}
+
+fn pin_key_action(ch: char) -> Option<String> {
+    match ch {
+        ' ' => None,
+        '⌫' => Some("⌫".to_string()),
+        digit if digit.is_ascii_digit() => Some(digit.to_string()),
+        _ => None,
+    }
+}
+
+fn intern_pin_action(action: &str) -> Option<&'static str> {
+    const LABELS: &[&str] = &[
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "⌫",
+        "Отмена",
+        "Готово",
+        "Убрать PIN",
+    ];
+    LABELS.iter().copied().find(|label| *label == action)
+}
+
+fn pin_keypad_node(controls: &[&str]) -> Node {
+    let mut rows: Vec<Node> = PIN_KEY_ROWS
+        .iter()
+        .enumerate()
+        .map(|(row_index, letters)| {
+            Node::linear(
+                format!("pin-row-{row_index}"),
+                Axis::Horizontal,
+                letters
+                    .chars()
+                    .map(|ch| {
+                        let leaf = Node::leaf(format!("pin-key-{row_index}-{ch}"));
+                        match pin_key_action(ch) {
+                            Some(action) => leaf.with_action(action),
+                            None => leaf,
+                        }
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    if !controls.is_empty() {
+        rows.push(Node::linear(
+            "pin-controls",
+            Axis::Horizontal,
+            controls
+                .iter()
+                .enumerate()
+                .map(|(index, label)| {
+                    Node::leaf(format!("pin-control-{index}")).with_action(*label)
+                })
+                .collect(),
+        ));
+    }
+    Node::linear("pin-rows", Axis::Vertical, rows)
+}
+
+fn pin_keyboard_bounds(width: u32, height: u32, kind: PinKeyboardKind) -> Rect {
+    match kind {
+        PinKeyboardKind::Unlock => Rect::new(
+            0,
+            INTENT_HEADER_HEIGHT,
+            width,
+            height.saturating_sub(INTENT_HEADER_HEIGHT),
+        ),
+        PinKeyboardKind::Setup { .. } => {
+            let field = stacked_row_rect(0, width, height);
+            let top = field.y.saturating_add(field.height);
+            Rect::new(0, top, width, height.saturating_sub(top))
+        }
+    }
+}
+
+fn pin_keyboard_keys(width: u32, height: u32, kind: PinKeyboardKind) -> Vec<(Rect, String)> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let controls = pin_keyboard_controls(kind);
+    let view = layout(
+        &pin_keypad_node(&controls),
+        pin_keyboard_bounds(width, height, kind),
+    );
+    let mut keys = Vec::new();
+    for (row_index, letters) in PIN_KEY_ROWS.iter().enumerate() {
+        let row_node = &view.children[row_index];
+        for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
+            if pin_key_action(ch).is_some() {
+                keys.push((key_node.rect, ch.to_string()));
+            }
+        }
+    }
+    if !controls.is_empty() {
+        let controls_node = &view.children[PIN_KEY_ROWS.len()];
+        for (key_node, label) in controls_node.children.iter().zip(controls.iter()) {
+            keys.push((key_node.rect, (*label).to_string()));
+        }
+    }
+    keys
+}
+
+fn pin_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    kind: PinKeyboardKind,
+) -> Option<&'static str> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let controls = pin_keyboard_controls(kind);
+    layout(
+        &pin_keypad_node(&controls),
+        pin_keyboard_bounds(width, height, kind),
+    )
+    .hit_test(pos.0, pos.1)
+    .and_then(|node| node.action.as_deref().and_then(intern_pin_action))
+}
+
+fn pin_keypad_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
+    pin_action_at(pos, width, height, PinKeyboardKind::Unlock)
+}
+
+fn pin_setup_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    has_existing_pin: bool,
+) -> Option<&'static str> {
+    pin_action_at(
+        pos,
+        width,
+        height,
+        PinKeyboardKind::Setup {
+            forget: has_existing_pin,
+        },
+    )
+}
+
+#[cfg(test)]
+fn pin_labeled_rect(label: &str, width: u32, height: u32, kind: PinKeyboardKind) -> Option<Rect> {
+    pin_keyboard_keys(width, height, kind)
+        .into_iter()
+        .find(|(_, key)| key == label)
+        .map(|(rect, _)| rect)
+}
+
+#[cfg(test)]
+fn pin_blank_rect(width: u32, height: u32) -> Rect {
+    let view = layout(
+        &pin_keypad_node(&[]),
+        pin_keyboard_bounds(width, height, PinKeyboardKind::Unlock),
+    );
+    view.children[3].children[0].rect
 }
 
 /// S21: generic system notifications (low battery so far -- see
@@ -4150,11 +4265,28 @@ fn lock_attention_tap(locked: bool) -> LockAttentionTap {
 
 /// VUI-07 (ADR-133): PIN-setup preview is a `Field`, not a second
 /// hand-rolled mask. Revealed stays false; digits never become the
-/// accessible value. Lock-surface unlock stays `draw_lock_pin_entry`.
+/// accessible value.
 fn pin_setup_field(buffer: &str) -> Field {
     Field::new("Новый PIN-код", FieldKind::Password)
         .with_value(buffer)
         .with_placeholder("Введите новый PIN (минимум 4 цифры)")
+}
+
+/// ADR-149: lock unlock progress is occupancy, never `pin_code`.
+/// Dummy `0`s are how many digits were entered; accessible value is
+/// bullets. Revealed stays false.
+fn lock_pin_entry_field(entered_len: usize) -> Field {
+    Field::new("Введите PIN", FieldKind::Password).with_value("0".repeat(entered_len))
+}
+
+fn lock_pin_field_rect(width: u32) -> Rect {
+    let margin = width / 22;
+    Rect::new(
+        margin,
+        24,
+        width.saturating_sub(margin.saturating_mul(2)),
+        INTENT_HEADER_HEIGHT.saturating_sub(48),
+    )
 }
 
 /// VUI-07 (ADR-130): «Bluetooth устройства» lists live `bt-scan`
@@ -6335,18 +6467,6 @@ impl Shell {
             }
         } else if let Some(state) = &self.pin_setup {
             let has_existing_pin = self.settings.pin_code.is_some();
-            let mut keys: Vec<(Rect, &'static str)> = PIN_KEYPAD_DIGIT_LABELS
-                .iter()
-                .enumerate()
-                .filter(|(_, label)| !label.is_empty())
-                .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
-                .collect();
-            keys.extend(
-                pin_setup_controls(has_existing_pin)
-                    .into_iter()
-                    .enumerate()
-                    .map(|(offset, label)| (pin_keypad_rect(12 + offset, width, height), label)),
-            );
             Frame::PinSetup {
                 content_rect: Rect::new(0, 0, width, height),
                 header: pin_setup_header(&space_display_name(
@@ -6355,7 +6475,13 @@ impl Shell {
                 )),
                 field: pin_setup_field(&state.buffer),
                 field_rect: stacked_row_rect(0, width, height),
-                keys,
+                keys: pin_keyboard_keys(
+                    width,
+                    height,
+                    PinKeyboardKind::Setup {
+                        forget: has_existing_pin,
+                    },
+                ),
             }
         } else if let Some(state) = &self.wifi_password {
             // Same tree as `intent_input` above, reused verbatim --
@@ -8987,13 +9113,10 @@ impl Shell {
         surface.commit();
     }
 
-    /// S24 / VUI-07 (ADR-134): what actually gets shown on the lock
-    /// surface each time it needs repainting -- Canvas + clock + tap
-    /// hint when no PIN is set, or a numeric keypad plus filled-dot
-    /// progress when `settings.pin_code` is set. Never called for the
-    /// `SLEEP_INDICATOR_COLOR` deep-idle blank (`check_deep_idle`
-    /// keeps calling `present_lock_surface` directly for that) --
-    /// screen-off should stay screen-off regardless of PIN.
+    /// S24 / VUI-07 (ADR-134 / ADR-149): no-PIN lock is clock + hint
+    /// (+ ADR-148 attention). PIN unlock paints a Password `Field` of
+    /// occupancy plus the keypad, never the secret. Deep-idle stays
+    /// `present_lock_surface(SLEEP_INDICATOR_COLOR)`.
     fn present_lock_pin_entry(&mut self, qh: &QueueHandle<Self>) {
         if self.sleeping {
             return;
@@ -9021,18 +9144,13 @@ impl Shell {
         } else {
             None
         };
-        let keys: Vec<(Rect, &'static str)> = if pin_code.is_some() {
-            PIN_KEYPAD_DIGIT_LABELS
-                .iter()
-                .enumerate()
-                .filter(|(_, label)| !label.is_empty())
-                .map(|(index, label)| (pin_keypad_rect(index, width, height), *label))
-                .collect()
+        let keys = if pin_code.is_some() {
+            pin_keyboard_keys(width, height, PinKeyboardKind::Unlock)
         } else {
             Vec::new()
         };
-        let entered_len = self.pin_entry_buffer.len();
-        let pin_len = pin_code.as_ref().map(|code| code.len()).unwrap_or(0);
+        let pin_field = lock_pin_entry_field(self.pin_entry_buffer.len());
+        let pin_field_rect = lock_pin_field_rect(width);
         let has_pin = pin_code.is_some();
         let idle_time = idle.time;
         let idle_hint = idle.hint;
@@ -9062,9 +9180,8 @@ impl Shell {
                     if has_pin {
                         render::draw_lock_pin_entry(
                             &mut frame,
-                            width,
-                            entered_len,
-                            pin_len,
+                            &pin_field,
+                            pin_field_rect,
                             &keys,
                             fonts,
                         );
@@ -9137,7 +9254,7 @@ impl Shell {
 
         let mut frame = render::Canvas::new(canvas, width, height);
         if has_pin {
-            render::draw_lock_pin_entry(&mut frame, width, entered_len, pin_len, &keys, fonts);
+            render::draw_lock_pin_entry(&mut frame, &pin_field, pin_field_rect, &keys, fonts);
         } else {
             render::draw_lock_idle(
                 &mut frame,
@@ -9193,15 +9310,15 @@ mod tests {
         effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
         in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
         intent_input_field, known_surfaces, lock_attention_tap, lock_attention_view,
-        lock_idle_view, me_fixture_facts, me_header, me_system_sections, next_in_cycle,
-        next_pending_action, now_action_at, now_object_tapped, object_view_action_at,
-        object_view_content, object_view_summary, orb_action_at, orb_attention_from_entities,
-        orb_menu_actions, orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header,
-        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
-        remove_context_source, space_color, space_color_entity, space_display_name,
-        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
-        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        lock_idle_view, lock_pin_entry_field, me_fixture_facts, me_header, me_system_sections,
+        next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
+        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remote_pair_content_cards,
+        remote_pair_header, remove_context_source, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
+        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
         trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
         upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
         wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
@@ -9631,40 +9748,29 @@ mod tests {
     fn pin_keypad_action_at_finds_digits_and_backspace_but_not_the_blank_cell() {
         let width = 1080;
         let height = 2400;
+        let kind = super::PinKeyboardKind::Unlock;
         let center = |rect: Rect| {
             (
                 (rect.x + rect.width / 2) as f64,
                 (rect.y + rect.height / 2) as f64,
             )
         };
+        let digit = |label: &str| super::pin_labeled_rect(label, width, height, kind).unwrap();
         assert_eq!(
-            super::pin_keypad_action_at(
-                center(super::pin_keypad_rect(0, width, height)),
-                width,
-                height
-            ),
+            super::pin_keypad_action_at(center(digit("1")), width, height),
             Some("1")
         );
         assert_eq!(
-            super::pin_keypad_action_at(
-                center(super::pin_keypad_rect(10, width, height)),
-                width,
-                height
-            ),
+            super::pin_keypad_action_at(center(digit("0")), width, height),
             Some("0")
         );
         assert_eq!(
-            super::pin_keypad_action_at(
-                center(super::pin_keypad_rect(11, width, height)),
-                width,
-                height
-            ),
+            super::pin_keypad_action_at(center(digit("⌫")), width, height),
             Some("⌫")
         );
-        // Index 9 is the deliberately blank cell between 9 and 0.
         assert_eq!(
             super::pin_keypad_action_at(
-                center(super::pin_keypad_rect(9, width, height)),
+                center(super::pin_blank_rect(width, height)),
                 width,
                 height
             ),
@@ -9682,33 +9788,17 @@ mod tests {
                 (rect.y + rect.height / 2) as f64,
             )
         };
-        // Index 14 (the third control slot) is only "Убрать PIN" when
-        // a PIN already exists.
+        let with_forget = super::PinKeyboardKind::Setup { forget: true };
+        let without_forget = super::PinKeyboardKind::Setup { forget: false };
+        let forget = super::pin_labeled_rect("Убрать PIN", width, height, with_forget).unwrap();
+        let cancel = super::pin_labeled_rect("Отмена", width, height, without_forget).unwrap();
         assert_eq!(
-            super::pin_setup_action_at(
-                center(super::pin_keypad_rect(14, width, height)),
-                width,
-                height,
-                true
-            ),
+            super::pin_setup_action_at(center(forget), width, height, true),
             Some("Убрать PIN")
         );
+        assert!(super::pin_labeled_rect("Убрать PIN", width, height, without_forget).is_none());
         assert_eq!(
-            super::pin_setup_action_at(
-                center(super::pin_keypad_rect(14, width, height)),
-                width,
-                height,
-                false
-            ),
-            None
-        );
-        assert_eq!(
-            super::pin_setup_action_at(
-                center(super::pin_keypad_rect(12, width, height)),
-                width,
-                height,
-                false
-            ),
+            super::pin_setup_action_at(center(cancel), width, height, false),
             Some("Отмена")
         );
     }
@@ -10841,6 +10931,53 @@ mod tests {
     fn lock_attention_tap_requires_unlock_while_locked() {
         assert_eq!(lock_attention_tap(true), LockAttentionTap::UnlockRequired);
         assert_eq!(lock_attention_tap(false), LockAttentionTap::ViewAllowed);
+    }
+
+    #[test]
+    fn lock_pin_entry_field_masks_occupancy_and_never_holds_a_pin() {
+        let empty = lock_pin_entry_field(0);
+        assert_eq!(empty.kind, FieldKind::Password);
+        assert!(!empty.revealed);
+        assert_eq!(empty.label, "Введите PIN");
+        assert!(empty.is_empty());
+        assert_eq!(empty.accessible_value(), "");
+        assert!(!empty.label.contains("Входящие"));
+
+        let entered = lock_pin_entry_field(4);
+        assert_eq!(
+            entered.accessible_value(),
+            "\u{2022}\u{2022}\u{2022}\u{2022}"
+        );
+        assert!(!entered
+            .accessible_value()
+            .chars()
+            .any(|c| c.is_ascii_digit()));
+        assert_ne!(entered.value, "4269");
+        assert!(!entered.revealed);
+    }
+
+    #[test]
+    fn pin_keyboard_keys_sit_below_the_intent_header_and_match_hit_test() {
+        let width = 1080;
+        let height = 2400;
+        let keys = super::pin_keyboard_keys(width, height, super::PinKeyboardKind::Unlock);
+        assert!(keys.iter().any(|(_, label)| label == "1"));
+        assert!(keys.iter().any(|(_, label)| label == "0"));
+        assert!(keys.iter().any(|(_, label)| label == "⌫"));
+        assert!(!keys.iter().any(|(_, label)| label.trim().is_empty()));
+        for (rect, label) in &keys {
+            assert!(rect.y >= super::INTENT_HEADER_HEIGHT);
+            let center = (
+                (rect.x + rect.width / 2) as f64,
+                (rect.y + rect.height / 2) as f64,
+            );
+            assert_eq!(
+                super::pin_keypad_action_at(center, width, height).map(str::to_string),
+                Some(label.clone())
+            );
+        }
+        let field = super::lock_pin_field_rect(width);
+        assert!(field.y + field.height <= super::INTENT_HEADER_HEIGHT);
     }
 
     #[test]

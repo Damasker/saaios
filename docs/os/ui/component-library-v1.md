@@ -208,9 +208,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - Password/PIN variants never expose their value through logs or accessibility
   unless the user explicitly reveals it.
 - First real consumer of `FieldKind::Password`: Wi-Fi password screen
-  (ADR-132) and PIN setup (ADR-133). Preview and accessibility use
-  `accessible_value()`. No reveal control in this slice. Lock-surface
-  unlock still paints progress dots, not the digits.
+  (ADR-132), PIN setup (ADR-133), and lock unlock (ADR-149). Preview
+  and accessibility use `accessible_value()`. No reveal control. Lock
+  occupancy is dummy length, never `pin_code`.
 - First real consumer of `FieldKind::Text`: intent composer (ADR-135).
   Placeholder `Наберите текст…` is distinct from empty. Offline is
   `help` (`Нет связи`), not `error`.
