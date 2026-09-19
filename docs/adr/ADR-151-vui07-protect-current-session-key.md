@@ -2,9 +2,8 @@
 
 ## Status
 
-Accepted, 2026-09-19. Host-verified only (2 new tests, full workspace
-test + clippy clean). Not yet physically re-confirmed on Pixel 7 -- see
-Verification.
+Accepted, 2026-09-19. Host-verified (2 new tests, full workspace test
++ clippy clean) and physically confirmed on Pixel 7 -- see Verification.
 
 ## Context
 
@@ -93,11 +92,13 @@ bundling its own Wi-Fi/Bluetooth findings in).
   method) -- the decision logic itself (`trusted_client_is_protected`)
   is what's tested, matching the exact precedent ADR-150 already set
   for `trusted_client_revoke_decision`.
-- Not yet physically re-confirmed: needs an actual on-device check
-  that the currently-connected management key's row now renders
-  non-actionable and a tap on it does nothing, ideally performed while
-  a real SSH connection from `home-server` is active so the 64 KiB tail
-  window is guaranteed to contain a fresh auth line.
+- **Physically confirmed** (2026-09-19): hot-swapped while several
+  fresh `home-server` SSH connections were in the log's 64 KiB tail
+  window, then the device owner opened this screen directly and
+  confirmed the `home-server-reconnect` row reads "Ключ этой сессии —
+  нельзя отозвать" with no button, and that tapping it repeatedly does
+  nothing -- no arm, no visual change, exactly the non-actionable
+  behavior this ADR specifies.
 
 ## Consequences
 

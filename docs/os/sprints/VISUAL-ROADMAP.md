@@ -1071,8 +1071,12 @@ big-bang rewrite.
   ("Ключ этой сессии — нельзя отозвать") and `handle_trusted_client_tap`
   refuses to arm or revoke it at all, regardless of tap count -- the
   exact incident above cannot recur through this screen. Host: 2 new
-  tests, full workspace test/clippy clean. **Found, not yet
-  fixed**: Wi-Fi list conflates "no networks" with "wpa_supplicant
+  tests, full workspace test/clippy clean. Physically confirmed
+  2026-09-19 -- the device owner opened this screen with fresh
+  `home-server` connections in the log's tail window and confirmed
+  `home-server-reconnect` reads as non-actionable and does nothing on
+  repeated taps. **Found, not yet fixed**: Wi-Fi list conflates "no
+  networks" with "wpa_supplicant
   unreachable" (same bug class ADR-114 fixed for `Сейчас`); Bluetooth
   pairing failure is parsed into real Russian text
   (`bluetooth_pair_result`) but has zero callers in the live draw path
