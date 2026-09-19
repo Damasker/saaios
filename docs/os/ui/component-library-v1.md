@@ -392,6 +392,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   The live shell does not abort when over the limit.
   ADR-175 tags each sample with `FrameSurface` and dumps the ring to
   `/run/saaios/shell-frame.trace`.
+  ADR-176 remembers the last non-scroll `input_to_commit` as `input_ok`
+  against 50 ms so first visible Pressed is the down commit.
 
 ### 7.6 `TaskSummary`
 

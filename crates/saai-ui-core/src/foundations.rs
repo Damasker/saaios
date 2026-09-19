@@ -434,6 +434,9 @@ impl MotionClock {
 pub const FRAME_PACE_CAP: usize = 32;
 /// VUI-08 drag gate (ADR-173). Compared only to scroll samples.
 pub const FRAME_PACE_P95_LIMIT_MS: u32 = 50;
+/// VUI-08 first-visible gate (ADR-176). Compared to non-scroll
+/// `input_to_commit_ms` remembered on the ring.
+pub const FIRST_FEEDBACK_LIMIT_MS: u32 = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameReason {
@@ -504,6 +507,7 @@ pub struct FramePace {
     count: usize,
     dropped: u32,
     coalesced: u32,
+    last_feedback_ms: Option<u32>,
 }
 
 impl Default for FramePace {
@@ -520,6 +524,7 @@ impl FramePace {
             count: 0,
             dropped: 0,
             coalesced: 0,
+            last_feedback_ms: None,
         }
     }
 
@@ -534,6 +539,11 @@ impl FramePace {
     pub fn record(&mut self, mut sample: FrameSample) {
         sample.dropped = self.dropped;
         sample.coalesced = self.coalesced;
+        if sample.reason != FrameReason::Scroll {
+            if let Some(ms) = sample.input_to_commit_ms {
+                self.last_feedback_ms = Some(ms);
+            }
+        }
         self.samples[self.next] = Some(sample);
         self.next = (self.next + 1) % FRAME_PACE_CAP;
         if self.count < FRAME_PACE_CAP {
@@ -598,6 +608,13 @@ impl FramePace {
             .map(|ms| ms <= FRAME_PACE_P95_LIMIT_MS)
     }
 
+    /// ADR-176: last non-scroll `input_to_commit_ms`. Scroll coalescing
+    /// does not count as first visible Pressed.
+    pub fn first_feedback_within_limit(&self) -> Option<bool> {
+        self.last_feedback_ms
+            .map(|ms| ms <= FIRST_FEEDBACK_LIMIT_MS)
+    }
+
     fn p95_produce_ms_matching(&self, keep: impl Fn(&FrameSample) -> bool) -> Option<u32> {
         let mut values = [0u32; FRAME_PACE_CAP];
         let mut n = 0usize;
@@ -631,8 +648,13 @@ impl FramePace {
             Some(false) => "0",
             None => "-",
         };
+        let input_ok = match self.first_feedback_within_limit() {
+            Some(true) => "1",
+            Some(false) => "0",
+            None => "-",
+        };
         Some(format!(
-            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} p95_scroll={} p95_ok={}",
+            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} p95_scroll={} p95_ok={} input_ok={}",
             sample.produce_ms,
             input,
             u8::from(sample.requested_frame),
@@ -643,6 +665,7 @@ impl FramePace {
             sample.surface.as_str(),
             p95_scroll,
             p95_ok,
+            input_ok,
         ))
     }
 }
@@ -874,6 +897,7 @@ mod tests {
         assert!(line.contains("surface=orb"));
         assert!(line.contains("p95_scroll=-"));
         assert!(line.contains("p95_ok=-"));
+        assert!(line.contains("input_ok=1"));
         assert_eq!(frame_reason(true, true), FrameReason::Scroll);
         assert_eq!(frame_reason(false, true), FrameReason::Motion);
         assert_eq!(frame_reason(false, false), FrameReason::Input);
@@ -964,6 +988,33 @@ mod tests {
         );
         assert!(trace.contains("reason=scroll produce_ms=12"));
         assert!(trace.contains("reason=input produce_ms=6"));
+    }
+
+    #[test]
+    fn first_feedback_gate_ignores_scroll_and_uses_the_50ms_limit() {
+        let mut pace = FramePace::new();
+        assert_eq!(pace.first_feedback_within_limit(), None);
+        let mut drag = sample(14, FrameReason::Scroll, FrameSurface::Me);
+        drag.input_to_commit_ms = Some(100);
+        pace.record(drag);
+        assert_eq!(pace.first_feedback_within_limit(), None);
+        assert!(pace.line().expect("recorded").contains("input_ok=-"));
+
+        let mut tap = sample(8, FrameReason::Motion, FrameSurface::Inbox);
+        tap.input_to_commit_ms = Some(20);
+        pace.record(tap);
+        assert_eq!(pace.first_feedback_within_limit(), Some(true));
+        pace.record(sample(6, FrameReason::Motion, FrameSurface::Inbox));
+        assert_eq!(pace.first_feedback_within_limit(), Some(true));
+        assert!(pace.line().expect("recorded").contains("input_ok=1"));
+
+        let mut slow = FramePace::new();
+        let mut late = sample(8, FrameReason::Input, FrameSurface::Now);
+        late.input_to_commit_ms = Some(80);
+        slow.record(late);
+        assert_eq!(slow.first_feedback_within_limit(), Some(false));
+        assert!(slow.line().expect("recorded").contains("input_ok=0"));
+        assert_eq!(FIRST_FEEDBACK_LIMIT_MS, 50);
     }
 
     #[test]

@@ -1105,9 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** In progress — MotionClock through FramePace traces
-(ADR-167–175) on panther. Remaining: token durations only where they
-clarify state, first-visible touch, idle redraw, SHM/Vulkan unless
+**Status:** In progress — MotionClock through first-visible touch
+(ADR-167–176) on panther. Remaining: idle redraw, SHM/Vulkan unless
 measured.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
@@ -1118,8 +1117,10 @@ into a measured regression contract.
 ### Tasks
 
 - [x] Add a shared transition clock and compositor/frame-callback integration.
-- [ ] Implement 80–150 ms micro, 150–220 ms panel, and 200–300 ms context
-  transitions only where they clarify state.
+- [x] Implement 80–150 ms micro, 150–220 ms panel, and 200–300 ms context
+  transitions only where they clarify state (`MicroFeedback` 120 /
+  `Selection` 180 / `Context` 240). First visible `Pressed` is the
+  `down()` commit, not a token delay (ADR-176). No panel slides.
 - [x] Add reduced-motion behavior for every animated component.
 - [x] Centralize haptic intents; map components to policy instead of direct motor
   control.
@@ -1140,8 +1141,8 @@ into a measured regression contract.
 
 - [x] Continuous drag p95 frame production is at or below 50 ms on the reference
   build, with no unbounded input backlog and no disappearing layer.
-- [ ] First visible touch feedback is prompt and no worse than the VUI-07
-  baseline.
+- [x] First visible touch feedback is prompt and no worse than the VUI-07
+  baseline (non-scroll `input_to_commit` ≤ 50 ms, `input_ok`, ADR-176).
 - [ ] Idle UI does not redraw continuously without a state reason.
 - [x] Reduced-motion mode communicates every state without animation.
 - [ ] Haptics are consistent, rate-limited, and absent for passive decoration.
@@ -1242,8 +1243,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-08**: 80–150 ms micro / 150–220 panel / 200–300 context
-only where they clarify state; first visible touch; idle does not
-redraw without a reason. Preserve SHM/Vulkan unless measured.
-ADR-167–175 are on panther. Space detail still deferred. MEM-08 stays
-omitted until a shell-legal memory read exists.
+Continue **VUI-08**: idle UI does not redraw without a state reason;
+preserve SHM/Vulkan unless measured. ADR-167–176 are on panther.
+Space detail still deferred. MEM-08 stays omitted until a
+shell-legal memory read exists.

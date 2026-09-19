@@ -33,6 +33,7 @@ ADR-172 FramePace commit log on panther.
 ADR-173 50 ms scroll p95 on panther.
 ADR-174 reduced motion is immediate on panther.
 ADR-175 FramePace surface traces on panther.
+ADR-176 first visible down commit on panther.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

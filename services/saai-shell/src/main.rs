@@ -42,7 +42,8 @@
 //!   directly. Unlock still has no tick. Keyboard `KeyPress` goes
 //!   through `haptic_intent_for` (ADR-171). Main-surface commits log
 //!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173) and
-//!   `/run/saaios/shell-frame.trace` (ADR-175).
+//!   `/run/saaios/shell-frame.trace` (ADR-175). First visible
+//!   `input_ok` is the down commit, not a token delay (ADR-176).
 //!   Reduced motion drops in-flight clocks on the same tap (ADR-174).
 //!   Displayd still has no haptic protocol; this slice does not flash it.
 //!
@@ -11934,6 +11935,12 @@ mod tests {
     fn scroll_p95_limit_is_fifty_milliseconds() {
         use saai_ui_core::FRAME_PACE_P95_LIMIT_MS;
         assert_eq!(FRAME_PACE_P95_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn first_feedback_limit_is_fifty_milliseconds() {
+        use saai_ui_core::FIRST_FEEDBACK_LIMIT_MS;
+        assert_eq!(FIRST_FEEDBACK_LIMIT_MS, 50);
     }
 
     #[test]
