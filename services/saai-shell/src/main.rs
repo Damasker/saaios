@@ -2693,6 +2693,16 @@ fn intent_action_at(
         .and_then(|node| node.action.clone())
 }
 
+/// ADR-163: a keyboard or PIN control fires only when down and up
+/// named the same action. Pressed highlight still follows the finger
+/// (ADR-151). Slide off, or onto a different key, cancels.
+fn committed_action(down: Option<&str>, up: Option<&str>) -> Option<String> {
+    match (down, up) {
+        (Some(start), Some(end)) if start == end => Some(end.to_string()),
+        _ => None,
+    }
+}
+
 /// Builds both the header rect and the drawn `(Rect, label)` pairs for
 /// every key -- letters/digits uppercased for display the same way a
 /// real keyboard shows capital letter-caps while typing lowercase,
@@ -5447,6 +5457,7 @@ fn main() {
         tab_touch_pending: false,
         pressed_tab: None,
         pressed_key: None,
+        touch_down_action: None,
         haptic: haptic::HapticMotor::open(),
         layer,
         layer_width: 0,
@@ -5642,6 +5653,9 @@ struct Shell {
     /// Keyboard key under a live finger (ADR-151). Drawn as
     /// `ColorRole::Pressed`. Cleared on up/cancel/sleep-wake.
     pressed_key: Option<String>,
+    /// Action under the finger at `down()` on a keyboard/PIN frame.
+    /// `up()` commits only when it still names this action (ADR-163).
+    touch_down_action: Option<String>,
     haptic: haptic::HapticMotor,
 
     layer: LayerSurface,
@@ -6136,6 +6150,7 @@ impl TouchHandler for Shell {
             self.tab_touch_pending = false;
             self.pressed_tab = None;
             self.pressed_key = None;
+            self.touch_down_action = None;
             self.me_drag = None;
             self.pin_entry_buffer.clear();
             self.present_lock_pin_entry(qh);
@@ -6172,6 +6187,7 @@ impl TouchHandler for Shell {
         } else {
             None
         };
+        self.touch_down_action = self.keyboard_frame_action_at(position);
         self.sync_pressed_tab(conn, qh);
         self.sync_pressed_key(conn, qh);
     }
@@ -6196,6 +6212,7 @@ impl TouchHandler for Shell {
         });
         let had_pressed_tab = self.pressed_tab.take().is_some();
         let had_pressed_key = self.pressed_key.take().is_some();
+        let down_action = self.touch_down_action.take();
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
         // starts on the lock surface but ends elsewhere (or a
@@ -6216,13 +6233,18 @@ impl TouchHandler for Shell {
                     println!("saai-shell: unlocked by touch");
                 }
                 Some(pin_code) => {
-                    if let Some(key) =
-                        pin_keypad_action_at(self.last_touch_pos, self.lock_width, self.lock_height)
-                    {
+                    if let Some(key) = committed_action(
+                        down_action.as_deref(),
+                        pin_keypad_action_at(
+                            self.last_touch_pos,
+                            self.lock_width,
+                            self.lock_height,
+                        ),
+                    ) {
                         if key == "⌫" {
                             self.pin_entry_buffer.pop();
                         } else {
-                            self.pin_entry_buffer.push_str(key);
+                            self.pin_entry_buffer.push_str(&key);
                         }
                         if self.pin_entry_buffer.len() >= pin_code.len() {
                             if self.pin_entry_buffer == pin_code {
@@ -6308,21 +6330,23 @@ impl TouchHandler for Shell {
                     .intent_input
                     .as_ref()
                     .map_or(KeyboardMode::Letters, |state| state.mode);
-                if let Some(action) =
-                    intent_action_at(self.last_touch_pos, self.width, self.height, mode)
-                {
+                let up = intent_action_at(self.last_touch_pos, self.width, self.height, mode);
+                if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
                     self.handle_intent_input_action(&action, conn, qh);
                 }
             } else if self.pin_setup.is_some() {
                 // S24: modal, same as the others.
                 let has_existing_pin = self.settings.pin_code.is_some();
-                if let Some(key) = pin_setup_action_at(
-                    self.last_touch_pos,
-                    self.width,
-                    self.height,
-                    has_existing_pin,
+                if let Some(key) = committed_action(
+                    down_action.as_deref(),
+                    pin_setup_action_at(
+                        self.last_touch_pos,
+                        self.width,
+                        self.height,
+                        has_existing_pin,
+                    ),
                 ) {
-                    self.handle_pin_setup_action(key, conn, qh);
+                    self.handle_pin_setup_action(&key, conn, qh);
                 }
             } else if self.wifi_password.is_some() {
                 // S19: same keyboard tree as `intent_input` above
@@ -6333,9 +6357,8 @@ impl TouchHandler for Shell {
                     .wifi_password
                     .as_ref()
                     .map_or(KeyboardMode::Letters, |state| state.mode);
-                if let Some(action) =
-                    intent_action_at(self.last_touch_pos, self.width, self.height, mode)
-                {
+                let up = intent_action_at(self.last_touch_pos, self.width, self.height, mode);
+                if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
                     self.handle_wifi_password_action(&action, conn, qh);
                 }
             } else if self.wifi_list.is_some() {
@@ -6622,6 +6645,7 @@ impl TouchHandler for Shell {
         self.tab_touch_pending = false;
         self.me_drag = None;
         self.me_row_cache = None;
+        self.touch_down_action = None;
         let had_pressed = self.pressed_tab.take().is_some() || self.pressed_key.take().is_some();
         if had_pressed {
             if self.locked {
@@ -7685,6 +7709,29 @@ impl Shell {
             );
         }
         Vec::new()
+    }
+
+    fn keyboard_frame_action_at(&self, pos: (f64, f64)) -> Option<String> {
+        if let Some(state) = self.intent_input.as_ref() {
+            return intent_action_at(pos, self.width, self.height, state.mode);
+        }
+        if let Some(state) = self.wifi_password.as_ref() {
+            return intent_action_at(pos, self.width, self.height, state.mode);
+        }
+        if self.pin_setup.is_some() {
+            return pin_setup_action_at(
+                pos,
+                self.width,
+                self.height,
+                self.settings.pin_code.is_some(),
+            )
+            .map(str::to_string);
+        }
+        if self.locked && self.settings.pin_code.is_some() {
+            return pin_keypad_action_at(pos, self.lock_width, self.lock_height)
+                .map(str::to_string);
+        }
+        None
     }
 
     fn sync_pressed_key(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
@@ -11178,6 +11225,52 @@ mod tests {
         );
         assert_eq!(pressed_key_from_keys(&keys, center).as_deref(), Some("Q"));
         assert_eq!(pressed_key_from_keys(&keys, (540.0, 100.0)), None);
+    }
+
+    #[test]
+    fn committed_action_requires_the_same_target_on_down_and_up() {
+        let width = 1080;
+        let height = 2400;
+        let q = super::intent_labeled_center("Q", width, height, KeyboardMode::Letters);
+        let w = super::intent_labeled_center("W", width, height, KeyboardMode::Letters);
+        let cancel = super::intent_labeled_center("Отмена", width, height, KeyboardMode::Letters);
+        let send = super::intent_labeled_center("Отправить", width, height, KeyboardMode::Letters);
+        let field = super::intent_field_rect(width, height, KeyboardMode::Letters);
+        let field_pos = (
+            field.x as f64 + field.width as f64 / 2.0,
+            field.y as f64 + field.height as f64 / 2.0,
+        );
+        let at = |pos| intent_action_at(pos, width, height, KeyboardMode::Letters);
+        let q_action = at(q);
+        let w_action = at(w);
+        let cancel_action = at(cancel);
+        let send_action = at(send);
+        assert!(q_action.is_some());
+        assert_ne!(q_action, w_action);
+        assert_eq!(
+            super::committed_action(q_action.as_deref(), q_action.as_deref()),
+            q_action
+        );
+        assert_eq!(
+            super::committed_action(at(field_pos).as_deref(), q_action.as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(q_action.as_deref(), w_action.as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(q_action.as_deref(), at((540.0, 100.0)).as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(cancel_action.as_deref(), send_action.as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(cancel_action.as_deref(), cancel_action.as_deref()),
+            cancel_action
+        );
     }
 
     #[test]

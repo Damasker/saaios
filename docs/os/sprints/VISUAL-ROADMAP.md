@@ -1070,8 +1070,11 @@ big-bang rewrite.
   Flashed `3d289b66…`.
 - [x] Put compose Field in the intent layout tree with `focus_order`.
   ADR-162. Do not send. Leave Отмена. Flashed `6d465506…`.
+- [x] Commit keyboard/PIN actions only when down and up hit the same
+  target. ADR-163. Pressed highlight still follows the finger. Do not
+  type. Do not send. Leave Отмена. Flashed `c095cc5d…`.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
-  and interrupted workflows on every frame variant.
+  and interrupted workflows on remaining frame variants.
 - [ ] Remove migrated screen-local primitives and record remaining exceptions.
 - [ ] Expand the component gallery and cross-surface golden tests.
 
@@ -1223,8 +1226,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07**: verify keyboard/scroll/back/focus/interrupted on
-every frame variant, then remove migrated primitives. Inbox EventRow (`c1547c02…`), Spaces list
+Continue **VUI-07**: verify keyboard/scroll/back/focus on remaining
+frame variants, then remove migrated primitives. Inbox EventRow (`c1547c02…`), Spaces list
 (`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
 trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
 setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input

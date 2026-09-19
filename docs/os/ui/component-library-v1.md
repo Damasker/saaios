@@ -223,7 +223,8 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   `help` (`Нет связи`), not `error`. ADR-161 parks the Field on the
   docked QWERTY under `ContextHeader` «Намерение»; Wi-Fi password
   reuses that avoidance as «Пароль». ADR-162 puts the Field in the
-  `intent_view` tree as focus stop 0.
+  `intent_view` tree as focus stop 0. ADR-163 commits a key only when
+  down and up hit the same action; pressed still follows the finger.
 - Keyboard keys (ADR-151): pressed fill is `ColorRole::Pressed` while
   the finger is down; one `KeyTick` haptic on down. Release still
   emits the key. Size does not change.
