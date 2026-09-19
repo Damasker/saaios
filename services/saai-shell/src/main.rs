@@ -933,6 +933,12 @@ struct TabDefinition {
     action: &'static str,
 }
 
+/// root.sui's own content-action table shape (ADR-149: the dispatch
+/// machinery that used to read this -- `Frame::Root`/`content_action_at`/
+/// `content_card`/`invoke_content_action` -- was dead code and removed;
+/// this struct and `ROOT_CONTENT_ACTIONS` below stay as the recorded
+/// exception, verified by one shape test instead of live dispatch).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ContentActionDefinition {
     id: &'static str,
@@ -953,26 +959,6 @@ enum RootPage {
     Inbox,
     Spaces,
     Me,
-}
-
-impl RootPage {
-    fn index(self) -> usize {
-        match self {
-            RootPage::Now => 0,
-            RootPage::Inbox => 1,
-            RootPage::Spaces => 2,
-            RootPage::Me => 3,
-        }
-    }
-
-    fn id(self) -> &'static str {
-        match self {
-            RootPage::Now => "now",
-            RootPage::Inbox => "inbox",
-            RootPage::Spaces => "spaces",
-            RootPage::Me => "me",
-        }
-    }
 }
 
 fn physical_unit(value: LogicalUnit) -> u32 {
@@ -1643,6 +1629,13 @@ fn intent_input_status(store_connected: bool) -> Option<&'static str> {
     }
 }
 
+/// Only real caller was `content_card`'s `open_intent_input` branch,
+/// removed as dead code alongside `Frame::Root` in the same change
+/// (ADR-149) -- the live "Новое намерение" footer row
+/// (`now_footer_action_views`) is a static Navigation row with no
+/// status subtitle and never called this. Kept, not deleted, for its
+/// own existing tests below.
+#[allow(dead_code)]
 fn intent_compose_status(store_connected: bool) -> &'static str {
     if store_connected {
         "Ввести текст намерения"
@@ -2039,13 +2032,6 @@ enum Frame {
         field: Field,
         field_rect: Rect,
         keys: Vec<(Rect, &'static str)>,
-    },
-    Root {
-        content_rect: Rect,
-        tabs: Vec<(Rect, NavigationItem)>,
-        content_cards: Vec<(Rect, render::ActionCardView)>,
-        context_label: String,
-        paint_navigation: bool,
     },
     /// ADR-138: the `Приложения` grid is no longer `Frame::Root`.
     /// Header is a real `ContextHeader`; tiles are only live
@@ -2968,36 +2954,13 @@ fn boot_attempts() -> u32 {
         .unwrap_or(0)
 }
 
-fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
-    let margin = width / 22;
-    let top = ((action.top as u64 * height as u64) / 2400) as u32;
-    let action_height = ((action.height as u64 * height as u64) / 2400) as u32;
-    Rect::new(
-        margin,
-        top,
-        width.saturating_sub(margin.saturating_mul(2)),
-        action_height,
-    )
-}
-
-fn content_action_at(
-    page: RootPage,
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-) -> Option<ContentActionDefinition> {
-    ROOT_CONTENT_ACTIONS.iter().copied().find(|action| {
-        action.page == page.id()
-            && content_action_rect(action, width, height).contains(pos.0, pos.1)
-    })
-}
-
 /// S13 Change 2: "Входящие" has no `root.sui` entries at all -- unlike
 /// every other page's content, the task list's length is runtime data
 /// (however many tasks `saai-taskd` currently has waiting), not
 /// something `build.rs` can bake in from markup. These functions are
-/// this page's own equivalent of `ROOT_CONTENT_ACTIONS` /
-/// `content_action_rect` / `content_action_at`.
+/// this page's own equivalent of `ROOT_CONTENT_ACTIONS` (root.sui's
+/// static content-action table, ADR-149: kept as inert declared data,
+/// no longer read by any live dispatch).
 /// S23: "Сейчас"'s icon grid -- 3 columns, phone-style, replacing the
 /// single-column list every other page still uses (`stacked_row_
 /// rect`). Same 1080x2400 reference-canvas convention as that
@@ -6089,25 +6052,19 @@ impl TouchHandler for Shell {
                     }
                     // "inspect_selected_entity" has no tap behavior --
                     // matches this card's pre-existing no-op (it was
-                    // never wired into `invoke_content_action` either).
+                    // never wired into the old root.sui content-action
+                    // dispatch either, removed as dead code, ADR-149).
                 }
             } else if self.current_page == RootPage::Me {
                 // S16: same reasoning again -- the three settings rows
                 // sit below "Я"'s two-then-three fixed info rows, at
-                // indices `content_action_at`'s `root.sui`-driven table
-                // (which has no "me" entries at all) can't reach.
+                // indices root.sui's static content-action table (which
+                // never had "me" entries) couldn't reach.
                 if let Some(action) =
                     self.me_action_at(self.last_touch_pos, self.width, self.height)
                 {
                     self.invoke_me_action(action, conn, qh);
                 }
-            } else if let Some(action) = content_action_at(
-                self.current_page,
-                self.last_touch_pos,
-                self.width,
-                self.height,
-            ) {
-                self.invoke_content_action(action, conn, qh);
             }
             if had_pressed_tab {
                 self.draw(conn, qh);
@@ -6501,7 +6458,14 @@ impl Shell {
                 ),
                 rows: self.spaces_content_cards(width, height),
             }
-        } else if self.current_page == RootPage::Me {
+        } else {
+            // RootPage has exactly 4 variants (Now, Inbox, Spaces, Me);
+            // Now (both apps_open states), Inbox, and Spaces are all
+            // matched above, so this is always Me. Was its own
+            // `else if self.current_page == RootPage::Me` branch;
+            // folded into the final `else` when `Frame::Root` (this
+            // page's own pre-migration fallback, last used by ADR-141)
+            // was removed as dead code -- see ADR-149.
             let view = root_view(width, height);
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
@@ -6516,28 +6480,6 @@ impl Shell {
                 rows: self.me_content_cards(width, height),
                 paint_navigation: !content_only,
             }
-        } else {
-            let view = root_view(width, height);
-            let content_rect = view.children[0].rect;
-            let tabs = self.root_navigation_items(width, height);
-            let content_cards = ROOT_CONTENT_ACTIONS
-                .iter()
-                .filter(|action| action.page == self.current_page.id())
-                .map(|action| {
-                    (
-                        content_action_rect(action, width, height),
-                        self.content_card(action),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let context_label = self.context_label();
-            Frame::Root {
-                content_rect,
-                tabs,
-                content_cards,
-                context_label,
-                paint_navigation: !content_only,
-            }
         };
 
         // HIA-04b: the Orb is drawn once, unconditionally, after the
@@ -6546,15 +6488,15 @@ impl Shell {
         // own notification check, `space_color`) has to happen before
         // `canvas`/`buffer` take their mutable borrow, same reasoning
         // this function's own top comment already gives for `frame`.
-        // Only ever `Some` on `Frame::Root` (the only frame the Orb
-        // ever draws on) and only when the Rollback setting allows it.
+        // Only ever `Some` on one of these six frames (every real page,
+        // `Frame::Root` was the last, pre-migration one and is gone,
+        // ADR-149) and only when the Rollback setting allows it.
         let orb_frame = (!content_only
             && !self.calibration_mode
             && self.settings.orb_enabled
             && matches!(
                 frame,
-                Frame::Root { .. }
-                    | Frame::Now { .. }
+                Frame::Now { .. }
                     | Frame::AppsGrid { .. }
                     | Frame::Inbox { .. }
                     | Frame::Spaces { .. }
@@ -6564,8 +6506,6 @@ impl Shell {
 
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
-        let current_page_index = self.current_page.index();
-        let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
         let gallery_mode = self.gallery_mode;
         let gallery_composites = self.gallery_composites;
@@ -6786,25 +6726,6 @@ impl Shell {
                         header,
                         &rows,
                         fonts,
-                    );
-                }
-                Frame::Root {
-                    content_rect,
-                    tabs,
-                    content_cards,
-                    context_label,
-                    paint_navigation,
-                } => {
-                    render::draw_root(
-                        &mut render::Canvas::new(canvas, width, height),
-                        content_rect,
-                        &tabs,
-                        current_page_index,
-                        &context_label,
-                        fonts,
-                        &content_cards,
-                        current_page_is_now,
-                        paint_navigation,
                     );
                 }
                 Frame::Now {
@@ -7089,26 +7010,6 @@ impl Shell {
         } else {
             self.upsert_manual_context(space_id);
             self.entityd.select_space(space_id);
-        }
-    }
-
-    fn invoke_content_action(
-        &mut self,
-        action: ContentActionDefinition,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        println!(
-            "saai-shell: invoked content action {} ({})",
-            action.id, action.action
-        );
-        if let Some(space_id) = action.action.strip_prefix("select_space:") {
-            self.invoke_select_space(space_id);
-            return;
-        }
-        if action.action == "open_intent_input" {
-            self.intent_input = Some(IntentInputState::default());
-            self.draw(conn, qh);
         }
     }
 
@@ -8090,72 +7991,6 @@ impl Shell {
         sections
     }
 
-    fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
-        if action.action == "inspect_selected_entity" {
-            return match self.selected_entities.first() {
-                Some(entity) => render::ActionCardView::new(
-                    entity.title.clone(),
-                    format!("{} · версия {}", entity.entity_type, entity.revision),
-                    "Локально",
-                ),
-                None if self.entityd.is_connected() => render::ActionCardView::new(
-                    action.label,
-                    "В этом пространстве пока пусто",
-                    "Нет объектов",
-                ),
-                None => render::ActionCardView::new(
-                    action.label,
-                    "Сервис пространств недоступен",
-                    "Ожидание",
-                ),
-            };
-        }
-        if action.action == "open_intent_input" {
-            return render::ActionCardView::new(
-                action.label,
-                intent_compose_status(self.entityd.is_connected()),
-                "Открыть",
-            );
-        }
-        if let Some(space_id) = action.action.strip_prefix("select_space:") {
-            let selected = space_id == self.selected_space_id;
-            return render::ActionCardView::new(
-                action.label,
-                space_card_status(
-                    space_id,
-                    self.entityd.is_connected(),
-                    &self.entity_counts,
-                    &self.spaces,
-                    &self.system_space_entities,
-                ),
-                if selected {
-                    "Выбрано"
-                } else {
-                    "Открыть"
-                },
-            )
-            .selected(selected);
-        }
-        render::ActionCardView::new(action.label, "", "")
-    }
-
-    fn context_label(&self) -> String {
-        let name = space_display_name(&self.spaces, &self.selected_space_id);
-        // HIA-01: the one real, always-visible behavioral difference
-        // `SpaceLifecycle::Archived` makes today -- everything else
-        // about an archived space (its card, its entities) keeps
-        // working exactly as before; only the status-bar label
-        // admits it's archived, so nobody mistakes it for an active
-        // context by accident.
-        if space_lifecycle(&self.system_space_entities, &self.selected_space_id)
-            == SpaceLifecycle::Archived
-        {
-            format!("{name} (архив)")
-        } else {
-            name
-        }
-    }
-
     /// S09 Change 3 (ADR-031's follow-up): the first `saaios.task` in
     /// the selected space still waiting on a live confirmation, if any
     /// -- read straight from `selected_entities` (already kept current
@@ -9117,7 +8952,7 @@ mod tests {
     use super::{
         apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
         bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
-        consent_action_at, consent_content_cards, consent_header, content_action_at,
+        consent_action_at, consent_content_cards, consent_header,
         dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
         effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
         in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
@@ -10299,34 +10134,22 @@ mod tests {
     }
 
     #[test]
-    fn now_page_static_actions_come_from_sui_markup() {
-        // S13 Change 4 removed the compiled-in demo-app card -- "Сейчас"
-        // now has exactly the two entries that were always meant to
-        // stay static (the app list itself is runtime data, handled by
-        // `now_action_at`/`apps_grid_cards`, not this table).
+    fn root_content_actions_is_now_inert_declared_data() {
+        // ADR-149: `Frame::Root`/`content_action_at`/`content_card`/
+        // `invoke_content_action` -- the machinery that used to read
+        // this root.sui-generated table at touch and render time --
+        // were dead code (every real RootPage already had its own
+        // dedicated Frame/dispatch) and were removed. This table stays
+        // declared (root.sui still names these two static cards) but
+        // is no longer read by anything live; this is a shape test of
+        // the codegen output, not a dispatch test.
         assert_eq!(ROOT_CONTENT_ACTIONS.len(), 2);
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
-            Some("selected-entity")
-        );
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 1000.0), 1080, 2400).map(|action| action.id),
-            Some("new-intent")
-        );
-        assert!(content_action_at(RootPage::Inbox, (540.0, 500.0), 1080, 2400).is_none());
-    }
-
-    #[test]
-    fn space_actions_come_from_live_spaces_not_sui_markup() {
-        assert!(content_action_at(RootPage::Spaces, (540.0, 500.0), 1080, 2400).is_none());
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
-            Some("selected-entity")
-        );
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 1020.0), 1080, 2400).map(|action| action.id),
-            Some("new-intent")
-        );
+        assert_eq!(ROOT_CONTENT_ACTIONS[0].id, "selected-entity");
+        assert_eq!(ROOT_CONTENT_ACTIONS[0].page, "now");
+        assert_eq!(ROOT_CONTENT_ACTIONS[0].action, "inspect_selected_entity");
+        assert_eq!(ROOT_CONTENT_ACTIONS[1].id, "new-intent");
+        assert_eq!(ROOT_CONTENT_ACTIONS[1].page, "now");
+        assert_eq!(ROOT_CONTENT_ACTIONS[1].action, "open_intent_input");
     }
 
     #[test]

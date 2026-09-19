@@ -1025,6 +1025,29 @@ big-bang rewrite.
   (dead-code/arg-count/redundant-clone/doc-comment-drift findings,
   unrelated to lock chrome but found while this file was open) -- see
   ADR-148.
+- [x] Remove migrated screen-local primitives and record remaining
+  exceptions (ADR-149). `Frame::Root`/`draw_root` (the S04-era
+  diagnostic-scaffold renderer every ADR-127-148 screen migrated off
+  of, one at a time) was never itself declared dead once the last real
+  page left it -- `RootPage`'s 4 variants were already matched
+  exhaustively before either the frame-construction or touch-dispatch
+  `if`/`else if` chain ever reached its own final `else`. Removed:
+  `Frame::Root`, `draw_root`, `content_action_at`/`content_action_rect`,
+  `content_card`, `invoke_content_action`, `context_label`,
+  `RootPage::index`/`id`, `intent_compose_status` (each confirmed to
+  have zero live callers, not just this one). Recorded exception, not
+  removed: root.sui's own two static content-action cards and their
+  generated `ROOT_CONTENT_ACTIONS`/`ContentActionDefinition` table --
+  deleting those means editing the shared `saai-ui-compiler` codegen
+  path generically, out of scope for this cleanup; left declared,
+  `#[allow(dead_code)]`'d, verified by one shape test instead of a
+  dispatch test that only ever exercised dead code. Host: full
+  workspace `cargo test`/`clippy --all-targets -D warnings` clean
+  (191/193 saai-shell tests -- see ADR-149 for the exact accounting).
+  Not yet physically re-confirmed; pure dead-code removal, so a same-
+  day spot check across Сейчас/Входящие/Пространства/Я/lock idle is
+  the proportionate verification, not a full re-walk of every screen
+  this sprint already flashed individually.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
 - [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
@@ -1032,7 +1055,6 @@ big-bang rewrite.
   triggering privileged actions.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
-- [ ] Remove migrated screen-local primitives and record remaining exceptions.
 - [ ] Expand the component gallery and cross-surface golden tests.
 
 ### Acceptance

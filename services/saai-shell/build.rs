@@ -55,6 +55,10 @@ fn main() {
     let generated = format!(
         "const ROOT_SCREEN_ID: &str = {:?};\n\
          const ROOT_CONTENT_ID: &str = {:?};\n\
+         // ADR-149: no live dispatch reads this table any more\n\
+         // (Frame::Root/content_action_at were dead code, removed);\n\
+         // kept as declared markup, verified by one shape test.\n\
+         #[allow(dead_code)]\n\
          const ROOT_CONTENT_ACTIONS: &[ContentActionDefinition] = &[\n    {}\n];\n\
          const ROOT_TABS_ID: &str = {:?};\n\
          const ROOT_TAB_HEIGHT: u32 = {};\n\

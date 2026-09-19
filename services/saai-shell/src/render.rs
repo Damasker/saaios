@@ -2292,170 +2292,6 @@ pub fn draw_composite_gallery(
         );
     }
 }
-// S23 added `is_grid` as the 8th plain draw-time knob on an already
-// data-only function (no behavior to extract into a struct without
-// inventing one purely to appease this lint) -- same call shape as
-// `draw_consent`/`draw_object_view`, just with one more page-shaped
-// screen to describe.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_root(
-    canvas: &mut Canvas<'_>,
-    content: Rect,
-    tabs: &[(Rect, NavigationItem)],
-    selected: usize,
-    context_label: &str,
-    fonts: Option<&Fonts>,
-    content_actions: &[(Rect, ActionCardView)],
-    is_grid: bool,
-    paint_navigation: bool,
-) {
-    if paint_navigation {
-        canvas.fill(theme_color(ColorRole::Canvas));
-    } else {
-        canvas.set_clip(Some(content));
-        canvas.fill(theme_color(ColorRole::Canvas));
-    }
-    canvas.set_clip(Some(content));
-
-    // A stable phone-like content surface. The number of rows changes per
-    // root page so page transitions remain visible even if a display pipeline
-    // maps two colors too similarly.
-    let margin = content.width / 22;
-    let card_width = content.width.saturating_sub(margin * 2);
-    canvas.fill_rect(
-        Rect::new(margin, 150, card_width, 190),
-        theme_color(ColorRole::Surface),
-    );
-    canvas.fill_rect(
-        Rect::new(margin, 150, 14, 190),
-        theme_color(ColorRole::Accent),
-    );
-    if let (Some(fonts), Some((_, title))) = (fonts, tabs.get(selected)) {
-        let header = format!("{context_label} · {}", title.label);
-        draw_text_centered(
-            canvas,
-            &fonts.semibold,
-            &header,
-            54.0,
-            content.x + content.width / 2,
-            210,
-            theme_color(ColorRole::TextPrimary),
-        );
-    }
-
-    let row_count = selected.saturating_add(2).min(5);
-    let first_placeholder = if content_actions.is_empty() {
-        0
-    } else {
-        row_count
-    };
-    if !is_grid {
-        for row in first_placeholder..row_count {
-            let y = 430 + row as u32 * 230;
-            if y >= content.height {
-                break;
-            }
-            canvas.fill_rect(
-                Rect::new(margin, y, card_width, 170),
-                theme_color(ColorRole::Surface),
-            );
-            canvas.fill_rect(
-                Rect::new(margin + 34, y + 42, 86, 86),
-                theme_color(ColorRole::Border),
-            );
-            canvas.fill_rect(
-                Rect::new(margin + 154, y + 52, card_width.saturating_sub(210), 24),
-                theme_color(ColorRole::Border),
-            );
-            canvas.fill_rect(
-                Rect::new(margin + 154, y + 96, card_width.saturating_sub(290), 18),
-                theme_color(ColorRole::Border),
-            );
-        }
-    }
-
-    // ADR-138: the live apps grid paints through `draw_apps_grid`.
-    // `is_grid` stays for the leftover `draw_root` path if a caller
-    // still asks for letter-square tiles.
-    if is_grid {
-        draw_app_icon_grid(canvas, fonts, content_actions);
-    } else {
-        for (rect, card) in content_actions {
-            canvas.fill_rect(
-                *rect,
-                if card.selected {
-                    theme_color(ColorRole::Elevated)
-                } else {
-                    theme_color(ColorRole::Surface)
-                },
-            );
-            // S13 Change 5: an empty `action` means this card has nothing to
-            // tap (an info summary -- "Это устройство", "Я"'s app grants,
-            // "Входящие"'s empty state) -- the icon block and the
-            // accent-colored button were drawn unconditionally before, which
-            // made every such card look clickable even though nothing
-            // happened when tapped. text starts at the icon's own left edge
-            // instead of after it when there's no icon to make room for.
-            let has_action = !card.action.is_empty();
-            let text_left = if has_action {
-                canvas.fill_rect(
-                    Rect::new(rect.x + 34, rect.y + 52, 104, 104),
-                    theme_color(ColorRole::Accent),
-                );
-                rect.x + 174
-            } else {
-                rect.x + 34
-            };
-            let button = has_action.then(|| {
-                let button_width = 250.min(rect.width / 3);
-                let button = Rect::new(
-                    rect.x + rect.width.saturating_sub(button_width + 34),
-                    rect.y + 58,
-                    button_width,
-                    88,
-                );
-                canvas.fill_rect(button, theme_color(ColorRole::Accent));
-                button
-            });
-            if let Some(fonts) = fonts {
-                draw_text(
-                    canvas,
-                    &fonts.semibold,
-                    &card.label,
-                    38.0,
-                    text_left,
-                    rect.y + 48,
-                    theme_color(ColorRole::TextPrimary),
-                );
-                draw_text(
-                    canvas,
-                    &fonts.regular,
-                    &card.status,
-                    27.0,
-                    text_left,
-                    rect.y + 108,
-                    theme_color(ColorRole::TextSecondary),
-                );
-                if let Some(button) = button {
-                    draw_text_centered(
-                        canvas,
-                        &fonts.semibold,
-                        &card.action,
-                        25.0,
-                        button.x + button.width / 2,
-                        button.y + 24,
-                        theme_color(ColorRole::Canvas),
-                    );
-                }
-            }
-        }
-    }
-
-    canvas.set_clip(None);
-    if paint_navigation {
-        draw_tab_bar(canvas, tabs, fonts);
-    }
-}
 
 fn paint_context_header(
     canvas: &mut Canvas<'_>,
@@ -3183,7 +3019,7 @@ mod tests {
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
         draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_orb,
         draw_pin_setup,
-        draw_remote_pair, draw_root, draw_status_bar, draw_tab_bar, gallery_row_positions,
+        draw_remote_pair, draw_status_bar, draw_tab_bar, gallery_row_positions,
         physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
@@ -3285,6 +3121,14 @@ mod tests {
 
     #[test]
     fn selected_indicator_moves_between_edge_tabs() {
+        // Retargeted at `draw_tab_bar` directly (ADR-149): this test's
+        // real subject was always the shared tab-bar primitive, not
+        // `draw_root`'s own page-content painting -- `draw_root` (the
+        // pre-migration Frame this ran through) was dead code, removed
+        // in the same change. `scroll_frame_does_not_repaint_navigation`,
+        // its sibling below, is not retargeted the same way: that
+        // behavior already has live coverage against a real migrated
+        // frame in `me_scroll_does_not_repaint_navigation` below.
         let mut pixels = vec![0; 1080 * 2400 * 4];
         let labels = ["Сейчас", "Входящие", "Пространства", "Система"];
         let make_tabs = |selected_index: usize| -> Vec<(Rect, NavigationItem)> {
@@ -3301,55 +3145,13 @@ mod tests {
                 .collect()
         };
         let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &make_tabs(0),
-            0,
-            "Дом",
-            None,
-            &[],
-            true,
-            true,
-        );
+        draw_tab_bar(&mut canvas, &make_tabs(0), None);
         assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Accent));
         assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Surface));
 
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &make_tabs(3),
-            3,
-            "Дом",
-            None,
-            &[],
-            false,
-            true,
-        );
+        draw_tab_bar(&mut canvas, &make_tabs(3), None);
         assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Surface));
         assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Accent));
-    }
-
-    #[test]
-    fn scroll_frame_does_not_repaint_navigation() {
-        let mut pixels = vec![0; 1080 * 2400 * 4];
-        let tabs = vec![(
-            Rect::new(0, 2100, 270, 300),
-            NavigationItem::new("me", "Система").selected(),
-        )];
-        let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &tabs,
-            3,
-            "Дом",
-            None,
-            &[],
-            false,
-            false,
-        );
-        assert_eq!(canvas.pixel(135, 2125), [0, 0, 0, 0]);
     }
 
     #[test]
