@@ -214,6 +214,9 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - First real consumer of `FieldKind::Text`: intent composer (ADR-135).
   Placeholder `Наберите текст…` is distinct from empty. Offline is
   `help` (`Нет связи`), not `error`.
+- Keyboard keys (ADR-151): pressed fill is `ColorRole::Pressed` while
+  the finger is down; one `KeyTick` haptic on down. Release still
+  emits the key. Size does not change.
 
 ### 6.8 `DataRow`
 

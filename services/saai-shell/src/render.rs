@@ -365,13 +365,14 @@ pub fn draw_intent_input(
     field: &Field,
     header: Rect,
     keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.fill_rect(header, theme_color(ColorRole::Surface));
 
     let Some(fonts) = fonts else {
-        paint_keyboard_keys(canvas, None, keys);
+        paint_keyboard_keys(canvas, None, keys, pressed_key);
         return;
     };
 
@@ -409,7 +410,7 @@ pub fn draw_intent_input(
         preview_color,
     );
 
-    paint_keyboard_keys(canvas, Some(fonts), keys);
+    paint_keyboard_keys(canvas, Some(fonts), keys, pressed_key);
 }
 
 /// VUI-07 (ADR-132): Wi-Fi password reuses the intent keyboard keys
@@ -422,13 +423,14 @@ pub fn draw_wifi_password(
     field: &Field,
     header: Rect,
     keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.fill_rect(header, theme_color(ColorRole::Surface));
 
     let Some(fonts) = fonts else {
-        paint_keyboard_keys(canvas, None, keys);
+        paint_keyboard_keys(canvas, None, keys, pressed_key);
         return;
     };
 
@@ -465,7 +467,7 @@ pub fn draw_wifi_password(
         preview_color,
     );
 
-    paint_keyboard_keys(canvas, Some(fonts), keys);
+    paint_keyboard_keys(canvas, Some(fonts), keys, pressed_key);
 }
 
 /// HIA-07: one screen for any entity, instead of a dedicated view per
@@ -1045,6 +1047,7 @@ pub fn draw_pin_setup(
     field: &Field,
     field_rect: Rect,
     keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
@@ -1054,7 +1057,7 @@ pub fn draw_pin_setup(
         draw_gallery_field(canvas, fonts, field, field_rect);
     }
     canvas.set_clip(None);
-    paint_keyboard_keys(canvas, fonts, keys);
+    paint_keyboard_keys(canvas, fonts, keys, pressed_key);
 }
 
 /// ADR-149: lock unlock. Password `Field` occupancy in the keyboard
@@ -1065,21 +1068,33 @@ pub fn draw_lock_pin_entry(
     field: &Field,
     field_rect: Rect,
     keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     if let Some(fonts) = fonts {
         draw_gallery_field(canvas, fonts, field, field_rect);
     }
-    paint_keyboard_keys(canvas, fonts, keys);
+    paint_keyboard_keys(canvas, fonts, keys, pressed_key);
 }
 
 /// One key painter for Intent, Wi-Fi password, PIN setup, and lock
 /// unlock. Rects come from `layout()`; this only fills them.
-fn paint_keyboard_keys(canvas: &mut Canvas<'_>, fonts: Option<&Fonts>, keys: &[(Rect, String)]) {
+/// ADR-151: the live finger's key uses `ColorRole::Pressed`.
+fn paint_keyboard_keys(
+    canvas: &mut Canvas<'_>,
+    fonts: Option<&Fonts>,
+    keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
+) {
     let Some(fonts) = fonts else {
-        for (rect, _) in keys {
-            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
+        for (rect, label) in keys {
+            let role = if pressed_key == Some(label.as_str()) {
+                ColorRole::Pressed
+            } else {
+                ColorRole::Elevated
+            };
+            canvas.fill_rect(*rect, theme_color(role));
         }
         return;
     };
@@ -1090,7 +1105,12 @@ fn paint_keyboard_keys(canvas: &mut Canvas<'_>, fonts: Option<&Fonts>, keys: &[(
             rect.width.saturating_sub(8),
             rect.height.saturating_sub(8),
         );
-        canvas.fill_rect(key, theme_color(ColorRole::Surface));
+        let role = if pressed_key == Some(label.as_str()) {
+            ColorRole::Pressed
+        } else {
+            ColorRole::Surface
+        };
+        canvas.fill_rect(key, theme_color(role));
         draw_keypad_label(
             canvas,
             fonts,
@@ -3675,7 +3695,9 @@ mod tests {
             .with_placeholder("Введите новый PIN (минимум 4 цифры)");
         let field_rect = Rect::new(49, 430, 982, 190);
         let keys = vec![(Rect::new(108, 900, 264, 240), "1".to_string())];
-        draw_pin_setup(canvas, content, &header, &field, field_rect, &keys, None);
+        draw_pin_setup(
+            canvas, content, &header, &field, field_rect, &keys, None, None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
     }
@@ -3821,10 +3843,60 @@ mod tests {
         let field = Field::new("Введите PIN", FieldKind::Password).with_value("0000");
         let field_rect = Rect::new(49, 24, 982, 212);
         let key = Rect::new(108, 900, 264, 240);
-        draw_lock_pin_entry(canvas, &field, field_rect, &[(key, "1".to_string())], None);
+        draw_lock_pin_entry(
+            canvas,
+            &field,
+            field_rect,
+            &[(key, "1".to_string())],
+            None,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_ne!(canvas.pixel(540, 1200), [0x00, 0xd0, 0x00, 0x00]);
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
+    }
+
+    #[test]
+    fn pressed_keyboard_key_uses_pressed_token_without_shifting_neighbors() {
+        let width = 1080;
+        let height = 2400;
+        let field = Field::new("Введите PIN", FieldKind::Password).with_value("0000");
+        let field_rect = Rect::new(49, 24, 982, 212);
+        let one = Rect::new(108, 900, 264, 240);
+        let two = Rect::new(372, 900, 264, 240);
+        let keys = vec![(one, "1".to_string()), (two, "2".to_string())];
+        let mut idle = vec![0u8; width as usize * height as usize * 4];
+        let mut down = vec![0u8; width as usize * height as usize * 4];
+        draw_lock_pin_entry(
+            &mut Canvas::new(&mut idle, width, height),
+            &field,
+            field_rect,
+            &keys,
+            None,
+            None,
+        );
+        draw_lock_pin_entry(
+            &mut Canvas::new(&mut down, width, height),
+            &field,
+            field_rect,
+            &keys,
+            Some("1"),
+            None,
+        );
+        assert_eq!(
+            Canvas::new(&mut down, width, height).pixel(240, 1020),
+            theme_color(ColorRole::Pressed)
+        );
+        assert_eq!(
+            Canvas::new(&mut idle, width, height).pixel(240, 1020),
+            theme_color(ColorRole::Elevated)
+        );
+        assert_eq!(
+            Canvas::new(&mut down, width, height).pixel(504, 1020),
+            theme_color(ColorRole::Elevated)
+        );
+        assert_eq!(one, Rect::new(108, 900, 264, 240));
+        assert_eq!(two, Rect::new(372, 900, 264, 240));
     }
 
     #[test]

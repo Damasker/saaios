@@ -909,7 +909,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…` on panther)
+**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…`, compact QWERTY `874ad0e2…`, keyboard press `3a97f0e8…` on panther)
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -1021,6 +1021,14 @@ big-bang rewrite.
   setup; one `paint_keyboard_keys` shared with Intent and Wi-Fi;
   Password `Field` occupancy on lock, never `pin_code`. Do not save
   a PIN. Do not type digits. Leave with Отмена. Flashed `32d50a67…`.
+- [x] Dock Intent/Wi-Fi QWERTY at the bottom. ADR-150: four
+  `MIN_TOUCH_TARGET` rows, staggered `asdf`/`zxcv`, wide space;
+  PIN dialer unchanged. Do not type a PSK. Do not send an intent.
+  Leave with Отмена. Flashed `874ad0e2…`.
+- [x] Keyboard press: `ColorRole::Pressed` plus one haptic `KeyTick`.
+  ADR-151: same `paint_keyboard_keys` for Intent/Wi-Fi/PIN; motor in
+  `HapticMotor` until VUI-08. Do not type a PSK. Do not send an
+  intent. Do not type PIN digits. Leave with Отмена. Flashed `3a97f0e8…`.
 - [ ] Restyle remaining lock chrome if any after the shared keyboard.
 - [ ] Apply shared empty, loading, offline, blocked, failed, permission,
   confirmation, and recovery patterns.
@@ -1189,6 +1197,7 @@ setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
 (`15fc3487…`), consent header (`cff22339…`), PIN setup header
 (`e8b215aa…`), remote pairing header (`4a1f7553…`), Bluetooth
 header (`efbab13a…`), Wi-Fi header (`d562249b…`), trusted-clients
-header (`b73f9433…`), lock attention (`55f7bd25…`), and lock/PIN
-keyboard (`32d50a67…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
+header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
+keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), and keyboard
+press (`3a97f0e8…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
 shell-legal memory read exists.

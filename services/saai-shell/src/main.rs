@@ -38,10 +38,11 @@
 //!   assumed here. The panel simply stays on and shows the lock
 //!   surface indefinitely instead of the phone-realistic
 //!   dim-then-blank sequence.
-//! - **Haptic feedback on unlock.** drm-splash opens `/dev/input/haptic`
-//!   directly. This client has no raw evdev access either (same
-//!   ADR-005/010 boundary) and there's no existing path to ask
-//!   saai-displayd to play a haptic effect on this client's behalf.
+//! - **Haptic feedback on unlock.** drm-splash opened `/dev/input/haptic`
+//!   directly. Unlock still has no tick. ADR-151 keyboard keys request
+//!   `HapticIntent::KeyTick` through `HapticMotor` (same device, same
+//!   15 ms pulse). Displayd still has no haptic protocol; VUI-08 may
+//!   move the write.
 //!
 //! Both are logged as known limitations in the S04 sprint doc, not
 //! silently dropped.
@@ -66,6 +67,7 @@ use std::time::{Duration, Instant, SystemTime};
 mod appd_client;
 mod dmabuf_canvas;
 mod entityd_client;
+mod haptic;
 mod intent_context;
 mod portal_server;
 mod render;
@@ -460,11 +462,11 @@ use saai_object_actions::{
 };
 use saai_ui_core::{
     layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
-    DataRowVariant, DecisionOverlay, EventRow, Field, FieldKind, IntentSummary, LayoutNode, Length,
-    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
-    SafeInsets, SettingRow, SpaceRow, StatusIndicator, StatusIndicatorVariant, StatusMark,
-    SurfaceScale, SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow,
-    UniversalState, WifiRow, MIN_TOUCH_TARGET,
+    DataRowVariant, DecisionOverlay, EdgeInsets, EventRow, Field, FieldKind, IntentSummary,
+    LayoutNode, Length, LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost,
+    Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection, SystemSectionRow,
+    SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1063,6 +1065,15 @@ fn tab_at(pos: (f64, f64), width: u32, height: u32) -> Option<RootPage> {
         .and_then(page_from_action)
 }
 
+/// ADR-151: the key currently under a live finger, from the same
+/// `(Rect, label)` pairs `paint_keyboard_keys` draws. `None` off the
+/// keyboard. Labels match the drawn set (`Q`, `␣`, `Отмена`, `1`).
+fn pressed_key_from_keys(keys: &[(Rect, String)], pos: (f64, f64)) -> Option<String> {
+    keys.iter()
+        .find(|(rect, _)| rect.contains(pos.0, pos.1))
+        .map(|(_, label)| label.clone())
+}
+
 /// VUI-04: `NavigationItem::pressed` is true only while a real finger is
 /// down on that tab, with no modal and no "Я" drag in progress. Same
 /// tree `tab_at` uses -- no second set of rectangles.
@@ -1576,10 +1587,35 @@ fn store_write_ready(store_connected: bool) -> bool {
 }
 
 const INTENT_KEY_PREFIX: &str = "intent:key:";
-/// Same reasoning as `CONSENT_BUTTON_HEIGHT`: a plain literal, not scaled
-/// against `ROOT_TAB_HEIGHT`'s 2400-unit design space, matching how
-/// `consent_view()`'s own header/buttons are sized.
+/// PIN unlock still parks its Field in this slot (ADR-149). Intent /
+/// Wi-Fi QWERTY no longer uses it as the keyboard split: ADR-150 docks
+/// the letter rows at the bottom instead of filling under a 260px bar.
 const INTENT_HEADER_HEIGHT: u32 = 260;
+
+fn intent_keyboard_height(panel_height: u32) -> u32 {
+    let row = physical_unit(MIN_TOUCH_TARGET);
+    let pad = physical_unit(SpacingToken::Small.value()).saturating_mul(2);
+    let wanted = row.saturating_mul(4).saturating_add(pad);
+    let keep_field = row.saturating_mul(2);
+    wanted.min(panel_height.saturating_sub(keep_field)).max(row)
+}
+
+fn intent_row_inset(letters: &str, width: u32) -> u32 {
+    let count = letters.chars().count() as u32;
+    if count >= 10 {
+        0
+    } else {
+        ((10 - count).saturating_mul(width)) / 20
+    }
+}
+
+fn intent_side_key_width(width: u32) -> u32 {
+    (width / 10 * 2).max(physical_unit(MIN_TOUCH_TARGET))
+}
+
+fn intent_mod_key_width() -> u32 {
+    physical_unit(MIN_TOUCH_TARGET)
+}
 
 /// ADR-029's proven touch-hit-test keyboard, grown from its 6-key spike
 /// (`H`/`I`/`!`) to a real (if Latin-only -- Cyrillic is future polish,
@@ -2585,14 +2621,17 @@ fn intent_key_action(ch: char) -> String {
 
 /// Built and hit-tested the same way as `root_view()`/`consent_view()`:
 /// one `Node`/`layout()` tree, no second set of rectangles for touch.
-/// Every row (letters and controls alike) is `Length::Fill` on both
-/// axes, so the keyboard reflows to whatever the real panel size is
-/// instead of assuming a fixed design canvas.
+/// ADR-150: four `MIN_TOUCH_TARGET` rows docked at the bottom (first
+/// iPhone QWERTY), not a Fill of the whole panel. Shorter letter rows
+/// inset so key cells stay one width. Space `Fill`s the control row.
 fn intent_view(width: u32, height: u32, mode: KeyboardMode) -> LayoutNode {
+    let side = intent_side_key_width(width);
+    let modifier = intent_mod_key_width();
     let mut rows: Vec<Node> = keyboard_rows_for_mode(mode)
         .iter()
         .enumerate()
         .map(|(row_index, letters)| {
+            let inset = intent_row_inset(letters, width);
             Node::linear(
                 format!("intent-row-{row_index}"),
                 Axis::Horizontal,
@@ -2603,6 +2642,12 @@ fn intent_view(width: u32, height: u32, mode: KeyboardMode) -> LayoutNode {
                     })
                     .collect(),
             )
+            .with_padding(EdgeInsets {
+                top: 0,
+                right: inset,
+                bottom: 0,
+                left: inset,
+            })
         })
         .collect();
     rows.push(Node::linear(
@@ -2610,17 +2655,28 @@ fn intent_view(width: u32, height: u32, mode: KeyboardMode) -> LayoutNode {
         Axis::Horizontal,
         INTENT_CONTROLS
             .iter()
-            .map(|control| Node::leaf(control.id).with_action(control.action))
+            .map(|control| {
+                let leaf = Node::leaf(control.id).with_action(control.action);
+                if control.action == INTENT_SPACE_ACTION {
+                    leaf.with_size(Length::Fill, Length::Fill)
+                } else if control.action == INTENT_CANCEL_ACTION
+                    || control.action == INTENT_SEND_ACTION
+                {
+                    leaf.with_size(Length::Px(side), Length::Fill)
+                } else {
+                    leaf.with_size(Length::Px(modifier), Length::Fill)
+                }
+            })
             .collect(),
     ));
-    let keyboard = Node::linear(INTENT_ROWS_ID, Axis::Vertical, rows);
+    let pad = physical_unit(SpacingToken::XSmall.value());
+    let keyboard = Node::linear(INTENT_ROWS_ID, Axis::Vertical, rows)
+        .with_size(Length::Fill, Length::Px(intent_keyboard_height(height)))
+        .with_padding(EdgeInsets::all(pad));
     let root = Node::linear(
         INTENT_SCREEN_ID,
         Axis::Vertical,
-        vec![
-            Node::leaf(INTENT_HEADER_ID).with_size(Length::Fill, Length::Px(INTENT_HEADER_HEIGHT)),
-            keyboard,
-        ],
+        vec![Node::leaf(INTENT_HEADER_ID), keyboard],
     );
     layout(&root, Rect::new(0, 0, width, height))
 }
@@ -2672,6 +2728,20 @@ fn intent_keyboard_keys(
         keys.push((key_node.rect, label));
     }
     (header, keys)
+}
+
+#[cfg(test)]
+fn intent_labeled_center(label: &str, width: u32, height: u32, mode: KeyboardMode) -> (f64, f64) {
+    let (_, keys) = intent_keyboard_keys(width, height, mode);
+    let rect = keys
+        .into_iter()
+        .find(|(_, key)| key == label)
+        .unwrap_or_else(|| panic!("missing keyboard key {label}"))
+        .0;
+    (
+        (rect.x + rect.width / 2) as f64,
+        (rect.y + rect.height / 2) as f64,
+    )
 }
 
 fn consent_view(width: u32, height: u32) -> LayoutNode {
@@ -5201,6 +5271,8 @@ fn main() {
         last_touch_pos: (0.0, 0.0),
         tab_touch_pending: false,
         pressed_tab: None,
+        pressed_key: None,
+        haptic: haptic::HapticMotor::open(),
         layer,
         layer_width: 0,
         layer_height: status_layer_height(),
@@ -5395,6 +5467,10 @@ struct Shell {
     /// pressed`. Cleared on up/cancel/sleep-wake. `None` when the
     /// finger is not on a tab.
     pressed_tab: Option<RootPage>,
+    /// Keyboard key under a live finger (ADR-151). Drawn as
+    /// `ColorRole::Pressed`. Cleared on up/cancel/sleep-wake.
+    pressed_key: Option<String>,
+    haptic: haptic::HapticMotor,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -5886,6 +5962,7 @@ impl TouchHandler for Shell {
             self.unlock_pending = false;
             self.tab_touch_pending = false;
             self.pressed_tab = None;
+            self.pressed_key = None;
             self.me_drag = None;
             self.pin_entry_buffer.clear();
             self.present_lock_pin_entry(qh);
@@ -5921,6 +5998,7 @@ impl TouchHandler for Shell {
             None
         };
         self.sync_pressed_tab(conn, qh);
+        self.sync_pressed_key(conn, qh);
     }
 
     fn up(
@@ -5942,6 +6020,7 @@ impl TouchHandler for Shell {
             (self.last_touch_pos.1 - start_y).abs() > ME_DRAG_TAP_SLOP_PX
         });
         let had_pressed_tab = self.pressed_tab.take().is_some();
+        let had_pressed_key = self.pressed_key.take().is_some();
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
         // starts on the lock surface but ends elsewhere (or a
@@ -6284,7 +6363,7 @@ impl TouchHandler for Shell {
             ) {
                 self.invoke_content_action(action, conn, qh);
             }
-            if had_pressed_tab {
+            if had_pressed_tab || had_pressed_key {
                 self.draw(conn, qh);
             }
         }
@@ -6316,6 +6395,7 @@ impl TouchHandler for Shell {
             }
         }
         self.sync_pressed_tab(conn, qh);
+        self.sync_pressed_key(conn, qh);
     }
 
     fn shape(
@@ -6344,8 +6424,13 @@ impl TouchHandler for Shell {
         self.tab_touch_pending = false;
         self.me_drag = None;
         self.me_row_cache = None;
-        if self.pressed_tab.take().is_some() {
-            self.draw(conn, qh);
+        let had_pressed = self.pressed_tab.take().is_some() || self.pressed_key.take().is_some();
+        if had_pressed {
+            if self.locked {
+                self.present_lock_pin_entry(qh);
+            } else {
+                self.draw(conn, qh);
+            }
         }
     }
 }
@@ -6400,6 +6485,7 @@ impl Shell {
         // take a mutable borrow tied to `self.buffer`/`self.pool` for the
         // rest of the function -- `self.content_card()`/`self.context_
         // label()` need the whole of `self`, not just those two fields.
+        let pressed_key = self.pressed_key.clone();
         let frame = if let Some(pending) = &self.pending_consent {
             let view = consent_view(width, height);
             let content_rect = view.children[0].rect;
@@ -6865,6 +6951,7 @@ impl Shell {
                         &field,
                         header,
                         &keys,
+                        pressed_key.as_deref(),
                         fonts,
                     );
                 }
@@ -6882,6 +6969,7 @@ impl Shell {
                         &field,
                         field_rect,
                         &keys,
+                        pressed_key.as_deref(),
                         fonts,
                     );
                 }
@@ -6895,6 +6983,7 @@ impl Shell {
                         &field,
                         header,
                         &keys,
+                        pressed_key.as_deref(),
                         fonts,
                     );
                 }
@@ -7335,6 +7424,52 @@ impl Shell {
         );
         if next != self.pressed_tab {
             self.pressed_tab = next;
+            self.draw(conn, qh);
+        }
+    }
+
+    fn live_keyboard_keys(&self) -> Vec<(Rect, String)> {
+        if self.locked {
+            if self.settings.pin_code.is_some() {
+                return pin_keyboard_keys(
+                    self.lock_width,
+                    self.lock_height,
+                    PinKeyboardKind::Unlock,
+                );
+            }
+            return Vec::new();
+        }
+        if let Some(state) = &self.intent_input {
+            return intent_keyboard_keys(self.width, self.height, state.mode).1;
+        }
+        if let Some(state) = &self.wifi_password {
+            return intent_keyboard_keys(self.width, self.height, state.mode).1;
+        }
+        if self.pin_setup.is_some() {
+            return pin_keyboard_keys(
+                self.width,
+                self.height,
+                PinKeyboardKind::Setup {
+                    forget: self.settings.pin_code.is_some(),
+                },
+            );
+        }
+        Vec::new()
+    }
+
+    fn sync_pressed_key(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        let next = pressed_key_from_keys(&self.live_keyboard_keys(), self.last_touch_pos);
+        if next == self.pressed_key {
+            return;
+        }
+        let tick = next.is_some();
+        self.pressed_key = next;
+        if tick {
+            self.haptic.play(haptic::haptic_intent_for_key_press());
+        }
+        if self.locked {
+            self.present_lock_pin_entry(qh);
+        } else {
             self.draw(conn, qh);
         }
     }
@@ -9149,6 +9284,7 @@ impl Shell {
         } else {
             Vec::new()
         };
+        let pressed_key = self.pressed_key.clone();
         let pin_field = lock_pin_entry_field(self.pin_entry_buffer.len());
         let pin_field_rect = lock_pin_field_rect(width);
         let has_pin = pin_code.is_some();
@@ -9183,6 +9319,7 @@ impl Shell {
                             &pin_field,
                             pin_field_rect,
                             &keys,
+                            pressed_key.as_deref(),
                             fonts,
                         );
                     } else {
@@ -9254,7 +9391,14 @@ impl Shell {
 
         let mut frame = render::Canvas::new(canvas, width, height);
         if has_pin {
-            render::draw_lock_pin_entry(&mut frame, &pin_field, pin_field_rect, &keys, fonts);
+            render::draw_lock_pin_entry(
+                &mut frame,
+                &pin_field,
+                pin_field_rect,
+                &keys,
+                pressed_key.as_deref(),
+                fonts,
+            );
         } else {
             render::draw_lock_idle(
                 &mut frame,
@@ -9314,18 +9458,18 @@ mod tests {
         next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
         object_view_action_at, object_view_content, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remote_pair_content_cards,
-        remote_pair_header, remove_context_source, space_color, space_color_entity,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
-        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_rows, trusted_header,
-        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        LockAttentionTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
-        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
+        remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
+        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
+        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
+        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
+        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
+        KeyboardMode, LockAttentionTap, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets,
+        Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient, TrustedClientTap,
+        UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
         INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
         NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
         ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
@@ -10530,28 +10674,36 @@ mod tests {
 
     #[test]
     fn intent_keyboard_rows_map_to_their_own_letters() {
+        let width = 1080;
+        let height = 2400;
+        let center =
+            |label: &str| super::intent_labeled_center(label, width, height, KeyboardMode::Letters);
         assert_eq!(
-            intent_action_at((50.0, 300.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
+            intent_action_at(center("Q"), width, height, KeyboardMode::Letters).as_deref(),
             Some("intent:key:q")
         );
         assert_eq!(
-            intent_action_at((50.0, 850.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
+            intent_action_at(center("A"), width, height, KeyboardMode::Letters).as_deref(),
             Some("intent:key:a")
         );
         assert_eq!(
-            intent_action_at((50.0, 1400.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
+            intent_action_at(center("Z"), width, height, KeyboardMode::Letters).as_deref(),
             Some("intent:key:z")
         );
     }
 
     #[test]
     fn intent_keyboard_controls_row_has_cancel_and_send_at_the_ends() {
+        let width = 1080;
+        let height = 2400;
+        let center =
+            |label: &str| super::intent_labeled_center(label, width, height, KeyboardMode::Letters);
         assert_eq!(
-            intent_action_at((50.0, 2000.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
+            intent_action_at(center("Отмена"), width, height, KeyboardMode::Letters).as_deref(),
             Some(INTENT_CANCEL_ACTION)
         );
         assert_eq!(
-            intent_action_at((950.0, 2000.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
+            intent_action_at(center("Отправить"), width, height, KeyboardMode::Letters).as_deref(),
             Some(INTENT_SEND_ACTION)
         );
     }
@@ -10566,22 +10718,62 @@ mod tests {
 
     #[test]
     fn intent_keyboard_symbol_mode_maps_digits_and_symbols() {
+        let width = 1080;
+        let height = 2400;
+        let center =
+            |label: &str| super::intent_labeled_center(label, width, height, KeyboardMode::Symbols);
         assert_eq!(
-            intent_action_at((50.0, 300.0), 1080, 2400, KeyboardMode::Symbols).as_deref(),
+            intent_action_at(center("1"), width, height, KeyboardMode::Symbols).as_deref(),
             Some("intent:key:1")
         );
         assert_eq!(
-            intent_action_at((50.0, 850.0), 1080, 2400, KeyboardMode::Symbols).as_deref(),
+            intent_action_at(center("-"), width, height, KeyboardMode::Symbols).as_deref(),
             Some("intent:key:-")
         );
     }
 
     #[test]
     fn intent_keyboard_mode_toggle_is_the_second_control() {
+        let width = 1080;
+        let height = 2400;
+        let center = super::intent_labeled_center("123", width, height, KeyboardMode::Letters);
         assert_eq!(
-            intent_action_at((300.0, 2000.0), 1080, 2400, KeyboardMode::Letters).as_deref(),
+            intent_action_at(center, width, height, KeyboardMode::Letters).as_deref(),
             Some(INTENT_MODE_TOGGLE_ACTION)
         );
+    }
+
+    #[test]
+    fn intent_qwerty_docks_at_the_bottom_with_staggered_rows_and_a_wide_space() {
+        let width = 1080;
+        let height = 2400;
+        let view = super::intent_view(width, height, KeyboardMode::Letters);
+        let keyboard = view.children[1].rect;
+        assert!(keyboard.y >= height / 2);
+        assert!(keyboard.height <= height / 2);
+        let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
+        let q = keys.iter().find(|(_, label)| label == "Q").unwrap().0;
+        let a = keys.iter().find(|(_, label)| label == "A").unwrap().0;
+        let z = keys.iter().find(|(_, label)| label == "Z").unwrap().0;
+        assert!(a.x > q.x);
+        assert!(z.x > a.x);
+        let space = keys.iter().find(|(_, label)| label == "␣").unwrap().0;
+        let mode = keys.iter().find(|(_, label)| label == "123").unwrap().0;
+        assert!(space.width > mode.width);
+    }
+
+    #[test]
+    fn pressed_key_from_keys_follows_the_letter_under_the_finger() {
+        let width = 1080;
+        let height = 2400;
+        let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
+        let q = keys.iter().find(|(_, label)| label == "Q").unwrap().0;
+        let center = (
+            q.x as f64 + q.width as f64 / 2.0,
+            q.y as f64 + q.height as f64 / 2.0,
+        );
+        assert_eq!(pressed_key_from_keys(&keys, center).as_deref(), Some("Q"));
+        assert_eq!(pressed_key_from_keys(&keys, (540.0, 100.0)), None);
     }
 
     #[test]
