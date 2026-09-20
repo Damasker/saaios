@@ -88,6 +88,7 @@ ADR-226 Inbox/Spaces/list paint from generated `layout_v2` trees.
 ADR-227 Me scroll paint from the same `layout_v2_scrolled` tree as hits.
 ADR-228 apps grid paint from generated `layout_v2` `Button` tiles.
 ADR-229 overlay Field/decision paint from generated `layout_v2`.
+ADR-230 OrbHost paint from the same generated `layout_v2` tree as hits.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

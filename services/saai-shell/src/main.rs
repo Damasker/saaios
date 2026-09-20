@@ -2745,8 +2745,9 @@ fn orb_menu_actions(is_system_space: bool, bluetooth_paired: bool) -> Vec<OrbAct
 /// Closed (`menu_actions` empty): the whole zone IS the dot, one
 /// leaf, nothing to stack. Open: a vertical list within the (now
 /// taller) zone -- one row per `menu_actions` entry, the dot itself
-/// last, doubling as the close control. Paint still reads this tree
-/// (ADR-223). Live hits come from `layout_v2()` over `orb_v2_source`.
+/// last, doubling as the close control. Host tests still compare
+/// against this tree. Live paint and hits read `layout_v2()` over
+/// `orb_v2_source` (ADR-230).
 fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
     let zone = orb_zone_rect(width, height, menu_actions.len());
     if menu_actions.is_empty() {
@@ -5766,7 +5767,12 @@ fn overlay_decision_paint(
     width: u32,
     height: u32,
 ) -> (Rect, Vec<Rect>) {
-    let tree = layout_live_v2(&overlay_buttons_v2_source(screen_id, locs), why, width, height);
+    let tree = layout_live_v2(
+        &overlay_buttons_v2_source(screen_id, locs),
+        why,
+        width,
+        height,
+    );
     let header = tree.children[0].rect;
     let buttons = locs
         .iter()
@@ -7600,10 +7606,7 @@ impl Shell {
         } else if let Some(entity) = self.viewing_entity() {
             let content = object_view_content(entity, &self.selected_entities, &self.relationships);
             let (header, actions) = if content.actions.is_empty() {
-                (
-                    object_view(width, height, 0).children[0].rect,
-                    Vec::new(),
-                )
+                (object_view(width, height, 0).children[0].rect, Vec::new())
             } else {
                 let locs: Vec<String> = (0..content.actions.len())
                     .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
@@ -10090,7 +10093,12 @@ impl Shell {
         } else {
             Vec::new()
         };
-        let view = orb_view(width, height, &menu_actions);
+        let view = layout_live_v2(
+            &orb_v2_source(&menu_actions),
+            "ADR-230 orb paint",
+            width,
+            height,
+        );
         let orb_host = OrbHost::new(orb_visual_state(
             self.appd.is_connected(),
             self.entityd.is_connected(),
@@ -10118,28 +10126,18 @@ impl Shell {
             }
             other => render::state_color(other),
         };
-        if menu_actions.is_empty() {
-            return OrbFrame {
-                dot: view.rect,
-                dot_color,
-                mark: orb_host.mark(),
-                attention_ring: orb_host.attention_ring(),
-                quantity: orb_host.quantity_percent(),
-                activity_pulse: orb_shows_activity_pulse(
-                    orb_host.motion() == MotionCue::ActivityPulse,
-                    self.activity_clock.as_ref(),
-                ),
-                menu_rows: Vec::new(),
-            };
-        }
-        let dot_rect = view.children[menu_actions.len()].rect;
+        let dot = v2_named_rect(&view, ORB_TOGGLE_ACTION, "ADR-230 orb paint");
         let menu_rows = menu_actions
             .iter()
-            .enumerate()
-            .map(|(index, action)| (view.children[index].rect, action.label()))
+            .map(|action| {
+                (
+                    v2_named_rect(&view, action.wire(), "ADR-230 orb paint"),
+                    action.label(),
+                )
+            })
             .collect();
         OrbFrame {
-            dot: dot_rect,
+            dot,
             dot_color,
             mark: orb_host.mark(),
             attention_ring: orb_host.attention_ring(),
@@ -12322,10 +12320,7 @@ mod tests {
         let height = 2400;
         let (header, buttons) = super::overlay_decision_paint(
             "consent",
-            &[
-                super::CONSENT_ACCEPT_ACTION,
-                super::CONSENT_DECLINE_ACTION,
-            ],
+            &[super::CONSENT_ACCEPT_ACTION, super::CONSENT_DECLINE_ACTION],
             "ADR-229 overlay paint",
             width,
             height,
@@ -12346,12 +12341,47 @@ mod tests {
         );
         assert_eq!(pair.1[0].y, buttons[0].y);
         assert_eq!(pair.1[0].height, 300);
-        let field = super::overlay_field_rect_with("intent", super::INTENT_FIELD_ID, width, height, true);
+        let field =
+            super::overlay_field_rect_with("intent", super::INTENT_FIELD_ID, width, height, true);
         assert!(field.height > 0);
         let main = include_str!("main.rs");
         assert!(main.contains("ADR-229 overlay paint"));
         assert!(main.contains("overlay_decision_paint"));
         assert!(main.contains("overlay_field_rect_with"));
+    }
+
+    #[test]
+    fn orb_paint_matches_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let closed = super::layout_live_v2(
+            &orb_v2_source(&[]),
+            "ADR-230 orb paint",
+            width,
+            height,
+        );
+        assert_eq!(
+            super::v2_named_rect(&closed, "orb:toggle", "orb"),
+            orb_zone_rect(width, height, 0)
+        );
+        let actions = [OrbAction::OpenInbox, OrbAction::OpenBluetooth];
+        let open = super::layout_live_v2(
+            &orb_v2_source(&actions),
+            "ADR-230 orb paint",
+            width,
+            height,
+        );
+        let old = super::orb_view(width, height, &actions);
+        assert_eq!(
+            super::v2_named_rect(&open, "orb-menu:inbox", "orb"),
+            old.children[0].rect
+        );
+        assert_eq!(
+            super::v2_named_rect(&open, "orb:toggle", "orb"),
+            old.children[2].rect
+        );
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-230 orb paint"));
     }
 
     #[test]

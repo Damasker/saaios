@@ -112,7 +112,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   reads generated list documents (ADR-226). Me scroll paint reads
   `layout_v2_scrolled` (ADR-227). Apps grid paint reads generated
   `layout_v2` (ADR-228). Overlay paint reads generated `layout_v2`
-  (ADR-229). `layout_v2()`
+  (ADR-229). OrbHost paint reads generated `layout_v2` (ADR-230).
+  `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
   `inset = safe` uses
