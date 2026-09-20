@@ -35,8 +35,34 @@ and it does not move shell business logic into the library.
 | Stable | Contract, gallery, accessibility, golden render, layout, hit-test, and migration tests have passed on Pixel 7. |
 
 No component in this document is stable merely because it has been drawn.
-Promotion is explicit and versioned. The public third-party subset is selected
-in VUI-09; privileged system composites are not automatically public.
+Promotion is explicit and versioned.
+
+### 2.1 Public subset (ADR-185)
+
+Third-party `.sui` v2 uses `compile_v2_public()`. The name is public when
+it is a proven primitive, composite, or live surface and is not privileged.
+The subset is still Experimental. It is not Stable until the VUI-09
+promotion checklist passes on Pixel 7.
+
+**Public primitives:** `SemanticText`, `Icon`, `Divider`, `StatusIndicator`,
+`Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure`,
+`SurfacePattern`.
+
+**Public composites:** `ContextHeader`, `SystemSection`, `ObjectSummary`,
+`BottomNavigation`, `IntentSummary`, `TaskSummary`, `AgentSummary`,
+`SettingRow`, `EventRow`, `SpaceRow`, `WifiRow`, `BluetoothRow`.
+
+**Public surfaces:** `now`, `inbox`, `spaces`, `me`, `object`, `intent`,
+`apps`, `wifi`, `bluetooth`, `trusted`, `wifi-password`, `pin-setup`,
+`consent`, `remote-pair`.
+
+**Privileged (shell `compile_v2()` only):** `OrbHost`, `SystemStatus`,
+`DecisionOverlay`, `CapabilityRow`, `TrustedClientRow`, `lock`,
+`diagnostic`, `gallery`. Deferred names (`SpaceDetail`, `MemoryReview`,
+`ChatThread`, `Widget`) remain outside the vocabulary.
+
+Gallery fixtures may show privileged rows so reviewers can see them.
+Those rows are not an app API.
 
 ## 3. Inventory
 
@@ -408,7 +434,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `root.sui` compiled through `compile()` as the v1 rollback artifact.
   ADR-184 emits that compiled `ScreenSpec` as one `layout_v1_root()`
   tree so tabs and leftover NOW actions share hit-test; `compile_v2()`
-  still does not build production chrome.
+  still does not build production chrome. ADR-185 names the public
+  third-party subset and gates privileged names behind
+  `compile_v2_public()`.
 
 ### 7.6 `TaskSummary`
 
@@ -608,6 +636,8 @@ Tap switches pages.
 The gallery must expose layout bounds and hit bounds in an optional developer
 overlay. Golden renders verify visual output; structural tests verify geometry,
 hit targets, overflow, focus order, and state transitions independently.
+`DecisionOverlay` and `TrustedClientRow` fixtures are privileged (ADR-185);
+they stay on the gallery page and are not part of `compile_v2_public()`.
 
 ## 9. API ownership
 

@@ -1,5 +1,7 @@
 //! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
-//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`. No live telemetry.
+//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`.
+//! No live telemetry. `DecisionOverlay` and `TrustedClientRow` are
+//! privileged (ADR-185); they are review fixtures, not a public subset.
 
 use crate::{
     AgentSummary, BluetoothRow, ContextHeader, DecisionOverlay, EventRow, IntentSummary,

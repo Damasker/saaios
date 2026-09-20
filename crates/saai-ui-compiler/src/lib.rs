@@ -13,9 +13,9 @@ pub use layout::{layout_v1_find, layout_v1_root, v1_root_node, v1_tab_strip_heig
 pub use rollback::{compile_v1_rollback, V1_ROLLBACK_SOURCE};
 pub use vocabulary::{
     sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred, sui_v2_inset_values,
-    sui_v2_is_component, sui_v2_is_deferred, sui_v2_is_privileged, sui_v2_is_surface,
-    sui_v2_primitives, sui_v2_privileged, sui_v2_property_keys, sui_v2_scroll_values,
-    sui_v2_spacing_tokens, sui_v2_surfaces, sui_v2_text_roles,
+    sui_v2_is_component, sui_v2_is_deferred, sui_v2_is_privileged, sui_v2_is_public,
+    sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged, sui_v2_property_keys,
+    sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_surfaces, sui_v2_text_roles,
 };
 
 use std::fmt;
@@ -79,6 +79,16 @@ impl SuiV2Component {
     }
 }
 
+impl SuiV2Screen {
+    pub fn is_privileged(&self) -> bool {
+        sui_v2_is_privileged(&self.id)
+            || self
+                .components
+                .iter()
+                .any(|component| component.is_privileged())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompileError {
     offset: usize,
@@ -116,7 +126,13 @@ pub fn compile(source: &str) -> Result<ScreenSpec, CompileError> {
 
 pub fn compile_v2(source: &str) -> Result<SuiV2Screen, CompileError> {
     let tokens = tokenize(source)?;
-    Parser { tokens, cursor: 0 }.v2_screen()
+    Parser { tokens, cursor: 0 }.v2_screen(false)
+}
+
+/// ADR-185: same grammar as `compile_v2()`, without privileged names.
+pub fn compile_v2_public(source: &str) -> Result<SuiV2Screen, CompileError> {
+    let tokens = tokenize(source)?;
+    Parser { tokens, cursor: 0 }.v2_screen(true)
 }
 
 fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
@@ -324,7 +340,7 @@ impl Parser {
         })
     }
 
-    fn v2_screen(mut self) -> Result<SuiV2Screen, CompileError> {
+    fn v2_screen(mut self, public_only: bool) -> Result<SuiV2Screen, CompileError> {
         self.keyword("sui")?;
         let version = self.number()?;
         if version != 2 {
@@ -334,6 +350,9 @@ impl Parser {
         let id = self.ident()?;
         if !sui_v2_is_surface(&id) {
             return Err(self.fail(format!("unknown SUI v2 surface `{id}`")));
+        }
+        if public_only && sui_v2_is_privileged(&id) {
+            return Err(self.fail(format!("privileged SUI v2 surface `{id}`")));
         }
         self.kind(TokenKind::LBrace)?;
         let mut components = Vec::new();
@@ -345,6 +364,9 @@ impl Parser {
             }
             if !sui_v2_is_component(&type_name) {
                 return Err(self.fail(format!("unknown SUI v2 component `{type_name}`")));
+            }
+            if public_only && sui_v2_is_privileged(&type_name) {
+                return Err(self.fail(format!("privileged SUI v2 component `{type_name}`")));
             }
             self.kind(TokenKind::LBrace)?;
             let props = self.v2_props()?;
@@ -487,7 +509,7 @@ fn error(offset: usize, message: impl Into<String>) -> CompileError {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, compile_v2};
+    use super::{compile, compile_v2, compile_v2_public};
 
     const VALID: &str = r#"
         sui 1
@@ -712,5 +734,48 @@ mod tests {
         assert!(error.to_string().contains("unsupported SUI version 2"));
         let error = compile_v2(VALID).unwrap_err();
         assert!(error.to_string().contains("compile_v2 expected version 2"));
+    }
+
+    #[test]
+    fn compile_v2_public_accepts_the_now_sample_and_rejects_privileged() {
+        let screen = compile_v2_public(VALID_V2).unwrap();
+        assert!(!screen.is_privileged());
+        let orb = compile_v2_public(
+            r#"
+            sui 2
+            screen now {
+              component OrbHost {}
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(orb
+            .to_string()
+            .contains("privileged SUI v2 component `OrbHost`"));
+        assert!(compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component OrbHost {}
+            }
+        "#,
+        )
+        .unwrap()
+        .is_privileged());
+        let lock = compile_v2_public(
+            r#"
+            sui 2
+            screen lock {
+              component ContextHeader {}
+            }
+        "#,
+        )
+        .unwrap_err();
+        assert!(lock
+            .to_string()
+            .contains("privileged SUI v2 surface `lock`"));
+        let build = include_str!("../../../services/saai-shell/build.rs");
+        assert!(build.contains("saai_ui_compiler::compile("));
+        assert!(!build.contains("saai_ui_compiler::compile_v2"));
     }
 }

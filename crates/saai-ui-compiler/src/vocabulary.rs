@@ -103,6 +103,11 @@ pub fn sui_v2_is_privileged(name: &str) -> bool {
     sui_v2_privileged().contains(&name)
 }
 
+/// ADR-185: third-party names. Privileged shell chrome is excluded.
+pub fn sui_v2_is_public(name: &str) -> bool {
+    (sui_v2_is_component(name) || sui_v2_is_surface(name)) && !sui_v2_is_privileged(name)
+}
+
 pub fn sui_v2_property_keys() -> &'static [&'static str] {
     &[
         "text", "color", "spacing", "inset", "scroll", "loc", "focus", "a11y",
@@ -171,8 +176,9 @@ mod tests {
     use super::{
         sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred,
         sui_v2_inset_values, sui_v2_is_component, sui_v2_is_deferred, sui_v2_is_privileged,
-        sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged, sui_v2_property_keys,
-        sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_surfaces, sui_v2_text_roles,
+        sui_v2_is_public, sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged,
+        sui_v2_property_keys, sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_surfaces,
+        sui_v2_text_roles,
     };
     use std::collections::HashSet;
 
@@ -214,6 +220,13 @@ mod tests {
             .collect();
         for name in sui_v2_privileged() {
             assert!(named.contains(name), "{name} is privileged but unnamed");
+            assert!(
+                !sui_v2_is_public(name),
+                "{name} leaked into the public subset"
+            );
+        }
+        for primitive in sui_v2_primitives() {
+            assert!(sui_v2_is_public(primitive), "{primitive} must be public");
         }
     }
 
@@ -225,6 +238,11 @@ mod tests {
         assert!(sui_v2_is_surface("wifi-password"));
         assert!(sui_v2_is_privileged("OrbHost"));
         assert!(sui_v2_is_deferred("SpaceDetail"));
+        assert!(sui_v2_is_public("ContextHeader"));
+        assert!(sui_v2_is_public("now"));
+        assert!(!sui_v2_is_public("OrbHost"));
+        assert!(!sui_v2_is_public("lock"));
+        assert!(!sui_v2_is_public("SpaceDetail"));
         assert!(!sui_v2_is_component("SpaceDetail"));
         assert!(!sui_v2_is_surface("root"));
         assert_eq!(sui_v2_property_keys().len(), 8);
