@@ -448,7 +448,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   down; Сейчас keeps live object chrome because entityd is still up.
   ADR-192 proves an unlocked `saai-shell` restart on HEAD without a
   lock surface. ADR-193 records known limitations and the Visual v2
-  backlog; it is not Visual v1 sign-off.
+  backlog; it is not Visual v1 sign-off. ADR-194 emits `layout_v2()`
+  so public NOW tab hits match v1; production still uses
+  `layout_v1_root()`.
 
 ### 7.6 `TaskSummary`
 

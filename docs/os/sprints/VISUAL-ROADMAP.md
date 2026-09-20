@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–193; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–194; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1161,8 +1161,9 @@ component state remains fully usable.
 ## VUI-09 — `.sui` v2, public library, cleanup, and release gate
 
 **Status:** In progress — vocabulary through named sizes (ADR-180–188);
-verification ledger (ADR-189); known limitations (ADR-193). Release
-gate remains. Not Visual v1 sign-off.
+verification ledger (ADR-189); known limitations (ADR-193);
+`layout_v2` tab hits (ADR-194). Release gate remains. Not Visual v1
+sign-off.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1208,6 +1209,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
+- [x] Emit `layout_v2()` so public NOW tab hits match `layout_v1_root()`
+  (ADR-194). `compile()` stays v1. Footer/object hits stay procedural.
 
 ### Acceptance
 
@@ -1270,7 +1273,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-09** only for operator-approved lock / display restart /
-cold boot, or start Visual v2 at `compile_v2()` hit-test equivalence.
+Continue **Visual v2** at logical `SafeInsets` vs physical `Node`
+pixels, or run operator-approved lock / display restart / cold boot.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.

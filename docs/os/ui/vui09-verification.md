@@ -7,14 +7,14 @@ Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
 Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted.
 
-Current panther shell: `e8865301…` (ADR-188). Known limitations
-(ADR-193) do not reflash.
+Current panther shell: `e8865301…` (ADR-188). `layout_v2` (ADR-194)
+does not reflash.
 
 ## Matrix
 
 | Area | Cell | Status | Evidence |
 |---|---|---|---|
-| Build | host tests | proven | overlay `cargo test -p saai-shell` 248; `saai-ui-compiler` 23 |
+| Build | host tests | proven | overlay `cargo test -p saai-shell` 248; `saai-ui-compiler` 25 |
 | Build | pixel7 cross-build | proven | ADR-188 `e8865301…` |
 | Render | Сейчас composition | proven | ObjectSummary + footer; leftover NOW cards gone (ADR-187) |
 | Render | four tabs | proven | hits 135/405/675/945 y=2250 (ADR-184); Inbox tap ADR-188 |
@@ -30,7 +30,7 @@ Current panther shell: `e8865301…` (ADR-188). Known limitations
 | Perf | frame pace / p95 / idle | proven | ADR-172–177; not re-read `/run/saaios/shell-frame.last` this slice |
 | Perf | haptic policy | proven | ADR-171/179 KeyPress-only |
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |
-| Render | v2 layout ≡ v1 hits | open | `compile_v2()` has no rectangles (ADR-184); named in ADR-193 |
+| Render | v2 layout ≡ v1 hits | host | ADR-194; `layout_v2` public NOW tabs match 135/405/675/945 y=2250; `compile()` stays v1 |
 | Device | lock / unlock cycle | open | PIN null; marker skips lock; named in ADR-193 |
 | Device | display restart | open | do not kill `saai-displayd`; named in ADR-193 |
 | Device | cold boot | open | not run on HEAD; named in ADR-193 |

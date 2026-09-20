@@ -53,8 +53,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
   that appearance.
 - Removing a public name requires an ADR and a compile error, not a
   silent skip.
-- `compile_v2()` on `root.sui` stays forbidden until a v2 emitter
-  matches the v1 tab hits (ADR-184).
+- `compile_v2()` on `root.sui` stays forbidden. `layout_v2()` matches
+  v1 tab hits for this example (ADR-194) but is not wired into
+  `build.rs`.
 
 ## Migration
 
@@ -64,6 +65,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | `sui 1` leftover NOW cards | removed in ADR-187; public NOW sample above |
 | `OrbHost` / lock / gallery in an app | omit; those stay privileged |
 | Switching `build.rs` to `compile_v2()` | do not; keep `compile()` |
+| Wanting tab hit-test from a v2 NOW | `layout_v2(compile_v2_public(…))`; not `root_view` |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

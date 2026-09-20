@@ -1,13 +1,15 @@
 //! ADR-184: layout and hit-test from compiled `.sui` v1 `ScreenSpec`.
+//! ADR-194: `layout_v2()` matches those tab hits for public NOW.
 //!
-//! `compile_v2()` still has no rectangles. This tree is the v1 chrome
-//! the shell already drew: a content column plus a bottom tab strip.
+//! Production chrome still uses `layout_v1_root()`. `compile_v2()`
+//! stays off `build.rs`. Tab ids still come from the v1 rollback
+//! until the v2 grammar lists tabs.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SurfaceScale, MIN_TOUCH_TARGET,
 };
 
-use crate::ScreenSpec;
+use crate::{compile_v1_rollback, ScreenSpec, SuiV2Screen};
 
 /// Design-canvas tab height scaled to the panel, never below
 /// `MIN_TOUCH_TARGET`. Landscape 2400×1080 would otherwise shrink
@@ -85,10 +87,67 @@ fn v1_content_node(spec: &ScreenSpec, width: u32, height: u32) -> Node {
     })
 }
 
+fn v2_has_tabs(screen: &SuiV2Screen) -> bool {
+    screen
+        .components
+        .iter()
+        .any(|component| component.type_name == "BottomNavigation")
+}
+
+fn v2_content_node(screen: &SuiV2Screen, width: u32) -> Node {
+    let margin = width / 22;
+    let mut children: Vec<Node> = screen
+        .components
+        .iter()
+        .filter(|component| component.type_name != "BottomNavigation")
+        .map(|component| Node::leaf(component.type_name.clone()))
+        .collect();
+    if children.is_empty() {
+        children.push(Node::leaf(format!("{}-fill", screen.id)));
+    }
+    Node::linear(format!("{}-content", screen.id), Axis::Vertical, children).with_padding(
+        EdgeInsets {
+            top: 0,
+            right: margin,
+            bottom: 0,
+            left: margin,
+        },
+    )
+}
+
+/// Public NOW chrome: non-actionable v2 content leaves plus the v1
+/// tab strip when `BottomNavigation` is present. Tab ids/actions stay
+/// those of `compile_v1_rollback()` so hits match `layout_v1_root()`.
+pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
+    let content = v2_content_node(screen, width);
+    if !v2_has_tabs(screen) {
+        return content;
+    }
+    let spec = compile_v1_rollback().expect("root.sui v1");
+    let tab_height = v1_tab_strip_height(height, spec.tab_height);
+    let tabs = Node::linear(
+        spec.tabs_id.clone(),
+        Axis::Horizontal,
+        spec.tabs
+            .iter()
+            .map(|tab| Node::leaf(tab.id.clone()).with_action(tab.action.clone()))
+            .collect(),
+    )
+    .with_size(Length::Fill, Length::Px(tab_height));
+    Node::linear(screen.id.clone(), Axis::Vertical, vec![content, tabs])
+}
+
+pub fn layout_v2(screen: &SuiV2Screen, width: u32, height: u32) -> LayoutNode {
+    layout(
+        &v2_root_node(screen, width, height),
+        Rect::new(0, 0, width, height),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{layout_v1_find, layout_v1_root};
-    use crate::compile_v1_rollback;
+    use super::{layout_v1_find, layout_v1_root, layout_v2};
+    use crate::{compile_v1_rollback, compile_v2, compile_v2_public};
 
     #[test]
     fn v1_rollback_layout_maps_the_four_tabs() {
@@ -135,8 +194,54 @@ mod tests {
         assert!(main.contains("layout_v1_root"));
         assert!(main.contains("compile_v1_rollback"));
         assert!(!main.contains("saai_ui_compiler::compile_v2"));
+        assert!(!main.contains("layout_v2"));
         let build = include_str!("../../../services/saai-shell/build.rs");
         assert!(build.contains("saai_ui_compiler::compile("));
         assert!(!build.contains("saai_ui_compiler::compile_v2"));
+    }
+
+    #[test]
+    fn layout_v2_public_now_matches_v1_tab_hits() {
+        let spec = compile_v1_rollback().expect("root.sui v1");
+        let v1 = layout_v1_root(&spec, 1080, 2400);
+        let source = include_str!("../../../docs/os/ui/examples/now-public.sui");
+        let screen = compile_v2_public(source).expect("public NOW");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        for (x, id) in [
+            (135.0, "now"),
+            (405.0, "inbox"),
+            (675.0, "spaces"),
+            (945.0, "me"),
+        ] {
+            assert_eq!(
+                v1.hit_test(x, 2250.0).map(|node| node.id.as_str()),
+                Some(id)
+            );
+            assert_eq!(
+                v2.hit_test(x, 2250.0).map(|node| node.id.as_str()),
+                v1.hit_test(x, 2250.0).map(|node| node.id.as_str())
+            );
+        }
+        assert!(v1.hit_test(540.0, 1200.0).is_none());
+        assert!(v2.hit_test(540.0, 1200.0).is_none());
+        assert!(layout_v1_find(&v2, "ContextHeader").is_some());
+        assert!(layout_v1_find(&v2, "ObjectSummary").is_some());
+        assert!(layout_v1_find(&v2, "SurfacePattern").is_some());
+    }
+
+    #[test]
+    fn layout_v2_without_tabs_does_not_invent_v1_hits() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {}
+            }
+            "#,
+        )
+        .expect("header only");
+        let tree = layout_v2(&screen, 1080, 2400);
+        assert!(tree.hit_test(135.0, 2250.0).is_none());
+        assert!(tree.hit_test(945.0, 2250.0).is_none());
     }
 }

@@ -3,7 +3,8 @@
 //! ADR-180 names the `.sui` v2 vocabulary. `compile()` still accepts
 //! only `sui 1`. ADR-181/182 parse `sui 2` through `compile_v2()`.
 //! ADR-183 keeps `root.sui` as the v1 rollback artifact. ADR-184
-//! emits layout/hit-test from that compiled v1 `ScreenSpec`. ADR-185
+//! emits layout/hit-test from that compiled v1 `ScreenSpec`. ADR-194
+//! adds `layout_v2()` so public NOW tab hits match v1. ADR-185
 //! gates third-party documents through `compile_v2_public()`. ADR-186
 //! publishes the public example and stability labels.
 
@@ -11,7 +12,9 @@ mod layout;
 mod rollback;
 mod vocabulary;
 
-pub use layout::{layout_v1_find, layout_v1_root, v1_root_node, v1_tab_strip_height};
+pub use layout::{
+    layout_v1_find, layout_v1_root, layout_v2, v1_root_node, v1_tab_strip_height, v2_root_node,
+};
 pub use rollback::{compile_v1_rollback, V1_ROLLBACK_SOURCE};
 pub use vocabulary::{
     sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred, sui_v2_inset_values,
@@ -824,7 +827,7 @@ mod tests {
         let ledger = include_str!("../../../docs/os/ui/vui09-verification.md");
         assert!(ledger.contains("not Visual v1 sign-off"));
         assert!(ledger.contains("compile_v2()"));
-        assert!(ledger.contains("no rectangles"));
+        assert!(ledger.contains("layout_v2"));
         assert!(ledger.contains("cold boot"));
         assert!(ledger.contains("e8865301"));
         assert!(ledger.contains("ADR-188"));
@@ -835,10 +838,11 @@ mod tests {
         assert!(ledger.contains("ADR-192"));
         assert!(ledger.contains("unlocked"));
         assert!(ledger.contains("ADR-193"));
+        assert!(ledger.contains("ADR-194"));
+        assert!(ledger.contains("layout_v2"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
-        assert!(limits.contains("compile_v2()"));
-        assert!(limits.contains("no rectangles"));
+        assert!(limits.contains("layout_v2"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

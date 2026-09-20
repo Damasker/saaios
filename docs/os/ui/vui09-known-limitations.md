@@ -30,14 +30,16 @@ display restart.
 
 ## Compiler and layout
 
-- `compile_v2()` parses names and properties. It has **no rectangles**.
-  Live tabs still come from `layout_v1_root()` over `compile_v1_rollback()`.
+- `layout_v2()` matches v1 tab hits for public NOW (ADR-194). Live
+  tabs still come from `layout_v1_root()` over `compile_v1_rollback()`.
+  Tab ids are borrowed from that v1 rollback until the v2 grammar
+  lists tabs. Footer and object hits stay procedural.
 - `compile_v2_public()` is the third-party gate. It is Experimental,
   not Stable.
 - `Node` layout is physical pixels. `SafeInsets` are logical. Mixing
   those units is not reconciled here.
-- `root.sui` stays `sui 1`. Switching `build.rs` to `compile_v2()` is
-  forbidden until a v2 emitter matches the v1 tab hits (ADR-184).
+- `root.sui` stays `sui 1`. Matching tab hits is not permission to
+  switch `build.rs` to `compile_v2()`.
 
 ## Leftover paint
 
@@ -54,11 +56,11 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. None of this is in flight.
+Ordered. Item 1 is host-done (ADR-194); production still v1.
 
-1. Emit layout and hit-test from `compile_v2()` that match
-   `layout_v1_root()` for the supported public names. Until then,
-   `compile()` stays on `root.sui`.
+1. ~~Emit layout and hit-test from `compile_v2()` that match
+   `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
+   (ADR-194). Do not attach it to `build.rs` yet.
 2. Reconcile `Node` physical pixels with logical `SafeInsets`.
 3. Keep leftover ActionCard/tab sizes on an explicit named list, or
    map them onto `TextRole` in a paint-normalization slice.
@@ -70,5 +72,7 @@ Ordered. None of this is in flight.
 6. Run the session-blocked v1 cells (lock cycle, display restart, cold
    boot, daylight booth, 7-tap gallery) as operator-approved device
    work. They are Visual v1 gates, not v2 features.
+7. Name tabs inside the v2 grammar so `layout_v2()` does not borrow
+   `compile_v1_rollback()` ids.
 
 Rollback: delete this page. The ledger and `compile()` path stay.
