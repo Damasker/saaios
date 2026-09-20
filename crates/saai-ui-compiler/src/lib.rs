@@ -1052,6 +1052,16 @@ mod tests {
         assert_eq!(wifi.components[1].type_name, "WifiRow");
         assert_eq!(wifi.components[1].props.a11y.as_deref(), Some("Button"));
         assert!(guide.contains("wifi-public.sui"));
+        const BLUETOOTH: &str = include_str!("../../../docs/os/ui/examples/bluetooth-public.sui");
+        let bluetooth = compile_v2_public(BLUETOOTH).unwrap();
+        assert_eq!(bluetooth.id, "bluetooth");
+        assert!(!bluetooth.is_privileged());
+        assert_eq!(bluetooth.components[1].type_name, "BluetoothRow");
+        assert_eq!(
+            bluetooth.components[1].props.a11y.as_deref(),
+            Some("Button")
+        );
+        assert!(guide.contains("bluetooth-public.sui"));
         for name in saai_ui_core::public_gallery_type_names() {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
         }
@@ -1100,6 +1110,8 @@ mod tests {
         assert!(ledger.contains("cycle_timezone"));
         assert!(ledger.contains("ADR-205"));
         assert!(ledger.contains("connect_wifi"));
+        assert!(ledger.contains("ADR-206"));
+        assert!(ledger.contains("pair_bluetooth"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1119,6 +1131,8 @@ mod tests {
         assert!(limits.contains("SettingRow"));
         assert!(limits.contains("ADR-205"));
         assert!(limits.contains("WifiRow"));
+        assert!(limits.contains("ADR-206"));
+        assert!(limits.contains("BluetoothRow"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

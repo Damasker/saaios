@@ -45,6 +45,9 @@ display restart.
   interned `loc`. Live Me flatten/scroll stays procedural.
   `WifiRow` docks Wi-Fi list stacked hits (ADR-205); Status rows
   invent no `connect_wifi`. Trailing Обновить/Назад stay procedural.
+  `BluetoothRow` docks Bluetooth list stacked hits (ADR-206); Status
+  rows invent no `pair_bluetooth`. Trailing Искать/Обновить/Назад
+  stay procedural.
 - `compile_v2_public()` is the third-party gate. It is Experimental,
   not Stable.
 - Top `SafeInsets` is the status layer (ADR-112), not tree padding.
@@ -71,8 +74,8 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Items 1–3 and 7–14 are done
-(ADR-194/195/197–198/196/199/200/201/202/203/204/205); production still v1.
+Ordered. Items 1–3 and 7–15 are done
+(ADR-194/195/197–198/196/199/200/201/202/203/204/205/206); production still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
    `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
@@ -121,5 +124,10 @@ Ordered. Items 1–3 and 7–14 are done
     `stacked_row_rect`.~~ Host: Button → `connect_wifi` (ADR-205).
     Do not open the live list. Trailing Обновить/Назад stay
     procedural. Do not attach `layout_v2()` to `build.rs` yet.
+15. ~~Dock `BluetoothRow` so `layout_v2()` matches Bluetooth
+    `stacked_row_rect`.~~ Host: Button → `pair_bluetooth` (ADR-206).
+    Do not open the live list. Do not tap Сопряжь. Trailing
+    Искать/Обновить/Назад stay procedural. Do not attach
+    `layout_v2()` to `build.rs` yet.
 
 Rollback: delete this page. The ledger and `compile()` path stay.

@@ -56,6 +56,12 @@ labelled Wi-Fi sample: `ContextHeader`, `WifiRow` with
 `connect_wifi`. No nested tabs: live «Wi-Fi сети» has trailing
 controls, not `BottomNavigation`.
 
+[`examples/bluetooth-public.sui`](examples/bluetooth-public.sui) is the
+labelled Bluetooth sample: `ContextHeader`, `BluetoothRow` with
+`a11y = Button` (ADR-206). Status `BluetoothRow` invents no
+`pair_bluetooth`. No nested tabs: live «Bluetooth устройства» has
+trailing controls, not `BottomNavigation`.
+
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
 ```
@@ -89,7 +95,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   stacked hits (ADR-202). `SpaceRow` owns Spaces stacked hits
   (ADR-203). `SettingRow` owns Me stacked hits (interned `loc`,
   ADR-204). `WifiRow` owns Wi-Fi stacked hits (`connect_wifi`,
-  ADR-205).
+  ADR-205). `BluetoothRow` owns Bluetooth stacked hits
+  (`pair_bluetooth`, ADR-206).
 
 ## Migration
 
@@ -114,6 +121,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Me `SettingRow` with `a11y = Status` | stacked rect, no interned action |
 | Wanting Wi-Fi hit-test from a v2 screen | `component WifiRow` + `a11y = Button` + `layout_v2` |
 | Wi-Fi `WifiRow` with `a11y = Status` | stacked rect, no `connect_wifi` |
+| Wanting Bluetooth hit-test from a v2 screen | `component BluetoothRow` + `a11y = Button` + `layout_v2` |
+| Bluetooth `BluetoothRow` with `a11y = Status` | stacked rect, no `pair_bluetooth` |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

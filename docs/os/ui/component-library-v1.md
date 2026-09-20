@@ -468,7 +468,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   hits (`open_object`). ADR-203 docks `SpaceRow` as Spaces stacked
   hits (`select_space:<loc>`). ADR-204 docks `SettingRow` as Me stacked
   hits (interned `loc`). ADR-205 docks `WifiRow` as Wi-Fi stacked
-  hits (`connect_wifi`).
+  hits (`connect_wifi`). ADR-206 docks `BluetoothRow` as Bluetooth
+  stacked hits (`pair_bluetooth`).
 
 ### 7.6 `TaskSummary`
 
@@ -623,6 +624,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Not RSSI, not a trusted-client row, not a Space binding.
 - First real consumer: `bluetooth_list_rows` (ADR-130/155/156). Flattened to
   `ActionCardView`. Scan / Refresh / Back stay trailing control cards.
+  ADR-206 docks public `BluetoothRow` onto `stacked_row_rect`; trailing
+  controls stay procedural. Do not tap Сопряжь.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.16 `TrustedClientRow`
