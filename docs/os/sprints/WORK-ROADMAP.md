@@ -87,8 +87,8 @@ After Result the Task is Verifying. `decide_verification` returns Done
 only on a Fresh Observation whose key/value match `verification_key` /
 `verification_expected`. Missing and Stale stay Verifying. Mismatch is
 Failed. Verifying counts as in-flight and does not complete a parent
-for DAG children. WORLD-05 later feeds live Observation into the same
-function.
+for DAG children. WORLD-05 feeds live Observation from runtime `status`
+(ADR-274) into the same function.
 
 **Test:** worker ok without contract is not Done; stale is not verified;
 Fresh match is Done; mismatch is Failed; verifying parent blocks child.

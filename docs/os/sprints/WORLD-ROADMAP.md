@@ -1,9 +1,10 @@
 # SaaiOS World Model / Observation Layer — delivery roadmap
 
-Status: **WORLD-00/01 host complete** (types + metrics conversion).
-WORLD-02 ObservationCache is in runtime (this slice).
+Status: **WORLD-00/01/02 host complete. WORLD-05 host (ADR-274): Verifier
+reads Fresh rows from runtime `status`. No `saai-deviced`.**
 Daemon (WORLD-03) is not on the Pixel path until ObservationCache is
-used by more than one consumer. See [PIXEL-PATH.md](PIXEL-PATH.md).
+used by more than one *process-local* consumer that cannot share status.
+See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-122](../../adr/ADR-122-world-model-observation-layer.md),
 [system-intelligence.md](../architecture/system-intelligence.md)
@@ -32,7 +33,7 @@ Do not start with a monitoring product or HealthState.
 | WORLD-02 | ObservationCache + snapshot revision | **Done** (host + panther runtime `93ad729c…`) | **yes** |
 | WORLD-03 | `saai-deviced` UDS GetSnapshot/Subscribe | Backlog | no |
 | WORLD-04 | Shared Linux observers (no `/proc` copy) | Backlog | no |
-| WORLD-05 | Verification uses fresh observation | Backlog | measure |
+| WORLD-05 | Verification uses fresh observation | **Done** (host, ADR-274) | no |
 | WORLD-06 | One deterministic Health component | Backlog | no |
 | WORLD-07 | Automation ObservationThreshold (legacy stays) | Backlog | no |
 | WORLD-08 | NOW/Attention feed (deviced does not notify) | Backlog | **yes** |

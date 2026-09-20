@@ -18,6 +18,8 @@ use uuid::Uuid;
 /// arrives as `ok:false` from `saaios-runtime`. Hung TCP cannot leave
 /// a Task `Pending` forever (ADR-236).
 pub const DIAGNOSE_TIMEOUT: Duration = Duration::from_secs(65);
+/// WORLD-05: status is a local snapshot, not a model call.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Error)]
 pub enum BridgeError {
@@ -78,6 +80,18 @@ struct ToolResultDto {
     error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LiveObservation {
+    pub key: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatusDto {
+    #[serde(default)]
+    observations: Vec<LiveObservation>,
+}
+
 /// The subset of `saaios-runtime`'s `ClientResponse` this bridge reads.
 /// Extra fields on the wire (`session_grants`, `progress`, ...) are
 /// silently ignored -- no `deny_unknown_fields` -- since this bridge
@@ -91,6 +105,8 @@ pub struct RuntimeResponse {
     pub pending: Option<Pending>,
     pub error: Option<String>,
     tool_result: Option<ToolResultDto>,
+    #[serde(default)]
+    status: Option<StatusDto>,
 }
 
 impl RuntimeResponse {
@@ -102,6 +118,13 @@ impl RuntimeResponse {
         self.tool_result
             .as_ref()
             .map(|r| (r.ok, &r.output, r.error.as_deref()))
+    }
+
+    pub fn observations(&self) -> &[LiveObservation] {
+        self.status
+            .as_ref()
+            .map(|status| status.observations.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -166,6 +189,13 @@ pub async fn diagnose_with_timeout(
         timeout,
     )
     .await
+}
+
+/// WORLD-05: Fresh Observation rows from `{"op":"status"}`. Stale rows
+/// are already omitted by runtime (ADR-246). Connect failure is the
+/// caller's problem — stay Verifying, do not invent evidence.
+pub async fn status(addr: &str) -> Result<RuntimeResponse, BridgeError> {
+    call_with_timeout(addr, &json!({ "op": "status" }), STATUS_TIMEOUT).await
 }
 
 /// `{"op":"confirm", ...}` -- resumes (or cancels) exactly the call a
@@ -329,5 +359,17 @@ mod tests {
             "request timed out after 60s (correlation_id=67d7c8ea-0000-0000-0000-000000000000)"
         ));
         assert!(!runtime_error_is_timeout("saaios-runtime unreachable"));
+    }
+
+    #[tokio::test]
+    async fn status_parses_fresh_observation_rows() {
+        let addr = with_fake_runtime(
+            r#"{"ok":true,"status":{"observations":[{"key":"wifi.link","value":"up","source":"net","observed_at":"2026-09-21T00:00:00Z"}]}}"#,
+        );
+        let response = status(&addr).await.unwrap();
+        assert!(response.ok);
+        assert_eq!(response.observations().len(), 1);
+        assert_eq!(response.observations()[0].key, "wifi.link");
+        assert_eq!(response.observations()[0].value, json!("up"));
     }
 }

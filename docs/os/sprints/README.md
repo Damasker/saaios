@@ -131,6 +131,7 @@ ADR-270 OSK is Keyboard keystrokes through IME `commit_string` (host; no wvkbd).
 ADR-271 layer-shell keeps the client's height; touch hits the topmost layer (host).
 ADR-272 layer blit is clipped to the client's destination, not always (0, 0) (host).
 ADR-273 foreign OSK is a bottom Keyboard layer shown on IME activate (host).
+ADR-274 Verifying Tasks settle from Fresh runtime `status` observations (host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

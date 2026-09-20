@@ -195,6 +195,29 @@ pub fn decide_verification(
     }
 }
 
+/// Status lists only Fresh rows (ADR-246). A listed key is therefore
+/// Fresh evidence. JSON strings compare as the string; other values
+/// use their JSON text.
+pub fn observation_value_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+pub fn evidence_from_fresh_rows<'a, I>(key: &str, rows: I) -> Option<ObservationEvidence>
+where
+    I: IntoIterator<Item = (&'a str, &'a Value)>,
+{
+    rows.into_iter()
+        .find(|(observed, _)| *observed == key)
+        .map(|(_, value)| ObservationEvidence {
+            key: key.to_string(),
+            fresh: true,
+            value: observation_value_text(value),
+        })
+}
+
 pub fn verification_key_of(entity: &Entity) -> Option<&str> {
     entity
         .properties
@@ -320,6 +343,14 @@ pub fn intent_id_of(entity: &Entity) -> Option<Uuid> {
     entity
         .properties
         .get("intent_id")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse().ok())
+}
+
+pub fn result_id_of(entity: &Entity) -> Option<Uuid> {
+    entity
+        .properties
+        .get("result_id")
         .and_then(Value::as_str)
         .and_then(|raw| raw.parse().ok())
 }
@@ -1093,5 +1124,37 @@ mod tests {
             closed.get("result_id").and_then(Value::as_str),
             Some(result_id.to_string()).as_deref()
         );
+    }
+
+    #[test]
+    fn status_fresh_row_is_live_evidence() {
+        let value = json!("up");
+        let rows = [("wifi.link", &value)];
+        let evidence = evidence_from_fresh_rows("wifi.link", rows).expect("row");
+        assert!(evidence.fresh);
+        assert_eq!(evidence.value, "up");
+        let mut properties = task_properties(Uuid::new_v4(), WorkflowStatus::Verifying);
+        properties.insert(VERIFICATION_KEY_PROPERTY.into(), json!("wifi.link"));
+        properties.insert(VERIFICATION_EXPECTED_PROPERTY.into(), json!("up"));
+        let task = entity(TASK_TYPE, properties);
+        assert_eq!(
+            status_after_verification(&task, Some(&evidence)),
+            WorkflowStatus::Done
+        );
+    }
+
+    #[test]
+    fn status_omits_stale_so_missing_row_stays_verifying() {
+        let other = json!("ok");
+        let rows = [("cpu.usage", &other)];
+        assert!(evidence_from_fresh_rows("wifi.link", rows).is_none());
+    }
+
+    #[test]
+    fn numeric_observation_compares_as_json_text() {
+        let value = json!(40.0);
+        let rows = [("cpu.usage", &value)];
+        let evidence = evidence_from_fresh_rows("cpu.usage", rows).expect("row");
+        assert_eq!(evidence.value, "40.0");
     }
 }

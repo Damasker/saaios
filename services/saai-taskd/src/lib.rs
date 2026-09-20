@@ -43,13 +43,14 @@ use intent_resolution::{
     ResolutionOutcome, ResolveAttempt, PLAN_PROPERTY, SEMANTIC_ACTION_PROPERTY, SOURCE_PROPERTY,
 };
 use model::{
-    action_properties, dangerous_action_of, find_action_for_task, has_open_task_for_intent,
-    has_task_for_intent, intent_id_of, is_schedule_due, result_properties, safe_title,
-    schedule_every_secs, schedule_fire_count, schedule_properties, schedule_text,
-    should_retry_failed_task, status_after_verification, status_of, task_properties,
-    task_properties_after_result, with_depends_on, WorkflowStatus, ACTION_TYPE,
-    DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY, RESULT_TYPE,
-    RUNTIME_ACTION_KIND, SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
+    action_properties, dangerous_action_of, evidence_from_fresh_rows, find_action_for_task,
+    has_open_task_for_intent, has_task_for_intent, intent_id_of, is_schedule_due, result_id_of,
+    result_properties, safe_title, schedule_every_secs, schedule_fire_count, schedule_properties,
+    schedule_text, should_retry_failed_task, status_after_verification, status_of, task_properties,
+    task_properties_after_result, verification_key_of, with_depends_on, ObservationEvidence,
+    WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE,
+    PROPOSAL_ID_PROPERTY, RESULT_TYPE, RUNTIME_ACTION_KIND, SCHEDULE_TYPE, SEMANTIC_ACTION_KIND,
+    TASK_TYPE,
 };
 use saai_entity_protocol::{
     Entity, EntitydEvent, RELATION_EXECUTES, RELATION_PRODUCES, RELATION_REALIZES,
@@ -187,6 +188,7 @@ impl Daemon {
                 _ => {}
             }
         }
+        self.settle_verifying_tasks().await?;
         Ok(resumed)
     }
 
@@ -231,6 +233,9 @@ impl Daemon {
                                         self.try_retry_failed_task(&entity).await?;
                                         self.dispatch_ready().await?;
                                     }
+                                    Some(WorkflowStatus::Verifying) => {
+                                        self.settle_verifying_task(&entity).await?;
+                                    }
                                     Some(WorkflowStatus::Done) | Some(WorkflowStatus::Pending) => {
                                         self.dispatch_ready().await?;
                                     }
@@ -243,6 +248,7 @@ impl Daemon {
                 }
                 _ = schedule_tick.tick() => {
                     self.evaluate_due_schedules().await?;
+                    self.settle_verifying_tasks().await?;
                 }
             }
         }
@@ -1552,12 +1558,55 @@ impl Daemon {
             self.remember_task(updated.clone());
             updated
         };
-        let next = status_after_verification(&verifying, None);
-        if next != WorkflowStatus::Verifying {
-            let settled = task_properties_after_result(&verifying, intent_id, result_id, next);
-            let updated = self.conn.update_entity(&verifying, settled).await?;
-            self.remember_task(updated);
+        self.settle_verifying_task(&verifying).await?;
+        Ok(())
+    }
+
+    async fn live_evidence(&self, key: Option<&str>) -> Option<ObservationEvidence> {
+        let key = key?;
+        match runtime_bridge::status(&self.runtime_addr).await {
+            Ok(response) => evidence_from_fresh_rows(
+                key,
+                response
+                    .observations()
+                    .iter()
+                    .map(|row| (row.key.as_str(), &row.value)),
+            ),
+            Err(_) => None,
         }
+    }
+
+    async fn settle_verifying_tasks(&mut self) -> Result<(), ClientError> {
+        let verifying: Vec<Entity> = self
+            .known_tasks
+            .iter()
+            .filter(|task| status_of(task) == Some(WorkflowStatus::Verifying))
+            .cloned()
+            .collect();
+        for task in verifying {
+            self.settle_verifying_task(&task).await?;
+        }
+        Ok(())
+    }
+
+    async fn settle_verifying_task(&mut self, task: &Entity) -> Result<(), ClientError> {
+        if status_of(task) != Some(WorkflowStatus::Verifying) {
+            return Ok(());
+        }
+        let evidence = self.live_evidence(verification_key_of(task)).await;
+        let next = status_after_verification(task, evidence.as_ref());
+        if next == WorkflowStatus::Verifying {
+            return Ok(());
+        }
+        let Some(intent_id) = intent_id_of(task) else {
+            return Ok(());
+        };
+        let Some(result_id) = result_id_of(task) else {
+            return Ok(());
+        };
+        let settled = task_properties_after_result(task, intent_id, result_id, next);
+        let updated = self.conn.update_entity(task, settled).await?;
+        self.remember_task(updated);
         Ok(())
     }
 

@@ -214,7 +214,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - runtime `status` lists Fresh Observation only **на panther** (ADR-246; runtime `35b3d642…` pid 1958)
 - Система live Observation rows **на panther** (ADR-247; `5414c57a…`; leave Сейчас)
 - product analytics of screens **default off** (ADR-248; no Intent text; no chrome)
-- WORLD-05 Verification только когда WORK-03 жив
+- WORLD-05 Verification uses Fresh `status` observations (ADR-274; host; do not flash taskd)
 
 `saai-deviced` (WORLD-03) — только если cache + несколько consumers
 реально требуют IPC. Не заранее.
@@ -241,6 +241,7 @@ diagnose (ADR-238, `351b0b6f…`).
 ## F — platform remainder (host until shell-legal)
 
 - WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; host)
+- WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
 - AUTH-02 PolicyEngine adapter, same verdicts (ADR-260; host)
 - AUTH-03 scoped session grants, not tool-name HashSet (ADR-261; host)
 - MEM-03 MemoryRecord v2 + legacy JSONL view (ADR-262; host)
