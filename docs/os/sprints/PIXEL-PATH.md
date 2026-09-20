@@ -230,7 +230,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 ## E — телефонное железо (только эта волна)
 
-- Volume: tinymix Digital PCM Volume 400–817 (ADR-253)
+- Volume: tinymix Digital PCM Volume 400–817 **на panther** (ADR-253; `79e753fc…`; pid 2480; `/run/audio-volume`=712)
 - Power / modem / cameras / BT-pairing — следующие E-слайсы
 - Голос на Pixel не открывать (ADR-092 AoC)
 
