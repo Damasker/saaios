@@ -818,4 +818,18 @@ mod tests {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Privileged));
         }
     }
+
+    #[test]
+    fn vui09_verification_ledger_is_not_sign_off() {
+        let ledger = include_str!("../../../docs/os/ui/vui09-verification.md");
+        assert!(ledger.contains("not Visual v1 sign-off"));
+        assert!(ledger.contains("compile_v2()"));
+        assert!(ledger.contains("no rectangles"));
+        assert!(ledger.contains("cold boot"));
+        assert!(ledger.contains("e8865301"));
+        assert!(ledger.contains("ADR-188"));
+        let build = include_str!("../../../services/saai-shell/build.rs");
+        assert!(build.contains("saai_ui_compiler::compile("));
+        assert!(!build.contains("saai_ui_compiler::compile_v2"));
+    }
 }

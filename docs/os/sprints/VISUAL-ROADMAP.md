@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–188; `compile()` stays v1) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–189; `compile()` stays v1) |
 
 ---
 
@@ -1160,8 +1160,8 @@ component state remains fully usable.
 
 ## VUI-09 — `.sui` v2, public library, cleanup, and release gate
 
-**Status:** In progress — `.sui` v2 vocabulary through public API
-docs (ADR-180–186). Allowlist cleanup and release gate remain.
+**Status:** In progress — vocabulary through named sizes (ADR-180–188);
+verification ledger (ADR-189). Release gate remains.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1192,8 +1192,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Name leftover `draw_text` sizes (`role_px` + named leftovers,
   ADR-188). Mapping ActionCard/tabs onto Title/Body stays a later
   paint-normalization.
-- [ ] Run complete visual, accessibility, interaction, performance, service
-  restart, display restart, cold boot, and offline test matrices.
+- [x] Start the VUI-09 verification ledger (`docs/os/ui/vui09-verification.md`,
+  ADR-189). Full matrix, cold boot, and Visual v1 sign-off remain.
+- [ ] Run remaining live matrix cells (lock cycle, display restart, cold
+  boot, increased text, radio-off) then close the ledger.
 - [ ] Record known limitations and the Visual v2 backlog.
 
 ### Acceptance
@@ -1257,7 +1259,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-09**: complete visual/a11y/interaction/perf/restart/
-cold-boot/offline matrices, then known limitations. Do not point
-`root.sui` at `compile_v2()`. Space detail still deferred. MEM-08
-stays omitted until a shell-legal memory read exists.
+Continue **VUI-09**: remaining live matrix cells that this ledger
+left open (lock cycle, display restart, cold boot, increased text,
+radio-off), then known limitations. Do not point `root.sui` at
+`compile_v2()`. Space detail still deferred. MEM-08 stays omitted
+until a shell-legal memory read exists.

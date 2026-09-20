@@ -442,6 +442,7 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   and the diagnostic panel-color literals from production `main.rs`.
   ADR-188 names leftover `draw_text` sizes through `role_px` and an
   explicit leftover list; ActionCard/tab sizes are not retokened.
+  ADR-189 is the verification ledger, not Visual v1 sign-off.
 
 ### 7.6 `TaskSummary`
 
