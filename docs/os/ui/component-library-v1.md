@@ -464,7 +464,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `row` ids so `layout_v2` matches the live NOW footer. ADR-200
   docks `ObjectSummary` as the NOW object hit (`open_object`).
   ADR-201 keeps badge, gallery kicker/swatch, and app-tile labels
-  named below Caption.
+  named below Caption. ADR-202 docks `EventRow` as Inbox stacked
+  hits (`open_object`).
 
 ### 7.6 `TaskSummary`
 

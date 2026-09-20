@@ -34,6 +34,11 @@ without leftover v1 NOW cards and without `OrbHost`. Empty
 footer hits. A screen without `ObjectSummary` invents no object
 hit (ADR-200).
 
+[`examples/inbox-public.sui`](examples/inbox-public.sui) is the
+labelled Inbox sample: `ContextHeader`, `EventRow` with
+`a11y = Button` (ADR-202), and the same nested tabs. Status
+`EventRow` invents no `open_object`.
+
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
 ```
@@ -63,7 +68,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   `EdgeInsets::from_safe` (ADR-195); the top inset is the status
   layer, not a content pad. Nested `tab` ids own the v2 strip.
   Nested `row` ids own the NOW footer. `ObjectSummary` owns the
-  NOW object hit (`open_object`, ADR-200).
+  NOW object hit (`open_object`, ADR-200). `EventRow` owns Inbox
+  stacked hits (ADR-202).
 
 ## Migration
 
@@ -80,6 +86,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Empty screen without `row` | no footer hits; do not invent `open_apps` |
 | Wanting object hit-test from a v2 NOW | `component ObjectSummary` + `layout_v2`; not `inspect_selected_entity` |
 | Screen without `ObjectSummary` | no object hit; do not invent `open_object` |
+| Wanting Inbox hit-test from a v2 screen | `component EventRow` + `a11y = Button` + `layout_v2` |
+| Inbox `EventRow` with `a11y = Status` | stacked rect, no `open_object` |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

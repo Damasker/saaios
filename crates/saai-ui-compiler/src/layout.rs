@@ -7,7 +7,7 @@
 //! stays off `build.rs`. Nested `tab` ids under `BottomNavigation`
 //! own the v2 strip (ADR-196). Footer hits come from named `row`s,
 //! not from v1 `content_actions`. Object hits come from
-//! `ObjectSummary`, not leftover inspect cards.
+//! ADR-202: `EventRow` docks as live Inbox stacked rows.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -131,10 +131,24 @@ fn v2_now_object_height() -> u32 {
         .max(v2_physical(MIN_TOUCH_TARGET))
 }
 
+const V2_STACKED_ROW_TOP_2400: u32 = 430;
+const V2_STACKED_ROW_PITCH_2400: u32 = 220;
+const V2_STACKED_ROW_HEIGHT_2400: u32 = 190;
+
+fn v2_stacked_row_top(index: usize, panel_height: u32) -> u32 {
+    let top_2400 = V2_STACKED_ROW_TOP_2400 + index as u32 * V2_STACKED_ROW_PITCH_2400;
+    ((u64::from(top_2400) * u64::from(panel_height)) / 2400) as u32
+}
+
+fn v2_stacked_row_height(panel_height: u32) -> u32 {
+    ((u64::from(V2_STACKED_ROW_HEIGHT_2400) * u64::from(panel_height)) / 2400) as u32
+}
+
 fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height: u32) -> Node {
     let margin = width / 22;
     let mut header = None;
     let mut object = None;
+    let mut events = Vec::new();
     let mut rest = Vec::new();
     for component in screen
         .components
@@ -144,28 +158,57 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         match component.type_name.as_str() {
             "ContextHeader" if header.is_none() => header = Some(component),
             "ObjectSummary" if object.is_none() => object = Some(component),
+            "EventRow" => events.push(component),
             _ => rest.push(component),
         }
     }
     let mut children = Vec::new();
+    let mut cursor = 0u32;
     if header.is_some() {
         let header_height = if object.is_some() {
             v2_now_header_height(content_height)
+        } else if !events.is_empty() {
+            v2_stacked_row_top(0, height)
         } else {
             0
         };
         let mut node = Node::leaf("ContextHeader");
         if header_height > 0 {
             node = node.with_size(Length::Fill, Length::Px(header_height));
+            cursor = header_height;
         }
         children.push(node);
     }
     if object.is_some() {
+        let object_height = v2_now_object_height();
         children.push(
             Node::leaf("ObjectSummary")
                 .with_action("open_object")
-                .with_size(Length::Fill, Length::Px(v2_now_object_height())),
+                .with_size(Length::Fill, Length::Px(object_height)),
         );
+        cursor = cursor.saturating_add(object_height);
+    }
+    let event_height = v2_stacked_row_height(height);
+    for (index, event) in events.iter().enumerate() {
+        let top = v2_stacked_row_top(index, height);
+        if top > cursor {
+            children.push(
+                Node::leaf(format!("{}-gap-{cursor}", screen.id))
+                    .with_size(Length::Fill, Length::Px(top - cursor)),
+            );
+            cursor = top;
+        }
+        let id = event
+            .props
+            .loc
+            .clone()
+            .unwrap_or_else(|| format!("EventRow-{index}"));
+        let mut node = Node::leaf(id).with_size(Length::Fill, Length::Px(event_height));
+        if event.props.a11y.as_deref() == Some("Button") {
+            node = node.with_action("open_object");
+        }
+        children.push(node);
+        cursor = cursor.max(top.saturating_add(event_height));
     }
     for component in rest {
         children.push(Node::leaf(component.type_name.clone()));
@@ -342,6 +385,52 @@ mod tests {
         let object = layout_v1_find(&v2, "ObjectSummary").expect("object");
         assert_eq!(object.rect.y, 263);
         assert_eq!(object.rect.height, 144);
+        assert!(v2.hit_test(540.0, 525.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_public_inbox_event_row_matches_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/inbox-public.sui");
+        let screen = compile_v2_public(source).expect("public Inbox");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(540.0, 525.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("open_object")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 525.0).map(|node| node.id.as_str()),
+            Some("inbox.item")
+        );
+        assert!(v2.hit_test(540.0, 250.0).is_none());
+        assert_eq!(
+            v2.hit_test(405.0, 2250.0).map(|node| node.id.as_str()),
+            Some("inbox")
+        );
+        let quiet = compile_v2(
+            r#"
+            sui 2
+            screen inbox {
+              component ContextHeader {}
+              component EventRow {
+                a11y = Status
+              }
+              component BottomNavigation {
+                tab now {}
+                tab inbox {}
+                tab spaces {}
+                tab me {}
+              }
+            }
+            "#,
+        )
+        .expect("quiet row");
+        let tree = layout_v2(&quiet, 1080, 2400);
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert_eq!(
+            tree.hit_test(405.0, 2250.0).map(|node| node.id.as_str()),
+            Some("inbox")
+        );
     }
 
     #[test]
@@ -368,6 +457,7 @@ mod tests {
             Some("now")
         );
         assert!(tree.hit_test(540.0, 335.0).is_none());
+        assert!(tree.hit_test(540.0, 525.0).is_none());
         assert!(layout_v1_find(&tree, "ObjectSummary").is_none());
     }
 

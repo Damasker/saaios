@@ -1,0 +1,25 @@
+sui 2
+screen inbox {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = inbox.header
+    focus = 0
+    inset = safe
+  }
+  component EventRow {
+    text = Body
+    a11y = Button
+    loc = inbox.item
+  }
+  component BottomNavigation {
+    a11y = Button
+    focus = 1
+    scroll = none
+    inset = safe
+    tab now { loc = now }
+    tab inbox { loc = inbox }
+    tab spaces { loc = spaces }
+    tab me { loc = me }
+  }
+}

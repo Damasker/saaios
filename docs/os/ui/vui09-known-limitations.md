@@ -37,7 +37,8 @@ display restart.
   footer (ADR-199); empty screens invent no footer hits. Live chrome
   still comes from `layout_v1_root()` over `compile_v1_rollback()`.
   `ObjectSummary` docks the NOW object hit (ADR-200); a screen
-  without it invents none.
+  without it invents none. `EventRow` docks Inbox stacked hits
+  (ADR-202); Status rows invent no `open_object`.
 - `compile_v2_public()` is the third-party gate. It is Experimental,
   not Stable.
 - Top `SafeInsets` is the status layer (ADR-112), not tree padding.
@@ -64,8 +65,8 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Items 1–3 and 7–10 are done
-(ADR-194/195/197–198/196/199/200/201); production still v1.
+Ordered. Items 1–3 and 7–11 are done
+(ADR-194/195/197–198/196/199/200/201/202); production still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
    `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
@@ -97,5 +98,9 @@ Ordered. Items 1–3 and 7–10 are done
 10. ~~Keep remaining leftover text sizes named below Caption.~~ Host:
     `leftover_text_sizes_stay_below_caption` (ADR-201). Apps grid on
     panther; do not launch; do not 7-tap.
+11. ~~Dock `EventRow` so `layout_v2()` matches Inbox
+    `stacked_row_rect`.~~ Host: Button → `open_object` (ADR-202).
+    Do not tap live Inbox rows. Do not attach `layout_v2()` to
+    `build.rs` yet.
 
 Rollback: delete this page. The ledger and `compile()` path stay.
