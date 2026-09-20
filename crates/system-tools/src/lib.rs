@@ -38,6 +38,110 @@ pub enum ToolsMode {
 
 pub type DeviceContext = Value;
 
+/// USB NCM of the Pixel 7 phone-gate in the PCE-25 lab (ADR-073/074).
+/// Reachability only — not a node UUID, PIN, or PSK.
+pub const PCE25_PANTHER_USB_NCM: &str = "172.31.7.1";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeIdentityKey {
+    pub target: String,
+    pub architecture: String,
+    pub device_class: String,
+}
+
+pub fn node_identity_key(identity: &Value) -> NodeIdentityKey {
+    NodeIdentityKey {
+        target: identity
+            .get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        architecture: identity
+            .get("architecture")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        device_class: identity
+            .get("device_class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    }
+}
+
+pub fn nodes_are_distinct(a: &Value, b: &Value) -> bool {
+    node_identity_key(a) != node_identity_key(b)
+}
+
+struct ObservedIdentity {
+    configured_target: Option<String>,
+    configured_class: Option<String>,
+    configured_deployment: Option<String>,
+    boot_hardware: Option<String>,
+    hardware_model: Option<String>,
+    kernel_release: Option<String>,
+    boot_slot: Option<String>,
+    native_marker: bool,
+    architecture: String,
+}
+
+fn architecture_is_x86(architecture: &str) -> bool {
+    matches!(architecture, "x86_64" | "x86" | "i686")
+}
+
+/// A bounded, non-secret identity snapshot. Laptop/x86 never claims panther.
+fn classify_observed_identity(obs: ObservedIdentity) -> DeviceContext {
+    let mut target = obs.configured_target.or(obs.boot_hardware);
+    if architecture_is_x86(&obs.architecture) {
+        if target.as_deref() == Some("panther") {
+            target = Some("x86".to_string());
+        }
+        if target.is_none() {
+            target = Some("x86".to_string());
+        }
+    }
+
+    let device_class = if architecture_is_x86(&obs.architecture) {
+        obs.configured_class
+            .filter(|class| class != "phone")
+            .unwrap_or_else(|| "computer".to_string())
+    } else {
+        obs.configured_class.unwrap_or_else(|| {
+            let looks_like_phone = target.as_deref() == Some("panther")
+                || obs
+                    .hardware_model
+                    .as_deref()
+                    .is_some_and(|model| model.to_ascii_lowercase().contains("pixel"));
+            if looks_like_phone {
+                "phone".to_string()
+            } else {
+                "computer".to_string()
+            }
+        })
+    };
+
+    let deployment = obs.configured_deployment.unwrap_or_else(|| {
+        if obs.native_marker {
+            "native_device".to_string()
+        } else {
+            "linux_host".to_string()
+        }
+    });
+
+    json!({
+        "schema": 1,
+        "system": "SaaiOS",
+        "deployment": deployment,
+        "device_class": device_class,
+        "target": target,
+        "hardware_model": obs.hardware_model,
+        "architecture": obs.architecture,
+        "kernel_release": obs.kernel_release,
+        "boot_slot": obs.boot_slot,
+        "observed_by": "local_runtime"
+    })
+}
+
 /// A bounded, non-secret identity snapshot for the running SaaiOS instance.
 /// Values come from the launch environment or local kernel interfaces only.
 pub fn system_identity(mode: ToolsMode) -> DeviceContext {
@@ -58,50 +162,19 @@ pub fn system_identity(mode: ToolsMode) -> DeviceContext {
 
     let bootconfig = std::fs::read_to_string("/proc/bootconfig").unwrap_or_default();
     let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
-    let native_marker = Path::new("/saaios").exists() || Path::new("/data/saaios").exists();
-    let configured_target = bounded_fact(std::env::var("SAAIOS_DEVICE_TARGET").ok());
-    let configured_class = bounded_fact(std::env::var("SAAIOS_DEVICE_CLASS").ok());
-    let configured_deployment = bounded_fact(std::env::var("SAAIOS_DEPLOYMENT").ok());
-    let hardware_model = read_bounded_fact(&[
-        "/proc/device-tree/model",
-        "/sys/devices/virtual/dmi/id/product_name",
-    ]);
-    let kernel_release = read_bounded_fact(&["/proc/sys/kernel/osrelease"]);
-    let boot_hardware = boot_fact_from(&bootconfig, &cmdline, "androidboot.hardware");
-    let boot_slot = boot_slot_from(&bootconfig, &cmdline);
-    let target = configured_target.or(boot_hardware);
-    let device_class = configured_class.unwrap_or_else(|| {
-        let looks_like_phone = target.as_deref() == Some("panther")
-            || hardware_model
-                .as_deref()
-                .is_some_and(|model| model.to_ascii_lowercase().contains("pixel"));
-        if looks_like_phone {
-            "phone"
-        } else {
-            "computer"
-        }
-        .to_string()
-    });
-    let deployment = configured_deployment.unwrap_or_else(|| {
-        if native_marker {
-            "native_device"
-        } else {
-            "linux_host"
-        }
-        .to_string()
-    });
-
-    json!({
-        "schema": 1,
-        "system": "SaaiOS",
-        "deployment": deployment,
-        "device_class": device_class,
-        "target": target,
-        "hardware_model": hardware_model,
-        "architecture": std::env::consts::ARCH,
-        "kernel_release": kernel_release,
-        "boot_slot": boot_slot,
-        "observed_by": "local_runtime"
+    classify_observed_identity(ObservedIdentity {
+        configured_target: bounded_fact(std::env::var("SAAIOS_DEVICE_TARGET").ok()),
+        configured_class: bounded_fact(std::env::var("SAAIOS_DEVICE_CLASS").ok()),
+        configured_deployment: bounded_fact(std::env::var("SAAIOS_DEPLOYMENT").ok()),
+        boot_hardware: boot_fact_from(&bootconfig, &cmdline, "androidboot.hardware"),
+        hardware_model: read_bounded_fact(&[
+            "/proc/device-tree/model",
+            "/sys/devices/virtual/dmi/id/product_name",
+        ]),
+        kernel_release: read_bounded_fact(&["/proc/sys/kernel/osrelease"]),
+        boot_slot: boot_slot_from(&bootconfig, &cmdline),
+        native_marker: Path::new("/saaios").exists() || Path::new("/data/saaios").exists(),
+        architecture: std::env::consts::ARCH.to_string(),
     })
 }
 
@@ -1124,6 +1197,88 @@ mod tests {
             Some("_a")
         );
         assert_eq!(cmdline_value("secret=value", "androidboot.hardware"), None);
+    }
+
+    fn panther_phone_gate() -> DeviceContext {
+        classify_observed_identity(ObservedIdentity {
+            configured_target: None,
+            configured_class: None,
+            configured_deployment: None,
+            boot_hardware: Some("panther".into()),
+            hardware_model: Some("Google Pixel 7".into()),
+            kernel_release: Some("6.1.0".into()),
+            boot_slot: Some("a".into()),
+            native_marker: true,
+            architecture: "aarch64".into(),
+        })
+    }
+
+    fn x86_laptop_surface() -> DeviceContext {
+        classify_observed_identity(ObservedIdentity {
+            configured_target: None,
+            configured_class: None,
+            configured_deployment: None,
+            boot_hardware: None,
+            hardware_model: Some("ThinkPad".into()),
+            kernel_release: Some("6.8.0".into()),
+            boot_slot: None,
+            native_marker: false,
+            architecture: "x86_64".into(),
+        })
+    }
+
+    #[test]
+    fn panther_stays_phone_gate() {
+        let panther = panther_phone_gate();
+        assert_eq!(panther["system"], "SaaiOS");
+        assert_eq!(panther["target"], "panther");
+        assert_eq!(panther["device_class"], "phone");
+        assert_eq!(panther["architecture"], "aarch64");
+        assert_eq!(panther["deployment"], "native_device");
+        let dump = panther.to_string();
+        assert!(!dump.contains(PCE25_PANTHER_USB_NCM));
+        assert!(!dump.contains("172."));
+    }
+
+    #[test]
+    fn x86_laptop_is_computer_surface_not_panther() {
+        let laptop = x86_laptop_surface();
+        assert_eq!(laptop["target"], "x86");
+        assert_eq!(laptop["device_class"], "computer");
+        assert_eq!(laptop["architecture"], "x86_64");
+        assert_eq!(laptop["deployment"], "linux_host");
+        assert_ne!(laptop["target"], "panther");
+        let dump = laptop.to_string();
+        assert!(!dump.contains(PCE25_PANTHER_USB_NCM));
+        assert!(nodes_are_distinct(&panther_phone_gate(), &laptop));
+    }
+
+    #[test]
+    fn x86_host_cannot_impersonate_panther_phone_gate() {
+        let spoofed = classify_observed_identity(ObservedIdentity {
+            configured_target: Some("panther".into()),
+            configured_class: Some("phone".into()),
+            configured_deployment: Some("native_device".into()),
+            boot_hardware: Some("panther".into()),
+            hardware_model: Some("Google Pixel 7".into()),
+            kernel_release: None,
+            boot_slot: None,
+            native_marker: true,
+            architecture: "x86_64".into(),
+        });
+        assert_eq!(spoofed["target"], "x86");
+        assert_eq!(spoofed["device_class"], "computer");
+        assert!(nodes_are_distinct(&panther_phone_gate(), &spoofed));
+    }
+
+    #[test]
+    fn mock_identity_stays_virtual_fixture() {
+        let mock = system_identity(ToolsMode::Mock);
+        assert_eq!(mock["deployment"], "test_fixture");
+        assert_eq!(mock["device_class"], "virtual");
+        assert_eq!(mock["target"], "mock");
+        assert!(nodes_are_distinct(&panther_phone_gate(), &mock));
+        assert!(nodes_are_distinct(&x86_laptop_surface(), &mock));
     }
 
     #[test]

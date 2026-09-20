@@ -115,16 +115,20 @@ Principal, Grant, scope, Confirmation (OneShot по умолчанию).
 {
   "schema": 1,
   "system": "SaaiOS",
-  "deployment": "native_device",
-  "device_class": "phone",
-  "target": "panther",
+  "deployment": "native_device | linux_host | test_fixture",
+  "device_class": "phone | computer | virtual",
+  "target": "panther | x86 | mock | observed",
   "hardware_model": "observed or null",
-  "architecture": "aarch64",
+  "architecture": "aarch64 | x86_64 | observed",
   "kernel_release": "observed or null",
   "boot_slot": "a or null",
   "observed_by": "local_runtime"
 }
 ```
+
+Pixel 7 (`panther` / `phone` / `aarch64`) остаётся phone-gate. Ноут
+PCE-25 (`x86` / `computer` / `x86_64`) — второй узел, не подмена
+panther (ADR-249). x86 не может заявить `target=panther`.
 
 Snapshot доступен через `system.identity`, runtime status и системный контекст
 planner. Поля ограничены по длине, управляющие символы удаляются. Полный kernel

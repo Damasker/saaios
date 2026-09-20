@@ -48,8 +48,8 @@ SERVICE QUEUE (можно шить параллельно shell)
   P3  later              WORLD cache; daemon только по доказанному IPC
 ```
 
-APP-COMPAT, Learning (MEM-09), голос, PCE, `saai-deviced` — **не в этом
-пути**. Их не планировать, пока P0–P2 не пощупаны на panther.
+APP-COMPAT, Learning (MEM-09), голос, PCE-01..24, `saai-deviced` — **не в этом
+пути**. PCE-25 (ноут x86) — отдельная lab-волна D, не вместо panther.
 
 ## P0 — закрыто на panther (2026-09-18)
 
@@ -218,6 +218,13 @@ diagnose (ADR-238, `351b0b6f…`).
 
 `saai-deviced` (WORLD-03) — только если cache + несколько consumers
 реально требуют IPC. Не заранее.
+
+## D — второй узел (не вместо panther)
+
+- PCE-25 node identity: laptop `x86`/`computer` ≠ panther `phone` (ADR-249; host)
+- Windowed displayd / pointer+HID / logical layout — следующие D-слайсы
+- PCE-01..24 и Resource Scheduler не начинать
+- Доказательство ноута валидно для D, не вместо phone-gate
 
 ## Что сознательно не делать сейчас
 
