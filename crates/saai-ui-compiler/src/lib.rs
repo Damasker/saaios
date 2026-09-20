@@ -1244,6 +1244,8 @@ mod tests {
         assert!(limits.contains("Me scroll paint"));
         assert!(limits.contains("ADR-228"));
         assert!(limits.contains("Apps grid paint"));
+        assert!(limits.contains("ADR-229"));
+        assert!(limits.contains("Overlay paint"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1277,5 +1279,7 @@ mod tests {
         assert!(ledger.contains("Me scroll paint"));
         assert!(ledger.contains("ADR-228"));
         assert!(ledger.contains("Apps grid paint"));
+        assert!(ledger.contains("ADR-229"));
+        assert!(ledger.contains("Overlay paint"));
     }
 }

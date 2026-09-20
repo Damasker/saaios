@@ -37,6 +37,7 @@
 //! generated list trees hit-test already uses.
 //! ADR-227: Me paint reads the same `layout_v2_scrolled` tree as hits.
 //! ADR-228: apps grid paint reads the same generated `layout_v2` tree.
+//! ADR-229: overlay Field/decision paint reads the same generated tree.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,

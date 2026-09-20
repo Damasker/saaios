@@ -187,7 +187,8 @@ host-only derived view.
 | VUI-09 NOW paint | `draw_now` chrome slots from `now_view()` **на panther** (ADR-225; `94613f7a…`; leave Сейчас) |
 | VUI-09 list paint | Inbox/Spaces/Wi-Fi/Bluetooth/trusted cards from generated `layout_v2` **на panther** (ADR-226; `f91144ab…`; leave Сейчас) |
 | VUI-09 Me paint | «Я» cards from `layout_v2_scrolled` **на panther** (ADR-227; `65fb3473…`; do not open «Я»; leave Сейчас) |
-| VUI-09 apps paint | Приложения tiles from generated `layout_v2` **host** (ADR-228; do not open Приложения; leave Сейчас) |
+| VUI-09 apps paint | Приложения tiles from generated `layout_v2` **на panther** (ADR-228; `40250fc4…`; do not open Приложения; leave Сейчас) |
+| VUI-09 overlay paint | Field/decision Buttons from generated `layout_v2` **host** (ADR-229; do not tap Разрешить/Сопряжь; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

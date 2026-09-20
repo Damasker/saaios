@@ -5758,6 +5758,23 @@ fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
     src
 }
 
+/// ADR-229: decision-row paint from the same generated tree hits use.
+fn overlay_decision_paint(
+    screen_id: &str,
+    locs: &[&str],
+    why: &'static str,
+    width: u32,
+    height: u32,
+) -> (Rect, Vec<Rect>) {
+    let tree = layout_live_v2(&overlay_buttons_v2_source(screen_id, locs), why, width, height);
+    let header = tree.children[0].rect;
+    let buttons = locs
+        .iter()
+        .map(|id| v2_named_rect(&tree, id, why))
+        .collect();
+    (header, buttons)
+}
+
 fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
     overlay_field_v2_source_with(screen_id, field_id, true)
 }
@@ -7561,9 +7578,13 @@ impl Shell {
         // label()` need the whole of `self`, not just those two fields.
         let pressed_key = self.pressed_key.clone();
         let frame = if let Some(pending) = &self.pending_consent {
-            let view = consent_view(width, height);
-            let content_rect = view.children[0].rect;
-            let buttons = &view.children[1].children;
+            let (content_rect, buttons) = overlay_decision_paint(
+                "consent",
+                &[CONSENT_ACCEPT_ACTION, CONSENT_DECLINE_ACTION],
+                "ADR-229 overlay paint",
+                width,
+                height,
+            );
             let labels = pending
                 .requested
                 .iter()
@@ -7573,23 +7594,37 @@ impl Shell {
                 content_rect,
                 header: consent_header(&space_display_name(&self.spaces, &self.selected_space_id)),
                 rows: consent_content_cards(&pending.app_name, &labels, width, height),
-                accept: buttons[0].rect,
-                decline: buttons[1].rect,
+                accept: buttons[0],
+                decline: buttons[1],
             }
         } else if let Some(entity) = self.viewing_entity() {
             let content = object_view_content(entity, &self.selected_entities, &self.relationships);
-            let view = object_view(width, height, content.actions.len());
-            let header = view.children[0].rect;
-            let actions: Vec<(Rect, &'static str)> = if content.actions.is_empty() {
-                Vec::new()
+            let (header, actions) = if content.actions.is_empty() {
+                (
+                    object_view(width, height, 0).children[0].rect,
+                    Vec::new(),
+                )
             } else {
-                let button_rects = &view.children[1].children;
-                content
-                    .actions
-                    .iter()
-                    .zip(button_rects.iter())
-                    .map(|(label, node)| (node.rect, *label))
-                    .collect()
+                let locs: Vec<String> = (0..content.actions.len())
+                    .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
+                    .collect();
+                let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+                let (header, rects) = overlay_decision_paint(
+                    "object",
+                    &loc_refs,
+                    "ADR-229 overlay paint",
+                    width,
+                    height,
+                );
+                (
+                    header,
+                    content
+                        .actions
+                        .iter()
+                        .zip(rects)
+                        .map(|(label, rect)| (rect, *label))
+                        .collect(),
+                )
             };
             let details = object_view_details(&content);
             let permission = object_view_permission_pattern(&content);
@@ -7607,9 +7642,13 @@ impl Shell {
             // header-plus-two-buttons shape) -- only the drawn text
             // and the touch handler's meaning differ. ADR-144: the
             // header leaf is `content_rect` for `ContextHeader`.
-            let view = task_confirm_view(width, height);
-            let content_rect = view.children[0].rect;
-            let buttons = &view.children[1].children;
+            let (content_rect, buttons) = overlay_decision_paint(
+                "consent",
+                &[TASK_CONFIRM_ACCEPT_ACTION, TASK_CONFIRM_DECLINE_ACTION],
+                "ADR-229 overlay paint",
+                width,
+                height,
+            );
             Frame::RemotePairing {
                 content_rect,
                 header: remote_pair_header(&space_display_name(
@@ -7618,8 +7657,8 @@ impl Shell {
                 )),
                 rows: remote_pair_content_cards(&pending.client_name, width, height),
                 fingerprint: key_fingerprint(&pending.public_key),
-                accept: buttons[0].rect,
-                decline: buttons[1].rect,
+                accept: buttons[0],
+                decline: buttons[1],
             }
         } else if let Some(state) = &self.intent_input {
             let keys = if state.keyboard.shows_panel() {
@@ -12275,6 +12314,44 @@ mod tests {
         let main = include_str!("main.rs");
         assert!(main.contains("ADR-228 apps paint"));
         assert!(main.contains("apps_paint_cards"));
+    }
+
+    #[test]
+    fn overlay_paint_buttons_match_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let (header, buttons) = super::overlay_decision_paint(
+            "consent",
+            &[
+                super::CONSENT_ACCEPT_ACTION,
+                super::CONSENT_DECLINE_ACTION,
+            ],
+            "ADR-229 overlay paint",
+            width,
+            height,
+        );
+        let old = super::consent_view(width, height);
+        assert_eq!(header, old.children[0].rect);
+        assert_eq!(buttons[0], old.children[1].children[0].rect);
+        assert_eq!(buttons[1], old.children[1].children[1].rect);
+        let pair = super::overlay_decision_paint(
+            "consent",
+            &[
+                super::TASK_CONFIRM_ACCEPT_ACTION,
+                super::TASK_CONFIRM_DECLINE_ACTION,
+            ],
+            "ADR-229 overlay paint",
+            width,
+            height,
+        );
+        assert_eq!(pair.1[0].y, buttons[0].y);
+        assert_eq!(pair.1[0].height, 300);
+        let field = super::overlay_field_rect_with("intent", super::INTENT_FIELD_ID, width, height, true);
+        assert!(field.height > 0);
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-229 overlay paint"));
+        assert!(main.contains("overlay_decision_paint"));
+        assert!(main.contains("overlay_field_rect_with"));
     }
 
     #[test]

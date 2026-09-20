@@ -30,7 +30,7 @@ NOW content hits are compiled `now.sui` (ADR-217).
 Inbox/Spaces/list hits are generated `compile_v2()` documents (ADR-218).
 Me scroll hits are `layout_v2_scrolled` (ADR-219).
 Privileged `Keyboard` is the Field-bound IME (ADR-222).
-OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are generated `layout_v2` (ADR-224). NOW chrome paint reads `now_view()` (ADR-225). List paint reads generated `layout_v2` (ADR-226). Me scroll paint reads `layout_v2_scrolled` (ADR-227). Apps grid paint reads generated `layout_v2` (ADR-228).
+OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are generated `layout_v2` (ADR-224). NOW chrome paint reads `now_view()` (ADR-225). List paint reads generated `layout_v2` (ADR-226). Me scroll paint reads `layout_v2_scrolled` (ADR-227). Apps grid paint reads generated `layout_v2` (ADR-228). Overlay paint reads generated `layout_v2` (ADR-229).
 
 ## Matrix
 
@@ -74,7 +74,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   `now_view()` nodes (ADR-225). Inbox/Spaces/Wi-Fi/Bluetooth/trusted
   paint reads the generated list trees (ADR-226). Me scroll paint
   reads `layout_v2_scrolled` (ADR-227). Apps grid paint reads
-  generated `layout_v2` (ADR-228). Gallery page taps stay a
+  generated `layout_v2` (ADR-228). Overlay paint reads generated
+  `layout_v2` (ADR-229). Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
   `compile_v2_public()`, which is the gate, not a Stable API.

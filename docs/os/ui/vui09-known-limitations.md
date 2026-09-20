@@ -25,7 +25,8 @@ use generated `layout_v2` (ADR-224). NOW chrome paint reads the
 same `now_view()` tree (ADR-225). Inbox/Spaces/list paint reads the
 generated list trees (ADR-226). Me scroll paint reads
 `layout_v2_scrolled` (ADR-227). Apps grid paint reads generated
-`layout_v2` (ADR-228).
+`layout_v2` (ADR-228). Overlay paint reads generated `layout_v2`
+(ADR-229).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -194,7 +195,9 @@ Ordered. Items 1–3 and 7–17 are done
     Apps/overlay paint stay procedural.
 30. ~~Apps grid paint from `layout_v2`.~~ Host (ADR-228). Overlay
     paint stays procedural.
-31. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+31. ~~Overlay paint from `layout_v2`.~~ Host (ADR-229). Keyboard keys
+    stay their formula.
+32. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 
