@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–197; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–198; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1163,7 +1163,8 @@ component state remains fully usable.
 **Status:** In progress — vocabulary through named sizes (ADR-180–188);
 verification ledger (ADR-189); known limitations (ADR-193);
 `layout_v2` tab hits (ADR-194); `from_safe` insets (ADR-195); nested
-`tab` grammar (ADR-196); ActionCard/tab `Label`/`Caption` (ADR-197).
+`tab` grammar (ADR-196); ActionCard/tab `Label`/`Caption` (ADR-197);
+status/keys `Label`/`Caption` (ADR-198).
 Release
 gate remains. Not Visual v1 sign-off.
 
@@ -1220,6 +1221,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   no v1 hits. `compile()` stays v1.
 - [x] Map ActionCard and tab labels onto `Label`/`Caption`, not Title
   (ADR-197). Badge and other leftovers stay named.
+- [x] Map status time/battery onto `Label` and key labels onto
+  `Caption` (ADR-198). Badge, gallery kicker/swatch, and app-tile
+  leftovers stay named.
 
 ### Acceptance
 
@@ -1282,8 +1286,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **Visual v2** at remaining named leftovers (badge, keys,
-status time), or Experimental→Stable after Visual v1, or
+Continue **Visual v2** at remaining named leftovers (badge, gallery
+kicker/swatch, app-tile), or Experimental→Stable after Visual v1, or
 operator-approved lock / display restart / cold boot.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.

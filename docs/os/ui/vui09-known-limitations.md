@@ -7,7 +7,7 @@ Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
 Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted until a shell-legal memory read exists.
 
-Current panther shell: `5eb6a27f…` (ADR-197). This page does not
+Current panther shell: `3850427a…` (ADR-198). This page does not
 lock, reboot, or kill `saai-displayd`.
 
 The verification ledger stays in
@@ -46,8 +46,10 @@ display restart.
 ## Leftover paint
 
 - ActionCard title/button are `Label`; status and tab labels are
-  `Caption` (ADR-197). Not Title (72). `TAB_BADGE_PX` and the other
-  ADR-188 leftovers stay named.
+  `Caption` (ADR-197). Status time/battery are `Label`; keys, Orb
+  menu, related line, and gallery heading are `Caption` (ADR-198).
+  Not Title (72). `TAB_BADGE_PX`, `GALLERY_KICKER_PX`,
+  `GALLERY_SWATCH_PX`, and `APP_TILE_LABEL_PX` stay named.
 - Gallery fixtures may show privileged rows. Copying those names into
   an app fails `compile_v2_public()`.
 
@@ -59,7 +61,7 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Items 1–3 and 7 are done (ADR-194/195/197/196); production
+Ordered. Items 1–3 and 7 are done (ADR-194/195/197–198/196); production
 still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
@@ -69,7 +71,8 @@ still v1.
    Host: `EdgeInsets::from_safe` (ADR-195). Top inset stays a layer.
 3. ~~Keep leftover ActionCard/tab sizes on an explicit named list, or
    map them onto `TextRole` in a paint-normalization slice.~~ Flashed:
-   Label/Caption, not Title (ADR-197). Badge and other leftovers stay.
+   Label/Caption, not Title (ADR-197/198). Badge, gallery kicker/swatch,
+   and app-tile leftovers stay.
 4. Promote public names from Experimental to Stable only after the
    Pixel 7 promotion checklist in the component library.
 5. Add `SpaceDetail` / `MemoryReview` / `ChatThread` / `Widget` to the

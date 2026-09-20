@@ -949,6 +949,7 @@ mod tests {
         assert!(ledger.contains("cold boot"));
         assert!(ledger.contains("e8865301"));
         assert!(ledger.contains("5eb6a27f"));
+        assert!(ledger.contains("3850427a"));
         assert!(ledger.contains("ADR-188"));
         assert!(ledger.contains("ADR-190"));
         assert!(ledger.contains("150%"));
@@ -964,10 +965,12 @@ mod tests {
         assert!(ledger.contains("nested tab"));
         assert!(ledger.contains("ADR-197"));
         assert!(ledger.contains("Caption"));
+        assert!(ledger.contains("ADR-198"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
         assert!(limits.contains("ADR-197"));
+        assert!(limits.contains("ADR-198"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

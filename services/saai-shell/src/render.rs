@@ -339,7 +339,7 @@ pub fn draw_consent(
         canvas,
         &fonts.semibold,
         "Разрешить",
-        DECISION_BUTTON_PX,
+        role_px(TextRole::Label),
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
         theme_color(ColorRole::Canvas),
@@ -348,7 +348,7 @@ pub fn draw_consent(
         canvas,
         &fonts.semibold,
         "Отклонить",
-        DECISION_BUTTON_PX,
+        role_px(TextRole::Label),
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
         theme_color(ColorRole::TextPrimary),
@@ -527,7 +527,7 @@ pub fn draw_object_view(
             canvas,
             &fonts.regular,
             related,
-            OBJECT_RELATED_PX,
+            role_px(TextRole::Caption),
             header.x + margin,
             y,
             theme_color(ColorRole::TextSecondary),
@@ -580,7 +580,7 @@ pub fn draw_object_view(
             canvas,
             &fonts.regular,
             detail,
-            OBJECT_RELATED_PX,
+            role_px(TextRole::Caption),
             header.x + margin,
             y,
             theme_color(ColorRole::TextSecondary),
@@ -602,7 +602,7 @@ pub fn draw_object_view(
             canvas,
             &fonts.semibold,
             text,
-            DECISION_BUTTON_PX,
+            role_px(TextRole::Label),
             rect.x + rect.width / 2,
             rect.y + rect.height / 2 - 20,
             if index == 0 {
@@ -657,7 +657,7 @@ pub fn draw_orb(
                 canvas,
                 &fonts.regular,
                 label,
-                ORB_MENU_PX,
+                role_px(TextRole::Caption),
                 rect.x + 24,
                 rect.y + rect.height / 2 - 16,
                 theme_color(ColorRole::TextPrimary),
@@ -808,7 +808,7 @@ pub fn draw_remote_pair(
         canvas,
         &fonts.semibold,
         "Разрешить",
-        DECISION_BUTTON_PX,
+        role_px(TextRole::Label),
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
         theme_color(ColorRole::Canvas),
@@ -817,7 +817,7 @@ pub fn draw_remote_pair(
         canvas,
         &fonts.semibold,
         "Отклонить",
-        DECISION_BUTTON_PX,
+        role_px(TextRole::Label),
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
         theme_color(ColorRole::TextPrimary),
@@ -1012,7 +1012,7 @@ fn paint_keyboard_keys(
             canvas,
             fonts,
             label,
-            KEY_LABEL_PX,
+            role_px(TextRole::Caption),
             key.x + key.width / 2,
             key.y + key.height / 2 - 18,
             theme_color(ColorRole::TextPrimary),
@@ -1513,19 +1513,15 @@ fn role_px(role: TextRole) -> f32 {
 
 /// ADR-188 leftover sizes: not a `TextRole` at Pixel 7 scale 3.
 /// Add a name here rather than a new raw draw-call literal.
-/// ADR-197: ActionCard title/status/button and tab labels use
-/// `role_px` (`Label`/`Caption`). Do not map those onto Title.
-const DECISION_BUTTON_PX: f32 = 40.0;
-const OBJECT_RELATED_PX: f32 = 28.0;
-const ORB_MENU_PX: f32 = 32.0;
-const KEY_LABEL_PX: f32 = 32.0;
-const GALLERY_HEADING_PX: f32 = 32.0;
+/// ADR-197/198: ActionCard, tabs, status time/battery, keys, Orb
+/// menu, decision buttons, related line, and gallery heading use
+/// `Label`/`Caption`. Do not map those onto Title. Badge, gallery
+/// kicker/swatch, and app-tile labels stay named — Caption would
+/// overflow those marks.
 const GALLERY_KICKER_PX: f32 = 24.0;
 const GALLERY_SWATCH_PX: f32 = 18.0;
 const APP_TILE_LABEL_PX: f32 = 26.0;
 const TAB_BADGE_PX: f32 = 24.0;
-const STATUS_TIME_PX: f32 = 44.0;
-const STATUS_BATTERY_PX: f32 = 40.0;
 
 /// Greedy word-wrap: breaks `text` into lines whose rendered width (in
 /// `font` at `size`) fits within `max_width`. A single word wider than
@@ -1984,7 +1980,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         canvas,
         &fonts.semibold,
         "SaaiOS Component Gallery · VUI-02",
-        GALLERY_HEADING_PX,
+        role_px(TextRole::Caption),
         margin,
         rows[0],
         theme_color(ColorRole::TextPrimary),
@@ -2133,7 +2129,7 @@ pub fn draw_composite_gallery(
         canvas,
         &fonts.semibold,
         fixtures.title,
-        GALLERY_HEADING_PX,
+        role_px(TextRole::Caption),
         margin,
         rows[0],
         theme_color(ColorRole::TextPrimary),
@@ -2866,11 +2862,12 @@ pub fn draw_status_bar(
     };
     let baseline = height / 2 - 22;
     let time_x = margin + dot_size + 16;
+    let time_size = role_px(TextRole::Label);
     draw_text(
         canvas,
         &fonts.semibold,
         &status.time_text,
-        STATUS_TIME_PX,
+        time_size,
         time_x,
         baseline,
         theme_color(ColorRole::TextPrimary),
@@ -2885,18 +2882,15 @@ pub fn draw_status_bar(
     let battery_label = status.battery_label().unwrap_or_default();
 
     let gap = 40.0;
-    let battery_width = text_width(
-        &fonts.semibold,
-        &battery_label,
-        STATUS_BATTERY_PX * text_scale(),
-    );
+    let battery_size = role_px(TextRole::Label);
+    let battery_width = text_width(&fonts.semibold, &battery_label, battery_size * text_scale());
     let battery_left = width as f32 - margin as f32 - battery_width;
     if !battery_label.is_empty() {
         draw_text(
             canvas,
             &fonts.semibold,
             &battery_label,
-            STATUS_BATTERY_PX,
+            battery_size,
             battery_left.round() as u32,
             baseline,
             theme_color(ColorRole::TextPrimary),
@@ -3509,6 +3503,33 @@ mod tests {
         assert!(!production.contains("TAB_SELECTED_PX"));
         assert!(!production.contains("TAB_IDLE_PX"));
         assert!(production.contains("TAB_BADGE_PX"));
+        assert!(production.contains("GALLERY_KICKER_PX"));
+        assert!(production.contains("APP_TILE_LABEL_PX"));
+        assert!(!production.contains("STATUS_TIME_PX"));
+        assert!(!production.contains("STATUS_BATTERY_PX"));
+        assert!(!production.contains("KEY_LABEL_PX"));
+        assert!(!production.contains("DECISION_BUTTON_PX"));
+        assert!(!production.contains("ORB_MENU_PX"));
+        assert!(!production.contains("OBJECT_RELATED_PX"));
+        assert!(!production.contains("GALLERY_HEADING_PX"));
+        let status = production
+            .split("pub fn draw_status_bar(")
+            .nth(1)
+            .expect("draw_status_bar")
+            .split("fn draw_text(")
+            .next()
+            .expect("draw_text");
+        assert!(status.contains("role_px(TextRole::Label)"));
+        assert!(!status.contains("TextRole::Title"));
+        let keys = production
+            .split("fn paint_keyboard_keys(")
+            .nth(1)
+            .expect("paint_keyboard_keys")
+            .split("pub fn draw_lock_idle(")
+            .next()
+            .expect("draw_lock_idle");
+        assert!(keys.contains("role_px(TextRole::Caption)"));
+        assert!(!keys.contains("TextRole::Title"));
         let card = production
             .split("fn draw_action_card(")
             .nth(1)

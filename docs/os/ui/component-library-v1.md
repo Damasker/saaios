@@ -447,7 +447,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   and the diagnostic panel-color literals from production `main.rs`.
   ADR-188 names leftover `draw_text` sizes through `role_px` and an
   explicit leftover list. ADR-197 maps ActionCard and tab labels onto
-  `Label`/`Caption`, not Title.
+  `Label`/`Caption`, not Title. ADR-198 maps status time/battery and
+  key labels the same way; badge and app-tile leftovers stay.
   ADR-189 is the verification ledger, not Visual v1 sign-off.
   ADR-190 proves 150% text on panther HEAD without a Система tap.
   ADR-191 proves live radio-off: status `Нет сети` while `wlan0` is
