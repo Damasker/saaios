@@ -26,6 +26,9 @@
 //! `layout_v2()`. ADR-222: privileged `Keyboard` is the Field-bound
 //! IME object; its presence docks the on-screen reserve. Hardware
 //! omits the component and USB HID replaces the panel.
+//! ADR-223: privileged `OrbHost` overlays the live Orb zone so
+//! closed-dot and open-menu hits match `orb_zone_rect`. Gallery page
+//! taps stay a whole-surface formula.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -307,6 +310,112 @@ fn v2_is_overlay_button(component: &crate::SuiV2Component) -> bool {
     component.type_name == "Button"
         && component.props.loc.is_some()
         && !v2_is_grid_button(component)
+        && !v2_is_orb_menu_button(component)
+}
+
+fn v2_is_orb_menu_button(component: &crate::SuiV2Component) -> bool {
+    component.type_name == "Button"
+        && component
+            .props
+            .loc
+            .as_deref()
+            .is_some_and(|loc| loc.starts_with("orb-menu:"))
+}
+
+/// Live HIA-04b Orb square: 90 px, never more than a tenth of the panel.
+pub fn v2_orb_dot_size(width: u32, height: u32) -> u32 {
+    90.min(width / 10).min(height / 10)
+}
+
+/// Live `orb_zone_rect`: closed is the dot; open grows upward into the
+/// header dead space and stops short of stacked cards at y=430/2400.
+pub fn v2_orb_zone_rect(width: u32, height: u32, menu_action_count: usize) -> Rect {
+    let margin = width / 22;
+    let dot_size = v2_orb_dot_size(width, height);
+    let bottom = ((410_u64 * u64::from(height)) / 2400) as u32;
+    if menu_action_count == 0 {
+        return Rect::new(
+            width.saturating_sub(margin + dot_size),
+            bottom.saturating_sub(dot_size),
+            dot_size,
+            dot_size,
+        );
+    }
+    let top = ((160_u64 * u64::from(height)) / 2400) as u32;
+    let zone_width = 420.min(width.saturating_sub(margin * 2));
+    Rect::new(
+        width.saturating_sub(margin + zone_width),
+        top,
+        zone_width,
+        bottom.saturating_sub(top),
+    )
+}
+
+fn v2_place_rect(screen_id: &str, index: usize, inner: Node, rect: Rect) -> Node {
+    let y_spacer = Node::leaf(format!("{screen_id}-orb-y-{index}"))
+        .with_size(Length::Fill, Length::Px(rect.y));
+    let x_spacer = Node::leaf(format!("{screen_id}-orb-x-{index}"))
+        .with_size(Length::Px(rect.x), Length::Px(rect.height));
+    let cell = inner.with_size(Length::Px(rect.width), Length::Px(rect.height));
+    let row = Node::linear(
+        format!("{screen_id}-orb-row-{index}"),
+        Axis::Horizontal,
+        vec![x_spacer, cell],
+    )
+    .with_size(Length::Fill, Length::Px(rect.height));
+    Node::linear(
+        format!("{screen_id}-orb-place-{index}"),
+        Axis::Vertical,
+        vec![y_spacer, row],
+    )
+}
+
+fn v2_orb_toggle_action(orb: &crate::SuiV2Component) -> String {
+    orb.props
+        .loc
+        .clone()
+        .unwrap_or_else(|| "orb:toggle".to_string())
+}
+
+fn v2_orb_node(
+    screen: &crate::SuiV2Screen,
+    width: u32,
+    height: u32,
+    orb: &crate::SuiV2Component,
+    menus: &[&crate::SuiV2Component],
+) -> Node {
+    let zone = v2_orb_zone_rect(width, height, menus.len());
+    let toggle = v2_orb_toggle_action(orb);
+    if menus.is_empty() {
+        return v2_place_rect(
+            &screen.id,
+            0,
+            Node::leaf(toggle.clone()).with_action(toggle),
+            zone,
+        );
+    }
+    let mut children: Vec<Node> = menus
+        .iter()
+        .map(|menu| {
+            let loc = menu
+                .props
+                .loc
+                .clone()
+                .unwrap_or_else(|| "orb-menu".to_string());
+            Node::leaf(loc.clone()).with_action(loc)
+        })
+        .collect();
+    children.push(
+        Node::leaf(toggle.clone())
+            .with_action(toggle)
+            .with_size(Length::Fill, Length::Px(v2_orb_dot_size(width, height))),
+    );
+    v2_place_rect(
+        &screen.id,
+        0,
+        Node::linear(format!("{}-orb-menu", screen.id), Axis::Vertical, children),
+        zone,
+    )
 }
 
 /// Live consent / task-confirm / object-view button row uses
@@ -465,6 +574,8 @@ fn v2_content_node(
     let mut overlay_buttons = Vec::new();
     let mut fields = Vec::new();
     let mut keyboards = Vec::new();
+    let mut orbs = Vec::new();
+    let mut orb_menus = Vec::new();
     let mut rest = Vec::new();
     for component in screen
         .components
@@ -476,12 +587,17 @@ fn v2_content_node(
             "ObjectSummary" if object.is_none() => object = Some(component),
             "Field" if component.props.loc.is_some() => fields.push(component),
             "Keyboard" => keyboards.push(component),
+            "OrbHost" => orbs.push(component),
             "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" | "WifiRow"
             | "BluetoothRow" | "TrustedClientRow" | "CapabilityRow" => stacked.push(component),
             _ if v2_is_grid_button(component) => grid.push(component),
+            _ if v2_is_orb_menu_button(component) => orb_menus.push(component),
             _ if v2_is_overlay_button(component) => overlay_buttons.push(component),
             _ => rest.push(component),
         }
+    }
+    if let Some(orb) = orbs.first().copied() {
+        return v2_orb_node(screen, width, height, orb, &orb_menus);
     }
     if v2_named_tabs(screen).is_empty() && !overlay_buttons.is_empty() {
         return v2_decision_node(screen, &overlay_buttons);
@@ -744,6 +860,7 @@ mod tests {
         let main = include_str!("../../../services/saai-shell/src/main.rs");
         assert!(main.contains("saai_ui_compiler::layout_v2"));
         assert!(main.contains("saai_ui_compiler::compile_v2"));
+        assert!(main.contains("orb_v2_source"));
         assert!(!main.contains("layout_v1_root("));
         let build = include_str!("../../../services/saai-shell/build.rs");
         assert!(build.contains("saai_ui_compiler::compile_v2"));
@@ -1228,6 +1345,76 @@ mod tests {
         let field = layout_v1_find(&v2, "intent-field").expect("field");
         assert!(layout_v1_find(&v2, "intent-keyboard").is_none());
         assert_eq!(field.rect.y + field.rect.height, 2400);
+    }
+
+    #[test]
+    fn layout_v2_orbhost_matches_the_closed_dot_and_open_menu() {
+        let closed = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component OrbHost {
+                a11y = Status
+                loc = "orb:toggle"
+              }
+            }
+            "#,
+        )
+        .expect("closed orb");
+        let closed_tree = layout_v2(&closed, 1080, 2400);
+        let zone = super::v2_orb_zone_rect(1080, 2400, 0);
+        assert_eq!(
+            closed_tree
+                .hit_test(
+                    f64::from(zone.x + zone.width / 2),
+                    f64::from(zone.y + zone.height / 2)
+                )
+                .and_then(|node| node.action.as_deref()),
+            Some("orb:toggle")
+        );
+        assert!(closed_tree.hit_test(540.0, 525.0).is_none());
+        assert!(closed_tree.hit_test(540.0, 2250.0).is_none());
+        let open = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component OrbHost {
+                a11y = Status
+                loc = "orb:toggle"
+              }
+              component Button {
+                a11y = Button
+                loc = "orb-menu:inbox"
+              }
+              component Button {
+                a11y = Button
+                loc = "orb-menu:intent"
+              }
+            }
+            "#,
+        )
+        .expect("open orb");
+        let open_tree = layout_v2(&open, 1080, 2400);
+        let open_zone = super::v2_orb_zone_rect(1080, 2400, 2);
+        assert_eq!(
+            open_tree
+                .hit_test(
+                    f64::from(open_zone.x + open_zone.width / 2),
+                    f64::from(open_zone.y + 10)
+                )
+                .and_then(|node| node.action.as_deref()),
+            Some("orb-menu:inbox")
+        );
+        assert_eq!(
+            open_tree
+                .hit_test(
+                    f64::from(open_zone.x + open_zone.width / 2),
+                    f64::from(open_zone.y + open_zone.height - 10)
+                )
+                .and_then(|node| node.action.as_deref()),
+            Some("orb:toggle")
+        );
+        assert!(open_tree.hit_test(540.0, 2250.0).is_none());
     }
 
     #[test]

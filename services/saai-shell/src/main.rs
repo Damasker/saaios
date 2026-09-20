@@ -2612,10 +2612,8 @@ const ORB_TOGGLE_ACTION: &str = "orb:toggle";
 const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
 const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
 const ORB_MENU_BLUETOOTH_ACTION: &str = "orb-menu:bluetooth";
-/// Square, not a circle -- same reasoning as `draw_status_bar`'s HIA-03
-/// dot: no circle-drawing primitive exists in `render.rs`.
 fn orb_dot_size(width: u32, height: u32) -> u32 {
-    90.min(width / 10).min(height / 10)
+    saai_ui_compiler::v2_orb_dot_size(width, height)
 }
 
 /// HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb must
@@ -2633,25 +2631,7 @@ fn orb_dot_size(width: u32, height: u32) -> u32 {
 /// `y=150..340`, which has never had a hit-test target of its own),
 /// never downward into card territory.
 fn orb_zone_rect(width: u32, height: u32, menu_action_count: usize) -> Rect {
-    let margin = width / 22;
-    let dot_size = orb_dot_size(width, height);
-    let bottom = ((410_u64 * height as u64) / 2400) as u32;
-    if menu_action_count == 0 {
-        return Rect::new(
-            width.saturating_sub(margin + dot_size),
-            bottom.saturating_sub(dot_size),
-            dot_size,
-            dot_size,
-        );
-    }
-    let top = ((160_u64 * height as u64) / 2400) as u32;
-    let zone_width = 420.min(width.saturating_sub(margin * 2));
-    Rect::new(
-        width.saturating_sub(margin + zone_width),
-        top,
-        zone_width,
-        bottom.saturating_sub(top),
-    )
+    saai_ui_compiler::v2_orb_zone_rect(width, height, menu_action_count)
 }
 
 /// HIA-05: which real thing a tapped Orb row does -- `Toggle` is
@@ -2728,9 +2708,8 @@ fn orb_menu_actions(is_system_space: bool, bluetooth_paired: bool) -> Vec<OrbAct
 /// Closed (`menu_actions` empty): the whole zone IS the dot, one
 /// leaf, nothing to stack. Open: a vertical list within the (now
 /// taller) zone -- one row per `menu_actions` entry, the dot itself
-/// last, doubling as the close control -- same "layout only returns a
-/// position, the call site decides what it means" shape `object_view`/
-/// `task_confirm_view` already use.
+/// last, doubling as the close control. Paint still reads this tree
+/// (ADR-223). Live hits come from `layout_v2()` over `orb_v2_source`.
 fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
     let zone = orb_zone_rect(width, height, menu_actions.len());
     if menu_actions.is_empty() {
@@ -2758,10 +2737,14 @@ fn orb_action_at(
     if width == 0 || height == 0 {
         return None;
     }
-    orb_view(width, height, menu_actions)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
-        .and_then(OrbAction::parse)
+    live_v2_hit(
+        &orb_v2_source(menu_actions),
+        "ADR-223 orb",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action.as_deref().and_then(OrbAction::parse))
 }
 
 /// What `draw_orb` needs, computed once per frame in `build_orb_
@@ -5678,6 +5661,20 @@ fn overlay_field_v2_source_with(screen_id: &str, field_id: &str, with_keyboard: 
         v2_header_block(&format!("{screen_id}.header")),
         v2_loc_token(field_id)
     )
+}
+
+/// ADR-223: live Orb hits are a generated `OrbHost` plus `orb-menu:`
+/// Buttons. Closed omits the menu Buttons so `layout_v2` docks only
+/// the dot. Paint still uses `orb_view`.
+fn orb_v2_source(menu_actions: &[OrbAction]) -> String {
+    let mut src = String::from(
+        "sui 2\nscreen now {\n  component OrbHost {\n    a11y = Status\n    loc = \"orb:toggle\"\n  }\n",
+    );
+    for action in menu_actions {
+        src.push_str(&v2_stacked_block("Button", "Button", action.wire()));
+    }
+    src.push('}');
+    src
 }
 
 fn overlay_field_rect(screen_id: &str, field_id: &str, width: u32, height: u32) -> Rect {
@@ -10728,8 +10725,8 @@ mod tests {
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
         now_object_tapped, object_view_action_at, object_view_content, object_view_details,
         object_view_permission_pattern, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_visual_state,
-        orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
+        orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
+        orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
         pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
         remove_context_source, retain_pressed_while_clock, space_color, space_color_entity,
         space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
@@ -13924,6 +13921,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn orb_live_source_names_orbhost_and_menu_buttons() {
+        let closed = orb_v2_source(&[]);
+        assert!(closed.contains("OrbHost"));
+        assert!(closed.contains("orb:toggle"));
+        assert!(!closed.contains("orb-menu:"));
+        let open = orb_v2_source(&[OrbAction::OpenInbox, OrbAction::OpenBluetooth]);
+        assert!(open.contains("orb-menu:inbox"));
+        assert!(open.contains("orb-menu:bluetooth"));
+        assert!(!open.contains("manage_app:"));
     }
 
     #[test]

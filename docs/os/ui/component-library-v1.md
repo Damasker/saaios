@@ -74,7 +74,7 @@ Those rows are not an app API.
 | Primitive | `SemanticText`, `Icon`, `Divider`, `StatusIndicator` | Experimental | gallery, `Сейчас`, no-PIN lock |
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
-| Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
+| Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04; Orb hits ADR-223) | shell navigation, Orb, status layer |
 | Composite | `IntentSummary`, `TaskSummary`, `DecisionOverlay`, `AgentSummary` | Experimental (VUI-05) | Object View |
 | Composite | `SettingRow`, `CapabilityRow` | Experimental (VUI-06) | `Я` / `Система` |
 | Composite | `EventRow` | Experimental (VUI-07) | `Входящие` |
@@ -418,7 +418,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - "Understandable without animation": the state's own non-color mark and
   `label_key` are always present regardless of whether a renderer is
   currently animating anything.
-- First real consumer: the existing Orb dot/menu.
+- First real consumer: the existing Orb dot/menu. ADR-223: live hits
+  come from `layout_v2()` `OrbHost` plus `orb-menu:` Buttons. Paint
+  stays `orb_view`. Do not tap Изменить.
 - ADR-170: while `motion()` is `ActivityPulse`, the inset hairline
   follows a looping `MotionClock` (on 240 ms / off 240 ms, Context
   duration reused). Reduced motion keeps the `StatusMark` only.

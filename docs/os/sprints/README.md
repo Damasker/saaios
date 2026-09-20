@@ -81,6 +81,7 @@ ADR-219 Me scroll hits from `layout_v2_scrolled`.
 ADR-220 apps grid hits from generated `compile_v2()` `Button` tiles.
 ADR-221 overlay Field/decision hits from `layout_v2`.
 ADR-222 privileged `Keyboard` IME bound to Field; USB HID may replace the panel.
+ADR-223 OrbHost hits from `layout_v2`; gallery page taps stay a whole-surface formula.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

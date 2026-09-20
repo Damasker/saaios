@@ -19,7 +19,7 @@ mod vocabulary;
 
 pub use layout::{
     layout_v1_find, layout_v1_root, layout_v2, layout_v2_scrolled, v1_root_node,
-    v1_tab_strip_height, v2_root_node,
+    v1_tab_strip_height, v2_orb_dot_size, v2_orb_zone_rect, v2_root_node,
 };
 pub use rollback::{compile_v1_rollback, V1_ROLLBACK_SOURCE};
 pub use vocabulary::{
@@ -1234,6 +1234,7 @@ mod tests {
         assert!(limits.contains("ADR-220"));
         assert!(limits.contains("ADR-221"));
         assert!(limits.contains("ADR-222"));
+        assert!(limits.contains("ADR-223"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1255,5 +1256,7 @@ mod tests {
         assert!(ledger.contains("consent:accept"));
         assert!(ledger.contains("ADR-222"));
         assert!(ledger.contains("Keyboard"));
+        assert!(ledger.contains("ADR-223"));
+        assert!(ledger.contains("OrbHost"));
     }
 }
