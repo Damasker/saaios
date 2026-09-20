@@ -1232,6 +1232,7 @@ mod tests {
         assert!(limits.contains("ADR-218"));
         assert!(limits.contains("ADR-219"));
         assert!(limits.contains("ADR-220"));
+        assert!(limits.contains("ADR-221"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1249,5 +1250,7 @@ mod tests {
         assert!(ledger.contains("ADR-220"));
         assert!(ledger.contains("now_grid_rect"));
         assert!(ledger.contains("manage_app"));
+        assert!(ledger.contains("ADR-221"));
+        assert!(ledger.contains("consent:accept"));
     }
 }

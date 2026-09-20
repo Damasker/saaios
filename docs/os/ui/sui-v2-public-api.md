@@ -102,7 +102,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
 - `compile_v2()` is production on `root.sui` (ADR-216) and `now.sui`
   (ADR-217). Live Inbox/Spaces/list hits generate documents
   (ADR-218). Me scroll is `layout_v2_scrolled` (ADR-219). Apps grid
-  `Button` tiles match `now_grid_rect` (ADR-220). `layout_v2()`
+  `Button` tiles match `now_grid_rect` (ADR-220). Overlay Field and
+  decision `Button`s match consent/object-view rows (ADR-221). Keyboard
+  keys stay a formula. `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
   `inset = safe` uses

@@ -22,6 +22,8 @@
 //! matches `scrolled_row_rect` after a drag.
 //! ADR-220: `Button` tiles overlay the 3-column apps grid so hits match
 //! `now_grid_rect`. Linear layout cannot place a column beside another.
+//! ADR-221: overlay `Field` and decision `Button`s dock through
+//! `layout_v2()`. Keyboard keys stay a formula.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -290,6 +292,142 @@ fn v2_grid_action(tile: &crate::SuiV2Component) -> Option<String> {
     tile.props.loc.clone()
 }
 
+fn v2_is_grid_button(component: &crate::SuiV2Component) -> bool {
+    component.type_name == "Button"
+        && component
+            .props
+            .loc
+            .as_deref()
+            .is_some_and(|loc| loc.starts_with("manage_app:"))
+}
+
+fn v2_is_overlay_button(component: &crate::SuiV2Component) -> bool {
+    component.type_name == "Button"
+        && component.props.loc.is_some()
+        && !v2_is_grid_button(component)
+}
+
+/// Live consent / task-confirm / object-view button row uses
+/// `ROOT_TAB_HEIGHT` (300) as physical `Px`.
+const V2_OVERLAY_BUTTON_HEIGHT: u32 = 300;
+const V2_LOCK_HEADER_HEIGHT: u32 = 260;
+const V2_LOCK_FIELD_TOP: u32 = 24;
+
+fn v2_compose_keyboard_height(screen: &crate::SuiV2Screen, panel_height: u32) -> u32 {
+    let row = v2_physical(MIN_TOUCH_TARGET);
+    let (rows, pad_token) = if screen.id == "pin-setup" {
+        (5u32, SpacingToken::XSmall)
+    } else {
+        (4, SpacingToken::Small)
+    };
+    let pad = v2_physical(pad_token.value()).saturating_mul(2);
+    let wanted = row.saturating_mul(rows).saturating_add(pad);
+    let keep_field = row.saturating_mul(2);
+    wanted.min(panel_height.saturating_sub(keep_field)).max(row)
+}
+
+fn v2_overlay_button_action(button: &crate::SuiV2Component) -> Option<String> {
+    if button.props.a11y.as_deref() != Some("Button") {
+        return None;
+    }
+    button.props.loc.clone()
+}
+
+fn v2_decision_node(screen: &crate::SuiV2Screen, buttons: &[&crate::SuiV2Component]) -> Node {
+    let header = Node::leaf("ContextHeader".to_string());
+    let row = Node::linear(
+        format!("{}-buttons", screen.id),
+        Axis::Horizontal,
+        buttons
+            .iter()
+            .enumerate()
+            .map(|(index, button)| {
+                let id = button
+                    .props
+                    .loc
+                    .clone()
+                    .unwrap_or_else(|| format!("Button-{index}"));
+                let mut leaf = Node::leaf(id);
+                if let Some(action) = v2_overlay_button_action(button) {
+                    leaf = leaf.with_action(action);
+                }
+                leaf
+            })
+            .collect(),
+    )
+    .with_size(Length::Fill, Length::Px(V2_OVERLAY_BUTTON_HEIGHT));
+    Node::linear(
+        format!("{}-content", screen.id),
+        Axis::Vertical,
+        vec![header, row],
+    )
+}
+
+fn v2_compose_node(
+    screen: &crate::SuiV2Screen,
+    width: u32,
+    height: u32,
+    field: &crate::SuiV2Component,
+) -> Node {
+    let margin = width / 22;
+    let field_height = v2_stacked_row_height(height);
+    let keyboard_height = v2_compose_keyboard_height(screen, height);
+    let id = field
+        .props
+        .loc
+        .clone()
+        .unwrap_or_else(|| "Field".to_string());
+    let field_row = Node::linear(
+        format!("{}-field-row", screen.id),
+        Axis::Horizontal,
+        vec![Node::leaf(id)],
+    )
+    .with_size(Length::Fill, Length::Px(field_height))
+    .with_padding(EdgeInsets {
+        top: 0,
+        right: margin,
+        bottom: 0,
+        left: margin,
+    });
+    Node::linear(
+        format!("{}-content", screen.id),
+        Axis::Vertical,
+        vec![
+            Node::leaf("ContextHeader".to_string()),
+            field_row,
+            Node::leaf(format!("{}-keyboard", screen.id))
+                .with_size(Length::Fill, Length::Px(keyboard_height)),
+        ],
+    )
+}
+
+fn v2_lock_field_node(
+    screen: &crate::SuiV2Screen,
+    width: u32,
+    field: &crate::SuiV2Component,
+) -> Node {
+    let margin = width / 22;
+    let id = field
+        .props
+        .loc
+        .clone()
+        .unwrap_or_else(|| "Field".to_string());
+    let slot = v2_placed_slot(
+        &screen.id,
+        0,
+        id,
+        None,
+        V2_LOCK_FIELD_TOP,
+        V2_LOCK_HEADER_HEIGHT.saturating_sub(48),
+    );
+    Node::stack(format!("{}-layers", screen.id), vec![slot]).with_padding(EdgeInsets {
+        top: 0,
+        right: margin,
+        bottom: 0,
+        left: margin,
+    })
+}
+
 fn v2_stacked_action(row: &crate::SuiV2Component) -> Option<String> {
     if matches!(row.type_name.as_str(), "SystemSection" | "CapabilityRow")
         || row.props.a11y.as_deref() != Some("Button")
@@ -319,6 +457,8 @@ fn v2_content_node(
     let mut object = None;
     let mut stacked = Vec::new();
     let mut grid = Vec::new();
+    let mut overlay_buttons = Vec::new();
+    let mut fields = Vec::new();
     let mut rest = Vec::new();
     for component in screen
         .components
@@ -328,14 +468,29 @@ fn v2_content_node(
         match component.type_name.as_str() {
             "ContextHeader" if header.is_none() => header = Some(component),
             "ObjectSummary" if object.is_none() => object = Some(component),
+            "Field" if component.props.loc.is_some() => fields.push(component),
             "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" | "WifiRow"
             | "BluetoothRow" | "TrustedClientRow" | "CapabilityRow" => stacked.push(component),
-            "Button" if component.props.loc.is_some() => grid.push(component),
+            _ if v2_is_grid_button(component) => grid.push(component),
+            _ if v2_is_overlay_button(component) => overlay_buttons.push(component),
             _ => rest.push(component),
         }
     }
+    if v2_named_tabs(screen).is_empty() && !overlay_buttons.is_empty() {
+        return v2_decision_node(screen, &overlay_buttons);
+    }
+    if v2_named_tabs(screen).is_empty() && screen.id == "lock" {
+        if let Some(field) = fields.first() {
+            return v2_lock_field_node(screen, width, field);
+        }
+    }
+    if v2_named_tabs(screen).is_empty() {
+        if let Some(field) = fields.first() {
+            return v2_compose_node(screen, width, height, field);
+        }
+    }
     let header_height = if header.is_some() {
-        if object.is_some() {
+        if object.is_some() && !v2_named_tabs(screen).is_empty() {
             v2_now_header_height(content_height)
         } else if !stacked.is_empty() || !grid.is_empty() {
             v2_stacked_row_top(0, height)
@@ -379,7 +534,7 @@ fn v2_content_node(
             header_height,
         ));
     }
-    if object.is_some() {
+    if object.is_some() && !v2_named_tabs(screen).is_empty() {
         layers.push(v2_placed_slot(
             &screen.id,
             1,
@@ -920,6 +1075,123 @@ mod tests {
         assert!(tree
             .hit_test(f64::from(cell_0.x + 10), f64::from(cell_0.y + 10))
             .is_none());
+    }
+
+    #[test]
+    fn layout_v2_overlay_buttons_match_consent_row() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen consent {
+              component ContextHeader {}
+              component Button {
+                a11y = Button
+                loc = "consent:accept"
+              }
+              component Button {
+                a11y = Button
+                loc = "consent:decline"
+              }
+            }
+            "#,
+        )
+        .expect("consent overlay");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(270.0, 2250.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("consent:accept")
+        );
+        assert_eq!(
+            v2.hit_test(810.0, 2250.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("consent:decline")
+        );
+        assert!(v2.hit_test(540.0, 1000.0).is_none());
+        let one = compile_v2(
+            r#"
+            sui 2
+            screen object {
+              component ObjectSummary {}
+              component Button {
+                a11y = Button
+                loc = "object-view-action:0"
+              }
+            }
+            "#,
+        )
+        .expect("object overlay");
+        let tree = layout_v2(&one, 1080, 2400);
+        assert_eq!(
+            tree.hit_test(270.0, 2250.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("object-view-action:0")
+        );
+        assert_eq!(
+            tree.hit_test(810.0, 2250.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("object-view-action:0")
+        );
+        assert!(tree
+            .hit_test(540.0, 800.0)
+            .and_then(|node| node.action.as_deref())
+            .is_none());
+    }
+
+    #[test]
+    fn layout_v2_compose_field_docks_above_keyboard_reserve() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen intent {
+              component ContextHeader {}
+              component Field {
+                a11y = Status
+                loc = "intent-field"
+              }
+            }
+            "#,
+        )
+        .expect("intent field");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        let field = layout_v1_find(&v2, "intent-field").expect("field");
+        let keyboard = layout_v1_find(&v2, "intent-keyboard").expect("keyboard reserve");
+        assert_eq!(field.rect.y + field.rect.height, keyboard.rect.y);
+        assert!(v2.hit_test(540.0, f64::from(field.rect.y + 10)).is_none());
+        let pin = compile_v2(
+            r#"
+            sui 2
+            screen pin-setup {
+              component ContextHeader {}
+              component Field {
+                a11y = Status
+                loc = "pin-setup-field"
+              }
+            }
+            "#,
+        )
+        .expect("pin field");
+        let pin_tree = layout_v2(&pin, 1080, 2400);
+        let pin_field = layout_v1_find(&pin_tree, "pin-setup-field").expect("pin field");
+        let pin_keys = layout_v1_find(&pin_tree, "pin-setup-keyboard").expect("pin reserve");
+        assert_eq!(pin_field.rect.y + pin_field.rect.height, pin_keys.rect.y);
+        assert!(pin_keys.rect.height > keyboard.rect.height);
+        let lock = compile_v2(
+            r#"
+            sui 2
+            screen lock {
+              component Field {
+                a11y = Status
+                loc = "lock-pin-field"
+              }
+            }
+            "#,
+        )
+        .expect("lock field");
+        let lock_tree = layout_v2(&lock, 1080, 2400);
+        let lock_field = layout_v1_find(&lock_tree, "lock-pin-field").expect("lock field");
+        assert_eq!(lock_field.rect.y, 24);
+        assert!(lock_field.rect.y + lock_field.rect.height <= 260);
     }
 
     #[test]

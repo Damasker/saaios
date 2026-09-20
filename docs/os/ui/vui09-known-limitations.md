@@ -17,7 +17,8 @@ Production is `compile_v2()` (ADR-216). NOW content hits use
 compiled `now.sui` (ADR-217). Inbox/Spaces/list hits generate
 `compile_v2()` documents (ADR-218). Me scroll uses
 `layout_v2_scrolled` (ADR-219). Apps grid hits use generated
-`compile_v2()` `Button` tiles (ADR-220).
+`compile_v2()` `Button` tiles (ADR-220). Overlay Field and decision
+`Button` hits use `layout_v2` (ADR-221). Keyboard keys stay a formula.
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).

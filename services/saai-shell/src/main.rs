@@ -2224,12 +2224,20 @@ fn task_confirm_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bo
     if width == 0 || height == 0 {
         return None;
     }
-    match task_confirm_view(width, height)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
+    match live_v2_hit(
+        &overlay_buttons_v2_source(
+            "consent",
+            &[TASK_CONFIRM_ACCEPT_ACTION, TASK_CONFIRM_DECLINE_ACTION],
+        ),
+        "ADR-221 task confirm",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
     {
-        Some(TASK_CONFIRM_ACCEPT_ACTION) => Some(true),
-        Some(TASK_CONFIRM_DECLINE_ACTION) => Some(false),
+        Some(action) if action == TASK_CONFIRM_ACCEPT_ACTION => Some(true),
+        Some(action) if action == TASK_CONFIRM_DECLINE_ACTION => Some(false),
         _ => None,
     }
 }
@@ -2279,11 +2287,19 @@ fn object_view_action_at(
     if width == 0 || height == 0 || action_count == 0 {
         return None;
     }
-    object_view(width, height, action_count)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
-        .and_then(|action| action.strip_prefix(OBJECT_VIEW_ACTION_PREFIX))
-        .and_then(|index| index.parse::<usize>().ok())
+    let locs: Vec<String> = (0..action_count)
+        .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
+        .collect();
+    let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+    live_v2_hit(
+        &overlay_buttons_v2_source("object", &loc_refs),
+        "ADR-221 object view",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
+    .and_then(|action| action.strip_prefix(OBJECT_VIEW_ACTION_PREFIX)?.parse().ok())
 }
 
 /// What Object View shows for one entity -- `saaios.task`/`saaios.
@@ -2953,10 +2969,8 @@ fn intent_keyboard_keys(
 
 /// ADR-161/162: the compose Field is the `intent-field` leaf in
 /// `intent_view`, immediately above the docked keyboard.
-fn intent_field_rect(width: u32, height: u32, mode: KeyboardMode) -> Rect {
-    layout_node_by_id(&intent_view(width, height, mode), INTENT_FIELD_ID)
-        .map(|node| node.rect)
-        .unwrap_or_else(|| stacked_row_rect(0, width, height))
+fn intent_field_rect(width: u32, height: u32, _mode: KeyboardMode) -> Rect {
+    overlay_field_rect("intent", INTENT_FIELD_ID, width, height)
 }
 
 fn layout_node_by_id<'a>(node: &'a LayoutNode, id: &str) -> Option<&'a LayoutNode> {
@@ -3023,12 +3037,17 @@ fn consent_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bool> {
     if width == 0 || height == 0 {
         return None;
     }
-    match consent_view(width, height)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
+    match live_v2_hit(
+        &overlay_buttons_v2_source("consent", &["consent:accept", "consent:decline"]),
+        "ADR-221 consent",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
     {
-        Some(CONSENT_ACCEPT_ACTION) => Some(true),
-        Some(CONSENT_DECLINE_ACTION) => Some(false),
+        Some(action) if action == CONSENT_ACCEPT_ACTION => Some(true),
+        Some(action) if action == CONSENT_DECLINE_ACTION => Some(false),
         _ => None,
     }
 }
@@ -3614,13 +3633,8 @@ fn pin_setup_action_at(
     )
 }
 
-fn pin_setup_field_rect(width: u32, height: u32, has_existing_pin: bool) -> Rect {
-    layout_node_by_id(
-        &pin_setup_view(width, height, has_existing_pin),
-        PIN_SETUP_FIELD_ID,
-    )
-    .map(|node| node.rect)
-    .unwrap_or_else(|| stacked_row_rect(0, width, height))
+fn pin_setup_field_rect(width: u32, height: u32, _has_existing_pin: bool) -> Rect {
+    overlay_field_rect("pin-setup", PIN_SETUP_FIELD_ID, width, height)
 }
 
 #[cfg(test)]
@@ -4779,13 +4793,7 @@ fn lock_pin_entry_field(entered_len: usize) -> Field {
 }
 
 fn lock_pin_field_rect(width: u32) -> Rect {
-    let margin = width / 22;
-    Rect::new(
-        margin,
-        24,
-        width.saturating_sub(margin.saturating_mul(2)),
-        INTENT_HEADER_HEIGHT.saturating_sub(48),
-    )
+    overlay_field_rect("lock", "lock-pin-field", width, 2400)
 }
 
 /// VUI-07 (ADR-130/155/156): «Bluetooth устройства» lists live
@@ -5615,6 +5623,36 @@ fn apps_v2_source(installed_apps: &BTreeMap<String, AppSummary>) -> String {
     src.push_str(V2_ROOT_TABS);
     src.push('}');
     src
+}
+
+fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
+    let mut src = format!("sui 2\nscreen {screen_id} {{\n");
+    src.push_str(&v2_header_block(&format!("{screen_id}.header")));
+    for loc in locs {
+        src.push_str(&v2_stacked_block("Button", "Button", loc));
+    }
+    src.push('}');
+    src
+}
+
+fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
+    format!(
+        "sui 2\nscreen {screen_id} {{\n{}  component Field {{\n    text = Body\n    a11y = Status\n    loc = {}\n  }}\n}}\n",
+        v2_header_block(&format!("{screen_id}.header")),
+        v2_loc_token(field_id)
+    )
+}
+
+fn overlay_field_rect(screen_id: &str, field_id: &str, width: u32, height: u32) -> Rect {
+    let tree = layout_live_v2(
+        &overlay_field_v2_source(screen_id, field_id),
+        "ADR-221 field",
+        width,
+        height,
+    );
+    saai_ui_compiler::layout_v1_find(&tree, field_id)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| stacked_row_rect(0, width, height))
 }
 
 fn me_dispatch_at(
