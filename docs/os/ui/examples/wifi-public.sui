@@ -12,4 +12,6 @@ screen wifi {
     a11y = Button
     loc = wifi.item
   }
+  row refresh {}
+  row back {}
 }

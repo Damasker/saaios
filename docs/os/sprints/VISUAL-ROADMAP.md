@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–213; runnable device cells proven; thin tuning parked last; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–214; runnable device cells proven; thin tuning parked last; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1174,7 +1174,8 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 `CapabilityRow` hits (ADR-208); lock cycle
 (ADR-209); display restart (ADR-210); cold boot
 (ADR-211); 7-tap gallery (ADR-212); thin tuning parked last
-(ADR-213). Release gate remains. Not Visual v1 sign-off.
+(ADR-213); list trailing rows (ADR-214). Release
+gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1231,6 +1232,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   leftover visual nits, and gallery-fixture completeness are not
   next. Me flatten/scroll and trailing list hits stay the Visual
   queue.
+- [x] Dock list trailing rows in `layout_v2()` so they match
+  `stacked_trailing_rect` (ADR-214). Me flatten/scroll stays
+  procedural. `compile()` stays v1.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1342,12 +1346,9 @@ After each completed task group, report:
 
 ## Next action
 
-Dock live Me flatten/scroll and list trailing controls in
-`layout_v2()` so declarative and procedural paths match. Runnable
-VUI-09 device cells are proven (ADR-209–212). Leftover text sizes
-stay named (ADR-201). Inbox through Bluetooth stacked hits are host
-(ADR-202–206). Privileged trusted-client and Me app hits are host
-(ADR-207/208). `compile()` stays v1. Do not point `root.sui` at
-`compile_v2()`. Space detail still deferred. MEM-08 stays omitted
-until a shell-legal memory read exists. Thin tuning stays last
-(ADR-213).
+Dock live Me flatten/scroll in `layout_v2()` so declarative and
+procedural paths match, then switch `build.rs` to `compile_v2()`
+only after that equivalence is proven. List trailing rows are host
+(ADR-214). Runnable VUI-09 device cells are proven (ADR-209–212).
+`compile()` stays v1 until the switch. Space detail still deferred.
+MEM-08 stays omitted. Thin tuning stays last (ADR-213).

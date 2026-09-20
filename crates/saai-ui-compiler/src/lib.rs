@@ -93,8 +93,10 @@ pub struct SuiV2Tab {
     pub loc: Option<String>,
 }
 
-/// Nested `row <id>` on a `sui 2` screen. Ids are the live NOW footer
-/// destinations (`apps`, `intent`). Action matches `now_footer_action_at`.
+/// Nested `row <id>` on a `sui 2` screen. Footer ids (`apps`,
+/// `intent`) match `now_footer_action_at`. Trailing list ids
+/// (`refresh`, `scan`, `back`) match live list controls
+/// (ADR-214).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SuiV2Row {
     pub id: String,
@@ -442,6 +444,9 @@ impl Parser {
         let action = match id.as_str() {
             "apps" => "open_apps",
             "intent" => "open_intent_input",
+            "refresh" => "list_refresh",
+            "scan" => "list_scan",
+            "back" => "list_back",
             _ => return Err(self.fail(format!("unknown SUI v2 row `{id}`"))),
         }
         .to_string();
@@ -813,6 +818,15 @@ mod tests {
             rows,
             [("apps", "open_apps"), ("intent", "open_intent_input")]
         );
+        let wifi_rows =
+            compile_v2_public(include_str!("../../../docs/os/ui/examples/wifi-public.sui"))
+                .expect("public Wi-Fi");
+        let named: Vec<(&str, &str)> = wifi_rows
+            .rows
+            .iter()
+            .map(|row| (row.id.as_str(), row.action.as_str()))
+            .collect();
+        assert_eq!(named, [("refresh", "list_refresh"), ("back", "list_back")]);
         let unknown = compile_v2(
             r#"
             sui 2
@@ -1153,6 +1167,9 @@ mod tests {
         assert!(ledger.contains("Диагностика"));
         assert!(ledger.contains("ADR-213"));
         assert!(ledger.contains("thin tuning"));
+        assert!(ledger.contains("ADR-214"));
+        assert!(ledger.contains("list_back"));
+        assert!(ledger.contains("stacked_trailing_rect"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1186,6 +1203,9 @@ mod tests {
         assert!(limits.contains("Диагностика"));
         assert!(limits.contains("ADR-213"));
         assert!(limits.contains("thin tuning"));
+        assert!(limits.contains("ADR-214"));
+        assert!(limits.contains("list_back"));
+        assert!(limits.contains("stacked_trailing_rect"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

@@ -52,20 +52,21 @@ invent no interned action.
 
 [`examples/wifi-public.sui`](examples/wifi-public.sui) is the
 labelled Wi-Fi sample: `ContextHeader`, `WifiRow` with
-`a11y = Button` (ADR-205). Status `WifiRow` invents no
-`connect_wifi`. No nested tabs: live «Wi-Fi сети» has trailing
-controls, not `BottomNavigation`.
+`a11y = Button` (ADR-205), and nested `row refresh` / `row back`
+(ADR-214). Status `WifiRow` invents no `connect_wifi`. No nested
+tabs: live «Wi-Fi сети» has trailing controls, not
+`BottomNavigation`.
 
 [`examples/bluetooth-public.sui`](examples/bluetooth-public.sui) is the
 labelled Bluetooth sample: `ContextHeader`, `BluetoothRow` with
-`a11y = Button` (ADR-206). Status `BluetoothRow` invents no
-`pair_bluetooth`. No nested tabs: live «Bluetooth устройства» has
-trailing controls, not `BottomNavigation`.
+`a11y = Button` (ADR-206), and nested `row scan` / `row refresh` /
+`row back` (ADR-214). Status `BluetoothRow` invents no
+`pair_bluetooth`. No nested tabs.
 
 [`examples/trusted-privileged.sui`](examples/trusted-privileged.sui) is
 the labelled shell sample: `TrustedClientRow` with `a11y = Button`
-(ADR-207). `compile_v2_public()` rejects it. Status rows invent no
-`revoke_trusted_client`.
+(ADR-207) and nested `row back` (ADR-214). `compile_v2_public()`
+rejects it. Status rows invent no `revoke_trusted_client`.
 
 [`examples/capability-privileged.sui`](examples/capability-privileged.sui)
 is the labelled shell sample: `CapabilityRow` with `a11y = Status`
@@ -110,7 +111,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
   trusted-client stacked hits (`revoke_trusted_client`, ADR-207);
   `compile_v2_public()` rejects the name. Privileged `CapabilityRow`
   occupies Me app stacked hits with no action (ADR-208);
-  `compile_v2_public()` rejects the name.
+  `compile_v2_public()` rejects the name. Nested trailing `row`
+  ids own list Обновить/Искать/Назад (`list_refresh` / `list_scan` /
+  `list_back`, ADR-214).
 
 ## Migration
 
@@ -133,7 +136,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Spaces `SpaceRow` with `a11y = Status` | stacked rect, no `select_space` |
 | Wanting Me hit-test from a v2 screen | `component SettingRow` + `a11y = Button` + interned `loc` + `layout_v2` |
 | Me `SettingRow` with `a11y = Status` | stacked rect, no interned action |
-| Wanting Wi-Fi hit-test from a v2 screen | `component WifiRow` + `a11y = Button` + `layout_v2` |
+| Wanting Wi-Fi trailing hits from a v2 screen | nested `row refresh` / `row back` + `layout_v2` |
+| Screen without trailing `row` | no `list_back`; do not invent Назад |
+| Wanting Bluetooth trailing hits from a v2 screen | nested `row scan` / `row refresh` / `row back` + `layout_v2` |
 | Wi-Fi `WifiRow` with `a11y = Status` | stacked rect, no `connect_wifi` |
 | Wanting Bluetooth hit-test from a v2 screen | `component BluetoothRow` + `a11y = Button` + `layout_v2` |
 | Bluetooth `BluetoothRow` with `a11y = Status` | stacked rect, no `pair_bluetooth` |

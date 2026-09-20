@@ -12,4 +12,7 @@ screen bluetooth {
     a11y = Button
     loc = bluetooth.item
   }
+  row scan {}
+  row refresh {}
+  row back {}
 }

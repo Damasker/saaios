@@ -15,6 +15,8 @@
 //! ADR-206: `BluetoothRow` docks as live Bluetooth list stacked rows.
 //! ADR-207: `TrustedClientRow` docks as live trusted-client stacked rows.
 //! ADR-208: `CapabilityRow` docks as live Me app stacked rows.
+//! ADR-214: nested `row refresh`/`scan`/`back` dock as live list
+//! trailing controls.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -151,6 +153,38 @@ fn v2_stacked_row_height(panel_height: u32) -> u32 {
     ((u64::from(V2_STACKED_ROW_HEIGHT_2400) * u64::from(panel_height)) / 2400) as u32
 }
 
+fn v2_stacked_row_pitch(panel_height: u32) -> u32 {
+    ((u64::from(V2_STACKED_ROW_PITCH_2400) * u64::from(panel_height)) / 2400) as u32
+}
+
+fn v2_is_footer_row(id: &str) -> bool {
+    matches!(id, "apps" | "intent")
+}
+
+fn v2_is_trailing_row(id: &str) -> bool {
+    matches!(id, "refresh" | "scan" | "back")
+}
+
+/// Live `stacked_control_rect`: if the stacked slot would paint below
+/// the panel, dock to the last on-screen row.
+fn v2_control_top(index: usize, panel_height: u32) -> u32 {
+    let desired = v2_stacked_row_top(index, panel_height);
+    let row_height = v2_stacked_row_height(panel_height);
+    if desired.saturating_add(row_height) <= panel_height {
+        desired
+    } else {
+        panel_height.saturating_sub(row_height)
+    }
+}
+
+/// Live `stacked_trailing_rect`.
+fn v2_trailing_top(index: usize, last_index: usize, panel_height: u32) -> u32 {
+    let back_top = v2_control_top(last_index, panel_height);
+    let steps = last_index.saturating_sub(index) as u32;
+    let y = back_top.saturating_sub(steps.saturating_mul(v2_stacked_row_pitch(panel_height)));
+    y.max(v2_stacked_row_top(0, panel_height))
+}
+
 fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height: u32) -> Node {
     let margin = width / 22;
     let mut header = None;
@@ -196,9 +230,28 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         );
         cursor = cursor.saturating_add(object_height);
     }
+    let trailing: Vec<&crate::SuiV2Row> = screen
+        .rows
+        .iter()
+        .filter(|row| v2_is_trailing_row(&row.id))
+        .collect();
+    let footer: Vec<&crate::SuiV2Row> = screen
+        .rows
+        .iter()
+        .filter(|row| v2_is_footer_row(&row.id))
+        .collect();
+    let trailing_first_top = if trailing.is_empty() {
+        None
+    } else {
+        let last = stacked.len() + trailing.len() - 1;
+        Some(v2_trailing_top(stacked.len(), last, height))
+    };
     let stacked_height = v2_stacked_row_height(height);
     for (index, row) in stacked.iter().enumerate() {
         let top = v2_stacked_row_top(index, height);
+        if trailing_first_top.is_some_and(|first| top.saturating_add(stacked_height) > first) {
+            continue;
+        }
         if top > cursor {
             children.push(
                 Node::leaf(format!("{}-gap-{cursor}", screen.id))
@@ -229,6 +282,26 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         children.push(node);
         cursor = cursor.max(top.saturating_add(stacked_height));
     }
+    if !trailing.is_empty() {
+        let last = stacked.len() + trailing.len() - 1;
+        for (offset, row) in trailing.iter().enumerate() {
+            let index = stacked.len() + offset;
+            let top = v2_trailing_top(index, last, height);
+            if top > cursor {
+                children.push(
+                    Node::leaf(format!("{}-trail-gap-{cursor}", screen.id))
+                        .with_size(Length::Fill, Length::Px(top - cursor)),
+                );
+                cursor = top;
+            }
+            children.push(
+                Node::leaf(row.id.clone())
+                    .with_action(row.action.clone())
+                    .with_size(Length::Fill, Length::Px(stacked_height)),
+            );
+            cursor = cursor.max(top.saturating_add(stacked_height));
+        }
+    }
     for component in rest {
         children.push(Node::leaf(component.type_name.clone()));
     }
@@ -236,7 +309,7 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         children.push(Node::leaf(format!("{}-fill", screen.id)));
     }
     let row_height = v2_footer_row_height(height);
-    for row in &screen.rows {
+    for row in footer {
         children.push(
             Node::leaf(row.id.clone())
                 .with_action(row.action.clone())
@@ -562,6 +635,16 @@ mod tests {
         );
         assert!(v2.hit_test(540.0, 250.0).is_none());
         assert!(v2.hit_test(135.0, 2250.0).is_none());
+        assert_eq!(
+            v2.hit_test(540.0, 745.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_refresh")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 965.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_back")
+        );
         let quiet = compile_v2(
             r#"
             sui 2
@@ -576,7 +659,34 @@ mod tests {
         .expect("quiet row");
         let tree = layout_v2(&quiet, 1080, 2400);
         assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert!(tree.hit_test(540.0, 745.0).is_none());
         assert!(tree.hit_test(135.0, 2250.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_trailing_back_docks_when_rows_overflow() {
+        let mut source = String::from("sui 2\nscreen wifi {\n  component ContextHeader {}\n");
+        for _ in 0..9 {
+            source.push_str("  component WifiRow { a11y = Button }\n");
+        }
+        source.push_str("  row refresh {}\n  row back {}\n}\n");
+        let screen = compile_v2(&source).expect("overflow Wi-Fi");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(540.0, 2305.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_back")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 2085.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_refresh")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 525.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("connect_wifi")
+        );
     }
 
     #[test]
@@ -595,6 +705,21 @@ mod tests {
         );
         assert!(v2.hit_test(540.0, 250.0).is_none());
         assert!(v2.hit_test(135.0, 2250.0).is_none());
+        assert_eq!(
+            v2.hit_test(540.0, 745.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_scan")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 965.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_refresh")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 1185.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_back")
+        );
         let quiet = compile_v2(
             r#"
             sui 2
@@ -633,6 +758,11 @@ mod tests {
         );
         assert!(v2.hit_test(540.0, 250.0).is_none());
         assert!(v2.hit_test(135.0, 2250.0).is_none());
+        assert_eq!(
+            v2.hit_test(540.0, 745.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_back")
+        );
         let quiet = compile_v2(
             r#"
             sui 2

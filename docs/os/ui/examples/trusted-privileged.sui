@@ -12,4 +12,5 @@ screen trusted {
     a11y = Button
     loc = trusted.item
   }
+  row back {}
 }

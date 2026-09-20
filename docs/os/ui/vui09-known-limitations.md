@@ -10,7 +10,7 @@ MEM-08 omitted until a shell-legal memory read exists.
 Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
 (ADR-209). Display restart is proven (ADR-210). Cold boot is proven
 (ADR-211). 7-tap gallery is proven (ADR-212). Parked last: thin tuning
-(ADR-213).
+(ADR-213). List trailing rows are host (ADR-214).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -44,14 +44,15 @@ ADR-211. 7-tap gallery is ADR-212.
   (ADR-204); Status rows and `SystemSection` invent no
   interned `loc`. Live Me flatten/scroll stays procedural.
   `WifiRow` docks Wi-Fi list stacked hits (ADR-205); Status rows
-  invent no `connect_wifi`. Trailing Обновить/Назад stay procedural.
+  invent no `connect_wifi`. Trailing `row refresh`/`back` dock as
+  `stacked_trailing_rect` (ADR-214).
   `BluetoothRow` docks Bluetooth list stacked hits (ADR-206); Status
-  rows invent no `pair_bluetooth`. Trailing Искать/Обновить/Назад
-  stay procedural.
+  rows invent no `pair_bluetooth`. Trailing `row scan`/`refresh`/`back`
+  dock as `stacked_trailing_rect` (ADR-214).
   Privileged `TrustedClientRow` docks trusted-client stacked hits
   (ADR-207); Status rows invent no `revoke_trusted_client`.
-  `compile_v2_public()` rejects the name. Trailing Назад stays
-  procedural.
+  `compile_v2_public()` rejects the name. Trailing `row back` docks
+  (ADR-214).
   Privileged `CapabilityRow` docks Me app stacked hits (ADR-208);
   the row is never actionable. `compile_v2_public()` rejects the
   name.
@@ -130,23 +131,26 @@ Ordered. Items 1–3 and 7–17 are done
     `build.rs` yet.
 14. ~~Dock `WifiRow` so `layout_v2()` matches Wi-Fi
     `stacked_row_rect`.~~ Host: Button → `connect_wifi` (ADR-205).
-    Do not open the live list. Trailing Обновить/Назад stay
-    procedural. Do not attach `layout_v2()` to `build.rs` yet.
+    Trailing `row refresh`/`back` (ADR-214). Do not attach
+    `layout_v2()` to `build.rs` yet.
 15. ~~Dock `BluetoothRow` so `layout_v2()` matches Bluetooth
     `stacked_row_rect`.~~ Host: Button → `pair_bluetooth` (ADR-206).
-    Do not open the live list. Do not tap Сопряжь. Trailing
-    Искать/Обновить/Назад stay procedural. Do not attach
+    Trailing `row scan`/`refresh`/`back` (ADR-214). Do not attach
     `layout_v2()` to `build.rs` yet.
 16. ~~Dock `TrustedClientRow` so `layout_v2()` matches trusted-client
     `stacked_row_rect`.~~ Host: Button → `revoke_trusted_client`
-    (ADR-207). Privileged; `compile_v2_public` rejects. Do not open
-    the live list. Do not tap Отозвать. Trailing Назад stays
-    procedural. Do not attach `layout_v2()` to `build.rs` yet.
+    (ADR-207). Privileged; `compile_v2_public` rejects. Trailing
+    `row back` (ADR-214). Do not attach `layout_v2()` to `build.rs`
+    yet.
 17. ~~Dock `CapabilityRow` so `layout_v2()` matches Me app
     `stacked_row_rect`.~~ Host: never actionable (ADR-208).
     Privileged; `compile_v2_public` rejects. Do not tap Me apps.
     Do not attach `layout_v2()` to `build.rs` yet.
-18. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+18. ~~Dock list trailing rows so `layout_v2()` matches
+    `stacked_trailing_rect`.~~ Host: `list_refresh` / `list_scan` /
+    `list_back` (ADR-214). Do not attach `layout_v2()` to `build.rs`
+    yet.
+19. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 
