@@ -22,7 +22,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Слой | ADR | Host сейчас | На телефоне |
 |---|---|---|---|
 | SOM / OAM / IRAB | 118–120 | crates + entityd | не прошито как продукт |
-| Work Scheduler v2 | 121 | DAG + derived ready set в `saai-taskd` | WORK-02 host; не прошито |
+| Work Scheduler v2 | 121 | DAG + derived ready set в `saai-taskd` | ADR-233 live intents on panther |
 | World Model | 122 | `saai-observation` types | нет `saai-deviced`, не нужно для P0 |
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
@@ -74,8 +74,8 @@ APP-COMPAT, Learning (MEM-09), голос, PCE, `saai-deviced` — **не в э�
 Pixel smoke: remember из Work не течёт в Home; модель не создаёт
 authoritative fact; опасный Action по-прежнему через `TaskConfirm`.
 AUTH-04 runtime прошит 2026-09-18 (`af90a6b3…`): confirm без pending —
-`no pending confirmation`. `saai-taskd` не в native-init, WORK-02 пока
-host-only derived view.
+`no pending confirmation`. `saai-taskd` на `/data` и в `native-init`
+(ADR-233); live Work intent больше не остаётся без Task.
 
 ## P2 — едет на VUI, не отдельным треком
 

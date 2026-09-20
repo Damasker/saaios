@@ -51,6 +51,8 @@
  * same "independent of the fixed-size image" reasoning as APPD_PATH's
  * own comment already gives, just applied here two years late. */
 #define RUNTIME_PATH "/data/saaios/system/saaios-runtime"
+#define TASKD_PATH "/data/saaios/system/saai-taskd"
+#define TASKD_RUNTIME_ADDR "172.31.7.1:38127"
 #define GPU_MODULE_DIR "/data/saaios/system/gpu"
 #define GPU_PIXEL_MODULE GPU_MODULE_DIR "/mali_pixel.ko"
 #define GPU_KBASE_MODULE GPU_MODULE_DIR "/mali_kbase.ko"
@@ -1662,6 +1664,74 @@ static pid_t start_saai_entityd(void) {
     return child;
 }
 
+/* ADR-233: workflow daemon lives on /data like entityd. One space —
+   the current selection.json, falling back to home. Runtime TCP is
+   the same address start_runtime() already binds. Missing binary is
+   not a boot failure. */
+static void selected_space_id(char *out, size_t n) {
+    snprintf(out, n, "%s", "home");
+    int fd = open("/data/saaios/var/entities/selection.json",
+                  O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return;
+    }
+    char buf[512] = {0};
+    ssize_t count = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (count <= 0) {
+        return;
+    }
+    const char *key = "\"space_id\":\"";
+    char *found = strstr(buf, key);
+    if (found == NULL) {
+        return;
+    }
+    found += strlen(key);
+    size_t i = 0;
+    while (found[i] != '\0' && found[i] != '"' && i + 1 < n) {
+        out[i] = found[i];
+        i++;
+    }
+    out[i] = '\0';
+    if (out[0] == '\0') {
+        snprintf(out, n, "%s", "home");
+    }
+}
+
+static pid_t start_saai_taskd(void) {
+    struct stat binary;
+    if (stat(TASKD_PATH, &binary) < 0 || !S_ISREG(binary.st_mode) ||
+        access(TASKD_PATH, X_OK) < 0) {
+        log_message("saai-taskd unavailable at %s", TASKD_PATH);
+        return -1;
+    }
+    char space[64];
+    selected_space_id(space, sizeof(space));
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/saai-taskd.log",
+                          O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl(TASKD_PATH, "saai-taskd",
+              "--entityd-socket", "/run/saaios/entityd.sock",
+              "--space", space,
+              "--runtime-addr", TASKD_RUNTIME_ADDR, NULL);
+        dprintf(STDERR_FILENO, "saai-taskd exec failed: %s\n",
+                strerror(errno));
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("system service started: saai-taskd space=%s", space);
+    }
+    return child;
+}
+
 static int create_input_node(const char *wanted_name,
                              const char *symlink_path) {
     for (int attempt = 0; attempt < 50; ++attempt) {
@@ -1940,6 +2010,7 @@ int main(void) {
     configure_network();
     start_usb_dhcp();
     start_runtime();
+    pid_t taskd_pid = start_saai_taskd();
     pid_t console_pid = start_console();
     mark_userspace_stable();
     log_message("native userspace ready");
@@ -2010,6 +2081,13 @@ int main(void) {
             entityd_pid = start_saai_entityd();
             if (entityd_pid > 0) {
                 log_message("system service restarted: saai-entityd");
+            }
+        } else if (taskd_pid > 0 && ended == taskd_pid) {
+            log_message("system service exited: saai-taskd");
+            usleep(500000);
+            taskd_pid = start_saai_taskd();
+            if (taskd_pid > 0) {
+                log_message("system service restarted: saai-taskd");
             }
         } else if (ui_pid > 0 && ended == ui_pid) {
             /* ADR-009: single UI-slot ownership -- waitpid() above already

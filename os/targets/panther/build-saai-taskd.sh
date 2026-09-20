@@ -1,12 +1,10 @@
 #!/bin/sh
 set -eu
 
-# Cross-compile S09 Change 2's workflow daemon for the persistent SaaiOS
-# system directory on /data, same as saai-appd/saai-entityd -- it stays
-# outside the fixed-size init_boot ramdisk and isn't (yet) started by
-# native-init.c, so it's run manually until the workflow itself has been
-# proven physically (ADR-030's "S06/S07 order": prove it before wiring
-# boot-critical init).
+# Cross-compile S09's workflow daemon for the persistent SaaiOS
+# system directory on /data, same as saai-appd/saai-entityd -- outside
+# the fixed-size init_boot ramdisk. native-init starts it after
+# entityd and saaios-runtime (ADR-233).
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd)

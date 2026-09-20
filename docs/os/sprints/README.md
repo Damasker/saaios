@@ -91,6 +91,7 @@ ADR-229 overlay Field/decision paint from generated `layout_v2`.
 ADR-230 OrbHost paint from the same generated `layout_v2` tree as hits.
 ADR-231 diagnostic paint from the same generated `layout_v2_scrolled` tree as hits.
 ADR-232 leftover formulas: Keyboard keys, gallery page, lock idle/wake.
+ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

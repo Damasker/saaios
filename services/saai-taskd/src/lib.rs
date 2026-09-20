@@ -24,11 +24,9 @@
 //! `delete_entity` path, just a different Action `kind` and a different
 //! executor underneath it.
 //!
-//! Not yet wired into `native-init.c`'s boot sequence (unlike
-//! `saai-appd`/`saai-entityd`) -- this Change proves the workflow
-//! itself first, run manually, the same "prove it physically before
-//! touching boot-critical init" order S06/S07 already followed for
-//! their own daemons.
+//! `native-init.c` starts it from `/data/saaios/system/saai-taskd`
+//! after entityd and `saaios-runtime` (ADR-233). Missing binary is
+//! skipped, not a boot failure.
 
 pub mod client;
 pub mod graph;
