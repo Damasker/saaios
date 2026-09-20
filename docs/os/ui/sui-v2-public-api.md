@@ -39,6 +39,11 @@ labelled Inbox sample: `ContextHeader`, `EventRow` with
 `a11y = Button` (ADR-202), and the same nested tabs. Status
 `EventRow` invents no `open_object`.
 
+[`examples/spaces-public.sui`](examples/spaces-public.sui) is the
+labelled Spaces sample: `ContextHeader`, `SpaceRow` with
+`a11y = Button` (ADR-203), and the same nested tabs. Status
+`SpaceRow` invents no `select_space`.
+
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
 ```
@@ -69,7 +74,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   layer, not a content pad. Nested `tab` ids own the v2 strip.
   Nested `row` ids own the NOW footer. `ObjectSummary` owns the
   NOW object hit (`open_object`, ADR-200). `EventRow` owns Inbox
-  stacked hits (ADR-202).
+  stacked hits (ADR-202). `SpaceRow` owns Spaces stacked hits
+  (ADR-203).
 
 ## Migration
 
@@ -88,6 +94,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Screen without `ObjectSummary` | no object hit; do not invent `open_object` |
 | Wanting Inbox hit-test from a v2 screen | `component EventRow` + `a11y = Button` + `layout_v2` |
 | Inbox `EventRow` with `a11y = Status` | stacked rect, no `open_object` |
+| Wanting Spaces hit-test from a v2 screen | `component SpaceRow` + `a11y = Button` + `layout_v2` |
+| Spaces `SpaceRow` with `a11y = Status` | stacked rect, no `select_space` |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

@@ -465,7 +465,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   docks `ObjectSummary` as the NOW object hit (`open_object`).
   ADR-201 keeps badge, gallery kicker/swatch, and app-tile labels
   named below Caption. ADR-202 docks `EventRow` as Inbox stacked
-  hits (`open_object`).
+  hits (`open_object`). ADR-203 docks `SpaceRow` as Spaces stacked
+  hits (`select_space:<loc>`).
 
 ### 7.6 `TaskSummary`
 

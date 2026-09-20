@@ -8,6 +8,7 @@
 //! own the v2 strip (ADR-196). Footer hits come from named `row`s,
 //! not from v1 `content_actions`. Object hits come from
 //! ADR-202: `EventRow` docks as live Inbox stacked rows.
+//! ADR-203: `SpaceRow` docks as live Spaces stacked rows.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -148,7 +149,7 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
     let margin = width / 22;
     let mut header = None;
     let mut object = None;
-    let mut events = Vec::new();
+    let mut stacked = Vec::new();
     let mut rest = Vec::new();
     for component in screen
         .components
@@ -158,7 +159,7 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         match component.type_name.as_str() {
             "ContextHeader" if header.is_none() => header = Some(component),
             "ObjectSummary" if object.is_none() => object = Some(component),
-            "EventRow" => events.push(component),
+            "EventRow" | "SpaceRow" => stacked.push(component),
             _ => rest.push(component),
         }
     }
@@ -167,7 +168,7 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
     if header.is_some() {
         let header_height = if object.is_some() {
             v2_now_header_height(content_height)
-        } else if !events.is_empty() {
+        } else if !stacked.is_empty() {
             v2_stacked_row_top(0, height)
         } else {
             0
@@ -188,8 +189,8 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         );
         cursor = cursor.saturating_add(object_height);
     }
-    let event_height = v2_stacked_row_height(height);
-    for (index, event) in events.iter().enumerate() {
+    let stacked_height = v2_stacked_row_height(height);
+    for (index, row) in stacked.iter().enumerate() {
         let top = v2_stacked_row_top(index, height);
         if top > cursor {
             children.push(
@@ -198,17 +199,24 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
             );
             cursor = top;
         }
-        let id = event
+        let id = row
             .props
             .loc
             .clone()
-            .unwrap_or_else(|| format!("EventRow-{index}"));
-        let mut node = Node::leaf(id).with_size(Length::Fill, Length::Px(event_height));
-        if event.props.a11y.as_deref() == Some("Button") {
-            node = node.with_action("open_object");
+            .unwrap_or_else(|| format!("{}-{index}", row.type_name));
+        let mut node = Node::leaf(id).with_size(Length::Fill, Length::Px(stacked_height));
+        if row.props.a11y.as_deref() == Some("Button") {
+            let action = match row.type_name.as_str() {
+                "SpaceRow" => format!(
+                    "select_space:{}",
+                    row.props.loc.as_deref().unwrap_or("SpaceRow")
+                ),
+                _ => "open_object".to_string(),
+            };
+            node = node.with_action(action);
         }
         children.push(node);
-        cursor = cursor.max(top.saturating_add(event_height));
+        cursor = cursor.max(top.saturating_add(stacked_height));
     }
     for component in rest {
         children.push(Node::leaf(component.type_name.clone()));
@@ -430,6 +438,51 @@ mod tests {
         assert_eq!(
             tree.hit_test(405.0, 2250.0).map(|node| node.id.as_str()),
             Some("inbox")
+        );
+    }
+
+    #[test]
+    fn layout_v2_public_spaces_row_matches_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/spaces-public.sui");
+        let screen = compile_v2_public(source).expect("public Spaces");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(540.0, 525.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("select_space:spaces.item")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 525.0).map(|node| node.id.as_str()),
+            Some("spaces.item")
+        );
+        assert!(v2.hit_test(540.0, 250.0).is_none());
+        assert_eq!(
+            v2.hit_test(675.0, 2250.0).map(|node| node.id.as_str()),
+            Some("spaces")
+        );
+        let quiet = compile_v2(
+            r#"
+            sui 2
+            screen spaces {
+              component ContextHeader {}
+              component SpaceRow {
+                a11y = Status
+              }
+              component BottomNavigation {
+                tab now {}
+                tab inbox {}
+                tab spaces {}
+                tab me {}
+              }
+            }
+            "#,
+        )
+        .expect("quiet row");
+        let tree = layout_v2(&quiet, 1080, 2400);
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert_eq!(
+            tree.hit_test(675.0, 2250.0).map(|node| node.id.as_str()),
+            Some("spaces")
         );
     }
 

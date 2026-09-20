@@ -1166,7 +1166,8 @@ verification ledger (ADR-189); known limitations (ADR-193);
 `tab` grammar (ADR-196); ActionCard/tab `Label`/`Caption` (ADR-197);
 status/keys `Label`/`Caption` (ADR-198); nested `row` footer
 (ADR-199); `ObjectSummary` object hit (ADR-200); leftover text
-budget (ADR-201); Inbox `EventRow` hits (ADR-202). Release
+budget (ADR-201); Inbox `EventRow` hits (ADR-202); Spaces
+`SpaceRow` hits (ADR-203). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1237,6 +1238,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Dock `EventRow` as Inbox stacked hits so `layout_v2()` matches
   `stacked_row_rect` (ADR-202). Status rows are not actionable.
   `compile()` stays v1.
+- [x] Dock `SpaceRow` as Spaces stacked hits so `layout_v2()` matches
+  `stacked_row_rect` (ADR-203). Status rows are not actionable.
+  `compile()` stays v1.
 
 ### Acceptance
 
@@ -1301,6 +1305,7 @@ After each completed task group, report:
 
 Continue **Visual v2** at Experimental→Stable after Visual v1, or
 operator-approved lock / display restart / cold boot. Leftover text
-sizes stay named (ADR-201). Inbox `EventRow` hits are host (ADR-202).
+sizes stay named (ADR-201). Inbox and Spaces stacked hits are host
+(ADR-202/203). Me lists stay procedural.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.
