@@ -9,7 +9,8 @@ MEM-08 omitted until a shell-legal memory read exists.
 
 Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
 (ADR-209). Display restart is proven (ADR-210). Cold boot is proven
-(ADR-211). 7-tap gallery is proven (ADR-212).
+(ADR-211). 7-tap gallery is proven (ADR-212). Parked last: thin tuning
+(ADR-213).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -22,14 +23,6 @@ The verification ledger stays in
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
-
-## Session-blocked live cells
-
-These stay **open**. They are not proven by this pass.
-
-| Cell | Why this session does not run it |
-|---|---|
-| daylight / indoor / dark | No booth this session. |
 
 Unlocked `saai-shell` restart (ADR-192) is not a display restart.
 Lock cycle is ADR-209. Display restart is ADR-210. Cold boot is
@@ -106,11 +99,9 @@ Ordered. Items 1–3 and 7–17 are done
 5. Add `SpaceDetail` / `MemoryReview` / `ChatThread` / `Widget` to the
    vocabulary only when a shell-legal consumer exists. MEM-08 stays
    omitted until that memory read exists.
-6. Run the remaining session-blocked v1 cell (daylight booth) as
-   operator-approved device work. Lock cycle is proven (ADR-209).
-   Display restart is proven (ADR-210). Cold boot is proven
-   (ADR-211). 7-tap gallery is proven (ADR-212). They are Visual v1
-   gates, not v2 features.
+6. ~~Run remaining session-blocked v1 cells.~~ Lock cycle, display
+   restart, cold boot, and 7-tap gallery are proven
+   (ADR-209–212).
 7. ~~Name tabs inside the v2 grammar so `layout_v2()` does not borrow
    `compile_v1_rollback()` ids.~~ Host: nested `tab` (ADR-196). Do not
    attach `layout_v2()` to `build.rs` yet.
@@ -155,5 +146,8 @@ Ordered. Items 1–3 and 7–17 are done
     `stacked_row_rect`.~~ Host: never actionable (ADR-208).
     Privileged; `compile_v2_public` rejects. Do not tap Me apps.
     Do not attach `layout_v2()` to `build.rs` yet.
+18. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+    nits, and gallery-fixture completeness stay in that sprint. Do
+    not schedule as next work.
 
 Rollback: delete this page. The ledger and `compile()` path stay.

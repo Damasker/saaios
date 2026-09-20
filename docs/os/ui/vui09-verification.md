@@ -22,6 +22,7 @@ Lock / unlock cycle (ADR-209) is proven on HEAD; tap-unlock; PIN null.
 Display restart (ADR-210) is proven on HEAD; native-init respawned `saai-displayd`.
 Cold boot (ADR-211) is proven on HEAD; `reboot -f`; marker dropped then restored.
 7-tap gallery (ADR-212) is proven on HEAD; Диагностика then Назад.
+Thin tuning (ADR-213) is parked last; not next work.
 
 ## Matrix
 
@@ -47,7 +48,7 @@ Cold boot (ADR-211) is proven on HEAD; `reboot -f`; marker dropped then restored
 | Device | lock / unlock cycle | proven | ADR-209; HEAD `3850427a…`; PIN null; clock `13:58`; tap-unlock; marker restored; pid 27000→28091→28125 |
 | Device | display restart | proven | ADR-210; HEAD `3850427a…`; `saai-displayd` 8323→28184; shell 28125→28190; marker on; Сейчас without lock |
 | Device | cold boot | proven | ADR-211; `reboot -f`; marker dropped; `saai-displayd` 401; shell 418; clock `14:07`; tap-unlock; `saai-entityd`/`file-recv` up; marker restored; pid 501 |
-| Device | daylight / indoor / dark | open | no booth this session; named in ADR-193 |
+| Device | daylight / indoor / dark | parked | thin tuning (ADR-213); last, not next |
 | A11y | 7-tap gallery | proven | ADR-212; HEAD `3850427a…`; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
 | Resilience | service restart | proven | ADR-192; unlocked kill, marker on, same `e8865301…`, Сейчас without lock |
 | Resilience | network / AI offline | proven | ADR-191; `wlan0` down → status `Нет сети`; Сейчас still live ObjectSummary; restored up |
@@ -61,6 +62,7 @@ Cold boot (ADR-211) is proven on HEAD; `reboot -f`; marker dropped then restored
   `Caption` (ADR-197). Status time/battery are `Label`; keys are
   `Caption` (ADR-198). They are not Title/Body. Badge, gallery
   kicker/swatch, and app-tile leftovers stay named below Caption
-  (ADR-201). 7-tap gallery is proven (ADR-212).
+  (ADR-201). 7-tap gallery is proven (ADR-212). Leftover visual nits
+  and panel lighting belong to thin tuning (ADR-213), not next work.
 - Space detail, Memory review, chat, widgets stay deferred.
 - Known limitations and the Visual v2 backlog: [`vui09-known-limitations.md`](vui09-known-limitations.md) (ADR-193).

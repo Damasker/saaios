@@ -71,6 +71,7 @@ ADR-209 lock / unlock cycle on panther HEAD (no-PIN tap-unlock; marker restored)
 ADR-210 display restart on panther HEAD (`saai-displayd` kill; native-init respawn).
 ADR-211 cold boot on panther HEAD (`reboot -f`; marker dropped then restored).
 ADR-212 7-tap gallery on panther HEAD (Диагностика then Назад).
+ADR-213 thin-tuning sprint parked last (not next Visual work).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
