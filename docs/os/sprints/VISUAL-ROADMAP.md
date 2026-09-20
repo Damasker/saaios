@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–185; `compile()` stays v1) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–186; `compile()` stays v1) |
 
 ---
 
@@ -1160,8 +1160,8 @@ component state remains fully usable.
 
 ## VUI-09 — `.sui` v2, public library, cleanup, and release gate
 
-**Status:** In progress — `.sui` v2 vocabulary through public subset
-(ADR-180–185). Gallery docs and cleanup remain.
+**Status:** In progress — `.sui` v2 vocabulary through public API
+docs (ADR-180–186). Allowlist cleanup and release gate remain.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1184,8 +1184,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Stabilize and document the public component subset for third-party SaaiOS
   applications; keep privileged composites capability-gated (`compile_v2_public()`,
   ADR-185).
-- [ ] Publish component API docs, gallery, examples, stability labels,
-  visual specification sheets, deprecation policy, and migration guide.
+- [x] Publish component API docs, gallery, examples, stability labels,
+  visual specification sheets, deprecation policy, and migration guide
+  (`docs/os/ui/sui-v2-public-api.md`, ADR-186).
 - [ ] Remove the hardcoded color/metric allowlist and duplicated migrated
   shell components.
 - [ ] Run complete visual, accessibility, interaction, performance, service
@@ -1253,7 +1254,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-09**: publish component API docs, gallery examples,
-and stability labels without pointing `root.sui` at `compile_v2()`.
-Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Continue **VUI-09**: remove the hardcoded color/metric allowlist
+and duplicated migrated shell components without pointing `root.sui`
+at `compile_v2()`. Space detail still deferred. MEM-08 stays omitted
+until a shell-legal memory read exists.

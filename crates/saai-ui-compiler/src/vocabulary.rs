@@ -108,6 +108,26 @@ pub fn sui_v2_is_public(name: &str) -> bool {
     (sui_v2_is_component(name) || sui_v2_is_surface(name)) && !sui_v2_is_privileged(name)
 }
 
+/// ADR-186: published stability labels. Nothing is Stable yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuiV2Stability {
+    Experimental,
+    Privileged,
+    Deferred,
+}
+
+pub fn sui_v2_stability(name: &str) -> Option<SuiV2Stability> {
+    if sui_v2_is_deferred(name) {
+        Some(SuiV2Stability::Deferred)
+    } else if sui_v2_is_privileged(name) {
+        Some(SuiV2Stability::Privileged)
+    } else if sui_v2_is_public(name) {
+        Some(SuiV2Stability::Experimental)
+    } else {
+        None
+    }
+}
+
 pub fn sui_v2_property_keys() -> &'static [&'static str] {
     &[
         "text", "color", "spacing", "inset", "scroll", "loc", "focus", "a11y",
@@ -177,8 +197,8 @@ mod tests {
         sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred,
         sui_v2_inset_values, sui_v2_is_component, sui_v2_is_deferred, sui_v2_is_privileged,
         sui_v2_is_public, sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged,
-        sui_v2_property_keys, sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_surfaces,
-        sui_v2_text_roles,
+        sui_v2_property_keys, sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_stability,
+        sui_v2_surfaces, sui_v2_text_roles, SuiV2Stability,
     };
     use std::collections::HashSet;
 
@@ -243,6 +263,19 @@ mod tests {
         assert!(!sui_v2_is_public("OrbHost"));
         assert!(!sui_v2_is_public("lock"));
         assert!(!sui_v2_is_public("SpaceDetail"));
+        assert_eq!(
+            sui_v2_stability("ContextHeader"),
+            Some(SuiV2Stability::Experimental)
+        );
+        assert_eq!(
+            sui_v2_stability("OrbHost"),
+            Some(SuiV2Stability::Privileged)
+        );
+        assert_eq!(
+            sui_v2_stability("SpaceDetail"),
+            Some(SuiV2Stability::Deferred)
+        );
+        assert_eq!(sui_v2_stability("WidgetCard"), None);
         assert!(!sui_v2_is_component("SpaceDetail"));
         assert!(!sui_v2_is_surface("root"));
         assert_eq!(sui_v2_property_keys().len(), 8);

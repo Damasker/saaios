@@ -27,7 +27,10 @@ pub use foundations::{
     TextRole, TextStyle, CONTROL_VISUAL_HEIGHT, FIRST_FEEDBACK_LIMIT_MS, FRAME_PACE_CAP,
     FRAME_PACE_P95_LIMIT_MS, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
-pub use gallery::{composite_gallery_fixtures, CompositeGalleryFixtures};
+pub use gallery::{
+    composite_gallery_fixtures, privileged_gallery_type_names, public_gallery_type_names,
+    CompositeGalleryFixtures,
+};
 
 /// Backend-independent sRGB color. Renderers are responsible for converting
 /// this logical value to their native pixel/scanout packing.

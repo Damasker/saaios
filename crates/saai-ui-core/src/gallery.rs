@@ -75,6 +75,26 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
     }
 }
 
+pub fn public_gallery_type_names() -> &'static [&'static str] {
+    &[
+        "ContextHeader",
+        "ObjectSummary",
+        "TaskSummary",
+        "IntentSummary",
+        "AgentSummary",
+        "EventRow",
+        "SpaceRow",
+        "WifiRow",
+        "BluetoothRow",
+        "StatusIndicator",
+        "SurfacePattern",
+    ]
+}
+
+pub fn privileged_gallery_type_names() -> &'static [&'static str] {
+    &["DecisionOverlay", "TrustedClientRow"]
+}
+
 pub fn state_fixture_label(state: UniversalState) -> &'static str {
     match state {
         UniversalState::Idle => "Спокойно",
@@ -186,5 +206,22 @@ mod tests {
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));
         assert!(!blob.contains("% CPU"));
+    }
+
+    #[test]
+    fn gallery_type_names_split_public_from_privileged() {
+        for name in public_gallery_type_names() {
+            assert!(
+                !privileged_gallery_type_names().contains(name),
+                "{name} listed as both public and privileged"
+            );
+        }
+        assert_eq!(
+            privileged_gallery_type_names(),
+            &["DecisionOverlay", "TrustedClientRow"]
+        );
+        assert!(public_gallery_type_names().contains(&"ContextHeader"));
+        assert!(public_gallery_type_names().contains(&"SurfacePattern"));
+        assert!(!public_gallery_type_names().contains(&"OrbHost"));
     }
 }

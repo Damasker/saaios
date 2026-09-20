@@ -3,7 +3,9 @@
 //! ADR-180 names the `.sui` v2 vocabulary. `compile()` still accepts
 //! only `sui 1`. ADR-181/182 parse `sui 2` through `compile_v2()`.
 //! ADR-183 keeps `root.sui` as the v1 rollback artifact. ADR-184
-//! emits layout/hit-test from that compiled v1 `ScreenSpec`.
+//! emits layout/hit-test from that compiled v1 `ScreenSpec`. ADR-185
+//! gates third-party documents through `compile_v2_public()`. ADR-186
+//! publishes the public example and stability labels.
 
 mod layout;
 mod rollback;
@@ -15,7 +17,8 @@ pub use vocabulary::{
     sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred, sui_v2_inset_values,
     sui_v2_is_component, sui_v2_is_deferred, sui_v2_is_privileged, sui_v2_is_public,
     sui_v2_is_surface, sui_v2_primitives, sui_v2_privileged, sui_v2_property_keys,
-    sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_surfaces, sui_v2_text_roles,
+    sui_v2_scroll_values, sui_v2_spacing_tokens, sui_v2_stability, sui_v2_surfaces,
+    sui_v2_text_roles, SuiV2Stability,
 };
 
 use std::fmt;
@@ -509,7 +512,7 @@ fn error(offset: usize, message: impl Into<String>) -> CompileError {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, compile_v2, compile_v2_public};
+    use super::{compile, compile_v2, compile_v2_public, sui_v2_stability, SuiV2Stability};
 
     const VALID: &str = r#"
         sui 1
@@ -777,5 +780,44 @@ mod tests {
         let build = include_str!("../../../services/saai-shell/build.rs");
         assert!(build.contains("saai_ui_compiler::compile("));
         assert!(!build.contains("saai_ui_compiler::compile_v2"));
+    }
+
+    #[test]
+    fn public_now_example_compiles_and_stays_experimental() {
+        const EXAMPLE: &str = include_str!("../../../docs/os/ui/examples/now-public.sui");
+        let screen = compile_v2_public(EXAMPLE).unwrap();
+        assert_eq!(screen.id, "now");
+        assert!(!screen.is_privileged());
+        let names: Vec<&str> = screen
+            .components
+            .iter()
+            .map(|component| component.type_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "ContextHeader",
+                "ObjectSummary",
+                "SurfacePattern",
+                "BottomNavigation"
+            ]
+        );
+        for name in names {
+            assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
+        }
+        assert!(compile(EXAMPLE)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported SUI version 2"));
+        let guide = include_str!("../../../docs/os/ui/sui-v2-public-api.md");
+        assert!(guide.contains("now-public.sui"));
+        assert!(guide.contains("Experimental"));
+        assert!(guide.contains("compile_v2_public"));
+        for name in saai_ui_core::public_gallery_type_names() {
+            assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
+        }
+        for name in saai_ui_core::privileged_gallery_type_names() {
+            assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Privileged));
+        }
     }
 }

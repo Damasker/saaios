@@ -7,9 +7,10 @@ Product source: [Visual Language v1](../architecture/visual-language-v1.md)
 Delivery source: [Visual System roadmap](../sprints/VISUAL-ROADMAP.md)
 
 This document is the reviewed design boundary for the first reusable SaaiOS
-components. It defines meaning and behavior before public Rust or `.sui` APIs
-are made stable. ADR-180 names the `.sui` v2 vocabulary from these contracts;
-`sui 1` is still the only compiled document. It is not a gallery of decoration
+components. It defines meaning and behavior. Public `.sui` v2 API docs,
+stability labels, and the NOW example live in
+[`sui-v2-public-api.md`](sui-v2-public-api.md) (ADR-186). `sui 1` is still
+the only compiled production document. It is not a gallery of decoration
 and it does not move shell business logic into the library.
 
 ## 1. Reference surface and coordinate model
@@ -436,7 +437,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   tree so tabs and leftover NOW actions share hit-test; `compile_v2()`
   still does not build production chrome. ADR-185 names the public
   third-party subset and gates privileged names behind
-  `compile_v2_public()`.
+  `compile_v2_public()`. ADR-186 publishes the public NOW example,
+  stability labels, and the migration page.
 
 ### 7.6 `TaskSummary`
 

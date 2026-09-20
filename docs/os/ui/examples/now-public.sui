@@ -1,0 +1,28 @@
+sui 2
+screen now {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = now.header
+    focus = 0
+    inset = safe
+  }
+  component ObjectSummary {
+    text = Body
+    color = TextPrimary
+    a11y = Status
+    loc = "now.object"
+  }
+  component SurfacePattern {
+    text = Body
+    color = TextSecondary
+    a11y = Status
+    loc = now.empty
+  }
+  component BottomNavigation {
+    a11y = Button
+    focus = 1
+    scroll = none
+    inset = safe
+  }
+}
