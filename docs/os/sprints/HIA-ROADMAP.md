@@ -571,5 +571,6 @@ PCE-25  Physical Multi-node Test Lab
 PCE-25 identity закрыт на host (ADR-249). Windowed displayd на x86 закрыт на host (ADR-250). Pointer+USB HID на x86 закрыт на host (ADR-251). Logical layout
 закрыт на host (ADR-252). Shared Space/Entity/Intent/Observation
 across nodes is the D remainder, не PCE-01..24. Volume на panther
-(ADR-253). Power button lock/sleep на host (ADR-254); CRTC blank
+(ADR-253). Power button lock/sleep на panther (ADR-254; `5ba2ef7b…`;
+pid 2586; event1 open). CRTC blank
 остаётся displayd. Thin visual tuning (ADR-213) не next.
