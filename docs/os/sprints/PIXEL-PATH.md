@@ -228,6 +228,12 @@ diagnose (ADR-238, `351b0b6f…`).
 - PCE-01..24 и Resource Scheduler не начинать
 - Доказательство ноута валидно для D, не вместо phone-gate
 
+## E — телефонное железо (только эта волна)
+
+- Volume: tinymix Digital PCM Volume 400–817 (ADR-253)
+- Power / modem / cameras / BT-pairing — следующие E-слайсы
+- Голос на Pixel не открывать (ADR-092 AoC)
+
 ## Что сознательно не делать сейчас
 
 - новые ADR «ещё одна фундаментальная модель»

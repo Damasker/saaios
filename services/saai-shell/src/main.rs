@@ -602,25 +602,31 @@ fn apply_brightness(pct: u8) {
     let _ = std::fs::write(BACKLIGHT_PATH, value.to_string());
 }
 
-/// S18: **honest gap, unlike `apply_brightness`.** No userspace volume
-/// control existed anywhere in the project to confirm against before
-/// this -- the kernel modules load (`snd-soc-cs35l41`, `aoc_alsa_dev`,
-/// `native-init.c`'s own "ALSA sound devices ready" log line) but no
-/// `amixer`/`alsactl` binary or any other precedent for which ALSA
-/// simple-mixer control actually maps to output volume on this
-/// hardware was ever established (confirmed absent by survey before
-/// writing this). Tries `amixer` on the off chance a minimal build of
-/// it is present on-device after all; silently no-ops (matching every
-/// other best-effort hardware write in this file) if it isn't -- the
-/// setting/UI/persistence side of this feature is real regardless of
-/// whether this specific call has any effect, and the right follow-up
-/// once the device is available again is to find the actual control
-/// name (`amixer scontrols` or reading `/proc/asound/.../controls`)
-/// and replace this guess.
+/// Pixel 7 speaker path proven by `os/targets/panther/scripts/audio-volume.sh`.
+const TINYMIX_PATH: &str = "/saaios/tinymix";
+const VOLUME_FILE: &str = "/run/audio-volume";
+const PCM_VOLUME_MIN: u32 = 400;
+const PCM_VOLUME_MAX: u32 = 817;
+const PCM_VOLUME_CONTROLS: [&str; 2] = ["Digital PCM Volume", "R Digital PCM Volume"];
+
+fn pcm_volume_from_pct(pct: u8) -> u32 {
+    let pct = u32::from(pct.min(100));
+    PCM_VOLUME_MIN + (PCM_VOLUME_MAX - PCM_VOLUME_MIN) * pct / 100
+}
+
+/// Writes the CS35L41 PCM controls through on-device `tinymix` (ADR-253).
+/// No-op on hosts without `/saaios/tinymix`. Not voice (ADR-092).
 fn apply_volume(pct: u8) {
-    let _ = std::process::Command::new("amixer")
-        .args(["sset", "Master", &format!("{}%", pct.min(100))])
-        .status();
+    if !std::path::Path::new(TINYMIX_PATH).exists() {
+        return;
+    }
+    let value = pcm_volume_from_pct(pct).to_string();
+    for control in PCM_VOLUME_CONTROLS {
+        let _ = std::process::Command::new(TINYMIX_PATH)
+            .args(["-D", "0", control, &value])
+            .status();
+    }
+    let _ = std::fs::write(VOLUME_FILE, format!("{value}\n"));
 }
 
 /// The Unix socket `pair-recv.c` connects to for every SSH pairing
@@ -790,8 +796,8 @@ struct ShellSettings {
     /// MINUTES`'s own units, deliberately not hours-only (some real
     /// timezones use a half-hour or 45-minute offset).
     utc_offset_minutes: i32,
-    /// S18. See `apply_volume`'s doc comment -- the setting/UI side is
-    /// real, the hardware effect is an unverified best-effort guess.
+    /// S18 / ADR-253. Percent shown on Система; hardware write is
+    /// `tinymix` Digital PCM Volume on panther, no-op without it.
     volume_pct: u8,
     /// S24. `None` (default) means unlock stays "any tap" -- the
     /// original behavior this device has been tested with all along
@@ -11575,13 +11581,13 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        activity_clock_for, apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row,
-        bluetooth_header, bluetooth_list_action_at, bluetooth_list_pattern,
-        bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
-        bluetooth_scan_pattern, calibration_requested, capability_label, consent_action_at,
-        consent_content_cards, consent_header, content_action_at, dev_surface_back_tapped,
-        diagnostic_card_from_row, diagnostic_header, diagnostic_row, diagnostic_v2_source,
-        drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
+        activity_clock_for, apply_volume, apps_grid_empty_pattern, apps_grid_header,
+        bluetooth_card_from_row, bluetooth_header, bluetooth_list_action_at,
+        bluetooth_list_pattern, bluetooth_list_row_count, bluetooth_list_rows,
+        bluetooth_pair_error_from, bluetooth_scan_pattern, calibration_requested, capability_label,
+        consent_action_at, consent_content_cards, consent_header, content_action_at,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
+        diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
         field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
         inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
         intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
@@ -11591,10 +11597,10 @@ mod tests {
         now_object_tapped, now_workflow_sections, object_view_action_at, object_view_content,
         object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
-        orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
-        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
-        remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
-        search_rows, space_color, space_color_entity, space_detail_action_at,
+        orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
+        pressed_key_from_keys, pressed_tab_from_touch, remote_pair_content_cards,
+        remote_pair_header, remove_context_source, retain_pressed_while_clock, search_header,
+        search_row_at, search_rows, space_color, space_color_entity, space_detail_action_at,
         space_detail_empty_card, space_detail_header, space_display_name, space_for_wifi_ssid,
         space_lifecycle, space_lifecycle_entity, space_list_rows, space_member_kind_label,
         space_member_rows, space_relation_targets, space_row_at, spaces_header,
@@ -11613,7 +11619,7 @@ mod tests {
         MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
         ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
         SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_IN_SPACE,
@@ -11963,6 +11969,18 @@ mod tests {
         assert_eq!(logical_surface_size(false), (1280, 800));
         assert_eq!(logical_surface_size(true), (1080, 2400));
         assert_ne!(logical_surface_size(false), logical_surface_size(true));
+    }
+
+    #[test]
+    fn pcm_volume_maps_percent_onto_tinymix_digital_pcm_range() {
+        assert_eq!(pcm_volume_from_pct(0), 400);
+        assert_eq!(pcm_volume_from_pct(100), 817);
+        assert_eq!(pcm_volume_from_pct(50), 608);
+        for pct in VOLUME_LEVELS_PCT {
+            let value = pcm_volume_from_pct(pct);
+            assert!((400..=817).contains(&value), "pct={pct} value={value}");
+        }
+        apply_volume(50);
     }
 
     #[test]
