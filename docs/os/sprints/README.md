@@ -95,6 +95,7 @@ ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
 ADR-236 diagnose timeout is Failed + retryable, not Pending.
+ADR-237 WORK-02 live dispatch (derived ready, concurrency=1).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

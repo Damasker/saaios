@@ -1,9 +1,9 @@
 //! ADR-121 WORK-01: a `PlanProposal` is an untrusted structured DAG.
 //! Validate it deterministically before any Task is persisted.
 //!
-//! This module does not dispatch work, does not write a Ready status,
-//! and does not talk to the model. Linear S09/S10 Intent → one Task
-//! remains the live path until WORK-02's derived ready set admits work.
+//! This module does not write a Ready status and does not talk to the
+//! model. Linear S09/S10 Intent → one Task is admitted by WORK-02's
+//! derived ready set (ADR-237).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

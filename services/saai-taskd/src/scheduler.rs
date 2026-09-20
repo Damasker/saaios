@@ -55,10 +55,21 @@ pub fn derive_ready_set(tasks: &[Entity]) -> Vec<Uuid> {
 }
 
 /// In-memory frontier: at most `max - in_flight` ready ids. Does not
-/// write a status and does not start work.
+/// write a status. Live dispatch (ADR-237) starts the admitted Task.
 pub fn admit_frontier(ready: &[Uuid], in_flight: usize, max: usize) -> Vec<Uuid> {
     let slots = max.saturating_sub(in_flight);
     ready.iter().copied().take(slots).collect()
+}
+
+pub fn next_admission(tasks: &[Entity]) -> Option<Uuid> {
+    let ready = derive_ready_set(tasks);
+    admit_frontier(
+        &ready,
+        mutating_in_flight(tasks),
+        MAX_MUTATING_IN_FLIGHT,
+    )
+    .into_iter()
+    .next()
 }
 
 #[cfg(test)]
@@ -160,6 +171,21 @@ mod tests {
         let admitted = admit_frontier(&ready, 0, MAX_MUTATING_IN_FLIGHT);
         assert_eq!(admitted.len(), 1);
         assert_eq!(admitted[0], ready[0]);
+        assert_eq!(next_admission(&[a, b]), Some(admitted[0]));
+    }
+
+    #[test]
+    fn next_admission_is_none_while_mutating_runs() {
+        let running = task(WorkflowStatus::Running, &[]);
+        let pending = task(WorkflowStatus::Pending, &[]);
+        assert_eq!(next_admission(&[running, pending]), None);
+    }
+
+    #[test]
+    fn next_admission_unblocks_child_after_parent_done() {
+        let parent = task(WorkflowStatus::Done, &[]);
+        let child = task(WorkflowStatus::Pending, &[parent.id]);
+        assert_eq!(next_admission(&[parent, child.clone()]), Some(child.id));
     }
 
     #[test]
