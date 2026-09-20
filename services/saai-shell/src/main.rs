@@ -72,6 +72,10 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 mod appd_client;
@@ -5866,6 +5870,147 @@ struct MeAppFact {
     grants: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct LiveObservationFact {
+    key: String,
+    label: String,
+    value: String,
+    source: String,
+}
+
+impl LiveObservationFact {
+    fn value_line(&self) -> String {
+        if self.source.is_empty() {
+            self.value.clone()
+        } else {
+            format!("{} · {}", self.value, self.source)
+        }
+    }
+}
+
+fn observation_row_label(key: &str) -> String {
+    match key {
+        "system.cpu.usage" => "Процессор".into(),
+        "system.load.average" => "Нагрузка".into(),
+        "system.memory.used_percent" => "Память".into(),
+        other => other.to_string(),
+    }
+}
+
+fn format_observation_value(value: &Value, unit: Option<&str>) -> Option<String> {
+    let number = value.as_f64().filter(|n| n.is_finite())?;
+    Some(if unit == Some("percent") {
+        format!("{number:.0}%")
+    } else if number.fract() == 0.0 {
+        format!("{number:.0}")
+    } else {
+        format!("{number:.1}")
+    })
+}
+
+fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> {
+    let Some(rows) = blob
+        .get("status")
+        .and_then(|status| status.get("observations"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let key = row
+                .get("key")
+                .and_then(Value::as_str)
+                .filter(|k| !k.is_empty())?;
+            let source = row
+                .get("source")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())?;
+            let unit = row.get("unit").and_then(Value::as_str);
+            let value = format_observation_value(row.get("value")?, unit)?;
+            Some(LiveObservationFact {
+                label: observation_row_label(key),
+                key: key.to_string(),
+                value,
+                source: source.to_string(),
+            })
+        })
+        .collect()
+}
+
+const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_millis(250);
+
+fn runtime_sock_candidates() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(env_path) = std::env::var("SAAIOS_SOCK") {
+        if !env_path.is_empty() {
+            paths.push(PathBuf::from(env_path));
+        }
+    }
+    paths.push(PathBuf::from("/tmp/saaios.sock"));
+    paths.push(PathBuf::from("/run/saaios/saaios.sock"));
+    paths
+}
+
+fn read_live_observations_from_stream(stream: &mut impl Read) -> Vec<LiveObservationFact> {
+    let mut buf = Vec::new();
+    if stream.read_to_end(&mut buf).is_err() || buf.is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_slice(&buf)
+        .ok()
+        .map(|blob| live_observations_from_status_json(&blob))
+        .unwrap_or_default()
+}
+
+fn write_status_request(stream: &mut impl Write) -> bool {
+    stream.write_all(br#"{"op":"status"}"#).is_ok() && stream.flush().is_ok()
+}
+
+fn read_live_observations_from_unix(path: &Path) -> Vec<LiveObservationFact> {
+    let mut stream = match UnixStream::connect(path) {
+        Ok(stream) => stream,
+        Err(_) => return Vec::new(),
+    };
+    let _ = stream.set_read_timeout(Some(RUNTIME_STATUS_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(RUNTIME_STATUS_TIMEOUT));
+    if !write_status_request(&mut stream) {
+        return Vec::new();
+    }
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    read_live_observations_from_stream(&mut stream)
+}
+
+fn read_live_observations_from_tcp(addr: &str) -> Vec<LiveObservationFact> {
+    let socket_addr: std::net::SocketAddr = match addr.parse() {
+        Ok(addr) => addr,
+        Err(_) => return Vec::new(),
+    };
+    let mut stream = match TcpStream::connect_timeout(&socket_addr, RUNTIME_STATUS_TIMEOUT) {
+        Ok(stream) => stream,
+        Err(_) => return Vec::new(),
+    };
+    let _ = stream.set_read_timeout(Some(RUNTIME_STATUS_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(RUNTIME_STATUS_TIMEOUT));
+    if !write_status_request(&mut stream) {
+        return Vec::new();
+    }
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    read_live_observations_from_stream(&mut stream)
+}
+
+fn read_live_observations() -> Vec<LiveObservationFact> {
+    for path in runtime_sock_candidates() {
+        if path.exists() {
+            return read_live_observations_from_unix(&path);
+        }
+    }
+    if Path::new("/data/saaios/system/saaios-runtime").exists() {
+        return read_live_observations_from_tcp("172.31.7.1:38127");
+    }
+    Vec::new()
+}
+
 /// Snapshot of every real `Я` fact `me_system_sections` needs.
 /// Memory, Android VM, and battery-as-a-page-gauge are intentionally
 /// absent (ADR-126).
@@ -5902,6 +6047,7 @@ struct MeFacts {
     entityd_connected: bool,
     appd_connected: bool,
     apps: Vec<MeAppFact>,
+    observations: Vec<LiveObservationFact>,
 }
 
 #[derive(Clone)]
@@ -6084,6 +6230,14 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
             ],
         ),
     ];
+    if !facts.observations.is_empty() {
+        let rows = facts
+            .observations
+            .iter()
+            .map(|obs| SettingRow::readout(obs.label.clone(), obs.value_line()).row)
+            .collect();
+        sections.insert(1, me_section_data("Наблюдения", rows));
+    }
     if !facts.apps.is_empty() {
         let rows = facts
             .apps
@@ -6341,6 +6495,7 @@ fn me_fixture_facts() -> MeFacts {
         entityd_connected: true,
         appd_connected: true,
         apps: Vec::new(),
+        observations: Vec::new(),
     }
 }
 
@@ -10146,6 +10301,7 @@ impl Shell {
             entityd_connected: self.entityd.is_connected(),
             appd_connected: self.appd.is_connected(),
             apps,
+            observations: read_live_observations(),
         }
     }
 
@@ -15405,6 +15561,72 @@ mod tests {
             .iter()
             .any(|row| row.card.label == "Устройство" && row.dispatch.is_none()));
         assert!(!rows.iter().any(|row| row.card.label.contains("Память")));
+    }
+
+    #[test]
+    fn live_observations_from_status_json_ignore_missing_and_invented_rows() {
+        assert!(
+            super::live_observations_from_status_json(&serde_json::json!({"ok": true})).is_empty()
+        );
+        assert!(
+            super::live_observations_from_status_json(&serde_json::json!({
+                "ok": true,
+                "status": { "observation_revision": 1 }
+            }))
+            .is_empty()
+        );
+        let rows = super::live_observations_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": {
+                "observations": [
+                    {
+                        "key": "system.cpu.usage",
+                        "value": 12.4,
+                        "unit": "percent",
+                        "source": "procfs.cpu",
+                        "observed_at": "2026-09-20T16:00:00Z"
+                    },
+                    {
+                        "key": "system.load.average",
+                        "value": 0.3,
+                        "source": "procfs.load"
+                    },
+                    { "key": "weather.temp", "value": 21.0, "source": "" },
+                    { "key": "", "value": 1.0, "source": "procfs.cpu" }
+                ]
+            }
+        }));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label, "Процессор");
+        assert_eq!(rows[0].value, "12%");
+        assert_eq!(rows[1].label, "Нагрузка");
+        assert_eq!(rows[1].value, "0.3");
+        assert!(!rows.iter().any(|row| row.key.contains("weather")));
+    }
+
+    #[test]
+    fn me_system_sections_show_only_live_observations() {
+        let mut facts = me_fixture_facts();
+        facts.observations = vec![super::LiveObservationFact {
+            key: "system.cpu.usage".into(),
+            label: "Процессор".into(),
+            value: "12%".into(),
+            source: "procfs.cpu".into(),
+        }];
+        let sections = me_system_sections(&facts);
+        assert_eq!(sections[1].title, "Наблюдения");
+        let rows = flatten_me_rows(&sections);
+        let cpu = rows
+            .iter()
+            .find(|row| row.card.label == "Процессор")
+            .expect("live cpu row");
+        assert!(cpu.card.status.contains("12%"));
+        assert!(cpu.card.status.contains("procfs.cpu"));
+        assert!(cpu.dispatch.is_none());
+        assert!(!rows.iter().any(|row| row.card.label.contains("погод")));
+        assert!(!rows
+            .iter()
+            .any(|row| row.card.label.contains("Android") || row.card.status.contains("Android")));
     }
 
     #[test]

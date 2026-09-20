@@ -105,6 +105,7 @@ ADR-243 Space detail lists SOM members, not invented people.
 ADR-244 Orb states follow workflow, not voice.
 ADR-245 ObservationCache lives in runtime, not a daemon.
 ADR-246 runtime status lists only Fresh Observations.
+ADR-247 Система paints only live Observations.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
