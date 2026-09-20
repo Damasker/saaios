@@ -129,6 +129,8 @@ Principal, Grant, scope, Confirmation (OneShot по умолчанию).
 Pixel 7 (`panther` / `phone` / `aarch64`) остаётся phone-gate. Ноут
 PCE-25 (`x86` / `computer` / `x86_64`) — второй узел, не подмена
 panther (ADR-249). x86 не может заявить `target=panther`.
+Кнопка питания на panther — `/dev/input/power-button` (KEY_POWER),
+не UI-тоггл (ADR-254). CRTC blank остаётся у displayd.
 
 Snapshot доступен через `system.identity`, runtime status и системный контекст
 planner. Поля ограничены по длине, управляющие символы удаляются. Полный kernel

@@ -112,6 +112,7 @@ ADR-250 x86 displayd configures a window, not a panther panel.
 ADR-251 x86 displayd seat is pointer+USB HID keyboard, not touch.
 ADR-252 x86 shell uses 1280×800 logical layout, panther stays 1080×2400.
 ADR-253 panther volume writes tinymix Digital PCM Volume.
+ADR-254 power button drives lock/sleep from `/dev/input/power-button`.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

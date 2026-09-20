@@ -85,6 +85,7 @@ mod haptic;
 mod hardware_keyboard;
 mod intent_context;
 mod portal_server;
+mod power_button;
 mod render;
 
 use chrono::Utc;
@@ -6754,6 +6755,7 @@ fn main() {
         pin_setup: None,
         pin_entry_buffer: String::new(),
         hardware_keyboard: None,
+        power_button: None,
         me_scroll_offset: 0,
         me_drag: None,
         me_scroll_dirty: false,
@@ -6830,6 +6832,7 @@ fn main() {
         shell.refresh_context_signals_if_due();
         shell.poll_portal();
         shell.poll_hardware_keyboard(&conn, &qh);
+        shell.poll_power_button(&conn, &qh);
         shell.check_idle_timeout(&qh);
         shell.check_deep_idle(&conn, &qh);
         shell.tick_motion(&conn, &qh);
@@ -7037,6 +7040,8 @@ struct Shell {
     /// Open USB HID evdev node while a hardware Keyboard source is
     /// attached. Never volume, power, touch, or haptic.
     hardware_keyboard: Option<File>,
+    /// Pixel 7 `s2mpg12-power-keys` node from native-init (ADR-254).
+    power_button: Option<File>,
     /// Vertical drag-to-scroll position for "Я"'s content list, in
     /// pixels -- 0 is the top. Deliberately not reset when leaving "Я"
     /// for another tab -- returning to it keeps the scroll position
@@ -9945,6 +9950,51 @@ impl Shell {
                 self.hardware_keyboard = None;
             }
             KeyboardSource::Hardware => {}
+        }
+    }
+
+    fn poll_power_button(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        if self.power_button.is_none() && Path::new(power_button::POWER_BUTTON_PATH).exists() {
+            self.power_button = power_button::open_power_button();
+        }
+        let pressed = {
+            let Some(file) = self.power_button.as_mut() else {
+                return;
+            };
+            power_button::read_power_presses(file)
+        };
+        if pressed {
+            self.apply_power_press(conn, qh);
+        }
+    }
+
+    fn apply_power_press(&mut self, _conn: &Connection, qh: &QueueHandle<Self>) {
+        match power_button::power_press_action(self.dev_no_lock, self.locked, self.sleeping) {
+            power_button::PowerPressAction::IgnoreDevNoLock => {
+                println!("saai-shell: power button ignored (dev-no-lock)");
+            }
+            power_button::PowerPressAction::Lock => {
+                println!("saai-shell: power button, locking");
+                self.last_activity = Instant::now();
+                match self.session_lock_state.lock(qh) {
+                    Ok(session_lock) => self.session_lock = Some(session_lock),
+                    Err(err) => eprintln!("saai-shell: failed to lock from power: {err}"),
+                }
+            }
+            power_button::PowerPressAction::Sleep => {
+                println!("saai-shell: power button, sleeping");
+                self.sleeping = true;
+                self.activity_clock = None;
+                self.motion_clock = None;
+                self.last_activity = Instant::now();
+                self.present_lock_pin_entry(qh);
+            }
+            power_button::PowerPressAction::WakeToLock => {
+                println!("saai-shell: power button, wake to lock");
+                self.sleeping = false;
+                self.last_activity = Instant::now();
+                self.present_lock_pin_entry(qh);
+            }
         }
     }
 
