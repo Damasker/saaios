@@ -45,11 +45,11 @@ use intent_resolution::{
 };
 use model::{
     action_properties, dangerous_action_of, evidence_from_fresh_rows, find_action_for_task,
-    has_open_task_for_intent, has_task_for_intent, intent_id_of, is_schedule_due, result_id_of,
-    result_properties, safe_title, schedule_every_secs, schedule_fire_count, schedule_properties,
+    has_open_task_for_intent, has_task_for_intent, intent_id_of, is_schedule_due_with,
+    observation_threshold_of, result_id_of, result_properties, safe_title, schedule_every_secs, schedule_fire_count, schedule_properties,
     schedule_text, should_retry_failed_task, status_after_verification, status_of, task_properties,
     task_properties_after_result, verification_key_of, with_depends_on, with_failure_class,
-    FailureClass, ObservationEvidence, WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND,
+    with_observation_threshold, FailureClass, ObservationEvidence, WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND,
     INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY, RESULT_TYPE, RUNTIME_ACTION_KIND,
     SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
@@ -281,7 +281,11 @@ impl Daemon {
 
         let mut fired = 0;
         for schedule in schedules {
-            if !is_schedule_due(&schedule, now) {
+            let evidence = match observation_threshold_of(&schedule) {
+                Some((key, _)) => self.live_evidence(Some(&key)).await,
+                None => None,
+            };
+            if !is_schedule_due_with(&schedule, now, evidence.as_ref()) {
                 continue;
             }
             let Some(text) = schedule_text(&schedule).map(str::to_string) else {
@@ -289,11 +293,13 @@ impl Daemon {
             };
             let fire_count = schedule_fire_count(&schedule) + 1;
             let every_secs = schedule_every_secs(&schedule).unwrap_or(0);
+            let mut fired_properties =
+                schedule_properties(every_secs, &text, true, Some(now), fire_count);
+            if let Some((key, gte)) = observation_threshold_of(&schedule) {
+                fired_properties = with_observation_threshold(fired_properties, &key, gte);
+            }
             self.conn
-                .update_entity(
-                    &schedule,
-                    schedule_properties(every_secs, &text, true, Some(now), fire_count),
-                )
+                .update_entity(&schedule, fired_properties)
                 .await?;
             let mut intent_properties = serde_json::Map::new();
             intent_properties.insert("text".into(), json!(text));

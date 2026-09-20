@@ -2,7 +2,8 @@
 
 Status: **WORLD-00/01/02 host complete. WORLD-05 host (ADR-274): Verifier
 reads Fresh rows from runtime `status`. WORLD-06 host (ADR-287): CPU
-sampler Health. No `saai-deviced`.**
+sampler Health. WORLD-07 host (ADR-290): ObservationThreshold on
+schedules. No `saai-deviced`.**
 Daemon (WORLD-03) is not on the Pixel path until ObservationCache is
 used by more than one *process-local* consumer that cannot share status.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
@@ -36,7 +37,7 @@ Do not start with a monitoring product or HealthState.
 | WORLD-04 | Shared Linux observers (no `/proc` copy) | Backlog | no |
 | WORLD-05 | Verification uses fresh observation | **Done** (host, ADR-274) | no |
 | WORLD-06 | One deterministic Health component | **Done** (host, ADR-287) | no |
-| WORLD-07 | Automation ObservationThreshold (legacy stays) | Backlog | no |
+| WORLD-07 | Automation ObservationThreshold (legacy stays) | **Done** (host, ADR-290) | no |
 | WORLD-08 | NOW/Attention feed (deviced does not notify) | Backlog | **yes** |
 
 ## WORLD-01
@@ -85,3 +86,17 @@ Approximate → Degraded. CPU percent is not a threshold. No runtime
 **Rollback:** drop `health.rs`.
 
 **Threat:** none — crate-only, no phone binary.
+
+## WORLD-07
+
+**Goal:** automation fires on Fresh Observation, not tool-success.
+
+**Change:** native `saaios.schedule` may set `observation_key` +
+`observation_gte`. Interval still required. Stale/missing is not due.
+`ToolResultThreshold` in automation-engine stays. No graphs.
+
+**Test:** host `cargo test -p saai-taskd`.
+
+**Rollback:** drop `is_schedule_due_with` and the two properties.
+
+**Threat:** none — host gate, no phone binary.

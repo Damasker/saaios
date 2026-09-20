@@ -624,15 +624,69 @@ pub fn schedule_fire_count(entity: &Entity) -> u64 {
 /// separate error/malformed state, unlike Task/Action's `Failed`, since
 /// nothing has been attempted yet.
 pub fn is_schedule_due(entity: &Entity, now: DateTime<Utc>) -> bool {
+    is_schedule_due_with(entity, now, None)
+}
+
+pub const OBSERVATION_KEY_PROPERTY: &str = "observation_key";
+pub const OBSERVATION_GTE_PROPERTY: &str = "observation_gte";
+
+/// WORLD-07: optional Fresh Observation gate on a native schedule.
+/// Legacy `every_secs` stays. Missing or Stale evidence is not due.
+pub fn observation_threshold_of(entity: &Entity) -> Option<(String, f64)> {
+    let key = entity
+        .properties
+        .get(OBSERVATION_KEY_PROPERTY)?
+        .as_str()
+        .filter(|key| !key.is_empty())?
+        .to_string();
+    let gte = entity.properties.get(OBSERVATION_GTE_PROPERTY)?.as_f64()?;
+    Some((key, gte))
+}
+
+pub fn with_observation_threshold(
+    mut properties: Map<String, Value>,
+    key: &str,
+    gte: f64,
+) -> Map<String, Value> {
+    properties.insert(OBSERVATION_KEY_PROPERTY.into(), json!(key));
+    properties.insert(OBSERVATION_GTE_PROPERTY.into(), json!(gte));
+    properties
+}
+
+fn observation_meets_gte(sample: &ObservationEvidence, key: &str, gte: f64) -> bool {
+    if sample.key != key || !sample.fresh {
+        return false;
+    }
+    sample
+        .value
+        .parse::<f64>()
+        .ok()
+        .is_some_and(|number| number >= gte)
+}
+
+/// Time interval still required. ObservationThreshold is an extra gate
+/// on Fresh numeric evidence. Stale or missing is not due.
+pub fn is_schedule_due_with(
+    entity: &Entity,
+    now: DateTime<Utc>,
+    evidence: Option<&ObservationEvidence>,
+) -> bool {
     if entity.entity_type != SCHEDULE_TYPE || !schedule_enabled(entity) {
         return false;
     }
     let Some(every_secs) = schedule_every_secs(entity) else {
         return false;
     };
-    match schedule_last_fired_at(entity) {
+    let time_due = match schedule_last_fired_at(entity) {
         None => true,
         Some(last) => (now - last).num_seconds() >= every_secs as i64,
+    };
+    if !time_due {
+        return false;
+    }
+    match observation_threshold_of(entity) {
+        None => true,
+        Some((key, gte)) => evidence.is_some_and(|sample| observation_meets_gte(sample, &key, gte)),
     }
 }
 
@@ -878,7 +932,10 @@ mod tests {
     fn verification_mismatch_is_failed_not_retryable() {
         let intent_id = Uuid::new_v4();
         let result_id = Uuid::new_v4();
-        let task = entity(TASK_TYPE, task_properties(intent_id, WorkflowStatus::Verifying));
+        let task = entity(
+            TASK_TYPE,
+            task_properties(intent_id, WorkflowStatus::Verifying),
+        );
         let failed =
             task_properties_after_result(&task, intent_id, result_id, WorkflowStatus::Failed);
         let failed_task = entity(TASK_TYPE, failed);
@@ -1074,6 +1131,46 @@ mod tests {
         props.insert("every_secs".into(), json!(1));
         let not_a_schedule = entity(TASK_TYPE, props);
         assert!(!is_schedule_due(&not_a_schedule, Utc::now()));
+    }
+
+    fn threshold_schedule(gte: f64) -> Entity {
+        let props = with_observation_threshold(
+            schedule_properties(60, "hi", true, None, 0),
+            "system.cpu.usage",
+            gte,
+        );
+        schedule(props)
+    }
+
+    #[test]
+    fn observation_threshold_needs_fresh_match() {
+        let sched = threshold_schedule(80.0);
+        let now = Utc::now();
+        assert!(!is_schedule_due_with(&sched, now, None));
+        let stale = ObservationEvidence {
+            key: "system.cpu.usage".into(),
+            fresh: false,
+            value: "90".into(),
+        };
+        assert!(!is_schedule_due_with(&sched, now, Some(&stale)));
+        let low = ObservationEvidence {
+            key: "system.cpu.usage".into(),
+            fresh: true,
+            value: "12".into(),
+        };
+        assert!(!is_schedule_due_with(&sched, now, Some(&low)));
+        let high = ObservationEvidence {
+            key: "system.cpu.usage".into(),
+            fresh: true,
+            value: "90".into(),
+        };
+        assert!(is_schedule_due_with(&sched, now, Some(&high)));
+    }
+
+    #[test]
+    fn legacy_interval_without_threshold_still_fires() {
+        let sched = schedule(schedule_properties(60, "hi", true, None, 0));
+        assert!(is_schedule_due_with(&sched, Utc::now(), None));
     }
 
     #[test]
