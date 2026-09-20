@@ -23,7 +23,9 @@
 //! ADR-220: `Button` tiles overlay the 3-column apps grid so hits match
 //! `now_grid_rect`. Linear layout cannot place a column beside another.
 //! ADR-221: overlay `Field` and decision `Button`s dock through
-//! `layout_v2()`. Keyboard keys stay a formula.
+//! `layout_v2()`. ADR-222: privileged `Keyboard` is the Field-bound
+//! IME object; its presence docks the on-screen reserve. Hardware
+//! omits the component and USB HID replaces the panel.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -368,10 +370,10 @@ fn v2_compose_node(
     width: u32,
     height: u32,
     field: &crate::SuiV2Component,
+    keyboard: Option<&crate::SuiV2Component>,
 ) -> Node {
     let margin = width / 22;
     let field_height = v2_stacked_row_height(height);
-    let keyboard_height = v2_compose_keyboard_height(screen, height);
     let id = field
         .props
         .loc
@@ -389,16 +391,19 @@ fn v2_compose_node(
         bottom: 0,
         left: margin,
     });
-    Node::linear(
-        format!("{}-content", screen.id),
-        Axis::Vertical,
-        vec![
-            Node::leaf("ContextHeader".to_string()),
-            field_row,
-            Node::leaf(format!("{}-keyboard", screen.id))
-                .with_size(Length::Fill, Length::Px(keyboard_height)),
-        ],
-    )
+    let mut children = vec![Node::leaf("ContextHeader".to_string()), field_row];
+    if let Some(keyboard) = keyboard {
+        let keyboard_id = keyboard
+            .props
+            .loc
+            .clone()
+            .unwrap_or_else(|| format!("{}-keyboard", screen.id));
+        children.push(Node::leaf(keyboard_id).with_size(
+            Length::Fill,
+            Length::Px(v2_compose_keyboard_height(screen, height)),
+        ));
+    }
+    Node::linear(format!("{}-content", screen.id), Axis::Vertical, children)
 }
 
 fn v2_lock_field_node(
@@ -459,6 +464,7 @@ fn v2_content_node(
     let mut grid = Vec::new();
     let mut overlay_buttons = Vec::new();
     let mut fields = Vec::new();
+    let mut keyboards = Vec::new();
     let mut rest = Vec::new();
     for component in screen
         .components
@@ -469,6 +475,7 @@ fn v2_content_node(
             "ContextHeader" if header.is_none() => header = Some(component),
             "ObjectSummary" if object.is_none() => object = Some(component),
             "Field" if component.props.loc.is_some() => fields.push(component),
+            "Keyboard" => keyboards.push(component),
             "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" | "WifiRow"
             | "BluetoothRow" | "TrustedClientRow" | "CapabilityRow" => stacked.push(component),
             _ if v2_is_grid_button(component) => grid.push(component),
@@ -486,7 +493,7 @@ fn v2_content_node(
     }
     if v2_named_tabs(screen).is_empty() {
         if let Some(field) = fields.first() {
-            return v2_compose_node(screen, width, height, field);
+            return v2_compose_node(screen, width, height, field, keyboards.first().copied());
         }
     }
     let header_height = if header.is_some() {
@@ -1149,6 +1156,10 @@ mod tests {
                 a11y = Status
                 loc = "intent-field"
               }
+              component Keyboard {
+                a11y = Status
+                loc = "intent-keyboard"
+              }
             }
             "#,
         )
@@ -1166,6 +1177,10 @@ mod tests {
               component Field {
                 a11y = Status
                 loc = "pin-setup-field"
+              }
+              component Keyboard {
+                a11y = Status
+                loc = "pin-setup-keyboard"
               }
             }
             "#,
@@ -1192,6 +1207,27 @@ mod tests {
         let lock_field = layout_v1_find(&lock_tree, "lock-pin-field").expect("lock field");
         assert_eq!(lock_field.rect.y, 24);
         assert!(lock_field.rect.y + lock_field.rect.height <= 260);
+    }
+
+    #[test]
+    fn layout_v2_compose_field_without_keyboard_omits_the_reserve() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen intent {
+              component ContextHeader {}
+              component Field {
+                a11y = Status
+                loc = "intent-field"
+              }
+            }
+            "#,
+        )
+        .expect("hardware field");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        let field = layout_v1_find(&v2, "intent-field").expect("field");
+        assert!(layout_v1_find(&v2, "intent-keyboard").is_none());
+        assert_eq!(field.rect.y + field.rect.height, 2400);
     }
 
     #[test]

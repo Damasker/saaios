@@ -69,12 +69,14 @@
 //! receive the taps that switch pages.
 
 use std::collections::BTreeMap;
+use std::fs::File;
 use std::time::{Duration, Instant, SystemTime};
 
 mod appd_client;
 mod dmabuf_canvas;
 mod entityd_client;
 mod haptic;
+mod hardware_keyboard;
 mod intent_context;
 mod portal_server;
 mod render;
@@ -470,12 +472,13 @@ use saai_object_actions::{
 use saai_ui_core::{
     frame_reason, frame_surface, layout, AgentSummary, Axis, BluetoothRow, CapabilityRow,
     ContextColor, ContextHeader, DataRow, DataRowVariant, DecisionOverlay, EdgeInsets, EventRow,
-    Field, FieldKind, FrameBackend, FramePace, FrameSample, FrameSurface, IntentSummary,
-    LayoutNode, Length, LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node,
-    ObjectSummary, OrbHost, Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken,
-    StatusIndicator, StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale,
-    SystemSection, SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState,
-    WifiRow, MIN_TOUCH_TARGET,
+    Field, FieldKind, FrameBackend, FramePace, FrameSample, FrameSurface, IntentSummary, Keyboard,
+    KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LayoutNode, Length,
+    LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node, ObjectSummary, OrbHost,
+    Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale, SystemSection,
+    SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow,
+    MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -1696,7 +1699,7 @@ fn intent_mod_key_width() -> u32 {
 /// "Последствия" section. Change 2's job is proving the Intent -> Task
 /// -> Action -> Result workflow end to end, not re-proving text entry
 /// works -- ADR-029 already did that.
-const INTENT_KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+const INTENT_KEY_ROWS: [&str; 3] = Keyboard::QWERTY_LETTER_ROWS;
 
 /// S29: the digits/symbols side of the same keyboard, toggled in by
 /// `INTENT_MODE_TOGGLE_ACTION` -- same three-row shape as
@@ -1705,23 +1708,7 @@ const INTENT_KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 /// mode`). Curated for what a real WPA2 password (ADR-065's own
 /// motivating case) actually needs, not an exhaustive ASCII table --
 /// still no uppercase, that's future polish, not this sprint's scope.
-const INTENT_SYMBOL_ROWS: [&str; 3] = ["1234567890", "-_/:;()$&@\"", ".,?!'#%^*+="];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum KeyboardMode {
-    #[default]
-    Letters,
-    Symbols,
-}
-
-impl KeyboardMode {
-    fn toggled(self) -> Self {
-        match self {
-            KeyboardMode::Letters => KeyboardMode::Symbols,
-            KeyboardMode::Symbols => KeyboardMode::Letters,
-        }
-    }
-}
+const INTENT_SYMBOL_ROWS: [&str; 3] = Keyboard::QWERTY_SYMBOL_ROWS;
 
 /// `INTENT_KEY_ROWS` or `INTENT_SYMBOL_ROWS`, whichever `mode` is
 /// currently showing -- the one place that decision is made, shared
@@ -1779,13 +1766,22 @@ const INTENT_CONTROLS: [IntentControlDef; 5] = [
     },
 ];
 
-/// Active while the on-screen keyboard (S09 Change 2) is composing a new
-/// `saaios.intent`'s text. Modal, same as `PendingConsent` -- owns every
-/// touch while it's showing (see `TouchHandler::up()`).
-#[derive(Default)]
+/// Active while a Field-bound Keyboard (ADR-222) is composing a new
+/// `saaios.intent`. Modal, same as `PendingConsent` -- owns every
+/// touch while it's showing (see `TouchHandler::up()`). Hardware
+/// source hides the on-screen panel.
 struct IntentInputState {
     buffer: String,
-    mode: KeyboardMode,
+    keyboard: Keyboard,
+}
+
+impl Default for IntentInputState {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            keyboard: Keyboard::bind(INTENT_FIELD_ID, KeyboardLayout::Qwerty),
+        }
+    }
 }
 
 /// S19: reuses `intent_view()`'s keyboard layout and hit-testing
@@ -1800,15 +1796,44 @@ struct IntentInputState {
 struct WifiPasswordState {
     ssid: String,
     buffer: String,
-    mode: KeyboardMode,
+    keyboard: Keyboard,
 }
 
 /// S24/ADR-149: "Изменить PIN" on "Я" -- digit rows on the same
 /// ADR-029 `Node`/`layout()`/`hit_test()` keyboard Intent and Wi-Fi
 /// password already use. Not a second painter.
-#[derive(Default)]
 struct PinSetupState {
     buffer: String,
+    keyboard: Keyboard,
+}
+
+impl Default for PinSetupState {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            keyboard: Keyboard::bind(PIN_SETUP_FIELD_ID, KeyboardLayout::Pin),
+        }
+    }
+}
+
+fn live_keyboard(field_id: &str, layout: KeyboardLayout) -> Keyboard {
+    Keyboard::bind(field_id, layout).with_source(hardware_keyboard::detect_keyboard_source())
+}
+
+fn open_intent_state() -> IntentInputState {
+    let mut state = IntentInputState::default();
+    state
+        .keyboard
+        .set_source(hardware_keyboard::detect_keyboard_source());
+    state
+}
+
+fn open_pin_setup_state() -> PinSetupState {
+    let mut state = PinSetupState::default();
+    state
+        .keyboard
+        .set_source(hardware_keyboard::detect_keyboard_source());
+    state
 }
 
 /// One row of `wifi_scan_results()`'s output, or a fixed trailing
@@ -3419,7 +3444,7 @@ const PIN_SETUP_SCREEN_ID: &str = "pin-setup";
 const PIN_SETUP_HEADER_ID: &str = "pin-header";
 const PIN_SETUP_FIELD_ID: &str = "pin-field";
 const PIN_ROWS_ID: &str = "pin-rows";
-const PIN_KEY_ROWS: [&str; 4] = ["123", "456", "789", " 0⌫"];
+const PIN_KEY_ROWS: [&str; 4] = Keyboard::PIN_DIGIT_ROWS;
 
 #[derive(Clone, Copy)]
 enum PinKeyboardKind {
@@ -5636,20 +5661,42 @@ fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
 }
 
 fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
+    overlay_field_v2_source_with(screen_id, field_id, true)
+}
+
+fn overlay_field_v2_source_with(screen_id: &str, field_id: &str, with_keyboard: bool) -> String {
+    let keyboard = if with_keyboard {
+        format!(
+            "  component Keyboard {{\n    a11y = Status\n    loc = {}\n  }}\n",
+            v2_loc_token(&format!("{screen_id}-keyboard"))
+        )
+    } else {
+        String::new()
+    };
     format!(
-        "sui 2\nscreen {screen_id} {{\n{}  component Field {{\n    text = Body\n    a11y = Status\n    loc = {}\n  }}\n}}\n",
+        "sui 2\nscreen {screen_id} {{\n{}  component Field {{\n    text = Body\n    a11y = Status\n    loc = {}\n  }}\n{keyboard}}}\n",
         v2_header_block(&format!("{screen_id}.header")),
         v2_loc_token(field_id)
     )
 }
 
 fn overlay_field_rect(screen_id: &str, field_id: &str, width: u32, height: u32) -> Rect {
-    let tree = layout_live_v2(
-        &overlay_field_v2_source(screen_id, field_id),
-        "ADR-221 field",
-        width,
-        height,
-    );
+    overlay_field_rect_with(screen_id, field_id, width, height, true)
+}
+
+fn overlay_field_rect_with(
+    screen_id: &str,
+    field_id: &str,
+    width: u32,
+    height: u32,
+    with_keyboard: bool,
+) -> Rect {
+    let source = if with_keyboard {
+        overlay_field_v2_source(screen_id, field_id)
+    } else {
+        overlay_field_v2_source_with(screen_id, field_id, false)
+    };
+    let tree = layout_live_v2(&source, "ADR-221 field", width, height);
     saai_ui_compiler::layout_v1_find(&tree, field_id)
         .map(|node| node.rect)
         .unwrap_or_else(|| stacked_row_rect(0, width, height))
@@ -5939,6 +5986,7 @@ fn main() {
         trusted_clients_open: false,
         pin_setup: None,
         pin_entry_buffer: String::new(),
+        hardware_keyboard: None,
         me_scroll_offset: 0,
         me_drag: None,
         me_scroll_dirty: false,
@@ -6014,6 +6062,7 @@ fn main() {
         shell.refresh_statusbar_if_due(&qh);
         shell.refresh_context_signals_if_due();
         shell.poll_portal();
+        shell.poll_hardware_keyboard(&conn, &qh);
         shell.check_idle_timeout(&qh);
         shell.check_deep_idle(&conn, &qh);
         shell.tick_motion(&conn, &qh);
@@ -6214,6 +6263,9 @@ struct Shell {
     /// be open at the same time -- `locked` is always `true` while
     /// this one matters and always `false` while `pin_setup` does).
     pin_entry_buffer: String,
+    /// Open USB HID evdev node while a hardware Keyboard source is
+    /// attached. Never volume, power, touch, or haptic.
+    hardware_keyboard: Option<File>,
     /// Vertical drag-to-scroll position for "Я"'s content list, in
     /// pixels -- 0 is the top. Deliberately not reset when leaving "Я"
     /// for another tab -- returning to it keeps the scroll position
@@ -6723,13 +6775,19 @@ impl TouchHandler for Shell {
                     println!("saai-shell: unlocked by touch");
                 }
                 Some(pin_code) => {
+                    let hardware =
+                        hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware;
                     if let Some(key) = committed_action(
                         down_action.as_deref(),
-                        pin_keypad_action_at(
-                            self.last_touch_pos,
-                            self.lock_width,
-                            self.lock_height,
-                        ),
+                        if hardware {
+                            None
+                        } else {
+                            pin_keypad_action_at(
+                                self.last_touch_pos,
+                                self.lock_width,
+                                self.lock_height,
+                            )
+                        },
                     ) {
                         if key == "⌫" {
                             self.pin_entry_buffer.pop();
@@ -6819,24 +6877,35 @@ impl TouchHandler for Shell {
                 let mode = self
                     .intent_input
                     .as_ref()
-                    .map_or(KeyboardMode::Letters, |state| state.mode);
-                let up = intent_action_at(self.last_touch_pos, self.width, self.height, mode);
+                    .map_or(KeyboardMode::Letters, |state| state.keyboard.mode);
+                let shows = self
+                    .intent_input
+                    .as_ref()
+                    .is_none_or(|state| state.keyboard.shows_panel());
+                let up = if shows {
+                    intent_action_at(self.last_touch_pos, self.width, self.height, mode)
+                } else {
+                    None
+                };
                 if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
                     self.handle_intent_input_action(&action, conn, qh);
                 }
-            } else if self.pin_setup.is_some() {
-                // S24: modal, same as the others.
-                let has_existing_pin = self.settings.pin_code.is_some();
-                if let Some(key) = committed_action(
-                    down_action.as_deref(),
-                    pin_setup_action_at(
-                        self.last_touch_pos,
-                        self.width,
-                        self.height,
-                        has_existing_pin,
-                    ),
-                ) {
-                    self.handle_pin_setup_action(&key, conn, qh);
+            } else if let Some(state) = self.pin_setup.as_ref() {
+                // S24: modal, same as the others. Hardware source
+                // replaces the on-screen pad.
+                if state.keyboard.shows_panel() {
+                    let has_existing_pin = self.settings.pin_code.is_some();
+                    if let Some(key) = committed_action(
+                        down_action.as_deref(),
+                        pin_setup_action_at(
+                            self.last_touch_pos,
+                            self.width,
+                            self.height,
+                            has_existing_pin,
+                        ),
+                    ) {
+                        self.handle_pin_setup_action(&key, conn, qh);
+                    }
                 }
             } else if self.wifi_password.is_some() {
                 // S19: same keyboard tree as `intent_input` above
@@ -6846,8 +6915,16 @@ impl TouchHandler for Shell {
                 let mode = self
                     .wifi_password
                     .as_ref()
-                    .map_or(KeyboardMode::Letters, |state| state.mode);
-                let up = intent_action_at(self.last_touch_pos, self.width, self.height, mode);
+                    .map_or(KeyboardMode::Letters, |state| state.keyboard.mode);
+                let shows = self
+                    .wifi_password
+                    .as_ref()
+                    .is_none_or(|state| state.keyboard.shows_panel());
+                let up = if shows {
+                    intent_action_at(self.last_touch_pos, self.width, self.height, mode)
+                } else {
+                    None
+                };
                 if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
                     self.handle_wifi_password_action(&action, conn, qh);
                 }
@@ -7012,7 +7089,7 @@ impl TouchHandler for Shell {
                         self.apps_open = true;
                         self.draw(conn, qh);
                     } else if action == "open_intent_input" {
-                        self.intent_input = Some(IntentInputState::default());
+                        self.intent_input = Some(open_intent_state());
                         self.begin_compose_context();
                         self.draw(conn, qh);
                     }
@@ -7037,7 +7114,7 @@ impl TouchHandler for Shell {
                         let app_id = app_id.to_string();
                         self.invoke_app_launch(&app_id, conn, qh);
                     } else if action_str == "open_intent_input" {
-                        self.intent_input = Some(IntentInputState::default());
+                        self.intent_input = Some(open_intent_state());
                         self.begin_compose_context();
                         self.draw(conn, qh);
                     }
@@ -7433,7 +7510,11 @@ impl Shell {
                 decline: buttons[1].rect,
             }
         } else if let Some(state) = &self.intent_input {
-            let (_split, keys) = intent_keyboard_keys(width, height, state.mode);
+            let keys = if state.keyboard.shows_panel() {
+                intent_keyboard_keys(width, height, state.keyboard.mode).1
+            } else {
+                Vec::new()
+            };
             Frame::IntentInput {
                 content_rect: Rect::new(0, 0, width, height),
                 header: intent_compose_header(&space_display_name(
@@ -7441,7 +7522,13 @@ impl Shell {
                     &self.selected_space_id,
                 )),
                 field: intent_input_field(&state.buffer, self.entityd.is_connected()),
-                field_rect: intent_field_rect(width, height, state.mode),
+                field_rect: overlay_field_rect_with(
+                    "intent",
+                    INTENT_FIELD_ID,
+                    width,
+                    height,
+                    state.keyboard.shows_panel(),
+                ),
                 keys,
             }
         } else if let Some(state) = &self.pin_setup {
@@ -7453,17 +7540,31 @@ impl Shell {
                     &self.selected_space_id,
                 )),
                 field: pin_setup_field(&state.buffer),
-                field_rect: pin_setup_field_rect(width, height, has_existing_pin),
-                keys: pin_keyboard_keys(
+                field_rect: overlay_field_rect_with(
+                    "pin-setup",
+                    PIN_SETUP_FIELD_ID,
                     width,
                     height,
-                    PinKeyboardKind::Setup {
-                        forget: has_existing_pin,
-                    },
+                    state.keyboard.shows_panel(),
                 ),
+                keys: if state.keyboard.shows_panel() {
+                    pin_keyboard_keys(
+                        width,
+                        height,
+                        PinKeyboardKind::Setup {
+                            forget: has_existing_pin,
+                        },
+                    )
+                } else {
+                    Vec::new()
+                },
             }
         } else if let Some(state) = &self.wifi_password {
-            let (_split, keys) = intent_keyboard_keys(width, height, state.mode);
+            let keys = if state.keyboard.shows_panel() {
+                intent_keyboard_keys(width, height, state.keyboard.mode).1
+            } else {
+                Vec::new()
+            };
             Frame::WifiPasswordInput {
                 content_rect: Rect::new(0, 0, width, height),
                 header: wifi_password_compose_header(&space_display_name(
@@ -7471,7 +7572,13 @@ impl Shell {
                     &self.selected_space_id,
                 )),
                 field: wifi_password_field(&state.ssid, &state.buffer),
-                field_rect: intent_field_rect(width, height, state.mode),
+                field_rect: overlay_field_rect_with(
+                    "intent",
+                    INTENT_FIELD_ID,
+                    width,
+                    height,
+                    state.keyboard.shows_panel(),
+                ),
                 keys,
             }
         } else if let Some(networks) = &self.wifi_list {
@@ -8300,7 +8407,7 @@ impl Shell {
             return;
         }
         if action.action == "open_intent_input" {
-            self.intent_input = Some(IntentInputState::default());
+            self.intent_input = Some(open_intent_state());
             self.begin_compose_context();
             self.draw(conn, qh);
         }
@@ -8379,6 +8486,9 @@ impl Shell {
     fn live_keyboard_keys(&self) -> Vec<(Rect, String)> {
         if self.locked {
             if self.settings.pin_code.is_some() {
+                if hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware {
+                    return Vec::new();
+                }
                 return pin_keyboard_keys(
                     self.lock_width,
                     self.lock_height,
@@ -8388,12 +8498,21 @@ impl Shell {
             return Vec::new();
         }
         if let Some(state) = &self.intent_input {
-            return intent_keyboard_keys(self.width, self.height, state.mode).1;
+            if !state.keyboard.shows_panel() {
+                return Vec::new();
+            }
+            return intent_keyboard_keys(self.width, self.height, state.keyboard.mode).1;
         }
         if let Some(state) = &self.wifi_password {
-            return intent_keyboard_keys(self.width, self.height, state.mode).1;
+            if !state.keyboard.shows_panel() {
+                return Vec::new();
+            }
+            return intent_keyboard_keys(self.width, self.height, state.keyboard.mode).1;
         }
-        if self.pin_setup.is_some() {
+        if let Some(state) = &self.pin_setup {
+            if !state.keyboard.shows_panel() {
+                return Vec::new();
+            }
             return pin_keyboard_keys(
                 self.width,
                 self.height,
@@ -8407,12 +8526,21 @@ impl Shell {
 
     fn keyboard_frame_action_at(&self, pos: (f64, f64)) -> Option<String> {
         if let Some(state) = self.intent_input.as_ref() {
-            return intent_action_at(pos, self.width, self.height, state.mode);
+            if !state.keyboard.shows_panel() {
+                return None;
+            }
+            return intent_action_at(pos, self.width, self.height, state.keyboard.mode);
         }
         if let Some(state) = self.wifi_password.as_ref() {
-            return intent_action_at(pos, self.width, self.height, state.mode);
+            if !state.keyboard.shows_panel() {
+                return None;
+            }
+            return intent_action_at(pos, self.width, self.height, state.keyboard.mode);
         }
-        if self.pin_setup.is_some() {
+        if let Some(state) = self.pin_setup.as_ref() {
+            if !state.keyboard.shows_panel() {
+                return None;
+            }
             return pin_setup_action_at(
                 pos,
                 self.width,
@@ -8422,6 +8550,9 @@ impl Shell {
             .map(str::to_string);
         }
         if self.locked && self.settings.pin_code.is_some() {
+            if hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware {
+                return None;
+            }
             return pin_keypad_action_at(pos, self.lock_width, self.lock_height)
                 .map(str::to_string);
         }
@@ -8542,7 +8673,7 @@ impl Shell {
             }
             "open_pin_setup" => {
                 // Same reasoning as "open_wifi_list" above.
-                self.pin_setup = Some(PinSetupState::default());
+                self.pin_setup = Some(open_pin_setup_state());
                 self.begin_compose_context();
                 self.draw(conn, qh);
                 return;
@@ -8658,27 +8789,15 @@ impl Shell {
         let Some(state) = self.intent_input.as_mut() else {
             return;
         };
-        match action {
-            INTENT_CANCEL_ACTION => {
+        match Keyboard::keystroke_from_osk_action(action) {
+            Some(Keystroke::Escape) => {
                 self.intent_input = None;
                 self.end_compose_context();
             }
-            INTENT_MODE_TOGGLE_ACTION => {
-                state.mode = state.mode.toggled();
+            Some(stroke) => {
+                let _ = state.keyboard.handle(stroke, &mut state.buffer);
             }
-            INTENT_SPACE_ACTION => {
-                state.buffer.push(' ');
-            }
-            INTENT_BACKSPACE_ACTION => {
-                state.buffer.pop();
-            }
-            other => {
-                if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
-                    if let Some(ch) = key.chars().next() {
-                        state.buffer.push(ch);
-                    }
-                }
-            }
+            None => {}
         }
         self.draw(conn, qh);
     }
@@ -8698,9 +8817,6 @@ impl Shell {
                 self.pin_setup = None;
                 self.end_compose_context();
             }
-            "⌫" => {
-                state.buffer.pop();
-            }
             "Готово" => {
                 let pin = state.buffer.clone();
                 if pin.len() >= 4 {
@@ -8718,8 +8834,10 @@ impl Shell {
                 self.pin_setup = None;
                 self.end_compose_context();
             }
-            digit => {
-                state.buffer.push_str(digit);
+            other => {
+                if let Some(stroke) = Keyboard::keystroke_from_osk_action(other) {
+                    let _ = state.keyboard.handle(stroke, &mut state.buffer);
+                }
             }
         }
         self.draw(conn, qh);
@@ -8739,19 +8857,6 @@ impl Shell {
             return;
         };
         match action {
-            INTENT_CANCEL_ACTION => {
-                self.wifi_password = None;
-                self.end_compose_context();
-            }
-            INTENT_MODE_TOGGLE_ACTION => {
-                state.mode = state.mode.toggled();
-            }
-            INTENT_SPACE_ACTION => {
-                state.buffer.push(' ');
-            }
-            INTENT_BACKSPACE_ACTION => {
-                state.buffer.pop();
-            }
             INTENT_SEND_ACTION => {
                 let ssid = state.ssid.clone();
                 let psk = state.buffer.clone();
@@ -8763,11 +8868,13 @@ impl Shell {
                 self.wifi_list = None;
                 self.end_compose_context();
             }
+            INTENT_CANCEL_ACTION => {
+                self.wifi_password = None;
+                self.end_compose_context();
+            }
             other => {
-                if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
-                    if let Some(ch) = key.chars().next() {
-                        state.buffer.push(ch);
-                    }
+                if let Some(stroke) = Keyboard::keystroke_from_osk_action(other) {
+                    let _ = state.keyboard.handle(stroke, &mut state.buffer);
                 }
             }
         }
@@ -8792,7 +8899,7 @@ impl Shell {
                     self.wifi_password = Some(WifiPasswordState {
                         ssid: network.ssid.clone(),
                         buffer: String::new(),
-                        mode: KeyboardMode::Letters,
+                        keyboard: live_keyboard(INTENT_FIELD_ID, KeyboardLayout::Qwerty),
                     });
                     self.begin_compose_context();
                 } else {
@@ -8890,6 +8997,117 @@ impl Shell {
             &mut self.entityd,
             &self.selected_space_id,
         );
+    }
+
+    fn poll_hardware_keyboard(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        self.sync_hardware_keyboard_source();
+        let codes = {
+            let Some(file) = self.hardware_keyboard.as_mut() else {
+                return;
+            };
+            hardware_keyboard::read_key_presses(file)
+        };
+        for code in codes {
+            self.apply_hardware_key(code, conn, qh);
+        }
+    }
+
+    fn sync_hardware_keyboard_source(&mut self) {
+        let source = hardware_keyboard::detect_keyboard_source();
+        if let Some(state) = self.intent_input.as_mut() {
+            state.keyboard.set_source(source);
+        }
+        if let Some(state) = self.wifi_password.as_mut() {
+            state.keyboard.set_source(source);
+        }
+        if let Some(state) = self.pin_setup.as_mut() {
+            state.keyboard.set_source(source);
+        }
+        match source {
+            KeyboardSource::Hardware if self.hardware_keyboard.is_none() => {
+                self.hardware_keyboard = hardware_keyboard::open_hardware_keyboard();
+            }
+            KeyboardSource::OnScreen => {
+                self.hardware_keyboard = None;
+            }
+            KeyboardSource::Hardware => {}
+        }
+    }
+
+    fn apply_hardware_key(&mut self, code: u16, conn: &Connection, qh: &QueueHandle<Self>) {
+        if let Some(state) = self.intent_input.as_mut() {
+            let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
+                return;
+            };
+            match state.keyboard.handle(stroke, &mut state.buffer) {
+                KeyboardCommand::Submit => {
+                    self.handle_intent_input_action(INTENT_SEND_ACTION, conn, qh);
+                }
+                KeyboardCommand::Cancel => {
+                    self.handle_intent_input_action(INTENT_CANCEL_ACTION, conn, qh);
+                }
+                KeyboardCommand::Edited => self.draw(conn, qh),
+                KeyboardCommand::Ignored => {}
+            }
+            return;
+        }
+        if let Some(state) = self.wifi_password.as_mut() {
+            let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
+                return;
+            };
+            match state.keyboard.handle(stroke, &mut state.buffer) {
+                KeyboardCommand::Submit => {
+                    self.handle_wifi_password_action(INTENT_SEND_ACTION, conn, qh);
+                }
+                KeyboardCommand::Cancel => {
+                    self.handle_wifi_password_action(INTENT_CANCEL_ACTION, conn, qh);
+                }
+                KeyboardCommand::Edited => self.draw(conn, qh),
+                KeyboardCommand::Ignored => {}
+            }
+            return;
+        }
+        if let Some(state) = self.pin_setup.as_mut() {
+            let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
+                return;
+            };
+            match state.keyboard.handle(stroke, &mut state.buffer) {
+                KeyboardCommand::Submit => self.handle_pin_setup_action("Готово", conn, qh),
+                KeyboardCommand::Cancel => self.handle_pin_setup_action("Отмена", conn, qh),
+                KeyboardCommand::Edited => self.draw(conn, qh),
+                KeyboardCommand::Ignored => {}
+            }
+            return;
+        }
+        if self.locked {
+            if let Some(pin_code) = self.settings.pin_code.clone() {
+                let Some(stroke) = Keyboard::keystroke_from_evdev(code, KeyboardLayout::Pin) else {
+                    return;
+                };
+                match stroke {
+                    Keystroke::Char(digit) => self.pin_entry_buffer.push(digit),
+                    Keystroke::Backspace => {
+                        let _ = self.pin_entry_buffer.pop();
+                    }
+                    _ => return,
+                }
+                if self.pin_entry_buffer.len() >= pin_code.len() {
+                    if self.pin_entry_buffer == pin_code {
+                        self.pin_entry_buffer.clear();
+                        if let Some(session_lock) = self.session_lock.take() {
+                            session_lock.unlock();
+                        }
+                        self.lock_surfaces.clear();
+                        self.locked = false;
+                        println!("saai-shell: unlocked by PIN");
+                        return;
+                    }
+                    println!("saai-shell: PIN mismatch, retry");
+                    self.pin_entry_buffer.clear();
+                }
+                self.present_lock_pin_entry(qh);
+            }
+        }
     }
 
     /// Keeps the portal's authorization caches (`apps_by_pid`,
@@ -9684,7 +9902,7 @@ impl Shell {
             }
             OrbAction::OpenIntent => {
                 self.orb_menu_open = false;
-                self.intent_input = Some(IntentInputState::default());
+                self.intent_input = Some(open_intent_state());
                 self.begin_compose_context();
             }
             OrbAction::OpenBluetooth => {
@@ -10316,7 +10534,11 @@ impl Shell {
             (None, None)
         };
         let keys = if !sleeping && pin_code.is_some() {
-            pin_keyboard_keys(width, height, PinKeyboardKind::Unlock)
+            if hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware {
+                Vec::new()
+            } else {
+                pin_keyboard_keys(width, height, PinKeyboardKind::Unlock)
+            }
         } else {
             Vec::new()
         };
@@ -10518,15 +10740,16 @@ mod tests {
         trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
         wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
         AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
-        ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode, LockAttentionTap,
-        LockWakeTap, MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow,
-        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        ContextSource, DataRowVariant, Entity, FieldKind, Keyboard, KeyboardCommand,
+        KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap,
+        MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -12315,6 +12538,24 @@ mod tests {
     fn keyboard_mode_toggles_both_ways() {
         assert_eq!(KeyboardMode::Letters.toggled(), KeyboardMode::Symbols);
         assert_eq!(KeyboardMode::Symbols.toggled(), KeyboardMode::Letters);
+    }
+
+    #[test]
+    fn hardware_keyboard_source_hides_osk_hits() {
+        let keyboard = Keyboard::bind(super::INTENT_FIELD_ID, KeyboardLayout::Qwerty)
+            .with_source(KeyboardSource::Hardware);
+        assert!(!keyboard.shows_panel());
+        let mut value = String::new();
+        let mut bound = keyboard;
+        assert_eq!(
+            bound.handle(Keystroke::Char('q'), &mut value),
+            KeyboardCommand::Edited
+        );
+        assert_eq!(value, "q");
+        assert_eq!(
+            Keyboard::keystroke_from_evdev(saai_ui_core::EVDEV_KEY_A, KeyboardLayout::Qwerty),
+            Some(Keystroke::Char('a'))
+        );
     }
 
     #[test]

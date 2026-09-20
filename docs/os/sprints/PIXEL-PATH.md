@@ -180,7 +180,8 @@ host-only derived view.
 | VUI-09 v2 live lists | generated Inbox/Spaces/Wi-Fi/Bluetooth/trusted hits **на panther** (ADR-218; `c8870c10…`; leave Сейчас) |
 | VUI-09 v2 Me scroll | `layout_v2_scrolled` **на panther** (ADR-219; `44afa590…`; leave Сейчас) |
 | VUI-09 v2 apps grid | generated `Button` tiles match `now_grid_rect` **на panther** (ADR-220; `9c146600…`; Приложения without launch; leave Сейчас) |
-| VUI-09 v2 overlay hits | `Field` + decision `Button`s from `layout_v2` **host** (ADR-221; keyboard keys stay formula) |
+| VUI-09 v2 overlay hits | `Field` + decision `Button`s from `layout_v2` **host** (ADR-221) |
+| VUI-09 Keyboard IME | privileged `Keyboard` bound to Field; USB HID replaces OSK **host** (ADR-222; no volume/power; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

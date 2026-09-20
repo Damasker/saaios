@@ -7,7 +7,8 @@
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
 //! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`/`WifiRow`/
-//! `BluetoothRow`/`TrustedClientRow`.
+//! `BluetoothRow`/`TrustedClientRow`. VUI-09 adds privileged `Keyboard`
+//! (ADR-222) as the Field-bound IME object; it lives in `keyboard.rs`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,

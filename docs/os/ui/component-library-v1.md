@@ -58,7 +58,7 @@ promotion checklist passes on Pixel 7.
 `consent`, `remote-pair`.
 
 **Privileged (shell `compile_v2()` only):** `OrbHost`, `SystemStatus`,
-`DecisionOverlay`, `CapabilityRow`, `TrustedClientRow`, `lock`,
+`DecisionOverlay`, `CapabilityRow`, `TrustedClientRow`, `Keyboard`, `lock`,
 `diagnostic`, `gallery`. Deferred names (`SpaceDetail`, `MemoryReview`,
 `ChatThread`, `Widget`) remain outside the vocabulary.
 
@@ -81,8 +81,8 @@ Those rows are not an app API.
 | Composite | `SpaceRow` | Experimental (VUI-07) | `Пространства` |
 | Composite | `WifiRow` | Experimental (VUI-07) | `Wi-Fi сети` |
 | Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
-| Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
-| Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
+| Composite | `TrustedClientRow` | Experimental (VUI-07) | `Доверенные клиенты` |
+| Composite | `Keyboard` | Privileged (VUI-09 ADR-222) | Field-bound IME; USB HID may replace the panel |
 | Pattern | empty, loading, offline, blocked, failed | Experimental (VUI-07 ADR-155/156) | NOW, apps grid, Bluetooth scan/pair |
 | Pattern | confirmation, permission, recovery | Deferred to VUI-07 | system surfaces |
 
@@ -255,6 +255,10 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   down and up hit the same action; pressed still follows the finger.
   ADR-164 docks the PIN setup dialer the same way; lock unlock is
   unchanged.
+- ADR-222: a privileged `Keyboard` IME binds to the focused Field.
+  On-screen keys are that object's `OnScreen` source. USB HID with
+  `KEY_A` is `Hardware` and hides the panel. The Field does not embed
+  keys. Volume/power/touch/haptic nodes are not a keyboard.
 - ADR-169: opening intent / Wi-Fi password / PIN setup starts
   `MotionToken::Context`. The Field paints a 2-unit `Focus` outline
   while that clock needs a frame, unless reduced motion. Lock PIN
@@ -650,6 +654,18 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `compile_v2_public` rejects the name. Trailing Назад stays
   procedural. Do not tap Отозвать.
 - Accessibility: delegated to the nested `DataRow`.
+
+### 7.17 `Keyboard`
+
+- Anatomy: an IME object bound to a `Field` loc, not a child of the
+  Field. Sources: `OnScreen` (ADR-029 QWERTY / PIN pad) and
+  `Hardware` (USB HID evdev with `KEY_A`). Hardware hides the panel.
+- Not gpio-keys, not power-keys, not the touchscreen, not haptic.
+  No libxkbcommon. Privileged; `compile_v2_public()` rejects the name.
+- First real consumer: intent, Wi-Fi password, PIN setup, lock PIN
+  (ADR-222). Do not type intent. PIN stays null.
+- Accessibility: the bound Field keeps `TextField`; the panel is
+  not a second accessible editor.
 
 ### SurfacePattern (empty / loading / offline / blocked / failed)
 

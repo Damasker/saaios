@@ -18,7 +18,8 @@ compiled `now.sui` (ADR-217). Inbox/Spaces/list hits generate
 `compile_v2()` documents (ADR-218). Me scroll uses
 `layout_v2_scrolled` (ADR-219). Apps grid hits use generated
 `compile_v2()` `Button` tiles (ADR-220). Overlay Field and decision
-`Button` hits use `layout_v2` (ADR-221). Keyboard keys stay a formula.
+`Button` hits use `layout_v2` (ADR-221). Privileged `Keyboard` is the
+Field-bound IME; USB HID may replace the panel (ADR-222).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -168,7 +169,11 @@ Ordered. Items 1–3 and 7–17 are done
     Host (ADR-218). Me scroll, apps grid, and overlays stay formulas.
 23. ~~Me scroll hits from `layout_v2_scrolled`.~~ Host (ADR-219).
     Apps grid and overlays stay formulas.
-24. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+24. ~~Overlay Field/decision hits from `layout_v2`.~~ Host (ADR-221).
+    Privileged `Keyboard` is the Field-bound IME (ADR-222). USB HID
+    with `KEY_A` replaces the on-screen panel. Volume/power are not
+    a keyboard.
+25. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 

@@ -1178,7 +1178,8 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 (ADR-215). Production `compile_v2()` / `layout_v2`
 `root_view` (ADR-216); NOW compiled hits (ADR-217); live list
 hits (ADR-218); Me scroll (ADR-219); apps grid (ADR-220); overlay
-Field/decision hits (ADR-221). Release
+Field/decision hits (ADR-221); Field-bound `Keyboard` IME with USB
+swap (ADR-222). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1254,6 +1255,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (ADR-220). Overlays with vocabulary stay next.
 - [x] Overlay Field and decision `Button` hits from `layout_v2`
   (ADR-221). Keyboard keys stay a formula; they are not vocabulary.
+- [x] Privileged `Keyboard` IME binds to the focused Field; `OnScreen`
+  and USB `Hardware` share keystrokes (ADR-222). Not a public app
+  API. Volume/power/touch/haptic are not a keyboard.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

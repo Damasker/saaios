@@ -103,8 +103,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
   (ADR-217). Live Inbox/Spaces/list hits generate documents
   (ADR-218). Me scroll is `layout_v2_scrolled` (ADR-219). Apps grid
   `Button` tiles match `now_grid_rect` (ADR-220). Overlay Field and
-  decision `Button`s match consent/object-view rows (ADR-221). Keyboard
-  keys stay a formula. `layout_v2()`
+  decision `Button`s match consent/object-view rows (ADR-221). Privileged
+  `Keyboard` binds to the focused Field; USB HID may replace the on-screen
+  panel (ADR-222). `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
   `inset = safe` uses
@@ -157,6 +158,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | `TrustedClientRow` in a public document | compile error; privileged |
 | Wanting Me app hit-test from a v2 screen | `compile_v2()` + `CapabilityRow`; stacked rect, no action |
 | `CapabilityRow` in a public document | compile error; privileged |
+| Wanting a Field-bound IME | privileged `Keyboard`; not a public app API |
+| `Keyboard` in a public document | compile error; privileged |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

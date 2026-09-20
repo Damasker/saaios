@@ -8,6 +8,7 @@ mod components;
 mod composites;
 mod foundations;
 mod gallery;
+mod keyboard;
 
 pub use components::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, DataRow, DataRowVariant,
@@ -30,6 +31,10 @@ pub use foundations::{
 pub use gallery::{
     composite_gallery_fixtures, privileged_gallery_type_names, public_gallery_type_names,
     CompositeGalleryFixtures,
+};
+pub use keyboard::{
+    hardware_keyboard_present, hardware_keyboards, HardwareKeyboardDevice, Keyboard,
+    KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, EVDEV_KEY_A,
 };
 
 /// Backend-independent sRGB color. Renderers are responsible for converting
