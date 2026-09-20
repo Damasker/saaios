@@ -12,7 +12,9 @@ use memory_store::{
 use model_provider::{build_provider, ProviderKind};
 use policy_engine::PolicyEngine;
 use protocol::{ConfirmScope, Envelope, MessageKind};
-use saai_observation::{Freshness, MetricsOrigin, ObservationCache};
+use saai_observation::{
+    cpu_sampler_health, Freshness, HealthState, MetricsOrigin, ObservationCache,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -355,6 +357,8 @@ struct RuntimeStatusDto {
     observations: Vec<LiveObservationDto>,
     #[serde(default)]
     memory_records: Vec<MemoryReviewDto>,
+    #[serde(default)]
+    health: Option<LiveHealthDto>,
     max_concurrent: usize,
     request_timeout_secs: u64,
     session_grants: Vec<String>,
@@ -376,6 +380,21 @@ struct LiveObservationDto {
     unit: Option<String>,
     source: String,
     observed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct LiveHealthDto {
+    component_id: String,
+    state: HealthState,
+}
+
+/// One CPU sampler Health. Magnitude is not a threshold. Stale is Unknown.
+fn live_health(cache: &ObservationCache) -> LiveHealthDto {
+    let report = cpu_sampler_health(&cache.snapshot(Utc::now()));
+    LiveHealthDto {
+        component_id: report.component_id,
+        state: report.state,
+    }
 }
 
 fn live_observations(cache: &ObservationCache) -> Vec<LiveObservationDto> {
@@ -467,6 +486,7 @@ impl RuntimeMeta {
             observation_revision: self.observations.revision(),
             observations: live_observations(&self.observations),
             memory_records: live_memory_records(runtime),
+            health: Some(live_health(&self.observations)),
             max_concurrent: self.max_concurrent,
             request_timeout_secs: self.request_timeout_secs,
             session_grants: runtime.session_grants(),
@@ -1454,6 +1474,7 @@ mod tests {
         assert_eq!(status.device, device);
         assert!(status.observations.is_empty());
         assert_eq!(status.observation_revision, 0);
+        assert_eq!(status.health.as_ref().map(|h| h.state), Some(HealthState::Unknown));
     }
 
     #[tokio::test]
@@ -1505,6 +1526,14 @@ mod tests {
             .observations
             .iter()
             .all(|row| !row.source.is_empty() && !row.key.is_empty()));
+        assert_eq!(
+            live.health.as_ref().map(|h| h.state),
+            Some(HealthState::Healthy)
+        );
+        assert_eq!(
+            live.health.as_ref().map(|h| h.component_id.as_str()),
+            Some("system.cpu.sampler")
+        );
 
         let stale = Arc::new(ObservationCache::new());
         stale.apply(observations_from_system_metrics(
@@ -1522,6 +1551,10 @@ mod tests {
         assert_eq!(expired.observation_revision, 1);
         assert!(expired.observations.is_empty());
         assert!(expired.memory_records.is_empty());
+        assert_eq!(
+            expired.health.as_ref().map(|h| h.state),
+            Some(HealthState::Unknown)
+        );
     }
 
     #[tokio::test]

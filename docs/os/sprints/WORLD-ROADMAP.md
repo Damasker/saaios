@@ -78,8 +78,8 @@ ToolResult again.
 
 **Change:** `HealthState` + `cpu_sampler_health` on LocalDevice
 `system.cpu.usage`. Fresh Direct → Healthy. Stale/missing → Unknown.
-Approximate → Degraded. CPU percent is not a threshold. No runtime
-`status` wire. No shell chrome.
+Approximate → Degraded. CPU percent is not a threshold. Runtime
+`status.health` is the same report (ADR-292). No shell chrome.
 
 **Test:** host `cargo test -p saai-observation health`.
 

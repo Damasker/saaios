@@ -144,6 +144,7 @@ ADR-288 FailureClass: timeout/unreachable retryable; mismatch is not retry (host
 ADR-289 one Planner ReplanRequest after verification mismatch, cap 1 (host).
 ADR-290 ObservationThreshold on schedules: Fresh >= gte; Stale not due (host).
 ADR-291 Health Attention: Unhealthy lights Orb; Healthy/Unknown omitted (host).
+ADR-292 runtime status includes one Health report, not a CPU graph (host).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
