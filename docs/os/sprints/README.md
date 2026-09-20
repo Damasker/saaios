@@ -86,6 +86,7 @@ ADR-224 diagnostic Назад hits from `layout_v2` `DataRow` + `row back`.
 ADR-225 NOW chrome paint from the same `now_view()` tree as hits.
 ADR-226 Inbox/Spaces/list paint from generated `layout_v2` trees.
 ADR-227 Me scroll paint from the same `layout_v2_scrolled` tree as hits.
+ADR-228 apps grid paint from generated `layout_v2` `Button` tiles.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

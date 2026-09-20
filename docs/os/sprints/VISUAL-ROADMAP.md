@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–227; production `compile_v2()`; NOW, list, and Me paint from `layout_v2`; apps/overlays paint still formula; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–228; production `compile_v2()`; NOW, list, Me, and apps paint from `layout_v2`; overlays paint still formula; not Visual v1 sign-off) |
 
 ---
 
@@ -1181,7 +1181,7 @@ hits (ADR-218); Me scroll (ADR-219); apps grid (ADR-220); overlay
 Field/decision hits (ADR-221); Field-bound `Keyboard` IME with USB
 swap (ADR-222); OrbHost hits (ADR-223); diagnostic hits (ADR-224);
 NOW chrome paint (ADR-225); list paint (ADR-226); Me scroll paint
-(ADR-227). Release
+(ADR-227); apps grid paint (ADR-228). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1270,7 +1270,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Inbox/Spaces/Wi-Fi/Bluetooth/trusted paint from generated
   `layout_v2` trees (ADR-226). Me scroll paint stayed next.
 - [x] Me scroll paint from the same `layout_v2_scrolled` tree as hits
-  (ADR-227). Apps grid and overlay paint stay next.
+  (ADR-227). Apps grid paint stayed next.
+- [x] Apps grid paint from the same generated `layout_v2` tree as hits
+  (ADR-228). Overlay paint stays next.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

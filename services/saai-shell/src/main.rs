@@ -3416,6 +3416,32 @@ fn me_paint_cards(tree: &LayoutNode, rows: &[MeRow]) -> Vec<(Rect, render::Actio
         .collect()
 }
 
+/// ADR-228: tile rects from the same generated `layout_v2` tree hits
+/// already use. Loc is `manage_app:{id}`; BTreeMap order matches
+/// `apps_v2_source`. Empty stays a SurfacePattern, not invented tiles.
+fn apps_paint_cards(
+    tree: &LayoutNode,
+    apps: &BTreeMap<String, AppSummary>,
+) -> Vec<(Rect, render::ActionCardView)> {
+    apps.values()
+        .map(|app| {
+            let id = format!("manage_app:{}", app.id);
+            (
+                v2_named_rect(tree, &id, "ADR-228 apps paint"),
+                render::ActionCardView::new(
+                    app.name.clone(),
+                    app_state_label(&app.state),
+                    if app.state == "running" {
+                        "Работает"
+                    } else {
+                        "Запустить"
+                    },
+                ),
+            )
+        })
+        .collect()
+}
+
 fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
     render::NowPaintChrome {
         header: now_node_rect(view, "ContextHeader"),
@@ -7816,18 +7842,23 @@ impl Shell {
                 footer_actions: now_footer_action_views_from(&view),
             }
         } else if self.current_page == RootPage::Now && self.apps_open {
-            let view = root_view(width, height);
+            let view = layout_live_v2(
+                &apps_v2_source(&self.installed_apps),
+                "ADR-228 apps paint",
+                width,
+                height,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::AppsGrid {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: apps_grid_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
                     self.appd.is_connected(),
                     archived,
                 ),
-                apps: self.apps_grid_cards(width, height),
+                apps: apps_paint_cards(&view, &self.installed_apps),
                 empty_pattern: apps_grid_empty_pattern(
                     self.appd.is_connected(),
                     self.installed_apps.len(),
@@ -9573,30 +9604,6 @@ impl Shell {
             }
         }
         rows
-    }
-
-    /// ADR-138: one letter-square tile per live installed app. The
-    /// leftover `root.sui` NOW cards are not tiles -- intent lives on
-    /// the composed footer, object inspect on the NOW summary.
-    fn apps_grid_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        self.installed_apps
-            .values()
-            .enumerate()
-            .map(|(index, app)| {
-                (
-                    now_grid_rect(index, width, height),
-                    render::ActionCardView::new(
-                        app.name.clone(),
-                        app_state_label(&app.state),
-                        if app.state == "running" {
-                            "Работает"
-                        } else {
-                            "Запустить"
-                        },
-                    ),
-                )
-            })
-            .collect()
     }
 
     /// VUI-03 (ADR-112): replaces `context_label()`'s own
@@ -12226,6 +12233,48 @@ mod tests {
         assert!(main.contains("ADR-227 me paint"));
         assert!(main.contains("me_paint_cards"));
         assert!(main.contains("layout_live_v2_scrolled"));
+    }
+
+    #[test]
+    fn apps_paint_tiles_match_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let mut apps = std::collections::BTreeMap::new();
+        apps.insert("demo".to_string(), test_app("demo", "Saai Demo"));
+        apps.insert("alpha".to_string(), test_app("alpha", "Alpha"));
+        let tree = super::layout_live_v2(
+            &super::apps_v2_source(&apps),
+            "ADR-228 apps paint",
+            width,
+            height,
+        );
+        assert_eq!(
+            super::v2_named_rect(&tree, "manage_app:alpha", "apps"),
+            super::now_grid_rect(0, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&tree, "manage_app:demo", "apps"),
+            super::now_grid_rect(1, width, height)
+        );
+        let cards = super::apps_paint_cards(&tree, &apps);
+        assert_eq!(cards[0].0, super::now_grid_rect(0, width, height));
+        assert_eq!(cards[0].1.label, "Alpha");
+        assert_eq!(cards[1].0, super::now_grid_rect(1, width, height));
+        assert_eq!(cards[1].1.label, "Saai Demo");
+        let empty_apps = std::collections::BTreeMap::new();
+        let empty = super::layout_live_v2(
+            &super::apps_v2_source(&empty_apps),
+            "ADR-228 apps empty",
+            width,
+            height,
+        );
+        assert!(saai_ui_compiler::layout_v1_find(&empty, "SurfacePattern").is_some());
+        assert!(super::apps_v2_source(&empty_apps).contains("apps.empty"));
+        let nav = saai_ui_compiler::layout_v1_find(&tree, "BottomNavigation").expect("tabs");
+        assert_eq!(nav.children.len(), 4);
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-228 apps paint"));
+        assert!(main.contains("apps_paint_cards"));
     }
 
     #[test]
