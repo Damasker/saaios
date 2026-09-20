@@ -135,6 +135,7 @@ ADR-274 Verifying Tasks settle from Fresh runtime `status` observations (host).
 ADR-275 OAM/IRAB pass Principal on AuthorityRequest (host).
 ADR-276 worker DelegationEnvelope is bound and OneShot (host).
 ADR-282 taskd confirm sends execution_id; runtime issues the worker envelope (host).
+ADR-283 memory remember/forget go through PolicyEngine (host).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

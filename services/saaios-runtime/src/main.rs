@@ -987,21 +987,35 @@ where
         } => match runtime.memory() {
             Some(store) => match memory_write_space(space_id.as_deref(), global) {
                 Ok(scope) => {
-                    let mut fact = MemoryFact::new(key, value);
-                    fact.tags = tags;
-                    fact.source = Some("console".into());
-                    fact.space_id = scope;
-                    match store.remember(fact) {
-                        Ok(fact) => ClientResponse {
-                            ok: true,
-                            memory_facts: Some(vec![fact]),
-                            ..Default::default()
-                        },
+                    let args = serde_json::json!({
+                        "key": &key,
+                        "space_id": &space_id,
+                        "global": global,
+                    });
+                    match runtime.allow_memory_mutation("memory.remember", &args) {
                         Err(e) => ClientResponse {
                             ok: false,
                             error: Some(e.to_string()),
                             ..Default::default()
                         },
+                        Ok(()) => {
+                            let mut fact = MemoryFact::new(key, value);
+                            fact.tags = tags;
+                            fact.source = Some("console".into());
+                            fact.space_id = scope;
+                            match store.remember(fact) {
+                                Ok(fact) => ClientResponse {
+                                    ok: true,
+                                    memory_facts: Some(vec![fact]),
+                                    ..Default::default()
+                                },
+                                Err(e) => ClientResponse {
+                                    ok: false,
+                                    error: Some(e.to_string()),
+                                    ..Default::default()
+                                },
+                            }
+                        }
                     }
                 }
                 Err(msg) => ClientResponse {
@@ -1072,23 +1086,37 @@ where
             global,
         } => match runtime.memory() {
             Some(store) => match memory_forget_access(space_id.as_deref(), global) {
-                Ok(access) => match store.forget(&key, &access) {
-                    Ok(Some(_)) => ClientResponse {
-                        ok: true,
-                        memory_facts: Some(vec![]),
-                        ..Default::default()
-                    },
-                    Ok(None) => ClientResponse {
-                        ok: false,
-                        error: Some(format!("no fact for key={key}")),
-                        ..Default::default()
-                    },
-                    Err(e) => ClientResponse {
-                        ok: false,
-                        error: Some(e.to_string()),
-                        ..Default::default()
-                    },
-                },
+                Ok(access) => {
+                    let args = serde_json::json!({
+                        "key": &key,
+                        "space_id": &space_id,
+                        "global": global,
+                    });
+                    match runtime.allow_memory_mutation("memory.forget", &args) {
+                        Err(e) => ClientResponse {
+                            ok: false,
+                            error: Some(e.to_string()),
+                            ..Default::default()
+                        },
+                        Ok(()) => match store.forget(&key, &access) {
+                            Ok(Some(_)) => ClientResponse {
+                                ok: true,
+                                memory_facts: Some(vec![]),
+                                ..Default::default()
+                            },
+                            Ok(None) => ClientResponse {
+                                ok: false,
+                                error: Some(format!("no fact for key={key}")),
+                                ..Default::default()
+                            },
+                            Err(e) => ClientResponse {
+                                ok: false,
+                                error: Some(e.to_string()),
+                                ..Default::default()
+                            },
+                        },
+                    }
+                }
                 Err(msg) => ClientResponse {
                     ok: false,
                     error: Some(msg),

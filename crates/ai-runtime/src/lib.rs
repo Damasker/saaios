@@ -814,6 +814,20 @@ impl AiRuntime {
         self.policy.clear_session_grants();
     }
 
+    /// MEM-07: console remember/forget is the owner channel. Deny is not a write.
+    pub fn allow_memory_mutation(&self, operation: &str, arguments: &Value) -> Result<()> {
+        let decision = self
+            .policy
+            .decide_owner_memory_mutation(operation, arguments);
+        if decision.verdict != PolicyVerdict::Allow {
+            return Err(anyhow!(
+                "policy denied memory mutation {operation}: {}",
+                decision.reason
+            ));
+        }
+        Ok(())
+    }
+
     pub fn audit_tail(&self, limit: usize) -> Result<Vec<audit_log::AuditRecord>> {
         let mut all = self.audit.read_all()?;
         if all.len() > limit {

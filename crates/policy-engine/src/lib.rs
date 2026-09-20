@@ -2,7 +2,7 @@ use protocol::PolicyVerdict;
 use saai_authority::{
     default_deny_unverified, envelope_covers, grant_covers, proof_matches_principal,
     request_operation_id, AuthorityOperation, AuthorityRequest, DelegationEnvelope, GrantValidity,
-    IdentityProof, ObjectRef, Principal, PrincipalId, SessionGrant,
+    IdentityProof, ObjectRef, Principal, PrincipalId, PrincipalKind, SessionGrant,
 };
 use serde_json::{Map, Value};
 use std::sync::Mutex;
@@ -310,6 +310,70 @@ impl PolicyEngine {
         self.decide_request(&request, Some(spec))
     }
 
+    /// MEM-07: remember/forget/erase are not ambient. Owner JSON is the
+    /// user channel. A worker needs an envelope. Automation and apps Deny.
+    pub fn decide_memory_mutation(&self, request: &AuthorityRequest) -> PolicyDecision {
+        if default_deny_unverified(&request.proof).is_some() {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "identity unverified".into(),
+            };
+        }
+        if !proof_matches_principal(&request.principal, &request.proof) {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "identity proof does not match principal".into(),
+            };
+        }
+        let Some(operation) = request_operation_id(request) else {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "unknown memory operation".into(),
+            };
+        };
+        if !is_memory_mutation(operation) {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: format!("not a memory mutation: {operation}"),
+            };
+        }
+        match request.principal.kind {
+            PrincipalKind::LocalUser => PolicyDecision {
+                verdict: PolicyVerdict::Allow,
+                reason: "owner memory mutation".into(),
+            },
+            PrincipalKind::Worker => {
+                if self.take_matching_envelope(request) {
+                    PolicyDecision {
+                        verdict: PolicyVerdict::Allow,
+                        reason: "delegation".into(),
+                    }
+                } else {
+                    PolicyDecision {
+                        verdict: PolicyVerdict::Deny,
+                        reason: "worker cannot mutate memory without an envelope".into(),
+                    }
+                }
+            }
+            _ => PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: format!(
+                    "principal {:?} cannot mutate memory",
+                    request.principal.kind
+                ),
+            },
+        }
+    }
+
+    pub fn decide_owner_memory_mutation(
+        &self,
+        operation: &str,
+        arguments: &Value,
+    ) -> PolicyDecision {
+        let request = AuthorityRequest::local_user_action(operation, None, arguments.clone());
+        self.decide_memory_mutation(&request)
+    }
+
     /// AUTH-03. Hard-denied tools and Persistent validity are refused.
     pub fn grant_scoped(&self, grant: SessionGrant) -> bool {
         if Self::hard_deny(&grant.operation) || grant.validity == GrantValidity::Persistent {
@@ -459,6 +523,13 @@ fn looks_like_injection(args: &Value) -> bool {
         || s.contains("kill -9 1")
         || s.contains("rm -rf")
         || s.contains("drop privileges")
+}
+
+fn is_memory_mutation(operation: &str) -> bool {
+    matches!(
+        operation,
+        "memory.remember" | "memory.forget" | "memory.invalidate" | "memory.erase"
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -827,6 +898,72 @@ mod tests {
                 .verdict,
             PolicyVerdict::Allow
         );
+    }
+
+    #[test]
+    fn owner_memory_remember_is_allowed() {
+        let engine = PolicyEngine::new();
+        let d = engine.decide_owner_memory_mutation(
+            "memory.remember",
+            &json!({"key": "ui.detail", "global": true}),
+        );
+        assert_eq!(d.verdict, PolicyVerdict::Allow);
+        assert!(d.reason.contains("owner"));
+    }
+
+    #[test]
+    fn worker_cannot_remember_without_envelope() {
+        let engine = PolicyEngine::new();
+        let execution_id = Uuid::new_v4();
+        let mut request = AuthorityRequest::local_user_action(
+            "memory.remember",
+            None,
+            json!({"key": "ui.detail"}),
+        );
+        request.principal = Principal::worker(execution_id);
+        request.proof = IdentityProof::DelegatedWorker { execution_id };
+        let d = engine.decide_memory_mutation(&request);
+        assert_eq!(d.verdict, PolicyVerdict::Deny);
+        assert!(d.reason.contains("envelope"));
+    }
+
+    #[test]
+    fn worker_memory_erase_is_oneshot_envelope() {
+        let engine = PolicyEngine::new();
+        let execution_id = Uuid::new_v4();
+        let args = json!({"key": "secret", "global": true});
+        assert!(engine.issue_worker_delegation("memory.erase", &args, execution_id, true));
+        let mut request = AuthorityRequest::local_user_action("memory.erase", None, args.clone());
+        request.principal = Principal::worker(execution_id);
+        request.proof = IdentityProof::DelegatedWorker { execution_id };
+        assert_eq!(
+            engine.decide_memory_mutation(&request).verdict,
+            PolicyVerdict::Allow
+        );
+        assert_eq!(
+            engine.decide_memory_mutation(&request).verdict,
+            PolicyVerdict::Deny
+        );
+    }
+
+    #[test]
+    fn automation_cannot_erase_memory() {
+        let engine = PolicyEngine::new();
+        let mut request =
+            AuthorityRequest::local_user_action("memory.erase", None, json!({"key": "secret"}));
+        request.principal = Principal::automation("nightly");
+        request.proof = IdentityProof::InternalServiceBoundary;
+        assert_eq!(
+            engine.decide_memory_mutation(&request).verdict,
+            PolicyVerdict::Deny
+        );
+    }
+
+    #[test]
+    fn recall_is_not_a_memory_mutation() {
+        let engine = PolicyEngine::new();
+        let d = engine.decide_owner_memory_mutation("memory.recall", &json!({"query": "ui"}));
+        assert_eq!(d.verdict, PolicyVerdict::Deny);
     }
 
     #[test]
