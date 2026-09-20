@@ -56,6 +56,8 @@ smithay-client-toolkit = { version = "0.19", default-features = false, features 
 # never caught it.
 drm = "0.14"
 wayland-protocols = { version = "0.32", features = ["client"] }
+# APP-04 / ADR-273: shell is the IME client for a foreign text field.
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
 
 [build-dependencies]
 saai-ui-compiler.workspace = true

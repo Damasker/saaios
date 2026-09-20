@@ -248,7 +248,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome host ADR-268, panther waits)
 - APP-COMPAT APP-02 compositor half: `wp-fractional-scale-v1` + `wp-viewporter` (ADR-266; host). GTK4 frame on panther still waits.
 - APP-COMPAT APP-03 compositor: `zwp_input_method_v2` without keymap (ADR-267; host). OSK chrome is APP-04.
-- APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272 (host). No wvkbd. Panther chrome waits.
+- APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272, shell IME layer ADR-273 (host). No wvkbd. Panther chrome waits.
 - APP-COMPAT APP-06 first browser is Falkon/QtWebEngine (ADR-269; host). No panther launch.
 - Visual v1 unsigned; `compile_v2_public` stays Experimental (ADR-265)
 

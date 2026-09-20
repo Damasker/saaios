@@ -84,6 +84,7 @@ mod entityd_client;
 mod haptic;
 mod hardware_keyboard;
 mod intent_context;
+mod osk_layer;
 mod portal_server;
 mod power_button;
 mod render;
@@ -482,7 +483,7 @@ use saai_ui_core::{
     Field, FieldKind, FrameBackend, FramePace, FrameSample, FrameSurface, IntentSummary, Keyboard,
     KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LayoutNode, Length,
     LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node, ObjectSummary, OrbHost,
-    Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
+    OskImeOp, Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
     StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale, SystemSection,
     SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow,
     MIN_TOUCH_TARGET,
@@ -491,10 +492,16 @@ use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
     protocol::{wl_buffer, wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
-    Connection, Dispatch, QueueHandle,
+    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
+};
+use wayland_protocols_misc::zwp_input_method_v2::client::{
+    zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2,
+    zwp_input_method_manager_v2::ZwpInputMethodManagerV2,
+    zwp_input_method_v2::{self, ZwpInputMethodV2},
+    zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2,
 };
 
 use dmabuf_canvas::{Busy, DmabufCanvas};
@@ -1788,11 +1795,7 @@ const INTENT_KEY_PREFIX: &str = "intent:key:";
 const INTENT_HEADER_HEIGHT: u32 = 260;
 
 fn intent_keyboard_height(panel_height: u32) -> u32 {
-    let row = physical_unit(MIN_TOUCH_TARGET);
-    let pad = physical_unit(SpacingToken::Small.value()).saturating_mul(2);
-    let wanted = row.saturating_mul(4).saturating_add(pad);
-    let keep_field = row.saturating_mul(2);
-    wanted.min(panel_height.saturating_sub(keep_field)).max(row)
+    osk_layer::osk_layer_height(panel_height)
 }
 
 fn intent_row_inset(letters: &str, width: u32) -> u32 {
@@ -6778,6 +6781,12 @@ fn main() {
     };
     let session_lock_state = SessionLockState::new(&globals, &qh);
     let layer_shell = LayerShell::bind(&globals, &qh).expect("wlr-layer-shell not available");
+    let ime_manager: Option<ZwpInputMethodManagerV2> = globals.bind(&qh, 1..=1, ()).ok();
+    if ime_manager.is_none() {
+        eprintln!(
+            "saai-shell: zwp_input_method_manager_v2 unavailable, foreign OSK stays off (ADR-273)"
+        );
+    }
 
     let surface = compositor.create_surface(&qh);
     let window = xdg_shell.create_window(surface, WindowDecorations::ServerDefault, &qh);
@@ -6930,6 +6939,17 @@ fn main() {
         last_lock_attention_key: None,
         low_battery_notified: false,
         fonts,
+        layer_shell,
+        ime_manager,
+        ime: None,
+        ime_active: false,
+        osk_keyboard: Keyboard::bind_foreign_ime(),
+        osk_layer: None,
+        osk_width: 0,
+        osk_height: 0,
+        osk_pool: None,
+        osk_buffer: None,
+        osk_touch_pending: false,
         appd: appd_client::AppdClient::new(appd_socket),
         pending_consent: None,
         remote_pair_listener,
@@ -7164,6 +7184,18 @@ struct Shell {
     /// S13 Change 1: throttles `refresh_statusbar_if_due` the same way
     /// `last_apps_refresh` throttles `refresh_apps_if_due`.
     last_statusbar_refresh: Instant,
+    /// APP-04 / ADR-273: create a bottom OSK layer when IME activates.
+    layer_shell: LayerShell,
+    ime_manager: Option<ZwpInputMethodManagerV2>,
+    ime: Option<ZwpInputMethodV2>,
+    ime_active: bool,
+    osk_keyboard: Keyboard,
+    osk_layer: Option<LayerSurface>,
+    osk_width: u32,
+    osk_height: u32,
+    osk_pool: Option<SlotPool>,
+    osk_buffer: Option<Buffer>,
+    osk_touch_pending: bool,
     /// VUI-07 (ADR-134): last clock string painted on the no-PIN lock,
     /// so a status tick can skip the lock commit until the minute
     /// changes. `None` until the first idle lock paint.
@@ -7385,6 +7417,61 @@ impl Dispatch<wl_buffer::WlBuffer, Busy> for Shell {
     }
 }
 
+impl Dispatch<ZwpInputMethodManagerV2, ()> for Shell {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpInputMethodManagerV2,
+        _event: <ZwpInputMethodManagerV2 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwpInputMethodV2, ()> for Shell {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwpInputMethodV2,
+        event: zwp_input_method_v2::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_input_method_v2::Event::Activate => state.on_foreign_ime_activate(qh),
+            zwp_input_method_v2::Event::Deactivate | zwp_input_method_v2::Event::Unavailable => {
+                state.on_foreign_ime_deactivate()
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZwpInputMethodKeyboardGrabV2, ()> for Shell {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpInputMethodKeyboardGrabV2,
+        _event: <ZwpInputMethodKeyboardGrabV2 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwpInputPopupSurfaceV2, ()> for Shell {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwpInputPopupSurfaceV2,
+        _event: <ZwpInputPopupSurfaceV2 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
 impl CompositorHandler for Shell {
     fn scale_factor_changed(
         &mut self,
@@ -7504,6 +7591,7 @@ impl SessionLockHandler for Shell {
     fn locked(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, session_lock: SessionLock) {
         println!("saai-shell: session locked, creating lock surface(s)");
         self.locked = true;
+        self.hide_foreign_osk();
         self.activity_clock = None;
         for output in self.output_state.outputs() {
             let surface = self.compositor.create_surface(qh);
@@ -7550,9 +7638,16 @@ impl SessionLockHandler for Shell {
 }
 
 impl LayerShellHandler for Shell {
-    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
-        // Not fatal for this test client, same stance as SessionLockHandler::finished --
-        // keep running as a plain toplevel if the compositor takes the layer surface away.
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, layer: &LayerSurface) {
+        if self
+            .osk_layer
+            .as_ref()
+            .is_some_and(|osk| osk.wl_surface() == layer.wl_surface())
+        {
+            self.hide_foreign_osk();
+            println!("saai-shell: OSK layer closed");
+            return;
+        }
         println!("saai-shell: layer surface closed");
     }
 
@@ -7560,18 +7655,27 @@ impl LayerShellHandler for Shell {
         &mut self,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
-        _layer: &LayerSurface,
+        layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
         let (width, height) = configure.new_size;
         let (width, height) = (width.max(1), height.max(1));
+        if self
+            .osk_layer
+            .as_ref()
+            .is_some_and(|osk| osk.wl_surface() == layer.wl_surface())
+        {
+            println!("saai-shell: OSK layer configure at {width}x{height}");
+            self.osk_width = width;
+            self.osk_height = height;
+            self.osk_buffer = None;
+            self.present_foreign_osk(qh);
+            return;
+        }
         println!("saai-shell: layer surface configure at {width}x{height}");
         self.layer_width = width;
         self.layer_height = height;
-        // A fresh configure means a new size -- the old buffer (if any)
-        // was sized for the previous one, same reasoning as the lock
-        // surface's own `configure`.
         self.layer_buffer = None;
         self.last_statusbar_snapshot = None;
         self.present_status_bar(qh);
@@ -7583,7 +7687,9 @@ impl SeatHandler for Shell {
         &mut self.seat_state
     }
 
-    fn new_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {}
+    fn new_seat(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        self.ensure_foreign_ime(&seat, qh);
+    }
 
     fn new_capability(
         &mut self,
@@ -7592,6 +7698,7 @@ impl SeatHandler for Shell {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        self.ensure_foreign_ime(&seat, qh);
         // No pointer/keyboard handling -- this is a touchscreen-only
         // device (ADR-012 already made the same call for saai-displayd).
         if capability == Capability::Touch && self.touch.is_none() {
@@ -7635,6 +7742,25 @@ impl TouchHandler for Shell {
         self.last_activity = Instant::now();
         self.frame_input_at = Some(self.last_activity);
         self.last_touch_pos = position;
+        if self
+            .osk_layer
+            .as_ref()
+            .is_some_and(|layer| *layer.wl_surface() == surface)
+        {
+            self.osk_touch_pending = true;
+            self.unlock_pending = false;
+            self.tab_touch_pending = false;
+            self.me_drag = None;
+            self.touch_down_action = osk_layer::osk_action_at(
+                position,
+                self.osk_width,
+                self.osk_height,
+                self.osk_keyboard.mode,
+            );
+            self.sync_pressed_key(conn, qh);
+            return;
+        }
+        self.osk_touch_pending = false;
         if lock_wake_tap(self.sleeping) == LockWakeTap::ShowLock {
             // First touch after AOD just wakes the lock — it does not
             // also unlock. Consumes this touch entirely so a stray
@@ -7718,6 +7844,23 @@ impl TouchHandler for Shell {
         self.pressed_key =
             retain_pressed_while_clock(self.pressed_key.take(), clock.as_ref(), false);
         let down_action = self.touch_down_action.take();
+        if self.osk_touch_pending {
+            self.osk_touch_pending = false;
+            let up_action = osk_layer::osk_action_at(
+                self.last_touch_pos,
+                self.osk_width,
+                self.osk_height,
+                self.osk_keyboard.mode,
+            );
+            if let Some(action) = committed_action(down_action.as_deref(), up_action.as_deref()) {
+                self.handle_foreign_osk_action(&action, qh);
+            }
+            if had_pressed_key {
+                self.draw(conn, qh);
+                self.present_foreign_osk(qh);
+            }
+            return;
+        }
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
         // starts on the lock surface but ends elsewhere (or a
@@ -9590,6 +9733,9 @@ impl Shell {
     }
 
     fn live_keyboard_keys(&self) -> Vec<(Rect, String)> {
+        if self.osk_layer.is_some() {
+            return osk_layer::osk_keys(self.osk_width, self.osk_height, self.osk_keyboard.mode);
+        }
         if self.locked {
             if self.settings.pin_code.is_some() {
                 if hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware {
@@ -9631,6 +9777,14 @@ impl Shell {
     }
 
     fn keyboard_frame_action_at(&self, pos: (f64, f64)) -> Option<String> {
+        if self.osk_layer.is_some() {
+            return osk_layer::osk_action_at(
+                pos,
+                self.osk_width,
+                self.osk_height,
+                self.osk_keyboard.mode,
+            );
+        }
         if let Some(state) = self.intent_input.as_ref() {
             if !state.keyboard.shows_panel() {
                 return None;
@@ -11281,6 +11435,153 @@ impl Shell {
     /// `layer_buffer` the same way `present_lock_surface` reuses its
     /// own pool/buffer -- called both from the layer's own `configure`
     /// (first paint) and periodically from `refresh_statusbar_if_due`.
+    fn shell_owns_text_field(&self) -> bool {
+        self.intent_input.is_some() || self.wifi_password.is_some() || self.pin_setup.is_some()
+    }
+
+    fn ensure_foreign_ime(&mut self, seat: &wl_seat::WlSeat, qh: &QueueHandle<Self>) {
+        if self.ime.is_some() {
+            return;
+        }
+        let Some(manager) = self.ime_manager.as_ref() else {
+            return;
+        };
+        self.ime = Some(manager.get_input_method(seat, qh, ()));
+    }
+
+    fn on_foreign_ime_activate(&mut self, qh: &QueueHandle<Self>) {
+        self.ime_active = true;
+        if osk_layer::osk_layer_visible(self.ime_active, self.shell_owns_text_field())
+            && !self.locked
+        {
+            self.show_foreign_osk(qh);
+        } else {
+            self.hide_foreign_osk();
+        }
+    }
+
+    fn on_foreign_ime_deactivate(&mut self) {
+        self.ime_active = false;
+        self.hide_foreign_osk();
+    }
+
+    fn show_foreign_osk(&mut self, qh: &QueueHandle<Self>) {
+        if self.osk_layer.is_some() {
+            self.present_foreign_osk(qh);
+            return;
+        }
+        let geom = osk_layer::osk_layer_geom(self.width, self.height);
+        let height = geom.height.max(1) as u32;
+        let surface = self.compositor.create_surface(qh);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Top,
+            Some(osk_layer::OSK_LAYER_NAMESPACE),
+            None,
+        );
+        layer.set_anchor(Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+        layer.set_size(0, height);
+        layer.set_exclusive_zone(geom.height);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.commit();
+        self.osk_width = self.width.max(1);
+        self.osk_height = height;
+        self.osk_layer = Some(layer);
+    }
+
+    fn hide_foreign_osk(&mut self) {
+        self.osk_layer = None;
+        self.osk_pool = None;
+        self.osk_buffer = None;
+        self.osk_touch_pending = false;
+        self.osk_width = 0;
+        self.osk_height = 0;
+    }
+
+    fn handle_foreign_osk_action(&mut self, action: &str, qh: &QueueHandle<Self>) {
+        let Some(op) = osk_layer::apply_osk_action(&mut self.osk_keyboard, action) else {
+            self.present_foreign_osk(qh);
+            return;
+        };
+        self.send_foreign_ime_op(&op);
+    }
+
+    fn send_foreign_ime_op(&self, op: &OskImeOp) {
+        let Some(ime) = self.ime.as_ref() else {
+            return;
+        };
+        match op {
+            OskImeOp::CommitString(text) => ime.commit_string(text.clone()),
+            OskImeOp::DeleteSurrounding {
+                before_bytes,
+                after_bytes,
+            } => ime.delete_surrounding_text(*before_bytes, *after_bytes),
+        }
+        ime.commit(0);
+    }
+
+    fn present_foreign_osk(&mut self, _qh: &QueueHandle<Self>) {
+        let Some(layer) = self.osk_layer.clone() else {
+            return;
+        };
+        let width = self.osk_width;
+        let height = self.osk_height;
+        if width == 0 || height == 0 {
+            return;
+        }
+        let stride = width as i32 * 4;
+        if self.osk_pool.is_none() {
+            self.osk_pool = Some(
+                SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                    .expect("create OSK surface pool"),
+            );
+        }
+        let pool = self.osk_pool.as_mut().expect("just ensured OSK pool");
+        if self.osk_buffer.is_none() {
+            let (buffer, _canvas) = pool
+                .create_buffer(
+                    width as i32,
+                    height as i32,
+                    stride,
+                    wl_shm::Format::Xrgb8888,
+                )
+                .expect("create OSK buffer");
+            self.osk_buffer = Some(buffer);
+        }
+        let buffer = self.osk_buffer.as_mut().expect("just ensured OSK buffer");
+        let canvas = match pool.canvas(buffer) {
+            Some(canvas) => canvas,
+            None => {
+                let (second_buffer, canvas) = pool
+                    .create_buffer(
+                        width as i32,
+                        height as i32,
+                        stride,
+                        wl_shm::Format::Xrgb8888,
+                    )
+                    .expect("create OSK buffer");
+                *buffer = second_buffer;
+                canvas
+            }
+        };
+        let keys = osk_layer::osk_keys(width, height, self.osk_keyboard.mode);
+        let pressed = self.pressed_key.clone();
+        let fonts = self.fonts.as_ref();
+        let contrast = self.settings.contrast_pct;
+        render::draw_foreign_osk(
+            &mut render::Canvas::new(canvas, width, height),
+            &keys,
+            pressed.as_deref(),
+            fonts,
+        );
+        render::apply_contrast_boost(canvas, contrast);
+        let surface = layer.wl_surface();
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        buffer.attach_to(surface).expect("OSK buffer attach");
+        layer.commit();
+    }
+
     fn present_status_bar(&mut self, qh: &QueueHandle<Self>) {
         let width = self.layer_width;
         let height = self.layer_height;

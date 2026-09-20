@@ -986,6 +986,18 @@ pub fn draw_lock_pin_entry(
     paint_keyboard_keys(canvas, fonts, keys, pressed_key);
 }
 
+/// APP-04 / ADR-273: Keyboard keys filling a bottom OSK layer. Not a
+/// shell Field. Same key paint as Intent.
+pub fn draw_foreign_osk(
+    canvas: &mut Canvas<'_>,
+    keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Surface));
+    paint_keyboard_keys(canvas, fonts, keys, pressed_key);
+}
+
 /// One key painter for Intent, Wi-Fi password, PIN setup, and lock
 /// unlock. Rects come from `layout()`; this only fills them.
 /// ADR-151: the live finger's key uses `ColorRole::Pressed`.
