@@ -572,45 +572,70 @@ impl HardwareOutput {
         Ok(())
     }
 
-    /// Blits a client's XRGB8888/ARGB8888 buffer at (0, 0) into the write
-    /// buffer, clipped to the panel size -- no scaling, matching the
-    /// smallest-verifiable-step cut of this milestone. Callers composite a
-    /// full scene by calling this once per visible layer, background to
-    /// foreground, before `present()`; this alone never clears the rest of
-    /// the buffer (that's `fill()`'s job, called first).
+    /// Blits a client's XRGB8888/ARGB8888 buffer at `(dst_x, dst_y)` into
+    /// the write buffer, clipped to the panel. GPU helper has no dest
+    /// offset (ADR-272): a non-zero dest uses the CPU path so an OSK
+    /// at the bottom is not painted over the status bar.
     pub fn blit(
         &mut self,
         src: &[u8],
         src_width: u32,
         src_height: u32,
         src_stride: u32,
+        dst_x: i32,
+        dst_y: i32,
     ) -> Result<(), String> {
         let width = self.width;
         let height = self.height;
         let stride = self.stride;
-        let copy_w = src_width.min(width);
-        let copy_h = src_height.min(height);
-        if let Some(gpu) = self.gpu.as_mut() {
-            gpu.blit(src, copy_w, copy_h, src_stride)?;
-            eprintln!(
-                "saai-displayd: GPU blit submitted {copy_w}x{copy_h} px (src stride={src_stride})"
-            );
+        let Some(win) = super::layer_geom::blit_window(
+            dst_x,
+            dst_y,
+            src_width as i32,
+            src_height as i32,
+            width as i32,
+            height as i32,
+        ) else {
             return Ok(());
+        };
+        if dst_x == 0 && dst_y == 0 {
+            if let Some(gpu) = self.gpu.as_mut() {
+                gpu.blit(src, win.width, win.height, src_stride)?;
+                eprintln!(
+                    "saai-displayd: GPU blit submitted {}x{} px (src stride={src_stride})",
+                    win.width, win.height
+                );
+                return Ok(());
+            }
         }
         let Some(mut mapping) = self.map_write_slot() else {
             return Err("CPU scanout mapping failed".to_string());
         };
         let dst = mapping.as_mut();
-        let copy_w = copy_w as usize;
-        let copy_h = copy_h as usize;
-        for row in 0..copy_h {
-            let src_off = row * src_stride as usize;
-            let dst_off = row * stride as usize;
-            let n = copy_w * 4;
-            dst[dst_off..dst_off + n].copy_from_slice(&src[src_off..src_off + n]);
+        let copy_w = win.width as usize;
+        let n = copy_w
+            .checked_mul(4)
+            .ok_or_else(|| "CPU blit row overflow".to_string())?;
+        for row in 0..win.height as usize {
+            let src_off = (win.src_y as usize + row)
+                .checked_mul(src_stride as usize)
+                .and_then(|off| off.checked_add(win.src_x as usize * 4))
+                .ok_or_else(|| "CPU blit src overflow".to_string())?;
+            let dst_off = (win.dst_y as usize + row)
+                .checked_mul(stride as usize)
+                .and_then(|off| off.checked_add(win.dst_x as usize * 4))
+                .ok_or_else(|| "CPU blit dst overflow".to_string())?;
+            let src_row = src
+                .get(src_off..src_off + n)
+                .ok_or_else(|| "CPU blit source is short".to_string())?;
+            let dst_row = dst
+                .get_mut(dst_off..dst_off + n)
+                .ok_or_else(|| "CPU blit dest is short".to_string())?;
+            dst_row.copy_from_slice(src_row);
         }
         eprintln!(
-            "saai-displayd: blit wrote {copy_w}x{copy_h} px into fb (dst stride={stride}, src stride={src_stride})"
+            "saai-displayd: blit wrote {}x{} px at ({},{}) into fb (dst stride={stride}, src stride={src_stride})",
+            win.width, win.height, win.dst_x, win.dst_y
         );
         Ok(())
     }
@@ -620,7 +645,7 @@ impl HardwareOutput {
     /// in shared GPU/DRM memory. If the UMD rejects an otherwise valid
     /// dma-buf, synchronize and map it once, then reuse the established
     /// staging path without taking down the compositor.
-    pub fn blit_dmabuf(&mut self, dmabuf: &Dmabuf) -> Result<(), String> {
+    pub fn blit_dmabuf(&mut self, dmabuf: &Dmabuf, dst_x: i32, dst_y: i32) -> Result<(), String> {
         let size = dmabuf.size();
         let width = size.w as u32;
         let height = size.h as u32;
@@ -634,17 +659,19 @@ impl HardwareOutput {
             .ok_or_else(|| "dma-buf has no plane fd".to_string())?;
         let format = dmabuf.format().code as u32;
 
-        if let Some(gpu) = self.gpu.as_mut() {
-            match gpu.blit_dmabuf(fd, width, height, stride, format)? {
-                true => {
-                    eprintln!(
-                        "saai-displayd: direct GPU dma-buf blit submitted {width}x{height} px (stride={stride})"
-                    );
-                    return Ok(());
+        if dst_x == 0 && dst_y == 0 {
+            if let Some(gpu) = self.gpu.as_mut() {
+                match gpu.blit_dmabuf(fd, width, height, stride, format)? {
+                    true => {
+                        eprintln!(
+                            "saai-displayd: direct GPU dma-buf blit submitted {width}x{height} px (stride={stride})"
+                        );
+                        return Ok(());
+                    }
+                    false => eprintln!(
+                        "saai-displayd: Vulkan rejected client dma-buf; using synchronized staging fallback"
+                    ),
                 }
-                false => eprintln!(
-                    "saai-displayd: Vulkan rejected client dma-buf; using synchronized staging fallback"
-                ),
             }
         }
 
@@ -672,7 +699,7 @@ impl HardwareOutput {
         // single plane covers `required` bytes, and START/END READ brackets
         // all CPU access to the shared allocation.
         let bytes = unsafe { std::slice::from_raw_parts(mapping.ptr().cast::<u8>(), required) };
-        let blit_result = self.blit(bytes, width, height, stride);
+        let blit_result = self.blit(bytes, width, height, stride, dst_x, dst_y);
         let sync_result = dmabuf
             .sync_plane(0, DmabufSyncFlags::END | DmabufSyncFlags::READ)
             .map_err(|e| format!("dma-buf read sync end failed: {e}"));

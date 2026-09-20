@@ -202,12 +202,19 @@ struct SurfaceFrame {
 fn blit_surface_frame(
     hardware: &mut hardware::HardwareOutput,
     frame: &SurfaceFrame,
+    dst_x: i32,
+    dst_y: i32,
 ) -> Result<(), String> {
     match &frame.backing {
-        FrameBacking::Pixels(pixels) => {
-            hardware.blit(pixels, frame.width, frame.height, frame.stride)
-        }
-        FrameBacking::Dmabuf(frame) => hardware.blit_dmabuf(&frame.dmabuf),
+        FrameBacking::Pixels(pixels) => hardware.blit(
+            pixels,
+            frame.width,
+            frame.height,
+            frame.stride,
+            dst_x,
+            dst_y,
+        ),
+        FrameBacking::Dmabuf(frame) => hardware.blit_dmabuf(&frame.dmabuf, dst_x, dst_y),
     }
 }
 
@@ -230,6 +237,8 @@ fn blit_if_changed(
     slot_generations: &mut [HashMap<WlSurface, u64>; 2],
     write_index: usize,
     surface: &WlSurface,
+    dst_x: i32,
+    dst_y: i32,
 ) -> Result<(), String> {
     let Some(frame) = surface_frames.get(surface) else {
         return Ok(());
@@ -237,7 +246,7 @@ fn blit_if_changed(
     if slot_generations[write_index].get(surface) == Some(&frame.generation) {
         return Ok(());
     }
-    blit_surface_frame(hw, frame)?;
+    blit_surface_frame(hw, frame, dst_x, dst_y)?;
     slot_generations[write_index].insert(surface.clone(), frame.generation);
     Ok(())
 }
@@ -717,6 +726,14 @@ impl State {
     }
 
     fn recomposite(&mut self) {
+        let layer_blits: Vec<(WlSurface, i32, i32)> = self
+            .layer_surfaces
+            .iter()
+            .map(|layer| {
+                let geom = self.layer_geom(layer);
+                (layer.wl_surface().clone(), geom.x, geom.y)
+            })
+            .collect();
         let Some(hw) = self.hardware.as_mut() else {
             return;
         };
@@ -742,6 +759,8 @@ impl State {
                     &mut self.slot_generations,
                     write_index,
                     &s,
+                    0,
+                    0,
                 ) {
                     eprintln!("saai-displayd: hardware lock blit failed: {error}");
                     std::process::exit(72);
@@ -758,6 +777,8 @@ impl State {
                     &mut self.slot_generations,
                     write_index,
                     &s,
+                    0,
+                    0,
                 ) {
                     eprintln!("saai-displayd: hardware toplevel blit failed: {error}");
                     std::process::exit(72);
@@ -766,20 +787,21 @@ impl State {
                     shown.push(s);
                 }
             }
-            for layer in &self.layer_surfaces {
-                let s = layer.wl_surface().clone();
+            for (s, dst_x, dst_y) in &layer_blits {
                 if let Err(error) = blit_if_changed(
                     hw,
                     &self.surface_frames,
                     &mut self.slot_generations,
                     write_index,
-                    &s,
+                    s,
+                    *dst_x,
+                    *dst_y,
                 ) {
                     eprintln!("saai-displayd: hardware layer blit failed: {error}");
                     std::process::exit(72);
                 }
-                if self.surface_frames.contains_key(&s) {
-                    shown.push(s);
+                if self.surface_frames.contains_key(s) {
+                    shown.push(s.clone());
                 }
             }
         }

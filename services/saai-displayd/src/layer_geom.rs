@@ -70,6 +70,47 @@ pub fn destination(
     }
 }
 
+/// Intersection of a source blit placed at `(dst_x, dst_y)` with the panel.
+/// `None` if it is completely off-screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlitWindow {
+    pub src_x: u32,
+    pub src_y: u32,
+    pub dst_x: u32,
+    pub dst_y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[allow(dead_code)]
+pub fn blit_window(
+    dst_x: i32,
+    dst_y: i32,
+    src_w: i32,
+    src_h: i32,
+    panel_w: i32,
+    panel_h: i32,
+) -> Option<BlitWindow> {
+    if src_w <= 0 || src_h <= 0 || panel_w <= 0 || panel_h <= 0 {
+        return None;
+    }
+    let x0 = dst_x.max(0);
+    let y0 = dst_y.max(0);
+    let x1 = dst_x.saturating_add(src_w).min(panel_w);
+    let y1 = dst_y.saturating_add(src_h).min(panel_h);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(BlitWindow {
+        src_x: u32::try_from(x0 - dst_x).unwrap_or(0),
+        src_y: u32::try_from(y0 - dst_y).unwrap_or(0),
+        dst_x: x0 as u32,
+        dst_y: y0 as u32,
+        width: (x1 - x0) as u32,
+        height: (y1 - y0) as u32,
+    })
+}
+
 /// Last matching layer is on top (same order as recomposite).
 #[allow(dead_code)]
 pub fn hit_layer(layers: &[LayerGeom], x: f64, y: f64) -> Option<usize> {
@@ -133,5 +174,42 @@ mod tests {
     #[test]
     fn unset_size_defaults_to_the_status_bar_strip() {
         assert_eq!(configure_size(1080, 2400, 0, 0), (1080, 120));
+    }
+
+    #[test]
+    fn status_bar_blit_stays_at_the_origin() {
+        assert_eq!(
+            blit_window(0, 0, 1080, 120, 1080, 2400),
+            Some(BlitWindow {
+                src_x: 0,
+                src_y: 0,
+                dst_x: 0,
+                dst_y: 0,
+                width: 1080,
+                height: 120
+            })
+        );
+    }
+
+    #[test]
+    fn osk_blit_starts_at_the_bottom() {
+        let geom = destination(1080, 2400, 1080, 800, false, true, true, true);
+        assert_eq!(
+            blit_window(geom.x, geom.y, geom.width, geom.height, 1080, 2400),
+            Some(BlitWindow {
+                src_x: 0,
+                src_y: 0,
+                dst_x: 0,
+                dst_y: 1600,
+                width: 1080,
+                height: 800
+            })
+        );
+    }
+
+    #[test]
+    fn offscreen_blit_is_skipped() {
+        assert_eq!(blit_window(0, 2400, 1080, 120, 1080, 2400), None);
+        assert_eq!(blit_window(-1080, 0, 1080, 120, 1080, 2400), None);
     }
 }
