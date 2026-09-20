@@ -1,7 +1,7 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete. AUTH-04 in progress (live grants + confirmation binding).**
-Next phone work is still AUTH-04 in the service queue, not AUTH-10 as a new
+Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host.**
+Next phone work is still AUTH-08/10 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-124](../../adr/ADR-124-unified-authority-model.md)
@@ -19,9 +19,9 @@ No ambient authority. No new policyd.
 |---|---|---|---|
 | AUTH-00 | ADR-124 + this roadmap | **Done** | no |
 | AUTH-01 | Principal, AuthorityRequest, scope, reason codes | **Done** (host) | no |
-| AUTH-02 | PolicyEngine adapter (same verdicts) | Backlog | no |
-| AUTH-03 | Scoped session grants (not tool-name HashSet) | Backlog | no |
-| AUTH-04 | Fix `decide_named` live grants; confirmation binding | **In progress** (host) | no |
+| AUTH-02 | PolicyEngine adapter (same verdicts) | **Done** (host, ADR-260) | no |
+| AUTH-03 | Scoped session grants (not tool-name HashSet) | **Done** (host, ADR-261) | no |
+| AUTH-04 | Fix `decide_named` live grants; confirmation binding | **Done** (host) | no |
 | AUTH-05 | OAM/IRAB Principal on AuthorityRequest | Backlog | no |
 | AUTH-06 | Worker DelegationEnvelope | Backlog | no |
 | AUTH-07 | Automation Principal | Backlog | no |
@@ -40,13 +40,44 @@ binding differs when target/args change, hard-deny is not a grant).
 
 **Threat:** none — unused types until AUTH-02.
 
+## AUTH-02
+
+**Goal:** AuthorityRequest hits the live PolicyEngine. Verdicts match
+`decide_named` for the same spec and args.
+
+**Change:** `PolicyEngine::decide_request`. Unverified is Deny. No new
+daemon. ToolSpec risk stays trusted metadata.
+
+**Test:** `adapter_matches_decide_named_verdicts`; unverified metrics
+Deny; format still hard-denied.
+
+**Rollback:** drop `decide_request`.
+
+**Threat:** none — host adapter, no phone binary.
+
+## AUTH-03
+
+**Goal:** a session grant names who / what / which object / how long.
+
+**Change:** `SessionGrant` + `grant_covers`. `grant_session(tool)` is
+owner+Any+Session. Hard deny and Persistent are refused. OneShot is
+consumed. Reboot still clears the process-local list.
+
+**Test:** worker does not inherit owner; exact object does not leak;
+expired Until asks; OneShot is single-use.
+
+**Rollback:** restore `HashSet<String>`.
+
+**Threat:** none — in-process only.
+
 ## AUTH-04
 
 **Goal:** `decide_named` uses the live `PolicyEngine` (session grants
 visible). One-shot confirm is bound to call/tool/canonical args.
 
 **Change:** instance `decide_named`; `note_pending` / `take_bound_pending`;
-runtime confirm consumes the binding. AUTH-03 scoped grants stay later.
+runtime confirm consumes the binding. Scoped grants are AUTH-03
+(`SessionGrant`), not a later HashSet patch.
 
 **Test:** grant then `decide_named` Allows; a fresh engine still Asks;
 mutated pid is rejected; key order does not break the bind.

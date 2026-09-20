@@ -1,18 +1,22 @@
-//! Unified Authority Model types (ADR-124 AUTH-01).
+//! Unified Authority Model types (ADR-124 AUTH-01…03).
 //!
-//! Vocabulary only. Does not enforce, listen, store grants, or replace
-//! PolicyEngine / GrantStore / authorized_keys.
+//! Vocabulary, request binding, and pure grant matching. Enforcement
+//! stays in PolicyEngine. Does not listen, persist GrantStore, or
+//! replace authorized_keys.
 
 mod binding;
+mod grant;
 mod model;
 mod scope;
 
 pub use binding::canonical_binding;
+pub use grant::{grant_covers, grant_is_live, space_scope_matches, SessionGrant};
 pub use model::{
-    default_deny_unknown_operation, default_deny_unverified, AuthorityContext,
-    AuthorityCorrelation, AuthorityOperation, AuthorityRequest, GrantValidity, IdentityProof,
-    PolicyReasonCode, Principal, PrincipalId, PrincipalKind, UsageConstraint,
+    default_deny_unknown_operation, default_deny_unverified, request_operation_id,
+    AuthorityContext, AuthorityCorrelation, AuthorityOperation, AuthorityRequest, GrantValidity,
+    IdentityProof, PolicyReasonCode, Principal, PrincipalId, PrincipalKind, UsageConstraint,
 };
+pub use saai_entity_store::ObjectRef;
 pub use scope::{scope_matches, SpaceScope, TargetScope};
 
 /// Existing PolicyEngine hard-deny tools. Grants cannot override these.

@@ -173,3 +173,11 @@ pub fn default_deny_unknown_operation(known: bool) -> Option<PolicyReasonCode> {
         Some(PolicyReasonCode::UnknownOperation)
     }
 }
+
+pub fn request_operation_id(request: &AuthorityRequest) -> Option<&str> {
+    match &request.operation {
+        AuthorityOperation::SemanticAction { action_id } => Some(action_id.as_str()),
+        AuthorityOperation::AppCapabilityUse { capability } => Some(capability.as_str()),
+        AuthorityOperation::RemoteAdministration { service } => Some(service.as_str()),
+    }
+}
