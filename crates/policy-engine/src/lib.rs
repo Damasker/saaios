@@ -267,6 +267,11 @@ impl PolicyEngine {
         self.grant_scoped(SessionGrant::session_any(PrincipalId::owner(), tool));
     }
 
+    /// Confirm Once is a consumed grant, not AskUser fallthrough.
+    pub fn grant_once(&self, tool: &str) -> bool {
+        self.grant_scoped(SessionGrant::oneshot_any(PrincipalId::owner(), tool))
+    }
+
     /// AUTH-03. Hard-denied tools and Persistent validity are refused.
     pub fn grant_scoped(&self, grant: SessionGrant) -> bool {
         if Self::hard_deny(&grant.operation) || grant.validity == GrantValidity::Persistent {
@@ -724,6 +729,20 @@ mod tests {
             engine
                 .decide_request(&kill_request(json!({"pid": 4312})), Some(&kill_spec()))
                 .verdict,
+            PolicyVerdict::AskUser
+        );
+    }
+
+    #[test]
+    fn grant_once_allows_then_asks() {
+        let engine = PolicyEngine::new();
+        assert!(engine.grant_once("process.kill_request"));
+        assert_eq!(
+            engine.decide(&kill_spec(), &json!({"pid": 4312})).verdict,
+            PolicyVerdict::Allow
+        );
+        assert_eq!(
+            engine.decide(&kill_spec(), &json!({"pid": 4312})).verdict,
             PolicyVerdict::AskUser
         );
     }

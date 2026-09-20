@@ -76,7 +76,8 @@ expired Until asks; OneShot is single-use.
 visible). One-shot confirm is bound to call/tool/canonical args.
 
 **Change:** instance `decide_named`; `note_pending` / `take_bound_pending`;
-runtime confirm consumes the binding. Scoped grants are AUTH-03
+runtime confirm consumes the binding. Confirm Once writes `grant_once`
+(ADR-280) so execute requires Allow. Scoped grants are AUTH-03
 (`SessionGrant`), not a later HashSet patch.
 
 **Test:** grant then `decide_named` Allows; a fresh engine still Asks;
@@ -166,3 +167,11 @@ until revoke; session/envelope Allow becomes AskUser.
 **Rollback:** drop the three `revoke*` methods.
 
 **Threat:** none — host API, no phone binary, no Отозвать tap.
+
+## AUTH-10
+
+**Goal:** Pixel 7 one-shot confirm, scoped grant, reboot, SSH
+regression. Host Once grant is ADR-280; this row is the device pass.
+
+**Phone:** yes. Do not start until a shell/displayd experiment week
+and dest-no-lock recovery is planned. PIN stays null.

@@ -249,6 +249,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - AUTH-07 Automation Principal, proof must match kind (ADR-277; host)
 - AUTH-08 portal capabilities through PolicyEngine; GrantStore stays (ADR-278; host; no shell flash)
 - AUTH-09 revoke GrantStore/session/envelope (ADR-279; host; no chrome, no Отозвать)
+- Confirm Once is a OneShot grant (ADR-280; host; no runtime flash)
 - MEM-03 MemoryRecord v2 + legacy JSONL view (ADR-262; host)
 - MEM-06 invalidate vs erase (ADR-263; host)
 - MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome host ADR-268, panther waits)

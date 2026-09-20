@@ -716,9 +716,16 @@ impl AiRuntime {
                 });
             }
 
-            if matches!(scope, ConfirmScope::Session) {
-                self.policy.grant_session(tool);
-                info!(%correlation_id, %tool, "session grant recorded");
+            match scope {
+                ConfirmScope::Session => {
+                    self.policy.grant_session(tool);
+                    info!(%correlation_id, %tool, "session grant recorded");
+                }
+                ConfirmScope::Once => {
+                    let _ = self.policy.grant_once(tool);
+                    info!(%correlation_id, %tool, "oneshot grant recorded");
+                }
+                ConfirmScope::Cancel => {}
             }
 
             let spec = self
@@ -726,8 +733,16 @@ impl AiRuntime {
                 .get(tool)
                 .ok_or_else(|| anyhow!("unknown tool {tool}"))?;
             let decision = self.policy.decide(spec.spec(), &arguments);
-            if decision.verdict == PolicyVerdict::Deny {
-                return Err(anyhow!("policy denied after confirmation"));
+            if decision.verdict != PolicyVerdict::Allow {
+                return Err(anyhow!(
+                    "policy {} after confirmation: {}",
+                    match decision.verdict {
+                        PolicyVerdict::Deny => "denied",
+                        PolicyVerdict::AskUser => "still asks",
+                        PolicyVerdict::Allow => "allowed",
+                    },
+                    decision.reason
+                ));
             }
 
             let output = self

@@ -26,6 +26,16 @@ impl SessionGrant {
             validity: GrantValidity::Session,
         }
     }
+
+    pub fn oneshot_any(principal: PrincipalId, operation: impl Into<String>) -> Self {
+        Self {
+            principal,
+            operation: operation.into(),
+            target: TargetScope::Any,
+            space: SpaceScope::Any,
+            validity: GrantValidity::OneShot,
+        }
+    }
 }
 
 pub fn grant_is_live(grant: &SessionGrant, now: DateTime<Utc>) -> bool {

@@ -137,6 +137,7 @@ ADR-276 worker DelegationEnvelope is bound and OneShot (host).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
+ADR-280 Confirm Once is a OneShot grant, not AskUser fallthrough (host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
