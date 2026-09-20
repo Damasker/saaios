@@ -14,6 +14,7 @@
 //! ADR-205: `WifiRow` docks as live Wi-Fi list stacked rows.
 //! ADR-206: `BluetoothRow` docks as live Bluetooth list stacked rows.
 //! ADR-207: `TrustedClientRow` docks as live trusted-client stacked rows.
+//! ADR-208: `CapabilityRow` docks as live Me app stacked rows.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -165,7 +166,7 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
             "ContextHeader" if header.is_none() => header = Some(component),
             "ObjectSummary" if object.is_none() => object = Some(component),
             "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" | "WifiRow"
-            | "BluetoothRow" | "TrustedClientRow" => stacked.push(component),
+            | "BluetoothRow" | "TrustedClientRow" | "CapabilityRow" => stacked.push(component),
             _ => rest.push(component),
         }
     }
@@ -211,7 +212,9 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
             .clone()
             .unwrap_or_else(|| format!("{}-{index}", row.type_name));
         let mut node = Node::leaf(id).with_size(Length::Fill, Length::Px(stacked_height));
-        if row.type_name != "SystemSection" && row.props.a11y.as_deref() == Some("Button") {
+        if !matches!(row.type_name.as_str(), "SystemSection" | "CapabilityRow")
+            && row.props.a11y.as_deref() == Some("Button")
+        {
             let loc = row.props.loc.as_deref();
             let action = match row.type_name.as_str() {
                 "SpaceRow" => format!("select_space:{}", loc.unwrap_or("SpaceRow")),
@@ -645,6 +648,44 @@ mod tests {
         let tree = layout_v2(&quiet, 1080, 2400);
         assert!(tree.hit_test(540.0, 525.0).is_none());
         assert!(tree.hit_test(135.0, 2250.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_privileged_capability_row_matches_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/capability-privileged.sui");
+        assert!(compile_v2_public(source)
+            .unwrap_err()
+            .to_string()
+            .contains("privileged SUI v2 component `CapabilityRow`"));
+        let screen = compile_v2(source).expect("privileged capability");
+        assert!(screen.is_privileged());
+        let v2 = layout_v2(&screen, 1080, 2400);
+        let row = layout_v1_find(&v2, "me.app").expect("capability row");
+        assert_eq!(row.rect.y, 430);
+        assert_eq!(row.rect.height, 190);
+        assert!(row.action.is_none());
+        assert!(v2.hit_test(540.0, 525.0).is_none());
+        assert!(v2.hit_test(540.0, 250.0).is_none());
+        assert!(v2.hit_test(135.0, 2250.0).is_none());
+        let forced = compile_v2(
+            r#"
+            sui 2
+            screen me {
+              component ContextHeader {}
+              component CapabilityRow {
+                a11y = Button
+                loc = me.app
+              }
+            }
+            "#,
+        )
+        .expect("button still inert");
+        let tree = layout_v2(&forced, 1080, 2400);
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert!(layout_v1_find(&tree, "me.app")
+            .expect("forced row")
+            .action
+            .is_none());
     }
 
     #[test]

@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–207; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–208; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1170,7 +1170,8 @@ budget (ADR-201); Inbox `EventRow` hits (ADR-202); Spaces
 `SpaceRow` hits (ADR-203); Me `SettingRow`
 hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 `BluetoothRow` hits (ADR-206); privileged
-`TrustedClientRow` hits (ADR-207). Release
+`TrustedClientRow` hits (ADR-207); privileged
+`CapabilityRow` hits (ADR-208). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1261,6 +1262,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   `compile_v2_public()` rejects the name. Status rows are not
   actionable. Trailing Назад stays procedural. Do not tap Отозвать.
   `compile()` stays v1.
+- [x] Dock privileged `CapabilityRow` as Me app stacked hits so
+  `layout_v2()` matches `stacked_row_rect` (ADR-208). Never
+  actionable: no revoke protocol. `compile_v2_public()` rejects the
+  name. Do not tap Me apps. `compile()` stays v1.
 
 ### Acceptance
 
@@ -1326,8 +1331,8 @@ After each completed task group, report:
 Continue **Visual v2** at Experimental→Stable after Visual v1, or
 operator-approved lock / display restart / cold boot. Leftover text
 sizes stay named (ADR-201). Inbox through Bluetooth stacked hits are
-host (ADR-202–206). Privileged trusted-client hits are host
-(ADR-207). Live Me flatten/scroll and list trailing controls stay
-procedural.
+host (ADR-202–206). Privileged trusted-client and Me app hits are
+host (ADR-207/208). Live Me flatten/scroll and list trailing
+controls stay procedural.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.

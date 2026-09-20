@@ -472,6 +472,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   stacked hits (`pair_bluetooth`). ADR-207 docks privileged
   `TrustedClientRow` as trusted-client stacked hits
   (`revoke_trusted_client`); `compile_v2_public` rejects the name.
+  ADR-208 docks privileged `CapabilityRow` as Me app stacked hits
+  with no action; `compile_v2_public` rejects the name.
 
 ### 7.6 `TaskSummary`
 
@@ -565,6 +567,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Empty grant set is «без разрешений», not invented scopes.
 - Omit the parent `Приложения` section when there are no apps.
 - First real consumer: `me_system_sections` installed-app rows.
+  ADR-208 docks privileged `CapabilityRow` onto `stacked_row_rect`
+  with no action; `compile_v2_public` rejects the name. Do not tap
+  Me apps.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.12 `EventRow`

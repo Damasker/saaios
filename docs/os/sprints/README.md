@@ -66,6 +66,7 @@ ADR-204 `SettingRow` docks as Me stacked hits (interned `cycle_timezone`, host).
 ADR-205 `WifiRow` docks as Wi-Fi list stacked hits (`connect_wifi`, host).
 ADR-206 `BluetoothRow` docks as Bluetooth list stacked hits (`pair_bluetooth`, host).
 ADR-207 `TrustedClientRow` docks as trusted-client stacked hits (`revoke_trusted_client`, privileged host).
+ADR-208 `CapabilityRow` docks as Me app stacked hits (no action, privileged host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

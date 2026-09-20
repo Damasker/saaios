@@ -167,6 +167,7 @@ host-only derived view.
 | VUI-09 v2 Wi-Fi rows | `WifiRow` → `connect_wifi` on `stacked_row_rect` **host** (ADR-205; chrome unchanged `3850427a…`; list not opened; leave Сейчас) |
 | VUI-09 v2 Bluetooth rows | `BluetoothRow` → `pair_bluetooth` on `stacked_row_rect` **host** (ADR-206; chrome unchanged `3850427a…`; list not opened; leave Сейчас) |
 | VUI-09 v2 trusted rows | `TrustedClientRow` → `revoke_trusted_client` on `stacked_row_rect` **host** (ADR-207; privileged; `compile_v2_public` rejects; list not opened; leave Сейчас) |
+| VUI-09 v2 capability rows | `CapabilityRow` occupies `stacked_row_rect` with no action **host** (ADR-208; privileged; `compile_v2_public` rejects; no Me app tap; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

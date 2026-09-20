@@ -52,6 +52,9 @@ display restart.
   (ADR-207); Status rows invent no `revoke_trusted_client`.
   `compile_v2_public()` rejects the name. Trailing Назад stays
   procedural.
+  Privileged `CapabilityRow` docks Me app stacked hits (ADR-208);
+  the row is never actionable. `compile_v2_public()` rejects the
+  name.
 - `compile_v2_public()` is the third-party gate. It is Experimental,
   not Stable.
 - Top `SafeInsets` is the status layer (ADR-112), not tree padding.
@@ -78,8 +81,8 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Items 1–3 and 7–16 are done
-(ADR-194/195/197–198/196/199/200/201/202/203/204/205/206/207); production still v1.
+Ordered. Items 1–3 and 7–17 are done
+(ADR-194/195/197–198/196/199/200/201/202/203/204/205/206/207/208); production still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
    `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
@@ -138,5 +141,9 @@ Ordered. Items 1–3 and 7–16 are done
     (ADR-207). Privileged; `compile_v2_public` rejects. Do not open
     the live list. Do not tap Отозвать. Trailing Назад stays
     procedural. Do not attach `layout_v2()` to `build.rs` yet.
+17. ~~Dock `CapabilityRow` so `layout_v2()` matches Me app
+    `stacked_row_rect`.~~ Host: never actionable (ADR-208).
+    Privileged; `compile_v2_public` rejects. Do not tap Me apps.
+    Do not attach `layout_v2()` to `build.rs` yet.
 
 Rollback: delete this page. The ledger and `compile()` path stay.

@@ -67,6 +67,11 @@ the labelled shell sample: `TrustedClientRow` with `a11y = Button`
 (ADR-207). `compile_v2_public()` rejects it. Status rows invent no
 `revoke_trusted_client`.
 
+[`examples/capability-privileged.sui`](examples/capability-privileged.sui)
+is the labelled shell sample: `CapabilityRow` with `a11y = Status`
+(ADR-208). `compile_v2_public()` rejects it. The row occupies
+`stacked_row_rect` and invents no action.
+
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
 ```
@@ -103,6 +108,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   ADR-205). `BluetoothRow` owns Bluetooth stacked hits
   (`pair_bluetooth`, ADR-206). Privileged `TrustedClientRow` owns
   trusted-client stacked hits (`revoke_trusted_client`, ADR-207);
+  `compile_v2_public()` rejects the name. Privileged `CapabilityRow`
+  occupies Me app stacked hits with no action (ADR-208);
   `compile_v2_public()` rejects the name.
 
 ## Migration
@@ -132,6 +139,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Bluetooth `BluetoothRow` with `a11y = Status` | stacked rect, no `pair_bluetooth` |
 | Wanting trusted-client hit-test from a v2 screen | `compile_v2()` + `TrustedClientRow`; not `compile_v2_public` |
 | `TrustedClientRow` in a public document | compile error; privileged |
+| Wanting Me app hit-test from a v2 screen | `compile_v2()` + `CapabilityRow`; stacked rect, no action |
+| `CapabilityRow` in a public document | compile error; privileged |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).
