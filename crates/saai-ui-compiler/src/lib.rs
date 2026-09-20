@@ -1144,6 +1144,8 @@ mod tests {
         assert!(ledger.contains("CapabilityRow"));
         assert!(ledger.contains("ADR-209"));
         assert!(ledger.contains("tap-unlock"));
+        assert!(ledger.contains("ADR-210"));
+        assert!(ledger.contains("saai-displayd"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1171,6 +1173,7 @@ mod tests {
         assert!(limits.contains("CapabilityRow"));
         assert!(limits.contains("ADR-209"));
         assert!(limits.contains("tap-unlock"));
+        assert!(limits.contains("ADR-210"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

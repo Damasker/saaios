@@ -169,6 +169,7 @@ host-only derived view.
 | VUI-09 v2 trusted rows | `TrustedClientRow` → `revoke_trusted_client` on `stacked_row_rect` **host** (ADR-207; privileged; `compile_v2_public` rejects; list not opened; leave Сейчас) |
 | VUI-09 v2 capability rows | `CapabilityRow` occupies `stacked_row_rect` with no action **host** (ADR-208; privileged; `compile_v2_public` rejects; no Me app tap; leave Сейчас) |
 | VUI-09 lock cycle | no-PIN tap-unlock **на panther** (`3850427a…`; ADR-209; marker restored; leave Сейчас) |
+| VUI-09 display restart | `saai-displayd` kill + native-init respawn **на panther** (`3850427a…`; ADR-210; marker on; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

@@ -19,6 +19,7 @@ Bluetooth `BluetoothRow` hits (ADR-206) stay host.
 Privileged `TrustedClientRow` hits (ADR-207) stay host.
 Privileged `CapabilityRow` hits (ADR-208) stay host.
 Lock / unlock cycle (ADR-209) is proven on HEAD; tap-unlock; PIN null.
+Display restart (ADR-210) is proven on HEAD; native-init respawned `saai-displayd`.
 
 ## Matrix
 
@@ -42,7 +43,7 @@ Lock / unlock cycle (ADR-209) is proven on HEAD; tap-unlock; PIN null.
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |
 | Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200, ADR-202, ADR-203, ADR-204, ADR-205, ADR-206, ADR-207, ADR-208; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; `EventRow`/`SpaceRow`/`SettingRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`/`CapabilityRow` match `stacked_row_rect`; `select_space`; `cycle_timezone`; `connect_wifi`; `pair_bluetooth`; `revoke_trusted_client`; empty nav/rows/object/Status invent none; `compile_v2_public` rejects privileged; `compile()` stays v1 |
 | Device | lock / unlock cycle | proven | ADR-209; HEAD `3850427a…`; PIN null; clock `13:58`; tap-unlock; marker restored; pid 27000→28091→28125 |
-| Device | display restart | open | do not kill `saai-displayd`; named in ADR-193 |
+| Device | display restart | proven | ADR-210; HEAD `3850427a…`; `saai-displayd` 8323→28184; shell 28125→28190; marker on; Сейчас without lock |
 | Device | cold boot | open | not run on HEAD; named in ADR-193 |
 | Device | daylight / indoor / dark | open | no booth this session; named in ADR-193 |
 | A11y | 7-tap gallery | open | not this slice; named in ADR-193 |
