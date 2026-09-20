@@ -469,7 +469,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   hits (`select_space:<loc>`). ADR-204 docks `SettingRow` as Me stacked
   hits (interned `loc`). ADR-205 docks `WifiRow` as Wi-Fi stacked
   hits (`connect_wifi`). ADR-206 docks `BluetoothRow` as Bluetooth
-  stacked hits (`pair_bluetooth`).
+  stacked hits (`pair_bluetooth`). ADR-207 docks privileged
+  `TrustedClientRow` as trusted-client stacked hits
+  (`revoke_trusted_client`); `compile_v2_public` rejects the name.
 
 ### 7.6 `TaskSummary`
 
@@ -639,6 +641,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   binding.
 - First real consumer: `trusted_client_list_rows` (ADR-131). Flattened
   to `ActionCardView`. «Назад» stays a trailing control card.
+  ADR-207 docks privileged `TrustedClientRow` onto `stacked_row_rect`;
+  `compile_v2_public` rejects the name. Trailing Назад stays
+  procedural. Do not tap Отозвать.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### SurfacePattern (empty / loading / offline / blocked / failed)

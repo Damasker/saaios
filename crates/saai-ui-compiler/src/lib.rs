@@ -1062,6 +1062,17 @@ mod tests {
             Some("Button")
         );
         assert!(guide.contains("bluetooth-public.sui"));
+        const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");
+        assert!(compile_v2_public(TRUSTED)
+            .unwrap_err()
+            .to_string()
+            .contains("privileged SUI v2 component `TrustedClientRow`"));
+        let trusted = compile_v2(TRUSTED).unwrap();
+        assert_eq!(trusted.id, "trusted");
+        assert!(trusted.is_privileged());
+        assert_eq!(trusted.components[1].type_name, "TrustedClientRow");
+        assert_eq!(trusted.components[1].props.a11y.as_deref(), Some("Button"));
+        assert!(guide.contains("trusted-privileged.sui"));
         for name in saai_ui_core::public_gallery_type_names() {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
         }
@@ -1112,6 +1123,8 @@ mod tests {
         assert!(ledger.contains("connect_wifi"));
         assert!(ledger.contains("ADR-206"));
         assert!(ledger.contains("pair_bluetooth"));
+        assert!(ledger.contains("ADR-207"));
+        assert!(ledger.contains("revoke_trusted_client"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1133,6 +1146,8 @@ mod tests {
         assert!(limits.contains("WifiRow"));
         assert!(limits.contains("ADR-206"));
         assert!(limits.contains("BluetoothRow"));
+        assert!(limits.contains("ADR-207"));
+        assert!(limits.contains("TrustedClientRow"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

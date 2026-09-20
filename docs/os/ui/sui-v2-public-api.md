@@ -62,6 +62,11 @@ labelled Bluetooth sample: `ContextHeader`, `BluetoothRow` with
 `pair_bluetooth`. No nested tabs: live «Bluetooth устройства» has
 trailing controls, not `BottomNavigation`.
 
+[`examples/trusted-privileged.sui`](examples/trusted-privileged.sui) is
+the labelled shell sample: `TrustedClientRow` with `a11y = Button`
+(ADR-207). `compile_v2_public()` rejects it. Status rows invent no
+`revoke_trusted_client`.
+
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
 ```
@@ -96,7 +101,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
   (ADR-203). `SettingRow` owns Me stacked hits (interned `loc`,
   ADR-204). `WifiRow` owns Wi-Fi stacked hits (`connect_wifi`,
   ADR-205). `BluetoothRow` owns Bluetooth stacked hits
-  (`pair_bluetooth`, ADR-206).
+  (`pair_bluetooth`, ADR-206). Privileged `TrustedClientRow` owns
+  trusted-client stacked hits (`revoke_trusted_client`, ADR-207);
+  `compile_v2_public()` rejects the name.
 
 ## Migration
 
@@ -123,6 +130,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Wi-Fi `WifiRow` with `a11y = Status` | stacked rect, no `connect_wifi` |
 | Wanting Bluetooth hit-test from a v2 screen | `component BluetoothRow` + `a11y = Button` + `layout_v2` |
 | Bluetooth `BluetoothRow` with `a11y = Status` | stacked rect, no `pair_bluetooth` |
+| Wanting trusted-client hit-test from a v2 screen | `compile_v2()` + `TrustedClientRow`; not `compile_v2_public` |
+| `TrustedClientRow` in a public document | compile error; privileged |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).
