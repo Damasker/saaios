@@ -182,7 +182,9 @@ host-only derived view.
 | VUI-09 v2 apps grid | generated `Button` tiles match `now_grid_rect` **на panther** (ADR-220; `9c146600…`; Приложения without launch; leave Сейчас) |
 | VUI-09 v2 overlay hits | `Field` + decision `Button`s from `layout_v2` **host** (ADR-221) |
 | VUI-09 Keyboard IME | privileged `Keyboard` bound to Field; USB HID replaces OSK **host** (ADR-222; no volume/power; leave Сейчас) |
-| VUI-09 v2 Orb hits | generated `OrbHost` / `orb-menu:` match `orb_zone_rect` **host** (ADR-223; do not tap Изменить; leave Сейчас) |
+| VUI-09 v2 Orb hits | generated `OrbHost` / `orb-menu:` match `orb_zone_rect` **на panther** (ADR-223; `a49dfadf…`; do not tap Изменить; leave Сейчас) |
+| VUI-09 v2 diagnostic hits | generated `DataRow` + `row back` match `stacked_control_rect` **host** (ADR-224; do not 7-tap; leave Сейчас) |
+| VUI-09 v2 diagnostic hits | generated `DataRow` + `row back` match `stacked_control_rect` **host** (ADR-224; do not 7-tap; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

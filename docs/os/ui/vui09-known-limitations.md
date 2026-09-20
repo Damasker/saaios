@@ -20,7 +20,8 @@ compiled `now.sui` (ADR-217). Inbox/Spaces/list hits generate
 `compile_v2()` `Button` tiles (ADR-220). Overlay Field and decision
 `Button` hits use `layout_v2` (ADR-221). Privileged `Keyboard` is the
 Field-bound IME; USB HID may replace the panel (ADR-222). OrbHost
-hits use generated `layout_v2` (ADR-223).
+hits use generated `layout_v2` (ADR-223). Diagnostic Назад hits
+use generated `layout_v2` (ADR-224).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -177,7 +178,10 @@ Ordered. Items 1–3 and 7–17 are done
 25. ~~OrbHost hits from `layout_v2`.~~ Host (ADR-223). Gallery page
     taps stay a whole-surface formula; they are not named
     `Button`/`OrbHost` locs.
-26. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+26. ~~Diagnostic Назад hits from `layout_v2`.~~ Host (ADR-224).
+    `DataRow`s stay read-only. Gallery page taps and Keyboard keys
+    stay their formulas.
+27. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 

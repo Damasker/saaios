@@ -1235,6 +1235,7 @@ mod tests {
         assert!(limits.contains("ADR-221"));
         assert!(limits.contains("ADR-222"));
         assert!(limits.contains("ADR-223"));
+        assert!(limits.contains("ADR-224"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1258,5 +1259,7 @@ mod tests {
         assert!(ledger.contains("Keyboard"));
         assert!(ledger.contains("ADR-223"));
         assert!(ledger.contains("OrbHost"));
+        assert!(ledger.contains("ADR-224"));
+        assert!(ledger.contains("diagnostic"));
     }
 }

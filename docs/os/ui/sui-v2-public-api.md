@@ -106,7 +106,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   decision `Button`s match consent/object-view rows (ADR-221). Privileged
   `Keyboard` binds to the focused Field; USB HID may replace the on-screen
   panel (ADR-222). Privileged `OrbHost` matches the live Orb zone
-  (ADR-223). `layout_v2()`
+  (ADR-223). Privileged `diagnostic` Назад matches `stacked_control_rect`
+  (ADR-224). `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
   `inset = safe` uses

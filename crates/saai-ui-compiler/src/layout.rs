@@ -29,6 +29,8 @@
 //! ADR-223: privileged `OrbHost` overlays the live Orb zone so
 //! closed-dot and open-menu hits match `orb_zone_rect`. Gallery page
 //! taps stay a whole-surface formula.
+//! ADR-224: privileged `diagnostic` DataRows plus trailing `row back`
+//! dock live DevSurface hits. Rows stay read-only.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -861,6 +863,7 @@ mod tests {
         assert!(main.contains("saai_ui_compiler::layout_v2"));
         assert!(main.contains("saai_ui_compiler::compile_v2"));
         assert!(main.contains("orb_v2_source"));
+        assert!(main.contains("diagnostic_v2_source"));
         assert!(!main.contains("layout_v1_root("));
         let build = include_str!("../../../services/saai-shell/build.rs");
         assert!(build.contains("saai_ui_compiler::compile_v2"));
@@ -1415,6 +1418,54 @@ mod tests {
             Some("orb:toggle")
         );
         assert!(open_tree.hit_test(540.0, 2250.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_diagnostic_back_matches_stacked_control() {
+        let mut source = String::from(
+            r#"
+            sui 2
+            screen diagnostic {
+              component ContextHeader {}
+            "#,
+        );
+        for index in 0..3 {
+            source.push_str(&format!(
+                "  component DataRow {{ a11y = Status loc = \"diagnostic.{index}\" }}\n"
+            ));
+        }
+        source.push_str("  row back {}\n}\n");
+        let screen = compile_v2(&source).expect("diagnostic");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert!(v2.hit_test(540.0, 525.0).is_none());
+        assert_eq!(
+            v2.hit_test(540.0, 1185.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_back")
+        );
+        let mut overflow =
+            String::from("sui 2\nscreen diagnostic {\n  component ContextHeader {}\n");
+        for index in 0..9 {
+            overflow.push_str(&format!(
+                "  component DataRow {{ a11y = Status loc = \"diagnostic.{index}\" }}\n"
+            ));
+        }
+        overflow.push_str("  row back {}\n}\n");
+        let docked = layout_v2(
+            &compile_v2(&overflow).expect("overflow diagnostic"),
+            1080,
+            2400,
+        );
+        assert_eq!(
+            docked
+                .hit_test(540.0, 2305.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_back")
+        );
+        assert!(compile_v2_public(&source)
+            .unwrap_err()
+            .to_string()
+            .contains("diagnostic"));
     }
 
     #[test]

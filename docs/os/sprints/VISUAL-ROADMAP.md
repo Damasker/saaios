@@ -1179,7 +1179,7 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 `root_view` (ADR-216); NOW compiled hits (ADR-217); live list
 hits (ADR-218); Me scroll (ADR-219); apps grid (ADR-220); overlay
 Field/decision hits (ADR-221); Field-bound `Keyboard` IME with USB
-swap (ADR-222); OrbHost hits (ADR-223). Release
+swap (ADR-222); OrbHost hits (ADR-223); diagnostic hits (ADR-224). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1260,6 +1260,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   API. Volume/power/touch/haptic are not a keyboard.
 - [x] OrbHost hits from generated `compile_v2()` / `layout_v2`
   (ADR-223). Gallery page taps stay a whole-surface formula.
+- [x] Diagnostic Назад hits from generated `DataRow` + `row back`
+  (ADR-224). Do not 7-tap gallery this slice.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

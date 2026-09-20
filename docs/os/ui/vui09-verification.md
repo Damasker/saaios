@@ -31,6 +31,7 @@ Inbox/Spaces/list hits are generated `compile_v2()` documents (ADR-218).
 Me scroll hits are `layout_v2_scrolled` (ADR-219).
 Privileged `Keyboard` is the Field-bound IME (ADR-222).
 OrbHost hits are generated `layout_v2` (ADR-223).
+Diagnostic Назад hits are generated `layout_v2` (ADR-224).
 
 ## Matrix
 
@@ -52,7 +53,7 @@ OrbHost hits are generated `layout_v2` (ADR-223).
 | Perf | frame pace / p95 / idle | proven | ADR-172–177; not re-read `/run/saaios/shell-frame.last` this slice |
 | Perf | haptic policy | proven | ADR-171/179 KeyPress-only |
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |
-| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200, ADR-202, ADR-203, ADR-204, ADR-205, ADR-206, ADR-207, ADR-208, ADR-214, ADR-215, ADR-216, ADR-217, ADR-218, ADR-219, ADR-220, ADR-221, ADR-222, ADR-223; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; live NOW hits `now.sui`; live Inbox/Spaces/Wi-Fi/Bluetooth/trusted hits generated `compile_v2()`; live Me scroll `layout_v2_scrolled`; live apps grid `Button` matches `now_grid_rect` / `manage_app`; overlay `Field` docks above keyboard reserve; overlay decision `Button` matches `consent:accept`; privileged `Keyboard` binds Field, USB HID may replace the panel; live Orb `OrbHost` matches `orb_zone_rect`; `EventRow`/`SpaceRow`/`SettingRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`/`CapabilityRow` match `stacked_row_rect`; trailing `row refresh`/`scan`/`back` match `stacked_trailing_rect`; Me flatten matches `flatten_me_rows` / `scrolled_row_rect`; `select_space`; `cycle_timezone`; `connect_wifi`; `pair_bluetooth`; `revoke_trusted_client`; `list_back`; empty nav/rows/object/Status invent none; `compile_v2_public` rejects privileged; production `compile_v2()` |
+| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200, ADR-202, ADR-203, ADR-204, ADR-205, ADR-206, ADR-207, ADR-208, ADR-214, ADR-215, ADR-216, ADR-217, ADR-218, ADR-219, ADR-220, ADR-221, ADR-222, ADR-223, ADR-224; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; live NOW hits `now.sui`; live Inbox/Spaces/Wi-Fi/Bluetooth/trusted hits generated `compile_v2()`; live Me scroll `layout_v2_scrolled`; live apps grid `Button` matches `now_grid_rect` / `manage_app`; overlay `Field` docks above keyboard reserve; overlay decision `Button` matches `consent:accept`; privileged `Keyboard` binds Field, USB HID may replace the panel; live Orb `OrbHost` matches `orb_zone_rect`; live diagnostic `DataRow` + `row back` match `stacked_control_rect`; `EventRow`/`SpaceRow`/`SettingRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`/`CapabilityRow` match `stacked_row_rect`; trailing `row refresh`/`scan`/`back` match `stacked_trailing_rect`; Me flatten matches `flatten_me_rows` / `scrolled_row_rect`; `select_space`; `cycle_timezone`; `connect_wifi`; `pair_bluetooth`; `revoke_trusted_client`; `list_back`; empty nav/rows/object/Status invent none; `compile_v2_public` rejects privileged; production `compile_v2()` |
 | Device | lock / unlock cycle | proven | ADR-209; HEAD `3850427a…`; PIN null; clock `13:58`; tap-unlock; marker restored; pid 27000→28091→28125 |
 | Device | display restart | proven | ADR-210; HEAD `3850427a…`; `saai-displayd` 8323→28184; shell 28125→28190; marker on; Сейчас without lock |
 | Device | cold boot | proven | ADR-211; `reboot -f`; marker dropped; `saai-displayd` 401; shell 418; clock `14:07`; tap-unlock; `saai-entityd`/`file-recv` up; marker restored; pid 501 |
@@ -69,7 +70,8 @@ OrbHost hits are generated `layout_v2` (ADR-223).
   hits generated `Button` tiles (ADR-220). Overlay Field and decision
   `Button`s hit `layout_v2` (ADR-221). Privileged `Keyboard` binds the
   focused Field; USB HID may replace the panel (ADR-222). OrbHost
-  hits generated `layout_v2` (ADR-223). Gallery page taps stay a
+  hits generated `layout_v2` (ADR-223). Diagnostic Назад hits
+  generated `layout_v2` (ADR-224). Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
   `compile_v2_public()`, which is the gate, not a Stable API.

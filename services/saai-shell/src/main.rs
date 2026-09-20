@@ -2027,13 +2027,38 @@ fn trusted_client_action_at(
     }
 }
 
+/// ADR-224: live DevSurface hits are generated `DataRow`s (read-only)
+/// plus trailing `row back`. Paint still uses `scrolled_row_rect`.
+fn diagnostic_v2_source(row_count: usize) -> String {
+    let mut src = String::from("sui 2\nscreen diagnostic {\n");
+    src.push_str(&v2_header_block("diagnostic.header"));
+    for index in 0..row_count {
+        src.push_str(&v2_stacked_block(
+            "DataRow",
+            "Status",
+            &format!("diagnostic.{index}"),
+        ));
+    }
+    src.push_str("  row back {}\n}\n");
+    src
+}
+
 /// HIA-20: every `dev_surface_rows()` row is read-only diagnostic
 /// text, not a button -- the only real tap target on this screen is
 /// the trailing "Назад" row right after them, same convention
 /// `trusted_client_action_at`'s own `Back` variant already uses, just
 /// without the per-row action this screen has no need for.
 fn dev_surface_back_tapped(pos: (f64, f64), width: u32, height: u32, row_count: usize) -> bool {
-    stacked_control_rect(row_count, width, height).contains(pos.0, pos.1)
+    live_v2_hit(
+        &diagnostic_v2_source(row_count),
+        "ADR-224 diagnostic",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
+    .as_deref()
+        == Some("list_back")
 }
 
 const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
@@ -10716,14 +10741,15 @@ mod tests {
         bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
         bluetooth_scan_pattern, calibration_requested, capability_label, consent_action_at,
         consent_content_cards, consent_header, content_action_at, dev_surface_back_tapped,
-        diagnostic_card_from_row, diagnostic_header, diagnostic_row, drop_clocks_if_reduced,
-        effective_context_space, ensure_me_row_cache, field_shows_context_focus, flatten_me_rows,
-        format_utc_offset, in_progress_work, inbox_header, input_idle_for_at_least,
-        intent_action_at, intent_compose_header, intent_field_rect, intent_input_field,
-        known_surfaces, lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
-        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header,
-        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
-        now_object_tapped, object_view_action_at, object_view_content, object_view_details,
+        diagnostic_card_from_row, diagnostic_header, diagnostic_row, diagnostic_v2_source,
+        drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
+        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
+        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
+        intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
+        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
+        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
+        motion_clock_for, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_details,
         object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
@@ -14278,6 +14304,15 @@ mod tests {
             panic!("Я scroll must not respawn wpa_cli/df")
         });
         assert_eq!(again, len);
+    }
+
+    #[test]
+    fn diagnostic_live_source_names_readonly_rows_and_back() {
+        let source = diagnostic_v2_source(3);
+        assert!(source.contains("screen diagnostic"));
+        assert!(source.contains("DataRow"));
+        assert!(source.contains("row back"));
+        assert!(!source.contains("a11y = Button"));
     }
 
     #[test]
