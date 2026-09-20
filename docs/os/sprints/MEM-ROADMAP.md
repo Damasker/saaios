@@ -26,7 +26,7 @@ User can inspect, correct, and erase without AI.
 | MEM-03 | `MemoryRecord` v2 + legacy JSONL parser; provenance server-assigned | **Done** (host, ADR-262) | no |
 | MEM-04 | `MemoryContextProjection`; kind labels; sensitivity filter | Backlog | no |
 | MEM-05 | Explicit remember/correct; model cannot write Explicit* | **Done** (host: model has no remember/forget tools) | with P0 flash |
-| MEM-06 | Invalidate vs Erase; atomic JSONL rewrite | **Done** (host, ADR-263) | no |
+| MEM-06 | Invalidate vs Erase; atomic JSONL rewrite | **Done** (host, ADR-263/284) | no |
 | MEM-07 | UAM on memory mutation (reuse ADR-124 Principal) | **Done** (host, ADR-283) | no |
 | MEM-08 | Manual review surface without AI | legal read **host** (ADR-264); chrome **host** (ADR-268); panther paint waits | **yes** (next shell experiment; JSONL still forbidden) |
 | MEM-09 | LearnedHypothesis + one bounded pattern; no profiling | Backlog | no |
@@ -70,7 +70,8 @@ is assigned by the store.
 the value.
 
 **Change:** `invalidate` tombstone; `erase` fsync+rename rewrite of
-one `(space_id, key)`. All-scopes erase is rejected.
+one `(space_id, key)`. All-scopes erase is rejected. ADR-284: runtime
+JSON `memory_erase` + console `/erase` (host; no flash).
 
 **Test:** tombstone still contains the secret on disk; erase does not;
 other space's same key survives.
@@ -86,7 +87,8 @@ write. Model still has no remember tool.
 
 **Change:** `PolicyEngine::decide_memory_mutation`. Owner JSON Allow.
 Worker needs an envelope. Automation/app Deny. Runtime
-`memory_remember` / `memory_forget` call it before the store.
+`memory_remember` / `memory_forget` / `memory_erase` call it before
+the store.
 
 **Test:** owner Allow; worker without envelope Deny; automation Deny;
 recall is not a mutation.

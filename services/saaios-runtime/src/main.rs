@@ -191,6 +191,14 @@ enum ClientRequest {
         #[serde(default)]
         global: bool,
     },
+    /// MEM-06/07: physical rewrite. Not forget. All-scopes rejected.
+    MemoryErase {
+        key: String,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        global: bool,
+    },
     Status,
     EventsTail {
         #[serde(default = "default_tail")]
@@ -234,6 +242,59 @@ fn memory_forget_access(space_id: Option<&str>, global: bool) -> Result<MemoryAc
         (None, true) | (Some(""), true) => Ok(MemoryAccessScope::Global),
         (Some(_), true) => Err("pass space_id or global, not both".into()),
         _ => Err("ambiguous memory forget: pass space_id or global=true".into()),
+    }
+}
+
+fn apply_memory_erase(
+    runtime: &AiRuntime,
+    key: String,
+    space_id: Option<String>,
+    global: bool,
+) -> ClientResponse {
+    match runtime.memory() {
+        None => ClientResponse {
+            ok: false,
+            error: Some("memory disabled (--no-memory)".into()),
+            ..Default::default()
+        },
+        Some(store) => match memory_forget_access(space_id.as_deref(), global) {
+            Err(msg) => ClientResponse {
+                ok: false,
+                error: Some(msg),
+                ..Default::default()
+            },
+            Ok(access) => {
+                let args = serde_json::json!({
+                    "key": &key,
+                    "space_id": &space_id,
+                    "global": global,
+                });
+                match runtime.allow_memory_mutation("memory.erase", &args) {
+                    Err(e) => ClientResponse {
+                        ok: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    },
+                    Ok(()) => match store.erase(&key, &access) {
+                        Ok(0) => ClientResponse {
+                            ok: false,
+                            error: Some(format!("no fact for key={key}")),
+                            ..Default::default()
+                        },
+                        Ok(_) => ClientResponse {
+                            ok: true,
+                            memory_facts: Some(vec![]),
+                            ..Default::default()
+                        },
+                        Err(e) => ClientResponse {
+                            ok: false,
+                            error: Some(e.to_string()),
+                            ..Default::default()
+                        },
+                    },
+                }
+            }
+        },
     }
 }
 
@@ -1129,6 +1190,11 @@ where
                 ..Default::default()
             },
         },
+        ClientRequest::MemoryErase {
+            key,
+            space_id,
+            global,
+        } => apply_memory_erase(&runtime, key, space_id, global),
         ClientRequest::SessionGrants => ClientResponse {
             ok: true,
             session_grants: Some(runtime.session_grants()),
@@ -1501,6 +1567,70 @@ mod tests {
         assert_eq!(status.memory_records[0].space, "global");
         assert_eq!(status.memory_records[0].kind, "explicit_fact");
         assert!(!status.memory_records.iter().any(|row| row.key == "deploy"));
+    }
+
+    #[test]
+    fn memory_erase_op_parses() {
+        let req: ClientRequest =
+            serde_json::from_str(r#"{"op":"memory_erase","key":"secret","global":true}"#).unwrap();
+        match req {
+            ClientRequest::MemoryErase {
+                key,
+                space_id,
+                global,
+            } => {
+                assert_eq!(key, "secret");
+                assert!(space_id.is_none());
+                assert!(global);
+            }
+            other => panic!("expected MemoryErase, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_erase_removes_the_value_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem_path = dir.path().join("memory.jsonl");
+        let store = Arc::new(MemoryStore::open(&mem_path).unwrap());
+        store
+            .remember(MemoryFact::new("secret", "do-not-keep"))
+            .unwrap();
+        let runtime = AiRuntime::new(
+            Arc::new(ToolRegistry::new()),
+            Arc::new(PolicyEngine::new()),
+            Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap()),
+            EventBus::new(16),
+            Arc::new(model_provider::MockModelProvider),
+        )
+        .with_memory(store.clone());
+        let resp = apply_memory_erase(&runtime, "secret".into(), None, true);
+        assert!(resp.ok, "{:?}", resp.error);
+        let on_disk = std::fs::read_to_string(&mem_path).unwrap();
+        assert!(!on_disk.contains("do-not-keep"));
+        assert_eq!(
+            store
+                .recall("secret", &MemoryAccessScope::Global)
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_erase_without_scope_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MemoryStore::open(dir.path().join("memory.jsonl")).unwrap());
+        let runtime = AiRuntime::new(
+            Arc::new(ToolRegistry::new()),
+            Arc::new(PolicyEngine::new()),
+            Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap()),
+            EventBus::new(16),
+            Arc::new(model_provider::MockModelProvider),
+        )
+        .with_memory(store);
+        let resp = apply_memory_erase(&runtime, "secret".into(), None, false);
+        assert!(!resp.ok);
+        assert!(resp.error.as_deref().unwrap_or("").contains("ambiguous"));
     }
 
     #[tokio::test]

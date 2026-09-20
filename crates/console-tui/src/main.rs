@@ -121,6 +121,13 @@ enum ClientRequest {
         #[serde(default)]
         global: bool,
     },
+    MemoryErase {
+        key: String,
+        #[serde(default)]
+        space_id: Option<String>,
+        #[serde(default)]
+        global: bool,
+    },
     Status,
     EventsTail {
         limit: usize,
@@ -786,6 +793,33 @@ async fn handle_slash(app: &mut App, text: &str) -> Result<()> {
                     }
                 }
                 Err(e) => app.lines.push(format!("forget failed: {e:#}")),
+            }
+        }
+        "/erase" => {
+            let flags = parse_memory_flags(rest);
+            if flags.rest.is_empty() {
+                app.lines
+                    .push("usage: /erase --space NAME key | /erase --global key".into());
+                return Ok(());
+            }
+            match request(
+                &app.endpoint,
+                &ClientRequest::MemoryErase {
+                    key: flags.rest.clone(),
+                    space_id: flags.space_id,
+                    global: flags.global,
+                },
+            )
+            .await
+            {
+                Ok(resp) => {
+                    if let Some(err) = resp.error {
+                        app.lines.push(format!("erase error: {err}"));
+                    } else {
+                        app.lines.push(format!("erased {}", flags.rest));
+                    }
+                }
+                Err(e) => app.lines.push(format!("erase failed: {e:#}")),
             }
         }
         _ => app.lines.push(format!("unknown command: {cmd}")),
