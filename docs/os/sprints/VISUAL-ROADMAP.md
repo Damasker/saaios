@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–196; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–197; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1163,7 +1163,8 @@ component state remains fully usable.
 **Status:** In progress — vocabulary through named sizes (ADR-180–188);
 verification ledger (ADR-189); known limitations (ADR-193);
 `layout_v2` tab hits (ADR-194); `from_safe` insets (ADR-195); nested
-`tab` grammar (ADR-196). Release
+`tab` grammar (ADR-196); ActionCard/tab `Label`/`Caption` (ADR-197).
+Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1193,8 +1194,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Close production color literals and leftover NOW chrome
   (`root.sui` empty content, `draw_action_card` reuse, ADR-187).
 - [x] Name leftover `draw_text` sizes (`role_px` + named leftovers,
-  ADR-188). Mapping ActionCard/tabs onto Title/Body stays a later
-  paint-normalization.
+  ADR-188). Mapping ActionCard/tabs onto Title/Body is not the map:
+  ADR-197 uses `Label`/`Caption`.
 - [x] Start the VUI-09 verification ledger (`docs/os/ui/vui09-verification.md`,
   ADR-189). Full matrix, cold boot, and Visual v1 sign-off remain.
 - [x] Prove increased text on panther HEAD (`text_scale_pct` 150 then
@@ -1217,6 +1218,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Name tabs in the v2 grammar so `layout_v2()` does not borrow
   `compile_v1_rollback()` (ADR-196). Empty `BottomNavigation` invents
   no v1 hits. `compile()` stays v1.
+- [x] Map ActionCard and tab labels onto `Label`/`Caption`, not Title
+  (ADR-197). Badge and other leftovers stay named.
 
 ### Acceptance
 
@@ -1279,7 +1282,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **Visual v2** at leftover ActionCard/tab sizes, or v2-named
-tabs, or operator-approved lock / display restart / cold boot.
+Continue **Visual v2** at remaining named leftovers (badge, keys,
+status time), or Experimental→Stable after Visual v1, or
+operator-approved lock / display restart / cold boot.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.

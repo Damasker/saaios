@@ -871,30 +871,33 @@ fn draw_action_card(
     let Some(fonts) = fonts else {
         return;
     };
+    let (title_font, title_size) = fonts.resolve(TextRole::Label);
     draw_text(
         canvas,
-        &fonts.semibold,
+        title_font,
         &card.label,
-        ACTION_CARD_TITLE_PX,
+        title_size,
         text_left,
         rect.y + 48,
         theme_color(ColorRole::TextPrimary),
     );
+    let (status_font, status_size) = fonts.resolve(TextRole::Caption);
     draw_text(
         canvas,
-        &fonts.regular,
+        status_font,
         &card.status,
-        ACTION_CARD_STATUS_PX,
+        status_size,
         text_left,
         rect.y + 108,
         theme_color(ColorRole::TextSecondary),
     );
     if let Some(button) = button {
+        let (button_font, button_size) = fonts.resolve(TextRole::Label);
         draw_text_centered(
             canvas,
-            &fonts.semibold,
+            button_font,
             &card.action,
-            ACTION_CARD_BUTTON_PX,
+            button_size,
             button.x + button.width / 2,
             button.y + 24,
             theme_color(ColorRole::Canvas),
@@ -1510,9 +1513,8 @@ fn role_px(role: TextRole) -> f32 {
 
 /// ADR-188 leftover sizes: not a `TextRole` at Pixel 7 scale 3.
 /// Add a name here rather than a new raw draw-call literal.
-const ACTION_CARD_TITLE_PX: f32 = 38.0;
-const ACTION_CARD_STATUS_PX: f32 = 27.0;
-const ACTION_CARD_BUTTON_PX: f32 = 25.0;
+/// ADR-197: ActionCard title/status/button and tab labels use
+/// `role_px` (`Label`/`Caption`). Do not map those onto Title.
 const DECISION_BUTTON_PX: f32 = 40.0;
 const OBJECT_RELATED_PX: f32 = 28.0;
 const ORB_MENU_PX: f32 = 32.0;
@@ -1521,8 +1523,6 @@ const GALLERY_HEADING_PX: f32 = 32.0;
 const GALLERY_KICKER_PX: f32 = 24.0;
 const GALLERY_SWATCH_PX: f32 = 18.0;
 const APP_TILE_LABEL_PX: f32 = 26.0;
-const TAB_SELECTED_PX: f32 = 31.0;
-const TAB_IDLE_PX: f32 = 27.0;
 const TAB_BADGE_PX: f32 = 24.0;
 const STATUS_TIME_PX: f32 = 44.0;
 const STATUS_BATTERY_PX: f32 = 40.0;
@@ -2552,11 +2552,7 @@ pub fn draw_tab_bar(
                     &fonts.regular
                 },
                 &item.label,
-                if is_selected {
-                    TAB_SELECTED_PX
-                } else {
-                    TAB_IDLE_PX
-                },
+                role_px(TextRole::Caption),
                 rect.x + rect.width / 2,
                 rect.y + 172,
                 text_color,
@@ -3501,6 +3497,37 @@ mod tests {
             leftover.is_empty(),
             "untracked draw-text size literals: {leftover:?}"
         );
+    }
+
+    #[test]
+    fn action_card_and_tabs_use_text_roles() {
+        let src = include_str!("render.rs");
+        let production = src.split("#[cfg(test)]\nmod tests").next().expect("tests");
+        assert!(!production.contains("ACTION_CARD_TITLE_PX"));
+        assert!(!production.contains("ACTION_CARD_STATUS_PX"));
+        assert!(!production.contains("ACTION_CARD_BUTTON_PX"));
+        assert!(!production.contains("TAB_SELECTED_PX"));
+        assert!(!production.contains("TAB_IDLE_PX"));
+        assert!(production.contains("TAB_BADGE_PX"));
+        let card = production
+            .split("fn draw_action_card(")
+            .nth(1)
+            .expect("draw_action_card")
+            .split("fn draw_keypad_label(")
+            .next()
+            .expect("keypad");
+        assert!(card.contains("fonts.resolve(TextRole::Label)"));
+        assert!(card.contains("fonts.resolve(TextRole::Caption)"));
+        assert!(!card.contains("TextRole::Title"));
+        let tabs = production
+            .split("pub fn draw_tab_bar(")
+            .nth(1)
+            .expect("draw_tab_bar")
+            .split("pub fn draw_now(")
+            .next()
+            .expect("draw_now");
+        assert!(tabs.contains("role_px(TextRole::Caption)"));
+        assert!(!tabs.contains("TextRole::Title"));
     }
 
     #[test]

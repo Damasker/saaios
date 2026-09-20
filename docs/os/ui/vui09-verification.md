@@ -7,20 +7,20 @@ Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
 Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted.
 
-Current panther shell: `e8865301…` (ADR-188). Nested tab grammar
-(ADR-196) does not reflash. `layout_v2` uses those nested tab ids.
-Tab height still comes from `from_safe` (ADR-195).
+Current panther shell: `5eb6a27f…` (ADR-197). Named sizes were
+`e8865301…` (ADR-188). `from_safe` (ADR-195) and nested tab ids
+(ADR-196) stay host.
 
 ## Matrix
 
 | Area | Cell | Status | Evidence |
 |---|---|---|---|
-| Build | host tests | proven | overlay `cargo test -p saai-shell` 248; `saai-ui-compiler` 27 |
-| Build | pixel7 cross-build | proven | ADR-188 `e8865301…` |
+| Build | host tests | proven | overlay `cargo test -p saai-shell` 249; `saai-ui-compiler` 27 |
+| Build | pixel7 cross-build | proven | ADR-197 `5eb6a27f…` |
 | Render | Сейчас composition | proven | ObjectSummary + footer; leftover NOW cards gone (ADR-187) |
 | Render | four tabs | proven | hits 135/405/675/945 y=2250 (ADR-184); Inbox tap ADR-188 |
 | Render | semantic color | proven | Theme + `panel_pixel`; no production RGB (ADR-187) |
-| Render | named text sizes | proven | `role_px` + leftovers (ADR-188) |
+| Render | named text sizes | proven | `role_px` leftovers (ADR-188); ActionCard/tabs `Label`/`Caption` (ADR-197) |
 | Input | tab switch | proven | Inbox then back to Сейчас on HEAD |
 | Input | keyboard | proven | ADR-029/150/161; not re-typed this slice |
 | Input | interrupted key | proven | ADR-163 |
@@ -45,6 +45,8 @@ Tab height still comes from `from_safe` (ADR-195).
 - Declarative and procedural paths are not hit-test equivalent.
 - Gallery covers fixtures; copying privileged names into an app fails
   `compile_v2_public()`, which is the gate, not a Stable API.
-- ActionCard 38/27/25 and tab 31/27 stay named leftovers, not Title/Body.
+- ActionCard title/button use `Label`; status and tab labels use
+  `Caption` (ADR-197). They are not Title/Body. Badge, keys, status
+  time, gallery, and app-tile leftovers stay named (ADR-188).
 - Space detail, Memory review, chat, widgets stay deferred.
 - Known limitations and the Visual v2 backlog: [`vui09-known-limitations.md`](vui09-known-limitations.md) (ADR-193).

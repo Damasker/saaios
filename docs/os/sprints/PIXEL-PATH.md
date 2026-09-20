@@ -156,6 +156,7 @@ host-only derived view.
 | VUI-09 v2 tab hits | `layout_v2` public NOW ≡ v1 tabs **host** (ADR-194; chrome unchanged `e8865301…`; leave Сейчас) |
 | VUI-09 safe insets | `EdgeInsets::from_safe`; top is status layer **host** (ADR-195; chrome unchanged `e8865301…`; leave Сейчас) |
 | VUI-09 v2 named tabs | nested `tab` on `BottomNavigation`; empty nav invents none **host** (ADR-196; chrome unchanged `e8865301…`; leave Сейчас) |
+| VUI-09 ActionCard/tab roles | `Label`/`Caption` not Title **на panther** (`5eb6a27f…`; ADR-197; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

@@ -398,6 +398,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - ADR-196: `.sui` v2 lists destinations as nested `tab <id> { loc = … }`
   under `BottomNavigation`. Empty navigation invents no v1 hits.
   `NavigationItem` stays a Rust type, not a v2 component name.
+- ADR-197: tab labels paint `TextRole::Caption` for selected and idle.
+  Selected stays semibold. Size does not encode selection.
 
 ### 7.5 `OrbHost`
 
@@ -444,7 +446,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   migration page. ADR-187 removes leftover NOW cards from `root.sui`
   and the diagnostic panel-color literals from production `main.rs`.
   ADR-188 names leftover `draw_text` sizes through `role_px` and an
-  explicit leftover list; ActionCard/tab sizes are not retokened.
+  explicit leftover list. ADR-197 maps ActionCard and tab labels onto
+  `Label`/`Caption`, not Title.
   ADR-189 is the verification ledger, not Visual v1 sign-off.
   ADR-190 proves 150% text on panther HEAD without a Система tap.
   ADR-191 proves live radio-off: status `Нет сети` while `wlan0` is
