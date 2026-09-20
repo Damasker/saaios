@@ -18,6 +18,8 @@
 //! trailing controls.
 //! ADR-215: Me `SystemSection`/`SettingRow` flatten clips like
 //! `scrolled_row_rect` at offset 0.
+//! ADR-219: stacked rows overlay via `Node::stack` so `layout_v2_scrolled`
+//! matches `scrolled_row_rect` after a drag.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -180,12 +182,6 @@ fn v2_me_scroll_clip(screen: &SuiV2Screen) -> bool {
         })
 }
 
-fn v2_stacked_fits_content(index: usize, panel_height: u32, content_height: u32) -> bool {
-    let top = v2_stacked_row_top(index, panel_height);
-    let bottom = top.saturating_add(v2_stacked_row_height(panel_height));
-    top < content_height && bottom <= content_height
-}
-
 /// Live `stacked_control_rect`: if the stacked slot would paint below
 /// the panel, dock to the last on-screen row.
 fn v2_control_top(index: usize, panel_height: u32) -> u32 {
@@ -206,7 +202,51 @@ fn v2_trailing_top(index: usize, last_index: usize, panel_height: u32) -> u32 {
     y.max(v2_stacked_row_top(0, panel_height))
 }
 
-fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height: u32) -> Node {
+fn v2_placed_slot(
+    screen_id: &str,
+    index: usize,
+    id: String,
+    action: Option<String>,
+    top: u32,
+    height: u32,
+) -> Node {
+    let spacer =
+        Node::leaf(format!("{screen_id}-slot-{index}")).with_size(Length::Fill, Length::Px(top));
+    let mut row = Node::leaf(id).with_size(Length::Fill, Length::Px(height));
+    if let Some(action) = action {
+        row = row.with_action(action);
+    }
+    Node::linear(
+        format!("{screen_id}-place-{index}"),
+        Axis::Vertical,
+        vec![spacer, row],
+    )
+}
+
+fn v2_stacked_action(row: &crate::SuiV2Component) -> Option<String> {
+    if matches!(row.type_name.as_str(), "SystemSection" | "CapabilityRow")
+        || row.props.a11y.as_deref() != Some("Button")
+    {
+        return None;
+    }
+    let loc = row.props.loc.as_deref();
+    Some(match row.type_name.as_str() {
+        "SpaceRow" => format!("select_space:{}", loc.unwrap_or("SpaceRow")),
+        "SettingRow" | "DataRow" => loc.unwrap_or("SettingRow").to_string(),
+        "WifiRow" => "connect_wifi".to_string(),
+        "BluetoothRow" => "pair_bluetooth".to_string(),
+        "TrustedClientRow" => "revoke_trusted_client".to_string(),
+        _ => "open_object".to_string(),
+    })
+}
+
+fn v2_content_node(
+    screen: &SuiV2Screen,
+    width: u32,
+    height: u32,
+    content_height: u32,
+    scroll_offset: i32,
+) -> Node {
     let margin = width / 22;
     let mut header = None;
     let mut object = None;
@@ -225,32 +265,17 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
             _ => rest.push(component),
         }
     }
-    let mut children = Vec::new();
-    let mut cursor = 0u32;
-    if header.is_some() {
-        let header_height = if object.is_some() {
+    let header_height = if header.is_some() {
+        if object.is_some() {
             v2_now_header_height(content_height)
         } else if !stacked.is_empty() {
             v2_stacked_row_top(0, height)
         } else {
             0
-        };
-        let mut node = Node::leaf("ContextHeader");
-        if header_height > 0 {
-            node = node.with_size(Length::Fill, Length::Px(header_height));
-            cursor = header_height;
         }
-        children.push(node);
-    }
-    if object.is_some() {
-        let object_height = v2_now_object_height();
-        children.push(
-            Node::leaf("ObjectSummary")
-                .with_action("open_object")
-                .with_size(Length::Fill, Length::Px(object_height)),
-        );
-        cursor = cursor.saturating_add(object_height);
-    }
+    } else {
+        0
+    };
     let trailing: Vec<&crate::SuiV2Row> = screen
         .rows
         .iter()
@@ -269,71 +294,83 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
     };
     let stacked_height = v2_stacked_row_height(height);
     let clip_to_content = v2_me_scroll_clip(screen);
+    let scroll = if clip_to_content {
+        scroll_offset.max(0)
+    } else {
+        0
+    };
+    let mut layers = Vec::new();
+    if header.is_some() && header_height > 0 {
+        layers.push(v2_placed_slot(
+            &screen.id,
+            0,
+            "ContextHeader".to_string(),
+            None,
+            0,
+            header_height,
+        ));
+    }
+    if object.is_some() {
+        layers.push(v2_placed_slot(
+            &screen.id,
+            1,
+            "ObjectSummary".to_string(),
+            Some("open_object".to_string()),
+            header_height,
+            v2_now_object_height(),
+        ));
+    }
     for (index, row) in stacked.iter().enumerate() {
-        let top = v2_stacked_row_top(index, height);
+        let base = v2_stacked_row_top(index, height) as i64 - i64::from(scroll);
+        if base < 0 {
+            continue;
+        }
+        let top = base as u32;
         if trailing_first_top.is_some_and(|first| top.saturating_add(stacked_height) > first) {
             continue;
         }
-        if clip_to_content && !v2_stacked_fits_content(index, height, content_height) {
+        if clip_to_content
+            && (top >= content_height || top.saturating_add(stacked_height) > content_height)
+        {
             continue;
-        }
-        if top > cursor {
-            children.push(
-                Node::leaf(format!("{}-gap-{cursor}", screen.id))
-                    .with_size(Length::Fill, Length::Px(top - cursor)),
-            );
-            cursor = top;
         }
         let id = row
             .props
             .loc
             .clone()
             .unwrap_or_else(|| format!("{}-{index}", row.type_name));
-        let mut node = Node::leaf(id).with_size(Length::Fill, Length::Px(stacked_height));
-        if !matches!(row.type_name.as_str(), "SystemSection" | "CapabilityRow")
-            && row.props.a11y.as_deref() == Some("Button")
-        {
-            let loc = row.props.loc.as_deref();
-            let action = match row.type_name.as_str() {
-                "SpaceRow" => format!("select_space:{}", loc.unwrap_or("SpaceRow")),
-                "SettingRow" | "DataRow" => loc.unwrap_or("SettingRow").to_string(),
-                "WifiRow" => "connect_wifi".to_string(),
-                "BluetoothRow" => "pair_bluetooth".to_string(),
-                "TrustedClientRow" => "revoke_trusted_client".to_string(),
-                _ => "open_object".to_string(),
-            };
-            node = node.with_action(action);
-        }
-        children.push(node);
-        cursor = cursor.max(top.saturating_add(stacked_height));
+        layers.push(v2_placed_slot(
+            &screen.id,
+            index + 2,
+            id,
+            v2_stacked_action(row),
+            top,
+            stacked_height,
+        ));
     }
     if !trailing.is_empty() {
         let last = stacked.len() + trailing.len() - 1;
         for (offset, row) in trailing.iter().enumerate() {
             let index = stacked.len() + offset;
             let top = v2_trailing_top(index, last, height);
-            if top > cursor {
-                children.push(
-                    Node::leaf(format!("{}-trail-gap-{cursor}", screen.id))
-                        .with_size(Length::Fill, Length::Px(top - cursor)),
-                );
-                cursor = top;
-            }
-            children.push(
-                Node::leaf(row.id.clone())
-                    .with_action(row.action.clone())
-                    .with_size(Length::Fill, Length::Px(stacked_height)),
-            );
-            cursor = cursor.max(top.saturating_add(stacked_height));
+            layers.push(v2_placed_slot(
+                &screen.id,
+                index + 100,
+                row.id.clone(),
+                Some(row.action.clone()),
+                top,
+                stacked_height,
+            ));
         }
     }
     for component in rest {
-        children.push(Node::leaf(component.type_name.clone()));
+        layers.push(Node::leaf(component.type_name.clone()));
     }
-    if children.is_empty() {
-        children
+    if layers.is_empty() {
+        layers
             .push(Node::leaf(format!("{}-fill", screen.id)).with_size(Length::Fill, Length::Fill));
     }
+    let mut children = vec![Node::stack(format!("{}-layers", screen.id), layers)];
     let row_height = v2_footer_row_height(height);
     for row in footer {
         children.push(
@@ -356,6 +393,15 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
 /// footer rows, plus a tab strip from nested `tab` ids. Empty
 /// `ObjectSummary`, `row`, and `BottomNavigation` invent no live hits.
 pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
+    v2_root_node_scrolled(screen, width, height, 0)
+}
+
+fn v2_root_node_scrolled(
+    screen: &SuiV2Screen,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Node {
     let tabs = v2_named_tabs(screen);
     let tab_height_2400 =
         EdgeInsets::from_safe(SafeInsets::PIXEL_7_PORTRAIT, SurfaceScale::PIXEL_7).bottom;
@@ -364,7 +410,13 @@ pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
     } else {
         v1_tab_strip_height(height, tab_height_2400)
     };
-    let content = v2_content_node(screen, width, height, height.saturating_sub(tab_height));
+    let content = v2_content_node(
+        screen,
+        width,
+        height,
+        height.saturating_sub(tab_height),
+        scroll_offset,
+    );
     if tabs.is_empty() {
         return content;
     }
@@ -380,15 +432,26 @@ pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
 }
 
 pub fn layout_v2(screen: &SuiV2Screen, width: u32, height: u32) -> LayoutNode {
+    layout_v2_scrolled(screen, width, height, 0)
+}
+
+/// ADR-219: same tree as `layout_v2`, with Me stacked rows shifted by
+/// `scroll_offset` like live `scrolled_row_rect`.
+pub fn layout_v2_scrolled(
+    screen: &SuiV2Screen,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> LayoutNode {
     layout(
-        &v2_root_node(screen, width, height),
+        &v2_root_node_scrolled(screen, width, height, scroll_offset),
         Rect::new(0, 0, width, height),
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{layout_v1_find, layout_v1_root, layout_v2};
+    use super::{layout_v1_find, layout_v1_root, layout_v2, layout_v2_scrolled};
     use crate::{compile_v1_rollback, compile_v2, compile_v2_public};
 
     #[test]
@@ -696,6 +759,19 @@ mod tests {
         assert_eq!(
             v2.hit_test(945.0, 2250.0).map(|node| node.id.as_str()),
             Some("me")
+        );
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 220);
+        assert_eq!(
+            scrolled
+                .hit_test(540.0, 305.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("row0")
+        );
+        assert_eq!(
+            scrolled
+                .hit_test(540.0, 1845.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("row7")
         );
     }
 

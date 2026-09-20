@@ -15,7 +15,8 @@ Current panther shell: `c05eedf9…` (ADR-216). Prior chrome `3850427a…`
 is host (`flatten_me_rows` / `scrolled_row_rect`, ADR-215).
 Production is `compile_v2()` (ADR-216). NOW content hits use
 compiled `now.sui` (ADR-217). Inbox/Spaces/list hits generate
-`compile_v2()` documents (ADR-218).
+`compile_v2()` documents (ADR-218). Me scroll uses
+`layout_v2_scrolled` (ADR-219).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -163,7 +164,9 @@ Ordered. Items 1–3 and 7–17 are done
     (ADR-217). Inbox/Spaces/Me/lists stay procedural.
 22. ~~Inbox, Spaces, and list hits from generated `compile_v2()`.~~
     Host (ADR-218). Me scroll, apps grid, and overlays stay formulas.
-23. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+23. ~~Me scroll hits from `layout_v2_scrolled`.~~ Host (ADR-219).
+    Apps grid and overlays stay formulas.
+24. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 

@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–218; production `compile_v2()`; NOW/list hits compiled; Me scroll still formula; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–219; production `compile_v2()`; NOW/list/Me hits compiled; apps/overlays still formula; not Visual v1 sign-off) |
 
 ---
 
@@ -1177,7 +1177,7 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 (ADR-213); list trailing rows (ADR-214); Me flatten/scroll
 (ADR-215). Production `compile_v2()` / `layout_v2`
 `root_view` (ADR-216); NOW compiled hits (ADR-217); live list
-hits (ADR-218). Release
+hits (ADR-218); Me scroll (ADR-219). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1247,6 +1247,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Inbox/Spaces/Me/lists stay procedural.
 - [x] Inbox, Spaces, and list hits from generated `compile_v2()`
   (ADR-218). Me scroll, apps grid, and overlays stay formulas.
+- [x] Me scroll hits from `layout_v2_scrolled` (ADR-219). Apps grid
+  and overlays stay formulas.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1358,7 +1360,6 @@ After each completed task group, report:
 
 ## Next action
 
-Compile Me scroll into `layout_v2` (linear stack cannot place a row
-under the header after a drag). Apps grid and overlays stay later.
-Space detail still deferred. MEM-08 stays omitted. Thin tuning stays
+Apps grid hits through `layout_v2`. Overlays with vocabulary after
+that. Space detail still deferred. MEM-08 stays omitted. Thin tuning stays
 last (ADR-213).

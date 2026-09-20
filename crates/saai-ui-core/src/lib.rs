@@ -477,6 +477,22 @@ impl Node {
         }
     }
 
+    /// Overlay children share the same bounds. Each child that needs a
+    /// y-offset is a vertical linear of a spacer then the row — ADR-219
+    /// Me scroll places stacked rows under the header this way.
+    pub fn stack(id: impl Into<String>, children: Vec<Node>) -> Self {
+        Self {
+            id: id.into(),
+            kind: NodeKind::Stack,
+            width: Length::Fill,
+            height: Length::Fill,
+            padding: EdgeInsets::ZERO,
+            focus_order: None,
+            action: None,
+            children,
+        }
+    }
+
     /// A fixed-thickness divider (`StrokeToken::Hairline`) sized to fill the
     /// cross axis of the container it will sit inside -- `axis` is that
     /// container's own axis (a divider between vertically stacked rows

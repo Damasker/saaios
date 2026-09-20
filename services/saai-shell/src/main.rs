@@ -1087,6 +1087,24 @@ fn live_v2_hit(
         .map(|node| (node.id.clone(), node.action.clone()))
 }
 
+fn live_v2_hit_scrolled(
+    source: &str,
+    why: &'static str,
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Option<(String, Option<String>)> {
+    saai_ui_compiler::layout_v2_scrolled(
+        &compile_live_v2(source, why),
+        width,
+        height,
+        scroll_offset,
+    )
+    .hit_test(pos.0, pos.1)
+    .map(|node| (node.id.clone(), node.action.clone()))
+}
+
 /// Content pane of the root layout — everything except the bottom
 /// navigation strip. Status is a separate layer surface, not an inset
 /// in this tree (ADR-112).
@@ -5559,6 +5577,43 @@ fn flatten_me_rows(sections: &[SystemSection]) -> Vec<MeRow> {
     rows
 }
 
+fn me_v2_source(rows: &[MeRow]) -> String {
+    let mut src = String::from("sui 2\nscreen me {\n");
+    src.push_str(&v2_header_block("me.header"));
+    for (index, row) in rows.iter().enumerate() {
+        if let Some(action) = row.dispatch {
+            src.push_str(&v2_stacked_block("SettingRow", "Button", action));
+        } else {
+            src.push_str(&v2_stacked_block(
+                "SettingRow",
+                "Status",
+                &format!("me.quiet.{index}"),
+            ));
+        }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
+fn me_dispatch_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    rows: &[MeRow],
+    scroll_offset: i32,
+) -> Option<&'static str> {
+    let (_, action) = live_v2_hit_scrolled(
+        &me_v2_source(rows),
+        "ADR-219 me",
+        pos,
+        width,
+        height,
+        scroll_offset,
+    )?;
+    intern_me_action(action.as_deref())
+}
+
 fn me_fixture_facts() -> MeFacts {
     MeFacts {
         space_count: 2,
@@ -8360,16 +8415,12 @@ impl Shell {
     /// dispatch keys do not depend on a frozen index table.
     fn me_action_at(&self, pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
         let all = self.me_all_rows();
-        let total = all.len();
         let content_rect = root_view(width, height).children[0].rect;
-        let offset = self
-            .me_scroll_offset
-            .clamp(0, me_max_scroll_offset(total, width, height, content_rect));
-        (0..total).find_map(|index| {
-            scrolled_row_rect(index, width, height, offset, content_rect)
-                .filter(|rect| rect.contains(pos.0, pos.1))
-                .and_then(|_| all.get(index).and_then(|row| row.dispatch))
-        })
+        let offset = self.me_scroll_offset.clamp(
+            0,
+            me_max_scroll_offset(all.len(), width, height, content_rect),
+        );
+        me_dispatch_at(pos, width, height, &all, offset)
     }
 
     fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
@@ -10976,6 +11027,40 @@ mod tests {
             super::scrolled_row_rect(row_index, width, height, needed_offset, content_rect)
                 .expect("row 10 should fit once scrolled down far enough");
         assert_eq!(scrolled.y + scrolled.height, content_bottom);
+    }
+
+    #[test]
+    fn me_dispatch_at_follows_layout_v2_scrolled() {
+        let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
+        let width = 1080;
+        let height = 2400;
+        let content = super::root_view(width, height).children[0].rect;
+        let index = rows
+            .iter()
+            .position(|row| row.dispatch == Some("cycle_timezone"))
+            .expect("fixture timezone");
+        let rest = super::scrolled_row_rect(index, width, height, 0, content)
+            .expect("timezone visible at rest");
+        let center = (
+            (rest.x + rest.width / 2) as f64,
+            (rest.y + rest.height / 2) as f64,
+        );
+        assert_eq!(
+            super::me_dispatch_at(center, width, height, &rows, 0),
+            Some("cycle_timezone")
+        );
+        let offset = 220;
+        let moved = super::scrolled_row_rect(index, width, height, offset, content)
+            .expect("timezone visible after drag");
+        let moved_center = (
+            (moved.x + moved.width / 2) as f64,
+            (moved.y + moved.height / 2) as f64,
+        );
+        assert_eq!(
+            super::me_dispatch_at(moved_center, width, height, &rows, offset),
+            Some("cycle_timezone")
+        );
+        assert_ne!(center, moved_center);
     }
 
     #[test]

@@ -18,7 +18,8 @@ mod rollback;
 mod vocabulary;
 
 pub use layout::{
-    layout_v1_find, layout_v1_root, layout_v2, v1_root_node, v1_tab_strip_height, v2_root_node,
+    layout_v1_find, layout_v1_root, layout_v2, layout_v2_scrolled, v1_root_node,
+    v1_tab_strip_height, v2_root_node,
 };
 pub use rollback::{compile_v1_rollback, V1_ROLLBACK_SOURCE};
 pub use vocabulary::{
@@ -1229,6 +1230,7 @@ mod tests {
         assert!(limits.contains("ADR-217"));
         assert!(limits.contains("now.sui"));
         assert!(limits.contains("ADR-218"));
+        assert!(limits.contains("ADR-219"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1241,5 +1243,6 @@ mod tests {
         assert!(ledger.contains("ADR-217"));
         assert!(ledger.contains("now.sui"));
         assert!(ledger.contains("ADR-218"));
+        assert!(ledger.contains("ADR-219"));
     }
 }
