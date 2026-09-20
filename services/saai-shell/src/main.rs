@@ -3364,9 +3364,27 @@ fn now_footer_action_views_from(view: &LayoutNode) -> Vec<(Rect, DataRow)> {
 }
 
 fn now_node_rect(view: &LayoutNode, id: &str) -> Rect {
-    saai_ui_compiler::layout_v1_find(view, id)
-        .unwrap_or_else(|| panic!("now.sui missing `{id}`"))
+    v2_named_rect(view, id, "now.sui")
+}
+
+fn v2_named_rect(tree: &LayoutNode, id: &str, why: &str) -> Rect {
+    saai_ui_compiler::layout_v1_find(tree, id)
+        .unwrap_or_else(|| panic!("{why}: missing `{id}`"))
         .rect
+}
+
+fn list_paint_cards(
+    tree: &LayoutNode,
+    why: &'static str,
+    cards: Vec<render::ActionCardView>,
+    ids: &[String],
+) -> Vec<(Rect, render::ActionCardView)> {
+    assert_eq!(cards.len(), ids.len(), "{why}: card/id count");
+    cards
+        .into_iter()
+        .zip(ids)
+        .map(|(card, id)| (v2_named_rect(tree, id, why), card))
+        .collect()
 }
 
 fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
@@ -7627,100 +7645,109 @@ impl Shell {
             // S19 / ADR-129: runtime-sized WifiRow list plus trailing
             // refresh/back cards -- see `wifi_list_action_at`.
             // ADR-146: header is a real `ContextHeader`, not a Surface
-            // strip.
+            // strip. ADR-226: paint rects from the same tree as hits.
             let connected = wifi_connected_ssid();
             let wifi_rows = wifi_list_rows(networks, connected.as_deref());
-            let mut rows: Vec<(Rect, render::ActionCardView)> = wifi_rows
-                .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        wifi_card_from_row(row),
-                    )
-                })
-                .collect();
-            let controls = rows.len();
-            let back_index = controls + 1;
-            rows.push((
-                stacked_trailing_rect(controls, back_index, width, height),
-                render::ActionCardView::new("Обновить", "", "Обновить"),
-            ));
-            rows.push((
-                stacked_trailing_rect(back_index, back_index, width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            let tree = layout_live_v2(
+                &wifi_v2_source(networks.len()),
+                "ADR-226 wifi paint",
+                width,
+                height,
+            );
+            let mut ids: Vec<String> = if networks.is_empty() {
+                vec!["wifi.empty".into()]
+            } else {
+                (0..networks.len())
+                    .map(|index| format!("wifi.{index}"))
+                    .collect()
+            };
+            ids.push("refresh".into());
+            ids.push("back".into());
+            let mut cards: Vec<render::ActionCardView> =
+                wifi_rows.iter().map(wifi_card_from_row).collect();
+            cards.push(render::ActionCardView::new("Обновить", "", "Обновить"));
+            cards.push(render::ActionCardView::new("Назад", "", "Назад"));
             Frame::WifiList {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: wifi_header(&space_display_name(&self.spaces, &self.selected_space_id)),
-                rows,
+                rows: list_paint_cards(&tree, "ADR-226 wifi paint", cards, &ids),
             }
         } else if self.bluetooth_list_open {
             // S20 / ADR-130: runtime-sized BluetoothRow list plus
             // trailing scan/refresh/back cards. ADR-145: header is a
-            // real `ContextHeader`, not a Surface strip.
+            // real `ContextHeader`, not a Surface strip. ADR-226:
+            // paint rects from the same tree as hits.
             let (devices, done) = bluetooth_scan_results();
             let saved = bluetooth_saved_names();
             let pair_error = bluetooth_pair_error_reason();
             let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved, pair_error.as_deref());
-            let mut rows: Vec<(Rect, render::ActionCardView)> = bluetooth_rows
-                .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        bluetooth_card_from_row(row),
-                    )
-                })
+            let status_rows = bluetooth_list_pattern(devices.len(), done, pair_error.as_deref())
+                .is_some() as usize;
+            let tree = layout_live_v2(
+                &bluetooth_v2_source(devices.len(), status_rows),
+                "ADR-226 bluetooth paint",
+                width,
+                height,
+            );
+            let mut ids: Vec<String> = (0..status_rows)
+                .map(|index| format!("bluetooth.status.{index}"))
                 .collect();
-            let controls = rows.len();
-            let back_index = controls + 2;
-            rows.push((
-                stacked_trailing_rect(controls, back_index, width, height),
-                render::ActionCardView::new("Искать устройства", "~8 с", "Искать"),
+            ids.extend((0..devices.len()).map(|index| format!("bluetooth.{index}")));
+            ids.push("scan".into());
+            ids.push("refresh".into());
+            ids.push("back".into());
+            let mut cards: Vec<render::ActionCardView> =
+                bluetooth_rows.iter().map(bluetooth_card_from_row).collect();
+            cards.push(render::ActionCardView::new(
+                "Искать устройства",
+                "~8 с",
+                "Искать",
             ));
-            rows.push((
-                stacked_trailing_rect(controls + 1, back_index, width, height),
-                render::ActionCardView::new("Обновить список", "", "Обновить"),
+            cards.push(render::ActionCardView::new(
+                "Обновить список",
+                "",
+                "Обновить",
             ));
-            rows.push((
-                stacked_trailing_rect(back_index, back_index, width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            cards.push(render::ActionCardView::new("Назад", "", "Назад"));
             Frame::BluetoothList {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: bluetooth_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
-                rows,
+                rows: list_paint_cards(&tree, "ADR-226 bluetooth paint", cards, &ids),
             }
         } else if self.trusted_clients_open {
             // Same runtime-sized-list shape as the Bluetooth branch
             // above -- `trusted_clients()`'s own doc comment explains
             // why this reads straight from disk instead of a cached
             // snapshot. ADR-147: header is a real `ContextHeader`,
-            // not a Surface strip.
+            // not a Surface strip. ADR-226: paint from layout_v2.
             let clients = trusted_clients();
             let trusted_rows = trusted_client_list_rows(&clients);
-            let mut rows: Vec<(Rect, render::ActionCardView)> = trusted_rows
+            let tree = layout_live_v2(
+                &trusted_v2_source(clients.len()),
+                "ADR-226 trusted paint",
+                width,
+                height,
+            );
+            let mut ids: Vec<String> = if clients.is_empty() {
+                vec!["trusted.empty".into()]
+            } else {
+                (0..clients.len())
+                    .map(|index| format!("trusted.{index}"))
+                    .collect()
+            };
+            ids.push("back".into());
+            let mut cards: Vec<render::ActionCardView> = trusted_rows
                 .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        trusted_client_card_from_row(row),
-                    )
-                })
+                .map(trusted_client_card_from_row)
                 .collect();
-            rows.push((
-                stacked_trailing_rect(trusted_rows.len(), trusted_rows.len(), width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            cards.push(render::ActionCardView::new("Назад", "", "Назад"));
             Frame::TrustedClients {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: trusted_header(&space_display_name(&self.spaces, &self.selected_space_id)),
-                rows,
+                rows: list_paint_cards(&tree, "ADR-226 trusted paint", cards, &ids),
             }
         } else if self.dev_surface_open {
             // HIA-20: same runtime-sized-list shape as trusted
@@ -7781,32 +7808,44 @@ impl Shell {
                 ),
             }
         } else if self.current_page == RootPage::Inbox {
-            let view = root_view(width, height);
+            let connected = self.entityd.is_connected();
+            let view = layout_live_v2(
+                &inbox_v2_source(&self.selected_entities, connected),
+                "ADR-226 inbox paint",
+                width,
+                height,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::Inbox {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: inbox_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
-                    self.entityd.is_connected(),
+                    connected,
                     archived,
                 ),
-                rows: self.inbox_content_cards(width, height),
+                rows: self.inbox_content_cards_from(&view),
             }
         } else if self.current_page == RootPage::Spaces {
-            let view = root_view(width, height);
+            let connected = self.entityd.is_connected();
+            let view = layout_live_v2(
+                &spaces_v2_source(&self.spaces, connected),
+                "ADR-226 spaces paint",
+                width,
+                height,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::Spaces {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: spaces_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
-                    self.entityd.is_connected(),
+                    connected,
                     archived,
                 ),
-                rows: self.spaces_content_cards(width, height),
+                rows: self.spaces_content_cards_from(&view),
             }
         } else if self.current_page == RootPage::Me {
             let view = root_view(width, height);
@@ -9300,36 +9339,51 @@ impl Shell {
     /// rather than the placeholder gray rows `draw_root` would
     /// otherwise draw for a page with zero real cards -- Acceptance
     /// criteria explicitly called this out during the DoR.
-    fn inbox_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        inbox_event_rows(&self.selected_entities, self.entityd.is_connected())
-            .into_iter()
-            .enumerate()
-            .map(|(index, event)| {
-                (
-                    stacked_row_rect(index, width, height),
-                    inbox_card_from_event(&event),
-                )
-            })
-            .collect()
+    fn inbox_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
+        let connected = self.entityd.is_connected();
+        let events = inbox_event_rows(&self.selected_entities, connected);
+        let ids: Vec<String> = if !connected {
+            vec!["inbox.offline".into()]
+        } else {
+            let rows = inbox_rows(&self.selected_entities);
+            if rows.is_empty() {
+                vec!["inbox.empty".into()]
+            } else {
+                rows.into_iter()
+                    .map(|(_, entity)| entity.id.to_string())
+                    .collect()
+            }
+        };
+        list_paint_cards(
+            tree,
+            "ADR-226 inbox paint",
+            events.iter().map(inbox_card_from_event).collect(),
+            &ids,
+        )
     }
 
-    fn spaces_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        space_list_rows(
+    fn spaces_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
+        let connected = self.entityd.is_connected();
+        let rows = space_list_rows(
             &self.spaces,
             &self.selected_space_id,
-            self.entityd.is_connected(),
+            connected,
             &self.entity_counts,
             &self.system_space_entities,
+        );
+        let ids: Vec<String> = if !connected {
+            vec!["spaces.offline".into()]
+        } else if self.spaces.is_empty() {
+            vec!["spaces.empty".into()]
+        } else {
+            self.spaces.iter().map(|space| space.id.clone()).collect()
+        };
+        list_paint_cards(
+            tree,
+            "ADR-226 spaces paint",
+            rows.iter().map(space_card_from_row).collect(),
+            &ids,
         )
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| {
-            (
-                stacked_row_rect(index, width, height),
-                space_card_from_row(&row),
-            )
-        })
-        .collect()
     }
 
     /// S13 Change 3: "Я" -- a device/apps summary built entirely from
@@ -12045,6 +12099,59 @@ mod tests {
         assert!(draw_now.contains("chrome.object"));
         assert!(draw_now.contains("chrome.empty"));
         assert!(draw_now.contains("draw_tab_bar(canvas, tabs, fonts)"));
+    }
+
+    #[test]
+    fn list_paint_rows_match_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let inbox = super::layout_live_v2(
+            &super::inbox_v2_source(&[], true),
+            "ADR-226 inbox empty",
+            width,
+            height,
+        );
+        assert_eq!(
+            super::v2_named_rect(&inbox, "inbox.empty", "empty"),
+            stacked_row_rect(0, width, height)
+        );
+        let nav = saai_ui_compiler::layout_v1_find(&inbox, "BottomNavigation").expect("tabs");
+        assert_eq!(nav.children.len(), 4);
+        let wifi = super::layout_live_v2(
+            &super::wifi_v2_source(0),
+            "ADR-226 wifi empty",
+            width,
+            height,
+        );
+        assert_eq!(
+            super::v2_named_rect(&wifi, "wifi.empty", "wifi"),
+            stacked_row_rect(0, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&wifi, "refresh", "wifi"),
+            stacked_trailing_rect(1, 2, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&wifi, "back", "wifi"),
+            stacked_trailing_rect(2, 2, width, height)
+        );
+        let two =
+            super::layout_live_v2(&super::wifi_v2_source(2), "ADR-226 wifi two", width, height);
+        assert_eq!(
+            super::v2_named_rect(&two, "wifi.0", "wifi"),
+            stacked_row_rect(0, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&two, "wifi.1", "wifi"),
+            stacked_row_rect(1, width, height)
+        );
+        let main = include_str!("main.rs");
+        assert!(main.contains("list_paint_cards"));
+        assert!(main.contains("ADR-226 inbox paint"));
+        assert!(main.contains("ADR-226 spaces paint"));
+        assert!(main.contains("ADR-226 wifi paint"));
+        assert!(main.contains("ADR-226 bluetooth paint"));
+        assert!(main.contains("ADR-226 trusted paint"));
     }
 
     #[test]

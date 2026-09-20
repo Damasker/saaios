@@ -84,6 +84,7 @@ ADR-222 privileged `Keyboard` IME bound to Field; USB HID may replace the panel.
 ADR-223 OrbHost hits from `layout_v2`; gallery page taps stay a whole-surface formula.
 ADR-224 diagnostic Назад hits from `layout_v2` `DataRow` + `row back`.
 ADR-225 NOW chrome paint from the same `now_view()` tree as hits.
+ADR-226 Inbox/Spaces/list paint from generated `layout_v2` trees.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

@@ -33,6 +33,8 @@
 //! dock live DevSurface hits. Rows stay read-only.
 //! ADR-225: NOW chrome paint reads the same `layout_v2(now.sui)`
 //! tree as hits. Live SystemSection rows stay runtime content.
+//! ADR-226: Inbox/Spaces/Wi-Fi/Bluetooth/trusted paint reads the
+//! generated list trees hit-test already uses.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -865,6 +867,7 @@ mod tests {
         assert!(main.contains("saai_ui_compiler::layout_v2"));
         assert!(main.contains("saai_ui_compiler::compile_v2"));
         assert!(main.contains("now_paint_chrome_from"));
+        assert!(main.contains("list_paint_cards"));
         assert!(main.contains("orb_v2_source"));
         assert!(main.contains("diagnostic_v2_source"));
         assert!(!main.contains("layout_v1_root("));

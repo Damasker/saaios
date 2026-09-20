@@ -1238,6 +1238,8 @@ mod tests {
         assert!(limits.contains("ADR-224"));
         assert!(limits.contains("ADR-225"));
         assert!(limits.contains("NOW chrome paint"));
+        assert!(limits.contains("ADR-226"));
+        assert!(limits.contains("list paint"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1265,5 +1267,7 @@ mod tests {
         assert!(ledger.contains("diagnostic"));
         assert!(ledger.contains("ADR-225"));
         assert!(ledger.contains("NOW chrome paint"));
+        assert!(ledger.contains("ADR-226"));
+        assert!(ledger.contains("List paint"));
     }
 }
