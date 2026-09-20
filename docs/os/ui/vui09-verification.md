@@ -26,7 +26,7 @@ not reflash.
 | State | empty / offline patterns | host | SurfacePattern tests; live NOW empty is «Ничего срочного» |
 | A11y | reduced motion | proven | ADR-174; not toggled this slice |
 | A11y | focus order | proven | ADR-162 |
-| A11y | increased text on panther | open | host `set_text_scale`; no 150% shot on HEAD |
+| A11y | increased text on panther | proven | ADR-190; HEAD `e8865301…` 150% then restored 100; no Me tap |
 | Perf | frame pace / p95 / idle | proven | ADR-172–177; not re-read `/run/saaios/shell-frame.last` this slice |
 | Perf | haptic policy | proven | ADR-171/179 KeyPress-only |
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |

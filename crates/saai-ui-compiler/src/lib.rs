@@ -828,6 +828,8 @@ mod tests {
         assert!(ledger.contains("cold boot"));
         assert!(ledger.contains("e8865301"));
         assert!(ledger.contains("ADR-188"));
+        assert!(ledger.contains("ADR-190"));
+        assert!(ledger.contains("150%"));
         let build = include_str!("../../../services/saai-shell/build.rs");
         assert!(build.contains("saai_ui_compiler::compile("));
         assert!(!build.contains("saai_ui_compiler::compile_v2"));

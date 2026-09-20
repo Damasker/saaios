@@ -11588,6 +11588,11 @@ mod tests {
     }
 
     #[test]
+    fn text_scale_cycle_includes_one_hundred_fifty() {
+        assert_eq!(super::TEXT_SCALE_LEVELS_PCT, [85, 100, 125, 150]);
+    }
+
+    #[test]
     fn consent_screen_left_half_of_button_row_accepts() {
         assert_eq!(consent_action_at((270.0, 2250.0), 1080, 2400), Some(true));
     }

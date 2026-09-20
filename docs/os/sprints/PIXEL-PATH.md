@@ -149,6 +149,7 @@ host-only derived view.
 | VUI-09 allowlist leftover NOW | empty `root.sui` content, no diagnostic RGB, `draw_action_card` reuse **на panther** (`36bcc8eb…`; ADR-187; leave Сейчас) |
 | VUI-09 named text sizes | `role_px` + leftover size names; paint unchanged **на panther** (`e8865301…`; ADR-188; leave Сейчас) |
 | VUI-09 verification ledger | matrix cells cited; not Visual v1 sign-off **host** (ADR-189; chrome unchanged `e8865301…`; leave Сейчас) |
+| VUI-09 increased text | `text_scale_pct` 150 then 100 on HEAD **на panther** (`e8865301…`; ADR-190; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

@@ -443,6 +443,7 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   ADR-188 names leftover `draw_text` sizes through `role_px` and an
   explicit leftover list; ActionCard/tab sizes are not retokened.
   ADR-189 is the verification ledger, not Visual v1 sign-off.
+  ADR-190 proves 150% text on panther HEAD without a Система tap.
 
 ### 7.6 `TaskSummary`
 
