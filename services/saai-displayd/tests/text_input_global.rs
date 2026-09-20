@@ -1,8 +1,9 @@
 //! S08 Change 3 / ADR-022: `zwp_text_input_manager_v3` advertised, and a
 //! client can bind + enable text input without the compositor crashing.
 //!
-//! Unlike `zwp_input_method_manager_v2` (deliberately NOT wired up -- see
-//! ADR-022: its `GetInputMethod` handler unconditionally requires a
+//! Unlike smithay's `zwp_input_method_manager_v2` (not used -- see
+//! ADR-022/267: its `GetInputMethod` handler unconditionally requires a
+//! working keyboard), `saai-displayd` owns text-input-v3 in `text_ime.rs`.
 //! working keyboard, and a spike proved no keymap compiles on this device
 //! at all, not even a fully self-contained one), text-input-v3's
 //! client-facing half only touches per-seat user data, confirmed by

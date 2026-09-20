@@ -1814,7 +1814,9 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 name = "policy-engine"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "protocol",
+ "saai-authority",
  "serde",
  "serde_json",
  "tool-registry",
@@ -2318,6 +2320,7 @@ dependencies = [
  "tempfile",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-misc",
 ]
 
 [[package]]
@@ -3522,6 +3525,7 @@ checksum = "6e9567599ef23e09b8dad6e429e5738d4509dfc46b3b21f32841a304d16b29c8"
 dependencies = [
  "bitflags",
  "wayland-backend",
+ "wayland-client",
  "wayland-protocols",
  "wayland-scanner",
  "wayland-server",

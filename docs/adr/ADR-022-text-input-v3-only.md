@@ -77,21 +77,20 @@ cross-sysroot) или в её несовместимости с этим окр�
    `InputMethodHandle` user-data, никогда `Seat::get_keyboard()`. Фокус
    ведётся из `activate_toplevel()` тем же способом, что уже сделан для
    `wl_data_device_manager` в ADR-021 -- независимо от клавиатуры,
-   `TextInputHandle::leave()`/`set_focus()`/`enter()`.
-2. **`zwp_input_method_manager_v2` -- НЕ реализован.** Осознанно
-   отложенный, задокументированный пробел, не тихо пропущенный: у
-   текстовых полей GTK4/Qt сейчас нет системной экранной клавиатуры,
-   отвечающей на `enable()`. Сами поля не ломаются и не роняют
-   compositor -- подтверждено и хостовым тестом, и физически на
-   устройстве (см. Evidence).
+   `TextInputHandle::leave()`/`set_focus()`/`enter()`. Superseded for
+   the compositor implementation by ADR-267's `text_ime.rs`.
+2. **`zwp_input_method_manager_v2` -- implemented without a keyboard
+   in ADR-267.** This ADR recorded the smithay unwrap; APP-03 owns the
+   replacement. Do not re-enable smithay's `InputMethodManagerState`.
 3. **ADR-012 не отменяется, но его диагноз сужен пост-фактум**: причина
    глубже "неполного xkb-data" -- вероятно баг/несовместимость самой
    собранной библиотеки `libxkbcommon.a`. Починка "по-настоящему"
    (в любом смысле, не только xkb-data) остаётся отдельной, не
    оценённой по объёму задачей -- не блокирует этот Change, но и не
    делается здесь.
-4. Три пути для будущего input-method-v2 (ни один не выбран этим ADR,
-   каждый требует отдельного решения при появлении бюджета):
+4. ADR-267 chose path two (hand-rolled input-method-v2, no KeyboardHandle).
+   The three options below are historical; do not re-open smithay's
+   GetInputMethod unwrap.
    - расследовать и исправить настоящую причину xkbcommon-краша
      (сначала нужно ЛОКАЛИЗОВАТЬ баг -- в этой версии библиотеки,
      сборке или окружении -- то, что не было сделано этим спайком);

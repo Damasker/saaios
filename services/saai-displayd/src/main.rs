@@ -21,6 +21,7 @@ use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 #[cfg(feature = "panther-hardware")]
 mod hardware;
 mod hid;
+mod text_ime;
 #[cfg(feature = "panther-hardware")]
 mod touch;
 
@@ -35,7 +36,7 @@ use smithay::{
     backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_fractional_scale,
     delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
-    delegate_text_input_manager, delegate_viewporter, delegate_xdg_shell,
+    delegate_viewporter, delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -76,7 +77,6 @@ use smithay::{
         },
         shm::{with_buffer_contents, ShmHandler, ShmState},
         socket::ListeningSocketSource,
-        text_input::{TextInputHandle, TextInputManagerState},
         viewporter::ViewporterState,
     },
 };
@@ -293,26 +293,11 @@ struct State {
     /// Needed by `set_data_device_focus` in `activate_toplevel()` -- cheap
     /// to clone, kept here rather than threading it through every call site.
     dh: DisplayHandle,
-    /// ADR-022 (S08 Change 3): `zwp_text_input_manager_v3` only -- the
-    /// client-facing half of text-input-v3, letting GTK4/Qt apps enable a
-    /// text field and receive `enter`/`leave` without touching any keyboard
-    /// machinery at all (confirmed by reading smithay's own
-    /// `GetTextInput` handler: it only touches per-seat `TextInputHandle`/
-    /// `InputMethodHandle` user data, never `Seat::get_keyboard()`).
-    /// Deliberately NOT paired with `InputMethodManagerState` -- a spike
-    /// proved `zwp_input_method_manager_v2`'s `GetInputMethod` handler
-    /// unconditionally calls `seat.get_keyboard().unwrap()`, and a working
-    /// keymap is not obtainable on this device at all (ADR-022 supersedes
-    /// ADR-012's narrower "incomplete xkb-data" diagnosis: even a fully
-    /// self-contained from-string keymap with zero file/rule-path
-    /// dependency SIGTRAPs here). Enabling a text field currently has no
-    /// on-screen keyboard to answer it -- a real, tracked limitation, not
-    /// silently dropped -- see ADR-022.
-    /// Kept alive for the lifetime of the process -- not read again after
-    /// construction, same reasoning as `_wl_output` above: the global it
-    /// registered, and the per-object dispatch `delegate_text_input_manager!`
-    /// wires up, don't need the field's value, only its existence.
-    _text_input_manager_state: TextInputManagerState,
+    /// ADR-267 (APP-03): our text-input-v3 + input-method-v2 pair, not
+    /// smithay's `InputMethodManagerState` (that path unwraps a keyboard,
+    /// ADR-022). Keep-alive for the globals, same as `_dmabuf_global`.
+    _text_input_manager_state: text_ime::SaaiTextInputManager,
+    _input_method_manager_state: text_ime::SaaiInputMethodManager,
     /// ADR-266 (APP-02): `wp_fractional_scale_manager_v1` so GTK4/GDK
     /// receives `preferred_scale` instead of an uninitialized `double *`
     /// (ADR-025). Same keep-alive pattern as `_text_input_manager_state`.
@@ -528,19 +513,9 @@ impl State {
             &self.seat,
             surface.as_ref().and_then(Resource::client),
         );
-        // ADR-022 (S08 Change 3): same reasoning -- text-input-v3 focus is
-        // "which client's field is live", not "which client gets key
-        // events". `insert_if_missing` matches smithay's own `GetTextInput`
-        // handler (text_input/mod.rs) -- a `TextInputHandle` may not exist
-        // yet for this seat if no client has ever bound text-input-v3.
-        self.seat
-            .user_data()
-            .insert_if_missing(TextInputHandle::default);
-        if let Some(text_input_handle) = self.seat.user_data().get::<TextInputHandle>().cloned() {
-            text_input_handle.leave();
-            text_input_handle.set_focus(surface.clone());
-            text_input_handle.enter();
-        }
+        // ADR-267: text-input focus is "which client's field is live", not
+        // "which client gets key events". Same seat, no keyboard required.
+        text_ime::on_focus(&self.seat, surface.clone());
         #[cfg(not(feature = "panther-hardware"))]
         {
             let serial = SERIAL_COUNTER.next_serial();
@@ -1191,13 +1166,9 @@ impl DataDeviceHandler for State {
 }
 delegate_data_device!(State);
 
-// ADR-022 (S08 Change 3): no custom handler trait needed -- smithay's own
-// GetTextInput/text-input-object request handling covers the full
-// zwp_text_input_v3 surface (enable/disable/commit/set_surrounding_text/
-// content type/cursor rectangle) without any hook back into this State.
-// Focus tracking is driven from `activate_toplevel()`, the same place
-// `set_data_device_focus` is called from.
-delegate_text_input_manager!(State);
+// ADR-267 (APP-03): text-input-v3 + input-method-v2 without keymap.
+// Focus is still driven from `activate_toplevel()`.
+delegate_saai_text_ime!(State);
 
 // ADR-266 (APP-02): send preferred_scale=1.0 as soon as a client binds
 // wp_fractional_scale_v1 on a surface. Output is already Scale::Integer(1);
@@ -1381,7 +1352,8 @@ fn main() {
     );
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
     let data_device_state = DataDeviceState::new::<State>(&dh);
-    let text_input_manager_state = TextInputManagerState::new::<State>(&dh);
+    let text_input_manager_state = text_ime::SaaiTextInputManager::new::<State>(&dh);
+    let input_method_manager_state = text_ime::SaaiInputMethodManager::new::<State>(&dh);
     let fractional_scale_manager_state = FractionalScaleManagerState::new::<State>(&dh);
     let viewporter_state = ViewporterState::new::<State>(&dh);
     let mut seat_state = SeatState::<State>::new();
@@ -1627,6 +1599,7 @@ fn main() {
         data_device_state,
         dh: dh.clone(),
         _text_input_manager_state: text_input_manager_state,
+        _input_method_manager_state: input_method_manager_state,
         _fractional_scale_manager_state: fractional_scale_manager_state,
         _viewporter_state: viewporter_state,
         #[cfg(not(feature = "panther-hardware"))]

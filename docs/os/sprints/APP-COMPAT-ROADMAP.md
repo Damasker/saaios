@@ -170,10 +170,10 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 - **Goal**: рабочий путь, которым любой OSK (включая будущий
   bespoke) может доставлять ТЕКСТ стороннему приложению через
   text-input-v3/input-method-v2, не касаясь `wl_keyboard`/xkbcommon.
-- **Текущее состояние**: `zwp_text_input_manager_v3` (клиентская
-  часть) есть; `zwp_input_method_manager_v2` (серверная часть)
-  сознательно не подключён из-за жёсткой зависимости smithay's
-  реализации от рабочего keymap.
+- **Текущее состояние**: compositor half on host (ADR-267:
+  `zwp_input_method_manager_v2` + owned text-input-v3, no
+  `get_keyboard()`). `commit_string` reaches an enabled field in the
+  host test. Do not flash displayd this week. APP-04 is the visible OSK.
 - **Приёмка**: тестовое стороннее Wayland-приложение (можно
   переиспользовать существующий demo) включает текстовое поле,
   получает `enter`, и текстовая строка, отправленная НЕ через
