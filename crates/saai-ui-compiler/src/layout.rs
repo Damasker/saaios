@@ -2,15 +2,15 @@
 //! ADR-194: `layout_v2()` matches those tab hits for public NOW.
 //!
 //! Production chrome still uses `layout_v1_root()`. `compile_v2()`
-//! stays off `build.rs`. Tab ids still come from the v1 rollback
-//! until the v2 grammar lists tabs.
+//! stays off `build.rs`. Nested `tab` ids under `BottomNavigation`
+//! own the v2 strip (ADR-196).
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SurfaceScale,
     MIN_TOUCH_TARGET,
 };
 
-use crate::{compile_v1_rollback, ScreenSpec, SuiV2Screen};
+use crate::{ScreenSpec, SuiV2Screen};
 
 /// Design-canvas tab height scaled to the panel, never below
 /// `MIN_TOUCH_TARGET`. Landscape 2400×1080 would otherwise shrink
@@ -88,11 +88,13 @@ fn v1_content_node(spec: &ScreenSpec, width: u32, height: u32) -> Node {
     })
 }
 
-fn v2_has_tabs(screen: &SuiV2Screen) -> bool {
+fn v2_named_tabs(screen: &SuiV2Screen) -> &[crate::SuiV2Tab] {
     screen
         .components
         .iter()
-        .any(|component| component.type_name == "BottomNavigation")
+        .find(|component| component.type_name == "BottomNavigation")
+        .map(|component| component.tabs.as_slice())
+        .unwrap_or(&[])
 }
 
 fn v2_content_node(screen: &SuiV2Screen, width: u32) -> Node {
@@ -116,28 +118,27 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32) -> Node {
     )
 }
 
-/// Public NOW chrome: non-actionable v2 content leaves plus the v1
-/// tab strip when `BottomNavigation` is present. Tab ids/actions stay
-/// those of `compile_v1_rollback()` so hits match `layout_v1_root()`.
+/// Public NOW chrome: non-actionable v2 content leaves plus a tab
+/// strip from nested `tab` ids. Empty `BottomNavigation` does not
+/// borrow `compile_v1_rollback()`.
 pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
     let content = v2_content_node(screen, width);
-    if !v2_has_tabs(screen) {
+    let tabs = v2_named_tabs(screen);
+    if tabs.is_empty() {
         return content;
     }
-    let spec = compile_v1_rollback().expect("root.sui v1");
     let tab_height_2400 =
         EdgeInsets::from_safe(SafeInsets::PIXEL_7_PORTRAIT, SurfaceScale::PIXEL_7).bottom;
     let tab_height = v1_tab_strip_height(height, tab_height_2400);
-    let tabs = Node::linear(
-        spec.tabs_id.clone(),
+    let strip = Node::linear(
+        "BottomNavigation".to_string(),
         Axis::Horizontal,
-        spec.tabs
-            .iter()
-            .map(|tab| Node::leaf(tab.id.clone()).with_action(tab.action.clone()))
+        tabs.iter()
+            .map(|tab| Node::leaf(tab.id.clone()).with_action(format!("select_root:{}", tab.id)))
             .collect(),
     )
     .with_size(Length::Fill, Length::Px(tab_height));
-    Node::linear(screen.id.clone(), Axis::Vertical, vec![content, tabs])
+    Node::linear(screen.id.clone(), Axis::Vertical, vec![content, strip])
 }
 
 pub fn layout_v2(screen: &SuiV2Screen, width: u32, height: u32) -> LayoutNode {
@@ -238,6 +239,27 @@ mod tests {
         );
         assert_eq!(spec.tab_height, edges.bottom);
         assert_ne!(header.rect.y, edges.top);
+        assert_eq!(
+            layout_v1_find(&v2, "BottomNavigation").map(|node| node.children.len()),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn layout_v2_empty_navigation_does_not_borrow_v1_tabs() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component BottomNavigation {}
+            }
+            "#,
+        )
+        .expect("empty nav");
+        let tree = layout_v2(&screen, 1080, 2400);
+        assert!(tree.hit_test(135.0, 2250.0).is_none());
+        assert!(layout_v1_find(&tree, "now").is_none());
+        assert!(layout_v1_find(&tree, "me").is_none());
     }
 
     #[test]

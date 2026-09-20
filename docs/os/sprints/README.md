@@ -54,6 +54,7 @@ ADR-192 unlocked shell restart on panther HEAD (same `e8865301…`).
 ADR-193 VUI-09 known limitations and Visual v2 backlog (not Visual v1 sign-off).
 ADR-194 `layout_v2` public NOW tab hits match v1 (host; `compile()` stays v1).
 ADR-195 `EdgeInsets::from_safe` converts logical SafeInsets (host; top stays a layer).
+ADR-196 nested `tab` ids on `BottomNavigation`; `layout_v2` does not borrow v1 (host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

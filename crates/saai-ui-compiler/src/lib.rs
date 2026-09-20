@@ -5,7 +5,9 @@
 //! ADR-183 keeps `root.sui` as the v1 rollback artifact. ADR-184
 //! emits layout/hit-test from that compiled v1 `ScreenSpec`. ADR-194
 //! adds `layout_v2()` so public NOW tab hits match v1. ADR-195
-//! converts logical `SafeInsets` through `EdgeInsets::from_safe`. ADR-185
+//! converts logical `SafeInsets` through `EdgeInsets::from_safe`. ADR-196
+//! names nested `tab` ids on `BottomNavigation` so `layout_v2` does
+//! not borrow `compile_v1_rollback()`. ADR-185
 //! gates third-party documents through `compile_v2_public()`. ADR-186
 //! publishes the public example and stability labels.
 
@@ -78,6 +80,15 @@ pub struct SuiV2Props {
 pub struct SuiV2Component {
     pub type_name: String,
     pub props: SuiV2Props,
+    pub tabs: Vec<SuiV2Tab>,
+}
+
+/// Nested `tab <id>` under `BottomNavigation`. Id is a public surface.
+/// Action is `select_root:<id>` so hits match live v1 chrome.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SuiV2Tab {
+    pub id: String,
+    pub loc: Option<String>,
 }
 
 impl SuiV2Component {
@@ -377,8 +388,19 @@ impl Parser {
             }
             self.kind(TokenKind::LBrace)?;
             let props = self.v2_props()?;
+            let tabs = if type_name == "BottomNavigation" {
+                self.v2_tabs(public_only)?
+            } else if self.next_is_ident("tab") {
+                return Err(self.fail("nested tabs only belong on BottomNavigation"));
+            } else {
+                Vec::new()
+            };
             self.kind(TokenKind::RBrace)?;
-            components.push(SuiV2Component { type_name, props });
+            components.push(SuiV2Component {
+                type_name,
+                props,
+                tabs,
+            });
         }
         self.kind(TokenKind::RBrace)?;
         if self.cursor != self.tokens.len() {
@@ -393,7 +415,7 @@ impl Parser {
     fn v2_props(&mut self) -> Result<SuiV2Props, CompileError> {
         let mut props = SuiV2Props::default();
         let mut seen = std::collections::HashSet::new();
-        while !self.next_is(&TokenKind::RBrace) {
+        while !self.next_is(&TokenKind::RBrace) && !self.next_is_ident("tab") {
             let key = self.ident()?;
             if !sui_v2_property_keys().contains(&key.as_str()) {
                 return Err(self.fail(format!("unknown SUI v2 property `{key}`")));
@@ -419,6 +441,29 @@ impl Parser {
             }
         }
         Ok(props)
+    }
+
+    fn v2_tabs(&mut self, public_only: bool) -> Result<Vec<SuiV2Tab>, CompileError> {
+        let mut tabs = Vec::new();
+        let mut ids = std::collections::HashSet::new();
+        while self.next_is_ident("tab") {
+            self.keyword("tab")?;
+            let id = self.ident()?;
+            if !sui_v2_is_surface(&id) {
+                return Err(self.fail(format!("unknown SUI v2 tab `{id}`")));
+            }
+            if public_only && sui_v2_is_privileged(&id) {
+                return Err(self.fail(format!("privileged SUI v2 tab `{id}`")));
+            }
+            if !ids.insert(id.clone()) {
+                return Err(self.fail("duplicate tab id"));
+            }
+            self.kind(TokenKind::LBrace)?;
+            let props = self.v2_props()?;
+            self.kind(TokenKind::RBrace)?;
+            tabs.push(SuiV2Tab { id, loc: props.loc });
+        }
+        Ok(tabs)
     }
 
     fn v2_named_value(&mut self, key: &str, allowed: &[&str]) -> Result<String, CompileError> {
@@ -488,6 +533,13 @@ impl Parser {
             .get(self.cursor)
             .map(|token| &token.kind == expected)
             .unwrap_or(false)
+    }
+
+    fn next_is_ident(&self, name: &str) -> bool {
+        matches!(
+            self.tokens.get(self.cursor).map(|token| &token.kind),
+            Some(TokenKind::Ident(value)) if value == name
+        )
     }
 
     fn offset(&self) -> usize {
@@ -634,6 +686,71 @@ mod tests {
         );
         assert_eq!(screen.components[2].props.focus, Some(1));
         assert_eq!(screen.components[2].props.scroll.as_deref(), Some("none"));
+        assert!(screen.components[2].tabs.is_empty());
+    }
+
+    #[test]
+    fn compile_v2_nested_tabs_belong_only_on_bottom_navigation() {
+        let screen = compile_v2_public(include_str!("../../../docs/os/ui/examples/now-public.sui"))
+            .expect("public NOW");
+        let ids: Vec<&str> = screen.components[3]
+            .tabs
+            .iter()
+            .map(|tab| tab.id.as_str())
+            .collect();
+        assert_eq!(ids, ["now", "inbox", "spaces", "me"]);
+        let header_tabs = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {
+                tab now {}
+              }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(header_tabs
+            .to_string()
+            .contains("nested tabs only belong on BottomNavigation"));
+        let duplicate = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component BottomNavigation {
+                tab now {}
+                tab now {}
+              }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate tab id"));
+        let lock_tab = compile_v2_public(
+            r#"
+            sui 2
+            screen now {
+              component BottomNavigation {
+                tab lock {}
+              }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(lock_tab
+            .to_string()
+            .contains("privileged SUI v2 tab `lock`"));
+        assert!(compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component BottomNavigation {
+                tab lock {}
+              }
+            }
+            "#,
+        )
+        .is_ok());
     }
 
     #[test]
@@ -842,10 +959,11 @@ mod tests {
         assert!(ledger.contains("ADR-194"));
         assert!(ledger.contains("ADR-195"));
         assert!(ledger.contains("from_safe"));
+        assert!(ledger.contains("ADR-196"));
+        assert!(ledger.contains("nested tab"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
-        assert!(limits.contains("from_safe"));
-        assert!(limits.contains("ADR-112"));
+        assert!(limits.contains("ADR-196"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

@@ -395,6 +395,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   rule every other composite in this document follows.
 - ADR-168: `pressed` holds `ColorRole::Pressed` for `MotionToken::
   Selection` after release unless reduced motion. Size does not change.
+- ADR-196: `.sui` v2 lists destinations as nested `tab <id> { loc = … }`
+  under `BottomNavigation`. Empty navigation invents no v1 hits.
+  `NavigationItem` stays a Rust type, not a v2 component name.
 
 ### 7.5 `OrbHost`
 
@@ -452,6 +455,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   so public NOW tab hits match v1; production still uses
   `layout_v1_root()`. ADR-195 converts logical `SafeInsets` through
   `EdgeInsets::from_safe`; the top inset stays the status layer.
+  ADR-196 names nested `tab` ids on `BottomNavigation` so `layout_v2`
+  does not borrow `compile_v1_rollback()`.
 
 ### 7.6 `TaskSummary`
 

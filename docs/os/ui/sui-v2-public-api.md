@@ -26,9 +26,10 @@ chrome still compiles through `compile()` on
 
 [`examples/now-public.sui`](examples/now-public.sui) is the labelled NOW
 sample: `ContextHeader`, `ObjectSummary`, `SurfacePattern`,
-`BottomNavigation`. It matches the live Сейчас composition (header,
-object, empty pattern, tabs) without leftover v1 NOW cards and without
-`OrbHost`.
+`BottomNavigation` with nested `tab now/inbox/spaces/me` (ADR-196). It
+matches the live Сейчас composition (header, object, empty pattern,
+tabs) without leftover v1 NOW cards and without `OrbHost`. Empty
+`BottomNavigation` invents no v1 hits.
 
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
@@ -54,9 +55,10 @@ review. Copying them into an app document fails `compile_v2_public()`.
 - Removing a public name requires an ADR and a compile error, not a
   silent skip.
 - `compile_v2()` on `root.sui` stays forbidden. `layout_v2()` matches
-  v1 tab hits for this example (ADR-194) but is not wired into
+  v1 tab hits for this example (ADR-194/196) but is not wired into
   `build.rs`. `inset = safe` uses `EdgeInsets::from_safe` (ADR-195);
-  the top inset is the status layer, not a content pad.
+  the top inset is the status layer, not a content pad. Nested `tab`
+  ids own the v2 strip.
 
 ## Migration
 
@@ -66,8 +68,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | `sui 1` leftover NOW cards | removed in ADR-187; public NOW sample above |
 | `OrbHost` / lock / gallery in an app | omit; those stay privileged |
 | Switching `build.rs` to `compile_v2()` | do not; keep `compile()` |
-| Wanting tab hit-test from a v2 NOW | `layout_v2(compile_v2_public(…))`; not `root_view` |
+| Wanting tab hit-test from a v2 NOW | nested `tab` + `layout_v2(compile_v2_public(…))`; not `root_view` |
 | Logical `SafeInsets` on a `Node` | `EdgeInsets::from_safe`; do not pad top (status layer) |
+| Empty `BottomNavigation {}` | no tab hits; do not borrow v1 ids |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

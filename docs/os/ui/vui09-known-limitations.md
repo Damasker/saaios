@@ -31,11 +31,11 @@ display restart.
 ## Compiler and layout
 
 - `layout_v2()` matches v1 tab hits for public NOW (ADR-194). Tab
-  height comes from `EdgeInsets::from_safe` (ADR-195), not from
-  mixing logical `SafeInsets` into `Node` padding. Live tabs still
-  come from `layout_v1_root()` over `compile_v1_rollback()`. Tab ids
-  are borrowed from that v1 rollback until the v2 grammar lists tabs.
-  Footer and object hits stay procedural.
+  height comes from `EdgeInsets::from_safe` (ADR-195). Nested `tab`
+  ids on `BottomNavigation` own the v2 strip (ADR-196); empty
+  navigation invents no v1 hits. Live chrome still comes from
+  `layout_v1_root()` over `compile_v1_rollback()`. Footer and object
+  hits stay procedural.
 - `compile_v2_public()` is the third-party gate. It is Experimental,
   not Stable.
 - Top `SafeInsets` is the status layer (ADR-112), not tree padding.
@@ -58,7 +58,8 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Items 1–2 are host-done (ADR-194/195); production still v1.
+Ordered. Items 1–2 and 7 are host-done (ADR-194/195/196); production
+still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
    `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
@@ -75,7 +76,8 @@ Ordered. Items 1–2 are host-done (ADR-194/195); production still v1.
 6. Run the session-blocked v1 cells (lock cycle, display restart, cold
    boot, daylight booth, 7-tap gallery) as operator-approved device
    work. They are Visual v1 gates, not v2 features.
-7. Name tabs inside the v2 grammar so `layout_v2()` does not borrow
-   `compile_v1_rollback()` ids.
+7. ~~Name tabs inside the v2 grammar so `layout_v2()` does not borrow
+   `compile_v1_rollback()` ids.~~ Host: nested `tab` (ADR-196). Do not
+   attach `layout_v2()` to `build.rs` yet.
 
 Rollback: delete this page. The ledger and `compile()` path stay.

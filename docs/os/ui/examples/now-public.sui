@@ -24,5 +24,9 @@ screen now {
     focus = 1
     scroll = none
     inset = safe
+    tab now { loc = now }
+    tab inbox { loc = inbox }
+    tab spaces { loc = spaces }
+    tab me { loc = me }
   }
 }
