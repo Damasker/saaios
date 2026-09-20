@@ -99,6 +99,7 @@ ADR-237 WORK-02 live dispatch (derived ready, concurrency=1).
 ADR-238 IRAB Plan persists a validated DAG, not diagnose.
 ADR-239 Intent Object View shows plan → progress from related Tasks.
 ADR-240 Primary nav is Сейчас · Пространства · Поиск · Система.
+ADR-241 Сейчас leads with attention, current work, next.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

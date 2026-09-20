@@ -5137,6 +5137,57 @@ fn now_attention_section(entities: &[Entity]) -> Option<SystemSection> {
     attention_section_from_projection(&project_from_entities(entities))
 }
 
+/// ADR-241: NOW body order matches the boards — attention, current
+/// work, next. Enabled schedules stay last when they exist.
+fn now_workflow_sections(
+    entities: &[Entity],
+    relationships: &[Relationship],
+) -> Vec<SystemSection> {
+    let mut sections = Vec::new();
+
+    if let Some(attention) = now_attention_section(entities) {
+        sections.push(attention);
+    }
+
+    let mut in_progress = SystemSection::new("Продолжается");
+    for entity in in_progress_work(entities) {
+        in_progress = in_progress.with_row(SystemSectionRow::Task(task_summary_from_entity(
+            entity,
+            entities,
+            relationships,
+        )));
+    }
+    if !in_progress.is_empty() {
+        sections.push(in_progress);
+    }
+
+    let mut next = SystemSection::new("Далее");
+    if let Some(work) = next_work(entities) {
+        next = next.with_row(next_work_row(work, entities, relationships));
+    }
+    if !next.is_empty() {
+        sections.push(next);
+    }
+
+    let mut today = SystemSection::new("Сегодня");
+    for schedule in today_schedules(entities) {
+        let text = schedule
+            .properties
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or(&schedule.title);
+        today = today.with_row(SystemSectionRow::Data(DataRow::new(
+            text.to_string(),
+            DataRowVariant::Static,
+        )));
+    }
+    if !today.is_empty() {
+        sections.push(today);
+    }
+
+    sections
+}
+
 fn attention_section_from_projection(projection: &AttentionProjection) -> Option<SystemSection> {
     let mut attention = SystemSection::new("Требует внимания");
     for item in projection.now_items() {
@@ -9993,62 +10044,11 @@ impl Shell {
         })
     }
 
-    /// VUI-03 (ADR-112): the three `SystemSection`s
-    /// `human-interface-architecture-v2.md` section 13 asks for, each
-    /// built from a real, already-fetched data source -- never a section
-    /// with an invented row. A section that ends up with zero real rows
-    /// is left out of the returned list entirely (never handed to
-    /// `draw_now` empty) -- "Продолжается" and "Далее" (VUI-03's "next
-    /// action") are exactly the two data sources the sprint's own
-    /// inventory task found the shell reading for the first time here.
+    /// ADR-241: Сейчас is attention, current work, next, then any real
+    /// schedule rows. Empty sections stay omitted. Orb + intent footer
+    /// remain the composer; this list does not invent weather.
     fn now_sections(&self) -> Vec<SystemSection> {
-        let mut sections = Vec::new();
-
-        let mut today = SystemSection::new("Сегодня");
-        for schedule in today_schedules(&self.selected_entities) {
-            let text = schedule
-                .properties
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or(&schedule.title);
-            today = today.with_row(SystemSectionRow::Data(DataRow::new(
-                text.to_string(),
-                DataRowVariant::Static,
-            )));
-        }
-        if !today.is_empty() {
-            sections.push(today);
-        }
-
-        let mut in_progress = SystemSection::new("Продолжается");
-        for entity in in_progress_work(&self.selected_entities) {
-            in_progress = in_progress.with_row(SystemSectionRow::Task(task_summary_from_entity(
-                entity,
-                &self.selected_entities,
-                &self.relationships,
-            )));
-        }
-        if !in_progress.is_empty() {
-            sections.push(in_progress);
-        }
-
-        if let Some(attention) = now_attention_section(&self.selected_entities) {
-            sections.push(attention);
-        }
-
-        let mut next = SystemSection::new("Далее");
-        if let Some(work) = next_work(&self.selected_entities) {
-            next = next.with_row(next_work_row(
-                work,
-                &self.selected_entities,
-                &self.relationships,
-            ));
-        }
-        if !next.is_empty() {
-            sections.push(next);
-        }
-
-        sections
+        now_workflow_sections(&self.selected_entities, &self.relationships)
     }
 
     fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
@@ -11151,7 +11151,7 @@ mod tests {
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
         lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
         motion_clock_for, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_details,
+        now_workflow_sections, object_view_action_at, object_view_content, object_view_details,
         object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
@@ -14641,6 +14641,45 @@ mod tests {
             other => panic!("expected status row, got {other:?}"),
         }
         assert!(super::now_attention_section(&[running]).is_none());
+    }
+
+    #[test]
+    fn now_sections_lead_with_attention_then_work_then_next() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let mut running = task_entity("Работает", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let action = action_entity("Выполнить шаг", running.id, "pending");
+        let mut enabled = serde_json::Map::new();
+        enabled.insert("enabled".into(), serde_json::Value::Bool(true));
+        enabled.insert("text".into(), serde_json::Value::String("Встреча".into()));
+        let mut schedule = test_entity(SCHEDULE_ENTITY_TYPE, enabled);
+        schedule.title = "Встреча".into();
+        let entities = vec![waiting, running, action, schedule];
+        let sections = now_workflow_sections(&entities, &[]);
+        let titles: Vec<&str> = sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Требует внимания", "Продолжается", "Далее", "Сегодня"]
+        );
+    }
+
+    #[test]
+    fn now_sections_omit_empty_workflow_blocks() {
+        let mut running = task_entity("Работает", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let sections = now_workflow_sections(std::slice::from_ref(&running), &[]);
+        let titles: Vec<&str> = sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Продолжается"]);
     }
 
     #[test]
