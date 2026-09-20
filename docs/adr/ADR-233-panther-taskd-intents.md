@@ -53,4 +53,4 @@ became Task `81154eac…`. Runtime accepted `diagnose` then hit the
 60s request budget (`correlation_id=67d7c8ea…`). Сейчас shows
 «Задача: install firexox» Failed, not «Нет задачи». Do not tap
 Разрешить/Сопряжь. Native-init wiring is in tree; this boot started
-the process from `/data`.
+the process from `/data`. Boot ownership is ADR-234.
