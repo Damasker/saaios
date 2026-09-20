@@ -46,9 +46,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
 
 ## Deprecation
 
-- Leftover `root.sui` NOW actions (`inspect_selected_entity`,
-  `open_intent_input`) are not a public API. Live NOW uses
-  `ObjectSummary` and the footer.
+- `root.sui` has no leftover NOW actions (ADR-187). Live NOW uses
+  `ObjectSummary` and the footer. `inspect_selected_entity` is not a
+  public name.
 - Privileged names that appear in gallery fixtures are not promoted by
   that appearance.
 - Removing a public name requires an ADR and a compile error, not a
@@ -61,7 +61,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | From | To |
 |---|---|
 | Copying `saai-shell` paint | `saai-ui-core` types + this example |
-| `sui 1` leftover NOW cards | public NOW sample above |
+| `sui 1` leftover NOW cards | removed in ADR-187; public NOW sample above |
 | `OrbHost` / lock / gallery in an app | omit; those stay privileged |
 | Switching `build.rs` to `compile_v2()` | do not; keep `compile()` |
 

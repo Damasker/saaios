@@ -2282,73 +2282,7 @@ pub fn draw_root(
         draw_app_icon_grid(canvas, fonts, content_actions);
     } else {
         for (rect, card) in content_actions {
-            canvas.fill_rect(
-                *rect,
-                if card.selected {
-                    theme_color(ColorRole::Elevated)
-                } else {
-                    theme_color(ColorRole::Surface)
-                },
-            );
-            // S13 Change 5: an empty `action` means this card has nothing to
-            // tap (an info summary -- "Это устройство", "Я"'s app grants,
-            // "Входящие"'s empty state) -- the icon block and the
-            // accent-colored button were drawn unconditionally before, which
-            // made every such card look clickable even though nothing
-            // happened when tapped. text starts at the icon's own left edge
-            // instead of after it when there's no icon to make room for.
-            let has_action = !card.action.is_empty();
-            let text_left = if has_action {
-                canvas.fill_rect(
-                    Rect::new(rect.x + 34, rect.y + 52, 104, 104),
-                    theme_color(ColorRole::Accent),
-                );
-                rect.x + 174
-            } else {
-                rect.x + 34
-            };
-            let button = has_action.then(|| {
-                let button_width = 250.min(rect.width / 3);
-                let button = Rect::new(
-                    rect.x + rect.width.saturating_sub(button_width + 34),
-                    rect.y + 58,
-                    button_width,
-                    88,
-                );
-                canvas.fill_rect(button, theme_color(ColorRole::Accent));
-                button
-            });
-            if let Some(fonts) = fonts {
-                draw_text(
-                    canvas,
-                    &fonts.semibold,
-                    &card.label,
-                    38.0,
-                    text_left,
-                    rect.y + 48,
-                    theme_color(ColorRole::TextPrimary),
-                );
-                draw_text(
-                    canvas,
-                    &fonts.regular,
-                    &card.status,
-                    27.0,
-                    text_left,
-                    rect.y + 108,
-                    theme_color(ColorRole::TextSecondary),
-                );
-                if let Some(button) = button {
-                    draw_text_centered(
-                        canvas,
-                        &fonts.semibold,
-                        &card.action,
-                        25.0,
-                        button.x + button.width / 2,
-                        button.y + 24,
-                        theme_color(ColorRole::Canvas),
-                    );
-                }
-            }
+            draw_action_card(canvas, *rect, card, fonts);
         }
     }
 
@@ -4176,5 +4110,20 @@ mod tests {
             canvas.pixel(rect.x + 40, rect.y + 80),
             theme_color(ColorRole::Accent)
         );
+    }
+
+    #[test]
+    fn draw_root_reuses_draw_action_card() {
+        let src = include_str!("render.rs");
+        let draw_root = src
+            .split("pub fn draw_root(")
+            .nth(1)
+            .expect("draw_root")
+            .split("fn paint_context_header(")
+            .next()
+            .expect("paint_context_header");
+        assert!(draw_root.contains("draw_action_card(canvas, *rect, card, fonts)"));
+        assert!(!draw_root.contains("38.0"));
+        assert!(!draw_root.contains("27.0"));
     }
 }

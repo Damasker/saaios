@@ -2,10 +2,7 @@ sui 1
 
 screen root {
   column {
-    content id=content fill {
-      action selected-entity page=now top=720 height=210 label="Объект пространства" action=inspect_selected_entity
-      action new-intent page=now top=950 height=140 label="Новое намерение" action=open_intent_input
-    }
+    content id=content fill
     tabs id=root-tabs height=300 {
       tab now label="Сейчас" icon=now action=select_root:now
       tab inbox label="Входящие" icon=inbox action=select_root:inbox

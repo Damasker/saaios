@@ -114,23 +114,19 @@ mod tests {
     }
 
     #[test]
-    fn v1_rollback_layout_maps_leftover_now_actions() {
+    fn v1_rollback_layout_has_no_leftover_now_actions() {
         let spec = compile_v1_rollback().expect("root.sui v1");
         let tree = layout_v1_root(&spec, 1080, 2400);
-        let selected = tree.hit_test(540.0, 800.0).expect("selected-entity");
-        assert_eq!(selected.id, "selected-entity");
-        assert_eq!(selected.action.as_deref(), Some("inspect_selected_entity"));
-        let intent = tree.hit_test(540.0, 1000.0).expect("new-intent");
-        assert_eq!(intent.id, "new-intent");
-        assert_eq!(intent.action.as_deref(), Some("open_intent_input"));
-        let rect = layout_v1_find(&tree, "selected-entity")
-            .expect("selected-entity node")
-            .rect;
-        assert_eq!(rect.x, 1080 / 22);
-        assert_eq!(rect.y, 720);
-        assert_eq!(rect.height, 210);
+        assert!(tree.hit_test(540.0, 800.0).is_none());
+        assert!(tree.hit_test(540.0, 1000.0).is_none());
+        assert!(layout_v1_find(&tree, "selected-entity").is_none());
+        assert!(layout_v1_find(&tree, "new-intent").is_none());
         assert_eq!(tree.children[0].id, "content");
         assert_eq!(tree.children[1].id, "root-tabs");
+        assert_eq!(
+            tree.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
+            Some("now")
+        );
     }
 
     #[test]

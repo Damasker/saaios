@@ -21,9 +21,9 @@ mod tests {
         assert_eq!(screen.id, "root");
         let labels: Vec<&str> = screen.tabs.iter().map(|tab| tab.label.as_str()).collect();
         assert_eq!(labels, ["Сейчас", "Входящие", "Пространства", "Система"]);
-        assert_eq!(screen.content_actions.len(), 2);
-        assert_eq!(screen.content_actions[0].action, "inspect_selected_entity");
-        assert_eq!(screen.content_actions[1].action, "open_intent_input");
+        assert!(screen.content_actions.is_empty());
+        assert!(!V1_ROLLBACK_SOURCE.contains("inspect_selected_entity"));
+        assert!(!V1_ROLLBACK_SOURCE.contains("open_intent_input"));
     }
 
     #[test]

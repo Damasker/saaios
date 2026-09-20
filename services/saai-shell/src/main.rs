@@ -941,25 +941,6 @@ impl ShellSettings {
         let _ = std::fs::write(SETTINGS_PATH, text);
     }
 }
-/// Bright red -- S04 diagnostic so a photo showed which surface the
-/// compositor was scanning out while locked. VUI-07 (ADR-134) no longer
-/// paints this for the idle lock; kept for rollback of
-/// `present_lock_surface(LOCK_SCREEN_COLOR)`. Byte order is empirical
-/// (R at byte-index 1, G at 2), not a standard XRGB8888 LE layout.
-#[allow(dead_code)]
-const LOCK_SCREEN_COLOR: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
-/// Plain black -- every byte-order permutation of all-zero reads as
-/// black, so this needs none of `LOCK_SCREEN_COLOR`'s empirical care.
-/// Shown on the lock surface (the panel's actual visible content while
-/// locked -- not the toplevel, which stays hidden underneath it, ADR-016)
-/// immediately before a real `mem`-suspend and while resuming from one.
-/// Real, physically confirmed UX gap otherwise (S11 Change 2/ADR-041):
-/// nothing made the panel visibly go dark before suspending, so there
-/// was no reliable cue for when it was actually safe -- or necessary --
-/// to press power.
-#[allow(dead_code)]
-const SLEEP_INDICATOR_COLOR: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TabDefinition {
     id: &'static str,
@@ -4838,10 +4819,9 @@ fn space_row_at(
         .map(|(_, space)| space.id.clone())
 }
 
-/// ADR-138: the apps grid only hits live `installed_apps`. The two
-/// leftover `root.sui` NOW cards (`inspect_selected_entity`,
-/// `open_intent_input`) live on the composed footer, not as extra
-/// tiles. S23 still owns the 3-column `now_grid_rect` math.
+/// ADR-138 / ADR-187: the apps grid only hits live `installed_apps`.
+/// Intent compose stays on the composed footer, not as extra tiles.
+/// S23 still owns the 3-column `now_grid_rect` math.
 fn now_action_at(
     pos: (f64, f64),
     width: u32,
@@ -9666,10 +9646,8 @@ impl Shell {
 
     /// Fills the lock surface -- the panel's actual visible content
     /// while locked; the toplevel stays hidden underneath it (ADR-016) --
-    /// with one solid color and commits it. Shared by the initial
-    /// `LOCK_SCREEN_COLOR` placeholder (`SessionLockSurfaceHandler::
-    /// configure`, above) and the `SLEEP_INDICATOR_COLOR` frame
-    /// `check_deep_idle()` shows around a real suspend. Reuses the
+    /// with one packed panel color and commits it. ADR-187: callers pass
+    /// `theme_color(...)`, not a production RGB literal. Reuses the
     /// already-created pool/buffer the same way `draw()` reuses its own
     /// for the toplevel; a no-op before the first configure
     /// (`lock_width`/`lock_height` still 0) or if the lock surface
@@ -10188,8 +10166,8 @@ impl Shell {
 
     /// S11 Change 2 (ADR-041), revised in ADR-051: once the screen has
     /// already been locked (`check_idle_timeout`) and stays untouched
-    /// for a further `deep_idle_timeout`, blanks the lock surface to
-    /// `SLEEP_INDICATOR_COLOR` instead of leaving the lock screen lit
+    /// for a further `deep_idle_timeout`, redraws the lock through
+    /// `present_lock_pin_entry` instead of leaving the lock screen lit
     /// forever. An earlier version of this also wrote `mem` to
     /// `/sys/power/state` to actually suspend the kernel; ADR-051 found
     /// that write reliably fails with EBUSY on this hardware whenever a
@@ -11581,33 +11559,32 @@ mod tests {
 
     #[test]
     fn now_page_static_actions_come_from_sui_markup() {
-        // S13 Change 4 removed the compiled-in demo-app card -- "Сейчас"
-        // now has exactly the two entries that were always meant to
-        // stay static (the app list itself is runtime data, handled by
-        // `now_action_at`/`apps_grid_cards`, not this table).
-        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 2);
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
-            Some("selected-entity")
-        );
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 1000.0), 1080, 2400).map(|action| action.id),
-            Some("new-intent")
-        );
+        // ADR-187: leftover NOW cards are gone from `root.sui`. Live
+        // NOW hits ObjectSummary + footer, not compiled content actions.
+        assert!(ROOT_CONTENT_ACTIONS.is_empty());
+        assert!(content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).is_none());
+        assert!(content_action_at(RootPage::Now, (540.0, 1000.0), 1080, 2400).is_none());
         assert!(content_action_at(RootPage::Inbox, (540.0, 500.0), 1080, 2400).is_none());
     }
 
     #[test]
     fn space_actions_come_from_live_spaces_not_sui_markup() {
         assert!(content_action_at(RootPage::Spaces, (540.0, 500.0), 1080, 2400).is_none());
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
-            Some("selected-entity")
-        );
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 1020.0), 1080, 2400).map(|action| action.id),
-            Some("new-intent")
-        );
+        assert!(content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).is_none());
+        assert!(content_action_at(RootPage::Now, (540.0, 1020.0), 1080, 2400).is_none());
+    }
+
+    #[test]
+    fn production_main_has_no_panel_color_literals() {
+        let src = include_str!("main.rs");
+        let lock = format!("{}{}", "LOCK_SCREEN", "_COLOR");
+        let sleep = format!("{}{}", "SLEEP_INDICATOR", "_COLOR");
+        assert!(!src.contains(&lock));
+        assert!(!src.contains(&sleep));
+        let diagnostic_red = format!("{}{}", "[0x00, 0xd0", ", 0x00, 0x00]");
+        assert!(!src.contains(&diagnostic_red));
+        let packed = format!("{}{}", "[u8; 4] = ", "[0x");
+        assert!(!src.contains(&packed));
     }
 
     #[test]
