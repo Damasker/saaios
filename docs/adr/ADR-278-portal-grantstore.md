@@ -34,8 +34,7 @@ persistent app grant; PolicyEngine session grants must not replace it.
 ## Consequences
 
 - Portal and OAM share one engine vocabulary.
-- AUTH-09 revocation review is still later. AUTH-10 is the phone
-  confirm/grant/reboot pass.
+- AUTH-10 is the phone confirm/grant/reboot pass.
 - Rollback: restore the `granted.iter().any` check in
   `portal_server`.
 

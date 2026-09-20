@@ -273,6 +273,27 @@ impl GrantStore {
                 source,
             })
     }
+
+    /// AUTH-09: drop the durable decision so the next launch re-asks.
+    /// Decline (`record_decision(..., false)`) keeps coverage; revoke
+    /// does not. Missing file is not an error.
+    pub fn revoke(&self, app_id: &str) -> Result<bool, GrantError> {
+        let path = self.path_for(app_id);
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                if let Ok(dir) = File::open(&self.grants_dir) {
+                    let _ = dir.sync_all();
+                }
+                Ok(true)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(GrantError::Io {
+                operation: "remove",
+                path,
+                source,
+            }),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -406,5 +427,42 @@ mod tests {
             store.load("org.saaios.example"),
             Err(GrantError::UnsupportedSchema(2))
         ));
+    }
+
+    #[test]
+    fn revoke_drops_coverage_so_the_next_launch_reasks() {
+        let root = tempdir().unwrap();
+        let store = GrantStore::new(root.path());
+        let requested = [Capability::ClipboardRead];
+        store
+            .record_decision("org.saaios.example", &requested, true)
+            .unwrap();
+        assert!(store.covers("org.saaios.example", &requested).unwrap());
+        assert!(store.revoke("org.saaios.example").unwrap());
+        assert!(!store.covers("org.saaios.example", &requested).unwrap());
+        assert_eq!(
+            store
+                .effective_capabilities("org.saaios.example", &requested)
+                .unwrap(),
+            Vec::new()
+        );
+        assert!(!store.revoke("org.saaios.example").unwrap());
+    }
+
+    #[test]
+    fn decline_is_not_revoke() {
+        let root = tempdir().unwrap();
+        let store = GrantStore::new(root.path());
+        let requested = [Capability::ClipboardRead];
+        store
+            .record_decision("org.saaios.example", &requested, false)
+            .unwrap();
+        assert!(store.covers("org.saaios.example", &requested).unwrap());
+        assert!(store
+            .effective_capabilities("org.saaios.example", &requested)
+            .unwrap()
+            .is_empty());
+        assert!(store.revoke("org.saaios.example").unwrap());
+        assert!(!store.covers("org.saaios.example", &requested).unwrap());
     }
 }

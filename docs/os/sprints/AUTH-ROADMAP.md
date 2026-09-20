@@ -1,7 +1,7 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276). AUTH-07 Automation Principal host (ADR-277). AUTH-08 portal adapter host (ADR-278).**
-Next phone work is still AUTH-09/10 in the service queue, not AUTH-10 as a new
+Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276). AUTH-07 Automation Principal host (ADR-277). AUTH-08 portal adapter host (ADR-278). AUTH-09 revocation host (ADR-279).**
+Next phone work is still AUTH-10 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-124](../../adr/ADR-124-unified-authority-model.md)
@@ -26,7 +26,7 @@ No ambient authority. No new policyd.
 | AUTH-06 | Worker DelegationEnvelope | **Done** (host, ADR-276) | no |
 | AUTH-07 | Automation Principal | **Done** (host, ADR-277) | no |
 | AUTH-08 | Portal adapter; GrantStore stays | **Done** (host, ADR-278) | no |
-| AUTH-09 | Revocation review | Backlog | **yes** |
+| AUTH-09 | Revocation review | **Done** (host, ADR-279) | no |
 | AUTH-10 | Pixel 7: one-shot confirm, scoped grant, reboot, SSH regression | Backlog | **yes** |
 
 ## AUTH-01
@@ -150,3 +150,19 @@ Deny; existing portal round-trip still works.
 **Rollback:** restore the string `granted` check in `portal_server`.
 
 **Threat:** none — host adapter, no phone binary.
+
+## AUTH-09
+
+**Goal:** a grant can be taken back. Decline is not revoke. Me
+CapabilityRow stays Static.
+
+**Change:** `GrantStore::revoke` unlinks the JSON so the next launch
+re-asks. `PolicyEngine::revoke_session` / `revoke_delegations` drop
+live records. SSH keys and trusted-client chrome are not this slice.
+
+**Test:** accepted then revoke → no coverage; decline still covers
+until revoke; session/envelope Allow becomes AskUser.
+
+**Rollback:** drop the three `revoke*` methods.
+
+**Threat:** none — host API, no phone binary, no Отозвать tap.

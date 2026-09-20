@@ -315,6 +315,35 @@ impl PolicyEngine {
         }
     }
 
+    /// AUTH-09: drop live session grants for this principal.
+    /// `operation = None` drops every grant for that principal.
+    pub fn revoke_session(&self, principal: &PrincipalId, operation: Option<&str>) -> usize {
+        let Ok(mut grants) = self.session_grants.lock() else {
+            return 0;
+        };
+        let before = grants.len();
+        grants.retain(|grant| {
+            if grant.principal != *principal {
+                return true;
+            }
+            match operation {
+                Some(operation) => grant.operation != operation,
+                None => false,
+            }
+        });
+        before - grants.len()
+    }
+
+    /// AUTH-09: drop live worker envelopes. Reboot already clears them.
+    pub fn revoke_delegations(&self, worker: &PrincipalId) -> usize {
+        let Ok(mut envelopes) = self.delegations.lock() else {
+            return 0;
+        };
+        let before = envelopes.len();
+        envelopes.retain(|envelope| envelope.worker != *worker);
+        before - envelopes.len()
+    }
+
     /// Explicit deny for obviously catastrophic tools in 0.1.
     pub fn hard_deny(tool: &str) -> bool {
         matches!(
@@ -954,6 +983,50 @@ mod tests {
                 .decide_capability(&request, &["clipboard.read".into()])
                 .verdict,
             PolicyVerdict::Deny
+        );
+    }
+
+    #[test]
+    fn revoke_session_drops_the_owner_grant() {
+        let engine = PolicyEngine::new();
+        engine.grant_session("process.kill_request");
+        assert_eq!(
+            engine.revoke_session(&PrincipalId::owner(), Some("process.kill_request")),
+            1
+        );
+        assert!(!engine.has_session_grant("process.kill_request"));
+        assert_eq!(
+            engine.decide(&kill_spec(), &json!({"pid": 4312})).verdict,
+            PolicyVerdict::AskUser
+        );
+    }
+
+    #[test]
+    fn revoke_delegations_drops_the_worker_envelope() {
+        let engine = PolicyEngine::new();
+        let object = ObjectRef::entity(Uuid::new_v4());
+        let execution_id = Uuid::new_v4();
+        let owner = AuthorityRequest::local_user_action(
+            "process.stop",
+            Some(object.clone()),
+            json!({"pid": 4312}),
+        );
+        let envelope = DelegationEnvelope::from_owner_request(
+            &owner,
+            saai_authority::Principal::worker(execution_id),
+            execution_id,
+            GrantValidity::OneShot,
+        )
+        .unwrap();
+        assert!(engine.issue_delegation(envelope));
+        let worker_id = PrincipalId::worker(execution_id);
+        assert_eq!(engine.revoke_delegations(&worker_id), 1);
+        let mut worker = owner;
+        worker.principal = saai_authority::Principal::worker(execution_id);
+        worker.proof = IdentityProof::DelegatedWorker { execution_id };
+        assert_eq!(
+            engine.decide_request(&worker, Some(&kill_spec())).verdict,
+            PolicyVerdict::AskUser
         );
     }
 }
