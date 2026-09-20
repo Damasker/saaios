@@ -12354,23 +12354,14 @@ mod tests {
     fn orb_paint_matches_layout_v2_nodes() {
         let width = 1080;
         let height = 2400;
-        let closed = super::layout_live_v2(
-            &orb_v2_source(&[]),
-            "ADR-230 orb paint",
-            width,
-            height,
-        );
+        let closed = super::layout_live_v2(&orb_v2_source(&[]), "ADR-230 orb paint", width, height);
         assert_eq!(
             super::v2_named_rect(&closed, "orb:toggle", "orb"),
             orb_zone_rect(width, height, 0)
         );
         let actions = [OrbAction::OpenInbox, OrbAction::OpenBluetooth];
-        let open = super::layout_live_v2(
-            &orb_v2_source(&actions),
-            "ADR-230 orb paint",
-            width,
-            height,
-        );
+        let open =
+            super::layout_live_v2(&orb_v2_source(&actions), "ADR-230 orb paint", width, height);
         let old = super::orb_view(width, height, &actions);
         assert_eq!(
             super::v2_named_rect(&open, "orb-menu:inbox", "orb"),
