@@ -233,15 +233,12 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 ### APP-06: браузер -- отдельный спайк на Qt-based кандидата, затем WebKitGTK/Firefox/Chromium
 
+- **Статус**: Spike Done, 2026-09-21, ADR-269. Launch not done.
 - **Goal**: APP-BROWSER-01 из исходного плана.
-- **Изменение порядка**: прежде чем брать Epiphany/WebKitGTK
-  (заблокирован ADR-025 через GTK4) как приоритет 1, отдельным
-  коротким спайком проверить жизнеспособность Qt-based браузера под
-  ARM64/musl (например, движок на базе QtWebEngine/QtWebView, если
-  такой существует и собирается под Alpine musl для aarch64 -- это
-  открытый исследовательский вопрос, не факт). Firefox и Chromium
-  ARM64 остаются самыми тяжёлыми, наиболее рискованными по объёму
-  портирования кандидатами и не должны блокировать APP-05/APP-04.
+- **Решение**: первый кандидат — Falkon (`qt6-qtwebengine` на Alpine
+  v3.20 aarch64 musl). Angelfish тот же движок плюс Plasma QML.
+  Epiphany — GTK4, ждёт APP-02. `webkit2gtk-4.1` есть как движок, без
+  браузерного apk в v3.20. Запуск на panther не в этом срезе.
 
 ## Фаза B -- Android compatibility island (низкая уверенность, требует отдельных спайков)
 
@@ -308,7 +305,7 @@ APP-02  GTK4 -- спайк на разблокировку или осознан
 APP-03  zwp_input_method_manager_v2 без keymap -- спайк на saai-displayd
 APP-04  экранная клавиатура поверх APP-03
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
-APP-06  браузер -- Qt-спайк, затем WebKitGTK/Firefox/Chromium по факту APP-02
+APP-06  браузер -- Falkon/QtWebEngine (ADR-269 spike); launch later
 
 ANDROID-00  разведка существующих Anbox/Waydroid-подобных подходов
 ANDROID-01  минимальный bionic+ART остров (по образцу gpu-compositor ABI firewall)
