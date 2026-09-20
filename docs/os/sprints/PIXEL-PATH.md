@@ -234,7 +234,8 @@ diagnose (ADR-238, `351b0b6f…`).
 - Power: KEY_POWER from `/dev/input/power-button` **на panther** (ADR-254; `5ba2ef7b…`; pid 2586; fd 16 → event1; dest-no-lock)
 - Modem: cellular row from live `rmnet`/`wwan` bearer; panther has none (ADR-255; host)
 - Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
-- Sound besides PCM / BT-pairing — следующие E-слайсы
+- Playback: tinyplay + test-tone presence, no auto-play (ADR-257; host)
+- Bluetooth adapter is `hci0`, not `bt-scan` (ADR-258; host)
 - Голос на Pixel не открывать (ADR-092 AoC)
 
 ## Что сознательно не делать сейчас

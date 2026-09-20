@@ -605,6 +605,8 @@ fn apply_brightness(pct: u8) {
 
 /// Pixel 7 speaker path proven by `os/targets/panther/scripts/audio-volume.sh`.
 const TINYMIX_PATH: &str = "/saaios/tinymix";
+const TINYPLAY_PATH: &str = "/saaios/tinyplay";
+const TEST_TONE_PATH: &str = "/saaios/test-tone.wav";
 const VOLUME_FILE: &str = "/run/audio-volume";
 const PCM_VOLUME_MIN: u32 = 400;
 const PCM_VOLUME_MAX: u32 = 817;
@@ -628,6 +630,27 @@ fn apply_volume(pct: u8) {
             .status();
     }
     let _ = std::fs::write(VOLUME_FILE, format!("{value}\n"));
+}
+
+/// Speaker playback path proven by `os/targets/panther/scripts/audio-test.sh`.
+/// Presence only — this slice does not spawn tinyplay (ADR-257). Not voice.
+fn playback_ready_from_paths(tinyplay: bool, tone: bool) -> bool {
+    tinyplay && tone
+}
+
+fn playback_status(ready: bool) -> &'static str {
+    if ready {
+        "tinyplay · test-tone"
+    } else {
+        "Нет tinyplay"
+    }
+}
+
+fn playback_ready() -> bool {
+    playback_ready_from_paths(
+        std::path::Path::new(TINYPLAY_PATH).exists(),
+        std::path::Path::new(TEST_TONE_PATH).exists(),
+    )
 }
 
 /// The Unix socket `pair-recv.c` connects to for every SSH pairing
@@ -1290,8 +1313,14 @@ fn capture_nodes() -> Vec<String> {
     names
 }
 
+const BT_HCI_PATH: &str = "/sys/class/bluetooth/hci0";
+
 fn bluetooth_adapter_present() -> bool {
-    std::path::Path::new(BT_SCAN_BIN).exists()
+    std::path::Path::new(BT_HCI_PATH).exists()
+}
+
+fn bluetooth_hci_present_in_listing(listing: &str) -> bool {
+    listing.split_whitespace().any(|name| name == "hci0")
 }
 
 /// S19: real, unlike S18's `apply_volume`. `native-init.c`'s
@@ -6120,6 +6149,7 @@ struct MeFacts {
     boot_slot: String,
     boot_attempts: u32,
     volume_pct: u8,
+    playback_ready: bool,
     wifi_status: String,
     wifi_present: bool,
     bluetooth_paired: usize,
@@ -6265,6 +6295,11 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                     "Громкость",
                     format!("{}%", facts.volume_pct),
                     "cycle_volume",
+                )
+                .row,
+                SettingRow::readout(
+                    "Воспроизведение",
+                    playback_status(facts.playback_ready).to_string(),
                 )
                 .row,
                 SettingRow::cycle("Виброотклик", haptic_status, "toggle_haptics").row,
@@ -6580,6 +6615,7 @@ fn me_fixture_facts() -> MeFacts {
         boot_slot: "A".into(),
         boot_attempts: 1,
         volume_pct: 40,
+        playback_ready: false,
         wifi_status: "Wallbox".into(),
         wifi_present: true,
         bluetooth_paired: 0,
@@ -10432,6 +10468,7 @@ impl Shell {
             boot_slot: boot_slot(),
             boot_attempts: boot_attempts(),
             volume_pct: self.settings.volume_pct,
+            playback_ready: playback_ready(),
             wifi_status: wifi_status_line(),
             wifi_present: wifi_adapter_present(),
             bluetooth_paired: bluetooth_paired_count(),
@@ -11711,45 +11748,47 @@ impl Shell {
 mod tests {
     use super::{
         activity_clock_for, apply_volume, apps_grid_empty_pattern, apps_grid_header,
-        bluetooth_card_from_row, bluetooth_header, bluetooth_list_action_at,
-        bluetooth_list_pattern, bluetooth_list_row_count, bluetooth_list_rows,
-        bluetooth_pair_error_from, bluetooth_scan_pattern, calibration_requested, capability_label,
-        capture_nodes_from_v4l_listing, cellular_ifaces_from_net_listing, consent_action_at,
-        consent_content_cards, consent_header, content_action_at, dev_surface_back_tapped,
-        diagnostic_card_from_row, diagnostic_header, diagnostic_row, diagnostic_v2_source,
-        drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
-        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
-        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
-        intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
-        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
-        lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
-        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
-        now_object_tapped, now_workflow_sections, object_view_action_at, object_view_content,
-        object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
+        bluetooth_card_from_row, bluetooth_hci_present_in_listing, bluetooth_header,
+        bluetooth_list_action_at, bluetooth_list_pattern, bluetooth_list_row_count,
+        bluetooth_list_rows, bluetooth_pair_error_from, bluetooth_scan_pattern,
+        calibration_requested, capability_label, capture_nodes_from_v4l_listing,
+        cellular_ifaces_from_net_listing, consent_action_at, consent_content_cards, consent_header,
+        content_action_at, dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header,
+        diagnostic_row, diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space,
+        ensure_me_row_cache, field_shows_context_focus, flatten_me_rows, format_utc_offset,
+        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
+        intent_compose_header, intent_field_rect, intent_input_field, known_surfaces,
+        lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
+        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, logical_surface_size,
+        me_fixture_facts, me_header, me_system_sections, motion_clock_for, next_in_cycle,
+        next_pending_action, now_action_at, now_object_tapped, now_workflow_sections,
+        object_view_action_at, object_view_content, object_view_details,
+        object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
-        pressed_key_from_keys, pressed_tab_from_touch, remote_pair_content_cards,
-        remote_pair_header, remove_context_source, retain_pressed_while_clock, search_header,
-        search_row_at, search_rows, space_color, space_color_entity, space_detail_action_at,
-        space_detail_empty_card, space_detail_header, space_display_name, space_for_wifi_ssid,
-        space_lifecycle, space_lifecycle_entity, space_list_rows, space_member_kind_label,
-        space_member_rows, space_relation_targets, space_row_at, spaces_header,
-        stacked_control_rect, stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect,
-        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
-        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
-        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
-        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
-        ContextSource, DataRowVariant, Entity, FieldKind, Keyboard, KeyboardCommand,
-        KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap,
-        MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
-        SpaceColor, SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow,
-        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
+        playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
+        remote_pair_content_cards, remote_pair_header, remove_context_source,
+        retain_pressed_while_clock, search_header, search_row_at, search_rows, space_color,
+        space_color_entity, space_detail_action_at, space_detail_empty_card, space_detail_header,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_list_rows, space_member_kind_label, space_member_rows, space_relation_targets,
+        space_row_at, spaces_header, stacked_control_rect, stacked_row_fits_above,
+        stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
+        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
+        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
+        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
+        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
+        Entity, FieldKind, Keyboard, KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource,
+        Keystroke, LockAttentionTap, LockWakeTap, MotionClock, MotionToken, ObjectSummary,
+        OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceDetailTap, SpaceLifecycle,
+        SurfacePattern, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
+        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
+        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
+        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
+        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_IN_SPACE,
@@ -13595,6 +13634,49 @@ mod tests {
         assert!(camera.dispatch.is_none());
         assert!(!camera.card.status.contains("preview"));
         assert!(!camera.card.status.contains("Android"));
+    }
+
+    #[test]
+    fn playback_ready_needs_tinyplay_and_tone() {
+        assert!(!playback_ready_from_paths(false, false));
+        assert!(!playback_ready_from_paths(true, false));
+        assert!(!playback_ready_from_paths(false, true));
+        assert!(playback_ready_from_paths(true, true));
+        assert_eq!(playback_status(false), "Нет tinyplay");
+        assert_eq!(playback_status(true), "tinyplay · test-tone");
+        assert!(!playback_status(true).contains("Слушает"));
+    }
+
+    #[test]
+    fn playback_row_is_readout_not_a_tap_and_not_voice() {
+        let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
+        let playback = rows
+            .iter()
+            .find(|row| row.card.label == "Воспроизведение")
+            .expect("playback");
+        assert_eq!(playback.card.status, "Нет tinyplay");
+        assert!(playback.dispatch.is_none());
+        let mut facts = me_fixture_facts();
+        facts.playback_ready = true;
+        let rows = flatten_me_rows(&me_system_sections(&facts));
+        let playback = rows
+            .iter()
+            .find(|row| row.card.label == "Воспроизведение")
+            .expect("playback ready");
+        assert_eq!(playback.card.status, "tinyplay · test-tone");
+        assert!(playback.dispatch.is_none());
+        assert!(!playback.card.status.contains("Слушает"));
+    }
+
+    #[test]
+    fn bluetooth_adapter_is_hci0_not_the_bt_scan_binary() {
+        assert!(bluetooth_hci_present_in_listing("hci0 hci0:65"));
+        assert!(!bluetooth_hci_present_in_listing("hci0:65"));
+        assert!(!bluetooth_hci_present_in_listing(""));
+        let src = include_str!("main.rs");
+        assert!(src.contains("/sys/class/bluetooth/hci0"));
+        assert!(src.contains("fn bluetooth_adapter_present"));
+        assert!(src.contains("BT_HCI_PATH"));
     }
 
     #[test]

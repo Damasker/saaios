@@ -574,5 +574,6 @@ across nodes is the D remainder, не PCE-01..24. Volume на panther
 (ADR-253). Power button lock/sleep на panther (ADR-254; `5ba2ef7b…`;
 pid 2586; event1 open). Cellular row is a live bearer or
 «Нет модема» (ADR-255). Camera row is a capture node or
-«Нет узла захвата» (ADR-256). CRTC blank
+«Нет узла захвата» (ADR-256). Playback is tinyplay presence
+(ADR-257). Bluetooth adapter is hci0 (ADR-258). CRTC blank
 остаётся displayd. Thin visual tuning (ADR-213) не next.
