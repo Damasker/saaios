@@ -3,8 +3,8 @@
 Status: **recorded** (ADR-193). This is not Visual v1 sign-off.
 Nothing in the public `.sui` 2 subset is Stable.
 
-Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
-Do not point `build.rs` at `compile_v2()`. Space detail deferred.
+Production chrome: `compile_v2()` on `services/saai-shell/ui/root.sui`
+(ADR-216). Frozen v1 stays `compile_v1_rollback()`. Space detail deferred.
 MEM-08 omitted until a shell-legal memory read exists.
 
 Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
@@ -12,6 +12,7 @@ Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
 (ADR-211). 7-tap gallery is proven (ADR-212). Parked last: thin tuning
 (ADR-213). List trailing rows are host (ADR-214). Me flatten/scroll
 is host (`flatten_me_rows` / `scrolled_row_rect`, ADR-215).
+Production is `compile_v2()` (ADR-216).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -152,9 +153,11 @@ Ordered. Items 1–3 and 7–17 are done
     yet.
 19. ~~Dock Me flatten/scroll so `layout_v2()` matches
     `flatten_me_rows` / `scrolled_row_rect` at offset 0.~~ Host
-    (ADR-215). Do not attach `layout_v2()` to `build.rs` yet.
-20. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+    (ADR-215). Do not invent Me hits from empty `root.sui`.
+20. ~~Switch production `build.rs` to `compile_v2()`.~~ Live
+    `layout_v2` tabs (ADR-216). Content paint stays procedural.
+21. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 
-Rollback: delete this page. The ledger and `compile()` path stay.
+Rollback: delete this page. The ledger and frozen v1 path stay.

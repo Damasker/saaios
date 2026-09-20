@@ -97,9 +97,10 @@ review. Copying them into an app document fails `compile_v2_public()`.
   that appearance.
 - Removing a public name requires an ADR and a compile error, not a
   silent skip.
-- `compile_v2()` on `root.sui` stays forbidden. `layout_v2()` matches
-  v1 tab hits for this example (ADR-194/196) and live footer hits
-  (ADR-199) but is not wired into `build.rs`. `inset = safe` uses
+- `compile_v2()` is production on `root.sui` (ADR-216). `layout_v2()`
+  matches v1 tab hits for the public NOW example (ADR-194/196) and
+  live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
+  `inset = safe` uses
   `EdgeInsets::from_safe` (ADR-195); the top inset is the status
   layer, not a content pad. Nested `tab` ids own the v2 strip.
   Nested `row` ids own the NOW footer. `ObjectSummary` owns the
@@ -124,7 +125,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Copying `saai-shell` paint | `saai-ui-core` types + this example |
 | `sui 1` leftover NOW cards | removed in ADR-187; public NOW sample above |
 | `OrbHost` / lock / gallery in an app | omit; those stay privileged |
-| Switching `build.rs` to `compile_v2()` | do not; keep `compile()` |
+| Switching `build.rs` to `compile_v2()` | done (ADR-216); frozen v1 is `compile_v1_rollback()` |
 | Wanting tab hit-test from a v2 NOW | nested `tab` + `layout_v2(compile_v2_public(…))`; not `root_view` |
 | Logical `SafeInsets` on a `Node` | `EdgeInsets::from_safe`; do not pad top (status layer) |
 | Empty `BottomNavigation {}` | no tab hits; do not borrow v1 ids |

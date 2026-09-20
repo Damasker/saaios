@@ -1,10 +1,23 @@
-//! ADR-183: `.sui` v1 rollback is the production `root.sui` compiled
-//! through `compile()`, not `compile_v2()`.
+//! ADR-183: `.sui` v1 rollback stays a frozen `compile()` artifact.
+//! ADR-216: production `root.sui` is `compile_v2()`.
 
 use crate::{compile, CompileError, ScreenSpec};
 
-/// Exact production chrome. Changing this file changes the rollback.
-pub const V1_ROLLBACK_SOURCE: &str = include_str!("../../../services/saai-shell/ui/root.sui");
+/// Frozen v1 chrome. Production `root.sui` is sui 2 (ADR-216).
+pub const V1_ROLLBACK_SOURCE: &str = r#"sui 1
+
+screen root {
+  column {
+    content id=content fill
+    tabs id=root-tabs height=300 {
+      tab now label="Сейчас" icon=now action=select_root:now
+      tab inbox label="Входящие" icon=inbox action=select_root:inbox
+      tab spaces label="Пространства" icon=spaces action=select_root:spaces
+      tab me label="Система" icon=person action=select_root:me
+    }
+  }
+}
+"#;
 
 pub fn compile_v1_rollback() -> Result<ScreenSpec, CompileError> {
     compile(V1_ROLLBACK_SOURCE)
@@ -17,7 +30,7 @@ mod tests {
 
     #[test]
     fn v1_rollback_keeps_the_four_root_tabs() {
-        let screen = compile_v1_rollback().expect("root.sui v1");
+        let screen = compile_v1_rollback().expect("frozen v1");
         assert_eq!(screen.id, "root");
         let labels: Vec<&str> = screen.tabs.iter().map(|tab| tab.label.as_str()).collect();
         assert_eq!(labels, ["Сейчас", "Входящие", "Пространства", "Система"]);
@@ -33,10 +46,10 @@ mod tests {
     }
 
     #[test]
-    fn shell_build_script_compiles_v1_not_v2() {
+    fn shell_build_script_compiles_v2() {
         let build = include_str!("../../../services/saai-shell/build.rs");
-        assert!(build.contains("saai_ui_compiler::compile("));
-        assert!(!build.contains("saai_ui_compiler::compile_v2"));
-        assert!(build.contains("ADR-183"));
+        assert!(build.contains("saai_ui_compiler::compile_v2"));
+        assert!(!build.contains("saai_ui_compiler::compile("));
+        assert!(build.contains("ADR-216"));
     }
 }

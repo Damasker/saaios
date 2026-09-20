@@ -29,26 +29,28 @@ fn main() {
     let source_path = "ui/root.sui";
     println!("cargo:rerun-if-changed={source_path}");
     let source = fs::read_to_string(source_path).expect("read root.sui");
-    // ADR-183/184: v1 rollback. Do not switch this call to compile_v2().
-    let screen = saai_ui_compiler::compile(&source).expect("compile root.sui");
-    let tabs = screen
+    // ADR-216: production chrome is compile_v2(). v1 stays frozen in
+    // compile_v1_rollback(). Labels/icons are the proven v1 chrome.
+    let screen = saai_ui_compiler::compile_v2(&source).expect("compile root.sui v2");
+    let nav = screen
+        .components
+        .iter()
+        .find(|component| component.type_name == "BottomNavigation")
+        .expect("root.sui v2 BottomNavigation");
+    let tabs = nav
         .tabs
         .iter()
         .map(|tab| {
+            let (label, icon, action) = match tab.id.as_str() {
+                "now" => ("Сейчас", "now", "select_root:now"),
+                "inbox" => ("Входящие", "inbox", "select_root:inbox"),
+                "spaces" => ("Пространства", "spaces", "select_root:spaces"),
+                "me" => ("Система", "person", "select_root:me"),
+                other => panic!("unknown root tab `{other}`"),
+            };
             format!(
                 "TabDefinition {{ id: {:?}, label: {:?}, icon: {:?}, action: {:?} }}",
-                tab.id, tab.label, tab.icon, tab.action
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",\n    ");
-    let content_actions = screen
-        .content_actions
-        .iter()
-        .map(|action| {
-            format!(
-                "ContentActionDefinition {{ id: {:?}, page: {:?}, top: {}, height: {}, label: {:?}, action: {:?} }}",
-                action.id, action.page, action.top, action.height, action.label, action.action
+                tab.id, label, icon, action
             )
         })
         .collect::<Vec<_>>()
@@ -56,11 +58,15 @@ fn main() {
     let generated = format!(
         "const ROOT_SCREEN_ID: &str = {:?};\n\
          const ROOT_CONTENT_ID: &str = {:?};\n\
-         const ROOT_CONTENT_ACTIONS: &[ContentActionDefinition] = &[\n    {}\n];\n\
+         const ROOT_CONTENT_ACTIONS: &[ContentActionDefinition] = &[];\n\
          const ROOT_TABS_ID: &str = {:?};\n\
          const ROOT_TAB_HEIGHT: u32 = {};\n\
          const ROOT_TABS: &[TabDefinition] = &[\n    {}\n];\n",
-        screen.id, screen.content_id, content_actions, screen.tabs_id, screen.tab_height, tabs
+        screen.id,
+        format!("{}-content", screen.id),
+        "BottomNavigation",
+        300u32,
+        tabs
     );
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     fs::write(output.join("root_sui.rs"), generated).expect("write generated root SUI");

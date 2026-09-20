@@ -3,9 +3,9 @@
 Status: **in progress** (ADR-189). This is not Visual v1 sign-off.
 Nothing in the public `.sui` 2 subset is Stable.
 
-Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
-Do not point `build.rs` at `compile_v2()`. Space detail deferred.
-MEM-08 omitted.
+Production chrome: `compile_v2()` on `services/saai-shell/ui/root.sui`
+(ADR-216). Frozen v1 stays `compile_v1_rollback()`. Space detail
+deferred. MEM-08 omitted.
 
 Current panther shell: `3850427a…` (ADR-198). ActionCard/tabs were
 `5eb6a27f…` (ADR-197). Named sizes were `e8865301…` (ADR-188).
@@ -25,6 +25,7 @@ Cold boot (ADR-211) is proven on HEAD; `reboot -f`; marker dropped then restored
 Thin tuning (ADR-213) is parked last; not next work.
 List trailing rows (ADR-214) are host; `list_back` / `list_refresh` / `list_scan`.
 Me flatten/scroll (ADR-215) is host; `flatten_me_rows` + `scrolled_row_rect` at offset 0.
+Production `compile_v2()` (ADR-216); `layout_v2` is live `root_view`.
 
 ## Matrix
 
@@ -46,7 +47,7 @@ Me flatten/scroll (ADR-215) is host; `flatten_me_rows` + `scrolled_row_rect` at 
 | Perf | frame pace / p95 / idle | proven | ADR-172–177; not re-read `/run/saaios/shell-frame.last` this slice |
 | Perf | haptic policy | proven | ADR-171/179 KeyPress-only |
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |
-| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200, ADR-202, ADR-203, ADR-204, ADR-205, ADR-206, ADR-207, ADR-208, ADR-214, ADR-215; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; `EventRow`/`SpaceRow`/`SettingRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`/`CapabilityRow` match `stacked_row_rect`; trailing `row refresh`/`scan`/`back` match `stacked_trailing_rect`; Me flatten matches `flatten_me_rows` / `scrolled_row_rect`; `select_space`; `cycle_timezone`; `connect_wifi`; `pair_bluetooth`; `revoke_trusted_client`; `list_back`; empty nav/rows/object/Status invent none; `compile_v2_public` rejects privileged; `compile()` stays v1 |
+| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200, ADR-202, ADR-203, ADR-204, ADR-205, ADR-206, ADR-207, ADR-208, ADR-214, ADR-215, ADR-216; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; `EventRow`/`SpaceRow`/`SettingRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`/`CapabilityRow` match `stacked_row_rect`; trailing `row refresh`/`scan`/`back` match `stacked_trailing_rect`; Me flatten matches `flatten_me_rows` / `scrolled_row_rect`; `select_space`; `cycle_timezone`; `connect_wifi`; `pair_bluetooth`; `revoke_trusted_client`; `list_back`; empty nav/rows/object/Status invent none; `compile_v2_public` rejects privileged; production `compile_v2()` |
 | Device | lock / unlock cycle | proven | ADR-209; HEAD `3850427a…`; PIN null; clock `13:58`; tap-unlock; marker restored; pid 27000→28091→28125 |
 | Device | display restart | proven | ADR-210; HEAD `3850427a…`; `saai-displayd` 8323→28184; shell 28125→28190; marker on; Сейчас without lock |
 | Device | cold boot | proven | ADR-211; `reboot -f`; marker dropped; `saai-displayd` 401; shell 418; clock `14:07`; tap-unlock; `saai-entityd`/`file-recv` up; marker restored; pid 501 |

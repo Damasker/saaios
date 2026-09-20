@@ -3,11 +3,10 @@
 //! ADR-199: nested `row` ids dock as the live NOW footer.
 //! ADR-200: `ObjectSummary` docks as the live NOW object hit.
 //!
-//! Production chrome still uses `layout_v1_root()`. `compile_v2()`
-//! stays off `build.rs`. Nested `tab` ids under `BottomNavigation`
-//! own the v2 strip (ADR-196). Footer hits come from named `row`s,
-//! not from v1 `content_actions`. Object hits come from
-//! `ObjectSummary` (ADR-200).
+//! Production chrome uses `layout_v2()` (ADR-216). Nested `tab` ids
+//! under `BottomNavigation` own the v2 strip (ADR-196). Footer hits
+//! come from named `row`s, not from v1 `content_actions`. Object hits
+//! come from `ObjectSummary` (ADR-200).
 //! ADR-202: `EventRow` docks as live Inbox stacked rows.
 //! ADR-203: `SpaceRow` docks as live Spaces stacked rows.
 //! ADR-204: `SettingRow` docks as live Me stacked rows.
@@ -332,7 +331,8 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         children.push(Node::leaf(component.type_name.clone()));
     }
     if children.is_empty() {
-        children.push(Node::leaf(format!("{}-fill", screen.id)));
+        children
+            .push(Node::leaf(format!("{}-fill", screen.id)).with_size(Length::Fill, Length::Fill));
     }
     let row_height = v2_footer_row_height(height);
     for row in footer {
@@ -431,15 +431,31 @@ mod tests {
     }
 
     #[test]
-    fn shell_root_view_uses_v1_layout_not_v2() {
+    fn shell_root_view_uses_v2_layout() {
         let main = include_str!("../../../services/saai-shell/src/main.rs");
-        assert!(main.contains("layout_v1_root"));
-        assert!(main.contains("compile_v1_rollback"));
-        assert!(!main.contains("saai_ui_compiler::compile_v2"));
-        assert!(!main.contains("layout_v2"));
+        assert!(main.contains("saai_ui_compiler::layout_v2"));
+        assert!(main.contains("saai_ui_compiler::compile_v2"));
+        assert!(!main.contains("layout_v1_root("));
         let build = include_str!("../../../services/saai-shell/build.rs");
-        assert!(build.contains("saai_ui_compiler::compile("));
-        assert!(!build.contains("saai_ui_compiler::compile_v2"));
+        assert!(build.contains("saai_ui_compiler::compile_v2"));
+        assert!(!build.contains("saai_ui_compiler::compile("));
+    }
+
+    #[test]
+    fn production_root_v2_tab_hits_match_v1_rollback() {
+        let spec = compile_v1_rollback().expect("frozen v1");
+        let v1 = layout_v1_root(&spec, 1080, 2400);
+        let source = include_str!("../../../services/saai-shell/ui/root.sui");
+        let screen = compile_v2(source).expect("production root v2");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        for x in [135.0, 405.0, 675.0, 945.0] {
+            assert_eq!(
+                v1.hit_test(x, 2250.0).map(|node| node.id.as_str()),
+                v2.hit_test(x, 2250.0).map(|node| node.id.as_str())
+            );
+        }
+        assert!(v1.hit_test(540.0, 1200.0).is_none());
+        assert!(v2.hit_test(540.0, 1200.0).is_none());
     }
 
     #[test]

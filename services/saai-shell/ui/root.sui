@@ -1,13 +1,12 @@
-sui 1
+sui 2
 
 screen root {
-  column {
-    content id=content fill
-    tabs id=root-tabs height=300 {
-      tab now label="Сейчас" icon=now action=select_root:now
-      tab inbox label="Входящие" icon=inbox action=select_root:inbox
-      tab spaces label="Пространства" icon=spaces action=select_root:spaces
-      tab me label="Система" icon=person action=select_root:me
-    }
+  component BottomNavigation {
+    a11y = Button
+    inset = safe
+    tab now { loc = now }
+    tab inbox { loc = inbox }
+    tab spaces { loc = spaces }
+    tab me { loc = me }
   }
 }

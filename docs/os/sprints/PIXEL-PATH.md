@@ -175,6 +175,7 @@ host-only derived view.
 | VUI-09 thin tuning | physical lighting, leftover visual nits, gallery fixtures **parked last** (ADR-213; not next) |
 | VUI-09 v2 trailing rows | `row refresh`/`scan`/`back` → `list_*` on `stacked_trailing_rect` **host** (ADR-214; chrome unchanged `3850427a…`; leave Сейчас) |
 | VUI-09 v2 Me flatten | `flatten_me_rows` + `scrolled_row_rect` offset 0 **host** (ADR-215; chrome unchanged `3850427a…`; leave Сейчас) |
+| VUI-09 v2 production | `compile_v2()` + `layout_v2` `root_view` **device** (ADR-216) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

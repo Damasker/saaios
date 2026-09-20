@@ -2,7 +2,9 @@
 //!
 //! ADR-180 names the `.sui` v2 vocabulary. `compile()` still accepts
 //! only `sui 1`. ADR-181/182 parse `sui 2` through `compile_v2()`.
-//! ADR-183 keeps `root.sui` as the v1 rollback artifact. ADR-184
+//! ADR-183 keeps a frozen v1 rollback artifact. ADR-216 compiles
+//! production `root.sui` through `compile_v2()` / `layout_v2()`.
+//! ADR-184
 //! emits layout/hit-test from that compiled v1 `ScreenSpec`. ADR-194
 //! adds `layout_v2()` so public NOW tab hits match v1. ADR-195
 //! converts logical `SafeInsets` through `EdgeInsets::from_safe`. ADR-196
@@ -690,12 +692,19 @@ mod tests {
     }
 
     #[test]
-    fn production_root_sui_is_still_version_one() {
-        let screen = compile(include_str!("../../../services/saai-shell/ui/root.sui")).unwrap();
+    fn production_root_sui_is_version_two() {
+        let source = include_str!("../../../services/saai-shell/ui/root.sui");
+        let screen = compile_v2(source).unwrap();
         assert_eq!(screen.id, "root");
-        let labels: Vec<&str> = screen.tabs.iter().map(|tab| tab.label.as_str()).collect();
-        assert_eq!(labels, ["Сейчас", "Входящие", "Пространства", "Система"]);
-        assert!(screen.content_actions.is_empty());
+        let tabs: Vec<&str> = screen
+            .components
+            .iter()
+            .find(|component| component.type_name == "BottomNavigation")
+            .map(|component| component.tabs.iter().map(|tab| tab.id.as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(tabs, ["now", "inbox", "spaces", "me"]);
+        assert!(screen.rows.is_empty());
+        assert!(compile_v2_public(source).is_ok());
     }
 
     #[test]
@@ -893,7 +902,7 @@ mod tests {
         let surface = compile_v2(
             r#"
             sui 2
-            screen root {
+            screen home {
               component ContextHeader {}
             }
         "#,
@@ -901,7 +910,7 @@ mod tests {
         .unwrap_err();
         assert!(surface
             .to_string()
-            .contains("unknown SUI v2 surface `root`"));
+            .contains("unknown SUI v2 surface `home`"));
     }
 
     #[test]
@@ -996,8 +1005,9 @@ mod tests {
             .to_string()
             .contains("privileged SUI v2 surface `lock`"));
         let build = include_str!("../../../services/saai-shell/build.rs");
-        assert!(build.contains("saai_ui_compiler::compile("));
-        assert!(!build.contains("saai_ui_compiler::compile_v2"));
+        assert!(build.contains("saai_ui_compiler::compile_v2"));
+        assert!(!build.contains("saai_ui_compiler::compile("));
+        assert!(build.contains("ADR-216"));
     }
 
     #[test]
@@ -1214,12 +1224,16 @@ mod tests {
         assert!(limits.contains("ADR-215"));
         assert!(limits.contains("scrolled_row_rect"));
         assert!(limits.contains("flatten_me_rows"));
+        assert!(limits.contains("ADR-216"));
+        assert!(limits.contains("compile_v2()"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
         assert!(limits.contains("Visual v2"));
         let build = include_str!("../../../services/saai-shell/build.rs");
-        assert!(build.contains("saai_ui_compiler::compile("));
-        assert!(!build.contains("saai_ui_compiler::compile_v2"));
+        assert!(build.contains("saai_ui_compiler::compile_v2"));
+        assert!(!build.contains("saai_ui_compiler::compile("));
+        assert!(build.contains("ADR-216"));
+        assert!(ledger.contains("ADR-216"));
     }
 }

@@ -1004,24 +1004,25 @@ fn status_layer_height() -> u32 {
 /// Navigation hit-region: design-canvas tab height scaled to the
 /// panel, never below `MIN_TOUCH_TARGET`. Landscape 2400×1080 would
 /// otherwise shrink the strip under 48 logical units. ADR-184: same
-/// formula `layout_v1_root` uses.
+/// formula `layout_v2` uses.
 fn navigation_hit_height(panel_height: u32) -> u32 {
     saai_ui_compiler::v1_tab_strip_height(panel_height, ROOT_TAB_HEIGHT)
 }
 
-fn root_screen_spec() -> &'static saai_ui_compiler::ScreenSpec {
-    static SPEC: std::sync::OnceLock<saai_ui_compiler::ScreenSpec> = std::sync::OnceLock::new();
-    SPEC.get_or_init(|| {
-        let spec = saai_ui_compiler::compile_v1_rollback().expect("ADR-184: root.sui v1");
-        debug_assert_eq!(spec.id, ROOT_SCREEN_ID);
-        debug_assert_eq!(spec.content_id, ROOT_CONTENT_ID);
-        debug_assert_eq!(spec.tabs_id, ROOT_TABS_ID);
-        spec
+fn root_screen() -> &'static saai_ui_compiler::SuiV2Screen {
+    static SCREEN: std::sync::OnceLock<saai_ui_compiler::SuiV2Screen> = std::sync::OnceLock::new();
+    SCREEN.get_or_init(|| {
+        let screen = saai_ui_compiler::compile_v2(include_str!("../ui/root.sui"))
+            .expect("ADR-216: root.sui v2");
+        debug_assert_eq!(screen.id, ROOT_SCREEN_ID);
+        debug_assert_eq!(format!("{}-content", screen.id), ROOT_CONTENT_ID);
+        debug_assert_eq!(ROOT_TABS_ID, "BottomNavigation");
+        screen
     })
 }
 
 fn root_view(width: u32, height: u32) -> LayoutNode {
-    saai_ui_compiler::layout_v1_root(root_screen_spec(), width, height)
+    saai_ui_compiler::layout_v2(root_screen(), width, height)
 }
 
 /// Content pane of the root layout — everything except the bottom

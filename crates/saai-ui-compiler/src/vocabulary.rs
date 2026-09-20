@@ -52,6 +52,7 @@ pub fn sui_v2_surfaces() -> &'static [&'static str] {
         "inbox",
         "spaces",
         "me",
+        "root",
         "object",
         "intent",
         "apps",
@@ -206,13 +207,14 @@ mod tests {
     fn vocabulary_is_the_proven_core_types_and_live_surfaces() {
         assert_eq!(sui_v2_primitives().len(), 11);
         assert_eq!(sui_v2_composites().len(), 17);
-        assert_eq!(sui_v2_surfaces().len(), 17);
+        assert_eq!(sui_v2_surfaces().len(), 18);
         assert!(sui_v2_primitives().contains(&"Field"));
         assert!(sui_v2_primitives().contains(&"SurfacePattern"));
         assert!(sui_v2_composites().contains(&"EventRow"));
         assert!(sui_v2_composites().contains(&"TrustedClientRow"));
         assert!(sui_v2_surfaces().contains(&"now"));
         assert!(sui_v2_surfaces().contains(&"me"));
+        assert!(sui_v2_surfaces().contains(&"root"));
         assert!(sui_v2_surfaces().contains(&"lock"));
     }
 
@@ -277,7 +279,7 @@ mod tests {
         );
         assert_eq!(sui_v2_stability("WidgetCard"), None);
         assert!(!sui_v2_is_component("SpaceDetail"));
-        assert!(!sui_v2_is_surface("root"));
+        assert!(sui_v2_is_surface("root"));
         assert_eq!(sui_v2_property_keys().len(), 8);
         assert!(sui_v2_text_roles().contains(&"Title"));
         assert!(sui_v2_color_roles().contains(&"TextPrimary"));
