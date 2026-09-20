@@ -10,7 +10,7 @@ use memory_store::{install_memory_tools, MemoryAccessScope, MemoryFact, MemorySt
 use model_provider::{build_provider, ProviderKind};
 use policy_engine::PolicyEngine;
 use protocol::{ConfirmScope, Envelope, MessageKind};
-use saai_observation::{MetricsOrigin, ObservationCache};
+use saai_observation::{Freshness, MetricsOrigin, ObservationCache};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -284,6 +284,8 @@ struct RuntimeStatusDto {
     telemetry_interval_secs: u64,
     #[serde(default)]
     observation_revision: u64,
+    #[serde(default)]
+    observations: Vec<LiveObservationDto>,
     max_concurrent: usize,
     request_timeout_secs: u64,
     session_grants: Vec<String>,
@@ -295,6 +297,32 @@ struct RuntimeStatusDto {
     chat_sessions: usize,
     #[serde(default)]
     ab: Option<AbStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LiveObservationDto {
+    key: String,
+    value: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unit: Option<String>,
+    source: String,
+    observed_at: String,
+}
+
+fn live_observations(cache: &ObservationCache) -> Vec<LiveObservationDto> {
+    let now = Utc::now();
+    let snap = cache.snapshot(now);
+    snap.observations
+        .iter()
+        .filter(|obs| snap.freshness(obs) == Freshness::Fresh)
+        .map(|obs| LiveObservationDto {
+            key: obs.key.clone(),
+            value: obs.value.clone(),
+            unit: obs.unit.clone(),
+            source: obs.source.source_id.clone(),
+            observed_at: obs.observed_at.to_rfc3339(),
+        })
+        .collect()
 }
 
 struct RuntimeMeta {
@@ -339,6 +367,7 @@ impl RuntimeMeta {
             telemetry_samples: tel.as_ref().map(|t| t.samples).unwrap_or(0),
             telemetry_interval_secs: tel.as_ref().map(|t| t.interval_secs).unwrap_or(0),
             observation_revision: self.observations.revision(),
+            observations: live_observations(&self.observations),
             max_concurrent: self.max_concurrent,
             request_timeout_secs: self.request_timeout_secs,
             session_grants: runtime.session_grants(),
@@ -1282,6 +1311,75 @@ mod tests {
 
         assert_eq!(tool.output, status.device);
         assert_eq!(status.device, device);
+        assert!(status.observations.is_empty());
+        assert_eq!(status.observation_revision, 0);
+    }
+
+    #[tokio::test]
+    async fn status_lists_only_fresh_observations() {
+        use saai_observation::{observations_from_system_metrics, METRICS_CPU_TTL};
+        let dir = tempfile::tempdir().unwrap();
+        let device = system_identity(ToolsMode::Mock);
+        let runtime = AiRuntime::new(
+            Arc::new(ToolRegistry::new()),
+            Arc::new(PolicyEngine::new()),
+            Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap()),
+            EventBus::new(16),
+            Arc::new(model_provider::MockModelProvider),
+        );
+        let fresh = Arc::new(ObservationCache::new());
+        fresh.apply(observations_from_system_metrics(
+            &json!({
+                "cpu_usage": 12.0,
+                "load_average": 0.3,
+                "mem_used_pct": 40.0
+            }),
+            MetricsOrigin::Mock,
+            Utc::now(),
+            1,
+        ));
+        let mut meta = RuntimeMeta {
+            started: Instant::now(),
+            config_path: None,
+            provider_name: "mock".into(),
+            provider_kind: "mock".into(),
+            tools_mode: "mock".into(),
+            tool_names: vec![],
+            device: device.clone(),
+            memory_enabled: false,
+            memory_path: None,
+            audit_path: dir.path().join("audit.jsonl"),
+            sock: dir.path().join("runtime.sock"),
+            automation: false,
+            auto_diagnose: false,
+            telemetry: None,
+            observations: fresh,
+            max_concurrent: 1,
+            request_timeout_secs: 30,
+        };
+        let live = meta.status(&runtime);
+        assert_eq!(live.observation_revision, 1);
+        assert_eq!(live.observations.len(), 3);
+        assert!(live
+            .observations
+            .iter()
+            .all(|row| !row.source.is_empty() && !row.key.is_empty()));
+
+        let stale = Arc::new(ObservationCache::new());
+        stale.apply(observations_from_system_metrics(
+            &json!({
+                "cpu_usage": 12.0,
+                "load_average": 0.3,
+                "mem_used_pct": 40.0
+            }),
+            MetricsOrigin::Mock,
+            Utc::now() - chrono::Duration::milliseconds(METRICS_CPU_TTL as i64 + 50),
+            2,
+        ));
+        meta.observations = stale;
+        let expired = meta.status(&runtime);
+        assert_eq!(expired.observation_revision, 1);
+        assert!(expired.observations.is_empty());
     }
 
     #[tokio::test]
