@@ -171,6 +171,7 @@ host-only derived view.
 | VUI-09 lock cycle | no-PIN tap-unlock **на panther** (`3850427a…`; ADR-209; marker restored; leave Сейчас) |
 | VUI-09 display restart | `saai-displayd` kill + native-init respawn **на panther** (`3850427a…`; ADR-210; marker on; leave Сейчас) |
 | VUI-09 cold boot | `reboot -f` lock then tap-unlock **на panther** (`3850427a…`; ADR-211; marker restored; leave Сейчас) |
+| VUI-09 7-tap gallery | DevSurface Диагностика then Назад **на panther** (`3850427a…`; ADR-212; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

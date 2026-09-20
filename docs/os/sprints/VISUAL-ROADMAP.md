@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–211; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–212; runnable device cells proven; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1173,7 +1173,8 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 `TrustedClientRow` hits (ADR-207); privileged
 `CapabilityRow` hits (ADR-208); lock cycle
 (ADR-209); display restart (ADR-210); cold boot
-(ADR-211). Release gate remains. Not Visual v1 sign-off.
+(ADR-211); 7-tap gallery (ADR-212). Release
+gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1221,8 +1222,11 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   7-tap gallery stay open.
 - [x] Prove cold boot on panther HEAD (ADR-211; `reboot -f`; marker
   dropped; tap-unlock; marker restored). 7-tap gallery stays open.
-- [ ] Run remaining live matrix cells (7-tap gallery) then close
-  the ledger. Daylight booth stays deferred (ADR-193).
+- [x] Prove 7-tap gallery on panther HEAD (ADR-212; Диагностика;
+  Назад; leave Сейчас). Daylight booth stays deferred.
+- [x] Record runnable live matrix cells (lock cycle, display
+  restart, cold boot, 7-tap gallery) in the ledger. Not Visual v1
+  sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1337,11 +1341,10 @@ After each completed task group, report:
 ## Next action
 
 Continue **Visual v2** at Experimental→Stable after Visual v1, or
-operator-approved 7-tap gallery. Lock cycle is proven (ADR-209).
-Display restart is proven (ADR-210). Cold boot is proven (ADR-211).
-Leftover text sizes stay named (ADR-201). Inbox through Bluetooth
-stacked hits are host (ADR-202–206). Privileged trusted-client and
-Me app hits are host (ADR-207/208). Live Me flatten/scroll and list
-trailing controls stay procedural.
+the daylight booth. Runnable VUI-09 device cells are proven
+(ADR-209–212). Leftover text sizes stay named (ADR-201). Inbox
+through Bluetooth stacked hits are host (ADR-202–206). Privileged
+trusted-client and Me app hits are host (ADR-207/208). Live Me
+flatten/scroll and list trailing controls stay procedural.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.

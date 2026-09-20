@@ -9,7 +9,7 @@ MEM-08 omitted until a shell-legal memory read exists.
 
 Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
 (ADR-209). Display restart is proven (ADR-210). Cold boot is proven
-(ADR-211).
+(ADR-211). 7-tap gallery is proven (ADR-212).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -21,6 +21,7 @@ The verification ledger stays in
 | lock / unlock cycle | ADR-209; HEAD `3850427a…`; PIN null; tap-unlock; `/run/saaios/dev-no-lock` restored |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
+| 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
 
 ## Session-blocked live cells
 
@@ -29,11 +30,10 @@ These stay **open**. They are not proven by this pass.
 | Cell | Why this session does not run it |
 |---|---|
 | daylight / indoor / dark | No booth this session. |
-| 7-tap gallery | Not a DevSurface-chrome slice. Do not 7-tap. |
 
 Unlocked `saai-shell` restart (ADR-192) is not a display restart.
 Lock cycle is ADR-209. Display restart is ADR-210. Cold boot is
-ADR-211.
+ADR-211. 7-tap gallery is ADR-212.
 
 ## Compiler and layout
 
@@ -76,7 +76,7 @@ ADR-211.
   menu, related line, and gallery heading are `Caption` (ADR-198).
   Not Title (72). `TAB_BADGE_PX`, `GALLERY_KICKER_PX`,
   `GALLERY_SWATCH_PX`, and `APP_TILE_LABEL_PX` stay named below
-  Caption (ADR-201). Do not 7-tap to see kicker/swatch.
+  Caption (ADR-201). 7-tap gallery is proven (ADR-212).
 - Gallery fixtures may show privileged rows. Copying those names into
   an app fails `compile_v2_public()`.
 
@@ -99,16 +99,18 @@ Ordered. Items 1–3 and 7–17 are done
 3. ~~Keep leftover ActionCard/tab sizes on an explicit named list, or
    map them onto `TextRole` in a paint-normalization slice.~~ Flashed:
    Label/Caption, not Title (ADR-197/198). ADR-201 locks badge, gallery
-   kicker/swatch, and app-tile leftovers below Caption. Do not 7-tap.
+   kicker/swatch, and app-tile leftovers below Caption. 7-tap gallery is
+   proven (ADR-212).
 4. Promote public names from Experimental to Stable only after the
    Pixel 7 promotion checklist in the component library.
 5. Add `SpaceDetail` / `MemoryReview` / `ChatThread` / `Widget` to the
    vocabulary only when a shell-legal consumer exists. MEM-08 stays
    omitted until that memory read exists.
-6. Run remaining session-blocked v1 cells (daylight booth, 7-tap
-   gallery) as operator-approved device work. Lock cycle is proven
-   (ADR-209). Display restart is proven (ADR-210). Cold boot is
-   proven (ADR-211). They are Visual v1 gates, not v2 features.
+6. Run the remaining session-blocked v1 cell (daylight booth) as
+   operator-approved device work. Lock cycle is proven (ADR-209).
+   Display restart is proven (ADR-210). Cold boot is proven
+   (ADR-211). 7-tap gallery is proven (ADR-212). They are Visual v1
+   gates, not v2 features.
 7. ~~Name tabs inside the v2 grammar so `layout_v2()` does not borrow
    `compile_v1_rollback()` ids.~~ Host: nested `tab` (ADR-196). Do not
    attach `layout_v2()` to `build.rs` yet.
@@ -121,7 +123,7 @@ Ordered. Items 1–3 and 7–17 are done
    to `build.rs` yet.
 10. ~~Keep remaining leftover text sizes named below Caption.~~ Host:
     `leftover_text_sizes_stay_below_caption` (ADR-201). Apps grid on
-    panther; do not launch; do not 7-tap.
+    panther; do not launch. 7-tap gallery is proven (ADR-212).
 11. ~~Dock `EventRow` so `layout_v2()` matches Inbox
     `stacked_row_rect`.~~ Host: Button → `open_object` (ADR-202).
     Do not tap live Inbox rows. Do not attach `layout_v2()` to

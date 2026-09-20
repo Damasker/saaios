@@ -1148,6 +1148,9 @@ mod tests {
         assert!(ledger.contains("saai-displayd"));
         assert!(ledger.contains("ADR-211"));
         assert!(ledger.contains("reboot -f"));
+        assert!(ledger.contains("ADR-212"));
+        assert!(ledger.contains("7-tap"));
+        assert!(ledger.contains("Диагностика"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1177,6 +1180,8 @@ mod tests {
         assert!(limits.contains("tap-unlock"));
         assert!(limits.contains("ADR-210"));
         assert!(limits.contains("ADR-211"));
+        assert!(limits.contains("ADR-212"));
+        assert!(limits.contains("Диагностика"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
