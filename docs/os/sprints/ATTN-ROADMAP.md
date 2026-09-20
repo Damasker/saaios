@@ -1,6 +1,6 @@
 # SaaiOS Attention & Proactive Context — delivery roadmap
 
-Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит.**
+Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит. ATTN-06 host (ADR-291).**
 Phone: ATTN-02/03 ride VUI-05; ATTN-04 rides VUI-04. See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-123](../../adr/ADR-123-attention-projection.md)
@@ -22,7 +22,7 @@ No second notification subsystem. No attention database.
 | ATTN-03 | Inbox uses same projection | **Done** (host + panther) | **yes** |
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
 | ATTN-05 | Context relevance (no AI) | Backlog | no |
-| ATTN-06 | One World Model Health adapter | Backlog | after WORLD Health |
+| ATTN-06 | One World Model Health adapter | **Done** (host, ADR-291) | no |
 | ATTN-07 | One OAM suggested action | Backlog | **yes** |
 
 ## ATTN-01
@@ -61,3 +61,17 @@ Task/Notification filter.
 **Test:** `inbox_rows_follow_the_attention_projection`.
 
 **Rollback:** restore the local Task-then-Notification filters.
+
+## ATTN-06
+
+**Goal:** one Health report can become Attention. Healthy is not news.
+
+**Change:** `project_with_health`. Unknown/Healthy omitted. Degraded is
+NOW only. Unhealthy lights Orb. Inbox stays Task/Notification.
+Shell still calls `project_from_entities`. Do not flash shell.
+
+**Test:** host `cargo test -p saai-attention`.
+
+**Rollback:** drop `AttentionSource::Health`.
+
+**Threat:** none — host adapter, no phone binary.

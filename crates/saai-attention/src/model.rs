@@ -16,13 +16,18 @@ impl AttentionKey {
     pub fn notification(notification_id: Uuid) -> Self {
         Self(format!("notification:{notification_id}"))
     }
+
+    pub fn health(component_id: &str) -> Self {
+        Self(format!("health:{component_id}"))
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttentionSource {
     WorkflowTask { task_id: Uuid },
     Notification { notification_id: Uuid },
+    Health { component_id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

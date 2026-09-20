@@ -4891,6 +4891,7 @@ fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
             let kind = match source {
                 AttentionSource::WorkflowTask { .. } => InboxRowKind::Task,
                 AttentionSource::Notification { .. } => InboxRowKind::Notification,
+                AttentionSource::Health { .. } => return None,
             };
             Some((kind, entity))
         })

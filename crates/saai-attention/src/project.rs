@@ -6,6 +6,7 @@ use crate::model::{
 };
 use chrono::Utc;
 use saai_entity_store::Entity;
+use saai_observation::{HealthReport, HealthState};
 use serde_json::Value;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -15,6 +16,15 @@ const NOTIFICATION_TYPE: &str = "saaios.notification";
 const WAITING_CONFIRMATION: &str = "waiting_confirmation";
 
 pub fn project_from_entities(entities: &[Entity]) -> AttentionProjection {
+    project_with_health(entities, None)
+}
+
+/// ATTN-06: one Health report. Healthy/Unknown are not attention.
+/// Unhealthy lights Orb. Degraded is NOW-only. Not a dashboard.
+pub fn project_with_health(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+) -> AttentionProjection {
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for entity in entities {
@@ -31,6 +41,11 @@ pub fn project_from_entities(entities: &[Entity]) -> AttentionProjection {
             }
         }
     }
+    if let Some(item) = health.and_then(from_health) {
+        if seen.insert(item.key.clone()) {
+            items.push(item);
+        }
+    }
     AttentionProjection {
         generated_at: Utc::now(),
         items,
@@ -41,9 +56,12 @@ pub fn project_from_entities(entities: &[Entity]) -> AttentionProjection {
 pub fn inbox_source_ids(entities: &[Entity]) -> Vec<(AttentionSource, Uuid)> {
     project_from_entities(entities)
         .inbox_items()
-        .map(|item| match item.source {
-            AttentionSource::WorkflowTask { task_id } => (item.source, task_id),
-            AttentionSource::Notification { notification_id } => (item.source, notification_id),
+        .filter_map(|item| match &item.source {
+            AttentionSource::WorkflowTask { task_id } => Some((item.source.clone(), *task_id)),
+            AttentionSource::Notification { notification_id } => {
+                Some((item.source.clone(), *notification_id))
+            }
+            AttentionSource::Health { .. } => None,
         })
         .collect()
 }
@@ -108,11 +126,54 @@ fn from_undismissed_notification(entity: &Entity) -> Option<AttentionItem> {
     })
 }
 
+fn from_health(report: &HealthReport) -> Option<AttentionItem> {
+    let (priority, actionability, surfaces) = match report.state {
+        HealthState::Healthy | HealthState::Unknown => return None,
+        HealthState::Degraded => (
+            AttentionPriority::Normal,
+            AttentionActionability::Informational,
+            AttentionSurfaces {
+                now: true,
+                inbox: false,
+                orb: false,
+            },
+        ),
+        HealthState::Unhealthy => (
+            AttentionPriority::High,
+            AttentionActionability::Inspectable,
+            AttentionSurfaces {
+                now: true,
+                inbox: false,
+                orb: true,
+            },
+        ),
+    };
+    Some(AttentionItem {
+        key: AttentionKey::health(&report.component_id),
+        source: AttentionSource::Health {
+            component_id: report.component_id.clone(),
+        },
+        title: report.component_id.clone(),
+        summary: Some(match report.state {
+            HealthState::Degraded => "degraded".into(),
+            HealthState::Unhealthy => "unhealthy".into(),
+            HealthState::Healthy | HealthState::Unknown => unreachable!(),
+        }),
+        priority,
+        relevance: AttentionRelevance::Global,
+        actionability,
+        surfaces,
+        object: None,
+        occurred_at: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
     use saai_entity_store::{Entity, SCHEMA_VERSION};
+    use saai_observation::{HealthReport, HealthState};
     use serde_json::{json, Map};
     use uuid::Uuid;
 
@@ -314,5 +375,62 @@ mod tests {
         assert!(proj.items[0].surfaces.inbox);
         assert!(proj.items[0].surfaces.orb);
         assert!(has_orb_attention(&proj));
+    }
+
+    fn report(state: HealthState) -> HealthReport {
+        HealthReport {
+            component_id: "system.cpu.sampler".into(),
+            state,
+            observation_id: None,
+            freshness: None,
+        }
+    }
+
+    #[test]
+    fn healthy_and_unknown_are_not_attention() {
+        assert!(
+            project_with_health(&[], Some(&report(HealthState::Healthy)))
+                .items
+                .is_empty()
+        );
+        assert!(
+            project_with_health(&[], Some(&report(HealthState::Unknown)))
+                .items
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn degraded_is_now_only_unhealthy_lights_orb() {
+        let degraded = project_with_health(&[], Some(&report(HealthState::Degraded)));
+        assert_eq!(degraded.items.len(), 1);
+        assert!(degraded.items[0].surfaces.now);
+        assert!(!degraded.items[0].surfaces.inbox);
+        assert!(!degraded.items[0].surfaces.orb);
+        assert!(!has_orb_attention(&degraded));
+        let unhealthy = project_with_health(&[], Some(&report(HealthState::Unhealthy)));
+        assert!(unhealthy.items[0].surfaces.orb);
+        assert!(has_orb_attention(&unhealthy));
+        assert_eq!(
+            unhealthy.items[0].key,
+            AttentionKey::health("system.cpu.sampler")
+        );
+    }
+
+    #[test]
+    fn health_does_not_break_inbox_parity() {
+        let waiting = task(WAITING_CONFIRMATION);
+        let note = notification(false, Map::new());
+        let entities = vec![waiting.clone(), note.clone()];
+        let with_health = project_with_health(&entities, Some(&report(HealthState::Unhealthy)));
+        let inbox: Vec<Uuid> = with_health
+            .inbox_items()
+            .filter_map(|item| match &item.source {
+                AttentionSource::WorkflowTask { task_id } => Some(*task_id),
+                AttentionSource::Notification { notification_id } => Some(*notification_id),
+                AttentionSource::Health { .. } => None,
+            })
+            .collect();
+        assert_eq!(inbox, vec![waiting.id, note.id]);
     }
 }
