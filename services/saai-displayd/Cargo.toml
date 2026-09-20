@@ -35,7 +35,8 @@ tempfile = "3"
 # wp-fractional-scale-v1 preferred_scale test (ADR-266), the
 # input-method-v2 commit_string test (ADR-267), the APP-04 OSK
 # two-client test (ADR-270), and the layer-shell size test
-# (ADR-271) -- a plain client connecting to the real spawned
+# the layer-shell size test (ADR-271), and the GDK shm scale test
+# (ADR-286) -- a plain client connecting to the real spawned
 # saai-displayd binary, the same way saai-demo-surface and
 # saai-shell already do in production.
 wayland-client = "0.31"

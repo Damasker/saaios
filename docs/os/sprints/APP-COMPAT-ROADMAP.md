@@ -158,8 +158,8 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
   от GTK4 в пользу Qt-only на этой цели.
 - **Текущее состояние**: причина найдена (ADR-025). Compositor half
   done on host (ADR-266: `wp-fractional-scale-v1` + `wp-viewporter`,
-  `preferred_scale=120`). GTK4 frame on panther not verified; do not
-  flash displayd this week.
+  `preferred_scale=120`). Host GDK-sized shm attach ADR-286. GTK4
+  frame on panther not verified; do not flash displayd this week.
 - **Приёмка**: либо GTK4-приложение реально рендерит кадр на железе
   тем же методом верификации, что ADR-026 использовал для Qt, либо ADR
   фиксирует осознанный отказ от GTK4 с обоснованием.
