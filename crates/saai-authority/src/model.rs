@@ -68,6 +68,13 @@ impl Principal {
             kind: PrincipalKind::Worker,
         }
     }
+
+    pub fn automation(id: &str) -> Self {
+        Self {
+            id: PrincipalId::automation(id),
+            kind: PrincipalKind::Automation,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +183,22 @@ pub fn default_deny_unverified(proof: &IdentityProof) -> Option<PolicyReasonCode
     match proof {
         IdentityProof::Unverified => Some(PolicyReasonCode::IdentityUnverified),
         _ => None,
+    }
+}
+
+/// AUTH-07: a Principal kind cannot present another boundary's proof.
+pub fn proof_matches_principal(principal: &Principal, proof: &IdentityProof) -> bool {
+    match (principal.kind, proof) {
+        (PrincipalKind::LocalUser, IdentityProof::LocalSystemSurface) => true,
+        (PrincipalKind::LocalUser, IdentityProof::CryptographicKey { .. }) => true,
+        (PrincipalKind::Worker, IdentityProof::DelegatedWorker { .. }) => true,
+        (PrincipalKind::Automation, IdentityProof::InternalServiceBoundary) => true,
+        (PrincipalKind::SystemService, IdentityProof::InternalServiceBoundary) => true,
+        (PrincipalKind::SystemService, IdentityProof::PeerCredentials { .. }) => true,
+        (PrincipalKind::Application, IdentityProof::PeerCredentials { .. }) => true,
+        (PrincipalKind::RemoteClient, IdentityProof::CryptographicKey { .. }) => true,
+        (_, IdentityProof::Unverified) => false,
+        _ => false,
     }
 }
 

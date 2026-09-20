@@ -34,7 +34,7 @@ or policyd would drift from ADR-124.
 
 - Owner confirmation can mint a OneShot envelope instead of widening
   a session grant to every principal.
-- AUTH-07 Automation Principal is still later. AUTH-08 GrantStore
+- AUTH-08 portal/GrantStore is still later. AUTH-08 GrantStore
   still later.
 - Rollback: drop `delegations` and `issue_delegation`.
 

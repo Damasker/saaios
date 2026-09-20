@@ -1,6 +1,6 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276).**
+Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276). AUTH-07 Automation Principal host (ADR-277).**
 Next phone work is still AUTH-08/10 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -24,7 +24,7 @@ No ambient authority. No new policyd.
 | AUTH-04 | Fix `decide_named` live grants; confirmation binding | **Done** (host) | no |
 | AUTH-05 | OAM/IRAB Principal on AuthorityRequest | **Done** (host, ADR-275) | no |
 | AUTH-06 | Worker DelegationEnvelope | **Done** (host, ADR-276) | no |
-| AUTH-07 | Automation Principal | Backlog | no |
+| AUTH-07 | Automation Principal | **Done** (host, ADR-277) | no |
 | AUTH-08 | Portal adapter; GrantStore stays | Backlog | **yes** |
 | AUTH-09 | Revocation review | Backlog | **yes** |
 | AUTH-10 | Pixel 7: one-shot confirm, scoped grant, reboot, SSH regression | Backlog | **yes** |
@@ -116,5 +116,21 @@ Hard deny and Persistent are refused. `saai-taskd` is not wired yet.
 args/target fail; owner cannot be covered as a worker.
 
 **Rollback:** drop `delegations`.
+
+**Threat:** none — host adapter, no phone binary.
+
+## AUTH-07
+
+**Goal:** Automation is a Principal, not the local user. Proof must
+match kind.
+
+**Change:** `Principal::automation`. `proof_matches_principal` in
+`decide_request`. Automation uses InternalServiceBoundary. Owner
+session grant does not cover it. No cron daemon.
+
+**Test:** LocalSystemSurface Deny; service boundary Allow on metrics;
+kill still AskUser.
+
+**Rollback:** drop the proof-match check.
 
 **Threat:** none — host adapter, no phone binary.

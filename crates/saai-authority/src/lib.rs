@@ -14,9 +14,10 @@ pub use binding::{canonical_binding, canonical_json};
 pub use delegation::{envelope_covers, DelegationEnvelope};
 pub use grant::{grant_covers, grant_is_live, space_scope_matches, SessionGrant};
 pub use model::{
-    default_deny_unknown_operation, default_deny_unverified, request_operation_id,
-    AuthorityContext, AuthorityCorrelation, AuthorityOperation, AuthorityRequest, GrantValidity,
-    IdentityProof, PolicyReasonCode, Principal, PrincipalId, PrincipalKind, UsageConstraint,
+    default_deny_unknown_operation, default_deny_unverified, proof_matches_principal,
+    request_operation_id, AuthorityContext, AuthorityCorrelation, AuthorityOperation,
+    AuthorityRequest, GrantValidity, IdentityProof, PolicyReasonCode, Principal, PrincipalId,
+    PrincipalKind, UsageConstraint,
 };
 pub use saai_entity_store::ObjectRef;
 pub use scope::{scope_matches, SpaceScope, TargetScope};
@@ -109,5 +110,35 @@ mod tests {
         let scope = TargetScope::ExactObject { object: a.clone() };
         assert!(scope_matches(&scope, Some(&a)));
         assert!(!scope_matches(&scope, Some(&b)));
+    }
+
+    #[test]
+    fn automation_is_not_local_user() {
+        let automation = Principal::automation("morning-brief");
+        assert_eq!(automation.kind, PrincipalKind::Automation);
+        assert_ne!(automation.id, PrincipalId::owner());
+        assert!(proof_matches_principal(
+            &automation,
+            &IdentityProof::InternalServiceBoundary
+        ));
+        assert!(!proof_matches_principal(
+            &automation,
+            &IdentityProof::LocalSystemSurface
+        ));
+    }
+
+    #[test]
+    fn worker_cannot_present_the_local_surface() {
+        let worker = Principal::worker(Uuid::new_v4());
+        assert!(!proof_matches_principal(
+            &worker,
+            &IdentityProof::LocalSystemSurface
+        ));
+        assert!(proof_matches_principal(
+            &worker,
+            &IdentityProof::DelegatedWorker {
+                execution_id: Uuid::new_v4()
+            }
+        ));
     }
 }

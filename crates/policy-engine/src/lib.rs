@@ -1,7 +1,8 @@
 use protocol::PolicyVerdict;
 use saai_authority::{
-    default_deny_unverified, envelope_covers, grant_covers, request_operation_id, AuthorityRequest,
-    DelegationEnvelope, GrantValidity, ObjectRef, PrincipalId, SessionGrant,
+    default_deny_unverified, envelope_covers, grant_covers, proof_matches_principal,
+    request_operation_id, AuthorityRequest, DelegationEnvelope, GrantValidity, ObjectRef,
+    PrincipalId, SessionGrant,
 };
 use serde_json::{Map, Value};
 use std::sync::Mutex;
@@ -56,6 +57,12 @@ impl PolicyEngine {
             return PolicyDecision {
                 verdict: PolicyVerdict::Deny,
                 reason: "identity unverified".into(),
+            };
+        }
+        if !proof_matches_principal(&request.principal, &request.proof) {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "identity proof does not match principal".into(),
             };
         }
         let Some(operation) = request_operation_id(request) else {
@@ -829,5 +836,40 @@ mod tests {
         )
         .unwrap();
         assert!(!engine.issue_delegation(envelope));
+    }
+
+    #[test]
+    fn automation_cannot_use_local_user_surface() {
+        let engine = PolicyEngine::new();
+        let mut request = AuthorityRequest::local_user_action("system.metrics", None, json!({}));
+        request.principal = saai_authority::Principal::automation("morning-brief");
+        assert_eq!(
+            engine
+                .decide_request(&request, Some(&metrics_spec()))
+                .verdict,
+            PolicyVerdict::Deny
+        );
+        request.proof = IdentityProof::InternalServiceBoundary;
+        assert_eq!(
+            engine
+                .decide_request(&request, Some(&metrics_spec()))
+                .verdict,
+            PolicyVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn owner_grant_does_not_cover_automation() {
+        let engine = PolicyEngine::new();
+        engine.grant_session("process.kill_request");
+        let mut automation = kill_request(json!({"pid": 4312}));
+        automation.principal = saai_authority::Principal::automation("nightly-reboot");
+        automation.proof = IdentityProof::InternalServiceBoundary;
+        assert_eq!(
+            engine
+                .decide_request(&automation, Some(&kill_spec()))
+                .verdict,
+            PolicyVerdict::AskUser
+        );
     }
 }
