@@ -18,8 +18,12 @@ pub fn canonical_binding(request: &AuthorityRequest) -> String {
             .map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
             .unwrap_or(Value::Null),
     );
-    obj.insert("arguments".into(), canonicalize(&request.arguments));
+    obj.insert("arguments".into(), canonical_json(&request.arguments));
     Value::Object(obj).to_string()
+}
+
+pub fn canonical_json(value: &Value) -> Value {
+    canonicalize(value)
 }
 
 fn operation_value(op: &AuthorityOperation) -> Value {

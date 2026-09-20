@@ -1,15 +1,17 @@
-//! Unified Authority Model types (ADR-124 AUTH-01…03).
+//! Unified Authority Model types (ADR-124 AUTH-01…06).
 //!
 //! Vocabulary, request binding, and pure grant matching. Enforcement
 //! stays in PolicyEngine. Does not listen, persist GrantStore, or
 //! replace authorized_keys.
 
 mod binding;
+mod delegation;
 mod grant;
 mod model;
 mod scope;
 
-pub use binding::canonical_binding;
+pub use binding::{canonical_binding, canonical_json};
+pub use delegation::{envelope_covers, DelegationEnvelope};
 pub use grant::{grant_covers, grant_is_live, space_scope_matches, SessionGrant};
 pub use model::{
     default_deny_unknown_operation, default_deny_unverified, request_operation_id,

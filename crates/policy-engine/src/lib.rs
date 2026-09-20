@@ -1,7 +1,7 @@
 use protocol::PolicyVerdict;
 use saai_authority::{
-    default_deny_unverified, grant_covers, request_operation_id, AuthorityRequest, GrantValidity,
-    ObjectRef, PrincipalId, SessionGrant,
+    default_deny_unverified, envelope_covers, grant_covers, request_operation_id, AuthorityRequest,
+    DelegationEnvelope, GrantValidity, ObjectRef, PrincipalId, SessionGrant,
 };
 use serde_json::{Map, Value};
 use std::sync::Mutex;
@@ -19,6 +19,8 @@ pub struct PolicyEngine {
     /// AUTH-03: scoped session grants. Not a tool-name HashSet.
     /// Process-local; reboot clears them. Persistent does not live here.
     session_grants: Mutex<Vec<SessionGrant>>,
+    /// AUTH-06: worker envelopes. Process-local; reboot clears them.
+    delegations: Mutex<Vec<DelegationEnvelope>>,
     /// One-shot confirmation currently waiting. AUTH-04: confirm must
     /// match this binding; a fresh `PolicyEngine::new()` never sees it.
     pending: Mutex<Option<PendingConfirmation>>,
@@ -37,6 +39,7 @@ impl PolicyEngine {
             None,
             &[],
             &[spec.name.as_str()],
+            None,
         )
     }
 
@@ -76,6 +79,7 @@ impl PolicyEngine {
                     request.target.as_ref(),
                     &request.context.space_ids,
                     &grant_ops,
+                    Some(request),
                 )
             }
             None => self.decide_named(operation, None, &request.arguments),
@@ -90,6 +94,7 @@ impl PolicyEngine {
         target: Option<&ObjectRef>,
         spaces: &[String],
         grant_ops: &[&str],
+        request: Option<&AuthorityRequest>,
     ) -> PolicyDecision {
         if Self::hard_deny(&spec.name) {
             return PolicyDecision {
@@ -127,6 +132,15 @@ impl PolicyEngine {
             };
         }
 
+        if let Some(request) = request {
+            if self.take_matching_envelope(request) {
+                return PolicyDecision {
+                    verdict: PolicyVerdict::Allow,
+                    reason: "delegation".into(),
+                };
+            }
+        }
+
         match (&spec.risk, spec.requires_confirmation) {
             (_, true) | (RiskLevel::High | RiskLevel::Critical, _) => PolicyDecision {
                 verdict: PolicyVerdict::AskUser,
@@ -160,6 +174,40 @@ impl PolicyEngine {
         };
         if grants[index].validity == GrantValidity::OneShot {
             grants.remove(index);
+        }
+        true
+    }
+
+    /// AUTH-06. Hard-denied operations and Persistent validity are refused.
+    /// Only the owner may issue. Worker cannot inherit by constructing issuer.
+    pub fn issue_delegation(&self, envelope: DelegationEnvelope) -> bool {
+        if Self::hard_deny(&envelope.operation) || envelope.validity == GrantValidity::Persistent {
+            return false;
+        }
+        if envelope.issuer != PrincipalId::owner() || envelope.worker == envelope.issuer {
+            return false;
+        }
+        if let Ok(mut envelopes) = self.delegations.lock() {
+            envelopes.push(envelope);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn take_matching_envelope(&self, request: &AuthorityRequest) -> bool {
+        let Ok(mut envelopes) = self.delegations.lock() else {
+            return false;
+        };
+        let now = chrono::Utc::now();
+        let index = envelopes
+            .iter()
+            .position(|envelope| envelope_covers(envelope, request, now));
+        let Some(index) = index else {
+            return false;
+        };
+        if envelopes[index].validity == GrantValidity::OneShot {
+            envelopes.remove(index);
         }
         true
     }
@@ -684,5 +732,102 @@ mod tests {
             engine.decide_request(&worker, Some(&kill_spec())).verdict,
             PolicyVerdict::AskUser
         );
+    }
+
+    #[test]
+    fn delegated_worker_allow_is_oneshot() {
+        let engine = PolicyEngine::new();
+        let object = ObjectRef::entity(Uuid::new_v4());
+        let execution_id = Uuid::new_v4();
+        let owner = AuthorityRequest::local_user_action(
+            "process.stop",
+            Some(object.clone()),
+            json!({"pid": 4312}),
+        );
+        let envelope = DelegationEnvelope::from_owner_request(
+            &owner,
+            saai_authority::Principal::worker(execution_id),
+            execution_id,
+            GrantValidity::OneShot,
+        )
+        .expect("owner issues");
+        assert!(engine.issue_delegation(envelope));
+        let mut worker = owner.clone();
+        worker.principal = saai_authority::Principal::worker(execution_id);
+        worker.proof = IdentityProof::DelegatedWorker { execution_id };
+        let first = engine.decide_request(&worker, Some(&kill_spec()));
+        assert_eq!(first.verdict, PolicyVerdict::Allow);
+        assert_eq!(first.reason, "delegation");
+        assert_eq!(
+            engine.decide_request(&worker, Some(&kill_spec())).verdict,
+            PolicyVerdict::AskUser
+        );
+    }
+
+    #[test]
+    fn other_worker_does_not_consume_the_envelope() {
+        let engine = PolicyEngine::new();
+        let object = ObjectRef::entity(Uuid::new_v4());
+        let execution_id = Uuid::new_v4();
+        let owner = AuthorityRequest::local_user_action(
+            "process.stop",
+            Some(object.clone()),
+            json!({"pid": 4312}),
+        );
+        let envelope = DelegationEnvelope::from_owner_request(
+            &owner,
+            saai_authority::Principal::worker(execution_id),
+            execution_id,
+            GrantValidity::OneShot,
+        )
+        .unwrap();
+        assert!(engine.issue_delegation(envelope));
+        let other_id = Uuid::new_v4();
+        let mut other = owner.clone();
+        other.principal = saai_authority::Principal::worker(other_id);
+        other.proof = IdentityProof::DelegatedWorker {
+            execution_id: other_id,
+        };
+        assert_eq!(
+            engine.decide_request(&other, Some(&kill_spec())).verdict,
+            PolicyVerdict::AskUser
+        );
+        let mut worker = owner;
+        worker.principal = saai_authority::Principal::worker(execution_id);
+        worker.proof = IdentityProof::DelegatedWorker { execution_id };
+        assert_eq!(
+            engine.decide_request(&worker, Some(&kill_spec())).verdict,
+            PolicyVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn hard_deny_refuses_delegation() {
+        let engine = PolicyEngine::new();
+        let execution_id = Uuid::new_v4();
+        let owner = AuthorityRequest::local_user_action("storage.format", None, json!({}));
+        let envelope = DelegationEnvelope::from_owner_request(
+            &owner,
+            saai_authority::Principal::worker(execution_id),
+            execution_id,
+            GrantValidity::OneShot,
+        )
+        .unwrap();
+        assert!(!engine.issue_delegation(envelope));
+    }
+
+    #[test]
+    fn persistent_delegation_is_not_stored() {
+        let engine = PolicyEngine::new();
+        let execution_id = Uuid::new_v4();
+        let owner = AuthorityRequest::local_user_action("process.stop", None, json!({"pid": 4312}));
+        let envelope = DelegationEnvelope::from_owner_request(
+            &owner,
+            saai_authority::Principal::worker(execution_id),
+            execution_id,
+            GrantValidity::Persistent,
+        )
+        .unwrap();
+        assert!(!engine.issue_delegation(envelope));
     }
 }

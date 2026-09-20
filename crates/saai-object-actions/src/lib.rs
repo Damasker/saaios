@@ -647,4 +647,56 @@ mod tests {
         assert!(matches!(error, ExecuteError::NeedsConfirmation(_)));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
+
+    #[tokio::test]
+    async fn delegated_worker_executes_once() {
+        let mut registry = ObjectActionRegistry::new();
+        registry
+            .register(action_spec(
+                "process.stop",
+                "saai.local-system",
+                "saaios.display",
+                "process.kill_request",
+                vec![ArgumentBinding {
+                    argument: "pid".into(),
+                    source: ArgumentSource::Constant(json!(4312)),
+                }],
+                vec![],
+            ))
+            .unwrap();
+        let (tool, calls) = counting("process.kill_request", RiskLevel::High, true);
+        let mut tools = ToolRegistry::new();
+        tools.register(tool);
+        let object = object("saaios.display", Map::new());
+        let action = only_resolved(resolved(&registry, &object, &tools));
+        let policy = PolicyEngine::new();
+        let execution_id = Uuid::new_v4();
+        let owner = authority_request(
+            &action,
+            saai_authority::Principal::local_user(),
+            saai_authority::IdentityProof::LocalSystemSurface,
+        );
+        let envelope = saai_authority::DelegationEnvelope::from_owner_request(
+            &owner,
+            saai_authority::Principal::worker(execution_id),
+            execution_id,
+            saai_authority::GrantValidity::OneShot,
+        )
+        .expect("owner issues");
+        assert!(policy.issue_delegation(envelope));
+        let worker = authority_request(
+            &action,
+            saai_authority::Principal::worker(execution_id),
+            saai_authority::IdentityProof::DelegatedWorker { execution_id },
+        );
+        execute_if_allowed_for(&policy, &tools, &action, &object, &ctx(), &worker)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let error = execute_if_allowed_for(&policy, &tools, &action, &object, &ctx(), &worker)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ExecuteError::NeedsConfirmation(_)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 }

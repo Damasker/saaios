@@ -35,7 +35,7 @@ would fall through and lose Principal/target.
 ## Consequences
 
 - Unverified remains Deny. Hard-denied tools still Deny from ToolSpec.
-- AUTH-06 DelegationEnvelope is still later.
+- AUTH-07 Automation Principal is still later.
 - Rollback: restore `decide_named` in OAM and name-equal spec match.
 
 ## Verification

@@ -1,6 +1,6 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275).**
+Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276).**
 Next phone work is still AUTH-08/10 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -23,7 +23,7 @@ No ambient authority. No new policyd.
 | AUTH-03 | Scoped session grants (not tool-name HashSet) | **Done** (host, ADR-261) | no |
 | AUTH-04 | Fix `decide_named` live grants; confirmation binding | **Done** (host) | no |
 | AUTH-05 | OAM/IRAB Principal on AuthorityRequest | **Done** (host, ADR-275) | no |
-| AUTH-06 | Worker DelegationEnvelope | Backlog | no |
+| AUTH-06 | Worker DelegationEnvelope | **Done** (host, ADR-276) | no |
 | AUTH-07 | Automation Principal | Backlog | no |
 | AUTH-08 | Portal adapter; GrantStore stays | Backlog | **yes** |
 | AUTH-09 | Revocation review | Backlog | **yes** |
@@ -100,5 +100,21 @@ IRAB Direct builds the request and does not evaluate policy.
 unverified Deny; worker does not inherit owner grant.
 
 **Rollback:** restore `decide_named` in OAM.
+
+**Threat:** none — host adapter, no phone binary.
+
+## AUTH-06
+
+**Goal:** a worker executes a confirmed action only through a bound
+`DelegationEnvelope`. Not a second GrantStore.
+
+**Change:** `DelegationEnvelope` + `envelope_covers`.
+`PolicyEngine::issue_delegation` is process-local. OneShot is consumed.
+Hard deny and Persistent are refused. `saai-taskd` is not wired yet.
+
+**Test:** matching worker Allow once; other worker AskUser; changed
+args/target fail; owner cannot be covered as a worker.
+
+**Rollback:** drop `delegations`.
 
 **Threat:** none — host adapter, no phone binary.
