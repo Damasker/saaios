@@ -33,6 +33,7 @@ saai-ui-compiler.workspace = true
 saai-attention.workspace = true
 saai-object-actions.workspace = true
 policy-engine.workspace = true
+saai-authority.workspace = true
 protocol.workspace = true
 tool-registry.workspace = true
 serde_json.workspace = true

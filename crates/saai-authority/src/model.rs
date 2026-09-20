@@ -75,6 +75,13 @@ impl Principal {
             kind: PrincipalKind::Automation,
         }
     }
+
+    pub fn app(app_id: &str) -> Self {
+        Self {
+            id: PrincipalId::app(app_id),
+            kind: PrincipalKind::Application,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +176,30 @@ impl AuthorityRequest {
                 session_id: None,
             },
             arguments,
+            correlation: AuthorityCorrelation {
+                intent_id: None,
+                task_id: None,
+                action_id: None,
+                call_id: None,
+            },
+        }
+    }
+
+    pub fn app_capability(app_id: &str, pid: u32, capability: &str) -> Self {
+        Self {
+            principal: Principal::app(app_id),
+            proof: IdentityProof::PeerCredentials { pid },
+            operation: AuthorityOperation::AppCapabilityUse {
+                capability: capability.into(),
+            },
+            target: None,
+            context: AuthorityContext {
+                space_ids: Vec::new(),
+                focused_object: None,
+                workflow_id: None,
+                session_id: None,
+            },
+            arguments: Value::Object(Default::default()),
             correlation: AuthorityCorrelation {
                 intent_id: None,
                 task_id: None,

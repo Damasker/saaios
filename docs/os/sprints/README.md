@@ -135,6 +135,7 @@ ADR-274 Verifying Tasks settle from Fresh runtime `status` observations (host).
 ADR-275 OAM/IRAB pass Principal on AuthorityRequest (host).
 ADR-276 worker DelegationEnvelope is bound and OneShot (host).
 ADR-277 Automation is not the local user (host).
+ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

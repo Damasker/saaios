@@ -1,7 +1,7 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276). AUTH-07 Automation Principal host (ADR-277).**
-Next phone work is still AUTH-08/10 in the service queue, not AUTH-10 as a new
+Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276). AUTH-07 Automation Principal host (ADR-277). AUTH-08 portal adapter host (ADR-278).**
+Next phone work is still AUTH-09/10 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-124](../../adr/ADR-124-unified-authority-model.md)
@@ -25,7 +25,7 @@ No ambient authority. No new policyd.
 | AUTH-05 | OAM/IRAB Principal on AuthorityRequest | **Done** (host, ADR-275) | no |
 | AUTH-06 | Worker DelegationEnvelope | **Done** (host, ADR-276) | no |
 | AUTH-07 | Automation Principal | **Done** (host, ADR-277) | no |
-| AUTH-08 | Portal adapter; GrantStore stays | Backlog | **yes** |
+| AUTH-08 | Portal adapter; GrantStore stays | **Done** (host, ADR-278) | no |
 | AUTH-09 | Revocation review | Backlog | **yes** |
 | AUTH-10 | Pixel 7: one-shot confirm, scoped grant, reboot, SSH regression | Backlog | **yes** |
 
@@ -132,5 +132,21 @@ session grant does not cover it. No cron daemon.
 kill still AskUser.
 
 **Rollback:** drop the proof-match check.
+
+**Threat:** none — host adapter, no phone binary.
+
+## AUTH-08
+
+**Goal:** portal clipboard/open_file/notifications hit the same
+PolicyEngine as OAM. GrantStore stays in `saai-appd`.
+
+**Change:** `AuthorityRequest::app_capability` +
+`decide_capability`. Application + PeerCredentials. Owner session
+grant does not cover an app. Do not flash shell. ADR-023 stays open.
+
+**Test:** granted clipboard Allow; missing Deny; LocalSystemSurface
+Deny; existing portal round-trip still works.
+
+**Rollback:** restore the string `granted` check in `portal_server`.
 
 **Threat:** none — host adapter, no phone binary.

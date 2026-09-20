@@ -33,7 +33,7 @@ proof match the kind.
 
 - A spoofed Automation + LocalSystemSurface is Deny even on low-risk
   tools.
-- AUTH-08 portal/GrantStore is still later.
+- AUTH-09 revocation review is still later.
 - Rollback: drop `proof_matches_principal` from `decide_request`.
 
 ## Verification

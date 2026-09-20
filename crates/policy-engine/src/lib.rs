@@ -1,8 +1,8 @@
 use protocol::PolicyVerdict;
 use saai_authority::{
     default_deny_unverified, envelope_covers, grant_covers, proof_matches_principal,
-    request_operation_id, AuthorityRequest, DelegationEnvelope, GrantValidity, ObjectRef,
-    PrincipalId, SessionGrant,
+    request_operation_id, AuthorityOperation, AuthorityRequest, DelegationEnvelope, GrantValidity,
+    ObjectRef, PrincipalId, SessionGrant,
 };
 use serde_json::{Map, Value};
 use std::sync::Mutex;
@@ -90,6 +90,50 @@ impl PolicyEngine {
                 )
             }
             None => self.decide_named(operation, None, &request.arguments),
+        }
+    }
+
+    /// AUTH-08: portal capability. GrantStore names stay in appd; this
+    /// engine does not persist them. Session grants do not cover apps.
+    pub fn decide_capability(
+        &self,
+        request: &AuthorityRequest,
+        granted: &[String],
+    ) -> PolicyDecision {
+        if default_deny_unverified(&request.proof).is_some() {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "identity unverified".into(),
+            };
+        }
+        if !proof_matches_principal(&request.principal, &request.proof) {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "identity proof does not match principal".into(),
+            };
+        }
+        let AuthorityOperation::AppCapabilityUse { capability } = &request.operation else {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "not an app capability".into(),
+            };
+        };
+        if Self::hard_deny(capability) {
+            return PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: format!("tool `{capability}` is denied by default policy"),
+            };
+        }
+        if granted.iter().any(|name| name == capability) {
+            PolicyDecision {
+                verdict: PolicyVerdict::Allow,
+                reason: "grant store".into(),
+            }
+        } else {
+            PolicyDecision {
+                verdict: PolicyVerdict::Deny,
+                reason: "missing grant".into(),
+            }
         }
     }
 
@@ -870,6 +914,46 @@ mod tests {
                 .decide_request(&automation, Some(&kill_spec()))
                 .verdict,
             PolicyVerdict::AskUser
+        );
+    }
+
+    #[test]
+    fn portal_grant_store_allows_clipboard_read() {
+        let engine = PolicyEngine::new();
+        let request = AuthorityRequest::app_capability("org.saaios.demo", 42, "clipboard.read");
+        assert_eq!(
+            engine
+                .decide_capability(&request, &["clipboard.read".into()])
+                .verdict,
+            PolicyVerdict::Allow
+        );
+        assert_eq!(
+            engine.decide_capability(&request, &[]).verdict,
+            PolicyVerdict::Deny
+        );
+    }
+
+    #[test]
+    fn owner_session_grant_does_not_cover_app_capability() {
+        let engine = PolicyEngine::new();
+        engine.grant_session("clipboard.read");
+        let request = AuthorityRequest::app_capability("org.saaios.demo", 42, "clipboard.read");
+        assert_eq!(
+            engine.decide_capability(&request, &[]).verdict,
+            PolicyVerdict::Deny
+        );
+    }
+
+    #[test]
+    fn app_cannot_use_local_user_surface() {
+        let engine = PolicyEngine::new();
+        let mut request = AuthorityRequest::app_capability("org.saaios.demo", 42, "clipboard.read");
+        request.proof = IdentityProof::LocalSystemSurface;
+        assert_eq!(
+            engine
+                .decide_capability(&request, &["clipboard.read".into()])
+                .verdict,
+            PolicyVerdict::Deny
         );
     }
 }

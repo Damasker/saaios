@@ -141,4 +141,13 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn app_capability_request_is_not_the_owner() {
+        let request = AuthorityRequest::app_capability("org.saaios.demo", 7, "clipboard.read");
+        assert_eq!(request.principal, Principal::app("org.saaios.demo"));
+        assert_eq!(request.proof, IdentityProof::PeerCredentials { pid: 7 });
+        assert_eq!(request_operation_id(&request), Some("clipboard.read"));
+        assert_ne!(request.principal.id, PrincipalId::owner());
+    }
 }

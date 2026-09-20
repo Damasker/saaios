@@ -19,9 +19,11 @@
 //! unstable on this toolchain, see the Cargo.toml comment) at accept time,
 //! resolving the connecting process's pid to an app_id via
 //! `Shell`'s own cache of `saai-appd`'s last `list()` response, then
-//! checking that app_id's `granted_capabilities` -- a request from a pid
-//! that isn't a currently known running app (an arbitrary shell command,
-//! for instance) is refused before any capability check even runs.
+//! checking that app_id's `granted_capabilities` via PolicyEngine
+//! `decide_capability` (AUTH-08). GrantStore stays in `saai-appd`.
+//! A request from a pid that isn't a currently known running app
+//! (an arbitrary shell command, for instance) is refused before any
+//! capability check even runs.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -36,6 +38,10 @@ use saai_portal_protocol::{
     MAX_WIRE_MESSAGE_BYTES,
 };
 use serde_json::{Map, Value};
+
+use policy_engine::PolicyEngine;
+use protocol::PolicyVerdict;
+use saai_authority::AuthorityRequest;
 
 use crate::entityd_client::EntitydClient;
 use crate::NOTIFICATION_ENTITY_TYPE;
@@ -208,6 +214,7 @@ impl Connection {
             );
         };
         let granted = apps_grants.get(app_id).map(Vec::as_slice).unwrap_or(&[]);
+        let pid = self.peer_pid.expect("app_id resolved from peer pid");
 
         let required = match &request {
             ClientRequest::ClipboardRead { .. } => CAP_CLIPBOARD_READ,
@@ -215,7 +222,11 @@ impl Connection {
             ClientRequest::OpenFile { .. } => CAP_PORTAL_OPEN_FILE,
             ClientRequest::PostNotification { .. } => CAP_NOTIFICATIONS_POST,
         };
-        if !granted.iter().any(|capability| capability == required) {
+        let decision = PolicyEngine::new().decide_capability(
+            &AuthorityRequest::app_capability(app_id, pid, required),
+            granted,
+        );
+        if decision.verdict != PolicyVerdict::Allow {
             return ServerMessage::error(
                 request_id,
                 "capability_denied",
