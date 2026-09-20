@@ -3888,32 +3888,30 @@ fn pin_blank_rect(width: u32, height: u32) -> Rect {
 /// `saaios.task`'s own `status` lookup already uses.
 const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
 
-/// VUI-04 (ADR-116): the Orb dot's own real state, independent of
-/// whether its menu happens to be open right now (that's a separate
-/// interaction-mode concern -- the menu rows themselves already carry
-/// it). Pure, no `Shell` needed, same shape the `OrbState`/`orb_state`
-/// pair this replaces used to have. Priority, most urgent first:
-/// `Offline` (a live connection is required to trust any signal below
-/// it -- without one this shell cannot honestly claim to know whether
-/// there is real pending attention or real in-progress work either),
-/// `Attention` (`saai-attention` projection: waiting-confirmation
-/// Tasks and undismissed Notifications), `Running`
-/// (`in_progress_work`, the same VUI-03 query "Продолжается" already
-/// uses), `Active` (the menu is open -- the user is deliberately
-/// engaging it right now), else `Idle`.
+/// ADR-244: Orb state is workflow, not mood and not voice. Priority,
+/// most urgent first: Offline, Attention (`WaitingConfirmation` and
+/// undismissed notifications), Failed, Running, Waiting (pending
+/// Action / derived-ready Task — «Планирует»), Complete (verified
+/// Result), Active (menu open), Idle. Слушает stays unlit: Pixel
+/// voice is hardware-blocked (ADR-092).
 fn orb_visual_state(
     appd_connected: bool,
     entityd_connected: bool,
-    has_orb_attention: bool,
-    has_in_progress_work: bool,
+    entities: &[Entity],
     menu_open: bool,
 ) -> UniversalState {
     if !appd_connected || !entityd_connected {
         UniversalState::Offline
-    } else if has_orb_attention {
+    } else if orb_attention_from_entities(entities) {
         UniversalState::Attention
-    } else if has_in_progress_work {
+    } else if orb_failed_work(entities) {
+        UniversalState::Failed
+    } else if !in_progress_work(entities).is_empty() {
         UniversalState::Running
+    } else if next_work(entities).is_some() {
+        UniversalState::Waiting
+    } else if orb_verified_result(entities) {
+        UniversalState::Complete
     } else if menu_open {
         UniversalState::Active
     } else {
@@ -3923,6 +3921,30 @@ fn orb_visual_state(
 
 fn orb_attention_from_entities(entities: &[Entity]) -> bool {
     has_orb_attention(&project_from_entities(entities))
+}
+
+fn orb_failed_work(entities: &[Entity]) -> bool {
+    entities.iter().any(|entity| {
+        (entity.entity_type == "saaios.task"
+            && workflow_status_of(entity) == Some(TASK_STATUS_FAILED))
+            || (entity.entity_type == RESULT_ENTITY_TYPE
+                && entity
+                    .properties
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map_or(false, |text| !text.is_empty()))
+    })
+}
+
+fn orb_verified_result(entities: &[Entity]) -> bool {
+    entities.iter().any(|entity| {
+        entity.entity_type == RESULT_ENTITY_TYPE
+            && entity
+                .properties
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or(true, |text| text.is_empty())
+    })
 }
 
 /// VUI-03: real schedule entries for the "Сегодня" `SystemSection` --
@@ -7896,8 +7918,7 @@ impl Shell {
         OrbHost::new(orb_visual_state(
             self.appd.is_connected(),
             self.entityd.is_connected(),
-            orb_attention_from_entities(&self.selected_entities),
-            !in_progress_work(&self.selected_entities).is_empty(),
+            &self.selected_entities,
             self.orb_menu_open,
         ))
         .motion()
@@ -10611,8 +10632,7 @@ impl Shell {
         let orb_host = OrbHost::new(orb_visual_state(
             self.appd.is_connected(),
             self.entityd.is_connected(),
-            orb_attention_from_entities(&self.selected_entities),
-            !in_progress_work(&self.selected_entities).is_empty(),
+            &self.selected_entities,
             self.orb_menu_open,
         ))
         .with_reduced_motion(self.settings.reduced_motion);
@@ -14918,24 +14938,29 @@ mod tests {
 
     #[test]
     fn orb_visual_state_priority_offline_beats_attention_beats_running_beats_active() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let mut running = task_entity("Работает", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
         assert_eq!(
-            orb_visual_state(false, true, true, true, true),
+            orb_visual_state(false, true, &[waiting.clone()], true),
             UniversalState::Offline
         );
         assert_eq!(
-            orb_visual_state(true, false, true, true, true),
+            orb_visual_state(true, false, &[waiting.clone()], true),
             UniversalState::Offline
         );
         assert_eq!(
-            orb_visual_state(true, true, true, true, true),
+            orb_visual_state(true, true, &[waiting.clone(), running.clone()], true),
             UniversalState::Attention
         );
         assert_eq!(
-            orb_visual_state(true, true, false, true, true),
+            orb_visual_state(true, true, std::slice::from_ref(&running), true),
             UniversalState::Running
         );
         assert_eq!(
-            orb_visual_state(true, true, false, false, true),
+            orb_visual_state(true, true, &[], true),
             UniversalState::Active
         );
     }
@@ -14943,7 +14968,7 @@ mod tests {
     #[test]
     fn orb_visual_state_is_idle_only_when_connected_and_nothing_else_is_true() {
         assert_eq!(
-            orb_visual_state(true, true, false, false, false),
+            orb_visual_state(true, true, &[], false),
             UniversalState::Idle
         );
     }
@@ -14953,13 +14978,7 @@ mod tests {
         let waiting = task_entity("Подтвердите удаление", None);
         assert!(orb_attention_from_entities(&[waiting.clone()]));
         assert_eq!(
-            orb_visual_state(
-                true,
-                true,
-                orb_attention_from_entities(&[waiting]),
-                false,
-                false
-            ),
+            orb_visual_state(true, true, std::slice::from_ref(&waiting), false),
             UniversalState::Attention
         );
     }
@@ -14979,6 +14998,45 @@ mod tests {
         gone.properties
             .insert("dismissed".into(), serde_json::Value::Bool(true));
         assert!(!orb_attention_from_entities(&[gone]));
+    }
+
+    #[test]
+    fn orb_visual_state_maps_failed_plan_and_result_not_voice() {
+        let mut failed = task_entity("Сломалось", None);
+        failed
+            .properties
+            .insert("status".into(), serde_json::Value::String("failed".into()));
+        assert_eq!(
+            orb_visual_state(true, true, std::slice::from_ref(&failed), false),
+            UniversalState::Failed
+        );
+
+        let action = action_entity("Экспорт PDF", uuid::Uuid::new_v4(), "pending");
+        assert_eq!(
+            orb_visual_state(true, true, std::slice::from_ref(&action), true),
+            UniversalState::Waiting
+        );
+
+        let result = result_entity(
+            "PDF готов",
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "файл на диске",
+        );
+        assert_eq!(
+            orb_visual_state(true, true, std::slice::from_ref(&result), true),
+            UniversalState::Complete
+        );
+
+        let waiting = task_entity("Подтвердите удаление", None);
+        assert_eq!(
+            orb_visual_state(true, true, &[waiting, result.clone()], false),
+            UniversalState::Attention
+        );
+        assert_ne!(
+            orb_visual_state(true, true, &[], false),
+            UniversalState::Running
+        );
     }
 
     #[test]

@@ -102,6 +102,7 @@ ADR-240 Primary nav is Сейчас · Пространства · Поиск ·
 ADR-241 Сейчас leads with attention, current work, next.
 ADR-242 Object View shows existing facts, links, OAM.
 ADR-243 Space detail lists SOM members, not invented people.
+ADR-244 Orb states follow workflow, not voice.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
