@@ -1227,6 +1227,41 @@ fn wifi_adapter_present() -> bool {
     std::path::Path::new("/sys/class/net/wlan0").exists()
 }
 
+/// Cellular bearers on Linux. `usb0` is USB NCM to the laptop (PCE-25),
+/// `wlan*` is Wi-Fi, `google_modemctl` is a BCL helper — none of those
+/// are a modem (ADR-255).
+fn cellular_iface_name(name: &str) -> bool {
+    let stem = name
+        .split(|c: char| c == '.' || c == '@')
+        .next()
+        .unwrap_or(name);
+    stem.starts_with("rmnet")
+        || stem.starts_with("wwan")
+        || stem.starts_with("qmimux")
+        || stem.starts_with("ccmni")
+}
+
+fn cellular_ifaces_from_net_listing(listing: &str) -> Vec<String> {
+    listing
+        .split_whitespace()
+        .filter(|name| cellular_iface_name(name))
+        .map(|name| name.to_string())
+        .collect()
+}
+
+fn cellular_ifaces() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| cellular_iface_name(name))
+        .collect();
+    names.sort();
+    names
+}
+
 fn bluetooth_adapter_present() -> bool {
     std::path::Path::new(BT_SCAN_BIN).exists()
 }
@@ -6061,6 +6096,7 @@ struct MeFacts {
     wifi_present: bool,
     bluetooth_paired: usize,
     bluetooth_present: bool,
+    cellular_ifaces: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
     contrast_pct: u8,
@@ -6217,6 +6253,11 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                     .row
                 } else {
                     SettingRow::readout("Bluetooth", "Нет адаптера").row
+                },
+                if facts.cellular_ifaces.is_empty() {
+                    SettingRow::readout("Сотовая сеть", "Нет модема").row
+                } else {
+                    SettingRow::readout("Сотовая сеть", facts.cellular_ifaces.join(" · ")).row
                 },
                 SettingRow::cycle(
                     "Удалённый доступ (SSH)",
@@ -6509,6 +6550,7 @@ fn me_fixture_facts() -> MeFacts {
         wifi_present: true,
         bluetooth_paired: 0,
         bluetooth_present: true,
+        cellular_ifaces: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
         contrast_pct: 0,
@@ -10359,6 +10401,7 @@ impl Shell {
             wifi_present: wifi_adapter_present(),
             bluetooth_paired: bluetooth_paired_count(),
             bluetooth_present: bluetooth_adapter_present(),
+            cellular_ifaces: cellular_ifaces(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
             contrast_pct: self.settings.contrast_pct,
@@ -11635,17 +11678,18 @@ mod tests {
         bluetooth_card_from_row, bluetooth_header, bluetooth_list_action_at,
         bluetooth_list_pattern, bluetooth_list_row_count, bluetooth_list_rows,
         bluetooth_pair_error_from, bluetooth_scan_pattern, calibration_requested, capability_label,
-        consent_action_at, consent_content_cards, consent_header, content_action_at,
-        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
-        diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
-        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
-        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
-        intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
-        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
-        lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
-        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
-        now_object_tapped, now_workflow_sections, object_view_action_at, object_view_content,
-        object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
+        cellular_ifaces_from_net_listing, consent_action_at, consent_content_cards, consent_header,
+        content_action_at, dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header,
+        diagnostic_row, diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space,
+        ensure_me_row_cache, field_shows_context_focus, flatten_me_rows, format_utc_offset,
+        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
+        intent_compose_header, intent_field_rect, intent_input_field, known_surfaces,
+        lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
+        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, logical_surface_size,
+        me_fixture_facts, me_header, me_system_sections, motion_clock_for, next_in_cycle,
+        next_pending_action, now_action_at, now_object_tapped, now_workflow_sections,
+        object_view_action_at, object_view_content, object_view_details,
+        object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         pressed_key_from_keys, pressed_tab_from_touch, remote_pair_content_cards,
@@ -13461,6 +13505,36 @@ mod tests {
         let src = include_str!("main.rs");
         assert!(src.contains("/sys/class/net/wlan0/operstate"));
         assert!(src.contains(".with_network_up(wifi_is_up())"));
+    }
+
+    #[test]
+    fn cellular_listing_ignores_usb_ncm_wifi_and_google_modemctl() {
+        let panther = "aware_nmi0 gre0 ifb1 usb0 wlan0 wlan1 lo";
+        assert!(cellular_ifaces_from_net_listing(panther).is_empty());
+        assert_eq!(
+            cellular_ifaces_from_net_listing("rmnet_data0 usb0 wlan0"),
+            vec!["rmnet_data0".to_string()]
+        );
+        assert_eq!(
+            cellular_ifaces_from_net_listing("wwan0 qmimux0"),
+            vec!["wwan0".to_string(), "qmimux0".to_string()]
+        );
+        assert!(cellular_ifaces_from_net_listing("google_modemctl").is_empty());
+    }
+
+    #[test]
+    fn cellular_row_names_live_ifaces_and_never_invents_signal() {
+        let mut facts = me_fixture_facts();
+        facts.cellular_ifaces = vec!["rmnet_data0".into()];
+        let rows = flatten_me_rows(&me_system_sections(&facts));
+        let cellular = rows
+            .iter()
+            .find(|row| row.card.label == "Сотовая сеть")
+            .expect("cellular");
+        assert_eq!(cellular.card.status, "rmnet_data0");
+        assert!(cellular.dispatch.is_none());
+        assert!(!cellular.card.status.contains("LTE"));
+        assert!(!cellular.card.status.contains("dBm"));
     }
 
     #[test]
@@ -15780,6 +15854,14 @@ mod tests {
         assert!(!rows
             .iter()
             .any(|row| row.dispatch == Some("cycle_space_color")));
+        let cellular = rows
+            .iter()
+            .find(|row| row.card.label == "Сотовая сеть")
+            .expect("cellular");
+        assert_eq!(cellular.card.status, "Нет модема");
+        assert!(cellular.dispatch.is_none());
+        assert!(!cellular.card.status.contains("dBm"));
+        assert!(!cellular.card.status.contains("полос"));
     }
 
     #[test]

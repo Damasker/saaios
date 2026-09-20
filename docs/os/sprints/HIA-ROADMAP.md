@@ -572,5 +572,6 @@ PCE-25 identity закрыт на host (ADR-249). Windowed displayd на x86 з�
 закрыт на host (ADR-252). Shared Space/Entity/Intent/Observation
 across nodes is the D remainder, не PCE-01..24. Volume на panther
 (ADR-253). Power button lock/sleep на panther (ADR-254; `5ba2ef7b…`;
-pid 2586; event1 open). CRTC blank
+pid 2586; event1 open). Cellular row is a live bearer or
+«Нет модема» (ADR-255). CRTC blank
 остаётся displayd. Thin visual tuning (ADR-213) не next.
