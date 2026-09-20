@@ -163,6 +163,7 @@ host-only derived view.
 | VUI-09 leftover text budget | badge/kicker/swatch/app-tile stay named below Caption **на panther** (`3850427a…`; ADR-201; Приложения, no launch; leave Сейчас) |
 | VUI-09 v2 Inbox rows | `EventRow` → `open_object` on `stacked_row_rect` **host** (ADR-202; chrome unchanged `3850427a…`; Inbox tab, no row tap; leave Сейчас) |
 | VUI-09 v2 Spaces rows | `SpaceRow` → `select_space:<loc>` on `stacked_row_rect` **host** (ADR-203; chrome unchanged `3850427a…`; Spaces tab, no row tap; leave Сейчас) |
+| VUI-09 v2 Me rows | `SettingRow` → interned `loc` on `stacked_row_rect` **host** (ADR-204; chrome unchanged `3850427a…`; Система tab, no row tap; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

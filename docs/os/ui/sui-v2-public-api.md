@@ -44,6 +44,12 @@ labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `a11y = Button` (ADR-203), and the same nested tabs. Status
 `SpaceRow` invents no `select_space`.
 
+[`examples/me-public.sui`](examples/me-public.sui) is the
+labelled Me sample: `ContextHeader`, `SettingRow` with
+`a11y = Button` and interned `loc = cycle_timezone` (ADR-204),
+and the same nested tabs. Status `SettingRow` and `SystemSection`
+invent no interned action.
+
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
 ```
@@ -75,7 +81,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   Nested `row` ids own the NOW footer. `ObjectSummary` owns the
   NOW object hit (`open_object`, ADR-200). `EventRow` owns Inbox
   stacked hits (ADR-202). `SpaceRow` owns Spaces stacked hits
-  (ADR-203).
+  (ADR-203). `SettingRow` owns Me stacked hits (interned `loc`,
+  ADR-204).
 
 ## Migration
 
@@ -96,6 +103,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Inbox `EventRow` with `a11y = Status` | stacked rect, no `open_object` |
 | Wanting Spaces hit-test from a v2 screen | `component SpaceRow` + `a11y = Button` + `layout_v2` |
 | Spaces `SpaceRow` with `a11y = Status` | stacked rect, no `select_space` |
+| Wanting Me hit-test from a v2 screen | `component SettingRow` + `a11y = Button` + interned `loc` + `layout_v2` |
+| Me `SettingRow` with `a11y = Status` | stacked rect, no interned action |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

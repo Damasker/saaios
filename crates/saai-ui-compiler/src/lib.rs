@@ -1034,6 +1034,17 @@ mod tests {
         assert_eq!(spaces.components[1].type_name, "SpaceRow");
         assert_eq!(spaces.components[1].props.a11y.as_deref(), Some("Button"));
         assert!(guide.contains("spaces-public.sui"));
+        const ME: &str = include_str!("../../../docs/os/ui/examples/me-public.sui");
+        let me = compile_v2_public(ME).unwrap();
+        assert_eq!(me.id, "me");
+        assert!(!me.is_privileged());
+        assert_eq!(me.components[1].type_name, "SettingRow");
+        assert_eq!(me.components[1].props.a11y.as_deref(), Some("Button"));
+        assert_eq!(
+            me.components[1].props.loc.as_deref(),
+            Some("cycle_timezone")
+        );
+        assert!(guide.contains("me-public.sui"));
         for name in saai_ui_core::public_gallery_type_names() {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
         }
@@ -1078,6 +1089,8 @@ mod tests {
         assert!(ledger.contains("stacked_row_rect"));
         assert!(ledger.contains("ADR-203"));
         assert!(ledger.contains("select_space"));
+        assert!(ledger.contains("ADR-204"));
+        assert!(ledger.contains("cycle_timezone"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1093,6 +1106,8 @@ mod tests {
         assert!(limits.contains("EventRow"));
         assert!(limits.contains("ADR-203"));
         assert!(limits.contains("SpaceRow"));
+        assert!(limits.contains("ADR-204"));
+        assert!(limits.contains("SettingRow"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

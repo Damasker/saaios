@@ -62,6 +62,7 @@ ADR-200 `ObjectSummary` docks as the NOW object hit (`open_object`, host).
 ADR-201 leftover text sizes stay below Caption; apps grid on panther, no launch.
 ADR-202 `EventRow` docks as Inbox stacked hits (`open_object`, host).
 ADR-203 `SpaceRow` docks as Spaces stacked hits (`select_space:<loc>`, host).
+ADR-204 `SettingRow` docks as Me stacked hits (interned `cycle_timezone`, host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

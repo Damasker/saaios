@@ -466,7 +466,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   ADR-201 keeps badge, gallery kicker/swatch, and app-tile labels
   named below Caption. ADR-202 docks `EventRow` as Inbox stacked
   hits (`open_object`). ADR-203 docks `SpaceRow` as Spaces stacked
-  hits (`select_space:<loc>`).
+  hits (`select_space:<loc>`). ADR-204 docks `SettingRow` as Me stacked
+  hits (interned `loc`).
 
 ### 7.6 `TaskSummary`
 
@@ -548,7 +549,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Distinct from `CapabilityRow`: this is a device setting, not an app
   grant list.
 - First real consumer: `me_system_sections` (ADR-126). Still flattened
-  to `ActionCardView` for `draw_context_row_list` (ADR-141).
+  to `ActionCardView` for `draw_context_row_list` (ADR-141). ADR-204
+  docks public `SettingRow` onto `stacked_row_rect`; live flatten
+  and scroll stay procedural.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.11 `CapabilityRow`
