@@ -1,6 +1,6 @@
 # SaaiOS Memory, Learning & Provenance — delivery roadmap
 
-Status: **MEM-00/01/02/05 host complete. MEM-03 record v2 host (ADR-262). MEM-06 erase host (ADR-263). MEM-07 UAM on mutation host (ADR-283).**
+Status: **MEM-00/01/02/05 host complete. MEM-03 record v2 host (ADR-262). MEM-04 projection host (ADR-285). MEM-06 erase host (ADR-263). MEM-07 UAM on mutation host (ADR-283).**
 Next phone step: flash `saaios-runtime` (P0 in [PIXEL-PATH.md](PIXEL-PATH.md))
 with scoped identity, `None≠All`, and no model remember/forget. Review UI
 rides VUI-06. Learning stays after typed record + erase.
@@ -24,7 +24,7 @@ User can inspect, correct, and erase without AI.
 | MEM-01 | `(space_id, key)` compaction; labelled context; Work/Home same-key tests | **Done** (host) | flash runtime |
 | MEM-02 | `None` is not All; explicit `MemoryAccessScope::All` | **Done** (host) | with P0 flash |
 | MEM-03 | `MemoryRecord` v2 + legacy JSONL parser; provenance server-assigned | **Done** (host, ADR-262) | no |
-| MEM-04 | `MemoryContextProjection`; kind labels; sensitivity filter | Backlog | no |
+| MEM-04 | `MemoryContextProjection`; kind labels; sensitivity filter | **Done** (host, ADR-285) | no |
 | MEM-05 | Explicit remember/correct; model cannot write Explicit* | **Done** (host: model has no remember/forget tools) | with P0 flash |
 | MEM-06 | Invalidate vs Erase; atomic JSONL rewrite | **Done** (host, ADR-263/284) | no |
 | MEM-07 | UAM on memory mutation (reuse ADR-124 Principal) | **Done** (host, ADR-283) | no |
@@ -96,4 +96,19 @@ recall is not a mutation.
 **Rollback:** drop the two runtime checks.
 
 **Threat:** none — host gate, no phone binary.
+
+## MEM-04
+
+**Goal:** model context names kind and scope. Restricted stays off
+the remote prompt and `memory.recall`.
+
+**Change:** `MemoryContextProjection`. Compact views drop Restricted.
+`format_context` prints `[space kind] key: value`.
+
+**Test:** preference labelled; Restricted omitted from projection and
+recall; "Known facts" still absent.
+
+**Rollback:** restore the unlabelled loop.
+
+**Threat:** none — host projection, no phone binary.
 

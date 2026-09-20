@@ -251,6 +251,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - AUTH-09 revoke GrantStore/session/envelope (ADR-279; host; no chrome, no Отозвать)
 - Confirm Once is a OneShot grant (ADR-280; host; no runtime flash)
 - MEM-03 MemoryRecord v2 + legacy JSONL view (ADR-262; host)
+- MEM-04 MemoryContextProjection kind labels; Restricted off model (ADR-285; host)
 - MEM-06 invalidate vs erase (ADR-263; JSON erase ADR-284; host; no runtime flash)
 - MEM-07 UAM on memory mutation (ADR-283; host; no runtime flash)
 - MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome host ADR-268, panther waits)
