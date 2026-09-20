@@ -1,6 +1,6 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host.**
+Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275).**
 Next phone work is still AUTH-08/10 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -22,7 +22,7 @@ No ambient authority. No new policyd.
 | AUTH-02 | PolicyEngine adapter (same verdicts) | **Done** (host, ADR-260) | no |
 | AUTH-03 | Scoped session grants (not tool-name HashSet) | **Done** (host, ADR-261) | no |
 | AUTH-04 | Fix `decide_named` live grants; confirmation binding | **Done** (host) | no |
-| AUTH-05 | OAM/IRAB Principal on AuthorityRequest | Backlog | no |
+| AUTH-05 | OAM/IRAB Principal on AuthorityRequest | **Done** (host, ADR-275) | no |
 | AUTH-06 | Worker DelegationEnvelope | Backlog | no |
 | AUTH-07 | Automation Principal | Backlog | no |
 | AUTH-08 | Portal adapter; GrantStore stays | Backlog | **yes** |
@@ -85,3 +85,20 @@ mutated pid is rejected; key order does not break the bind.
 **Rollback:** revert `policy-engine` + `ai-runtime` confirm gate.
 
 **Threat:** forged confirm with different args no longer executes.
+
+## AUTH-05
+
+**Goal:** OAM/IRAB name Principal + semantic action + target on
+`AuthorityRequest`. Policy uses bound ToolSpec risk even when the
+action id is not the tool name.
+
+**Change:** `decide_request` keeps scoped Principal when spec.name
+differs. OAM `preflight` / `execute_if_allowed` call `decide_request`.
+IRAB Direct builds the request and does not evaluate policy.
+
+**Test:** inspect is `display.inspect` not `system.identity`;
+unverified Deny; worker does not inherit owner grant.
+
+**Rollback:** restore `decide_named` in OAM.
+
+**Threat:** none — host adapter, no phone binary.

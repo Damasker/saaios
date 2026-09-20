@@ -8,7 +8,10 @@ mod execute;
 mod registry;
 mod spec;
 
-pub use execute::{execute_if_allowed, preflight, ExecuteError};
+pub use execute::{
+    authority_request, execute_if_allowed, execute_if_allowed_for, preflight, preflight_for,
+    ExecuteError,
+};
 pub use registry::ObjectActionRegistry;
 pub use spec::{
     bind_arguments, display_inspect_spec, ActionAvailability, ActionResolution,
@@ -552,6 +555,96 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, ExecuteError::StaleObject));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn preflight_request_is_semantic_action_not_tool_name() {
+        let mut registry = ObjectActionRegistry::new();
+        registry.register(display_inspect_spec()).unwrap();
+        let (tool, _) = counting("system.identity", RiskLevel::Low, false);
+        let mut tools = ToolRegistry::new();
+        tools.register(tool);
+        let object = object("saaios.display", Map::new());
+        let action = only_resolved(resolved(&registry, &object, &tools));
+        let request = authority_request(
+            &action,
+            saai_authority::Principal::local_user(),
+            saai_authority::IdentityProof::LocalSystemSurface,
+        );
+        assert_eq!(
+            saai_authority::request_operation_id(&request),
+            Some("display.inspect")
+        );
+        assert_eq!(action.tool_name, "system.identity");
+        assert_eq!(request.target.as_ref(), Some(&action.target));
+        let policy = PolicyEngine::new();
+        assert_eq!(
+            preflight(&policy, &tools, &action).verdict,
+            PolicyVerdict::Allow
+        );
+    }
+
+    #[test]
+    fn unverified_principal_is_denied() {
+        let mut registry = ObjectActionRegistry::new();
+        registry.register(display_inspect_spec()).unwrap();
+        let (tool, _) = counting("system.identity", RiskLevel::Low, false);
+        let mut tools = ToolRegistry::new();
+        tools.register(tool);
+        let object = object("saaios.display", Map::new());
+        let action = only_resolved(resolved(&registry, &object, &tools));
+        let mut request = authority_request(
+            &action,
+            saai_authority::Principal::local_user(),
+            saai_authority::IdentityProof::LocalSystemSurface,
+        );
+        request.proof = saai_authority::IdentityProof::Unverified;
+        let policy = PolicyEngine::new();
+        assert_eq!(
+            preflight_for(&policy, &tools, &action, &request).verdict,
+            PolicyVerdict::Deny
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_does_not_inherit_owner_grant() {
+        let mut registry = ObjectActionRegistry::new();
+        registry
+            .register(action_spec(
+                "process.stop",
+                "saai.local-system",
+                "saaios.display",
+                "process.kill_request",
+                vec![ArgumentBinding {
+                    argument: "pid".into(),
+                    source: ArgumentSource::Constant(json!(4312)),
+                }],
+                vec![],
+            ))
+            .unwrap();
+        let (tool, calls) = counting("process.kill_request", RiskLevel::High, true);
+        let mut tools = ToolRegistry::new();
+        tools.register(tool);
+        let object = object("saaios.display", Map::new());
+        let action = only_resolved(resolved(&registry, &object, &tools));
+        let policy = PolicyEngine::new();
+        policy.grant_session("process.stop");
+        assert_eq!(
+            preflight(&policy, &tools, &action).verdict,
+            PolicyVerdict::Allow
+        );
+        let worker = authority_request(
+            &action,
+            saai_authority::Principal::worker(Uuid::new_v4()),
+            saai_authority::IdentityProof::DelegatedWorker {
+                execution_id: Uuid::new_v4(),
+            },
+        );
+        let error = execute_if_allowed_for(&policy, &tools, &action, &object, &ctx(), &worker)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ExecuteError::NeedsConfirmation(_)));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

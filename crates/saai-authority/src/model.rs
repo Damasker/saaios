@@ -54,6 +54,22 @@ pub struct Principal {
     pub kind: PrincipalKind,
 }
 
+impl Principal {
+    pub fn local_user() -> Self {
+        Self {
+            id: PrincipalId::owner(),
+            kind: PrincipalKind::LocalUser,
+        }
+    }
+
+    pub fn worker(execution_id: Uuid) -> Self {
+        Self {
+            id: PrincipalId::worker(execution_id),
+            kind: PrincipalKind::Worker,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum IdentityProof {
@@ -133,10 +149,7 @@ pub enum PolicyReasonCode {
 impl AuthorityRequest {
     pub fn local_user_action(action_id: &str, target: Option<ObjectRef>, arguments: Value) -> Self {
         Self {
-            principal: Principal {
-                id: PrincipalId::owner(),
-                kind: PrincipalKind::LocalUser,
-            },
+            principal: Principal::local_user(),
             proof: IdentityProof::LocalSystemSurface,
             operation: AuthorityOperation::SemanticAction {
                 action_id: action_id.into(),

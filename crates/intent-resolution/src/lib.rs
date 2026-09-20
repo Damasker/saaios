@@ -355,4 +355,54 @@ mod tests {
             other => panic!("expected plan, got {other:?}"),
         }
     }
+
+    #[test]
+    fn direct_action_request_names_local_user_and_target() {
+        let object = display();
+        let action = action_of(resolve_deterministic(
+            &input_for(&object, "покажи его состояние"),
+            &allowed_for(&object, &["display.inspect"]),
+        ));
+        let request = action.authority_request(
+            saai_authority::Principal::local_user(),
+            saai_authority::IdentityProof::LocalSystemSurface,
+        );
+        assert_eq!(
+            saai_authority::request_operation_id(&request),
+            Some("display.inspect")
+        );
+        assert_eq!(request.target, Some(action.target.clone()));
+        assert_eq!(
+            request.principal.kind,
+            saai_authority::PrincipalKind::LocalUser
+        );
+        assert_eq!(
+            request.proof,
+            saai_authority::IdentityProof::LocalSystemSurface
+        );
+        assert_eq!(request.context.focused_object, Some(action.target));
+    }
+
+    #[test]
+    fn worker_direct_request_does_not_become_owner() {
+        let object = display();
+        let action = action_of(resolve_deterministic(
+            &input_for(&object, "покажи его состояние"),
+            &allowed_for(&object, &["display.inspect"]),
+        ));
+        let execution_id = Uuid::new_v4();
+        let request = action.authority_request(
+            saai_authority::Principal::worker(execution_id),
+            saai_authority::IdentityProof::DelegatedWorker { execution_id },
+        );
+        assert_eq!(
+            request.principal.id,
+            saai_authority::PrincipalId::worker(execution_id)
+        );
+        assert_ne!(request.principal.id, saai_authority::PrincipalId::owner());
+        assert_eq!(
+            request.principal.kind,
+            saai_authority::PrincipalKind::Worker
+        );
+    }
 }

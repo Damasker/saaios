@@ -1,3 +1,4 @@
+use saai_authority::{AuthorityRequest, IdentityProof, Principal};
 use saai_entity_store::ObjectRef;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,6 +32,24 @@ impl ActionResolution {
     pub fn is_stale(&self, current_revision: u64) -> bool {
         self.target_revision
             .is_some_and(|captured| captured != current_revision)
+    }
+
+    /// AUTH-05: Direct names Principal + semantic action + target.
+    /// IRAB does not evaluate policy.
+    pub fn authority_request(
+        &self,
+        principal: Principal,
+        proof: IdentityProof,
+    ) -> AuthorityRequest {
+        let mut request = AuthorityRequest::local_user_action(
+            &self.action_id,
+            Some(self.target.clone()),
+            self.parameters.clone(),
+        );
+        request.principal = principal;
+        request.proof = proof;
+        request.context.focused_object = Some(self.target.clone());
+        request
     }
 }
 

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 policy-engine.workspace = true
 protocol.workspace = true
+saai-authority.workspace = true
 saai-entity-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true

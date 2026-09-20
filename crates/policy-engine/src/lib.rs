@@ -30,11 +30,20 @@ impl PolicyEngine {
     }
 
     pub fn decide(&self, spec: &ToolSpec, args: &Value) -> PolicyDecision {
-        self.decide_scoped(spec, args, &PrincipalId::owner(), None, &[])
+        self.decide_scoped(
+            spec,
+            args,
+            &PrincipalId::owner(),
+            None,
+            &[],
+            &[spec.name.as_str()],
+        )
     }
 
-    /// AUTH-02: same Allow/AskUser/Deny as `decide_named`, plus identity
-    /// and scoped grants from the request. Unverified is Deny.
+    /// AUTH-02/05: same Allow/AskUser/Deny as `decide_named`, plus
+    /// identity and scoped grants. The operation may be an OAM/IRAB
+    /// semantic action; `spec` is the bound tool's risk metadata.
+    /// Unverified is Deny.
     pub fn decide_request(
         &self,
         request: &AuthorityRequest,
@@ -46,21 +55,30 @@ impl PolicyEngine {
                 reason: "identity unverified".into(),
             };
         }
-        let Some(tool) = request_operation_id(request) else {
+        let Some(operation) = request_operation_id(request) else {
             return PolicyDecision {
                 verdict: PolicyVerdict::Deny,
                 reason: "unknown tool ``".into(),
             };
         };
         match spec {
-            Some(spec) if spec.name == tool => self.decide_scoped(
-                spec,
-                &request.arguments,
-                &request.principal.id,
-                request.target.as_ref(),
-                &request.context.space_ids,
-            ),
-            Some(_) | None => self.decide_named(tool, None, &request.arguments),
+            Some(spec) => {
+                let name = spec.name.as_str();
+                let grant_ops: Vec<&str> = if name == operation {
+                    vec![operation]
+                } else {
+                    vec![operation, name]
+                };
+                self.decide_scoped(
+                    spec,
+                    &request.arguments,
+                    &request.principal.id,
+                    request.target.as_ref(),
+                    &request.context.space_ids,
+                    &grant_ops,
+                )
+            }
+            None => self.decide_named(operation, None, &request.arguments),
         }
     }
 
@@ -71,6 +89,7 @@ impl PolicyEngine {
         principal: &PrincipalId,
         target: Option<&ObjectRef>,
         spaces: &[String],
+        grant_ops: &[&str],
     ) -> PolicyDecision {
         if Self::hard_deny(&spec.name) {
             return PolicyDecision {
@@ -101,7 +120,7 @@ impl PolicyEngine {
             }
         }
 
-        if self.take_matching_grant(&spec.name, principal, target, spaces) {
+        if self.take_matching_grant(grant_ops, principal, target, spaces) {
             return PolicyDecision {
                 verdict: PolicyVerdict::Allow,
                 reason: "session grant".into(),
@@ -122,7 +141,7 @@ impl PolicyEngine {
 
     fn take_matching_grant(
         &self,
-        tool: &str,
+        operations: &[&str],
         principal: &PrincipalId,
         target: Option<&ObjectRef>,
         spaces: &[String],
@@ -131,9 +150,11 @@ impl PolicyEngine {
             return false;
         };
         let now = chrono::Utc::now();
-        let index = grants
-            .iter()
-            .position(|grant| grant_covers(grant, principal, tool, target, spaces, now));
+        let index = grants.iter().position(|grant| {
+            operations
+                .iter()
+                .any(|operation| grant_covers(grant, principal, operation, target, spaces, now))
+        });
         let Some(index) = index else {
             return false;
         };
@@ -616,5 +637,52 @@ mod tests {
             validity: GrantValidity::Persistent,
         }));
         assert!(!engine.has_session_grant("process.kill_request"));
+    }
+
+    #[test]
+    fn semantic_action_uses_bound_tool_risk() {
+        let engine = PolicyEngine::new();
+        let object = ObjectRef::entity(Uuid::new_v4());
+        let request =
+            AuthorityRequest::local_user_action("display.inspect", Some(object.clone()), json!({}));
+        assert_eq!(
+            engine
+                .decide_request(&request, Some(&metrics_spec()))
+                .verdict,
+            PolicyVerdict::Allow
+        );
+        let mut unverified = request.clone();
+        unverified.proof = IdentityProof::Unverified;
+        assert_eq!(
+            engine
+                .decide_request(&unverified, Some(&metrics_spec()))
+                .verdict,
+            PolicyVerdict::Deny
+        );
+    }
+
+    #[test]
+    fn semantic_grant_does_not_cover_worker() {
+        let engine = PolicyEngine::new();
+        engine.grant_session("display.inspect");
+        let object = ObjectRef::entity(Uuid::new_v4());
+        let owner = AuthorityRequest::local_user_action(
+            "display.inspect",
+            Some(object),
+            json!({"pid": 4312}),
+        );
+        assert_eq!(
+            engine.decide_request(&owner, Some(&kill_spec())).verdict,
+            PolicyVerdict::Allow
+        );
+        let mut worker = owner.clone();
+        worker.principal = saai_authority::Principal::worker(Uuid::new_v4());
+        worker.proof = IdentityProof::DelegatedWorker {
+            execution_id: Uuid::new_v4(),
+        };
+        assert_eq!(
+            engine.decide_request(&worker, Some(&kill_spec())).verdict,
+            PolicyVerdict::AskUser
+        );
     }
 }
