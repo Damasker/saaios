@@ -120,6 +120,8 @@ ADR-258 Bluetooth adapter presence is hci0, not bt-scan.
 ADR-259 WORK-03: Task Done only from Fresh matching Observation.
 ADR-260 PolicyEngine adapter keeps the same Allow/AskUser/Deny verdicts.
 ADR-261 session grants are scoped records, not a tool-name HashSet.
+ADR-262 MemoryRecord v2; legacy JSONL is a view; provenance is assigned.
+ADR-263 forget invalidates; erase rewrites the JSONL without the value.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

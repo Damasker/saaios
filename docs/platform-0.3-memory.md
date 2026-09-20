@@ -22,8 +22,9 @@ Disable: `--no-memory`.
 Latest non-deleted record wins per `(space_id, key)` (ADR-125 / MEM-01).
 The same key may exist independently in Work and Home. A Space-local
 record overrides a Global record with the same key for that Space only.
-`forget` writes a soft-delete tombstone for that identity; physical erase
-is MEM-06.
+`forget` writes a soft-delete tombstone for that identity; the value
+stays on disk (MEM-06 invalidate). Physical erase rewrites the JSONL
+without that identity (ADR-263).
 
 ## Tools
 
