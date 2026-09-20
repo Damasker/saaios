@@ -233,7 +233,8 @@ diagnose (ADR-238, `351b0b6f…`).
 - Volume: tinymix Digital PCM Volume 400–817 **на panther** (ADR-253; `79e753fc…`; pid 2480; `/run/audio-volume`=712)
 - Power: KEY_POWER from `/dev/input/power-button` **на panther** (ADR-254; `5ba2ef7b…`; pid 2586; fd 16 → event1; dest-no-lock)
 - Modem: cellular row from live `rmnet`/`wwan` bearer; panther has none (ADR-255; host)
-- Cameras / sound besides PCM / BT-pairing — следующие E-слайсы
+- Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
+- Sound besides PCM / BT-pairing — следующие E-слайсы
 - Голос на Pixel не открывать (ADR-092 AoC)
 
 ## Что сознательно не делать сейчас

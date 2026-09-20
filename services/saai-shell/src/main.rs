@@ -1262,6 +1262,34 @@ fn cellular_ifaces() -> Vec<String> {
     names
 }
 
+/// Capture nodes in `video4linux`. `v4l-touch*` is the panel, not a
+/// camera (ADR-256). No `/dev/video*` on panther as of 2026-09-20.
+fn capture_v4l_name(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty() && name.starts_with("video") && !name.contains("touch")
+}
+
+fn capture_nodes_from_v4l_listing(listing: &str) -> Vec<String> {
+    listing
+        .split_whitespace()
+        .filter(|name| capture_v4l_name(name))
+        .map(|name| name.to_string())
+        .collect()
+}
+
+fn capture_nodes() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir("/sys/class/video4linux") else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| capture_v4l_name(name))
+        .collect();
+    names.sort();
+    names
+}
+
 fn bluetooth_adapter_present() -> bool {
     std::path::Path::new(BT_SCAN_BIN).exists()
 }
@@ -6097,6 +6125,7 @@ struct MeFacts {
     bluetooth_paired: usize,
     bluetooth_present: bool,
     cellular_ifaces: Vec<String>,
+    camera_nodes: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
     contrast_pct: u8,
@@ -6186,6 +6215,11 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 )
                 .row,
                 SettingRow::readout("Обновления", format!("Слот {}", facts.boot_slot)).row,
+                if facts.camera_nodes.is_empty() {
+                    SettingRow::readout("Камера", "Нет узла захвата").row
+                } else {
+                    SettingRow::readout("Камера", facts.camera_nodes.join(" · ")).row
+                },
                 SettingRow::cycle(
                     "Часовой пояс",
                     format_utc_offset(facts.utc_offset_minutes),
@@ -6551,6 +6585,7 @@ fn me_fixture_facts() -> MeFacts {
         bluetooth_paired: 0,
         bluetooth_present: true,
         cellular_ifaces: Vec::new(),
+        camera_nodes: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
         contrast_pct: 0,
@@ -10402,6 +10437,7 @@ impl Shell {
             bluetooth_paired: bluetooth_paired_count(),
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
+            camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
             contrast_pct: self.settings.contrast_pct,
@@ -11678,18 +11714,18 @@ mod tests {
         bluetooth_card_from_row, bluetooth_header, bluetooth_list_action_at,
         bluetooth_list_pattern, bluetooth_list_row_count, bluetooth_list_rows,
         bluetooth_pair_error_from, bluetooth_scan_pattern, calibration_requested, capability_label,
-        cellular_ifaces_from_net_listing, consent_action_at, consent_content_cards, consent_header,
-        content_action_at, dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header,
-        diagnostic_row, diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space,
-        ensure_me_row_cache, field_shows_context_focus, flatten_me_rows, format_utc_offset,
-        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
-        intent_compose_header, intent_field_rect, intent_input_field, known_surfaces,
-        lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
-        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, logical_surface_size,
-        me_fixture_facts, me_header, me_system_sections, motion_clock_for, next_in_cycle,
-        next_pending_action, now_action_at, now_object_tapped, now_workflow_sections,
-        object_view_action_at, object_view_content, object_view_details,
-        object_view_permission_pattern, object_view_summary, orb_action_at,
+        capture_nodes_from_v4l_listing, cellular_ifaces_from_net_listing, consent_action_at,
+        consent_content_cards, consent_header, content_action_at, dev_surface_back_tapped,
+        diagnostic_card_from_row, diagnostic_header, diagnostic_row, diagnostic_v2_source,
+        drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
+        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
+        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
+        intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
+        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
+        lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
+        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
+        now_object_tapped, now_workflow_sections, object_view_action_at, object_view_content,
+        object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         pressed_key_from_keys, pressed_tab_from_touch, remote_pair_content_cards,
@@ -13535,6 +13571,30 @@ mod tests {
         assert!(cellular.dispatch.is_none());
         assert!(!cellular.card.status.contains("LTE"));
         assert!(!cellular.card.status.contains("dBm"));
+    }
+
+    #[test]
+    fn capture_listing_ignores_v4l_touch_and_keeps_video_nodes() {
+        assert!(capture_nodes_from_v4l_listing("v4l-touch0").is_empty());
+        assert_eq!(
+            capture_nodes_from_v4l_listing("video0 v4l-touch0 video1"),
+            vec!["video0".to_string(), "video1".to_string()]
+        );
+    }
+
+    #[test]
+    fn camera_row_names_live_nodes_and_never_invents_preview() {
+        let mut facts = me_fixture_facts();
+        facts.camera_nodes = vec!["video0".into()];
+        let rows = flatten_me_rows(&me_system_sections(&facts));
+        let camera = rows
+            .iter()
+            .find(|row| row.card.label == "Камера")
+            .expect("camera");
+        assert_eq!(camera.card.status, "video0");
+        assert!(camera.dispatch.is_none());
+        assert!(!camera.card.status.contains("preview"));
+        assert!(!camera.card.status.contains("Android"));
     }
 
     #[test]
@@ -15808,7 +15868,7 @@ mod tests {
             sections.last().map(|section| section.title.as_str()),
             Some("Приложения")
         );
-        let rows = flatten_me_rows(&sections);
+        let rows = flatten_me_rows(std::slice::from_ref(sections.last().unwrap()));
         let app = rows
             .iter()
             .find(|row| row.card.label == "Камера")
@@ -15862,6 +15922,13 @@ mod tests {
         assert!(cellular.dispatch.is_none());
         assert!(!cellular.card.status.contains("dBm"));
         assert!(!cellular.card.status.contains("полос"));
+        let camera = rows
+            .iter()
+            .find(|row| row.card.label == "Камера")
+            .expect("camera");
+        assert_eq!(camera.card.status, "Нет узла захвата");
+        assert!(camera.dispatch.is_none());
+        assert!(!camera.card.status.contains("preview"));
     }
 
     #[test]
