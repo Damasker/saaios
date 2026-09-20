@@ -170,6 +170,7 @@ host-only derived view.
 | VUI-09 v2 capability rows | `CapabilityRow` occupies `stacked_row_rect` with no action **host** (ADR-208; privileged; `compile_v2_public` rejects; no Me app tap; leave Сейчас) |
 | VUI-09 lock cycle | no-PIN tap-unlock **на panther** (`3850427a…`; ADR-209; marker restored; leave Сейчас) |
 | VUI-09 display restart | `saai-displayd` kill + native-init respawn **на panther** (`3850427a…`; ADR-210; marker on; leave Сейчас) |
+| VUI-09 cold boot | `reboot -f` lock then tap-unlock **на panther** (`3850427a…`; ADR-211; marker restored; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

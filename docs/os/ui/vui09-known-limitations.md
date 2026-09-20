@@ -8,8 +8,8 @@ Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted until a shell-legal memory read exists.
 
 Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
-(ADR-209). Display restart is proven (ADR-210). This page does not
-reboot.
+(ADR-209). Display restart is proven (ADR-210). Cold boot is proven
+(ADR-211).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -20,6 +20,7 @@ The verification ledger stays in
 |---|---|
 | lock / unlock cycle | ADR-209; HEAD `3850427a…`; PIN null; tap-unlock; `/run/saaios/dev-no-lock` restored |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
+| cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 
 ## Session-blocked live cells
 
@@ -27,12 +28,12 @@ These stay **open**. They are not proven by this pass.
 
 | Cell | Why this session does not run it |
 |---|---|
-| cold boot | `/run` is lost across reboot; the no-lock marker would drop. |
 | daylight / indoor / dark | No booth this session. |
 | 7-tap gallery | Not a DevSurface-chrome slice. Do not 7-tap. |
 
 Unlocked `saai-shell` restart (ADR-192) is not a display restart.
-Lock cycle is ADR-209. Display restart is ADR-210.
+Lock cycle is ADR-209. Display restart is ADR-210. Cold boot is
+ADR-211.
 
 ## Compiler and layout
 
@@ -104,10 +105,10 @@ Ordered. Items 1–3 and 7–17 are done
 5. Add `SpaceDetail` / `MemoryReview` / `ChatThread` / `Widget` to the
    vocabulary only when a shell-legal consumer exists. MEM-08 stays
    omitted until that memory read exists.
-6. Run remaining session-blocked v1 cells (cold boot, daylight
-   booth, 7-tap gallery) as operator-approved device work. Lock
-   cycle is proven (ADR-209). Display restart is proven (ADR-210).
-   They are Visual v1 gates, not v2 features.
+6. Run remaining session-blocked v1 cells (daylight booth, 7-tap
+   gallery) as operator-approved device work. Lock cycle is proven
+   (ADR-209). Display restart is proven (ADR-210). Cold boot is
+   proven (ADR-211). They are Visual v1 gates, not v2 features.
 7. ~~Name tabs inside the v2 grammar so `layout_v2()` does not borrow
    `compile_v1_rollback()` ids.~~ Host: nested `tab` (ADR-196). Do not
    attach `layout_v2()` to `build.rs` yet.
