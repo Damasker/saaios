@@ -568,5 +568,5 @@ PCE-25  Physical Multi-node Test Lab
 завершены с приведёнными в документе доказательствами и ограничениями.
 
 Голос остаётся заблокирован аппаратной авторизацией AoC (ADR-092).
-PCE-25 identity закрыт на host (ADR-249). Дальше в D — windowed
-displayd на x86, не PCE-01..24. Thin visual tuning (ADR-213) не next.
+PCE-25 identity закрыт на host (ADR-249). Windowed displayd на x86
+закрыт на host (ADR-250). Дальше в D — pointer+USB HID, не PCE-01..24.

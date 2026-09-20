@@ -76,6 +76,45 @@ use smithay::{
     },
 };
 
+/// Laptop surface (PCE-25). Smaller than the host output; not a phone panel.
+const WINDOWED_WIDTH: i32 = 1280;
+const WINDOWED_HEIGHT: i32 = 800;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ToplevelGeometry {
+    width: i32,
+    height: i32,
+    fullscreen: bool,
+}
+
+fn output_model_for(phone_gate: bool) -> &'static str {
+    if phone_gate {
+        "panther"
+    } else {
+        "x86"
+    }
+}
+
+fn toplevel_geometry_for(
+    phone_gate: bool,
+    output_width: i32,
+    output_height: i32,
+) -> ToplevelGeometry {
+    if phone_gate {
+        ToplevelGeometry {
+            width: output_width,
+            height: output_height,
+            fullscreen: true,
+        }
+    } else {
+        ToplevelGeometry {
+            width: WINDOWED_WIDTH,
+            height: WINDOWED_HEIGHT,
+            fullscreen: false,
+        }
+    }
+}
+
 #[derive(Default)]
 struct SaaiClientState {
     compositor_state: CompositorClientState,
@@ -1145,17 +1184,19 @@ impl XdgShellHandler for State {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        println!("saai-displayd: new xdg_toplevel");
-        // Was hardcoded to 800x480 (an S02 headless-test leftover, from
-        // before the real panther panel size was known) regardless of
-        // what the client actually asked for -- real bug, confirmed on
-        // hardware: saai-shell's own fullscreen request was silently
-        // overridden by this every single time, so every visual test
-        // this sprint ran against an 800x480 toplevel, not the real
-        // 1080x2400 panel.
-        let (width, height) = (self.output_width, self.output_height);
+        let geo = toplevel_geometry_for(
+            cfg!(feature = "panther-hardware"),
+            self.output_width,
+            self.output_height,
+        );
+        println!(
+            "saai-displayd: new xdg_toplevel {}x{} fullscreen={}",
+            geo.width, geo.height, geo.fullscreen
+        );
+        // Panther stays the phone panel. x86 is a window inside the host
+        // output, not a second panther (ADR-250).
         surface.with_pending_state(|state| {
-            state.size = Some((width, height).into());
+            state.size = Some((geo.width, geo.height).into());
         });
         surface.send_configure();
         self.toplevels.insert(surface.wl_surface().clone(), surface);
@@ -1395,7 +1436,7 @@ fn main() {
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "SaaiOS".into(),
-            model: "panther".into(),
+            model: output_model_for(cfg!(feature = "panther-hardware")).into(),
         },
     );
     wl_output.create_global::<State>(&dh);
@@ -1796,5 +1837,43 @@ mod supervision_tests {
         let start = Instant::now();
         assert_eq!(budget.record_failure(start), 1);
         assert_eq!(budget.record_failure(start + SHELL_RESTART_WINDOW), 1);
+    }
+}
+
+#[cfg(test)]
+mod windowed_surface_tests {
+    use super::{
+        output_model_for, toplevel_geometry_for, ToplevelGeometry, WINDOWED_HEIGHT, WINDOWED_WIDTH,
+    };
+
+    #[test]
+    fn x86_toplevel_is_windowed_not_fullscreen() {
+        let geo = toplevel_geometry_for(false, 1920, 1080);
+        assert_eq!(
+            geo,
+            ToplevelGeometry {
+                width: WINDOWED_WIDTH,
+                height: WINDOWED_HEIGHT,
+                fullscreen: false,
+            }
+        );
+        assert!(geo.width < 1920);
+        assert!(geo.height < 1080);
+        assert_eq!(output_model_for(false), "x86");
+        assert_ne!(output_model_for(false), "panther");
+    }
+
+    #[test]
+    fn panther_toplevel_stays_panel_fullscreen() {
+        let geo = toplevel_geometry_for(true, 1080, 2400);
+        assert_eq!(
+            geo,
+            ToplevelGeometry {
+                width: 1080,
+                height: 2400,
+                fullscreen: true,
+            }
+        );
+        assert_eq!(output_model_for(true), "panther");
     }
 }
