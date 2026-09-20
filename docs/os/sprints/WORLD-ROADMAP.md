@@ -1,7 +1,8 @@
 # SaaiOS World Model / Observation Layer — delivery roadmap
 
 Status: **WORLD-00/01/02 host complete. WORLD-05 host (ADR-274): Verifier
-reads Fresh rows from runtime `status`. No `saai-deviced`.**
+reads Fresh rows from runtime `status`. WORLD-06 host (ADR-287): CPU
+sampler Health. No `saai-deviced`.**
 Daemon (WORLD-03) is not on the Pixel path until ObservationCache is
 used by more than one *process-local* consumer that cannot share status.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
@@ -34,7 +35,7 @@ Do not start with a monitoring product or HealthState.
 | WORLD-03 | `saai-deviced` UDS GetSnapshot/Subscribe | Backlog | no |
 | WORLD-04 | Shared Linux observers (no `/proc` copy) | Backlog | no |
 | WORLD-05 | Verification uses fresh observation | **Done** (host, ADR-274) | no |
-| WORLD-06 | One deterministic Health component | Backlog | no |
+| WORLD-06 | One deterministic Health component | **Done** (host, ADR-287) | no |
 | WORLD-07 | Automation ObservationThreshold (legacy stays) | Backlog | no |
 | WORLD-08 | NOW/Attention feed (deviced does not notify) | Backlog | **yes** |
 
@@ -69,3 +70,18 @@ not Unhealthy; sampler fills cache and still publishes ToolResult.
 ToolResult again.
 
 **Threat:** none — in-memory, no new listener, no secrets, no graphs.
+
+## WORLD-06
+
+**Goal:** one Health component from Observation. Stale ≠ Unhealthy.
+
+**Change:** `HealthState` + `cpu_sampler_health` on LocalDevice
+`system.cpu.usage`. Fresh Direct → Healthy. Stale/missing → Unknown.
+Approximate → Degraded. CPU percent is not a threshold. No runtime
+`status` wire. No shell chrome.
+
+**Test:** host `cargo test -p saai-observation health`.
+
+**Rollback:** drop `health.rs`.
+
+**Threat:** none — crate-only, no phone binary.

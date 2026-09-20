@@ -242,6 +242,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 - WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; host)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
+- WORLD-06 CPU sampler Health from Observation (ADR-287; host; Stale→Unknown; no runtime flash)
 - AUTH-02 PolicyEngine adapter, same verdicts (ADR-260; host)
 - AUTH-03 scoped session grants, not tool-name HashSet (ADR-261; host)
 - AUTH-05 OAM/IRAB Principal on AuthorityRequest (ADR-275; host)
