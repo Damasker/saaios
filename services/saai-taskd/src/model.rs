@@ -144,6 +144,8 @@ pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
 /// Temporary property form of Task DAG edges (ADR-121 WORK-01).
 /// Prefer SOM `saaios.depends-on` once that relation is the only format.
 pub const DEPENDS_ON_PROPERTY: &str = "depends_on_task_ids";
+/// Proposal id from a PlanProposal step (ADR-238). Distinct from Task UUID.
+pub const PROPOSAL_ID_PROPERTY: &str = "proposal_id";
 
 pub fn task_properties(intent_id: Uuid, status: WorkflowStatus) -> Map<String, Value> {
     let mut map = Map::new();

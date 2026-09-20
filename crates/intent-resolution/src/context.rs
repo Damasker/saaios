@@ -6,6 +6,7 @@ pub const SOURCE_PROPERTY: &str = "source";
 pub const CONTEXT_PROPERTY: &str = "context";
 pub const SEMANTIC_ACTION_PROPERTY: &str = "semantic_action_id";
 pub const TEXT_PROPERTY: &str = "text";
+pub const PLAN_PROPERTY: &str = "plan";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +93,9 @@ pub struct IntentInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_object: Option<ObjectRef>,
     pub context: ContextSnapshot,
+    /// Structured PlanProposal JSON (ADR-238). Absent on Direct/Confirm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Value>,
 }
 
 impl IntentInput {
@@ -125,12 +129,16 @@ impl IntentInput {
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok())
             .or_else(|| context.focused_ref().cloned());
+        let plan = entity.properties.get(PLAN_PROPERTY).cloned().filter(|value| {
+            !value.is_null() && value.as_object().is_some()
+        });
         Self {
             text,
             source,
             explicit_action_id,
             primary_object,
             context,
+            plan,
         }
     }
 }

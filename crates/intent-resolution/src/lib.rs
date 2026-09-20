@@ -8,7 +8,7 @@ mod resolve;
 
 pub use context::{
     intent_properties, ContextSnapshot, IntentInput, IntentSource, ObjectSummary, CONTEXT_PROPERTY,
-    SEMANTIC_ACTION_PROPERTY, SOURCE_PROPERTY, TEXT_PROPERTY,
+    PLAN_PROPERTY, SEMANTIC_ACTION_PROPERTY, SOURCE_PROPERTY, TEXT_PROPERTY,
 };
 pub use outcome::{
     ActionResolution, AnswerResolution, ClarificationOption, ClarificationResolution,
@@ -58,6 +58,7 @@ mod tests {
             explicit_action_id: None,
             primary_object: None,
             context: ContextSnapshot::from_focus("work", Some(entity)),
+            plan: None,
         }
     }
 
@@ -133,6 +134,7 @@ mod tests {
             source: IntentSource::Orb,
             explicit_action_id: None,
             primary_object: None,
+            plan: None,
             context: ContextSnapshot {
                 primary_space_id: Some("work".into()),
                 active_space_ids: vec!["work".into()],
@@ -158,6 +160,7 @@ mod tests {
             source: IntentSource::Orb,
             explicit_action_id: None,
             primary_object: None,
+            plan: None,
             context: ContextSnapshot {
                 primary_space_id: Some("work".into()),
                 active_space_ids: vec!["work".into()],
@@ -266,6 +269,7 @@ mod tests {
             source: IntentSource::Orb,
             explicit_action_id: None,
             primary_object: None,
+            plan: None,
             context: ContextSnapshot {
                 primary_space_id: Some("work".into()),
                 active_space_ids: vec!["work".into()],
@@ -317,11 +321,38 @@ mod tests {
             source: IntentSource::Orb,
             explicit_action_id: None,
             primary_object: None,
+            plan: None,
             context: ContextSnapshot::default(),
         };
         assert!(matches!(
             resolve_deterministic(&input, &AllowedContext::default()),
             ResolveAttempt::NeedsModel
         ));
+    }
+
+    #[test]
+    fn structured_plan_is_not_a_diagnose_fallback() {
+        let input = IntentInput {
+            text: "Подготовь демо".into(),
+            source: IntentSource::Orb,
+            explicit_action_id: None,
+            primary_object: None,
+            plan: Some(json!({
+                "schema": 1,
+                "goal": "Подготовь демо",
+                "tasks": [
+                    {"id": "draft", "title": "Черновик", "depends_on": []},
+                    {"id": "send", "title": "Отправить", "depends_on": ["draft"]}
+                ]
+            })),
+            context: ContextSnapshot::default(),
+        };
+        match resolve_deterministic(&input, &AllowedContext::default()) {
+            ResolveAttempt::Resolved {
+                outcome: ResolutionOutcome::Plan(plan),
+                ..
+            } => assert_eq!(plan.goal, "Подготовь демо"),
+            other => panic!("expected plan, got {other:?}"),
+        }
     }
 }
