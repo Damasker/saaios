@@ -13,7 +13,8 @@ Current panther shell: `c05eedf9…` (ADR-216). Prior chrome `3850427a…`
 (ADR-211). 7-tap gallery is proven (ADR-212). Parked last: thin tuning
 (ADR-213). List trailing rows are host (ADR-214). Me flatten/scroll
 is host (`flatten_me_rows` / `scrolled_row_rect`, ADR-215).
-Production is `compile_v2()` (ADR-216).
+Production is `compile_v2()` (ADR-216). NOW content hits use
+compiled `now.sui` (ADR-217).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -157,7 +158,9 @@ Ordered. Items 1–3 and 7–17 are done
     (ADR-215). Do not invent Me hits from empty `root.sui`.
 20. ~~Switch production `build.rs` to `compile_v2()`.~~ Live
     `layout_v2` tabs (ADR-216). Content paint stays procedural.
-21. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+21. ~~NOW footer and object hits from compiled `now.sui`.~~ Live
+    (ADR-217). Inbox/Spaces/Me/lists stay procedural.
+22. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 

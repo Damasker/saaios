@@ -75,6 +75,7 @@ ADR-213 thin-tuning sprint parked last (not next Visual work).
 ADR-214 list trailing rows in `layout_v2` (`list_refresh`/`list_scan`/`list_back`, host).
 ADR-215 Me flatten/scroll in `layout_v2` (`flatten_me_rows` / `scrolled_row_rect`, host).
 ADR-216 production `compile_v2()` / `layout_v2` `root_view`.
+ADR-217 NOW content hits from compiled `now.sui`.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

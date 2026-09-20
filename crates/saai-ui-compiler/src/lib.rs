@@ -1226,6 +1226,8 @@ mod tests {
         assert!(limits.contains("flatten_me_rows"));
         assert!(limits.contains("ADR-216"));
         assert!(limits.contains("compile_v2()"));
+        assert!(limits.contains("ADR-217"));
+        assert!(limits.contains("now.sui"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1235,5 +1237,7 @@ mod tests {
         assert!(!build.contains("saai_ui_compiler::compile("));
         assert!(build.contains("ADR-216"));
         assert!(ledger.contains("ADR-216"));
+        assert!(ledger.contains("ADR-217"));
+        assert!(ledger.contains("now.sui"));
     }
 }

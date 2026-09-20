@@ -1025,6 +1025,17 @@ fn root_view(width: u32, height: u32) -> LayoutNode {
     saai_ui_compiler::layout_v2(root_screen(), width, height)
 }
 
+fn now_screen() -> &'static saai_ui_compiler::SuiV2Screen {
+    static SCREEN: std::sync::OnceLock<saai_ui_compiler::SuiV2Screen> = std::sync::OnceLock::new();
+    SCREEN.get_or_init(|| {
+        saai_ui_compiler::compile_v2(include_str!("../ui/now.sui")).expect("ADR-217: now.sui v2")
+    })
+}
+
+fn now_view(width: u32, height: u32) -> LayoutNode {
+    saai_ui_compiler::layout_v2(now_screen(), width, height)
+}
+
 /// Content pane of the root layout — everything except the bottom
 /// navigation strip. Status is a separate layer surface, not an inset
 /// in this tree (ADR-112).
@@ -3133,12 +3144,14 @@ fn now_grid_rect(index: usize, width: u32, height: u32) -> Rect {
 /// Same "pure function shared by rendering and hit-testing" pattern
 /// `now_grid_rect`/`stacked_row_rect` already use.
 fn now_footer_action_rect(index: usize, width: u32, height: u32) -> Rect {
-    let margin = width / 22;
-    let content_rect = root_view(width, height).children[0].rect;
-    let row_height = ((160_u64 * u64::from(height)) / 2400) as u32;
-    let bottom = content_rect.y + content_rect.height;
-    let top = bottom.saturating_sub(row_height * (2 - index) as u32);
-    Rect::new(margin, top, width.saturating_sub(margin * 2), row_height)
+    let id = match index {
+        0 => "apps",
+        1 => "intent",
+        _ => panic!("NOW footer only has apps then intent"),
+    };
+    saai_ui_compiler::layout_v1_find(&now_view(width, height), id)
+        .unwrap_or_else(|| panic!("now.sui missing `{id}`"))
+        .rect
 }
 
 const NOW_FOOTER_OPEN_APPS_ACTION: &str = "open_apps";
@@ -3159,24 +3172,27 @@ fn now_footer_action_views(width: u32, height: u32) -> Vec<(Rect, DataRow)> {
 }
 
 fn now_footer_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
-    if now_footer_action_rect(0, width, height).contains(pos.0, pos.1) {
-        Some(NOW_FOOTER_OPEN_APPS_ACTION)
-    } else if now_footer_action_rect(1, width, height).contains(pos.0, pos.1) {
-        Some("open_intent_input")
-    } else {
-        None
+    match now_view(width, height)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref())
+    {
+        Some("open_apps") => Some(NOW_FOOTER_OPEN_APPS_ACTION),
+        Some("open_intent_input") => Some("open_intent_input"),
+        _ => None,
     }
 }
 
 fn now_object_tapped(
     pos: (f64, f64),
-    content: Rect,
-    has_lifecycle: bool,
+    width: u32,
+    height: u32,
     object: Option<&ObjectSummary>,
 ) -> bool {
-    object.is_some_and(|summary| {
-        render::now_object_summary_rect(content, has_lifecycle, summary).contains(pos.0, pos.1)
-    })
+    object.is_some()
+        && now_view(width, height)
+            .hit_test(pos.0, pos.1)
+            .and_then(|node| node.action.as_deref())
+            == Some("open_object")
 }
 
 fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
@@ -6690,15 +6706,12 @@ impl TouchHandler for Shell {
                     self.invoke_select_space(&space_id);
                 }
             } else if self.current_page == RootPage::Now && !self.apps_open {
-                // VUI-03 (ADR-113): footer rows stay tappable. ADR-137:
-                // the ObjectSummary is the same HIA-07 entry as an Inbox
-                // row -- explicit tap, not auto-popup.
-                let content_rect = root_view(self.width, self.height).children[0].rect;
-                let has_lifecycle = self.now_context_header().lifecycle.is_some();
+                // VUI-03 (ADR-113): footer rows stay tappable. ADR-217:
+                // ObjectSummary and footer hits come from compile_v2.
                 if now_object_tapped(
                     self.last_touch_pos,
-                    content_rect,
-                    has_lifecycle,
+                    self.width,
+                    self.height,
                     self.now_object_summary().as_ref(),
                 ) {
                     if let Some(id) = self.selected_entities.first().map(|entity| entity.id) {
@@ -11388,6 +11401,14 @@ mod tests {
             super::now_footer_action_at((540.0, 400.0), width, height),
             None
         );
+        assert_eq!(
+            super::now_footer_action_at((540.0, 1860.0), width, height),
+            Some(super::NOW_FOOTER_OPEN_APPS_ACTION)
+        );
+        assert_eq!(
+            super::now_footer_action_at((540.0, 2080.0), width, height),
+            Some("open_intent_input")
+        );
     }
 
     #[test]
@@ -13727,22 +13748,21 @@ mod tests {
     fn now_object_tapped_finds_the_summary_and_misses_the_footer() {
         let width = 1080;
         let height = 2400;
-        let content = super::root_view(width, height).children[0].rect;
         let summary = ObjectSummary::new("vnnnmb", "saaios.intent · версия 1");
-        let object_rect = crate::render::now_object_summary_rect(content, false, &summary);
-        let center = (
-            f64::from(object_rect.x + object_rect.width / 2),
-            f64::from(object_rect.y + object_rect.height / 2),
-        );
-        assert!(now_object_tapped(center, content, false, Some(&summary)));
+        assert!(now_object_tapped(
+            (540.0, 335.0),
+            width,
+            height,
+            Some(&summary)
+        ));
         let footer = super::now_footer_action_rect(1, width, height);
         assert!(!now_object_tapped(
             (f64::from(footer.x + 10), f64::from(footer.y + 10)),
-            content,
-            false,
+            width,
+            height,
             Some(&summary)
         ));
-        assert!(!now_object_tapped(center, content, false, None));
+        assert!(!now_object_tapped((540.0, 335.0), width, height, None));
     }
 
     #[test]

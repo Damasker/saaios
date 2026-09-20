@@ -7,8 +7,9 @@ Product source: [Visual Language v1](../architecture/visual-language-v1.md)
 Contract source: [Component Library v1](component-library-v1.md)
 
 Compiler: `compile_v2_public()` in `saai-ui-compiler`. Production
-chrome still compiles through `compile()` on
-`services/saai-shell/ui/root.sui`.
+chrome compiles through `compile_v2()` on
+`services/saai-shell/ui/root.sui` (tabs, ADR-216) and
+`services/saai-shell/ui/now.sui` (NOW content, ADR-217).
 
 ## Stability labels
 
@@ -97,7 +98,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   that appearance.
 - Removing a public name requires an ADR and a compile error, not a
   silent skip.
-- `compile_v2()` is production on `root.sui` (ADR-216). `layout_v2()`
+- `compile_v2()` is production on `root.sui` (ADR-216) and `now.sui`
+  (ADR-217). `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
   `inset = safe` uses

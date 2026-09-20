@@ -176,6 +176,7 @@ host-only derived view.
 | VUI-09 v2 trailing rows | `row refresh`/`scan`/`back` → `list_*` on `stacked_trailing_rect` **host** (ADR-214; chrome unchanged `3850427a…`; leave Сейчас) |
 | VUI-09 v2 Me flatten | `flatten_me_rows` + `scrolled_row_rect` offset 0 **host** (ADR-215; chrome unchanged `3850427a…`; leave Сейчас) |
 | VUI-09 v2 production | `compile_v2()` + `layout_v2` `root_view` **на panther** (ADR-216; `c05eedf9…`; leave Сейчас) |
+| VUI-09 v2 NOW hits | compiled `now.sui` footer/object **device** (ADR-217) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 
