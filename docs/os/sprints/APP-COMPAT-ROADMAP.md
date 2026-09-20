@@ -233,12 +233,15 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 ### APP-06: браузер -- отдельный спайк на Qt-based кандидата, затем WebKitGTK/Firefox/Chromium
 
-- **Статус**: Spike Done, 2026-09-21, ADR-269. Launch not done.
+- **Статус**: Spike Done, 2026-09-21, ADR-269. Package tree ADR-281 host. Launch not done.
 - **Goal**: APP-BROWSER-01 из исходного плана.
 - **Решение**: первый кандидат — Falkon (`qt6-qtwebengine` на Alpine
   v3.20 aarch64 musl). Angelfish тот же движок плюс Plasma QML.
   Epiphany — GTK4, ждёт APP-02. `webkit2gtk-4.1` есть как движок, без
-  браузерного apk в v3.20. Запуск на panther не в этом срезе.
+  браузерного apk в v3.20. `build-falkon-package.sh` packs
+  `QtWebEngineProcess` + `.pak`/`v8` snapshot + system ICU (ADR-281).
+  Запуск на panther не
+  в этом срезе.
 
 ## Фаза B -- Android compatibility island (низкая уверенность, требует отдельных спайков)
 
@@ -305,7 +308,7 @@ APP-02  GTK4 -- спайк на разблокировку или осознан
 APP-03  zwp_input_method_manager_v2 без keymap -- спайк на saai-displayd
 APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); panther later
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
-APP-06  браузер -- Falkon/QtWebEngine (ADR-269 spike); launch later
+APP-06  браузер -- Falkon/QtWebEngine (ADR-269/281 package); launch later
 
 ANDROID-00  разведка существующих Anbox/Waydroid-подобных подходов
 ANDROID-01  минимальный bionic+ART остров (по образцу gpu-compositor ABI firewall)
