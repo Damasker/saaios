@@ -7,11 +7,17 @@ Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
 Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted until a shell-legal memory read exists.
 
-Current panther shell: `3850427a…` (ADR-198). This page does not
-lock, reboot, or kill `saai-displayd`.
+Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
+(ADR-209). This page does not reboot or kill `saai-displayd`.
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
+
+## Proven live cells this session
+
+| Cell | Evidence |
+|---|---|
+| lock / unlock cycle | ADR-209; HEAD `3850427a…`; PIN null; tap-unlock; `/run/saaios/dev-no-lock` restored |
 
 ## Session-blocked live cells
 
@@ -19,14 +25,13 @@ These stay **open**. They are not proven by this pass.
 
 | Cell | Why this session does not run it |
 |---|---|
-| lock / unlock cycle | `/run/saaios/dev-no-lock` skips boot lock and idle lock. Removing it is an operator action. PIN is `null`. Killing a locked shell without `session_lock.unlock()` wedges displayd. |
 | display restart | Do not kill `saai-displayd` except recovery. |
 | cold boot | `/run` is lost across reboot; the no-lock marker would drop. |
 | daylight / indoor / dark | No booth this session. |
 | 7-tap gallery | Not a DevSurface-chrome slice. Do not 7-tap. |
 
-Unlocked `saai-shell` restart (ADR-192) is not a lock cycle and not a
-display restart.
+Unlocked `saai-shell` restart (ADR-192) is not a display restart.
+Lock cycle is ADR-209, not ADR-192.
 
 ## Compiler and layout
 
@@ -98,9 +103,10 @@ Ordered. Items 1–3 and 7–17 are done
 5. Add `SpaceDetail` / `MemoryReview` / `ChatThread` / `Widget` to the
    vocabulary only when a shell-legal consumer exists. MEM-08 stays
    omitted until that memory read exists.
-6. Run the session-blocked v1 cells (lock cycle, display restart, cold
+6. Run remaining session-blocked v1 cells (display restart, cold
    boot, daylight booth, 7-tap gallery) as operator-approved device
-   work. They are Visual v1 gates, not v2 features.
+   work. Lock cycle is proven (ADR-209). They are Visual v1 gates,
+   not v2 features.
 7. ~~Name tabs inside the v2 grammar so `layout_v2()` does not borrow
    `compile_v1_rollback()` ids.~~ Host: nested `tab` (ADR-196). Do not
    attach `layout_v2()` to `build.rs` yet.

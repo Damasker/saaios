@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–208; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–209; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1171,8 +1171,8 @@ budget (ADR-201); Inbox `EventRow` hits (ADR-202); Spaces
 hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 `BluetoothRow` hits (ADR-206); privileged
 `TrustedClientRow` hits (ADR-207); privileged
-`CapabilityRow` hits (ADR-208). Release
-gate remains. Not Visual v1 sign-off.
+`CapabilityRow` hits (ADR-208); lock cycle
+(ADR-209). Release gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1212,9 +1212,12 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   ADR-191). Lock cycle, display restart, and cold boot stay open.
 - [x] Prove unlocked shell restart on panther HEAD (ADR-192). Lock
   cycle, display restart, and cold boot stay open.
-- [ ] Run remaining live matrix cells (lock cycle, display restart, cold
-  boot) then close the ledger. Those cells stay session-blocked
-  (ADR-193).
+- [x] Prove lock / unlock on panther HEAD (ADR-209; PIN null;
+  tap-unlock; marker restored). Display restart, cold boot, and
+  7-tap gallery stay open.
+- [ ] Run remaining live matrix cells (display restart, cold boot,
+  7-tap gallery) then close the ledger. Daylight booth stays
+  deferred (ADR-193).
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1329,10 +1332,11 @@ After each completed task group, report:
 ## Next action
 
 Continue **Visual v2** at Experimental→Stable after Visual v1, or
-operator-approved lock / display restart / cold boot. Leftover text
-sizes stay named (ADR-201). Inbox through Bluetooth stacked hits are
-host (ADR-202–206). Privileged trusted-client and Me app hits are
-host (ADR-207/208). Live Me flatten/scroll and list trailing
-controls stay procedural.
+operator-approved display restart / cold boot / 7-tap gallery.
+Lock cycle is proven (ADR-209). Leftover text sizes stay named
+(ADR-201). Inbox through Bluetooth stacked hits are host
+(ADR-202–206). Privileged trusted-client and Me app hits are host
+(ADR-207/208). Live Me flatten/scroll and list trailing controls
+stay procedural.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.
