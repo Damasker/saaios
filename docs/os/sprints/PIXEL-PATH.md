@@ -223,7 +223,8 @@ diagnose (ADR-238, `351b0b6f…`).
 
 - PCE-25 node identity: laptop `x86`/`computer` ≠ panther `phone` (ADR-249; host)
 - Windowed displayd on x86: 1280×800, model `x86` (ADR-250; host)
-- Pointer+HID / logical layout — следующие D-слайсы
+- Pointer + USB HID keyboard on x86 seat (ADR-251; host)
+- Logical layout — следующий D-слайс
 - PCE-01..24 и Resource Scheduler не начинать
 - Доказательство ноута валидно для D, не вместо phone-gate
 

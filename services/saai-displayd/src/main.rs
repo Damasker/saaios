@@ -20,6 +20,7 @@ use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 
 #[cfg(feature = "panther-hardware")]
 mod hardware;
+mod hid;
 #[cfg(feature = "panther-hardware")]
 mod touch;
 
@@ -310,6 +311,8 @@ struct State {
     // a real KeyboardHandle and a normal host libxkbcommon works fine.
     #[cfg(not(feature = "panther-hardware"))]
     keyboard: smithay::input::keyboard::KeyboardHandle<State>,
+    #[cfg(not(feature = "panther-hardware"))]
+    pointer: smithay::input::pointer::PointerHandle<State>,
     /// Active fullscreen toplevel. A newly mapped toplevel becomes active;
     /// destroying it restores the previous live toplevel (normally the
     /// persistent system shell).
@@ -1352,6 +1355,8 @@ fn main() {
     let keyboard = seat
         .add_keyboard(XkbConfig::default(), 200, 25)
         .expect("failed to add keyboard capability");
+    #[cfg(not(feature = "panther-hardware"))]
+    let pointer = seat.add_pointer();
     #[cfg(feature = "panther-hardware")]
     let touch = seat.add_touch();
 
@@ -1589,6 +1594,8 @@ fn main() {
         _text_input_manager_state: text_input_manager_state,
         #[cfg(not(feature = "panther-hardware"))]
         keyboard: keyboard.clone(),
+        #[cfg(not(feature = "panther-hardware"))]
+        pointer: pointer.clone(),
         focused_surface: None,
         focus_history: Vec::new(),
         toplevels: HashMap::new(),
@@ -1792,6 +1799,30 @@ fn main() {
                 // take the compositor down.
                 eprintln!(
                     "saai-displayd: inject-key debug trigger unavailable, continuing without it: {err}"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(feature = "panther-hardware"))]
+    {
+        let _ = &state.pointer;
+        let profile = hid::seat_input_profile(false);
+        println!(
+            "saai-displayd: x86 seat pointer={} keyboard={} touch={}",
+            profile.pointer, profile.keyboard, profile.touch
+        );
+        if let Ok(text) = std::fs::read_to_string("/proc/bus/input/devices") {
+            for device in hid::usb_hid_keyboards(&text) {
+                println!(
+                    "saai-displayd: usb hid keyboard {} ({})",
+                    device.name, device.event_node
+                );
+            }
+            for device in hid::usb_hid_pointers(&text) {
+                println!(
+                    "saai-displayd: usb hid pointer {} ({})",
+                    device.name, device.event_node
                 );
             }
         }
