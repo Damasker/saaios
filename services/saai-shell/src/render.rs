@@ -211,8 +211,7 @@ impl Fonts {
             (FontFamily::Sans, FontWeight::Semibold) => &self.semibold,
             (FontFamily::Sans, FontWeight::Regular) => &self.regular,
         };
-        let size = SurfaceScale::PIXEL_7.logical_to_physical(style.size) as f32;
-        (font, size)
+        (font, role_px(role))
     }
 
     /// `None` when the optional icon font (ADR-100) failed to load --
@@ -340,7 +339,7 @@ pub fn draw_consent(
         canvas,
         &fonts.semibold,
         "Разрешить",
-        40.0,
+        DECISION_BUTTON_PX,
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
         theme_color(ColorRole::Canvas),
@@ -349,7 +348,7 @@ pub fn draw_consent(
         canvas,
         &fonts.semibold,
         "Отклонить",
-        40.0,
+        DECISION_BUTTON_PX,
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
         theme_color(ColorRole::TextPrimary),
@@ -528,7 +527,7 @@ pub fn draw_object_view(
             canvas,
             &fonts.regular,
             related,
-            28.0,
+            OBJECT_RELATED_PX,
             header.x + margin,
             y,
             theme_color(ColorRole::TextSecondary),
@@ -581,7 +580,7 @@ pub fn draw_object_view(
             canvas,
             &fonts.regular,
             detail,
-            28.0,
+            OBJECT_RELATED_PX,
             header.x + margin,
             y,
             theme_color(ColorRole::TextSecondary),
@@ -603,7 +602,7 @@ pub fn draw_object_view(
             canvas,
             &fonts.semibold,
             text,
-            40.0,
+            DECISION_BUTTON_PX,
             rect.x + rect.width / 2,
             rect.y + rect.height / 2 - 20,
             if index == 0 {
@@ -658,7 +657,7 @@ pub fn draw_orb(
                 canvas,
                 &fonts.regular,
                 label,
-                32.0,
+                ORB_MENU_PX,
                 rect.x + 24,
                 rect.y + rect.height / 2 - 16,
                 theme_color(ColorRole::TextPrimary),
@@ -809,7 +808,7 @@ pub fn draw_remote_pair(
         canvas,
         &fonts.semibold,
         "Разрешить",
-        40.0,
+        DECISION_BUTTON_PX,
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
         theme_color(ColorRole::Canvas),
@@ -818,7 +817,7 @@ pub fn draw_remote_pair(
         canvas,
         &fonts.semibold,
         "Отклонить",
-        40.0,
+        DECISION_BUTTON_PX,
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
         theme_color(ColorRole::TextPrimary),
@@ -876,7 +875,7 @@ fn draw_action_card(
         canvas,
         &fonts.semibold,
         &card.label,
-        38.0,
+        ACTION_CARD_TITLE_PX,
         text_left,
         rect.y + 48,
         theme_color(ColorRole::TextPrimary),
@@ -885,7 +884,7 @@ fn draw_action_card(
         canvas,
         &fonts.regular,
         &card.status,
-        27.0,
+        ACTION_CARD_STATUS_PX,
         text_left,
         rect.y + 108,
         theme_color(ColorRole::TextSecondary),
@@ -895,7 +894,7 @@ fn draw_action_card(
             canvas,
             &fonts.semibold,
             &card.action,
-            25.0,
+            ACTION_CARD_BUTTON_PX,
             button.x + button.width / 2,
             button.y + 24,
             theme_color(ColorRole::Canvas),
@@ -1010,7 +1009,7 @@ fn paint_keyboard_keys(
             canvas,
             fonts,
             label,
-            32.0,
+            KEY_LABEL_PX,
             key.x + key.width / 2,
             key.y + key.height / 2 - 18,
             theme_color(ColorRole::TextPrimary),
@@ -1038,8 +1037,8 @@ pub fn draw_lock_idle(
     let hint_y = time_y + physical_line_height(TextRole::Display) + physical(LogicalUnit::new(16));
     let left = width / 22;
     if let Some(fonts) = fonts {
-        let time_size = physical(TextRole::Display.style().size) as f32;
-        let hint_size = physical(TextRole::Body.style().size) as f32;
+        let time_size = role_px(TextRole::Display);
+        let hint_size = role_px(TextRole::Body);
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -1102,7 +1101,7 @@ pub fn draw_lock_sleep(
     canvas.fill(theme_color(ColorRole::Canvas));
     let time_y = ((height as u64 * 480) / 2400) as u32;
     if let Some(fonts) = fonts {
-        let time_size = physical(TextRole::Display.style().size) as f32;
+        let time_size = role_px(TextRole::Display);
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -1180,7 +1179,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.semibold,
             "SaaiOS Visual v1 · VUI-01",
-            42.0,
+            role_px(TextRole::Label),
             margin,
             height / 24,
             theme_color(ColorRole::TextPrimary),
@@ -1189,7 +1188,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.regular,
             "SEMANTIC PALETTE",
-            24.0,
+            GALLERY_KICKER_PX,
             margin,
             palette_top.saturating_sub(42),
             theme_color(ColorRole::TextSecondary),
@@ -1220,7 +1219,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
                 canvas,
                 &fonts.regular,
                 label,
-                18.0,
+                GALLERY_SWATCH_PX,
                 x,
                 y + swatch_height + 8,
                 theme_color(ColorRole::TextSecondary),
@@ -1234,7 +1233,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.regular,
             "CONTEXT COLOR · NOT STATUS",
-            24.0,
+            GALLERY_KICKER_PX,
             margin,
             context_top.saturating_sub(42),
             theme_color(ColorRole::TextSecondary),
@@ -1255,7 +1254,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
                 canvas,
                 &fonts.regular,
                 label,
-                18.0,
+                GALLERY_SWATCH_PX,
                 x,
                 y + swatch_height + 8,
                 theme_color(ColorRole::TextSecondary),
@@ -1272,7 +1271,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.regular,
             "UNIVERSAL STATE · COLOR + MARK",
-            24.0,
+            GALLERY_KICKER_PX,
             margin,
             state_top.saturating_sub(42),
             theme_color(ColorRole::TextSecondary),
@@ -1301,7 +1300,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
                 canvas,
                 &fonts.semibold,
                 &description,
-                24.0,
+                GALLERY_KICKER_PX,
                 mark.x + mark.width + 28,
                 row.y + row.height / 2 - 14,
                 theme_color(ColorRole::TextPrimary),
@@ -1502,6 +1501,31 @@ fn scaled_line_height(role: TextRole) -> u32 {
 fn physical(value: LogicalUnit) -> u32 {
     SurfaceScale::PIXEL_7.logical_to_physical(value)
 }
+
+/// Pixel-7 physical size of a `TextRole`. Draw calls that already
+/// match a role go through this instead of a raw `NN.0`.
+fn role_px(role: TextRole) -> f32 {
+    physical(role.style().size) as f32
+}
+
+/// ADR-188 leftover sizes: not a `TextRole` at Pixel 7 scale 3.
+/// Add a name here rather than a new raw draw-call literal.
+const ACTION_CARD_TITLE_PX: f32 = 38.0;
+const ACTION_CARD_STATUS_PX: f32 = 27.0;
+const ACTION_CARD_BUTTON_PX: f32 = 25.0;
+const DECISION_BUTTON_PX: f32 = 40.0;
+const OBJECT_RELATED_PX: f32 = 28.0;
+const ORB_MENU_PX: f32 = 32.0;
+const KEY_LABEL_PX: f32 = 32.0;
+const GALLERY_HEADING_PX: f32 = 32.0;
+const GALLERY_KICKER_PX: f32 = 24.0;
+const GALLERY_SWATCH_PX: f32 = 18.0;
+const APP_TILE_LABEL_PX: f32 = 26.0;
+const TAB_SELECTED_PX: f32 = 31.0;
+const TAB_IDLE_PX: f32 = 27.0;
+const TAB_BADGE_PX: f32 = 24.0;
+const STATUS_TIME_PX: f32 = 44.0;
+const STATUS_BATTERY_PX: f32 = 40.0;
 
 /// Greedy word-wrap: breaks `text` into lines whose rendered width (in
 /// `font` at `size`) fits within `max_width`. A single word wider than
@@ -1960,7 +1984,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         canvas,
         &fonts.semibold,
         "SaaiOS Component Gallery · VUI-02",
-        32.0,
+        GALLERY_HEADING_PX,
         margin,
         rows[0],
         theme_color(ColorRole::TextPrimary),
@@ -2109,7 +2133,7 @@ pub fn draw_composite_gallery(
         canvas,
         &fonts.semibold,
         fixtures.title,
-        32.0,
+        GALLERY_HEADING_PX,
         margin,
         rows[0],
         theme_color(ColorRole::TextPrimary),
@@ -2237,7 +2261,7 @@ pub fn draw_root(
             canvas,
             &fonts.semibold,
             &header,
-            54.0,
+            role_px(TextRole::Section),
             content.x + content.width / 2,
             210,
             theme_color(ColorRole::TextPrimary),
@@ -2345,7 +2369,7 @@ fn draw_app_icon_grid(
                 canvas,
                 &fonts.semibold,
                 &initial,
-                54.0,
+                role_px(TextRole::Section),
                 icon_x + icon_size / 2,
                 rect.y + icon_size / 2 - 27,
                 theme_color(ColorRole::Canvas),
@@ -2354,7 +2378,7 @@ fn draw_app_icon_grid(
                 canvas,
                 &fonts.regular,
                 &card.label,
-                26.0,
+                APP_TILE_LABEL_PX,
                 rect.x + rect.width / 2,
                 rect.y + icon_size + 16,
                 theme_color(ColorRole::TextPrimary),
@@ -2528,7 +2552,11 @@ pub fn draw_tab_bar(
                     &fonts.regular
                 },
                 &item.label,
-                if is_selected { 31.0 } else { 27.0 },
+                if is_selected {
+                    TAB_SELECTED_PX
+                } else {
+                    TAB_IDLE_PX
+                },
                 rect.x + rect.width / 2,
                 rect.y + 172,
                 text_color,
@@ -2558,7 +2586,7 @@ pub fn draw_tab_bar(
                     canvas,
                     &fonts.semibold,
                     &count.to_string(),
-                    24.0,
+                    TAB_BADGE_PX,
                     badge_rect.x + badge_rect.width / 2,
                     badge_rect.y + badge_rect.height / 2 - 12,
                     theme_color(ColorRole::HighContrastText),
@@ -2846,7 +2874,7 @@ pub fn draw_status_bar(
         canvas,
         &fonts.semibold,
         &status.time_text,
-        44.0,
+        STATUS_TIME_PX,
         time_x,
         baseline,
         theme_color(ColorRole::TextPrimary),
@@ -2861,26 +2889,34 @@ pub fn draw_status_bar(
     let battery_label = status.battery_label().unwrap_or_default();
 
     let gap = 40.0;
-    let battery_width = text_width(&fonts.semibold, &battery_label, 40.0 * text_scale());
+    let battery_width = text_width(
+        &fonts.semibold,
+        &battery_label,
+        STATUS_BATTERY_PX * text_scale(),
+    );
     let battery_left = width as f32 - margin as f32 - battery_width;
     if !battery_label.is_empty() {
         draw_text(
             canvas,
             &fonts.semibold,
             &battery_label,
-            40.0,
+            STATUS_BATTERY_PX,
             battery_left.round() as u32,
             baseline,
             theme_color(ColorRole::TextPrimary),
         );
     }
-    let wifi_width = text_width(&fonts.regular, wifi_label, 36.0 * text_scale());
+    let wifi_width = text_width(
+        &fonts.regular,
+        wifi_label,
+        role_px(TextRole::Caption) * text_scale(),
+    );
     let wifi_left = battery_left - gap - wifi_width;
     draw_text(
         canvas,
         &fonts.regular,
         wifi_label,
-        36.0,
+        role_px(TextRole::Caption),
         wifi_left.round() as u32,
         baseline + 4,
         wifi_color,
@@ -3041,8 +3077,8 @@ mod tests {
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        gallery_row_positions, now_empty_pattern, physical, physical_line_height, state_color,
-        theme_color, ActionCardView, Canvas,
+        gallery_row_positions, now_empty_pattern, physical, physical_line_height, role_px,
+        state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,
@@ -3441,6 +3477,30 @@ mod tests {
         // rather than only implied.
         assert_eq!(physical_line_height(TextRole::Body), 72);
         assert_eq!(physical_line_height(TextRole::Caption), 48);
+        assert_eq!(role_px(TextRole::Display), 96.0);
+        assert_eq!(role_px(TextRole::Title), 72.0);
+        assert_eq!(role_px(TextRole::Section), 54.0);
+        assert_eq!(role_px(TextRole::Body), 48.0);
+        assert_eq!(role_px(TextRole::Label), 42.0);
+        assert_eq!(role_px(TextRole::Caption), 36.0);
+        assert_eq!(role_px(TextRole::MonoBody), 42.0);
+    }
+
+    #[test]
+    fn production_draw_text_sizes_are_named() {
+        let src = include_str!("render.rs");
+        let production = src.split("#[cfg(test)]\nmod tests").next().expect("tests");
+        let mut leftover = Vec::new();
+        for (index, line) in production.lines().enumerate() {
+            let trimmed = line.trim().trim_end_matches(',');
+            if trimmed.parse::<f32>().is_ok() && trimmed.contains('.') {
+                leftover.push((index + 1, line.trim().to_string()));
+            }
+        }
+        assert!(
+            leftover.is_empty(),
+            "untracked draw-text size literals: {leftover:?}"
+        );
     }
 
     #[test]

@@ -46,6 +46,7 @@ ADR-184 shared v1 layout/hit-test (`layout_v1_root()`, not `compile_v2()`).
 ADR-185 public `.sui` v2 subset (`compile_v2_public()`, privileged gated).
 ADR-186 public API docs, NOW example, and stability labels.
 ADR-187 close production color literals and leftover NOW chrome.
+ADR-188 name leftover `draw_text` sizes (`role_px`).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

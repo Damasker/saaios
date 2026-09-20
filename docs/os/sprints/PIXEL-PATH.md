@@ -147,6 +147,7 @@ host-only derived view.
 | VUI-09 public subset | `compile_v2_public()` rejects privileged names; `compile()` stays v1 **host** (ADR-185; chrome unchanged `1079a5db…`; leave Сейчас) |
 | VUI-09 public API docs | NOW example + stability labels + migration page **host** (ADR-186; chrome unchanged `1079a5db…`; leave Сейчас) |
 | VUI-09 allowlist leftover NOW | empty `root.sui` content, no diagnostic RGB, `draw_action_card` reuse **на panther** (`36bcc8eb…`; ADR-187; leave Сейчас) |
+| VUI-09 named text sizes | `role_px` + leftover size names; paint unchanged **на panther** (`e8865301…`; ADR-188; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–187; `compile()` stays v1) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–188; `compile()` stays v1) |
 
 ---
 
@@ -1189,8 +1189,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (`docs/os/ui/sui-v2-public-api.md`, ADR-186).
 - [x] Close production color literals and leftover NOW chrome
   (`root.sui` empty content, `draw_action_card` reuse, ADR-187).
-  Remaining `draw_text` size literals stay until a paint-normalization
-  slice.
+- [x] Name leftover `draw_text` sizes (`role_px` + named leftovers,
+  ADR-188). Mapping ActionCard/tabs onto Title/Body stays a later
+  paint-normalization.
 - [ ] Run complete visual, accessibility, interaction, performance, service
   restart, display restart, cold boot, and offline test matrices.
 - [ ] Record known limitations and the Visual v2 backlog.
@@ -1256,8 +1257,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-09**: remaining `draw_text` size literals, then the
-complete visual/a11y/interaction/perf/restart/cold-boot/offline
-matrices, then known limitations. Do not point `root.sui` at
-`compile_v2()`. Space detail still deferred. MEM-08 stays omitted
-until a shell-legal memory read exists.
+Continue **VUI-09**: complete visual/a11y/interaction/perf/restart/
+cold-boot/offline matrices, then known limitations. Do not point
+`root.sui` at `compile_v2()`. Space detail still deferred. MEM-08
+stays omitted until a shell-legal memory read exists.
