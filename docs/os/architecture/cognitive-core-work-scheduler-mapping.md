@@ -105,7 +105,7 @@ writer into the entity store (`saai-taskd`), one risk classifier (`policy-engine
 | **Supervisor** | Colocated in `saai-taskd` (+ runtime budgets) | Timeouts, cancel/confirm paths, idempotent resume, failure → `failed` | Re-plan; authorize |
 | **Worker** | Tool executors / entity mutations invoked after Policy / confirmation | Run one authorized action; disposable execution instance | Parse model prose as a tool name; persist child Tasks; claim Verification |
 | **Policy** | `policy-engine` (planner path); native dangerous-action gate (explicit Intent) | Allow / Deny / AskUser | Execute tools; call model |
-| **Verifier** | Not a separate process yet; target role after Action success | Observe expected effect (`VerificationContract`); never authorize or spawn Tasks | Declare Done from worker "ok"; rewrite the goal |
+| **Verifier** | `saai-taskd` `decide_verification` (ADR-259) | Observe expected effect (`verification_key`); never authorize or spawn Tasks | Declare Done from worker "ok"; rewrite the goal |
 | **UI** | `saai-shell` | Capture Intent; show state; live confirmation | Bypass TaskConfirm for dangerous work |
 
 Long-term: keep Planner probabilistic and Scheduler deterministic. Short-term
@@ -125,7 +125,9 @@ Native `saai-entity-store` (S06) with entity types
 - `saaios.schedule` ([ADR-036](../../adr/ADR-036-schedule-triggers-native-entity.md))
 
 Workflow status lives in entity `properties` (`pending` /
-`waiting_confirmation` / `running` / `done` / `failed` / `cancelled`, etc.).
+`waiting_confirmation` / `running` / `verifying` / `done` / `failed` /
+`cancelled`, etc.). `verifying` is durable. `Done` is not written from
+worker "ok" (ADR-259).
 Cold-reboot resume is `list_entities` + reconcile — never auto-execute
 confirmation-gated work ([ADR-032](../../adr/ADR-032-change3-dangerous-confirmation-verified.md)).
 

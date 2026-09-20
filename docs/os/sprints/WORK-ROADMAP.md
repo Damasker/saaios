@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-08 visibility on panther shell `63b8b64`.**
+Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -25,7 +25,7 @@ Planner the scheduler.
 | WORK-00 | ADR-121 + mapping + this roadmap | **Done** | no |
 | WORK-01 | Task dependency model + DAG validation | **Done** (host) | no |
 | WORK-02 | Derived ready set + concurrency = 1 | **Done** (host + panther dispatch ADR-237) | **yes** |
-| WORK-03 | Verification lifecycle (`Verifying`) | Backlog | no |
+| WORK-03 | Verification lifecycle (`Verifying`) | **Done** (host, ADR-259) | no |
 | WORK-04 | Read-only bounded parallelism | Backlog | measure first |
 | WORK-05 | Priority scheduling | Backlog | no |
 | WORK-06 | Retry + failure taxonomy | Backlog | no |
@@ -77,6 +77,28 @@ Pending with one Running admits nothing; reboot snapshot matches;
 **Rollback:** diagnose again inside `process_planner_intent`.
 
 **Threat:** one live diagnose per admit; no new queue.
+
+## WORK-03
+
+**Goal:** a Task is not Done because the worker said ok.
+
+**Change:** `WorkflowStatus::Verifying`. `Running → Done` is illegal.
+After Result the Task is Verifying. `decide_verification` returns Done
+only on a Fresh Observation whose key/value match `verification_key` /
+`verification_expected`. Missing and Stale stay Verifying. Mismatch is
+Failed. Verifying counts as in-flight and does not complete a parent
+for DAG children. WORLD-05 later feeds live Observation into the same
+function.
+
+**Test:** worker ok without contract is not Done; stale is not verified;
+Fresh match is Done; mismatch is Failed; verifying parent blocks child.
+
+**Acceptance:** host `cargo test -p saai-taskd`. Phone=no this slice.
+
+**Rollback:** restore `Running → Done` in `valid_transition` and write
+Done from `finish_task`.
+
+**Threat:** none — no new network, no shell flash.
 
 ## WORK-08
 

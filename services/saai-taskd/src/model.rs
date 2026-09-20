@@ -64,6 +64,7 @@ pub enum WorkflowStatus {
     Running,
     WaitingConfirmation,
     WaitingClarification,
+    Verifying,
     Done,
     Failed,
     Cancelled,
@@ -76,6 +77,7 @@ impl WorkflowStatus {
             Self::Running => "running",
             Self::WaitingConfirmation => "waiting_confirmation",
             Self::WaitingClarification => "waiting_clarification",
+            Self::Verifying => "verifying",
             Self::Done => "done",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -88,6 +90,7 @@ impl WorkflowStatus {
             "running" => Some(Self::Running),
             "waiting_confirmation" => Some(Self::WaitingConfirmation),
             "waiting_clarification" => Some(Self::WaitingClarification),
+            "verifying" => Some(Self::Verifying),
             "done" => Some(Self::Done),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
@@ -100,13 +103,15 @@ impl WorkflowStatus {
 /// yet -- true for every planner-bridged Intent (S10 Change 2), since
 /// nothing here knows whether the model will answer outright or propose
 /// something that needs confirmation until `saaios-runtime` actually
-/// replies. From `Pending` it can reach `Running` (answered outright,
-/// about to be finalized `Done`), `WaitingConfirmation` (the model
-/// proposed something `saaios-runtime`'s own `policy-engine` flagged
-/// `ask_user`), or `Failed` directly (the bridge couldn't even reach
-/// `saaios-runtime` -- there was never anything to run). `Running` only
-/// ever continues to `Done`/`Failed` for itself, matching Change 2 of
-/// S09's original shape. `WaitingConfirmation` can only reach `Running`
+/// replies. From `Pending` it can reach `Running` (answered, Action
+/// about to execute), `WaitingConfirmation` (the model proposed
+/// something `saaios-runtime`'s own `policy-engine` flagged `ask_user`),
+/// or `Failed` directly (the bridge couldn't even reach
+/// `saaios-runtime` -- there was never anything to run). `Running` goes
+/// to `Verifying` after an Action Result, or `Failed` if the worker
+/// never produced a Result. `Done` is only from `Verifying` when a
+/// Fresh Observation matches the contract (WORK-03 / ADR-259) -- never
+/// from worker "ok". `WaitingConfirmation` can only reach `Running`
 /// or `Cancelled` through an explicit, separately authored update
 /// (`saai-shell`'s confirmation screen, a live touch -- never something
 /// this daemon writes to itself) -- there is deliberately no
@@ -126,8 +131,10 @@ pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
     matches!(
         (from, to),
         (Pending, Running)
-            | (Running, Done)
+            | (Running, Verifying)
             | (Running, Failed)
+            | (Verifying, Done)
+            | (Verifying, Failed)
             | (Pending, WaitingConfirmation)
             | (Pending, WaitingClarification)
             | (Pending, Failed)
@@ -146,6 +153,98 @@ pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
 pub const DEPENDS_ON_PROPERTY: &str = "depends_on_task_ids";
 /// Proposal id from a PlanProposal step (ADR-238). Distinct from Task UUID.
 pub const PROPOSAL_ID_PROPERTY: &str = "proposal_id";
+/// WORK-03: Observation key that must be Fresh and match before Done.
+pub const VERIFICATION_KEY_PROPERTY: &str = "verification_key";
+pub const VERIFICATION_EXPECTED_PROPERTY: &str = "verification_expected";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationEvidence {
+    pub key: String,
+    pub fresh: bool,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationDecision {
+    Verified,
+    StillVerifying,
+    FailedMismatch,
+}
+
+/// Worker "ok" is never Done (ADR-121). Fresh matching Observation is.
+pub fn decide_verification(
+    expected_key: Option<&str>,
+    expected_value: Option<&str>,
+    evidence: Option<&ObservationEvidence>,
+) -> VerificationDecision {
+    let Some(key) = expected_key.filter(|key| !key.is_empty()) else {
+        return VerificationDecision::StillVerifying;
+    };
+    let Some(sample) = evidence else {
+        return VerificationDecision::StillVerifying;
+    };
+    if sample.key != key {
+        return VerificationDecision::StillVerifying;
+    }
+    if !sample.fresh {
+        return VerificationDecision::StillVerifying;
+    }
+    match expected_value {
+        Some(expected) if sample.value != expected => VerificationDecision::FailedMismatch,
+        _ => VerificationDecision::Verified,
+    }
+}
+
+pub fn verification_key_of(entity: &Entity) -> Option<&str> {
+    entity
+        .properties
+        .get(VERIFICATION_KEY_PROPERTY)
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty())
+}
+
+pub fn verification_expected_of(entity: &Entity) -> Option<&str> {
+    entity
+        .properties
+        .get(VERIFICATION_EXPECTED_PROPERTY)
+        .and_then(Value::as_str)
+}
+
+/// After Result, Task is Verifying until Fresh evidence matches.
+pub fn status_after_verification(
+    task: &Entity,
+    evidence: Option<&ObservationEvidence>,
+) -> WorkflowStatus {
+    match decide_verification(
+        verification_key_of(task),
+        verification_expected_of(task),
+        evidence,
+    ) {
+        VerificationDecision::Verified => WorkflowStatus::Done,
+        VerificationDecision::FailedMismatch => WorkflowStatus::Failed,
+        VerificationDecision::StillVerifying => WorkflowStatus::Verifying,
+    }
+}
+
+pub fn task_properties_after_result(
+    task: &Entity,
+    intent_id: Uuid,
+    result_id: Uuid,
+    status: WorkflowStatus,
+) -> Map<String, Value> {
+    let mut properties = task_properties(intent_id, status);
+    properties.insert("result_id".into(), json!(result_id.to_string()));
+    if let Some(key) = verification_key_of(task) {
+        properties.insert(VERIFICATION_KEY_PROPERTY.into(), json!(key));
+    }
+    if let Some(expected) = verification_expected_of(task) {
+        properties.insert(VERIFICATION_EXPECTED_PROPERTY.into(), json!(expected));
+    }
+    if let Some(proposal) = task.properties.get(PROPOSAL_ID_PROPERTY).cloned() {
+        properties.insert(PROPOSAL_ID_PROPERTY.into(), proposal);
+    }
+    with_depends_on(properties, &depends_on_of(task))
+}
 
 pub fn task_properties(intent_id: Uuid, status: WorkflowStatus) -> Map<String, Value> {
     let mut map = Map::new();
@@ -264,6 +363,7 @@ fn is_open_workflow(status: WorkflowStatus) -> bool {
             | WorkflowStatus::Running
             | WorkflowStatus::WaitingConfirmation
             | WorkflowStatus::WaitingClarification
+            | WorkflowStatus::Verifying
     )
 }
 
@@ -460,6 +560,7 @@ mod tests {
             WorkflowStatus::Running,
             WorkflowStatus::WaitingConfirmation,
             WorkflowStatus::WaitingClarification,
+            WorkflowStatus::Verifying,
             WorkflowStatus::Done,
             WorkflowStatus::Failed,
             WorkflowStatus::Cancelled,
@@ -478,8 +579,11 @@ mod tests {
     fn change_2_transitions_are_accepted() {
         use WorkflowStatus::*;
         assert!(valid_transition(Pending, Running));
-        assert!(valid_transition(Running, Done));
+        assert!(valid_transition(Running, Verifying));
         assert!(valid_transition(Running, Failed));
+        assert!(valid_transition(Verifying, Done));
+        assert!(valid_transition(Verifying, Failed));
+        assert!(!valid_transition(Running, Done));
     }
 
     #[test]
@@ -524,6 +628,7 @@ mod tests {
         assert!(!valid_transition(Pending, Done));
         assert!(!valid_transition(Failed, Done));
         assert!(!valid_transition(Running, WaitingConfirmation));
+        assert!(!valid_transition(Verifying, Running));
     }
 
     #[test]
@@ -613,6 +718,16 @@ mod tests {
         let tasks = vec![entity(
             TASK_TYPE,
             task_properties(intent_id, WorkflowStatus::Pending),
+        )];
+        assert!(has_open_task_for_intent(&tasks, intent_id));
+    }
+
+    #[test]
+    fn verifying_task_is_open() {
+        let intent_id = Uuid::new_v4();
+        let tasks = vec![entity(
+            TASK_TYPE,
+            task_properties(intent_id, WorkflowStatus::Verifying),
         )];
         assert!(has_open_task_for_intent(&tasks, intent_id));
     }
@@ -856,5 +971,127 @@ mod tests {
         let done = Uuid::new_v4();
         // Failed parent is omitted from the completed set.
         assert!(!dependencies_satisfied(&[failed, done], &[done]));
+    }
+
+    #[test]
+    fn worker_ok_without_contract_is_not_done() {
+        let task = entity(
+            TASK_TYPE,
+            task_properties(Uuid::new_v4(), WorkflowStatus::Running),
+        );
+        assert_eq!(
+            decide_verification(None, None, None),
+            VerificationDecision::StillVerifying
+        );
+        assert_eq!(
+            status_after_verification(&task, None),
+            WorkflowStatus::Verifying
+        );
+        assert!(!valid_transition(
+            WorkflowStatus::Running,
+            WorkflowStatus::Done
+        ));
+    }
+
+    #[test]
+    fn stale_observation_is_not_verified() {
+        let mut properties = task_properties(Uuid::new_v4(), WorkflowStatus::Verifying);
+        properties.insert(VERIFICATION_KEY_PROPERTY.into(), json!("system.metrics"));
+        properties.insert(VERIFICATION_EXPECTED_PROPERTY.into(), json!("ok"));
+        let task = entity(TASK_TYPE, properties);
+        let stale = ObservationEvidence {
+            key: "system.metrics".into(),
+            fresh: false,
+            value: "ok".into(),
+        };
+        assert_eq!(
+            decide_verification(
+                verification_key_of(&task),
+                verification_expected_of(&task),
+                Some(&stale)
+            ),
+            VerificationDecision::StillVerifying
+        );
+        assert_eq!(
+            status_after_verification(&task, Some(&stale)),
+            WorkflowStatus::Verifying
+        );
+    }
+
+    #[test]
+    fn missing_observation_stays_verifying() {
+        let mut properties = task_properties(Uuid::new_v4(), WorkflowStatus::Verifying);
+        properties.insert(VERIFICATION_KEY_PROPERTY.into(), json!("system.metrics"));
+        let task = entity(TASK_TYPE, properties);
+        assert_eq!(
+            status_after_verification(&task, None),
+            WorkflowStatus::Verifying
+        );
+    }
+
+    #[test]
+    fn fresh_matching_observation_is_done() {
+        let mut properties = task_properties(Uuid::new_v4(), WorkflowStatus::Verifying);
+        properties.insert(VERIFICATION_KEY_PROPERTY.into(), json!("system.metrics"));
+        properties.insert(VERIFICATION_EXPECTED_PROPERTY.into(), json!("ok"));
+        let task = entity(TASK_TYPE, properties);
+        let fresh = ObservationEvidence {
+            key: "system.metrics".into(),
+            fresh: true,
+            value: "ok".into(),
+        };
+        assert_eq!(
+            status_after_verification(&task, Some(&fresh)),
+            WorkflowStatus::Done
+        );
+        assert!(valid_transition(
+            WorkflowStatus::Verifying,
+            WorkflowStatus::Done
+        ));
+    }
+
+    #[test]
+    fn fresh_mismatch_is_failed() {
+        let mut properties = task_properties(Uuid::new_v4(), WorkflowStatus::Verifying);
+        properties.insert(VERIFICATION_KEY_PROPERTY.into(), json!("system.metrics"));
+        properties.insert(VERIFICATION_EXPECTED_PROPERTY.into(), json!("ok"));
+        let task = entity(TASK_TYPE, properties);
+        let mismatch = ObservationEvidence {
+            key: "system.metrics".into(),
+            fresh: true,
+            value: "wrong".into(),
+        };
+        assert_eq!(
+            status_after_verification(&task, Some(&mismatch)),
+            WorkflowStatus::Failed
+        );
+    }
+
+    #[test]
+    fn after_result_keeps_verification_contract() {
+        let intent_id = Uuid::new_v4();
+        let result_id = Uuid::new_v4();
+        let mut properties = task_properties(intent_id, WorkflowStatus::Running);
+        properties.insert(VERIFICATION_KEY_PROPERTY.into(), json!("wifi.link"));
+        properties.insert(VERIFICATION_EXPECTED_PROPERTY.into(), json!("up"));
+        let task = entity(TASK_TYPE, properties);
+        let closed =
+            task_properties_after_result(&task, intent_id, result_id, WorkflowStatus::Verifying);
+        assert_eq!(
+            closed
+                .get(VERIFICATION_KEY_PROPERTY)
+                .and_then(Value::as_str),
+            Some("wifi.link")
+        );
+        assert_eq!(
+            closed
+                .get(VERIFICATION_EXPECTED_PROPERTY)
+                .and_then(Value::as_str),
+            Some("up")
+        );
+        assert_eq!(
+            closed.get("result_id").and_then(Value::as_str),
+            Some(result_id.to_string()).as_deref()
+        );
     }
 }

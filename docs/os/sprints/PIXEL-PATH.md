@@ -238,6 +238,15 @@ diagnose (ADR-238, `351b0b6f…`).
 - Bluetooth adapter is `hci0`, not `bt-scan` (ADR-258; host)
 - Голос на Pixel не открывать (ADR-092 AoC)
 
+## F — platform remainder (host until shell-legal)
+
+- WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; host)
+- AUTH-02/03
+- MEM-03/06 typed record + erase
+- MEM-08 when shell-legal read exists
+- APP-COMPAT
+- Visual v1 unsigned; `compile_v2_public` stays Experimental
+
 ## Что сознательно не делать сейчас
 
 - новые ADR «ещё одна фундаментальная модель»

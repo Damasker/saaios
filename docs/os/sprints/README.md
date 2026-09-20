@@ -117,6 +117,7 @@ ADR-255 cellular row names a live net bearer or «Нет модема».
 ADR-256 camera row names a capture node or «Нет узла захвата».
 ADR-257 playback row names tinyplay + test-tone, does not play.
 ADR-258 Bluetooth adapter presence is hci0, not bt-scan.
+ADR-259 WORK-03: Task Done only from Fresh matching Observation.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

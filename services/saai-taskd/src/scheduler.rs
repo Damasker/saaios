@@ -6,8 +6,8 @@
 //! ready file to replay.
 
 use crate::model::{
-    dependencies_satisfied, depends_on_of, intent_id_of, status_of, WorkflowStatus, TASK_TYPE,
-    PROPOSAL_ID_PROPERTY,
+    dependencies_satisfied, depends_on_of, intent_id_of, status_of, WorkflowStatus,
+    PROPOSAL_ID_PROPERTY, TASK_TYPE,
 };
 use saai_entity_protocol::Entity;
 use serde_json::Value;
@@ -20,7 +20,7 @@ pub fn is_completed(status: WorkflowStatus) -> bool {
 }
 
 pub fn is_mutating_in_flight(status: WorkflowStatus) -> bool {
-    matches!(status, WorkflowStatus::Running)
+    matches!(status, WorkflowStatus::Running | WorkflowStatus::Verifying)
 }
 
 pub fn mutating_in_flight(tasks: &[Entity]) -> usize {
@@ -90,13 +90,9 @@ pub fn admit_frontier(ready: &[Uuid], in_flight: usize, max: usize) -> Vec<Uuid>
 
 pub fn next_admission(tasks: &[Entity]) -> Option<Uuid> {
     let ready = derive_ready_set(tasks);
-    admit_frontier(
-        &ready,
-        mutating_in_flight(tasks),
-        MAX_MUTATING_IN_FLIGHT,
-    )
-    .into_iter()
-    .next()
+    admit_frontier(&ready, mutating_in_flight(tasks), MAX_MUTATING_IN_FLIGHT)
+        .into_iter()
+        .next()
 }
 
 #[cfg(test)]
@@ -207,6 +203,26 @@ mod tests {
         let running = task(WorkflowStatus::Running, &[]);
         let pending = task(WorkflowStatus::Pending, &[]);
         assert_eq!(next_admission(&[running, pending]), None);
+    }
+
+    #[test]
+    fn verifying_parent_blocks_child() {
+        let parent = task(WorkflowStatus::Verifying, &[]);
+        let child = task(WorkflowStatus::Pending, &[parent.id]);
+        assert_eq!(
+            derive_ready_set(&[parent.clone(), child.clone()]),
+            Vec::<Uuid>::new()
+        );
+        assert_eq!(mutating_in_flight(&[parent.clone()]), 1);
+        assert_eq!(next_admission(&[parent, child]), None);
+    }
+
+    #[test]
+    fn verifying_counts_as_in_flight() {
+        let verifying = task(WorkflowStatus::Verifying, &[]);
+        let pending = task(WorkflowStatus::Pending, &[]);
+        assert_eq!(mutating_in_flight(&[verifying.clone(), pending.clone()]), 1);
+        assert_eq!(next_admission(&[verifying, pending]), None);
     }
 
     #[test]

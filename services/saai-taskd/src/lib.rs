@@ -46,9 +46,10 @@ use model::{
     action_properties, dangerous_action_of, find_action_for_task, has_open_task_for_intent,
     has_task_for_intent, intent_id_of, is_schedule_due, result_properties, safe_title,
     schedule_every_secs, schedule_fire_count, schedule_properties, schedule_text,
-    should_retry_failed_task, status_of, task_properties, with_depends_on, WorkflowStatus,
-    ACTION_TYPE, DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY,
-    RESULT_TYPE, RUNTIME_ACTION_KIND, SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
+    should_retry_failed_task, status_after_verification, status_of, task_properties,
+    task_properties_after_result, with_depends_on, WorkflowStatus, ACTION_TYPE,
+    DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY, RESULT_TYPE,
+    RUNTIME_ACTION_KIND, SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
 use saai_entity_protocol::{
     Entity, EntitydEvent, RELATION_EXECUTES, RELATION_PRODUCES, RELATION_REALIZES,
@@ -389,10 +390,7 @@ impl Daemon {
                 outcome: ResolutionOutcome::Plan(plan),
                 ..
             } => {
-                eprintln!(
-                    "IRAB: intent={} outcome=plan goal={}",
-                    intent.id, plan.goal
-                );
+                eprintln!("IRAB: intent={} outcome=plan goal={}", intent.id, plan.goal);
                 self.process_plan_intent(intent, &plan.goal).await
             }
             ResolveAttempt::NeedsModel
@@ -608,13 +606,8 @@ impl Daemon {
             .await?;
         self.record_lineage(stored_action.id, result.id, RELATION_PRODUCES)
             .await;
-        let mut done_properties = task_properties(intent.id, WorkflowStatus::Done);
-        done_properties.insert("result_id".into(), json!(result.id.to_string()));
-        let updated_task = self
-            .conn
-            .update_entity(&running_task, done_properties)
+        self.advance_task_after_result(&running_task, intent.id, result.id)
             .await?;
-        self.remember_task(updated_task);
         eprintln!(
             "saai-taskd: task {} irab-resolved {} without runtime diagnose",
             running_task.id, action.action_id
@@ -709,10 +702,8 @@ impl Daemon {
         let mut ids = HashMap::new();
         for step in &bound {
             let deps = graph::remap_depends_on(step, &ids);
-            let mut properties = with_depends_on(
-                task_properties(intent.id, WorkflowStatus::Pending),
-                &deps,
-            );
+            let mut properties =
+                with_depends_on(task_properties(intent.id, WorkflowStatus::Pending), &deps);
             properties.insert(PROPOSAL_ID_PROPERTY.into(), json!(step.proposal_id));
             if let Some(action_id) = &step.action_id {
                 properties.insert(SEMANTIC_ACTION_PROPERTY.into(), json!(action_id));
@@ -948,15 +939,10 @@ impl Daemon {
             .await?;
         self.record_lineage(stored_action.id, result.id, RELATION_PRODUCES)
             .await;
-        let mut done_properties = task_properties(intent_id, WorkflowStatus::Done);
-        done_properties.insert("result_id".into(), json!(result.id.to_string()));
-        let updated_task = self
-            .conn
-            .update_entity(&running_task, done_properties)
+        self.advance_task_after_result(&running_task, intent_id, result.id)
             .await?;
-        self.remember_task(updated_task);
         eprintln!(
-            "saai-taskd: task {} plan step {} done",
+            "saai-taskd: task {} plan step {} verifying",
             running_task.id, action.action_id
         );
         Ok(())
@@ -1097,15 +1083,10 @@ impl Daemon {
         self.record_lineage(action.id, result.id, RELATION_PRODUCES)
             .await;
 
-        let mut done_properties = task_properties(intent_id, WorkflowStatus::Done);
-        done_properties.insert("result_id".into(), json!(result.id.to_string()));
-        let updated_task = self
-            .conn
-            .update_entity(&running_task, done_properties)
+        self.advance_task_after_result(&running_task, intent_id, result.id)
             .await?;
-        self.remember_task(updated_task);
 
-        eprintln!("saai-taskd: intent {intent_id} done -> {summary}");
+        eprintln!("saai-taskd: intent {intent_id} verifying -> {summary}");
         Ok(())
     }
 
@@ -1235,10 +1216,7 @@ impl Daemon {
             eprintln!("saai-taskd: retry skipped, intent {intent_id} gone");
             return Ok(false);
         };
-        eprintln!(
-            "saai-taskd: retry task {} intent {intent_id}",
-            task.id
-        );
+        eprintln!("saai-taskd: retry task {} intent {intent_id}", task.id);
         let _ = std::io::Write::flush(&mut std::io::stderr());
         self.process_intent(&intent).await?;
         Ok(true)
@@ -1525,10 +1503,11 @@ impl Daemon {
     }
 
     /// Shared tail of both confirmed-Action executors: create the
-    /// Result, move the Task to `Done`, remember it. `action_id` is
-    /// already the post-update entity's id (unchanged by the update,
-    /// but taken explicitly so callers pass the entity they just got
-    /// back from `update_entity`, not the pre-update one).
+    /// Result, move the Task to `Verifying`, settle if Fresh evidence
+    /// already matches. Worker "ok" is never Done (ADR-259).
+    /// `action_id` is already the post-update entity's id (unchanged by
+    /// the update, but taken explicitly so callers pass the entity they
+    /// just got back from `update_entity`, not the pre-update one).
     async fn finish_task(
         &mut self,
         task: &Entity,
@@ -1549,12 +1528,36 @@ impl Daemon {
 
         let intent_id = model::intent_id_of(task)
             .ok_or_else(|| ClientError::UnexpectedResult("task missing intent_id".into()))?;
-        let mut done_properties = task_properties(intent_id, WorkflowStatus::Done);
-        done_properties.insert("result_id".into(), json!(result.id.to_string()));
-        let updated_task = self.conn.update_entity(task, done_properties).await?;
-        self.remember_task(updated_task);
+        self.advance_task_after_result(task, intent_id, result.id)
+            .await?;
 
-        eprintln!("saai-taskd: task {} done -> {summary}", task.id);
+        eprintln!("saai-taskd: task {} verifying -> {summary}", task.id);
+        Ok(())
+    }
+
+    /// Running → Verifying (durable). Done/Failed only from a Fresh
+    /// matching Observation. No evidence at Result time stays Verifying.
+    async fn advance_task_after_result(
+        &mut self,
+        task: &Entity,
+        intent_id: Uuid,
+        result_id: Uuid,
+    ) -> Result<(), ClientError> {
+        let verifying_properties =
+            task_properties_after_result(task, intent_id, result_id, WorkflowStatus::Verifying);
+        let verifying = if status_of(task) == Some(WorkflowStatus::Verifying) {
+            task.clone()
+        } else {
+            let updated = self.conn.update_entity(task, verifying_properties).await?;
+            self.remember_task(updated.clone());
+            updated
+        };
+        let next = status_after_verification(&verifying, None);
+        if next != WorkflowStatus::Verifying {
+            let settled = task_properties_after_result(&verifying, intent_id, result_id, next);
+            let updated = self.conn.update_entity(&verifying, settled).await?;
+            self.remember_task(updated);
+        }
         Ok(())
     }
 
