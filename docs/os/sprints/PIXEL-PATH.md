@@ -201,6 +201,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
 | Object View facts/links | existing SOM peers + facts; no dangling/in-space **на panther** (ADR-242; `bfba710f…`; leave Сейчас) |
+| Space detail members | SOM members of selected space; no invented people **на panther** (ADR-243; `a63e1ce9…`; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

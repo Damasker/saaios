@@ -2234,8 +2234,8 @@ enum Frame {
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-140: Пространства is no longer `Frame::Root`. Header is a
-    /// real `ContextHeader`; rows stay live `SpaceRow` cards. Space
-    /// detail stays deferred.
+    /// real `ContextHeader`; rows stay live `SpaceRow` cards. ADR-243:
+    /// selected-space detail replaces the list with SOM members.
     Spaces {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
@@ -5476,6 +5476,98 @@ fn space_row_at(
         .map(str::to_string)
 }
 
+const PERSON_CONTACT_ENTITY_TYPE: &str = "person.contact";
+
+#[derive(Debug, PartialEq, Eq)]
+enum SpaceDetailTap {
+    Member(Uuid),
+    Back,
+}
+
+fn space_member_kind_label(entity: &Entity) -> &'static str {
+    if entity.entity_type == PERSON_CONTACT_ENTITY_TYPE {
+        "Человек"
+    } else {
+        search_kind_label(entity)
+    }
+}
+
+fn space_member_rows(entities: &[Entity]) -> Vec<&Entity> {
+    search_rows(entities)
+}
+
+fn space_detail_v2_source(entities: &[Entity], store_connected: bool) -> String {
+    let mut src = String::from("sui 2\nscreen spaces {\n");
+    src.push_str(&v2_header_block("spaces.header"));
+    if !store_connected {
+        src.push_str(&v2_stacked_block("DataRow", "Status", "spaces.offline"));
+    } else {
+        let rows = space_member_rows(entities);
+        if rows.is_empty() {
+            src.push_str(&v2_stacked_block(
+                "DataRow",
+                "Status",
+                "spaces.detail.empty",
+            ));
+        } else {
+            for entity in &rows {
+                src.push_str(&v2_stacked_block(
+                    "DataRow",
+                    "Button",
+                    &entity.id.to_string(),
+                ));
+            }
+        }
+    }
+    src.push_str("  row back {}\n");
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
+fn space_detail_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    entities: &[Entity],
+    store_connected: bool,
+) -> Option<SpaceDetailTap> {
+    let (id, action) = live_v2_hit(
+        &space_detail_v2_source(entities, store_connected),
+        "ADR-243 space detail",
+        pos,
+        width,
+        height,
+    )?;
+    match action.as_deref() {
+        Some("list_back") => Some(SpaceDetailTap::Back),
+        Some(loc) if loc == id => {
+            let parsed = Uuid::parse_str(&id).ok()?;
+            space_member_rows(entities)
+                .into_iter()
+                .find(|entity| entity.id == parsed)
+                .map(|entity| SpaceDetailTap::Member(entity.id))
+        }
+        _ => None,
+    }
+}
+
+fn space_member_card(entity: &Entity) -> render::ActionCardView {
+    render::ActionCardView::new(
+        entity.title.clone(),
+        space_member_kind_label(entity).to_string(),
+        "Открыть",
+    )
+}
+
+fn space_detail_empty_card(store_connected: bool) -> render::ActionCardView {
+    if store_connected {
+        render::ActionCardView::new("Нет объектов", String::new(), "")
+    } else {
+        render::ActionCardView::new("Нет связи", String::new(), "")
+    }
+}
+
 /// ADR-138 / ADR-187 / ADR-220: the apps grid only hits live
 /// `installed_apps`. Intent compose stays on the composed footer,
 /// not as extra tiles. Hits come from generated `compile_v2()`
@@ -5541,6 +5633,18 @@ fn inbox_header(space_name: &str, entityd_connected: bool, archived: bool) -> Co
 /// names `Нет связи` and wins over the selected space's archived mark.
 fn spaces_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
     let header = ContextHeader::new(space_name).with_section_title("Пространства");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
+/// ADR-243: detail names the one selected context, not the switcher.
+fn space_detail_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Пространство");
     if !entityd_connected {
         header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
     } else if archived {
@@ -6406,6 +6510,7 @@ fn main() {
         locked: !dev_no_lock,
         dev_no_lock,
         apps_open: false,
+        space_detail_open: false,
         unlock_pending: false,
         sleeping: false,
         last_activity: Instant::now(),
@@ -6592,6 +6697,10 @@ struct Shell {
     /// `false` on every root tab switch so leaving and returning to
     /// `Сейчас` never re-opens the grid unexpectedly.
     apps_open: bool,
+    /// ADR-243: true while Пространства shows the selected space's
+    /// SOM members instead of the space switcher. Closed by Назад or
+    /// re-tapping Пространства. Reset on tab switch.
+    space_detail_open: bool,
     /// Set on a touch-down that started on the lock surface while
     /// locked; the matching touch-up is what actually unlocks (mirrors
     /// drm-splash.c requiring touch *release* over the lock screen, not
@@ -7490,6 +7599,7 @@ impl TouchHandler for Shell {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
                     self.apps_open = false;
+                    self.space_detail_open = false;
                     self.draw(conn, qh);
                 } else if page == RootPage::Now && self.apps_open {
                     // VUI-03 (ADR-113): re-tapping the already-selected
@@ -7498,6 +7608,9 @@ impl TouchHandler for Shell {
                     // now doing something the first time it's pressed
                     // while the grid is open over the composed screen.
                     self.apps_open = false;
+                    self.draw(conn, qh);
+                } else if page == RootPage::Spaces && self.space_detail_open {
+                    self.space_detail_open = false;
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Inbox {
@@ -7533,7 +7646,25 @@ impl TouchHandler for Shell {
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Spaces {
-                if let Some(space_id) = space_row_at(
+                if self.space_detail_open {
+                    match space_detail_action_at(
+                        self.last_touch_pos,
+                        self.width,
+                        self.height,
+                        &self.selected_entities,
+                        self.entityd.is_connected(),
+                    ) {
+                        Some(SpaceDetailTap::Member(id)) => {
+                            self.viewing_entity_id = Some(id);
+                            self.draw(conn, qh);
+                        }
+                        Some(SpaceDetailTap::Back) => {
+                            self.space_detail_open = false;
+                            self.draw(conn, qh);
+                        }
+                        None => {}
+                    }
+                } else if let Some(space_id) = space_row_at(
                     self.last_touch_pos,
                     self.width,
                     self.height,
@@ -7541,6 +7672,7 @@ impl TouchHandler for Shell {
                     self.entityd.is_connected(),
                 ) {
                     self.invoke_select_space(&space_id);
+                    self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Now && !self.apps_open {
                 // VUI-03 (ADR-113): footer rows stay tappable. ADR-217:
@@ -8284,23 +8416,42 @@ impl Shell {
             }
         } else if self.current_page == RootPage::Spaces {
             let connected = self.entityd.is_connected();
-            let view = layout_live_v2(
-                &spaces_v2_source(&self.spaces, connected),
-                "ADR-226 spaces paint",
-                width,
-                height,
-            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
-            Frame::Spaces {
-                content_rect: view.children[0].rect,
-                tabs: self.navigation_items_from(&view),
-                header: spaces_header(
-                    &space_display_name(&self.spaces, &self.selected_space_id),
-                    connected,
-                    archived,
-                ),
-                rows: self.spaces_content_cards_from(&view),
+            if self.space_detail_open {
+                let view = layout_live_v2(
+                    &space_detail_v2_source(&self.selected_entities, connected),
+                    "ADR-243 space detail paint",
+                    width,
+                    height,
+                );
+                Frame::Spaces {
+                    content_rect: view.children[0].rect,
+                    tabs: self.navigation_items_from(&view),
+                    header: space_detail_header(
+                        &space_display_name(&self.spaces, &self.selected_space_id),
+                        connected,
+                        archived,
+                    ),
+                    rows: self.space_detail_content_cards_from(&view),
+                }
+            } else {
+                let view = layout_live_v2(
+                    &spaces_v2_source(&self.spaces, connected),
+                    "ADR-226 spaces paint",
+                    width,
+                    height,
+                );
+                Frame::Spaces {
+                    content_rect: view.children[0].rect,
+                    tabs: self.navigation_items_from(&view),
+                    header: spaces_header(
+                        &space_display_name(&self.spaces, &self.selected_space_id),
+                        connected,
+                        archived,
+                    ),
+                    rows: self.spaces_content_cards_from(&view),
+                }
             }
         } else if self.current_page == RootPage::Me {
             let all = self.me_all_rows();
@@ -8949,15 +9100,11 @@ impl Shell {
         if !self.entityd.is_connected() {
             return;
         }
-        // HIA-01: tapping the space that's already selected cycles
-        // lifecycle. Nothing on the card explains the gesture --
-        // status has no room (confirmed live).
-        if space_id == self.selected_space_id {
-            self.cycle_space_lifecycle(space_id);
-        } else {
+        if space_id != self.selected_space_id {
             self.upsert_manual_context(space_id);
             self.entityd.select_space(space_id);
         }
+        self.space_detail_open = true;
     }
 
     fn invoke_content_action(
@@ -9887,6 +10034,33 @@ impl Shell {
             rows.iter().map(space_card_from_row).collect(),
             &ids,
         )
+    }
+
+    fn space_detail_content_cards_from(
+        &self,
+        tree: &LayoutNode,
+    ) -> Vec<(Rect, render::ActionCardView)> {
+        let connected = self.entityd.is_connected();
+        let rows = space_member_rows(&self.selected_entities);
+        let (mut cards, mut ids): (Vec<render::ActionCardView>, Vec<String>) = if !connected {
+            (
+                vec![space_detail_empty_card(false)],
+                vec!["spaces.offline".into()],
+            )
+        } else if rows.is_empty() {
+            (
+                vec![space_detail_empty_card(true)],
+                vec!["spaces.detail.empty".into()],
+            )
+        } else {
+            (
+                rows.iter().copied().map(space_member_card).collect(),
+                rows.iter().map(|entity| entity.id.to_string()).collect(),
+            )
+        };
+        ids.push("back".into());
+        cards.push(render::ActionCardView::new("Назад", "", "Назад"));
+        list_paint_cards(tree, "ADR-243 space detail paint", cards, &ids)
     }
 
     fn me_facts(&self) -> MeFacts {
@@ -11227,22 +11401,24 @@ mod tests {
         orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
         pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
         remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
-        search_rows, space_color, space_color_entity, space_display_name, space_for_wifi_ssid,
-        space_lifecycle, space_lifecycle_entity, space_list_rows, space_relation_targets,
-        space_row_at, spaces_header, stacked_control_rect, stacked_row_fits_above,
-        stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
-        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
-        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
-        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
-        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
-        Entity, FieldKind, Keyboard, KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource,
-        Keystroke, LockAttentionTap, LockWakeTap, MotionClock, MotionToken, ObjectSummary,
-        OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern,
-        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
-        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
-        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        search_rows, space_color, space_color_entity, space_detail_action_at,
+        space_detail_empty_card, space_detail_header, space_display_name, space_for_wifi_ssid,
+        space_lifecycle, space_lifecycle_entity, space_list_rows, space_member_kind_label,
+        space_member_rows, space_relation_targets, space_row_at, spaces_header,
+        stacked_control_rect, stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect,
+        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
+        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, DataRowVariant, Entity, FieldKind, Keyboard, KeyboardCommand,
+        KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap,
+        MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow,
+        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
         SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
         SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
@@ -13628,6 +13804,58 @@ mod tests {
             space_row_at(point, 1080, 2400, &spaces, true).as_deref(),
             Some("home")
         );
+    }
+
+    #[test]
+    fn space_member_rows_are_som_members_not_invented_people() {
+        let intent = intent_entity("Подготовить демо");
+        let task = task_entity("Собрать слайды", Some(intent.id));
+        let notice = notification_entity("Батарея", "15%");
+        let mut person = test_entity("person.contact", serde_json::Map::new());
+        person.title = "Андрей".to_string();
+        let mut color_props = serde_json::Map::new();
+        color_props.insert("space_id".into(), serde_json::Value::String("home".into()));
+        color_props.insert("color".into(), serde_json::Value::String("teal".into()));
+        let color = test_entity(SPACE_COLOR_ENTITY_TYPE, color_props);
+        let entities = vec![intent.clone(), task.clone(), notice, person.clone(), color];
+        let rows = space_member_rows(&entities);
+        let titles: Vec<&str> = rows.iter().map(|entity| entity.title.as_str()).collect();
+        assert_eq!(titles.len(), 3);
+        assert!(titles.contains(&"Собрать слайды"));
+        assert!(titles.contains(&"Подготовить демо"));
+        assert!(titles.contains(&"Андрей"));
+        assert_eq!(space_member_kind_label(&person), "Человек");
+        assert!(!titles.iter().any(|title| title.contains("Люди")));
+        assert_eq!(space_detail_empty_card(true).label, "Нет объектов");
+        assert_eq!(space_detail_empty_card(false).label, "Нет связи");
+        let header = space_detail_header("Дом", true, false);
+        assert_eq!(header.heading_text(), "Дом · Пространство");
+    }
+
+    #[test]
+    fn space_detail_action_at_finds_member_then_back() {
+        let intent = intent_entity("Подготовить демо");
+        let entities = vec![intent.clone()];
+        let first = stacked_row_rect(0, 1080, 2400);
+        let member_point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            space_detail_action_at(member_point, 1080, 2400, &entities, true),
+            Some(SpaceDetailTap::Member(intent.id))
+        );
+        let row_count = space_member_rows(&entities).len();
+        let back = stacked_trailing_rect(row_count, row_count, 1080, 2400);
+        let back_point = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert_eq!(
+            space_detail_action_at(back_point, 1080, 2400, &entities, true),
+            Some(SpaceDetailTap::Back)
+        );
+        assert!(space_detail_action_at(member_point, 1080, 2400, &entities, false).is_none());
     }
 
     #[test]
