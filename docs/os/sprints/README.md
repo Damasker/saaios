@@ -42,6 +42,7 @@ ADR-180 `.sui` v2 vocabulary (host; v1 root chrome unchanged).
 ADR-181 `.sui` v2 grammar (host; `compile()` stays v1).
 ADR-182 `.sui` v2 component properties (host; `root.sui` unchanged).
 ADR-183 `.sui` v1 rollback artifact (`compile()` on `root.sui`).
+ADR-184 shared v1 layout/hit-test (`layout_v1_root()`, not `compile_v2()`).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

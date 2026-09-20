@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–183; `compile()` stays v1) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–184; `compile()` stays v1) |
 
 ---
 
@@ -1160,8 +1160,8 @@ component state remains fully usable.
 
 ## VUI-09 — `.sui` v2, public library, cleanup, and release gate
 
-**Status:** In progress — `.sui` v2 vocabulary through v1 rollback
-(ADR-180–183). Layout/hit-test, public subset, and cleanup remain.
+**Status:** In progress — `.sui` v2 vocabulary through v1 shared
+layout (ADR-180–184). Public subset and cleanup remain.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1178,7 +1178,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   properties). Layout and hit-testing still compile from `sui 1`.
 - [x] Preserve `.sui` v1 parsing or provide a deterministic migration tool and
   rollback artifact (`root.sui` + `compile_v1_rollback()`, ADR-183).
-- [ ] Move root layout and hit testing to compiled shared layout output.
+- [x] Move root layout and hit testing to compiled shared layout output
+  (`layout_v1_root()` from `compile_v1_rollback()`, ADR-184; `compile()`
+  stays v1).
 - [ ] Stabilize and document the public component subset for third-party SaaiOS
   applications; keep privileged composites capability-gated.
 - [ ] Publish component API docs, gallery, examples, stability labels,
@@ -1250,7 +1252,7 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-09**: emit shared layout/hit-test from compiled
-output without pointing `root.sui` at `compile_v2()`. Space detail
-still deferred. MEM-08 stays omitted until a shell-legal memory
-read exists.
+Continue **VUI-09**: stabilize the public component subset and
+gallery docs without pointing `root.sui` at `compile_v2()`. Space
+detail still deferred. MEM-08 stays omitted until a shell-legal
+memory read exists.

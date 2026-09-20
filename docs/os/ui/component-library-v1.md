@@ -406,6 +406,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   adds `text`/`color`/`spacing`/`inset`/`scroll`/`loc`/`focus`/`a11y`
   on those blocks from live `saai-ui-core` names. ADR-183 keeps
   `root.sui` compiled through `compile()` as the v1 rollback artifact.
+  ADR-184 emits that compiled `ScreenSpec` as one `layout_v1_root()`
+  tree so tabs and leftover NOW actions share hit-test; `compile_v2()`
+  still does not build production chrome.
 
 ### 7.6 `TaskSummary`
 

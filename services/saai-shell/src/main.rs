@@ -1022,29 +1022,25 @@ fn status_layer_height() -> u32 {
 
 /// Navigation hit-region: design-canvas tab height scaled to the
 /// panel, never below `MIN_TOUCH_TARGET`. Landscape 2400×1080 would
-/// otherwise shrink the strip under 48 logical units.
+/// otherwise shrink the strip under 48 logical units. ADR-184: same
+/// formula `layout_v1_root` uses.
 fn navigation_hit_height(panel_height: u32) -> u32 {
-    let scaled = ((panel_height as u64 * ROOT_TAB_HEIGHT as u64) / 2400) as u32;
-    scaled.max(physical_unit(MIN_TOUCH_TARGET))
+    saai_ui_compiler::v1_tab_strip_height(panel_height, ROOT_TAB_HEIGHT)
+}
+
+fn root_screen_spec() -> &'static saai_ui_compiler::ScreenSpec {
+    static SPEC: std::sync::OnceLock<saai_ui_compiler::ScreenSpec> = std::sync::OnceLock::new();
+    SPEC.get_or_init(|| {
+        let spec = saai_ui_compiler::compile_v1_rollback().expect("ADR-184: root.sui v1");
+        debug_assert_eq!(spec.id, ROOT_SCREEN_ID);
+        debug_assert_eq!(spec.content_id, ROOT_CONTENT_ID);
+        debug_assert_eq!(spec.tabs_id, ROOT_TABS_ID);
+        spec
+    })
 }
 
 fn root_view(width: u32, height: u32) -> LayoutNode {
-    let tab_height = navigation_hit_height(height);
-    let tabs = Node::linear(
-        ROOT_TABS_ID,
-        Axis::Horizontal,
-        ROOT_TABS
-            .iter()
-            .map(|tab| Node::leaf(tab.id).with_action(tab.action))
-            .collect(),
-    )
-    .with_size(Length::Fill, Length::Px(tab_height));
-    let root = Node::linear(
-        ROOT_SCREEN_ID,
-        Axis::Vertical,
-        vec![Node::leaf(ROOT_CONTENT_ID), tabs],
-    );
-    layout(&root, Rect::new(0, 0, width, height))
+    saai_ui_compiler::layout_v1_root(root_screen_spec(), width, height)
 }
 
 /// Content pane of the root layout — everything except the bottom
@@ -3086,15 +3082,9 @@ fn boot_attempts() -> u32 {
 }
 
 fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
-    let margin = width / 22;
-    let top = ((action.top as u64 * height as u64) / 2400) as u32;
-    let action_height = ((action.height as u64 * height as u64) / 2400) as u32;
-    Rect::new(
-        margin,
-        top,
-        width.saturating_sub(margin.saturating_mul(2)),
-        action_height,
-    )
+    saai_ui_compiler::layout_v1_find(&root_view(width, height), action.id)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| Rect::new(0, 0, 0, 0))
 }
 
 fn content_action_at(
@@ -3103,10 +3093,15 @@ fn content_action_at(
     width: u32,
     height: u32,
 ) -> Option<ContentActionDefinition> {
-    ROOT_CONTENT_ACTIONS.iter().copied().find(|action| {
-        action.page == page.id()
-            && content_action_rect(action, width, height).contains(pos.0, pos.1)
-    })
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let tree = root_view(width, height);
+    let hit = tree.hit_test(pos.0, pos.1)?;
+    ROOT_CONTENT_ACTIONS
+        .iter()
+        .copied()
+        .find(|action| action.page == page.id() && action.id == hit.id)
 }
 
 /// S13 Change 2: "Входящие" has no `root.sui` entries at all -- unlike

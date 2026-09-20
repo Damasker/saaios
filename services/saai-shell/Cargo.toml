@@ -29,6 +29,7 @@ intent-resolution.workspace = true
 chrono.workspace = true
 saai-portal-protocol.workspace = true
 saai-ui-core.workspace = true
+saai-ui-compiler.workspace = true
 saai-attention.workspace = true
 saai-object-actions.workspace = true
 policy-engine.workspace = true

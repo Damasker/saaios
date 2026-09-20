@@ -2,11 +2,14 @@
 //!
 //! ADR-180 names the `.sui` v2 vocabulary. `compile()` still accepts
 //! only `sui 1`. ADR-181/182 parse `sui 2` through `compile_v2()`.
-//! ADR-183 keeps `root.sui` as the v1 rollback artifact.
+//! ADR-183 keeps `root.sui` as the v1 rollback artifact. ADR-184
+//! emits layout/hit-test from that compiled v1 `ScreenSpec`.
 
+mod layout;
 mod rollback;
 mod vocabulary;
 
+pub use layout::{layout_v1_find, layout_v1_root, v1_root_node, v1_tab_strip_height};
 pub use rollback::{compile_v1_rollback, V1_ROLLBACK_SOURCE};
 pub use vocabulary::{
     sui_v2_a11y_roles, sui_v2_color_roles, sui_v2_composites, sui_v2_deferred, sui_v2_inset_values,
