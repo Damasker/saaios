@@ -241,6 +241,7 @@ diagnose (ADR-238, `351b0b6f…`).
 ## F — platform remainder (host until shell-legal)
 
 - WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; host)
+- WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; host; no taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
 - WORLD-06 CPU sampler Health from Observation (ADR-287; host; Stale→Unknown; no runtime flash)
 - AUTH-02 PolicyEngine adapter, same verdicts (ADR-260; host)

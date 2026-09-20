@@ -47,10 +47,10 @@ use model::{
     has_open_task_for_intent, has_task_for_intent, intent_id_of, is_schedule_due, result_id_of,
     result_properties, safe_title, schedule_every_secs, schedule_fire_count, schedule_properties,
     schedule_text, should_retry_failed_task, status_after_verification, status_of, task_properties,
-    task_properties_after_result, verification_key_of, with_depends_on, ObservationEvidence,
-    WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE,
-    PROPOSAL_ID_PROPERTY, RESULT_TYPE, RUNTIME_ACTION_KIND, SCHEDULE_TYPE, SEMANTIC_ACTION_KIND,
-    TASK_TYPE,
+    task_properties_after_result, verification_key_of, with_depends_on, with_failure_class,
+    FailureClass, ObservationEvidence, WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND,
+    INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY, RESULT_TYPE, RUNTIME_ACTION_KIND,
+    SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
 use saai_entity_protocol::{
     Entity, EntitydEvent, RELATION_EXECUTES, RELATION_PRODUCES, RELATION_REALIZES,
@@ -1123,21 +1123,9 @@ impl Daemon {
         intent_id: Uuid,
         error: &runtime_bridge::BridgeError,
     ) -> Result<(), ClientError> {
-        let kind = if error.is_timeout() {
-            Some("timeout")
-        } else if matches!(error, runtime_bridge::BridgeError::Connect { .. }) {
-            Some("unreachable")
-        } else {
-            None
-        };
-        self.fail_task_with(
-            task,
-            intent_id,
-            &error.to_string(),
-            error.is_retryable(),
-            kind,
-        )
-        .await
+        let class = error.failure_class();
+        self.fail_task_with(task, intent_id, &error.to_string(), class)
+            .await
     }
 
     async fn fail_runtime_message(
@@ -1146,13 +1134,11 @@ impl Daemon {
         intent_id: Uuid,
         message: &str,
     ) -> Result<(), ClientError> {
-        let timeout = runtime_bridge::runtime_error_is_timeout(message);
         self.fail_task_with(
             task,
             intent_id,
             message,
-            timeout,
-            if timeout { Some("timeout") } else { None },
+            runtime_bridge::runtime_error_class(message),
         )
         .await
     }
@@ -1163,7 +1149,7 @@ impl Daemon {
         intent_id: Uuid,
         message: &str,
     ) -> Result<(), ClientError> {
-        self.fail_task_with(task, intent_id, message, false, None)
+        self.fail_task_with(task, intent_id, message, FailureClass::Unknown)
             .await
     }
 
@@ -1172,8 +1158,7 @@ impl Daemon {
         task: &Entity,
         intent_id: Uuid,
         message: &str,
-        retryable: bool,
-        error_kind: Option<&str>,
+        class: FailureClass,
     ) -> Result<(), ClientError> {
         eprintln!("saai-taskd: task {} failed: {message}", task.id);
         let _ = std::io::Write::flush(&mut std::io::stderr());
@@ -1185,12 +1170,7 @@ impl Daemon {
         self.notify_task_failed(&task.title, message).await;
         let mut failed_properties = task_properties(intent_id, WorkflowStatus::Failed);
         failed_properties.insert("error".into(), json!(message));
-        if retryable {
-            failed_properties.insert("retryable".into(), json!(true));
-        }
-        if let Some(kind) = error_kind {
-            failed_properties.insert("error_kind".into(), json!(kind));
-        }
+        failed_properties = with_failure_class(failed_properties, class);
         let updated_task = self.conn.update_entity(task, failed_properties).await?;
         self.remember_task(updated_task);
         Ok(())

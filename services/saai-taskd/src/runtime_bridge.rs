@@ -14,6 +14,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
+use crate::model::FailureClass;
+
 /// Slightly above panther's 60s runtime budget so a live timeout still
 /// arrives as `ok:false` from `saaios-runtime`. Hung TCP cannot leave
 /// a Task `Pending` forever (ADR-236).
@@ -42,9 +44,19 @@ impl BridgeError {
         matches!(self, Self::Timeout { .. })
     }
 
-    /// Timeout and connect failures are retryable. Malformed JSON is not.
+    pub fn failure_class(&self) -> FailureClass {
+        match self {
+            Self::Timeout { .. } => FailureClass::Timeout,
+            Self::Connect { .. } => FailureClass::Unreachable,
+            Self::Json(_) => FailureClass::Malformed,
+            Self::Io(_) => FailureClass::Unknown,
+        }
+    }
+
+    /// Timeout and connect failures are retryable. Malformed JSON and
+    /// unknown IO are not (ADR-121: unknown idempotency → no auto-retry).
     pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::Timeout { .. } | Self::Connect { .. })
+        self.failure_class().is_retryable()
     }
 }
 
@@ -52,6 +64,14 @@ impl BridgeError {
 /// (`crates/ai-runtime` "request timed out after Ns").
 pub fn runtime_error_is_timeout(message: &str) -> bool {
     message.contains("timed out after")
+}
+
+pub fn runtime_error_class(message: &str) -> FailureClass {
+    if runtime_error_is_timeout(message) {
+        FailureClass::Timeout
+    } else {
+        FailureClass::Unknown
+    }
 }
 
 /// Mirrors `saaios-runtime`'s `PendingDto` -- a proposed, not yet
@@ -428,6 +448,7 @@ mod tests {
 
         let error = diagnose(&addr, "hello", "home").await.unwrap_err();
         assert!(matches!(error, BridgeError::Connect { .. }));
+        assert_eq!(error.failure_class(), crate::model::FailureClass::Unreachable);
         assert!(error.is_retryable());
         assert!(!error.is_timeout());
     }
@@ -444,6 +465,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.is_timeout());
+        assert_eq!(error.failure_class(), crate::model::FailureClass::Timeout);
         assert!(error.is_retryable());
     }
 
@@ -453,6 +475,14 @@ mod tests {
             "request timed out after 60s (correlation_id=67d7c8ea-0000-0000-0000-000000000000)"
         ));
         assert!(!runtime_error_is_timeout("saaios-runtime unreachable"));
+        assert_eq!(
+            runtime_error_class("request timed out after 60s"),
+            crate::model::FailureClass::Timeout
+        );
+        assert_eq!(
+            runtime_error_class("malformed saaios-runtime response"),
+            crate::model::FailureClass::Unknown
+        );
     }
 
     #[tokio::test]

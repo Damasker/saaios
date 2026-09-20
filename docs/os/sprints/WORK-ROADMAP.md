@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-08 visibility on panther shell `63b8b64`.**
+Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-06 host FailureClass (ADR-288); WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -28,7 +28,7 @@ Planner the scheduler.
 | WORK-03 | Verification lifecycle (`Verifying`) | **Done** (host, ADR-259) | no |
 | WORK-04 | Read-only bounded parallelism | Backlog | measure first |
 | WORK-05 | Priority scheduling | Backlog | no |
-| WORK-06 | Retry + failure taxonomy | Backlog | no |
+| WORK-06 | Retry + failure taxonomy | **Done** (host, ADR-288) | no |
 | WORK-07 | Bounded ReplanRequest | Backlog | no |
 | WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther) | **yes** |
 | WORK-09 | Pixel measurements + tuned budgets | Backlog | **yes** |
@@ -99,6 +99,23 @@ Fresh match is Done; mismatch is Failed; verifying parent blocks child.
 Done from `finish_task`.
 
 **Threat:** none — no new network, no shell flash.
+
+## WORK-06
+
+**Goal:** Failed has a class. Retry ≠ Replan. Unknown idempotency is
+not retried.
+
+**Change:** `FailureClass` on the Task (`error_kind`). Timeout and
+unreachable stay `retryable` and still need `retry_requested`.
+Verification mismatch, malformed JSON, and unknown IO do not.
+Legacy rows with `retryable` and no kind stay retryable. No
+ReplanRequest (WORK-07). No taskd flash.
+
+**Test:** host `cargo test -p saai-taskd`.
+
+**Rollback:** drop `FailureClass`; restore boolean+optional strings.
+
+**Threat:** none — host taxonomy, no phone binary.
 
 ## WORK-08
 

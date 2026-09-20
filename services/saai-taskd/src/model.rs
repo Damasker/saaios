@@ -266,6 +266,9 @@ pub fn task_properties_after_result(
     if let Some(proposal) = task.properties.get(PROPOSAL_ID_PROPERTY).cloned() {
         properties.insert(PROPOSAL_ID_PROPERTY.into(), proposal);
     }
+    if status == WorkflowStatus::Failed {
+        properties = with_failure_class(properties, FailureClass::VerificationMismatch);
+    }
     with_depends_on(properties, &depends_on_of(task))
 }
 
@@ -406,12 +409,86 @@ pub fn has_open_task_for_intent(existing_tasks: &[Entity], intent_id: Uuid) -> b
     })
 }
 
-/// Timeout/unreachable Failed Tasks are retryable. Malformed responses
-/// are not. Object View later writes `retry_requested`; this daemon
-/// never auto-retries mutating work (ADR-121).
+/// WORK-06: why a Task is Failed. Retry ≠ Replan. Unknown idempotency
+/// is never auto-retried (ADR-121).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureClass {
+    Timeout,
+    Unreachable,
+    Malformed,
+    VerificationMismatch,
+    Unknown,
+}
+
+impl FailureClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Unreachable => "unreachable",
+            Self::Malformed => "malformed",
+            Self::VerificationMismatch => "verification_mismatch",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(kind: &str) -> Self {
+        match kind {
+            "timeout" => Self::Timeout,
+            "unreachable" => Self::Unreachable,
+            "malformed" => Self::Malformed,
+            "verification_mismatch" => Self::VerificationMismatch,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Only timeout and unreachable may be retried. Verification
+    /// mismatch is Replan (WORK-07), not retry.
+    pub fn is_retryable(self) -> bool {
+        matches!(self, Self::Timeout | Self::Unreachable)
+    }
+}
+
+pub fn with_failure_class(
+    mut properties: Map<String, Value>,
+    class: FailureClass,
+) -> Map<String, Value> {
+    properties.insert("error_kind".into(), json!(class.as_str()));
+    if class.is_retryable() {
+        properties.insert("retryable".into(), json!(true));
+    }
+    properties
+}
+
+pub fn failure_class_of(entity: &Entity) -> Option<FailureClass> {
+    if status_of(entity) != Some(WorkflowStatus::Failed) {
+        return None;
+    }
+    Some(
+        entity
+            .properties
+            .get("error_kind")
+            .and_then(Value::as_str)
+            .map(FailureClass::parse)
+            .unwrap_or(FailureClass::Unknown),
+    )
+}
+
+/// Timeout/unreachable Failed Tasks are retryable. Malformed,
+/// verification mismatch, and unknown are not. A legacy ADR-236
+/// `retryable` flag without `error_kind` still counts. Object View
+/// later writes `retry_requested`; this daemon never auto-retries
+/// mutating work (ADR-121).
 pub fn is_retryable_failure(entity: &Entity) -> bool {
-    status_of(entity) == Some(WorkflowStatus::Failed)
-        && entity.properties.get("retryable").and_then(Value::as_bool) == Some(true)
+    if status_of(entity) != Some(WorkflowStatus::Failed) {
+        return false;
+    }
+    if entity.properties.get("retryable").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+    match entity.properties.get("error_kind").and_then(Value::as_str) {
+        None => true,
+        Some(kind) => FailureClass::parse(kind).is_retryable(),
+    }
 }
 
 pub fn retry_requested(entity: &Entity) -> bool {
@@ -784,6 +861,40 @@ mod tests {
         );
         assert!(!is_retryable_failure(&task));
         assert!(!should_retry_failed_task(&task));
+    }
+
+    #[test]
+    fn unknown_error_kind_is_not_retryable_even_with_the_flag() {
+        let mut properties = task_properties(Uuid::new_v4(), WorkflowStatus::Failed);
+        properties.insert("retryable".into(), json!(true));
+        properties.insert("error_kind".into(), json!("unknown"));
+        let task = entity(TASK_TYPE, properties);
+        assert_eq!(failure_class_of(&task), Some(FailureClass::Unknown));
+        assert!(!FailureClass::Unknown.is_retryable());
+        assert!(!is_retryable_failure(&task));
+    }
+
+    #[test]
+    fn verification_mismatch_is_failed_not_retryable() {
+        let intent_id = Uuid::new_v4();
+        let result_id = Uuid::new_v4();
+        let task = entity(TASK_TYPE, task_properties(intent_id, WorkflowStatus::Verifying));
+        let failed =
+            task_properties_after_result(&task, intent_id, result_id, WorkflowStatus::Failed);
+        let failed_task = entity(TASK_TYPE, failed);
+        assert_eq!(
+            failure_class_of(&failed_task),
+            Some(FailureClass::VerificationMismatch)
+        );
+        assert!(!is_retryable_failure(&failed_task));
+    }
+
+    #[test]
+    fn timeout_class_is_retryable_unreachable_is_too() {
+        assert!(FailureClass::Timeout.is_retryable());
+        assert!(FailureClass::Unreachable.is_retryable());
+        assert!(!FailureClass::Malformed.is_retryable());
+        assert_eq!(FailureClass::parse("timeout"), FailureClass::Timeout);
     }
 
     #[test]

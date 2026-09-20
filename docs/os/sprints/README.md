@@ -140,6 +140,7 @@ ADR-284 runtime JSON `memory_erase` rewrites one identity off disk (host).
 ADR-285 MemoryContextProjection labels kind; Restricted stays off the model (host).
 ADR-286 GDK shm size from preferred_scale=120 is identity, not height 1776831 (host).
 ADR-287 CPU sampler Health: Fresh→Healthy, Stale→Unknown, no percent threshold (host).
+ADR-288 FailureClass: timeout/unreachable retryable; mismatch is not retry (host).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
