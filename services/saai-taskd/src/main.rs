@@ -7,9 +7,10 @@ use std::path::PathBuf;
 struct Args {
     #[arg(long, default_value = "/run/saaios/entityd.sock")]
     entityd_socket: PathBuf,
-    /// Space this daemon watches for `saaios.intent` entities. S09
-    /// Change 2 only needs one space -- multi-space workflows are out
-    /// of scope until something actually asks for them.
+    /// Space this daemon watches for `saaios.intent` entities at start.
+    /// Live `SelectionChanged` from entityd retargets the watch
+    /// (ADR-235); this flag is the boot/fallback selection, not a
+    /// permanent pin to Work.
     #[arg(long, default_value = "home")]
     space: String,
     /// `host:port` of the on-device `saaios-runtime` free-form intents
