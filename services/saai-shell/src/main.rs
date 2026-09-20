@@ -2423,7 +2423,16 @@ fn object_view_content(
                 None => (UniversalState::Idle, "Нет задачи".to_string()),
             };
             let actions = workflow_follow_actions(entity, &lineage, selected_entities);
-            finish_workflow_view(entity, selected_entities, lineage, state, status, actions)
+            let mut content =
+                finish_workflow_view(entity, selected_entities, lineage, state, status, actions);
+            let steps = plan_steps_for_intent(entity, selected_entities, relationships);
+            if let Some(plan) = intent_plan_caption(&steps) {
+                content.related = Some(plan);
+            }
+            if let Some(progress) = intent_plan_progress(&steps, selected_entities) {
+                content.activity = Some(progress);
+            }
+            content
         }
         ACTION_ENTITY_TYPE => {
             let lineage = workflow_lineage_for(entity, selected_entities, relationships);
@@ -4009,6 +4018,51 @@ fn related_workflow_tasks<'a>(
             by_intent || by_rel
         })
         .collect()
+}
+
+/// Intent screen (ADR-239): Tasks that realize this Intent, parents
+/// before children. One Task is the linear path; two or more is a plan.
+fn plan_steps_for_intent<'a>(
+    intent: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Vec<&'a Entity> {
+    let mut tasks = related_workflow_tasks(intent, entities, relationships);
+    tasks.sort_by(|left, right| {
+        depends_on_task_ids(left)
+            .len()
+            .cmp(&depends_on_task_ids(right).len())
+            .then_with(|| left.created_at.cmp(&right.created_at))
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    tasks
+}
+
+fn intent_plan_caption(steps: &[&Entity]) -> Option<String> {
+    if steps.len() < 2 {
+        return None;
+    }
+    Some(format!(
+        "План: {}",
+        steps
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect::<Vec<_>>()
+            .join(" → ")
+    ))
+}
+
+fn intent_plan_progress(steps: &[&Entity], entities: &[Entity]) -> Option<String> {
+    if steps.len() < 2 {
+        return None;
+    }
+    Some(
+        steps
+            .iter()
+            .map(|task| format!("{} — {}", task.title, task_status_text(task, entities)))
+            .collect::<Vec<_>>()
+            .join(" · "),
+    )
 }
 
 fn task_visibility_rank(entity: &Entity, entities: &[Entity]) -> u8 {
@@ -13919,6 +13973,31 @@ mod tests {
         assert_eq!(result_view.status, "Готово");
         assert_eq!(result_view.observation.as_deref(), Some("файл на диске"));
         assert_eq!(result_view.actions, vec!["Открыть задачу"]);
+    }
+
+    #[test]
+    fn object_view_content_for_an_intent_shows_plan_progress_from_related_tasks() {
+        let intent = intent_entity("Подготовить демо");
+        let mut draft = task_entity("Черновик", Some(intent.id));
+        draft
+            .properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let mut send = task_entity("Отправить", Some(intent.id));
+        send.properties.insert(
+            "depends_on_task_ids".into(),
+            serde_json::json!([draft.id.to_string()]),
+        );
+        let content =
+            object_view_content(&intent, &[intent.clone(), draft.clone(), send.clone()], &[]);
+        assert_eq!(
+            content.related.as_deref(),
+            Some("План: Черновик → Отправить")
+        );
+        assert_eq!(
+            content.activity.as_deref(),
+            Some("Черновик — Готово · Отправить — Ждёт подтверждения")
+        );
+        assert_eq!(content.status, "Ждёт подтверждения");
     }
 
     #[test]
