@@ -11600,6 +11600,11 @@ mod tests {
     }
 
     #[test]
+    fn unlocked_restart_uses_the_dev_no_lock_marker() {
+        assert_eq!(super::DEV_NO_LOCK_MARKER, "/run/saaios/dev-no-lock");
+    }
+
+    #[test]
     fn consent_screen_left_half_of_button_row_accepts() {
         assert_eq!(consent_action_at((270.0, 2250.0), 1080, 2400), Some(true));
     }

@@ -446,6 +446,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   ADR-190 proves 150% text on panther HEAD without a Система tap.
   ADR-191 proves live radio-off: status `Нет сети` while `wlan0` is
   down; Сейчас keeps live object chrome because entityd is still up.
+  ADR-192 proves an unlocked `saai-shell` restart on HEAD without a
+  lock surface.
 
 ### 7.6 `TaskSummary`
 

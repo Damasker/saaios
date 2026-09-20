@@ -7,14 +7,14 @@ Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
 Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted.
 
-Current panther shell: `e8865301…` (ADR-188). Radio-off (ADR-191)
-does not reflash.
+Current panther shell: `e8865301…` (ADR-188). Unlocked restart
+(ADR-192) does not reflash.
 
 ## Matrix
 
 | Area | Cell | Status | Evidence |
 |---|---|---|---|
-| Build | host tests | proven | overlay `cargo test -p saai-shell` 245; `saai-ui-compiler` 22 |
+| Build | host tests | proven | overlay `cargo test -p saai-shell` 248; `saai-ui-compiler` 23 |
 | Build | pixel7 cross-build | proven | ADR-188 `e8865301…` |
 | Render | Сейчас composition | proven | ObjectSummary + footer; leftover NOW cards gone (ADR-187) |
 | Render | four tabs | proven | hits 135/405/675/945 y=2250 (ADR-184); Inbox tap ADR-188 |
@@ -36,7 +36,7 @@ does not reflash.
 | Device | cold boot | open | not run on HEAD |
 | Device | daylight / indoor / dark | open | no booth this session |
 | A11y | 7-tap gallery | open | not this slice |
-| Resilience | service restart | open | unlocked shell restart last done ADR-188 flash |
+| Resilience | service restart | proven | ADR-192; unlocked kill, marker on, same `e8865301…`, Сейчас without lock |
 | Resilience | network / AI offline | proven | ADR-191; `wlan0` down → status `Нет сети`; Сейчас still live ObjectSummary; restored up |
 
 ## Still not Visual v1

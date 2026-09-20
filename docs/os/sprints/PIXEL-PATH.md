@@ -151,6 +151,7 @@ host-only derived view.
 | VUI-09 verification ledger | matrix cells cited; not Visual v1 sign-off **host** (ADR-189; chrome unchanged `e8865301…`; leave Сейчас) |
 | VUI-09 increased text | `text_scale_pct` 150 then 100 on HEAD **на panther** (`e8865301…`; ADR-190; leave Сейчас) |
 | VUI-09 radio-off | `wlan0` down → status `Нет сети` then restored **на panther** (`e8865301…`; ADR-191; leave Сейчас) |
+| VUI-09 shell restart | unlocked `saai-shell` kill + respawn **на panther** (`e8865301…`; ADR-192; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 
