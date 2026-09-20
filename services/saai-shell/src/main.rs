@@ -3272,6 +3272,26 @@ fn hardware_model() -> String {
         .unwrap_or_else(|_| "неизвестно".to_string())
 }
 
+/// Pixel 7 panel vs x86 window (ADR-252). Matches displayd ADR-250.
+const PANTHER_LOGICAL_WIDTH: u32 = 1080;
+const PANTHER_LOGICAL_HEIGHT: u32 = 2400;
+const WINDOWED_LOGICAL_WIDTH: u32 = 1280;
+const WINDOWED_LOGICAL_HEIGHT: u32 = 800;
+
+fn phone_gate_surface() -> bool {
+    cfg!(target_arch = "aarch64")
+        && (std::path::Path::new("/data/saaios").exists()
+            || hardware_model().to_ascii_lowercase().contains("pixel"))
+}
+
+fn logical_surface_size(phone_gate: bool) -> (u32, u32) {
+    if phone_gate {
+        (PANTHER_LOGICAL_WIDTH, PANTHER_LOGICAL_HEIGHT)
+    } else {
+        (WINDOWED_LOGICAL_WIDTH, WINDOWED_LOGICAL_HEIGHT)
+    }
+}
+
 fn uptime_string() -> String {
     let seconds = std::fs::read_to_string("/proc/uptime")
         .ok()
@@ -6569,19 +6589,12 @@ fn main() {
     let window = xdg_shell.create_window(surface, WindowDecorations::ServerDefault, &qh);
     window.set_title("SaaiOS");
     window.set_app_id("org.saaios.shell");
-    // Fullscreen, not a resizable desktop window -- saai-shell is the
-    // system shell, not an app; matches drm-splash.c's own fixed
-    // 1080x2400 panel assumption for now (real multi-output handling is
-    // future work, not this vertical slice).
-    //
-    // set_min_size() alone does NOT request fullscreen -- it only
-    // constrains resizing, so the server was free to configure whatever
-    // size it wanted (observed on hardware: 800x480, the same default
-    // saai-displayd hands out when it has no better information). This
-    // was a real, previously-unnoticed bug: every visual test this
-    // sprint ran against an 800x480 toplevel, not the real panel.
-    window.set_min_size(Some((1080, 2400)));
-    window.set_fullscreen(None);
+    let phone_gate = phone_gate_surface();
+    let (logical_width, logical_height) = logical_surface_size(phone_gate);
+    window.set_min_size(Some((logical_width, logical_height)));
+    if phone_gate {
+        window.set_fullscreen(None);
+    }
     window.commit();
 
     // Second half of ADR-015 (Change 4): a real system-surface layer,
@@ -6604,7 +6617,11 @@ fn main() {
     // (mirrors the toolkit's own simple_layer.rs example).
     layer.commit();
 
-    let pool = SlotPool::new(1080 * 2400 * 4, &shm).expect("failed to create SHM pool");
+    let pool = SlotPool::new(
+        (logical_width as usize) * (logical_height as usize) * 4,
+        &shm,
+    )
+    .expect("failed to create SHM pool");
 
     let fonts = match render::Fonts::load_system() {
         Ok(fonts) => Some(fonts),
@@ -6671,8 +6688,8 @@ fn main() {
         exit: false,
         first_configure: true,
         pool,
-        width: 1080,
-        height: 2400,
+        width: logical_width,
+        height: logical_height,
         buffer: None,
         main_dmabuf: main_dmabuf_canvas,
         window,
@@ -7265,8 +7282,8 @@ impl WindowHandler for Shell {
         _serial: u32,
     ) {
         self.buffer = None;
-        self.width = configure.new_size.0.map(|v| v.get()).unwrap_or(1080);
-        self.height = configure.new_size.1.map(|v| v.get()).unwrap_or(2400);
+        self.width = configure.new_size.0.map(|v| v.get()).unwrap_or(self.width);
+        self.height = configure.new_size.1.map(|v| v.get()).unwrap_or(self.height);
 
         if self.first_configure {
             self.first_configure = false;
@@ -11569,10 +11586,10 @@ mod tests {
         inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
         intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
-        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
-        motion_clock_for, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        now_workflow_sections, object_view_action_at, object_view_content, object_view_details,
-        object_view_permission_pattern, object_view_summary, orb_action_at,
+        lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
+        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
+        now_object_tapped, now_workflow_sections, object_view_action_at, object_view_content,
+        object_view_details, object_view_permission_pattern, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
         pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
@@ -11939,6 +11956,13 @@ mod tests {
         assert_eq!(format_utc_offset(180), "UTC+03:00");
         assert_eq!(format_utc_offset(330), "UTC+05:30");
         assert_eq!(format_utc_offset(-300), "UTC-05:00");
+    }
+
+    #[test]
+    fn logical_surface_is_windowed_on_x86_and_panel_on_panther() {
+        assert_eq!(logical_surface_size(false), (1280, 800));
+        assert_eq!(logical_surface_size(true), (1080, 2400));
+        assert_ne!(logical_surface_size(false), logical_surface_size(true));
     }
 
     #[test]

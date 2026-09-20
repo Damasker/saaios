@@ -110,6 +110,7 @@ ADR-248 product analytics of screens stays off.
 ADR-249 PCE-25 laptop identity is x86/computer, never panther.
 ADR-250 x86 displayd configures a window, not a panther panel.
 ADR-251 x86 displayd seat is pointer+USB HID keyboard, not touch.
+ADR-252 x86 shell uses 1280×800 logical layout, panther stays 1080×2400.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
