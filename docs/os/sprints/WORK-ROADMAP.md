@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-06 host FailureClass (ADR-288); WORK-08 visibility on panther shell `63b8b64`.**
+Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-06 host FailureClass (ADR-288); WORK-07 host ReplanRequest (ADR-289); WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -29,7 +29,7 @@ Planner the scheduler.
 | WORK-04 | Read-only bounded parallelism | Backlog | measure first |
 | WORK-05 | Priority scheduling | Backlog | no |
 | WORK-06 | Retry + failure taxonomy | **Done** (host, ADR-288) | no |
-| WORK-07 | Bounded ReplanRequest | Backlog | no |
+| WORK-07 | Bounded ReplanRequest | **Done** (host, ADR-289) | no |
 | WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther) | **yes** |
 | WORK-09 | Pixel measurements + tuned budgets | Backlog | **yes** |
 
@@ -108,14 +108,28 @@ not retried.
 **Change:** `FailureClass` on the Task (`error_kind`). Timeout and
 unreachable stay `retryable` and still need `retry_requested`.
 Verification mismatch, malformed JSON, and unknown IO do not.
-Legacy rows with `retryable` and no kind stay retryable. No
-ReplanRequest (WORK-07). No taskd flash.
+Legacy rows with `retryable` and no kind stay retryable. No taskd flash.
 
 **Test:** host `cargo test -p saai-taskd`.
 
 **Rollback:** drop `FailureClass`; restore boolean+optional strings.
 
 **Threat:** none — host taxonomy, no phone binary.
+
+## WORK-07
+
+**Goal:** verification mismatch asks the Planner once. Retry ≠ Replan.
+
+**Change:** `ReplanRequest` is computed. Budget is `replan_count` on
+the Intent, cap 1. Scheduler calls `process_planner_intent`, not the
+failed PlanProposal, not Supervisor, not the Worker. Open sibling
+blocks. Timeout stays retry.
+
+**Test:** host `cargo test -p saai-taskd`.
+
+**Rollback:** drop `replan.rs` and `try_replan_failed_task`.
+
+**Threat:** none — host bound, no phone binary.
 
 ## WORK-08
 

@@ -33,6 +33,7 @@
 pub mod client;
 pub mod graph;
 pub mod model;
+pub mod replan;
 pub mod runtime_bridge;
 pub mod scheduler;
 
@@ -57,6 +58,7 @@ use saai_entity_protocol::{
 };
 use saai_entity_store::EventPayload;
 use saai_object_actions::{display_inspect_spec, ObjectActionRegistry};
+use replan::{should_issue_replan, REPLAN_COUNT_PROPERTY};
 use scheduler::{admit_frontier, derive_ready_set, mutating_in_flight, MAX_MUTATING_IN_FLIGHT};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -189,6 +191,7 @@ impl Daemon {
             }
         }
         self.settle_verifying_tasks().await?;
+        self.try_replan_failed_tasks().await?;
         Ok(resumed)
     }
 
@@ -231,6 +234,7 @@ impl Daemon {
                                     }
                                     Some(WorkflowStatus::Failed) => {
                                         self.try_retry_failed_task(&entity).await?;
+                                        self.try_replan_failed_task(&entity).await?;
                                         self.dispatch_ready().await?;
                                     }
                                     Some(WorkflowStatus::Verifying) => {
@@ -249,6 +253,7 @@ impl Daemon {
                 _ = schedule_tick.tick() => {
                     self.evaluate_due_schedules().await?;
                     self.settle_verifying_tasks().await?;
+                    self.try_replan_failed_tasks().await?;
                 }
             }
         }
@@ -1205,6 +1210,54 @@ impl Daemon {
         eprintln!("saai-taskd: retry task {} intent {intent_id}", task.id);
         let _ = std::io::Write::flush(&mut std::io::stderr());
         self.process_intent(&intent).await?;
+        Ok(true)
+    }
+
+    /// WORK-07: one Planner pass after verification mismatch. Not retry.
+    /// Not a replay of the failed PlanProposal. Budget lives on the Intent.
+    async fn try_replan_failed_tasks(&mut self) -> Result<(), ClientError> {
+        let failed: Vec<Entity> = self
+            .known_tasks
+            .iter()
+            .filter(|task| status_of(task) == Some(WorkflowStatus::Failed))
+            .cloned()
+            .collect();
+        for task in failed {
+            self.try_replan_failed_task(&task).await?;
+        }
+        Ok(())
+    }
+
+    async fn try_replan_failed_task(&mut self, task: &Entity) -> Result<bool, ClientError> {
+        let Some(intent_id) = intent_id_of(task) else {
+            return Ok(false);
+        };
+        let entities = self.conn.list_entities(&self.space_id).await?;
+        let Some(intent) = entities
+            .iter()
+            .find(|entity| entity.entity_type == INTENT_TYPE && entity.id == intent_id)
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        let Some(request) = should_issue_replan(task, &intent, &self.known_tasks) else {
+            return Ok(false);
+        };
+        let mut properties = intent.properties.clone();
+        properties.insert(REPLAN_COUNT_PROPERTY.into(), json!(request.attempt));
+        self.conn.update_entity(&intent, properties).await?;
+        let text = intent
+            .properties
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("replan")
+            .to_string();
+        eprintln!(
+            "saai-taskd: replan task {} intent {intent_id} attempt {}",
+            task.id, request.attempt
+        );
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        self.process_planner_intent(&intent, &text).await?;
         Ok(true)
     }
 
