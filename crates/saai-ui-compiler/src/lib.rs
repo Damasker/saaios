@@ -1228,6 +1228,7 @@ mod tests {
         assert!(limits.contains("compile_v2()"));
         assert!(limits.contains("ADR-217"));
         assert!(limits.contains("now.sui"));
+        assert!(limits.contains("ADR-218"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1239,5 +1240,6 @@ mod tests {
         assert!(ledger.contains("ADR-216"));
         assert!(ledger.contains("ADR-217"));
         assert!(ledger.contains("now.sui"));
+        assert!(ledger.contains("ADR-218"));
     }
 }

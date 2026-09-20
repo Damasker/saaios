@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–217; production `compile_v2()`; NOW hits compiled; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–218; production `compile_v2()`; NOW/list hits compiled; Me scroll still formula; not Visual v1 sign-off) |
 
 ---
 
@@ -1176,7 +1176,8 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 (ADR-211); 7-tap gallery (ADR-212); thin tuning parked last
 (ADR-213); list trailing rows (ADR-214); Me flatten/scroll
 (ADR-215). Production `compile_v2()` / `layout_v2`
-`root_view` (ADR-216); NOW compiled hits (ADR-217). Release
+`root_view` (ADR-216); NOW compiled hits (ADR-217); live list
+hits (ADR-218). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1244,6 +1245,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   to `layout_v2()` after host equivalence (ADR-216). Not Visual v1.
 - [x] NOW footer and object hits from compiled `now.sui` (ADR-217).
   Inbox/Spaces/Me/lists stay procedural.
+- [x] Inbox, Spaces, and list hits from generated `compile_v2()`
+  (ADR-218). Me scroll, apps grid, and overlays stay formulas.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1355,6 +1358,7 @@ After each completed task group, report:
 
 ## Next action
 
-Compile Inbox/Spaces/Me/list screens the same way as NOW (`now.sui`,
-ADR-217). Space detail still deferred. MEM-08 stays omitted. Thin
-tuning stays last (ADR-213).
+Compile Me scroll into `layout_v2` (linear stack cannot place a row
+under the header after a drag). Apps grid and overlays stay later.
+Space detail still deferred. MEM-08 stays omitted. Thin tuning stays
+last (ADR-213).

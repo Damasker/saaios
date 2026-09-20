@@ -1036,6 +1036,57 @@ fn now_view(width: u32, height: u32) -> LayoutNode {
     saai_ui_compiler::layout_v2(now_screen(), width, height)
 }
 
+const V2_ROOT_TABS: &str = "
+  component BottomNavigation {
+    a11y = Button
+    focus = 1
+    scroll = none
+    inset = safe
+    tab now { loc = now }
+    tab inbox { loc = inbox }
+    tab spaces { loc = spaces }
+    tab me { loc = me }
+  }
+";
+
+fn v2_loc_token(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn v2_header_block(loc: &str) -> String {
+    format!(
+        "  component ContextHeader {{\n    text = Title\n    a11y = Heading\n    loc = {}\n    focus = 0\n    inset = safe\n  }}\n",
+        v2_loc_token(loc)
+    )
+}
+
+fn v2_stacked_block(type_name: &str, a11y: &str, loc: &str) -> String {
+    format!(
+        "  component {type_name} {{\n    text = Body\n    a11y = {a11y}\n    loc = {}\n  }}\n",
+        v2_loc_token(loc)
+    )
+}
+
+fn compile_live_v2(source: &str, why: &'static str) -> saai_ui_compiler::SuiV2Screen {
+    saai_ui_compiler::compile_v2(source).unwrap_or_else(|err| panic!("{why}: {err}"))
+}
+
+fn layout_live_v2(source: &str, why: &'static str, width: u32, height: u32) -> LayoutNode {
+    saai_ui_compiler::layout_v2(&compile_live_v2(source, why), width, height)
+}
+
+fn live_v2_hit(
+    source: &str,
+    why: &'static str,
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+) -> Option<(String, Option<String>)> {
+    layout_live_v2(source, why, width, height)
+        .hit_test(pos.0, pos.1)
+        .map(|node| (node.id.clone(), node.action.clone()))
+}
+
 /// Content pane of the root layout — everything except the bottom
 /// navigation strip. Status is a separate layer surface, not an inset
 /// in this tree (ADR-112).
@@ -1765,27 +1816,46 @@ fn wifi_list_row_count(network_count: usize) -> usize {
 /// (like `installed_apps.len()` elsewhere), so this can't be a
 /// `root.sui` entry -- two more `stacked_row_rect` slots after the
 /// `WifiRow` list are the fixed "Обновить"/"Назад" controls.
+fn wifi_v2_source(network_count: usize) -> String {
+    let mut src = String::from("sui 2\nscreen wifi {\n");
+    src.push_str(&v2_header_block("wifi.header"));
+    if network_count == 0 {
+        src.push_str(&v2_stacked_block("WifiRow", "Status", "wifi.empty"));
+    } else {
+        for index in 0..network_count {
+            src.push_str(&v2_stacked_block(
+                "WifiRow",
+                "Button",
+                &format!("wifi.{index}"),
+            ));
+        }
+    }
+    src.push_str("  row refresh {}\n  row back {}\n}\n");
+    src
+}
+
 fn wifi_list_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     network_count: usize,
 ) -> Option<WifiListTap> {
-    let data = wifi_list_row_count(network_count);
-    let refresh_index = data;
-    let back_index = data + 1;
-    if stacked_trailing_rect(back_index, back_index, width, height).contains(pos.0, pos.1) {
-        return Some(WifiListTap::Back);
+    let (id, action) = live_v2_hit(
+        &wifi_v2_source(network_count),
+        "ADR-218 wifi",
+        pos,
+        width,
+        height,
+    )?;
+    match action.as_deref() {
+        Some("list_back") => Some(WifiListTap::Back),
+        Some("list_refresh") => Some(WifiListTap::Refresh),
+        Some("connect_wifi") => id
+            .strip_prefix("wifi.")
+            .and_then(|index| index.parse().ok())
+            .map(WifiListTap::Network),
+        _ => None,
     }
-    if stacked_trailing_rect(refresh_index, back_index, width, height).contains(pos.0, pos.1) {
-        return Some(WifiListTap::Refresh);
-    }
-    for index in 0..network_count {
-        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
-            return Some(WifiListTap::Network(index));
-        }
-    }
-    None
 }
 
 /// S20: same shape as `WifiListTap`, one more trailing control row
@@ -1805,6 +1875,27 @@ fn bluetooth_list_row_count(device_count: usize, status_rows: usize) -> usize {
     device_count + status_rows
 }
 
+fn bluetooth_v2_source(device_count: usize, status_rows: usize) -> String {
+    let mut src = String::from("sui 2\nscreen bluetooth {\n");
+    src.push_str(&v2_header_block("bluetooth.header"));
+    for index in 0..status_rows {
+        src.push_str(&v2_stacked_block(
+            "BluetoothRow",
+            "Status",
+            &format!("bluetooth.status.{index}"),
+        ));
+    }
+    for index in 0..device_count {
+        src.push_str(&v2_stacked_block(
+            "BluetoothRow",
+            "Button",
+            &format!("bluetooth.{index}"),
+        ));
+    }
+    src.push_str("  row scan {}\n  row refresh {}\n  row back {}\n}\n");
+    src
+}
+
 fn bluetooth_list_action_at(
     pos: (f64, f64),
     width: u32,
@@ -1812,25 +1903,23 @@ fn bluetooth_list_action_at(
     device_count: usize,
     status_rows: usize,
 ) -> Option<BluetoothListTap> {
-    let data = bluetooth_list_row_count(device_count, status_rows);
-    let scan_index = data;
-    let refresh_index = data + 1;
-    let back_index = data + 2;
-    if stacked_trailing_rect(back_index, back_index, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Back);
+    let (id, action) = live_v2_hit(
+        &bluetooth_v2_source(device_count, status_rows),
+        "ADR-218 bluetooth",
+        pos,
+        width,
+        height,
+    )?;
+    match action.as_deref() {
+        Some("list_back") => Some(BluetoothListTap::Back),
+        Some("list_refresh") => Some(BluetoothListTap::Refresh),
+        Some("list_scan") => Some(BluetoothListTap::Scan),
+        Some("pair_bluetooth") => id
+            .strip_prefix("bluetooth.")
+            .and_then(|index| index.parse().ok())
+            .map(BluetoothListTap::Device),
+        _ => None,
     }
-    if stacked_trailing_rect(refresh_index, back_index, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Refresh);
-    }
-    if stacked_trailing_rect(scan_index, back_index, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Scan);
-    }
-    for index in 0..device_count {
-        if stacked_row_rect(status_rows + index, width, height).contains(pos.0, pos.1) {
-            return Some(BluetoothListTap::Device(index));
-        }
-    }
-    None
 }
 
 /// Same shape as `BluetoothListTap`, minus a scan/refresh control --
@@ -1850,22 +1939,49 @@ fn trusted_client_list_row_count(client_count: usize) -> usize {
     }
 }
 
+fn trusted_v2_source(client_count: usize) -> String {
+    let mut src = String::from("sui 2\nscreen trusted {\n");
+    src.push_str(&v2_header_block("trusted.header"));
+    if client_count == 0 {
+        src.push_str(&v2_stacked_block(
+            "TrustedClientRow",
+            "Status",
+            "trusted.empty",
+        ));
+    } else {
+        for index in 0..client_count {
+            src.push_str(&v2_stacked_block(
+                "TrustedClientRow",
+                "Button",
+                &format!("trusted.{index}"),
+            ));
+        }
+    }
+    src.push_str("  row back {}\n}\n");
+    src
+}
+
 fn trusted_client_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     client_count: usize,
 ) -> Option<TrustedClientTap> {
-    let back_index = trusted_client_list_row_count(client_count);
-    if stacked_trailing_rect(back_index, back_index, width, height).contains(pos.0, pos.1) {
-        return Some(TrustedClientTap::Back);
+    let (id, action) = live_v2_hit(
+        &trusted_v2_source(client_count),
+        "ADR-218 trusted",
+        pos,
+        width,
+        height,
+    )?;
+    match action.as_deref() {
+        Some("list_back") => Some(TrustedClientTap::Back),
+        Some("revoke_trusted_client") => id
+            .strip_prefix("trusted.")
+            .and_then(|index| index.parse().ok())
+            .map(TrustedClientTap::Revoke),
+        _ => None,
     }
-    for index in 0..client_count {
-        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
-            return Some(TrustedClientTap::Revoke(index));
-        }
-    }
-    None
 }
 
 /// HIA-20: every `dev_surface_rows()` row is read-only diagnostic
@@ -4802,6 +4918,30 @@ fn now_attention_row(item: &AttentionItem) -> SystemSectionRow {
     )
 }
 
+fn inbox_v2_source(entities: &[Entity], store_connected: bool) -> String {
+    let mut src = String::from("sui 2\nscreen inbox {\n");
+    src.push_str(&v2_header_block("inbox.header"));
+    if !store_connected {
+        src.push_str(&v2_stacked_block("EventRow", "Status", "inbox.offline"));
+    } else {
+        let rows = inbox_rows(entities);
+        if rows.is_empty() {
+            src.push_str(&v2_stacked_block("EventRow", "Status", "inbox.empty"));
+        } else {
+            for (_, entity) in &rows {
+                src.push_str(&v2_stacked_block(
+                    "EventRow",
+                    "Button",
+                    &entity.id.to_string(),
+                ));
+            }
+        }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
 fn inbox_row_at(
     pos: (f64, f64),
     width: u32,
@@ -4812,11 +4952,38 @@ fn inbox_row_at(
     if !store_connected {
         return None;
     }
+    let (id, action) = live_v2_hit(
+        &inbox_v2_source(entities, true),
+        "ADR-218 inbox",
+        pos,
+        width,
+        height,
+    )?;
+    if action.as_deref() != Some("open_object") {
+        return None;
+    }
+    let id = Uuid::parse_str(&id).ok()?;
     inbox_rows(entities)
         .into_iter()
-        .enumerate()
-        .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
-        .map(|(_, (kind, entity))| (kind, entity.id))
+        .find(|(_, entity)| entity.id == id)
+        .map(|(kind, entity)| (kind, entity.id))
+}
+
+fn spaces_v2_source(spaces: &[Space], store_connected: bool) -> String {
+    let mut src = String::from("sui 2\nscreen spaces {\n");
+    src.push_str(&v2_header_block("spaces.header"));
+    if !store_connected {
+        src.push_str(&v2_stacked_block("SpaceRow", "Status", "spaces.offline"));
+    } else if spaces.is_empty() {
+        src.push_str(&v2_stacked_block("SpaceRow", "Status", "spaces.empty"));
+    } else {
+        for space in spaces {
+            src.push_str(&v2_stacked_block("SpaceRow", "Button", &space.id));
+        }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
 }
 
 fn space_row_at(
@@ -4829,11 +4996,17 @@ fn space_row_at(
     if !store_connected {
         return None;
     }
-    spaces
-        .iter()
-        .enumerate()
-        .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
-        .map(|(_, space)| space.id.clone())
+    let (_, action) = live_v2_hit(
+        &spaces_v2_source(spaces, true),
+        "ADR-218 spaces",
+        pos,
+        width,
+        height,
+    )?;
+    action
+        .as_deref()
+        .and_then(|action| action.strip_prefix("select_space:"))
+        .map(str::to_string)
 }
 
 /// ADR-138 / ADR-187: the apps grid only hits live `installed_apps`.
