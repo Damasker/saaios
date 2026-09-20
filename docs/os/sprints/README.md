@@ -58,6 +58,7 @@ ADR-196 nested `tab` ids on `BottomNavigation`; `layout_v2` does not borrow v1 (
 ADR-197 ActionCard/tab labels use `Label`/`Caption`, not Title (paint; flashes).
 ADR-198 status time/battery `Label`, keys `Caption` (paint; flashes).
 ADR-199 nested `row` footer ids; `layout_v2` matches `now_footer_action_rect` (host).
+ADR-200 `ObjectSummary` docks as the NOW object hit (`open_object`, host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

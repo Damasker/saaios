@@ -1,15 +1,17 @@
 //! ADR-184: layout and hit-test from compiled `.sui` v1 `ScreenSpec`.
 //! ADR-194: `layout_v2()` matches those tab hits for public NOW.
 //! ADR-199: nested `row` ids dock as the live NOW footer.
+//! ADR-200: `ObjectSummary` docks as the live NOW object hit.
 //!
 //! Production chrome still uses `layout_v1_root()`. `compile_v2()`
 //! stays off `build.rs`. Nested `tab` ids under `BottomNavigation`
 //! own the v2 strip (ADR-196). Footer hits come from named `row`s,
-//! not from v1 `content_actions`.
+//! not from v1 `content_actions`. Object hits come from
+//! `ObjectSummary`, not leftover inspect cards.
 
 use saai_ui_core::{
-    layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SurfaceScale,
-    MIN_TOUCH_TARGET,
+    layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
+    SurfaceScale, TextRole, MIN_TOUCH_TARGET,
 };
 
 use crate::{ScreenSpec, SuiV2Screen};
@@ -106,14 +108,68 @@ fn v2_footer_row_height(panel_height: u32) -> u32 {
     ((panel_height as u64 * u64::from(V2_FOOTER_ROW_HEIGHT_2400)) / 2400) as u32
 }
 
-fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
+/// Live `draw_now` starts identity 150 design-canvas units below y=0
+/// so the status layer does not cover the heading.
+const V2_NOW_TOP_INSET_2400: u32 = 150;
+
+fn v2_physical(value: saai_ui_core::LogicalUnit) -> u32 {
+    SurfaceScale::PIXEL_7.logical_to_physical(value)
+}
+
+fn v2_line_height(role: TextRole) -> u32 {
+    v2_physical(role.style().line_height)
+}
+
+fn v2_now_header_height(content_height: u32) -> u32 {
+    let top_inset =
+        ((u64::from(V2_NOW_TOP_INSET_2400) * u64::from(content_height.max(1))) / 2400) as u32;
+    top_inset + v2_line_height(TextRole::Title) + v2_physical(SpacingToken::Medium.value())
+}
+
+fn v2_now_object_height() -> u32 {
+    (v2_line_height(TextRole::Body) + v2_line_height(TextRole::Caption))
+        .max(v2_physical(MIN_TOUCH_TARGET))
+}
+
+fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height: u32) -> Node {
     let margin = width / 22;
-    let mut children: Vec<Node> = screen
+    let mut header = None;
+    let mut object = None;
+    let mut rest = Vec::new();
+    for component in screen
         .components
         .iter()
         .filter(|component| component.type_name != "BottomNavigation")
-        .map(|component| Node::leaf(component.type_name.clone()))
-        .collect();
+    {
+        match component.type_name.as_str() {
+            "ContextHeader" if header.is_none() => header = Some(component),
+            "ObjectSummary" if object.is_none() => object = Some(component),
+            _ => rest.push(component),
+        }
+    }
+    let mut children = Vec::new();
+    if header.is_some() {
+        let header_height = if object.is_some() {
+            v2_now_header_height(content_height)
+        } else {
+            0
+        };
+        let mut node = Node::leaf("ContextHeader");
+        if header_height > 0 {
+            node = node.with_size(Length::Fill, Length::Px(header_height));
+        }
+        children.push(node);
+    }
+    if object.is_some() {
+        children.push(
+            Node::leaf("ObjectSummary")
+                .with_action("open_object")
+                .with_size(Length::Fill, Length::Px(v2_now_object_height())),
+        );
+    }
+    for component in rest {
+        children.push(Node::leaf(component.type_name.clone()));
+    }
     if children.is_empty() {
         children.push(Node::leaf(format!("{}-fill", screen.id)));
     }
@@ -135,18 +191,22 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
     )
 }
 
-/// Public NOW chrome: non-actionable v2 content leaves, named footer
-/// rows, plus a tab strip from nested `tab` ids. Empty `row` lists
-/// and empty `BottomNavigation` do not invent live hits.
+/// Public NOW chrome: stacked header/object, Fill leftovers, named
+/// footer rows, plus a tab strip from nested `tab` ids. Empty
+/// `ObjectSummary`, `row`, and `BottomNavigation` invent no live hits.
 pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
-    let content = v2_content_node(screen, width, height);
     let tabs = v2_named_tabs(screen);
+    let tab_height_2400 =
+        EdgeInsets::from_safe(SafeInsets::PIXEL_7_PORTRAIT, SurfaceScale::PIXEL_7).bottom;
+    let tab_height = if tabs.is_empty() {
+        0
+    } else {
+        v1_tab_strip_height(height, tab_height_2400)
+    };
+    let content = v2_content_node(screen, width, height, height.saturating_sub(tab_height));
     if tabs.is_empty() {
         return content;
     }
-    let tab_height_2400 =
-        EdgeInsets::from_safe(SafeInsets::PIXEL_7_PORTRAIT, SurfaceScale::PIXEL_7).bottom;
-    let tab_height = v1_tab_strip_height(height, tab_height_2400);
     let strip = Node::linear(
         "BottomNavigation".to_string(),
         Axis::Horizontal,
@@ -272,6 +332,43 @@ mod tests {
         );
         assert!(v1.hit_test(540.0, 1860.0).is_none());
         assert!(v1.hit_test(540.0, 2080.0).is_none());
+        assert_eq!(
+            v2.hit_test(540.0, 335.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("open_object")
+        );
+        assert!(v2.hit_test(540.0, 250.0).is_none());
+        assert!(v1.hit_test(540.0, 335.0).is_none());
+        let object = layout_v1_find(&v2, "ObjectSummary").expect("object");
+        assert_eq!(object.rect.y, 263);
+        assert_eq!(object.rect.height, 144);
+    }
+
+    #[test]
+    fn layout_v2_without_object_does_not_invent_object_hits() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {}
+              component SurfacePattern {}
+              component BottomNavigation {
+                tab now {}
+                tab inbox {}
+                tab spaces {}
+                tab me {}
+              }
+            }
+            "#,
+        )
+        .expect("no object");
+        let tree = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            tree.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
+            Some("now")
+        );
+        assert!(tree.hit_test(540.0, 335.0).is_none());
+        assert!(layout_v1_find(&tree, "ObjectSummary").is_none());
     }
 
     #[test]

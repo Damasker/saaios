@@ -159,6 +159,7 @@ host-only derived view.
 | VUI-09 ActionCard/tab roles | `Label`/`Caption` not Title **на panther** (`5eb6a27f…`; ADR-197; leave Сейчас) |
 | VUI-09 status/key roles | status `Label`, keys `Caption` **на panther** (`3850427a…`; ADR-198; leave Сейчас) |
 | VUI-09 v2 footer rows | nested `row apps`/`intent`; `layout_v2` ≡ live footer **host** (ADR-199; chrome unchanged `3850427a…`; leave Сейчас) |
+| VUI-09 v2 object hit | `ObjectSummary` → `open_object`; `layout_v2` ≡ live object **host** (ADR-200; chrome unchanged `3850427a…`; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

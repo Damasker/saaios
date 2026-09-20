@@ -36,7 +36,8 @@ display restart.
   navigation invents no v1 hits. Nested `row` ids dock the NOW
   footer (ADR-199); empty screens invent no footer hits. Live chrome
   still comes from `layout_v1_root()` over `compile_v1_rollback()`.
-  Object hits stay procedural.
+  `ObjectSummary` docks the NOW object hit (ADR-200); a screen
+  without it invents none.
 - `compile_v2_public()` is the third-party gate. It is Experimental,
   not Stable.
 - Top `SafeInsets` is the status layer (ADR-112), not tree padding.
@@ -62,8 +63,8 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Items 1–3, 7, and 8 are done (ADR-194/195/197–198/196/199);
-production still v1.
+Ordered. Items 1–3 and 7–9 are done
+(ADR-194/195/197–198/196/199/200); production still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
    `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
@@ -86,7 +87,11 @@ production still v1.
    `compile_v1_rollback()` ids.~~ Host: nested `tab` (ADR-196). Do not
    attach `layout_v2()` to `build.rs` yet.
 8. ~~Name NOW footer destinations so `layout_v2()` matches
-   `now_footer_action_rect`.~~ Host: nested `row` (ADR-199). Object
-   hits stay procedural. Do not attach `layout_v2()` to `build.rs` yet.
+   `now_footer_action_rect`.~~ Host: nested `row` (ADR-199). Do not
+   attach `layout_v2()` to `build.rs` yet.
+9. ~~Dock `ObjectSummary` so `layout_v2()` matches
+   `now_object_summary_rect`.~~ Host: `open_object` (ADR-200).
+   Lifecycle/trailing stay paint-side. Do not attach `layout_v2()`
+   to `build.rs` yet.
 
 Rollback: delete this page. The ledger and `compile()` path stay.

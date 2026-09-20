@@ -1018,6 +1018,7 @@ mod tests {
         assert!(guide.contains("Experimental"));
         assert!(guide.contains("compile_v2_public"));
         assert!(guide.contains("row apps"));
+        assert!(guide.contains("open_object"));
         assert_eq!(screen.rows.len(), 2);
         for name in saai_ui_core::public_gallery_type_names() {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
@@ -1055,6 +1056,8 @@ mod tests {
         assert!(ledger.contains("ADR-198"));
         assert!(ledger.contains("ADR-199"));
         assert!(ledger.contains("now_footer_action_rect"));
+        assert!(ledger.contains("ADR-200"));
+        assert!(ledger.contains("open_object"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1062,6 +1065,8 @@ mod tests {
         assert!(limits.contains("ADR-198"));
         assert!(limits.contains("ADR-199"));
         assert!(limits.contains("nested `row`"));
+        assert!(limits.contains("ADR-200"));
+        assert!(limits.contains("open_object"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

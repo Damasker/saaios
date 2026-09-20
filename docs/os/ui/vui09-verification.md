@@ -9,14 +9,14 @@ MEM-08 omitted.
 
 Current panther shell: `3850427a…` (ADR-198). ActionCard/tabs were
 `5eb6a27f…` (ADR-197). Named sizes were `e8865301…` (ADR-188).
-`from_safe` (ADR-195), nested tab ids (ADR-196), and nested footer
-rows (ADR-199) stay host.
+`from_safe` (ADR-195), nested tab ids (ADR-196), nested footer
+rows (ADR-199), and the object hit (ADR-200) stay host.
 
 ## Matrix
 
 | Area | Cell | Status | Evidence |
 |---|---|---|---|
-| Build | host tests | proven | overlay `cargo test -p saai-shell` 249; `saai-ui-compiler` 29 |
+| Build | host tests | proven | overlay `cargo test -p saai-shell` 249; `saai-ui-compiler` 30 |
 | Build | pixel7 cross-build | proven | ADR-198 `3850427a…` |
 | Render | Сейчас composition | proven | ObjectSummary + footer; leftover NOW cards gone (ADR-187) |
 | Render | four tabs | proven | hits 135/405/675/945 y=2250 (ADR-184); Inbox tap ADR-188 |
@@ -32,7 +32,7 @@ rows (ADR-199) stay host.
 | Perf | frame pace / p95 / idle | proven | ADR-172–177; not re-read `/run/saaios/shell-frame.last` this slice |
 | Perf | haptic policy | proven | ADR-171/179 KeyPress-only |
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |
-| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; empty nav/rows invent none; `compile()` stays v1 |
+| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; empty nav/rows/object invent none; `compile()` stays v1 |
 | Device | lock / unlock cycle | open | PIN null; marker skips lock; named in ADR-193 |
 | Device | display restart | open | do not kill `saai-displayd`; named in ADR-193 |
 | Device | cold boot | open | not run on HEAD; named in ADR-193 |

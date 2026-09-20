@@ -461,8 +461,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `EdgeInsets::from_safe`; the top inset stays the status layer.
   ADR-196 names nested `tab` ids on `BottomNavigation` so `layout_v2`
   does not borrow `compile_v1_rollback()`. ADR-199 names nested
-  `row` ids so `layout_v2` matches the live NOW footer; object hits
-  stay procedural.
+  `row` ids so `layout_v2` matches the live NOW footer. ADR-200
+  docks `ObjectSummary` as the NOW object hit (`open_object`).
 
 ### 7.6 `TaskSummary`
 
