@@ -2315,6 +2315,7 @@ version = "0.1.0"
 dependencies = [
  "calloop 0.14.4",
  "nix",
+ "saai-ui-core",
  "sha2",
  "smithay",
  "tempfile",

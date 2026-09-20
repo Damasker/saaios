@@ -93,6 +93,50 @@ pub enum KeyboardCommand {
     Ignored,
 }
 
+/// APP-04 / ADR-270: the same OSK keystroke, sent to a third-party field
+/// through `zwp_input_method_v2` instead of a bound `Field`. Mode toggle
+/// and Escape stay local. Backspace is one UTF-8 byte: current QWERTY is
+/// ASCII. Do not use `zwp_virtual_keyboard_v1`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OskImeOp {
+    CommitString(String),
+    DeleteSurrounding { before_bytes: u32, after_bytes: u32 },
+}
+
+impl Keystroke {
+    pub fn to_ime_op(self) -> Option<OskImeOp> {
+        match self {
+            Keystroke::Char(ch) => Some(OskImeOp::CommitString(ch.to_string())),
+            Keystroke::Backspace => Some(OskImeOp::DeleteSurrounding {
+                before_bytes: 1,
+                after_bytes: 0,
+            }),
+            Keystroke::Enter => Some(OskImeOp::CommitString("\n".to_string())),
+            Keystroke::Escape | Keystroke::ModeToggle => None,
+        }
+    }
+}
+
+/// Apply an IME op to a local buffer as a host stand-in for a client field
+/// with the cursor at the end.
+pub fn apply_ime_op(buffer: &mut String, op: &OskImeOp) {
+    match op {
+        OskImeOp::CommitString(text) => buffer.push_str(text),
+        OskImeOp::DeleteSurrounding {
+            before_bytes,
+            after_bytes,
+        } => {
+            // Host stand-in: cursor is at the end, so `after` is empty.
+            let cursor = buffer.len();
+            let start = cursor.saturating_sub(*before_bytes as usize);
+            let end = cursor
+                .saturating_add(*after_bytes as usize)
+                .min(buffer.len());
+            buffer.replace_range(start..end, "");
+        }
+    }
+}
+
 /// USB typing device discovered in `/proc/bus/input/devices`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HardwareKeyboardDevice {
@@ -113,6 +157,8 @@ impl Keyboard {
     pub const QWERTY_LETTER_ROWS: [&'static str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
     pub const QWERTY_SYMBOL_ROWS: [&'static str; 3] = ["1234567890", "-_/:;()$&@\"", ".,?!'#%^*+="];
     pub const PIN_DIGIT_ROWS: [&'static str; 4] = ["123", "456", "789", " 0⌫"];
+    /// Bound loc for a third-party text-input field (APP-04). Not a shell Field.
+    pub const FOREIGN_IME_FIELD: &'static str = "foreign-ime";
 
     pub fn bind(field_id: impl Into<String>, layout: KeyboardLayout) -> Self {
         Self {
@@ -121,6 +167,14 @@ impl Keyboard {
             layout,
             mode: KeyboardMode::Letters,
         }
+    }
+
+    pub fn bind_foreign_ime() -> Self {
+        Self::bind(Self::FOREIGN_IME_FIELD, KeyboardLayout::Qwerty)
+    }
+
+    pub fn is_foreign_ime(&self) -> bool {
+        self.field_id == Self::FOREIGN_IME_FIELD
     }
 
     pub fn with_source(mut self, source: KeyboardSource) -> Self {
@@ -486,5 +540,33 @@ B: KEY=400 0 0 0 0 0 0 0 0 0 0
             Some(Keystroke::Char('5'))
         );
         assert_eq!(Keyboard::keystroke_from_osk_action("Убрать PIN"), None);
+    }
+
+    #[test]
+    fn foreign_ime_osk_types_hi_bang_without_a_bound_field() {
+        let keyboard = Keyboard::bind_foreign_ime();
+        assert!(keyboard.is_foreign_ime());
+        assert!(keyboard.shows_panel());
+        assert_eq!(Keystroke::ModeToggle.to_ime_op(), None);
+        assert_eq!(Keystroke::Escape.to_ime_op(), None);
+
+        let mut buffer = String::new();
+        let actions = [
+            "intent:key:h",
+            "intent:key:i",
+            "intent:mode:toggle",
+            "intent:backspace",
+            "intent:key:i",
+            "intent:key:!",
+        ];
+        for action in actions {
+            let Some(stroke) = Keyboard::keystroke_from_osk_action(action) else {
+                panic!("unmapped OSK action {action}");
+            };
+            if let Some(op) = stroke.to_ime_op() {
+                apply_ime_op(&mut buffer, &op);
+            }
+        }
+        assert_eq!(buffer, "hi!");
     }
 }

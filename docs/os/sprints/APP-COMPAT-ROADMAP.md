@@ -182,19 +182,18 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 ### APP-04: экранная клавиатура поверх APP-03
 
+- **Статус**: Host protocol Done, 2026-09-21, ADR-270. Panther chrome
+  waits next shell/displayd experiment.
 - **Goal**: тап по текстовому полю стороннего Qt-приложения показывает
   клавиатуру, ввод долетает до приложения -- APP-KEYBOARD-01 из
   исходного плана, но через путь, который реально работает на этом
   железе.
-- **Текущее состояние**: не начато, зависит от APP-03.
-- **Приёмка**: совпадает с исходной формулировкой пользователя
-  (APP-KEYBOARD-01).
-- **Открытый вопрос**: bespoke-клавиатура в духе ADR-029 (рисуется как
-  `saai-shell`'s собственная layer-shell поверхность, но теперь ШЛЁТ
-  текст через APP-03's путь вместо локальной обработки) vs
-  портирование wvkbd -- решить после APP-03, не раньше (wvkbd и
-  Squeekboard сами по себе не решают проблему keymap на стороне
-  сервера).
+- **Решение**: bespoke `Keyboard` (ADR-029/222), не wvkbd. Третьему
+  лицу текст через APP-03 `commit_string` / `delete_surrounding_text`,
+  отдельным IME-клиентом. `zwp_virtual_keyboard_v1` запрещён.
+- **Приёмка**: host `hi!` from a second client. Visible panel on
+  panther is not this slice.
+- **Открытый вопрос**: закрыт — не портируем wvkbd.
 
 ### APP-05: файловый менеджер -- PCManFM-Qt, не Nautilus, до APP-02
 
@@ -303,7 +302,7 @@ APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
 APP-02  GTK4 -- спайк на разблокировку или осознанный отказ
 APP-03  zwp_input_method_manager_v2 без keymap -- спайк на saai-displayd
-APP-04  экранная клавиатура поверх APP-03
+APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); panther later
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
 APP-06  браузер -- Falkon/QtWebEngine (ADR-269 spike); launch later
 

@@ -33,8 +33,9 @@ pub use gallery::{
     CompositeGalleryFixtures,
 };
 pub use keyboard::{
-    hardware_keyboard_present, hardware_keyboards, HardwareKeyboardDevice, Keyboard,
-    KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, EVDEV_KEY_A,
+    apply_ime_op, hardware_keyboard_present, hardware_keyboards, HardwareKeyboardDevice, Keyboard,
+    KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, OskImeOp,
+    EVDEV_KEY_A,
 };
 
 /// Backend-independent sRGB color. Renderers are responsible for converting

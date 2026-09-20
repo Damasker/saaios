@@ -127,6 +127,7 @@ ADR-266 `saai-displayd` advertises `wp-fractional-scale-v1` and `wp-viewporter` 
 ADR-267 `saai-displayd` implements `input-method-v2` without a keyboard (host).
 ADR-268 Sistema `Записи` are Global `memory_records` from status (host).
 ADR-269 first browser candidate is Falkon on QtWebEngine (host; no launch).
+ADR-270 OSK is Keyboard keystrokes through IME `commit_string` (host; no wvkbd).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
