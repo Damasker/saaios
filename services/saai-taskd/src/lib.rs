@@ -1422,7 +1422,7 @@ impl Daemon {
             task.id
         );
 
-        let response = match runtime_bridge::confirm(
+        let response = match runtime_bridge::confirm_as_worker(
             &self.runtime_addr,
             correlation_id,
             session_id,
@@ -1430,6 +1430,7 @@ impl Daemon {
             &tool,
             arguments,
             true,
+            Some(task.id),
         )
         .await
         {

@@ -2,7 +2,7 @@ use protocol::PolicyVerdict;
 use saai_authority::{
     default_deny_unverified, envelope_covers, grant_covers, proof_matches_principal,
     request_operation_id, AuthorityOperation, AuthorityRequest, DelegationEnvelope, GrantValidity,
-    ObjectRef, PrincipalId, SessionGrant,
+    IdentityProof, ObjectRef, Principal, PrincipalId, SessionGrant,
 };
 use serde_json::{Map, Value};
 use std::sync::Mutex;
@@ -270,6 +270,44 @@ impl PolicyEngine {
     /// Confirm Once is a consumed grant, not AskUser fallthrough.
     pub fn grant_once(&self, tool: &str) -> bool {
         self.grant_scoped(SessionGrant::oneshot_any(PrincipalId::owner(), tool))
+    }
+
+    /// AUTH-06 wire: owner confirmation mints a worker envelope. `once`
+    /// is OneShot; otherwise Session. Does not widen the owner's grant.
+    pub fn issue_worker_delegation(
+        &self,
+        tool: &str,
+        arguments: &Value,
+        execution_id: Uuid,
+        once: bool,
+    ) -> bool {
+        let request = AuthorityRequest::local_user_action(tool, None, arguments.clone());
+        let Some(envelope) = DelegationEnvelope::from_owner_request(
+            &request,
+            Principal::worker(execution_id),
+            execution_id,
+            if once {
+                GrantValidity::OneShot
+            } else {
+                GrantValidity::Session
+            },
+        ) else {
+            return false;
+        };
+        self.issue_delegation(envelope)
+    }
+
+    /// AUTH-06 wire: the worker presents the envelope, not the owner grant.
+    pub fn decide_worker(
+        &self,
+        spec: &ToolSpec,
+        args: &Value,
+        execution_id: Uuid,
+    ) -> PolicyDecision {
+        let mut request = AuthorityRequest::local_user_action(&spec.name, None, args.clone());
+        request.principal = Principal::worker(execution_id);
+        request.proof = IdentityProof::DelegatedWorker { execution_id };
+        self.decide_request(&request, Some(spec))
     }
 
     /// AUTH-03. Hard-denied tools and Persistent validity are refused.
@@ -744,6 +782,50 @@ mod tests {
         assert_eq!(
             engine.decide(&kill_spec(), &json!({"pid": 4312})).verdict,
             PolicyVerdict::AskUser
+        );
+    }
+
+    #[test]
+    fn worker_delegation_allows_once_without_owner_grant() {
+        let engine = PolicyEngine::new();
+        let execution_id = Uuid::new_v4();
+        let args = json!({"pid": 4312});
+        assert!(engine.issue_worker_delegation("process.kill_request", &args, execution_id, true));
+        assert_eq!(
+            engine
+                .decide_worker(&kill_spec(), &args, execution_id)
+                .verdict,
+            PolicyVerdict::Allow
+        );
+        assert_eq!(
+            engine
+                .decide_worker(&kill_spec(), &args, execution_id)
+                .verdict,
+            PolicyVerdict::AskUser
+        );
+        assert_eq!(
+            engine.decide(&kill_spec(), &args).verdict,
+            PolicyVerdict::AskUser
+        );
+    }
+
+    #[test]
+    fn other_execution_id_does_not_consume_the_envelope() {
+        let engine = PolicyEngine::new();
+        let execution_id = Uuid::new_v4();
+        let args = json!({"pid": 4312});
+        assert!(engine.issue_worker_delegation("process.kill_request", &args, execution_id, true));
+        assert_eq!(
+            engine
+                .decide_worker(&kill_spec(), &args, Uuid::new_v4())
+                .verdict,
+            PolicyVerdict::AskUser
+        );
+        assert_eq!(
+            engine
+                .decide_worker(&kill_spec(), &args, execution_id)
+                .verdict,
+            PolicyVerdict::Allow
         );
     }
 

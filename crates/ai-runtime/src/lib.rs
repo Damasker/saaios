@@ -657,7 +657,7 @@ impl AiRuntime {
         arguments: Value,
         scope: ConfirmScope,
     ) -> Result<ToolCallResult> {
-        self.confirm_in_session(correlation_id, None, call_id, tool, arguments, scope)
+        self.confirm_in_session(correlation_id, None, call_id, tool, arguments, scope, None)
             .await
     }
 
@@ -669,6 +669,7 @@ impl AiRuntime {
         tool: &str,
         arguments: Value,
         scope: ConfirmScope,
+        execution_id: Option<Uuid>,
     ) -> Result<ToolCallResult> {
         let span = info_span!(
             "confirm",
@@ -716,23 +717,35 @@ impl AiRuntime {
                 });
             }
 
-            match scope {
-                ConfirmScope::Session => {
-                    self.policy.grant_session(tool);
-                    info!(%correlation_id, %tool, "session grant recorded");
-                }
-                ConfirmScope::Once => {
-                    let _ = self.policy.grant_once(tool);
-                    info!(%correlation_id, %tool, "oneshot grant recorded");
-                }
-                ConfirmScope::Cancel => {}
-            }
-
             let spec = self
                 .tools
                 .get(tool)
                 .ok_or_else(|| anyhow!("unknown tool {tool}"))?;
-            let decision = self.policy.decide(spec.spec(), &arguments);
+            let decision = if let Some(execution_id) = execution_id {
+                let once = matches!(scope, ConfirmScope::Once);
+                if !self
+                    .policy
+                    .issue_worker_delegation(tool, &arguments, execution_id, once)
+                {
+                    return Err(anyhow!("could not issue worker delegation for {tool}"));
+                }
+                info!(%correlation_id, %tool, %execution_id, "worker envelope recorded");
+                self.policy
+                    .decide_worker(spec.spec(), &arguments, execution_id)
+            } else {
+                match scope {
+                    ConfirmScope::Session => {
+                        self.policy.grant_session(tool);
+                        info!(%correlation_id, %tool, "session grant recorded");
+                    }
+                    ConfirmScope::Once => {
+                        let _ = self.policy.grant_once(tool);
+                        info!(%correlation_id, %tool, "oneshot grant recorded");
+                    }
+                    ConfirmScope::Cancel => {}
+                }
+                self.policy.decide(spec.spec(), &arguments)
+            };
             if decision.verdict != PolicyVerdict::Allow {
                 return Err(anyhow!(
                     "policy {} after confirmation: {}",

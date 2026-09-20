@@ -245,7 +245,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - AUTH-02 PolicyEngine adapter, same verdicts (ADR-260; host)
 - AUTH-03 scoped session grants, not tool-name HashSet (ADR-261; host)
 - AUTH-05 OAM/IRAB Principal on AuthorityRequest (ADR-275; host)
-- AUTH-06 worker DelegationEnvelope (ADR-276; host; no taskd flash)
+- AUTH-06 worker DelegationEnvelope (ADR-276; JSON wire ADR-282; host; no taskd flash)
 - AUTH-07 Automation Principal, proof must match kind (ADR-277; host)
 - AUTH-08 portal capabilities through PolicyEngine; GrantStore stays (ADR-278; host; no shell flash)
 - AUTH-09 revoke GrantStore/session/envelope (ADR-279; host; no chrome, no Отозвать)

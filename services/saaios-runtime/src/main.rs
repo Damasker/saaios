@@ -144,6 +144,10 @@ enum ClientRequest {
         confirmed: Option<bool>,
         #[serde(default)]
         session_id: Option<Uuid>,
+        /// AUTH-06: when set, confirm mints a worker envelope for this
+        /// Task id instead of an owner session grant.
+        #[serde(default)]
+        execution_id: Option<Uuid>,
     },
     ChatReset {
         session_id: Uuid,
@@ -925,6 +929,7 @@ where
             scope,
             confirmed,
             session_id,
+            execution_id,
         } => {
             let scope = match confirmed {
                 Some(false) => ConfirmScope::Cancel,
@@ -932,7 +937,15 @@ where
                 _ => scope,
             };
             match runtime
-                .confirm_in_session(correlation_id, session_id, call_id, &tool, arguments, scope)
+                .confirm_in_session(
+                    correlation_id,
+                    session_id,
+                    call_id,
+                    &tool,
+                    arguments,
+                    scope,
+                    execution_id,
+                )
                 .await
             {
                 Ok(result) => ClientResponse {

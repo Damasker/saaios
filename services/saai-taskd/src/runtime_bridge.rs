@@ -212,21 +212,47 @@ pub async fn confirm(
     arguments: Value,
     confirmed: bool,
 ) -> Result<RuntimeResponse, BridgeError> {
-    let scope = if confirmed { "once" } else { "cancel" };
-    call(
+    confirm_as_worker(
         addr,
-        &json!({
-            "op": "confirm",
-            "correlation_id": correlation_id,
-            "call_id": call_id,
-            "tool": tool,
-            "arguments": arguments,
-            "scope": scope,
-            "confirmed": confirmed,
-            "session_id": session_id,
-        }),
+        correlation_id,
+        session_id,
+        call_id,
+        tool,
+        arguments,
+        confirmed,
+        None,
     )
     .await
+}
+
+/// AUTH-06: `execution_id` is the Task that will present the worker
+/// envelope. Absent keeps the owner grant path for shell/runtime
+/// confirm without a Task.
+pub async fn confirm_as_worker(
+    addr: &str,
+    correlation_id: Uuid,
+    session_id: Option<Uuid>,
+    call_id: Uuid,
+    tool: &str,
+    arguments: Value,
+    confirmed: bool,
+    execution_id: Option<Uuid>,
+) -> Result<RuntimeResponse, BridgeError> {
+    let scope = if confirmed { "once" } else { "cancel" };
+    let mut body = json!({
+        "op": "confirm",
+        "correlation_id": correlation_id,
+        "call_id": call_id,
+        "tool": tool,
+        "arguments": arguments,
+        "scope": scope,
+        "confirmed": confirmed,
+        "session_id": session_id,
+    });
+    if let Some(execution_id) = execution_id {
+        body["execution_id"] = json!(execution_id);
+    }
+    call(addr, &body).await
 }
 
 #[cfg(test)]
@@ -320,6 +346,74 @@ mod tests {
         let (ok, _output, error) = response.tool_output().expect("expected a tool_result");
         assert!(!ok);
         assert_eq!(error, Some("user cancelled"));
+    }
+
+    #[tokio::test]
+    async fn confirm_as_worker_sends_execution_id_on_the_wire() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).unwrap();
+            tx.send(request).unwrap();
+            stream
+                .write_all(
+                    br#"{"ok":true,"correlation_id":null,"session_id":null,"diagnose":null,"pending":null,"error":null,"tool_result":null}"#,
+                )
+                .unwrap();
+        });
+        let execution_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        confirm_as_worker(
+            &addr,
+            Uuid::nil(),
+            None,
+            Uuid::nil(),
+            "process.kill_request",
+            json!({"pid": 4312}),
+            true,
+            Some(execution_id),
+        )
+        .await
+        .unwrap();
+        let sent = String::from_utf8(rx.recv().unwrap()).unwrap();
+        let parsed: Value = serde_json::from_str(&sent).unwrap();
+        assert_eq!(parsed["op"], "confirm");
+        assert_eq!(parsed["execution_id"], execution_id.to_string());
+        assert_eq!(parsed["scope"], "once");
+    }
+
+    #[tokio::test]
+    async fn confirm_without_task_omits_execution_id() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).unwrap();
+            tx.send(request).unwrap();
+            stream
+                .write_all(
+                    br#"{"ok":true,"correlation_id":null,"session_id":null,"diagnose":null,"pending":null,"error":null,"tool_result":null}"#,
+                )
+                .unwrap();
+        });
+        confirm(
+            &addr,
+            Uuid::nil(),
+            None,
+            Uuid::nil(),
+            "process.kill_request",
+            json!({}),
+            false,
+        )
+        .await
+        .unwrap();
+        let sent = String::from_utf8(rx.recv().unwrap()).unwrap();
+        let parsed: Value = serde_json::from_str(&sent).unwrap();
+        assert!(parsed.get("execution_id").is_none());
     }
 
     #[tokio::test]

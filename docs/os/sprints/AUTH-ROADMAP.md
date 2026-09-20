@@ -1,6 +1,6 @@
 # SaaiOS Unified Authority Model — delivery roadmap
 
-Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276). AUTH-07 Automation Principal host (ADR-277). AUTH-08 portal adapter host (ADR-278). AUTH-09 revocation host (ADR-279).**
+Status: **AUTH-00/01 host complete. AUTH-02 adapter host (ADR-260). AUTH-03 scoped grants host (ADR-261). AUTH-04 live `decide_named` host. AUTH-05 OAM/IRAB Principal host (ADR-275). AUTH-06 DelegationEnvelope host (ADR-276) + JSON wire (ADR-282). AUTH-07 Automation Principal host (ADR-277). AUTH-08 portal adapter host (ADR-278). AUTH-09 revocation host (ADR-279).**
 Next phone work is still AUTH-10 in the service queue, not AUTH-10 as a new
 UI. Confirmation already exists (`TaskConfirm`). See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -23,7 +23,7 @@ No ambient authority. No new policyd.
 | AUTH-03 | Scoped session grants (not tool-name HashSet) | **Done** (host, ADR-261) | no |
 | AUTH-04 | Fix `decide_named` live grants; confirmation binding | **Done** (host) | no |
 | AUTH-05 | OAM/IRAB Principal on AuthorityRequest | **Done** (host, ADR-275) | no |
-| AUTH-06 | Worker DelegationEnvelope | **Done** (host, ADR-276) | no |
+| AUTH-06 | Worker DelegationEnvelope | **Done** (host, ADR-276/282) | no |
 | AUTH-07 | Automation Principal | **Done** (host, ADR-277) | no |
 | AUTH-08 | Portal adapter; GrantStore stays | **Done** (host, ADR-278) | no |
 | AUTH-09 | Revocation review | **Done** (host, ADR-279) | no |
@@ -111,7 +111,9 @@ unverified Deny; worker does not inherit owner grant.
 
 **Change:** `DelegationEnvelope` + `envelope_covers`.
 `PolicyEngine::issue_delegation` is process-local. OneShot is consumed.
-Hard deny and Persistent are refused. `saai-taskd` is not wired yet.
+Hard deny and Persistent are refused. ADR-282: `saai-taskd` sends
+`execution_id` on confirm JSON; runtime issues the envelope and
+`decide_worker`. Host-only; do not flash taskd or runtime.
 
 **Test:** matching worker Allow once; other worker AskUser; changed
 args/target fail; owner cannot be covered as a worker.
