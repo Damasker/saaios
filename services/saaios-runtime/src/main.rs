@@ -6,7 +6,9 @@ use chrono::Utc;
 use clap::Parser;
 use config::{resolve, CliOverrides};
 use event_bus::EventBus;
-use memory_store::{install_memory_tools, MemoryAccessScope, MemoryFact, MemoryStore};
+use memory_store::{
+    install_memory_tools, MemoryAccessScope, MemoryFact, MemorySensitivity, MemoryStore,
+};
 use model_provider::{build_provider, ProviderKind};
 use policy_engine::PolicyEngine;
 use protocol::{ConfirmScope, Envelope, MessageKind};
@@ -286,6 +288,8 @@ struct RuntimeStatusDto {
     observation_revision: u64,
     #[serde(default)]
     observations: Vec<LiveObservationDto>,
+    #[serde(default)]
+    memory_records: Vec<MemoryReviewDto>,
     max_concurrent: usize,
     request_timeout_secs: u64,
     session_grants: Vec<String>,
@@ -323,6 +327,35 @@ fn live_observations(cache: &ObservationCache) -> Vec<LiveObservationDto> {
             observed_at: obs.observed_at.to_rfc3339(),
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct MemoryReviewDto {
+    key: String,
+    value: String,
+    space: String,
+    kind: String,
+}
+
+/// ADR-264: Global live records only. Status has no space. None≠All.
+/// Restricted stays off this channel (MEM-04). Not Observation.
+fn live_memory_records(runtime: &AiRuntime) -> Vec<MemoryReviewDto> {
+    let Some(store) = runtime.memory() else {
+        return Vec::new();
+    };
+    match store.latest_visible_records(&MemoryAccessScope::Global) {
+        Ok(records) => records
+            .into_iter()
+            .filter(|record| record.sensitivity == MemorySensitivity::Normal)
+            .map(|record| MemoryReviewDto {
+                key: record.key,
+                value: record.value,
+                space: "global".into(),
+                kind: record.kind.as_str().into(),
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 struct RuntimeMeta {
@@ -368,6 +401,7 @@ impl RuntimeMeta {
             telemetry_interval_secs: tel.as_ref().map(|t| t.interval_secs).unwrap_or(0),
             observation_revision: self.observations.revision(),
             observations: live_observations(&self.observations),
+            memory_records: live_memory_records(runtime),
             max_concurrent: self.max_concurrent,
             request_timeout_secs: self.request_timeout_secs,
             session_grants: runtime.session_grants(),
@@ -1380,6 +1414,52 @@ mod tests {
         let expired = meta.status(&runtime);
         assert_eq!(expired.observation_revision, 1);
         assert!(expired.observations.is_empty());
+        assert!(expired.memory_records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn status_lists_only_global_memory_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem_path = dir.path().join("memory.jsonl");
+        let store = Arc::new(MemoryStore::open(&mem_path).unwrap());
+        store.remember(MemoryFact::new("host.role", "pi5")).unwrap();
+        let mut work = MemoryFact::new("deploy", "Fridays");
+        work.space_id = Some("work".into());
+        store.remember(work).unwrap();
+        let device = system_identity(ToolsMode::Mock);
+        let runtime = AiRuntime::new(
+            Arc::new(ToolRegistry::new()),
+            Arc::new(PolicyEngine::new()),
+            Arc::new(AuditLog::open(dir.path().join("audit.jsonl")).unwrap()),
+            EventBus::new(16),
+            Arc::new(model_provider::MockModelProvider),
+        )
+        .with_memory(store);
+        let meta = RuntimeMeta {
+            started: Instant::now(),
+            config_path: None,
+            provider_name: "mock".into(),
+            provider_kind: "mock".into(),
+            tools_mode: "mock".into(),
+            tool_names: vec![],
+            device: device.clone(),
+            memory_enabled: true,
+            memory_path: Some(mem_path),
+            audit_path: dir.path().join("audit.jsonl"),
+            sock: dir.path().join("runtime.sock"),
+            automation: false,
+            auto_diagnose: false,
+            telemetry: None,
+            observations: Arc::new(ObservationCache::new()),
+            max_concurrent: 1,
+            request_timeout_secs: 30,
+        };
+        let status = meta.status(&runtime);
+        assert_eq!(status.memory_records.len(), 1);
+        assert_eq!(status.memory_records[0].key, "host.role");
+        assert_eq!(status.memory_records[0].space, "global");
+        assert_eq!(status.memory_records[0].kind, "explicit_fact");
+        assert!(!status.memory_records.iter().any(|row| row.key == "deploy"));
     }
 
     #[tokio::test]

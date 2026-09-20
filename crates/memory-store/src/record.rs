@@ -16,6 +16,16 @@ pub enum MemoryKind {
     LearnedHypothesis,
 }
 
+impl MemoryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ExplicitFact => "explicit_fact",
+            Self::ExplicitPreference => "explicit_preference",
+            Self::LearnedHypothesis => "learned_hypothesis",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryState {

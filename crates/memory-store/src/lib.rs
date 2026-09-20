@@ -163,55 +163,65 @@ impl MemoryStore {
     }
 
     /// Latest live revision per `(space_id, key)`.
-    ///
-    /// A key is unique *within a scope*, not globally. Work
-    /// `door.color=blue` and Home `door.color=red` are two identities
-    /// (ADR-125). Callers that need a space's effective view use
-    /// [`Self::latest_visible`].
-    pub fn latest_by_key(&self) -> Result<Vec<MemoryFact>> {
+    pub fn latest_by_key_records(&self) -> Result<Vec<MemoryRecord>> {
         let now = Utc::now();
         let mut map = std::collections::HashMap::<(Option<String>, String), MemoryRecord>::new();
         for record in self.read_all_records()? {
             map.insert((record.space_id.clone(), record.key.clone()), record);
         }
-        let mut facts: Vec<_> = map
+        let mut records: Vec<_> = map
             .into_values()
             .filter(|record| record.is_live(now))
-            .map(|record| record.as_fact())
             .collect();
-        facts.sort_by_key(|b| std::cmp::Reverse(b.ts));
-        Ok(facts)
+        records.sort_by_key(|b| std::cmp::Reverse(b.ts));
+        Ok(records)
+    }
+
+    pub fn latest_by_key(&self) -> Result<Vec<MemoryFact>> {
+        Ok(self
+            .latest_by_key_records()?
+            .into_iter()
+            .map(|record| record.as_fact())
+            .collect())
     }
 
     /// Compact records for `access`. Context applies Space > Global for
     /// the same key. Global is only `space_id = None`. All is explicit.
-    pub fn latest_visible(&self, access: &MemoryAccessScope) -> Result<Vec<MemoryFact>> {
-        let all = self.latest_by_key()?;
+    pub fn latest_visible_records(&self, access: &MemoryAccessScope) -> Result<Vec<MemoryRecord>> {
+        let all = self.latest_by_key_records()?;
         match access {
             MemoryAccessScope::All => Ok(all),
             MemoryAccessScope::Global => {
-                Ok(all.into_iter().filter(|f| f.space_id.is_none()).collect())
+                Ok(all.into_iter().filter(|r| r.space_id.is_none()).collect())
             }
             MemoryAccessScope::Context(space) => {
-                let visible: Vec<MemoryFact> = all
+                let visible: Vec<MemoryRecord> = all
                     .into_iter()
-                    .filter(|f| {
-                        f.space_id.is_none() || f.space_id.as_deref() == Some(space.as_str())
+                    .filter(|r| {
+                        r.space_id.is_none() || r.space_id.as_deref() == Some(space.as_str())
                     })
                     .collect();
                 let space_keys: std::collections::HashSet<String> = visible
                     .iter()
-                    .filter(|f| f.space_id.as_deref() == Some(space.as_str()))
-                    .map(|f| f.key.clone())
+                    .filter(|r| r.space_id.as_deref() == Some(space.as_str()))
+                    .map(|r| r.key.clone())
                     .collect();
-                let mut facts: Vec<_> = visible
+                let mut records: Vec<_> = visible
                     .into_iter()
-                    .filter(|f| !(f.space_id.is_none() && space_keys.contains(&f.key)))
+                    .filter(|r| !(r.space_id.is_none() && space_keys.contains(&r.key)))
                     .collect();
-                facts.sort_by_key(|b| std::cmp::Reverse(b.ts));
-                Ok(facts)
+                records.sort_by_key(|b| std::cmp::Reverse(b.ts));
+                Ok(records)
             }
         }
+    }
+
+    pub fn latest_visible(&self, access: &MemoryAccessScope) -> Result<Vec<MemoryFact>> {
+        Ok(self
+            .latest_visible_records(access)?
+            .into_iter()
+            .map(|record| record.as_fact())
+            .collect())
     }
 
     pub fn list_recent(&self, limit: usize, access: &MemoryAccessScope) -> Result<Vec<MemoryFact>> {
@@ -878,5 +888,19 @@ mod tests {
             store.recall("foo", &access("work")).unwrap()[0].value,
             "new"
         );
+    }
+
+    #[test]
+    fn global_review_omits_space_records() {
+        let tmp = NamedTempFile::new().unwrap();
+        let store = MemoryStore::open(tmp.path()).unwrap();
+        remember_in(&store, "work", "deploy", "Fridays");
+        store.remember(MemoryFact::new("host.role", "pi5")).unwrap();
+        let global = store
+            .latest_visible_records(&MemoryAccessScope::Global)
+            .unwrap();
+        assert_eq!(global.len(), 1);
+        assert_eq!(global[0].key, "host.role");
+        assert!(global[0].space_id.is_none());
     }
 }
