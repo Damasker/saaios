@@ -29,4 +29,6 @@ screen now {
     tab spaces { loc = spaces }
     tab me { loc = me }
   }
+  row apps { loc = now.apps }
+  row intent { loc = now.intent }
 }

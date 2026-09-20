@@ -57,6 +57,7 @@ ADR-195 `EdgeInsets::from_safe` converts logical SafeInsets (host; top stays a l
 ADR-196 nested `tab` ids on `BottomNavigation`; `layout_v2` does not borrow v1 (host).
 ADR-197 ActionCard/tab labels use `Label`/`Caption`, not Title (paint; flashes).
 ADR-198 status time/battery `Label`, keys `Caption` (paint; flashes).
+ADR-199 nested `row` footer ids; `layout_v2` matches `now_footer_action_rect` (host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

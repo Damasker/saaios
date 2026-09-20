@@ -58,10 +58,12 @@ pub struct TabSpec {
 }
 
 /// ADR-181: a `sui 2` screen is an ordered list of vocabulary components.
+/// ADR-199: optional nested `row` ids dock as the NOW footer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SuiV2Screen {
     pub id: String,
     pub components: Vec<SuiV2Component>,
+    pub rows: Vec<SuiV2Row>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -89,6 +91,15 @@ pub struct SuiV2Component {
 pub struct SuiV2Tab {
     pub id: String,
     pub loc: Option<String>,
+}
+
+/// Nested `row <id>` on a `sui 2` screen. Ids are the live NOW footer
+/// destinations (`apps`, `intent`). Action matches `now_footer_action_at`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SuiV2Row {
+    pub id: String,
+    pub loc: Option<String>,
+    pub action: String,
 }
 
 impl SuiV2Component {
@@ -374,7 +385,13 @@ impl Parser {
         }
         self.kind(TokenKind::LBrace)?;
         let mut components = Vec::new();
+        let mut rows = Vec::new();
+        let mut row_ids = std::collections::HashSet::new();
         while !self.next_is(&TokenKind::RBrace) {
+            if self.next_is_ident("row") {
+                rows.push(self.v2_row(&mut row_ids)?);
+                continue;
+            }
             self.keyword("component")?;
             let type_name = self.ident()?;
             if sui_v2_is_deferred(&type_name) {
@@ -409,7 +426,36 @@ impl Parser {
         if components.is_empty() {
             return Err(self.fail("SUI v2 screen must name a component"));
         }
-        Ok(SuiV2Screen { id, components })
+        Ok(SuiV2Screen {
+            id,
+            components,
+            rows,
+        })
+    }
+
+    fn v2_row(
+        &mut self,
+        ids: &mut std::collections::HashSet<String>,
+    ) -> Result<SuiV2Row, CompileError> {
+        self.keyword("row")?;
+        let id = self.ident()?;
+        let action = match id.as_str() {
+            "apps" => "open_apps",
+            "intent" => "open_intent_input",
+            _ => return Err(self.fail(format!("unknown SUI v2 row `{id}`"))),
+        }
+        .to_string();
+        if !ids.insert(id.clone()) {
+            return Err(self.fail("duplicate row id"));
+        }
+        self.kind(TokenKind::LBrace)?;
+        let props = self.v2_props()?;
+        self.kind(TokenKind::RBrace)?;
+        Ok(SuiV2Row {
+            id,
+            loc: props.loc,
+            action,
+        })
     }
 
     fn v2_props(&mut self) -> Result<SuiV2Props, CompileError> {
@@ -687,6 +733,7 @@ mod tests {
         assert_eq!(screen.components[2].props.focus, Some(1));
         assert_eq!(screen.components[2].props.scroll.as_deref(), Some("none"));
         assert!(screen.components[2].tabs.is_empty());
+        assert!(screen.rows.is_empty());
     }
 
     #[test]
@@ -751,6 +798,44 @@ mod tests {
             "#,
         )
         .is_ok());
+    }
+
+    #[test]
+    fn compile_v2_nested_rows_name_the_now_footer() {
+        let screen = compile_v2_public(include_str!("../../../docs/os/ui/examples/now-public.sui"))
+            .expect("public NOW");
+        let rows: Vec<(&str, &str)> = screen
+            .rows
+            .iter()
+            .map(|row| (row.id.as_str(), row.action.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            [("apps", "open_apps"), ("intent", "open_intent_input")]
+        );
+        let unknown = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {}
+              row search {}
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(unknown.to_string().contains("unknown SUI v2 row `search`"));
+        let duplicate = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {}
+              row apps {}
+              row apps {}
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate row id"));
     }
 
     #[test]
@@ -932,6 +1017,8 @@ mod tests {
         assert!(guide.contains("now-public.sui"));
         assert!(guide.contains("Experimental"));
         assert!(guide.contains("compile_v2_public"));
+        assert!(guide.contains("row apps"));
+        assert_eq!(screen.rows.len(), 2);
         for name in saai_ui_core::public_gallery_type_names() {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
         }
@@ -966,11 +1053,15 @@ mod tests {
         assert!(ledger.contains("ADR-197"));
         assert!(ledger.contains("Caption"));
         assert!(ledger.contains("ADR-198"));
+        assert!(ledger.contains("ADR-199"));
+        assert!(ledger.contains("now_footer_action_rect"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
         assert!(limits.contains("ADR-197"));
         assert!(limits.contains("ADR-198"));
+        assert!(limits.contains("ADR-199"));
+        assert!(limits.contains("nested `row`"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

@@ -26,10 +26,12 @@ chrome still compiles through `compile()` on
 
 [`examples/now-public.sui`](examples/now-public.sui) is the labelled NOW
 sample: `ContextHeader`, `ObjectSummary`, `SurfacePattern`,
-`BottomNavigation` with nested `tab now/inbox/spaces/me` (ADR-196). It
-matches the live Сейчас composition (header, object, empty pattern,
-tabs) without leftover v1 NOW cards and without `OrbHost`. Empty
-`BottomNavigation` invents no v1 hits.
+`BottomNavigation` with nested `tab now/inbox/spaces/me` (ADR-196),
+and nested `row apps` / `row intent` (ADR-199). It matches the live
+Сейчас composition (header, object, empty pattern, footer, tabs)
+without leftover v1 NOW cards and without `OrbHost`. Empty
+`BottomNavigation` invents no v1 hits. Empty screens invent no
+footer hits.
 
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
@@ -55,10 +57,11 @@ review. Copying them into an app document fails `compile_v2_public()`.
 - Removing a public name requires an ADR and a compile error, not a
   silent skip.
 - `compile_v2()` on `root.sui` stays forbidden. `layout_v2()` matches
-  v1 tab hits for this example (ADR-194/196) but is not wired into
-  `build.rs`. `inset = safe` uses `EdgeInsets::from_safe` (ADR-195);
-  the top inset is the status layer, not a content pad. Nested `tab`
-  ids own the v2 strip.
+  v1 tab hits for this example (ADR-194/196) and live footer hits
+  (ADR-199) but is not wired into `build.rs`. `inset = safe` uses
+  `EdgeInsets::from_safe` (ADR-195); the top inset is the status
+  layer, not a content pad. Nested `tab` ids own the v2 strip.
+  Nested `row` ids own the NOW footer.
 
 ## Migration
 
@@ -71,6 +74,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Wanting tab hit-test from a v2 NOW | nested `tab` + `layout_v2(compile_v2_public(…))`; not `root_view` |
 | Logical `SafeInsets` on a `Node` | `EdgeInsets::from_safe`; do not pad top (status layer) |
 | Empty `BottomNavigation {}` | no tab hits; do not borrow v1 ids |
+| Wanting footer hit-test from a v2 NOW | nested `row apps` / `row intent` + `layout_v2`; not v1 `content_actions` |
+| Empty screen without `row` | no footer hits; do not invent `open_apps` |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

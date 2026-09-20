@@ -1,9 +1,11 @@
 //! ADR-184: layout and hit-test from compiled `.sui` v1 `ScreenSpec`.
 //! ADR-194: `layout_v2()` matches those tab hits for public NOW.
+//! ADR-199: nested `row` ids dock as the live NOW footer.
 //!
 //! Production chrome still uses `layout_v1_root()`. `compile_v2()`
 //! stays off `build.rs`. Nested `tab` ids under `BottomNavigation`
-//! own the v2 strip (ADR-196).
+//! own the v2 strip (ADR-196). Footer hits come from named `row`s,
+//! not from v1 `content_actions`.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SurfaceScale,
@@ -97,7 +99,14 @@ fn v2_named_tabs(screen: &SuiV2Screen) -> &[crate::SuiV2Tab] {
         .unwrap_or(&[])
 }
 
-fn v2_content_node(screen: &SuiV2Screen, width: u32) -> Node {
+/// Live `now_footer_action_rect` row height at the design canvas.
+const V2_FOOTER_ROW_HEIGHT_2400: u32 = 160;
+
+fn v2_footer_row_height(panel_height: u32) -> u32 {
+    ((panel_height as u64 * u64::from(V2_FOOTER_ROW_HEIGHT_2400)) / 2400) as u32
+}
+
+fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
     let margin = width / 22;
     let mut children: Vec<Node> = screen
         .components
@@ -107,6 +116,14 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32) -> Node {
         .collect();
     if children.is_empty() {
         children.push(Node::leaf(format!("{}-fill", screen.id)));
+    }
+    let row_height = v2_footer_row_height(height);
+    for row in &screen.rows {
+        children.push(
+            Node::leaf(row.id.clone())
+                .with_action(row.action.clone())
+                .with_size(Length::Fill, Length::Px(row_height)),
+        );
     }
     Node::linear(format!("{}-content", screen.id), Axis::Vertical, children).with_padding(
         EdgeInsets {
@@ -118,11 +135,11 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32) -> Node {
     )
 }
 
-/// Public NOW chrome: non-actionable v2 content leaves plus a tab
-/// strip from nested `tab` ids. Empty `BottomNavigation` does not
-/// borrow `compile_v1_rollback()`.
+/// Public NOW chrome: non-actionable v2 content leaves, named footer
+/// rows, plus a tab strip from nested `tab` ids. Empty `row` lists
+/// and empty `BottomNavigation` do not invent live hits.
 pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
-    let content = v2_content_node(screen, width);
+    let content = v2_content_node(screen, width, height);
     let tabs = v2_named_tabs(screen);
     if tabs.is_empty() {
         return content;
@@ -243,6 +260,44 @@ mod tests {
             layout_v1_find(&v2, "BottomNavigation").map(|node| node.children.len()),
             Some(4)
         );
+        assert_eq!(
+            v2.hit_test(540.0, 1860.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("open_apps")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 2080.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("open_intent_input")
+        );
+        assert!(v1.hit_test(540.0, 1860.0).is_none());
+        assert!(v1.hit_test(540.0, 2080.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_without_rows_does_not_invent_footer_hits() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {}
+              component BottomNavigation {
+                tab now {}
+                tab inbox {}
+                tab spaces {}
+                tab me {}
+              }
+            }
+            "#,
+        )
+        .expect("tabs only");
+        let tree = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            tree.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
+            Some("now")
+        );
+        assert!(tree.hit_test(540.0, 1860.0).is_none());
+        assert!(tree.hit_test(540.0, 2080.0).is_none());
     }
 
     #[test]

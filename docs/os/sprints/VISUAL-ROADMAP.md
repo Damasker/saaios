@@ -1164,8 +1164,8 @@ component state remains fully usable.
 verification ledger (ADR-189); known limitations (ADR-193);
 `layout_v2` tab hits (ADR-194); `from_safe` insets (ADR-195); nested
 `tab` grammar (ADR-196); ActionCard/tab `Label`/`Caption` (ADR-197);
-status/keys `Label`/`Caption` (ADR-198).
-Release
+status/keys `Label`/`Caption` (ADR-198); nested `row` footer
+(ADR-199). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1213,7 +1213,7 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
 - [x] Emit `layout_v2()` so public NOW tab hits match `layout_v1_root()`
-  (ADR-194). `compile()` stays v1. Footer/object hits stay procedural.
+  (ADR-194). `compile()` stays v1. Object hits stay procedural.
 - [x] Convert logical `SafeInsets` through `EdgeInsets::from_safe`
   (ADR-195). Top inset stays the status layer, not tree padding.
 - [x] Name tabs in the v2 grammar so `layout_v2()` does not borrow
@@ -1224,6 +1224,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Map status time/battery onto `Label` and key labels onto
   `Caption` (ADR-198). Badge, gallery kicker/swatch, and app-tile
   leftovers stay named.
+- [x] Name NOW footer destinations in the v2 grammar so `layout_v2()`
+  matches `now_footer_action_rect` (ADR-199). Empty screens invent no
+  footer hits. `compile()` stays v1.
 
 ### Acceptance
 
@@ -1287,7 +1290,8 @@ After each completed task group, report:
 ## Next action
 
 Continue **Visual v2** at remaining named leftovers (badge, gallery
-kicker/swatch, app-tile), or Experimental→Stable after Visual v1, or
-operator-approved lock / display restart / cold boot.
+kicker/swatch, app-tile), or object hits, or Experimental→Stable
+after Visual v1, or operator-approved lock / display restart / cold
+boot.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.
