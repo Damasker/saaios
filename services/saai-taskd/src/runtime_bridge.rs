@@ -8,10 +8,16 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use uuid::Uuid;
+
+/// Slightly above panther's 60s runtime budget so a live timeout still
+/// arrives as `ok:false` from `saaios-runtime`. Hung TCP cannot leave
+/// a Task `Pending` forever (ADR-236).
+pub const DIAGNOSE_TIMEOUT: Duration = Duration::from_secs(65);
 
 #[derive(Debug, Error)]
 pub enum BridgeError {
@@ -25,6 +31,25 @@ pub enum BridgeError {
     Io(#[from] std::io::Error),
     #[error("malformed saaios-runtime response: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("saaios-runtime diagnose timed out after {secs}s at {addr}")]
+    Timeout { addr: String, secs: u64 },
+}
+
+impl BridgeError {
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::Timeout { .. })
+    }
+
+    /// Timeout and connect failures are retryable. Malformed JSON is not.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::Timeout { .. } | Self::Connect { .. })
+    }
+}
+
+/// Runtime's own budget surfaces as `ok:false` with this substring
+/// (`crates/ai-runtime` "request timed out after Ns").
+pub fn runtime_error_is_timeout(message: &str) -> bool {
+    message.contains("timed out after")
 }
 
 /// Mirrors `saaios-runtime`'s `PendingDto` -- a proposed, not yet
@@ -81,18 +106,35 @@ impl RuntimeResponse {
 }
 
 async fn call(addr: &str, request: &Value) -> Result<RuntimeResponse, BridgeError> {
-    let mut stream = TcpStream::connect(addr)
-        .await
-        .map_err(|source| BridgeError::Connect {
+    call_with_timeout(addr, request, DIAGNOSE_TIMEOUT).await
+}
+
+async fn call_with_timeout(
+    addr: &str,
+    request: &Value,
+    timeout: Duration,
+) -> Result<RuntimeResponse, BridgeError> {
+    let fut = async {
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .map_err(|source| BridgeError::Connect {
+                addr: addr.to_string(),
+                source,
+            })?;
+        let bytes = serde_json::to_vec(request)?;
+        stream.write_all(&bytes).await?;
+        stream.shutdown().await?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await?;
+        Ok(serde_json::from_slice(&buf)?)
+    };
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(inner) => inner,
+        Err(_) => Err(BridgeError::Timeout {
             addr: addr.to_string(),
-            source,
-        })?;
-    let bytes = serde_json::to_vec(request)?;
-    stream.write_all(&bytes).await?;
-    stream.shutdown().await?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
-    Ok(serde_json::from_slice(&buf)?)
+            secs: timeout.as_secs().max(1),
+        }),
+    }
 }
 
 /// `{"op":"diagnose", "text": ..., "stream": false}` -- the one call
@@ -109,9 +151,19 @@ pub async fn diagnose(
     text: &str,
     space_id: &str,
 ) -> Result<RuntimeResponse, BridgeError> {
-    call(
+    diagnose_with_timeout(addr, text, space_id, DIAGNOSE_TIMEOUT).await
+}
+
+pub async fn diagnose_with_timeout(
+    addr: &str,
+    text: &str,
+    space_id: &str,
+    timeout: Duration,
+) -> Result<RuntimeResponse, BridgeError> {
+    call_with_timeout(
         addr,
         &json!({ "op": "diagnose", "text": text, "stream": false, "space_id": space_id }),
+        timeout,
     )
     .await
 }
@@ -153,6 +205,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+    use std::time::Duration;
 
     /// A one-shot fake `saaios-runtime`: accepts one connection, reads
     /// until the peer half-closes (matching `read_client_request`'s own
@@ -251,5 +304,30 @@ mod tests {
 
         let error = diagnose(&addr, "hello", "home").await.unwrap_err();
         assert!(matches!(error, BridgeError::Connect { .. }));
+        assert!(error.is_retryable());
+        assert!(!error.is_timeout());
+    }
+
+    #[tokio::test]
+    async fn diagnose_times_out_instead_of_hanging() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_secs(30));
+        });
+        let error = diagnose_with_timeout(&addr, "hi", "work", Duration::from_millis(80))
+            .await
+            .unwrap_err();
+        assert!(error.is_timeout());
+        assert!(error.is_retryable());
+    }
+
+    #[test]
+    fn runtime_timeout_text_is_classified() {
+        assert!(runtime_error_is_timeout(
+            "request timed out after 60s (correlation_id=67d7c8ea-0000-0000-0000-000000000000)"
+        ));
+        assert!(!runtime_error_is_timeout("saaios-runtime unreachable"));
     }
 }

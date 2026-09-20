@@ -94,6 +94,7 @@ ADR-232 leftover formulas: Keyboard keys, gallery page, lock idle/wake.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
+ADR-236 diagnose timeout is Failed + retryable, not Pending.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
