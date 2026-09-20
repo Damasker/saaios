@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–190; `compile()` stays v1) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–191; `compile()` stays v1) |
 
 ---
 
@@ -1197,8 +1197,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Prove increased text on panther HEAD (`text_scale_pct` 150 then
   100, ADR-190). Lock cycle, display restart, cold boot, and radio-off
   stay open.
+- [x] Prove live radio-off on panther HEAD (`wlan0` down then up,
+  ADR-191). Lock cycle, display restart, and cold boot stay open.
 - [ ] Run remaining live matrix cells (lock cycle, display restart, cold
-  boot, radio-off) then close the ledger.
+  boot) then close the ledger.
 - [ ] Record known limitations and the Visual v2 backlog.
 
 ### Acceptance
@@ -1263,6 +1265,6 @@ After each completed task group, report:
 ## Next action
 
 Continue **VUI-09**: remaining live matrix cells (lock cycle, display
-restart, cold boot, radio-off), then known limitations. Do not point
+restart, cold boot), then known limitations. Do not point
 `root.sui` at `compile_v2()`. Space detail still deferred. MEM-08
 stays omitted until a shell-legal memory read exists.

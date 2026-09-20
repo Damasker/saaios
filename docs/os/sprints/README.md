@@ -49,6 +49,7 @@ ADR-187 close production color literals and leftover NOW chrome.
 ADR-188 name leftover `draw_text` sizes (`role_px`).
 ADR-189 VUI-09 verification ledger (not Visual v1 sign-off).
 ADR-190 increased text 150% on panther HEAD, then restored 100%.
+ADR-191 live radio-off on panther HEAD (`wlan0` down → `Нет сети`, then up).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

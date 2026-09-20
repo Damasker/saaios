@@ -11593,6 +11593,13 @@ mod tests {
     }
 
     #[test]
+    fn radio_off_is_wlan0_operstate_not_entityd() {
+        let src = include_str!("main.rs");
+        assert!(src.contains("/sys/class/net/wlan0/operstate"));
+        assert!(src.contains(".with_network_up(wifi_is_up())"));
+    }
+
+    #[test]
     fn consent_screen_left_half_of_button_row_accepts() {
         assert_eq!(consent_action_at((270.0, 2250.0), 1080, 2400), Some(true));
     }

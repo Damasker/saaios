@@ -7,8 +7,8 @@ Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
 Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted.
 
-Current panther shell: `e8865301…` (ADR-188). This ledger slice does
-not reflash.
+Current panther shell: `e8865301…` (ADR-188). Radio-off (ADR-191)
+does not reflash.
 
 ## Matrix
 
@@ -37,7 +37,7 @@ not reflash.
 | Device | daylight / indoor / dark | open | no booth this session |
 | A11y | 7-tap gallery | open | not this slice |
 | Resilience | service restart | open | unlocked shell restart last done ADR-188 flash |
-| Resilience | network / AI offline | host | named empty/offline copy; not a live radio-off pass |
+| Resilience | network / AI offline | proven | ADR-191; `wlan0` down → status `Нет сети`; Сейчас still live ObjectSummary; restored up |
 
 ## Still not Visual v1
 
