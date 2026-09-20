@@ -7,7 +7,7 @@ Production chrome: `compile_v2()` on `services/saai-shell/ui/root.sui`
 (ADR-216). Frozen v1 stays `compile_v1_rollback()`. Space detail
 deferred. MEM-08 omitted.
 
-Current panther shell: `3850427a…` (ADR-198). ActionCard/tabs were
+Current panther shell: `c05eedf9…` (ADR-216). Prior chrome `3850427a…` (ADR-198). ActionCard/tabs were
 `5eb6a27f…` (ADR-197). Named sizes were `e8865301…` (ADR-188).
 `from_safe` (ADR-195), nested tab ids (ADR-196), nested footer
 rows (ADR-199), and the object hit (ADR-200) stay host. Leftover
