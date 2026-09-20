@@ -1058,6 +1058,8 @@ mod tests {
         assert!(ledger.contains("now_footer_action_rect"));
         assert!(ledger.contains("ADR-200"));
         assert!(ledger.contains("open_object"));
+        assert!(ledger.contains("ADR-201"));
+        assert!(ledger.contains("below Caption"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1067,6 +1069,8 @@ mod tests {
         assert!(limits.contains("nested `row`"));
         assert!(limits.contains("ADR-200"));
         assert!(limits.contains("open_object"));
+        assert!(limits.contains("ADR-201"));
+        assert!(limits.contains("below Caption"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

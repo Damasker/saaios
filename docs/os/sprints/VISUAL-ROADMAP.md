@@ -1165,7 +1165,8 @@ verification ledger (ADR-189); known limitations (ADR-193);
 `layout_v2` tab hits (ADR-194); `from_safe` insets (ADR-195); nested
 `tab` grammar (ADR-196); ActionCard/tab `Label`/`Caption` (ADR-197);
 status/keys `Label`/`Caption` (ADR-198); nested `row` footer
-(ADR-199); `ObjectSummary` object hit (ADR-200). Release
+(ADR-199); `ObjectSummary` object hit (ADR-200); leftover text
+budget (ADR-201). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1230,6 +1231,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Dock `ObjectSummary` as the NOW object hit so `layout_v2()`
   matches `now_object_summary_rect` vertically (ADR-200). A screen
   without `ObjectSummary` invents no object hit. `compile()` stays v1.
+- [x] Keep badge, gallery kicker/swatch, and app-tile labels named
+  below Caption (ADR-201). Do not invent a smaller `TextRole`. Do
+  not 7-tap. Prove the apps grid on panther without launching.
 
 ### Acceptance
 
@@ -1292,8 +1296,8 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **Visual v2** at remaining named leftovers (badge, gallery
-kicker/swatch, app-tile), or Experimental→Stable after Visual v1, or
-operator-approved lock / display restart / cold boot.
+Continue **Visual v2** at Experimental→Stable after Visual v1, or
+operator-approved lock / display restart / cold boot. Leftover text
+sizes stay named (ADR-201).
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.

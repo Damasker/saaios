@@ -463,6 +463,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   does not borrow `compile_v1_rollback()`. ADR-199 names nested
   `row` ids so `layout_v2` matches the live NOW footer. ADR-200
   docks `ObjectSummary` as the NOW object hit (`open_object`).
+  ADR-201 keeps badge, gallery kicker/swatch, and app-tile labels
+  named below Caption.
 
 ### 7.6 `TaskSummary`
 

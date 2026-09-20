@@ -10,18 +10,19 @@ MEM-08 omitted.
 Current panther shell: `3850427a…` (ADR-198). ActionCard/tabs were
 `5eb6a27f…` (ADR-197). Named sizes were `e8865301…` (ADR-188).
 `from_safe` (ADR-195), nested tab ids (ADR-196), nested footer
-rows (ADR-199), and the object hit (ADR-200) stay host.
+rows (ADR-199), and the object hit (ADR-200) stay host. Leftover
+text budget (ADR-201) is host-locked; apps grid is the device cell.
 
 ## Matrix
 
 | Area | Cell | Status | Evidence |
 |---|---|---|---|
-| Build | host tests | proven | overlay `cargo test -p saai-shell` 249; `saai-ui-compiler` 30 |
+| Build | host tests | proven | overlay `cargo test -p saai-shell` 250; `saai-ui-compiler` 30 |
 | Build | pixel7 cross-build | proven | ADR-198 `3850427a…` |
 | Render | Сейчас composition | proven | ObjectSummary + footer; leftover NOW cards gone (ADR-187) |
 | Render | four tabs | proven | hits 135/405/675/945 y=2250 (ADR-184); Inbox tap ADR-188 |
 | Render | semantic color | proven | Theme + `panel_pixel`; no production RGB (ADR-187) |
-| Render | named text sizes | proven | `role_px` leftovers (ADR-188); ActionCard/tabs (ADR-197); status/keys `Label`/`Caption` (ADR-198) |
+| Render | named text sizes | proven | `role_px` leftovers (ADR-188); ActionCard/tabs (ADR-197); status/keys `Label`/`Caption` (ADR-198); leftover PX below Caption (ADR-201) |
 | Input | tab switch | proven | Inbox then back to Сейчас on HEAD |
 | Input | keyboard | proven | ADR-029/150/161; not re-typed this slice |
 | Input | interrupted key | proven | ADR-163 |
@@ -49,6 +50,7 @@ rows (ADR-199), and the object hit (ADR-200) stay host.
 - ActionCard title/button use `Label`; status and tab labels use
   `Caption` (ADR-197). Status time/battery are `Label`; keys are
   `Caption` (ADR-198). They are not Title/Body. Badge, gallery
-  kicker/swatch, and app-tile leftovers stay named (ADR-188).
+  kicker/swatch, and app-tile leftovers stay named below Caption
+  (ADR-201). Do not 7-tap.
 - Space detail, Memory review, chat, widgets stay deferred.
 - Known limitations and the Visual v2 backlog: [`vui09-known-limitations.md`](vui09-known-limitations.md) (ADR-193).

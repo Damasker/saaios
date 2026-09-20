@@ -51,7 +51,8 @@ display restart.
   `Caption` (ADR-197). Status time/battery are `Label`; keys, Orb
   menu, related line, and gallery heading are `Caption` (ADR-198).
   Not Title (72). `TAB_BADGE_PX`, `GALLERY_KICKER_PX`,
-  `GALLERY_SWATCH_PX`, and `APP_TILE_LABEL_PX` stay named.
+  `GALLERY_SWATCH_PX`, and `APP_TILE_LABEL_PX` stay named below
+  Caption (ADR-201). Do not 7-tap to see kicker/swatch.
 - Gallery fixtures may show privileged rows. Copying those names into
   an app fails `compile_v2_public()`.
 
@@ -63,8 +64,8 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Items 1–3 and 7–9 are done
-(ADR-194/195/197–198/196/199/200); production still v1.
+Ordered. Items 1–3 and 7–10 are done
+(ADR-194/195/197–198/196/199/200/201); production still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
    `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
@@ -73,8 +74,8 @@ Ordered. Items 1–3 and 7–9 are done
    Host: `EdgeInsets::from_safe` (ADR-195). Top inset stays a layer.
 3. ~~Keep leftover ActionCard/tab sizes on an explicit named list, or
    map them onto `TextRole` in a paint-normalization slice.~~ Flashed:
-   Label/Caption, not Title (ADR-197/198). Badge, gallery kicker/swatch,
-   and app-tile leftovers stay.
+   Label/Caption, not Title (ADR-197/198). ADR-201 locks badge, gallery
+   kicker/swatch, and app-tile leftovers below Caption. Do not 7-tap.
 4. Promote public names from Experimental to Stable only after the
    Pixel 7 promotion checklist in the component library.
 5. Add `SpaceDetail` / `MemoryReview` / `ChatThread` / `Widget` to the
@@ -93,5 +94,8 @@ Ordered. Items 1–3 and 7–9 are done
    `now_object_summary_rect`.~~ Host: `open_object` (ADR-200).
    Lifecycle/trailing stay paint-side. Do not attach `layout_v2()`
    to `build.rs` yet.
+10. ~~Keep remaining leftover text sizes named below Caption.~~ Host:
+    `leftover_text_sizes_stay_below_caption` (ADR-201). Apps grid on
+    panther; do not launch; do not 7-tap.
 
 Rollback: delete this page. The ledger and `compile()` path stay.

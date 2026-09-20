@@ -1515,9 +1515,9 @@ fn role_px(role: TextRole) -> f32 {
 /// Add a name here rather than a new raw draw-call literal.
 /// ADR-197/198: ActionCard, tabs, status time/battery, keys, Orb
 /// menu, decision buttons, related line, and gallery heading use
-/// `Label`/`Caption`. Do not map those onto Title. Badge, gallery
-/// kicker/swatch, and app-tile labels stay named — Caption would
-/// overflow those marks.
+/// `Label`/`Caption`. Do not map those onto Title. ADR-201: badge,
+/// gallery kicker/swatch, and app-tile labels stay named — each is
+/// smaller than Caption (36) and would overflow its mark.
 const GALLERY_KICKER_PX: f32 = 24.0;
 const GALLERY_SWATCH_PX: f32 = 18.0;
 const APP_TILE_LABEL_PX: f32 = 26.0;
@@ -3504,6 +3504,7 @@ mod tests {
         assert!(!production.contains("TAB_IDLE_PX"));
         assert!(production.contains("TAB_BADGE_PX"));
         assert!(production.contains("GALLERY_KICKER_PX"));
+        assert!(production.contains("GALLERY_SWATCH_PX"));
         assert!(production.contains("APP_TILE_LABEL_PX"));
         assert!(!production.contains("STATUS_TIME_PX"));
         assert!(!production.contains("STATUS_BATTERY_PX"));
@@ -3549,6 +3550,21 @@ mod tests {
             .expect("draw_now");
         assert!(tabs.contains("role_px(TextRole::Caption)"));
         assert!(!tabs.contains("TextRole::Title"));
+    }
+
+    #[test]
+    fn leftover_text_sizes_stay_below_caption() {
+        let caption = super::role_px(TextRole::Caption);
+        assert_eq!(caption, 36.0);
+        assert!(super::TAB_BADGE_PX < caption);
+        assert!(super::GALLERY_KICKER_PX < caption);
+        assert!(super::GALLERY_SWATCH_PX < caption);
+        assert!(super::APP_TILE_LABEL_PX < caption);
+        assert!(super::TAB_BADGE_PX < 40.0);
+        assert_eq!(super::TAB_BADGE_PX, 24.0);
+        assert_eq!(super::GALLERY_KICKER_PX, 24.0);
+        assert_eq!(super::GALLERY_SWATCH_PX, 18.0);
+        assert_eq!(super::APP_TILE_LABEL_PX, 26.0);
     }
 
     #[test]
