@@ -895,45 +895,40 @@ mod tests {
     }
 
     #[test]
-    fn production_root_v2_tab_hits_match_v1_rollback() {
-        let spec = compile_v1_rollback().expect("frozen v1");
-        let v1 = layout_v1_root(&spec, 1080, 2400);
+    fn production_root_v2_tab_hits_are_now_spaces_search_me() {
         let source = include_str!("../../../services/saai-shell/ui/root.sui");
         let screen = compile_v2(source).expect("production root v2");
         let v2 = layout_v2(&screen, 1080, 2400);
-        for x in [135.0, 405.0, 675.0, 945.0] {
+        for (x, id) in [
+            (135.0, "now"),
+            (405.0, "spaces"),
+            (675.0, "search"),
+            (945.0, "me"),
+        ] {
             assert_eq!(
-                v1.hit_test(x, 2250.0).map(|node| node.id.as_str()),
-                v2.hit_test(x, 2250.0).map(|node| node.id.as_str())
+                v2.hit_test(x, 2250.0).map(|node| node.id.as_str()),
+                Some(id)
             );
         }
-        assert!(v1.hit_test(540.0, 1200.0).is_none());
         assert!(v2.hit_test(540.0, 1200.0).is_none());
     }
 
     #[test]
-    fn layout_v2_public_now_matches_v1_tab_hits() {
-        let spec = compile_v1_rollback().expect("root.sui v1");
-        let v1 = layout_v1_root(&spec, 1080, 2400);
+    fn layout_v2_public_now_matches_production_tab_hits() {
         let source = include_str!("../../../docs/os/ui/examples/now-public.sui");
         let screen = compile_v2_public(source).expect("public NOW");
         let v2 = layout_v2(&screen, 1080, 2400);
         for (x, id) in [
             (135.0, "now"),
-            (405.0, "inbox"),
-            (675.0, "spaces"),
+            (405.0, "spaces"),
+            (675.0, "search"),
             (945.0, "me"),
         ] {
             assert_eq!(
-                v1.hit_test(x, 2250.0).map(|node| node.id.as_str()),
+                v2.hit_test(x, 2250.0).map(|node| node.id.as_str()),
                 Some(id)
             );
-            assert_eq!(
-                v2.hit_test(x, 2250.0).map(|node| node.id.as_str()),
-                v1.hit_test(x, 2250.0).map(|node| node.id.as_str())
-            );
         }
-        assert!(v1.hit_test(540.0, 1200.0).is_none());
         assert!(v2.hit_test(540.0, 1200.0).is_none());
         assert!(layout_v1_find(&v2, "ContextHeader").is_some());
         assert!(layout_v1_find(&v2, "ObjectSummary").is_some());
@@ -944,7 +939,6 @@ mod tests {
             saai_ui_core::SafeInsets::PIXEL_7_PORTRAIT,
             saai_ui_core::SurfaceScale::PIXEL_7,
         );
-        assert_eq!(spec.tab_height, edges.bottom);
         assert_ne!(header.rect.y, edges.top);
         assert_eq!(
             layout_v1_find(&v2, "BottomNavigation").map(|node| node.children.len()),
@@ -960,15 +954,12 @@ mod tests {
                 .and_then(|node| node.action.as_deref()),
             Some("open_intent_input")
         );
-        assert!(v1.hit_test(540.0, 1860.0).is_none());
-        assert!(v1.hit_test(540.0, 2080.0).is_none());
         assert_eq!(
             v2.hit_test(540.0, 335.0)
                 .and_then(|node| node.action.as_deref()),
             Some("open_object")
         );
         assert!(v2.hit_test(540.0, 250.0).is_none());
-        assert!(v1.hit_test(540.0, 335.0).is_none());
         let object = layout_v1_find(&v2, "ObjectSummary").expect("object");
         assert_eq!(object.rect.y, 263);
         assert_eq!(object.rect.height, 144);
@@ -992,7 +983,7 @@ mod tests {
         assert!(v2.hit_test(540.0, 250.0).is_none());
         assert_eq!(
             v2.hit_test(405.0, 2250.0).map(|node| node.id.as_str()),
-            Some("inbox")
+            Some("spaces")
         );
         let quiet = compile_v2(
             r#"
@@ -1036,7 +1027,7 @@ mod tests {
         );
         assert!(v2.hit_test(540.0, 250.0).is_none());
         assert_eq!(
-            v2.hit_test(675.0, 2250.0).map(|node| node.id.as_str()),
+            v2.hit_test(405.0, 2250.0).map(|node| node.id.as_str()),
             Some("spaces")
         );
         let quiet = compile_v2(

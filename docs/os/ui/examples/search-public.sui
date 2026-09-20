@@ -1,23 +1,16 @@
 sui 2
-screen now {
+screen search {
   component ContextHeader {
     text = Title
     a11y = Heading
-    loc = now.header
+    loc = search.header
     focus = 0
     inset = safe
   }
-  component ObjectSummary {
+  component DataRow {
     text = Body
-    color = TextPrimary
-    a11y = Status
-    loc = "now.object"
-  }
-  component SurfacePattern {
-    text = Body
-    color = TextSecondary
-    a11y = Status
-    loc = now.empty
+    a11y = Button
+    loc = search.item
   }
   component BottomNavigation {
     a11y = Button
@@ -29,6 +22,4 @@ screen now {
     tab search { loc = search }
     tab me { loc = me }
   }
-  row apps { loc = now.apps }
-  row intent { loc = now.intent }
 }

@@ -53,7 +53,7 @@ promotion checklist passes on Pixel 7.
 `BottomNavigation`, `IntentSummary`, `TaskSummary`, `AgentSummary`,
 `SettingRow`, `EventRow`, `SpaceRow`, `WifiRow`, `BluetoothRow`.
 
-**Public surfaces:** `now`, `inbox`, `spaces`, `me`, `object`, `intent`,
+**Public surfaces:** `now`, `inbox`, `spaces`, `search`, `me`, `object`, `intent`,
 `apps`, `wifi`, `bluetooth`, `trusted`, `wifi-password`, `pin-setup`,
 `consent`, `remote-pair`.
 

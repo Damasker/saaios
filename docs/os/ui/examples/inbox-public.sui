@@ -18,8 +18,8 @@ screen inbox {
     scroll = none
     inset = safe
     tab now { loc = now }
-    tab inbox { loc = inbox }
     tab spaces { loc = spaces }
+    tab search { loc = search }
     tab me { loc = me }
   }
 }

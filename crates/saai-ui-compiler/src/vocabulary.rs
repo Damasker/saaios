@@ -52,6 +52,7 @@ pub fn sui_v2_surfaces() -> &'static [&'static str] {
         "now",
         "inbox",
         "spaces",
+        "search",
         "me",
         "root",
         "object",
@@ -209,7 +210,7 @@ mod tests {
     fn vocabulary_is_the_proven_core_types_and_live_surfaces() {
         assert_eq!(sui_v2_primitives().len(), 11);
         assert_eq!(sui_v2_composites().len(), 18);
-        assert_eq!(sui_v2_surfaces().len(), 18);
+        assert_eq!(sui_v2_surfaces().len(), 19);
         assert!(sui_v2_primitives().contains(&"Field"));
         assert!(sui_v2_primitives().contains(&"SurfacePattern"));
         assert!(sui_v2_composites().contains(&"EventRow"));

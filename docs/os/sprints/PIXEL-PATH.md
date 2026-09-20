@@ -198,6 +198,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 diagnostic paint | DevSurface cards/Назад from generated `layout_v2_scrolled` **на panther** (ADR-231; `f00632f2…`; do not 7-tap; leave Сейчас) |
 | VUI-09 leftover formulas | Keyboard keys / gallery page / lock idle/wake stay formulas **host** (ADR-232; do not 7-tap; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
+| Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

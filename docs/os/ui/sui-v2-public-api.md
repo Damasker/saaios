@@ -29,13 +29,19 @@ Spaces, and list hits generate `compile_v2()` documents (ADR-218).
 
 [`examples/now-public.sui`](examples/now-public.sui) is the labelled NOW
 sample: `ContextHeader`, `ObjectSummary`, `SurfacePattern`,
-`BottomNavigation` with nested `tab now/inbox/spaces/me` (ADR-196),
+`BottomNavigation` with nested `tab now/spaces/search/me` (ADR-240),
 and nested `row apps` / `row intent` (ADR-199). It matches the live
 Сейчас composition (header, object, empty pattern, footer, tabs)
 without leftover v1 NOW cards and without `OrbHost`. Empty
 `BottomNavigation` invents no v1 hits. Empty screens invent no
 footer hits. A screen without `ObjectSummary` invents no object
 hit (ADR-200).
+
+[`examples/search-public.sui`](examples/search-public.sui) is the
+labelled Search sample: `ContextHeader`, `DataRow` with
+`a11y = Button` (ADR-240), and the same nested tabs. Status
+`DataRow` invents no object hit. Inbox remains a surface opened
+from Orb, not a primary tab.
 
 [`examples/inbox-public.sui`](examples/inbox-public.sui) is the
 labelled Inbox sample: `ContextHeader`, `EventRow` with

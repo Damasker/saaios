@@ -703,7 +703,7 @@ mod tests {
             .find(|component| component.type_name == "BottomNavigation")
             .map(|component| component.tabs.iter().map(|tab| tab.id.as_str()).collect())
             .unwrap_or_default();
-        assert_eq!(tabs, ["now", "inbox", "spaces", "me"]);
+        assert_eq!(tabs, ["now", "spaces", "search", "me"]);
         assert!(screen.rows.is_empty());
         assert!(compile_v2_public(source).is_ok());
     }
@@ -760,7 +760,7 @@ mod tests {
             .iter()
             .map(|tab| tab.id.as_str())
             .collect();
-        assert_eq!(ids, ["now", "inbox", "spaces", "me"]);
+        assert_eq!(ids, ["now", "spaces", "search", "me"]);
         let header_tabs = compile_v2(
             r#"
             sui 2
@@ -1052,6 +1052,13 @@ mod tests {
         assert_eq!(inbox.components[1].type_name, "EventRow");
         assert_eq!(inbox.components[1].props.a11y.as_deref(), Some("Button"));
         assert!(guide.contains("inbox-public.sui"));
+        const SEARCH: &str = include_str!("../../../docs/os/ui/examples/search-public.sui");
+        let search = compile_v2_public(SEARCH).unwrap();
+        assert_eq!(search.id, "search");
+        assert!(!search.is_privileged());
+        assert_eq!(search.components[1].type_name, "DataRow");
+        assert_eq!(search.components[1].props.a11y.as_deref(), Some("Button"));
+        assert!(guide.contains("search-public.sui"));
         const SPACES: &str = include_str!("../../../docs/os/ui/examples/spaces-public.sui");
         let spaces = compile_v2_public(SPACES).unwrap();
         assert_eq!(spaces.id, "spaces");

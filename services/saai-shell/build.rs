@@ -43,8 +43,8 @@ fn main() {
         .map(|tab| {
             let (label, icon, action) = match tab.id.as_str() {
                 "now" => ("Сейчас", "now", "select_root:now"),
-                "inbox" => ("Входящие", "inbox", "select_root:inbox"),
                 "spaces" => ("Пространства", "spaces", "select_root:spaces"),
+                "search" => ("Поиск", "search", "select_root:search"),
                 "me" => ("Система", "person", "select_root:me"),
                 other => panic!("unknown root tab `{other}`"),
             };

@@ -55,7 +55,9 @@
 //! silently dropped.
 //!
 //! Change step 6 ports drm-splash.c's four root sections (`root_page()`,
-//! `render_root_controls()`): "Сейчас"/"Входящие"/"Пространства"/"Система",
+//! `render_root_controls()`). Production chrome is
+//! "Сейчас"/"Пространства"/"Поиск"/"Система" (ADR-240). Inbox is an
+//! Orb destination, not a primary tab.
 //! navigable via a bottom tab bar. No real per-section content yet
 //! (placeholder-only is explicitly in scope for this step, per the S04
 //! sprint doc) and no text rendering exists in this client at all
@@ -964,32 +966,35 @@ struct ContentActionDefinition {
 
 include!(concat!(env!("OUT_DIR"), "/root_sui.rs"));
 
-/// The four root sections (drm-splash.c's `root_page()`/`root_pages`),
-/// in bottom-tab-bar order.
+/// The four root sections in bottom-tab-bar order, plus Inbox as an
+/// Orb destination that is not a primary tab (ADR-240).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RootPage {
     Now,
-    Inbox,
     Spaces,
+    Search,
     Me,
+    Inbox,
 }
 
 impl RootPage {
     fn index(self) -> usize {
         match self {
             RootPage::Now => 0,
-            RootPage::Inbox => 1,
-            RootPage::Spaces => 2,
+            RootPage::Spaces => 1,
+            RootPage::Search => 2,
             RootPage::Me => 3,
+            RootPage::Inbox => 0,
         }
     }
 
     fn id(self) -> &'static str {
         match self {
             RootPage::Now => "now",
-            RootPage::Inbox => "inbox",
             RootPage::Spaces => "spaces",
+            RootPage::Search => "search",
             RootPage::Me => "me",
+            RootPage::Inbox => "inbox",
         }
     }
 }
@@ -1046,8 +1051,8 @@ const V2_ROOT_TABS: &str = "
     scroll = none
     inset = safe
     tab now { loc = now }
-    tab inbox { loc = inbox }
     tab spaces { loc = spaces }
+    tab search { loc = search }
     tab me { loc = me }
   }
 ";
@@ -1146,9 +1151,10 @@ fn scroll_surface_damage(width: u32, height: u32) -> Rect {
 fn page_from_id(id: &str) -> Option<RootPage> {
     match id {
         "now" => Some(RootPage::Now),
-        "inbox" => Some(RootPage::Inbox),
         "spaces" => Some(RootPage::Spaces),
+        "search" => Some(RootPage::Search),
         "me" => Some(RootPage::Me),
+        "inbox" => Some(RootPage::Inbox),
         _ => None,
     }
 }
@@ -2231,6 +2237,14 @@ enum Frame {
     /// real `ContextHeader`; rows stay live `SpaceRow` cards. Space
     /// detail stays deferred.
     Spaces {
+        content_rect: Rect,
+        tabs: Vec<(Rect, NavigationItem)>,
+        header: ContextHeader,
+        rows: Vec<(Rect, render::ActionCardView)>,
+    },
+    /// ADR-240: Поиск lists live objects in the selected space.
+    /// Inbox stays an Orb destination, not a primary tab.
+    Search {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
@@ -5171,6 +5185,109 @@ fn inbox_v2_source(entities: &[Entity], store_connected: bool) -> String {
     src
 }
 
+fn searchable_entity(entity: &Entity) -> bool {
+    !matches!(
+        entity.entity_type.as_str(),
+        SPACE_COLOR_ENTITY_TYPE
+            | SPACE_LIFECYCLE_ENTITY_TYPE
+            | SPACE_RELATION_ENTITY_TYPE
+            | SPACE_SIGNAL_ENTITY_TYPE
+            | NOTIFICATION_ENTITY_TYPE
+            | SCHEDULE_ENTITY_TYPE
+    )
+}
+
+fn search_kind_label(entity: &Entity) -> &'static str {
+    match entity.entity_type.as_str() {
+        "saaios.intent" => "Намерение",
+        "saaios.task" => "Задача",
+        ACTION_ENTITY_TYPE => "Действие",
+        RESULT_ENTITY_TYPE => "Результат",
+        _ => "Объект",
+    }
+}
+
+fn search_rows(entities: &[Entity]) -> Vec<&Entity> {
+    let mut rows: Vec<&Entity> = entities
+        .iter()
+        .filter(|entity| searchable_entity(entity))
+        .collect();
+    rows.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    rows
+}
+
+fn search_v2_source(entities: &[Entity], store_connected: bool) -> String {
+    let mut src = String::from("sui 2\nscreen search {\n");
+    src.push_str(&v2_header_block("search.header"));
+    if !store_connected {
+        src.push_str(&v2_stacked_block("DataRow", "Status", "search.offline"));
+    } else {
+        let rows = search_rows(entities);
+        if rows.is_empty() {
+            src.push_str(&v2_stacked_block("DataRow", "Status", "search.empty"));
+        } else {
+            for entity in &rows {
+                src.push_str(&v2_stacked_block(
+                    "DataRow",
+                    "Button",
+                    &entity.id.to_string(),
+                ));
+            }
+        }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
+fn search_row_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    entities: &[Entity],
+    store_connected: bool,
+) -> Option<Uuid> {
+    if !store_connected {
+        return None;
+    }
+    let (id, action) = live_v2_hit(
+        &search_v2_source(entities, true),
+        "ADR-240 search",
+        pos,
+        width,
+        height,
+    )?;
+    let parsed = Uuid::parse_str(&id).ok()?;
+    if action.as_deref() != Some(id.as_str()) {
+        return None;
+    }
+    search_rows(entities)
+        .into_iter()
+        .find(|entity| entity.id == parsed)
+        .map(|entity| entity.id)
+}
+
+fn search_card_from_entity(entity: &Entity) -> render::ActionCardView {
+    render::ActionCardView::new(
+        entity.title.clone(),
+        search_kind_label(entity).to_string(),
+        "Открыть",
+    )
+}
+
+fn search_empty_card(store_connected: bool) -> render::ActionCardView {
+    if store_connected {
+        render::ActionCardView::new("Нет объектов", String::new(), "")
+    } else {
+        render::ActionCardView::new("Нет связи", String::new(), "")
+    }
+}
+
 fn inbox_row_at(
     pos: (f64, f64),
     width: u32,
@@ -5303,6 +5420,19 @@ fn inbox_header(space_name: &str, entityd_connected: bool, archived: bool) -> Co
 /// names `Нет связи` and wins over the selected space's archived mark.
 fn spaces_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
     let header = ContextHeader::new(space_name).with_section_title("Пространства");
+    if !entityd_connected {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
+    } else if archived {
+        header.with_lifecycle(StatusIndicator::new(UniversalState::Blocked, "Архив"))
+    } else {
+        header
+    }
+}
+
+/// ADR-240: section title is always `Поиск`. Offline `entityd`
+/// names `Нет связи` and wins over the selected space's archived mark.
+fn search_header(space_name: &str, entityd_connected: bool, archived: bool) -> ContextHeader {
+    let header = ContextHeader::new(space_name).with_section_title("Поиск");
     if !entityd_connected {
         header.with_lifecycle(StatusIndicator::new(UniversalState::Offline, "Нет связи"))
     } else if archived {
@@ -7270,6 +7400,17 @@ impl TouchHandler for Shell {
                     self.viewing_entity_id = Some(id);
                     self.draw(conn, qh);
                 }
+            } else if self.current_page == RootPage::Search {
+                if let Some(id) = search_row_at(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    &self.selected_entities,
+                    self.entityd.is_connected(),
+                ) {
+                    self.viewing_entity_id = Some(id);
+                    self.draw(conn, qh);
+                }
             } else if self.current_page == RootPage::Spaces {
                 if let Some(space_id) = space_row_at(
                     self.last_touch_pos,
@@ -7579,6 +7720,7 @@ impl Shell {
             RootPage::Now => FrameSurface::Now,
             RootPage::Inbox => FrameSurface::Inbox,
             RootPage::Spaces => FrameSurface::Spaces,
+            RootPage::Search => FrameSurface::Search,
             RootPage::Me => FrameSurface::Me,
         };
         frame_surface(self.locked, overlay, keyboard, list, orb, tab)
@@ -7999,6 +8141,26 @@ impl Shell {
                 ),
                 rows: self.inbox_content_cards_from(&view),
             }
+        } else if self.current_page == RootPage::Search {
+            let connected = self.entityd.is_connected();
+            let view = layout_live_v2(
+                &search_v2_source(&self.selected_entities, connected),
+                "ADR-240 search paint",
+                width,
+                height,
+            );
+            let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
+                == SpaceLifecycle::Archived;
+            Frame::Search {
+                content_rect: view.children[0].rect,
+                tabs: self.navigation_items_from(&view),
+                header: search_header(
+                    &space_display_name(&self.spaces, &self.selected_space_id),
+                    connected,
+                    archived,
+                ),
+                rows: self.search_content_cards_from(&view),
+            }
         } else if self.current_page == RootPage::Spaces {
             let connected = self.entityd.is_connected();
             let view = layout_live_v2(
@@ -8087,6 +8249,7 @@ impl Shell {
                     | Frame::Now { .. }
                     | Frame::AppsGrid { .. }
                     | Frame::Inbox { .. }
+                    | Frame::Search { .. }
                     | Frame::Spaces { .. }
                     | Frame::Me { .. }
             ))
@@ -8397,6 +8560,22 @@ impl Shell {
                     );
                 }
                 Frame::Inbox {
+                    content_rect,
+                    tabs,
+                    header,
+                    rows,
+                } => {
+                    render::draw_context_row_list(
+                        &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &tabs,
+                        &header,
+                        &rows,
+                        true,
+                        fonts,
+                    );
+                }
+                Frame::Search {
                     content_rect,
                     tabs,
                     header,
@@ -9546,6 +9725,25 @@ impl Shell {
         )
     }
 
+    fn search_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
+        let connected = self.entityd.is_connected();
+        let rows = search_rows(&self.selected_entities);
+        let (cards, ids): (Vec<render::ActionCardView>, Vec<String>) = if !connected {
+            (
+                vec![search_empty_card(false)],
+                vec!["search.offline".into()],
+            )
+        } else if rows.is_empty() {
+            (vec![search_empty_card(true)], vec!["search.empty".into()])
+        } else {
+            (
+                rows.iter().copied().map(search_card_from_entity).collect(),
+                rows.iter().map(|entity| entity.id.to_string()).collect(),
+            )
+        };
+        list_paint_cards(tree, "ADR-240 search paint", cards, &ids)
+    }
+
     fn spaces_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
         let connected = self.entityd.is_connected();
         let rows = space_list_rows(
@@ -9733,18 +9931,15 @@ impl Shell {
     /// Offline is the more urgent, more global fact.
     /// VUI-04 (ADR-116): the shared `BottomNavigation` data every root
     /// page now draws through -- real `selected` (matches the current
-    /// page), real `badge`/`attention` for "Входящие" (the same
-    /// `inbox_rows` count "Входящие" itself lists, not a separate
-    /// tally that could drift from it). `pressed` follows the live
-    /// finger (`pressed_tab`); `disabled` stays at its default `false`
-    /// -- no tab is ever actually disabled today.
+    /// tab). Inbox is not a primary tab (ADR-240). `pressed` follows
+    /// the live finger (`pressed_tab`); `disabled` stays at its
+    /// default `false` -- no tab is ever actually disabled today.
     fn root_navigation_items(&self, width: u32, height: u32) -> Vec<(Rect, NavigationItem)> {
         self.navigation_items_from(&root_view(width, height))
     }
 
     /// ADR-225: tab rects from the same compiled tree the screen paints.
     fn navigation_items_from(&self, tree: &LayoutNode) -> Vec<(Rect, NavigationItem)> {
-        let inbox_badge = inbox_rows(&self.selected_entities).len() as u32;
         let Some(nav) = saai_ui_compiler::layout_v1_find(tree, "BottomNavigation") else {
             return Vec::new();
         };
@@ -9758,9 +9953,6 @@ impl Shell {
                 }
                 if page_from_id(tab.id) == self.pressed_tab {
                     item = item.pressed();
-                }
-                if tab.id == "inbox" && inbox_badge > 0 {
-                    item = item.with_badge(inbox_badge).with_attention();
                 }
                 (node.rect, item)
             })
@@ -10964,25 +11156,25 @@ mod tests {
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
         pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
-        remove_context_source, retain_pressed_while_clock, space_color, space_color_entity,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
-        stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect, tab_at,
-        task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
-        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
-        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
-        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
-        ContextSource, DataRowVariant, Entity, FieldKind, Keyboard, KeyboardCommand,
-        KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap,
-        MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
-        SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
+        search_rows, space_color, space_color_entity, space_display_name, space_for_wifi_ssid,
+        space_lifecycle, space_lifecycle_entity, space_list_rows, space_relation_targets,
+        space_row_at, spaces_header, stacked_control_rect, stacked_row_fits_above,
+        stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
+        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
+        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
+        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
+        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
+        Entity, FieldKind, Keyboard, KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource,
+        Keystroke, LockAttentionTap, LockWakeTap, MotionClock, MotionToken, ObjectSummary,
+        OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern,
+        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
+        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -11642,8 +11834,8 @@ mod tests {
             );
             for (index, expected) in [
                 RootPage::Now,
-                RootPage::Inbox,
                 RootPage::Spaces,
+                RootPage::Search,
                 RootPage::Me,
             ]
             .into_iter()
@@ -11885,6 +12077,44 @@ mod tests {
                 .map(|status| status.label.as_str()),
             Some("Нет связи")
         );
+    }
+
+    #[test]
+    fn search_header_names_the_section_and_offline() {
+        let online = search_header("Дом", true, false);
+        assert_eq!(online.heading_text(), "Дом · Поиск");
+        assert!(online.lifecycle.is_none());
+        let offline = search_header("Дом", false, false);
+        assert_eq!(
+            offline
+                .lifecycle
+                .as_ref()
+                .map(|status| status.label.as_str()),
+            Some("Нет связи")
+        );
+    }
+
+    #[test]
+    fn search_rows_list_space_objects_not_inbox_or_system_records() {
+        let intent = intent_entity("Подготовить демо");
+        let task = task_entity("Собрать слайды", Some(intent.id));
+        let notice = notification_entity("Батарея", "15%");
+        let mut color_props = serde_json::Map::new();
+        color_props.insert("space_id".into(), serde_json::Value::String("home".into()));
+        color_props.insert("color".into(), serde_json::Value::String("teal".into()));
+        let color = test_entity(SPACE_COLOR_ENTITY_TYPE, color_props);
+        let entities = vec![intent.clone(), task.clone(), notice, color];
+        let rows = search_rows(&entities);
+        let titles: Vec<&str> = rows.iter().map(|entity| entity.title.as_str()).collect();
+        assert_eq!(titles, ["Собрать слайды", "Подготовить демо"]);
+        assert!(search_row_at(
+            (540.0, 500.0),
+            1080,
+            2400,
+            &[intent.clone(), task.clone()],
+            false
+        )
+        .is_none());
     }
 
     #[test]
@@ -12637,6 +12867,8 @@ mod tests {
     fn root_tabs_come_from_sui_markup() {
         assert_eq!(ROOT_TABS.len(), 4);
         assert_eq!(ROOT_TABS[0].label, "Сейчас");
+        assert_eq!(ROOT_TABS[1].label, "Пространства");
+        assert_eq!(ROOT_TABS[2].label, "Поиск");
         assert_eq!(ROOT_TABS[3].label, "Система");
         assert_eq!(ROOT_TABS[3].icon, "person");
         assert_eq!(ROOT_TABS[3].action, "select_root:me");
@@ -12645,8 +12877,8 @@ mod tests {
     #[test]
     fn bottom_bar_maps_all_four_tabs() {
         assert_eq!(tab_at((135.0, 2250.0), 1080, 2400), Some(RootPage::Now));
-        assert_eq!(tab_at((405.0, 2250.0), 1080, 2400), Some(RootPage::Inbox));
-        assert_eq!(tab_at((675.0, 2250.0), 1080, 2400), Some(RootPage::Spaces));
+        assert_eq!(tab_at((405.0, 2250.0), 1080, 2400), Some(RootPage::Spaces));
+        assert_eq!(tab_at((675.0, 2250.0), 1080, 2400), Some(RootPage::Search));
         assert_eq!(tab_at((945.0, 2250.0), 1080, 2400), Some(RootPage::Me));
         assert_eq!(
             pressed_tab_from_touch(true, false, false, (135.0, 2250.0), 1080, 2400),
