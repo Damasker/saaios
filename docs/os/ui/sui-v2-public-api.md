@@ -50,6 +50,12 @@ labelled Me sample: `ContextHeader`, `SettingRow` with
 and the same nested tabs. Status `SettingRow` and `SystemSection`
 invent no interned action.
 
+[`examples/wifi-public.sui`](examples/wifi-public.sui) is the
+labelled Wi-Fi sample: `ContextHeader`, `WifiRow` with
+`a11y = Button` (ADR-205). Status `WifiRow` invents no
+`connect_wifi`. No nested tabs: live «Wi-Fi сети» has trailing
+controls, not `BottomNavigation`.
+
 ```
 compile_v2_public(include_str!("…/now-public.sui"))
 ```
@@ -82,7 +88,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   NOW object hit (`open_object`, ADR-200). `EventRow` owns Inbox
   stacked hits (ADR-202). `SpaceRow` owns Spaces stacked hits
   (ADR-203). `SettingRow` owns Me stacked hits (interned `loc`,
-  ADR-204).
+  ADR-204). `WifiRow` owns Wi-Fi stacked hits (`connect_wifi`,
+  ADR-205).
 
 ## Migration
 
@@ -105,6 +112,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Spaces `SpaceRow` with `a11y = Status` | stacked rect, no `select_space` |
 | Wanting Me hit-test from a v2 screen | `component SettingRow` + `a11y = Button` + interned `loc` + `layout_v2` |
 | Me `SettingRow` with `a11y = Status` | stacked rect, no interned action |
+| Wanting Wi-Fi hit-test from a v2 screen | `component WifiRow` + `a11y = Button` + `layout_v2` |
+| Wi-Fi `WifiRow` with `a11y = Status` | stacked rect, no `connect_wifi` |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

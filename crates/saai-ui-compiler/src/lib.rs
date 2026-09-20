@@ -1045,6 +1045,13 @@ mod tests {
             Some("cycle_timezone")
         );
         assert!(guide.contains("me-public.sui"));
+        const WIFI: &str = include_str!("../../../docs/os/ui/examples/wifi-public.sui");
+        let wifi = compile_v2_public(WIFI).unwrap();
+        assert_eq!(wifi.id, "wifi");
+        assert!(!wifi.is_privileged());
+        assert_eq!(wifi.components[1].type_name, "WifiRow");
+        assert_eq!(wifi.components[1].props.a11y.as_deref(), Some("Button"));
+        assert!(guide.contains("wifi-public.sui"));
         for name in saai_ui_core::public_gallery_type_names() {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Experimental));
         }
@@ -1091,6 +1098,8 @@ mod tests {
         assert!(ledger.contains("select_space"));
         assert!(ledger.contains("ADR-204"));
         assert!(ledger.contains("cycle_timezone"));
+        assert!(ledger.contains("ADR-205"));
+        assert!(ledger.contains("connect_wifi"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1108,6 +1117,8 @@ mod tests {
         assert!(limits.contains("SpaceRow"));
         assert!(limits.contains("ADR-204"));
         assert!(limits.contains("SettingRow"));
+        assert!(limits.contains("ADR-205"));
+        assert!(limits.contains("WifiRow"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

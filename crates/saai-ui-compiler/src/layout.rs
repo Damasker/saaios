@@ -11,6 +11,7 @@
 //! ADR-202: `EventRow` docks as live Inbox stacked rows.
 //! ADR-203: `SpaceRow` docks as live Spaces stacked rows.
 //! ADR-204: `SettingRow` docks as live Me stacked rows.
+//! ADR-205: `WifiRow` docks as live Wi-Fi list stacked rows.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -161,7 +162,7 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         match component.type_name.as_str() {
             "ContextHeader" if header.is_none() => header = Some(component),
             "ObjectSummary" if object.is_none() => object = Some(component),
-            "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" => {
+            "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" | "WifiRow" => {
                 stacked.push(component)
             }
             _ => rest.push(component),
@@ -214,6 +215,7 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
             let action = match row.type_name.as_str() {
                 "SpaceRow" => format!("select_space:{}", loc.unwrap_or("SpaceRow")),
                 "SettingRow" | "DataRow" => loc.unwrap_or("SettingRow").to_string(),
+                "WifiRow" => "connect_wifi".to_string(),
                 _ => "open_object".to_string(),
             };
             node = node.with_action(action);
@@ -536,6 +538,39 @@ mod tests {
             tree.hit_test(945.0, 2250.0).map(|node| node.id.as_str()),
             Some("me")
         );
+    }
+
+    #[test]
+    fn layout_v2_public_wifi_row_matches_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/wifi-public.sui");
+        let screen = compile_v2_public(source).expect("public Wi-Fi");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(540.0, 525.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("connect_wifi")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 525.0).map(|node| node.id.as_str()),
+            Some("wifi.item")
+        );
+        assert!(v2.hit_test(540.0, 250.0).is_none());
+        assert!(v2.hit_test(135.0, 2250.0).is_none());
+        let quiet = compile_v2(
+            r#"
+            sui 2
+            screen wifi {
+              component ContextHeader {}
+              component WifiRow {
+                a11y = Status
+              }
+            }
+            "#,
+        )
+        .expect("quiet row");
+        let tree = layout_v2(&quiet, 1080, 2400);
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert!(tree.hit_test(135.0, 2250.0).is_none());
     }
 
     #[test]

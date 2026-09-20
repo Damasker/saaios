@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–204; `compile()` stays v1; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–205; `compile()` stays v1; not Visual v1 sign-off) |
 
 ---
 
@@ -1168,7 +1168,7 @@ status/keys `Label`/`Caption` (ADR-198); nested `row` footer
 (ADR-199); `ObjectSummary` object hit (ADR-200); leftover text
 budget (ADR-201); Inbox `EventRow` hits (ADR-202); Spaces
 `SpaceRow` hits (ADR-203); Me `SettingRow`
-hits (ADR-204). Release
+hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1246,6 +1246,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   `stacked_row_rect` (ADR-204). Status rows and `SystemSection` are
   not actionable. Live flatten/scroll stays procedural. `compile()`
   stays v1.
+- [x] Dock `WifiRow` as Wi-Fi list stacked hits so `layout_v2()`
+  matches `stacked_row_rect` (ADR-205). Status rows are not
+  actionable. Trailing Обновить/Назад stay procedural. `compile()`
+  stays v1.
 
 ### Acceptance
 
@@ -1310,7 +1314,8 @@ After each completed task group, report:
 
 Continue **Visual v2** at Experimental→Stable after Visual v1, or
 operator-approved lock / display restart / cold boot. Leftover text
-sizes stay named (ADR-201). Inbox, Spaces, and Me stacked hits are
-host (ADR-202/203/204). Live Me flatten/scroll stays procedural.
+sizes stay named (ADR-201). Inbox, Spaces, Me, and Wi-Fi stacked hits
+are host (ADR-202/203/204/205). Live Me flatten/scroll and Wi-Fi
+trailing controls stay procedural.
 Do not point `root.sui` at `compile_v2()`. Space detail still deferred.
 MEM-08 stays omitted until a shell-legal memory read exists.

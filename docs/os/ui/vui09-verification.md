@@ -14,12 +14,13 @@ rows (ADR-199), and the object hit (ADR-200) stay host. Leftover
 text budget (ADR-201) is host-locked; apps grid is the device cell.
 Inbox `EventRow` hits (ADR-202) stay host. Spaces `SpaceRow` hits
 (ADR-203) stay host. Me `SettingRow` hits (ADR-204) stay host.
+Wi-Fi `WifiRow` hits (ADR-205) stay host.
 
 ## Matrix
 
 | Area | Cell | Status | Evidence |
 |---|---|---|---|
-| Build | host tests | proven | overlay `cargo test -p saai-shell` 250; `saai-ui-compiler` 33 |
+| Build | host tests | proven | overlay `cargo test -p saai-shell` 250; `saai-ui-compiler` 34 |
 | Build | pixel7 cross-build | proven | ADR-198 `3850427a…` |
 | Render | Сейчас composition | proven | ObjectSummary + footer; leftover NOW cards gone (ADR-187) |
 | Render | four tabs | proven | hits 135/405/675/945 y=2250 (ADR-184); Inbox tap ADR-188 |
@@ -35,7 +36,7 @@ Inbox `EventRow` hits (ADR-202) stay host. Spaces `SpaceRow` hits
 | Perf | frame pace / p95 / idle | proven | ADR-172–177; not re-read `/run/saaios/shell-frame.last` this slice |
 | Perf | haptic policy | proven | ADR-171/179 KeyPress-only |
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |
-| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200, ADR-202, ADR-203, ADR-204; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; `EventRow`/`SpaceRow`/`SettingRow` match `stacked_row_rect`; `select_space`; `cycle_timezone`; empty nav/rows/object/Status invent none; `compile()` stays v1 |
+| Render | v2 layout ≡ v1 hits | host | ADR-194, ADR-195, ADR-196, ADR-199, ADR-200, ADR-202, ADR-203, ADR-204, ADR-205; `layout_v2` nested tab ids; nested `row` footer matches `now_footer_action_rect`; `ObjectSummary` hits `open_object`; `EventRow`/`SpaceRow`/`SettingRow`/`WifiRow` match `stacked_row_rect`; `select_space`; `cycle_timezone`; `connect_wifi`; empty nav/rows/object/Status invent none; `compile()` stays v1 |
 | Device | lock / unlock cycle | open | PIN null; marker skips lock; named in ADR-193 |
 | Device | display restart | open | do not kill `saai-displayd`; named in ADR-193 |
 | Device | cold boot | open | not run on HEAD; named in ADR-193 |

@@ -467,7 +467,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   named below Caption. ADR-202 docks `EventRow` as Inbox stacked
   hits (`open_object`). ADR-203 docks `SpaceRow` as Spaces stacked
   hits (`select_space:<loc>`). ADR-204 docks `SettingRow` as Me stacked
-  hits (interned `loc`).
+  hits (interned `loc`). ADR-205 docks `WifiRow` as Wi-Fi stacked
+  hits (`connect_wifi`).
 
 ### 7.6 `TaskSummary`
 
@@ -603,6 +604,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Not a password field, not a Bluetooth list, not a Space binding.
 - First real consumer: `wifi_list_rows` (ADR-129). Flattened to
   `ActionCardView`. «Обновить» / «Назад» stay trailing control cards.
+  ADR-205 docks public `WifiRow` onto `stacked_row_rect`; trailing
+  controls stay procedural.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.15 `BluetoothRow`
