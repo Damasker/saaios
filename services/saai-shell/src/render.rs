@@ -451,7 +451,18 @@ fn draw_object_summary(
     y
 }
 
-/// Hit rect for the NOW `ObjectSummary`, same stacking as `draw_now`.
+/// ADR-225: live NOW chrome slots from `layout_v2(now.sui)`. Header,
+/// object, and empty pattern paint into these rects so draw cannot
+/// drift from hit-test. Live SystemSection rows are not chrome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NowPaintChrome {
+    pub header: Rect,
+    pub object: Rect,
+    pub empty: Rect,
+}
+
+/// Historical cursor math for the NOW `ObjectSummary`. Live paint and
+/// hit-test use `NowPaintChrome.object` from `layout_v2` (ADR-225).
 pub fn now_object_summary_rect(content: Rect, has_lifecycle: bool, object: &ObjectSummary) -> Rect {
     let margin = (content.width / 20).max(12);
     let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
@@ -2600,14 +2611,15 @@ pub fn draw_now(
     content: Rect,
     tabs: &[(Rect, NavigationItem)],
     header: &ContextHeader,
+    chrome: &NowPaintChrome,
     sections: &[SystemSection],
     object: Option<&ObjectSummary>,
     footer_actions: &[(Rect, DataRow)],
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-    let margin = (content.width / 20).max(12);
-    let content_width = content.width.saturating_sub(margin * 2);
+    let left = chrome.header.x;
+    let content_width = chrome.header.width;
     canvas.set_clip(Some(content));
 
     if let Some(fonts) = fonts {
@@ -2615,21 +2627,18 @@ pub fn draw_now(
             draw_data_row(canvas, fonts, row, *rect);
         }
 
+        // ADR-225: heading sits inside the compiled ContextHeader slot.
         // `content` spans the full canvas from y=0 -- the status bar is a
-        // separate, always-on-top compositor surface (`layer.set_size(0,
-        // 120)` in `main.rs`), not a reserved inset inside this one. Content
-        // drawn at `content.y` alone renders directly underneath it and is
-        // invisible; `draw_root`'s own header/card rows avoid this with
-        // hardcoded 150/430 (2400-scale) starting offsets -- this scales the
-        // same 150 proportionally instead of repeating the literal, matching
-        // `now_grid_rect`'s own scaling convention for its 2400-scale numbers.
-        let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
-        let mut cursor_y = content.y + top_inset;
+        // separate, always-on-top compositor surface, not a reserved inset
+        // in this tree. The 150/2400 clearance is painted *inside* the
+        // header rect so copy is not drawn underneath that layer.
+        let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
+        let mut cursor_y = chrome.header.y + top_inset;
         draw_semantic_text(
             canvas,
             fonts,
             &header.heading(),
-            content.x + margin,
+            left,
             cursor_y,
             content_width,
         );
@@ -2644,19 +2653,17 @@ pub fn draw_now(
         // whenever `sections`/`object` still have real, possibly-stale
         // content to show.
         if let Some(lifecycle) = &header.lifecycle {
-            draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
-            cursor_y += scaled_line_height(TextRole::Body);
+            draw_status_indicator(canvas, fonts, lifecycle, left, cursor_y);
         }
 
         if let Some(object) = object {
-            cursor_y += physical(SpacingToken::Medium.value());
-            cursor_y = draw_object_summary(
+            draw_object_summary(
                 canvas,
                 fonts,
                 object,
-                content.x + margin,
-                cursor_y,
-                content_width,
+                chrome.object.x,
+                chrome.object.y,
+                chrome.object.width,
             );
         }
 
@@ -2679,15 +2686,28 @@ pub fn draw_now(
                 header.lifecycle.as_ref().map(|status| status.state),
                 Some(UniversalState::Offline)
             );
-            draw_surface_pattern(canvas, Some(fonts), content, &now_empty_pattern(offline));
+            draw_surface_pattern(
+                canvas,
+                Some(fonts),
+                chrome.empty,
+                &now_empty_pattern(offline),
+            );
         } else {
+            // Live SystemSection rows are not in now.sui. They paint below
+            // the compiled object slot, or the header when there is no live
+            // object, using the same inset as chrome.
+            cursor_y = if object.is_some() {
+                chrome.object.y.saturating_add(chrome.object.height)
+            } else {
+                chrome.header.y.saturating_add(chrome.header.height)
+            };
             for section in sections {
                 cursor_y += physical(SpacingToken::Medium.value());
                 draw_semantic_text(
                     canvas,
                     fonts,
                     &section.heading(),
-                    content.x + margin,
+                    left,
                     cursor_y,
                     content_width,
                 );
@@ -2696,7 +2716,7 @@ pub fn draw_now(
                 draw_divider(
                     canvas,
                     &section.divider(),
-                    Rect::new(content.x + margin, cursor_y, content_width, hairline),
+                    Rect::new(left, cursor_y, content_width, hairline),
                 );
                 cursor_y += physical(SpacingToken::Small.value());
 
@@ -2715,18 +2735,12 @@ pub fn draw_now(
                                 canvas,
                                 fonts,
                                 data_row,
-                                Rect::new(content.x + margin, cursor_y, content_width, row_height),
+                                Rect::new(left, cursor_y, content_width, row_height),
                             );
                             cursor_y += row_height;
                         }
                         SystemSectionRow::Status(status) => {
-                            draw_status_indicator(
-                                canvas,
-                                fonts,
-                                status,
-                                content.x + margin,
-                                cursor_y,
-                            );
+                            draw_status_indicator(canvas, fonts, status, left, cursor_y);
                             cursor_y += scaled_line_height(TextRole::Body);
                             if status.visible_reason().is_some() {
                                 cursor_y += scaled_line_height(TextRole::Caption);
@@ -2734,13 +2748,7 @@ pub fn draw_now(
                         }
                         SystemSectionRow::Task(task) => {
                             let status = task.status();
-                            draw_status_indicator(
-                                canvas,
-                                fonts,
-                                &status,
-                                content.x + margin,
-                                cursor_y,
-                            );
+                            draw_status_indicator(canvas, fonts, &status, left, cursor_y);
                             cursor_y += scaled_line_height(TextRole::Body);
                             if status.visible_reason().is_some() {
                                 cursor_y += scaled_line_height(TextRole::Caption);
@@ -2750,7 +2758,7 @@ pub fn draw_now(
                                     canvas,
                                     fonts,
                                     &related,
-                                    content.x + margin,
+                                    left,
                                     cursor_y,
                                     content_width,
                                 );
@@ -2762,20 +2770,14 @@ pub fn draw_now(
                                 canvas,
                                 fonts,
                                 &intent.heading(),
-                                content.x + margin,
+                                left,
                                 cursor_y,
                                 content_width,
                             );
                             cursor_y += scaled_line_height(TextRole::Body);
                             if let Some(task) = &intent.task {
                                 let status = task.status();
-                                draw_status_indicator(
-                                    canvas,
-                                    fonts,
-                                    &status,
-                                    content.x + margin,
-                                    cursor_y,
-                                );
+                                draw_status_indicator(canvas, fonts, &status, left, cursor_y);
                                 cursor_y += scaled_line_height(TextRole::Body);
                                 if status.visible_reason().is_some() {
                                     cursor_y += scaled_line_height(TextRole::Caption);
@@ -2785,7 +2787,7 @@ pub fn draw_now(
                                     canvas,
                                     fonts,
                                     &missing,
-                                    content.x + margin,
+                                    left,
                                     cursor_y,
                                     content_width,
                                 );
@@ -2799,7 +2801,7 @@ pub fn draw_now(
                                 label_font,
                                 &metric.label,
                                 label_size,
-                                content.x + margin,
+                                left,
                                 cursor_y,
                                 theme_color(ColorRole::TextSecondary),
                             );
@@ -2818,7 +2820,7 @@ pub fn draw_now(
                                 value_font,
                                 &value_text,
                                 value_size,
-                                content.x + margin,
+                                left,
                                 cursor_y,
                                 theme_color(ColorRole::TextPrimary),
                             );

@@ -31,6 +31,8 @@
 //! taps stay a whole-surface formula.
 //! ADR-224: privileged `diagnostic` DataRows plus trailing `row back`
 //! dock live DevSurface hits. Rows stay read-only.
+//! ADR-225: NOW chrome paint reads the same `layout_v2(now.sui)`
+//! tree as hits. Live SystemSection rows stay runtime content.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -862,6 +864,7 @@ mod tests {
         let main = include_str!("../../../services/saai-shell/src/main.rs");
         assert!(main.contains("saai_ui_compiler::layout_v2"));
         assert!(main.contains("saai_ui_compiler::compile_v2"));
+        assert!(main.contains("now_paint_chrome_from"));
         assert!(main.contains("orb_v2_source"));
         assert!(main.contains("diagnostic_v2_source"));
         assert!(!main.contains("layout_v1_root("));

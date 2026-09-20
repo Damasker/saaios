@@ -2239,11 +2239,13 @@ enum Frame {
     },
     /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
     /// Now`'s only content now, the app grid relocated behind its own
-    /// "Приложения" row (ADR-113/`apps_open`).
+    /// "Приложения" row (ADR-113/`apps_open`). ADR-225: chrome rects
+    /// and tab rects come from `now_view()`.
     Now {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
+        chrome: render::NowPaintChrome,
         sections: Vec<SystemSection>,
         object: Option<ObjectSummary>,
         footer_actions: Vec<(Rect, DataRow)>,
@@ -3343,18 +3345,36 @@ fn now_footer_action_rect(index: usize, width: u32, height: u32) -> Rect {
 const NOW_FOOTER_OPEN_APPS_ACTION: &str = "open_apps";
 
 fn now_footer_action_views(width: u32, height: u32) -> Vec<(Rect, DataRow)> {
+    now_footer_action_views_from(&now_view(width, height))
+}
+
+fn now_footer_action_views_from(view: &LayoutNode) -> Vec<(Rect, DataRow)> {
     vec![
         (
-            now_footer_action_rect(0, width, height),
+            now_node_rect(view, "apps"),
             DataRow::new("Приложения", DataRowVariant::Navigation)
                 .with_action(NOW_FOOTER_OPEN_APPS_ACTION),
         ),
         (
-            now_footer_action_rect(1, width, height),
+            now_node_rect(view, "intent"),
             DataRow::new("Новое намерение", DataRowVariant::Navigation)
                 .with_action("open_intent_input"),
         ),
     ]
+}
+
+fn now_node_rect(view: &LayoutNode, id: &str) -> Rect {
+    saai_ui_compiler::layout_v1_find(view, id)
+        .unwrap_or_else(|| panic!("now.sui missing `{id}`"))
+        .rect
+}
+
+fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
+    render::NowPaintChrome {
+        header: now_node_rect(view, "ContextHeader"),
+        object: now_node_rect(view, "ObjectSummary"),
+        empty: now_node_rect(view, "SurfacePattern"),
+    }
 }
 
 fn now_footer_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
@@ -7732,14 +7752,15 @@ impl Shell {
                 rows,
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
-            let view = root_view(width, height);
+            let view = now_view(width, height);
             Frame::Now {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: self.now_context_header(),
+                chrome: now_paint_chrome_from(&view),
                 sections: self.now_sections(),
                 object: self.now_object_summary(),
-                footer_actions: now_footer_action_views(width, height),
+                footer_actions: now_footer_action_views_from(&view),
             }
         } else if self.current_page == RootPage::Now && self.apps_open {
             let view = root_view(width, height);
@@ -8118,6 +8139,7 @@ impl Shell {
                     content_rect,
                     tabs,
                     header,
+                    chrome,
                     sections,
                     object,
                     footer_actions,
@@ -8127,6 +8149,7 @@ impl Shell {
                         content_rect,
                         &tabs,
                         &header,
+                        &chrome,
                         &sections,
                         object.as_ref(),
                         &footer_actions,
@@ -9531,9 +9554,16 @@ impl Shell {
     /// finger (`pressed_tab`); `disabled` stays at its default `false`
     /// -- no tab is ever actually disabled today.
     fn root_navigation_items(&self, width: u32, height: u32) -> Vec<(Rect, NavigationItem)> {
+        self.navigation_items_from(&root_view(width, height))
+    }
+
+    /// ADR-225: tab rects from the same compiled tree the screen paints.
+    fn navigation_items_from(&self, tree: &LayoutNode) -> Vec<(Rect, NavigationItem)> {
         let inbox_badge = inbox_rows(&self.selected_entities).len() as u32;
-        root_view(width, height).children[1]
-            .children
+        let Some(nav) = saai_ui_compiler::layout_v1_find(tree, "BottomNavigation") else {
+            return Vec::new();
+        };
+        nav.children
             .iter()
             .zip(ROOT_TABS)
             .map(|(node, tab)| {
@@ -11972,6 +12002,49 @@ mod tests {
             super::now_footer_action_at((540.0, 2080.0), width, height),
             Some("open_intent_input")
         );
+    }
+
+    #[test]
+    fn now_paint_chrome_matches_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let view = super::now_view(width, height);
+        let chrome = super::now_paint_chrome_from(&view);
+        let header = saai_ui_compiler::layout_v1_find(&view, "ContextHeader").expect("header");
+        let object = saai_ui_compiler::layout_v1_find(&view, "ObjectSummary").expect("object");
+        let empty = saai_ui_compiler::layout_v1_find(&view, "SurfacePattern").expect("empty");
+        let nav = saai_ui_compiler::layout_v1_find(&view, "BottomNavigation").expect("tabs");
+        assert_eq!(chrome.header, header.rect);
+        assert_eq!(chrome.object, object.rect);
+        assert_eq!(chrome.empty, empty.rect);
+        assert_eq!(chrome.header.y, 0);
+        assert_eq!(chrome.object.y, 263);
+        assert_eq!(chrome.object.height, 144);
+        assert_eq!(nav.children.len(), 4);
+        let root = super::root_view(width, height);
+        let root_nav =
+            saai_ui_compiler::layout_v1_find(&root, "BottomNavigation").expect("root tabs");
+        for (now_tab, root_tab) in nav.children.iter().zip(root_nav.children.iter()) {
+            assert_eq!(now_tab.id, root_tab.id);
+            assert_eq!(now_tab.rect, root_tab.rect);
+        }
+        let footer = super::now_footer_action_views_from(&view);
+        assert_eq!(footer[0].0, super::now_node_rect(&view, "apps"));
+        assert_eq!(footer[1].0, super::now_node_rect(&view, "intent"));
+        let main = include_str!("main.rs");
+        assert!(main.contains("now_paint_chrome_from"));
+        assert!(main.contains("navigation_items_from"));
+        let draw_now = include_str!("render.rs")
+            .split("pub fn draw_now(")
+            .nth(1)
+            .expect("draw_now")
+            .split("pub fn draw_status_bar(")
+            .next()
+            .expect("status");
+        assert!(draw_now.contains("chrome.header"));
+        assert!(draw_now.contains("chrome.object"));
+        assert!(draw_now.contains("chrome.empty"));
+        assert!(draw_now.contains("draw_tab_bar(canvas, tabs, fonts)"));
     }
 
     #[test]

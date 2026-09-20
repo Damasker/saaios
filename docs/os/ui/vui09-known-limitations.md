@@ -21,7 +21,8 @@ compiled `now.sui` (ADR-217). Inbox/Spaces/list hits generate
 `Button` hits use `layout_v2` (ADR-221). Privileged `Keyboard` is the
 Field-bound IME; USB HID may replace the panel (ADR-222). OrbHost
 hits use generated `layout_v2` (ADR-223). Diagnostic Назад hits
-use generated `layout_v2` (ADR-224).
+use generated `layout_v2` (ADR-224). NOW chrome paint reads the
+same `now_view()` tree (ADR-225).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -164,9 +165,11 @@ Ordered. Items 1–3 and 7–17 are done
     `flatten_me_rows` / `scrolled_row_rect` at offset 0.~~ Host
     (ADR-215). Do not invent Me hits from empty `root.sui`.
 20. ~~Switch production `build.rs` to `compile_v2()`.~~ Live
-    `layout_v2` tabs (ADR-216). Content paint stays procedural.
+    `layout_v2` tabs (ADR-216). NOW chrome paint reads `now_view()`
+    (ADR-225). Other content paint stays procedural.
 21. ~~NOW footer and object hits from compiled `now.sui`.~~ Live
-    (ADR-217). Inbox/Spaces/Me/lists stay procedural.
+    (ADR-217). NOW paint uses those nodes (ADR-225).
+    Inbox/Spaces/Me/lists stay procedural.
 22. ~~Inbox, Spaces, and list hits from generated `compile_v2()`.~~
     Host (ADR-218). Me scroll, apps grid, and overlays stay formulas.
 23. ~~Me scroll hits from `layout_v2_scrolled`.~~ Host (ADR-219).
@@ -181,7 +184,9 @@ Ordered. Items 1–3 and 7–17 are done
 26. ~~Diagnostic Назад hits from `layout_v2`.~~ Host (ADR-224).
     `DataRow`s stay read-only. Gallery page taps and Keyboard keys
     stay their formulas.
-27. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+27. ~~NOW chrome paint from `layout_v2`.~~ Host (ADR-225).
+    Inbox/Spaces/list paint stay procedural.
+28. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 

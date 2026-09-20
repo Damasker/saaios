@@ -9,7 +9,8 @@ Contract source: [Component Library v1](component-library-v1.md)
 Compiler: `compile_v2_public()` in `saai-ui-compiler`. Production
 chrome compiles through `compile_v2()` on
 `services/saai-shell/ui/root.sui` (tabs, ADR-216) and
-`services/saai-shell/ui/now.sui` (NOW content, ADR-217). Live Inbox,
+`services/saai-shell/ui/now.sui` (NOW content, ADR-217). Live NOW
+paint reads that same tree (ADR-225). Live Inbox,
 Spaces, and list hits generate `compile_v2()` documents (ADR-218).
 
 ## Stability labels
@@ -107,7 +108,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
   `Keyboard` binds to the focused Field; USB HID may replace the on-screen
   panel (ADR-222). Privileged `OrbHost` matches the live Orb zone
   (ADR-223). Privileged `diagnostic` Назад matches `stacked_control_rect`
-  (ADR-224). `layout_v2()`
+  (ADR-224). NOW chrome paint reads that tree (ADR-225). `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
   `inset = safe` uses

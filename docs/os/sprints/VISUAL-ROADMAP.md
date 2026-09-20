@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–219; production `compile_v2()`; NOW/list/Me hits compiled; apps/overlays still formula; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–225; production `compile_v2()`; NOW paint from `now_view()`; lists/Me/apps/overlays paint still formula; not Visual v1 sign-off) |
 
 ---
 
@@ -1179,7 +1179,8 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 `root_view` (ADR-216); NOW compiled hits (ADR-217); live list
 hits (ADR-218); Me scroll (ADR-219); apps grid (ADR-220); overlay
 Field/decision hits (ADR-221); Field-bound `Keyboard` IME with USB
-swap (ADR-222); OrbHost hits (ADR-223); diagnostic hits (ADR-224). Release
+swap (ADR-222); OrbHost hits (ADR-223); diagnostic hits (ADR-224);
+NOW chrome paint (ADR-225). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1262,6 +1263,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (ADR-223). Gallery page taps stay a whole-surface formula.
 - [x] Diagnostic Назад hits from generated `DataRow` + `row back`
   (ADR-224). Do not 7-tap gallery this slice.
+- [x] NOW chrome paint from the same `layout_v2(now.sui)` tree as
+  hits (ADR-225). Live SystemSection rows stay runtime content.
+  Inbox/Spaces/list paint stay next.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

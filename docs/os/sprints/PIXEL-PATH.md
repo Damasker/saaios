@@ -184,7 +184,7 @@ host-only derived view.
 | VUI-09 Keyboard IME | privileged `Keyboard` bound to Field; USB HID replaces OSK **host** (ADR-222; no volume/power; leave Сейчас) |
 | VUI-09 v2 Orb hits | generated `OrbHost` / `orb-menu:` match `orb_zone_rect` **на panther** (ADR-223; `a49dfadf…`; do not tap Изменить; leave Сейчас) |
 | VUI-09 v2 diagnostic hits | generated `DataRow` + `row back` match `stacked_control_rect` **host** (ADR-224; do not 7-tap; leave Сейчас) |
-| VUI-09 v2 diagnostic hits | generated `DataRow` + `row back` match `stacked_control_rect` **host** (ADR-224; do not 7-tap; leave Сейчас) |
+| VUI-09 NOW paint | `draw_now` chrome slots from `now_view()` **host** (ADR-225; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 
