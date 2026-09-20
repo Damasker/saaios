@@ -190,7 +190,8 @@ host-only derived view.
 | VUI-09 apps paint | Приложения tiles from generated `layout_v2` **на panther** (ADR-228; `40250fc4…`; do not open Приложения; leave Сейчас) |
 | VUI-09 overlay paint | Field/decision Buttons from generated `layout_v2` **на panther** (ADR-229; `f593f608…`; do not tap Разрешить/Сопряжь; leave Сейчас) |
 | VUI-09 OrbHost paint | Orb closed-dot/menu from generated `layout_v2` **на panther** (ADR-230; `e0913b26…`; do not tap Изменить; leave Сейчас) |
-| VUI-09 diagnostic paint | DevSurface cards/Назад from generated `layout_v2_scrolled` **host** (ADR-231; do not 7-tap; leave Сейчас) |
+| VUI-09 diagnostic paint | DevSurface cards/Назад from generated `layout_v2_scrolled` **на panther** (ADR-231; `f00632f2…`; do not 7-tap; leave Сейчас) |
+| VUI-09 leftover formulas | Keyboard keys / gallery page / lock idle/wake stay formulas **host** (ADR-232; do not 7-tap; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 
