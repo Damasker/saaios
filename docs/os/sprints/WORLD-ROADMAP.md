@@ -1,8 +1,9 @@
 # SaaiOS World Model / Observation Layer — delivery roadmap
 
 Status: **WORLD-00/01 host complete** (types + metrics conversion).
+WORLD-02 ObservationCache is in runtime (this slice).
 Daemon (WORLD-03) is not on the Pixel path until ObservationCache is
-used in runtime. See [PIXEL-PATH.md](PIXEL-PATH.md).
+used by more than one consumer. See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-122](../../adr/ADR-122-world-model-observation-layer.md),
 [system-intelligence.md](../architecture/system-intelligence.md)
@@ -28,7 +29,7 @@ Do not start with a monitoring product or HealthState.
 |---|---|---|---|
 | WORLD-00 | ADR-122 + mapping + this roadmap | **Done** | no |
 | WORLD-01 | Observation types + `system.metrics` conversion | **Done** (host) | no |
-| WORLD-02 | ObservationCache + snapshot revision | Backlog | no |
+| WORLD-02 | ObservationCache + snapshot revision | **Done** (host + panther runtime `93ad729c…`) | **yes** |
 | WORLD-03 | `saai-deviced` UDS GetSnapshot/Subscribe | Backlog | no |
 | WORLD-04 | Shared Linux observers (no `/proc` copy) | Backlog | no |
 | WORLD-05 | Verification uses fresh observation | Backlog | measure |
@@ -49,3 +50,21 @@ source, timestamps and freshness. Stale ≠ Unhealthy.
 **Rollback:** drop the crate; tools/telemetry untouched.
 
 **Threat:** none — no network, no phone binary, no secrets in observations.
+
+## WORLD-02
+
+**Goal:** latest Observation lives in an in-process cache with a snapshot
+revision. Stale ≠ Unhealthy. Reboot starts empty.
+
+**Change:** `ObservationCache` in `saai-observation`. `TelemetrySampler`
+converts `system.metrics` into Observations and applies them. Runtime
+owns the cache. No `saai-deviced`. No entity-store writes. ToolResult
+JSON is unchanged.
+
+**Test:** empty cache revision 0; apply replaces latest; TTL → Stale
+not Unhealthy; sampler fills cache and still publishes ToolResult.
+
+**Rollback:** drop `cache.rs` and `with_cache`; sampler publishes only
+ToolResult again.
+
+**Threat:** none — in-memory, no new listener, no secrets, no graphs.

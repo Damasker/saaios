@@ -10,6 +10,7 @@ use memory_store::{install_memory_tools, MemoryAccessScope, MemoryFact, MemorySt
 use model_provider::{build_provider, ProviderKind};
 use policy_engine::PolicyEngine;
 use protocol::{ConfirmScope, Envelope, MessageKind};
+use saai_observation::{MetricsOrigin, ObservationCache};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -281,6 +282,8 @@ struct RuntimeStatusDto {
     telemetry: bool,
     telemetry_samples: u64,
     telemetry_interval_secs: u64,
+    #[serde(default)]
+    observation_revision: u64,
     max_concurrent: usize,
     request_timeout_secs: u64,
     session_grants: Vec<String>,
@@ -309,6 +312,7 @@ struct RuntimeMeta {
     automation: bool,
     auto_diagnose: bool,
     telemetry: Option<Arc<TelemetrySampler>>,
+    observations: Arc<ObservationCache>,
     max_concurrent: usize,
     request_timeout_secs: u64,
 }
@@ -334,6 +338,7 @@ impl RuntimeMeta {
             telemetry: self.telemetry.is_some(),
             telemetry_samples: tel.as_ref().map(|t| t.samples).unwrap_or(0),
             telemetry_interval_secs: tel.as_ref().map(|t| t.interval_secs).unwrap_or(0),
+            observation_revision: self.observations.revision(),
             max_concurrent: self.max_concurrent,
             request_timeout_secs: self.request_timeout_secs,
             session_grants: runtime.session_grants(),
@@ -410,6 +415,11 @@ async fn main() -> Result<()> {
     let policy = Arc::new(PolicyEngine::new());
     let audit = Arc::new(AuditLog::open(&settings.audit)?);
     let bus = EventBus::new(64);
+    let observations = Arc::new(ObservationCache::new());
+    let metrics_origin = match tools_mode {
+        ToolsMode::Mock => MetricsOrigin::Mock,
+        ToolsMode::RealLinux => MetricsOrigin::Procfs,
+    };
 
     if settings.mock_planner {
         info!("running one-shot mock planner demo");
@@ -499,12 +509,15 @@ async fn main() -> Result<()> {
     let telemetry = if !settings.telemetry_enabled {
         None
     } else {
-        let sampler = Arc::new(TelemetrySampler::new(
-            tools.clone(),
-            bus.clone(),
-            audit.clone(),
-            Duration::from_secs(settings.telemetry_interval_secs),
-        ));
+        let sampler = Arc::new(
+            TelemetrySampler::new(
+                tools.clone(),
+                bus.clone(),
+                audit.clone(),
+                Duration::from_secs(settings.telemetry_interval_secs),
+            )
+            .with_cache(observations.clone(), metrics_origin),
+        );
         let _tel = sampler.clone().spawn();
         info!(
             interval_secs = settings.telemetry_interval_secs,
@@ -535,6 +548,7 @@ async fn main() -> Result<()> {
         automation: automation_enabled,
         auto_diagnose: settings.auto_diagnose,
         telemetry,
+        observations,
         max_concurrent,
         request_timeout_secs,
     });
@@ -1255,6 +1269,7 @@ mod tests {
             automation: false,
             auto_diagnose: false,
             telemetry: None,
+            observations: Arc::new(ObservationCache::new()),
             max_concurrent: 1,
             request_timeout_secs: 30,
         };
@@ -1304,6 +1319,7 @@ mod tests {
             automation: false,
             auto_diagnose: false,
             telemetry: None,
+            observations: Arc::new(ObservationCache::new()),
             max_concurrent: 1,
             request_timeout_secs: 30,
         });

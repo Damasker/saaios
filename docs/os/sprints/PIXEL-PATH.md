@@ -210,7 +210,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 - MEM-03 `MemoryRecord` v2 + provenance
 - MEM-06 physical erase
-- WORLD-02 ObservationCache внутри runtime (без daemon)
+- WORLD-02 ObservationCache внутри runtime (без daemon) **на panther** (ADR-245; runtime `93ad729c…` pid 1865)
 - WORLD-05 Verification только когда WORK-03 жив
 
 `saai-deviced` (WORLD-03) — только если cache + несколько consumers

@@ -33,6 +33,8 @@ Event              неизменяемая причинная запись
 Целевой native owner World Model (ADR-122). Пока сервиса нет: identity
 идёт через `system.identity`, динамика — через `system.metrics` /
 TelemetrySampler. WORLD-01 вводит typed Observation без daemon.
+WORLD-02 держит ObservationCache внутри runtime, пока нет второго
+consumer для `saai-deviced`.
 
 Когда сервис появится (WORLD-03), он:
 
