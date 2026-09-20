@@ -149,14 +149,16 @@ DRM-неудача обрабатывается штатно, реальный �
 
 Дефект локализован до конкретной функции/строки и правдоподобного
 механизма (неинициализированный scale-указатель без
-`wp-fractional-scale-v1`), но исправление остаётся вне кода этого
-проекта -- либо патчить/пересобирать GTK4, либо реализовать
-`wp-fractional-scale-v1` в `saai-displayd` (само по себе не гарантирует
-исправление без подтверждения на реальном GTK4-исходнике) и
-физически проверить, снимает ли это находку. Ни один путь не выбран
-здесь -- по прежнему решается отдельно, при появлении бюджета на это
-именно, не как часть Change 7's текущего критического пути (уже закрыт
-через Qt/Kirigami, ADR-026/027/028).
+`wp-fractional-scale-v1`). Compositor half chosen in ADR-266: advertise
+`wp-fractional-scale-v1` and `wp-viewporter`, send `preferred_scale=120`.
+That does not close APP-02: a GTK4 frame on panther is still required
+(or a later ADR refuses GTK4). Do not treat host protocol presence as
+device acceptance.
+
+## Обновление (2026-09-20)
+
+ADR-266 implements the protocol on host `saai-displayd`. Panther binary
+is unchanged in that slice.
 
 ## Последствия
 

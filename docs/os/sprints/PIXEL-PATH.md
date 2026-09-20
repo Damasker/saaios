@@ -246,7 +246,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - MEM-03 MemoryRecord v2 + legacy JSONL view (ADR-262; host)
 - MEM-06 invalidate vs erase (ADR-263; host)
 - MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome waits)
-- APP-COMPAT APP-02 GTK4 waits for a displayd experiment (ADR-025/265)
+- APP-COMPAT APP-02 compositor half: `wp-fractional-scale-v1` + `wp-viewporter` (ADR-266; host). GTK4 frame on panther still waits.
 - Visual v1 unsigned; `compile_v2_public` stays Experimental (ADR-265)
 
 ## Что сознательно не делать сейчас

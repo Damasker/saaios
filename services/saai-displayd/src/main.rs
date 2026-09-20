@@ -33,9 +33,9 @@ use smithay::input::keyboard::Keycode;
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
     backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_layer_shell,
-    delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
-    delegate_text_input_manager, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_fractional_scale,
+    delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
+    delegate_text_input_manager, delegate_viewporter, delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -58,6 +58,9 @@ use smithay::{
             CompositorState, SurfaceAttributes,
         },
         dmabuf::{get_dmabuf, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        fractional_scale::{
+            with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
+        },
         output::OutputHandler,
         selection::{
             data_device::{
@@ -74,8 +77,15 @@ use smithay::{
         shm::{with_buffer_contents, ShmHandler, ShmState},
         socket::ListeningSocketSource,
         text_input::{TextInputHandle, TextInputManagerState},
+        viewporter::ViewporterState,
     },
 };
+
+/// Matches `Scale::Integer(1)` on the advertised output. GDK initializes
+/// its shm height from `wp_fractional_scale_v1.preferred_scale` in 120ths
+/// (1.0 → 120). Without that event the pointer stays uninitialized
+/// (ADR-025 height=1776831).
+const PREFERRED_FRACTIONAL_SCALE: f64 = 1.0;
 
 /// Laptop surface (PCE-25). Smaller than the host output; not a phone panel.
 const WINDOWED_WIDTH: i32 = 1280;
@@ -303,6 +313,14 @@ struct State {
     /// registered, and the per-object dispatch `delegate_text_input_manager!`
     /// wires up, don't need the field's value, only its existence.
     _text_input_manager_state: TextInputManagerState,
+    /// ADR-266 (APP-02): `wp_fractional_scale_manager_v1` so GTK4/GDK
+    /// receives `preferred_scale` instead of an uninitialized `double *`
+    /// (ADR-025). Same keep-alive pattern as `_text_input_manager_state`.
+    _fractional_scale_manager_state: FractionalScaleManagerState,
+    /// Pair protocol GDK expects alongside fractional-scale. Viewport
+    /// dest size is not applied to the DRM blit path in this slice;
+    /// advertising the global is enough for the client to bind.
+    _viewporter_state: ViewporterState,
     // No keyboard capability on the real Pixel 7 build (ADR-012): this
     // device has no physical keyboard, and drm-splash.c's own on-screen
     // keyboard proves this architecture never needed wl_keyboard/xkbcommon
@@ -1181,6 +1199,21 @@ delegate_data_device!(State);
 // `set_data_device_focus` is called from.
 delegate_text_input_manager!(State);
 
+// ADR-266 (APP-02): send preferred_scale=1.0 as soon as a client binds
+// wp_fractional_scale_v1 on a surface. Output is already Scale::Integer(1);
+// this is the client-facing event GDK actually waits for.
+impl FractionalScaleHandler for State {
+    fn new_fractional_scale(&mut self, surface: WlSurface) {
+        with_states(&surface, |states| {
+            with_fractional_scale(states, |fractional_scale| {
+                fractional_scale.set_preferred_scale(PREFERRED_FRACTIONAL_SCALE);
+            });
+        });
+    }
+}
+delegate_fractional_scale!(State);
+delegate_viewporter!(State);
+
 impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
@@ -1349,6 +1382,8 @@ fn main() {
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
     let data_device_state = DataDeviceState::new::<State>(&dh);
     let text_input_manager_state = TextInputManagerState::new::<State>(&dh);
+    let fractional_scale_manager_state = FractionalScaleManagerState::new::<State>(&dh);
+    let viewporter_state = ViewporterState::new::<State>(&dh);
     let mut seat_state = SeatState::<State>::new();
     let mut seat = seat_state.new_wl_seat(&dh, "seat0");
     #[cfg(not(feature = "panther-hardware"))]
@@ -1592,6 +1627,8 @@ fn main() {
         data_device_state,
         dh: dh.clone(),
         _text_input_manager_state: text_input_manager_state,
+        _fractional_scale_manager_state: fractional_scale_manager_state,
+        _viewporter_state: viewporter_state,
         #[cfg(not(feature = "panther-hardware"))]
         keyboard: keyboard.clone(),
         #[cfg(not(feature = "panther-hardware"))]

@@ -25,9 +25,9 @@ experiment is already spent.
 1. **Unsigned.** Visual Language v1 is not accepted. No Stable public
    `.sui` names. `sui_v2_stability` stays Experimental for public
    names; privileged stays `compile_v2` only.
-2. **APP-02 later.** GTK4 shm crash remains ADR-025. Do not flash
-   displayd for fractional-scale in this slice. Do not paint Android
-   VM.
+2. **APP-02 later.** GTK4 shm crash remains ADR-025 until a panther
+   GTK4 frame. ADR-266 is the host compositor protocol only. Do not
+   paint Android VM.
 3. **ADR-213 last.** Not scheduled as next.
 
 ## Consequences
