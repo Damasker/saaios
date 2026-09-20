@@ -30,14 +30,16 @@ display restart.
 
 ## Compiler and layout
 
-- `layout_v2()` matches v1 tab hits for public NOW (ADR-194). Live
-  tabs still come from `layout_v1_root()` over `compile_v1_rollback()`.
-  Tab ids are borrowed from that v1 rollback until the v2 grammar
-  lists tabs. Footer and object hits stay procedural.
+- `layout_v2()` matches v1 tab hits for public NOW (ADR-194). Tab
+  height comes from `EdgeInsets::from_safe` (ADR-195), not from
+  mixing logical `SafeInsets` into `Node` padding. Live tabs still
+  come from `layout_v1_root()` over `compile_v1_rollback()`. Tab ids
+  are borrowed from that v1 rollback until the v2 grammar lists tabs.
+  Footer and object hits stay procedural.
 - `compile_v2_public()` is the third-party gate. It is Experimental,
   not Stable.
-- `Node` layout is physical pixels. `SafeInsets` are logical. Mixing
-  those units is not reconciled here.
+- Top `SafeInsets` is the status layer (ADR-112), not tree padding.
+  `layout()` stays physical. `EdgeInsets::from_safe` is the conversion.
 - `root.sui` stays `sui 1`. Matching tab hits is not permission to
   switch `build.rs` to `compile_v2()`.
 
@@ -56,12 +58,13 @@ later sprint names a legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 
-Ordered. Item 1 is host-done (ADR-194); production still v1.
+Ordered. Items 1–2 are host-done (ADR-194/195); production still v1.
 
 1. ~~Emit layout and hit-test from `compile_v2()` that match
    `layout_v1_root()` for public NOW tabs.~~ Host: `layout_v2()`
    (ADR-194). Do not attach it to `build.rs` yet.
-2. Reconcile `Node` physical pixels with logical `SafeInsets`.
+2. ~~Reconcile `Node` physical pixels with logical `SafeInsets`.~~
+   Host: `EdgeInsets::from_safe` (ADR-195). Top inset stays a layer.
 3. Keep leftover ActionCard/tab sizes on an explicit named list, or
    map them onto `TextRole` in a paint-normalization slice.
 4. Promote public names from Experimental to Stable only after the

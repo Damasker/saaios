@@ -154,6 +154,7 @@ host-only derived view.
 | VUI-09 shell restart | unlocked `saai-shell` kill + respawn **на panther** (`e8865301…`; ADR-192; leave Сейчас) |
 | VUI-09 known limitations | ledger gaps + Visual v2 backlog **host** (ADR-193; chrome unchanged `e8865301…`; leave Сейчас) |
 | VUI-09 v2 tab hits | `layout_v2` public NOW ≡ v1 tabs **host** (ADR-194; chrome unchanged `e8865301…`; leave Сейчас) |
+| VUI-09 safe insets | `EdgeInsets::from_safe`; top is status layer **host** (ADR-195; chrome unchanged `e8865301…`; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

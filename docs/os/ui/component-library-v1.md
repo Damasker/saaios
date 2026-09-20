@@ -450,7 +450,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   lock surface. ADR-193 records known limitations and the Visual v2
   backlog; it is not Visual v1 sign-off. ADR-194 emits `layout_v2()`
   so public NOW tab hits match v1; production still uses
-  `layout_v1_root()`.
+  `layout_v1_root()`. ADR-195 converts logical `SafeInsets` through
+  `EdgeInsets::from_safe`; the top inset stays the status layer.
 
 ### 7.6 `TaskSummary`
 

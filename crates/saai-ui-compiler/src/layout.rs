@@ -6,7 +6,8 @@
 //! until the v2 grammar lists tabs.
 
 use saai_ui_core::{
-    layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SurfaceScale, MIN_TOUCH_TARGET,
+    layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SurfaceScale,
+    MIN_TOUCH_TARGET,
 };
 
 use crate::{compile_v1_rollback, ScreenSpec, SuiV2Screen};
@@ -124,7 +125,9 @@ pub fn v2_root_node(screen: &SuiV2Screen, width: u32, height: u32) -> Node {
         return content;
     }
     let spec = compile_v1_rollback().expect("root.sui v1");
-    let tab_height = v1_tab_strip_height(height, spec.tab_height);
+    let tab_height_2400 =
+        EdgeInsets::from_safe(SafeInsets::PIXEL_7_PORTRAIT, SurfaceScale::PIXEL_7).bottom;
+    let tab_height = v1_tab_strip_height(height, tab_height_2400);
     let tabs = Node::linear(
         spec.tabs_id.clone(),
         Axis::Horizontal,
@@ -227,6 +230,14 @@ mod tests {
         assert!(layout_v1_find(&v2, "ContextHeader").is_some());
         assert!(layout_v1_find(&v2, "ObjectSummary").is_some());
         assert!(layout_v1_find(&v2, "SurfacePattern").is_some());
+        let header = layout_v1_find(&v2, "ContextHeader").expect("header");
+        assert_eq!(header.rect.y, 0);
+        let edges = saai_ui_core::EdgeInsets::from_safe(
+            saai_ui_core::SafeInsets::PIXEL_7_PORTRAIT,
+            saai_ui_core::SurfaceScale::PIXEL_7,
+        );
+        assert_eq!(spec.tab_height, edges.bottom);
+        assert_ne!(header.rect.y, edges.top);
     }
 
     #[test]

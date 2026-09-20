@@ -4,7 +4,8 @@
 //! only `sui 1`. ADR-181/182 parse `sui 2` through `compile_v2()`.
 //! ADR-183 keeps `root.sui` as the v1 rollback artifact. ADR-184
 //! emits layout/hit-test from that compiled v1 `ScreenSpec`. ADR-194
-//! adds `layout_v2()` so public NOW tab hits match v1. ADR-185
+//! adds `layout_v2()` so public NOW tab hits match v1. ADR-195
+//! converts logical `SafeInsets` through `EdgeInsets::from_safe`. ADR-185
 //! gates third-party documents through `compile_v2_public()`. ADR-186
 //! publishes the public example and stability labels.
 
@@ -839,10 +840,12 @@ mod tests {
         assert!(ledger.contains("unlocked"));
         assert!(ledger.contains("ADR-193"));
         assert!(ledger.contains("ADR-194"));
-        assert!(ledger.contains("layout_v2"));
+        assert!(ledger.contains("ADR-195"));
+        assert!(ledger.contains("from_safe"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
-        assert!(limits.contains("layout_v2"));
+        assert!(limits.contains("from_safe"));
+        assert!(limits.contains("ADR-112"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

@@ -55,7 +55,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   silent skip.
 - `compile_v2()` on `root.sui` stays forbidden. `layout_v2()` matches
   v1 tab hits for this example (ADR-194) but is not wired into
-  `build.rs`.
+  `build.rs`. `inset = safe` uses `EdgeInsets::from_safe` (ADR-195);
+  the top inset is the status layer, not a content pad.
 
 ## Migration
 
@@ -66,6 +67,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | `OrbHost` / lock / gallery in an app | omit; those stay privileged |
 | Switching `build.rs` to `compile_v2()` | do not; keep `compile()` |
 | Wanting tab hit-test from a v2 NOW | `layout_v2(compile_v2_public(…))`; not `root_view` |
+| Logical `SafeInsets` on a `Node` | `EdgeInsets::from_safe`; do not pad top (status layer) |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).
