@@ -125,6 +125,7 @@ ADR-264 shell-legal memory read is status `memory_records`, not JSONL.
 ADR-265 Visual v1 stays unsigned; `compile_v2_public` stays Experimental.
 ADR-266 `saai-displayd` advertises `wp-fractional-scale-v1` and `wp-viewporter` (host).
 ADR-267 `saai-displayd` implements `input-method-v2` without a keyboard (host).
+ADR-268 Sistema `Записи` are Global `memory_records` from status (host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

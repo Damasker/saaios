@@ -5,7 +5,8 @@ Nothing in the public `.sui` 2 subset is Stable.
 
 Production chrome: `compile_v2()` on `services/saai-shell/ui/root.sui`
 (ADR-216). Frozen v1 stays `compile_v1_rollback()`. Space detail deferred.
-MEM-08 omitted until a shell-legal memory read exists.
+MEM-08 omitted until a shell-legal memory read exists. Host chrome is
+ADR-268 (`Записи` from status); panther paint waits.
 
 Current panther shell: `c05eedf9…` (ADR-216). Prior chrome `3850427a…`
 (ADR-198). Lock cycle is proven

@@ -25,9 +25,8 @@ Memory is not Observation (ADR-125).
    no space, so this is not All (MEM-02).
 2. **Not Observation.** Separate DTO: key, value, `space=global`,
    kind. Restricted records are omitted.
-3. **Not chrome.** Sistema does not grow a Memory row in this slice.
-   MEM-08 review UI waits for a later shell experiment that reads this
-   field the same way it reads `observations`.
+3. **Chrome later.** ADR-268 paints `Записи` from this field on host.
+   Panther paint still waits for a shell experiment.
 4. **Still forbidden.** Shell must not `open()` the JSONL. Shell must
    not call `MemoryRecall` as a second client.
 

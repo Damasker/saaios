@@ -19,6 +19,7 @@ grant lines. Concept boards and Visual Language 9.5 group by device
 domain, not by the sprint that added the card.
 
 `Я`→`Система` rename waited until this destination was truthful.
+MEM-08 review chrome is host (ADR-268); panther paint waits.
 
 ## Inventory (current `Я` and adjacent frames)
 

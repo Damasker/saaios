@@ -6007,6 +6007,29 @@ impl LiveObservationFact {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Default)]
+struct LiveMemoryFact {
+    key: String,
+    value: String,
+    kind: String,
+}
+
+impl LiveMemoryFact {
+    fn value_line(&self) -> String {
+        if self.kind.is_empty() {
+            self.value.clone()
+        } else {
+            format!("{} · {}", self.value, self.kind)
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
+struct RuntimeLiveFacts {
+    observations: Vec<LiveObservationFact>,
+    memory_records: Vec<LiveMemoryFact>,
+}
+
 fn observation_row_label(key: &str) -> String {
     match key {
         "system.cpu.usage" => "Процессор".into(),
@@ -6057,6 +6080,45 @@ fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> 
         .collect()
 }
 
+fn live_memory_records_from_status_json(blob: &Value) -> Vec<LiveMemoryFact> {
+    let Some(rows) = blob
+        .get("status")
+        .and_then(|status| status.get("memory_records"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let key = row
+                .get("key")
+                .and_then(Value::as_str)
+                .filter(|k| !k.is_empty())?;
+            let value = row.get("value").and_then(Value::as_str)?;
+            let space = row.get("space").and_then(Value::as_str)?;
+            if space != "global" {
+                return None;
+            }
+            Some(LiveMemoryFact {
+                key: key.to_string(),
+                value: value.to_string(),
+                kind: row
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        })
+        .collect()
+}
+
+fn runtime_live_facts_from_status_json(blob: &Value) -> RuntimeLiveFacts {
+    RuntimeLiveFacts {
+        observations: live_observations_from_status_json(blob),
+        memory_records: live_memory_records_from_status_json(blob),
+    }
+}
+
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_millis(250);
 
 fn runtime_sock_candidates() -> Vec<PathBuf> {
@@ -6071,14 +6133,14 @@ fn runtime_sock_candidates() -> Vec<PathBuf> {
     paths
 }
 
-fn read_live_observations_from_stream(stream: &mut impl Read) -> Vec<LiveObservationFact> {
+fn read_runtime_live_facts_from_stream(stream: &mut impl Read) -> RuntimeLiveFacts {
     let mut buf = Vec::new();
     if stream.read_to_end(&mut buf).is_err() || buf.is_empty() {
-        return Vec::new();
+        return RuntimeLiveFacts::default();
     }
     serde_json::from_slice(&buf)
         .ok()
-        .map(|blob| live_observations_from_status_json(&blob))
+        .map(|blob| runtime_live_facts_from_status_json(&blob))
         .unwrap_or_default()
 }
 
@@ -6086,53 +6148,53 @@ fn write_status_request(stream: &mut impl Write) -> bool {
     stream.write_all(br#"{"op":"status"}"#).is_ok() && stream.flush().is_ok()
 }
 
-fn read_live_observations_from_unix(path: &Path) -> Vec<LiveObservationFact> {
+fn read_runtime_live_facts_from_unix(path: &Path) -> RuntimeLiveFacts {
     let mut stream = match UnixStream::connect(path) {
         Ok(stream) => stream,
-        Err(_) => return Vec::new(),
+        Err(_) => return RuntimeLiveFacts::default(),
     };
     let _ = stream.set_read_timeout(Some(RUNTIME_STATUS_TIMEOUT));
     let _ = stream.set_write_timeout(Some(RUNTIME_STATUS_TIMEOUT));
     if !write_status_request(&mut stream) {
-        return Vec::new();
+        return RuntimeLiveFacts::default();
     }
     let _ = stream.shutdown(std::net::Shutdown::Write);
-    read_live_observations_from_stream(&mut stream)
+    read_runtime_live_facts_from_stream(&mut stream)
 }
 
-fn read_live_observations_from_tcp(addr: &str) -> Vec<LiveObservationFact> {
+fn read_runtime_live_facts_from_tcp(addr: &str) -> RuntimeLiveFacts {
     let socket_addr: std::net::SocketAddr = match addr.parse() {
         Ok(addr) => addr,
-        Err(_) => return Vec::new(),
+        Err(_) => return RuntimeLiveFacts::default(),
     };
     let mut stream = match TcpStream::connect_timeout(&socket_addr, RUNTIME_STATUS_TIMEOUT) {
         Ok(stream) => stream,
-        Err(_) => return Vec::new(),
+        Err(_) => return RuntimeLiveFacts::default(),
     };
     let _ = stream.set_read_timeout(Some(RUNTIME_STATUS_TIMEOUT));
     let _ = stream.set_write_timeout(Some(RUNTIME_STATUS_TIMEOUT));
     if !write_status_request(&mut stream) {
-        return Vec::new();
+        return RuntimeLiveFacts::default();
     }
     let _ = stream.shutdown(std::net::Shutdown::Write);
-    read_live_observations_from_stream(&mut stream)
+    read_runtime_live_facts_from_stream(&mut stream)
 }
 
-fn read_live_observations() -> Vec<LiveObservationFact> {
+fn read_runtime_live_facts() -> RuntimeLiveFacts {
     for path in runtime_sock_candidates() {
         if path.exists() {
-            return read_live_observations_from_unix(&path);
+            return read_runtime_live_facts_from_unix(&path);
         }
     }
     if Path::new("/data/saaios/system/saaios-runtime").exists() {
-        return read_live_observations_from_tcp("172.31.7.1:38127");
+        return read_runtime_live_facts_from_tcp("172.31.7.1:38127");
     }
-    Vec::new()
+    RuntimeLiveFacts::default()
 }
 
 /// Snapshot of every real `Я` fact `me_system_sections` needs.
-/// Memory, Android VM, and battery-as-a-page-gauge are intentionally
-/// absent (ADR-126).
+/// Android VM and battery-as-a-page-gauge stay absent (ADR-126).
+/// Memory review is status `memory_records` only (ADR-268), never JSONL.
 #[allow(dead_code)] // kernel/uptime/counts/boot attempts belong on DevSurface
 struct MeFacts {
     space_count: usize,
@@ -6170,6 +6232,7 @@ struct MeFacts {
     appd_connected: bool,
     apps: Vec<MeAppFact>,
     observations: Vec<LiveObservationFact>,
+    memory_records: Vec<LiveMemoryFact>,
 }
 
 #[derive(Clone)]
@@ -6196,7 +6259,8 @@ fn me_section_data(title: &'static str, rows: Vec<DataRow>) -> SystemSection {
 }
 
 /// ADR-126: group the existing `Я` controls by device domain.
-/// Empty `Приложения` is omitted. Memory is not a row.
+/// Empty `Приложения` is omitted. Memory rows come only from status
+/// `memory_records` (ADR-268), never from JSONL or MemoryRecall.
 fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
     let pin_status = if facts.pin_set {
         "Установлен"
@@ -6374,6 +6438,15 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
             .map(|obs| SettingRow::readout(obs.label.clone(), obs.value_line()).row)
             .collect();
         sections.insert(1, me_section_data("Наблюдения", rows));
+    }
+    if !facts.memory_records.is_empty() {
+        let rows = facts
+            .memory_records
+            .iter()
+            .map(|rec| SettingRow::readout(rec.key.clone(), rec.value_line()).row)
+            .collect();
+        let at = if facts.observations.is_empty() { 1 } else { 2 };
+        sections.insert(at, me_section_data("Записи", rows));
     }
     if !facts.apps.is_empty() {
         let rows = facts
@@ -6636,6 +6709,7 @@ fn me_fixture_facts() -> MeFacts {
         appd_connected: true,
         apps: Vec::new(),
         observations: Vec::new(),
+        memory_records: Vec::new(),
     }
 }
 
@@ -10453,6 +10527,7 @@ impl Shell {
                 }
             })
             .collect();
+        let live = read_runtime_live_facts();
         MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
@@ -10490,7 +10565,8 @@ impl Shell {
             entityd_connected: self.entityd.is_connected(),
             appd_connected: self.appd.is_connected(),
             apps,
-            observations: read_live_observations(),
+            observations: live.observations,
+            memory_records: live.memory_records,
         }
     }
 
@@ -15935,6 +16011,60 @@ mod tests {
         assert!(!rows
             .iter()
             .any(|row| row.card.label.contains("Android") || row.card.status.contains("Android")));
+    }
+
+    #[test]
+    fn live_memory_records_from_status_json_keep_only_global() {
+        assert!(
+            super::live_memory_records_from_status_json(&serde_json::json!({"ok": true}))
+                .is_empty()
+        );
+        let rows = super::live_memory_records_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": {
+                "memory_records": [
+                    {
+                        "key": "host.role",
+                        "value": "home",
+                        "space": "global",
+                        "kind": "explicit_fact"
+                    },
+                    {
+                        "key": "deploy",
+                        "value": "secret",
+                        "space": "work",
+                        "kind": "explicit_fact"
+                    },
+                    { "key": "", "value": "x", "space": "global", "kind": "explicit_fact" }
+                ]
+            }
+        }));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "host.role");
+        assert_eq!(rows[0].value, "home");
+        assert_eq!(rows[0].kind, "explicit_fact");
+        assert!(!rows.iter().any(|row| row.key == "deploy"));
+    }
+
+    #[test]
+    fn me_system_sections_show_global_memory_records() {
+        let mut facts = me_fixture_facts();
+        facts.memory_records = vec![super::LiveMemoryFact {
+            key: "host.role".into(),
+            value: "home".into(),
+            kind: "explicit_fact".into(),
+        }];
+        let sections = me_system_sections(&facts);
+        assert_eq!(sections[1].title, "Записи");
+        let rows = flatten_me_rows(&sections);
+        let remembered = rows
+            .iter()
+            .find(|row| row.card.label == "host.role")
+            .expect("global memory row");
+        assert!(remembered.card.status.contains("home"));
+        assert!(remembered.card.status.contains("explicit_fact"));
+        assert!(remembered.dispatch.is_none());
+        assert!(!rows.iter().any(|row| row.card.label == "deploy"));
     }
 
     #[test]
