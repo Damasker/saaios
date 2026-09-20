@@ -1177,7 +1177,7 @@ hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
 (ADR-213); list trailing rows (ADR-214); Me flatten/scroll
 (ADR-215). Production `compile_v2()` / `layout_v2`
 `root_view` (ADR-216); NOW compiled hits (ADR-217); live list
-hits (ADR-218); Me scroll (ADR-219). Release
+hits (ADR-218); Me scroll (ADR-219); apps grid (ADR-220). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1249,6 +1249,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (ADR-218). Me scroll, apps grid, and overlays stay formulas.
 - [x] Me scroll hits from `layout_v2_scrolled` (ADR-219). Apps grid
   and overlays stay formulas.
+- [x] Apps grid hits from generated `compile_v2()` `Button` tiles
+  (ADR-220). Overlays with vocabulary stay next.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

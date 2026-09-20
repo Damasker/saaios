@@ -16,7 +16,8 @@ is host (`flatten_me_rows` / `scrolled_row_rect`, ADR-215).
 Production is `compile_v2()` (ADR-216). NOW content hits use
 compiled `now.sui` (ADR-217). Inbox/Spaces/list hits generate
 `compile_v2()` documents (ADR-218). Me scroll uses
-`layout_v2_scrolled` (ADR-219).
+`layout_v2_scrolled` (ADR-219). Apps grid hits use generated
+`compile_v2()` `Button` tiles (ADR-220).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).

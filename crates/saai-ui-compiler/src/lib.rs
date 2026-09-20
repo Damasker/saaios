@@ -1231,6 +1231,7 @@ mod tests {
         assert!(limits.contains("now.sui"));
         assert!(limits.contains("ADR-218"));
         assert!(limits.contains("ADR-219"));
+        assert!(limits.contains("ADR-220"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1244,5 +1245,9 @@ mod tests {
         assert!(ledger.contains("now.sui"));
         assert!(ledger.contains("ADR-218"));
         assert!(ledger.contains("ADR-219"));
+        assert!(ledger.contains("layout_v2_scrolled"));
+        assert!(ledger.contains("ADR-220"));
+        assert!(ledger.contains("now_grid_rect"));
+        assert!(ledger.contains("manage_app"));
     }
 }

@@ -78,6 +78,7 @@ ADR-216 production `compile_v2()` / `layout_v2` `root_view`.
 ADR-217 NOW content hits from compiled `now.sui`.
 ADR-218 Inbox/Spaces/list hits from generated `compile_v2()`.
 ADR-219 Me scroll hits from `layout_v2_scrolled`.
+ADR-220 apps grid hits from generated `compile_v2()` `Button` tiles.
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

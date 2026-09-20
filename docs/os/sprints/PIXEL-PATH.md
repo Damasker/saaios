@@ -178,7 +178,8 @@ host-only derived view.
 | VUI-09 v2 production | `compile_v2()` + `layout_v2` `root_view` **на panther** (ADR-216; `c05eedf9…`; leave Сейчас) |
 | VUI-09 v2 NOW hits | compiled `now.sui` footer/object **на panther** (ADR-217; `d9faae38…`; leave Сейчас) |
 | VUI-09 v2 live lists | generated Inbox/Spaces/Wi-Fi/Bluetooth/trusted hits **на panther** (ADR-218; `c8870c10…`; leave Сейчас) |
-| VUI-09 v2 Me scroll | `layout_v2_scrolled` **device** (ADR-219) |
+| VUI-09 v2 Me scroll | `layout_v2_scrolled` **на panther** (ADR-219; `44afa590…`; leave Сейчас) |
+| VUI-09 v2 apps grid | generated `Button` tiles match `now_grid_rect` **host** (ADR-220) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

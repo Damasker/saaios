@@ -20,6 +20,8 @@
 //! `scrolled_row_rect` at offset 0.
 //! ADR-219: stacked rows overlay via `Node::stack` so `layout_v2_scrolled`
 //! matches `scrolled_row_rect` after a drag.
+//! ADR-220: `Button` tiles overlay the 3-column apps grid so hits match
+//! `now_grid_rect`. Linear layout cannot place a column beside another.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -223,6 +225,71 @@ fn v2_placed_slot(
     )
 }
 
+const V2_GRID_COLUMNS: u32 = 3;
+const V2_GRID_CELL_HEIGHT_2400: u32 = 300;
+const V2_GRID_ROW_GAP_2400: u32 = 40;
+const V2_GRID_TOP_2400: u32 = 430;
+
+/// Live `now_grid_rect`: 3 columns, design-canvas tops scaled by panel
+/// height. Column gap is `margin / 2`, same as the shell paint formula.
+fn v2_grid_rect(index: usize, width: u32, height: u32) -> Rect {
+    let margin = width / 22;
+    let columns = V2_GRID_COLUMNS;
+    let gap = margin / 2;
+    let usable_width = width.saturating_sub(margin * 2);
+    let cell_width = usable_width.saturating_sub(gap * (columns - 1)) / columns;
+    let row = index as u32 / columns;
+    let column = index as u32 % columns;
+    let top_2400 = V2_GRID_TOP_2400 + row * (V2_GRID_CELL_HEIGHT_2400 + V2_GRID_ROW_GAP_2400);
+    let top = ((u64::from(top_2400) * u64::from(height)) / 2400) as u32;
+    let cell_height = ((u64::from(V2_GRID_CELL_HEIGHT_2400) * u64::from(height)) / 2400) as u32;
+    Rect::new(
+        margin + column * (cell_width + gap),
+        top,
+        cell_width,
+        cell_height,
+    )
+}
+
+fn v2_placed_grid_slot(
+    screen_id: &str,
+    index: usize,
+    id: String,
+    action: Option<String>,
+    panel_width: u32,
+    panel_height: u32,
+) -> Node {
+    let margin = panel_width / 22;
+    let rect = v2_grid_rect(index, panel_width, panel_height);
+    let inner_x = rect.x.saturating_sub(margin);
+    let y_spacer = Node::leaf(format!("{screen_id}-grid-y-{index}"))
+        .with_size(Length::Fill, Length::Px(rect.y));
+    let x_spacer = Node::leaf(format!("{screen_id}-grid-x-{index}"))
+        .with_size(Length::Px(inner_x), Length::Px(rect.height));
+    let mut cell = Node::leaf(id).with_size(Length::Px(rect.width), Length::Px(rect.height));
+    if let Some(action) = action {
+        cell = cell.with_action(action);
+    }
+    let row = Node::linear(
+        format!("{screen_id}-grid-row-{index}"),
+        Axis::Horizontal,
+        vec![x_spacer, cell],
+    )
+    .with_size(Length::Fill, Length::Px(rect.height));
+    Node::linear(
+        format!("{screen_id}-grid-place-{index}"),
+        Axis::Vertical,
+        vec![y_spacer, row],
+    )
+}
+
+fn v2_grid_action(tile: &crate::SuiV2Component) -> Option<String> {
+    if tile.props.a11y.as_deref() != Some("Button") {
+        return None;
+    }
+    tile.props.loc.clone()
+}
+
 fn v2_stacked_action(row: &crate::SuiV2Component) -> Option<String> {
     if matches!(row.type_name.as_str(), "SystemSection" | "CapabilityRow")
         || row.props.a11y.as_deref() != Some("Button")
@@ -251,6 +318,7 @@ fn v2_content_node(
     let mut header = None;
     let mut object = None;
     let mut stacked = Vec::new();
+    let mut grid = Vec::new();
     let mut rest = Vec::new();
     for component in screen
         .components
@@ -262,13 +330,14 @@ fn v2_content_node(
             "ObjectSummary" if object.is_none() => object = Some(component),
             "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" | "WifiRow"
             | "BluetoothRow" | "TrustedClientRow" | "CapabilityRow" => stacked.push(component),
+            "Button" if component.props.loc.is_some() => grid.push(component),
             _ => rest.push(component),
         }
     }
     let header_height = if header.is_some() {
         if object.is_some() {
             v2_now_header_height(content_height)
-        } else if !stacked.is_empty() {
+        } else if !stacked.is_empty() || !grid.is_empty() {
             v2_stacked_row_top(0, height)
         } else {
             0
@@ -363,6 +432,21 @@ fn v2_content_node(
             ));
         }
     }
+    for (index, tile) in grid.iter().enumerate() {
+        let id = tile
+            .props
+            .loc
+            .clone()
+            .unwrap_or_else(|| format!("Button-{index}"));
+        layers.push(v2_placed_grid_slot(
+            &screen.id,
+            index,
+            id,
+            v2_grid_action(tile),
+            width,
+            height,
+        ));
+    }
     for component in rest {
         layers.push(Node::leaf(component.type_name.clone()));
     }
@@ -451,7 +535,7 @@ pub fn layout_v2_scrolled(
 
 #[cfg(test)]
 mod tests {
-    use super::{layout_v1_find, layout_v1_root, layout_v2, layout_v2_scrolled};
+    use super::{layout_v1_find, layout_v1_root, layout_v2, layout_v2_scrolled, v2_grid_rect};
     use crate::{compile_v1_rollback, compile_v2, compile_v2_public};
 
     #[test]
@@ -773,6 +857,69 @@ mod tests {
                 .and_then(|node| node.action.as_deref()),
             Some("row7")
         );
+    }
+
+    #[test]
+    fn layout_v2_apps_grid_matches_now_grid_rect() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen apps {
+              component ContextHeader {}
+              component Button {
+                a11y = Button
+                loc = "manage_app:demo"
+              }
+              component Button {
+                a11y = Status
+                loc = "manage_app:quiet"
+              }
+              component BottomNavigation {
+                tab now {}
+                tab inbox {}
+                tab spaces {}
+                tab me {}
+              }
+            }
+            "#,
+        )
+        .expect("apps grid");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        let cell_0 = v2_grid_rect(0, 1080, 2400);
+        let cell_1 = v2_grid_rect(1, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(f64::from(cell_0.x + 10), f64::from(cell_0.y + 10))
+                .and_then(|node| node.action.as_deref()),
+            Some("manage_app:demo")
+        );
+        assert!(v2
+            .hit_test(f64::from(cell_1.x + 10), f64::from(cell_1.y + 10))
+            .is_none());
+        assert!(v2.hit_test(540.0, 250.0).is_none());
+        assert_eq!(
+            v2.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
+            Some("now")
+        );
+        let empty = compile_v2(
+            r#"
+            sui 2
+            screen apps {
+              component ContextHeader {}
+              component SurfacePattern {}
+              component BottomNavigation {
+                tab now {}
+                tab inbox {}
+                tab spaces {}
+                tab me {}
+              }
+            }
+            "#,
+        )
+        .expect("empty apps");
+        let tree = layout_v2(&empty, 1080, 2400);
+        assert!(tree
+            .hit_test(f64::from(cell_0.x + 10), f64::from(cell_0.y + 10))
+            .is_none());
     }
 
     #[test]

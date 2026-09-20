@@ -5027,21 +5027,24 @@ fn space_row_at(
         .map(str::to_string)
 }
 
-/// ADR-138 / ADR-187: the apps grid only hits live `installed_apps`.
-/// Intent compose stays on the composed footer, not as extra tiles.
-/// S23 still owns the 3-column `now_grid_rect` math.
+/// ADR-138 / ADR-187 / ADR-220: the apps grid only hits live
+/// `installed_apps`. Intent compose stays on the composed footer,
+/// not as extra tiles. Hits come from generated `compile_v2()`
+/// `Button` tiles laid out like `now_grid_rect`.
 fn now_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     installed_apps: &BTreeMap<String, AppSummary>,
 ) -> Option<String> {
-    for (index, app) in installed_apps.values().enumerate() {
-        if now_grid_rect(index, width, height).contains(pos.0, pos.1) {
-            return Some(format!("manage_app:{}", app.id));
-        }
-    }
-    None
+    let (_, action) = live_v2_hit(
+        &apps_v2_source(installed_apps),
+        "ADR-220 apps",
+        pos,
+        width,
+        height,
+    )?;
+    action.filter(|value| value.starts_with("manage_app:"))
 }
 
 /// ADR-138: section title is always `Приложения`. Offline `appd`
@@ -5590,6 +5593,24 @@ fn me_v2_source(rows: &[MeRow]) -> String {
                 &format!("me.quiet.{index}"),
             ));
         }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
+fn apps_v2_source(installed_apps: &BTreeMap<String, AppSummary>) -> String {
+    let mut src = String::from("sui 2\nscreen apps {\n");
+    src.push_str(&v2_header_block("apps.header"));
+    for app in installed_apps.values() {
+        src.push_str(&v2_stacked_block(
+            "Button",
+            "Button",
+            &format!("manage_app:{}", app.id),
+        ));
+    }
+    if installed_apps.is_empty() {
+        src.push_str(&v2_stacked_block("SurfacePattern", "Status", "apps.empty"));
     }
     src.push_str(V2_ROOT_TABS);
     src.push('}');
