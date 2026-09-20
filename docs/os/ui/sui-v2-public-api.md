@@ -45,10 +45,11 @@ labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `SpaceRow` invents no `select_space`.
 
 [`examples/me-public.sui`](examples/me-public.sui) is the
-labelled Me sample: `ContextHeader`, `SettingRow` with
-`a11y = Button` and interned `loc = cycle_timezone` (ADR-204),
-and the same nested tabs. Status `SettingRow` and `SystemSection`
-invent no interned action.
+labelled Me sample: `ContextHeader`, a `SystemSection` header, the
+live «Устройство» prefix, and interned `cycle_timezone` at flatten
+index 4 (ADR-204/215), plus the same nested tabs. Status
+`SettingRow` and `SystemSection` invent no interned action. Rows
+that fail `scrolled_row_rect` at offset 0 are not hittable.
 
 [`examples/wifi-public.sui`](examples/wifi-public.sui) is the
 labelled Wi-Fi sample: `ContextHeader`, `WifiRow` with
@@ -113,7 +114,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   occupies Me app stacked hits with no action (ADR-208);
   `compile_v2_public()` rejects the name. Nested trailing `row`
   ids own list Обновить/Искать/Назад (`list_refresh` / `list_scan` /
-  `list_back`, ADR-214).
+  `list_back`, ADR-214). Me flatten/scroll matches `flatten_me_rows`
+  / `scrolled_row_rect` at offset 0 (ADR-215).
 
 ## Migration
 
@@ -134,7 +136,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Inbox `EventRow` with `a11y = Status` | stacked rect, no `open_object` |
 | Wanting Spaces hit-test from a v2 screen | `component SpaceRow` + `a11y = Button` + `layout_v2` |
 | Spaces `SpaceRow` with `a11y = Status` | stacked rect, no `select_space` |
-| Wanting Me hit-test from a v2 screen | `component SettingRow` + `a11y = Button` + interned `loc` + `layout_v2` |
+| Wanting Me hit-test from a v2 screen | `component SettingRow` + `a11y = Button` + interned `loc` + flatten order + `layout_v2` |
+| Me row that fails `scrolled_row_rect` at offset 0 | no hit; do not invent a clipped action |
 | Me `SettingRow` with `a11y = Status` | stacked rect, no interned action |
 | Wanting Wi-Fi trailing hits from a v2 screen | nested `row refresh` / `row back` + `layout_v2` |
 | Screen without trailing `row` | no `list_back`; do not invent Назад |

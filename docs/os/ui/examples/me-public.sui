@@ -7,6 +7,26 @@ screen me {
     focus = 0
     inset = safe
   }
+  component SystemSection {
+    text = Title
+    a11y = Heading
+    loc = me.device
+  }
+  component SettingRow {
+    text = Body
+    a11y = Status
+    loc = me.device.readout
+  }
+  component SettingRow {
+    text = Body
+    a11y = Button
+    loc = tap_build_info
+  }
+  component SettingRow {
+    text = Body
+    a11y = Status
+    loc = me.updates.readout
+  }
   component SettingRow {
     text = Body
     a11y = Button

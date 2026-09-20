@@ -1052,10 +1052,12 @@ mod tests {
         let me = compile_v2_public(ME).unwrap();
         assert_eq!(me.id, "me");
         assert!(!me.is_privileged());
-        assert_eq!(me.components[1].type_name, "SettingRow");
-        assert_eq!(me.components[1].props.a11y.as_deref(), Some("Button"));
+        assert_eq!(me.components[1].type_name, "SystemSection");
+        assert_eq!(me.components[1].props.a11y.as_deref(), Some("Heading"));
+        assert_eq!(me.components[5].type_name, "SettingRow");
+        assert_eq!(me.components[5].props.a11y.as_deref(), Some("Button"));
         assert_eq!(
-            me.components[1].props.loc.as_deref(),
+            me.components[5].props.loc.as_deref(),
             Some("cycle_timezone")
         );
         assert!(guide.contains("me-public.sui"));
@@ -1170,6 +1172,9 @@ mod tests {
         assert!(ledger.contains("ADR-214"));
         assert!(ledger.contains("list_back"));
         assert!(ledger.contains("stacked_trailing_rect"));
+        assert!(ledger.contains("ADR-215"));
+        assert!(ledger.contains("scrolled_row_rect"));
+        assert!(ledger.contains("flatten_me_rows"));
         let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
         assert!(limits.contains("not Visual v1 sign-off"));
         assert!(limits.contains("ADR-196"));
@@ -1206,6 +1211,9 @@ mod tests {
         assert!(limits.contains("ADR-214"));
         assert!(limits.contains("list_back"));
         assert!(limits.contains("stacked_trailing_rect"));
+        assert!(limits.contains("ADR-215"));
+        assert!(limits.contains("scrolled_row_rect"));
+        assert!(limits.contains("flatten_me_rows"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));

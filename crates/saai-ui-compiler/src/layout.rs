@@ -17,6 +17,8 @@
 //! ADR-208: `CapabilityRow` docks as live Me app stacked rows.
 //! ADR-214: nested `row refresh`/`scan`/`back` dock as live list
 //! trailing controls.
+//! ADR-215: Me `SystemSection`/`SettingRow` flatten clips like
+//! `scrolled_row_rect` at offset 0.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -165,6 +167,26 @@ fn v2_is_trailing_row(id: &str) -> bool {
     matches!(id, "refresh" | "scan" | "back")
 }
 
+/// Live `me_action_at` uses `scrolled_row_rect` at offset 0: a stacked
+/// row that does not sit wholly inside the content pane (above tabs)
+/// is neither drawn nor hittable. Inbox/Spaces/lists keep unclipped
+/// `stacked_row_rect`.
+fn v2_me_scroll_clip(screen: &SuiV2Screen) -> bool {
+    !v2_named_tabs(screen).is_empty()
+        && screen.components.iter().any(|component| {
+            matches!(
+                component.type_name.as_str(),
+                "SystemSection" | "SettingRow" | "DataRow" | "CapabilityRow"
+            )
+        })
+}
+
+fn v2_stacked_fits_content(index: usize, panel_height: u32, content_height: u32) -> bool {
+    let top = v2_stacked_row_top(index, panel_height);
+    let bottom = top.saturating_add(v2_stacked_row_height(panel_height));
+    top < content_height && bottom <= content_height
+}
+
 /// Live `stacked_control_rect`: if the stacked slot would paint below
 /// the panel, dock to the last on-screen row.
 fn v2_control_top(index: usize, panel_height: u32) -> u32 {
@@ -247,9 +269,13 @@ fn v2_content_node(screen: &SuiV2Screen, width: u32, height: u32, content_height
         Some(v2_trailing_top(stacked.len(), last, height))
     };
     let stacked_height = v2_stacked_row_height(height);
+    let clip_to_content = v2_me_scroll_clip(screen);
     for (index, row) in stacked.iter().enumerate() {
         let top = v2_stacked_row_top(index, height);
         if trailing_first_top.is_some_and(|first| top.saturating_add(stacked_height) > first) {
+            continue;
+        }
+        if clip_to_content && !v2_stacked_fits_content(index, height, content_height) {
             continue;
         }
         if top > cursor {
@@ -575,13 +601,21 @@ mod tests {
         let source = include_str!("../../../docs/os/ui/examples/me-public.sui");
         let screen = compile_v2_public(source).expect("public Me");
         let v2 = layout_v2(&screen, 1080, 2400);
+        assert!(v2.hit_test(540.0, 525.0).is_none());
+        assert!(v2.hit_test(540.0, 745.0).is_none());
         assert_eq!(
-            v2.hit_test(540.0, 525.0)
+            v2.hit_test(540.0, 965.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("tap_build_info")
+        );
+        assert!(v2.hit_test(540.0, 1185.0).is_none());
+        assert_eq!(
+            v2.hit_test(540.0, 1405.0)
                 .and_then(|node| node.action.as_deref()),
             Some("cycle_timezone")
         );
         assert_eq!(
-            v2.hit_test(540.0, 525.0).map(|node| node.id.as_str()),
+            v2.hit_test(540.0, 1405.0).map(|node| node.id.as_str()),
             Some("cycle_timezone")
         );
         assert!(v2.hit_test(540.0, 250.0).is_none());
@@ -615,6 +649,36 @@ mod tests {
         assert!(tree.hit_test(540.0, 745.0).is_none());
         assert_eq!(
             tree.hit_test(945.0, 2250.0).map(|node| node.id.as_str()),
+            Some("me")
+        );
+    }
+
+    #[test]
+    fn layout_v2_me_rows_clip_to_content_at_zero_scroll() {
+        let mut source = String::from("sui 2\nscreen me {\n  component ContextHeader {}\n");
+        for index in 0..8 {
+            source.push_str(&format!(
+                "  component SettingRow {{ a11y = Button loc = row{index} }}\n"
+            ));
+        }
+        source.push_str(
+            "  component BottomNavigation {\n    tab now {}\n    tab inbox {}\n    tab spaces {}\n    tab me {}\n  }\n}\n",
+        );
+        let screen = compile_v2(&source).expect("clipped Me");
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(540.0, 525.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("row0")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 1845.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("row6")
+        );
+        assert!(v2.hit_test(540.0, 2065.0).is_none());
+        assert_eq!(
+            v2.hit_test(945.0, 2250.0).map(|node| node.id.as_str()),
             Some("me")
         );
     }

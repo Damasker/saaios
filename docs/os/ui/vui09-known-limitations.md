@@ -10,7 +10,8 @@ MEM-08 omitted until a shell-legal memory read exists.
 Current panther shell: `3850427a…` (ADR-198). Lock cycle is proven
 (ADR-209). Display restart is proven (ADR-210). Cold boot is proven
 (ADR-211). 7-tap gallery is proven (ADR-212). Parked last: thin tuning
-(ADR-213). List trailing rows are host (ADR-214).
+(ADR-213). List trailing rows are host (ADR-214). Me flatten/scroll
+is host (`flatten_me_rows` / `scrolled_row_rect`, ADR-215).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -126,9 +127,8 @@ Ordered. Items 1–3 and 7–17 are done
     `layout_v2()` to `build.rs` yet.
 13. ~~Dock `SettingRow` so `layout_v2()` matches Me
     `stacked_row_rect`.~~ Host: Button → interned `loc`
-    (`cycle_timezone`, ADR-204). Do not tap live Me rows. Live
-    flatten/scroll stays procedural. Do not attach `layout_v2()` to
-    `build.rs` yet.
+    (`cycle_timezone`, ADR-204). Flatten/scroll is ADR-215. Do not
+    attach `layout_v2()` to `build.rs` yet.
 14. ~~Dock `WifiRow` so `layout_v2()` matches Wi-Fi
     `stacked_row_rect`.~~ Host: Button → `connect_wifi` (ADR-205).
     Trailing `row refresh`/`back` (ADR-214). Do not attach
@@ -150,7 +150,10 @@ Ordered. Items 1–3 and 7–17 are done
     `stacked_trailing_rect`.~~ Host: `list_refresh` / `list_scan` /
     `list_back` (ADR-214). Do not attach `layout_v2()` to `build.rs`
     yet.
-19. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+19. ~~Dock Me flatten/scroll so `layout_v2()` matches
+    `flatten_me_rows` / `scrolled_row_rect` at offset 0.~~ Host
+    (ADR-215). Do not attach `layout_v2()` to `build.rs` yet.
+20. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 
