@@ -185,7 +185,8 @@ host-only derived view.
 | VUI-09 v2 Orb hits | generated `OrbHost` / `orb-menu:` match `orb_zone_rect` **на panther** (ADR-223; `a49dfadf…`; do not tap Изменить; leave Сейчас) |
 | VUI-09 v2 diagnostic hits | generated `DataRow` + `row back` match `stacked_control_rect` **host** (ADR-224; do not 7-tap; leave Сейчас) |
 | VUI-09 NOW paint | `draw_now` chrome slots from `now_view()` **на panther** (ADR-225; `94613f7a…`; leave Сейчас) |
-| VUI-09 list paint | Inbox/Spaces/Wi-Fi/Bluetooth/trusted cards from generated `layout_v2` **host** (ADR-226; leave Сейчас) |
+| VUI-09 list paint | Inbox/Spaces/Wi-Fi/Bluetooth/trusted cards from generated `layout_v2` **на panther** (ADR-226; `f91144ab…`; leave Сейчас) |
+| VUI-09 Me paint | «Я» cards from `layout_v2_scrolled` **host** (ADR-227; do not open «Я»; leave Сейчас) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

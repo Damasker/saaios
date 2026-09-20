@@ -109,7 +109,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   panel (ADR-222). Privileged `OrbHost` matches the live Orb zone
   (ADR-223). Privileged `diagnostic` Назад matches `stacked_control_rect`
   (ADR-224). NOW chrome paint reads that tree (ADR-225). List paint
-  reads generated list documents (ADR-226). `layout_v2()`
+  reads generated list documents (ADR-226). Me scroll paint reads
+  `layout_v2_scrolled` (ADR-227). `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
   `inset = safe` uses

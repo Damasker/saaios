@@ -35,6 +35,7 @@
 //! tree as hits. Live SystemSection rows stay runtime content.
 //! ADR-226: Inbox/Spaces/Wi-Fi/Bluetooth/trusted paint reads the
 //! generated list trees hit-test already uses.
+//! ADR-227: Me paint reads the same `layout_v2_scrolled` tree as hits.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,

@@ -1078,6 +1078,21 @@ fn layout_live_v2(source: &str, why: &'static str, width: u32, height: u32) -> L
     saai_ui_compiler::layout_v2(&compile_live_v2(source, why), width, height)
 }
 
+fn layout_live_v2_scrolled(
+    source: &str,
+    why: &'static str,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> LayoutNode {
+    saai_ui_compiler::layout_v2_scrolled(
+        &compile_live_v2(source, why),
+        width,
+        height,
+        scroll_offset,
+    )
+}
+
 fn live_v2_hit(
     source: &str,
     why: &'static str,
@@ -1098,14 +1113,9 @@ fn live_v2_hit_scrolled(
     height: u32,
     scroll_offset: i32,
 ) -> Option<(String, Option<String>)> {
-    saai_ui_compiler::layout_v2_scrolled(
-        &compile_live_v2(source, why),
-        width,
-        height,
-        scroll_offset,
-    )
-    .hit_test(pos.0, pos.1)
-    .map(|node| (node.id.clone(), node.action.clone()))
+    layout_live_v2_scrolled(source, why, width, height, scroll_offset)
+        .hit_test(pos.0, pos.1)
+        .map(|node| (node.id.clone(), node.action.clone()))
 }
 
 /// Content pane of the root layout — everything except the bottom
@@ -3387,6 +3397,25 @@ fn list_paint_cards(
         .collect()
 }
 
+fn me_row_loc(index: usize, row: &MeRow) -> String {
+    match row.dispatch {
+        Some(action) => action.to_string(),
+        None => format!("me.quiet.{index}"),
+    }
+}
+
+/// ADR-227: paint only rows still present after `layout_v2_scrolled`
+/// clips them. Missing locs are off-screen, not invented Buttons.
+fn me_paint_cards(tree: &LayoutNode, rows: &[MeRow]) -> Vec<(Rect, render::ActionCardView)> {
+    rows.iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            saai_ui_compiler::layout_v1_find(tree, &me_row_loc(index, row))
+                .map(|node| (node.rect, row.card.clone()))
+        })
+        .collect()
+}
+
 fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
     render::NowPaintChrome {
         header: now_node_rect(view, "ContextHeader"),
@@ -5331,7 +5360,7 @@ fn scrolled_row_rect(
 /// How far "Я"'s content list can scroll before its last row's bottom
 /// edge reaches the content area's own bottom edge -- the usual
 /// "don't scroll past the end" clamp, shared by the live drag in
-/// `TouchHandler::motion` and the defensive clamp `me_content_cards`/
+/// `TouchHandler::motion` and the defensive clamp Frame::Me /
 /// `me_action_at` apply in case `installed_apps` shrank while "Я"
 /// wasn't the visible tab and left a stale, now-too-large offset.
 fn me_max_scroll_offset(total_rows: usize, width: u32, height: u32, content_rect: Rect) -> i32 {
@@ -5663,14 +5692,11 @@ fn me_v2_source(rows: &[MeRow]) -> String {
     let mut src = String::from("sui 2\nscreen me {\n");
     src.push_str(&v2_header_block("me.header"));
     for (index, row) in rows.iter().enumerate() {
-        if let Some(action) = row.dispatch {
-            src.push_str(&v2_stacked_block("SettingRow", "Button", action));
+        let loc = me_row_loc(index, row);
+        if row.dispatch.is_some() {
+            src.push_str(&v2_stacked_block("SettingRow", "Button", &loc));
         } else {
-            src.push_str(&v2_stacked_block(
-                "SettingRow",
-                "Status",
-                &format!("me.quiet.{index}"),
-            ));
+            src.push_str(&v2_stacked_block("SettingRow", "Status", &loc));
         }
     }
     src.push_str(V2_ROOT_TABS);
@@ -7848,18 +7874,30 @@ impl Shell {
                 rows: self.spaces_content_cards_from(&view),
             }
         } else if self.current_page == RootPage::Me {
-            let view = root_view(width, height);
+            let all = self.me_all_rows();
+            let content_rect = root_view(width, height).children[0].rect;
+            let offset = self.me_scroll_offset.clamp(
+                0,
+                me_max_scroll_offset(all.len(), width, height, content_rect),
+            );
+            let view = layout_live_v2_scrolled(
+                &me_v2_source(&all),
+                "ADR-227 me paint",
+                width,
+                height,
+                offset,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::Me {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: me_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
                     self.entityd.is_connected(),
                     archived,
                 ),
-                rows: self.me_content_cards(width, height),
+                rows: me_paint_cards(&view, &all),
                 paint_navigation: !content_only,
             }
         } else {
@@ -8685,7 +8723,7 @@ impl Shell {
     }
 
     /// Hit-test uses the same flattened `me_all_rows` list
-    /// `me_content_cards` draws, so section headers stay inert and
+    /// `me_paint_cards` draws, so section headers stay inert and
     /// dispatch keys do not depend on a frozen index table.
     fn me_action_at(&self, pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
         let all = self.me_all_rows();
@@ -9384,35 +9422,6 @@ impl Shell {
             rows.iter().map(space_card_from_row).collect(),
             &ids,
         )
-    }
-
-    /// S13 Change 3: "Я" -- a device/apps summary built entirely from
-    /// state this client already tracks (`spaces`, `entity_counts`,
-    /// `installed_apps`) plus each app's currently granted
-    /// capabilities (`capability_label`, same vocabulary the consent
-    /// screen already uses). Read-only -- no protocol supports
-    /// revoking one capability from an already-decided app (see
-    /// ADR-054's notes on `saai-app-protocol`), so there is nothing
-    /// for a tap here to do yet.
-    /// Real drag-to-scroll (`TouchHandler::down`/`motion`/`up`) --
-    /// every row of `me_all_rows` that currently fits inside
-    /// the content area at `self.me_scroll_offset`, positioned by
-    /// `scrolled_row_rect`. No more "Ещё"/"Назад" nav rows to append:
-    /// the scroll gesture itself is the navigation now.
-    fn me_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let all = self.me_all_rows();
-        let content_rect = root_view(width, height).children[0].rect;
-        let offset = self.me_scroll_offset.clamp(
-            0,
-            me_max_scroll_offset(all.len(), width, height, content_rect),
-        );
-        all.into_iter()
-            .enumerate()
-            .filter_map(|(index, row)| {
-                scrolled_row_rect(index, width, height, offset, content_rect)
-                    .map(|rect| (rect, row.card))
-            })
-            .collect()
     }
 
     fn me_facts(&self) -> MeFacts {
@@ -12152,6 +12161,71 @@ mod tests {
         assert!(main.contains("ADR-226 wifi paint"));
         assert!(main.contains("ADR-226 bluetooth paint"));
         assert!(main.contains("ADR-226 trusted paint"));
+    }
+
+    #[test]
+    fn me_paint_rows_match_layout_v2_scrolled_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
+        let content = super::root_view(width, height).children[0].rect;
+        let view = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-227 me paint",
+            width,
+            height,
+            0,
+        );
+        let first = super::me_row_loc(0, &rows[0]);
+        assert_eq!(
+            super::v2_named_rect(&view, &first, "me"),
+            super::scrolled_row_rect(0, width, height, 0, content).expect("row0")
+        );
+        let index = rows
+            .iter()
+            .position(|row| row.dispatch == Some("cycle_timezone"))
+            .expect("fixture timezone");
+        let rest = super::scrolled_row_rect(index, width, height, 0, content)
+            .expect("timezone visible at rest");
+        assert_eq!(super::v2_named_rect(&view, "cycle_timezone", "me"), rest);
+        let cards = super::me_paint_cards(&view, &rows);
+        assert_eq!(
+            cards
+                .iter()
+                .find(|(rect, _)| *rect == rest)
+                .map(|(_, card)| card.label.as_str()),
+            Some("Часовой пояс")
+        );
+        let last = rows.len() - 1;
+        let hidden = (0..=last)
+            .rev()
+            .find(|&index| super::scrolled_row_rect(index, width, height, 0, content).is_none())
+            .expect("fixture overflows content");
+        assert!(
+            saai_ui_compiler::layout_v1_find(&view, &super::me_row_loc(hidden, &rows[hidden]))
+                .is_none()
+        );
+        let offset = 220;
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-227 me paint",
+            width,
+            height,
+            offset,
+        );
+        let moved = super::scrolled_row_rect(index, width, height, offset, content)
+            .expect("timezone visible after drag");
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "cycle_timezone", "me"),
+            moved
+        );
+        assert_ne!(rest, moved);
+        let nav = saai_ui_compiler::layout_v1_find(&view, "BottomNavigation").expect("tabs");
+        assert_eq!(nav.children.len(), 4);
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-227 me paint"));
+        assert!(main.contains("me_paint_cards"));
+        assert!(main.contains("layout_live_v2_scrolled"));
     }
 
     #[test]

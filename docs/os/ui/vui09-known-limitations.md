@@ -23,7 +23,8 @@ Field-bound IME; USB HID may replace the panel (ADR-222). OrbHost
 hits use generated `layout_v2` (ADR-223). Diagnostic Назад hits
 use generated `layout_v2` (ADR-224). NOW chrome paint reads the
 same `now_view()` tree (ADR-225). Inbox/Spaces/list paint reads the
-generated list trees (ADR-226).
+generated list trees (ADR-226). Me scroll paint reads
+`layout_v2_scrolled` (ADR-227).
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -187,8 +188,10 @@ Ordered. Items 1–3 and 7–17 are done
     stay their formulas.
 27. ~~NOW chrome paint from `layout_v2`.~~ Live (ADR-225).
 28. ~~Inbox/Spaces/list paint from `layout_v2`.~~ Host (ADR-226).
-    Me/apps/overlay paint stay procedural.
-29. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+    Apps/overlay paint stay procedural.
+29. ~~Me scroll paint from `layout_v2_scrolled`.~~ Host (ADR-227).
+    Apps/overlay paint stay procedural.
+30. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 
