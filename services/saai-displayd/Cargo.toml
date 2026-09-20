@@ -33,12 +33,14 @@ tempfile = "3"
 # Only for the wl_data_device_manager registry-presence test (ADR-021),
 # the text-input-v3 bind/enable/commit test (ADR-022), the
 # wp-fractional-scale-v1 preferred_scale test (ADR-266), the
-# input-method-v2 commit_string test (ADR-267), and the APP-04 OSK
-# two-client test (ADR-270) -- a plain client connecting to the real
-# spawned saai-displayd binary, the same way saai-demo-surface and
+# input-method-v2 commit_string test (ADR-267), the APP-04 OSK
+# two-client test (ADR-270), and the layer-shell size test
+# (ADR-271) -- a plain client connecting to the real spawned
+# saai-displayd binary, the same way saai-demo-surface and
 # saai-shell already do in production.
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-04: OSK keystrokes are saai-ui-core Keyboard actions, not a second map.
 saai-ui-core = { path = "../../crates/saai-ui-core" }

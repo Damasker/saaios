@@ -182,8 +182,9 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 ### APP-04: экранная клавиатура поверх APP-03
 
-- **Статус**: Host protocol Done, 2026-09-21, ADR-270. Panther chrome
-  waits next shell/displayd experiment.
+- **Статус**: Host protocol Done, 2026-09-21, ADR-270. Layer geometry
+  host ADR-271 (no more forced 120px top). Panther chrome waits next
+  shell/displayd experiment.
 - **Goal**: тап по текстовому полю стороннего Qt-приложения показывает
   клавиатуру, ввод долетает до приложения -- APP-KEYBOARD-01 из
   исходного плана, но через путь, который реально работает на этом

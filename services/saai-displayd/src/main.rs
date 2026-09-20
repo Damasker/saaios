@@ -21,6 +21,7 @@ use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 #[cfg(feature = "panther-hardware")]
 mod hardware;
 mod hid;
+mod layer_geom;
 mod text_ime;
 #[cfg(feature = "panther-hardware")]
 mod touch;
@@ -72,7 +73,10 @@ use smithay::{
         },
         session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
         shell::{
-            wlr_layer::{LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
+            wlr_layer::{
+                Anchor, LayerSurface, LayerSurfaceCachedState, WlrLayerShellHandler,
+                WlrLayerShellState,
+            },
             xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{with_buffer_contents, ShmHandler, ShmState},
@@ -429,12 +433,9 @@ struct State {
     locked: bool,
     lock_surface: Option<LockSurface>,
     layer_shell_state: WlrLayerShellState,
-    /// Known layer surfaces (status bar / nav overlay per ADR-015) --
-    /// checked in commit()'s should_present branch so their frames reach
-    /// the panel. No spatial hit-testing wired up yet: touch routing
-    /// still only knows about `focused_surface`/`lock_surface`, so a
-    /// layer surface renders but cannot receive touch input in this
-    /// step -- known limitation, not a goal of this vertical slice.
+    /// Known layer surfaces (status bar / OSK). Placement follows the
+    /// client's size and anchor (ADR-271). Touch hits the topmost layer
+    /// under the contact, then `focused_surface`. Locked still wins.
     layer_surfaces: Vec<LayerSurface>,
 }
 
@@ -534,6 +535,80 @@ impl State {
             );
             self.request_recomposite();
         }
+    }
+
+    fn layer_client_size_anchor(
+        surface: &LayerSurface,
+        pending: bool,
+    ) -> (i32, i32, bool, bool, bool, bool) {
+        with_states(surface.wl_surface(), |states| {
+            let mut guard = states.cached_state.get::<LayerSurfaceCachedState>();
+            let cached = if pending {
+                *guard.pending()
+            } else {
+                *guard.current()
+            };
+            (
+                cached.size.w,
+                cached.size.h,
+                cached.anchor.contains(Anchor::TOP),
+                cached.anchor.contains(Anchor::BOTTOM),
+                cached.anchor.contains(Anchor::LEFT),
+                cached.anchor.contains(Anchor::RIGHT),
+            )
+        })
+    }
+
+    #[cfg_attr(not(feature = "panther-hardware"), allow(dead_code))]
+    fn layer_geom(&self, surface: &LayerSurface) -> layer_geom::LayerGeom {
+        let (requested_w, requested_h, top, bottom, left, right) =
+            Self::layer_client_size_anchor(surface, false);
+        let (width, height) = layer_geom::configure_size(
+            self.output_width,
+            self.output_height,
+            requested_w,
+            requested_h,
+        );
+        layer_geom::destination(
+            self.output_width,
+            self.output_height,
+            width,
+            height,
+            top,
+            bottom,
+            left,
+            right,
+        )
+    }
+
+    #[cfg_attr(not(feature = "panther-hardware"), allow(dead_code))]
+    fn touch_focus_at(
+        &self,
+        x: f64,
+        y: f64,
+    ) -> Option<(
+        WlSurface,
+        smithay::utils::Point<f64, smithay::utils::Logical>,
+    )> {
+        use smithay::utils::Point;
+        if self.locked {
+            return self
+                .lock_surface
+                .as_ref()
+                .map(|ls| (ls.wl_surface().clone(), Point::from((0.0, 0.0))));
+        }
+        for layer in self.layer_surfaces.iter().rev() {
+            let geom = self.layer_geom(layer);
+            if geom.contains(x, y) {
+                return Some((
+                    layer.wl_surface().clone(),
+                    Point::from((f64::from(geom.x), f64::from(geom.y))),
+                ));
+            }
+        }
+        self.focused_surface
+            .clone()
+            .map(|s| (s, Point::from((0.0, 0.0))))
     }
 }
 
@@ -731,6 +806,25 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        if let Some(layer) = self
+            .layer_surfaces
+            .iter()
+            .find(|layer| layer.wl_surface() == surface)
+            .cloned()
+        {
+            let (requested_w, requested_h, _, _, _, _) =
+                Self::layer_client_size_anchor(&layer, false);
+            let (width, height) = layer_geom::configure_size(
+                self.output_width,
+                self.output_height,
+                requested_w,
+                requested_h,
+            );
+            layer.with_pending_state(|state| {
+                state.size = Some((width, height).into());
+            });
+            layer.send_pending_configure();
+        }
         // Frame callbacks (`wl_surface.frame`) are acknowledged after
         // the DRM VBlank for the scene submitted by recomposite(), not
         // unconditionally here on every commit
@@ -1290,16 +1384,15 @@ impl WlrLayerShellHandler for State {
         _layer: smithay::wayland::shell::wlr_layer::Layer,
         namespace: String,
     ) {
-        // Minimal vertical slice (S04 Change 4, second half of ADR-015):
-        // prove the protocol renders end to end, same standard as the
-        // session-lock slice above. No real status-bar content yet and
-        // no per-client anchor/size negotiation -- every layer surface
-        // gets a fixed top strip, panel width x a fixed height, exactly
-        // like `new_surface` above always overrides with the real panel
-        // size rather than trusting client hints.
+        // ADR-271: honor the client's size. 0 on an axis means the
+        // output size (status bar width, OSK width). Do not force 120px
+        // top for every layer — APP-04's keyboard is a bottom strip.
         println!("saai-displayd: new layer surface, namespace={namespace:?}");
-        let width = self.output_width;
-        let height = 120;
+        let output_w = self.output_width;
+        let output_h = self.output_height;
+        let (requested_w, requested_h, _, _, _, _) = Self::layer_client_size_anchor(&surface, true);
+        let (width, height) =
+            layer_geom::configure_size(output_w, output_h, requested_w, requested_h);
         surface.with_pending_state(|state| {
             state.size = Some((width, height).into());
         });
@@ -1502,32 +1595,12 @@ fn main() {
                             };
                             let serial = SERIAL_COUNTER.next_serial();
                             let time = 0;
-                            // Computed once as an owned value (not a
-                            // closure over `state`): `touch.down(state, ...)`
-                            // needs `state` by mutable reference, which
-                            // would conflict with a closure still borrowing
-                            // it for this same call's other argument.
-                            //
-                            // ADR-015's security invariant enforced here, not
-                            // just in the session_lock protocol handlers:
-                            // while locked, touch goes to the lock surface
-                            // (or nowhere, if the client hasn't created one
-                            // yet) and never falls through to
-                            // `focused_surface` -- a locked screen must not
-                            // pass input to the app underneath.
-                            let focus = if state.locked {
-                                state
-                                    .lock_surface
-                                    .as_ref()
-                                    .map(|ls| (ls.wl_surface().clone(), Point::from((0.0, 0.0))))
-                            } else {
-                                state
-                                    .focused_surface
-                                    .clone()
-                                    .map(|s| (s, Point::from((0.0, 0.0))))
-                            };
+                            // ADR-015: while locked, touch goes to the lock
+                            // surface. Unlocked, ADR-271: topmost layer under
+                            // the contact, else focused_surface.
                             match update {
                                 touch::TouchUpdate::Down { x, y } => {
+                                    let focus = state.touch_focus_at(x as f64, y as f64);
                                     println!(
                                         "saai-displayd: touch down at ({x}, {y}), routed to: {:?} (locked={})",
                                         focus.as_ref().map(|(s, _)| s.id()),
@@ -1548,6 +1621,7 @@ fn main() {
                                     touch.frame(state);
                                 }
                                 touch::TouchUpdate::Motion { x, y } => {
+                                    let focus = state.touch_focus_at(x as f64, y as f64);
                                     let location = Point::from((x as f64, y as f64));
                                     touch.motion(
                                         state,
