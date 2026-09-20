@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–230; production `compile_v2()`; NOW through OrbHost paint from `layout_v2`; diagnostic paint still formula; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–231; production `compile_v2()`; NOW through diagnostic paint from `layout_v2`; Keyboard keys / gallery page / lock idle/wake stay formulas; not Visual v1 sign-off) |
 
 ---
 
@@ -1182,7 +1182,8 @@ Field/decision hits (ADR-221); Field-bound `Keyboard` IME with USB
 swap (ADR-222); OrbHost hits (ADR-223); diagnostic hits (ADR-224);
 NOW chrome paint (ADR-225); list paint (ADR-226); Me scroll paint
 (ADR-227); apps grid paint (ADR-228); overlay paint (ADR-229);
-OrbHost paint (ADR-230). Release
+OrbHost paint (ADR-230); diagnostic paint (ADR-231). Keyboard
+keys, gallery page, and lock idle/wake stay formulas. Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1277,7 +1278,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Overlay paint from the same generated `layout_v2` tree as hits
   (ADR-229). Keyboard keys stay a formula. OrbHost paint stayed next.
 - [x] OrbHost paint from the same generated `layout_v2` tree as hits
-  (ADR-230). Diagnostic paint stays next.
+  (ADR-230). Diagnostic paint stayed next.
+- [x] Diagnostic paint from the same generated `layout_v2_scrolled`
+  tree as hits (ADR-231). Keyboard keys, gallery page, and lock
+  idle/wake stay formulas. Do not 7-tap.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

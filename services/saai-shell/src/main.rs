@@ -2038,7 +2038,7 @@ fn trusted_client_action_at(
 }
 
 /// ADR-224: live DevSurface hits are generated `DataRow`s (read-only)
-/// plus trailing `row back`. Paint still uses `scrolled_row_rect`.
+/// plus trailing `row back`. Paint uses the same scrolled tree.
 fn diagnostic_v2_source(row_count: usize) -> String {
     let mut src = String::from("sui 2\nscreen diagnostic {\n");
     src.push_str(&v2_header_block("diagnostic.header"));
@@ -3441,6 +3441,28 @@ fn apps_paint_cards(
             )
         })
         .collect()
+}
+
+/// ADR-231: diagnostic DataRows from the same `layout_v2_scrolled`
+/// tree as Назад hits. Missing locs are clipped above the first
+/// stacked slot, not invented cards. Trailing `back` always docks.
+fn diagnostic_paint_cards(
+    tree: &LayoutNode,
+    rows: &[DataRow],
+) -> Vec<(Rect, render::ActionCardView)> {
+    let mut cards: Vec<(Rect, render::ActionCardView)> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            saai_ui_compiler::layout_v1_find(tree, &format!("diagnostic.{index}"))
+                .map(|node| (node.rect, diagnostic_card_from_row(row)))
+        })
+        .collect();
+    cards.push((
+        v2_named_rect(tree, "back", "ADR-231 diagnostic paint"),
+        render::ActionCardView::new("Назад", "", "Назад"),
+    ));
+    cards
 }
 
 fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
@@ -7849,28 +7871,25 @@ impl Shell {
             // ADR-152: header is a real `ContextHeader`, not a Surface
             // strip. `dev_surface_rows()` is always read fresh.
             let data_rows = self.dev_surface_rows();
-            let back = stacked_control_rect(data_rows.len(), width, height);
             let content = dev_surface_scroll_content(width, height, data_rows.len());
             let offset = self.me_scroll_offset.clamp(
                 0,
                 me_max_scroll_offset(data_rows.len(), width, height, content),
             );
-            let mut rows: Vec<(Rect, render::ActionCardView)> = data_rows
-                .iter()
-                .enumerate()
-                .filter_map(|(index, row)| {
-                    scrolled_row_rect(index, width, height, offset, content)
-                        .map(|rect| (rect, diagnostic_card_from_row(row)))
-                })
-                .collect();
-            rows.push((back, render::ActionCardView::new("Назад", "", "Назад")));
+            let tree = layout_live_v2_scrolled(
+                &diagnostic_v2_source(data_rows.len()),
+                "ADR-231 diagnostic paint",
+                width,
+                height,
+                offset,
+            );
             Frame::DevSurface {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: diagnostic_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
-                rows,
+                rows: diagnostic_paint_cards(&tree, &data_rows),
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
             let view = now_view(width, height);
@@ -12373,6 +12392,65 @@ mod tests {
         );
         let main = include_str!("main.rs");
         assert!(main.contains("ADR-230 orb paint"));
+    }
+
+    #[test]
+    fn diagnostic_paint_rows_match_layout_v2_scrolled_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let n = 3;
+        let tree = super::layout_live_v2_scrolled(
+            &diagnostic_v2_source(n),
+            "ADR-231 diagnostic paint",
+            width,
+            height,
+            0,
+        );
+        let content = super::dev_surface_scroll_content(width, height, n);
+        for index in 0..n {
+            assert_eq!(
+                saai_ui_compiler::layout_v1_find(&tree, &format!("diagnostic.{index}"))
+                    .expect("row")
+                    .rect,
+                super::scrolled_row_rect(index, width, height, 0, content).expect("visible")
+            );
+        }
+        assert_eq!(
+            super::v2_named_rect(&tree, "back", "ADR-231 diagnostic paint"),
+            stacked_control_rect(n, width, height)
+        );
+        let overflow = 9;
+        let offset = 220;
+        let scrolled = super::layout_live_v2_scrolled(
+            &diagnostic_v2_source(overflow),
+            "ADR-231 diagnostic paint",
+            width,
+            height,
+            offset,
+        );
+        let scrolled_content = super::dev_surface_scroll_content(width, height, overflow);
+        assert!(saai_ui_compiler::layout_v1_find(&scrolled, "diagnostic.0").is_none());
+        assert_eq!(
+            saai_ui_compiler::layout_v1_find(&scrolled, "diagnostic.1")
+                .expect("row1")
+                .rect,
+            super::scrolled_row_rect(1, width, height, offset, scrolled_content).expect("moved")
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "back", "ADR-231 diagnostic paint"),
+            stacked_control_rect(overflow, width, height)
+        );
+        let rows: Vec<_> = (0..overflow)
+            .map(|index| diagnostic_row(format!("r{index}"), "v"))
+            .collect();
+        let cards = super::diagnostic_paint_cards(&scrolled, &rows);
+        assert!(!cards.iter().any(|(_, card)| card.label == "r0"));
+        assert!(cards.iter().any(|(rect, card)| {
+            card.label == "Назад" && *rect == stacked_control_rect(overflow, width, height)
+        }));
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-231 diagnostic paint"));
+        assert!(main.contains("fn diagnostic_paint_cards"));
     }
 
     #[test]

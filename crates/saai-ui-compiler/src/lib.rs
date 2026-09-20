@@ -1248,6 +1248,8 @@ mod tests {
         assert!(limits.contains("Overlay paint"));
         assert!(limits.contains("ADR-230"));
         assert!(limits.contains("OrbHost paint"));
+        assert!(limits.contains("ADR-231"));
+        assert!(limits.contains("Diagnostic paint"));
         assert!(limits.contains("saai-displayd"));
         assert!(limits.contains("cold boot"));
         assert!(limits.contains("SpaceDetail"));
@@ -1285,5 +1287,7 @@ mod tests {
         assert!(ledger.contains("Overlay paint"));
         assert!(ledger.contains("ADR-230"));
         assert!(ledger.contains("OrbHost paint"));
+        assert!(ledger.contains("ADR-231"));
+        assert!(ledger.contains("Diagnostic paint"));
     }
 }

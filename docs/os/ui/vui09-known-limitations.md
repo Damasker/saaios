@@ -27,6 +27,8 @@ generated list trees (ADR-226). Me scroll paint reads
 `layout_v2_scrolled` (ADR-227). Apps grid paint reads generated
 `layout_v2` (ADR-228). Overlay paint reads generated `layout_v2`
 (ADR-229). OrbHost paint reads generated `layout_v2` (ADR-230).
+Diagnostic paint reads `layout_v2_scrolled` (ADR-231). Keyboard
+keys, gallery page, and lock idle/wake stay formulas.
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).
@@ -199,7 +201,9 @@ Ordered. Items 1–3 and 7–17 are done
     stay their formula.
 32. ~~OrbHost paint from `layout_v2`.~~ Host (ADR-230). Do not tap
     Изменить.
-33. Thin tuning is last (ADR-213). Physical lighting, leftover visual
+33. ~~Diagnostic paint from `layout_v2_scrolled`.~~ Host (ADR-231).
+    Do not 7-tap gallery.
+34. Thin tuning is last (ADR-213). Physical lighting, leftover visual
     nits, and gallery-fixture completeness stay in that sprint. Do
     not schedule as next work.
 

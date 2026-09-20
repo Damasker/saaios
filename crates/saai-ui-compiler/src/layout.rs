@@ -39,7 +39,8 @@
 //! ADR-228: apps grid paint reads the same generated `layout_v2` tree.
 //! ADR-229: overlay Field/decision paint reads the same generated tree.
 //! ADR-230: OrbHost paint reads the same generated `layout_v2` tree.
-//! ADR-230: OrbHost paint reads the same generated `layout_v2` tree.
+//! ADR-231: diagnostic paint reads the same generated `layout_v2_scrolled`
+//! tree as Назад hits, clipping DataRows to the first stacked slot.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -200,6 +201,12 @@ fn v2_me_scroll_clip(screen: &SuiV2Screen) -> bool {
                 "SystemSection" | "SettingRow" | "DataRow" | "CapabilityRow"
             )
         })
+}
+
+/// Live DevSurface scrolls DataRows between the first stacked slot
+/// and docked Назад. Tabs are absent, so this is not `v2_me_scroll_clip`.
+fn v2_diagnostic_scroll_clip(screen: &SuiV2Screen) -> bool {
+    screen.id == "diagnostic"
 }
 
 /// Live `stacked_control_rect`: if the stacked slot would paint below
@@ -652,8 +659,14 @@ fn v2_content_node(
     };
     let stacked_height = v2_stacked_row_height(height);
     let clip_to_content = v2_me_scroll_clip(screen);
-    let scroll = if clip_to_content {
+    let clip_to_first_slot = v2_diagnostic_scroll_clip(screen);
+    let scroll = if clip_to_content || clip_to_first_slot {
         scroll_offset.max(0)
+    } else {
+        0
+    };
+    let min_top = if clip_to_first_slot {
+        i64::from(v2_stacked_row_top(0, height))
     } else {
         0
     };
@@ -680,7 +693,7 @@ fn v2_content_node(
     }
     for (index, row) in stacked.iter().enumerate() {
         let base = v2_stacked_row_top(index, height) as i64 - i64::from(scroll);
-        if base < 0 {
+        if base < min_top {
             continue;
         }
         let top = base as u32;
@@ -1477,6 +1490,36 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("diagnostic"));
+    }
+
+    #[test]
+    fn layout_v2_diagnostic_rows_clip_above_first_slot_when_scrolled() {
+        let mut overflow =
+            String::from("sui 2\nscreen diagnostic {\n  component ContextHeader {}\n");
+        for index in 0..9 {
+            overflow.push_str(&format!(
+                "  component DataRow {{ a11y = Status loc = \"diagnostic.{index}\" }}\n"
+            ));
+        }
+        overflow.push_str("  row back {}\n}\n");
+        let screen = compile_v2(&overflow).expect("overflow diagnostic");
+        let rest = layout_v2(&screen, 1080, 2400);
+        let first = layout_v1_find(&rest, "diagnostic.0").expect("row0").rect;
+        assert!(layout_v1_find(&rest, "diagnostic.8").is_none());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 220);
+        assert!(layout_v1_find(&scrolled, "diagnostic.0").is_none());
+        assert_eq!(
+            layout_v1_find(&scrolled, "diagnostic.1")
+                .expect("row1")
+                .rect,
+            first
+        );
+        assert_eq!(
+            scrolled
+                .hit_test(540.0, 2305.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("list_back")
+        );
     }
 
     #[test]
