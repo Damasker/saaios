@@ -51,6 +51,7 @@ ADR-189 VUI-09 verification ledger (not Visual v1 sign-off).
 ADR-190 increased text 150% on panther HEAD, then restored 100%.
 ADR-191 live radio-off on panther HEAD (`wlan0` down → `Нет сети`, then up).
 ADR-192 unlocked shell restart on panther HEAD (same `e8865301…`).
+ADR-193 VUI-09 known limitations and Visual v2 backlog (not Visual v1 sign-off).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 

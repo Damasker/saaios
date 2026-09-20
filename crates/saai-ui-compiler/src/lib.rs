@@ -834,6 +834,15 @@ mod tests {
         assert!(ledger.contains("Нет сети"));
         assert!(ledger.contains("ADR-192"));
         assert!(ledger.contains("unlocked"));
+        assert!(ledger.contains("ADR-193"));
+        let limits = include_str!("../../../docs/os/ui/vui09-known-limitations.md");
+        assert!(limits.contains("not Visual v1 sign-off"));
+        assert!(limits.contains("compile_v2()"));
+        assert!(limits.contains("no rectangles"));
+        assert!(limits.contains("saai-displayd"));
+        assert!(limits.contains("cold boot"));
+        assert!(limits.contains("SpaceDetail"));
+        assert!(limits.contains("Visual v2"));
         let build = include_str!("../../../services/saai-shell/build.rs");
         assert!(build.contains("saai_ui_compiler::compile("));
         assert!(!build.contains("saai_ui_compiler::compile_v2"));

@@ -7,8 +7,8 @@ Production chrome: `compile()` on `services/saai-shell/ui/root.sui`.
 Do not point `build.rs` at `compile_v2()`. Space detail deferred.
 MEM-08 omitted.
 
-Current panther shell: `e8865301…` (ADR-188). Unlocked restart
-(ADR-192) does not reflash.
+Current panther shell: `e8865301…` (ADR-188). Known limitations
+(ADR-193) do not reflash.
 
 ## Matrix
 
@@ -30,12 +30,12 @@ Current panther shell: `e8865301…` (ADR-188). Unlocked restart
 | Perf | frame pace / p95 / idle | proven | ADR-172–177; not re-read `/run/saaios/shell-frame.last` this slice |
 | Perf | haptic policy | proven | ADR-171/179 KeyPress-only |
 | Safety | public subset gate | host | `compile_v2_public()` (ADR-185/186) |
-| Render | v2 layout ≡ v1 hits | open | `compile_v2()` has no rectangles (ADR-184) |
-| Device | lock / unlock cycle | open | PIN null; this slice does not lock |
-| Device | display restart | open | do not kill `saai-displayd` |
-| Device | cold boot | open | not run on HEAD |
-| Device | daylight / indoor / dark | open | no booth this session |
-| A11y | 7-tap gallery | open | not this slice |
+| Render | v2 layout ≡ v1 hits | open | `compile_v2()` has no rectangles (ADR-184); named in ADR-193 |
+| Device | lock / unlock cycle | open | PIN null; marker skips lock; named in ADR-193 |
+| Device | display restart | open | do not kill `saai-displayd`; named in ADR-193 |
+| Device | cold boot | open | not run on HEAD; named in ADR-193 |
+| Device | daylight / indoor / dark | open | no booth this session; named in ADR-193 |
+| A11y | 7-tap gallery | open | not this slice; named in ADR-193 |
 | Resilience | service restart | proven | ADR-192; unlocked kill, marker on, same `e8865301…`, Сейчас without lock |
 | Resilience | network / AI offline | proven | ADR-191; `wlan0` down → status `Нет сети`; Сейчас still live ObjectSummary; restored up |
 
@@ -46,3 +46,4 @@ Current panther shell: `e8865301…` (ADR-188). Unlocked restart
   `compile_v2_public()`, which is the gate, not a Stable API.
 - ActionCard 38/27/25 and tab 31/27 stay named leftovers, not Title/Body.
 - Space detail, Memory review, chat, widgets stay deferred.
+- Known limitations and the Visual v2 backlog: [`vui09-known-limitations.md`](vui09-known-limitations.md) (ADR-193).

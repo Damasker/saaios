@@ -66,3 +66,4 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | Switching `build.rs` to `compile_v2()` | do not; keep `compile()` |
 
 Space detail, Memory review, chat, and widgets stay deferred.
+Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).
