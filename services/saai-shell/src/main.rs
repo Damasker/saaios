@@ -90,8 +90,8 @@ use saai_app_protocol::{
 };
 use saai_entity_protocol::{
     Entity, EntitydEvent, ObjectRef, Relationship, ResponseResult as EntityResponseResult,
-    ServerMessage as EntityServerMessage, Space, RELATION_EXECUTES, RELATION_PRODUCES,
-    RELATION_REALIZES,
+    ServerMessage as EntityServerMessage, Space, RELATION_EXECUTES, RELATION_IN_SPACE,
+    RELATION_PRODUCES, RELATION_REALIZES,
 };
 
 /// HIA-01 (docs/os/sprints/HIA-ROADMAP.md): the builtin system space
@@ -2486,16 +2486,7 @@ fn object_view_content(
             actions: vec!["Скрыть"],
         },
         _ => {
-            let status = if entity.properties.is_empty() {
-                "Нет дополнительных данных".to_string()
-            } else {
-                entity
-                    .properties
-                    .iter()
-                    .map(|(key, value)| format!("{key}: {}", object_view_property_text(value)))
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            };
+            let status = object_view_fact_status(entity);
             ObjectViewContent {
                 title: entity.title.clone(),
                 state: UniversalState::Idle,
@@ -2613,11 +2604,31 @@ fn related_object_line(
     selected_entities: &[Entity],
     relationships: &[Relationship],
 ) -> Option<String> {
+    let lines = related_object_lines(entity, selected_entities, relationships);
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join(" · "))
+    }
+}
+
+/// ADR-242: Object View related is every live SOM entity link whose
+/// peer is already in the selected space. Space membership and
+/// dangling refs stay off this screen. Missing peers are omitted,
+/// never invented titles.
+fn related_object_lines(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> Vec<String> {
     let now = Utc::now();
+    let self_ref = ObjectRef::entity(entity.id);
     let mut related = relationships
         .iter()
         .filter(|relationship| {
-            relationship.source == ObjectRef::entity(entity.id) && relationship.is_active_at(now)
+            relationship.is_active_at(now)
+                && relationship.relation_type != RELATION_IN_SPACE
+                && (relationship.source == self_ref || relationship.target == self_ref)
         })
         .collect::<Vec<_>>();
     related.sort_by_key(|relationship| {
@@ -2626,29 +2637,48 @@ fn related_object_line(
             relationship.id,
         )
     });
-    related
-        .into_iter()
-        .find_map(|relationship| format_related_relationship(relationship, selected_entities))
+    let mut lines = Vec::new();
+    let mut seen_peers = Vec::new();
+    for relationship in related {
+        let outgoing = relationship.source == self_ref;
+        let peer = if outgoing {
+            &relationship.target
+        } else {
+            &relationship.source
+        };
+        let ObjectRef::Entity { id: peer_id } = peer else {
+            continue;
+        };
+        if seen_peers.contains(peer_id) {
+            continue;
+        }
+        if let Some(line) =
+            format_related_relationship(relationship, *peer_id, outgoing, selected_entities)
+        {
+            seen_peers.push(*peer_id);
+            lines.push(line);
+        }
+    }
+    lines
 }
 
 fn format_related_relationship(
     relationship: &Relationship,
+    peer_id: Uuid,
+    outgoing: bool,
     selected_entities: &[Entity],
 ) -> Option<String> {
-    let title = match &relationship.target {
-        ObjectRef::Entity { id } => selected_entities
-            .iter()
-            .find(|candidate| candidate.id == *id)
-            .map(|candidate| candidate.title.clone()),
-        ObjectRef::Space { id } => Some(id.clone()),
-    }?;
+    let title = selected_entities
+        .iter()
+        .find(|candidate| candidate.id == peer_id)
+        .map(|candidate| candidate.title.clone())?;
     if relationship.provenance.is_inferred() && !relationship.user_confirmed() {
         let confidence = relationship
             .confidence
             .map(|value| format!(" · {:.0}%", value * 100.0))
             .unwrap_or_default();
         Some(format!("Возможно связано{confidence} · {title}"))
-    } else if relationship.relation_type == RELATION_REALIZES {
+    } else if outgoing && relationship.relation_type == RELATION_REALIZES {
         Some(format!("Из намерения: {title}"))
     } else {
         Some(format!("Связано: {title}"))
@@ -2664,6 +2694,31 @@ fn object_view_property_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         other => other.to_string(),
+    }
+}
+
+fn object_view_is_fact_property(key: &str, value: &Value) -> bool {
+    if key == "id" || key.ends_with("_id") || key.ends_with("_ids") {
+        return false;
+    }
+    match value {
+        Value::Null | Value::Array(_) | Value::Object(_) => false,
+        Value::String(text) => Uuid::parse_str(text).is_err(),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
+}
+
+fn object_view_fact_status(entity: &Entity) -> String {
+    let facts: Vec<String> = entity
+        .properties
+        .iter()
+        .filter(|(key, value)| object_view_is_fact_property(key, value))
+        .map(|(key, value)| format!("{key}: {}", object_view_property_text(value)))
+        .collect();
+    if facts.is_empty() {
+        "Нет дополнительных данных".to_string()
+    } else {
+        facts.join(" · ")
     }
 }
 
@@ -4596,10 +4651,25 @@ fn related_intent_title(
     entities: &[Entity],
     relationships: &[Relationship],
 ) -> Option<String> {
-    if let Some(line) = related_object_line(entity, entities, relationships) {
-        if let Some(rest) = line.strip_prefix("Из намерения: ") {
-            return Some(rest.to_string());
+    let now = Utc::now();
+    let self_ref = ObjectRef::entity(entity.id);
+    let from_relation = relationships.iter().find_map(|relationship| {
+        if relationship.source != self_ref
+            || relationship.relation_type != RELATION_REALIZES
+            || !relationship.is_active_at(now)
+        {
+            return None;
         }
+        match &relationship.target {
+            ObjectRef::Entity { id } => entities
+                .iter()
+                .find(|candidate| candidate.id == *id && candidate.entity_type == "saaios.intent")
+                .map(|intent| intent.title.clone()),
+            ObjectRef::Space { .. } => None,
+        }
+    });
+    if from_relation.is_some() {
+        return from_relation;
     }
     entity
         .properties
@@ -11177,8 +11247,8 @@ mod tests {
         SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
-        ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
-        RELATION_REALIZES,
+        ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_IN_SPACE,
+        RELATION_PRODUCES, RELATION_REALIZES,
     };
     use saai_entity_store::SpaceKind;
     use saai_ui_core::ObjectSummaryTrailing;
@@ -14530,6 +14600,79 @@ mod tests {
             content.related,
             Some("Возможно связано · 68% · dev-eks".to_string())
         );
+    }
+
+    #[test]
+    fn object_view_content_lists_every_existing_related_peer() {
+        let server = intent_entity("Сервер");
+        let note = intent_entity("Заметка");
+        let mut entity = test_entity("device.node", serde_json::Map::new());
+        entity.title = "dev-eks".to_string();
+        let outgoing = related_relationship(
+            entity.id,
+            ObjectRef::entity(server.id),
+            "saaios.related-to",
+            Provenance::User,
+            None,
+        );
+        let incoming = related_relationship(
+            note.id,
+            ObjectRef::entity(entity.id),
+            "saaios.related-to",
+            Provenance::User,
+            None,
+        );
+        let content = object_view_content(&entity, &[server, note], &[outgoing, incoming]);
+        let related = content.related.expect("existing links");
+        assert!(related.contains("Связано: Сервер"));
+        assert!(related.contains("Связано: Заметка"));
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_content_omits_dangling_and_space_membership() {
+        let mut entity = test_entity("device.node", serde_json::Map::new());
+        entity.title = "dev-eks".to_string();
+        let dangling = related_relationship(
+            entity.id,
+            ObjectRef::entity(uuid::Uuid::new_v4()),
+            "saaios.related-to",
+            Provenance::User,
+            None,
+        );
+        let membership = related_relationship(
+            entity.id,
+            ObjectRef::space("work"),
+            RELATION_IN_SPACE,
+            Provenance::User,
+            None,
+        );
+        let content = object_view_content(
+            &entity,
+            std::slice::from_ref(&entity),
+            &[dangling, membership],
+        );
+        assert_eq!(content.related, None);
+        assert_eq!(content.status, "Нет дополнительных данных");
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_content_omits_identifier_properties() {
+        let mut properties = serde_json::Map::new();
+        let intent_id = uuid::Uuid::new_v4().to_string();
+        properties.insert(
+            "intent_id".into(),
+            serde_json::Value::String(intent_id.clone()),
+        );
+        properties.insert("note".into(), serde_json::Value::String("hello".into()));
+        let mut entity = test_entity("device.note", properties);
+        entity.title = "Заметка".to_string();
+        let content = object_view_content(&entity, &[], &[]);
+        assert!(content.status.contains("hello"));
+        assert!(!content.status.contains("intent_id"));
+        assert!(!content.status.contains(&intent_id));
+        assert!(content.actions.is_empty());
     }
 
     #[test]
