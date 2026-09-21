@@ -8,6 +8,7 @@
 //! IME instance exists. This module owns the globals so commit_string
 //! can reach an enabled field on a seat that has only touch. Qt packed
 //! on panther does not contain `zwp_text_input_v3` at all (ADR-319).
+//! IME `DeleteSurroundingText` is also forwarded to v2 (ADR-328).
 
 use std::sync::Mutex;
 
@@ -522,6 +523,12 @@ where
                 };
                 for ti in ime.text_inputs.lock().expect("text_inputs").iter() {
                     if ti.id() == active_id {
+                        ti.delete_surrounding_text(before_length, after_length);
+                    }
+                }
+                for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
+                    if ti.id() == active_id {
+                        println!("saai-displayd: text-input-v2 delete_surrounding");
                         ti.delete_surrounding_text(before_length, after_length);
                     }
                 }
