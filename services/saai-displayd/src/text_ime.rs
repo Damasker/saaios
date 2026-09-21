@@ -233,11 +233,11 @@ where
     ) {
         match request {
             zwp_text_input_manager_v3::Request::GetTextInput { id, seat } => {
-                println!("saai-displayd: text-input-v3 get");
                 let Some(seat) = Seat::<D>::from_resource(&seat) else {
                     return;
                 };
                 let instance = data_init.init(id, TextInputData { seat: seat.clone() });
+                println!("saai-displayd: text-input-v3 get {:?}", instance.id());
                 let ime = seat_ime(&seat);
                 ime.text_inputs
                     .lock()
@@ -272,7 +272,7 @@ where
         let ime = seat_ime(&data.seat);
         match request {
             zwp_text_input_v3::Request::Enable => {
-                println!("saai-displayd: text-input-v3 enable");
+                println!("saai-displayd: text-input-v3 enable {:?}", resource.id());
                 *ime.active.lock().expect("active") = Some(resource.id());
                 if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
                     im.activate();
@@ -559,7 +559,7 @@ where
                 let mut forwarded = false;
                 for ti in ime.text_inputs.lock().expect("text_inputs").iter() {
                     if ti.id() == active_id && focus.id().same_client_as(&ti.id()) {
-                        println!("saai-displayd: text-input-v3 commit_string");
+                        println!("saai-displayd: text-input-v3 commit_string {:?}", active_id);
                         ti.commit_string(Some(text.clone()));
                         forwarded = true;
                     }

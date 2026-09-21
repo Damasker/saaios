@@ -5,8 +5,8 @@
 //! `--run=entry` click without wl_keyboard is ADR-356. Packed 4.14
 //! competing pane is ADR-372. `--run=entry` is not a gtk4-demo
 //! example name (ADR-373). `--run=search_entry` is ADR-374. OSK on
-//! that demo is ADR-375. v3 commit_string log is ADR-376. Not a
-//! panther field.
+//! that demo is ADR-375. v3 commit_string log is ADR-376. v3 object
+//! ids on search_entry are ADR-377. Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1803,9 +1803,9 @@ fn packed_gtk4_demo_search_entry_enables_v3_without_click() {
     );
 }
 
-/// ADR-375/376: OSK into packed gtk4-demo `--run=search_entry` after
-/// v3 enable. `commit_string` is forwarded. Main shm stays
-/// `233e0ee2…`. Protocol without paint. Not typed.
+/// ADR-375/376/377: OSK into packed gtk4-demo `--run=search_entry`.
+/// One v3 object; commit_string target is that enable. Main shm stays
+/// `233e0ee2…`. Not typed.
 #[test]
 fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let probe = gtk4_alpine_probe();
@@ -1995,9 +1995,35 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let _ = displayd.kill();
     let _ = displayd.wait();
     let after = last_hash.as_deref().unwrap_or(before.as_str());
+    let n_gets = lines
+        .iter()
+        .filter(|l| l.contains("text-input-v3 get"))
+        .count();
+    let enable_id = lines.iter().rev().find_map(|l| {
+        l.split("text-input-v3 enable ")
+            .nth(1)
+            .map(|s| s.trim().to_string())
+    });
+    let commit_id = lines.iter().rev().find_map(|l| {
+        l.split("text-input-v3 commit_string ")
+            .nth(1)
+            .filter(|s| !s.starts_with("dropped"))
+            .map(|s| s.trim().to_string())
+    });
     assert!(
         saw_v3_commit && !saw_v3_dropped,
         "search_entry OSK v3 commit_string forwarded={saw_v3_commit} dropped={saw_v3_dropped}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        n_gets, 1,
+        "search_entry v3 get count; expected one seat object; gets={n_gets} enable={enable_id:?} commit={commit_id:?}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        enable_id.as_deref(),
+        commit_id.as_deref(),
+        "search_entry OSK commit_string target != enable; enable={enable_id:?} commit={commit_id:?}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert_eq!(
