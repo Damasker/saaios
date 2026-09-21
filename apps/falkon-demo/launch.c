@@ -6,6 +6,7 @@
  * sandbox is disabled for the first hello-frame.
  */
 #define _GNU_SOURCE
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,12 +38,13 @@ int main(void) {
     setenv(
         "QTWEBENGINE_CHROMIUM_FLAGS",
         "--no-sandbox --disable-gpu --disable-gpu-compositing "
-        "--allow-file-access-from-files",
+        "--allow-file-access-from-files --enable-logging --log-level=0",
         1);
     setenv_joined("LIBGL_DRIVERS_PATH", cwd, "lib/dri");
     setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
     setenv("GALLIUM_DRIVER", "llvmpipe", 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "swrast", 1);
+    setenv("LIBGL_DEBUG", "verbose", 1);
     setenv("QT_OPENGL", "software", 1);
     setenv("QT_QUICK_BACKEND", "software", 1);
     setenv("QSG_RENDER_LOOP", "basic", 1);
@@ -50,6 +52,16 @@ int main(void) {
     const char *data_dir = getenv("SAAIOS_DATA_DIR");
     if (data_dir != NULL && data_dir[0] != '\0') {
         setenv("HOME", data_dir, 1);
+        char logpath[PATH_MAX];
+        snprintf(logpath, sizeof(logpath), "%s/webengine.log", data_dir);
+        int logfd = open(logpath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (logfd >= 0) {
+            dup2(logfd, STDERR_FILENO);
+            dup2(logfd, STDOUT_FILENO);
+            if (logfd > STDERR_FILENO) {
+                close(logfd);
+            }
+        }
     }
 
     char exec_path[PATH_MAX];

@@ -153,9 +153,14 @@ pub fn apply(
         reveal_file(&dbus_pin, &paths.dbus_socket)?;
     }
 
-    for path in ["/metadata", "/proc", "/sys", "/saaios"] {
+    for path in ["/metadata", "/sys", "/saaios"] {
         mask_if_present(Path::new(path))?;
     }
+    // Chromium/QtWebEngine renderers need a real procfs (maps, pid,
+    // inotify). Masking /proc with 64k tmpfs made them ProcessGone.
+    // Without CLONE_NEWPID this is still the host pid view — the same
+    // ADR-020 gap seccomp already covers.
+    mount_proc()?;
     if reveal_fonts {
         reveal_directory(&fonts_pin, Path::new("/saaios/fonts"), true)?;
     }
@@ -171,7 +176,9 @@ pub fn apply(
     mask_device_tree(&scratch_root)?;
 
     let _ = fs::remove_dir_all(&scratch_root);
-    mask_tmpfs(Path::new("/tmp"), "mode=1777,size=16m", true)?;
+    // Chromium discardable shared memory refuses to start under 64MB
+    // free in the temp dir (ADR-315). 16m/8m was enough for Kirigami.
+    mask_tmpfs(Path::new("/tmp"), "mode=1777,size=128m", true)?;
 
     make_root_read_only()?;
     drop_all_capabilities()?;
@@ -342,7 +349,18 @@ fn mask_device_tree(scratch_root: &Path) -> io::Result<()> {
         )?;
     }
     fs::create_dir("/dev/shm")?;
-    mask_tmpfs(Path::new("/dev/shm"), "mode=1777,size=8m", false)
+    mask_tmpfs(Path::new("/dev/shm"), "mode=1777,size=128m", false)
+}
+
+fn mount_proc() -> io::Result<()> {
+    mount(
+        Some("proc"),
+        "/proc",
+        Some("proc"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
+        None::<&str>,
+    )
+    .map_err(nix_to_io)
 }
 
 fn make_root_read_only() -> io::Result<()> {
