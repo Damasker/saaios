@@ -2,6 +2,8 @@
 // Prints QT_LINEEDIT_TEXT= on every change. Not a panther field.
 #include <QApplication>
 #include <QCompleter>
+#include <QCoreApplication>
+#include <QInputMethodEvent>
 #include <QLineEdit>
 #include <QMenu>
 #include <QStringList>
@@ -208,6 +210,18 @@ int main(int argc, char **argv) {
             }
             popup->move(edit->mapToGlobal(QPoint(0, edit->height())));
             popup->show();
+        });
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_IM_FORMAT")) {
+        // ADR-416: Falkon LineEdit::clearTextFormat empty
+        // QInputMethodEvent. Lone QLineEdit keeps v2; Falkon
+        // disable is not this.
+        edit->setText(QStringLiteral("https://example.com"));
+        QTimer::singleShot(80, edit, [edit]() {
+            QList<QInputMethodEvent::Attribute> attrs;
+            QInputMethodEvent ev(QString(), attrs);
+            QCoreApplication::sendEvent(edit, &ev);
         });
     }
 
