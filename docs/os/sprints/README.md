@@ -217,6 +217,7 @@ ADR-361 host Qt5 steal-back after tap does not type OSK (no flash).
 ADR-362 host Qt5 OSK in the enable window types before steal-back (no flash).
 ADR-363 packed PCManFM OSK without wl_keyboard hits FolderView not Filter (no flash).
 ADR-364 packed PCManFM Filter click without wl_keyboard stays FolderView (no flash).
+ADR-365 packed PCManFM PathEdit click without wl_keyboard stays FolderView (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

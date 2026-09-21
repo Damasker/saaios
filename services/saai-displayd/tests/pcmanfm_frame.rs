@@ -8,7 +8,7 @@
 //! ADR-357: that enable stays through a 2 s quiet (not Falkon ADR-337).
 //! ADR-363: OSK into that live enable without wl_keyboard hits
 //! FolderViewListView, not Filter. ADR-364: Filter-band click on that
-//! seat. Empty `QT_IM_MODULE` blocks the path.
+//! seat. ADR-365: PathEdit-band click. Empty `QT_IM_MODULE` blocks the path.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1044,10 +1044,9 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
     );
 }
 
-/// ADR-364: one Filter-band click `400 760` on a keyboard-less seat
-/// after FolderView enable. Not a Y sweep. Not Ctrl+L. Not Falkon.
-#[test]
-fn packed_pcmanfm_filter_click_without_seat_keyboard_still_folderview() {
+/// ADR-364 / ADR-365: one band click on a keyboard-less seat after
+/// FolderView enable. `400 760` Filter, `400 40` PathEdit. Not a Y sweep.
+fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     let pkg = pcmanfm_package();
     let bin = pkg.join("bin/pcmanfm-qt");
     assert!(
@@ -1184,13 +1183,13 @@ fn packed_pcmanfm_filter_click_without_seat_keyboard_still_folderview() {
         let _ = displayd.kill();
         let _ = displayd.wait();
         panic!(
-            "pre-click: PCManFM never enabled v2; enable={saw_enable} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+            "pre-click {band}: PCManFM never enabled v2; enable={saw_enable} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
         );
     }
     let hash_at_enable = hash_after.clone();
 
     if let Some(stdin) = displayd.stdin.as_mut() {
-        writeln!(stdin, "inject-click 400 760").expect("inject-click");
+        writeln!(stdin, "inject-click {x} {y}").expect("inject-click");
         let _ = stdin.flush();
     }
     let click_deadline = Instant::now() + Duration::from_secs(4);
@@ -1224,7 +1223,7 @@ fn packed_pcmanfm_filter_click_without_seat_keyboard_still_folderview() {
         let _ = displayd.kill();
         let _ = displayd.wait();
         panic!(
-            "Filter click 400 760; click={saw_click} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+            "{band} click {x} {y}; click={saw_click} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
         );
     }
     let hash_at_click = hash_after.clone();
@@ -1277,18 +1276,32 @@ fn packed_pcmanfm_filter_click_without_seat_keyboard_still_folderview() {
     let _ = displayd.wait();
     assert!(
         saw_commit && !saw_kbd_focus,
-        "expected OSK commit after Filter click; commit={saw_commit} enables={enable_count} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+        "expected OSK commit after {band} click; commit={saw_commit} enables={enable_count} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
     );
     assert!(
         stderr.contains("FolderViewListView::inputMethodQuery"),
-        "expected FolderView IM still; qt={stderr}"
+        "expected FolderView IM still after {band}; qt={stderr}"
     );
     assert!(
         !stderr.contains("QLineEdit::inputMethodQuery"),
-        "Filter QLineEdit took IM after 400 760; do not claim typed without shm; qt={stderr}"
+        "{band} QLineEdit took IM after {x} {y}; do not claim typed without shm; qt={stderr}"
     );
     assert_eq!(
         hash_at_click, hash_after,
-        "PCManFM shm changed after Filter click OSK; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
+        "PCManFM shm changed after {band} click OSK; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
     );
+}
+
+/// ADR-364: one Filter-band click `400 760` on a keyboard-less seat
+/// after FolderView enable. Not a Y sweep. Not Ctrl+L. Not Falkon.
+#[test]
+fn packed_pcmanfm_filter_click_without_seat_keyboard_still_folderview() {
+    packed_pcmanfm_band_click_osk(400, 760, "Filter");
+}
+
+/// ADR-365: one PathEdit-band click `400 40` on a keyboard-less seat.
+/// Not a Y sweep. Not Ctrl+L.
+#[test]
+fn packed_pcmanfm_pathedit_click_without_seat_keyboard_still_folderview() {
+    packed_pcmanfm_band_click_osk(400, 40, "PathEdit");
 }
