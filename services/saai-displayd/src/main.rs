@@ -314,7 +314,7 @@ struct State {
     // where the keyboard-focus/synthetic-inject acceptance tests still use
     // a real KeyboardHandle and a normal host libxkbcommon works fine.
     #[cfg(not(feature = "panther-hardware"))]
-    keyboard: smithay::input::keyboard::KeyboardHandle<State>,
+    keyboard: Option<smithay::input::keyboard::KeyboardHandle<State>>,
     #[cfg(not(feature = "panther-hardware"))]
     pointer: smithay::input::pointer::PointerHandle<State>,
     /// Active fullscreen toplevel. A newly mapped toplevel becomes active;
@@ -507,13 +507,19 @@ impl State {
         text_ime::on_focus(&self.seat, surface.clone());
         #[cfg(not(feature = "panther-hardware"))]
         {
-            let serial = SERIAL_COUNTER.next_serial();
-            let keyboard = self.keyboard.clone();
-            keyboard.set_focus(self, surface.clone(), serial);
-            println!(
-                "saai-displayd: keyboard focus set to {:?}",
-                surface.as_ref().map(Resource::id)
-            );
+            if let Some(keyboard) = self.keyboard.clone() {
+                let serial = SERIAL_COUNTER.next_serial();
+                keyboard.set_focus(self, surface.clone(), serial);
+                println!(
+                    "saai-displayd: keyboard focus set to {:?}",
+                    surface.as_ref().map(Resource::id)
+                );
+            } else {
+                println!(
+                    "saai-displayd: focus set to {:?}",
+                    surface.as_ref().map(Resource::id)
+                );
+            }
         }
         #[cfg(feature = "panther-hardware")]
         {
@@ -1421,9 +1427,15 @@ fn main() {
     let mut seat_state = SeatState::<State>::new();
     let mut seat = seat_state.new_wl_seat(&dh, "seat0");
     #[cfg(not(feature = "panther-hardware"))]
-    let keyboard = seat
-        .add_keyboard(XkbConfig::default(), 200, 25)
-        .expect("failed to add keyboard capability");
+    let keyboard = if std::env::var_os("SAAIOS_SEAT_NO_KEYBOARD").is_some() {
+        println!("saai-displayd: seat has no keyboard (SAAIOS_SEAT_NO_KEYBOARD)");
+        None
+    } else {
+        Some(
+            seat.add_keyboard(XkbConfig::default(), 200, 25)
+                .expect("failed to add keyboard capability"),
+        )
+    };
     #[cfg(not(feature = "panther-hardware"))]
     let pointer = seat.add_pointer();
     #[cfg(feature = "panther-hardware")]
@@ -1817,6 +1829,10 @@ fn main() {
             }
             let cmd = line.trim();
             if cmd == "inject-key" {
+                let Some(keyboard) = keyboard.as_ref() else {
+                    println!("saai-displayd: inject-key requested but seat has no keyboard");
+                    return Ok(PostAction::Continue);
+                };
                 if state.focused_surface.is_some() {
                     let time = 0;
                     // evdev KEY_A (30) + 8 = xkb keycode 38.
@@ -1842,6 +1858,10 @@ fn main() {
                     println!("saai-displayd: inject-key requested but no surface is focused yet");
                 }
             } else if cmd == "inject-ctrl-i" {
+                let Some(keyboard) = keyboard.as_ref() else {
+                    println!("saai-displayd: inject-ctrl-i requested but seat has no keyboard");
+                    return Ok(PostAction::Continue);
+                };
                 if state.focused_surface.is_some() {
                     let time = 0;
                     // evdev KEY_LEFTCTRL=29, KEY_I=23; xkb = evdev+8.
@@ -1867,6 +1887,10 @@ fn main() {
                     println!("saai-displayd: inject-ctrl-i requested but no surface is focused yet");
                 }
             } else if cmd == "inject-ctrl-b" {
+                let Some(keyboard) = keyboard.as_ref() else {
+                    println!("saai-displayd: inject-ctrl-b requested but seat has no keyboard");
+                    return Ok(PostAction::Continue);
+                };
                 if state.focused_surface.is_some() {
                     let time = 0;
                     // evdev KEY_LEFTCTRL=29, KEY_B=48; xkb = evdev+8.
@@ -1892,6 +1916,10 @@ fn main() {
                     println!("saai-displayd: inject-ctrl-b requested but no surface is focused yet");
                 }
             } else if cmd == "inject-ctrl-l" {
+                let Some(keyboard) = keyboard.as_ref() else {
+                    println!("saai-displayd: inject-ctrl-l requested but seat has no keyboard");
+                    return Ok(PostAction::Continue);
+                };
                 if state.focused_surface.is_some() {
                     let time = 0;
                     // evdev KEY_LEFTCTRL=29, KEY_L=38; xkb = evdev+8.
