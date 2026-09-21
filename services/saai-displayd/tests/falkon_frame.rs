@@ -5,6 +5,7 @@
 //! OSK hi! sequence (commit+delete) in the same window. Not a
 //! panther typed field. WebEngine helper spawn via binfmt is host-only
 //! and may fail; the Widgets chrome frame is the hello-frame.
+//! ADR-354: without wl_keyboard, xdg Activated does not enable URL v2.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -30,11 +31,21 @@ fn falkon_package() -> PathBuf {
 }
 
 fn spawn_displayd(runtime_dir: &std::path::Path) -> (Child, mpsc::Receiver<String>) {
+    spawn_displayd_with(runtime_dir, &[])
+}
+
+fn spawn_displayd_with(
+    runtime_dir: &std::path::Path,
+    extra: &[(&str, &str)],
+) -> (Child, mpsc::Receiver<String>) {
     let mut cmd = Command::new(displayd_bin());
     cmd.env("XDG_RUNTIME_DIR", runtime_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
     let mut child = cmd.spawn().expect("failed to spawn saai-displayd");
     let stdout = child.stdout.take().expect("child stdout not piped");
     let (tx, rx) = mpsc::channel();
@@ -1169,6 +1180,187 @@ fn falkon_url_inject_key_a_after_second_click() {
     assert_eq!(
         hash_at_key, hash_after,
         "Falkon main shm changed after KEY_A; do not claim LocationBar paint; first={hash_before:?} at_key={hash_at_key:?} after={hash_after:?}; displayd={:?}; qt={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+}
+
+/// ADR-354: packed Falkon on a keyboard-less seat binds v2 after xdg
+/// Activated and does not enable. LocationBar is not auto-focused.
+/// PCManFM chrome does enable (ADR-353). Not a panther field. Do not click.
+#[test]
+fn packed_falkon_without_seat_keyboard_does_not_enable_v2() {
+    let pkg = falkon_package();
+    let falkon = pkg.join("bin/falkon");
+    assert!(
+        falkon.is_file(),
+        "missing packed falkon at {} — set FALKON_PACKAGE_DIR",
+        falkon.display()
+    );
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let home_dir = tempfile::tempdir().expect("failed to create Falkon HOME");
+    let cfg = home_dir.path().join(".config/falkon/profiles/default");
+    std::fs::create_dir_all(&cfg).expect("falkon profile dir");
+    std::fs::write(
+        cfg.join("settings.ini"),
+        "[Browser-View-Settings]\n\
+         showNavigationToolbar=true\n\
+         showMenubar=false\n\
+         showBookmarksToolbar=false\n\
+         showStatusBar=false\n\
+         [Browser-Tabs-Settings]\n\
+         hideTabsWithOneTab=true\n",
+    )
+    .expect("write falkon settings.ini");
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let path = std::env::var("PATH").unwrap_or_default();
+    let pkg = pkg.canonicalize().expect("canonicalize falkon package");
+    let falkon = pkg.join("bin/falkon");
+
+    let mut falkon_child = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&pkg)
+        .arg(&falkon)
+        .arg("--private-browsing")
+        .arg("about:blank")
+        .current_dir(&pkg)
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("QT_PLUGIN_PATH", pkg.join("plugins"))
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
+        .env(
+            "QTWEBENGINEPROCESS_PATH",
+            pkg.join("libexec/QtWebEngineProcess"),
+        )
+        .env(
+            "QTWEBENGINE_RESOURCES_PATH",
+            pkg.join("share/qt6/resources"),
+        )
+        .env(
+            "QTWEBENGINE_LOCALES_PATH",
+            pkg.join("share/qt6/translations/qtwebengine_locales"),
+        )
+        .env("QTWEBENGINE_DISABLE_SANDBOX", "1")
+        .env(
+            "QTWEBENGINE_CHROMIUM_FLAGS",
+            "--no-sandbox --disable-gpu --disable-gpu-compositing --use-gl=disabled",
+        )
+        .env("LIBGL_ALWAYS_SOFTWARE", "1")
+        .env("QT_QUICK_BACKEND", "software")
+        .env("QSG_RENDER_LOOP", "basic")
+        .process_group(0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn falkon");
+    let stderr_rx = {
+        let stderr = falkon_child.stderr.take().expect("falkon stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_frame = false;
+    let mut saw_get = false;
+    let mut saw_enable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while Instant::now() < deadline && !(saw_toplevel && saw_frame && saw_activated && saw_focus) {
+        match log.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                }
+                if line.contains("frame sha256=") {
+                    saw_frame = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v2 get") {
+                    saw_get = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let settle = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("text-input-v2 get") {
+                    saw_get = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    reap_falkon(&mut falkon_child);
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_toplevel && saw_frame && saw_activated && saw_focus && !saw_kbd_focus,
+        "expected framed Falkon with xdg Activated and no wl_keyboard; kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated}; displayd={:?}; stderr={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        saw_get,
+        "Falkon never zwp_text_input_v2.get; displayd={:?}; stderr={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        !saw_enable,
+        "Falkon enabled v2 without a LocationBar click; do not claim URL typed; displayd={:?}; stderr={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
