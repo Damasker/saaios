@@ -303,9 +303,19 @@ where
             zwp_text_input_v3::Request::Commit => {
                 println!("saai-displayd: text-input-v3 commit {:?}", resource.id());
             }
+            zwp_text_input_v3::Request::SetCursorRectangle {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                println!(
+                    "saai-displayd: text-input-v3 cursor {:?} {width}x{height}+{x}+{y}",
+                    resource.id()
+                );
+            }
             zwp_text_input_v3::Request::SetTextChangeCause { .. }
-            | zwp_text_input_v3::Request::SetContentType { .. }
-            | zwp_text_input_v3::Request::SetCursorRectangle { .. } => {}
+            | zwp_text_input_v3::Request::SetContentType { .. } => {}
             _ => {}
         }
     }

@@ -8,7 +8,8 @@
 //! that demo is ADR-375. v3 commit_string log is ADR-376. v3 object
 //! ids on search_entry are ADR-377. v3 surrounding/done on that
 //! OSK are ADR-378. shm commits after that OSK are ADR-379. Click
-//! then OSK on that demo is ADR-380. Not a panther field.
+//! then OSK on that demo is ADR-380. v3 cursor rectangle is ADR-381.
+//! Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -2089,6 +2090,10 @@ fn search_entry_osk_case(click: Option<(i32, i32)>) {
         .iter()
         .filter(|l| l.contains("text-input-v3 done") && !l.contains("dropped"))
         .count();
+    let n_cursor = lines
+        .iter()
+        .filter(|l| l.contains("text-input-v3 cursor"))
+        .count();
     let n_client_commit = lines
         .iter()
         .filter(|l| l.contains("text-input-v3 commit "))
@@ -2117,6 +2122,11 @@ fn search_entry_osk_case(click: Option<(i32, i32)>) {
     assert!(
         surrounding_after_osk.unwrap_or(0) > surrounding_at_enable.unwrap_or(0),
         "search_entry OSK surrounding did not grow; GTK did not report applied text; click={click:?} done={n_done} client_commit={n_client_commit} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        n_cursor >= 1,
+        "search_entry OSK v3 cursor rectangle missing; mapped widget unproven; click={click:?} cursor={n_cursor} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     if click.is_some() {
