@@ -178,6 +178,8 @@ export ZIG="$zig"
 "$zig" cc -target aarch64-linux-musl -static -O2 \
     -o "$package_dir/bin/launch" "$repo_root/apps/falkon-demo/launch.c"
 
+mkdir -p "$package_dir/etc/fonts"
+cp "$repo_root/apps/falkon-demo/fonts.conf" "$package_dir/etc/fonts/fonts.conf"
 cp "$repo_root/apps/falkon-demo/manifest.toml" "$package_dir/manifest.toml"
 cp "$repo_root/apps/falkon-demo/hello.html" "$package_dir/share/hello.html"
 chmod 0755 "$package_dir/bin/launch" "$package_dir/bin/falkon" \

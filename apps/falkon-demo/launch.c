@@ -29,6 +29,8 @@ int main(void) {
     setenv_joined("QTWEBENGINEPROCESS_PATH", cwd, "libexec/QtWebEngineProcess");
     setenv_joined("QTWEBENGINE_RESOURCES_PATH", cwd, "share/qt6/resources");
     setenv_joined("QTWEBENGINE_LOCALES_PATH", cwd, "share/qt6/translations/qtwebengine_locales");
+    setenv_joined("FONTCONFIG_PATH", cwd, "etc/fonts");
+    setenv_joined("FONTCONFIG_FILE", cwd, "etc/fonts/fonts.conf");
     setenv("QTWEBENGINE_DISABLE_SANDBOX", "1", 1);
     setenv("QT_QPA_PLATFORMTHEME", "", 1);
     /* ADR-306/312: drop Wayland EGL so QBackingStore attaches wl_shm.
