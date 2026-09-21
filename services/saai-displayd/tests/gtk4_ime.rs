@@ -6,7 +6,8 @@
 //! competing pane is ADR-372. `--run=entry` is not a gtk4-demo
 //! example name (ADR-373). `--run=search_entry` is ADR-374. OSK on
 //! that demo is ADR-375. v3 commit_string log is ADR-376. v3 object
-//! ids on search_entry are ADR-377. Not a panther field.
+//! ids on search_entry are ADR-377. v3 surrounding/done on that
+//! OSK are ADR-378. Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -970,6 +971,13 @@ fn interesting(line: &str) -> bool {
         || line.contains("focus set to")
 }
 
+fn surrounding_bytes(line: &str) -> Option<usize> {
+    line.split("text-input-v3 surrounding ")
+        .nth(1)
+        .and_then(|rest| rest.split("bytes=").nth(1))
+        .and_then(|n| n.trim().parse().ok())
+}
+
 /// ADR-344: packed gtk4-demo `--run=entry` binds v3; a center click
 /// does not enable. Not a Y sweep. Not a panther typed field.
 #[test]
@@ -1803,9 +1811,10 @@ fn packed_gtk4_demo_search_entry_enables_v3_without_click() {
     );
 }
 
-/// ADR-375/376/377: OSK into packed gtk4-demo `--run=search_entry`.
-/// One v3 object; commit_string target is that enable. Main shm stays
-/// `233e0ee2…`. Not typed.
+/// ADR-375/376/377/378: OSK into packed gtk4-demo `--run=search_entry`.
+/// One v3 object; commit_string target is that enable. IME `done` and
+/// surrounding after OSK are ADR-378. Main shm stays `233e0ee2…`.
+/// Not typed.
 #[test]
 fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let probe = gtk4_alpine_probe();
@@ -1894,6 +1903,8 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let mut last_hash: Option<String> = None;
     let mut saw_v3_commit = false;
     let mut saw_v3_dropped = false;
+    let mut surrounding_at_enable: Option<usize> = None;
+    let mut surrounding_after_osk: Option<usize> = None;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline
@@ -1912,6 +1923,9 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
                 }
                 if line.contains("text-input-v3 enable") {
                     saw_enable = true;
+                }
+                if let Some(n) = surrounding_bytes(&line) {
+                    surrounding_at_enable = Some(n);
                 }
                 if line.contains("text-input-v3 commit_string dropped") {
                     saw_v3_dropped = true;
@@ -1976,6 +1990,9 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
                 } else if line.contains("text-input-v3 commit_string") {
                     saw_v3_commit = true;
                 }
+                if let Some(n) = surrounding_bytes(&line) {
+                    surrounding_after_osk = Some(n);
+                }
                 if let Some(h) = toplevel_frame_hash(&line, &mut activated) {
                     last_hash = Some(h.to_string());
                 }
@@ -2010,6 +2027,14 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
             .filter(|s| !s.starts_with("dropped"))
             .map(|s| s.trim().to_string())
     });
+    let n_done = lines
+        .iter()
+        .filter(|l| l.contains("text-input-v3 done") && !l.contains("dropped"))
+        .count();
+    let n_client_commit = lines
+        .iter()
+        .filter(|l| l.contains("text-input-v3 commit "))
+        .count();
     assert!(
         saw_v3_commit && !saw_v3_dropped,
         "search_entry OSK v3 commit_string forwarded={saw_v3_commit} dropped={saw_v3_dropped}; displayd={:?}; gtk={stderr}",
@@ -2024,6 +2049,16 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
         enable_id.as_deref(),
         commit_id.as_deref(),
         "search_entry OSK commit_string target != enable; enable={enable_id:?} commit={commit_id:?}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        n_done >= 1,
+        "search_entry OSK v3 done missing; done={n_done} client_commit={n_client_commit} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        surrounding_after_osk.unwrap_or(0) > surrounding_at_enable.unwrap_or(0),
+        "search_entry OSK surrounding did not grow; GTK did not report applied text; done={n_done} client_commit={n_client_commit} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert_eq!(

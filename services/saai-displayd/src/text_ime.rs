@@ -280,6 +280,7 @@ where
                 }
             }
             zwp_text_input_v3::Request::Disable => {
+                println!("saai-displayd: text-input-v3 disable {:?}", resource.id());
                 *ime.active.lock().expect("active") = None;
                 if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
                     im.deactivate();
@@ -292,9 +293,17 @@ where
                     .expect("text_inputs")
                     .retain(|ti| ti.id() != resource.id());
             }
-            zwp_text_input_v3::Request::Commit
-            | zwp_text_input_v3::Request::SetSurroundingText { .. }
-            | zwp_text_input_v3::Request::SetTextChangeCause { .. }
+            zwp_text_input_v3::Request::SetSurroundingText { text, .. } => {
+                println!(
+                    "saai-displayd: text-input-v3 surrounding {:?} bytes={}",
+                    resource.id(),
+                    text.len()
+                );
+            }
+            zwp_text_input_v3::Request::Commit => {
+                println!("saai-displayd: text-input-v3 commit {:?}", resource.id());
+            }
+            zwp_text_input_v3::Request::SetTextChangeCause { .. }
             | zwp_text_input_v3::Request::SetContentType { .. }
             | zwp_text_input_v3::Request::SetCursorRectangle { .. } => {}
             _ => {}
@@ -617,10 +626,12 @@ where
                 drop(serial);
                 let active = ime.active.lock().expect("active").clone();
                 let Some(active_id) = active else {
+                    println!("saai-displayd: text-input-v3 done dropped no-active");
                     return;
                 };
                 for ti in ime.text_inputs.lock().expect("text_inputs").iter() {
                     if ti.id() == active_id {
+                        println!("saai-displayd: text-input-v3 done {:?}", active_id);
                         ti.done(done_serial);
                     }
                 }
