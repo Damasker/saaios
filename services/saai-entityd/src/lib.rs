@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::{TcpListener, UnixListener, UnixStream};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
@@ -26,6 +26,10 @@ pub struct DaemonConfig {
     pub store_root: PathBuf,
     pub legacy_active_space: PathBuf,
     pub socket_path: PathBuf,
+    /// USB NCM second surface (ADR-307). `None` is UDS only.
+    pub tcp_bind: Option<String>,
+    /// When false, a failed TCP bind stays UDS-only.
+    pub tcp_required: bool,
 }
 
 #[derive(Debug, Error)]
@@ -74,6 +78,30 @@ pub async fn run_daemon(config: DaemonConfig) -> Result<(), EntitydError> {
     )?;
     let store = Arc::new(Mutex::new(store));
     let (events, _) = broadcast::channel(EVENT_CAPACITY);
+    let mut tcp_listener = match config.tcp_bind.as_deref() {
+        Some(addr) => match TcpListener::bind(addr).await {
+            Ok(listener) => {
+                let bound = listener
+                    .local_addr()
+                    .map(|bound| bound.to_string())
+                    .unwrap_or_else(|_| addr.to_string());
+                println!("saai-entityd: listening on TCP={bound}");
+                Some(listener)
+            }
+            Err(source) if !config.tcp_required => {
+                eprintln!("saai-entityd: TCP {addr} unavailable, UDS only: {source}");
+                None
+            }
+            Err(source) => {
+                return Err(EntitydError::Io {
+                    operation: "bind entityd TCP",
+                    path: PathBuf::from(addr),
+                    source,
+                })
+            }
+        },
+        None => None,
+    };
 
     loop {
         tokio::select! {
@@ -86,10 +114,36 @@ pub async fn run_daemon(config: DaemonConfig) -> Result<(), EntitydError> {
                 let client_store = Arc::clone(&store);
                 let client_events = events.clone();
                 tokio::spawn(async move {
-                    if let Err(error) = serve_client(stream, client_store, client_events).await {
+                    let (reader, writer) = stream.into_split();
+                    if let Err(error) = serve_client(reader, writer, client_store, client_events).await {
                         eprintln!("saai-entityd: client disconnected: {error}");
                     }
                 });
+            }
+            accepted = async {
+                match tcp_listener.as_mut() {
+                    Some(tcp) => tcp.accept().await.map(Some),
+                    None => std::future::pending().await,
+                }
+            } => {
+                match accepted {
+                    Ok(Some((stream, _))) => {
+                        let client_store = Arc::clone(&store);
+                        let client_events = events.clone();
+                        tokio::spawn(async move {
+                            let (reader, writer) = stream.into_split();
+                            if let Err(error) =
+                                serve_client(reader, writer, client_store, client_events).await
+                            {
+                                eprintln!("saai-entityd: TCP client disconnected: {error}");
+                            }
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(source) => {
+                        eprintln!("saai-entityd: TCP accept failed: {source}");
+                    }
+                }
             }
             signal = tokio::signal::ctrl_c() => {
                 signal.map_err(|source| EntitydError::Io {
@@ -152,13 +206,18 @@ async fn prepare_socket_path(path: &Path) -> Result<(), EntitydError> {
     }
 }
 
-async fn serve_client(
-    stream: UnixStream,
+async fn serve_client<R, W>(
+    reader: R,
+    writer: W,
     store: Arc<Mutex<EntityStore>>,
     events: broadcast::Sender<EntitydEvent>,
-) -> Result<(), ProtocolError> {
-    let (reader, mut writer) = stream.into_split();
+) -> Result<(), ProtocolError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut reader = BufReader::with_capacity(8192, reader);
+    let mut writer = writer;
     let mut event_receiver = events.subscribe();
     let mut subscribed = false;
 
@@ -265,9 +324,7 @@ fn handle_request(
             });
             match store.ensure_in_space(&entity) {
                 Ok(Some(membership)) => {
-                    emitted.push(EntitydEvent::RelationshipChanged {
-                        record: membership,
-                    });
+                    emitted.push(EntitydEvent::RelationshipChanged { record: membership });
                 }
                 Ok(None) => {}
                 Err(error) => {

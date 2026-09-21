@@ -4,6 +4,7 @@ use saai_entity_protocol::{EntitydEvent, ResponseResult, ServerMessage};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -22,12 +23,12 @@ impl Drop for DaemonGuard {
     }
 }
 
-struct Client {
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
+struct Client<S> {
+    reader: BufReader<S>,
+    writer: S,
 }
 
-impl Client {
+impl Client<UnixStream> {
     fn connect(socket: &Path) -> Self {
         let stream = UnixStream::connect(socket).unwrap();
         stream
@@ -38,7 +39,22 @@ impl Client {
             reader: BufReader::new(stream),
         }
     }
+}
 
+impl Client<TcpStream> {
+    fn connect_tcp(addr: SocketAddr) -> Self {
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        Self {
+            writer: stream.try_clone().unwrap(),
+            reader: BufReader::new(stream),
+        }
+    }
+}
+
+impl<S: std::io::Read + Write> Client<S> {
     fn request(&mut self, request_id: &str, request: Value) -> ResponseResult {
         match self.request_message(request) {
             ServerMessage::Response {
@@ -411,7 +427,17 @@ fn created_relationship(result: ResponseResult) -> saai_entity_store::Relationsh
 }
 
 fn spawn_daemon(store: &Path, legacy: &Path, socket: &Path) -> DaemonGuard {
-    let child = Command::new(env!("CARGO_BIN_EXE_saai-entityd"))
+    spawn_daemon_with_tcp(store, legacy, socket, None)
+}
+
+fn spawn_daemon_with_tcp(
+    store: &Path,
+    legacy: &Path,
+    socket: &Path,
+    tcp: Option<SocketAddr>,
+) -> DaemonGuard {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_saai-entityd"));
+    command
         .arg("--store-root")
         .arg(store)
         .arg("--legacy-active-space")
@@ -419,10 +445,20 @@ fn spawn_daemon(store: &Path, legacy: &Path, socket: &Path) -> DaemonGuard {
         .arg("--socket")
         .arg(socket)
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::inherit());
+    match tcp {
+        Some(addr) => {
+            command.arg("--tcp-bind").arg(addr.to_string());
+        }
+        None => {
+            command.arg("--tcp-bind").arg("none");
+        }
+    }
+    let child = command.spawn().unwrap();
     wait_for_socket(socket);
+    if let Some(addr) = tcp {
+        wait_for_tcp(addr);
+    }
     DaemonGuard { child }
 }
 
@@ -431,5 +467,57 @@ fn wait_for_socket(socket: &Path) {
     while UnixStream::connect(socket).is_err() {
         assert!(Instant::now() < deadline, "daemon socket was not created");
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_tcp(addr: SocketAddr) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_err() {
+        assert!(Instant::now() < deadline, "daemon TCP was not listening");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn tcp_client_lists_the_same_space_entity_as_unix() {
+    let temp = TempDir::new().unwrap();
+    let store = temp.path().join("entities");
+    let legacy = temp.path().join("active-space");
+    let socket = temp.path().join("run/entityd.sock");
+    fs::write(&legacy, b"1\n").unwrap();
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = probe.local_addr().unwrap();
+    drop(probe);
+
+    let _daemon = spawn_daemon_with_tcp(&store, &legacy, &socket, Some(addr));
+    let mut unix = Client::connect(&socket);
+    let created = created_entity(unix.request(
+        "create-home",
+        json!({
+            "schema":1,"request_id":"create-home","command":"create_entity",
+            "space_id":"home","entity_type":"saaios.intent",
+            "title":"shared-intent","properties":{}
+        }),
+    ));
+
+    let mut tcp = Client::connect_tcp(addr);
+    let listed = tcp.request(
+        "list-home",
+        json!({
+            "schema":1,"request_id":"list-home","command":"list_entities",
+            "space_id":"home"
+        }),
+    );
+    match listed {
+        ResponseResult::Entities { entities, space_id } => {
+            assert_eq!(space_id, "home");
+            assert!(
+                entities
+                    .iter()
+                    .any(|entity| entity.id == created.id && entity.title == "shared-intent"),
+                "TCP client must see the Unix-created Intent, got {entities:?}"
+            );
+        }
+        other => panic!("expected entities, got {other:?}"),
     }
 }

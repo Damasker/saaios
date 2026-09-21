@@ -4,15 +4,57 @@ use saai_entity_protocol::{
 };
 use serde_json::{Map, Value};
 use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const RETRY_DELAY: Duration = Duration::from_millis(500);
+const TCP_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
+
+enum EntitydStream {
+    Unix(UnixStream),
+    Tcp(TcpStream),
+}
+
+impl Read for EntitydStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Unix(stream) => stream.read(buf),
+            Self::Tcp(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for EntitydStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Unix(stream) => stream.write(buf),
+            Self::Tcp(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Unix(stream) => stream.flush(),
+            Self::Tcp(stream) => stream.flush(),
+        }
+    }
+}
+
+impl EntitydStream {
+    fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        match self {
+            Self::Unix(stream) => stream.set_nonblocking(nonblocking),
+            Self::Tcp(stream) => stream.set_nonblocking(nonblocking),
+        }
+    }
+}
 
 pub struct EntitydClient {
     socket_path: PathBuf,
-    stream: Option<UnixStream>,
+    tcp_addr: Option<SocketAddr>,
+    stream: Option<EntitydStream>,
     read_buffer: Vec<u8>,
     write_buffer: Vec<u8>,
     next_request: u64,
@@ -23,12 +65,20 @@ impl EntitydClient {
     pub fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
             socket_path: socket_path.into(),
+            tcp_addr: None,
             stream: None,
             read_buffer: Vec::new(),
             write_buffer: Vec::new(),
             next_request: 1,
             retry_at: Instant::now(),
         }
+    }
+
+    /// Laptop second surface (ADR-307): same store over USB NCM TCP
+    /// when the Unix socket is absent.
+    pub fn with_tcp(mut self, addr: SocketAddr) -> Self {
+        self.tcp_addr = Some(addr);
+        self
     }
 
     /// Physical partition plus `saaios.in-space` members. Space UI
@@ -131,20 +181,33 @@ impl EntitydClient {
     fn connect(&mut self) {
         match UnixStream::connect(&self.socket_path) {
             Ok(stream) => {
-                if let Err(error) = stream.set_nonblocking(true) {
-                    self.disconnect(error);
-                    return;
-                }
-                self.stream = Some(stream);
-                self.read_buffer.clear();
-                println!("saai-shell: connected to saai-entityd");
-                self.subscribe();
-                self.list_spaces();
-                self.get_selection();
-                self.list_relationships();
+                self.attach(EntitydStream::Unix(stream));
             }
-            Err(error) => self.disconnect(error),
+            Err(unix_error) => {
+                if let Some(addr) = self.tcp_addr {
+                    match TcpStream::connect_timeout(&addr, TCP_CONNECT_TIMEOUT) {
+                        Ok(stream) => self.attach(EntitydStream::Tcp(stream)),
+                        Err(error) => self.disconnect(error),
+                    }
+                } else {
+                    self.disconnect(unix_error);
+                }
+            }
         }
+    }
+
+    fn attach(&mut self, stream: EntitydStream) {
+        if let Err(error) = stream.set_nonblocking(true) {
+            self.disconnect(error);
+            return;
+        }
+        self.stream = Some(stream);
+        self.read_buffer.clear();
+        println!("saai-shell: connected to saai-entityd");
+        self.subscribe();
+        self.list_spaces();
+        self.get_selection();
+        self.list_relationships();
     }
 
     fn subscribe(&mut self) {

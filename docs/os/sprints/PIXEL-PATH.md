@@ -225,6 +225,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - Windowed displayd on x86: 1280×800, model `x86` (ADR-250; host)
 - Pointer + USB HID keyboard on x86 seat (ADR-251; host)
 - Logical layout: x86 1280×800, panther 1080×2400 (ADR-252; host)
+- Shared Space/Entity/Intent/Observation: laptop is a USB NCM client of panther entityd `38128` + runtime `38127`, not a replica (ADR-307; host; panther entityd TCP waits the service binary)
 - PCE-01..24 и Resource Scheduler не начинать
 - Доказательство ноута валидно для D, не вместо phone-gate
 

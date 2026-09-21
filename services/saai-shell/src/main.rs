@@ -73,7 +73,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -6340,6 +6340,9 @@ fn runtime_live_facts_from_status_json(blob: &Value) -> RuntimeLiveFacts {
 }
 
 const RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_millis(250);
+const USB_NCM_RUNTIME: &str = "172.31.7.1:38127";
+const USB_NCM_ENTITYD: &str = "172.31.7.1:38128";
+const USB_NCM_HOST: &str = "172.31.7.2:0";
 
 fn runtime_sock_candidates() -> Vec<PathBuf> {
     let mut paths = Vec::new();
@@ -6362,6 +6365,23 @@ fn read_runtime_live_facts_from_stream(stream: &mut impl Read) -> RuntimeLiveFac
         .ok()
         .map(|blob| runtime_live_facts_from_status_json(&blob))
         .unwrap_or_default()
+}
+
+fn usb_ncm_present() -> bool {
+    std::net::UdpSocket::bind(USB_NCM_HOST).is_ok()
+}
+
+fn entityd_tcp_addr() -> Option<SocketAddr> {
+    if let Ok(raw) = std::env::var("SAAIOS_ENTITYD_TCP") {
+        if raw.is_empty() || raw.eq_ignore_ascii_case("none") {
+            return None;
+        }
+        return raw.parse().ok();
+    }
+    if cfg!(test) || phone_gate_surface() || !usb_ncm_present() {
+        return None;
+    }
+    USB_NCM_ENTITYD.parse().ok()
 }
 
 fn write_status_request(stream: &mut impl Write) -> bool {
@@ -6407,7 +6427,10 @@ fn read_runtime_live_facts() -> RuntimeLiveFacts {
         }
     }
     if Path::new("/data/saaios/system/saaios-runtime").exists() {
-        return read_runtime_live_facts_from_tcp("172.31.7.1:38127");
+        return read_runtime_live_facts_from_tcp(USB_NCM_RUNTIME);
+    }
+    if cfg!(not(test)) && !phone_gate_surface() && usb_ncm_present() {
+        return read_runtime_live_facts_from_tcp(USB_NCM_RUNTIME);
     }
     RuntimeLiveFacts::default()
 }
@@ -7196,7 +7219,13 @@ fn main() {
         me_scroll_dirty: false,
         scroll_content_only: false,
         me_row_cache: None,
-        entityd: entityd_client::EntitydClient::new(entityd_socket),
+        entityd: {
+            let client = entityd_client::EntitydClient::new(entityd_socket);
+            match entityd_tcp_addr() {
+                Some(addr) => client.with_tcp(addr),
+                None => client,
+            }
+        },
         spaces: Vec::new(),
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
@@ -12841,6 +12870,11 @@ mod tests {
         assert_eq!(logical_surface_size(false), (1280, 800));
         assert_eq!(logical_surface_size(true), (1080, 2400));
         assert_ne!(logical_surface_size(false), logical_surface_size(true));
+    }
+
+    #[test]
+    fn entityd_tcp_is_off_in_unit_tests() {
+        assert!(super::entityd_tcp_addr().is_none());
     }
 
     #[test]
