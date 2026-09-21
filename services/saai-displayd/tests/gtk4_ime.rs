@@ -3,7 +3,8 @@
 //! under qemu is the panther toolkit (ADR-343). Without wl_keyboard,
 //! packed 4.14 is ADR-346 and host 4.18 is ADR-350. gtk4-demo
 //! `--run=entry` click without wl_keyboard is ADR-356. Packed 4.14
-//! competing pane is ADR-372. Not a panther field.
+//! competing pane is ADR-372. `--run=entry` is not a gtk4-demo
+//! example name (ADR-373). Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1514,4 +1515,113 @@ fn osk_ime_types_hi_bang_into_alpine_gtk414_entry_competing_pane() {
     );
     let _ = displayd.kill();
     let _ = displayd.wait();
+}
+
+/// ADR-373: packed gtk4-demo `--list` has `search_entry` /
+/// `password_entry`, not `entry`. `--run=entry` never opens an
+/// Entry demo window (main.c name match). ADR-344/356 clicked the
+/// demo browser. Not a Y sweep.
+#[test]
+fn packed_gtk4_demo_run_entry_is_not_an_example_name() {
+    let probe = gtk4_alpine_probe();
+    let demo = probe.join("bin/gtk4-demo");
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        demo.is_file(),
+        "missing Alpine gtk4-demo at {} — set GTK4_ALPINE_PROBE",
+        demo.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let demo = probe.join("bin/gtk4-demo");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&demo)
+        .arg("--list")
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk4-demo --list");
+    let stdout_rx = {
+        let stdout = gtk.stdout.take().expect("gtk4-demo stdout");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk4-demo stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let names = stdout_rx
+        .recv_timeout(Duration::from_secs(20))
+        .unwrap_or_default();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+
+    let listed: Vec<&str> = names.lines().filter(|l| !l.is_empty()).collect();
+    assert!(
+        listed.iter().any(|n| *n == "search_entry"),
+        "gtk4-demo --list missing search_entry; names={listed:?}; stderr={stderr}"
+    );
+    assert!(
+        listed.iter().any(|n| *n == "password_entry"),
+        "gtk4-demo --list missing password_entry; names={listed:?}; stderr={stderr}"
+    );
+    assert!(
+        listed.iter().all(|n| *n != "entry"),
+        "gtk4-demo --list unexpectedly has entry; ADR-344/356 --run=entry was a real demo; names={listed:?}; stderr={stderr}"
+    );
 }
