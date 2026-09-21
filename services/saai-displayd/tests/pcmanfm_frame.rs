@@ -2,6 +2,8 @@
 //! `zwp_text_input_manager_v2` on host `saai-displayd` and `enable`s.
 //! ADR-324: IME `commit_string` while that enable is live. ADR-332:
 //! Ctrl+L (PathEdit QShortcut) disables v2 with no second enable.
+//! ADR-341: Qt 5.15 IME debug has no `discard commit_string` (same
+//! silent `focusObject() == null` class as Falkon ADR-340).
 //! Empty `QT_IM_MODULE` blocks the path. Not a panther typed field.
 
 use std::io::{BufRead, BufReader, Write};
@@ -9,6 +11,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
@@ -56,6 +61,18 @@ fn spawn_displayd(runtime_dir: &std::path::Path) -> (Child, mpsc::Receiver<Strin
         }
     });
     (child, rx)
+}
+
+fn reap_pcmanfm(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id();
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{pid}")])
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn wait_for_socket(log: &mpsc::Receiver<String>) -> String {
@@ -322,10 +339,13 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         .env("QT_QPA_PLATFORM", "wayland")
         .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
         .env("QT_QPA_PLATFORMTHEME", "")
+        .env("QT_LOGGING_TO_CONSOLE", "1")
+        .env("QT_ASSUME_STDERR_HAS_CONSOLE", "1")
         .env(
             "QT_LOGGING_RULES",
             "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
         )
+        .process_group(0)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -444,8 +464,7 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         }
         let _ = queue.roundtrip(&mut ime_state);
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    reap_pcmanfm(&mut child);
     let stderr = _stderr_rx
         .recv_timeout(Duration::from_secs(2))
         .unwrap_or_default();
@@ -456,6 +475,14 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     assert!(
         !saw_enable_after,
         "Ctrl+L re-enabled v2 unexpectedly; displayd={lines:?}; qt={stderr}"
+    );
+    assert!(
+        stderr.contains("qt.qpa.input.methods"),
+        "PCManFM OSK spawn must carry QT_LOGGING_RULES; qt={stderr}"
+    );
+    assert!(
+        !stderr.contains("discard commit_string"),
+        "Qt discarded commit_string despite ADR-339 defer; qt={stderr}"
     );
 
     let _ = displayd.kill();
