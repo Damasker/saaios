@@ -5,6 +5,7 @@
 //! ADR-341: Qt 5.15 IME debug has no `discard commit_string` (same
 //! silent `focusObject() == null` class as Falkon ADR-340).
 //! ADR-353: without wl_keyboard, xdg Activated still enables chrome v2.
+//! ADR-357: that enable stays through a 2 s quiet (not Falkon ADR-337).
 //! Empty `QT_IM_MODULE` blocks the path. Not a panther typed field.
 
 use std::io::{BufRead, BufReader, Write};
@@ -633,5 +634,164 @@ fn packed_pcmanfm_enables_v2_without_seat_keyboard() {
     assert!(
         saw_enable,
         "PCManFM never enabled v2 on a keyboard-less seat after xdg Activated; displayd={lines:?}; stderr={stderr}"
+    );
+}
+
+/// ADR-357: packed PCManFM v2 enable on a keyboard-less seat stays
+/// through 2 s quiet. Not Falkon URL disable (ADR-337). No click.
+/// No OSK. Not typed PathEdit/Filter.
+#[test]
+fn packed_pcmanfm_v2_stays_enabled_without_seat_keyboard() {
+    let pkg = pcmanfm_package();
+    let bin = pkg.join("bin/pcmanfm-qt");
+    assert!(
+        bin.is_file(),
+        "missing packed pcmanfm-qt at {} — set PCMANFM_PACKAGE_DIR",
+        bin.display()
+    );
+    assert!(
+        pkg.join("lib/ld-musl-aarch64.so.1").is_file(),
+        "missing musl loader in {}",
+        pkg.display()
+    );
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let home_dir = tempfile::tempdir().expect("failed to create PCManFM HOME");
+    let cfg = home_dir.path().join(".config/pcmanfm-qt/default");
+    std::fs::create_dir_all(&cfg).expect("pcmanfm config dir");
+    std::fs::write(
+        cfg.join("settings.conf"),
+        "[FolderView]\nShowFilter=true\n[Window]\nPathBarButtons=false\n",
+    )
+    .expect("write settings.conf");
+
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+    let path = std::env::var("PATH").unwrap_or_default();
+    let pkg = pkg.canonicalize().expect("canonicalize pcmanfm package");
+    let bin = pkg.join("bin/pcmanfm-qt");
+
+    let mut child = Command::new("dbus-run-session")
+        .arg("--")
+        .arg("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&pkg)
+        .arg(&bin)
+        .env_remove("QT_IM_MODULE")
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("QT_PLUGIN_PATH", pkg.join("plugins"))
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
+        .env("QT_QPA_PLATFORMTHEME", "")
+        .process_group(0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("dbus-run-session/qemu failed to spawn pcmanfm-qt");
+    let stderr_rx = {
+        let stderr = child.stderr.take().expect("pcmanfm stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_frame = false;
+    let mut saw_enable = false;
+    let mut saw_disable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !saw_enable {
+        match log.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                }
+                if line.contains("frame sha256=") {
+                    saw_frame = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    if !saw_enable {
+        reap_pcmanfm(&mut child);
+        let stderr = stderr_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let _ = displayd.kill();
+        let _ = displayd.wait();
+        panic!(
+            "PCManFM never enabled v2 before quiet; kbd={saw_kbd_focus} xdg={saw_activated}; displayd={lines:?}; stderr={stderr}"
+        );
+    }
+    let quiet = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < quiet {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    reap_pcmanfm(&mut child);
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_toplevel && saw_frame && saw_activated && saw_focus && !saw_kbd_focus,
+        "expected framed PCManFM Activated without wl_keyboard; kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated}; displayd={lines:?}; stderr={stderr}"
+    );
+    assert!(
+        !saw_disable,
+        "PCManFM disabled v2 within 2 s on a keyboard-less seat; Falkon-class, not a durable field; displayd={lines:?}; stderr={stderr}"
     );
 }

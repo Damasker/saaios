@@ -209,6 +209,7 @@ ADR-353 packed PCManFM enables v2 without wl_keyboard (no flash).
 ADR-354 packed Falkon without wl_keyboard does not enable v2 (no flash).
 ADR-355 packed Falkon URL click enables v2 without wl_keyboard (no flash).
 ADR-356 packed gtk4-demo click binds v3 without wl_keyboard and does not enable (no flash).
+ADR-357 packed PCManFM v2 stays enabled without wl_keyboard (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
