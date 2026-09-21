@@ -71,6 +71,24 @@ int main(int argc, char **argv) {
         QTimer::singleShot(80, completer, [completer]() { completer->complete(); });
     }
 
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_SELECTALL")) {
+        // ADR-408: PathEdit click class. selectAll with path
+        // surrounding. Lone QLineEdit keeps v2; PathEdit disable
+        // is not this.
+        edit->setText(QStringLiteral("/home/mike/worktrees/saaios-som"));
+        auto select = [edit]() { edit->selectAll(); };
+        QTimer::singleShot(0, edit, select);
+        QObject::connect(
+            &app,
+            &QApplication::focusChanged,
+            edit,
+            [edit](QWidget *, QWidget *now) {
+                if (now == edit) {
+                    QTimer::singleShot(0, edit, [edit]() { edit->selectAll(); });
+                }
+            });
+    }
+
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
         // ADR-403: QMenu::popup. Qt Wayland menus are a second
         // xdg_toplevel, same class as QCompleter — not xdg_popup.
