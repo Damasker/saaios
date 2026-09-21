@@ -63,4 +63,5 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-04 packed Falkon URL OSK hi! reaches v2 (ADR-334).
 # APP-04 packed Falkon URL OSK still no new shm (ADR-335).
 # APP-04 packed musl Qt 6.6.3 QLineEdit types hi! via IME (ADR-336).
+# APP-04 packed Falkon URL v2 disables before update_state settle (ADR-337).
 saai-ui-core = { path = "../../crates/saai-ui-core" }
