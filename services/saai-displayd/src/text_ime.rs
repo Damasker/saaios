@@ -1,10 +1,13 @@
-//! ADR-267 / APP-03: `zwp_text_input_manager_v3` + `zwp_input_method_manager_v2`
-//! without `Seat::get_keyboard()` / xkbcommon.
+//! ADR-267 / APP-03 / ADR-319: `zwp_text_input_manager_v3` (GTK) plus
+//! KDE `zwp_text_input_manager_v2` (Qt 5.15 / Qt 6.6) plus
+//! `zwp_input_method_manager_v2` without `Seat::get_keyboard()` /
+//! xkbcommon.
 //!
 //! Smithay's `InputMethodManagerState::GetInputMethod` unwraps a keyboard
 //! (ADR-022). Enable on smithay's text-input is discarded unless that
-//! IME instance exists. This module owns both globals so commit_string
-//! can reach an enabled field on a seat that has only touch.
+//! IME instance exists. This module owns the globals so commit_string
+//! can reach an enabled field on a seat that has only touch. Qt packed
+//! on panther does not contain `zwp_text_input_v3` at all (ADR-319).
 
 use std::sync::Mutex;
 
@@ -28,10 +31,15 @@ use smithay::{
         },
     },
 };
+use wayland_protocols_plasma::text_input::v2::server::{
+    zwp_text_input_manager_v2::{self, ZwpTextInputManagerV2},
+    zwp_text_input_v2::{self, ZwpTextInputV2},
+};
 
 #[derive(Default)]
 struct SeatTextIme {
     text_inputs: Mutex<Vec<ZwpTextInputV3>>,
+    text_inputs_v2: Mutex<Vec<ZwpTextInputV2>>,
     input_method: Mutex<Option<ZwpInputMethodV2>>,
     focus: Mutex<Option<WlSurface>>,
     active: Mutex<Option<ObjectId>>,
@@ -53,6 +61,16 @@ pub fn on_focus<D: SeatHandler + 'static>(seat: &Seat<D>, surface: Option<WlSurf
                 ti.leave(&old);
             }
         }
+        let serial = {
+            let mut serial = ime.serial.lock().expect("serial");
+            *serial = serial.wrapping_add(1);
+            *serial
+        };
+        for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
+            if old.id().same_client_as(&ti.id()) {
+                ti.leave(serial, &old);
+            }
+        }
         if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
             im.deactivate();
             im.done();
@@ -68,10 +86,21 @@ pub fn on_focus<D: SeatHandler + 'static>(seat: &Seat<D>, surface: Option<WlSurf
             ti.enter(&surf);
         }
     }
+    let serial = {
+        let mut serial = ime.serial.lock().expect("serial");
+        *serial = serial.wrapping_add(1);
+        *serial
+    };
+    for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
+        if surf.id().same_client_as(&ti.id()) {
+            ti.enter(serial, &surf);
+        }
+    }
 }
 
 pub struct SaaiTextInputManager {
-    _global: GlobalId,
+    _global_v3: GlobalId,
+    _global_v2: GlobalId,
 }
 
 impl SaaiTextInputManager {
@@ -80,11 +109,15 @@ impl SaaiTextInputManager {
         D: GlobalDispatch<ZwpTextInputManagerV3, ()>
             + Dispatch<ZwpTextInputManagerV3, ()>
             + Dispatch<ZwpTextInputV3, TextInputData<D>>
+            + GlobalDispatch<ZwpTextInputManagerV2, ()>
+            + Dispatch<ZwpTextInputManagerV2, ()>
+            + Dispatch<ZwpTextInputV2, TextInputData<D>>
             + SeatHandler
             + 'static,
     {
         Self {
-            _global: display.create_global::<D, ZwpTextInputManagerV3, ()>(1, ()),
+            _global_v3: display.create_global::<D, ZwpTextInputManagerV3, ()>(1, ()),
+            _global_v2: display.create_global::<D, ZwpTextInputManagerV2, ()>(1, ()),
         }
     }
 }
@@ -211,6 +244,126 @@ where
     }
 }
 
+impl<D> GlobalDispatch<ZwpTextInputManagerV2, (), D> for SaaiTextInputManager
+where
+    D: GlobalDispatch<ZwpTextInputManagerV2, ()>
+        + Dispatch<ZwpTextInputManagerV2, ()>
+        + Dispatch<ZwpTextInputV2, TextInputData<D>>
+        + SeatHandler
+        + 'static,
+{
+    fn bind(
+        _state: &mut D,
+        _handle: &DisplayHandle,
+        _client: &Client,
+        resource: New<ZwpTextInputManagerV2>,
+        _global_data: &(),
+        data_init: &mut DataInit<'_, D>,
+    ) {
+        data_init.init(resource, ());
+    }
+}
+
+impl<D> Dispatch<ZwpTextInputManagerV2, (), D> for SaaiTextInputManager
+where
+    D: Dispatch<ZwpTextInputManagerV2, ()>
+        + Dispatch<ZwpTextInputV2, TextInputData<D>>
+        + SeatHandler
+        + 'static,
+{
+    fn request(
+        _state: &mut D,
+        _client: &Client,
+        _resource: &ZwpTextInputManagerV2,
+        request: zwp_text_input_manager_v2::Request,
+        _data: &(),
+        _dhandle: &DisplayHandle,
+        data_init: &mut DataInit<'_, D>,
+    ) {
+        match request {
+            zwp_text_input_manager_v2::Request::GetTextInput { id, seat } => {
+                let Some(seat) = Seat::<D>::from_resource(&seat) else {
+                    return;
+                };
+                let instance = data_init.init(id, TextInputData { seat: seat.clone() });
+                let ime = seat_ime(&seat);
+                ime.text_inputs_v2
+                    .lock()
+                    .expect("text_inputs_v2")
+                    .push(instance.clone());
+                let focus = ime.focus.lock().expect("focus").clone();
+                if let Some(focus) = focus {
+                    if focus.id().same_client_as(&instance.id()) {
+                        let serial = {
+                            let mut serial = ime.serial.lock().expect("serial");
+                            *serial = serial.wrapping_add(1);
+                            *serial
+                        };
+                        instance.enter(serial, &focus);
+                    }
+                }
+            }
+            zwp_text_input_manager_v2::Request::Destroy => {}
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl<D> Dispatch<ZwpTextInputV2, TextInputData<D>, D> for SaaiTextInputManager
+where
+    D: Dispatch<ZwpTextInputV2, TextInputData<D>> + SeatHandler + 'static,
+{
+    fn request(
+        _state: &mut D,
+        _client: &Client,
+        resource: &ZwpTextInputV2,
+        request: zwp_text_input_v2::Request,
+        data: &TextInputData<D>,
+        _dhandle: &DisplayHandle,
+        _data_init: &mut DataInit<'_, D>,
+    ) {
+        let ime = seat_ime(&data.seat);
+        match request {
+            zwp_text_input_v2::Request::Enable { surface: _ }
+            | zwp_text_input_v2::Request::ShowInputPanel => {
+                *ime.active.lock().expect("active") = Some(resource.id());
+                if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
+                    im.activate();
+                    im.done();
+                }
+            }
+            zwp_text_input_v2::Request::Disable { surface: _ }
+            | zwp_text_input_v2::Request::HideInputPanel => {
+                *ime.active.lock().expect("active") = None;
+                if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
+                    im.deactivate();
+                    im.done();
+                }
+            }
+            zwp_text_input_v2::Request::Destroy => {
+                ime.text_inputs_v2
+                    .lock()
+                    .expect("text_inputs_v2")
+                    .retain(|ti| ti.id() != resource.id());
+            }
+            _ => {}
+        }
+    }
+
+    fn destroyed(
+        _state: &mut D,
+        _client: ClientId,
+        resource: &ZwpTextInputV2,
+        data: &TextInputData<D>,
+    ) {
+        let ime = seat_ime(&data.seat);
+        ime.text_inputs_v2
+            .lock()
+            .expect("text_inputs_v2")
+            .retain(|ti| ti.id() != resource.id());
+    }
+}
+
 pub struct SaaiInputMethodManager {
     _global: GlobalId,
 }
@@ -329,6 +482,11 @@ where
                         ti.commit_string(Some(text.clone()));
                     }
                 }
+                for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
+                    if ti.id() == active_id && focus.id().same_client_as(&ti.id()) {
+                        ti.commit_string(text.clone());
+                    }
+                }
             }
             zwp_input_method_v2::Request::SetPreeditString {
                 text,
@@ -433,6 +591,15 @@ macro_rules! delegate_saai_text_ime {
         ] => $crate::text_ime::SaaiTextInputManager);
         smithay::reexports::wayland_server::delegate_dispatch!($ty: [
             smithay::reexports::wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::ZwpTextInputV3: $crate::text_ime::TextInputData<Self>
+        ] => $crate::text_ime::SaaiTextInputManager);
+        smithay::reexports::wayland_server::delegate_global_dispatch!($ty: [
+            wayland_protocols_plasma::text_input::v2::server::zwp_text_input_manager_v2::ZwpTextInputManagerV2: ()
+        ] => $crate::text_ime::SaaiTextInputManager);
+        smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            wayland_protocols_plasma::text_input::v2::server::zwp_text_input_manager_v2::ZwpTextInputManagerV2: ()
+        ] => $crate::text_ime::SaaiTextInputManager);
+        smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            wayland_protocols_plasma::text_input::v2::server::zwp_text_input_v2::ZwpTextInputV2: $crate::text_ime::TextInputData<Self>
         ] => $crate::text_ime::SaaiTextInputManager);
 
         smithay::reexports::wayland_server::delegate_global_dispatch!($ty: [

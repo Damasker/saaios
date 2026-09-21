@@ -1220,6 +1220,7 @@ delegate_seat!(State);
 delegate_saai_data_device!(State);
 
 // ADR-267 (APP-03): text-input-v3 + input-method-v2 without keymap.
+// ADR-319: also text-input-v2 so Qt 5/6 can enable IME.
 // Focus is still driven from `activate_toplevel()`.
 delegate_saai_text_ime!(State);
 
