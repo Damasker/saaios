@@ -173,6 +173,7 @@ ADR-317 WebEngine file:// field does not Activate IME; saai-shell-osk never mapp
 ADR-318 PCManFM-Qt Filter QLineEdit on panther; tap does not Activate OSK.
 ADR-319 displayd advertises zwp_text_input_manager_v2 for Qt (host; no flash).
 ADR-320 Alpine GTK 4.14.4 qemu frames when configure_bounds is the window (host; no flash).
+ADR-321 Falkon loads hello.html over 127.0.0.1 HTTP (panther; not NetInternet).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
