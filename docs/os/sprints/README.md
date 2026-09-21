@@ -270,6 +270,7 @@ ADR-414 host Qt 5.15 QLineEdit inline completer keeps v2 (no flash).
 ADR-415 host Qt 5.15 LocationCompleterView ToolTip keeps v2 (no flash).
 ADR-416 host Qt 5.15 empty QInputMethodEvent keeps v2 (no flash).
 ADR-417 host Qt 5.15 SideWidget ClickFocus + margins keep v2 (no flash).
+ADR-418 host Qt 5.15 QLineEdit above QWebEngineView keeps v2 (no flash).
 ADR-404 packed GTK 4.14 ComboBox popup maps xdg_popup (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).

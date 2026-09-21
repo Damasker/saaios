@@ -10,7 +10,9 @@
 #include <QStringListModel>
 #include <QThread>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
+#include <QWebEngineView>
 #include <QWidget>
 #include <QWindow>
 #include <cstdio>
@@ -22,7 +24,25 @@ int main(int argc, char **argv) {
     QLineEdit *edit = nullptr;
     QWidget window;
     const int steal_ms = qEnvironmentVariableIntValue("QT_LINEEDIT_STEAL_MS");
-    if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPETE")) {
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_WEBENGINE")) {
+        // ADR-418: Falkon LocationBar above QWebEngineView.
+        // Sibling about:blank does not steal IM; Falkon disable
+        // is not this.
+        window.resize(640, 400);
+        window.setWindowFlags(Qt::FramelessWindowHint);
+        auto *layout = new QVBoxLayout(&window);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        edit = new QLineEdit;
+        edit->setText(QStringLiteral("https://example.com"));
+        edit->setFixedHeight(40);
+        auto *view = new QWebEngineView;
+        view->load(QUrl(QStringLiteral("about:blank")));
+        layout->addWidget(edit);
+        layout->addWidget(view, 1);
+        window.show();
+        edit->setFocus(Qt::OtherFocusReason);
+    } else if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPETE")) {
         // ADR-360: LocationBar/Filter class. A non-IM pane holds
         // focus (WebView/FolderView). The field is the top 40 px.
         // ADR-361: QT_LINEEDIT_STEAL_MS > 0 returns focus to the pane
