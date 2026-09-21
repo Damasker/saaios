@@ -9,7 +9,8 @@
 //! types (ADR-359). Competing non-IM pane + tap is ADR-360.
 //! Steal-back after the tap is ADR-361. OSK in the enable window
 //! before steal is ADR-362. Packed Qt 6.6.3 competing pane is
-//! ADR-366. Not a panther field.
+//! ADR-366. Packed Qt 6.6.3 steal-back is ADR-367. Not a panther
+//! field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -2313,6 +2314,258 @@ fn osk_ime_types_hi_bang_into_packed_qt6_lineedit_competing_pane() {
     assert_eq!(
         entry, "hi!",
         "OSK IME did not type hi! into packed Qt6 competing QLineEdit after click; displayd={lines:?}; qt={stderr}"
+    );
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+}
+
+/// ADR-367: packed musl Qt 6.6.3 competing pane, 80 ms steal-back.
+/// OSK after 200 ms quiet does not type. Falkon URL class on the
+/// Falkon toolkit. Not a Falkon Y click.
+#[test]
+fn osk_ime_does_not_type_into_packed_qt6_lineedit_after_steal_back() {
+    let pkg = falkon_package();
+    let probe = packed_qt6_probe();
+    assert!(
+        pkg.join("lib/ld-musl-aarch64.so.1").is_file(),
+        "missing packed musl loader in {} — set FALKON_PACKAGE_DIR",
+        pkg.display()
+    );
+    assert!(
+        probe.is_file(),
+        "missing packed Qt6 QLineEdit at {} — set PACKED_QT6_LINEEDIT",
+        probe.display()
+    );
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let pkg = pkg.canonicalize().expect("canonicalize falkon package");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut qt = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&pkg)
+        .arg(&probe)
+        .env_remove("QT_IM_MODULE")
+        .env_remove("DISPLAY")
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("QT_PLUGIN_PATH", pkg.join("plugins"))
+        .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
+        .env("QT_QPA_PLATFORMTHEME", "")
+        .env("QT_LINEEDIT_COMPETE", "1")
+        .env("QT_LINEEDIT_STEAL_MS", "80")
+        .env(
+            "QT_LOGGING_RULES",
+            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn packed Qt6 steal-back");
+    let qt_out = {
+        let stdout = qt.stdout.take().expect("qt stdout");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    };
+    let qt_err = {
+        let stderr = qt.stderr.take().expect("qt stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_disable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut saw_click = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !(saw_activated && saw_focus) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    let settle = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_activated && saw_focus && !saw_kbd_focus && !saw_enable) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "pre-click packed Qt6 steal: expected pane without v2 enable; enable={saw_enable} kbd={saw_kbd_focus} xdg={saw_activated}; displayd={lines:?}; qt={stderr}"
+        );
+    }
+
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 160 20").expect("inject-click");
+        let _ = stdin.flush();
+    }
+    let click_deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < click_deadline && !(saw_click && saw_enable) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    saw_click = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_click && saw_enable && !saw_kbd_focus) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "packed Qt6 click 160 20 did not enable v2 before steal; click={saw_click} enable={saw_enable} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}"
+        );
+    }
+    let quiet = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < quiet {
+        match log.recv_timeout(Duration::from_millis(20)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _keyboard = Keyboard::bind_foreign_ime();
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let mut entry = String::new();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        match qt_out.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if let Some(text) = line.strip_prefix("QT_LINEEDIT_TEXT=") {
+                    entry = text.to_string();
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _ = qt.kill();
+    let _ = qt.wait();
+    let stderr = qt_err
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    assert!(
+        saw_disable && !saw_kbd_focus,
+        "packed Qt6 expected v2 disable after 80 ms steal-back; disable={saw_disable} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}"
+    );
+    assert_ne!(
+        entry.as_str(),
+        "hi!",
+        "packed Qt6 OSK typed hi! after steal-back; Falkon-class not reproduced; displayd={lines:?}; qt={stderr}"
     );
     let _ = displayd.kill();
     let _ = displayd.wait();
