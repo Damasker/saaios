@@ -258,6 +258,7 @@ ADR-402 packed GTK 4.14 popover Entry types OSK hi! (no flash).
 ADR-403 host Qt 5.15 QMenu is a second toplevel, not xdg_popup (no flash).
 ADR-404 packed GTK 4.14 ComboBox popup maps configured xdg_popup (no flash).
 ADR-405 packed GTK 4.14 ComboBox with_entry types OSK hi! (no flash).
+ADR-406 packed GTK 4.14 DropDown activate maps xdg_popup (no flash).
 ADR-404 packed GTK 4.14 ComboBox popup maps xdg_popup (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
