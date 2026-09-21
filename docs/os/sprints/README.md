@@ -195,6 +195,7 @@ ADR-339 defer v2 IME commit until after client dispatch (host; no flash).
 ADR-340 Falkon URL OSK is silent focusObject null, not discard (no flash).
 ADR-341 packed PCManFM v2 OSK is silent focusObject null, not discard (no flash).
 ADR-342 packed Falkon URL KEY_A after second click still does not paint (no flash).
+ADR-343 packed musl GTK 4.14.4 Entry receives OSK hi! through IME (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
