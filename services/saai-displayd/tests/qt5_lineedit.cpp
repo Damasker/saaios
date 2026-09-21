@@ -1,7 +1,9 @@
 // APP-04 host probe: focused QLineEdit against saai-displayd.
 // Prints QT_LINEEDIT_TEXT= on every change. Not a panther field.
 #include <QApplication>
+#include <QCompleter>
 #include <QLineEdit>
+#include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -56,6 +58,16 @@ int main(int argc, char **argv) {
         if (!qEnvironmentVariableIsSet("QT_LINEEDIT_NO_SETFOCUS")) {
             edit->setFocus(Qt::OtherFocusReason);
         }
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPLETER")) {
+        // ADR-394: PathEdit/LocationBar class. QCompleter popup is an
+        // xdg_popup; empty new_popup left it unmapped.
+        auto *completer = new QCompleter(
+            QStringList() << QStringLiteral("hi!") << QStringLiteral("hello"),
+            edit);
+        edit->setCompleter(completer);
+        QTimer::singleShot(80, completer, [completer]() { completer->complete(); });
     }
 
     QObject::connect(edit, &QLineEdit::textChanged, [](const QString &text) {

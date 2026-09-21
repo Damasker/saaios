@@ -329,6 +329,9 @@ struct State {
     /// ensure_configured() (S02 protocol-negative test: reject a buffer
     /// attached before the surface's first configure was acked).
     toplevels: HashMap<WlSurface, ToplevelSurface>,
+    /// ADR-394: xdg_popup needs configure + frame acks. Empty
+    /// `new_popup` left QCompleter / LocationBar dropdowns unmapped.
+    popups: Vec<PopupSurface>,
     #[cfg(feature = "panther-hardware")]
     hardware: Option<hardware::HardwareOutput>,
     /// Every known surface's last committed frame (ADR-016) -- lets
@@ -842,6 +845,12 @@ impl State {
                 surfaces.push(surface);
             }
         }
+        for popup in &self.popups {
+            let surface = popup.wl_surface().clone();
+            if !surfaces.iter().any(|s| s == &surface) {
+                surfaces.push(surface);
+            }
+        }
         for surface in surfaces {
             send_frames_surface_tree(&surface, &output, time, None, |_, _| Some(output.clone()));
         }
@@ -932,7 +941,17 @@ impl CompositorHandler for State {
             // identical to the wl_shm path below.
             if self.toplevels.contains_key(surface) && !self.focus_history.contains(surface) {
                 self.focus_history.push(surface.clone());
-                self.activate_toplevel(Some(surface.clone()));
+                // ADR-394: QCompleter / LocationBar dropdowns map a second
+                // xdg_toplevel. Activating it unsets Activated on the field
+                // and Qt disables v2. First mapped toplevel keeps the seat.
+                if self.focused_surface.is_none() {
+                    self.activate_toplevel(Some(surface.clone()));
+                } else {
+                    println!(
+                        "saai-displayd: mapped toplevel without steal {:?}",
+                        surface.id()
+                    );
+                }
             }
 
             #[cfg(feature = "panther-hardware")]
@@ -1103,7 +1122,17 @@ impl CompositorHandler for State {
         // client animation from stealing focus later.
         if self.toplevels.contains_key(surface) && !self.focus_history.contains(surface) {
             self.focus_history.push(surface.clone());
-            self.activate_toplevel(Some(surface.clone()));
+            // ADR-394: QCompleter / LocationBar dropdowns map a second
+            // xdg_toplevel. Activating it unsets Activated on the field
+            // and Qt disables v2. First mapped toplevel keeps the seat.
+            if self.focused_surface.is_none() {
+                self.activate_toplevel(Some(surface.clone()));
+            } else {
+                println!(
+                    "saai-displayd: mapped toplevel without steal {:?}",
+                    surface.id()
+                );
+            }
         }
 
         match result {
@@ -1337,7 +1366,18 @@ impl XdgShellHandler for State {
         }
     }
 
-    fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
+    fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+        match surface.send_configure() {
+            Ok(_) => println!("saai-displayd: xdg popup"),
+            Err(err) => println!("saai-displayd: xdg popup configure failed: {err:?}"),
+        }
+        self.popups.push(surface);
+    }
+
+    fn popup_destroyed(&mut self, surface: PopupSurface) {
+        self.popups
+            .retain(|candidate| candidate.wl_surface() != surface.wl_surface());
+    }
 
     fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {}
 
@@ -1711,6 +1751,7 @@ fn main() {
         focused_surface: None,
         focus_history: Vec::new(),
         toplevels: HashMap::new(),
+        popups: Vec::new(),
         #[cfg(feature = "panther-hardware")]
         touch,
         #[cfg(feature = "panther-hardware")]
