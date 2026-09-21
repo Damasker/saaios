@@ -2,7 +2,9 @@
 
 ## Статус
 
-Принято, 2026-09-10.
+Принято, 2026-09-10. Follow-up 2026-09-21: native path is owned and
+deny-by-default (ADR-294). Portal stays the gated channel. Do not
+flash displayd.
 
 ## Контекст
 
@@ -73,7 +75,9 @@ smithay's `wl_data_device_manager` остаётся закрытым извес�
      `offer.rs` -- чистый API на будущее, новый слой поддержки и
      расхождение с upstream.
 
-   Ни один путь не выбран -- решается отдельно, при появлении бюджета.
+   Ни один путь не выбран в 2026-09-10. ADR-294 takes the first path:
+   a hand-rolled manager that advertises the global and cancels every
+   source. Portal remains the capability-gated channel.
 2. Случайная блокировка записи на `panther-hardware` (отсутствие
    `wl_keyboard`) остаётся как есть -- не считается решением проблемы,
    явно помечена как хрупкая в коде и здесь.

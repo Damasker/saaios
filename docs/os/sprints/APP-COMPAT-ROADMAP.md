@@ -156,10 +156,11 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
   устранить порчу `height`/`scale` в `gdk_wayland_display_create_shm_
   surface`) в `saai-displayd`, патчить GTK4, или сознательно отказаться
   от GTK4 в пользу Qt-only на этой цели.
-- **Текущее состояние**: причина найдена (ADR-025). Compositor half
-  done on host (ADR-266: `wp-fractional-scale-v1` + `wp-viewporter`,
-  `preferred_scale=120`). Host GDK-sized shm attach ADR-286. GTK4
-  frame on panther not verified; do not flash displayd this week.
+- **Текущее состояние**: compositor half done on host (ADR-266:
+  `wp-fractional-scale-v1` + `wp-viewporter`, `preferred_scale=120`).
+  Host GDK-sized shm attach ADR-286. Native clipboard is deny-by-default
+  (ADR-294) so x86 keyboard cannot open smithay's ungated path.
+  GTK4 frame on panther not verified; do not flash displayd this week.
 - **Приёмка**: либо GTK4-приложение реально рендерит кадр на железе
   тем же методом верификации, что ADR-026 использовал для Qt, либо ADR
   фиксирует осознанный отказ от GTK4 с обоснованием.

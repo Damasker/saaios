@@ -145,7 +145,9 @@ PolicyEngine as OAM. GrantStore stays in `saai-appd`.
 
 **Change:** `AuthorityRequest::app_capability` +
 `decide_capability`. Application + PeerCredentials. Owner session
-grant does not cover an app. Do not flash shell. ADR-023 stays open.
+grant does not cover an app. Do not flash shell. Native Wayland
+clipboard is deny-by-default (ADR-294); portal stays the gated
+channel. Smithay's ungated path is not used.
 
 **Test:** granted clipboard Allow; missing Deny; LocalSystemSurface
 Deny; existing portal round-trip still works.

@@ -261,6 +261,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - MEM-07 UAM on memory mutation (ADR-283; host; no runtime flash)
 - MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome host ADR-268, panther waits)
 - APP-COMPAT APP-02 compositor half: `wp-fractional-scale-v1` + `wp-viewporter` (ADR-266; GDK shm size ADR-286; host). GTK4 frame on panther still waits.
+- Native Wayland clipboard is deny-by-default; portal stays the grant path (ADR-294; host; no displayd flash)
 - APP-COMPAT APP-03 compositor: `zwp_input_method_v2` without keymap (ADR-267; host). OSK chrome is APP-04.
 - APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272, shell IME layer ADR-273 (host). No wvkbd. Panther chrome waits.
 - APP-COMPAT APP-06 first browser is Falkon/QtWebEngine (ADR-269; package tree ADR-281; host). No panther launch.

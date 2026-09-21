@@ -18,6 +18,7 @@ use calloop::signals::{Signal, Signals};
 #[cfg(feature = "panther-hardware")]
 use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 
+mod data_device;
 #[cfg(feature = "panther-hardware")]
 mod hardware;
 mod hid;
@@ -35,9 +36,9 @@ use smithay::input::keyboard::Keycode;
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
     backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_fractional_scale,
-    delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
-    delegate_viewporter, delegate_xdg_shell,
+    delegate_compositor, delegate_dmabuf, delegate_fractional_scale, delegate_layer_shell,
+    delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter,
+    delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -64,13 +65,6 @@ use smithay::{
             with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
         },
         output::OutputHandler,
-        selection::{
-            data_device::{
-                set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
-                ServerDndGrabHandler,
-            },
-            SelectionHandler,
-        },
         session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
         shell::{
             wlr_layer::{
@@ -291,21 +285,11 @@ struct State {
     xdg_shell_state: XdgShellState,
     seat_state: SeatState<State>,
     seat: Seat<State>,
-    /// ADR-021 (S08 Change 2): GTK4's `_gdk_wayland_display_open()`
-    /// unconditionally requires `wl_data_device_manager` alongside
-    /// `wl_compositor`/`wl_shm` -- without it, GTK4 refuses to open a
-    /// Wayland display at all, confirmed physically against this exact
-    /// compositor build (see ADR-021's Evidence). This wires up smithay's
-    /// own data-device implementation (real client-to-client clipboard/DnD,
-    /// not a protocol-level no-op) so the global exists and clients can use
-    /// it -- capability-gating clipboard reads/writes against S07's grants
-    /// is explicitly NOT done here (see `DataDeviceHandler`/`SelectionHandler`
-    /// impls below), left for a later change once the policy mechanism is
-    /// decided.
-    data_device_state: DataDeviceState,
-    /// Needed by `set_data_device_focus` in `activate_toplevel()` -- cheap
-    /// to clone, kept here rather than threading it through every call site.
-    dh: DisplayHandle,
+    /// ADR-021: GTK4's `_gdk_wayland_display_open()` requires
+    /// `wl_data_device_manager`. ADR-294 owns the global so smithay
+    /// cannot broker native copy/paste. Portal clipboard stays the
+    /// capability-gated channel (AUTH-08).
+    _data_device_manager: data_device::SaaiDataDeviceManager,
     /// ADR-267 (APP-03): our text-input-v3 + input-method-v2 pair, not
     /// smithay's `InputMethodManagerState` (that path unwraps a keyboard,
     /// ADR-022). Keep-alive for the globals, same as `_dmabuf_global`.
@@ -514,15 +498,6 @@ impl State {
             return;
         }
         self.focused_surface = surface.clone();
-        // Independent of keyboard availability (ADR-012's touch-only
-        // panther-hardware build included) -- clipboard/DnD focus tracks
-        // which client currently owns the selection target, not which
-        // client can receive key events.
-        set_data_device_focus(
-            &self.dh,
-            &self.seat,
-            surface.as_ref().and_then(Resource::client),
-        );
         // ADR-267: text-input focus is "which client's field is live", not
         // "which client gets key events". Same seat, no keyboard required.
         text_ime::on_focus(&self.seat, surface.clone());
@@ -1239,48 +1214,10 @@ impl SeatHandler for State {
 }
 delegate_seat!(State);
 
-// ADR-021 (S08 Change 2): existence-only. These default-method impls give
-// working client-to-client clipboard/drag-and-drop through smithay's own
-// data-device machinery (offers and fds are brokered directly between the
-// two client connections, not routed through this compositor's own
-// storage) -- enough for `_gdk_wayland_display_open()` to stop refusing
-// GTK4 clients, and for real inter-app copy/paste to function.
-//
-// This is NOT yet gated by S07's capability grants: any two clients that
-// can both reach this compositor can already copy/paste between each
-// other today, the same as an unmodified desktop compositor. `saai-appd`'s
-// sandbox has no way to see or intercept this at all -- it is Wayland
-// protocol traffic between two already-launched client processes, entirely
-// outside the mount/seccomp boundary. Acceptable for now only because the
-// only Wayland clients that exist are `saai-shell` and the trusted demo
-// apps (same scope note as S05's "only trusted applications" and S07's
-// sandbox-probe suite) -- this must not be read as "clipboard capability
-// enforcement is done". Gating this against `Capability::ClipboardRead`/
-// `ClipboardWrite` is explicit, tracked follow-up work, not implied by
-// this Change.
-//
-// ADR-023 (S08 Change 5 attempt): that follow-up turned out not to be
-// implementable against this smithay version's public API at all.
-// `new_selection()` below is a pure FYI notification -- device.rs calls
-// it, then unconditionally applies the selection regardless of what this
-// method does, there is no way to veto a write. Reading
-// (`wl_data_offer.receive`) is handled by an internal `ObjectData` bound
-// directly to the offer object at creation time, entirely bypassing the
-// `Dispatch`/handler-trait path this file uses everywhere else -- no
-// hook exists to intercept or deny it either. Closing this gap for real
-// needs a hand-rolled data-device implementation or a patched smithay,
-// neither attempted here; see ADR-023 for the full finding and reasoning.
-impl ClientDndGrabHandler for State {}
-impl ServerDndGrabHandler for State {}
-impl SelectionHandler for State {
-    type SelectionUserData = ();
-}
-impl DataDeviceHandler for State {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
-    }
-}
-delegate_data_device!(State);
+// ADR-294: native Wayland clipboard is deny-by-default. The global still
+// exists so GTK4 can open a display (ADR-021). Smithay's data-device
+// path is not used — it cannot refuse SetSelection or Receive (ADR-023).
+delegate_saai_data_device!(State);
 
 // ADR-267 (APP-03): text-input-v3 + input-method-v2 without keymap.
 // Focus is still driven from `activate_toplevel()`.
@@ -1466,7 +1403,7 @@ fn main() {
         ],
     );
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
-    let data_device_state = DataDeviceState::new::<State>(&dh);
+    let data_device_manager = data_device::SaaiDataDeviceManager::new::<State>(&dh);
     let text_input_manager_state = text_ime::SaaiTextInputManager::new::<State>(&dh);
     let input_method_manager_state = text_ime::SaaiInputMethodManager::new::<State>(&dh);
     let fractional_scale_manager_state = FractionalScaleManagerState::new::<State>(&dh);
@@ -1692,8 +1629,7 @@ fn main() {
         xdg_shell_state,
         seat_state,
         seat,
-        data_device_state,
-        dh: dh.clone(),
+        _data_device_manager: data_device_manager,
         _text_input_manager_state: text_input_manager_state,
         _input_method_manager_state: input_method_manager_state,
         _fractional_scale_manager_state: fractional_scale_manager_state,
