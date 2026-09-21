@@ -1,7 +1,8 @@
 //! APP-06 / ADR-306: packaged aarch64 Falkon maps an xdg_toplevel on
 //! host `saai-displayd` under `qemu-aarch64-static` and commits a
 //! hashed shm frame. ADR-333: windowed URL `QLineEdit` click enables
-//! v2; IME `commit_string` in that window reaches the field. Not a
+//! v2; IME `commit_string` in that window reaches the field. ADR-334:
+//! OSK hi! sequence (commit+delete) in the same window. Not a
 //! panther typed field. WebEngine helper spawn via binfmt is host-only
 //! and may fail; the Widgets chrome frame is the hello-frame.
 
@@ -10,6 +11,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+use saai_ui_core::{Keyboard, OskImeOp};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 fn displayd_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_saai-displayd"))
@@ -42,6 +47,20 @@ fn spawn_displayd(runtime_dir: &std::path::Path) -> (Child, mpsc::Receiver<Strin
         }
     });
     (child, rx)
+}
+
+fn reap_falkon(child: &mut Child) {
+    // qemu-aarch64 leaves QtWebEngineProcess children; kill the group
+    // so the next falkon_frame test can still map a frame.
+    #[cfg(unix)]
+    {
+        let pid = child.id();
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{pid}")])
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn wait_for_socket(log: &mpsc::Receiver<String>) -> String {
@@ -128,6 +147,7 @@ fn falkon_commits_an_shm_frame_on_host_displayd() {
         .env("LIBGL_ALWAYS_SOFTWARE", "1")
         .env("QT_QUICK_BACKEND", "software")
         .env("QSG_RENDER_LOOP", "basic")
+        .process_group(0)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -171,8 +191,7 @@ fn falkon_commits_an_shm_frame_on_host_displayd() {
         }
     }
 
-    let _ = falkon_child.kill();
-    let _ = falkon_child.wait();
+    reap_falkon(&mut falkon_child);
     let stderr = stderr_rx
         .recv_timeout(Duration::from_secs(2))
         .unwrap_or_default();
@@ -370,6 +389,7 @@ fn falkon_url_click_text_input_v2_protocol() {
             "QT_LOGGING_RULES",
             "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
         )
+        .process_group(0)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -504,8 +524,248 @@ fn falkon_url_click_text_input_v2_protocol() {
             .unwrap_or_default()
     );
 
-    let _ = falkon_child.kill();
-    let _ = falkon_child.wait();
+    reap_falkon(&mut falkon_child);
     let _ = displayd.kill();
     let _ = displayd.wait();
+}
+
+fn send_ime_op(ime: &ZwpInputMethodV2, op: &OskImeOp) {
+    match op {
+        OskImeOp::CommitString(text) => ime.commit_string(text.clone()),
+        OskImeOp::DeleteSurrounding {
+            before_bytes,
+            after_bytes,
+        } => ime.delete_surrounding_text(*before_bytes, *after_bytes),
+    }
+    ime.commit(0);
+}
+
+/// ADR-334: same URL enable window, OSK hi! sequence (commit + delete),
+/// not a single commit_string. Not a painted LocationBar. Not panther.
+#[test]
+fn falkon_url_osk_hi_bang_reaches_v2() {
+    let pkg = falkon_package();
+    let falkon = pkg.join("bin/falkon");
+    assert!(
+        falkon.is_file(),
+        "missing packed falkon at {} — set FALKON_PACKAGE_DIR",
+        falkon.display()
+    );
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let home_dir = tempfile::tempdir().expect("failed to create Falkon HOME");
+    let cfg = home_dir.path().join(".config/falkon/profiles/default");
+    std::fs::create_dir_all(&cfg).expect("falkon profile dir");
+    std::fs::write(
+        cfg.join("settings.ini"),
+        "[Browser-View-Settings]\n\
+         showNavigationToolbar=true\n\
+         showMenubar=false\n\
+         showBookmarksToolbar=false\n\
+         showStatusBar=false\n\
+         [Browser-Tabs-Settings]\n\
+         hideTabsWithOneTab=true\n",
+    )
+    .expect("write falkon settings.ini");
+    let (mut displayd, log) = spawn_displayd(runtime_dir.path());
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let path = std::env::var("PATH").unwrap_or_default();
+    let pkg = pkg.canonicalize().expect("canonicalize falkon package");
+    let falkon = pkg.join("bin/falkon");
+
+    let mut falkon_child = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&pkg)
+        .arg(&falkon)
+        .arg("--private-browsing")
+        .arg("about:blank")
+        .current_dir(&pkg)
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("QT_LOGGING_TO_CONSOLE", "1")
+        .env("QT_PLUGIN_PATH", pkg.join("plugins"))
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
+        .env(
+            "QTWEBENGINEPROCESS_PATH",
+            pkg.join("libexec/QtWebEngineProcess"),
+        )
+        .env(
+            "QTWEBENGINE_RESOURCES_PATH",
+            pkg.join("share/qt6/resources"),
+        )
+        .env(
+            "QTWEBENGINE_LOCALES_PATH",
+            pkg.join("share/qt6/translations/qtwebengine_locales"),
+        )
+        .env("QTWEBENGINE_DISABLE_SANDBOX", "1")
+        .env(
+            "QTWEBENGINE_CHROMIUM_FLAGS",
+            "--no-sandbox --disable-gpu --disable-gpu-compositing --use-gl=disabled",
+        )
+        .env("LIBGL_ALWAYS_SOFTWARE", "1")
+        .env("QT_QUICK_BACKEND", "software")
+        .env("QSG_RENDER_LOOP", "basic")
+        .process_group(0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn falkon");
+    let stderr_rx = {
+        let stderr = falkon_child.stderr.take().expect("falkon stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_frame = false;
+    let mut saw_enable = false;
+    let mut saw_disable = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while Instant::now() < deadline && !(saw_toplevel && saw_frame) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                }
+                if line.contains("frame sha256=") {
+                    saw_frame = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    assert!(
+        saw_toplevel && saw_frame,
+        "Falkon never framed before URL OSK; displayd={:?}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 640 20").expect("inject-click");
+        let _ = stdin.flush();
+    }
+    let mut saw_click = false;
+    let click_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < click_deadline && !(saw_click && saw_enable) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    saw_click = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    assert!(
+        saw_click && saw_enable,
+        "Falkon URL click did not enable v2 before OSK; disable={saw_disable}; displayd={:?}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let mut commit_count = 0u32;
+    let mut saw_delete = false;
+    let osk_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < osk_deadline && (commit_count < 4 || !saw_delete) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 commit_string") {
+                    commit_count += 1;
+                }
+                if line.contains("text-input-v2 delete_surrounding") {
+                    saw_delete = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    reap_falkon(&mut falkon_child);
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        commit_count >= 4 && saw_delete,
+        "OSK hi! did not reach Falkon v2 (commit={commit_count} delete={saw_delete} disable={saw_disable}); displayd={:?}; qt={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
 }

@@ -186,6 +186,7 @@ ADR-330 packed musl Qt 5.15 QLineEdit receives OSK hi! through IME (no flash).
 ADR-331 packed PCManFM Filter-band click re-enables v2; still no shm (no flash).
 ADR-332 host Ctrl+L into packed PCManFM disables text-input-v2 (no flash).
 ADR-333 packed Falkon URL click enables v2; IME commit_string reaches it (no flash).
+ADR-334 packed Falkon URL OSK hi! reaches v2 (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
