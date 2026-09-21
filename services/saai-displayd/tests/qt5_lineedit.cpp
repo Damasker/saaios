@@ -2,6 +2,7 @@
 // Prints QT_LINEEDIT_TEXT= on every change. Not a panther field.
 #include <QApplication>
 #include <QLineEdit>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <cstdio>
@@ -12,9 +13,12 @@ int main(int argc, char **argv) {
 
     QLineEdit *edit = nullptr;
     QWidget window;
+    const int steal_ms = qEnvironmentVariableIntValue("QT_LINEEDIT_STEAL_MS");
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPETE")) {
         // ADR-360: LocationBar/Filter class. A non-IM pane holds
         // focus (WebView/FolderView). The field is the top 40 px.
+        // ADR-361: QT_LINEEDIT_STEAL_MS > 0 returns focus to the pane
+        // after the field is focused (WebEngine steal-back).
         window.resize(320, 200);
         window.setWindowFlags(Qt::FramelessWindowHint);
         auto *layout = new QVBoxLayout(&window);
@@ -28,6 +32,19 @@ int main(int argc, char **argv) {
         pane->setMinimumHeight(160);
         layout->addWidget(edit);
         layout->addWidget(pane, 1);
+        if (steal_ms > 0) {
+            QObject::connect(
+                &app,
+                &QApplication::focusChanged,
+                edit,
+                [edit, pane, steal_ms](QWidget *, QWidget *now) {
+                    if (now == edit) {
+                        QTimer::singleShot(steal_ms, pane, [pane]() {
+                            pane->setFocus(Qt::OtherFocusReason);
+                        });
+                    }
+                });
+        }
         pane->setFocus(Qt::OtherFocusReason);
         window.show();
     } else {
