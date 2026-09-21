@@ -3,10 +3,13 @@
 #include <QApplication>
 #include <QCompleter>
 #include <QCoreApplication>
+#include <QEvent>
+#include <QFocusEvent>
 #include <QHBoxLayout>
 #include <QInputMethodEvent>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QStringList>
 #include <QStringListModel>
 #include <QThread>
@@ -17,6 +20,39 @@
 #include <QWidget>
 #include <QWindow>
 #include <cstdio>
+
+// ADR-423: Falkon LineEdit::focusInEvent MouseFocusReason
+// selectAllOnClick + swallow the focusing mouse press.
+class FalkonLineEditMouse : public QObject {
+public:
+    explicit FalkonLineEditMouse(QLineEdit *edit)
+        : QObject(edit), m_edit(edit) {
+        m_edit->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched != m_edit) {
+            return false;
+        }
+        if (event->type() == QEvent::FocusIn) {
+            auto *fe = static_cast<QFocusEvent *>(event);
+            if (fe->reason() == Qt::MouseFocusReason) {
+                m_ignoreMousePress = true;
+                m_edit->selectAll();
+            }
+        } else if (event->type() == QEvent::MouseButtonPress
+                   && m_ignoreMousePress) {
+            m_ignoreMousePress = false;
+            return true;
+        }
+        return false;
+    }
+
+private:
+    QLineEdit *m_edit;
+    bool m_ignoreMousePress = false;
+};
 
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "wayland");
@@ -325,6 +361,13 @@ int main(int argc, char **argv) {
         inner->addStretch();
         inner->addWidget(right, 0, Qt::AlignVCenter);
         edit->setTextMargins(28, 0, 28, 0);
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_FALKON_MOUSE")) {
+        // ADR-423: Falkon LineEdit selectAllOnClick + ignore first
+        // mouse press. Combined with WEBENGINE_CLICK. Falkon
+        // disable is this only if it hides IM.
+        new FalkonLineEditMouse(edit);
     }
 
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
