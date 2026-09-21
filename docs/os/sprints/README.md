@@ -241,6 +241,7 @@ ADR-385 packed Falkon URL OSK grows v2 surrounding, not shm (no flash).
 ADR-386 packed Falkon URL OSK extra shm is cursor, not LocationBar (no flash).
 ADR-387 packed PCManFM FolderView OSK surrounding stays 0 (no flash).
 ADR-388 host frame clock; packed gtk4-demo OSK commits shm (no flash).
+ADR-389 packed Falkon URL click flashes then disables before OSK (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

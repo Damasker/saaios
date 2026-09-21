@@ -9,8 +9,9 @@
 //! ADR-355: one URL click 640 20 on that seat enables v2. Not typed.
 //! ADR-358: that enable disables within 2 s (not PCManFM ADR-357).
 //! ADR-384: OSK immediately after that URL enable on the same seat.
-//! ADR-385: v2 surrounding/cursor on that OSK. ADR-386: no surface
-//! commit after that OSK (not a missed subsurface).
+//! ADR-385: v2 surrounding/cursor on that OSK. ADR-386: extra shm is
+//! cursor, not LocationBar. ADR-389: host frame clock lets URL click
+//! flash `f0e21a69…` then disable before OSK.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -347,6 +348,7 @@ fn v2_surrounding_bytes(line: &str) -> Option<usize> {
         .and_then(|n| n.trim().parse().ok())
 }
 
+#[allow(dead_code)]
 fn commit_surface_id(line: &str) -> Option<&str> {
     if !line.contains("commit on surface") {
         return None;
@@ -1844,11 +1846,11 @@ fn packed_falkon_url_v2_disables_without_seat_keyboard() {
     );
 }
 
-/// ADR-384/385: one URL click `640 20` on a keyboard-less seat, then OSK
-/// immediately. v2 `commit_string` reaches the field. v2 surrounding
-/// after that OSK is ADR-385. Any-surface shm after that OSK is
-/// ADR-386. Toplevel shm stays `6cd11128…`. Not a Y sweep. Not typed
-/// LocationBar.
+/// ADR-384/385/389: one URL click `640 20` on a keyboard-less seat, then
+/// OSK on first v2 enable. Host frame clock (ADR-388) lets Qt commit
+/// `f0e21a69…` then disable before OSK. v2 `commit_string` does not
+/// reach the field. Toplevel returns to `6cd11128…`. Not typed
+/// LocationBar. Not a Y sweep.
 #[test]
 fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let pkg = falkon_package();
@@ -1968,10 +1970,6 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let mut activated: Option<String> = None;
     let mut hash_at_enable: Option<String> = None;
     let mut last_hash: Option<String> = None;
-    let mut n_commits_after_osk = 0;
-    let mut n_any_commits_after_osk = 0;
-    let mut other_surfaces_after_osk = Vec::new();
-    let mut other_hashes_after_osk = Vec::new();
     let mut surrounding_at_enable: Option<usize> = None;
     let mut surrounding_after_osk: Option<usize> = None;
     let mut lines = Vec::new();
@@ -2045,8 +2043,19 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
         writeln!(stdin, "inject-click 640 20").expect("inject-click");
         let _ = stdin.flush();
     }
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    let mut osk_sent = false;
     let click_deadline = Instant::now() + Duration::from_secs(4);
-    while Instant::now() < click_deadline && !(saw_click && saw_enable) {
+    while Instant::now() < click_deadline && !(saw_click && saw_enable && osk_sent) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("injected click") {
@@ -2072,9 +2081,20 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+        if saw_enable && !osk_sent {
+            for action in actions {
+                let stroke = Keyboard::keystroke_from_osk_action(action)
+                    .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+                if let Some(op) = stroke.to_ime_op() {
+                    send_ime_op(&ime, &op);
+                }
+                let _ = queue.roundtrip(&mut ime_state);
+            }
+            osk_sent = true;
+        }
         let _ = queue.roundtrip(&mut ime_state);
     }
-    if !(saw_click && saw_enable && !saw_kbd_focus) {
+    if !(saw_click && saw_enable && osk_sent && !saw_kbd_focus) {
         reap_falkon(&mut falkon_child);
         let stderr = stderr_rx
             .recv_timeout(Duration::from_secs(1))
@@ -2082,7 +2102,7 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
         let _ = displayd.kill();
         let _ = displayd.wait();
         panic!(
-            "URL click 640 20 did not enable v2; click={saw_click} enable={saw_enable} kbd={saw_kbd_focus}; displayd={:?}; stderr={stderr}",
+            "URL click 640 20 did not enable v2 in time for OSK; click={saw_click} enable={saw_enable} osk={osk_sent} kbd={saw_kbd_focus}; displayd={:?}; stderr={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
     }
@@ -2090,25 +2110,6 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
         .clone()
         .or(last_hash.clone())
         .expect("no shm on activated Falkon surface");
-
-    let keyboard = Keyboard::bind_foreign_ime();
-    assert!(keyboard.shows_panel());
-    let actions = [
-        "intent:key:h",
-        "intent:key:i",
-        "intent:mode:toggle",
-        "intent:backspace",
-        "intent:key:i",
-        "intent:key:!",
-    ];
-    for action in actions {
-        let stroke = Keyboard::keystroke_from_osk_action(action)
-            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
-        if let Some(op) = stroke.to_ime_op() {
-            send_ime_op(&ime, &op);
-        }
-        let _ = queue.roundtrip(&mut ime_state);
-    }
 
     let osk_deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < osk_deadline {
@@ -2119,28 +2120,6 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
                 }
                 if let Some(n) = v2_surrounding_bytes(&line) {
                     surrounding_after_osk = Some(n);
-                }
-                if line.contains("commit on surface") {
-                    n_any_commits_after_osk += 1;
-                    if let Some(id) = commit_surface_id(&line) {
-                        if activated.as_deref() != Some(id)
-                            && !other_surfaces_after_osk.iter().any(|s| s == id)
-                        {
-                            other_surfaces_after_osk.push(id.to_string());
-                        }
-                        if activated.as_deref() != Some(id) {
-                            if let Some(h) = line
-                                .split("frame sha256=")
-                                .nth(1)
-                                .and_then(|rest| rest.split_whitespace().next())
-                            {
-                                other_hashes_after_osk.push(h.to_string());
-                            }
-                        }
-                    }
-                    if activated_frame_hash(&line, &activated).is_some() {
-                        n_commits_after_osk += 1;
-                    }
                 }
                 if let Some(h) = activated_frame_hash(&line, &activated) {
                     last_hash = Some(h.to_string());
@@ -2164,38 +2143,34 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
         .iter()
         .filter(|l| l.contains("text-input-v2 cursor"))
         .count();
+    let saw_disable = lines.iter().any(|l| l.contains("text-input-v2 disable"));
+    let saw_focus_flash = lines
+        .iter()
+        .any(|l| l.contains("f0e21a6983b99ec4fdd869f070377496bea7619dd4414ad27cc0e94532994f9b"));
     assert!(
-        saw_commit,
-        "Falkon URL OSK immediately after enable; v2 commit_string missing; click={saw_click} enable={saw_enable} commits={n_commits_after_osk} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?} cursor={n_cursor}; displayd={:?}; stderr={stderr}",
-        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
-    );
-    assert!(
-        surrounding_after_osk.unwrap_or(0) > surrounding_at_enable.unwrap_or(0),
-        "Falkon URL OSK v2 surrounding did not grow; Qt did not report applied text; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?} cursor={n_cursor}; displayd={:?}; stderr={stderr}",
-        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
-    );
-    assert_eq!(
-        surrounding_after_osk,
-        Some(3),
-        "Falkon URL OSK surrounding; expected hi! 3 bytes; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; stderr={stderr}",
-        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
-    );
-    assert_eq!(
-        n_commits_after_osk, 0,
-        "Falkon URL OSK immediately after enable shm commit count; expected no toplevel redraw; commits={n_commits_after_osk} before={before} after={after}; displayd={:?}; stderr={stderr}",
+        saw_disable,
+        "Falkon URL v2 stayed enabled through OSK; expected disable before commit_string (ADR-358 class); click={saw_click} enable={saw_enable} commit={saw_commit} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; stderr={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert!(
-        n_any_commits_after_osk >= 1
-            && other_hashes_after_osk.iter().all(|h| h.starts_with("849af246")
-                || h.starts_with("8c6de10e")
-                || h.starts_with("64156441")),
-        "Falkon URL OSK extra surfaces should be cursor hashes; any={n_any_commits_after_osk} other={other_surfaces_after_osk:?} hashes={other_hashes_after_osk:?}; displayd={:?}; stderr={stderr}",
+        !saw_commit,
+        "Falkon URL OSK reached v2 after disable; commit={saw_commit} surrounding_osk={surrounding_after_osk:?} cursor={n_cursor}; displayd={:?}; stderr={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert_eq!(
-        after, before.as_str(),
-        "Falkon URL OSK immediately after enable attached a new toplevel shm; before={before} after={after}; do not claim typed LocationBar; displayd={:?}; stderr={stderr}",
+        surrounding_after_osk.unwrap_or(0),
+        0,
+        "Falkon URL OSK surrounding grew after disable; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; stderr={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        saw_focus_flash,
+        "Falkon URL click never committed focus-flash shm f0e21a69; host frame clock unproven; displayd={:?}; stderr={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        after.starts_with("6cd11128"),
+        "Falkon URL toplevel did not return to 6cd11128 after disable; before={before} after={after}; displayd={:?}; stderr={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
