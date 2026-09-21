@@ -81,7 +81,6 @@ use smithay::{
     },
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-#[cfg(not(feature = "panther-hardware"))]
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 /// Matches `Scale::Integer(1)` on the advertised output. GDK initializes
@@ -822,14 +821,13 @@ impl State {
     }
 }
 
-#[cfg(not(feature = "panther-hardware"))]
 impl State {
-    /// Host has no DRM VBlank. gtk4-demo and Falkon wait on
-    /// `wl_surface.frame` after IME apply; without a refresh clock those
-    /// callbacks never fire and the client never commits a new shm
-    /// (ADR-375/384). Ack at ~60 Hz, not on every commit — ack-on-commit
-    /// spun saai-shell (see `commit()`).
-    fn send_host_frames(&mut self) {
+    /// Ack pending `wl_surface.frame` callbacks at refresh rate, not on
+    /// every commit (ack-on-commit spun saai-shell; see `commit()`).
+    /// Host has no DRM VBlank (ADR-388). Panther still acks after
+    /// present VBlank; this path covers IME apply with no new buffer
+    /// while `!flip_pending` (ADR-390).
+    fn send_pending_frames(&mut self) {
         let output = self._wl_output.clone();
         let time = self.presentation_started.elapsed();
         let mut surfaces: Vec<WlSurface> = self.toplevels.keys().cloned().collect();
@@ -2073,23 +2071,31 @@ fn main() {
                 );
             }
         }
-        handle
-            .insert_source(
-                Timer::from_duration(Duration::from_millis(16)),
-                {
-                    let mut logged = false;
-                    move |_, _, state: &mut State| {
-                        if !logged {
-                            logged = true;
-                            println!("saai-displayd: host frame clock");
-                        }
-                        state.send_host_frames();
-                        TimeoutAction::ToDuration(Duration::from_millis(16))
-                    }
-                },
-            )
-            .expect("failed to register host frame clock");
     }
+
+    handle
+        .insert_source(
+            Timer::from_duration(Duration::from_millis(16)),
+            {
+                let mut logged = false;
+                move |_, _, state: &mut State| {
+                    #[cfg(feature = "panther-hardware")]
+                    if state.flip_pending {
+                        return TimeoutAction::ToDuration(Duration::from_millis(16));
+                    }
+                    if !logged {
+                        logged = true;
+                        #[cfg(feature = "panther-hardware")]
+                        println!("saai-displayd: idle frame clock");
+                        #[cfg(not(feature = "panther-hardware"))]
+                        println!("saai-displayd: host frame clock");
+                    }
+                    state.send_pending_frames();
+                    TimeoutAction::ToDuration(Duration::from_millis(16))
+                }
+            },
+        )
+        .expect("failed to register frame clock");
 
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");
     event_loop

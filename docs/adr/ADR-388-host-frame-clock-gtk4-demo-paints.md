@@ -27,9 +27,8 @@ and layers. Not on every `wl_surface.commit`.
 1. **Host `calloop` 16 ms timer calls `send_host_frames`.** Log
    `host frame clock` once. Do not ack on commit.
 2. **Panther stays VBlank-after-present.** Next displayd flash must
-   carry ADR-311+319+328+339+352+376+377+378+381+385 **and** idle
-   frame acks for pending callbacks when IME applied without a new
-   buffer. Do not add a fake `wl_keyboard` (ADR-012).
+   carry ADR-311+319+328+339+352+376+377+378+381+385 **and ADR-390 idle
+   frame acks**. Do not add a fake `wl_keyboard` (ADR-012).
 3. **Do not flash panther this week.** AUTH-10 stays a later
    flash-week device pass.
 
