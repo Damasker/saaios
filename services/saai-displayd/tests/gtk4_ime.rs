@@ -4,8 +4,8 @@
 //! packed 4.14 is ADR-346 and host 4.18 is ADR-350. gtk4-demo
 //! `--run=entry` click without wl_keyboard is ADR-356. Packed 4.14
 //! competing pane is ADR-372. `--run=entry` is not a gtk4-demo
-//! example name (ADR-373). `--run=search_entry` is ADR-374. Not a
-//! panther field.
+//! example name (ADR-373). `--run=search_entry` is ADR-374. OSK on
+//! that demo is ADR-375. Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -169,6 +169,35 @@ fn send_ime_op(ime: &ZwpInputMethodV2, op: &OskImeOp) {
         } => ime.delete_surrounding_text(*before_bytes, *after_bytes),
     }
     ime.commit(0);
+}
+
+fn activated_surface_id(line: &str) -> Option<&str> {
+    if !line.contains("xdg activated") {
+        return None;
+    }
+    line.split("wl_surface@")
+        .nth(1)?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+}
+
+fn toplevel_frame_hash<'a>(line: &'a str, surface: &mut Option<String>) -> Option<&'a str> {
+    if !line.contains("frame sha256=") {
+        return None;
+    }
+    let id = line
+        .split("wl_surface@")
+        .nth(1)?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?;
+    match surface {
+        None => return None,
+        Some(s) if s != id => return None,
+        Some(_) => {}
+    }
+    line.split("frame sha256=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
 }
 
 #[test]
@@ -1769,6 +1798,193 @@ fn packed_gtk4_demo_search_entry_enables_v3_without_click() {
     assert!(
         saw_enable,
         "gtk4-demo --run=search_entry never enabled v3 without a click; get={saw_get} enable={saw_enable}; packed Entry auto-enables, this demo has no grab_focus; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+}
+
+/// ADR-375: OSK into packed gtk4-demo `--run=search_entry` after v3
+/// enable. Keyboard-less seat, no click. Main shm stays
+/// `233e0ee2…`. Protocol without paint. Not typed.
+#[test]
+fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
+    let probe = gtk4_alpine_probe();
+    let demo = probe.join("bin/gtk4-demo");
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        demo.is_file(),
+        "missing Alpine gtk4-demo at {} — set GTK4_ALPINE_PROBE",
+        demo.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let demo = probe.join("bin/gtk4-demo");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&demo)
+        .arg("--run=search_entry")
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk4-demo --run=search_entry");
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk4-demo stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut activated: Option<String> = None;
+    let mut hash_at_enable: Option<String> = None;
+    let mut last_hash: Option<String> = None;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline
+        && !(saw_enable && ime_state.activate && hash_at_enable.is_some())
+    {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if let Some(id) = activated_surface_id(&line) {
+                    saw_activated = true;
+                    activated = Some(id.to_string());
+                }
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut activated) {
+                    last_hash = Some(h.to_string());
+                    if saw_enable {
+                        hash_at_enable = Some(h.to_string());
+                    }
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_enable && ime_state.activate && saw_activated && saw_focus && !saw_kbd_focus) {
+        let _ = gtk.kill();
+        let _ = gtk.wait();
+        let stderr = stderr_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "search_entry OSK: enable never ready; enable={saw_enable} activate={} kbd={saw_kbd_focus} hash={hash_at_enable:?}; displayd={:?}; gtk={stderr}",
+            ime_state.activate,
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+    }
+    let before = hash_at_enable
+        .clone()
+        .or(last_hash.clone())
+        .expect("no shm on activated search_entry surface");
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let osk_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < osk_deadline {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if let Some(h) = toplevel_frame_hash(&line, &mut activated) {
+                    last_hash = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _ = gtk.kill();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    let after = last_hash.as_deref().unwrap_or(before.as_str());
+    assert_eq!(
+        after, before.as_str(),
+        "gtk4-demo search_entry OSK attached a new shm; before={before} after={after}; do not claim typed; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
