@@ -9,7 +9,8 @@
 //! ADR-355: one URL click 640 20 on that seat enables v2. Not typed.
 //! ADR-358: that enable disables within 2 s (not PCManFM ADR-357).
 //! ADR-384: OSK immediately after that URL enable on the same seat.
-//! ADR-385: v2 surrounding/cursor on that OSK.
+//! ADR-385: v2 surrounding/cursor on that OSK. ADR-386: no surface
+//! commit after that OSK (not a missed subsurface).
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -344,6 +345,16 @@ fn v2_surrounding_bytes(line: &str) -> Option<usize> {
     line.split("text-input-v2 surrounding bytes=")
         .nth(1)
         .and_then(|n| n.trim().parse().ok())
+}
+
+fn commit_surface_id(line: &str) -> Option<&str> {
+    if !line.contains("commit on surface") {
+        return None;
+    }
+    line.split("wl_surface@")
+        .nth(1)?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
 }
 
 fn toplevel_frame_hash<'a>(line: &'a str, surface: &mut Option<String>) -> Option<&'a str> {
@@ -1835,8 +1846,9 @@ fn packed_falkon_url_v2_disables_without_seat_keyboard() {
 
 /// ADR-384/385: one URL click `640 20` on a keyboard-less seat, then OSK
 /// immediately. v2 `commit_string` reaches the field. v2 surrounding
-/// after that OSK is ADR-385. Toplevel shm stays `6cd11128…`. Not a Y
-/// sweep. Not typed LocationBar.
+/// after that OSK is ADR-385. Any-surface shm after that OSK is
+/// ADR-386. Toplevel shm stays `6cd11128…`. Not a Y sweep. Not typed
+/// LocationBar.
 #[test]
 fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let pkg = falkon_package();
@@ -1957,6 +1969,9 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let mut hash_at_enable: Option<String> = None;
     let mut last_hash: Option<String> = None;
     let mut n_commits_after_osk = 0;
+    let mut n_any_commits_after_osk = 0;
+    let mut other_surfaces_after_osk = Vec::new();
+    let mut other_hashes_after_osk = Vec::new();
     let mut surrounding_at_enable: Option<usize> = None;
     let mut surrounding_after_osk: Option<usize> = None;
     let mut lines = Vec::new();
@@ -2106,6 +2121,23 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
                     surrounding_after_osk = Some(n);
                 }
                 if line.contains("commit on surface") {
+                    n_any_commits_after_osk += 1;
+                    if let Some(id) = commit_surface_id(&line) {
+                        if activated.as_deref() != Some(id)
+                            && !other_surfaces_after_osk.iter().any(|s| s == id)
+                        {
+                            other_surfaces_after_osk.push(id.to_string());
+                        }
+                        if activated.as_deref() != Some(id) {
+                            if let Some(h) = line
+                                .split("frame sha256=")
+                                .nth(1)
+                                .and_then(|rest| rest.split_whitespace().next())
+                            {
+                                other_hashes_after_osk.push(h.to_string());
+                            }
+                        }
+                    }
                     if activated_frame_hash(&line, &activated).is_some() {
                         n_commits_after_osk += 1;
                     }
@@ -2143,8 +2175,22 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert_eq!(
+        surrounding_after_osk,
+        Some(3),
+        "Falkon URL OSK surrounding; expected hi! 3 bytes; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; stderr={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert_eq!(
         n_commits_after_osk, 0,
         "Falkon URL OSK immediately after enable shm commit count; expected no toplevel redraw; commits={n_commits_after_osk} before={before} after={after}; displayd={:?}; stderr={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        n_any_commits_after_osk >= 1
+            && other_hashes_after_osk.iter().all(|h| h.starts_with("849af246")
+                || h.starts_with("8c6de10e")
+                || h.starts_with("64156441")),
+        "Falkon URL OSK extra surfaces should be cursor hashes; any={n_any_commits_after_osk} other={other_surfaces_after_osk:?} hashes={other_hashes_after_osk:?}; displayd={:?}; stderr={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert_eq!(
