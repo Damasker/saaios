@@ -16,7 +16,8 @@
 //! popup is ADR-394. Host QMenu::popup is a second toplevel, not
 //! xdg_popup (ADR-403). Host QLineEdit selectAll after focus keeps
 //! v2 (ADR-408). Host QLineEdit completer reload without complete()
-//! keeps v2 (ADR-409). Not a panther field.
+//! keeps v2 (ADR-409). Host competing pane + path selectAll on a
+//! mouse click keeps v2 (ADR-410). Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -4077,5 +4078,164 @@ fn host_qt5_lineedit_completer_reload_keeps_v2() {
     assert!(
         !saw_disable && !saw_kbd_focus,
         "completer reload without complete() disabled v2; PathEdit class would be lone reload; disable={saw_disable} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}"
+    );
+}
+
+/// ADR-410: competing pane + path `selectAll` on mouse click
+/// `160 20`. PathEdit mouse-focus class. Not a PathEdit click.
+/// First assert was disable. Field stays enabled — PathEdit
+/// remaining is not mouse selectAll on a real QLineEdit.
+#[test]
+fn host_qt5_competing_selectall_click_keeps_v2() {
+    assert!(
+        qt5_available(),
+        "host Qt5 probe needs g++ and qtbase5-dev (Qt5Widgets)"
+    );
+    let probe = compile_qt5_probe();
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let mut qt = Command::new(&probe)
+        .env_remove("QT_IM_MODULE")
+        .env_remove("DISPLAY")
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("QT_LINEEDIT_COMPETE", "1")
+        .env("QT_LINEEDIT_SELECTALL", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn qt5_lineedit");
+    let qt_err = {
+        let stderr = qt.stderr.take().expect("qt stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_disable = false;
+    let mut saw_activated = false;
+    let mut saw_focus = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_click = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline && !(saw_activated && saw_focus) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    if !(saw_activated && saw_focus && !saw_kbd_focus && !saw_enable) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let _ = displayd.kill();
+        let _ = displayd.wait();
+        panic!(
+            "pre-click: competing pane should hold focus without v2; enable={saw_enable} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}"
+        );
+    }
+
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 160 20").expect("inject-click");
+        let _ = stdin.flush();
+    }
+    let click_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < click_deadline && !saw_enable {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    saw_click = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    if !(saw_click && saw_enable && !saw_kbd_focus) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let _ = displayd.kill();
+        let _ = displayd.wait();
+        panic!(
+            "click 160 20 did not enable v2; click={saw_click} enable={saw_enable} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}"
+        );
+    }
+    let quiet = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < quiet && !saw_disable {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = qt.kill();
+    let _ = qt.wait();
+    let stderr = qt_err
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        !saw_disable && !saw_kbd_focus,
+        "competing selectAll click disabled v2; PathEdit class would be mouse selectAll; disable={saw_disable} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}"
     );
 }
