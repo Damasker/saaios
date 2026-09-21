@@ -31,9 +31,13 @@ use sha2::{Digest, Sha256};
 #[cfg(feature = "panther-hardware")]
 use smithay::desktop::utils::send_frames_surface_tree;
 #[cfg(not(feature = "panther-hardware"))]
+use smithay::backend::input::ButtonState;
+#[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::{FilterResult, XkbConfig};
+#[cfg(not(feature = "panther-hardware"))]
+use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::{
     backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
     delegate_compositor, delegate_dmabuf, delegate_fractional_scale, delegate_layer_shell,
@@ -1811,7 +1815,8 @@ fn main() {
             if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
                 return Ok(PostAction::Remove);
             }
-            if line.trim() == "inject-key" {
+            let cmd = line.trim();
+            if cmd == "inject-key" {
                 if state.focused_surface.is_some() {
                     let time = 0;
                     // evdev KEY_A (30) + 8 = xkb keycode 38.
@@ -1835,6 +1840,73 @@ fn main() {
                     println!("saai-displayd: injected synthetic key press+release");
                 } else {
                     println!("saai-displayd: inject-key requested but no surface is focused yet");
+                }
+            } else if cmd == "inject-ctrl-i" {
+                if state.focused_surface.is_some() {
+                    let time = 0;
+                    // evdev KEY_LEFTCTRL=29, KEY_I=23; xkb = evdev+8.
+                    let ctrl = Keycode::new(37);
+                    let key_i = Keycode::new(31);
+                    for (code, ks) in [
+                        (ctrl, smithay::backend::input::KeyState::Pressed),
+                        (key_i, smithay::backend::input::KeyState::Pressed),
+                        (key_i, smithay::backend::input::KeyState::Released),
+                        (ctrl, smithay::backend::input::KeyState::Released),
+                    ] {
+                        keyboard.input::<(), _>(
+                            state,
+                            code,
+                            ks,
+                            SERIAL_COUNTER.next_serial(),
+                            time,
+                            |_, _, _| FilterResult::Forward,
+                        );
+                    }
+                    println!("saai-displayd: injected ctrl-i");
+                } else {
+                    println!("saai-displayd: inject-ctrl-i requested but no surface is focused yet");
+                }
+            } else if let Some(rest) = cmd.strip_prefix("inject-click ") {
+                let mut parts = rest.split_whitespace();
+                if let (Some(xs), Some(ys)) = (parts.next(), parts.next()) {
+                    if let (Ok(x), Ok(y)) = (xs.parse::<f64>(), ys.parse::<f64>()) {
+                        if let Some(surface) = state.focused_surface.clone() {
+                            let serial = SERIAL_COUNTER.next_serial();
+                            pointer.motion(
+                                state,
+                                Some((surface, (0.0, 0.0).into())),
+                                &MotionEvent {
+                                    location: (x, y).into(),
+                                    serial,
+                                    time: 0,
+                                },
+                            );
+                            pointer.button(
+                                state,
+                                &ButtonEvent {
+                                    serial: SERIAL_COUNTER.next_serial(),
+                                    time: 0,
+                                    button: 0x110,
+                                    state: ButtonState::Pressed,
+                                },
+                            );
+                            pointer.button(
+                                state,
+                                &ButtonEvent {
+                                    serial: SERIAL_COUNTER.next_serial(),
+                                    time: 0,
+                                    button: 0x110,
+                                    state: ButtonState::Released,
+                                },
+                            );
+                            pointer.frame(state);
+                            println!("saai-displayd: injected click {x} {y}");
+                        } else {
+                            println!(
+                                "saai-displayd: inject-click requested but no surface is focused yet"
+                            );
+                        }
+                    }
                 }
             }
             Ok(PostAction::Continue)

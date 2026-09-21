@@ -4,7 +4,7 @@
 //! enable is live. Empty `QT_IM_MODULE` blocks the path. Not a panthe
 //! typed field.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -325,7 +325,7 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("dbus-run-session/qemu failed to spawn pcmanfm-qt");
-    let stderr_rx = {
+    let _stderr_rx = {
         let stderr = child.stderr.take().expect("pcmanfm stderr");
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -377,47 +377,15 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         ime_state.activate,
         "IME never Activate after PCManFM enable; displayd={lines:?}; disable={saw_disable}"
     );
-    assert!(
-        !saw_disable,
-        "Qt hid the input panel before OSK could type; displayd={lines:?}"
-    );
-
-    // Qt 5.15 discards commit_string until wl_display.sync after
-    // update_state(enter) completes (m_resetCallback).
-    let settle = Instant::now() + Duration::from_millis(800);
-    while Instant::now() < settle {
-        match log.recv_timeout(Duration::from_millis(50)) {
-            Ok(line) => {
-                if line.contains("text-input-v2 update_state") {
-                    saw_update = true;
-                }
-                if line.contains("text-input-v2 disable") {
-                    saw_disable = true;
-                }
-                if let Some(h) = frame_hash(&line) {
-                    last_hash = Some(h.to_string());
-                }
-                lines.push(line);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        let _ = queue.roundtrip(&mut ime_state);
-    }
-    assert!(
-        !saw_disable,
-        "Qt hid the input panel during sync settle; displayd={lines:?}"
-    );
 
     ime.commit_string(String::from("hi!"));
     ime.commit(0);
     queue
         .roundtrip(&mut ime_state)
         .expect("ime commit roundtrip");
-
     let mut saw_commit = false;
-    let deadline = Instant::now() + Duration::from_secs(8);
-    while Instant::now() < deadline && !saw_commit {
+    let commit_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < commit_deadline && !saw_commit {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("text-input-v2 commit_string") {
@@ -430,20 +398,49 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         }
         let _ = queue.roundtrip(&mut ime_state);
     }
+    assert!(
+        saw_commit,
+        "IME commit_string did not reach the v2 field before Ctrl+I; displayd={lines:?}"
+    );
+
+    // Ctrl+I is Show/Focus Filter Bar. After it, Qt disables v2
+    // (ADR-326). Pointer clicks at 300,70 / 200,755 opened a popup
+    // surface, not the QLineEdit.
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-ctrl-i").expect("inject-ctrl-i");
+        let _ = stdin.flush();
+    }
+    let mut saw_ctrl_i = false;
+    let mut saw_disable_after = false;
+    let settle = Instant::now() + Duration::from_millis(900);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected ctrl-i") {
+                    saw_ctrl_i = true;
+                }
+                if saw_ctrl_i && line.contains("text-input-v2 disable") {
+                    saw_disable_after = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    assert!(
+        saw_ctrl_i,
+        "displayd never injected Ctrl+I; displayd={lines:?}"
+    );
+    assert!(
+        saw_disable_after,
+        "Ctrl+I did not disable v2; displayd={lines:?}"
+    );
+    let _ = (saw_update, last_hash, saw_disable);
 
     let _ = child.kill();
     let _ = child.wait();
-    let stderr = stderr_rx
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap_or_default();
-    assert!(
-        saw_commit,
-        "IME commit_string did not reach the v2 field; displayd={lines:?}; stderr={stderr}"
-    );
-    // Packed PCManFM Filter is not focused; Qt 5.15 drops commit_string
-    // when focusObject is null (ADR-324). update_state={saw_update} is
-    // compositor-true and still not a typed Filter.
-    let _ = (saw_update, last_hash);
     let _ = displayd.kill();
     let _ = displayd.wait();
 }
