@@ -225,6 +225,29 @@ int main(int argc, char **argv) {
         });
     }
 
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_SIDE")) {
+        // ADR-417: Falkon LineEdit SideWidget ClickFocus +
+        // setGoIconVisible margins. Lone QLineEdit keeps v2;
+        // Falkon disable is not this.
+        edit->setText(QStringLiteral("https://example.com"));
+        auto *left = new QWidget(edit);
+        left->setFocusPolicy(Qt::ClickFocus);
+        left->setFixedSize(24, 24);
+        left->move(2, 8);
+        left->show();
+        auto *go = new QWidget(edit);
+        go->setFocusPolicy(Qt::ClickFocus);
+        go->setFixedSize(24, 24);
+        go->move(280, 8);
+        go->hide();
+        edit->setTextMargins(28, 0, 4, 0);
+        QTimer::singleShot(80, edit, [edit, left, go]() {
+            left->hide();
+            go->show();
+            edit->setTextMargins(28, 0, 28, 0);
+        });
+    }
+
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
         // ADR-403: QMenu::popup. Qt Wayland menus are a second
         // xdg_toplevel, same class as QCompleter — not xdg_popup.
