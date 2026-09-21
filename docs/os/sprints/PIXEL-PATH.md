@@ -242,7 +242,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 - WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; shell chrome ADR-295; host; no shell/taskd flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; host; no shell/taskd flash)
-- WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; host; cap 1; no taskd flash)
+- WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
 - WORLD-06 CPU sampler Health from Observation (ADR-287; status wire ADR-292; host; Stale→Unknown; no runtime flash)
 - WORLD-07 ObservationThreshold on native schedules (ADR-290; host; Stale not due; no taskd flash)

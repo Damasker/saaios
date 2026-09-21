@@ -130,7 +130,7 @@ blocks. Timeout stays retry.
 
 **Rollback:** drop `replan.rs` and `try_replan_failed_task`.
 
-**Threat:** none — host bound, no phone binary.
+**Threat:** none — host bound, no phone binary. Shell note is ADR-297.
 
 ## WORK-08
 

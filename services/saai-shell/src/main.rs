@@ -2554,6 +2554,12 @@ fn object_view_content(
             if let Some(progress) = intent_plan_progress(&steps, selected_entities) {
                 content.activity = Some(progress);
             }
+            if let Some(note) = intent_replan_note(entity) {
+                content.related = Some(match content.related {
+                    Some(existing) => format!("{existing} · {note}"),
+                    None => note.to_string(),
+                });
+            }
             content
         }
         ACTION_ENTITY_TYPE => {
@@ -4300,6 +4306,17 @@ fn intent_plan_caption(steps: &[&Entity]) -> Option<String> {
             .collect::<Vec<_>>()
             .join(" → ")
     ))
+}
+
+/// ADR-297 / WORK-07: `replan_count >= 1` is a fact on the Intent.
+/// Not a Retry button. Cap stays in taskd.
+fn intent_replan_note(intent: &Entity) -> Option<String> {
+    let count = intent
+        .properties
+        .get("replan_count")
+        .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|n| n as u64)))
+        .unwrap_or(0);
+    (count >= 1).then(|| "Перепланировано".to_string())
 }
 
 fn intent_plan_progress(steps: &[&Entity], entities: &[Entity]) -> Option<String> {
@@ -15561,6 +15578,33 @@ mod tests {
             Some("Черновик — Готово · Отправить — Ждёт подтверждения")
         );
         assert_eq!(content.status, "Ждёт подтверждения");
+    }
+
+    #[test]
+    fn object_view_content_for_an_intent_names_a_replan() {
+        let mut intent = intent_entity("Подготовить демо");
+        intent
+            .properties
+            .insert("replan_count".into(), serde_json::json!(1));
+        let mut draft = task_entity("Черновик", Some(intent.id));
+        draft
+            .properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let mut send = task_entity("Отправить", Some(intent.id));
+        send.properties.insert(
+            "depends_on_task_ids".into(),
+            serde_json::json!([draft.id.to_string()]),
+        );
+        let content =
+            object_view_content(&intent, &[intent.clone(), draft.clone(), send.clone()], &[]);
+        assert_eq!(
+            content.related.as_deref(),
+            Some("План: Черновик → Отправить · Перепланировано")
+        );
+        let plain = intent_entity("Без переплана");
+        let plain_view = object_view_content(&plain, &[plain.clone()], &[]);
+        assert_eq!(plain_view.related, None);
+        assert_eq!(plain_view.status, "Нет задачи");
     }
 
     #[test]
