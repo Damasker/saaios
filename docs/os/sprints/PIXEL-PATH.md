@@ -265,7 +265,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - Native Wayland clipboard is deny-by-default; portal stays the grant path (ADR-294; host; no displayd flash)
 - APP-COMPAT APP-03 compositor: `zwp_input_method_v2` without keymap (ADR-267; panther displayd `02c78f9f…` ADR-309). OSK chrome is APP-04.
 - APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272, shell IME layer ADR-273. Panther displayd `02c78f9f…` advertises IME v2 (ADR-309); shell `4dc19018…` no longer logs unavailable. No wvkbd.
-- APP-COMPAT APP-06 first browser is Falkon/QtWebEngine (ADR-269; package tree ADR-281; host qemu shm frame ADR-306; panther appd launch ADR-312, software scanout, no browse).
+- APP-COMPAT APP-06 first browser is Falkon/QtWebEngine (ADR-269; package tree ADR-281; host qemu shm frame ADR-306; panther appd launch ADR-312, software scanout, no browse). Empty NEWNET loopback ADR-313 (`e9b3c57c…`); `file://` hello.html does not paint over the white shm frame.
 - Visual v1 unsigned; `compile_v2_public` stays Experimental (ADR-265)
 
 ## Что сознательно не делать сейчас

@@ -150,6 +150,7 @@ export ZIG="$zig"
     -o "$package_dir/bin/launch" "$repo_root/apps/falkon-demo/launch.c"
 
 cp "$repo_root/apps/falkon-demo/manifest.toml" "$package_dir/manifest.toml"
+cp "$repo_root/apps/falkon-demo/hello.html" "$package_dir/share/hello.html"
 chmod 0755 "$package_dir/bin/launch" "$package_dir/bin/falkon" \
     "$package_dir/libexec/QtWebEngineProcess"
 

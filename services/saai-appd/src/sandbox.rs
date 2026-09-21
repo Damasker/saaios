@@ -80,6 +80,12 @@ pub fn apply(
         flags |= CloneFlags::CLONE_NEWNET;
     }
     unshare(flags).map_err(nix_to_io)?;
+    if !net_internet {
+        // Empty NEWNET has `lo` down and unaddressed. Chromium's network
+        // service (QtWebEngine) then fails even `file://` / `data:` with
+        // "Failed loading page". Loopback is not NetInternet.
+        bring_up_loopback()?;
+    }
 
     // Detach this process's mount tree from the host's before touching
     // anything else -- without this, mount namespaces created by
@@ -173,6 +179,51 @@ pub fn apply(
     install_seccomp_filter()?;
 
     Ok(())
+}
+
+fn bring_up_loopback() -> io::Result<()> {
+    unsafe {
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let result = (|| {
+            let mut ifr: libc::ifreq = std::mem::zeroed();
+            let name = b"lo";
+            for (i, b) in name.iter().enumerate() {
+                ifr.ifr_name[i] = *b as libc::c_char;
+            }
+
+            let mut sin: libc::sockaddr_in = std::mem::zeroed();
+            sin.sin_family = libc::AF_INET as libc::sa_family_t;
+            sin.sin_addr = libc::in_addr {
+                s_addr: u32::to_be(libc::INADDR_LOOPBACK),
+            };
+            ifr.ifr_ifru.ifru_addr = std::mem::transmute_copy(&sin);
+            if libc::ioctl(fd, libc::SIOCSIFADDR as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            sin.sin_addr = libc::in_addr {
+                s_addr: u32::to_be(0xff00_0000),
+            };
+            ifr.ifr_ifru.ifru_netmask = std::mem::transmute_copy(&sin);
+            if libc::ioctl(fd, libc::SIOCSIFNETMASK as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            if libc::ioctl(fd, libc::SIOCGIFFLAGS as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            ifr.ifr_ifru.ifru_flags |= (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
+            if libc::ioctl(fd, libc::SIOCSIFFLAGS as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        })();
+        libc::close(fd);
+        result
+    }
 }
 
 fn pin_directory(source: &Path, scratch: &Path) -> io::Result<()> {

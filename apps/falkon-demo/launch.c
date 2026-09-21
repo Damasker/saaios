@@ -35,7 +35,8 @@ int main(void) {
      * Mali is not the scanout path (ADR-024). */
     setenv(
         "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--no-sandbox --disable-gpu --disable-gpu-compositing --use-gl=disabled",
+        "--no-sandbox --disable-gpu --disable-gpu-compositing --use-gl=disabled "
+        "--allow-file-access-from-files",
         1);
     setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
     setenv("QT_QUICK_BACKEND", "software", 1);
@@ -47,9 +48,14 @@ int main(void) {
     }
 
     char exec_path[PATH_MAX];
+    char url[PATH_MAX];
     snprintf(exec_path, sizeof(exec_path), "%s/bin/falkon", cwd);
+    /* Local page, no NetInternet. Private browsing skips the default
+     * session that restores https://www.falkon.org (CLONE_NEWNET has
+     * only loopback after ADR-313). */
+    snprintf(url, sizeof(url), "file://%s/share/hello.html", cwd);
 
-    char *args[] = {exec_path, NULL};
+    char *args[] = {exec_path, "--private-browsing", url, NULL};
     execv(exec_path, args);
     _exit(127);
 }

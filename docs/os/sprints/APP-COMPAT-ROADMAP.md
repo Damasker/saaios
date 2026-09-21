@@ -319,7 +319,7 @@ APP-02  GTK4 -- host frame ADR-305; bounds ADR-311; panther 4.14.4 still 2337935
 APP-03  zwp_input_method_manager_v2 -- panther displayd ADR-309
 APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); IME global on panther
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
-APP-06  браузер -- Falkon host qemu ADR-306; panther appd hello-frame ADR-312
+APP-06  браузер -- Falkon host qemu ADR-306; panther appd hello-frame ADR-312; loopback ADR-313 (page still white shm)
 
 ANDROID-00  разведка существующих Anbox/Waydroid-подобных подходов
 ANDROID-01  минимальный bionic+ART остров (по образцу gpu-compositor ABI firewall)
