@@ -9,7 +9,7 @@
 //! ADR-363: OSK into that live enable without wl_keyboard hits
 //! FolderViewListView, not Filter. ADR-387: that OSK surrounding.
 //! ADR-364/391: Filter-band click maps a line caret; OSK grows surrounding.
-//! ADR-365: PathEdit-band click. Empty `QT_IM_MODULE` blocks the path.
+//! ADR-365/392: PathEdit-band click maps a line caret then disables.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1241,7 +1241,7 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     let mut surrounding_after_osk: Option<usize> = None;
     let mut osk_sent = false;
     let click_deadline = Instant::now() + Duration::from_secs(4);
-    let wait_caret = band == "Filter";
+    let wait_caret = band == "Filter" || band == "PathEdit";
     while Instant::now() < click_deadline
         && !(saw_click && (!wait_caret || saw_line_caret) && osk_sent)
     {
@@ -1263,7 +1263,7 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
                     saw_line_caret = true;
                 }
                 if let Some(n) = v2_surrounding_bytes(&line) {
-                    if saw_line_caret {
+                    if saw_click && n > 0 {
                         surrounding_at_caret = Some(n);
                     }
                 }
@@ -1335,22 +1335,43 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     let _ = displayd.kill();
     let _ = displayd.wait();
     assert!(
-        saw_commit && !saw_kbd_focus,
-        "expected OSK commit after {band} click; commit={saw_commit} enables={enable_count} kbd={saw_kbd_focus} caret={saw_line_caret}; displayd={lines:?}; stderr={stderr}"
+        !saw_kbd_focus,
+        "keyboard focus on panther-class seat after {band}; kbd={saw_kbd_focus} caret={saw_line_caret}; displayd={lines:?}; stderr={stderr}"
     );
-    if wait_caret {
+    if band == "PathEdit" {
         assert!(
             saw_line_caret,
-            "Filter click never mapped a line caret (10x13 class); displayd={lines:?}; stderr={stderr}"
+            "PathEdit click never mapped a line caret; displayd={lines:?}; stderr={stderr}"
+        );
+        assert!(
+            surrounding_at_caret.unwrap_or(0) > 0,
+            "PathEdit click did not report path surrounding; at_caret={surrounding_at_caret:?}; displayd={lines:?}; stderr={stderr}"
+        );
+        assert!(
+            !saw_commit,
+            "PathEdit OSK reached v2 after disable; commit={saw_commit} at_caret={surrounding_at_caret:?} osk={surrounding_after_osk:?}; displayd={lines:?}; stderr={stderr}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("text-input-v2 disable")),
+            "PathEdit click never disabled v2; Filter-class re-enable unproven; displayd={lines:?}; stderr={stderr}"
+        );
+    } else if wait_caret {
+        assert!(
+            saw_commit,
+            "expected OSK commit after {band} click; commit={saw_commit} enables={enable_count} caret={saw_line_caret}; displayd={lines:?}; stderr={stderr}"
+        );
+        assert!(
+            saw_line_caret,
+            "Filter/PathEdit click never mapped a line caret after {band} {x} {y}; displayd={lines:?}; stderr={stderr}"
         );
         assert_eq!(
             surrounding_after_osk,
             Some(3),
-            "Filter line-caret OSK surrounding; expected hi! 3 bytes; at_caret={surrounding_at_caret:?} osk={surrounding_after_osk:?}; displayd={lines:?}; stderr={stderr}"
+            "{band} line-caret OSK surrounding; expected hi! 3 bytes; at_caret={surrounding_at_caret:?} osk={surrounding_after_osk:?}; displayd={lines:?}; stderr={stderr}"
         );
         assert_ne!(
             hash_at_click, hash_after,
-            "Filter line-caret OSK did not attach a new shm; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
+            "{band} line-caret OSK did not attach a new shm; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
         );
     } else {
         assert!(
@@ -1377,9 +1398,10 @@ fn packed_pcmanfm_filter_click_osk_grows_surrounding() {
     packed_pcmanfm_band_click_osk(400, 760, "Filter");
 }
 
-/// ADR-365: one PathEdit-band click `400 40` on a keyboard-less seat.
-/// Not a Y sweep. Not Ctrl+L.
+/// ADR-365/392: one PathEdit-band click `400 40` on a keyboard-less
+/// seat. Line caret + path surrounding, then v2 disable. OSK does not
+/// reach v2. Not typed PathEdit. Not a Y sweep. Not Ctrl+L.
 #[test]
-fn packed_pcmanfm_pathedit_click_without_seat_keyboard_still_folderview() {
+fn packed_pcmanfm_pathedit_click_selects_path_then_disables() {
     packed_pcmanfm_band_click_osk(400, 40, "PathEdit");
 }
