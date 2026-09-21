@@ -29,6 +29,12 @@ int main(void) {
 
     setenv_joined("QT_PLUGIN_PATH", cwd, "plugins");
     setenv_joined("XKB_CONFIG_ROOT", cwd, "share/X11/xkb");
+    setenv_joined("FONTCONFIG_PATH", cwd, "etc/fonts");
+    setenv_joined("FONTCONFIG_FILE", cwd, "etc/fonts/fonts.conf");
+    /* Empty module: the ibus plugin talks to a bus that is not IME.
+     * Wayland QPA then uses zwp_text_input_v3 (APP-04). */
+    setenv("QT_IM_MODULE", "", 1);
+    setenv("QT_QPA_PLATFORMTHEME", "", 1);
 
     const char *data_dir = getenv("SAAIOS_DATA_DIR");
     if (data_dir != NULL && data_dir[0] != '\0') {
