@@ -42,6 +42,26 @@ int main(int argc, char **argv) {
         layout->addWidget(view, 1);
         window.show();
         edit->setFocus(Qt::OtherFocusReason);
+    } else if (qEnvironmentVariableIsSet("QT_LINEEDIT_WEBENGINE_READY")) {
+        // ADR-419: Falkon URL click after WebEngine has loaded.
+        // Ready engine then URL setFocus keeps v2; Falkon disable
+        // is not this.
+        window.resize(640, 400);
+        window.setWindowFlags(Qt::FramelessWindowHint);
+        auto *layout = new QVBoxLayout(&window);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        edit = new QLineEdit;
+        edit->setText(QStringLiteral("https://example.com"));
+        edit->setFixedHeight(40);
+        auto *view = new QWebEngineView;
+        QObject::connect(view, &QWebEngineView::loadFinished, edit, [edit](bool) {
+            edit->setFocus(Qt::OtherFocusReason);
+        });
+        view->load(QUrl(QStringLiteral("about:blank")));
+        layout->addWidget(edit);
+        layout->addWidget(view, 1);
+        window.show();
     } else if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPETE")) {
         // ADR-360: LocationBar/Filter class. A non-IM pane holds
         // focus (WebView/FolderView). The field is the top 40 px.
