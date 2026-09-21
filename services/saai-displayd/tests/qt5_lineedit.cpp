@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCompleter>
 #include <QCoreApplication>
+#include <QHBoxLayout>
 #include <QInputMethodEvent>
 #include <QLineEdit>
 #include <QMenu>
@@ -286,6 +287,26 @@ int main(int argc, char **argv) {
             go->show();
             edit->setTextMargins(28, 0, 28, 0);
         });
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_INNER_LAYOUT")) {
+        // ADR-420: Falkon LineEdit::init QHBoxLayout on the
+        // QLineEdit. Lone field keeps v2; Falkon disable is not
+        // this.
+        edit->setText(QStringLiteral("https://example.com"));
+        auto *inner = new QHBoxLayout(edit);
+        inner->setContentsMargins(0, 0, 0, 0);
+        inner->setSpacing(0);
+        auto *left = new QWidget(edit);
+        left->setFocusPolicy(Qt::ClickFocus);
+        left->setFixedSize(24, 24);
+        auto *right = new QWidget(edit);
+        right->setFocusPolicy(Qt::ClickFocus);
+        right->setFixedSize(24, 24);
+        inner->addWidget(left, 0, Qt::AlignVCenter);
+        inner->addStretch();
+        inner->addWidget(right, 0, Qt::AlignVCenter);
+        edit->setTextMargins(28, 0, 28, 0);
     }
 
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
