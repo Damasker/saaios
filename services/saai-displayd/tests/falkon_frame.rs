@@ -626,6 +626,11 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
         .env("HOME", home_dir.path())
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("QT_LOGGING_TO_CONSOLE", "1")
+        .env("QT_ASSUME_STDERR_HAS_CONSOLE", "1")
+        .env(
+            "QT_LOGGING_RULES",
+            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
+        )
         .env("QT_PLUGIN_PATH", pkg.join("plugins"))
         .env("QT_QPA_PLATFORM", "wayland")
         .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
@@ -870,7 +875,15 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
     );
     assert_eq!(
         hash_at_osk, hash_after,
-        "Falkon main shm changed after OSK; do not claim LocationBar paint; first={hash_before:?} at_osk={hash_at_osk:?} after={hash_after:?}; displayd={:?}",
+        "Falkon main shm changed after OSK; do not claim LocationBar paint; first={hash_before:?} at_osk={hash_at_osk:?} after={hash_after:?}; displayd={:?}; qt={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        stderr.contains("qt.qpa.input.methods"),
+        "Falkon OSK spawn must carry QT_LOGGING_RULES; qt={stderr}"
+    );
+    assert!(
+        !stderr.contains("discard commit_string"),
+        "Qt discarded commit_string despite ADR-339 defer; qt={stderr}"
     );
 }

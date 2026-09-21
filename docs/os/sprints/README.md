@@ -192,6 +192,7 @@ ADR-336 packed musl Qt 6.6.3 QLineEdit receives OSK hi! through IME (no flash).
 ADR-337 packed Falkon URL v2 disables before an update_state settle (no flash).
 ADR-338 packed Falkon URL second click re-enables v2; still no shm (no flash).
 ADR-339 defer v2 IME commit until after client dispatch (host; no flash).
+ADR-340 Falkon URL OSK is silent focusObject null, not discard (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
