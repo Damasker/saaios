@@ -11,7 +11,11 @@
 //! ADR-378. shm commits after that OSK are ADR-379. Click then
 //! OSK on that demo is ADR-380. v3 cursor rectangle is ADR-381.
 //! password_entry OSK is ADR-383. Host frame clock lets search_entry
-//! and password_entry OSK commit shm (ADR-388). Not a panther field.
+//! and password_entry OSK commit shm (ADR-388). gtk4-demo
+//! `--list` has `entry_completion`/`combobox`, not popover/menu;
+//! `--run=entry_completion` enables v3 without xdg_popup (ADR-396).
+//! OSK into that demo types without xdg_popup (ADR-397).
+//! Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -2252,6 +2256,13 @@ fn packed_gtk4_demo_password_entry_osk_commits_shm() {
     search_entry_osk_case("password_entry", None);
 }
 
+/// ADR-397: OSK into packed gtk4-demo `--run=entry_completion`.
+/// Types `hi!` and commits shm. No xdg_popup. Not a click.
+#[test]
+fn packed_gtk4_demo_entry_completion_osk_types_without_popup() {
+    search_entry_osk_case("entry_completion", None);
+}
+
 fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
     let probe = gtk4_alpine_probe();
     let demo = probe.join("bin/gtk4-demo");
@@ -2344,6 +2355,8 @@ fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
     let mut surrounding_at_enable: Option<usize> = None;
     let mut surrounding_after_osk: Option<usize> = None;
     let mut n_commits_after_osk = 0;
+    let mut saw_popup = false;
+    let mut popup_failed = false;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline
@@ -2362,6 +2375,12 @@ fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
                 }
                 if line.contains("text-input-v3 enable") {
                     saw_enable = true;
+                }
+                if line.contains("xdg popup configure failed") {
+                    popup_failed = true;
+                    saw_popup = true;
+                } else if line.contains("xdg popup") {
+                    saw_popup = true;
                 }
                 if let Some(n) = surrounding_bytes(&line) {
                     surrounding_at_enable = Some(n);
@@ -2471,6 +2490,12 @@ fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
                 }
                 if let Some(n) = surrounding_bytes(&line) {
                     surrounding_after_osk = Some(n);
+                }
+                if line.contains("xdg popup configure failed") {
+                    popup_failed = true;
+                    saw_popup = true;
+                } else if line.contains("xdg popup") {
+                    saw_popup = true;
                 }
                 if line.contains("commit on surface") {
                     n_commits_after_osk += 1;
@@ -2589,6 +2614,23 @@ fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
         assert_ne!(
             after, before.as_str(),
             "gtk4-demo password_entry OSK did not attach a new shm; before={before} after={after}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+    } else if run == "entry_completion" {
+        assert!(
+            !saw_popup && !popup_failed,
+            "entry_completion OSK mapped xdg_popup; ADR-394 configure would be exercised; popup={saw_popup} failed={popup_failed}; surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            surrounding_after_osk,
+            Some(3),
+            "entry_completion OSK surrounding; expected hi! 3 bytes; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_ne!(
+            after, before.as_str(),
+            "entry_completion OSK did not attach a new shm; before={before} after={after}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
     } else {
