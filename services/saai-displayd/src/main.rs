@@ -2000,13 +2000,16 @@ fn main() {
 
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");
     event_loop
-        .run(None, &mut state, move |_| {
+        .run(None, &mut state, move |state| {
             // Runs after *every* event loop iteration regardless of
             // which source fired -- a real fix for the general "only the
             // client-readable source used to flush" gap (see the comment
             // above at display_for_fd's closure). Necessary, but proven
             // NOT sufficient on its own for the touch-delivery bug --
             // see the known-limitations entry in the S04 sprint doc.
+            // ADR-339: apply queued v2 IME commits after dispatch so Qt
+            // has run update_state + wl_display.sync first.
+            text_ime::flush_pending_v2(&state.seat);
             display
                 .borrow_mut()
                 .flush_clients()

@@ -9,6 +9,9 @@
 //! can reach an enabled field on a seat that has only touch. Qt packed
 //! on panther does not contain `zwp_text_input_v3` at all (ADR-319).
 //! IME `DeleteSurroundingText` is also forwarded to v2 (ADR-328).
+//! v2 IME commit/delete are applied after the current dispatch so Qt's
+//! `update_state` + `wl_display.sync` (`m_resetCallback`) run first
+//! (ADR-339).
 
 use std::sync::Mutex;
 
@@ -45,6 +48,16 @@ struct SeatTextIme {
     focus: Mutex<Option<WlSurface>>,
     active: Mutex<Option<ObjectId>>,
     serial: Mutex<u32>,
+    pending_v2: Mutex<Vec<PendingV2>>,
+}
+
+enum PendingV2 {
+    CommitString { active_id: ObjectId, text: String },
+    DeleteSurrounding {
+        active_id: ObjectId,
+        before_length: u32,
+        after_length: u32,
+    },
 }
 
 fn seat_ime<D: SeatHandler + 'static>(seat: &Seat<D>) -> &SeatTextIme {
@@ -95,6 +108,61 @@ pub fn on_focus<D: SeatHandler + 'static>(seat: &Seat<D>, surface: Option<WlSurf
     for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
         if surf.id().same_client_as(&ti.id()) {
             ti.enter(serial, &surf);
+        }
+    }
+}
+
+/// Apply IME→v2 commits queued during dispatch, after Qt has sent
+/// `update_state` + sync in the same wakeup.
+pub fn flush_pending_v2<D: SeatHandler + 'static>(seat: &Seat<D>) {
+    let ime = seat_ime(seat);
+    let pending: Vec<PendingV2> = {
+        let mut q = ime.pending_v2.lock().expect("pending_v2");
+        q.drain(..).collect()
+    };
+    if pending.is_empty() {
+        return;
+    }
+    let active = ime.active.lock().expect("active").clone();
+    let focus = ime.focus.lock().expect("focus").clone();
+    let Some(active_id) = active else {
+        return;
+    };
+    let Some(focus) = focus else {
+        return;
+    };
+    let inputs = ime.text_inputs_v2.lock().expect("text_inputs_v2");
+    for op in pending {
+        match op {
+            PendingV2::CommitString {
+                active_id: queued,
+                text,
+            } => {
+                if queued != active_id {
+                    continue;
+                }
+                for ti in inputs.iter() {
+                    if ti.id() == active_id && focus.id().same_client_as(&ti.id()) {
+                        println!("saai-displayd: text-input-v2 commit_string");
+                        ti.commit_string(text.clone());
+                    }
+                }
+            }
+            PendingV2::DeleteSurrounding {
+                active_id: queued,
+                before_length,
+                after_length,
+            } => {
+                if queued != active_id {
+                    continue;
+                }
+                for ti in inputs.iter() {
+                    if ti.id() == active_id {
+                        println!("saai-displayd: text-input-v2 delete_surrounding");
+                        ti.delete_surrounding_text(before_length, after_length);
+                    }
+                }
+            }
         }
     }
 }
@@ -491,12 +559,12 @@ where
                         ti.commit_string(Some(text.clone()));
                     }
                 }
-                for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
-                    if ti.id() == active_id && focus.id().same_client_as(&ti.id()) {
-                        println!("saai-displayd: text-input-v2 commit_string");
-                        ti.commit_string(text.clone());
-                    }
-                }
+                ime.pending_v2.lock().expect("pending_v2").push(
+                    PendingV2::CommitString {
+                        active_id,
+                        text,
+                    },
+                );
             }
             zwp_input_method_v2::Request::SetPreeditString {
                 text,
@@ -526,12 +594,13 @@ where
                         ti.delete_surrounding_text(before_length, after_length);
                     }
                 }
-                for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
-                    if ti.id() == active_id {
-                        println!("saai-displayd: text-input-v2 delete_surrounding");
-                        ti.delete_surrounding_text(before_length, after_length);
-                    }
-                }
+                ime.pending_v2.lock().expect("pending_v2").push(
+                    PendingV2::DeleteSurrounding {
+                        active_id,
+                        before_length,
+                        after_length,
+                    },
+                );
             }
             zwp_input_method_v2::Request::Commit { serial: _ } => {
                 let mut serial = ime.serial.lock().expect("serial");
