@@ -7,8 +7,8 @@
 //! example name (ADR-373). `--run=search_entry` is ADR-374. OSK on
 //! that demo is ADR-375. v3 commit_string log is ADR-376. v3 object
 //! ids on search_entry are ADR-377. v3 surrounding/done on that
-//! OSK are ADR-378. shm commits after that OSK are ADR-379. Not a
-//! panther field.
+//! OSK are ADR-378. shm commits after that OSK are ADR-379. Click
+//! then OSK on that demo is ADR-380. Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1818,6 +1818,19 @@ fn packed_gtk4_demo_search_entry_enables_v3_without_click() {
 /// ADR-379. Main shm stays `233e0ee2…`. Not typed.
 #[test]
 fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
+    search_entry_osk_case(None);
+}
+
+/// ADR-380: one inject-click 640 40 on packed gtk4-demo
+/// `--run=search_entry` after v3 enable, then OSK. Surrounding
+/// grows to 3. Toplevel shm stays `233e0ee2…`. Cursor may commit.
+/// Not `--run=entry`. Not typed.
+#[test]
+fn packed_gtk4_demo_search_entry_click_then_osk() {
+    search_entry_osk_case(Some((640, 40)));
+}
+
+fn search_entry_osk_case(click: Option<(i32, i32)>) {
     let probe = gtk4_alpine_probe();
     let demo = probe.join("bin/gtk4-demo");
     let loader = probe.join("lib/ld-musl-aarch64.so.1");
@@ -1959,10 +1972,50 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
     }
-    let before = hash_at_enable
+    let mut before = hash_at_enable
         .clone()
         .or(last_hash.clone())
         .expect("no shm on activated search_entry surface");
+
+    if let Some((x, y)) = click {
+        let mut saw_click = false;
+        if let Some(stdin) = displayd.stdin.as_mut() {
+            writeln!(stdin, "inject-click {x} {y}").expect("inject-click");
+            let _ = stdin.flush();
+        }
+        let click_deadline = Instant::now() + Duration::from_millis(800);
+        while Instant::now() < click_deadline {
+            match log.recv_timeout(Duration::from_millis(50)) {
+                Ok(line) => {
+                    if line.contains("injected click") {
+                        saw_click = true;
+                    }
+                    if let Some(n) = surrounding_bytes(&line) {
+                        surrounding_at_enable = Some(n);
+                    }
+                    if let Some(h) = toplevel_frame_hash(&line, &mut activated) {
+                        last_hash = Some(h.to_string());
+                    }
+                    lines.push(line);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            let _ = queue.roundtrip(&mut ime_state);
+        }
+        if !saw_click {
+            let _ = gtk.kill();
+            let _ = gtk.wait();
+            let stderr = stderr_rx
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap_or_default();
+            panic!(
+                "search_entry click {x} {y} never reached compositor; displayd={:?}; gtk={stderr}",
+                lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+            );
+        }
+        before = last_hash.clone().unwrap_or(before);
+    }
 
     let keyboard = Keyboard::bind_foreign_ime();
     assert!(keyboard.shows_panel());
@@ -2063,17 +2116,36 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     );
     assert!(
         surrounding_after_osk.unwrap_or(0) > surrounding_at_enable.unwrap_or(0),
-        "search_entry OSK surrounding did not grow; GTK did not report applied text; done={n_done} client_commit={n_client_commit} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+        "search_entry OSK surrounding did not grow; GTK did not report applied text; click={click:?} done={n_done} client_commit={n_client_commit} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
-    assert_eq!(
-        n_commits_after_osk, 0,
-        "search_entry OSK shm commit count after OSK; expected no redraw; commits={n_commits_after_osk} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
-        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
-    );
-    assert_eq!(
-        after, before.as_str(),
-        "gtk4-demo search_entry OSK attached a new shm; before={before} after={after}; do not claim typed; displayd={:?}; gtk={stderr}",
-        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
-    );
+    if click.is_some() {
+        assert_eq!(
+            surrounding_after_osk,
+            Some(3),
+            "search_entry click then OSK surrounding; expected hi! 3 bytes; click={click:?} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            n_commits_after_osk, 0,
+            "search_entry click then OSK shm commit count after OSK; expected no toplevel redraw; commits={n_commits_after_osk} click={click:?} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            after, before.as_str(),
+            "search_entry click then OSK attached a new toplevel shm; before={before} after={after}; click={click:?}; do not claim typed; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+    } else {
+        assert_eq!(
+            n_commits_after_osk, 0,
+            "search_entry OSK shm commit count after OSK; expected no redraw; commits={n_commits_after_osk} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            after, before.as_str(),
+            "gtk4-demo search_entry OSK attached a new shm; before={before} after={after}; do not claim typed; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+    }
 }
