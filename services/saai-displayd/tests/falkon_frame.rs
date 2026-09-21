@@ -716,13 +716,13 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
         writeln!(stdin, "inject-click 640 20").expect("inject-click");
         let _ = stdin.flush();
     }
-    let mut saw_click = false;
+    let mut click_count = 0u32;
     let click_deadline = Instant::now() + Duration::from_secs(4);
-    while Instant::now() < click_deadline && !(saw_click && saw_enable) {
+    while Instant::now() < click_deadline && !(click_count >= 1 && saw_enable) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("injected click") {
-                    saw_click = true;
+                    click_count += 1;
                 }
                 if line.contains("text-input-v2 enable") {
                     saw_enable = true;
@@ -741,8 +741,58 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
         let _ = queue.roundtrip(&mut ime_state);
     }
     assert!(
-        saw_click && saw_enable,
-        "Falkon URL click did not enable v2 before OSK; disable={saw_disable}; displayd={:?}",
+        click_count >= 1 && saw_enable,
+        "Falkon URL click did not enable v2; clicks={click_count} disable={saw_disable}; displayd={:?}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    let disable_deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < disable_deadline && !saw_disable {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    saw_enable = false;
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 640 20").expect("inject-click 2");
+        let _ = stdin.flush();
+    }
+    let click2_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < click2_deadline && !(click_count >= 2 && saw_enable) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    click_count += 1;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    assert!(
+        click_count >= 2 && saw_enable,
+        "Falkon URL second click did not re-enable v2; clicks={click_count} disable={saw_disable}; displayd={:?}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     let hash_at_osk = hash_after.clone();
