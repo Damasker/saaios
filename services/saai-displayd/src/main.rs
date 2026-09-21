@@ -82,6 +82,7 @@ use smithay::{
         viewporter::ViewporterState,
     },
 };
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
 /// Matches `Scale::Integer(1)` on the advertised output. GDK initializes
 /// its shm height from `wp_fractional_scale_v1.preferred_scale` in 120ths
@@ -501,10 +502,32 @@ impl State {
         if self.focused_surface == surface {
             return;
         }
+        let previous = self.focused_surface.clone();
         self.focused_surface = surface.clone();
         // ADR-267: text-input focus is "which client's field is live", not
         // "which client gets key events". Same seat, no keyboard required.
         text_ime::on_focus(&self.seat, surface.clone());
+        // ADR-352: xdg Activated is window activation, not wl_keyboard.
+        if let Some(prev) = previous.as_ref() {
+            if let Some(toplevel) = self.toplevels.get(prev) {
+                toplevel.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Activated);
+                });
+                toplevel.send_configure();
+            }
+        }
+        if let Some(current) = surface.as_ref() {
+            if let Some(toplevel) = self.toplevels.get(current) {
+                toplevel.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Activated);
+                });
+                toplevel.send_configure();
+                println!(
+                    "saai-displayd: xdg activated {:?}",
+                    current.id()
+                );
+            }
+        }
         #[cfg(not(feature = "panther-hardware"))]
         {
             if let Some(keyboard) = self.keyboard.clone() {

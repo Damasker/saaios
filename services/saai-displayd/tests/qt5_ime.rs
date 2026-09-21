@@ -4,10 +4,10 @@
 //! from the Falkon package is ADR-336. Without wl_keyboard that same
 //! probe binds v2 and does not enable (ADR-347). Packed musl Qt 5.15.10
 //! on that same seat is the same class (ADR-348). Host glibc Qt 5.15
-//! without wl_keyboard is ADR-349. A pointer click on that same seat
-//! is ADR-351. Not a panther field.
+//! without wl_keyboard is ADR-349. xdg Activated makes those probes
+//! type OSK hi! (ADR-352). Not a panther field.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -715,11 +715,11 @@ fn osk_ime_types_hi_bang_into_packed_qt6_lineedit() {
     let _ = displayd.wait();
 }
 
-/// ADR-347: packed musl Qt 6.6.3 QLineEdit with setFocus binds v2 on a
-/// keyboard-less seat and does not enable. GTK 4.14 still types
-/// (ADR-346). Not a panther field.
+/// ADR-352: packed musl Qt 6.6.3 QLineEdit types OSK on a keyboard-less
+/// seat once xdg Activated is set. ADR-347 was bind-without-enable
+/// before that configure. Not a panther field.
 #[test]
-fn packed_qt6_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
+fn osk_ime_types_hi_bang_into_packed_qt6_lineedit_without_seat_keyboard() {
     let pkg = falkon_package();
     let probe = packed_qt6_probe();
     assert!(
@@ -752,7 +752,7 @@ fn packed_qt6_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     let ime_mgr: ZwpInputMethodManagerV2 = globals
         .bind(&qh, 1..=1, ())
         .expect("zwp_input_method_manager_v2 not advertised");
-    let _ime = ime_mgr.get_input_method(&seat, &qh, ());
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
     queue
         .roundtrip(&mut ime_state)
         .expect("ime first roundtrip");
@@ -780,7 +780,7 @@ fn packed_qt6_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("qemu-aarch64-static failed to spawn packed Qt6 QLineEdit");
-    let _qt_out = {
+    let qt_out = {
         let stdout = qt.stdout.take().expect("qt stdout");
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -809,12 +809,12 @@ fn packed_qt6_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     };
 
     let mut saw_enable = false;
-    let mut saw_get = false;
+    let mut saw_activated = false;
     let mut saw_kbd_focus = false;
     let mut saw_focus = false;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline && !saw_focus {
+    while Instant::now() < deadline && !(saw_enable && ime_state.activate) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("keyboard focus set") {
@@ -822,8 +822,8 @@ fn packed_qt6_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
                 } else if line.contains("focus set to") {
                     saw_focus = true;
                 }
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
+                if line.contains("xdg activated") {
+                    saw_activated = true;
                 }
                 if line.contains("text-input-v2 enable") {
                     saw_enable = true;
@@ -835,22 +835,48 @@ fn packed_qt6_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
         }
         let _ = queue.roundtrip(&mut ime_state);
     }
-    let settle = Instant::now() + Duration::from_millis(700);
-    while Instant::now() < settle {
-        match log.recv_timeout(Duration::from_millis(50)) {
+    if !(saw_enable && ime_state.activate && saw_focus && !saw_kbd_focus && saw_activated) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "packed Qt6 QLineEdit on keyboard-less seat: enable={saw_enable} activate={} kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated}; displayd={lines:?}; qt={stderr}",
+            ime_state.activate
+        );
+    }
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let mut entry = String::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        match qt_out.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
-                if line.contains("keyboard focus set") {
-                    saw_kbd_focus = true;
-                } else if line.contains("focus set to") {
-                    saw_focus = true;
+                if let Some(text) = line.strip_prefix("QT_LINEEDIT_TEXT=") {
+                    entry = text.to_string();
+                    if entry == "hi!" {
+                        break;
+                    }
                 }
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
-                }
-                if line.contains("text-input-v2 enable") {
-                    saw_enable = true;
-                }
-                lines.push(line);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -863,26 +889,19 @@ fn packed_qt6_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     let stderr = qt_err
         .recv_timeout(Duration::from_secs(1))
         .unwrap_or_default();
+    assert_eq!(
+        entry, "hi!",
+        "OSK IME did not type hi! into packed Qt6 QLineEdit without wl_keyboard; displayd={lines:?}; qt={stderr}"
+    );
     let _ = displayd.kill();
     let _ = displayd.wait();
-    assert!(
-        saw_focus && !saw_kbd_focus,
-        "expected compositor focus without wl_keyboard; kbd={saw_kbd_focus} focus={saw_focus}; displayd={lines:?}; qt={stderr}"
-    );
-    assert!(
-        saw_get,
-        "packed Qt6 QLineEdit never zwp_text_input_v2.get; displayd={lines:?}; qt={stderr}"
-    );
-    assert!(
-        !saw_enable && !ime_state.activate,
-        "packed Qt6 QLineEdit enabled v2 without wl_keyboard; compositor IME is not the gap; displayd={lines:?}; qt={stderr}"
-    );
 }
 
-/// ADR-348: packed musl Qt 5.15.10 QLineEdit with setFocus binds v2 on a
-/// keyboard-less seat. Expect no enable, same class as ADR-347.
+/// ADR-352: packed musl Qt 5.15.10 QLineEdit types OSK on a keyboard-less
+/// seat once xdg Activated is set. ADR-348 was bind-without-enable
+/// before that configure. Not a panther field.
 #[test]
-fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
+fn osk_ime_types_hi_bang_into_packed_qt5_lineedit_without_seat_keyboard() {
     let pkg = pcmanfm_package();
     let probe = packed_qt5_probe();
     assert!(
@@ -915,7 +934,7 @@ fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     let ime_mgr: ZwpInputMethodManagerV2 = globals
         .bind(&qh, 1..=1, ())
         .expect("zwp_input_method_manager_v2 not advertised");
-    let _ime = ime_mgr.get_input_method(&seat, &qh, ());
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
     queue
         .roundtrip(&mut ime_state)
         .expect("ime first roundtrip");
@@ -943,7 +962,7 @@ fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("qemu-aarch64-static failed to spawn packed Qt5 QLineEdit");
-    let _qt_out = {
+    let qt_out = {
         let stdout = qt.stdout.take().expect("qt stdout");
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -972,12 +991,12 @@ fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     };
 
     let mut saw_enable = false;
-    let mut saw_get = false;
+    let mut saw_activated = false;
     let mut saw_kbd_focus = false;
     let mut saw_focus = false;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline && !saw_focus {
+    while Instant::now() < deadline && !(saw_enable && ime_state.activate) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("keyboard focus set") {
@@ -985,8 +1004,8 @@ fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
                 } else if line.contains("focus set to") {
                     saw_focus = true;
                 }
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
+                if line.contains("xdg activated") {
+                    saw_activated = true;
                 }
                 if line.contains("text-input-v2 enable") {
                     saw_enable = true;
@@ -998,22 +1017,48 @@ fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
         }
         let _ = queue.roundtrip(&mut ime_state);
     }
-    let settle = Instant::now() + Duration::from_millis(700);
-    while Instant::now() < settle {
-        match log.recv_timeout(Duration::from_millis(50)) {
+    if !(saw_enable && ime_state.activate && saw_focus && !saw_kbd_focus && saw_activated) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "packed Qt5 QLineEdit on keyboard-less seat: enable={saw_enable} activate={} kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated}; displayd={lines:?}; qt={stderr}",
+            ime_state.activate
+        );
+    }
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let mut entry = String::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        match qt_out.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
-                if line.contains("keyboard focus set") {
-                    saw_kbd_focus = true;
-                } else if line.contains("focus set to") {
-                    saw_focus = true;
+                if let Some(text) = line.strip_prefix("QT_LINEEDIT_TEXT=") {
+                    entry = text.to_string();
+                    if entry == "hi!" {
+                        break;
+                    }
                 }
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
-                }
-                if line.contains("text-input-v2 enable") {
-                    saw_enable = true;
-                }
-                lines.push(line);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -1026,26 +1071,18 @@ fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     let stderr = qt_err
         .recv_timeout(Duration::from_secs(1))
         .unwrap_or_default();
+    assert_eq!(
+        entry, "hi!",
+        "OSK IME did not type hi! into packed Qt5 QLineEdit without wl_keyboard; displayd={lines:?}; qt={stderr}"
+    );
     let _ = displayd.kill();
     let _ = displayd.wait();
-    assert!(
-        saw_focus && !saw_kbd_focus,
-        "expected compositor focus without wl_keyboard; kbd={saw_kbd_focus} focus={saw_focus}; displayd={lines:?}; qt={stderr}"
-    );
-    assert!(
-        saw_get,
-        "packed Qt5 QLineEdit never zwp_text_input_v2.get; displayd={lines:?}; qt={stderr}"
-    );
-    assert!(
-        !saw_enable && !ime_state.activate,
-        "packed Qt5 QLineEdit enabled v2 without wl_keyboard; not the same class as ADR-347; displayd={lines:?}; qt={stderr}"
-    );
 }
 
-/// ADR-349: host glibc Qt 5.15 QLineEdit with setFocus binds v2 on a
-/// keyboard-less seat. Expect no enable, same class as ADR-347/348.
+/// ADR-352: host glibc Qt 5.15 QLineEdit with setFocus types OSK on a
+/// keyboard-less seat once xdg Activated is set. Not a panther field.
 #[test]
-fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
+fn osk_ime_types_hi_bang_into_qt5_lineedit_without_seat_keyboard() {
     assert!(
         qt5_available(),
         "host Qt5 probe needs g++ and qtbase5-dev (Qt5Widgets)"
@@ -1071,7 +1108,7 @@ fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     let ime_mgr: ZwpInputMethodManagerV2 = globals
         .bind(&qh, 1..=1, ())
         .expect("zwp_input_method_manager_v2 not advertised");
-    let _ime = ime_mgr.get_input_method(&seat, &qh, ());
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
     queue
         .roundtrip(&mut ime_state)
         .expect("ime first roundtrip");
@@ -1090,7 +1127,7 @@ fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn qt5_lineedit");
-    let _qt_out = {
+    let qt_out = {
         let stdout = qt.stdout.take().expect("qt stdout");
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -1119,12 +1156,12 @@ fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     };
 
     let mut saw_enable = false;
-    let mut saw_get = false;
+    let mut saw_activated = false;
     let mut saw_kbd_focus = false;
     let mut saw_focus = false;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline && !saw_focus {
+    while Instant::now() < deadline && !(saw_enable && ime_state.activate) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("keyboard focus set") {
@@ -1132,8 +1169,8 @@ fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
                 } else if line.contains("focus set to") {
                     saw_focus = true;
                 }
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
+                if line.contains("xdg activated") {
+                    saw_activated = true;
                 }
                 if line.contains("text-input-v2 enable") {
                     saw_enable = true;
@@ -1145,22 +1182,48 @@ fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
         }
         let _ = queue.roundtrip(&mut ime_state);
     }
-    let settle = Instant::now() + Duration::from_millis(700);
-    while Instant::now() < settle {
-        match log.recv_timeout(Duration::from_millis(50)) {
+    if !(saw_enable && ime_state.activate && saw_focus && !saw_kbd_focus && saw_activated) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "host Qt5 QLineEdit on keyboard-less seat: enable={saw_enable} activate={} kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated}; displayd={lines:?}; qt={stderr}",
+            ime_state.activate
+        );
+    }
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let mut entry = String::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        match qt_out.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
-                if line.contains("keyboard focus set") {
-                    saw_kbd_focus = true;
-                } else if line.contains("focus set to") {
-                    saw_focus = true;
+                if let Some(text) = line.strip_prefix("QT_LINEEDIT_TEXT=") {
+                    entry = text.to_string();
+                    if entry == "hi!" {
+                        break;
+                    }
                 }
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
-                }
-                if line.contains("text-input-v2 enable") {
-                    saw_enable = true;
-                }
-                lines.push(line);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -1173,200 +1236,10 @@ fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     let stderr = qt_err
         .recv_timeout(Duration::from_secs(1))
         .unwrap_or_default();
+    assert_eq!(
+        entry, "hi!",
+        "OSK IME did not type hi! into host Qt5 QLineEdit without wl_keyboard; displayd={lines:?}; qt={stderr}"
+    );
     let _ = displayd.kill();
     let _ = displayd.wait();
-    assert!(
-        saw_focus && !saw_kbd_focus,
-        "expected compositor focus without wl_keyboard; kbd={saw_kbd_focus} focus={saw_focus}; displayd={lines:?}; qt={stderr}"
-    );
-    assert!(
-        saw_get,
-        "host Qt5 QLineEdit never zwp_text_input_v2.get; displayd={lines:?}; qt={stderr}"
-    );
-    assert!(
-        !saw_enable && !ime_state.activate,
-        "host Qt5 QLineEdit enabled v2 without wl_keyboard; not the same class as packed Qt; displayd={lines:?}; qt={stderr}"
-    );
-}
-
-/// ADR-351: host glibc Qt 5.15 QLineEdit on a keyboard-less seat.
-/// setFocus does not enable v2 (ADR-349). One pointer click `160 20`
-/// (widget origin, not a Y sweep) is the panther-class activation.
-#[test]
-fn host_qt5_lineedit_click_without_seat_keyboard_does_not_enable_v2() {
-    assert!(
-        qt5_available(),
-        "host Qt5 probe needs g++ and qtbase5-dev (Qt5Widgets)"
-    );
-    let probe = compile_qt5_probe();
-
-    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
-            .expect("XDG_RUNTIME_DIR 0700");
-    }
-    let (mut displayd, log) =
-        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
-    let socket_name = wait_for_socket(&log);
-
-    let conn = connect(runtime_dir.path(), &socket_name);
-    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
-    let qh = queue.handle();
-    let mut ime_state = ImeState { activate: false };
-    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
-    let ime_mgr: ZwpInputMethodManagerV2 = globals
-        .bind(&qh, 1..=1, ())
-        .expect("zwp_input_method_manager_v2 not advertised");
-    let _ime = ime_mgr.get_input_method(&seat, &qh, ());
-    queue
-        .roundtrip(&mut ime_state)
-        .expect("ime first roundtrip");
-
-    let mut qt = Command::new(&probe)
-        .env_remove("QT_IM_MODULE")
-        .env_remove("DISPLAY")
-        .env("XDG_RUNTIME_DIR", runtime_dir.path())
-        .env("WAYLAND_DISPLAY", &socket_name)
-        .env("QT_QPA_PLATFORM", "wayland")
-        .env("QT_LOGGING_TO_CONSOLE", "1")
-        .env("QT_ASSUME_STDERR_HAS_CONSOLE", "1")
-        .env(
-            "QT_LOGGING_RULES",
-            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
-        )
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn qt5_lineedit");
-    let _qt_out = {
-        let stdout = qt.stdout.take().expect("qt stdout");
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().map_while(Result::ok) {
-                if tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-        rx
-    };
-    let qt_err = {
-        let stderr = qt.stderr.take().expect("qt stderr");
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            let mut buf = String::new();
-            for line in reader.lines().map_while(Result::ok) {
-                buf.push_str(&line);
-                buf.push('\n');
-            }
-            let _ = tx.send(buf);
-        });
-        rx
-    };
-
-    let mut saw_enable = false;
-    let mut saw_get = false;
-    let mut saw_kbd_focus = false;
-    let mut saw_focus = false;
-    let mut saw_click = false;
-    let mut lines = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline && !saw_focus {
-        match log.recv_timeout(Duration::from_millis(50)) {
-            Ok(line) => {
-                if line.contains("keyboard focus set") {
-                    saw_kbd_focus = true;
-                } else if line.contains("focus set to") {
-                    saw_focus = true;
-                }
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
-                }
-                if line.contains("text-input-v2 enable") {
-                    saw_enable = true;
-                }
-                lines.push(line);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        let _ = queue.roundtrip(&mut ime_state);
-    }
-    let settle = Instant::now() + Duration::from_millis(700);
-    while Instant::now() < settle {
-        match log.recv_timeout(Duration::from_millis(50)) {
-            Ok(line) => {
-                if line.contains("text-input-v2 get") {
-                    saw_get = true;
-                }
-                if line.contains("text-input-v2 enable") {
-                    saw_enable = true;
-                }
-                lines.push(line);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        let _ = queue.roundtrip(&mut ime_state);
-    }
-    assert!(
-        saw_focus && !saw_kbd_focus && saw_get && !saw_enable,
-        "pre-click: expected v2 get without enable; kbd={saw_kbd_focus} focus={saw_focus} get={saw_get} enable={saw_enable}; displayd={lines:?}"
-    );
-
-    if let Some(stdin) = displayd.stdin.as_mut() {
-        writeln!(stdin, "inject-click 160 20").expect("inject-click");
-        let _ = stdin.flush();
-    }
-    let click_deadline = Instant::now() + Duration::from_secs(4);
-    while Instant::now() < click_deadline && !saw_click {
-        match log.recv_timeout(Duration::from_millis(50)) {
-            Ok(line) => {
-                if line.contains("injected click") {
-                    saw_click = true;
-                }
-                if line.contains("text-input-v2 enable") {
-                    saw_enable = true;
-                }
-                lines.push(line);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        let _ = queue.roundtrip(&mut ime_state);
-    }
-    let settle = Instant::now() + Duration::from_millis(700);
-    while Instant::now() < settle {
-        match log.recv_timeout(Duration::from_millis(50)) {
-            Ok(line) => {
-                if line.contains("text-input-v2 enable") {
-                    saw_enable = true;
-                }
-                lines.push(line);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        let _ = queue.roundtrip(&mut ime_state);
-    }
-
-    let _ = qt.kill();
-    let _ = qt.wait();
-    let stderr = qt_err
-        .recv_timeout(Duration::from_secs(1))
-        .unwrap_or_default();
-    let _ = displayd.kill();
-    let _ = displayd.wait();
-    assert!(
-        saw_click,
-        "displayd never injected click 160 20; displayd={lines:?}; qt={stderr}"
-    );
-    assert!(
-        !saw_enable && !ime_state.activate,
-        "host Qt5 QLineEdit enabled v2 after pointer click without wl_keyboard; compositor IME is not the remaining gap; displayd={lines:?}; qt={stderr}"
-    );
 }
