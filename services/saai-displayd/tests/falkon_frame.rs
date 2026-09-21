@@ -294,6 +294,25 @@ fn interesting(line: &str) -> bool {
         || line.contains("frame sha256=")
 }
 
+fn toplevel_frame_hash<'a>(line: &'a str, surface: &mut Option<String>) -> Option<&'a str> {
+    if !line.contains("frame sha256=") {
+        return None;
+    }
+    let id = line
+        .split("wl_surface@")
+        .nth(1)?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?;
+    match surface {
+        None => *surface = Some(id.to_string()),
+        Some(s) if s != id => return None,
+        Some(_) => {}
+    }
+    line.split("frame sha256=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+}
+
 /// ADR-333: windowed packed Falkon chrome (URL QLineEdit) on host qemu.
 /// hideTabsWithOneTab so chrome is the navigation toolbar only.
 /// Click 640,20 in that band. Not a Y sweep. Not a panther typed field.
@@ -654,6 +673,9 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
     let mut saw_frame = false;
     let mut saw_enable = false;
     let mut saw_disable = false;
+    let mut toplevel_surface = None;
+    let mut hash_before = None::<String>;
+    let mut hash_after = None::<String>;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(25);
     while Instant::now() < deadline && !(saw_toplevel && saw_frame) {
@@ -670,6 +692,12 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
                 }
                 if line.contains("text-input-v2 disable") {
                     saw_disable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    if hash_before.is_none() {
+                        hash_before = Some(h.to_string());
+                    }
+                    hash_after = Some(h.to_string());
                 }
                 lines.push(line);
             }
@@ -702,6 +730,9 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
                 if line.contains("text-input-v2 disable") {
                     saw_disable = true;
                 }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
                 lines.push(line);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -714,6 +745,7 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
         "Falkon URL click did not enable v2 before OSK; disable={saw_disable}; displayd={:?}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
+    let hash_at_osk = hash_after.clone();
 
     let keyboard = Keyboard::bind_foreign_ime();
     assert!(keyboard.shows_panel());
@@ -749,6 +781,24 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
                 if line.contains("text-input-v2 disable") {
                     saw_disable = true;
                 }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let settle = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
                 lines.push(line);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -765,7 +815,12 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
     let _ = displayd.wait();
     assert!(
         commit_count >= 4 && saw_delete,
-        "OSK hi! did not reach Falkon v2 (commit={commit_count} delete={saw_delete} disable={saw_disable}); displayd={:?}; qt={stderr}",
+        "OSK hi! did not reach Falkon v2 (commit={commit_count} delete={saw_delete} disable={saw_disable}); at_osk={hash_at_osk:?} after={hash_after:?}; displayd={:?}; qt={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        hash_at_osk, hash_after,
+        "Falkon main shm changed after OSK; do not claim LocationBar paint; first={hash_before:?} at_osk={hash_at_osk:?} after={hash_after:?}; displayd={:?}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }

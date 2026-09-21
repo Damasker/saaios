@@ -61,4 +61,5 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-04 packed PCManFM Filter-band click still no shm paint (ADR-331).
 # APP-04 packed Falkon URL click enables v2; IME commit_string (ADR-333).
 # APP-04 packed Falkon URL OSK hi! reaches v2 (ADR-334).
+# APP-04 packed Falkon URL OSK still no new shm (ADR-335).
 saai-ui-core = { path = "../../crates/saai-ui-core" }
