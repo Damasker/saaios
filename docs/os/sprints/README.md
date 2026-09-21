@@ -166,6 +166,7 @@ ADR-310 Alpine gtk4-demo gets `preferred_scale=120` then still asks for height 2
 ADR-311 host `configure_bounds` is the window geometry, not smithay `(0,0)`; no displayd flash.
 ADR-312 Falkon installs and launches on panther via appd; software shm hello-frame; no browse.
 ADR-313 empty NEWNET brings up loopback (`e9b3c57c…`); Falkon file:// still white shm.
+ADR-314 pack mesa swrast/llvmpipe into Falkon; WebEngine still white, renderers die.
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

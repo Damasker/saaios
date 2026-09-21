@@ -46,7 +46,7 @@ mkdir -p "$alpine_sysroot"
     -X https://dl-cdn.alpinelinux.org/alpine/v3.20/main \
     -X https://dl-cdn.alpinelinux.org/alpine/v3.20/community \
     --root "$alpine_sysroot" --arch aarch64 --allow-untrusted --initdb \
-    add falkon qt6-qtwayland qt6-qtwebengine || true
+    add falkon qt6-qtwayland qt6-qtwebengine mesa-dri-gallium || true
 
 if [ ! -e "$alpine_sysroot/usr/bin/falkon" ]; then
     printf '%s\n' "apk add falkon did not produce usr/bin/falkon -- see output above" >&2
@@ -130,6 +130,35 @@ if [ ! -e "$package_dir/lib/libpxbackend-1.0.so" ]; then
 fi
 if [ -e "$package_dir/plugins/platforms/libqwayland-egl.so" ]; then
     printf '%s\n' "wayland-egl plugin must not ship -- it blocks shm hello-frame" >&2
+    exit 1
+fi
+
+# ADR-314: QtWebEngine's view is GL. Without swrast/llvmpipe the shm
+# hello-frame stays white. Pack only the megadriver + LLVM, not Mali.
+mkdir -p "$package_dir/lib/dri"
+gallium=""
+for cand in \
+    "$alpine_sysroot/usr/lib/dri/libgallium_dri.so" \
+    "$alpine_sysroot/usr/lib/xorg/modules/dri/libgallium_dri.so"
+do
+    if [ -e "$cand" ]; then
+        gallium=$cand
+        break
+    fi
+done
+if [ -z "$gallium" ]; then
+    printf '%s\n' "missing libgallium_dri.so -- apk mesa-dri-gallium" >&2
+    exit 1
+fi
+cp -L "$gallium" "$package_dir/lib/dri/libgallium_dri.so"
+ln -sf libgallium_dri.so "$package_dir/lib/dri/swrast_dri.so"
+ln -sf libgallium_dri.so "$package_dir/lib/dri/kms_swrast_dri.so"
+if [ ! -e "$package_dir/lib/libLLVM-17.so" ]; then
+    printf '%s\n' "missing libLLVM-17.so -- llvmpipe" >&2
+    exit 1
+fi
+if [ ! -e "$package_dir/lib/libelf.so.1" ]; then
+    printf '%s\n' "missing libelf.so.1 -- libgallium NEEDED" >&2
     exit 1
 fi
 

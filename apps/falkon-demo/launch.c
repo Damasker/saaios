@@ -30,15 +30,20 @@ int main(void) {
     setenv_joined("QTWEBENGINE_LOCALES_PATH", cwd, "share/qt6/translations/qtwebengine_locales");
     setenv("QTWEBENGINE_DISABLE_SANDBOX", "1", 1);
     setenv("QT_QPA_PLATFORMTHEME", "", 1);
-    /* ADR-306 host qemu needed these so QtWebEngine does not wait on
-     * EGL/Vulkan and never attach a wl_shm buffer. Same on panther:
-     * Mali is not the scanout path (ADR-024). */
+    /* ADR-306/312: drop Wayland EGL so QBackingStore attaches wl_shm.
+     * `--use-gl=disabled` then left QtWebEngine with nothing to rasterize
+     * into that store (white hello-frame, ADR-313). Keep GPU off; let
+     * Chromium software-composite. */
     setenv(
         "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--no-sandbox --disable-gpu --disable-gpu-compositing --use-gl=disabled "
+        "--no-sandbox --disable-gpu --disable-gpu-compositing "
         "--allow-file-access-from-files",
         1);
+    setenv_joined("LIBGL_DRIVERS_PATH", cwd, "lib/dri");
     setenv("LIBGL_ALWAYS_SOFTWARE", "1", 1);
+    setenv("GALLIUM_DRIVER", "llvmpipe", 1);
+    setenv("MESA_LOADER_DRIVER_OVERRIDE", "swrast", 1);
+    setenv("QT_OPENGL", "software", 1);
     setenv("QT_QUICK_BACKEND", "software", 1);
     setenv("QSG_RENDER_LOOP", "basic", 1);
 
