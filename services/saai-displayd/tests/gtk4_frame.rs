@@ -102,9 +102,10 @@ fn gtk4_commits_an_shm_frame_on_host_displayd() {
 
     let mut saw_toplevel = false;
     let mut saw_frame = false;
+    let mut saw_enable = false;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline && !(saw_toplevel && saw_frame) {
+    while Instant::now() < deadline && !(saw_toplevel && saw_frame && saw_enable) {
         match log.recv_timeout(Duration::from_millis(200)) {
             Ok(line) => {
                 assert!(
@@ -120,6 +121,9 @@ fn gtk4_commits_an_shm_frame_on_host_displayd() {
                 }
                 if line.contains("frame sha256=") {
                     saw_frame = true;
+                }
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
                 }
                 lines.push(line);
             }
@@ -157,6 +161,10 @@ fn gtk4_commits_an_shm_frame_on_host_displayd() {
     assert!(
         saw_frame,
         "GTK4 never committed a hashed shm frame; displayd={lines:?}; stderr={stderr}"
+    );
+    assert!(
+        saw_enable,
+        "GTK4 Entry never zwp_text_input_v3::enable; displayd={lines:?}; stderr={stderr}"
     );
     assert!(
         displayd

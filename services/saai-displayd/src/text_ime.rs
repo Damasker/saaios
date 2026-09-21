@@ -202,6 +202,7 @@ where
         let ime = seat_ime(&data.seat);
         match request {
             zwp_text_input_v3::Request::Enable => {
+                println!("saai-displayd: text-input-v3 enable");
                 *ime.active.lock().expect("active") = Some(resource.id());
                 if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
                     im.activate();
@@ -326,6 +327,7 @@ where
         match request {
             zwp_text_input_v2::Request::Enable { surface: _ }
             | zwp_text_input_v2::Request::ShowInputPanel => {
+                println!("saai-displayd: text-input-v2 enable");
                 *ime.active.lock().expect("active") = Some(resource.id());
                 if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
                     im.activate();
