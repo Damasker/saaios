@@ -974,6 +974,7 @@ fn interesting(line: &str) -> bool {
         || line.contains("xdg activated")
         || line.contains("focus set to")
         || line.contains("host frame clock")
+        || line.contains("xdg popup")
 }
 
 fn surrounding_bytes(line: &str) -> Option<usize> {
@@ -1667,6 +1668,270 @@ fn packed_gtk4_demo_run_entry_is_not_an_example_name() {
     assert!(
         listed.iter().all(|n| *n != "entry"),
         "gtk4-demo --list unexpectedly has entry; ADR-344/356 --run=entry was a real demo; names={listed:?}; stderr={stderr}"
+    );
+}
+
+/// ADR-396: packed gtk4-demo `--list` has `entry_completion` /
+/// `combobox` (dropdown chrome), not `popover`/`menu`. Not a click.
+#[test]
+fn packed_gtk4_demo_list_has_entry_completion() {
+    let probe = gtk4_alpine_probe();
+    let demo = probe.join("bin/gtk4-demo");
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        demo.is_file(),
+        "missing Alpine gtk4-demo at {} — set GTK4_ALPINE_PROBE",
+        demo.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let demo = probe.join("bin/gtk4-demo");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&demo)
+        .arg("--list")
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk4-demo --list");
+    let stdout_rx = {
+        let stdout = gtk.stdout.take().expect("gtk4-demo stdout");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk4-demo stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+    let names = stdout_rx
+        .recv_timeout(Duration::from_secs(20))
+        .unwrap_or_default();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+
+    let listed: Vec<&str> = names.lines().filter(|l| !l.is_empty()).collect();
+    assert!(
+        listed.iter().any(|n| *n == "entry_completion"),
+        "gtk4-demo --list missing entry_completion; names={listed:?}; stderr={stderr}"
+    );
+    assert!(
+        listed.iter().any(|n| *n == "combobox"),
+        "gtk4-demo --list missing combobox; names={listed:?}; stderr={stderr}"
+    );
+    assert!(
+        listed.iter().all(|n| {
+            let n = n.to_ascii_lowercase();
+            !n.contains("popover") && n != "menus" && n != "menu"
+        }),
+        "gtk4-demo --list unexpectedly has popover/menu; names={listed:?}; stderr={stderr}"
+    );
+}
+
+/// ADR-396: packed gtk4-demo `--run=entry_completion` enables v3
+/// without a click and does not map xdg_popup until type. Not OSK
+/// this slice. Not `--run=entry`.
+#[test]
+fn packed_gtk4_demo_entry_completion_enables_v3_without_popup() {
+    let probe = gtk4_alpine_probe();
+    let demo = probe.join("bin/gtk4-demo");
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        demo.is_file(),
+        "missing Alpine gtk4-demo at {} — set GTK4_ALPINE_PROBE",
+        demo.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let demo = probe.join("bin/gtk4-demo");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&demo)
+        .arg("--run=entry_completion")
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk4-demo --run=entry_completion");
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk4-demo stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_frame = false;
+    let mut saw_activated = false;
+    let mut saw_focus = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_enable = false;
+    let mut saw_popup = false;
+    let mut popup_failed = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline
+        && !(saw_toplevel && saw_frame && saw_activated && saw_focus && saw_enable)
+    {
+        match log.recv_timeout(Duration::from_millis(100)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                }
+                if line.contains("frame sha256=") {
+                    saw_frame = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("xdg popup configure failed") {
+                    popup_failed = true;
+                    saw_popup = true;
+                } else if line.contains("xdg popup") {
+                    saw_popup = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let settle = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                if line.contains("xdg popup configure failed") {
+                    popup_failed = true;
+                    saw_popup = true;
+                } else if line.contains("xdg popup") {
+                    saw_popup = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = gtk.kill();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_toplevel && saw_frame && saw_activated && saw_focus && saw_enable && !saw_kbd_focus,
+        "entry_completion demo did not enable v3; kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated} enable={saw_enable}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        !saw_popup && !popup_failed,
+        "entry_completion mapped xdg_popup without type; popup={saw_popup} failed={popup_failed}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
 
