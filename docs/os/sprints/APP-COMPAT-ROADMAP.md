@@ -317,7 +317,7 @@ APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
 APP-02  GTK4 -- host 4.18 frame ADR-305; bounds ADR-311; 4.14.4 qemu shm frame ADR-320; panther still 2337935 until next displayd flash (ADR-310)
 APP-03  zwp_input_method_manager_v2 -- panther displayd ADR-309
-APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); GTK 4.18 Entry v3 enable (ADR-322) and OSK types hi! (ADR-325); Qt 5.15 v2 enable (ADR-323); IME forwarded, Filter not focused (ADR-324); host Ctrl+I disables v2 (ADR-326); panther field not typed
+APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); GTK 4.18 Entry v3 enable (ADR-322) and OSK types hi! (ADR-325); Qt 5.15 v2 enable (ADR-323); IME forwarded, Filter not focused (ADR-324); host Ctrl+I disables v2 (ADR-326); PathEdit click re-enables v2, still no shm paint (ADR-327); panther field not typed
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
 APP-06  браузер -- Falkon host qemu ADR-306; panther paints loopback HTTP hello.html ADR-321 (not NetInternet, not public browse)
 

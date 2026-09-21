@@ -1,7 +1,8 @@
 //! APP-04 / ADR-323: packed aarch64 PCManFM-Qt (Qt 5.15) binds
 //! `zwp_text_input_manager_v2` on host `saai-displayd` and `enable`s.
 //! ADR-324: a separate IME client can `commit_string` while that
-//! enable is live. Empty `QT_IM_MODULE` blocks the path. Not a panthe
+//! enable is live. ADR-327: toolbar click re-enables v2; still no new
+//! hashed shm. Empty `QT_IM_MODULE` blocks the path. Not a panther
 //! typed field.
 
 use std::io::{BufRead, BufReader, Write};
@@ -123,6 +124,7 @@ fn pcmanfm_qt_binds_text_input_v2_when_im_module_is_unset() {
         .env("XDG_RUNTIME_DIR", runtime_dir.path())
         .env("WAYLAND_DISPLAY", &socket_name)
         .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("QT_PLUGIN_PATH", pkg.join("plugins"))
         .env("QT_QPA_PLATFORM", "wayland")
         .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
@@ -259,12 +261,6 @@ fn connect(runtime_dir: &std::path::Path, socket_name: &str) -> Connection {
     Connection::connect_to_env().expect("failed to connect to saai-displayd")
 }
 
-fn frame_hash(line: &str) -> Option<&str> {
-    line.split("frame sha256=")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-}
-
 #[test]
 fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     let pkg = pcmanfm_package();
@@ -316,11 +312,15 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         .env("XDG_RUNTIME_DIR", runtime_dir.path())
         .env("WAYLAND_DISPLAY", &socket_name)
         .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("QT_PLUGIN_PATH", pkg.join("plugins"))
         .env("QT_QPA_PLATFORM", "wayland")
         .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
         .env("QT_QPA_PLATFORMTHEME", "")
-        .env("QT_LOGGING_RULES", "qt.qpa.input.methods.debug=true")
+        .env(
+            "QT_LOGGING_RULES",
+            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
+        )
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -342,8 +342,6 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
 
     let mut saw_enable = false;
     let mut saw_disable = false;
-    let mut saw_update = false;
-    let mut last_hash = None;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline && !(saw_enable && ime_state.activate) {
@@ -354,12 +352,6 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
                 }
                 if line.contains("text-input-v2 disable") {
                     saw_disable = true;
-                }
-                if line.contains("text-input-v2 update_state") {
-                    saw_update = true;
-                }
-                if let Some(h) = frame_hash(&line) {
-                    last_hash = Some(h.to_string());
                 }
                 lines.push(line);
             }
@@ -400,44 +392,60 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     }
     assert!(
         saw_commit,
-        "IME commit_string did not reach the v2 field before Ctrl+I; displayd={lines:?}"
+        "IME commit_string did not reach the v2 field before click; displayd={lines:?}"
     );
 
-    // Ctrl+I is Show/Focus Filter Bar. After it, Qt disables v2
-    // (ADR-326). Pointer clicks at 300,70 / 200,755 opened a popup
-    // surface, not the QLineEdit.
+    // Toolbar click (PathEdit). Cursor maps a second wl_surface. Qt then
+    // disable+enable (focus moved). IME again. update_state after that is
+    // not a new hashed shm (ADR-327).
     if let Some(stdin) = displayd.stdin.as_mut() {
-        writeln!(stdin, "inject-ctrl-i").expect("inject-ctrl-i");
+        writeln!(stdin, "inject-click 400 40").expect("inject-click path");
         let _ = stdin.flush();
     }
-    let mut saw_ctrl_i = false;
-    let mut saw_disable_after = false;
-    let settle = Instant::now() + Duration::from_millis(900);
-    while Instant::now() < settle {
+    let mut saw_click = false;
+    let mut saw_enable_after_click = false;
+    let mut saw_commit_after_click = false;
+    let mut sent_after_click = false;
+    let click_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < click_deadline && !saw_commit_after_click {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
-                if line.contains("injected ctrl-i") {
-                    saw_ctrl_i = true;
+                if line.contains("injected click") {
+                    saw_click = true;
                 }
-                if saw_ctrl_i && line.contains("text-input-v2 disable") {
-                    saw_disable_after = true;
+                if saw_click && line.contains("text-input-v2 enable") {
+                    saw_enable_after_click = true;
+                }
+                if line.contains("text-input-v2 commit_string") && sent_after_click {
+                    saw_commit_after_click = true;
                 }
                 lines.push(line);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+        if saw_click && saw_enable_after_click && !sent_after_click {
+            // Quiet one display round-trip so m_resetCallback can clear.
+            std::thread::sleep(Duration::from_millis(400));
+            ime.commit_string(String::from("hi!"));
+            ime.commit(0);
+            let _ = queue.roundtrip(&mut ime_state);
+            sent_after_click = true;
+        }
         let _ = queue.roundtrip(&mut ime_state);
     }
     assert!(
-        saw_ctrl_i,
-        "displayd never injected Ctrl+I; displayd={lines:?}"
+        saw_click,
+        "displayd never injected click 400 40; displayd={lines:?}"
     );
     assert!(
-        saw_disable_after,
-        "Ctrl+I did not disable v2; displayd={lines:?}"
+        saw_enable_after_click,
+        "toolbar click did not re-enable v2; displayd={lines:?}"
     );
-    let _ = (saw_update, last_hash, saw_disable);
+    assert!(
+        saw_commit_after_click,
+        "IME commit_string did not reach v2 after PathEdit click; displayd={lines:?}"
+    );
 
     let _ = child.kill();
     let _ = child.wait();
