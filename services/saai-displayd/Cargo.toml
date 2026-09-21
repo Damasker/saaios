@@ -57,4 +57,5 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-04 PathEdit click re-enables v2; still no new shm (ADR-327).
 # APP-04 host Qt 5.15 QLineEdit types hi! via IME (ADR-328).
 # APP-04 packed PCManFM OSK commit+delete after PathEdit click (ADR-329).
+# APP-04 packed musl Qt 5.15 QLineEdit types hi! via IME (ADR-330).
 saai-ui-core = { path = "../../crates/saai-ui-core" }

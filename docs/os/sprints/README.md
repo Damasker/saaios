@@ -182,6 +182,7 @@ ADR-326 host Ctrl+I into packed PCManFM disables text-input-v2 (no flash).
 ADR-327 host PathEdit click re-enables v2; IME still does not paint (no flash).
 ADR-328 host Qt 5.15 QLineEdit receives OSK hi! through IME (no flash).
 ADR-329 packed PCManFM gets OSK commit+delete after PathEdit click; still no shm (no flash).
+ADR-330 packed musl Qt 5.15 QLineEdit receives OSK hi! through IME (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
