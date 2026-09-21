@@ -160,7 +160,9 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
   `wp-fractional-scale-v1` + `wp-viewporter`, `preferred_scale=120`).
   Host GDK-sized shm attach ADR-286. Native clipboard is deny-by-default
   (ADR-294) so x86 keyboard cannot open smithay's ungated path.
-  GTK4 frame on panther not verified; do not flash displayd this week.
+  Host GTK4 4.18 glibc cairo commits a hashed shm frame (ADR-305;
+  `xdg_toplevel 1280x800`, `frame sha256=`). GTK4 frame on panther
+  (Alpine 4.14.4 musl) not verified; do not flash displayd this week.
 - **Приёмка**: либо GTK4-приложение реально рендерит кадр на железе
   тем же методом верификации, что ADR-026 использовал для Qt, либо ADR
   фиксирует осознанный отказ от GTK4 с обоснованием.
@@ -305,7 +307,7 @@ package broker → VM fallback для несовместимых приложе�
 ```text
 APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
-APP-02  GTK4 -- спайк на разблокировку или осознанный отказ
+APP-02  GTK4 -- host frame ADR-305; panther still the gate
 APP-03  zwp_input_method_manager_v2 без keymap -- спайк на saai-displayd
 APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); panther later
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
