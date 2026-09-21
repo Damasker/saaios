@@ -11,7 +11,8 @@
 //! ADR-384: OSK immediately after that URL enable on the same seat.
 //! ADR-385: v2 surrounding/cursor on that OSK. ADR-386: extra shm is
 //! cursor, not LocationBar. ADR-389: host frame clock lets URL click
-//! flash `f0e21a69…` then disable before OSK.
+//! flash `f0e21a69…` then disable before OSK. ADR-398: that still
+//! holds after ADR-394 no-steal Activated.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1851,6 +1852,9 @@ fn packed_falkon_url_v2_disables_without_seat_keyboard() {
 /// `f0e21a69…` then disable before OSK. v2 `commit_string` does not
 /// reach the field. Toplevel returns to `6cd11128…`. Not typed
 /// LocationBar. Not a Y sweep.
+#[test]
+/// ADR-389/398: URL click 640 20, OSK on first enable. Flash then
+/// disable before commit_string. Still true after ADR-394 no-steal.
 #[test]
 fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let pkg = falkon_package();
