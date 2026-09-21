@@ -165,6 +165,14 @@ int main(int argc, char **argv) {
         QTimer::singleShot(80, thread, [thread]() { thread->start(QThread::LowPriority); });
     }
 
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_URL_HINTS")) {
+        // ADR-413: Falkon LocationBar ImhNoAutoUppercase |
+        // ImhUrlCharactersOnly. Lone QLineEdit keeps v2; Falkon
+        // disable is not this.
+        edit->setText(QStringLiteral("https://example.com"));
+        edit->setInputMethodHints(Qt::ImhNoAutoUppercase | Qt::ImhUrlCharactersOnly);
+    }
+
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
         // ADR-403: QMenu::popup. Qt Wayland menus are a second
         // xdg_toplevel, same class as QCompleter — not xdg_popup.
