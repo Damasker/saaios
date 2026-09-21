@@ -89,6 +89,36 @@ int main(int argc, char **argv) {
             });
     }
 
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPLETER_RELOAD")) {
+        // ADR-409: PathEdit focusInEvent reloads QCompleter and does
+        // not complete(). Lone QLineEdit keeps v2; PathEdit disable
+        // is not this.
+        auto reload = [edit]() {
+            auto *old = edit->completer();
+            auto *c = new QCompleter(
+                QStringList() << QStringLiteral("hi!") << QStringLiteral("hello"),
+                edit);
+            edit->setCompleter(c);
+            if (old) {
+                old->deleteLater();
+            }
+        };
+        QTimer::singleShot(0, edit, reload);
+        QObject::connect(
+            &app,
+            &QApplication::focusChanged,
+            edit,
+            [edit, reload](QWidget *, QWidget *now) {
+                if (now == edit) {
+                    QTimer::singleShot(0, edit, reload);
+                } else if (edit->completer()) {
+                    auto *old = edit->completer();
+                    edit->setCompleter(nullptr);
+                    old->deleteLater();
+                }
+            });
+    }
+
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
         // ADR-403: QMenu::popup. Qt Wayland menus are a second
         // xdg_toplevel, same class as QCompleter — not xdg_popup.
