@@ -1,9 +1,10 @@
 //! APP-04 / ADR-323: packed aarch64 PCManFM-Qt (Qt 5.15) binds
 //! `zwp_text_input_manager_v2` on host `saai-displayd` and `enable`s.
 //! ADR-324: a separate IME client can `commit_string` while that
-//! enable is live. ADR-327: toolbar click re-enables v2; still no new
-//! hashed shm. Empty `QT_IM_MODULE` blocks the path. Not a panther
-//! typed field.
+//! enable is live. ADR-327: toolbar click re-enables v2. ADR-329: OSK
+//! hi! sequence forwards commit_string and delete_surrounding after
+//! that click; packed PathEdit still does not attach a new shm. Empty
+//! `QT_IM_MODULE` blocks the path. Not a panther typed field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use saai_ui_core::{Keyboard, OskImeOp};
 use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{wl_registry, wl_seat},
@@ -261,6 +263,42 @@ fn connect(runtime_dir: &std::path::Path, socket_name: &str) -> Connection {
     Connection::connect_to_env().expect("failed to connect to saai-displayd")
 }
 
+fn send_ime_op(ime: &ZwpInputMethodV2, op: &OskImeOp) {
+    match op {
+        OskImeOp::CommitString(text) => ime.commit_string(text.clone()),
+        OskImeOp::DeleteSurrounding {
+            before_bytes,
+            after_bytes,
+        } => ime.delete_surrounding_text(*before_bytes, *after_bytes),
+    }
+    ime.commit(0);
+}
+
+fn send_osk_hi_bang(
+    ime: &ZwpInputMethodV2,
+    queue: &mut wayland_client::EventQueue<ImeState>,
+    ime_state: &mut ImeState,
+) {
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(ime, &op);
+        }
+        let _ = queue.roundtrip(ime_state);
+    }
+}
+
 #[test]
 fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     let pkg = pcmanfm_package();
@@ -272,6 +310,12 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     );
 
     let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
     let home_dir = tempfile::tempdir().expect("failed to create PCManFM HOME");
     let cfg = home_dir.path().join(".config/pcmanfm-qt/default");
     std::fs::create_dir_all(&cfg).expect("pcmanfm config dir");
@@ -396,18 +440,16 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     );
 
     // Toolbar click (PathEdit). Cursor maps a second wl_surface. Qt then
-    // disable+enable (focus moved). IME again. update_state after that is
-    // not a new hashed shm (ADR-327).
+    // disable+enable (focus moved). OSK hi! is the same sequence as
+    // ADR-328; a new toplevel shm is a typed PathEdit.
     if let Some(stdin) = displayd.stdin.as_mut() {
         writeln!(stdin, "inject-click 400 40").expect("inject-click path");
         let _ = stdin.flush();
     }
     let mut saw_click = false;
     let mut saw_enable_after_click = false;
-    let mut saw_commit_after_click = false;
-    let mut sent_after_click = false;
     let click_deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < click_deadline && !saw_commit_after_click {
+    while Instant::now() < click_deadline && !(saw_click && saw_enable_after_click) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("injected click") {
@@ -416,21 +458,10 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
                 if saw_click && line.contains("text-input-v2 enable") {
                     saw_enable_after_click = true;
                 }
-                if line.contains("text-input-v2 commit_string") && sent_after_click {
-                    saw_commit_after_click = true;
-                }
                 lines.push(line);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        if saw_click && saw_enable_after_click && !sent_after_click {
-            // Quiet one display round-trip so m_resetCallback can clear.
-            std::thread::sleep(Duration::from_millis(400));
-            ime.commit_string(String::from("hi!"));
-            ime.commit(0);
-            let _ = queue.roundtrip(&mut ime_state);
-            sent_after_click = true;
         }
         let _ = queue.roundtrip(&mut ime_state);
     }
@@ -442,13 +473,41 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         saw_enable_after_click,
         "toolbar click did not re-enable v2; displayd={lines:?}"
     );
-    assert!(
-        saw_commit_after_click,
-        "IME commit_string did not reach v2 after PathEdit click; displayd={lines:?}"
-    );
-
+    std::thread::sleep(Duration::from_millis(400));
+    send_osk_hi_bang(&ime, &mut queue, &mut ime_state);
+    let mut saw_osk_commit = false;
+    let mut saw_osk_delete = false;
+    let osk_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < osk_deadline && !(saw_osk_commit && saw_osk_delete) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 commit_string") {
+                    saw_osk_commit = true;
+                }
+                if line.contains("text-input-v2 delete_surrounding") {
+                    saw_osk_delete = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
     let _ = child.kill();
     let _ = child.wait();
+    let stderr = _stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    assert!(
+        saw_osk_commit,
+        "OSK commit_string did not reach v2 after PathEdit click; displayd={lines:?}; qt={stderr}"
+    );
+    assert!(
+        saw_osk_delete,
+        "OSK backspace did not reach v2 after PathEdit click; displayd={lines:?}; qt={stderr}"
+    );
+
     let _ = displayd.kill();
     let _ = displayd.wait();
 }
