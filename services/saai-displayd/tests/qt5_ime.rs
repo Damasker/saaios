@@ -3,7 +3,8 @@
 //! QLineEdit under qemu does the same (ADR-330). Packed musl Qt 6.6.3
 //! from the Falkon package is ADR-336. Without wl_keyboard that same
 //! probe binds v2 and does not enable (ADR-347). Packed musl Qt 5.15.10
-//! on that same seat is the same class (ADR-348). Not a panther field.
+//! on that same seat is the same class (ADR-348). Host glibc Qt 5.15
+//! without wl_keyboard is ADR-349. Not a panther field.
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -1037,5 +1038,152 @@ fn packed_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
     assert!(
         !saw_enable && !ime_state.activate,
         "packed Qt5 QLineEdit enabled v2 without wl_keyboard; not the same class as ADR-347; displayd={lines:?}; qt={stderr}"
+    );
+}
+
+/// ADR-349: host glibc Qt 5.15 QLineEdit with setFocus binds v2 on a
+/// keyboard-less seat. Expect no enable, same class as ADR-347/348.
+#[test]
+fn host_qt5_lineedit_binds_v2_without_seat_keyboard_and_does_not_enable() {
+    assert!(
+        qt5_available(),
+        "host Qt5 probe needs g++ and qtbase5-dev (Qt5Widgets)"
+    );
+    let probe = compile_qt5_probe();
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let _ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let mut qt = Command::new(&probe)
+        .env_remove("QT_IM_MODULE")
+        .env_remove("DISPLAY")
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env(
+            "QT_LOGGING_RULES",
+            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn qt5_lineedit");
+    let _qt_out = {
+        let stdout = qt.stdout.take().expect("qt stdout");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    };
+    let qt_err = {
+        let stderr = qt.stderr.take().expect("qt stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_get = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline && !saw_focus {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("text-input-v2 get") {
+                    saw_get = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    let settle = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("text-input-v2 get") {
+                    saw_get = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _ = qt.kill();
+    let _ = qt.wait();
+    let stderr = qt_err
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_focus && !saw_kbd_focus,
+        "expected compositor focus without wl_keyboard; kbd={saw_kbd_focus} focus={saw_focus}; displayd={lines:?}; qt={stderr}"
+    );
+    assert!(
+        saw_get,
+        "host Qt5 QLineEdit never zwp_text_input_v2.get; displayd={lines:?}; qt={stderr}"
+    );
+    assert!(
+        !saw_enable && !ime_state.activate,
+        "host Qt5 QLineEdit enabled v2 without wl_keyboard; not the same class as packed Qt; displayd={lines:?}; qt={stderr}"
     );
 }
