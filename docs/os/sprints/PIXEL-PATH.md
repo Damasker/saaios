@@ -221,7 +221,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 ## D — второй узел (не вместо panther)
 
-- PCE-25 node identity: laptop `x86`/`computer` ≠ panther `phone` (ADR-249; Sistema «Узел» ADR-298; host; no shell flash)
+- PCE-25 node identity: laptop `x86`/`computer` ≠ panther `phone` (ADR-249; Sistema «Узел» ADR-298; live `status.device` ADR-299; host; no shell flash)
 - Windowed displayd on x86: 1280×800, model `x86` (ADR-250; host)
 - Pointer + USB HID keyboard on x86 seat (ADR-251; host)
 - Logical layout: x86 1280×800, panther 1080×2400 (ADR-252; host)

@@ -6116,11 +6116,19 @@ impl LiveMemoryFact {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct LiveNodeIdentity {
+    class: String,
+    target: String,
+    arch: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Default)]
 struct RuntimeLiveFacts {
     observations: Vec<LiveObservationFact>,
     memory_records: Vec<LiveMemoryFact>,
     health: Option<HealthReport>,
+    identity: Option<LiveNodeIdentity>,
 }
 
 fn observation_row_label(key: &str) -> String {
@@ -6229,11 +6237,53 @@ fn live_health_from_status_json(blob: &Value) -> Option<HealthReport> {
     })
 }
 
+fn looks_like_network_address(text: &str) -> bool {
+    text.contains("172.") || text.contains("192.168") || text.contains(':')
+}
+
+/// ADR-249 keys already live on runtime `status.device`. Missing or
+/// address-shaped values fall back to the local phone-gate guess.
+fn live_node_from_status_json(blob: &Value) -> Option<LiveNodeIdentity> {
+    let device = blob
+        .get("status")
+        .and_then(|status| status.get("device"))
+        .or_else(|| blob.get("device"))?;
+    let class = device.get("device_class")?.as_str()?.trim();
+    let target = device.get("target")?.as_str()?.trim();
+    let arch = device.get("architecture")?.as_str()?.trim();
+    if class.is_empty() || target.is_empty() || arch.is_empty() {
+        return None;
+    }
+    if looks_like_network_address(class)
+        || looks_like_network_address(target)
+        || looks_like_network_address(arch)
+    {
+        return None;
+    }
+    Some(LiveNodeIdentity {
+        class: class.to_string(),
+        target: target.to_string(),
+        arch: arch.to_string(),
+    })
+}
+
+fn node_identity_resolved(
+    live: Option<&LiveNodeIdentity>,
+    phone_gate: bool,
+) -> (String, String, String) {
+    if let Some(id) = live {
+        return (id.class.clone(), id.target.clone(), id.arch.clone());
+    }
+    let (class, target, arch) = node_identity_of(phone_gate);
+    (class.to_string(), target.to_string(), arch.to_string())
+}
+
 fn runtime_live_facts_from_status_json(blob: &Value) -> RuntimeLiveFacts {
     RuntimeLiveFacts {
         observations: live_observations_from_status_json(blob),
         memory_records: live_memory_records_from_status_json(blob),
         health: live_health_from_status_json(blob),
+        identity: live_node_from_status_json(blob),
     }
 }
 
@@ -10809,7 +10859,8 @@ impl Shell {
             })
             .collect();
         let live = read_runtime_live_facts();
-        let (node_class, node_target, node_arch) = node_identity_of(phone_gate_surface());
+        let (node_class, node_target, node_arch) =
+            node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
         MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
@@ -16533,6 +16584,48 @@ mod tests {
         assert!(laptop.starts_with("Компьютер · x86 · "));
         assert!(!laptop.contains("172."));
         assert!(!super::node_identity_line("phone", "panther", "aarch64").contains("192.168"));
+    }
+
+    #[test]
+    fn live_node_from_status_json_reads_laptop_not_usb_address() {
+        assert!(super::live_node_from_status_json(&serde_json::json!({"ok": true})).is_none());
+        let live = super::live_node_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": {
+                "device": {
+                    "device_class": "computer",
+                    "target": "x86",
+                    "architecture": "x86_64"
+                }
+            }
+        }))
+        .expect("live device");
+        assert_eq!(live.class, "computer");
+        assert_eq!(live.target, "x86");
+        assert_eq!(live.arch, "x86_64");
+        assert!(super::live_node_from_status_json(&serde_json::json!({
+            "status": {
+                "device": {
+                    "device_class": "computer",
+                    "target": "172.31.7.1",
+                    "architecture": "x86_64"
+                }
+            }
+        }))
+        .is_none());
+        let live = super::LiveNodeIdentity {
+            class: "computer".into(),
+            target: "x86".into(),
+            arch: "x86_64".into(),
+        };
+        assert_eq!(
+            super::node_identity_resolved(Some(&live), true),
+            ("computer".into(), "x86".into(), "x86_64".into())
+        );
+        assert_eq!(
+            super::node_identity_resolved(None, true),
+            ("phone".into(), "panther".into(), "aarch64".into())
+        );
     }
 
     #[test]
