@@ -264,7 +264,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - APP-COMPAT APP-02 compositor half: `wp-fractional-scale-v1` + `wp-viewporter` (ADR-266; GDK shm size ADR-286; host GTK4 cairo frame ADR-305; panther displayd `02c78f9f…` pid 6886 ADR-309). Alpine 4.14.4 still `create_buffer(508, 2337935)` after `preferred_scale(120)` (ADR-310). Host `configure_bounds` is the window, not `(0,0)` (ADR-311; no displayd flash).
 - Native Wayland clipboard is deny-by-default; portal stays the grant path (ADR-294; host; no displayd flash)
 - APP-COMPAT APP-03 compositor: `zwp_input_method_v2` without keymap (ADR-267; panther displayd `02c78f9f…` ADR-309). OSK chrome is APP-04.
-- APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272, shell IME layer ADR-273. Panther displayd `02c78f9f…` advertises IME v2 (ADR-309); shell `4dc19018…` no longer logs unavailable. No wvkbd.
+- APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272, shell IME layer ADR-273. Panther displayd `02c78f9f…` advertises IME v2 (ADR-309); shell `4dc19018…` no longer logs unavailable. Falkon `file://` `<input>` does not Activate IME; `saai-shell-osk` never mapped (ADR-317). No wvkbd.
 - APP-COMPAT APP-06 first browser is Falkon/QtWebEngine (ADR-269; package tree ADR-281; host qemu shm frame ADR-306; panther appd launch ADR-312, software scanout, no browse). Empty NEWNET loopback ADR-313 (`e9b3c57c…`); swrast/llvmpipe packed ADR-314; sandbox procfs + 128 MiB tmp/shm ADR-315 (`2503f4f5…`); fonts.conf → `/saaios/fonts` ADR-316; panther paints `file://` hello.html (renderer lives; still no browse).
 - Visual v1 unsigned; `compile_v2_public` stays Experimental (ADR-265)
 
