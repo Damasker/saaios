@@ -290,6 +290,7 @@ fn interesting(line: &str) -> bool {
     line.contains("text-input-v2")
         || line.contains("text-input-v3")
         || line.contains("injected click")
+        || line.contains("injected synthetic key")
         || line.contains("new xdg_toplevel")
         || line.contains("frame sha256=")
 }
@@ -885,5 +886,289 @@ fn falkon_url_osk_hi_bang_reaches_v2() {
     assert!(
         !stderr.contains("discard commit_string"),
         "Qt discarded commit_string despite ADR-339 defer; qt={stderr}"
+    );
+}
+
+/// ADR-342: after the same URL second-click enable, `inject-key` KEY_A
+/// (wl_keyboard, not IME). Distinguishes widget key focus from silent
+/// `focusObject() == null` on commit_string. Not a Y sweep. Not panther.
+#[test]
+fn falkon_url_inject_key_a_after_second_click() {
+    let pkg = falkon_package();
+    let falkon = pkg.join("bin/falkon");
+    assert!(
+        falkon.is_file(),
+        "missing packed falkon at {} — set FALKON_PACKAGE_DIR",
+        falkon.display()
+    );
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let home_dir = tempfile::tempdir().expect("failed to create Falkon HOME");
+    let cfg = home_dir.path().join(".config/falkon/profiles/default");
+    std::fs::create_dir_all(&cfg).expect("falkon profile dir");
+    std::fs::write(
+        cfg.join("settings.ini"),
+        "[Browser-View-Settings]\n\
+         showNavigationToolbar=true\n\
+         showMenubar=false\n\
+         showBookmarksToolbar=false\n\
+         showStatusBar=false\n\
+         [Browser-Tabs-Settings]\n\
+         hideTabsWithOneTab=true\n",
+    )
+    .expect("write falkon settings.ini");
+    let (mut displayd, log) = spawn_displayd(runtime_dir.path());
+    let socket_name = wait_for_socket(&log);
+
+    let path = std::env::var("PATH").unwrap_or_default();
+    let pkg = pkg.canonicalize().expect("canonicalize falkon package");
+    let falkon = pkg.join("bin/falkon");
+
+    let mut falkon_child = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&pkg)
+        .arg(&falkon)
+        .arg("--private-browsing")
+        .arg("about:blank")
+        .current_dir(&pkg)
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("QT_LOGGING_TO_CONSOLE", "1")
+        .env("QT_ASSUME_STDERR_HAS_CONSOLE", "1")
+        .env(
+            "QT_LOGGING_RULES",
+            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
+        )
+        .env("QT_PLUGIN_PATH", pkg.join("plugins"))
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
+        .env(
+            "QTWEBENGINEPROCESS_PATH",
+            pkg.join("libexec/QtWebEngineProcess"),
+        )
+        .env(
+            "QTWEBENGINE_RESOURCES_PATH",
+            pkg.join("share/qt6/resources"),
+        )
+        .env(
+            "QTWEBENGINE_LOCALES_PATH",
+            pkg.join("share/qt6/translations/qtwebengine_locales"),
+        )
+        .env("QTWEBENGINE_DISABLE_SANDBOX", "1")
+        .env(
+            "QTWEBENGINE_CHROMIUM_FLAGS",
+            "--no-sandbox --disable-gpu --disable-gpu-compositing --use-gl=disabled",
+        )
+        .env("LIBGL_ALWAYS_SOFTWARE", "1")
+        .env("QT_QUICK_BACKEND", "software")
+        .env("QSG_RENDER_LOOP", "basic")
+        .process_group(0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn falkon");
+    let stderr_rx = {
+        let stderr = falkon_child.stderr.take().expect("falkon stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_frame = false;
+    let mut saw_enable = false;
+    let mut saw_disable = false;
+    let mut toplevel_surface = None;
+    let mut hash_before = None::<String>;
+    let mut hash_after = None::<String>;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while Instant::now() < deadline && !(saw_toplevel && saw_frame) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                }
+                if line.contains("frame sha256=") {
+                    saw_frame = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    if hash_before.is_none() {
+                        hash_before = Some(h.to_string());
+                    }
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    assert!(
+        saw_toplevel && saw_frame,
+        "Falkon never framed before KEY_A; displayd={:?}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 640 20").expect("inject-click");
+        let _ = stdin.flush();
+    }
+    let mut click_count = 0u32;
+    let click_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < click_deadline && !(click_count >= 1 && saw_enable) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    click_count += 1;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    assert!(
+        click_count >= 1 && saw_enable,
+        "Falkon URL click did not enable v2; clicks={click_count} disable={saw_disable}; displayd={:?}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    let disable_deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < disable_deadline && !saw_disable {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    saw_enable = false;
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 640 20").expect("inject-click 2");
+        let _ = stdin.flush();
+    }
+    let click2_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < click2_deadline && !(click_count >= 2 && saw_enable) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    click_count += 1;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    assert!(
+        click_count >= 2 && saw_enable,
+        "Falkon URL second click did not re-enable v2; clicks={click_count} disable={saw_disable}; displayd={:?}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    let hash_at_key = hash_after.clone();
+
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-key").expect("inject-key");
+        let _ = stdin.flush();
+    }
+    let mut saw_key = false;
+    let key_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < key_deadline && !saw_key {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected synthetic key") {
+                    saw_key = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let settle = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected synthetic key") {
+                    saw_key = true;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    reap_falkon(&mut falkon_child);
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_key,
+        "displayd never injected KEY_A; at_key={hash_at_key:?} after={hash_after:?}; displayd={:?}; qt={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        hash_at_key, hash_after,
+        "Falkon main shm changed after KEY_A; do not claim LocationBar paint; first={hash_before:?} at_key={hash_at_key:?} after={hash_after:?}; displayd={:?}; qt={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
