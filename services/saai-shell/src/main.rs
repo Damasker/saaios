@@ -3394,6 +3394,25 @@ fn phone_gate_surface() -> bool {
             || hardware_model().to_ascii_lowercase().contains("pixel"))
 }
 
+/// ADR-249 / ADR-298: laptop ≠ panther. Same keys as system.identity.
+/// No IP, MAC, serial, or hostname.
+fn node_identity_of(phone_gate: bool) -> (&'static str, &'static str, &'static str) {
+    if phone_gate {
+        ("phone", "panther", "aarch64")
+    } else {
+        ("computer", "x86", std::env::consts::ARCH)
+    }
+}
+
+fn node_identity_line(class: &str, target: &str, arch: &str) -> String {
+    let class_label = match class {
+        "phone" => "Телефон",
+        "computer" => "Компьютер",
+        other => other,
+    };
+    format!("{class_label} · {target} · {arch}")
+}
+
 fn logical_surface_size(phone_gate: bool) -> (u32, u32) {
     if phone_gate {
         (PANTHER_LOGICAL_WIDTH, PANTHER_LOGICAL_HEIGHT)
@@ -6300,6 +6319,9 @@ struct MeFacts {
     entity_count: usize,
     build_id: String,
     model: String,
+    node_class: String,
+    node_target: String,
+    node_arch: String,
     kernel: String,
     uptime: String,
     storage: String,
@@ -6399,6 +6421,11 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 SettingRow::readout(
                     "Это устройство",
                     format!("{} · {}", facts.model, facts.storage),
+                )
+                .row,
+                SettingRow::readout(
+                    "Узел",
+                    node_identity_line(&facts.node_class, &facts.node_target, &facts.node_arch),
                 )
                 .row,
                 SettingRow::silent(
@@ -6777,6 +6804,9 @@ fn me_fixture_facts() -> MeFacts {
         entity_count: 4,
         build_id: "test".into(),
         model: "panther".into(),
+        node_class: "phone".into(),
+        node_target: "panther".into(),
+        node_arch: "aarch64".into(),
         kernel: "6.1".into(),
         uptime: "1 ч".into(),
         storage: "12 ГБ свободно".into(),
@@ -10779,11 +10809,15 @@ impl Shell {
             })
             .collect();
         let live = read_runtime_live_facts();
+        let (node_class, node_target, node_arch) = node_identity_of(phone_gate_surface());
         MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
             build_id: env!("SAAIOS_BUILD_ID").to_string(),
             model: hardware_model(),
+            node_class: node_class.to_string(),
+            node_target: node_target.to_string(),
+            node_arch: node_arch.to_string(),
             kernel: kernel_release(),
             uptime: uptime_string(),
             storage: storage_string(),
@@ -16446,6 +16480,13 @@ mod tests {
             .expect("healthy device summary");
         assert!(device.card.status.contains("panther"));
         assert!(device.card.status.contains("12 ГБ"));
+        let node = rows
+            .iter()
+            .find(|row| row.card.label == "Узел")
+            .expect("node identity");
+        assert_eq!(node.card.status, "Телефон · panther · aarch64");
+        assert!(!node.card.status.contains("172."));
+        assert!(node.dispatch.is_none());
         assert!(!device.card.status.contains("Пространств"));
         assert!(!rows.iter().any(|row| row.card.label == "Хранилище"));
         let build = rows
@@ -16476,6 +16517,22 @@ mod tests {
             .iter()
             .any(|row| row.card.label == "Устройство" && row.dispatch.is_none()));
         assert!(!rows.iter().any(|row| row.card.label.contains("Память")));
+    }
+
+    #[test]
+    fn node_identity_laptop_is_not_the_phone_gate() {
+        assert_eq!(
+            super::node_identity_of(false),
+            ("computer", "x86", std::env::consts::ARCH)
+        );
+        assert_eq!(
+            super::node_identity_of(true),
+            ("phone", "panther", "aarch64")
+        );
+        let laptop = super::node_identity_line("computer", "x86", std::env::consts::ARCH);
+        assert!(laptop.starts_with("Компьютер · x86 · "));
+        assert!(!laptop.contains("172."));
+        assert!(!super::node_identity_line("phone", "panther", "aarch64").contains("192.168"));
     }
 
     #[test]
