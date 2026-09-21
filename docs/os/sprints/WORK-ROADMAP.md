@@ -98,7 +98,8 @@ Fresh match is Done; mismatch is Failed; verifying parent blocks child.
 **Rollback:** restore `Running → Done` in `valid_transition` and write
 Done from `finish_task`.
 
-**Threat:** none — no new network, no shell flash.
+**Threat:** none — no new network, no shell flash. Chrome that names
+`verifying` is ADR-295 (host; panther waits).
 
 ## WORK-06
 

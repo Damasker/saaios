@@ -147,6 +147,7 @@ ADR-291 Health Attention: Unhealthy lights Orb; Healthy/Unknown omitted (host).
 ADR-292 runtime status includes one Health report, not a CPU graph (host).
 ADR-293 shell Attention reads status.health; Sistema stays Observation-only (host).
 ADR-294 native Wayland clipboard is deny-by-default; portal stays the grant path (host).
+ADR-295 shell shows Verifying as in-progress, not worker Result as Done (host).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

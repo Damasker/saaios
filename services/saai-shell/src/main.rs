@@ -2201,6 +2201,7 @@ const TASK_CONFIRM_BUTTON_HEIGHT: u32 = ROOT_TAB_HEIGHT;
 /// by sharing a type.
 const TASK_STATUS_WAITING_CONFIRMATION: &str = "waiting_confirmation";
 const TASK_STATUS_RUNNING: &str = "running";
+const TASK_STATUS_VERIFYING: &str = "verifying";
 const TASK_STATUS_CANCELLED: &str = "cancelled";
 /// `saaios.action`'s own recognized value for an Action `saai-taskd` has
 /// created but not yet executed -- same no-cross-runtime-dependency
@@ -4110,19 +4111,18 @@ fn today_schedules(entities: &[Entity]) -> Vec<&Entity> {
         .collect()
 }
 
-/// VUI-03: real in-progress system activity for the "Продолжается"
-/// `SystemSection` -- a `saaios.task` genuinely `running` (the status
-/// `handle_object_view_action` writes once the user confirms it), not
-/// merely `waiting_confirmation`: a task still waiting on the user stays
-/// in "Требует внимания" via the attention projection instead, since it
-/// needs the user to act, not the system.
+/// VUI-03 / ADR-295: "Продолжается" is a `saaios.task` still mutating —
+/// `running` or `verifying`. Worker Result is not Done (ADR-259).
+/// `waiting_confirmation` stays in "Требует внимания".
 fn in_progress_work(entities: &[Entity]) -> Vec<&Entity> {
     entities
         .iter()
         .filter(|entity| {
             entity.entity_type == "saaios.task"
-                && entity.properties.get("status").and_then(Value::as_str)
-                    == Some(TASK_STATUS_RUNNING)
+                && matches!(
+                    entity.properties.get("status").and_then(Value::as_str),
+                    Some(TASK_STATUS_RUNNING | TASK_STATUS_VERIFYING)
+                )
         })
         .collect()
 }
@@ -4193,7 +4193,7 @@ fn task_dependencies_ready(entity: &Entity, entities: &[Entity]) -> bool {
 fn task_universal_state(entity: &Entity, entities: &[Entity]) -> UniversalState {
     match workflow_status_of(entity) {
         Some(TASK_STATUS_WAITING_CONFIRMATION) => UniversalState::Attention,
-        Some(TASK_STATUS_RUNNING) => UniversalState::Running,
+        Some(TASK_STATUS_RUNNING) | Some(TASK_STATUS_VERIFYING) => UniversalState::Running,
         Some(TASK_STATUS_FAILED) => UniversalState::Failed,
         Some(TASK_STATUS_DONE) => UniversalState::Complete,
         Some(TASK_STATUS_WAITING_CLARIFICATION) => UniversalState::Waiting,
@@ -4212,6 +4212,7 @@ fn task_status_text(entity: &Entity, entities: &[Entity]) -> String {
     ) {
         (Some(TASK_STATUS_WAITING_CONFIRMATION), _) => "Ждёт подтверждения".to_string(),
         (Some(TASK_STATUS_RUNNING), _) => "Выполняется".to_string(),
+        (Some(TASK_STATUS_VERIFYING), _) => "Проверяется".to_string(),
         (Some(TASK_STATUS_FAILED), _) => "Ошибка".to_string(),
         (Some(TASK_STATUS_DONE), _) => "Готово".to_string(),
         (Some(TASK_STATUS_WAITING_CLARIFICATION), _) => "Нужно уточнение".to_string(),
@@ -4304,12 +4305,13 @@ fn task_visibility_rank(entity: &Entity, entities: &[Entity]) -> u8 {
     ) {
         (Some(TASK_STATUS_WAITING_CONFIRMATION), _) => 0,
         (Some(TASK_STATUS_RUNNING), _) => 1,
-        (Some(TASK_STATUS_WAITING_CLARIFICATION), _) => 2,
-        (Some(TASK_STATUS_PENDING), UniversalState::Blocked) => 3,
-        (Some(TASK_STATUS_PENDING), _) => 4,
-        (Some(TASK_STATUS_FAILED), _) => 5,
-        (Some(TASK_STATUS_DONE), _) => 6,
-        (Some(TASK_STATUS_CANCELLED), _) => 7,
+        (Some(TASK_STATUS_VERIFYING), _) => 2,
+        (Some(TASK_STATUS_WAITING_CLARIFICATION), _) => 3,
+        (Some(TASK_STATUS_PENDING), UniversalState::Blocked) => 4,
+        (Some(TASK_STATUS_PENDING), _) => 5,
+        (Some(TASK_STATUS_FAILED), _) => 6,
+        (Some(TASK_STATUS_DONE), _) => 7,
+        (Some(TASK_STATUS_CANCELLED), _) => 8,
         _ => 8,
     }
 }
@@ -4668,10 +4670,13 @@ fn workflow_activity_or_observation(
     if entity.entity_type == RESULT_ENTITY_TYPE {
         return (None, result_summary_text(entity));
     }
-    let task_running = lineage
-        .task
-        .is_some_and(|task| workflow_status_of(task) == Some(TASK_STATUS_RUNNING));
-    if task_running {
+    let task_open = lineage.task.is_some_and(|task| {
+        matches!(
+            workflow_status_of(task),
+            Some(TASK_STATUS_RUNNING | TASK_STATUS_VERIFYING)
+        )
+    });
+    if task_open {
         return (None, None);
     }
     (None, lineage.result.and_then(result_summary_text))
@@ -12301,6 +12306,41 @@ mod tests {
     }
 
     #[test]
+    fn in_progress_work_includes_verifying_not_as_done() {
+        let mut verifying = serde_json::Map::new();
+        verifying.insert(
+            "status".into(),
+            serde_json::Value::String("verifying".into()),
+        );
+        let mut waiting = serde_json::Map::new();
+        waiting.insert(
+            "status".into(),
+            serde_json::Value::String("waiting_confirmation".into()),
+        );
+        let entities = vec![
+            test_entity("saaios.task", verifying),
+            test_entity("saaios.task", waiting),
+        ];
+        let in_progress = in_progress_work(&entities);
+        assert_eq!(in_progress.len(), 1);
+        assert_eq!(
+            in_progress[0]
+                .properties
+                .get("status")
+                .and_then(serde_json::Value::as_str),
+            Some("verifying")
+        );
+        assert_eq!(
+            super::task_status_text(&entities[0], &entities),
+            "Проверяется"
+        );
+        assert_eq!(
+            super::task_universal_state(&entities[0], &entities),
+            UniversalState::Running
+        );
+    }
+
+    #[test]
     fn next_pending_action_finds_a_pending_action_and_ignores_finished_ones() {
         let mut done = serde_json::Map::new();
         done.insert("status".into(), serde_json::Value::String("done".into()));
@@ -15935,6 +15975,20 @@ mod tests {
         );
         assert_eq!(
             orb_visual_state(true, true, std::slice::from_ref(&result), true),
+            UniversalState::Complete
+        );
+
+        let mut verifying = task_entity("Проверка", None);
+        verifying.properties.insert(
+            "status".into(),
+            serde_json::Value::String("verifying".into()),
+        );
+        assert_eq!(
+            orb_visual_state(true, true, &[verifying.clone(), result.clone()], false),
+            UniversalState::Running
+        );
+        assert_ne!(
+            orb_visual_state(true, true, &[verifying, result.clone()], false),
             UniversalState::Complete
         );
 
