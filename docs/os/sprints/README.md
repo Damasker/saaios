@@ -247,6 +247,7 @@ ADR-391 packed PCManFM Filter click OSK grows surrounding (no flash).
 ADR-392 packed PCManFM PathEdit click selects path then disables (no flash).
 ADR-393 packed PCManFM PathEdit disables without OSK (no flash).
 ADR-394 second xdg_toplevel does not steal Activated (no flash).
+ADR-395 packed PCManFM PathEdit still disables after no-steal (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

@@ -11,6 +11,7 @@
 //! ADR-364/391: Filter-band click maps a line caret; OSK grows surrounding.
 //! ADR-365/392: PathEdit-band click maps a line caret then disables.
 //! ADR-393: that disable still fires with no OSK.
+//! ADR-395: still disables after ADR-394 no-steal Activated.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1421,8 +1422,8 @@ fn packed_pcmanfm_pathedit_click_selects_path_then_disables() {
     packed_pcmanfm_band_click_osk(400, 40, "PathEdit");
 }
 
-/// ADR-393: same PathEdit click `400 40`, no OSK. First assert: v2 still
-/// disables (chrome, not OSK-induced). Flip if PathEdit holds IM 2 s.
+/// ADR-393/395: same PathEdit click `400 40`, no OSK. v2 still
+/// disables after ADR-394 no-steal. Chrome, not Activated-steal.
 #[test]
 fn packed_pcmanfm_pathedit_click_disables_without_osk() {
     packed_pcmanfm_band_click(400, 40, "PathEdit", false);
