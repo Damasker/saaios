@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QWindow>
 #include <cstdio>
 
 int main(int argc, char **argv) {
@@ -185,6 +186,29 @@ int main(int argc, char **argv) {
         c->setModel(model);
         edit->setCompleter(c);
         QTimer::singleShot(80, c, [c]() { c->complete(); });
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_TOOLTIP_POPUP")) {
+        // ADR-415: Falkon LocationCompleterView is Qt::ToolTip +
+        // setFocusProxy. Maps xdg_popup and keeps v2; Falkon
+        // disable is not this.
+        edit->setText(QStringLiteral("https://example.com"));
+        QTimer::singleShot(80, edit, [edit]() {
+            auto *popup = new QWidget(nullptr);
+            popup->setAttribute(Qt::WA_ShowWithoutActivating);
+            popup->setAttribute(Qt::WA_DeleteOnClose);
+            popup->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint
+                                  | Qt::BypassWindowManagerHint);
+            popup->resize(240, 80);
+            popup->setFocusProxy(edit);
+            popup->createWinId();
+            if (popup->windowHandle() && edit->window()->windowHandle()) {
+                popup->windowHandle()->setTransientParent(
+                    edit->window()->windowHandle());
+            }
+            popup->move(edit->mapToGlobal(QPoint(0, edit->height())));
+            popup->show();
+        });
     }
 
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
