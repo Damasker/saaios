@@ -164,7 +164,8 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
   `xdg_toplevel 1280x800`, `frame sha256=`). Panther displayd
   `02c78f9f…` now advertises fractional-scale + viewporter (ADR-309).
   Alpine 4.14.4 musl `gtk4-demo --run=dialog` still SIGSEGV after
-  connect, before `xdg_toplevel`.
+  `preferred_scale(120)` (ADR-310): `create_buffer(508, 2337935)`.
+  Compositor protocol is not the remaining cause.
 - **Приёмка**: либо GTK4-приложение реально рендерит кадр на железе
   тем же методом верификации, что ADR-026 использовал для Qt, либо ADR
   фиксирует осознанный отказ от GTK4 с обоснованием.
@@ -178,7 +179,8 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 - **Текущее состояние**: compositor half on host (ADR-267:
   `zwp_input_method_manager_v2` + owned text-input-v3, no
   `get_keyboard()`). `commit_string` reaches an enabled field in the
-  host test. Do not flash displayd this week. APP-04 is the visible OSK.
+  host test. Panther displayd `02c78f9f…` advertises IME v2 (ADR-309).
+  APP-04 is the visible OSK.
 - **Приёмка**: тестовое стороннее Wayland-приложение (можно
   переиспользовать существующий demo) включает текстовое поле,
   получает `enter`, и текстовая строка, отправленная НЕ через
@@ -311,7 +313,7 @@ package broker → VM fallback для несовместимых приложе�
 ```text
 APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
-APP-02  GTK4 -- host frame ADR-305; panther displayd ADR-309; 4.14.4 still SIGSEGV
+APP-02  GTK4 -- host frame ADR-305; panther preferred_scale=120 still 2337935 (ADR-310)
 APP-03  zwp_input_method_manager_v2 -- panther displayd ADR-309
 APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); IME global on panther
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
