@@ -1866,6 +1866,56 @@ fn main() {
                 } else {
                     println!("saai-displayd: inject-ctrl-i requested but no surface is focused yet");
                 }
+            } else if cmd == "inject-ctrl-b" {
+                if state.focused_surface.is_some() {
+                    let time = 0;
+                    // evdev KEY_LEFTCTRL=29, KEY_B=48; xkb = evdev+8.
+                    let ctrl = Keycode::new(37);
+                    let key_b = Keycode::new(56);
+                    for (code, ks) in [
+                        (ctrl, smithay::backend::input::KeyState::Pressed),
+                        (key_b, smithay::backend::input::KeyState::Pressed),
+                        (key_b, smithay::backend::input::KeyState::Released),
+                        (ctrl, smithay::backend::input::KeyState::Released),
+                    ] {
+                        keyboard.input::<(), _>(
+                            state,
+                            code,
+                            ks,
+                            SERIAL_COUNTER.next_serial(),
+                            time,
+                            |_, _, _| FilterResult::Forward,
+                        );
+                    }
+                    println!("saai-displayd: injected ctrl-b");
+                } else {
+                    println!("saai-displayd: inject-ctrl-b requested but no surface is focused yet");
+                }
+            } else if cmd == "inject-ctrl-l" {
+                if state.focused_surface.is_some() {
+                    let time = 0;
+                    // evdev KEY_LEFTCTRL=29, KEY_L=38; xkb = evdev+8.
+                    let ctrl = Keycode::new(37);
+                    let key_l = Keycode::new(46);
+                    for (code, ks) in [
+                        (ctrl, smithay::backend::input::KeyState::Pressed),
+                        (key_l, smithay::backend::input::KeyState::Pressed),
+                        (key_l, smithay::backend::input::KeyState::Released),
+                        (ctrl, smithay::backend::input::KeyState::Released),
+                    ] {
+                        keyboard.input::<(), _>(
+                            state,
+                            code,
+                            ks,
+                            SERIAL_COUNTER.next_serial(),
+                            time,
+                            |_, _, _| FilterResult::Forward,
+                        );
+                    }
+                    println!("saai-displayd: injected ctrl-l");
+                } else {
+                    println!("saai-displayd: inject-ctrl-l requested but no surface is focused yet");
+                }
             } else if let Some(rest) = cmd.strip_prefix("inject-click ") {
                 let mut parts = rest.split_whitespace();
                 if let (Some(xs), Some(ys)) = (parts.next(), parts.next()) {

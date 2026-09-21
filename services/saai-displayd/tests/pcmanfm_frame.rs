@@ -1,10 +1,7 @@
 //! APP-04 / ADR-323: packed aarch64 PCManFM-Qt (Qt 5.15) binds
 //! `zwp_text_input_manager_v2` on host `saai-displayd` and `enable`s.
-//! ADR-324: a separate IME client can `commit_string` while that
-//! enable is live. ADR-327: toolbar click re-enables v2. ADR-329: OSK
-//! hi! sequence forwards commit_string and delete_surrounding after
-//! that click; packed PathEdit still does not attach a new shm.
-//! ADR-331: Filter-band click 400,760 is the same protocol-without-paint.
+//! ADR-324: IME `commit_string` while that enable is live. ADR-332:
+//! Ctrl+L (PathEdit QShortcut) disables v2 with no second enable.
 //! Empty `QT_IM_MODULE` blocks the path. Not a panther typed field.
 
 use std::io::{BufRead, BufReader, Write};
@@ -13,7 +10,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use saai_ui_core::{Keyboard, OskImeOp};
 use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{wl_registry, wl_seat},
@@ -264,42 +260,6 @@ fn connect(runtime_dir: &std::path::Path, socket_name: &str) -> Connection {
     Connection::connect_to_env().expect("failed to connect to saai-displayd")
 }
 
-fn send_ime_op(ime: &ZwpInputMethodV2, op: &OskImeOp) {
-    match op {
-        OskImeOp::CommitString(text) => ime.commit_string(text.clone()),
-        OskImeOp::DeleteSurrounding {
-            before_bytes,
-            after_bytes,
-        } => ime.delete_surrounding_text(*before_bytes, *after_bytes),
-    }
-    ime.commit(0);
-}
-
-fn send_osk_hi_bang(
-    ime: &ZwpInputMethodV2,
-    queue: &mut wayland_client::EventQueue<ImeState>,
-    ime_state: &mut ImeState,
-) {
-    let keyboard = Keyboard::bind_foreign_ime();
-    assert!(keyboard.shows_panel());
-    let actions = [
-        "intent:key:h",
-        "intent:key:i",
-        "intent:mode:toggle",
-        "intent:backspace",
-        "intent:key:i",
-        "intent:key:!",
-    ];
-    for action in actions {
-        let stroke = Keyboard::keystroke_from_osk_action(action)
-            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
-        if let Some(op) = stroke.to_ime_op() {
-            send_ime_op(ime, &op);
-        }
-        let _ = queue.roundtrip(ime_state);
-    }
-}
-
 #[test]
 fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     let pkg = pcmanfm_package();
@@ -437,27 +397,24 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     }
     assert!(
         saw_commit,
-        "IME commit_string did not reach the v2 field before click; displayd={lines:?}"
+        "IME commit_string did not reach the v2 field before Ctrl+L; displayd={lines:?}"
     );
 
-    // Permanent Filter sits at the bottom of TabPage (ShowFilter=true).
-    // Toolbar click 400,40 re-enables v2 but does not paint (ADR-327/329).
-    // Typing into Filter must change the folder listing shm.
+    // Ctrl+L is QShortcut → PathEdit::setFocus+selectAll. With Ctrl held,
+    // Qt disables v2 and does not enable again after release (ADR-332).
     if let Some(stdin) = displayd.stdin.as_mut() {
-        writeln!(stdin, "inject-click 400 760").expect("inject-click filter");
+        writeln!(stdin, "inject-ctrl-l").expect("inject-ctrl-l");
         let _ = stdin.flush();
     }
-    let mut saw_click = false;
-    let mut saw_enable_after_click = false;
-    let click_deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < click_deadline && !(saw_click && saw_enable_after_click) {
+    let mut saw_ctrl_l = false;
+    let mut saw_disable_after = false;
+    let mut saw_enable_after = false;
+    let ctrl_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < ctrl_deadline && !saw_ctrl_l {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
-                if line.contains("injected click") {
-                    saw_click = true;
-                }
-                if saw_click && line.contains("text-input-v2 enable") {
-                    saw_enable_after_click = true;
+                if line.contains("injected ctrl-l") {
+                    saw_ctrl_l = true;
                 }
                 lines.push(line);
             }
@@ -467,26 +424,18 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         let _ = queue.roundtrip(&mut ime_state);
     }
     assert!(
-        saw_click,
-        "displayd never injected click 400 760; displayd={lines:?}"
+        saw_ctrl_l,
+        "displayd never injected Ctrl+L; displayd={lines:?}"
     );
-    assert!(
-        saw_enable_after_click,
-        "Filter-band click did not re-enable v2; displayd={lines:?}"
-    );
-    std::thread::sleep(Duration::from_millis(400));
-    send_osk_hi_bang(&ime, &mut queue, &mut ime_state);
-    let mut saw_osk_commit = false;
-    let mut saw_osk_delete = false;
-    let osk_deadline = Instant::now() + Duration::from_secs(4);
-    while Instant::now() < osk_deadline && !(saw_osk_commit && saw_osk_delete) {
+    let settle = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < settle {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
-                if line.contains("text-input-v2 commit_string") {
-                    saw_osk_commit = true;
+                if line.contains("text-input-v2 disable") {
+                    saw_disable_after = true;
                 }
-                if line.contains("text-input-v2 delete_surrounding") {
-                    saw_osk_delete = true;
+                if saw_disable_after && line.contains("text-input-v2 enable") {
+                    saw_enable_after = true;
                 }
                 lines.push(line);
             }
@@ -501,12 +450,12 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         .recv_timeout(Duration::from_secs(2))
         .unwrap_or_default();
     assert!(
-        saw_osk_commit,
-        "OSK commit_string did not reach v2 after Filter click; displayd={lines:?}; qt={stderr}"
+        saw_disable_after,
+        "Ctrl+L did not disable v2; displayd={lines:?}; qt={stderr}"
     );
     assert!(
-        saw_osk_delete,
-        "OSK backspace did not reach v2 after Filter click; displayd={lines:?}; qt={stderr}"
+        !saw_enable_after,
+        "Ctrl+L re-enabled v2 unexpectedly; displayd={lines:?}; qt={stderr}"
     );
 
     let _ = displayd.kill();
