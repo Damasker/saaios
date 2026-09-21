@@ -10,6 +10,7 @@
 //! FolderViewListView, not Filter. ADR-387: that OSK surrounding.
 //! ADR-364/391: Filter-band click maps a line caret; OSK grows surrounding.
 //! ADR-365/392: PathEdit-band click maps a line caret then disables.
+//! ADR-393: that disable still fires with no OSK.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1080,6 +1081,10 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
 /// ADR-364 / ADR-365: one band click on a keyboard-less seat after
 /// FolderView enable. `400 760` Filter, `400 40` PathEdit. Not a Y sweep.
 fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
+    packed_pcmanfm_band_click(x, y, band, true);
+}
+
+fn packed_pcmanfm_band_click(x: i32, y: i32, band: &str, send_osk: bool) {
     let pkg = pcmanfm_package();
     let bin = pkg.join("bin/pcmanfm-qt");
     assert!(
@@ -1221,8 +1226,13 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     }
     let hash_at_enable = hash_after.clone();
 
-    let keyboard = Keyboard::bind_foreign_ime();
-    assert!(keyboard.shows_panel());
+    let _keyboard = if send_osk {
+        let keyboard = Keyboard::bind_foreign_ime();
+        assert!(keyboard.shows_panel());
+        Some(keyboard)
+    } else {
+        None
+    };
     let actions = [
         "intent:key:h",
         "intent:key:i",
@@ -1243,7 +1253,7 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     let click_deadline = Instant::now() + Duration::from_secs(4);
     let wait_caret = band == "Filter" || band == "PathEdit";
     while Instant::now() < click_deadline
-        && !(saw_click && (!wait_caret || saw_line_caret) && osk_sent)
+        && !(saw_click && (!wait_caret || saw_line_caret) && (!send_osk || osk_sent))
     {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
@@ -1275,7 +1285,7 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-        if saw_click && (!wait_caret || saw_line_caret) && !osk_sent {
+        if send_osk && saw_click && (!wait_caret || saw_line_caret) && !osk_sent {
             for action in actions {
                 let stroke = Keyboard::keystroke_from_osk_action(action)
                     .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
@@ -1288,7 +1298,7 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
         }
         let _ = queue.roundtrip(&mut ime_state);
     }
-    if !saw_click || saw_kbd_focus || (wait_caret && !saw_line_caret) || !osk_sent {
+    if !saw_click || saw_kbd_focus || (wait_caret && !saw_line_caret) || (send_osk && !osk_sent) {
         reap_pcmanfm(&mut child);
         let stderr = stderr_rx
             .recv_timeout(Duration::from_secs(1))
@@ -1301,7 +1311,12 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     }
     let hash_at_click = hash_after.clone();
 
-    let paint = Instant::now() + Duration::from_secs(4);
+    let paint = Instant::now()
+        + if send_osk {
+            Duration::from_secs(4)
+        } else {
+            Duration::from_secs(2)
+        };
     while Instant::now() < paint {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
@@ -1323,7 +1338,7 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
         let _ = queue.roundtrip(&mut ime_state);
-        if wait_caret && surrounding_after_osk.unwrap_or(0) >= 3 {
+        if send_osk && wait_caret && surrounding_after_osk.unwrap_or(0) >= 3 {
             break;
         }
     }
@@ -1353,7 +1368,7 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
         );
         assert!(
             lines.iter().any(|l| l.contains("text-input-v2 disable")),
-            "PathEdit click never disabled v2; Filter-class re-enable unproven; displayd={lines:?}; stderr={stderr}"
+            "PathEdit click never disabled v2; send_osk={send_osk}; Filter-class re-enable unproven; displayd={lines:?}; stderr={stderr}"
         );
     } else if wait_caret {
         assert!(
@@ -1404,4 +1419,11 @@ fn packed_pcmanfm_filter_click_osk_grows_surrounding() {
 #[test]
 fn packed_pcmanfm_pathedit_click_selects_path_then_disables() {
     packed_pcmanfm_band_click_osk(400, 40, "PathEdit");
+}
+
+/// ADR-393: same PathEdit click `400 40`, no OSK. First assert: v2 still
+/// disables (chrome, not OSK-induced). Flip if PathEdit holds IM 2 s.
+#[test]
+fn packed_pcmanfm_pathedit_click_disables_without_osk() {
+    packed_pcmanfm_band_click(400, 40, "PathEdit", false);
 }
