@@ -161,8 +161,10 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
   Host GDK-sized shm attach ADR-286. Native clipboard is deny-by-default
   (ADR-294) so x86 keyboard cannot open smithay's ungated path.
   Host GTK4 4.18 glibc cairo commits a hashed shm frame (ADR-305;
-  `xdg_toplevel 1280x800`, `frame sha256=`). GTK4 frame on panther
-  (Alpine 4.14.4 musl) not verified; do not flash displayd this week.
+  `xdg_toplevel 1280x800`, `frame sha256=`). Panther displayd
+  `02c78f9f…` now advertises fractional-scale + viewporter (ADR-309).
+  Alpine 4.14.4 musl `gtk4-demo --run=dialog` still SIGSEGV after
+  connect, before `xdg_toplevel`.
 - **Приёмка**: либо GTK4-приложение реально рендерит кадр на железе
   тем же методом верификации, что ADR-026 использовал для Qt, либо ADR
   фиксирует осознанный отказ от GTK4 с обоснованием.
@@ -187,8 +189,8 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 - **Статус**: Host protocol Done, 2026-09-21, ADR-270. Layer geometry
   host ADR-271. Layer blit dest host ADR-272. Shell IME layer host
-  ADR-273. Panther shell `4dc19018…` (ADR-308) logs IME v2 unavailable;
-  foreign OSK stays off until a displayd experiment.
+  ADR-273. Panther displayd `02c78f9f…` advertises IME v2 (ADR-309);
+  shell `4dc19018…` binds it. No Qt field was typed this slice.
 - **Goal**: тап по текстовому полю стороннего Qt-приложения показывает
   клавиатуру, ввод долетает до приложения -- APP-KEYBOARD-01 из
   исходного плана, но через путь, который реально работает на этом
@@ -309,9 +311,9 @@ package broker → VM fallback для несовместимых приложе�
 ```text
 APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
-APP-02  GTK4 -- host frame ADR-305; panther still the gate
-APP-03  zwp_input_method_manager_v2 без keymap -- спайк на saai-displayd
-APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); panther later
+APP-02  GTK4 -- host frame ADR-305; panther displayd ADR-309; 4.14.4 still SIGSEGV
+APP-03  zwp_input_method_manager_v2 -- panther displayd ADR-309
+APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); IME global on panther
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
 APP-06  браузер -- Falkon host qemu frame ADR-306; panther launch later
 
