@@ -39,13 +39,18 @@ second transport, not a second world.
 ## Consequences
 
 - Two clients (UDS + TCP) see the same Intent in host tests.
-- Until panther entityd is replaced, laptop Entity/Intent TCP
-  gets connection refused; Observation can already work because
-  runtime already binds `38127`.
+- panther entityd `c15c551d…` binds `172.31.7.1:38128`. Laptop
+  `list_spaces` returns home/personal/saaios/work; home has 16
+  entities, work 7. Observation stays on runtime `38127`.
 - Rollback: drop `--tcp-bind` and the shell TCP fallback.
 
 ## Verification
 
 Host: `cargo test -p saai-entityd --offline tcp_client_lists_the_same`
 and `cargo test -p saai-shell --offline entityd_tcp_is_off_in_unit_tests`.
-No panther shell/displayd flash. Leave Сейчас.
+Panther: PUT `saai-entityd` `c15c551d0b610129875ae1d78bc70f86dce53e1991ed8c8042e3505d16cd3299`,
+mv to `/data/saaios/system/saai-entityd`, kill pid 156; native-init
+respawn pid 6568; log `listening on TCP=172.31.7.1:38128`. USB
+`list_spaces` ok; `list_entities` home=16 work=7; selection space
+`home`. Shell pid 6066 and displayd pid 3240 unchanged. dest-no-lock
+kept. No reboot. Leave Сейчас.

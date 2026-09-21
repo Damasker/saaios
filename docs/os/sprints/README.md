@@ -159,7 +159,7 @@ ADR-303 Orb Failed is the Task's class, not Result.error (host).
 ADR-304 Sistema «Записи» omits Restricted even if status leaks it (host).
 ADR-305 host GTK4 commits a shm frame on displayd; panther GTK4 still waits.
 ADR-306 packed Falkon commits a shm hello-frame on host displayd; panther launch waits.
-ADR-307 laptop is a USB client of the panther Space/Entity/Intent/Observation store (host).
+ADR-307 laptop is a USB client of the panther Space/Entity/Intent/Observation store (panther `c15c551d…` pid 6568).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
