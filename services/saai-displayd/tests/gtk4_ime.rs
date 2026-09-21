@@ -5,12 +5,12 @@
 //! `--run=entry` click without wl_keyboard is ADR-356. Packed 4.14
 //! competing pane is ADR-372. `--run=entry` is not a gtk4-demo
 //! example name (ADR-373). `--run=search_entry` is ADR-374.
-//! `--run=password_entry` is ADR-382. OSK on that demo is ADR-375.
-//! that demo is ADR-375. v3 commit_string log is ADR-376. v3 object
-//! ids on search_entry are ADR-377. v3 surrounding/done on that
-//! OSK are ADR-378. shm commits after that OSK are ADR-379. Click
-//! then OSK on that demo is ADR-380. v3 cursor rectangle is ADR-381.
-//! Not a panther field.
+//! `--run=password_entry` is ADR-382. OSK on search_entry is
+//! ADR-375. v3 commit_string log is ADR-376. v3 object ids on
+//! search_entry are ADR-377. v3 surrounding/done on that OSK are
+//! ADR-378. shm commits after that OSK are ADR-379. Click then
+//! OSK on that demo is ADR-380. v3 cursor rectangle is ADR-381.
+//! password_entry OSK is ADR-383. Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1966,7 +1966,7 @@ fn packed_gtk4_demo_password_entry_enables_v3_without_click() {
 /// ADR-379. Main shm stays `233e0ee2…`. Not typed.
 #[test]
 fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
-    search_entry_osk_case(None);
+    search_entry_osk_case("search_entry", None);
 }
 
 /// ADR-380: one inject-click 640 40 on packed gtk4-demo
@@ -1975,10 +1975,18 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
 /// Not `--run=entry`. Not typed.
 #[test]
 fn packed_gtk4_demo_search_entry_click_then_osk() {
-    search_entry_osk_case(Some((640, 40)));
+    search_entry_osk_case("search_entry", Some((640, 40)));
 }
 
-fn search_entry_osk_case(click: Option<(i32, i32)>) {
+/// ADR-383: OSK into packed gtk4-demo `--run=password_entry` after
+/// v3 enable. Surrounding grows to 9 (bullet encoding). Toplevel
+/// shm stays `1eddcfe1…`. Not typed.
+#[test]
+fn packed_gtk4_demo_password_entry_osk_does_not_change_shm() {
+    search_entry_osk_case("password_entry", None);
+}
+
+fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
     let probe = gtk4_alpine_probe();
     let demo = probe.join("bin/gtk4-demo");
     let loader = probe.join("lib/ld-musl-aarch64.so.1");
@@ -2026,7 +2034,7 @@ fn search_entry_osk_case(click: Option<(i32, i32)>) {
         .arg("-L")
         .arg(&probe)
         .arg(&demo)
-        .arg("--run=search_entry")
+        .arg(format!("--run={run}"))
         .env_clear()
         .env("PATH", &path)
         .env("XDG_RUNTIME_DIR", runtime_dir.path())
@@ -2040,7 +2048,9 @@ fn search_entry_osk_case(click: Option<(i32, i32)>) {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("qemu-aarch64-static failed to spawn gtk4-demo --run=search_entry");
+        .unwrap_or_else(|e| {
+            panic!("qemu-aarch64-static failed to spawn gtk4-demo --run={run}: {e}")
+        });
     let stderr_rx = {
         let stderr = gtk.stderr.take().expect("gtk4-demo stderr");
         let (tx, rx) = mpsc::channel();
@@ -2115,7 +2125,7 @@ fn search_entry_osk_case(click: Option<(i32, i32)>) {
             .recv_timeout(Duration::from_secs(1))
             .unwrap_or_default();
         panic!(
-            "search_entry OSK: enable never ready; enable={saw_enable} activate={} kbd={saw_kbd_focus} hash={hash_at_enable:?}; displayd={:?}; gtk={stderr}",
+            "gtk4-demo --run={run} OSK: enable never ready; enable={saw_enable} activate={} kbd={saw_kbd_focus} hash={hash_at_enable:?}; displayd={:?}; gtk={stderr}",
             ime_state.activate,
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
@@ -2291,6 +2301,23 @@ fn search_entry_osk_case(click: Option<(i32, i32)>) {
         assert_eq!(
             after, before.as_str(),
             "search_entry click then OSK attached a new toplevel shm; before={before} after={after}; click={click:?}; do not claim typed; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+    } else if run == "password_entry" {
+        assert_eq!(
+            surrounding_after_osk,
+            Some(9),
+            "gtk4-demo password_entry OSK surrounding; expected 9-byte bullets for hi!; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?} commits={n_commits_after_osk}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            n_commits_after_osk, 0,
+            "gtk4-demo password_entry OSK shm commit count after OSK; expected no redraw; commits={n_commits_after_osk} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            after, before.as_str(),
+            "gtk4-demo password_entry OSK attached a new shm; before={before} after={after}; do not claim typed; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
     } else {
