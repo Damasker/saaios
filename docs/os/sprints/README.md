@@ -266,6 +266,7 @@ ADR-410 host Qt 5.15 competing pane + mouse selectAll keeps v2 (no flash).
 ADR-411 host Qt 5.15 QLineEdit completer async model update keeps v2 (no flash).
 ADR-412 host Qt 5.15 QLineEdit BlockingQueuedConnection completer update keeps v2 (no flash).
 ADR-413 host Qt 5.15 QLineEdit URL input-method hints keep v2 (no flash).
+ADR-414 host Qt 5.15 QLineEdit inline completer keeps v2 (no flash).
 ADR-404 packed GTK 4.14 ComboBox popup maps xdg_popup (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).

@@ -173,6 +173,20 @@ int main(int argc, char **argv) {
         edit->setInputMethodHints(Qt::ImhNoAutoUppercase | Qt::ImhUrlCharactersOnly);
     }
 
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_INLINE")) {
+        // ADR-414: Falkon LocationBar domain QCompleter is
+        // InlineCompletion. Lone QLineEdit keeps v2; Falkon disable
+        // is not this.
+        edit->setText(QStringLiteral("https://example.com"));
+        auto *model = new QStringListModel(edit);
+        model->setStringList(QStringList() << QStringLiteral("https://example.com/"));
+        auto *c = new QCompleter(edit);
+        c->setCompletionMode(QCompleter::InlineCompletion);
+        c->setModel(model);
+        edit->setCompleter(c);
+        QTimer::singleShot(80, c, [c]() { c->complete(); });
+    }
+
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
         // ADR-403: QMenu::popup. Qt Wayland menus are a second
         // xdg_toplevel, same class as QCompleter — not xdg_popup.
