@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCompleter>
 #include <QLineEdit>
+#include <QMenu>
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -68,6 +69,16 @@ int main(int argc, char **argv) {
             edit);
         edit->setCompleter(completer);
         QTimer::singleShot(80, completer, [completer]() { completer->complete(); });
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
+        // ADR-403: QMenu::popup. Qt Wayland menus are a second
+        // xdg_toplevel, same class as QCompleter — not xdg_popup.
+        auto *menu = new QMenu(edit);
+        menu->addAction(QStringLiteral("hi"));
+        QTimer::singleShot(200, menu, [menu, edit]() {
+            menu->popup(edit->mapToGlobal(QPoint(8, 8)));
+        });
     }
 
     QObject::connect(edit, &QLineEdit::textChanged, [](const QString &text) {

@@ -13,7 +13,8 @@
 //! OSK before steal is ADR-368. Packed Qt 5.15.10 competing pane is
 //! ADR-369. Packed Qt 5.15.10 steal-back is ADR-370. Packed Qt
 //! 5.15.10 OSK before steal is ADR-371. Host QLineEdit + QCompleter
-//! popup is ADR-394. Not a panther field.
+//! popup is ADR-394. Host QMenu::popup is a second toplevel, not
+//! xdg_popup (ADR-403). Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -3723,4 +3724,114 @@ fn osk_ime_types_hi_bang_into_qt5_lineedit_with_completer_popup() {
     );
     let _ = displayd.kill();
     let _ = displayd.wait();
+}
+
+/// ADR-403: host Qt 5.15 QMenu::popup. Not a click. Not QCompleter.
+/// First assert was configured xdg_popup. Qt maps a second
+/// toplevel instead — same class as QCompleter (ADR-394).
+#[test]
+fn host_qt5_qmenu_popup_is_second_toplevel_not_xdg_popup() {
+    assert!(
+        qt5_available(),
+        "host Qt5 probe needs g++ and qtbase5-dev (Qt5Widgets)"
+    );
+    let probe = compile_qt5_probe();
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let mut qt = Command::new(&probe)
+        .env_remove("QT_IM_MODULE")
+        .env_remove("DISPLAY")
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("QT_LINEEDIT_MENU", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn qt5_lineedit");
+    let qt_err = {
+        let stderr = qt.stderr.take().expect("qt stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_activated = false;
+    let mut saw_focus = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_popup = false;
+    let mut popup_failed = false;
+    let mut saw_no_steal = false;
+    let mut n_toplevels = 0usize;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline && !(n_toplevels >= 2 && saw_no_steal) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                    n_toplevels += 1;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("mapped toplevel without steal") {
+                    saw_no_steal = true;
+                }
+                if line.contains("xdg popup configure failed") {
+                    popup_failed = true;
+                    saw_popup = true;
+                } else if line.contains("xdg popup") {
+                    saw_popup = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = qt.kill();
+    let _ = qt.wait();
+    let stderr = qt_err
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_toplevel && saw_activated && saw_focus && !saw_kbd_focus,
+        "host Qt5 QMenu did not map/activate; kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated}; displayd={lines:?}; qt={stderr}"
+    );
+    assert!(
+        n_toplevels >= 2 && !saw_popup && !popup_failed,
+        "host Qt5 QMenu::popup was not a second toplevel; popup={saw_popup} failed={popup_failed} toplevels={n_toplevels}; displayd={lines:?}; qt={stderr}"
+    );
+    assert!(
+        saw_no_steal,
+        "QMenu second toplevel stole Activated; displayd={lines:?}; qt={stderr}"
+    );
 }
