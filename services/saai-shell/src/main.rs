@@ -4092,14 +4092,8 @@ fn orb_attention(entities: &[Entity], health: Option<&HealthReport>) -> bool {
 
 fn orb_failed_work(entities: &[Entity]) -> bool {
     entities.iter().any(|entity| {
-        (entity.entity_type == "saaios.task"
-            && workflow_status_of(entity) == Some(TASK_STATUS_FAILED))
-            || (entity.entity_type == RESULT_ENTITY_TYPE
-                && entity
-                    .properties
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .map_or(false, |text| !text.is_empty()))
+        entity.entity_type == "saaios.task"
+            && workflow_status_of(entity) == Some(TASK_STATUS_FAILED)
     })
 }
 
@@ -4727,6 +4721,9 @@ fn result_universal_facts(
             task_universal_state(task, entities),
             task_status_text(task, entities),
         );
+    }
+    if let Some(task) = task.filter(|task| workflow_status_of(task) == Some(TASK_STATUS_FAILED)) {
+        return (UniversalState::Failed, failed_status_text(task));
     }
     if let Some(error) = entity
         .properties
@@ -15763,6 +15760,42 @@ mod tests {
     }
 
     #[test]
+    fn object_view_result_names_the_task_failure_class_not_worker_ok() {
+        let intent = intent_entity("Подготовить демо");
+        let mut task = task_entity("Собрать слайды", Some(intent.id));
+        task.properties
+            .insert("status".into(), serde_json::Value::String("failed".into()));
+        task.properties.insert(
+            "error_kind".into(),
+            serde_json::Value::String("timeout".into()),
+        );
+        let action = action_entity("Экспорт PDF", task.id, "done");
+        let result = result_entity("PDF готов", task.id, action.id, "файл на диске");
+        let executes = related_relationship(
+            action.id,
+            ObjectRef::entity(task.id),
+            RELATION_EXECUTES,
+            Provenance::System,
+            None,
+        );
+        let produces = related_relationship(
+            action.id,
+            ObjectRef::entity(result.id),
+            RELATION_PRODUCES,
+            Provenance::System,
+            None,
+        );
+        let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
+        let relationships = vec![executes, produces];
+        let result_view = object_view_content(&result, &entities, &relationships);
+        assert_eq!(result_view.state, UniversalState::Failed);
+        assert_eq!(result_view.status, "Таймаут");
+        assert_ne!(result_view.status, "Готово");
+        let intent_view = object_view_content(&intent, &entities, &relationships);
+        assert_eq!(intent_view.status, "Таймаут");
+    }
+
+    #[test]
     fn object_view_content_for_an_intent_shows_plan_progress_from_related_tasks() {
         let intent = intent_entity("Подготовить демо");
         let mut draft = task_entity("Черновик", Some(intent.id));
@@ -16323,6 +16356,29 @@ mod tests {
         assert_ne!(
             orb_visual_state(true, true, &[verifying, inflight], false),
             UniversalState::Complete
+        );
+
+        let mut verifying_fail = task_entity("Проверка сбоя", None);
+        verifying_fail.properties.insert(
+            "status".into(),
+            serde_json::Value::String("verifying".into()),
+        );
+        let mut claimed_error = result_entity(
+            "Сбой воркера",
+            verifying_fail.id,
+            uuid::Uuid::new_v4(),
+            "файл на диске",
+        );
+        claimed_error
+            .properties
+            .insert("error".into(), serde_json::Value::String("boom".into()));
+        assert_eq!(
+            orb_visual_state(true, true, &[verifying_fail, claimed_error.clone()], false),
+            UniversalState::Running
+        );
+        assert_ne!(
+            orb_visual_state(true, true, std::slice::from_ref(&claimed_error), false),
+            UniversalState::Failed
         );
 
         let waiting = task_entity("Подтвердите удаление", None);
