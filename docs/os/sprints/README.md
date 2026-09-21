@@ -224,6 +224,7 @@ ADR-368 packed Qt6 OSK in the enable window types before steal-back (no flash).
 ADR-369 packed Qt5 competing pane tap types OSK without wl_keyboard (no flash).
 ADR-370 packed Qt5 steal-back after tap does not type OSK (no flash).
 ADR-371 packed Qt5 OSK in the enable window types before steal-back (no flash).
+ADR-372 packed GTK 4.14 competing pane auto-enables and types OSK without a tap (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

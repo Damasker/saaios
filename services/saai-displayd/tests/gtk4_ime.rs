@@ -2,7 +2,8 @@
 //! IME `commit_string` as widget text. Packed musl GTK 4.14.4 Entry
 //! under qemu is the panther toolkit (ADR-343). Without wl_keyboard,
 //! packed 4.14 is ADR-346 and host 4.18 is ADR-350. gtk4-demo
-//! `--run=entry` click without wl_keyboard is ADR-356. Not a panther field.
+//! `--run=entry` click without wl_keyboard is ADR-356. Packed 4.14
+//! competing pane is ADR-372. Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1322,4 +1323,195 @@ fn packed_gtk4_demo_click_without_seat_keyboard_does_not_enable_v3() {
         "gtk4-demo click 640 400 without wl_keyboard; get={saw_get} enable={saw_enable}; do not claim demo Entry typed; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
+}
+
+/// ADR-372: packed GTK 4.14 competing pane. Keyboard-less seat.
+/// Entry in the tree auto-enables v3 without a tap. gtk4-demo does
+/// not. Not a gtk4-demo click.
+#[test]
+fn osk_ime_types_hi_bang_into_alpine_gtk414_entry_competing_pane() {
+    let probe = gtk4_alpine_probe();
+    let bin = packed_gtk414_entry();
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        bin.is_file(),
+        "missing Alpine GTK 4.14 Entry at {} — set PACKED_GTK414_ENTRY",
+        bin.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let bin = if bin.is_absolute() {
+        bin
+    } else {
+        probe.join("bin/gtk414-entry")
+    };
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&bin)
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GTK4_PROBE_HOLD", "1")
+        .env("GTK4_COMPETE", "1")
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk414 competing pane");
+    let gtk_out = {
+        let stdout = gtk.stdout.take().expect("gtk stdout");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    };
+    let gtk_err = {
+        let stderr = gtk.stderr.take().expect("gtk stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline
+        && !(saw_activated && saw_focus && saw_enable && ime_state.activate)
+    {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_activated && saw_focus && saw_enable && ime_state.activate && !saw_kbd_focus) {
+        let _ = gtk.kill();
+        let _ = gtk.wait();
+        let stderr = gtk_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "packed GTK competing pane never auto-enabled v3; enable={saw_enable} activate={} kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated}; gtk4-demo class would be bind-without-enable; displayd={lines:?}; gtk={stderr}",
+            ime_state.activate
+        );
+    }
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let mut entry = String::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        match gtk_out.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if let Some(text) = line.strip_prefix("GTK_ENTRY_TEXT=") {
+                    entry = text.to_string();
+                    if entry == "hi!" {
+                        break;
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _ = gtk.kill();
+    let _ = gtk.wait();
+    let stderr = gtk_err
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    assert_eq!(
+        entry, "hi!",
+        "OSK IME did not type hi! into packed GTK competing Entry without a tap; gtk4-demo still bind-without-enable; displayd={lines:?}; gtk={stderr}"
+    );
+    let _ = displayd.kill();
+    let _ = displayd.wait();
 }
