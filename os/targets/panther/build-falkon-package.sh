@@ -4,6 +4,7 @@ set -eu
 # Builds org.saaios.demo.falkon (APP-06) -- Falkon on Qt6 WebEngine,
 # same Alpine v3.20 aarch64 musl recipe as PCManFM-Qt (ADR-021/269).
 # Does not install on panther. Does not flash displayd.
+# Host qemu hello-frame is ADR-306.
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd)
@@ -68,6 +69,15 @@ cp -L "$webengine_process" "$package_dir/libexec/QtWebEngineProcess"
 find "$alpine_sysroot/lib" "$alpine_sysroot/usr/lib" -maxdepth 1 -name '*.so*' \
     -exec cp -L {} "$package_dir/lib/" \;
 
+# libproxy DT_NEEDED lives in usr/lib/libproxy/, not maxdepth-1.
+# Without it falkon exits 127 before any Wayland surface.
+pxbackend="$alpine_sysroot/usr/lib/libproxy/libpxbackend-1.0.so"
+if [ ! -e "$pxbackend" ]; then
+    printf '%s\n' "apk falkon did not produce libpxbackend-1.0.so" >&2
+    exit 1
+fi
+cp -L "$pxbackend" "$package_dir/lib/"
+
 if [ -d "$alpine_sysroot/usr/lib/qt6/plugins" ]; then
     cp -a "$alpine_sysroot/usr/lib/qt6/plugins/." "$package_dir/plugins/"
 fi
@@ -83,6 +93,15 @@ fi
 
 rm -f "$package_dir/plugins/platformthemes/libqgtk3.so" \
     "$package_dir/plugins/platformthemes/libqxdgdesktopportal.so"
+
+# ADR-024: no Mali EGL scanout. Qt6 prefers wayland-egl and then
+# never commits wl_shm. Keep generic Wayland so QBackingStore can
+# hash a software frame (host qemu ADR-306).
+rm -f "$package_dir/plugins/platforms/libqwayland-egl.so" \
+    "$package_dir/plugins/platforms/libqminimalegl.so" \
+    "$package_dir/plugins/platforms/libqeglfs.so" \
+    "$package_dir/plugins/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so" \
+    "$package_dir/plugins/wayland-graphics-integration-client/libdrm-egl-server.so"
 
 if find "$package_dir/plugins" "$package_dir/share" -type l | grep -q .; then
     printf '%s\n' "package contains symlinks under plugins/share -- dereference them" >&2
@@ -104,6 +123,24 @@ fi
 if [ ! -e "$package_dir/lib/libicuuc.so.74" ] && [ ! -e "$package_dir/lib/libicuuc.so.74.2" ]; then
     printf '%s\n' "missing libicuuc -- Alpine WebEngine needs system ICU" >&2
     exit 1
+fi
+if [ ! -e "$package_dir/lib/libpxbackend-1.0.so" ]; then
+    printf '%s\n' "missing libpxbackend-1.0.so -- falkon cannot relocate libproxy" >&2
+    exit 1
+fi
+if [ -e "$package_dir/plugins/platforms/libqwayland-egl.so" ]; then
+    printf '%s\n' "wayland-egl plugin must not ship -- it blocks shm hello-frame" >&2
+    exit 1
+fi
+
+if command -v qemu-aarch64-static >/dev/null 2>&1; then
+    missing=$(qemu-aarch64-static -L "$package_dir" \
+        "$package_dir/lib/ld-musl-aarch64.so.1" --list "$package_dir/bin/falkon" 2>&1 \
+        | grep 'Error loading shared library' || true)
+    if [ -n "$missing" ]; then
+        printf '%s\n' "falkon still missing NEEDED libs:" "$missing" >&2
+        exit 1
+    fi
 fi
 
 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$script_dir/tools/zig-aarch64-musl.sh"

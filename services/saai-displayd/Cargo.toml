@@ -44,4 +44,5 @@ wayland-protocols-misc = { version = "0.3", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-04: OSK keystrokes are saai-ui-core Keyboard actions, not a second map.
 # APP-02 host GTK4 frame (ADR-305) spawns tests/gtk4_hello.py; not a crate dep.
+# APP-06 host Falkon frame (ADR-306) spawns packed aarch64 falkon via qemu.
 saai-ui-core = { path = "../../crates/saai-ui-core" }

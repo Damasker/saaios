@@ -158,11 +158,12 @@ ADR-302 Orb Complete requires the Result's Task to be Done (host).
 ADR-303 Orb Failed is the Task's class, not Result.error (host).
 ADR-304 Sistema «Записи» omits Restricted even if status leaks it (host).
 ADR-305 host GTK4 commits a shm frame on displayd; panther GTK4 still waits.
+ADR-306 packed Falkon commits a shm hello-frame on host displayd; panther launch waits.
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
 ADR-280 Confirm Once is a OneShot grant, not AskUser fallthrough (host).
-ADR-281 Falkon package packs QtWebEngineProcess, pak/v8, system ICU (host; no launch).
+ADR-281 Falkon package packs QtWebEngineProcess, pak/v8, system ICU (host).
 VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
 blocked item). Этот трек не переоткрывает S00–S32.
 
