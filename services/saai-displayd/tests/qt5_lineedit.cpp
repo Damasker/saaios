@@ -6,6 +6,7 @@
 #include <QMenu>
 #include <QStringList>
 #include <QStringListModel>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -134,6 +135,34 @@ int main(int argc, char **argv) {
                                  << QStringLiteral("/tmp/a/")
                                  << QStringLiteral("/tmp/b/"));
         });
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPLETER_BLOCK")) {
+        // ADR-412: PathEdit GIO BlockingQueuedConnection into
+        // onJobFinished. Lone QLineEdit keeps v2; PathEdit disable
+        // is not this.
+        edit->setText(QStringLiteral("/tmp/"));
+        auto *model = new QStringListModel(edit);
+        auto *c = new QCompleter(edit);
+        c->setModel(model);
+        edit->setCompleter(c);
+        auto *thread = new QThread(edit);
+        auto *worker = new QObject();
+        worker->moveToThread(thread);
+        QObject::connect(thread, &QThread::started, worker, [model, worker]() {
+            QMetaObject::invokeMethod(
+                model,
+                [model]() {
+                    model->setStringList(QStringList()
+                                         << QStringLiteral("/tmp/a/")
+                                         << QStringLiteral("/tmp/b/"));
+                },
+                Qt::BlockingQueuedConnection);
+            QThread::currentThread()->quit();
+            worker->deleteLater();
+        });
+        QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+        QTimer::singleShot(80, thread, [thread]() { thread->start(QThread::LowPriority); });
     }
 
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {

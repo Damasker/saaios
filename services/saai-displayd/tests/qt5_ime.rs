@@ -18,7 +18,9 @@
 //! v2 (ADR-408). Host QLineEdit completer reload without complete()
 //! keeps v2 (ADR-409). Host competing pane + path selectAll on a
 //! mouse click keeps v2 (ADR-410). Host QLineEdit completer async
-//! model update keeps v2 (ADR-411). Not a panther field.
+//! model update keeps v2 (ADR-411). Host QLineEdit completer
+//! BlockingQueuedConnection model update keeps v2 (ADR-412). Not a
+//! panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -4366,5 +4368,133 @@ fn host_qt5_lineedit_completer_async_keeps_v2() {
     assert!(
         !saw_disable && !saw_kbd_focus,
         "completer async model update disabled v2; PathEdit class would be onJobFinished; disable={saw_disable} kbd={saw_kbd_focus} toplevels={n_toplevels}; displayd={lines:?}; qt={stderr}"
+    );
+}
+
+/// ADR-412: host Qt 5.15 QLineEdit completer model update from a
+/// worker via BlockingQueuedConnection. PathEdit GIO job class. No
+/// PathEdit click. First assert was disable. Field stays enabled —
+/// PathEdit remaining is not GIO BlockingQueuedConnection.
+#[test]
+fn host_qt5_lineedit_completer_block_keeps_v2() {
+    assert!(
+        qt5_available(),
+        "host Qt5 probe needs g++ and qtbase5-dev (Qt5Widgets)"
+    );
+    let probe = compile_qt5_probe();
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let mut qt = Command::new(&probe)
+        .env_remove("QT_IM_MODULE")
+        .env_remove("DISPLAY")
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("QT_LINEEDIT_COMPLETER_BLOCK", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn qt5_lineedit");
+    let qt_err = {
+        let stderr = qt.stderr.take().expect("qt stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_disable = false;
+    let mut saw_activated = false;
+    let mut saw_focus = false;
+    let mut saw_kbd_focus = false;
+    let mut n_toplevels = 0usize;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline && !saw_enable {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    n_toplevels += 1;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    if !(saw_enable && saw_activated && saw_focus && !saw_kbd_focus) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let _ = displayd.kill();
+        let _ = displayd.wait();
+        panic!(
+            "completer block probe never enabled v2; enable={saw_enable} disable={saw_disable} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}"
+        );
+    }
+    let quiet = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < quiet && !saw_disable {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    n_toplevels += 1;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = qt.kill();
+    let _ = qt.wait();
+    let stderr = qt_err
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        !saw_disable && !saw_kbd_focus,
+        "completer BlockingQueuedConnection disabled v2; PathEdit class would be GIO job; disable={saw_disable} kbd={saw_kbd_focus} toplevels={n_toplevels}; displayd={lines:?}; qt={stderr}"
     );
 }
