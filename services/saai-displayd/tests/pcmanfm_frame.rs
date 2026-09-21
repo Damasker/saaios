@@ -3,8 +3,9 @@
 //! ADR-324: a separate IME client can `commit_string` while that
 //! enable is live. ADR-327: toolbar click re-enables v2. ADR-329: OSK
 //! hi! sequence forwards commit_string and delete_surrounding after
-//! that click; packed PathEdit still does not attach a new shm. Empty
-//! `QT_IM_MODULE` blocks the path. Not a panther typed field.
+//! that click; packed PathEdit still does not attach a new shm.
+//! ADR-331: Filter-band click 400,760 is the same protocol-without-paint.
+//! Empty `QT_IM_MODULE` blocks the path. Not a panther typed field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -439,11 +440,11 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         "IME commit_string did not reach the v2 field before click; displayd={lines:?}"
     );
 
-    // Toolbar click (PathEdit). Cursor maps a second wl_surface. Qt then
-    // disable+enable (focus moved). OSK hi! is the same sequence as
-    // ADR-328; a new toplevel shm is a typed PathEdit.
+    // Permanent Filter sits at the bottom of TabPage (ShowFilter=true).
+    // Toolbar click 400,40 re-enables v2 but does not paint (ADR-327/329).
+    // Typing into Filter must change the folder listing shm.
     if let Some(stdin) = displayd.stdin.as_mut() {
-        writeln!(stdin, "inject-click 400 40").expect("inject-click path");
+        writeln!(stdin, "inject-click 400 760").expect("inject-click filter");
         let _ = stdin.flush();
     }
     let mut saw_click = false;
@@ -467,11 +468,11 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     }
     assert!(
         saw_click,
-        "displayd never injected click 400 40; displayd={lines:?}"
+        "displayd never injected click 400 760; displayd={lines:?}"
     );
     assert!(
         saw_enable_after_click,
-        "toolbar click did not re-enable v2; displayd={lines:?}"
+        "Filter-band click did not re-enable v2; displayd={lines:?}"
     );
     std::thread::sleep(Duration::from_millis(400));
     send_osk_hi_bang(&ime, &mut queue, &mut ime_state);
@@ -501,11 +502,11 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         .unwrap_or_default();
     assert!(
         saw_osk_commit,
-        "OSK commit_string did not reach v2 after PathEdit click; displayd={lines:?}; qt={stderr}"
+        "OSK commit_string did not reach v2 after Filter click; displayd={lines:?}; qt={stderr}"
     );
     assert!(
         saw_osk_delete,
-        "OSK backspace did not reach v2 after PathEdit click; displayd={lines:?}; qt={stderr}"
+        "OSK backspace did not reach v2 after Filter click; displayd={lines:?}; qt={stderr}"
     );
 
     let _ = displayd.kill();
