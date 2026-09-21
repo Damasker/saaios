@@ -6121,6 +6121,7 @@ struct LiveNodeIdentity {
     class: String,
     target: String,
     arch: String,
+    model: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -6260,10 +6261,17 @@ fn live_node_from_status_json(blob: &Value) -> Option<LiveNodeIdentity> {
     {
         return None;
     }
+    let model = device
+        .get("hardware_model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty() && !looks_like_network_address(text))
+        .map(str::to_string);
     Some(LiveNodeIdentity {
         class: class.to_string(),
         target: target.to_string(),
         arch: arch.to_string(),
+        model,
     })
 }
 
@@ -6276,6 +6284,12 @@ fn node_identity_resolved(
     }
     let (class, target, arch) = node_identity_of(phone_gate);
     (class.to_string(), target.to_string(), arch.to_string())
+}
+
+fn node_model_resolved(live: Option<&LiveNodeIdentity>, local: String) -> String {
+    live.and_then(|id| id.model.clone())
+        .filter(|text| !text.is_empty())
+        .unwrap_or(local)
 }
 
 fn runtime_live_facts_from_status_json(blob: &Value) -> RuntimeLiveFacts {
@@ -10865,7 +10879,7 @@ impl Shell {
             space_count: self.spaces.len(),
             entity_count: total_entities,
             build_id: env!("SAAIOS_BUILD_ID").to_string(),
-            model: hardware_model(),
+            model: node_model_resolved(live.identity.as_ref(), hardware_model()),
             node_class: node_class.to_string(),
             node_target: node_target.to_string(),
             node_arch: node_arch.to_string(),
@@ -16603,6 +16617,7 @@ mod tests {
         assert_eq!(live.class, "computer");
         assert_eq!(live.target, "x86");
         assert_eq!(live.arch, "x86_64");
+        assert_eq!(live.model, None);
         assert!(super::live_node_from_status_json(&serde_json::json!({
             "status": {
                 "device": {
@@ -16617,6 +16632,7 @@ mod tests {
             class: "computer".into(),
             target: "x86".into(),
             arch: "x86_64".into(),
+            model: None,
         };
         assert_eq!(
             super::node_identity_resolved(Some(&live), true),
@@ -16626,6 +16642,44 @@ mod tests {
             super::node_identity_resolved(None, true),
             ("phone".into(), "panther".into(), "aarch64".into())
         );
+    }
+
+    #[test]
+    fn live_node_hardware_model_is_the_device_summary_not_usb() {
+        let live = super::live_node_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": {
+                "device": {
+                    "device_class": "computer",
+                    "target": "x86",
+                    "architecture": "x86_64",
+                    "hardware_model": "Framework Laptop"
+                }
+            }
+        }))
+        .expect("live device");
+        assert_eq!(live.model.as_deref(), Some("Framework Laptop"));
+        assert_eq!(
+            super::node_model_resolved(Some(&live), "неизвестно".into()),
+            "Framework Laptop"
+        );
+        assert_eq!(
+            super::node_model_resolved(None, "неизвестно".into()),
+            "неизвестно"
+        );
+        let poisoned = super::live_node_from_status_json(&serde_json::json!({
+            "status": {
+                "device": {
+                    "device_class": "computer",
+                    "target": "x86",
+                    "architecture": "x86_64",
+                    "hardware_model": "172.31.7.1"
+                }
+            }
+        }))
+        .expect("class still valid");
+        assert_eq!(poisoned.model, None);
+        assert!(!super::node_model_resolved(Some(&poisoned), "local".into()).contains("172."));
     }
 
     #[test]

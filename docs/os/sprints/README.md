@@ -152,6 +152,7 @@ ADR-296 Failed status names timeout vs mismatch; no Retry button (host).
 ADR-297 Intent names a bounded replan from `replan_count` (host).
 ADR-298 Sistema names the node phone/panther vs computer/x86 (host).
 ADR-299 Sistema «Узел» reads live `status.device`, not USB NCM (host).
+ADR-300 Sistema «Это устройство» prefers live `hardware_model` (host).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
