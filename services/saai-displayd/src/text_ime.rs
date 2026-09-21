@@ -351,6 +351,9 @@ where
                     .expect("text_inputs_v2")
                     .retain(|ti| ti.id() != resource.id());
             }
+            zwp_text_input_v2::Request::UpdateState { .. } => {
+                println!("saai-displayd: text-input-v2 update_state");
+            }
             _ => {}
         }
     }

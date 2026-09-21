@@ -53,4 +53,5 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-02 Alpine GTK 4.14.4 qemu frame (ADR-320) needs GTK4_ALPINE_PROBE.
 # APP-04 packed PCManFM-Qt v2 enable (ADR-323) needs PCMANFM_PACKAGE_DIR.
 # APP-04 IME commit_string into that field (ADR-324) uses the same package.
+# APP-04 host GTK 4.18 Entry types hi! via IME (ADR-325).
 saai-ui-core = { path = "../../crates/saai-ui-core" }

@@ -176,7 +176,8 @@ ADR-320 Alpine GTK 4.14.4 qemu frames when configure_bounds is the window (host;
 ADR-321 Falkon loads hello.html over 127.0.0.1 HTTP (panther; not NetInternet).
 ADR-322 host GTK 4.18 Entry sends zwp_text_input_v3::enable (no flash).
 ADR-323 empty QT_IM_MODULE blocks Qt text-input-v2; packed PCManFM enables when unset.
-ADR-324 IME commit_string reaches that v2 field; Qt 5.15 does not repaint (no flash).
+ADR-324 IME commit_string reaches that v2 field; Qt 5.15 does not insert without a focused QLineEdit (no flash).
+ADR-325 host GTK 4.18 Entry receives OSK hi! through IME (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

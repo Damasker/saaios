@@ -320,6 +320,7 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         .env("QT_QPA_PLATFORM", "wayland")
         .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
         .env("QT_QPA_PLATFORMTHEME", "")
+        .env("QT_LOGGING_RULES", "qt.qpa.input.methods.debug=true")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -341,10 +342,11 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
 
     let mut saw_enable = false;
     let mut saw_disable = false;
-    let mut first_hash = None;
+    let mut saw_update = false;
+    let mut last_hash = None;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline && !(saw_enable && ime_state.activate && first_hash.is_some()) {
+    while Instant::now() < deadline && !(saw_enable && ime_state.activate) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("text-input-v2 enable") {
@@ -353,10 +355,11 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
                 if line.contains("text-input-v2 disable") {
                     saw_disable = true;
                 }
-                if first_hash.is_none() {
-                    if let Some(h) = frame_hash(&line) {
-                        first_hash = Some(h.to_string());
-                    }
+                if line.contains("text-input-v2 update_state") {
+                    saw_update = true;
+                }
+                if let Some(h) = frame_hash(&line) {
+                    last_hash = Some(h.to_string());
                 }
                 lines.push(line);
             }
@@ -377,6 +380,33 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
     assert!(
         !saw_disable,
         "Qt hid the input panel before OSK could type; displayd={lines:?}"
+    );
+
+    // Qt 5.15 discards commit_string until wl_display.sync after
+    // update_state(enter) completes (m_resetCallback).
+    let settle = Instant::now() + Duration::from_millis(800);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 update_state") {
+                    saw_update = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if let Some(h) = frame_hash(&line) {
+                    last_hash = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    assert!(
+        !saw_disable,
+        "Qt hid the input panel during sync settle; displayd={lines:?}"
     );
 
     ime.commit_string(String::from("hi!"));
@@ -410,8 +440,10 @@ fn osk_ime_commit_string_reaches_pcmanfm_v2() {
         saw_commit,
         "IME commit_string did not reach the v2 field; displayd={lines:?}; stderr={stderr}"
     );
-    // Packed Qt 5.15 does not commit a new shm frame after that
-    // event (ADR-324). Protocol reach is this slice; paint is not.
+    // Packed PCManFM Filter is not focused; Qt 5.15 drops commit_string
+    // when focusObject is null (ADR-324). update_state={saw_update} is
+    // compositor-true and still not a typed Filter.
+    let _ = (saw_update, last_hash);
     let _ = displayd.kill();
     let _ = displayd.wait();
 }

@@ -34,6 +34,13 @@ def main() -> int:
     win.connect("close-request", lambda *_: (loop.quit(), False)[1])
     win.present()
     GLib.idle_add(entry.grab_focus)
+    if os.environ.get("GTK4_PROBE_HOLD"):
+        def on_text(*_args):
+            print(f"GTK_ENTRY_TEXT={entry.get_text()}", flush=True)
+
+        entry.connect("notify::text", on_text)
+        loop.run()
+        return 0
     GLib.timeout_add(2000, lambda: (loop.quit(), False)[1])
     loop.run()
     return 0
