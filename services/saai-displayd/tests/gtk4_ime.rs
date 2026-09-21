@@ -7,7 +7,8 @@
 //! example name (ADR-373). `--run=search_entry` is ADR-374. OSK on
 //! that demo is ADR-375. v3 commit_string log is ADR-376. v3 object
 //! ids on search_entry are ADR-377. v3 surrounding/done on that
-//! OSK are ADR-378. Not a panther field.
+//! OSK are ADR-378. shm commits after that OSK are ADR-379. Not a
+//! panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1811,10 +1812,10 @@ fn packed_gtk4_demo_search_entry_enables_v3_without_click() {
     );
 }
 
-/// ADR-375/376/377/378: OSK into packed gtk4-demo `--run=search_entry`.
+/// ADR-375/376/377/378/379: OSK into packed gtk4-demo `--run=search_entry`.
 /// One v3 object; commit_string target is that enable. IME `done` and
-/// surrounding after OSK are ADR-378. Main shm stays `233e0ee2…`.
-/// Not typed.
+/// surrounding after OSK are ADR-378. shm commits after OSK are
+/// ADR-379. Main shm stays `233e0ee2…`. Not typed.
 #[test]
 fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let probe = gtk4_alpine_probe();
@@ -1905,6 +1906,7 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let mut saw_v3_dropped = false;
     let mut surrounding_at_enable: Option<usize> = None;
     let mut surrounding_after_osk: Option<usize> = None;
+    let mut n_commits_after_osk = 0;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline
@@ -1993,6 +1995,9 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
                 if let Some(n) = surrounding_bytes(&line) {
                     surrounding_after_osk = Some(n);
                 }
+                if line.contains("commit on surface") {
+                    n_commits_after_osk += 1;
+                }
                 if let Some(h) = toplevel_frame_hash(&line, &mut activated) {
                     last_hash = Some(h.to_string());
                 }
@@ -2059,6 +2064,11 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     assert!(
         surrounding_after_osk.unwrap_or(0) > surrounding_at_enable.unwrap_or(0),
         "search_entry OSK surrounding did not grow; GTK did not report applied text; done={n_done} client_commit={n_client_commit} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        n_commits_after_osk, 0,
+        "search_entry OSK shm commit count after OSK; expected no redraw; commits={n_commits_after_osk} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert_eq!(
