@@ -10,7 +10,6 @@ use std::rc::Rc;
 #[cfg(feature = "panther-hardware")]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-#[cfg(any(test, feature = "panther-hardware"))]
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "panther-hardware")]
@@ -28,7 +27,6 @@ mod text_ime;
 mod touch;
 
 use sha2::{Digest, Sha256};
-#[cfg(feature = "panther-hardware")]
 use smithay::desktop::utils::send_frames_surface_tree;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::backend::input::ButtonState;
@@ -83,6 +81,8 @@ use smithay::{
     },
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+#[cfg(not(feature = "panther-hardware"))]
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 /// Matches `Scale::Integer(1)` on the advertised output. GDK initializes
 /// its shm height from `wp_fractional_scale_v1.preferred_scale` in 120ths
@@ -408,7 +408,6 @@ struct State {
     shell_restart_budget: RestartBudget,
     #[cfg(feature = "panther-hardware")]
     privileged_shell_pid: Arc<AtomicU32>,
-    #[cfg(feature = "panther-hardware")]
     presentation_started: Instant,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
@@ -819,6 +818,34 @@ impl State {
                 self.pending_frame_surfaces = shown;
             }
             Err(err) => eprintln!("saai-displayd: hardware present failed: {err}"),
+        }
+    }
+}
+
+#[cfg(not(feature = "panther-hardware"))]
+impl State {
+    /// Host has no DRM VBlank. gtk4-demo and Falkon wait on
+    /// `wl_surface.frame` after IME apply; without a refresh clock those
+    /// callbacks never fire and the client never commits a new shm
+    /// (ADR-375/384). Ack at ~60 Hz, not on every commit — ack-on-commit
+    /// spun saai-shell (see `commit()`).
+    fn send_host_frames(&mut self) {
+        let output = self._wl_output.clone();
+        let time = self.presentation_started.elapsed();
+        let mut surfaces: Vec<WlSurface> = self.toplevels.keys().cloned().collect();
+        if let Some(surface) = self.focused_surface.clone() {
+            if !surfaces.iter().any(|s| s == &surface) {
+                surfaces.push(surface);
+            }
+        }
+        for layer in &self.layer_surfaces {
+            let surface = layer.wl_surface().clone();
+            if !surfaces.iter().any(|s| s == &surface) {
+                surfaces.push(surface);
+            }
+        }
+        for surface in surfaces {
+            send_frames_surface_tree(&surface, &output, time, None, |_, _| Some(output.clone()));
         }
     }
 }
@@ -1716,7 +1743,6 @@ fn main() {
         shell_restart_budget: RestartBudget::default(),
         #[cfg(feature = "panther-hardware")]
         privileged_shell_pid: privileged_shell_pid.clone(),
-        #[cfg(feature = "panther-hardware")]
         presentation_started: Instant::now(),
         _wl_output: wl_output,
         output_width,
@@ -2047,6 +2073,22 @@ fn main() {
                 );
             }
         }
+        handle
+            .insert_source(
+                Timer::from_duration(Duration::from_millis(16)),
+                {
+                    let mut logged = false;
+                    move |_, _, state: &mut State| {
+                        if !logged {
+                            logged = true;
+                            println!("saai-displayd: host frame clock");
+                        }
+                        state.send_host_frames();
+                        TimeoutAction::ToDuration(Duration::from_millis(16))
+                    }
+                },
+            )
+            .expect("failed to register host frame clock");
     }
 
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");

@@ -837,10 +837,10 @@ fn packed_pcmanfm_v2_stays_enabled_without_seat_keyboard() {
     );
 }
 
-/// ADR-363/387: OSK into packed PCManFM v2 on a keyboard-less seat.
+/// ADR-363/387/388: OSK into packed PCManFM v2 on a keyboard-less seat.
 /// Durable enable is `Fm::FolderViewListView`, not Filter.
-/// Surrounding stays 0 (not Falkon URL ADR-385). No click. No Ctrl+L.
-/// Main shm after enable stays `484823fc…`.
+/// Surrounding stays 0 (not gtk4-demo ADR-388). Host frame clock lets
+/// FolderView commit a new shm without a text field. No click. No Ctrl+L.
 #[test]
 fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
     let pkg = pcmanfm_package();
@@ -1058,9 +1058,9 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
         surrounding_after_osk.unwrap_or(0) == 0,
         "PCManFM FolderView OSK surrounding grew; expected no text field; enable={surrounding_at_enable:?} osk={surrounding_after_osk:?}; displayd={lines:?}; stderr={stderr}"
     );
-    assert_eq!(
+    assert_ne!(
         hash_at_enable, hash_after,
-        "PCManFM main shm changed after OSK; at_enable={hash_at_enable:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
+        "PCManFM FolderView OSK did not attach a new shm after host frame clock; at_enable={hash_at_enable:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
     );
 }
 

@@ -10,7 +10,8 @@
 //! search_entry are ADR-377. v3 surrounding/done on that OSK are
 //! ADR-378. shm commits after that OSK are ADR-379. Click then
 //! OSK on that demo is ADR-380. v3 cursor rectangle is ADR-381.
-//! password_entry OSK is ADR-383. Not a panther field.
+//! password_entry OSK is ADR-383. Host frame clock lets search_entry
+//! and password_entry OSK commit shm (ADR-388). Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -972,6 +973,7 @@ fn interesting(line: &str) -> bool {
         || line.contains("frame sha256=")
         || line.contains("xdg activated")
         || line.contains("focus set to")
+        || line.contains("host frame clock")
 }
 
 fn surrounding_bytes(line: &str) -> Option<usize> {
@@ -1960,29 +1962,28 @@ fn packed_gtk4_demo_password_entry_enables_v3_without_click() {
     );
 }
 
-/// ADR-375/376/377/378/379: OSK into packed gtk4-demo `--run=search_entry`.
-/// One v3 object; commit_string target is that enable. IME `done` and
-/// surrounding after OSK are ADR-378. shm commits after OSK are
-/// ADR-379. Main shm stays `233e0ee2…`. Not typed.
+/// ADR-375/376/377/378/379/388: OSK into packed gtk4-demo
+/// `--run=search_entry`. One v3 object; commit_string target is that
+/// enable. Host frame clock lets the demo commit a new shm after OSK
+/// (surrounding `hi!` 3 bytes). Not a panther field.
 #[test]
-fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
+fn packed_gtk4_demo_search_entry_osk_commits_shm() {
     search_entry_osk_case("search_entry", None);
 }
 
-/// ADR-380: one inject-click 640 40 on packed gtk4-demo
+/// ADR-380/388: one inject-click 640 40 on packed gtk4-demo
 /// `--run=search_entry` after v3 enable, then OSK. Surrounding
-/// grows to 3. Toplevel shm stays `233e0ee2…`. Cursor may commit.
-/// Not `--run=entry`. Not typed.
+/// grows to 3. Toplevel shm changes. Not `--run=entry`.
 #[test]
 fn packed_gtk4_demo_search_entry_click_then_osk() {
     search_entry_osk_case("search_entry", Some((640, 40)));
 }
 
-/// ADR-383: OSK into packed gtk4-demo `--run=password_entry` after
-/// v3 enable. Surrounding grows to 9 (bullet encoding). Toplevel
-/// shm stays `1eddcfe1…`. Not typed.
+/// ADR-383/388: OSK into packed gtk4-demo `--run=password_entry` after
+/// v3 enable. Surrounding grows to 9 (bullet encoding). Toplevel shm
+/// changes. Not a panther field.
 #[test]
-fn packed_gtk4_demo_password_entry_osk_does_not_change_shm() {
+fn packed_gtk4_demo_password_entry_osk_commits_shm() {
     search_entry_osk_case("password_entry", None);
 }
 
@@ -2286,6 +2287,11 @@ fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
         "search_entry OSK v3 cursor rectangle missing; mapped widget unproven; click={click:?} cursor={n_cursor} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
+    assert!(
+        lines.iter().any(|l| l.contains("host frame clock")),
+        "host frame clock never logged; gtk4-demo OSK paint depends on it; click={click:?} run={run}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
     if click.is_some() {
         assert_eq!(
             surrounding_after_osk,
@@ -2293,14 +2299,14 @@ fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
             "search_entry click then OSK surrounding; expected hi! 3 bytes; click={click:?} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
-        assert_eq!(
-            n_commits_after_osk, 0,
-            "search_entry click then OSK shm commit count after OSK; expected no toplevel redraw; commits={n_commits_after_osk} click={click:?} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+        assert!(
+            n_commits_after_osk >= 1,
+            "search_entry click then OSK shm commit count after OSK; expected toplevel redraw; commits={n_commits_after_osk} click={click:?} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
-        assert_eq!(
+        assert_ne!(
             after, before.as_str(),
-            "search_entry click then OSK attached a new toplevel shm; before={before} after={after}; click={click:?}; do not claim typed; displayd={:?}; gtk={stderr}",
+            "search_entry click then OSK did not attach a new toplevel shm; before={before} after={after}; click={click:?}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
     } else if run == "password_entry" {
@@ -2310,25 +2316,31 @@ fn search_entry_osk_case(run: &str, click: Option<(i32, i32)>) {
             "gtk4-demo password_entry OSK surrounding; expected 9-byte bullets for hi!; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?} commits={n_commits_after_osk}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
-        assert_eq!(
-            n_commits_after_osk, 0,
-            "gtk4-demo password_entry OSK shm commit count after OSK; expected no redraw; commits={n_commits_after_osk} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+        assert!(
+            n_commits_after_osk >= 1,
+            "gtk4-demo password_entry OSK shm commit count after OSK; expected redraw; commits={n_commits_after_osk} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
-        assert_eq!(
+        assert_ne!(
             after, before.as_str(),
-            "gtk4-demo password_entry OSK attached a new shm; before={before} after={after}; do not claim typed; displayd={:?}; gtk={stderr}",
+            "gtk4-demo password_entry OSK did not attach a new shm; before={before} after={after}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
     } else {
         assert_eq!(
-            n_commits_after_osk, 0,
-            "search_entry OSK shm commit count after OSK; expected no redraw; commits={n_commits_after_osk} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            surrounding_after_osk,
+            Some(3),
+            "search_entry OSK surrounding; expected hi! 3 bytes; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
-        assert_eq!(
+        assert!(
+            n_commits_after_osk >= 1,
+            "search_entry OSK shm commit count after OSK; expected redraw; commits={n_commits_after_osk} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?}; displayd={:?}; gtk={stderr}",
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+        assert_ne!(
             after, before.as_str(),
-            "gtk4-demo search_entry OSK attached a new shm; before={before} after={after}; do not claim typed; displayd={:?}; gtk={stderr}",
+            "gtk4-demo search_entry OSK did not attach a new shm; before={before} after={after}; displayd={:?}; gtk={stderr}",
             lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
         );
     }
