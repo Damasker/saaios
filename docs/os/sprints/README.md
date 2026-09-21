@@ -237,6 +237,7 @@ ADR-381 packed gtk4-demo search_entry OSK sends a v3 cursor rectangle (no flash)
 ADR-382 packed gtk4-demo --run=password_entry enables v3 without a tap (no flash).
 ADR-383 packed gtk4-demo password_entry OSK does not commit shm (no flash).
 ADR-384 packed Falkon URL OSK immediately after enable still no shm (no flash).
+ADR-385 packed Falkon URL OSK grows v2 surrounding, not shm (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

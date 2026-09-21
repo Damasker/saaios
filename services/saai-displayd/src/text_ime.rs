@@ -442,6 +442,20 @@ where
             zwp_text_input_v2::Request::UpdateState { .. } => {
                 println!("saai-displayd: text-input-v2 update_state");
             }
+            zwp_text_input_v2::Request::SetSurroundingText { text, .. } => {
+                println!(
+                    "saai-displayd: text-input-v2 surrounding bytes={}",
+                    text.len()
+                );
+            }
+            zwp_text_input_v2::Request::SetCursorRectangle {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                println!("saai-displayd: text-input-v2 cursor {width}x{height}+{x}+{y}");
+            }
             _ => {}
         }
     }

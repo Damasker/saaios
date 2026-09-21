@@ -9,6 +9,7 @@
 //! ADR-355: one URL click 640 20 on that seat enables v2. Not typed.
 //! ADR-358: that enable disables within 2 s (not PCManFM ADR-357).
 //! ADR-384: OSK immediately after that URL enable on the same seat.
+//! ADR-385: v2 surrounding/cursor on that OSK.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -337,6 +338,12 @@ fn activated_frame_hash<'a>(line: &'a str, surface: &Option<String>) -> Option<&
     line.split("frame sha256=")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
+}
+
+fn v2_surrounding_bytes(line: &str) -> Option<usize> {
+    line.split("text-input-v2 surrounding bytes=")
+        .nth(1)
+        .and_then(|n| n.trim().parse().ok())
 }
 
 fn toplevel_frame_hash<'a>(line: &'a str, surface: &mut Option<String>) -> Option<&'a str> {
@@ -1826,9 +1833,10 @@ fn packed_falkon_url_v2_disables_without_seat_keyboard() {
     );
 }
 
-/// ADR-384: one URL click `640 20` on a keyboard-less seat, then OSK
-/// immediately. v2 `commit_string` reaches the field. Toplevel shm
-/// stays `6cd11128…`. Not a Y sweep. Not typed LocationBar.
+/// ADR-384/385: one URL click `640 20` on a keyboard-less seat, then OSK
+/// immediately. v2 `commit_string` reaches the field. v2 surrounding
+/// after that OSK is ADR-385. Toplevel shm stays `6cd11128…`. Not a Y
+/// sweep. Not typed LocationBar.
 #[test]
 fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let pkg = falkon_package();
@@ -1949,6 +1957,8 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let mut hash_at_enable: Option<String> = None;
     let mut last_hash: Option<String> = None;
     let mut n_commits_after_osk = 0;
+    let mut surrounding_at_enable: Option<usize> = None;
+    let mut surrounding_after_osk: Option<usize> = None;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(25);
     while Instant::now() < deadline && !(saw_toplevel && saw_frame && saw_activated && saw_focus) {
@@ -2021,7 +2031,7 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
         let _ = stdin.flush();
     }
     let click_deadline = Instant::now() + Duration::from_secs(4);
-    while Instant::now() < click_deadline && !(saw_click && saw_enable && ime_state.activate) {
+    while Instant::now() < click_deadline && !(saw_click && saw_enable) {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("injected click") {
@@ -2032,6 +2042,9 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
                 }
                 if line.contains("text-input-v2 enable") {
                     saw_enable = true;
+                }
+                if let Some(n) = v2_surrounding_bytes(&line) {
+                    surrounding_at_enable = Some(n);
                 }
                 if let Some(h) = activated_frame_hash(&line, &activated) {
                     last_hash = Some(h.to_string());
@@ -2089,6 +2102,9 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
                 if line.contains("text-input-v2 commit_string") {
                     saw_commit = true;
                 }
+                if let Some(n) = v2_surrounding_bytes(&line) {
+                    surrounding_after_osk = Some(n);
+                }
                 if line.contains("commit on surface") {
                     if activated_frame_hash(&line, &activated).is_some() {
                         n_commits_after_osk += 1;
@@ -2112,9 +2128,18 @@ fn packed_falkon_url_osk_immediately_after_enable_without_seat_keyboard() {
     let _ = displayd.kill();
     let _ = displayd.wait();
     let after = last_hash.as_deref().unwrap_or(before.as_str());
+    let n_cursor = lines
+        .iter()
+        .filter(|l| l.contains("text-input-v2 cursor"))
+        .count();
     assert!(
         saw_commit,
-        "Falkon URL OSK immediately after enable; v2 commit_string missing; click={saw_click} enable={saw_enable} commits={n_commits_after_osk}; displayd={:?}; stderr={stderr}",
+        "Falkon URL OSK immediately after enable; v2 commit_string missing; click={saw_click} enable={saw_enable} commits={n_commits_after_osk} surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?} cursor={n_cursor}; displayd={:?}; stderr={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        surrounding_after_osk.unwrap_or(0) > surrounding_at_enable.unwrap_or(0),
+        "Falkon URL OSK v2 surrounding did not grow; Qt did not report applied text; surrounding_enable={surrounding_at_enable:?} surrounding_osk={surrounding_after_osk:?} cursor={n_cursor}; displayd={:?}; stderr={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
     assert_eq!(
