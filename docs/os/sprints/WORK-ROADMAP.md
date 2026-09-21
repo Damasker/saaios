@@ -115,7 +115,7 @@ Legacy rows with `retryable` and no kind stay retryable. No taskd flash.
 
 **Rollback:** drop `FailureClass`; restore boolean+optional strings.
 
-**Threat:** none — host taxonomy, no phone binary.
+**Threat:** none — host taxonomy, no phone binary. Shell copy is ADR-296.
 
 ## WORK-07
 

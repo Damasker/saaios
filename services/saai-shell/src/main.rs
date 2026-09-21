@@ -4213,7 +4213,7 @@ fn task_status_text(entity: &Entity, entities: &[Entity]) -> String {
         (Some(TASK_STATUS_WAITING_CONFIRMATION), _) => "Ждёт подтверждения".to_string(),
         (Some(TASK_STATUS_RUNNING), _) => "Выполняется".to_string(),
         (Some(TASK_STATUS_VERIFYING), _) => "Проверяется".to_string(),
-        (Some(TASK_STATUS_FAILED), _) => "Ошибка".to_string(),
+        (Some(TASK_STATUS_FAILED), _) => failed_status_text(entity),
         (Some(TASK_STATUS_DONE), _) => "Готово".to_string(),
         (Some(TASK_STATUS_WAITING_CLARIFICATION), _) => "Нужно уточнение".to_string(),
         (Some(TASK_STATUS_CANCELLED), _) => "Отменено".to_string(),
@@ -4221,6 +4221,23 @@ fn task_status_text(entity: &Entity, entities: &[Entity]) -> String {
         (Some(TASK_STATUS_PENDING), _) => "Ожидает запуска".to_string(),
         (Some(other), _) => other.to_string(),
         (None, _) => "Нет статуса".to_string(),
+    }
+}
+
+/// ADR-296 / WORK-06: Failed names its class. Retry is not a new button.
+/// Timeout/unreachable stay retryable in taskd; mismatch is not retry.
+fn failed_status_text(entity: &Entity) -> String {
+    match entity.properties.get("error_kind").and_then(Value::as_str) {
+        Some("timeout") => "Таймаут".into(),
+        Some("unreachable") => "Нет связи".into(),
+        Some("verification_mismatch") => "Не подтвердилось".into(),
+        Some("malformed") => "Ошибка формата".into(),
+        Some("unknown") => "Ошибка".into(),
+        Some(other) => other.to_string(),
+        None if entity.properties.get("retryable").and_then(Value::as_bool) == Some(true) => {
+            "Таймаут".into()
+        }
+        None => "Ошибка".into(),
     }
 }
 
@@ -12337,6 +12354,52 @@ mod tests {
         assert_eq!(
             super::task_universal_state(&entities[0], &entities),
             UniversalState::Running
+        );
+    }
+
+    #[test]
+    fn failed_status_text_names_the_class_not_one_generic_error() {
+        let mut timeout = serde_json::Map::new();
+        timeout.insert("status".into(), serde_json::Value::String("failed".into()));
+        timeout.insert(
+            "error_kind".into(),
+            serde_json::Value::String("timeout".into()),
+        );
+        timeout.insert("retryable".into(), serde_json::Value::Bool(true));
+        let mut mismatch = serde_json::Map::new();
+        mismatch.insert("status".into(), serde_json::Value::String("failed".into()));
+        mismatch.insert(
+            "error_kind".into(),
+            serde_json::Value::String("verification_mismatch".into()),
+        );
+        let mut legacy = serde_json::Map::new();
+        legacy.insert("status".into(), serde_json::Value::String("failed".into()));
+        legacy.insert("retryable".into(), serde_json::Value::Bool(true));
+        let mut unknown = serde_json::Map::new();
+        unknown.insert("status".into(), serde_json::Value::String("failed".into()));
+        let entities = vec![
+            test_entity("saaios.task", timeout),
+            test_entity("saaios.task", mismatch),
+            test_entity("saaios.task", legacy),
+            test_entity("saaios.task", unknown),
+        ];
+        assert_eq!(super::task_status_text(&entities[0], &entities), "Таймаут");
+        assert_eq!(
+            super::task_status_text(&entities[1], &entities),
+            "Не подтвердилось"
+        );
+        assert_eq!(super::task_status_text(&entities[2], &entities), "Таймаут");
+        assert_eq!(super::task_status_text(&entities[3], &entities), "Ошибка");
+        let mut unreachable = serde_json::Map::new();
+        unreachable.insert("status".into(), serde_json::Value::String("failed".into()));
+        unreachable.insert(
+            "error_kind".into(),
+            serde_json::Value::String("unreachable".into()),
+        );
+        let down = test_entity("saaios.task", unreachable);
+        assert_eq!(
+            super::task_status_text(&down, std::slice::from_ref(&down)),
+            "Нет связи"
         );
     }
 
