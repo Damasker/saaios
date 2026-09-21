@@ -1255,8 +1255,13 @@ impl XdgShellHandler for State {
         );
         // Panther stays the phone panel. x86 is a window inside the host
         // output, not a second panther (ADR-250).
+        // ADR-311: smithay serializes missing bounds as configure_bounds(0,0).
+        // GTK 4.14 then gdk_toplevel_size_init(0,0) and asks for a garbage
+        // shm height (ADR-310: 2337935) even after preferred_scale=120.
         surface.with_pending_state(|state| {
-            state.size = Some((geo.width, geo.height).into());
+            let size = (geo.width, geo.height).into();
+            state.size = Some(size);
+            state.bounds = Some(size);
         });
         surface.send_configure();
         self.toplevels.insert(surface.wl_surface().clone(), surface);
@@ -1948,5 +1953,15 @@ mod windowed_surface_tests {
             }
         );
         assert_eq!(output_model_for(true), "panther");
+    }
+
+    #[test]
+    fn bounds_are_the_toplevel_geometry_never_zero() {
+        for (phone, out_w, out_h) in [(false, 1920, 1080), (true, 1080, 2400)] {
+            let geo = toplevel_geometry_for(phone, out_w, out_h);
+            assert!(geo.width > 0);
+            assert!(geo.height > 0);
+            assert_ne!((geo.width, geo.height), (0, 0));
+        }
     }
 }

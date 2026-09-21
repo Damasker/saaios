@@ -163,6 +163,7 @@ ADR-307 laptop is a USB client of the panther Space/Entity/Intent/Observation st
 ADR-308 panther shell carries host F chrome (`4dc19018…` pid 6710; leave Сейчас).
 ADR-309 panther displayd advertises fractional-scale + IME v2 (`02c78f9f…` pid 6886).
 ADR-310 Alpine gtk4-demo gets `preferred_scale=120` then still asks for height 2337935; no frame.
+ADR-311 host `configure_bounds` is the window geometry, not smithay `(0,0)`; no displayd flash.
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

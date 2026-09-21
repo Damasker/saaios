@@ -165,7 +165,8 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
   `02c78f9f…` now advertises fractional-scale + viewporter (ADR-309).
   Alpine 4.14.4 musl `gtk4-demo --run=dialog` still SIGSEGV after
   `preferred_scale(120)` (ADR-310): `create_buffer(508, 2337935)`.
-  Compositor protocol is not the remaining cause.
+  Remaining compositor half: smithay sent `configure_bounds(0,0)`;
+  host now sends the window size (ADR-311). No displayd flash this week.
 - **Приёмка**: либо GTK4-приложение реально рендерит кадр на железе
   тем же методом верификации, что ADR-026 использовал для Qt, либо ADR
   фиксирует осознанный отказ от GTK4 с обоснованием.
@@ -313,7 +314,7 @@ package broker → VM fallback для несовместимых приложе�
 ```text
 APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
-APP-02  GTK4 -- host frame ADR-305; panther preferred_scale=120 still 2337935 (ADR-310)
+APP-02  GTK4 -- host frame ADR-305; bounds ADR-311; panther 4.14.4 still 2337935 (ADR-310)
 APP-03  zwp_input_method_manager_v2 -- panther displayd ADR-309
 APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); IME global on panther
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
