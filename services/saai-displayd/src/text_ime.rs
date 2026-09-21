@@ -164,6 +164,7 @@ where
     ) {
         match request {
             zwp_text_input_manager_v3::Request::GetTextInput { id, seat } => {
+                println!("saai-displayd: text-input-v3 get");
                 let Some(seat) = Seat::<D>::from_resource(&seat) else {
                     return;
                 };
@@ -283,6 +284,7 @@ where
     ) {
         match request {
             zwp_text_input_manager_v2::Request::GetTextInput { id, seat } => {
+                println!("saai-displayd: text-input-v2 get");
                 let Some(seat) = Seat::<D>::from_resource(&seat) else {
                     return;
                 };

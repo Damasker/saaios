@@ -31,9 +31,10 @@ int main(void) {
     setenv_joined("XKB_CONFIG_ROOT", cwd, "share/X11/xkb");
     setenv_joined("FONTCONFIG_PATH", cwd, "etc/fonts");
     setenv_joined("FONTCONFIG_FILE", cwd, "etc/fonts/fonts.conf");
-    /* Empty module: the ibus plugin talks to a bus that is not IME.
-     * Wayland QPA then uses zwp_text_input_v3 (APP-04). */
-    setenv("QT_IM_MODULE", "", 1);
+    /* Do not set QT_IM_MODULE to empty: that disables Wayland
+     * text-input-v2 (ADR-323). The ibus plugin is deleted from the
+     * package so QPA can own IM. */
+    unsetenv("QT_IM_MODULE");
     setenv("QT_QPA_PLATFORMTHEME", "", 1);
 
     const char *data_dir = getenv("SAAIOS_DATA_DIR");

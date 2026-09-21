@@ -51,4 +51,5 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-02 configure_bounds (ADR-311) is the window geometry, not (0,0).
 # APP-04 text-input-v2 (ADR-319) is the Qt protocol; v3 stays for GTK.
 # APP-02 Alpine GTK 4.14.4 qemu frame (ADR-320) needs GTK4_ALPINE_PROBE.
+# APP-04 packed PCManFM-Qt v2 enable (ADR-323) needs PCMANFM_PACKAGE_DIR.
 saai-ui-core = { path = "../../crates/saai-ui-core" }
