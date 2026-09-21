@@ -99,7 +99,7 @@ Fresh match is Done; mismatch is Failed; verifying parent blocks child.
 Done from `finish_task`.
 
 **Threat:** none — no new network, no shell flash. Chrome that names
-`verifying` is ADR-295 (host; panther waits).
+`verifying` is ADR-295 (host; panther waits). Result screen is ADR-301.
 
 ## WORK-06
 

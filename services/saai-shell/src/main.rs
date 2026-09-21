@@ -2576,7 +2576,7 @@ fn object_view_content(
         }
         RESULT_ENTITY_TYPE => {
             let lineage = workflow_lineage_for(entity, selected_entities, relationships);
-            let (state, status) = result_universal_facts(entity);
+            let (state, status) = result_universal_facts(entity, lineage.task, selected_entities);
             let actions = workflow_follow_actions(entity, &lineage, selected_entities);
             finish_workflow_view(entity, selected_entities, lineage, state, status, actions)
         }
@@ -4595,7 +4595,9 @@ fn workflow_path_caption(entity: &Entity, lineage: &WorkflowLineage<'_>) -> Opti
     }
     if entity.entity_type != RESULT_ENTITY_TYPE {
         if let Some(result) = lineage.result {
-            parts.push(format!("Результат: {}", result.title));
+            if !task_is_in_flight(lineage.task) {
+                parts.push(format!("Результат: {}", result.title));
+            }
         }
     }
     if parts.is_empty() {
@@ -4693,7 +4695,26 @@ fn finish_workflow_view(
     }
 }
 
-fn result_universal_facts(entity: &Entity) -> (UniversalState, String) {
+fn task_is_in_flight(task: Option<&Entity>) -> bool {
+    task.is_some_and(|task| {
+        matches!(
+            workflow_status_of(task),
+            Some(TASK_STATUS_RUNNING | TASK_STATUS_VERIFYING)
+        )
+    })
+}
+
+fn result_universal_facts(
+    entity: &Entity,
+    task: Option<&Entity>,
+    entities: &[Entity],
+) -> (UniversalState, String) {
+    if let Some(task) = task.filter(|_| task_is_in_flight(task)) {
+        return (
+            task_universal_state(task, entities),
+            task_status_text(task, entities),
+        );
+    }
     if let Some(error) = entity
         .properties
         .get("error")
@@ -15628,30 +15649,104 @@ mod tests {
         let intent_view = object_view_content(&intent, &entities, &relationships);
         assert_eq!(
             intent_view.related.as_deref(),
-            Some("Задача: Собрать слайды → Действие: Экспорт PDF → Результат: PDF готов")
+            Some("Задача: Собрать слайды → Действие: Экспорт PDF")
         );
         assert_eq!(intent_view.actions, vec!["Открыть задачу"]);
 
         let task_view = object_view_content(&task, &entities, &relationships);
         assert_eq!(
             task_view.related.as_deref(),
-            Some("Намерение: Подготовить демо → Действие: Экспорт PDF → Результат: PDF готов")
+            Some("Намерение: Подготовить демо → Действие: Экспорт PDF")
         );
         assert_eq!(task_view.actions, vec!["Открыть действие"]);
 
         let action_view = object_view_content(&action, &entities, &relationships);
         assert_eq!(
             action_view.related.as_deref(),
-            Some("Намерение: Подготовить демо → Задача: Собрать слайды → Результат: PDF готов")
+            Some("Намерение: Подготовить демо → Задача: Собрать слайды")
         );
         assert_eq!(action_view.actions, vec!["Открыть результат"]);
         assert_eq!(action_view.status, "Ожидает запуска");
 
         let result_view = object_view_content(&result, &entities, &relationships);
-        assert_eq!(result_view.state, UniversalState::Complete);
-        assert_eq!(result_view.status, "Готово");
+        assert_eq!(result_view.state, UniversalState::Running);
+        assert_eq!(result_view.status, "Выполняется");
         assert_eq!(result_view.observation.as_deref(), Some("файл на диске"));
         assert_eq!(result_view.actions, vec!["Открыть задачу"]);
+    }
+
+    #[test]
+    fn object_view_result_stays_verifying_until_the_task_is_done() {
+        let intent = intent_entity("Подготовить демо");
+        let mut task = task_entity("Собрать слайды", Some(intent.id));
+        task.properties.insert(
+            "status".into(),
+            serde_json::Value::String("verifying".into()),
+        );
+        let action = action_entity("Экспорт PDF", task.id, "done");
+        let result = result_entity("PDF готов", task.id, action.id, "файл на диске");
+        let executes = related_relationship(
+            action.id,
+            ObjectRef::entity(task.id),
+            RELATION_EXECUTES,
+            Provenance::System,
+            None,
+        );
+        let produces = related_relationship(
+            action.id,
+            ObjectRef::entity(result.id),
+            RELATION_PRODUCES,
+            Provenance::System,
+            None,
+        );
+        let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
+        let relationships = vec![executes, produces];
+        let intent_view = object_view_content(&intent, &entities, &relationships);
+        assert_eq!(intent_view.status, "Проверяется");
+        assert_eq!(
+            intent_view.related.as_deref(),
+            Some("Задача: Собрать слайды → Действие: Экспорт PDF")
+        );
+        assert_eq!(intent_view.observation, None);
+        let result_view = object_view_content(&result, &entities, &relationships);
+        assert_eq!(result_view.state, UniversalState::Running);
+        assert_eq!(result_view.status, "Проверяется");
+        assert_ne!(result_view.status, "Готово");
+    }
+
+    #[test]
+    fn object_view_result_is_complete_only_after_the_task_is_done() {
+        let intent = intent_entity("Подготовить демо");
+        let mut task = task_entity("Собрать слайды", Some(intent.id));
+        task.properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let action = action_entity("Экспорт PDF", task.id, "done");
+        let result = result_entity("PDF готов", task.id, action.id, "файл на диске");
+        let executes = related_relationship(
+            action.id,
+            ObjectRef::entity(task.id),
+            RELATION_EXECUTES,
+            Provenance::System,
+            None,
+        );
+        let produces = related_relationship(
+            action.id,
+            ObjectRef::entity(result.id),
+            RELATION_PRODUCES,
+            Provenance::System,
+            None,
+        );
+        let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
+        let relationships = vec![executes, produces];
+        let intent_view = object_view_content(&intent, &entities, &relationships);
+        assert_eq!(
+            intent_view.related.as_deref(),
+            Some("Задача: Собрать слайды → Действие: Экспорт PDF → Результат: PDF готов")
+        );
+        assert_eq!(intent_view.observation.as_deref(), Some("файл на диске"));
+        let result_view = object_view_content(&result, &entities, &relationships);
+        assert_eq!(result_view.state, UniversalState::Complete);
+        assert_eq!(result_view.status, "Готово");
     }
 
     #[test]

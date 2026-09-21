@@ -240,7 +240,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 ## F — platform remainder (host until shell-legal)
 
-- WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; shell chrome ADR-295; host; no shell/taskd flash)
+- WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; shell chrome ADR-295; Result screen ADR-301; host; no shell/taskd flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
