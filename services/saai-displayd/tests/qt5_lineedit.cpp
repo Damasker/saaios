@@ -15,6 +15,10 @@ int main(int argc, char **argv) {
         std::fflush(stdout);
     });
     edit.show();
-    edit.setFocus(Qt::OtherFocusReason);
+    // ADR-359: a lone QLineEdit auto-focuses on Activated. Chrome
+    // LocationBar/Filter do not; they compete with WebView/FolderView.
+    if (!qEnvironmentVariableIsSet("QT_LINEEDIT_NO_SETFOCUS")) {
+        edit.setFocus(Qt::OtherFocusReason);
+    }
     return app.exec();
 }
