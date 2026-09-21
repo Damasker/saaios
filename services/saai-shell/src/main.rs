@@ -470,8 +470,9 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .map(str::to_string)
 }
 use saai_attention::{
-    has_orb_attention, inbox_source_ids, project_from_entities, AttentionActionability,
-    AttentionItem, AttentionProjection, AttentionSource,
+    has_orb_attention, inbox_source_ids, project_from_entities, project_with_health,
+    AttentionActionability, AttentionItem, AttentionProjection, AttentionSource, HealthReport,
+    HealthState,
 };
 use saai_object_actions::{
     display_inspect_spec, preflight, ActionAvailability, ActionResolution, ActionResolveContext,
@@ -4026,9 +4027,19 @@ fn orb_visual_state(
     entities: &[Entity],
     menu_open: bool,
 ) -> UniversalState {
+    orb_visual_state_with(appd_connected, entityd_connected, entities, menu_open, None)
+}
+
+fn orb_visual_state_with(
+    appd_connected: bool,
+    entityd_connected: bool,
+    entities: &[Entity],
+    menu_open: bool,
+    health: Option<&HealthReport>,
+) -> UniversalState {
     if !appd_connected || !entityd_connected {
         UniversalState::Offline
-    } else if orb_attention_from_entities(entities) {
+    } else if orb_attention(entities, health) {
         UniversalState::Attention
     } else if orb_failed_work(entities) {
         UniversalState::Failed
@@ -4046,7 +4057,11 @@ fn orb_visual_state(
 }
 
 fn orb_attention_from_entities(entities: &[Entity]) -> bool {
-    has_orb_attention(&project_from_entities(entities))
+    orb_attention(entities, None)
+}
+
+fn orb_attention(entities: &[Entity], health: Option<&HealthReport>) -> bool {
+    has_orb_attention(&project_with_health(entities, health))
 }
 
 fn orb_failed_work(entities: &[Entity]) -> bool {
@@ -5353,7 +5368,14 @@ fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
 /// omitted, never a placeholder.
 fn now_attention_section(entities: &[Entity]) -> Option<SystemSection> {
-    attention_section_from_projection(&project_from_entities(entities))
+    now_attention_section_with(entities, None)
+}
+
+fn now_attention_section_with(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+) -> Option<SystemSection> {
+    attention_section_from_projection(&project_with_health(entities, health))
 }
 
 /// ADR-241: NOW body order matches the boards — attention, current
@@ -5362,9 +5384,17 @@ fn now_workflow_sections(
     entities: &[Entity],
     relationships: &[Relationship],
 ) -> Vec<SystemSection> {
+    now_workflow_sections_with(entities, relationships, None)
+}
+
+fn now_workflow_sections_with(
+    entities: &[Entity],
+    relationships: &[Relationship],
+    health: Option<&HealthReport>,
+) -> Vec<SystemSection> {
     let mut sections = Vec::new();
 
-    if let Some(attention) = now_attention_section(entities) {
+    if let Some(attention) = now_attention_section_with(entities, health) {
         sections.push(attention);
     }
 
@@ -6032,6 +6062,7 @@ impl LiveMemoryFact {
 struct RuntimeLiveFacts {
     observations: Vec<LiveObservationFact>,
     memory_records: Vec<LiveMemoryFact>,
+    health: Option<HealthReport>,
 }
 
 fn observation_row_label(key: &str) -> String {
@@ -6116,10 +6147,35 @@ fn live_memory_records_from_status_json(blob: &Value) -> Vec<LiveMemoryFact> {
         .collect()
 }
 
+fn live_health_from_status_json(blob: &Value) -> Option<HealthReport> {
+    let health = blob
+        .get("status")
+        .and_then(|status| status.get("health"))
+        .or_else(|| blob.get("health"))?;
+    let component_id = health.get("component_id")?.as_str()?.to_string();
+    if component_id.is_empty() {
+        return None;
+    }
+    let state = match health.get("state")?.as_str()? {
+        "healthy" => HealthState::Healthy,
+        "degraded" => HealthState::Degraded,
+        "unhealthy" => HealthState::Unhealthy,
+        "unknown" => HealthState::Unknown,
+        _ => return None,
+    };
+    Some(HealthReport {
+        component_id,
+        state,
+        observation_id: None,
+        freshness: None,
+    })
+}
+
 fn runtime_live_facts_from_status_json(blob: &Value) -> RuntimeLiveFacts {
     RuntimeLiveFacts {
         observations: live_observations_from_status_json(blob),
         memory_records: live_memory_records_from_status_json(blob),
+        health: live_health_from_status_json(blob),
     }
 }
 
@@ -8429,11 +8485,12 @@ impl Shell {
         {
             return false;
         }
-        OrbHost::new(orb_visual_state(
+        OrbHost::new(orb_visual_state_with(
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
             self.orb_menu_open,
+            read_runtime_live_facts().health.as_ref(),
         ))
         .motion()
             == MotionCue::ActivityPulse
@@ -10889,7 +10946,11 @@ impl Shell {
     /// schedule rows. Empty sections stay omitted. Orb + intent footer
     /// remain the composer; this list does not invent weather.
     fn now_sections(&self) -> Vec<SystemSection> {
-        now_workflow_sections(&self.selected_entities, &self.relationships)
+        now_workflow_sections_with(
+            &self.selected_entities,
+            &self.relationships,
+            read_runtime_live_facts().health.as_ref(),
+        )
     }
 
     fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
@@ -11205,11 +11266,12 @@ impl Shell {
             width,
             height,
         );
-        let orb_host = OrbHost::new(orb_visual_state(
+        let orb_host = OrbHost::new(orb_visual_state_with(
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
             self.orb_menu_open,
+            read_runtime_live_facts().health.as_ref(),
         ))
         .with_reduced_motion(self.settings.reduced_motion);
         let orb_host = if let Some((percent, _)) = read_battery() {
@@ -11759,7 +11821,10 @@ impl Shell {
         }
         let attention = lock_attention_view(
             self.entityd.is_connected(),
-            orb_attention_from_entities(&self.selected_entities),
+            orb_attention(
+                &self.selected_entities,
+                read_runtime_live_facts().health.as_ref(),
+            ),
         );
         let key = lock_attention_key(&attention);
         let device = lock_device_key(&lock_device_view(read_battery()));
@@ -11931,7 +11996,10 @@ impl Shell {
         } else if pin_code.is_none() {
             let view = lock_attention_view(
                 self.entityd.is_connected(),
-                orb_attention_from_entities(&self.selected_entities),
+                orb_attention(
+                    &self.selected_entities,
+                    read_runtime_live_facts().health.as_ref(),
+                ),
             );
             let device = lock_device_view(read_battery());
             self.last_lock_idle_time = Some(idle.time.clone());
@@ -12157,14 +12225,14 @@ mod tests {
         wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
         wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
         BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
-        Entity, FieldKind, Keyboard, KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource,
-        Keystroke, LockAttentionTap, LockWakeTap, MotionClock, MotionToken, ObjectSummary,
-        OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceDetailTap, SpaceLifecycle,
-        SurfacePattern, SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState,
-        WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION,
-        INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET,
-        NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        Entity, FieldKind, HealthReport, HealthState, Keyboard, KeyboardCommand, KeyboardLayout,
+        KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap, MotionClock,
+        MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
+        SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
         SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
         SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
     };
@@ -16288,6 +16356,71 @@ mod tests {
         assert_eq!(rows[1].label, "Нагрузка");
         assert_eq!(rows[1].value, "0.3");
         assert!(!rows.iter().any(|row| row.key.contains("weather")));
+    }
+
+    #[test]
+    fn live_health_from_status_json_missing_is_none() {
+        assert!(super::live_health_from_status_json(&serde_json::json!({"ok": true})).is_none());
+        assert!(super::live_health_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": { "observations": [] }
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn live_health_from_status_json_reads_unhealthy() {
+        let report = super::live_health_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": {
+                "health": {
+                    "component_id": "system.cpu.sampler",
+                    "state": "unhealthy"
+                }
+            }
+        }))
+        .expect("health row");
+        assert_eq!(report.component_id, "system.cpu.sampler");
+        assert_eq!(report.state, HealthState::Unhealthy);
+    }
+
+    fn cpu_sampler_health(state: HealthState) -> HealthReport {
+        HealthReport {
+            component_id: "system.cpu.sampler".into(),
+            state,
+            observation_id: None,
+            freshness: None,
+        }
+    }
+
+    #[test]
+    fn unhealthy_health_lights_orb_and_now() {
+        let report = cpu_sampler_health(HealthState::Unhealthy);
+        assert!(super::orb_attention(&[], Some(&report)));
+        let section = super::now_attention_section_with(&[], Some(&report)).expect("now row");
+        assert_eq!(section.rows.len(), 1);
+        match &section.rows[0] {
+            SystemSectionRow::Status(status) => {
+                assert_eq!(status.label, "system.cpu.sampler");
+                assert_eq!(status.reason.as_deref(), Some("unhealthy"));
+            }
+            other => panic!("expected status row, got {other:?}"),
+        }
+        assert_eq!(
+            super::orb_visual_state_with(true, true, &[], false, Some(&report)),
+            UniversalState::Attention
+        );
+    }
+
+    #[test]
+    fn healthy_health_does_not_light_orb_or_now() {
+        let report = cpu_sampler_health(HealthState::Healthy);
+        assert!(!super::orb_attention(&[], Some(&report)));
+        assert!(super::now_attention_section_with(&[], Some(&report)).is_none());
+        assert_eq!(
+            super::orb_visual_state_with(true, true, &[], false, Some(&report)),
+            UniversalState::Idle
+        );
     }
 
     #[test]
