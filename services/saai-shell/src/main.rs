@@ -4044,9 +4044,9 @@ const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
 /// ADR-244: Orb state is workflow, not mood and not voice. Priority,
 /// most urgent first: Offline, Attention (`WaitingConfirmation` and
 /// undismissed notifications), Failed, Running, Waiting (pending
-/// Action / derived-ready Task — «Планирует»), Complete (verified
-/// Result), Active (menu open), Idle. Слушает stays unlit: Pixel
-/// voice is hardware-blocked (ADR-092).
+/// Action / derived-ready Task — «Планирует»), Complete (Result whose
+/// Task is `done`, not a worker claim), Active (menu open), Idle.
+/// Слушает stays unlit: Pixel voice is hardware-blocked (ADR-092).
 fn orb_visual_state(
     appd_connected: bool,
     entityd_connected: bool,
@@ -4105,12 +4105,25 @@ fn orb_failed_work(entities: &[Entity]) -> bool {
 
 fn orb_verified_result(entities: &[Entity]) -> bool {
     entities.iter().any(|entity| {
-        entity.entity_type == RESULT_ENTITY_TYPE
-            && entity
-                .properties
-                .get("error")
-                .and_then(Value::as_str)
-                .map_or(true, |text| text.is_empty())
+        if entity.entity_type != RESULT_ENTITY_TYPE {
+            return false;
+        }
+        if entity
+            .properties
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty())
+        {
+            return false;
+        }
+        let Some(task_id) = uuid_property(entity, "task_id") else {
+            return false;
+        };
+        entities.iter().any(|candidate| {
+            candidate.id == task_id
+                && candidate.entity_type == "saaios.task"
+                && workflow_status_of(candidate) == Some(TASK_STATUS_DONE)
+        })
     })
 }
 
@@ -16268,14 +16281,27 @@ mod tests {
             UniversalState::Waiting
         );
 
-        let result = result_entity(
+        let orphan = result_entity(
             "PDF готов",
             uuid::Uuid::new_v4(),
             uuid::Uuid::new_v4(),
             "файл на диске",
         );
         assert_eq!(
-            orb_visual_state(true, true, std::slice::from_ref(&result), true),
+            orb_visual_state(true, true, std::slice::from_ref(&orphan), true),
+            UniversalState::Active
+        );
+        assert_ne!(
+            orb_visual_state(true, true, std::slice::from_ref(&orphan), false),
+            UniversalState::Complete
+        );
+
+        let mut done = task_entity("Собрать слайды", None);
+        done.properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let verified = result_entity("PDF готов", done.id, uuid::Uuid::new_v4(), "файл на диске");
+        assert_eq!(
+            orb_visual_state(true, true, &[done.clone(), verified.clone()], false),
             UniversalState::Complete
         );
 
@@ -16284,18 +16310,24 @@ mod tests {
             "status".into(),
             serde_json::Value::String("verifying".into()),
         );
+        let inflight = result_entity(
+            "PDF готов",
+            verifying.id,
+            uuid::Uuid::new_v4(),
+            "файл на диске",
+        );
         assert_eq!(
-            orb_visual_state(true, true, &[verifying.clone(), result.clone()], false),
+            orb_visual_state(true, true, &[verifying.clone(), inflight.clone()], false),
             UniversalState::Running
         );
         assert_ne!(
-            orb_visual_state(true, true, &[verifying, result.clone()], false),
+            orb_visual_state(true, true, &[verifying, inflight], false),
             UniversalState::Complete
         );
 
         let waiting = task_entity("Подтвердите удаление", None);
         assert_eq!(
-            orb_visual_state(true, true, &[waiting, result.clone()], false),
+            orb_visual_state(true, true, &[waiting, orphan], false),
             UniversalState::Attention
         );
         assert_ne!(

@@ -100,6 +100,7 @@ Done from `finish_task`.
 
 **Threat:** none — no new network, no shell flash. Chrome that names
 `verifying` is ADR-295 (host; panther waits). Result screen is ADR-301.
+Orb Complete is ADR-302.
 
 ## WORK-06
 
