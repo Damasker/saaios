@@ -7,7 +7,8 @@
 //! without wl_keyboard is ADR-349. xdg Activated makes those probes
 //! type OSK hi! (ADR-352). Without setFocus that same probe still
 //! types (ADR-359). Competing non-IM pane + tap is ADR-360.
-//! Steal-back after the tap is ADR-361. Not a panther field.
+//! Steal-back after the tap is ADR-361. OSK in the enable window
+//! before steal is ADR-362. Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1861,6 +1862,223 @@ fn osk_ime_does_not_type_into_qt5_lineedit_after_steal_back() {
         entry.as_str(),
         "hi!",
         "OSK typed hi! after steal-back; Falkon-class not reproduced; displayd={lines:?}; qt={stderr}"
+    );
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+}
+
+/// ADR-362: same 80 ms steal-back, OSK in the enable window before
+/// the pane takes focus. Not a 200 ms quiet. Not a Falkon click.
+#[test]
+fn osk_ime_types_hi_bang_into_qt5_lineedit_before_steal_back() {
+    assert!(
+        qt5_available(),
+        "host Qt5 probe needs g++ and qtbase5-dev (Qt5Widgets)"
+    );
+    let probe = compile_qt5_probe();
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let mut qt = Command::new(&probe)
+        .env_remove("QT_IM_MODULE")
+        .env_remove("DISPLAY")
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("QT_LINEEDIT_COMPETE", "1")
+        .env("QT_LINEEDIT_STEAL_MS", "80")
+        .env(
+            "QT_LOGGING_RULES",
+            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn qt5_lineedit");
+    let qt_out = {
+        let stdout = qt.stdout.take().expect("qt stdout");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    };
+    let qt_err = {
+        let stderr = qt.stderr.take().expect("qt stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut saw_click = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline && !(saw_activated && saw_focus) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    let settle = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_activated && saw_focus && !saw_kbd_focus && !saw_enable) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "pre-click: expected competing pane without v2 enable; enable={saw_enable} kbd={saw_kbd_focus} xdg={saw_activated}; displayd={lines:?}; qt={stderr}"
+        );
+    }
+
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 160 20").expect("inject-click");
+        let _ = stdin.flush();
+    }
+    let click_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < click_deadline && !(saw_click && saw_enable && ime_state.activate) {
+        match log.recv_timeout(Duration::from_millis(20)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    saw_click = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_click && saw_enable && ime_state.activate && !saw_kbd_focus) {
+        let _ = qt.kill();
+        let _ = qt.wait();
+        let stderr = qt_err
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        panic!(
+            "click 160 20 did not enable v2 before steal window; click={saw_click} enable={saw_enable} activate={} kbd={saw_kbd_focus}; displayd={lines:?}; qt={stderr}",
+            ime_state.activate
+        );
+    }
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let mut entry = String::new();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        match qt_out.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if let Some(text) = line.strip_prefix("QT_LINEEDIT_TEXT=") {
+                    entry = text.to_string();
+                    if entry == "hi!" {
+                        break;
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _ = qt.kill();
+    let _ = qt.wait();
+    let stderr = qt_err
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_default();
+    assert_eq!(
+        entry, "hi!",
+        "OSK in the enable window did not type hi! before 80 ms steal-back; Falkon must race or focusObject is already null; displayd={lines:?}; qt={stderr}"
     );
     let _ = displayd.kill();
     let _ = displayd.wait();
