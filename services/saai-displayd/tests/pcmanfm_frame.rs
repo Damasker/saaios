@@ -7,7 +7,8 @@
 //! ADR-353: without wl_keyboard, xdg Activated still enables chrome v2.
 //! ADR-357: that enable stays through a 2 s quiet (not Falkon ADR-337).
 //! ADR-363: OSK into that live enable without wl_keyboard hits
-//! FolderViewListView, not Filter. ADR-364: Filter-band click on that
+//! FolderViewListView, not Filter. ADR-387: that OSK surrounding.
+//! ADR-364: Filter-band click on that
 //! seat. ADR-365: PathEdit-band click. Empty `QT_IM_MODULE` blocks the path.
 
 use std::io::{BufRead, BufReader, Write};
@@ -321,6 +322,12 @@ fn toplevel_frame_hash<'a>(line: &'a str, surface: &mut Option<String>) -> Optio
     line.split("frame sha256=")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
+}
+
+fn v2_surrounding_bytes(line: &str) -> Option<usize> {
+    line.split("text-input-v2 surrounding bytes=")
+        .nth(1)
+        .and_then(|n| n.trim().parse().ok())
 }
 
 #[test]
@@ -830,9 +837,10 @@ fn packed_pcmanfm_v2_stays_enabled_without_seat_keyboard() {
     );
 }
 
-/// ADR-363: OSK into packed PCManFM v2 on a keyboard-less seat.
+/// ADR-363/387: OSK into packed PCManFM v2 on a keyboard-less seat.
 /// Durable enable is `Fm::FolderViewListView`, not Filter.
-/// No click. No Ctrl+L. Main shm after enable stays `484823fc…`.
+/// Surrounding stays 0 (not Falkon URL ADR-385). No click. No Ctrl+L.
+/// Main shm after enable stays `484823fc…`.
 #[test]
 fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
     let pkg = pcmanfm_package();
@@ -936,6 +944,8 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
     let mut saw_focus = false;
     let mut toplevel_surface = None;
     let mut hash_after = None;
+    let mut surrounding_at_enable: Option<usize> = None;
+    let mut surrounding_after_osk: Option<usize> = None;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline && !(saw_enable && ime_state.activate) {
@@ -954,6 +964,9 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
                 }
                 if line.contains("text-input-v2 enable") {
                     saw_enable = true;
+                }
+                if let Some(n) = v2_surrounding_bytes(&line) {
+                    surrounding_at_enable = Some(n);
                 }
                 if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
                     saw_frame = true;
@@ -1006,6 +1019,9 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
                 if line.contains("text-input-v2 commit_string") {
                     saw_commit = true;
                 }
+                if let Some(n) = v2_surrounding_bytes(&line) {
+                    surrounding_after_osk = Some(n);
+                }
                 if line.contains("keyboard focus set") {
                     saw_kbd_focus = true;
                 }
@@ -1037,6 +1053,10 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
     assert!(
         !stderr.contains("discard commit_string"),
         "Qt discarded commit_string on keyboard-less PCManFM; qt={stderr}"
+    );
+    assert!(
+        surrounding_after_osk.unwrap_or(0) == 0,
+        "PCManFM FolderView OSK surrounding grew; expected no text field; enable={surrounding_at_enable:?} osk={surrounding_after_osk:?}; displayd={lines:?}; stderr={stderr}"
     );
     assert_eq!(
         hash_at_enable, hash_after,
