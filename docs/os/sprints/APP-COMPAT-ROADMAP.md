@@ -187,7 +187,8 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 - **Статус**: Host protocol Done, 2026-09-21, ADR-270. Layer geometry
   host ADR-271. Layer blit dest host ADR-272. Shell IME layer host
-  ADR-273. Panther chrome waits next shell/displayd experiment.
+  ADR-273. Panther shell `4dc19018…` (ADR-308) logs IME v2 unavailable;
+  foreign OSK stays off until a displayd experiment.
 - **Goal**: тап по текстовому полю стороннего Qt-приложения показывает
   клавиатуру, ввод долетает до приложения -- APP-KEYBOARD-01 из
   исходного плана, но через путь, который реально работает на этом

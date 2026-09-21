@@ -1,6 +1,6 @@
 # SaaiOS Attention & Proactive Context — delivery roadmap
 
-Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит. ATTN-06 host (ADR-291 + shell wire ADR-293).**
+Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит. ATTN-06 host (ADR-291 + shell wire ADR-293) + panther `4dc19018…` (ADR-308).**
 Phone: ATTN-02/03 ride VUI-05; ATTN-04 rides VUI-04. See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-123](../../adr/ADR-123-attention-projection.md)
@@ -22,7 +22,7 @@ No second notification subsystem. No attention database.
 | ATTN-03 | Inbox uses same projection | **Done** (host + panther) | **yes** |
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
 | ATTN-05 | Context relevance (no AI) | Backlog | no |
-| ATTN-06 | One World Model Health adapter | **Done** (host, ADR-291 + shell wire ADR-293) | no |
+| ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
 | ATTN-07 | One OAM suggested action | Backlog | **yes** |
 
 ## ATTN-01

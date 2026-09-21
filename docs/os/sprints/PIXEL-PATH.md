@@ -221,7 +221,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 ## D — второй узел (не вместо panther)
 
-- PCE-25 node identity: laptop `x86`/`computer` ≠ panther `phone` (ADR-249; Sistema «Узел» ADR-298; live `status.device` ADR-299; live `hardware_model` ADR-300; host; no shell flash)
+- PCE-25 node identity: laptop `x86`/`computer` ≠ panther `phone` (ADR-249; Sistema «Узел» ADR-298; live `status.device` ADR-299; live `hardware_model` ADR-300; panther `4dc19018…` pid 6710)
 - Windowed displayd on x86: 1280×800, model `x86` (ADR-250; host)
 - Pointer + USB HID keyboard on x86 seat (ADR-251; host)
 - Logical layout: x86 1280×800, panther 1080×2400 (ADR-252; host)
@@ -241,13 +241,13 @@ diagnose (ADR-238, `351b0b6f…`).
 
 ## F — platform remainder (host until shell-legal)
 
-- WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; shell chrome ADR-295; Result screen ADR-301; Orb Complete ADR-302; Orb Failed ADR-303; host; no shell/taskd flash)
+- WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; shell chrome ADR-295; Result screen ADR-301; Orb Complete ADR-302; Orb Failed ADR-303; panther `4dc19018…` pid 6710; no taskd flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
 - WORLD-06 CPU sampler Health from Observation (ADR-287; status wire ADR-292; host; Stale→Unknown; no runtime flash)
 - WORLD-07 ObservationThreshold on native schedules (ADR-290; host; Stale not due; no taskd flash)
-- ATTN-06 Health adapter: Unhealthy lights Orb, Healthy is omitted (ADR-291; shell reads status.health ADR-293; host; no shell flash)
+- ATTN-06 Health adapter: Unhealthy lights Orb, Healthy is omitted (ADR-291; shell reads status.health ADR-293; panther `4dc19018…` pid 6710)
 - AUTH-02 PolicyEngine adapter, same verdicts (ADR-260; host)
 - AUTH-03 scoped session grants, not tool-name HashSet (ADR-261; host)
 - AUTH-05 OAM/IRAB Principal on AuthorityRequest (ADR-275; host)
@@ -260,11 +260,11 @@ diagnose (ADR-238, `351b0b6f…`).
 - MEM-04 MemoryContextProjection kind labels; Restricted off model (ADR-285; host)
 - MEM-06 invalidate vs erase (ADR-263; JSON erase ADR-284; host; no runtime flash)
 - MEM-07 UAM on memory mutation (ADR-283; host; no runtime flash)
-- MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome host ADR-268, Restricted omit ADR-304, panther waits)
+- MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome ADR-268, Restricted omit ADR-304; panther `4dc19018…` pid 6710)
 - APP-COMPAT APP-02 compositor half: `wp-fractional-scale-v1` + `wp-viewporter` (ADR-266; GDK shm size ADR-286; host GTK4 cairo frame ADR-305). GTK4 frame on panther still waits.
 - Native Wayland clipboard is deny-by-default; portal stays the grant path (ADR-294; host; no displayd flash)
 - APP-COMPAT APP-03 compositor: `zwp_input_method_v2` without keymap (ADR-267; host). OSK chrome is APP-04.
-- APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272, shell IME layer ADR-273 (host). No wvkbd. Panther chrome waits.
+- APP-COMPAT APP-04 OSK is existing Keyboard via IME `commit_string` (ADR-270; host). Layer size/hit ADR-271, blit dest ADR-272, shell IME layer ADR-273. Panther shell `4dc19018…` logs IME v2 unavailable; foreign OSK stays off until displayd. No wvkbd.
 - APP-COMPAT APP-06 first browser is Falkon/QtWebEngine (ADR-269; package tree ADR-281; host qemu shm frame ADR-306). No panther launch.
 - Visual v1 unsigned; `compile_v2_public` stays Experimental (ADR-265)
 

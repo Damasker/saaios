@@ -6,10 +6,11 @@ Nothing in the public `.sui` 2 subset is Stable.
 Production chrome: `compile_v2()` on `services/saai-shell/ui/root.sui`
 (ADR-216). Frozen v1 stays `compile_v1_rollback()`. Space detail deferred.
 MEM-08 omitted until a shell-legal memory read exists. Host chrome is
-ADR-268 (`Записи` from status); panther paint waits.
+ADR-268 (`Записи` from status); Restricted omit ADR-304; panther
+`4dc19018…` (ADR-308).
 
-Current panther shell: `c05eedf9…` (ADR-216). Prior chrome `3850427a…`
-(ADR-198). Lock cycle is proven
+Current panther shell: `4dc19018…` (ADR-308). Prior chrome `5ba2ef7b…`
+(ADR-254). Lock cycle is proven
 (ADR-209). Display restart is proven (ADR-210). Cold boot is proven
 (ADR-211). 7-tap gallery is proven (ADR-212). Parked last: thin tuning
 (ADR-213). List trailing rows are host (ADR-214). Me flatten/scroll

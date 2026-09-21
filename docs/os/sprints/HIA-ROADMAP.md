@@ -568,7 +568,8 @@ PCE-25  Physical Multi-node Test Lab
 завершены с приведёнными в документе доказательствами и ограничениями.
 
 Голос остаётся заблокирован аппаратной авторизацией AoC (ADR-092).
-PCE-25 identity закрыт на host (ADR-249). Windowed displayd на x86 закрыт на host (ADR-250). Pointer+USB HID на x86 закрыт на host (ADR-251). Logical layout
+PCE-25 identity закрыт на host (ADR-249). Sistema «Узел» на panther
+`4dc19018…` (ADR-298/299/300; ADR-308). Windowed displayd на x86 закрыт на host (ADR-250). Pointer+USB HID на x86 закрыт на host (ADR-251). Logical layout
 закрыт на host (ADR-252). Shared Space/Entity/Intent/Observation:
 laptop is a USB NCM client of the panther store (ADR-307;
 panther `c15c551d…` pid 6568; `38128` lists home=16 work=7),
