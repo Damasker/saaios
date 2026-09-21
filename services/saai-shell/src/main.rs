@@ -6232,6 +6232,13 @@ fn live_memory_records_from_status_json(blob: &Value) -> Vec<LiveMemoryFact> {
             if space != "global" {
                 return None;
             }
+            let sensitivity = row
+                .get("sensitivity")
+                .and_then(Value::as_str)
+                .unwrap_or("normal");
+            if sensitivity.eq_ignore_ascii_case("restricted") {
+                return None;
+            }
             Some(LiveMemoryFact {
                 key: key.to_string(),
                 value: value.to_string(),
@@ -17018,6 +17025,13 @@ mod tests {
                         "space": "work",
                         "kind": "explicit_fact"
                     },
+                    {
+                        "key": "pin",
+                        "value": "1234",
+                        "space": "global",
+                        "kind": "explicit_fact",
+                        "sensitivity": "restricted"
+                    },
                     { "key": "", "value": "x", "space": "global", "kind": "explicit_fact" }
                 ]
             }
@@ -17027,6 +17041,8 @@ mod tests {
         assert_eq!(rows[0].value, "home");
         assert_eq!(rows[0].kind, "explicit_fact");
         assert!(!rows.iter().any(|row| row.key == "deploy"));
+        assert!(!rows.iter().any(|row| row.key == "pin"));
+        assert!(!rows.iter().any(|row| row.value == "1234"));
     }
 
     #[test]

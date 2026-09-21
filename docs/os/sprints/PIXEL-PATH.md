@@ -259,7 +259,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - MEM-04 MemoryContextProjection kind labels; Restricted off model (ADR-285; host)
 - MEM-06 invalidate vs erase (ADR-263; JSON erase ADR-284; host; no runtime flash)
 - MEM-07 UAM on memory mutation (ADR-283; host; no runtime flash)
-- MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome host ADR-268, panther waits)
+- MEM-08 when shell-legal read exists (ADR-264 status `memory_records`; chrome host ADR-268, Restricted omit ADR-304, panther waits)
 - APP-COMPAT APP-02 compositor half: `wp-fractional-scale-v1` + `wp-viewporter` (ADR-266; GDK shm size ADR-286; host). GTK4 frame on panther still waits.
 - Native Wayland clipboard is deny-by-default; portal stays the grant path (ADR-294; host; no displayd flash)
 - APP-COMPAT APP-03 compositor: `zwp_input_method_v2` without keymap (ADR-267; host). OSK chrome is APP-04.

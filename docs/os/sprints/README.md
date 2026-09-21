@@ -156,6 +156,7 @@ ADR-300 Sistema «Это устройство» prefers live `hardware_model` (h
 ADR-301 Result is not Complete while the Task is Running/Verifying (host).
 ADR-302 Orb Complete requires the Result's Task to be Done (host).
 ADR-303 Orb Failed is the Task's class, not Result.error (host).
+ADR-304 Sistema «Записи» omits Restricted even if status leaks it (host).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

@@ -28,7 +28,7 @@ User can inspect, correct, and erase without AI.
 | MEM-05 | Explicit remember/correct; model cannot write Explicit* | **Done** (host: model has no remember/forget tools) | with P0 flash |
 | MEM-06 | Invalidate vs Erase; atomic JSONL rewrite | **Done** (host, ADR-263/284) | no |
 | MEM-07 | UAM on memory mutation (reuse ADR-124 Principal) | **Done** (host, ADR-283) | no |
-| MEM-08 | Manual review surface without AI | legal read **host** (ADR-264); chrome **host** (ADR-268); panther paint waits | **yes** (next shell experiment; JSONL still forbidden) |
+| MEM-08 | Manual review surface without AI | legal read **host** (ADR-264); chrome **host** (ADR-268); Restricted omit ADR-304; panther paint waits | **yes** (next shell experiment; JSONL still forbidden) |
 | MEM-09 | LearnedHypothesis + one bounded pattern; no profiling | Backlog | no |
 | MEM-10 | Pixel 7: scope, preference, correction, model isolation, erase, AI-off | Backlog | **yes** |
 
