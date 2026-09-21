@@ -315,7 +315,7 @@ package broker → VM fallback для несовместимых приложе�
 ```text
 APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
-APP-02  GTK4 -- host frame ADR-305; bounds ADR-311; panther 4.14.4 still 2337935 (ADR-310)
+APP-02  GTK4 -- host 4.18 frame ADR-305; bounds ADR-311; 4.14.4 qemu shm frame ADR-320; panther still 2337935 until next displayd flash (ADR-310)
 APP-03  zwp_input_method_manager_v2 -- panther displayd ADR-309
 APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); IME global on panther; WebEngine field does not Activate (ADR-317); PCManFM Filter neither (ADR-318); host text-input-v2 for Qt (ADR-319; no flash)
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
