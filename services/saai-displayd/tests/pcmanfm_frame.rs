@@ -7,7 +7,8 @@
 //! ADR-353: without wl_keyboard, xdg Activated still enables chrome v2.
 //! ADR-357: that enable stays through a 2 s quiet (not Falkon ADR-337).
 //! ADR-363: OSK into that live enable without wl_keyboard hits
-//! FolderViewListView, not Filter. Empty `QT_IM_MODULE` blocks the path.
+//! FolderViewListView, not Filter. ADR-364: Filter-band click on that
+//! seat. Empty `QT_IM_MODULE` blocks the path.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1040,5 +1041,254 @@ fn packed_pcmanfm_osk_without_seat_keyboard_hits_folderview_not_filter() {
     assert_eq!(
         hash_at_enable, hash_after,
         "PCManFM main shm changed after OSK; at_enable={hash_at_enable:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
+    );
+}
+
+/// ADR-364: one Filter-band click `400 760` on a keyboard-less seat
+/// after FolderView enable. Not a Y sweep. Not Ctrl+L. Not Falkon.
+#[test]
+fn packed_pcmanfm_filter_click_without_seat_keyboard_still_folderview() {
+    let pkg = pcmanfm_package();
+    let bin = pkg.join("bin/pcmanfm-qt");
+    assert!(
+        bin.is_file(),
+        "missing packed pcmanfm-qt at {} — set PCMANFM_PACKAGE_DIR",
+        bin.display()
+    );
+    assert!(
+        pkg.join("lib/ld-musl-aarch64.so.1").is_file(),
+        "missing musl loader in {}",
+        pkg.display()
+    );
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let home_dir = tempfile::tempdir().expect("failed to create PCManFM HOME");
+    let cfg = home_dir.path().join(".config/pcmanfm-qt/default");
+    std::fs::create_dir_all(&cfg).expect("pcmanfm config dir");
+    std::fs::write(
+        cfg.join("settings.conf"),
+        "[FolderView]\nShowFilter=true\n[Window]\nPathBarButtons=false\n",
+    )
+    .expect("write settings.conf");
+
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let path = std::env::var("PATH").unwrap_or_default();
+    let pkg = pkg.canonicalize().expect("canonicalize pcmanfm package");
+    let bin = pkg.join("bin/pcmanfm-qt");
+
+    let mut child = Command::new("dbus-run-session")
+        .arg("--")
+        .arg("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&pkg)
+        .arg(&bin)
+        .env_remove("QT_IM_MODULE")
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("QT_PLUGIN_PATH", pkg.join("plugins"))
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
+        .env("QT_QPA_PLATFORMTHEME", "")
+        .env("QT_LOGGING_TO_CONSOLE", "1")
+        .env("QT_ASSUME_STDERR_HAS_CONSOLE", "1")
+        .env(
+            "QT_LOGGING_RULES",
+            "qt.qpa.wayland.textinput.debug=true;qt.qpa.input.methods.debug=true",
+        )
+        .process_group(0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("dbus-run-session/qemu failed to spawn pcmanfm-qt");
+    let stderr_rx = {
+        let stderr = child.stderr.take().expect("pcmanfm stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut saw_click = false;
+    let mut saw_commit = false;
+    let mut enable_count = 0u32;
+    let mut toplevel_surface = None;
+    let mut hash_after = None;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !(saw_enable && ime_state.activate) {
+        match log.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                    enable_count += 1;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_enable && ime_state.activate && saw_focus && !saw_kbd_focus && saw_activated) {
+        reap_pcmanfm(&mut child);
+        let stderr = stderr_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let _ = displayd.kill();
+        let _ = displayd.wait();
+        panic!(
+            "pre-click: PCManFM never enabled v2; enable={saw_enable} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+        );
+    }
+    let hash_at_enable = hash_after.clone();
+
+    if let Some(stdin) = displayd.stdin.as_mut() {
+        writeln!(stdin, "inject-click 400 760").expect("inject-click");
+        let _ = stdin.flush();
+    }
+    let click_deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < click_deadline && !saw_click {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("injected click") {
+                    saw_click = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    enable_count += 1;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !saw_click || saw_kbd_focus {
+        reap_pcmanfm(&mut child);
+        let stderr = stderr_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let _ = displayd.kill();
+        let _ = displayd.wait();
+        panic!(
+            "Filter click 400 760; click={saw_click} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+        );
+    }
+    let hash_at_click = hash_after.clone();
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let paint = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < paint {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 commit_string") {
+                    saw_commit = true;
+                }
+                if line.contains("text-input-v2 enable") {
+                    enable_count += 1;
+                }
+                if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
+                    hash_after = Some(h.to_string());
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    reap_pcmanfm(&mut child);
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_commit && !saw_kbd_focus,
+        "expected OSK commit after Filter click; commit={saw_commit} enables={enable_count} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("FolderViewListView::inputMethodQuery"),
+        "expected FolderView IM still; qt={stderr}"
+    );
+    assert!(
+        !stderr.contains("QLineEdit::inputMethodQuery"),
+        "Filter QLineEdit took IM after 400 760; do not claim typed without shm; qt={stderr}"
+    );
+    assert_eq!(
+        hash_at_click, hash_after,
+        "PCManFM shm changed after Filter click OSK; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
     );
 }
