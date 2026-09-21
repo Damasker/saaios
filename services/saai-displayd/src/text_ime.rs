@@ -338,6 +338,7 @@ where
             }
             zwp_text_input_v2::Request::Disable { surface: _ }
             | zwp_text_input_v2::Request::HideInputPanel => {
+                println!("saai-displayd: text-input-v2 disable");
                 *ime.active.lock().expect("active") = None;
                 if let Some(im) = ime.input_method.lock().expect("input_method").as_ref() {
                     im.deactivate();
@@ -488,6 +489,7 @@ where
                 }
                 for ti in ime.text_inputs_v2.lock().expect("text_inputs_v2").iter() {
                     if ti.id() == active_id && focus.id().same_client_as(&ti.id()) {
+                        println!("saai-displayd: text-input-v2 commit_string");
                         ti.commit_string(text.clone());
                     }
                 }

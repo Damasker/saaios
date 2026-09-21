@@ -1,12 +1,26 @@
 //! APP-04 / ADR-323: packed aarch64 PCManFM-Qt (Qt 5.15) binds
 //! `zwp_text_input_manager_v2` on host `saai-displayd` and `enable`s.
-//! Empty `QT_IM_MODULE` blocks that path. Not a panther typed field.
+//! ADR-324: a separate IME client can `commit_string` while that
+//! enable is live. Empty `QT_IM_MODULE` blocks the path. Not a panthe
+//! typed field.
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+use wayland_client::{
+    globals::{registry_queue_init, GlobalListContents},
+    protocol::{wl_registry, wl_seat},
+    Connection, Dispatch, QueueHandle,
+};
+use wayland_protocols_misc::zwp_input_method_v2::client::{
+    zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2,
+    zwp_input_method_manager_v2::ZwpInputMethodManagerV2,
+    zwp_input_method_v2::{self, ZwpInputMethodV2},
+    zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2,
+};
 
 fn displayd_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_saai-displayd"))
@@ -181,6 +195,223 @@ fn pcmanfm_qt_binds_text_input_v2_when_im_module_is_unset() {
         saw_enable,
         "Qt 5.15 never zwp_text_input_v2.enable; displayd={lines:?}; stderr={stderr}"
     );
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+}
+
+struct ImeState {
+    activate: bool,
+}
+
+macro_rules! empty_dispatch {
+    ($ty:ty) => {
+        impl Dispatch<$ty, ()> for ImeState {
+            fn event(
+                _state: &mut Self,
+                _proxy: &$ty,
+                _event: <$ty as wayland_client::Proxy>::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+            }
+        }
+    };
+}
+
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for ImeState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_registry::WlRegistry,
+        _event: wl_registry::Event,
+        _data: &GlobalListContents,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+empty_dispatch!(wl_seat::WlSeat);
+empty_dispatch!(ZwpInputMethodManagerV2);
+empty_dispatch!(ZwpInputMethodKeyboardGrabV2);
+empty_dispatch!(ZwpInputPopupSurfaceV2);
+
+impl Dispatch<ZwpInputMethodV2, ()> for ImeState {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwpInputMethodV2,
+        event: zwp_input_method_v2::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if matches!(event, zwp_input_method_v2::Event::Activate) {
+            state.activate = true;
+        }
+    }
+}
+
+fn connect(runtime_dir: &std::path::Path, socket_name: &str) -> Connection {
+    unsafe {
+        std::env::set_var("XDG_RUNTIME_DIR", runtime_dir);
+        std::env::set_var("WAYLAND_DISPLAY", socket_name);
+    }
+    Connection::connect_to_env().expect("failed to connect to saai-displayd")
+}
+
+fn frame_hash(line: &str) -> Option<&str> {
+    line.split("frame sha256=")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+}
+
+#[test]
+fn osk_ime_commit_string_reaches_pcmanfm_v2() {
+    let pkg = pcmanfm_package();
+    let bin = pkg.join("bin/pcmanfm-qt");
+    assert!(
+        bin.is_file(),
+        "missing packed pcmanfm-qt at {} — set PCMANFM_PACKAGE_DIR",
+        bin.display()
+    );
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    let home_dir = tempfile::tempdir().expect("failed to create PCManFM HOME");
+    let cfg = home_dir.path().join(".config/pcmanfm-qt/default");
+    std::fs::create_dir_all(&cfg).expect("pcmanfm config dir");
+    std::fs::write(
+        cfg.join("settings.conf"),
+        "[FolderView]\nShowFilter=true\n[Window]\nPathBarButtons=false\n",
+    )
+    .expect("write settings.conf");
+
+    let (mut displayd, log) = spawn_displayd(runtime_dir.path());
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let path = std::env::var("PATH").unwrap_or_default();
+    let pkg = pkg.canonicalize().expect("canonicalize pcmanfm package");
+    let bin = pkg.join("bin/pcmanfm-qt");
+
+    let mut child = Command::new("dbus-run-session")
+        .arg("--")
+        .arg("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&pkg)
+        .arg(&bin)
+        .env_remove("QT_IM_MODULE")
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("HOME", home_dir.path())
+        .env("QT_PLUGIN_PATH", pkg.join("plugins"))
+        .env("QT_QPA_PLATFORM", "wayland")
+        .env("XKB_CONFIG_ROOT", pkg.join("share/X11/xkb"))
+        .env("QT_QPA_PLATFORMTHEME", "")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("dbus-run-session/qemu failed to spawn pcmanfm-qt");
+    let stderr_rx = {
+        let stderr = child.stderr.take().expect("pcmanfm stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_enable = false;
+    let mut saw_disable = false;
+    let mut first_hash = None;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !(saw_enable && ime_state.activate && first_hash.is_some()) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("text-input-v2 disable") {
+                    saw_disable = true;
+                }
+                if first_hash.is_none() {
+                    if let Some(h) = frame_hash(&line) {
+                        first_hash = Some(h.to_string());
+                    }
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    assert!(
+        saw_enable,
+        "Qt never enabled v2 before IME commit; displayd={lines:?}; disable={saw_disable}"
+    );
+    assert!(
+        ime_state.activate,
+        "IME never Activate after PCManFM enable; displayd={lines:?}; disable={saw_disable}"
+    );
+    assert!(
+        !saw_disable,
+        "Qt hid the input panel before OSK could type; displayd={lines:?}"
+    );
+
+    ime.commit_string(String::from("hi!"));
+    ime.commit(0);
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime commit roundtrip");
+
+    let mut saw_commit = false;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline && !saw_commit {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v2 commit_string") {
+                    saw_commit = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    assert!(
+        saw_commit,
+        "IME commit_string did not reach the v2 field; displayd={lines:?}; stderr={stderr}"
+    );
+    // Packed Qt 5.15 does not commit a new shm frame after that
+    // event (ADR-324). Protocol reach is this slice; paint is not.
     let _ = displayd.kill();
     let _ = displayd.wait();
 }
