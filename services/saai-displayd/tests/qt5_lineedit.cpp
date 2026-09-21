@@ -5,6 +5,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QStringList>
+#include <QStringListModel>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -117,6 +118,22 @@ int main(int argc, char **argv) {
                     old->deleteLater();
                 }
             });
+    }
+
+    if (qEnvironmentVariableIsSet("QT_LINEEDIT_COMPLETER_ASYNC")) {
+        // ADR-411: PathEdit onJobFinished updates the model without
+        // complete() on focusIn. Lone QLineEdit keeps v2; PathEdit
+        // disable is not this.
+        edit->setText(QStringLiteral("/tmp/"));
+        auto *model = new QStringListModel(edit);
+        auto *c = new QCompleter(edit);
+        c->setModel(model);
+        edit->setCompleter(c);
+        QTimer::singleShot(80, model, [model]() {
+            model->setStringList(QStringList()
+                                 << QStringLiteral("/tmp/a/")
+                                 << QStringLiteral("/tmp/b/"));
+        });
     }
 
     if (qEnvironmentVariableIsSet("QT_LINEEDIT_MENU")) {
