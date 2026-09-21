@@ -200,6 +200,7 @@ ADR-344 packed gtk4-demo --run=entry binds v3; center click does not enable (no 
 ADR-345 packed GTK 4.14 Entry types without grab_focus on a keyboard seat (no flash).
 ADR-346 packed GTK 4.14 Entry types OSK without wl_keyboard (no flash).
 ADR-347 packed Qt 6 QLineEdit binds v2 without wl_keyboard and does not enable (no flash).
+ADR-348 packed Qt 5 QLineEdit binds v2 without wl_keyboard and does not enable (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
