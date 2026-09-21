@@ -253,6 +253,7 @@ ADR-397 gtk4-demo entry_completion OSK types without xdg_popup (no flash).
 ADR-398 packed Falkon URL still flash-disables after no-steal (no flash).
 ADR-399 gtk4-demo combobox has no xdg_popup without a click (no flash).
 ADR-400 gtk4-demo combobox click 200 90 has no xdg_popup (no flash).
+ADR-401 packed GTK 4.14 popover maps configured xdg_popup (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).

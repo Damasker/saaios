@@ -17,6 +17,7 @@
 //! OSK into that demo types without xdg_popup (ADR-397).
 //! `--run=combobox` maps without xdg_popup until a tap (ADR-399).
 //! One click `200 90` still has no xdg_popup (ADR-400).
+//! Packed GtkMenuButton popover without a tap is ADR-401.
 //! Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
@@ -2257,6 +2258,145 @@ fn packed_gtk4_demo_combobox_click_200_90_has_no_popup() {
     assert!(
         !saw_popup && !popup_failed,
         "combobox click 200 90 mapped xdg_popup; ADR-394 configure would be exercised; popup={saw_popup} failed={popup_failed}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+}
+
+fn packed_gtk414_popover() -> PathBuf {
+    if let Ok(p) = std::env::var("PACKED_GTK414_POPOVER") {
+        return PathBuf::from(p);
+    }
+    gtk4_alpine_probe().join("bin/gtk414-popover")
+}
+
+/// ADR-401: packed GTK 4.14 GtkMenuButton popover without a tap.
+/// gtk_menu_button_popup after map. Not gtk4-demo. Not a Y sweep.
+#[test]
+fn packed_gtk414_popover_maps_xdg_popup_without_click() {
+    let probe = gtk4_alpine_probe();
+    let bin = packed_gtk414_popover();
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        bin.is_file(),
+        "missing Alpine GTK 4.14 popover at {} — set PACKED_GTK414_POPOVER",
+        bin.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let bin = if bin.is_absolute() {
+        bin
+    } else {
+        probe.join("bin/gtk414-popover")
+    };
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&bin)
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GTK4_PROBE_HOLD", "1")
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk414-popover");
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk414-popover stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_frame = false;
+    let mut saw_activated = false;
+    let mut saw_focus = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_popup = false;
+    let mut popup_failed = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline
+        && !(saw_toplevel && saw_frame && saw_activated && saw_focus && saw_popup)
+    {
+        match log.recv_timeout(Duration::from_millis(100)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                }
+                if line.contains("frame sha256=") {
+                    saw_frame = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("xdg popup configure failed") {
+                    popup_failed = true;
+                    saw_popup = true;
+                } else if line.contains("xdg popup") {
+                    saw_popup = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = gtk.kill();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_toplevel && saw_frame && saw_activated && saw_focus && !saw_kbd_focus,
+        "popover probe did not map/activate; kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated} frame={saw_frame}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        saw_popup && !popup_failed,
+        "popover probe never mapped a configured xdg_popup; popup={saw_popup} failed={popup_failed}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
