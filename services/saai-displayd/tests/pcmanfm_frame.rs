@@ -8,8 +8,8 @@
 //! ADR-357: that enable stays through a 2 s quiet (not Falkon ADR-337).
 //! ADR-363: OSK into that live enable without wl_keyboard hits
 //! FolderViewListView, not Filter. ADR-387: that OSK surrounding.
-//! ADR-364: Filter-band click on that
-//! seat. ADR-365: PathEdit-band click. Empty `QT_IM_MODULE` blocks the path.
+//! ADR-364/391: Filter-band click maps a line caret; OSK grows surrounding.
+//! ADR-365: PathEdit-band click. Empty `QT_IM_MODULE` blocks the path.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -328,6 +328,19 @@ fn v2_surrounding_bytes(line: &str) -> Option<usize> {
     line.split("text-input-v2 surrounding bytes=")
         .nth(1)
         .and_then(|n| n.trim().parse().ok())
+}
+
+fn v2_cursor_size(line: &str) -> Option<(i32, i32)> {
+    let rest = line.split("text-input-v2 cursor ").nth(1)?;
+    let dim = rest.split('+').next()?.trim();
+    let mut it = dim.split('x');
+    let w = it.next()?.parse().ok()?;
+    let h = it.next()?.parse().ok()?;
+    Some((w, h))
+}
+
+fn v2_line_caret(line: &str) -> bool {
+    matches!(v2_cursor_size(line), Some((w, h)) if w <= 20 && h <= 40)
 }
 
 #[test]
@@ -1208,12 +1221,30 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     }
     let hash_at_enable = hash_after.clone();
 
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+
     if let Some(stdin) = displayd.stdin.as_mut() {
         writeln!(stdin, "inject-click {x} {y}").expect("inject-click");
         let _ = stdin.flush();
     }
+    let mut saw_line_caret = false;
+    let mut surrounding_at_caret: Option<usize> = None;
+    let mut surrounding_after_osk: Option<usize> = None;
+    let mut osk_sent = false;
     let click_deadline = Instant::now() + Duration::from_secs(4);
-    while Instant::now() < click_deadline && !saw_click {
+    let wait_caret = band == "Filter";
+    while Instant::now() < click_deadline
+        && !(saw_click && (!wait_caret || saw_line_caret) && osk_sent)
+    {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
                 if line.contains("injected click") {
@@ -1225,6 +1256,17 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
                 if line.contains("text-input-v2 enable") {
                     enable_count += 1;
                 }
+                if line.contains("text-input-v2 commit_string") {
+                    saw_commit = true;
+                }
+                if v2_line_caret(&line) {
+                    saw_line_caret = true;
+                }
+                if let Some(n) = v2_surrounding_bytes(&line) {
+                    if saw_line_caret {
+                        surrounding_at_caret = Some(n);
+                    }
+                }
                 if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
                     hash_after = Some(h.to_string());
                 }
@@ -1233,9 +1275,20 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+        if saw_click && (!wait_caret || saw_line_caret) && !osk_sent {
+            for action in actions {
+                let stroke = Keyboard::keystroke_from_osk_action(action)
+                    .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+                if let Some(op) = stroke.to_ime_op() {
+                    send_ime_op(&ime, &op);
+                }
+                let _ = queue.roundtrip(&mut ime_state);
+            }
+            osk_sent = true;
+        }
         let _ = queue.roundtrip(&mut ime_state);
     }
-    if !saw_click || saw_kbd_focus {
+    if !saw_click || saw_kbd_focus || (wait_caret && !saw_line_caret) || !osk_sent {
         reap_pcmanfm(&mut child);
         let stderr = stderr_rx
             .recv_timeout(Duration::from_secs(1))
@@ -1243,31 +1296,12 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
         let _ = displayd.kill();
         let _ = displayd.wait();
         panic!(
-            "{band} click {x} {y}; click={saw_click} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+            "{band} click {x} {y}; click={saw_click} caret={saw_line_caret} osk={osk_sent} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
         );
     }
     let hash_at_click = hash_after.clone();
 
-    let keyboard = Keyboard::bind_foreign_ime();
-    assert!(keyboard.shows_panel());
-    let actions = [
-        "intent:key:h",
-        "intent:key:i",
-        "intent:mode:toggle",
-        "intent:backspace",
-        "intent:key:i",
-        "intent:key:!",
-    ];
-    for action in actions {
-        let stroke = Keyboard::keystroke_from_osk_action(action)
-            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
-        if let Some(op) = stroke.to_ime_op() {
-            send_ime_op(&ime, &op);
-        }
-        let _ = queue.roundtrip(&mut ime_state);
-    }
-
-    let paint = Instant::now() + Duration::from_secs(2);
+    let paint = Instant::now() + Duration::from_secs(4);
     while Instant::now() < paint {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
@@ -1277,6 +1311,9 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
                 if line.contains("text-input-v2 enable") {
                     enable_count += 1;
                 }
+                if let Some(n) = v2_surrounding_bytes(&line) {
+                    surrounding_after_osk = Some(n);
+                }
                 if let Some(h) = toplevel_frame_hash(&line, &mut toplevel_surface) {
                     hash_after = Some(h.to_string());
                 }
@@ -1286,6 +1323,9 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
         let _ = queue.roundtrip(&mut ime_state);
+        if wait_caret && surrounding_after_osk.unwrap_or(0) >= 3 {
+            break;
+        }
     }
 
     reap_pcmanfm(&mut child);
@@ -1296,26 +1336,44 @@ fn packed_pcmanfm_band_click_osk(x: i32, y: i32, band: &str) {
     let _ = displayd.wait();
     assert!(
         saw_commit && !saw_kbd_focus,
-        "expected OSK commit after {band} click; commit={saw_commit} enables={enable_count} kbd={saw_kbd_focus}; displayd={lines:?}; stderr={stderr}"
+        "expected OSK commit after {band} click; commit={saw_commit} enables={enable_count} kbd={saw_kbd_focus} caret={saw_line_caret}; displayd={lines:?}; stderr={stderr}"
     );
-    assert!(
-        stderr.contains("FolderViewListView::inputMethodQuery"),
-        "expected FolderView IM still after {band}; qt={stderr}"
-    );
-    assert!(
-        !stderr.contains("QLineEdit::inputMethodQuery"),
-        "{band} QLineEdit took IM after {x} {y}; do not claim typed without shm; qt={stderr}"
-    );
-    assert_eq!(
-        hash_at_click, hash_after,
-        "PCManFM shm changed after {band} click OSK; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
-    );
+    if wait_caret {
+        assert!(
+            saw_line_caret,
+            "Filter click never mapped a line caret (10x13 class); displayd={lines:?}; stderr={stderr}"
+        );
+        assert_eq!(
+            surrounding_after_osk,
+            Some(3),
+            "Filter line-caret OSK surrounding; expected hi! 3 bytes; at_caret={surrounding_at_caret:?} osk={surrounding_after_osk:?}; displayd={lines:?}; stderr={stderr}"
+        );
+        assert_ne!(
+            hash_at_click, hash_after,
+            "Filter line-caret OSK did not attach a new shm; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
+        );
+    } else {
+        assert!(
+            stderr.contains("FolderViewListView::inputMethodQuery"),
+            "expected FolderView IM still after {band}; qt={stderr}"
+        );
+        assert!(
+            !stderr.contains("QLineEdit::inputMethodQuery"),
+            "{band} QLineEdit took IM after {x} {y}; do not claim typed without shm; qt={stderr}"
+        );
+        assert_ne!(
+            hash_at_click, hash_after,
+            "PCManFM shm unchanged after {band} click OSK with frame clock; at_enable={hash_at_enable:?} at_click={hash_at_click:?} after={hash_after:?}; displayd={lines:?}; stderr={stderr}"
+        );
+    }
 }
 
-/// ADR-364: one Filter-band click `400 760` on a keyboard-less seat
-/// after FolderView enable. Not a Y sweep. Not Ctrl+L. Not Falkon.
+/// ADR-364/391: one Filter-band click `400 760` on a keyboard-less seat
+/// after FolderView enable. Host frame clock maps a line caret (`10x13`
+/// at y≈752). OSK after disable+re-enable grows surrounding to 3 (`hi!`).
+/// Not a panther field. Not a Y sweep. Not Ctrl+L. Not Falkon.
 #[test]
-fn packed_pcmanfm_filter_click_without_seat_keyboard_still_folderview() {
+fn packed_pcmanfm_filter_click_osk_grows_surrounding() {
     packed_pcmanfm_band_click_osk(400, 760, "Filter");
 }
 
