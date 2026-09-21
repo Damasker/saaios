@@ -21,15 +21,16 @@ static gboolean quit_cb(gpointer data) {
 static void activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
     GtkWidget *win = gtk_application_window_new(app);
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     GtkWidget *entry = gtk_entry_new();
     gtk_window_set_title(GTK_WINDOW(win), "saaios-gtk414-entry");
-    gtk_window_set_default_size(GTK_WINDOW(win), 320, 240);
-    gtk_box_append(GTK_BOX(box), gtk_label_new("hello"));
-    gtk_box_append(GTK_BOX(box), entry);
-    gtk_window_set_child(GTK_WINDOW(win), box);
+    gtk_widget_set_hexpand(entry, TRUE);
+    gtk_widget_set_vexpand(entry, TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(win), 320, 200);
+    gtk_window_set_child(GTK_WINDOW(win), entry);
     gtk_window_present(GTK_WINDOW(win));
-    gtk_widget_grab_focus(entry);
+    if (!getenv("GTK4_NO_GRAB")) {
+        gtk_widget_grab_focus(entry);
+    }
     if (getenv("GTK4_PROBE_HOLD")) {
         g_signal_connect(entry, "notify::text", G_CALLBACK(on_text), NULL);
     } else {
