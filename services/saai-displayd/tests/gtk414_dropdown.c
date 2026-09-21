@@ -24,6 +24,9 @@ static void activate(GtkApplication *app, gpointer user_data) {
     gtk_window_set_default_size(GTK_WINDOW(win), 320, 200);
     const char *items[] = {"one", "two", "hi!", NULL};
     GtkWidget *drop = gtk_drop_down_new_from_strings(items);
+    if (getenv("GTK4_DROPDOWN_SEARCH")) {
+        gtk_drop_down_set_enable_search(GTK_DROP_DOWN(drop), TRUE);
+    }
     gtk_window_set_child(GTK_WINDOW(win), drop);
     gtk_window_present(GTK_WINDOW(win));
     g_timeout_add(200, popup_cb, drop);

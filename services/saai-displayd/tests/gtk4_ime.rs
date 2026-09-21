@@ -22,6 +22,7 @@
 //! Packed GtkComboBoxText popup without a tap is ADR-404.
 //! OSK into ComboBoxText with_entry is ADR-405.
 //! Packed GtkDropDown activate without a tap is ADR-406.
+//! OSK into DropDown enable_search is ADR-407.
 //! Not a panther field.
 
 use std::io::{BufRead, BufReader, Write};
@@ -3091,6 +3092,186 @@ fn packed_gtk414_dropdown_activate_maps_xdg_popup_without_click() {
     assert!(
         saw_popup && !popup_failed,
         "dropdown activate never mapped a configured xdg_popup; popup={saw_popup} failed={popup_failed} toplevels={n_toplevels}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+}
+
+/// ADR-407: packed GTK 4.14 GtkDropDown with enable_search.
+/// Activate opens the popover; search field should take v3.
+/// Keyboard-less seat. OSK types `hi!` surrounding 3. Not a Y sweep.
+#[test]
+fn packed_gtk414_dropdown_search_osk_types_hi_bang() {
+    let probe = gtk4_alpine_probe();
+    let bin = packed_gtk414_dropdown();
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        bin.is_file(),
+        "missing Alpine GTK 4.14 dropdown at {} — set PACKED_GTK414_DROPDOWN",
+        bin.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let conn = connect(runtime_dir.path(), &socket_name);
+    let (globals, mut queue) = registry_queue_init::<ImeState>(&conn).expect("ime registry");
+    let qh = queue.handle();
+    let mut ime_state = ImeState { activate: false };
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).unwrap();
+    let ime_mgr: ZwpInputMethodManagerV2 = globals
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_input_method_manager_v2 not advertised");
+    let ime = ime_mgr.get_input_method(&seat, &qh, ());
+    queue
+        .roundtrip(&mut ime_state)
+        .expect("ime first roundtrip");
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let bin = if bin.is_absolute() {
+        bin
+    } else {
+        probe.join("bin/gtk414-dropdown")
+    };
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&bin)
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GTK4_PROBE_HOLD", "1")
+        .env("GTK4_DROPDOWN_SEARCH", "1")
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk414-dropdown");
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk414-dropdown stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_popup = false;
+    let mut popup_failed = false;
+    let mut saw_enable = false;
+    let mut saw_kbd_focus = false;
+    let mut surrounding_after_osk: Option<usize> = None;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline && !(saw_popup && saw_enable && ime_state.activate) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                if line.contains("xdg popup configure failed") {
+                    popup_failed = true;
+                    saw_popup = true;
+                } else if line.contains("xdg popup") {
+                    saw_popup = true;
+                }
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+    if !(saw_popup && !popup_failed && saw_enable && ime_state.activate && !saw_kbd_focus) {
+        let _ = gtk.kill();
+        let _ = gtk.wait();
+        let stderr = stderr_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let _ = displayd.kill();
+        let _ = displayd.wait();
+        panic!(
+            "dropdown search never enabled v3; popup={saw_popup} failed={popup_failed} enable={saw_enable} ime={:?} kbd={saw_kbd_focus}; displayd={:?}; gtk={stderr}",
+            ime_state.activate,
+            lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+        );
+    }
+
+    let keyboard = Keyboard::bind_foreign_ime();
+    assert!(keyboard.shows_panel());
+    let actions = [
+        "intent:key:h",
+        "intent:key:i",
+        "intent:mode:toggle",
+        "intent:backspace",
+        "intent:key:i",
+        "intent:key:!",
+    ];
+    for action in actions {
+        let stroke = Keyboard::keystroke_from_osk_action(action)
+            .unwrap_or_else(|| panic!("unmapped OSK action {action}"));
+        if let Some(op) = stroke.to_ime_op() {
+            send_ime_op(&ime, &op);
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let typed_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < typed_deadline && surrounding_after_osk != Some(3) {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if let Some(n) = surrounding_bytes(&line) {
+                    surrounding_after_osk = Some(n);
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        let _ = queue.roundtrip(&mut ime_state);
+    }
+
+    let _ = gtk.kill();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert_eq!(
+        surrounding_after_osk,
+        Some(3),
+        "OSK IME did not grow dropdown search surrounding to hi!; surrounding={surrounding_after_osk:?} popup={saw_popup} enable={saw_enable}; displayd={:?}; gtk={stderr}",
         lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
