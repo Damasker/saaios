@@ -59,4 +59,5 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # APP-04 packed PCManFM OSK commit+delete after PathEdit click (ADR-329).
 # APP-04 packed musl Qt 5.15 QLineEdit types hi! via IME (ADR-330).
 # APP-04 packed PCManFM Filter-band click still no shm paint (ADR-331).
+# APP-04 packed Falkon URL click enables v2; IME commit_string (ADR-333).
 saai-ui-core = { path = "../../crates/saai-ui-core" }
