@@ -549,15 +549,23 @@ where
                 let active = ime.active.lock().expect("active").clone();
                 let focus = ime.focus.lock().expect("focus").clone();
                 let Some(active_id) = active else {
+                    println!("saai-displayd: text-input-v3 commit_string dropped no-active");
                     return;
                 };
                 let Some(focus) = focus else {
+                    println!("saai-displayd: text-input-v3 commit_string dropped no-focus");
                     return;
                 };
+                let mut forwarded = false;
                 for ti in ime.text_inputs.lock().expect("text_inputs").iter() {
                     if ti.id() == active_id && focus.id().same_client_as(&ti.id()) {
+                        println!("saai-displayd: text-input-v3 commit_string");
                         ti.commit_string(Some(text.clone()));
+                        forwarded = true;
                     }
+                }
+                if !forwarded {
+                    println!("saai-displayd: text-input-v3 commit_string dropped no-match");
                 }
                 ime.pending_v2.lock().expect("pending_v2").push(
                     PendingV2::CommitString {

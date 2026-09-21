@@ -5,7 +5,8 @@
 //! `--run=entry` click without wl_keyboard is ADR-356. Packed 4.14
 //! competing pane is ADR-372. `--run=entry` is not a gtk4-demo
 //! example name (ADR-373). `--run=search_entry` is ADR-374. OSK on
-//! that demo is ADR-375. Not a panther field.
+//! that demo is ADR-375. v3 commit_string log is ADR-376. Not a
+//! panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1802,8 +1803,8 @@ fn packed_gtk4_demo_search_entry_enables_v3_without_click() {
     );
 }
 
-/// ADR-375: OSK into packed gtk4-demo `--run=search_entry` after v3
-/// enable. Keyboard-less seat, no click. Main shm stays
+/// ADR-375/376: OSK into packed gtk4-demo `--run=search_entry` after
+/// v3 enable. `commit_string` is forwarded. Main shm stays
 /// `233e0ee2…`. Protocol without paint. Not typed.
 #[test]
 fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
@@ -1891,6 +1892,8 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let mut activated: Option<String> = None;
     let mut hash_at_enable: Option<String> = None;
     let mut last_hash: Option<String> = None;
+    let mut saw_v3_commit = false;
+    let mut saw_v3_dropped = false;
     let mut lines = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline
@@ -1909,6 +1912,11 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
                 }
                 if line.contains("text-input-v3 enable") {
                     saw_enable = true;
+                }
+                if line.contains("text-input-v3 commit_string dropped") {
+                    saw_v3_dropped = true;
+                } else if line.contains("text-input-v3 commit_string") {
+                    saw_v3_commit = true;
                 }
                 if let Some(h) = toplevel_frame_hash(&line, &mut activated) {
                     last_hash = Some(h.to_string());
@@ -1963,6 +1971,11 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     while Instant::now() < osk_deadline {
         match log.recv_timeout(Duration::from_millis(50)) {
             Ok(line) => {
+                if line.contains("text-input-v3 commit_string dropped") {
+                    saw_v3_dropped = true;
+                } else if line.contains("text-input-v3 commit_string") {
+                    saw_v3_commit = true;
+                }
                 if let Some(h) = toplevel_frame_hash(&line, &mut activated) {
                     last_hash = Some(h.to_string());
                 }
@@ -1982,6 +1995,11 @@ fn packed_gtk4_demo_search_entry_osk_does_not_change_shm() {
     let _ = displayd.kill();
     let _ = displayd.wait();
     let after = last_hash.as_deref().unwrap_or(before.as_str());
+    assert!(
+        saw_v3_commit && !saw_v3_dropped,
+        "search_entry OSK v3 commit_string forwarded={saw_v3_commit} dropped={saw_v3_dropped}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
     assert_eq!(
         after, before.as_str(),
         "gtk4-demo search_entry OSK attached a new shm; before={before} after={after}; do not claim typed; displayd={:?}; gtk={stderr}",

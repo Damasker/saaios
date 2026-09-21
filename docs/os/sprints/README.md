@@ -228,6 +228,7 @@ ADR-372 packed GTK 4.14 competing pane auto-enables and types OSK without a tap 
 ADR-373 packed gtk4-demo --run=entry is not an example name (no flash).
 ADR-374 packed gtk4-demo --run=search_entry enables v3 without a tap (no flash).
 ADR-375 packed gtk4-demo --run=search_entry OSK does not change shm (no flash).
+ADR-376 packed gtk4-demo search_entry OSK forwards v3 commit_string (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
 ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
