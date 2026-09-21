@@ -4,7 +4,8 @@
 //! packed 4.14 is ADR-346 and host 4.18 is ADR-350. gtk4-demo
 //! `--run=entry` click without wl_keyboard is ADR-356. Packed 4.14
 //! competing pane is ADR-372. `--run=entry` is not a gtk4-demo
-//! example name (ADR-373). Not a panther field.
+//! example name (ADR-373). `--run=search_entry` is ADR-374. Not a
+//! panther field.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -1623,5 +1624,151 @@ fn packed_gtk4_demo_run_entry_is_not_an_example_name() {
     assert!(
         listed.iter().all(|n| *n != "entry"),
         "gtk4-demo --list unexpectedly has entry; ADR-344/356 --run=entry was a real demo; names={listed:?}; stderr={stderr}"
+    );
+}
+
+/// ADR-374: packed gtk4-demo `--run=search_entry` (a real `--list`
+/// name). Keyboard-less seat, no click. Demo is a GtkEntry without
+/// grab_focus plus a Find button. Not `--run=entry`. Not a Y sweep.
+#[test]
+fn packed_gtk4_demo_search_entry_enables_v3_without_click() {
+    let probe = gtk4_alpine_probe();
+    let demo = probe.join("bin/gtk4-demo");
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        demo.is_file(),
+        "missing Alpine gtk4-demo at {} — set GTK4_ALPINE_PROBE",
+        demo.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
+
+    let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("XDG_RUNTIME_DIR 0700");
+    }
+    let (mut displayd, log) =
+        spawn_displayd_with(runtime_dir.path(), &[("SAAIOS_SEAT_NO_KEYBOARD", "1")]);
+    let socket_name = wait_for_socket(&log);
+
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let demo = probe.join("bin/gtk4-demo");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
+        .arg(&probe)
+        .arg(&demo)
+        .arg("--run=search_entry")
+        .env_clear()
+        .env("PATH", &path)
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .env("WAYLAND_DISPLAY", &socket_name)
+        .env("GDK_BACKEND", "wayland")
+        .env("GSK_RENDERER", "cairo")
+        .env("GTK_A11Y", "none")
+        .env("NO_AT_BRIDGE", "1")
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("qemu-aarch64-static failed to spawn gtk4-demo --run=search_entry");
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk4-demo stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
+
+    let mut saw_toplevel = false;
+    let mut saw_frame = false;
+    let mut saw_get = false;
+    let mut saw_enable = false;
+    let mut saw_activated = false;
+    let mut saw_kbd_focus = false;
+    let mut saw_focus = false;
+    let mut lines = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !(saw_toplevel && saw_frame && saw_activated && saw_focus) {
+        match log.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                if line.contains("new xdg_toplevel") {
+                    saw_toplevel = true;
+                }
+                if line.contains("frame sha256=") {
+                    saw_frame = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                } else if line.contains("focus set to") {
+                    saw_focus = true;
+                }
+                if line.contains("xdg activated") {
+                    saw_activated = true;
+                }
+                if line.contains("text-input-v3 get") {
+                    saw_get = true;
+                }
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let settle = Instant::now() + Duration::from_millis(700);
+    while Instant::now() < settle {
+        match log.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if line.contains("text-input-v3 get") {
+                    saw_get = true;
+                }
+                if line.contains("text-input-v3 enable") {
+                    saw_enable = true;
+                }
+                if line.contains("keyboard focus set") {
+                    saw_kbd_focus = true;
+                }
+                lines.push(line);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = gtk.kill();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let _ = displayd.kill();
+    let _ = displayd.wait();
+    assert!(
+        saw_toplevel && saw_frame && saw_activated && saw_focus && !saw_kbd_focus,
+        "search_entry demo did not map/activate; kbd={saw_kbd_focus} focus={saw_focus} xdg={saw_activated} frame={saw_frame}; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
+    );
+    assert!(
+        saw_enable,
+        "gtk4-demo --run=search_entry never enabled v3 without a click; get={saw_get} enable={saw_enable}; packed Entry auto-enables, this demo has no grab_focus; displayd={:?}; gtk={stderr}",
+        lines.iter().filter(|l| interesting(l)).collect::<Vec<_>>()
     );
 }
