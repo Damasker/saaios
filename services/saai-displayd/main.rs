@@ -10,6 +10,7 @@ use std::rc::Rc;
 #[cfg(feature = "panther-hardware")]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+#[cfg(any(test, feature = "panther-hardware"))]
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "panther-hardware")]
@@ -27,15 +28,12 @@ mod text_ime;
 mod touch;
 
 use sha2::{Digest, Sha256};
+#[cfg(feature = "panther-hardware")]
 use smithay::desktop::utils::send_frames_surface_tree;
-#[cfg(not(feature = "panther-hardware"))]
-use smithay::backend::input::ButtonState;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::Keycode;
 #[cfg(not(feature = "panther-hardware"))]
 use smithay::input::keyboard::{FilterResult, XkbConfig};
-#[cfg(not(feature = "panther-hardware"))]
-use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::{
     backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
     delegate_compositor, delegate_dmabuf, delegate_fractional_scale, delegate_layer_shell,
@@ -80,8 +78,6 @@ use smithay::{
         viewporter::ViewporterState,
     },
 };
-use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 /// Matches `Scale::Integer(1)` on the advertised output. GDK initializes
 /// its shm height from `wp_fractional_scale_v1.preferred_scale` in 120ths
@@ -314,7 +310,7 @@ struct State {
     // where the keyboard-focus/synthetic-inject acceptance tests still use
     // a real KeyboardHandle and a normal host libxkbcommon works fine.
     #[cfg(not(feature = "panther-hardware"))]
-    keyboard: Option<smithay::input::keyboard::KeyboardHandle<State>>,
+    keyboard: smithay::input::keyboard::KeyboardHandle<State>,
     #[cfg(not(feature = "panther-hardware"))]
     pointer: smithay::input::pointer::PointerHandle<State>,
     /// Active fullscreen toplevel. A newly mapped toplevel becomes active;
@@ -329,9 +325,6 @@ struct State {
     /// ensure_configured() (S02 protocol-negative test: reject a buffer
     /// attached before the surface's first configure was acked).
     toplevels: HashMap<WlSurface, ToplevelSurface>,
-    /// ADR-394: xdg_popup needs configure + frame acks. Empty
-    /// `new_popup` left QCompleter / LocationBar dropdowns unmapped.
-    popups: Vec<PopupSurface>,
     #[cfg(feature = "panther-hardware")]
     hardware: Option<hardware::HardwareOutput>,
     /// Every known surface's last committed frame (ADR-016) -- lets
@@ -410,6 +403,7 @@ struct State {
     shell_restart_budget: RestartBudget,
     #[cfg(feature = "panther-hardware")]
     privileged_shell_pid: Arc<AtomicU32>,
+    #[cfg(feature = "panther-hardware")]
     presentation_started: Instant,
     #[cfg(feature = "panther-hardware")]
     touch: smithay::input::touch::TouchHandle<State>,
@@ -503,47 +497,19 @@ impl State {
         if self.focused_surface == surface {
             return;
         }
-        let previous = self.focused_surface.clone();
         self.focused_surface = surface.clone();
         // ADR-267: text-input focus is "which client's field is live", not
         // "which client gets key events". Same seat, no keyboard required.
         text_ime::on_focus(&self.seat, surface.clone());
-        // ADR-352: xdg Activated is window activation, not wl_keyboard.
-        if let Some(prev) = previous.as_ref() {
-            if let Some(toplevel) = self.toplevels.get(prev) {
-                toplevel.with_pending_state(|state| {
-                    state.states.unset(xdg_toplevel::State::Activated);
-                });
-                toplevel.send_configure();
-            }
-        }
-        if let Some(current) = surface.as_ref() {
-            if let Some(toplevel) = self.toplevels.get(current) {
-                toplevel.with_pending_state(|state| {
-                    state.states.set(xdg_toplevel::State::Activated);
-                });
-                toplevel.send_configure();
-                println!(
-                    "saai-displayd: xdg activated {:?}",
-                    current.id()
-                );
-            }
-        }
         #[cfg(not(feature = "panther-hardware"))]
         {
-            if let Some(keyboard) = self.keyboard.clone() {
-                let serial = SERIAL_COUNTER.next_serial();
-                keyboard.set_focus(self, surface.clone(), serial);
-                println!(
-                    "saai-displayd: keyboard focus set to {:?}",
-                    surface.as_ref().map(Resource::id)
-                );
-            } else {
-                println!(
-                    "saai-displayd: focus set to {:?}",
-                    surface.as_ref().map(Resource::id)
-                );
-            }
+            let serial = SERIAL_COUNTER.next_serial();
+            let keyboard = self.keyboard.clone();
+            keyboard.set_focus(self, surface.clone(), serial);
+            println!(
+                "saai-displayd: keyboard focus set to {:?}",
+                surface.as_ref().map(Resource::id)
+            );
         }
         #[cfg(feature = "panther-hardware")]
         {
@@ -824,39 +790,6 @@ impl State {
     }
 }
 
-impl State {
-    /// Ack pending `wl_surface.frame` callbacks at refresh rate, not on
-    /// every commit (ack-on-commit spun saai-shell; see `commit()`).
-    /// Host has no DRM VBlank (ADR-388). Panther still acks after
-    /// present VBlank; this path covers IME apply with no new buffer
-    /// while `!flip_pending` (ADR-390).
-    fn send_pending_frames(&mut self) {
-        let output = self._wl_output.clone();
-        let time = self.presentation_started.elapsed();
-        let mut surfaces: Vec<WlSurface> = self.toplevels.keys().cloned().collect();
-        if let Some(surface) = self.focused_surface.clone() {
-            if !surfaces.iter().any(|s| s == &surface) {
-                surfaces.push(surface);
-            }
-        }
-        for layer in &self.layer_surfaces {
-            let surface = layer.wl_surface().clone();
-            if !surfaces.iter().any(|s| s == &surface) {
-                surfaces.push(surface);
-            }
-        }
-        for popup in &self.popups {
-            let surface = popup.wl_surface().clone();
-            if !surfaces.iter().any(|s| s == &surface) {
-                surfaces.push(surface);
-            }
-        }
-        for surface in surfaces {
-            send_frames_surface_tree(&surface, &output, time, None, |_, _| Some(output.clone()));
-        }
-    }
-}
-
 impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
         &mut self.compositor_state
@@ -941,17 +874,7 @@ impl CompositorHandler for State {
             // identical to the wl_shm path below.
             if self.toplevels.contains_key(surface) && !self.focus_history.contains(surface) {
                 self.focus_history.push(surface.clone());
-                // ADR-394: QCompleter / LocationBar dropdowns map a second
-                // xdg_toplevel. Activating it unsets Activated on the field
-                // and Qt disables v2. First mapped toplevel keeps the seat.
-                if self.focused_surface.is_none() {
-                    self.activate_toplevel(Some(surface.clone()));
-                } else {
-                    println!(
-                        "saai-displayd: mapped toplevel without steal {:?}",
-                        surface.id()
-                    );
-                }
+                self.activate_toplevel(Some(surface.clone()));
             }
 
             #[cfg(feature = "panther-hardware")]
@@ -1122,17 +1045,7 @@ impl CompositorHandler for State {
         // client animation from stealing focus later.
         if self.toplevels.contains_key(surface) && !self.focus_history.contains(surface) {
             self.focus_history.push(surface.clone());
-            // ADR-394: QCompleter / LocationBar dropdowns map a second
-            // xdg_toplevel. Activating it unsets Activated on the field
-            // and Qt disables v2. First mapped toplevel keeps the seat.
-            if self.focused_surface.is_none() {
-                self.activate_toplevel(Some(surface.clone()));
-            } else {
-                println!(
-                    "saai-displayd: mapped toplevel without steal {:?}",
-                    surface.id()
-                );
-            }
+            self.activate_toplevel(Some(surface.clone()));
         }
 
         match result {
@@ -1307,7 +1220,6 @@ delegate_seat!(State);
 delegate_saai_data_device!(State);
 
 // ADR-267 (APP-03): text-input-v3 + input-method-v2 without keymap.
-// ADR-319: also text-input-v2 so Qt 5/6 can enable IME.
 // Focus is still driven from `activate_toplevel()`.
 delegate_saai_text_ime!(State);
 
@@ -1366,18 +1278,7 @@ impl XdgShellHandler for State {
         }
     }
 
-    fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
-        match surface.send_configure() {
-            Ok(_) => println!("saai-displayd: xdg popup"),
-            Err(err) => println!("saai-displayd: xdg popup configure failed: {err:?}"),
-        }
-        self.popups.push(surface);
-    }
-
-    fn popup_destroyed(&mut self, surface: PopupSurface) {
-        self.popups
-            .retain(|candidate| candidate.wl_surface() != surface.wl_surface());
-    }
+    fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
 
     fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {}
 
@@ -1515,15 +1416,9 @@ fn main() {
     let mut seat_state = SeatState::<State>::new();
     let mut seat = seat_state.new_wl_seat(&dh, "seat0");
     #[cfg(not(feature = "panther-hardware"))]
-    let keyboard = if std::env::var_os("SAAIOS_SEAT_NO_KEYBOARD").is_some() {
-        println!("saai-displayd: seat has no keyboard (SAAIOS_SEAT_NO_KEYBOARD)");
-        None
-    } else {
-        Some(
-            seat.add_keyboard(XkbConfig::default(), 200, 25)
-                .expect("failed to add keyboard capability"),
-        )
-    };
+    let keyboard = seat
+        .add_keyboard(XkbConfig::default(), 200, 25)
+        .expect("failed to add keyboard capability");
     #[cfg(not(feature = "panther-hardware"))]
     let pointer = seat.add_pointer();
     #[cfg(feature = "panther-hardware")]
@@ -1751,7 +1646,6 @@ fn main() {
         focused_surface: None,
         focus_history: Vec::new(),
         toplevels: HashMap::new(),
-        popups: Vec::new(),
         #[cfg(feature = "panther-hardware")]
         touch,
         #[cfg(feature = "panther-hardware")]
@@ -1782,6 +1676,7 @@ fn main() {
         shell_restart_budget: RestartBudget::default(),
         #[cfg(feature = "panther-hardware")]
         privileged_shell_pid: privileged_shell_pid.clone(),
+        #[cfg(feature = "panther-hardware")]
         presentation_started: Instant::now(),
         _wl_output: wl_output,
         output_width,
@@ -1915,12 +1810,7 @@ fn main() {
             if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
                 return Ok(PostAction::Remove);
             }
-            let cmd = line.trim();
-            if cmd == "inject-key" {
-                let Some(keyboard) = keyboard.as_ref() else {
-                    println!("saai-displayd: inject-key requested but seat has no keyboard");
-                    return Ok(PostAction::Continue);
-                };
+            if line.trim() == "inject-key" {
                 if state.focused_surface.is_some() {
                     let time = 0;
                     // evdev KEY_A (30) + 8 = xkb keycode 38.
@@ -1944,135 +1834,6 @@ fn main() {
                     println!("saai-displayd: injected synthetic key press+release");
                 } else {
                     println!("saai-displayd: inject-key requested but no surface is focused yet");
-                }
-            } else if cmd == "inject-ctrl-i" {
-                let Some(keyboard) = keyboard.as_ref() else {
-                    println!("saai-displayd: inject-ctrl-i requested but seat has no keyboard");
-                    return Ok(PostAction::Continue);
-                };
-                if state.focused_surface.is_some() {
-                    let time = 0;
-                    // evdev KEY_LEFTCTRL=29, KEY_I=23; xkb = evdev+8.
-                    let ctrl = Keycode::new(37);
-                    let key_i = Keycode::new(31);
-                    for (code, ks) in [
-                        (ctrl, smithay::backend::input::KeyState::Pressed),
-                        (key_i, smithay::backend::input::KeyState::Pressed),
-                        (key_i, smithay::backend::input::KeyState::Released),
-                        (ctrl, smithay::backend::input::KeyState::Released),
-                    ] {
-                        keyboard.input::<(), _>(
-                            state,
-                            code,
-                            ks,
-                            SERIAL_COUNTER.next_serial(),
-                            time,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                    }
-                    println!("saai-displayd: injected ctrl-i");
-                } else {
-                    println!("saai-displayd: inject-ctrl-i requested but no surface is focused yet");
-                }
-            } else if cmd == "inject-ctrl-b" {
-                let Some(keyboard) = keyboard.as_ref() else {
-                    println!("saai-displayd: inject-ctrl-b requested but seat has no keyboard");
-                    return Ok(PostAction::Continue);
-                };
-                if state.focused_surface.is_some() {
-                    let time = 0;
-                    // evdev KEY_LEFTCTRL=29, KEY_B=48; xkb = evdev+8.
-                    let ctrl = Keycode::new(37);
-                    let key_b = Keycode::new(56);
-                    for (code, ks) in [
-                        (ctrl, smithay::backend::input::KeyState::Pressed),
-                        (key_b, smithay::backend::input::KeyState::Pressed),
-                        (key_b, smithay::backend::input::KeyState::Released),
-                        (ctrl, smithay::backend::input::KeyState::Released),
-                    ] {
-                        keyboard.input::<(), _>(
-                            state,
-                            code,
-                            ks,
-                            SERIAL_COUNTER.next_serial(),
-                            time,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                    }
-                    println!("saai-displayd: injected ctrl-b");
-                } else {
-                    println!("saai-displayd: inject-ctrl-b requested but no surface is focused yet");
-                }
-            } else if cmd == "inject-ctrl-l" {
-                let Some(keyboard) = keyboard.as_ref() else {
-                    println!("saai-displayd: inject-ctrl-l requested but seat has no keyboard");
-                    return Ok(PostAction::Continue);
-                };
-                if state.focused_surface.is_some() {
-                    let time = 0;
-                    // evdev KEY_LEFTCTRL=29, KEY_L=38; xkb = evdev+8.
-                    let ctrl = Keycode::new(37);
-                    let key_l = Keycode::new(46);
-                    for (code, ks) in [
-                        (ctrl, smithay::backend::input::KeyState::Pressed),
-                        (key_l, smithay::backend::input::KeyState::Pressed),
-                        (key_l, smithay::backend::input::KeyState::Released),
-                        (ctrl, smithay::backend::input::KeyState::Released),
-                    ] {
-                        keyboard.input::<(), _>(
-                            state,
-                            code,
-                            ks,
-                            SERIAL_COUNTER.next_serial(),
-                            time,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                    }
-                    println!("saai-displayd: injected ctrl-l");
-                } else {
-                    println!("saai-displayd: inject-ctrl-l requested but no surface is focused yet");
-                }
-            } else if let Some(rest) = cmd.strip_prefix("inject-click ") {
-                let mut parts = rest.split_whitespace();
-                if let (Some(xs), Some(ys)) = (parts.next(), parts.next()) {
-                    if let (Ok(x), Ok(y)) = (xs.parse::<f64>(), ys.parse::<f64>()) {
-                        if let Some(surface) = state.focused_surface.clone() {
-                            let serial = SERIAL_COUNTER.next_serial();
-                            pointer.motion(
-                                state,
-                                Some((surface, (0.0, 0.0).into())),
-                                &MotionEvent {
-                                    location: (x, y).into(),
-                                    serial,
-                                    time: 0,
-                                },
-                            );
-                            pointer.button(
-                                state,
-                                &ButtonEvent {
-                                    serial: SERIAL_COUNTER.next_serial(),
-                                    time: 0,
-                                    button: 0x110,
-                                    state: ButtonState::Pressed,
-                                },
-                            );
-                            pointer.button(
-                                state,
-                                &ButtonEvent {
-                                    serial: SERIAL_COUNTER.next_serial(),
-                                    time: 0,
-                                    button: 0x110,
-                                    state: ButtonState::Released,
-                                },
-                            );
-                            pointer.frame(state);
-                            println!("saai-displayd: injected click {x} {y}");
-                        } else {
-                            println!(
-                                "saai-displayd: inject-click requested but no surface is focused yet"
-                            );
-                        }
-                    }
                 }
             }
             Ok(PostAction::Continue)
@@ -2114,42 +1875,15 @@ fn main() {
         }
     }
 
-    handle
-        .insert_source(
-            Timer::from_duration(Duration::from_millis(16)),
-            {
-                let mut logged = false;
-                move |_, _, state: &mut State| {
-                    #[cfg(feature = "panther-hardware")]
-                    if state.flip_pending {
-                        return TimeoutAction::ToDuration(Duration::from_millis(16));
-                    }
-                    if !logged {
-                        logged = true;
-                        #[cfg(feature = "panther-hardware")]
-                        println!("saai-displayd: idle frame clock");
-                        #[cfg(not(feature = "panther-hardware"))]
-                        println!("saai-displayd: host frame clock");
-                    }
-                    state.send_pending_frames();
-                    TimeoutAction::ToDuration(Duration::from_millis(16))
-                }
-            },
-        )
-        .expect("failed to register frame clock");
-
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");
     event_loop
-        .run(None, &mut state, move |state| {
+        .run(None, &mut state, move |_| {
             // Runs after *every* event loop iteration regardless of
             // which source fired -- a real fix for the general "only the
             // client-readable source used to flush" gap (see the comment
             // above at display_for_fd's closure). Necessary, but proven
             // NOT sufficient on its own for the touch-delivery bug --
             // see the known-limitations entry in the S04 sprint doc.
-            // ADR-339: apply queued v2 IME commits after dispatch so Qt
-            // has run update_state + wl_display.sync first.
-            text_ime::flush_pending_v2(&state.seat);
             display
                 .borrow_mut()
                 .flush_clients()

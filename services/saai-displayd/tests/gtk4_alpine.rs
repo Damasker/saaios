@@ -1,7 +1,9 @@
-//! APP-02 / ADR-305: a real GTK4 client (GDK Wayland + GSK cairo) maps
-//! an xdg_toplevel on host `saai-displayd` and commits a hashed shm
-//! frame. This is the host 4.18 toolkit half of ADR-266/286, not a
-//! panther frame. Alpine 4.14.4 musl qemu is ADR-320.
+//! APP-02 / ADR-320: Alpine musl GTK 4.14.4 (`gtk4-demo`) maps an
+//! xdg_toplevel on host `saai-displayd` under `qemu-aarch64-static`
+//! and commits a hashed shm frame. This is the same 4.14.4 binary
+//! that asked for height 2337935 on panther when bounds were `(0,0)`
+//! (ADR-310). Host displayd now sends window bounds (ADR-311). Not a
+//! panther flash.
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -14,7 +16,9 @@ fn displayd_bin() -> PathBuf {
 }
 
 fn gtk4_probe() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/gtk4_hello.py")
+    std::env::var("GTK4_ALPINE_PROBE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp/gtk4-probe"))
 }
 
 fn spawn_displayd(runtime_dir: &std::path::Path) -> (Child, mpsc::Receiver<String>) {
@@ -60,70 +64,85 @@ fn wait_for_socket(log: &mpsc::Receiver<String>) -> String {
     }
 }
 
-fn gtk4_import_available() -> bool {
-    Command::new("python3")
-        .args([
-            "-c",
-            "import gi; gi.require_version('Gtk','4.0'); from gi.repository import Gtk",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 #[test]
-fn gtk4_commits_an_shm_frame_on_host_displayd() {
-    assert!(
-        gtk4_import_available(),
-        "host GTK4 probe needs python3 + gir1.2-gtk-4.0 (Gtk 4.0)"
-    );
+fn alpine_gtk414_commits_an_shm_frame_when_bounds_are_the_window() {
     let probe = gtk4_probe();
-    assert!(probe.is_file(), "missing GTK4 probe at {}", probe.display());
+    let demo = probe.join("bin/gtk4-demo");
+    let loader = probe.join("lib/ld-musl-aarch64.so.1");
+    let xkb = probe.join("share/X11/xkb");
+    assert!(
+        demo.is_file(),
+        "missing Alpine gtk4-demo at {} — pack /tmp/gtk4-probe from alpine-gtk4-sysroot",
+        demo.display()
+    );
+    assert!(
+        loader.is_file(),
+        "missing musl loader at {}",
+        loader.display()
+    );
+    assert!(xkb.is_dir(), "missing XKB_CONFIG_ROOT at {}", xkb.display());
 
     let runtime_dir = tempfile::tempdir().expect("failed to create XDG_RUNTIME_DIR");
     let (mut displayd, log) = spawn_displayd(runtime_dir.path());
     let socket_name = wait_for_socket(&log);
+    let probe = probe.canonicalize().expect("canonicalize gtk4 probe");
+    let demo = probe.join("bin/gtk4-demo");
+    let path = std::env::var("PATH").unwrap_or_default();
 
-    let mut gtk = Command::new("python3")
+    let mut gtk = Command::new("qemu-aarch64-static")
+        .arg("-L")
         .arg(&probe)
+        .arg(&demo)
+        .arg("--run=dialog")
+        .env_clear()
+        .env("PATH", &path)
         .env("XDG_RUNTIME_DIR", runtime_dir.path())
         .env("WAYLAND_DISPLAY", &socket_name)
         .env("GDK_BACKEND", "wayland")
         .env("GSK_RENDERER", "cairo")
         .env("GTK_A11Y", "none")
         .env("NO_AT_BRIDGE", "1")
-        .env_remove("DISPLAY")
-        .stdout(Stdio::piped())
+        .env("XKB_CONFIG_ROOT", probe.join("share/X11/xkb"))
+        .env("GIO_USE_VFS", "local")
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn gtk4_hello.py");
+        .expect("qemu-aarch64-static failed to spawn gtk4-demo");
+    let stderr_rx = {
+        let stderr = gtk.stderr.take().expect("gtk4-demo stderr");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            for line in reader.lines().map_while(Result::ok) {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    };
 
     let mut saw_toplevel = false;
     let mut saw_frame = false;
-    let mut saw_enable = false;
     let mut lines = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline && !(saw_toplevel && saw_frame && saw_enable) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !(saw_toplevel && saw_frame) {
         match log.recv_timeout(Duration::from_millis(200)) {
             Ok(line) => {
                 assert!(
-                    !line.contains("1776831"),
-                    "ADR-025 uninitialized height leaked into displayd log: {line}"
+                    !line.contains("2337935") && !line.contains("1776831"),
+                    "GTK 4.14.4 still asked for the ADR-310 garbage height: {line}"
                 );
                 if line.contains("new xdg_toplevel") {
                     assert!(
                         line.contains("1280x800 fullscreen=false"),
-                        "GTK4 must map the x86 windowed size, not a phone panel: {line}"
+                        "GTK 4.14.4 must map the x86 windowed size, not a phone panel: {line}"
                     );
                     saw_toplevel = true;
                 }
                 if line.contains("frame sha256=") {
                     saw_frame = true;
-                }
-                if line.contains("text-input-v3 enable") {
-                    saw_enable = true;
                 }
                 lines.push(line);
             }
@@ -132,46 +151,25 @@ fn gtk4_commits_an_shm_frame_on_host_displayd() {
         }
     }
 
-    let gtk_deadline = Instant::now() + Duration::from_secs(8);
-    let status = loop {
-        if let Some(status) = gtk.try_wait().expect("failed to poll gtk4_hello.py") {
-            break status;
-        }
-        assert!(
-            Instant::now() < gtk_deadline,
-            "GTK4 probe hung; displayd={lines:?}"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    let stderr = {
-        let mut buf = String::new();
-        if let Some(mut err) = gtk.stderr.take() {
-            let _ = std::io::Read::read_to_string(&mut err, &mut buf);
-        }
-        buf
-    };
-    assert!(
-        status.success(),
-        "GTK4 probe exited {status:?}; stderr={stderr}; displayd={lines:?}"
-    );
+    let _ = gtk.kill();
+    let _ = gtk.wait();
+    let stderr = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
     assert!(
         saw_toplevel,
-        "GTK4 never created an xdg_toplevel; displayd={lines:?}; stderr={stderr}"
+        "Alpine GTK 4.14.4 never created an xdg_toplevel; displayd={lines:?}; stderr={stderr}"
     );
     assert!(
         saw_frame,
-        "GTK4 never committed a hashed shm frame; displayd={lines:?}; stderr={stderr}"
-    );
-    assert!(
-        saw_enable,
-        "GTK4 Entry never zwp_text_input_v3::enable; displayd={lines:?}; stderr={stderr}"
+        "Alpine GTK 4.14.4 never committed a hashed shm frame; displayd={lines:?}; stderr={stderr}"
     );
     assert!(
         displayd
             .try_wait()
             .expect("failed to poll saai-displayd")
             .is_none(),
-        "saai-displayd exited during the GTK4 frame"
+        "saai-displayd exited during the GTK 4.14.4 frame"
     );
     let _ = displayd.kill();
     let _ = displayd.wait();

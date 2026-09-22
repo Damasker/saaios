@@ -1486,6 +1486,7 @@ name = "intent-resolution"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "saai-authority",
  "saai-entity-store",
  "serde",
  "serde_json",
@@ -2280,6 +2281,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "saai-entity-store",
+ "saai-observation",
  "serde",
  "serde_json",
  "uuid",
@@ -2322,6 +2324,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-misc",
+ "wayland-protocols-plasma",
  "wayland-protocols-wlr",
 ]
 
@@ -2385,6 +2388,7 @@ dependencies = [
  "chrono",
  "policy-engine",
  "protocol",
+ "saai-authority",
  "saai-entity-store",
  "serde",
  "serde_json",
@@ -2491,6 +2495,7 @@ dependencies = [
  "protocol",
  "saai-app-protocol",
  "saai-attention",
+ "saai-authority",
  "saai-entity-protocol",
  "saai-entity-store",
  "saai-object-actions",
@@ -2504,6 +2509,7 @@ dependencies = [
  "tool-registry",
  "uuid",
  "wayland-protocols",
+ "wayland-protocols-misc",
 ]
 
 [[package]]
@@ -3524,6 +3530,20 @@ name = "wayland-protocols-misc"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e9567599ef23e09b8dad6e429e5738d4509dfc46b3b21f32841a304d16b29c8"
+dependencies = [
+ "bitflags",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-scanner",
+ "wayland-server",
+]
+
+[[package]]
+name = "wayland-protocols-plasma"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b6d8cf1eb2c1c31ed1f5643c88a6e53538129d4af80030c8cabd1f9fa884d91"
 dependencies = [
  "bitflags",
  "wayland-backend",
