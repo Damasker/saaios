@@ -13,7 +13,8 @@ Base: ADR-424. Keep current known-working phone binaries; no flash here.
 
 ## Sprint LW-01 — bounded policy projection
 
-Status: Ready. Dependencies: ADR-153, ADR-154, ADR-425.
+Status: Verify (host implementation; physical acceptance pending).
+Dependencies: ADR-153, ADR-154, ADR-425.
 
 1. Commit this contract and roadmap independently of code.
 2. Persist `lock_widgets` (`hidden`, `device`, `summary`); unknown values hide.
@@ -58,3 +59,15 @@ artifact untouched. No partitions or device data are modified in LW-01.
 
 Physical acceptance pending. No third-party widgets, drag layout, live settings
 reload or full notification content. Host verification recorded with code.
+
+2026-09-22, R620: baseline `cargo test -p saai-shell --bin saai-shell`
+314 passed; implementation `cargo test -p saai-shell` 319 passed.
+`cargo clippy -p saai-shell --all-targets` exits successfully with warnings
+(not a warning-free workspace). Targeted rustfmt check passes. Shared
+projection is used before both render backends and before refresh keys.
+`lock_widgets` is saved in existing shell settings and read on startup;
+no owner-facing selector yet. The default deliberately preserves appearance.
+Documentation commit: `0c0a47d`. No phone binaries or settings changed.
+`cargo check -p saai-shell --target aarch64-unknown-linux-musl` passes
+with warnings. This checks the target code, not final linking, an installable
+image or physical behavior.

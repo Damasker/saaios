@@ -3,6 +3,8 @@
 **Lock-screen follow-up:** [LW-01…03](LOCK-WIDGETS.md), policy-controlled
 system widgets (ADR-425). Separate host-only track; no device flash while
 APP-04 experiments are active. Documentation precedes implementation.
+LW-01 is in Verify: three disclosure modes, shared paint/refresh projection,
+319 shell tests on R620; owner controls and physical acceptance remain LW-02.
 
 Roadmap описывает порядок доказуемых вертикальных результатов. Он не является
 обещанием дат: каждый спринт закрывается по критериям, а не по количеству

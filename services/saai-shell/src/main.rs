@@ -84,6 +84,7 @@ mod entityd_client;
 mod haptic;
 mod hardware_keyboard;
 mod intent_context;
+mod lock_widgets;
 mod osk_layer;
 mod portal_server;
 mod power_button;
@@ -821,6 +822,8 @@ fn revoke_trusted_client(index: usize) {
 }
 
 struct ShellSettings {
+    /// ADR-425: shell-owned lock disclosure; not an application grant.
+    lock_widgets: lock_widgets::LockWidgetPolicy,
     brightness_pct: u8,
     idle_timeout_secs: u64,
     deep_idle_timeout_secs: u64,
@@ -886,6 +889,7 @@ impl ShellSettings {
 
     fn load() -> Self {
         let default = Self {
+            lock_widgets: lock_widgets::LockWidgetPolicy::default(),
             brightness_pct: 100,
             idle_timeout_secs: IDLE_TIMEOUT.as_secs(),
             deep_idle_timeout_secs: Self::default_deep_idle_secs(),
@@ -911,6 +915,7 @@ impl ShellSettings {
                 .and_then(Value::as_u64)
                 .map(|pct| pct as u8)
                 .unwrap_or(default.brightness_pct),
+            lock_widgets: lock_widgets::LockWidgetPolicy::from_setting(value.get("lock_widgets")),
             idle_timeout_secs: value
                 .get("idle_timeout_secs")
                 .and_then(Value::as_u64)
@@ -966,6 +971,7 @@ impl ShellSettings {
 
     fn save(&self) {
         let value = json!({
+            "lock_widgets": self.lock_widgets.as_str(),
             "brightness_pct": self.brightness_pct,
             "idle_timeout_secs": self.idle_timeout_secs,
             "deep_idle_timeout_secs": self.deep_idle_timeout_secs,
@@ -5375,6 +5381,24 @@ fn lock_device_view(battery: Option<(u8, bool)>) -> Option<LockDeviceView> {
 
 fn lock_device_key(view: &Option<LockDeviceView>) -> u16 {
     view.as_ref().map(LockDeviceView::key).unwrap_or(0)
+}
+
+/// One policy-filtered projection shared by rendering and refresh keys.
+fn lock_widget_views(
+    policy: lock_widgets::LockWidgetPolicy,
+    sleeping: bool,
+    has_pin: bool,
+    battery: Option<(u8, bool)>,
+    store_connected: bool,
+    has_attention: bool,
+) -> (Option<LockAttentionView>, Option<LockDeviceView>) {
+    let widgets = policy.project(sleeping, has_pin, battery, store_connected, has_attention);
+    (
+        widgets
+            .attention
+            .and_then(|(connected, attention)| lock_attention_view(connected, attention)),
+        lock_device_view(widgets.battery),
+    )
 }
 
 /// VUI-07 (ADR-133): PIN-setup preview is a `Field`, not a second
@@ -10570,9 +10594,9 @@ impl Shell {
             TrustedClientTap::Revoke(index) => {
                 let clients = trusted_clients();
                 let recent = recently_authenticated_key_fingerprints();
-                let protected = clients
-                    .get(index)
-                    .is_some_and(|client| trusted_client_is_protected(&client.fingerprint, &recent));
+                let protected = clients.get(index).is_some_and(|client| {
+                    trusted_client_is_protected(&client.fingerprint, &recent)
+                });
                 if !protected {
                     let (pending, confirmed) =
                         trusted_client_revoke_decision(self.pending_revoke_trusted_client, index);
@@ -12133,7 +12157,11 @@ impl Shell {
         if self.settings.pin_code.is_some() {
             return;
         }
-        let attention = lock_attention_view(
+        let (attention, device) = lock_widget_views(
+            self.settings.lock_widgets,
+            self.sleeping,
+            self.settings.pin_code.is_some(),
+            read_battery(),
             self.entityd.is_connected(),
             orb_attention(
                 &self.selected_entities,
@@ -12141,7 +12169,7 @@ impl Shell {
             ),
         );
         let key = lock_attention_key(&attention);
-        let device = lock_device_key(&lock_device_view(read_battery()));
+        let device = lock_device_key(&device);
         if self.last_lock_idle_time.as_deref() == Some(time.as_str())
             && self.last_lock_attention_key == Some(key)
             && self.last_lock_device_key == Some(device)
@@ -12308,14 +12336,17 @@ impl Shell {
             self.last_lock_idle_time = Some(sleep.time.clone());
             (None, None)
         } else if pin_code.is_none() {
-            let view = lock_attention_view(
+            let (view, device) = lock_widget_views(
+                self.settings.lock_widgets,
+                sleeping,
+                pin_code.is_some(),
+                read_battery(),
                 self.entityd.is_connected(),
                 orb_attention(
                     &self.selected_entities,
                     read_runtime_live_facts().health.as_ref(),
                 ),
             );
-            let device = lock_device_view(read_battery());
             self.last_lock_idle_time = Some(idle.time.clone());
             self.last_lock_attention_key = Some(lock_attention_key(&view));
             self.last_lock_device_key = Some(lock_device_key(&device));
@@ -12536,20 +12567,19 @@ mod tests {
         stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, trusted_client_card_from_row, trusted_client_is_protected,
         trusted_client_list_row_count, trusted_client_list_rows, trusted_client_revoke_decision,
-        trusted_header, upsert_context_entry, wifi_card_from_row,
-        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
-        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
-        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
-        Entity, FieldKind, HealthReport, HealthState, Keyboard, KeyboardCommand, KeyboardLayout,
-        KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap, MotionClock,
-        MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
+        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, DataRowVariant, Entity, FieldKind, HealthReport, HealthState, Keyboard,
+        KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap,
+        LockWakeTap, MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceDetailTap, SpaceLifecycle, SurfacePattern,
+        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
+        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
+        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_IN_SPACE,
@@ -15309,6 +15339,73 @@ mod tests {
         assert_eq!(lock_wake_tap(true), LockWakeTap::ShowLock);
         assert_eq!(lock_wake_tap(false), LockWakeTap::Continue);
         assert_ne!(lock_wake_tap(true), lock_wake_tap(false));
+    }
+
+    #[test]
+    fn lock_widget_projection_filters_render_values_and_refresh_keys() {
+        use super::lock_widgets::LockWidgetPolicy;
+        let keys = |policy, sleeping, pin, battery, connected, attention| {
+            let (attention, device) =
+                super::lock_widget_views(policy, sleeping, pin, battery, connected, attention);
+            (
+                super::lock_attention_key(&attention),
+                super::lock_device_key(&device),
+            )
+        };
+        for connected in [false, true] {
+            for attention in [false, true] {
+                for battery in [None, Some((0, false)), Some((100, true))] {
+                    assert_eq!(
+                        keys(
+                            LockWidgetPolicy::Hidden,
+                            false,
+                            false,
+                            battery,
+                            connected,
+                            attention
+                        ),
+                        (0, 0)
+                    );
+                    for policy in [
+                        LockWidgetPolicy::Hidden,
+                        LockWidgetPolicy::Device,
+                        LockWidgetPolicy::Summary,
+                    ] {
+                        assert_eq!(
+                            keys(policy, true, false, battery, connected, attention),
+                            (0, 0)
+                        );
+                        assert_eq!(
+                            keys(policy, false, true, battery, connected, attention),
+                            (0, 0)
+                        );
+                    }
+                }
+                assert_eq!(
+                    keys(
+                        LockWidgetPolicy::Device,
+                        false,
+                        false,
+                        Some((87, false)),
+                        connected,
+                        attention
+                    ),
+                    (0, 88)
+                );
+            }
+        }
+        assert_eq!(
+            keys(LockWidgetPolicy::Summary, false, false, None, false, false),
+            (1, 0)
+        );
+        assert_eq!(
+            keys(LockWidgetPolicy::Summary, false, false, None, true, true),
+            (2, 0)
+        );
+        assert_eq!(
+            keys(LockWidgetPolicy::Summary, false, false, None, true, false),
+            (0, 0)
+        );
     }
 
     #[test]
