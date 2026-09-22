@@ -27,7 +27,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
 | Memory MLP | 125 | `(space,key)` + labelled context | **P0 runtime прошит** (MEM-01/02/05) |
-| Visual | 111–116 | VUI-00…03 Done, VUI-04 host remainder `Я`→`Система`, **VUI-05 ATTN-03+WORK-08** | **saai-shell `63b8b64` прошит** |
+| Visual | 111–116, 126 | VUI-00…03 Done, VUI-04 host remainder `Я`→`Система`, **VUI-05 ATTN-03+WORK-08**, VUI-06 domain grouping **host** | **saai-shell `63b8b64` прошит** |
 
 ## Две очереди, не девять
 
@@ -85,7 +85,7 @@ host-only derived view.
 |---|---|
 | VUI-04 remainder | `Я`→`Система` (blocked). SafeInsets, rotation, keyboard, rapid-tab on host |
 | VUI-05 | NOW ATTN-02, Inbox ATTN-03, WORK-08 **на panther** (`63b8b64`); Object View + offline + `AgentSummary` + gallery **host** |
-| VUI-06 `Система` | ручной Memory list/correct/erase без модели = MEM-08 |
+| VUI-06 `Система` | inventory + domain grouping **host** (ADR-126); MEM-08 still blocked (no shell-legal memory read) |
 
 Если VUI-05 ещё не готов, Attention **не** рисуем отдельным экраном.
 

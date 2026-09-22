@@ -91,8 +91,8 @@ contains:
 | VUI-02 | Typography, geometry, icons, and base component library | **Acceptance complete except one environment-blocked item** |
 | VUI-03 | Reference `Сейчас` surface | **Done** |
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **In progress** |
-| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **In progress** (TaskSummary host) |
-| VUI-06 | `Система` information architecture and settings components | Backlog |
+| VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
+| VUI-06 | `Система` information architecture and settings components | **In progress** (inventory + domain grouping host) |
 | VUI-07 | Remaining system surfaces and state patterns | Backlog |
 | VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
 | VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
@@ -823,7 +823,9 @@ types and preserve protocol compatibility.
 
 ## VUI-06 — `Система` and device control
 
-**Status:** Backlog
+**Status:** In progress (ADR-126 host: inventory, `SettingRow`/`CapabilityRow`,
+domain-grouped `Я`. Tab still `Я`. MEM-08 omitted — no shell-legal memory
+read. Physical flash pending.)
 
 **Depends on:** VUI-04; may run after core VUI-05 primitives stabilize
 
@@ -832,11 +834,17 @@ a concise engineering-oriented surface.
 
 ### Tasks
 
-- [ ] Inventory existing `Я`, developer, connectivity, power, display, sound,
+- [x] Inventory existing `Я`, developer, connectivity, power, display, sound,
   storage, privacy, update, capability, and diagnostic data/actions.
-- [ ] Define System section, setting row, capability row, metric, health,
+  ADR-126. Memory/Android VM/battery-gauge omitted honestly.
+- [x] Define System section, setting row, capability row, metric, health,
   evidence, recovery action, and dangerous-action components.
-- [ ] Reorganize content by device domain rather than implementation service.
+  `SystemSection` already exists. `SettingRow`/`CapabilityRow` added.
+  Metric already a primitive. Health/evidence/recovery wait for a first
+  consumer; dangerous confirmation is `DecisionOverlay`.
+- [x] Reorganize content by device domain rather than implementation service.
+  Host: `me_system_sections` groups the same 19 controls. Flattened to
+  `ActionCardView` so scroll/nav stay the accepted path.
 - [ ] Rename `Я` to `Система` when the migrated information architecture is
   complete.
 - [ ] Show healthy summaries first; disclose raw logs and identifiers on demand.
@@ -1038,7 +1046,6 @@ After each completed task group, report:
 
 ## Next action
 
-Finish **VUI-01** physical sign-off: review and photograph the raw calibration
-fixture, remove the volatile marker, verify normal navigation/touch/scrolling,
-then cold reboot and repeat the smoke test. Only after that gate should VUI-02
-begin drawing and implementing the base graphical component library.
+Continue **VUI-06**: healthy summaries / progressive disclosure on `Я`,
+then rename `Я`→`Система` only when that destination is truthful.
+MEM-08 stays omitted until a shell-legal memory read exists.

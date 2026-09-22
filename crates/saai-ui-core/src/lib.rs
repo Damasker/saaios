@@ -15,9 +15,9 @@ pub use components::{
     SemanticText, StatusIndicator, StatusIndicatorVariant, TextOverflow,
 };
 pub use composites::{
-    AgentAssignment, AgentSummary, BottomNavigation, ContextHeader, DecisionOverlay, IntentSummary,
-    NavigationItem, ObjectSummary, ObjectSummaryTrailing, OrbHost, SystemSection, SystemSectionRow,
-    SystemStatus, TaskSummary,
+    AgentAssignment, AgentSummary, BottomNavigation, CapabilityRow, ContextHeader, DecisionOverlay,
+    IntentSummary, NavigationItem, ObjectSummary, ObjectSummaryTrailing, OrbHost, SettingRow,
+    SystemSection, SystemSectionRow, SystemStatus, TaskSummary,
 };
 pub use foundations::{
     FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,
