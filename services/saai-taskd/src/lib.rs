@@ -43,9 +43,10 @@ use intent_resolution::{
     ResolutionOutcome, ResolveAttempt, SOURCE_PROPERTY,
 };
 use model::{
-    action_properties, dangerous_action_of, find_action_for_task, has_task_for_intent,
-    is_schedule_due, result_properties, safe_title, schedule_every_secs, schedule_fire_count,
-    schedule_properties, schedule_text, status_of, task_properties, WorkflowStatus, ACTION_TYPE,
+    action_properties, dangerous_action_of, find_action_for_task, has_open_task_for_intent,
+    has_task_for_intent, intent_id_of, is_schedule_due, result_properties, safe_title,
+    schedule_every_secs, schedule_fire_count, schedule_properties, schedule_text,
+    should_retry_failed_task, status_of, task_properties, WorkflowStatus, ACTION_TYPE,
     DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, RESULT_TYPE, RUNTIME_ACTION_KIND,
     SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
@@ -54,6 +55,7 @@ use saai_entity_protocol::{
 };
 use saai_entity_store::EventPayload;
 use saai_object_actions::{display_inspect_spec, ObjectActionRegistry};
+use scheduler::{admit_frontier, derive_ready_set, mutating_in_flight, MAX_MUTATING_IN_FLIGHT};
 use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::time::Duration;
@@ -125,6 +127,7 @@ impl Daemon {
             .collect();
         self.reconcile_existing_intents().await?;
         self.reconcile_confirmed_tasks().await?;
+        self.dispatch_ready().await?;
         Ok(true)
     }
 
@@ -222,6 +225,13 @@ impl Daemon {
                                     Some(WorkflowStatus::Cancelled) => {
                                         self.try_cancel_pending_action(&entity).await?;
                                     }
+                                    Some(WorkflowStatus::Failed) => {
+                                        self.try_retry_failed_task(&entity).await?;
+                                        self.dispatch_ready().await?;
+                                    }
+                                    Some(WorkflowStatus::Done) | Some(WorkflowStatus::Pending) => {
+                                        self.dispatch_ready().await?;
+                                    }
                                     _ => {}
                                 }
                             }
@@ -302,6 +312,7 @@ impl Daemon {
             .iter_mut()
             .find(|known| known.id == task.id)
         {
+            Some(slot) if task.revision < slot.revision => {}
             Some(slot) => *slot = task,
             None => self.known_tasks.push(task),
         }
@@ -677,11 +688,93 @@ impl Daemon {
         self.remember_task(task.clone());
         self.record_lineage(task.id, intent.id, RELATION_REALIZES)
             .await;
+        self.dispatch_ready().await?;
+        Ok(())
+    }
+
+    /// ADR-237: Ready is derived; this is the only place that starts
+    /// planner work. `WaitingConfirmation` is never admitted.
+    /// Mutating in-flight stays at 1.
+    pub async fn dispatch_ready(&mut self) -> Result<usize, ClientError> {
+        let mut started = 0;
+        loop {
+            let ready = derive_ready_set(&self.known_tasks);
+            let in_flight = mutating_in_flight(&self.known_tasks);
+            let Some(id) = admit_frontier(&ready, in_flight, MAX_MUTATING_IN_FLIGHT)
+                .into_iter()
+                .next()
+            else {
+                break;
+            };
+            let Some(task) = self
+                .known_tasks
+                .iter()
+                .find(|known| known.id == id)
+                .cloned()
+            else {
+                break;
+            };
+            if status_of(&task) != Some(WorkflowStatus::Pending) {
+                break;
+            }
+            eprintln!(
+                "saai-taskd: admit {} ready={} in_flight={}",
+                task.id,
+                ready.len(),
+                in_flight
+            );
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+            self.start_ready_planner_task(&task).await?;
+            started += 1;
+            let still_pending = self
+                .known_tasks
+                .iter()
+                .find(|known| known.id == id)
+                .and_then(status_of)
+                == Some(WorkflowStatus::Pending);
+            if still_pending {
+                break;
+            }
+        }
+        Ok(started)
+    }
+
+    async fn start_ready_planner_task(&mut self, task: &Entity) -> Result<(), ClientError> {
+        let Some(intent_id) = intent_id_of(task) else {
+            return self
+                .fail_task(task, Uuid::nil(), "task missing intent_id")
+                .await;
+        };
+        let entities = self.conn.list_entities(&self.space_id).await?;
+        let actions: Vec<Entity> = entities
+            .iter()
+            .filter(|entity| entity.entity_type == ACTION_TYPE)
+            .cloned()
+            .collect();
+        if find_action_for_task(&actions, task.id).is_some() {
+            return Ok(());
+        }
+        let Some(intent) = entities
+            .iter()
+            .find(|entity| entity.entity_type == INTENT_TYPE && entity.id == intent_id)
+        else {
+            return self
+                .fail_task(task, intent_id, "intent gone before dispatch")
+                .await;
+        };
+        let text = intent
+            .properties
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or(&intent.title)
+            .to_string();
 
         let response =
-            match runtime_bridge::diagnose(&self.runtime_addr, text, &self.space_id).await {
+            match runtime_bridge::diagnose(&self.runtime_addr, &text, &self.space_id).await {
                 Ok(response) => response,
-                Err(error) => return self.fail_task(&task, intent.id, &error.to_string()).await,
+                Err(error) => {
+                    return self.fail_bridge_task(task, intent_id, &error).await;
+                }
             };
 
         if !response.ok {
@@ -689,7 +782,7 @@ impl Daemon {
                 .error
                 .clone()
                 .unwrap_or_else(|| "saaios-runtime returned an error".into());
-            return self.fail_task(&task, intent.id, &message).await;
+            return self.fail_runtime_message(task, intent_id, &message).await;
         }
 
         if let Some(pending) = response.pending.clone() {
@@ -721,8 +814,8 @@ impl Daemon {
             let updated_task = self
                 .conn
                 .update_entity(
-                    &task,
-                    task_properties(intent.id, WorkflowStatus::WaitingConfirmation),
+                    task,
+                    task_properties(intent_id, WorkflowStatus::WaitingConfirmation),
                 )
                 .await?;
             self.remember_task(updated_task);
@@ -733,14 +826,9 @@ impl Daemon {
             return Ok(());
         }
 
-        // No pending proposal -- saaios-runtime's own policy-engine
-        // already judged everything it did along the way safe enough to
-        // run without asking, so this Task never needs a native
-        // confirmation gate either (ADR-033's answer to Change 1's
-        // second question).
         let running_task = self
             .conn
-            .update_entity(&task, task_properties(intent.id, WorkflowStatus::Running))
+            .update_entity(task, task_properties(intent_id, WorkflowStatus::Running))
             .await?;
 
         let summary = response.summary().unwrap_or_default().to_string();
@@ -776,7 +864,7 @@ impl Daemon {
         self.record_lineage(action.id, result.id, RELATION_PRODUCES)
             .await;
 
-        let mut done_properties = task_properties(intent.id, WorkflowStatus::Done);
+        let mut done_properties = task_properties(intent_id, WorkflowStatus::Done);
         done_properties.insert("result_id".into(), json!(result.id.to_string()));
         let updated_task = self
             .conn
@@ -784,7 +872,7 @@ impl Daemon {
             .await?;
         self.remember_task(updated_task);
 
-        eprintln!("saai-taskd: intent {} done -> {summary}", intent.id);
+        eprintln!("saai-taskd: intent {intent_id} done -> {summary}");
         Ok(())
     }
 
@@ -809,13 +897,66 @@ impl Daemon {
         }
     }
 
+    async fn fail_bridge_task(
+        &mut self,
+        task: &Entity,
+        intent_id: Uuid,
+        error: &runtime_bridge::BridgeError,
+    ) -> Result<(), ClientError> {
+        let kind = if error.is_timeout() {
+            Some("timeout")
+        } else if matches!(error, runtime_bridge::BridgeError::Connect { .. }) {
+            Some("unreachable")
+        } else {
+            None
+        };
+        self.fail_task_with(
+            task,
+            intent_id,
+            &error.to_string(),
+            error.is_retryable(),
+            kind,
+        )
+        .await
+    }
+
+    async fn fail_runtime_message(
+        &mut self,
+        task: &Entity,
+        intent_id: Uuid,
+        message: &str,
+    ) -> Result<(), ClientError> {
+        let timeout = runtime_bridge::runtime_error_is_timeout(message);
+        self.fail_task_with(
+            task,
+            intent_id,
+            message,
+            timeout,
+            if timeout { Some("timeout") } else { None },
+        )
+        .await
+    }
+
     async fn fail_task(
         &mut self,
         task: &Entity,
         intent_id: Uuid,
         message: &str,
     ) -> Result<(), ClientError> {
+        self.fail_task_with(task, intent_id, message, false, None)
+            .await
+    }
+
+    async fn fail_task_with(
+        &mut self,
+        task: &Entity,
+        intent_id: Uuid,
+        message: &str,
+        retryable: bool,
+        error_kind: Option<&str>,
+    ) -> Result<(), ClientError> {
         eprintln!("saai-taskd: task {} failed: {message}", task.id);
+        let _ = std::io::Write::flush(&mut std::io::stderr());
         // Best-effort, deliberately not `?` -- a hiccup creating the
         // notification must never turn this Task's own already-
         // durable `Failed` write below into a daemon-crashing error
@@ -824,9 +965,50 @@ impl Daemon {
         self.notify_task_failed(&task.title, message).await;
         let mut failed_properties = task_properties(intent_id, WorkflowStatus::Failed);
         failed_properties.insert("error".into(), json!(message));
+        if retryable {
+            failed_properties.insert("retryable".into(), json!(true));
+        }
+        if let Some(kind) = error_kind {
+            failed_properties.insert("error_kind".into(), json!(kind));
+        }
         let updated_task = self.conn.update_entity(task, failed_properties).await?;
         self.remember_task(updated_task);
         Ok(())
+    }
+
+    /// ADR-236: a retryable Failed Task whose `retry_requested` flag was
+    /// set (Object View later; tests/socket now) gets a sibling Task on
+    /// the same Intent. Failed stays Failed. No auto-retry of mutating
+    /// Actions (ADR-121).
+    async fn try_retry_failed_task(&mut self, task: &Entity) -> Result<bool, ClientError> {
+        if !should_retry_failed_task(task) {
+            return Ok(false);
+        }
+        let Some(intent_id) = intent_id_of(task) else {
+            return Ok(false);
+        };
+        if has_open_task_for_intent(&self.known_tasks, intent_id) {
+            return Ok(false);
+        }
+        let mut consumed = task.properties.clone();
+        consumed.insert("retry_requested".into(), json!(false));
+        let updated = self.conn.update_entity(task, consumed).await?;
+        self.remember_task(updated);
+        let entities = self.conn.list_entities(&self.space_id).await?;
+        let Some(intent) = entities
+            .into_iter()
+            .find(|entity| entity.entity_type == INTENT_TYPE && entity.id == intent_id)
+        else {
+            eprintln!("saai-taskd: retry skipped, intent {intent_id} gone");
+            return Ok(false);
+        };
+        eprintln!(
+            "saai-taskd: retry task {} intent {intent_id}",
+            task.id
+        );
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        self.process_intent(&intent).await?;
+        Ok(true)
     }
 
     /// A Task just became (or already was, at reconcile time) `Running`

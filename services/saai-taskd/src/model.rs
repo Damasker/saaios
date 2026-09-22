@@ -255,6 +255,44 @@ pub fn has_task_for_intent(existing_tasks: &[Entity], intent_id: Uuid) -> bool {
         .any(|task| intent_id_of(task) == Some(intent_id))
 }
 
+fn is_open_workflow(status: WorkflowStatus) -> bool {
+    matches!(
+        status,
+        WorkflowStatus::Pending
+            | WorkflowStatus::Running
+            | WorkflowStatus::WaitingConfirmation
+            | WorkflowStatus::WaitingClarification
+    )
+}
+
+/// A still-in-flight Task for this Intent. Failed/Done/Cancelled do not
+/// count -- ADR-236 retry creates a sibling Task after a timeout.
+pub fn has_open_task_for_intent(existing_tasks: &[Entity], intent_id: Uuid) -> bool {
+    existing_tasks.iter().any(|task| {
+        intent_id_of(task) == Some(intent_id) && status_of(task).is_some_and(is_open_workflow)
+    })
+}
+
+/// Timeout/unreachable Failed Tasks are retryable. Malformed responses
+/// are not. Object View later writes `retry_requested`; this daemon
+/// never auto-retries mutating work (ADR-121).
+pub fn is_retryable_failure(entity: &Entity) -> bool {
+    status_of(entity) == Some(WorkflowStatus::Failed)
+        && entity.properties.get("retryable").and_then(Value::as_bool) == Some(true)
+}
+
+pub fn retry_requested(entity: &Entity) -> bool {
+    entity
+        .properties
+        .get("retry_requested")
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+pub fn should_retry_failed_task(entity: &Entity) -> bool {
+    is_retryable_failure(entity) && retry_requested(entity)
+}
+
 /// The Action belonging to a given Task, if any -- used both to find
 /// what a confirmed Task is waiting to run and, implicitly, whether it
 /// already ran (via `status_of` on the result).
@@ -554,6 +592,50 @@ mod tests {
     #[test]
     fn idempotency_guard_is_false_on_an_empty_task_list() {
         assert!(!has_task_for_intent(&[], Uuid::new_v4()));
+    }
+
+    #[test]
+    fn failed_task_is_not_an_open_task() {
+        let intent_id = Uuid::new_v4();
+        let tasks = vec![entity(
+            TASK_TYPE,
+            task_properties(intent_id, WorkflowStatus::Failed),
+        )];
+        assert!(has_task_for_intent(&tasks, intent_id));
+        assert!(!has_open_task_for_intent(&tasks, intent_id));
+    }
+
+    #[test]
+    fn pending_task_is_open() {
+        let intent_id = Uuid::new_v4();
+        let tasks = vec![entity(
+            TASK_TYPE,
+            task_properties(intent_id, WorkflowStatus::Pending),
+        )];
+        assert!(has_open_task_for_intent(&tasks, intent_id));
+    }
+
+    #[test]
+    fn timeout_failed_task_retries_only_when_requested() {
+        let intent_id = Uuid::new_v4();
+        let mut properties = task_properties(intent_id, WorkflowStatus::Failed);
+        properties.insert("retryable".into(), json!(true));
+        let failed = entity(TASK_TYPE, properties.clone());
+        assert!(is_retryable_failure(&failed));
+        assert!(!should_retry_failed_task(&failed));
+        properties.insert("retry_requested".into(), json!(true));
+        let requested = entity(TASK_TYPE, properties);
+        assert!(should_retry_failed_task(&requested));
+    }
+
+    #[test]
+    fn malformed_failure_is_not_retryable() {
+        let task = entity(
+            TASK_TYPE,
+            task_properties(Uuid::new_v4(), WorkflowStatus::Failed),
+        );
+        assert!(!is_retryable_failure(&task));
+        assert!(!should_retry_failed_task(&task));
     }
 
     #[test]

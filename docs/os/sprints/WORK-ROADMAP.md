@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01/02 host; WORK-08 visibility on panther shell `63b8b64`.**
+Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -24,7 +24,7 @@ Planner the scheduler.
 |---|---|---|---|
 | WORK-00 | ADR-121 + mapping + this roadmap | **Done** | no |
 | WORK-01 | Task dependency model + DAG validation | **Done** (host) | no |
-| WORK-02 | Derived ready set + concurrency = 1 | **Done** (host) | no |
+| WORK-02 | Derived ready set + concurrency = 1 | **Done** (host + panther dispatch ADR-237) | **yes** |
 | WORK-03 | Verification lifecycle (`Verifying`) | Backlog | no |
 | WORK-04 | Read-only bounded parallelism | Backlog | measure first |
 | WORK-05 | Priority scheduling | Backlog | no |
@@ -64,16 +64,18 @@ required to accept the module.
 
 **Goal:** Ready is derived from the store; mutating concurrency is 1.
 
-**Change:** `scheduler.rs` — `derive_ready_set` / `admit_frontier`. No
-`ready` status. WaitingConfirmation is not admitted. Linear S09/S10
-one-task path unchanged.
+**Change:** `scheduler.rs` — `derive_ready_set` / `admit_frontier` /
+`next_admission`. `dispatch_ready` starts at most one admitted planner
+Task (ADR-237). No `ready` status. WaitingConfirmation is not admitted.
+Linear S09/S10 one-task path goes through the same frontier.
 
 **Test:** child blocked until parent Done; failed parent blocks; two
-Pending with one Running admits nothing; reboot snapshot matches.
+Pending with one Running admits nothing; reboot snapshot matches;
+`next_admission` unblocks the child.
 
-**Rollback:** drop `scheduler.rs`.
+**Rollback:** diagnose again inside `process_planner_intent`.
 
-**Threat:** none — no dispatch change, no new queue.
+**Threat:** one live diagnose per admit; no new queue.
 
 ## WORK-08
 

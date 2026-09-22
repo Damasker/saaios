@@ -53,6 +53,14 @@ async fn main() {
             std::process::exit(1);
         }
     }
+    match daemon.dispatch_ready().await {
+        Ok(0) => {}
+        Ok(count) => eprintln!("saai-taskd: admitted {count} ready task(s)"),
+        Err(error) => {
+            eprintln!("saai-taskd: ready dispatch failed: {error}");
+            std::process::exit(1);
+        }
+    }
     if let Err(error) = daemon.run().await {
         eprintln!("saai-taskd: {error}");
         std::process::exit(1);
