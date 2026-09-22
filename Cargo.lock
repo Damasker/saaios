@@ -1486,6 +1486,7 @@ name = "intent-resolution"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "saai-authority",
  "saai-entity-store",
  "serde",
  "serde_json",
@@ -2280,6 +2281,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "saai-entity-store",
+ "saai-observation",
  "serde",
  "serde_json",
  "uuid",
@@ -2386,6 +2388,7 @@ dependencies = [
  "chrono",
  "policy-engine",
  "protocol",
+ "saai-authority",
  "saai-entity-store",
  "serde",
  "serde_json",
@@ -2492,6 +2495,7 @@ dependencies = [
  "protocol",
  "saai-app-protocol",
  "saai-attention",
+ "saai-authority",
  "saai-entity-protocol",
  "saai-entity-store",
  "saai-object-actions",
@@ -2505,6 +2509,7 @@ dependencies = [
  "tool-registry",
  "uuid",
  "wayland-protocols",
+ "wayland-protocols-misc",
 ]
 
 [[package]]
