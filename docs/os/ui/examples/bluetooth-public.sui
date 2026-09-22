@@ -1,0 +1,18 @@
+sui 2
+screen bluetooth {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = bluetooth.header
+    focus = 0
+    inset = safe
+  }
+  component BluetoothRow {
+    text = Body
+    a11y = Button
+    loc = bluetooth.item
+  }
+  row scan {}
+  row refresh {}
+  row back {}
+}

@@ -39,10 +39,17 @@
 //!   surface indefinitely instead of the phone-realistic
 //!   dim-then-blank sequence.
 //! - **Haptic feedback on unlock.** drm-splash opened `/dev/input/haptic`
-//!   directly. Unlock still has no tick. ADR-151 keyboard keys request
-//!   `HapticIntent::KeyTick` through `HapticMotor` (same device, same
-//!   15 ms pulse). Displayd still has no haptic protocol; VUI-08 may
-//!   move the write.
+//!   directly. Unlock still has no tick. Keyboard `KeyPress` goes
+//!   through `haptic_intent_for` (ADR-171). Main-surface commits log
+//!   `FramePace` to `/run/saaios/shell-frame.last` (ADR-172/173) and
+//!   `/run/saaios/shell-frame.trace` (ADR-175). First visible
+//!   `input_ok` is the down commit, not a token delay (ADR-176).
+//!   Idle Сейчас must keep `seq` still (ADR-177).
+//!   Main-surface commits name `backend=dmabuf` or `backend=shm`
+//!   (ADR-178) without changing either path. VUI-08 haptic
+//!   acceptance is that same KeyPress map (ADR-179).
+//!   Reduced motion drops in-flight clocks on the same tap (ADR-174).
+//!   Displayd still has no haptic protocol; this slice does not flash it.
 //!
 //! Both are logged as known limitations in the S04 sprint doc, not
 //! silently dropped.
@@ -62,12 +69,14 @@
 //! receive the taps that switch pages.
 
 use std::collections::BTreeMap;
+use std::fs::File;
 use std::time::{Duration, Instant, SystemTime};
 
 mod appd_client;
 mod dmabuf_canvas;
 mod entityd_client;
 mod haptic;
+mod hardware_keyboard;
 mod intent_context;
 mod portal_server;
 mod render;
@@ -461,9 +470,11 @@ use saai_object_actions::{
     ObjectActionRegistry,
 };
 use saai_ui_core::{
-    layout, AgentSummary, Axis, BluetoothRow, CapabilityRow, ContextColor, ContextHeader, DataRow,
-    DataRowVariant, DecisionOverlay, EdgeInsets, EventRow, Field, FieldKind, IntentSummary,
-    LayoutNode, Length, LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost,
+    frame_reason, frame_surface, layout, AgentSummary, Axis, BluetoothRow, CapabilityRow,
+    ContextColor, ContextHeader, DataRow, DataRowVariant, DecisionOverlay, EdgeInsets, EventRow,
+    Field, FieldKind, FrameBackend, FramePace, FrameSample, FrameSurface, IntentSummary, Keyboard,
+    KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LayoutNode, Length,
+    LogicalUnit, MotionClock, MotionCue, MotionToken, NavigationItem, Node, ObjectSummary, OrbHost,
     Progress, Rect, SafeInsets, SettingRow, SpaceRow, SpacingToken, StatusIndicator,
     StatusIndicatorVariant, StatusMark, SurfacePattern, SurfaceScale, SystemSection,
     SystemSectionRow, SystemStatus, TaskSummary, TrustedClientRow, UniversalState, WifiRow,
@@ -661,6 +672,20 @@ fn next_gallery_page(show_composites: bool) -> bool {
 /// asked to act on them right now.
 const DEV_NO_LOCK_MARKER: &str = "/run/saaios/dev-no-lock";
 
+/// ADR-172: last main-surface commit sample. Missing `/run` is a
+/// silent no-op so host tests do not fail.
+const FRAME_PACE_PATH: &str = "/run/saaios/shell-frame.last";
+/// ADR-175: chronological ring dump of the same samples.
+const FRAME_TRACE_PATH: &str = "/run/saaios/shell-frame.trace";
+
+fn write_frame_pace_last(line: &str) {
+    let _ = std::fs::write(FRAME_PACE_PATH, format!("{line}\n"));
+}
+
+fn write_frame_pace_trace(trace: &str) {
+    let _ = std::fs::write(FRAME_TRACE_PATH, trace);
+}
+
 /// The master "Удалённый доступ" switch's on-disk signal to `pair-
 /// recv` (a separate process, native-init.c-started, that can't read
 /// `ShellSettings`'s own JSON directly without duplicating its parse
@@ -798,6 +823,9 @@ struct ShellSettings {
     /// keeps today's static frames; when true, `OrbHost` stops
     /// advertising Running as busy.
     reduced_motion: bool,
+    /// ADR-171: independent of `reduced_motion`. Missing JSON key stays
+    /// on so existing devices keep keyboard ticks.
+    haptics_enabled: bool,
 }
 
 impl ShellSettings {
@@ -825,6 +853,7 @@ impl ShellSettings {
             remote_access_enabled: false,
             orb_enabled: true,
             reduced_motion: false,
+            haptics_enabled: true,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -884,6 +913,10 @@ impl ShellSettings {
                 .get("reduced_motion")
                 .and_then(Value::as_bool)
                 .unwrap_or(default.reduced_motion),
+            haptics_enabled: value
+                .get("haptics_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(default.haptics_enabled),
         }
     }
 
@@ -900,6 +933,7 @@ impl ShellSettings {
             "remote_access_enabled": self.remote_access_enabled,
             "orb_enabled": self.orb_enabled,
             "reduced_motion": self.reduced_motion,
+            "haptics_enabled": self.haptics_enabled,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -910,25 +944,6 @@ impl ShellSettings {
         let _ = std::fs::write(SETTINGS_PATH, text);
     }
 }
-/// Bright red -- S04 diagnostic so a photo showed which surface the
-/// compositor was scanning out while locked. VUI-07 (ADR-134) no longer
-/// paints this for the idle lock; kept for rollback of
-/// `present_lock_surface(LOCK_SCREEN_COLOR)`. Byte order is empirical
-/// (R at byte-index 1, G at 2), not a standard XRGB8888 LE layout.
-#[allow(dead_code)]
-const LOCK_SCREEN_COLOR: [u8; 4] = [0x00, 0xd0, 0x00, 0x00];
-/// Plain black -- every byte-order permutation of all-zero reads as
-/// black, so this needs none of `LOCK_SCREEN_COLOR`'s empirical care.
-/// Shown on the lock surface (the panel's actual visible content while
-/// locked -- not the toplevel, which stays hidden underneath it, ADR-016)
-/// immediately before a real `mem`-suspend and while resuming from one.
-/// Real, physically confirmed UX gap otherwise (S11 Change 2/ADR-041):
-/// nothing made the panel visibly go dark before suspending, so there
-/// was no reliable cue for when it was actually safe -- or necessary --
-/// to press power.
-#[allow(dead_code)]
-const SLEEP_INDICATOR_COLOR: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TabDefinition {
     id: &'static str,
@@ -991,29 +1006,116 @@ fn status_layer_height() -> u32 {
 
 /// Navigation hit-region: design-canvas tab height scaled to the
 /// panel, never below `MIN_TOUCH_TARGET`. Landscape 2400×1080 would
-/// otherwise shrink the strip under 48 logical units.
+/// otherwise shrink the strip under 48 logical units. ADR-184: same
+/// formula `layout_v2` uses.
 fn navigation_hit_height(panel_height: u32) -> u32 {
-    let scaled = ((panel_height as u64 * ROOT_TAB_HEIGHT as u64) / 2400) as u32;
-    scaled.max(physical_unit(MIN_TOUCH_TARGET))
+    saai_ui_compiler::v1_tab_strip_height(panel_height, ROOT_TAB_HEIGHT)
+}
+
+fn root_screen() -> &'static saai_ui_compiler::SuiV2Screen {
+    static SCREEN: std::sync::OnceLock<saai_ui_compiler::SuiV2Screen> = std::sync::OnceLock::new();
+    SCREEN.get_or_init(|| {
+        let screen = saai_ui_compiler::compile_v2(include_str!("../ui/root.sui"))
+            .expect("ADR-216: root.sui v2");
+        debug_assert_eq!(screen.id, ROOT_SCREEN_ID);
+        debug_assert_eq!(format!("{}-content", screen.id), ROOT_CONTENT_ID);
+        debug_assert_eq!(ROOT_TABS_ID, "BottomNavigation");
+        screen
+    })
 }
 
 fn root_view(width: u32, height: u32) -> LayoutNode {
-    let tab_height = navigation_hit_height(height);
-    let tabs = Node::linear(
-        ROOT_TABS_ID,
-        Axis::Horizontal,
-        ROOT_TABS
-            .iter()
-            .map(|tab| Node::leaf(tab.id).with_action(tab.action))
-            .collect(),
+    saai_ui_compiler::layout_v2(root_screen(), width, height)
+}
+
+fn now_screen() -> &'static saai_ui_compiler::SuiV2Screen {
+    static SCREEN: std::sync::OnceLock<saai_ui_compiler::SuiV2Screen> = std::sync::OnceLock::new();
+    SCREEN.get_or_init(|| {
+        saai_ui_compiler::compile_v2(include_str!("../ui/now.sui")).expect("ADR-217: now.sui v2")
+    })
+}
+
+fn now_view(width: u32, height: u32) -> LayoutNode {
+    saai_ui_compiler::layout_v2(now_screen(), width, height)
+}
+
+const V2_ROOT_TABS: &str = "
+  component BottomNavigation {
+    a11y = Button
+    focus = 1
+    scroll = none
+    inset = safe
+    tab now { loc = now }
+    tab inbox { loc = inbox }
+    tab spaces { loc = spaces }
+    tab me { loc = me }
+  }
+";
+
+fn v2_loc_token(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn v2_header_block(loc: &str) -> String {
+    format!(
+        "  component ContextHeader {{\n    text = Title\n    a11y = Heading\n    loc = {}\n    focus = 0\n    inset = safe\n  }}\n",
+        v2_loc_token(loc)
     )
-    .with_size(Length::Fill, Length::Px(tab_height));
-    let root = Node::linear(
-        ROOT_SCREEN_ID,
-        Axis::Vertical,
-        vec![Node::leaf(ROOT_CONTENT_ID), tabs],
-    );
-    layout(&root, Rect::new(0, 0, width, height))
+}
+
+fn v2_stacked_block(type_name: &str, a11y: &str, loc: &str) -> String {
+    format!(
+        "  component {type_name} {{\n    text = Body\n    a11y = {a11y}\n    loc = {}\n  }}\n",
+        v2_loc_token(loc)
+    )
+}
+
+fn compile_live_v2(source: &str, why: &'static str) -> saai_ui_compiler::SuiV2Screen {
+    saai_ui_compiler::compile_v2(source).unwrap_or_else(|err| panic!("{why}: {err}"))
+}
+
+fn layout_live_v2(source: &str, why: &'static str, width: u32, height: u32) -> LayoutNode {
+    saai_ui_compiler::layout_v2(&compile_live_v2(source, why), width, height)
+}
+
+fn layout_live_v2_scrolled(
+    source: &str,
+    why: &'static str,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> LayoutNode {
+    saai_ui_compiler::layout_v2_scrolled(
+        &compile_live_v2(source, why),
+        width,
+        height,
+        scroll_offset,
+    )
+}
+
+fn live_v2_hit(
+    source: &str,
+    why: &'static str,
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+) -> Option<(String, Option<String>)> {
+    layout_live_v2(source, why, width, height)
+        .hit_test(pos.0, pos.1)
+        .map(|node| (node.id.clone(), node.action.clone()))
+}
+
+fn live_v2_hit_scrolled(
+    source: &str,
+    why: &'static str,
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Option<(String, Option<String>)> {
+    layout_live_v2_scrolled(source, why, width, height, scroll_offset)
+        .hit_test(pos.0, pos.1)
+        .map(|node| (node.id.clone(), node.action.clone()))
 }
 
 /// Content pane of the root layout — everything except the bottom
@@ -1325,41 +1427,23 @@ fn bluetooth_pair(index: usize) {
     spawn_detached(BT_PAIR_BIN, &[&index.to_string()], BT_PAIR_LOG_PATH);
 }
 
-/// `bt-pair <index>`'s own result line, if the background pairing
-/// attempt has reached one yet (`None` while only its initial
-/// "PAIRING" line is present, or before it's been run at all).
-fn bluetooth_pair_result() -> Option<String> {
-    let text = std::fs::read_to_string(BT_PAIR_LOG_PATH).ok()?;
-    for line in text.lines() {
-        if let Some(name) = line.strip_prefix("PAIRED\t") {
-            return Some(format!("Сопряжено: {name}"));
-        }
+/// First result line from `bt-pair`'s log. `PAIR-ERROR` is a Failed
+/// pattern. `PAIRED` first is success on the device row, not a
+/// surface pattern.
+fn bluetooth_pair_error_from(log: &str) -> Option<String> {
+    for line in log.lines() {
         if let Some(reason) = line.strip_prefix("PAIR-ERROR\t") {
-            return Some(format!("Ошибка сопряжения: {reason}"));
+            return Some(reason.to_string());
+        }
+        if line.starts_with("PAIRED\t") {
+            return None;
         }
     }
     None
 }
 
-/// Prefers a pairing result in progress/just finished over the scan
-/// state, so tapping a device to pair immediately starts showing
-/// that outcome instead of being silently overwritten by scan status
-/// text. ADR-145: the Surface subtitle that consumed this left the
-/// Bluetooth header; kept for a later scan-status row.
-#[allow(dead_code)]
-fn bluetooth_status_summary() -> String {
-    if let Some(result) = bluetooth_pair_result() {
-        return result;
-    }
-    if !std::path::Path::new(BT_SCAN_LOG_PATH).exists() {
-        return "Поиск ещё не запускался".to_string();
-    }
-    let (devices, done) = bluetooth_scan_results();
-    if done {
-        format!("Поиск завершён: найдено {}", devices.len())
-    } else {
-        "Идёт поиск... (~8 с)".to_string()
-    }
+fn bluetooth_pair_error_reason() -> Option<String> {
+    bluetooth_pair_error_from(&std::fs::read_to_string(BT_PAIR_LOG_PATH).ok()?)
 }
 
 fn bluetooth_paired_count() -> usize {
@@ -1536,6 +1620,7 @@ fn key_fingerprint(public_key: &str) -> String {
 
 const INTENT_SCREEN_ID: &str = "intent-input";
 const INTENT_HEADER_ID: &str = "intent-header";
+const INTENT_FIELD_ID: &str = "intent-field";
 const INTENT_ROWS_ID: &str = "intent-rows";
 const INTENT_CANCEL_ACTION: &str = "intent:cancel";
 const INTENT_MODE_TOGGLE_ACTION: &str = "intent:mode:toggle";
@@ -1624,7 +1709,7 @@ fn intent_mod_key_width() -> u32 {
 /// "Последствия" section. Change 2's job is proving the Intent -> Task
 /// -> Action -> Result workflow end to end, not re-proving text entry
 /// works -- ADR-029 already did that.
-const INTENT_KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+const INTENT_KEY_ROWS: [&str; 3] = Keyboard::QWERTY_LETTER_ROWS;
 
 /// S29: the digits/symbols side of the same keyboard, toggled in by
 /// `INTENT_MODE_TOGGLE_ACTION` -- same three-row shape as
@@ -1633,23 +1718,7 @@ const INTENT_KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 /// mode`). Curated for what a real WPA2 password (ADR-065's own
 /// motivating case) actually needs, not an exhaustive ASCII table --
 /// still no uppercase, that's future polish, not this sprint's scope.
-const INTENT_SYMBOL_ROWS: [&str; 3] = ["1234567890", "-_/:;()$&@\"", ".,?!'#%^*+="];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum KeyboardMode {
-    #[default]
-    Letters,
-    Symbols,
-}
-
-impl KeyboardMode {
-    fn toggled(self) -> Self {
-        match self {
-            KeyboardMode::Letters => KeyboardMode::Symbols,
-            KeyboardMode::Symbols => KeyboardMode::Letters,
-        }
-    }
-}
+const INTENT_SYMBOL_ROWS: [&str; 3] = Keyboard::QWERTY_SYMBOL_ROWS;
 
 /// `INTENT_KEY_ROWS` or `INTENT_SYMBOL_ROWS`, whichever `mode` is
 /// currently showing -- the one place that decision is made, shared
@@ -1707,13 +1776,22 @@ const INTENT_CONTROLS: [IntentControlDef; 5] = [
     },
 ];
 
-/// Active while the on-screen keyboard (S09 Change 2) is composing a new
-/// `saaios.intent`'s text. Modal, same as `PendingConsent` -- owns every
-/// touch while it's showing (see `TouchHandler::up()`).
-#[derive(Default)]
+/// Active while a Field-bound Keyboard (ADR-222) is composing a new
+/// `saaios.intent`. Modal, same as `PendingConsent` -- owns every
+/// touch while it's showing (see `TouchHandler::up()`). Hardware
+/// source hides the on-screen panel.
 struct IntentInputState {
     buffer: String,
-    mode: KeyboardMode,
+    keyboard: Keyboard,
+}
+
+impl Default for IntentInputState {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            keyboard: Keyboard::bind(INTENT_FIELD_ID, KeyboardLayout::Qwerty),
+        }
+    }
 }
 
 /// S19: reuses `intent_view()`'s keyboard layout and hit-testing
@@ -1728,15 +1806,44 @@ struct IntentInputState {
 struct WifiPasswordState {
     ssid: String,
     buffer: String,
-    mode: KeyboardMode,
+    keyboard: Keyboard,
 }
 
 /// S24/ADR-149: "Изменить PIN" on "Я" -- digit rows on the same
 /// ADR-029 `Node`/`layout()`/`hit_test()` keyboard Intent and Wi-Fi
 /// password already use. Not a second painter.
-#[derive(Default)]
 struct PinSetupState {
     buffer: String,
+    keyboard: Keyboard,
+}
+
+impl Default for PinSetupState {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            keyboard: Keyboard::bind(PIN_SETUP_FIELD_ID, KeyboardLayout::Pin),
+        }
+    }
+}
+
+fn live_keyboard(field_id: &str, layout: KeyboardLayout) -> Keyboard {
+    Keyboard::bind(field_id, layout).with_source(hardware_keyboard::detect_keyboard_source())
+}
+
+fn open_intent_state() -> IntentInputState {
+    let mut state = IntentInputState::default();
+    state
+        .keyboard
+        .set_source(hardware_keyboard::detect_keyboard_source());
+    state
+}
+
+fn open_pin_setup_state() -> PinSetupState {
+    let mut state = PinSetupState::default();
+    state
+        .keyboard
+        .set_source(hardware_keyboard::detect_keyboard_source());
+    state
 }
 
 /// One row of `wifi_scan_results()`'s output, or a fixed trailing
@@ -1762,25 +1869,46 @@ fn wifi_list_row_count(network_count: usize) -> usize {
 /// (like `installed_apps.len()` elsewhere), so this can't be a
 /// `root.sui` entry -- two more `stacked_row_rect` slots after the
 /// `WifiRow` list are the fixed "Обновить"/"Назад" controls.
+fn wifi_v2_source(network_count: usize) -> String {
+    let mut src = String::from("sui 2\nscreen wifi {\n");
+    src.push_str(&v2_header_block("wifi.header"));
+    if network_count == 0 {
+        src.push_str(&v2_stacked_block("WifiRow", "Status", "wifi.empty"));
+    } else {
+        for index in 0..network_count {
+            src.push_str(&v2_stacked_block(
+                "WifiRow",
+                "Button",
+                &format!("wifi.{index}"),
+            ));
+        }
+    }
+    src.push_str("  row refresh {}\n  row back {}\n}\n");
+    src
+}
+
 fn wifi_list_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     network_count: usize,
 ) -> Option<WifiListTap> {
-    for index in 0..network_count {
-        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
-            return Some(WifiListTap::Network(index));
-        }
+    let (id, action) = live_v2_hit(
+        &wifi_v2_source(network_count),
+        "ADR-218 wifi",
+        pos,
+        width,
+        height,
+    )?;
+    match action.as_deref() {
+        Some("list_back") => Some(WifiListTap::Back),
+        Some("list_refresh") => Some(WifiListTap::Refresh),
+        Some("connect_wifi") => id
+            .strip_prefix("wifi.")
+            .and_then(|index| index.parse().ok())
+            .map(WifiListTap::Network),
+        _ => None,
     }
-    let controls = wifi_list_row_count(network_count);
-    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
-        return Some(WifiListTap::Refresh);
-    }
-    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
-        return Some(WifiListTap::Back);
-    }
-    None
 }
 
 /// S20: same shape as `WifiListTap`, one more trailing control row
@@ -1796,12 +1924,29 @@ enum BluetoothListTap {
     Back,
 }
 
-fn bluetooth_list_row_count(device_count: usize, _scan_done: bool) -> usize {
-    if device_count == 0 {
-        1
-    } else {
-        device_count
+fn bluetooth_list_row_count(device_count: usize, status_rows: usize) -> usize {
+    device_count + status_rows
+}
+
+fn bluetooth_v2_source(device_count: usize, status_rows: usize) -> String {
+    let mut src = String::from("sui 2\nscreen bluetooth {\n");
+    src.push_str(&v2_header_block("bluetooth.header"));
+    for index in 0..status_rows {
+        src.push_str(&v2_stacked_block(
+            "BluetoothRow",
+            "Status",
+            &format!("bluetooth.status.{index}"),
+        ));
     }
+    for index in 0..device_count {
+        src.push_str(&v2_stacked_block(
+            "BluetoothRow",
+            "Button",
+            &format!("bluetooth.{index}"),
+        ));
+    }
+    src.push_str("  row scan {}\n  row refresh {}\n  row back {}\n}\n");
+    src
 }
 
 fn bluetooth_list_action_at(
@@ -1809,24 +1954,25 @@ fn bluetooth_list_action_at(
     width: u32,
     height: u32,
     device_count: usize,
-    scan_done: bool,
+    status_rows: usize,
 ) -> Option<BluetoothListTap> {
-    for index in 0..device_count {
-        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
-            return Some(BluetoothListTap::Device(index));
-        }
+    let (id, action) = live_v2_hit(
+        &bluetooth_v2_source(device_count, status_rows),
+        "ADR-218 bluetooth",
+        pos,
+        width,
+        height,
+    )?;
+    match action.as_deref() {
+        Some("list_back") => Some(BluetoothListTap::Back),
+        Some("list_refresh") => Some(BluetoothListTap::Refresh),
+        Some("list_scan") => Some(BluetoothListTap::Scan),
+        Some("pair_bluetooth") => id
+            .strip_prefix("bluetooth.")
+            .and_then(|index| index.parse().ok())
+            .map(BluetoothListTap::Device),
+        _ => None,
     }
-    let controls = bluetooth_list_row_count(device_count, scan_done);
-    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Scan);
-    }
-    if stacked_row_rect(controls + 1, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Refresh);
-    }
-    if stacked_row_rect(controls + 2, width, height).contains(pos.0, pos.1) {
-        return Some(BluetoothListTap::Back);
-    }
-    None
 }
 
 /// Same shape as `BluetoothListTap`, minus a scan/refresh control --
@@ -1846,22 +1992,65 @@ fn trusted_client_list_row_count(client_count: usize) -> usize {
     }
 }
 
+fn trusted_v2_source(client_count: usize) -> String {
+    let mut src = String::from("sui 2\nscreen trusted {\n");
+    src.push_str(&v2_header_block("trusted.header"));
+    if client_count == 0 {
+        src.push_str(&v2_stacked_block(
+            "TrustedClientRow",
+            "Status",
+            "trusted.empty",
+        ));
+    } else {
+        for index in 0..client_count {
+            src.push_str(&v2_stacked_block(
+                "TrustedClientRow",
+                "Button",
+                &format!("trusted.{index}"),
+            ));
+        }
+    }
+    src.push_str("  row back {}\n}\n");
+    src
+}
+
 fn trusted_client_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     client_count: usize,
 ) -> Option<TrustedClientTap> {
-    for index in 0..client_count {
-        if stacked_row_rect(index, width, height).contains(pos.0, pos.1) {
-            return Some(TrustedClientTap::Revoke(index));
-        }
+    let (id, action) = live_v2_hit(
+        &trusted_v2_source(client_count),
+        "ADR-218 trusted",
+        pos,
+        width,
+        height,
+    )?;
+    match action.as_deref() {
+        Some("list_back") => Some(TrustedClientTap::Back),
+        Some("revoke_trusted_client") => id
+            .strip_prefix("trusted.")
+            .and_then(|index| index.parse().ok())
+            .map(TrustedClientTap::Revoke),
+        _ => None,
     }
-    let controls = trusted_client_list_row_count(client_count);
-    if stacked_row_rect(controls, width, height).contains(pos.0, pos.1) {
-        return Some(TrustedClientTap::Back);
+}
+
+/// ADR-224: live DevSurface hits are generated `DataRow`s (read-only)
+/// plus trailing `row back`. Paint uses the same scrolled tree.
+fn diagnostic_v2_source(row_count: usize) -> String {
+    let mut src = String::from("sui 2\nscreen diagnostic {\n");
+    src.push_str(&v2_header_block("diagnostic.header"));
+    for index in 0..row_count {
+        src.push_str(&v2_stacked_block(
+            "DataRow",
+            "Status",
+            &format!("diagnostic.{index}"),
+        ));
     }
-    None
+    src.push_str("  row back {}\n}\n");
+    src
 }
 
 /// HIA-20: every `dev_surface_rows()` row is read-only diagnostic
@@ -1870,7 +2059,16 @@ fn trusted_client_action_at(
 /// `trusted_client_action_at`'s own `Back` variant already uses, just
 /// without the per-row action this screen has no need for.
 fn dev_surface_back_tapped(pos: (f64, f64), width: u32, height: u32, row_count: usize) -> bool {
-    stacked_row_rect(row_count, width, height).contains(pos.0, pos.1)
+    live_v2_hit(
+        &diagnostic_v2_source(row_count),
+        "ADR-224 diagnostic",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
+    .as_deref()
+        == Some("list_back")
 }
 
 const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
@@ -1919,12 +2117,16 @@ enum Frame {
     /// HIA-07: one variant for any entity. ADR-137: identity is an
     /// `ObjectSummary` (title + type/version + trailing status);
     /// `details` are the optional activity / observation / blocker /
-    /// consequence lines that actually exist. History is omitted until
-    /// entity events load.
+    /// consequence lines that actually exist. ADR-157: confirmation
+    /// is `DecisionOverlay`, not flattened into `details`. ADR-158:
+    /// OAM permission is `SurfacePattern::blocked`, not a Caption dump.
+    /// History is omitted until entity events load.
     ObjectView {
         summary: ObjectSummary,
         related: Option<String>,
         details: Vec<String>,
+        decision: Option<DecisionOverlay>,
+        permission: Option<SurfacePattern>,
         header: Rect,
         actions: Vec<(Rect, &'static str)>,
     },
@@ -1940,14 +2142,21 @@ enum Frame {
         accept: Rect,
         decline: Rect,
     },
+    /// ADR-161: Field sits immediately above the docked QWERTY.
+    /// Header is a real `ContextHeader`, not a Surface fill of the
+    /// Fill slot ADR-150 left above the keys.
     IntentInput {
+        content_rect: Rect,
+        header: ContextHeader,
         field: Field,
-        header: Rect,
+        field_rect: Rect,
         keys: Vec<(Rect, String)>,
     },
     WifiPasswordInput {
+        content_rect: Rect,
+        header: ContextHeader,
         field: Field,
-        header: Rect,
+        field_rect: Rect,
         keys: Vec<(Rect, String)>,
     },
     /// ADR-146: Wi-Fi is no longer `draw_action_row_list` Surface
@@ -2040,11 +2249,13 @@ enum Frame {
     },
     /// VUI-03 (ADR-112/115): the real composed `Сейчас` -- `RootPage::
     /// Now`'s only content now, the app grid relocated behind its own
-    /// "Приложения" row (ADR-113/`apps_open`).
+    /// "Приложения" row (ADR-113/`apps_open`). ADR-225: chrome rects
+    /// and tab rects come from `now_view()`.
     Now {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
+        chrome: render::NowPaintChrome,
         sections: Vec<SystemSection>,
         object: Option<ObjectSummary>,
         footer_actions: Vec<(Rect, DataRow)>,
@@ -2075,12 +2286,20 @@ fn task_confirm_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bo
     if width == 0 || height == 0 {
         return None;
     }
-    match task_confirm_view(width, height)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
+    match live_v2_hit(
+        &overlay_buttons_v2_source(
+            "consent",
+            &[TASK_CONFIRM_ACCEPT_ACTION, TASK_CONFIRM_DECLINE_ACTION],
+        ),
+        "ADR-221 task confirm",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
     {
-        Some(TASK_CONFIRM_ACCEPT_ACTION) => Some(true),
-        Some(TASK_CONFIRM_DECLINE_ACTION) => Some(false),
+        Some(action) if action == TASK_CONFIRM_ACCEPT_ACTION => Some(true),
+        Some(action) if action == TASK_CONFIRM_DECLINE_ACTION => Some(false),
         _ => None,
     }
 }
@@ -2130,11 +2349,19 @@ fn object_view_action_at(
     if width == 0 || height == 0 || action_count == 0 {
         return None;
     }
-    object_view(width, height, action_count)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
-        .and_then(|action| action.strip_prefix(OBJECT_VIEW_ACTION_PREFIX))
-        .and_then(|index| index.parse::<usize>().ok())
+    let locs: Vec<String> = (0..action_count)
+        .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
+        .collect();
+    let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+    live_v2_hit(
+        &overlay_buttons_v2_source("object", &loc_refs),
+        "ADR-221 object view",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
+    .and_then(|action| action.strip_prefix(OBJECT_VIEW_ACTION_PREFIX)?.parse().ok())
 }
 
 /// What Object View shows for one entity -- `saaios.task`/`saaios.
@@ -2276,24 +2503,20 @@ fn object_view_summary(entity: &Entity, content: &ObjectViewContent) -> ObjectSu
 }
 
 fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
-    let mut lines = content
-        .decision
-        .as_ref()
-        .map(DecisionOverlay::fact_lines)
-        .unwrap_or_default();
-    lines.extend(
-        [
-            content.agent.as_ref().map(AgentSummary::detail_line),
-            content.activity.clone(),
-            content.observation.clone(),
-            content.blocker.clone(),
-            content.consequence.clone(),
-            content.permission.clone(),
-        ]
-        .into_iter()
-        .flatten(),
-    );
-    lines
+    [
+        content.agent.as_ref().map(AgentSummary::detail_line),
+        content.activity.clone(),
+        content.observation.clone(),
+        content.blocker.clone(),
+        content.consequence.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn object_view_permission_pattern(content: &ObjectViewContent) -> Option<SurfacePattern> {
+    content.permission.clone().map(SurfacePattern::blocked)
 }
 
 fn builtin_object_actions() -> ObjectActionRegistry {
@@ -2426,10 +2649,8 @@ const ORB_TOGGLE_ACTION: &str = "orb:toggle";
 const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
 const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
 const ORB_MENU_BLUETOOTH_ACTION: &str = "orb-menu:bluetooth";
-/// Square, not a circle -- same reasoning as `draw_status_bar`'s HIA-03
-/// dot: no circle-drawing primitive exists in `render.rs`.
 fn orb_dot_size(width: u32, height: u32) -> u32 {
-    90.min(width / 10).min(height / 10)
+    saai_ui_compiler::v2_orb_dot_size(width, height)
 }
 
 /// HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb must
@@ -2447,25 +2668,7 @@ fn orb_dot_size(width: u32, height: u32) -> u32 {
 /// `y=150..340`, which has never had a hit-test target of its own),
 /// never downward into card territory.
 fn orb_zone_rect(width: u32, height: u32, menu_action_count: usize) -> Rect {
-    let margin = width / 22;
-    let dot_size = orb_dot_size(width, height);
-    let bottom = ((410_u64 * height as u64) / 2400) as u32;
-    if menu_action_count == 0 {
-        return Rect::new(
-            width.saturating_sub(margin + dot_size),
-            bottom.saturating_sub(dot_size),
-            dot_size,
-            dot_size,
-        );
-    }
-    let top = ((160_u64 * height as u64) / 2400) as u32;
-    let zone_width = 420.min(width.saturating_sub(margin * 2));
-    Rect::new(
-        width.saturating_sub(margin + zone_width),
-        top,
-        zone_width,
-        bottom.saturating_sub(top),
-    )
+    saai_ui_compiler::v2_orb_zone_rect(width, height, menu_action_count)
 }
 
 /// HIA-05: which real thing a tapped Orb row does -- `Toggle` is
@@ -2542,9 +2745,9 @@ fn orb_menu_actions(is_system_space: bool, bluetooth_paired: bool) -> Vec<OrbAct
 /// Closed (`menu_actions` empty): the whole zone IS the dot, one
 /// leaf, nothing to stack. Open: a vertical list within the (now
 /// taller) zone -- one row per `menu_actions` entry, the dot itself
-/// last, doubling as the close control -- same "layout only returns a
-/// position, the call site decides what it means" shape `object_view`/
-/// `task_confirm_view` already use.
+/// last, doubling as the close control. Host tests still compare
+/// against this tree. Live paint and hits read `layout_v2()` over
+/// `orb_v2_source` (ADR-230).
 fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
     let zone = orb_zone_rect(width, height, menu_actions.len());
     if menu_actions.is_empty() {
@@ -2572,10 +2775,14 @@ fn orb_action_at(
     if width == 0 || height == 0 {
         return None;
     }
-    orb_view(width, height, menu_actions)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
-        .and_then(OrbAction::parse)
+    live_v2_hit(
+        &orb_v2_source(menu_actions),
+        "ADR-223 orb",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action.as_deref().and_then(OrbAction::parse))
 }
 
 /// What `draw_orb` needs, computed once per frame in `build_orb_
@@ -2594,7 +2801,8 @@ struct OrbFrame {
     /// Context Light quantity=fill, determinate battery percent.
     /// `None` if `read_battery` has no reading — not `0`.
     quantity: Option<u8>,
-    /// Context Light activity=motion, still-frame stand-in until VUI-08.
+    /// Context Light activity=motion, ADR-170: inset on the activity
+    /// clock's visible phase. Still-frame when reduced motion.
     activity_pulse: bool,
     menu_rows: Vec<(Rect, &'static str)>,
 }
@@ -2627,56 +2835,68 @@ fn intent_key_action(ch: char) -> String {
 fn intent_view(width: u32, height: u32, mode: KeyboardMode) -> LayoutNode {
     let side = intent_side_key_width(width);
     let modifier = intent_mod_key_width();
-    let mut rows: Vec<Node> = keyboard_rows_for_mode(mode)
-        .iter()
-        .enumerate()
-        .map(|(row_index, letters)| {
-            let inset = intent_row_inset(letters, width);
-            Node::linear(
-                format!("intent-row-{row_index}"),
-                Axis::Horizontal,
-                letters
-                    .chars()
-                    .map(|ch| {
-                        Node::leaf(format!("intent-key-{ch}")).with_action(intent_key_action(ch))
-                    })
-                    .collect(),
-            )
-            .with_padding(EdgeInsets {
-                top: 0,
-                right: inset,
-                bottom: 0,
-                left: inset,
-            })
-        })
-        .collect();
-    rows.push(Node::linear(
-        "intent-controls",
-        Axis::Horizontal,
-        INTENT_CONTROLS
-            .iter()
-            .map(|control| {
-                let leaf = Node::leaf(control.id).with_action(control.action);
-                if control.action == INTENT_SPACE_ACTION {
-                    leaf.with_size(Length::Fill, Length::Fill)
-                } else if control.action == INTENT_CANCEL_ACTION
-                    || control.action == INTENT_SEND_ACTION
-                {
-                    leaf.with_size(Length::Px(side), Length::Fill)
-                } else {
-                    leaf.with_size(Length::Px(modifier), Length::Fill)
-                }
-            })
-            .collect(),
-    ));
+    let mut focus = 1u32;
+    let mut rows: Vec<Node> = Vec::new();
+    for (row_index, letters) in keyboard_rows_for_mode(mode).iter().enumerate() {
+        let inset = intent_row_inset(letters, width);
+        let mut keys = Vec::new();
+        for ch in letters.chars() {
+            keys.push(
+                Node::leaf(format!("intent-key-{ch}"))
+                    .with_action(intent_key_action(ch))
+                    .with_focus_order(focus),
+            );
+            focus += 1;
+        }
+        rows.push(
+            Node::linear(format!("intent-row-{row_index}"), Axis::Horizontal, keys).with_padding(
+                EdgeInsets {
+                    top: 0,
+                    right: inset,
+                    bottom: 0,
+                    left: inset,
+                },
+            ),
+        );
+    }
+    let mut controls = Vec::new();
+    for control in &INTENT_CONTROLS {
+        let mut leaf = Node::leaf(control.id)
+            .with_action(control.action)
+            .with_focus_order(focus);
+        focus += 1;
+        if control.action == INTENT_SPACE_ACTION {
+            leaf = leaf.with_size(Length::Fill, Length::Fill);
+        } else if control.action == INTENT_CANCEL_ACTION || control.action == INTENT_SEND_ACTION {
+            leaf = leaf.with_size(Length::Px(side), Length::Fill);
+        } else {
+            leaf = leaf.with_size(Length::Px(modifier), Length::Fill);
+        }
+        controls.push(leaf);
+    }
+    rows.push(Node::linear("intent-controls", Axis::Horizontal, controls));
     let pad = physical_unit(SpacingToken::XSmall.value());
     let keyboard = Node::linear(INTENT_ROWS_ID, Axis::Vertical, rows)
         .with_size(Length::Fill, Length::Px(intent_keyboard_height(height)))
         .with_padding(EdgeInsets::all(pad));
+    let field_height = stacked_row_rect(0, width, height).height;
+    let margin = width / 22;
+    let field = Node::linear(
+        "intent-field-row",
+        Axis::Horizontal,
+        vec![Node::leaf(INTENT_FIELD_ID).with_focus_order(0)],
+    )
+    .with_size(Length::Fill, Length::Px(field_height))
+    .with_padding(EdgeInsets {
+        top: 0,
+        right: margin,
+        bottom: 0,
+        left: margin,
+    });
     let root = Node::linear(
         INTENT_SCREEN_ID,
         Axis::Vertical,
-        vec![Node::leaf(INTENT_HEADER_ID), keyboard],
+        vec![Node::leaf(INTENT_HEADER_ID), field, keyboard],
     );
     layout(&root, Rect::new(0, 0, width, height))
 }
@@ -2695,6 +2915,66 @@ fn intent_action_at(
         .and_then(|node| node.action.clone())
 }
 
+/// ADR-163: a keyboard or PIN control fires only when down and up
+/// named the same action. Pressed highlight still follows the finger
+/// (ADR-151). Slide off, or onto a different key, cancels.
+fn committed_action(down: Option<&str>, up: Option<&str>) -> Option<String> {
+    match (down, up) {
+        (Some(start), Some(end)) if start == end => Some(end.to_string()),
+        _ => None,
+    }
+}
+
+/// ADR-167/168: after release, keep the pressed key or tab only while
+/// the in-flight clock still needs a frame. Finger-down always wins.
+fn retain_pressed_while_clock<T>(
+    pressed: Option<T>,
+    clock: Option<&MotionClock>,
+    finger_down: bool,
+) -> Option<T> {
+    if finger_down || clock.is_some_and(|clock| clock.needs_frame()) {
+        pressed
+    } else {
+        None
+    }
+}
+
+/// ADR-174: reduced motion never occupies a clock slot.
+fn motion_clock_for(token: MotionToken, reduced: bool) -> Option<MotionClock> {
+    (!reduced).then(|| MotionClock::one_shot(token, false))
+}
+
+fn activity_clock_for(wants: bool) -> Option<MotionClock> {
+    wants.then(|| MotionClock::looping(MotionToken::Context, false))
+}
+
+fn drop_clocks_if_reduced(
+    reduced: bool,
+    motion: Option<MotionClock>,
+    activity: Option<MotionClock>,
+) -> (Option<MotionClock>, Option<MotionClock>) {
+    if reduced {
+        (None, None)
+    } else {
+        (motion, activity)
+    }
+}
+
+/// ADR-169: the compose Field shows Focus only while the in-flight
+/// interaction clock is still a live one-shot `Context` token.
+fn field_shows_context_focus(clock: Option<&MotionClock>) -> bool {
+    clock.is_some_and(|clock| {
+        clock.token() == MotionToken::Context && clock.needs_frame() && !clock.is_looping()
+    })
+}
+
+/// ADR-170: Orb inset hairline follows the activity loop's on-phase.
+/// No clock and no Running work stays still. Reduced motion never
+/// starts a loop, so `wants` is already false.
+fn orb_shows_activity_pulse(wants: bool, clock: Option<&MotionClock>) -> bool {
+    wants && clock.is_some_and(|clock| clock.pulse_visible())
+}
+
 /// Builds both the header rect and the drawn `(Rect, label)` pairs for
 /// every key -- letters/digits uppercased for display the same way a
 /// real keyboard shows capital letter-caps while typing lowercase,
@@ -2708,8 +2988,11 @@ fn intent_keyboard_keys(
     mode: KeyboardMode,
 ) -> (Rect, Vec<(Rect, String)>) {
     let view = intent_view(width, height, mode);
-    let header = view.children[0].rect;
-    let keyboard_rows = &view.children[1].children;
+    let header = layout_node_by_id(&view, INTENT_HEADER_ID)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| view.children[0].rect);
+    let keyboard = layout_node_by_id(&view, INTENT_ROWS_ID).expect("intent keyboard");
+    let keyboard_rows = &keyboard.children;
     let rows = keyboard_rows_for_mode(mode);
     let mut keys = Vec::new();
     for (row_index, letters) in rows.iter().enumerate() {
@@ -2728,6 +3011,37 @@ fn intent_keyboard_keys(
         keys.push((key_node.rect, label));
     }
     (header, keys)
+}
+
+/// ADR-161/162: the compose Field is the `intent-field` leaf in
+/// `intent_view`, immediately above the docked keyboard.
+fn intent_field_rect(width: u32, height: u32, _mode: KeyboardMode) -> Rect {
+    overlay_field_rect("intent", INTENT_FIELD_ID, width, height)
+}
+
+fn layout_node_by_id<'a>(node: &'a LayoutNode, id: &str) -> Option<&'a LayoutNode> {
+    if node.id == id {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| layout_node_by_id(child, id))
+}
+
+fn layout_focus_stops(node: &LayoutNode) -> Vec<(u32, String)> {
+    let mut stops = Vec::new();
+    collect_focus_stops(node, &mut stops);
+    stops.sort_by_key(|(order, _)| *order);
+    stops
+}
+
+fn collect_focus_stops(node: &LayoutNode, stops: &mut Vec<(u32, String)>) {
+    if let Some(order) = node.focus_order {
+        stops.push((order, node.id.clone()));
+    }
+    for child in &node.children {
+        collect_focus_stops(child, stops);
+    }
 }
 
 #[cfg(test)]
@@ -2769,12 +3083,17 @@ fn consent_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bool> {
     if width == 0 || height == 0 {
         return None;
     }
-    match consent_view(width, height)
-        .hit_test(pos.0, pos.1)
-        .and_then(|node| node.action.as_deref())
+    match live_v2_hit(
+        &overlay_buttons_v2_source("consent", &["consent:accept", "consent:decline"]),
+        "ADR-221 consent",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
     {
-        Some(CONSENT_ACCEPT_ACTION) => Some(true),
-        Some(CONSENT_DECLINE_ACTION) => Some(false),
+        Some(action) if action == CONSENT_ACCEPT_ACTION => Some(true),
+        Some(action) if action == CONSENT_DECLINE_ACTION => Some(false),
         _ => None,
     }
 }
@@ -2955,15 +3274,9 @@ fn boot_attempts() -> u32 {
 }
 
 fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
-    let margin = width / 22;
-    let top = ((action.top as u64 * height as u64) / 2400) as u32;
-    let action_height = ((action.height as u64 * height as u64) / 2400) as u32;
-    Rect::new(
-        margin,
-        top,
-        width.saturating_sub(margin.saturating_mul(2)),
-        action_height,
-    )
+    saai_ui_compiler::layout_v1_find(&root_view(width, height), action.id)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| Rect::new(0, 0, 0, 0))
 }
 
 fn content_action_at(
@@ -2972,10 +3285,15 @@ fn content_action_at(
     width: u32,
     height: u32,
 ) -> Option<ContentActionDefinition> {
-    ROOT_CONTENT_ACTIONS.iter().copied().find(|action| {
-        action.page == page.id()
-            && content_action_rect(action, width, height).contains(pos.0, pos.1)
-    })
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let tree = root_view(width, height);
+    let hit = tree.hit_test(pos.0, pos.1)?;
+    ROOT_CONTENT_ACTIONS
+        .iter()
+        .copied()
+        .find(|action| action.page == page.id() && action.id == hit.id)
 }
 
 /// S13 Change 2: "Входящие" has no `root.sui` entries at all -- unlike
@@ -3025,50 +3343,158 @@ fn now_grid_rect(index: usize, width: u32, height: u32) -> Rect {
 /// Same "pure function shared by rendering and hit-testing" pattern
 /// `now_grid_rect`/`stacked_row_rect` already use.
 fn now_footer_action_rect(index: usize, width: u32, height: u32) -> Rect {
-    let margin = width / 22;
-    let content_rect = root_view(width, height).children[0].rect;
-    let row_height = ((160_u64 * u64::from(height)) / 2400) as u32;
-    let bottom = content_rect.y + content_rect.height;
-    let top = bottom.saturating_sub(row_height * (2 - index) as u32);
-    Rect::new(margin, top, width.saturating_sub(margin * 2), row_height)
+    let id = match index {
+        0 => "apps",
+        1 => "intent",
+        _ => panic!("NOW footer only has apps then intent"),
+    };
+    saai_ui_compiler::layout_v1_find(&now_view(width, height), id)
+        .unwrap_or_else(|| panic!("now.sui missing `{id}`"))
+        .rect
 }
 
 const NOW_FOOTER_OPEN_APPS_ACTION: &str = "open_apps";
 
 fn now_footer_action_views(width: u32, height: u32) -> Vec<(Rect, DataRow)> {
+    now_footer_action_views_from(&now_view(width, height))
+}
+
+fn now_footer_action_views_from(view: &LayoutNode) -> Vec<(Rect, DataRow)> {
     vec![
         (
-            now_footer_action_rect(0, width, height),
+            now_node_rect(view, "apps"),
             DataRow::new("Приложения", DataRowVariant::Navigation)
                 .with_action(NOW_FOOTER_OPEN_APPS_ACTION),
         ),
         (
-            now_footer_action_rect(1, width, height),
+            now_node_rect(view, "intent"),
             DataRow::new("Новое намерение", DataRowVariant::Navigation)
                 .with_action("open_intent_input"),
         ),
     ]
 }
 
+fn now_node_rect(view: &LayoutNode, id: &str) -> Rect {
+    v2_named_rect(view, id, "now.sui")
+}
+
+fn v2_named_rect(tree: &LayoutNode, id: &str, why: &str) -> Rect {
+    saai_ui_compiler::layout_v1_find(tree, id)
+        .unwrap_or_else(|| panic!("{why}: missing `{id}`"))
+        .rect
+}
+
+fn list_paint_cards(
+    tree: &LayoutNode,
+    why: &'static str,
+    cards: Vec<render::ActionCardView>,
+    ids: &[String],
+) -> Vec<(Rect, render::ActionCardView)> {
+    assert_eq!(cards.len(), ids.len(), "{why}: card/id count");
+    cards
+        .into_iter()
+        .zip(ids)
+        .map(|(card, id)| (v2_named_rect(tree, id, why), card))
+        .collect()
+}
+
+fn me_row_loc(index: usize, row: &MeRow) -> String {
+    match row.dispatch {
+        Some(action) => action.to_string(),
+        None => format!("me.quiet.{index}"),
+    }
+}
+
+/// ADR-227: paint only rows still present after `layout_v2_scrolled`
+/// clips them. Missing locs are off-screen, not invented Buttons.
+fn me_paint_cards(tree: &LayoutNode, rows: &[MeRow]) -> Vec<(Rect, render::ActionCardView)> {
+    rows.iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            saai_ui_compiler::layout_v1_find(tree, &me_row_loc(index, row))
+                .map(|node| (node.rect, row.card.clone()))
+        })
+        .collect()
+}
+
+/// ADR-228: tile rects from the same generated `layout_v2` tree hits
+/// already use. Loc is `manage_app:{id}`; BTreeMap order matches
+/// `apps_v2_source`. Empty stays a SurfacePattern, not invented tiles.
+fn apps_paint_cards(
+    tree: &LayoutNode,
+    apps: &BTreeMap<String, AppSummary>,
+) -> Vec<(Rect, render::ActionCardView)> {
+    apps.values()
+        .map(|app| {
+            let id = format!("manage_app:{}", app.id);
+            (
+                v2_named_rect(tree, &id, "ADR-228 apps paint"),
+                render::ActionCardView::new(
+                    app.name.clone(),
+                    app_state_label(&app.state),
+                    if app.state == "running" {
+                        "Работает"
+                    } else {
+                        "Запустить"
+                    },
+                ),
+            )
+        })
+        .collect()
+}
+
+/// ADR-231: diagnostic DataRows from the same `layout_v2_scrolled`
+/// tree as Назад hits. Missing locs are clipped above the first
+/// stacked slot, not invented cards. Trailing `back` always docks.
+fn diagnostic_paint_cards(
+    tree: &LayoutNode,
+    rows: &[DataRow],
+) -> Vec<(Rect, render::ActionCardView)> {
+    let mut cards: Vec<(Rect, render::ActionCardView)> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            saai_ui_compiler::layout_v1_find(tree, &format!("diagnostic.{index}"))
+                .map(|node| (node.rect, diagnostic_card_from_row(row)))
+        })
+        .collect();
+    cards.push((
+        v2_named_rect(tree, "back", "ADR-231 diagnostic paint"),
+        render::ActionCardView::new("Назад", "", "Назад"),
+    ));
+    cards
+}
+
+fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
+    render::NowPaintChrome {
+        header: now_node_rect(view, "ContextHeader"),
+        object: now_node_rect(view, "ObjectSummary"),
+        empty: now_node_rect(view, "SurfacePattern"),
+    }
+}
+
 fn now_footer_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
-    if now_footer_action_rect(0, width, height).contains(pos.0, pos.1) {
-        Some(NOW_FOOTER_OPEN_APPS_ACTION)
-    } else if now_footer_action_rect(1, width, height).contains(pos.0, pos.1) {
-        Some("open_intent_input")
-    } else {
-        None
+    match now_view(width, height)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref())
+    {
+        Some("open_apps") => Some(NOW_FOOTER_OPEN_APPS_ACTION),
+        Some("open_intent_input") => Some("open_intent_input"),
+        _ => None,
     }
 }
 
 fn now_object_tapped(
     pos: (f64, f64),
-    content: Rect,
-    has_lifecycle: bool,
+    width: u32,
+    height: u32,
     object: Option<&ObjectSummary>,
 ) -> bool {
-    object.is_some_and(|summary| {
-        render::now_object_summary_rect(content, has_lifecycle, summary).contains(pos.0, pos.1)
-    })
+    object.is_some()
+        && now_view(width, height)
+            .hit_test(pos.0, pos.1)
+            .and_then(|node| node.action.as_deref())
+            == Some("open_object")
 }
 
 fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
@@ -3084,12 +3510,65 @@ fn stacked_row_rect(index: usize, width: u32, height: u32) -> Rect {
     )
 }
 
+/// ADR-159: trailing list controls that would paint below the fold
+/// dock to the last on-screen row. Same x/height as `stacked_row_rect`.
+fn stacked_control_rect(index: usize, width: u32, height: u32) -> Rect {
+    let desired = stacked_row_rect(index, width, height);
+    if desired.y.saturating_add(desired.height) <= height {
+        desired
+    } else {
+        Rect::new(
+            desired.x,
+            height.saturating_sub(desired.height),
+            desired.width,
+            desired.height,
+        )
+    }
+}
+
+fn stacked_row_pitch(height: u32) -> u32 {
+    ((220_u64 * height as u64) / 2400) as u32
+}
+
+/// ADR-165: trailing list controls dock as a cluster whose last row
+/// (Назад) stays on-screen. Same x/height as `stacked_row_rect`.
+fn stacked_trailing_rect(index: usize, last_index: usize, width: u32, height: u32) -> Rect {
+    let back = stacked_control_rect(last_index, width, height);
+    let steps = last_index.saturating_sub(index) as u32;
+    let y = back
+        .y
+        .saturating_sub(steps.saturating_mul(stacked_row_pitch(height)));
+    Rect::new(
+        back.x,
+        y.max(stacked_row_rect(0, width, height).y),
+        back.width,
+        back.height,
+    )
+}
+
+fn stacked_row_fits_above(row: Rect, back: Rect) -> bool {
+    row.y.saturating_add(row.height) <= back.y
+}
+
+/// ADR-160: DevSurface data rows scroll between the first stacked
+/// row and the docked back card. Назад itself is not in this rect.
+fn dev_surface_scroll_content(width: u32, height: u32, row_count: usize) -> Rect {
+    let back = stacked_control_rect(row_count, width, height);
+    let top = stacked_row_rect(0, width, height).y;
+    Rect::new(0, top, width, back.y.saturating_sub(top))
+}
+
 /// ADR-149: the same `Node`/`layout()`/`hit_test()` keyboard as
 /// `intent_view()`, with dialer rows instead of Latin letters. Space
 /// in the last digit row is the blank cell (no action). Setup adds
 /// Отмена/Готово/Убрать PIN as one more Fill row, the same way
-/// `intent_view()` appends `INTENT_CONTROLS`.
-const PIN_KEY_ROWS: [&str; 4] = ["123", "456", "789", " 0⌫"];
+/// `intent_view()` appends `INTENT_CONTROLS`. ADR-164 docks that
+/// setup tree at the bottom and parks the Field on it.
+const PIN_SETUP_SCREEN_ID: &str = "pin-setup";
+const PIN_SETUP_HEADER_ID: &str = "pin-header";
+const PIN_SETUP_FIELD_ID: &str = "pin-field";
+const PIN_ROWS_ID: &str = "pin-rows";
+const PIN_KEY_ROWS: [&str; 4] = Keyboard::PIN_DIGIT_ROWS;
 
 #[derive(Clone, Copy)]
 enum PinKeyboardKind {
@@ -3141,41 +3620,77 @@ fn intern_pin_action(action: &str) -> Option<&'static str> {
     LABELS.iter().copied().find(|label| *label == action)
 }
 
+fn pin_setup_keyboard_height(panel_height: u32) -> u32 {
+    let row = physical_unit(MIN_TOUCH_TARGET);
+    let pad = physical_unit(SpacingToken::XSmall.value()).saturating_mul(2);
+    let wanted = row.saturating_mul(5).saturating_add(pad);
+    let keep_field = row.saturating_mul(2);
+    wanted.min(panel_height.saturating_sub(keep_field)).max(row)
+}
+
 fn pin_keypad_node(controls: &[&str]) -> Node {
-    let mut rows: Vec<Node> = PIN_KEY_ROWS
-        .iter()
-        .enumerate()
-        .map(|(row_index, letters)| {
-            Node::linear(
-                format!("pin-row-{row_index}"),
-                Axis::Horizontal,
-                letters
-                    .chars()
-                    .map(|ch| {
-                        let leaf = Node::leaf(format!("pin-key-{row_index}-{ch}"));
-                        match pin_key_action(ch) {
-                            Some(action) => leaf.with_action(action),
-                            None => leaf,
-                        }
-                    })
-                    .collect(),
-            )
-        })
-        .collect();
+    let mut focus = 1u32;
+    let mut rows: Vec<Node> = Vec::new();
+    for (row_index, letters) in PIN_KEY_ROWS.iter().enumerate() {
+        let mut keys = Vec::new();
+        for ch in letters.chars() {
+            let mut leaf = Node::leaf(format!("pin-key-{row_index}-{ch}"));
+            if let Some(action) = pin_key_action(ch) {
+                leaf = leaf.with_action(action).with_focus_order(focus);
+                focus += 1;
+            }
+            keys.push(leaf);
+        }
+        rows.push(Node::linear(
+            format!("pin-row-{row_index}"),
+            Axis::Horizontal,
+            keys,
+        ));
+    }
     if !controls.is_empty() {
+        let mut control_leaves = Vec::new();
+        for (index, label) in controls.iter().enumerate() {
+            control_leaves.push(
+                Node::leaf(format!("pin-control-{index}"))
+                    .with_action(*label)
+                    .with_focus_order(focus),
+            );
+            focus += 1;
+        }
         rows.push(Node::linear(
             "pin-controls",
             Axis::Horizontal,
-            controls
-                .iter()
-                .enumerate()
-                .map(|(index, label)| {
-                    Node::leaf(format!("pin-control-{index}")).with_action(*label)
-                })
-                .collect(),
+            control_leaves,
         ));
     }
-    Node::linear("pin-rows", Axis::Vertical, rows)
+    Node::linear(PIN_ROWS_ID, Axis::Vertical, rows)
+}
+
+fn pin_setup_view(width: u32, height: u32, forget: bool) -> LayoutNode {
+    let pad = physical_unit(SpacingToken::XSmall.value());
+    let keyboard = pin_keypad_node(&pin_setup_controls(forget))
+        .with_size(Length::Fill, Length::Px(pin_setup_keyboard_height(height)))
+        .with_padding(EdgeInsets::all(pad));
+    let field_height = stacked_row_rect(0, width, height).height;
+    let margin = width / 22;
+    let field = Node::linear(
+        "pin-field-row",
+        Axis::Horizontal,
+        vec![Node::leaf(PIN_SETUP_FIELD_ID).with_focus_order(0)],
+    )
+    .with_size(Length::Fill, Length::Px(field_height))
+    .with_padding(EdgeInsets {
+        top: 0,
+        right: margin,
+        bottom: 0,
+        left: margin,
+    });
+    let root = Node::linear(
+        PIN_SETUP_SCREEN_ID,
+        Axis::Vertical,
+        vec![Node::leaf(PIN_SETUP_HEADER_ID), field, keyboard],
+    );
+    layout(&root, Rect::new(0, 0, width, height))
 }
 
 fn pin_keyboard_bounds(width: u32, height: u32, kind: PinKeyboardKind) -> Rect {
@@ -3187,10 +3702,24 @@ fn pin_keyboard_bounds(width: u32, height: u32, kind: PinKeyboardKind) -> Rect {
             height.saturating_sub(INTENT_HEADER_HEIGHT),
         ),
         PinKeyboardKind::Setup { .. } => {
-            let field = stacked_row_rect(0, width, height);
-            let top = field.y.saturating_add(field.height);
-            Rect::new(0, top, width, height.saturating_sub(top))
+            let keyboard_height = pin_setup_keyboard_height(height);
+            Rect::new(
+                0,
+                height.saturating_sub(keyboard_height),
+                width,
+                keyboard_height,
+            )
         }
+    }
+}
+
+fn pin_layout(width: u32, height: u32, kind: PinKeyboardKind) -> LayoutNode {
+    match kind {
+        PinKeyboardKind::Unlock => layout(
+            &pin_keypad_node(&[]),
+            pin_keyboard_bounds(width, height, kind),
+        ),
+        PinKeyboardKind::Setup { forget } => pin_setup_view(width, height, forget),
     }
 }
 
@@ -3199,13 +3728,11 @@ fn pin_keyboard_keys(width: u32, height: u32, kind: PinKeyboardKind) -> Vec<(Rec
         return Vec::new();
     }
     let controls = pin_keyboard_controls(kind);
-    let view = layout(
-        &pin_keypad_node(&controls),
-        pin_keyboard_bounds(width, height, kind),
-    );
+    let view = pin_layout(width, height, kind);
+    let keyboard = layout_node_by_id(&view, PIN_ROWS_ID).unwrap_or(&view);
     let mut keys = Vec::new();
     for (row_index, letters) in PIN_KEY_ROWS.iter().enumerate() {
-        let row_node = &view.children[row_index];
+        let row_node = &keyboard.children[row_index];
         for (key_node, ch) in row_node.children.iter().zip(letters.chars()) {
             if pin_key_action(ch).is_some() {
                 keys.push((key_node.rect, ch.to_string()));
@@ -3213,7 +3740,7 @@ fn pin_keyboard_keys(width: u32, height: u32, kind: PinKeyboardKind) -> Vec<(Rec
         }
     }
     if !controls.is_empty() {
-        let controls_node = &view.children[PIN_KEY_ROWS.len()];
+        let controls_node = &keyboard.children[PIN_KEY_ROWS.len()];
         for (key_node, label) in controls_node.children.iter().zip(controls.iter()) {
             keys.push((key_node.rect, (*label).to_string()));
         }
@@ -3230,13 +3757,9 @@ fn pin_action_at(
     if width == 0 || height == 0 {
         return None;
     }
-    let controls = pin_keyboard_controls(kind);
-    layout(
-        &pin_keypad_node(&controls),
-        pin_keyboard_bounds(width, height, kind),
-    )
-    .hit_test(pos.0, pos.1)
-    .and_then(|node| node.action.as_deref().and_then(intern_pin_action))
+    pin_layout(width, height, kind)
+        .hit_test(pos.0, pos.1)
+        .and_then(|node| node.action.as_deref().and_then(intern_pin_action))
 }
 
 fn pin_keypad_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
@@ -3257,6 +3780,10 @@ fn pin_setup_action_at(
             forget: has_existing_pin,
         },
     )
+}
+
+fn pin_setup_field_rect(width: u32, height: u32, _has_existing_pin: bool) -> Rect {
+    overlay_field_rect("pin-setup", PIN_SETUP_FIELD_ID, width, height)
 }
 
 #[cfg(test)]
@@ -4415,18 +4942,17 @@ fn lock_pin_entry_field(entered_len: usize) -> Field {
 }
 
 fn lock_pin_field_rect(width: u32) -> Rect {
-    let margin = width / 22;
-    Rect::new(
-        margin,
-        24,
-        width.saturating_sub(margin.saturating_mul(2)),
-        INTENT_HEADER_HEIGHT.saturating_sub(48),
-    )
+    overlay_field_rect("lock", "lock-pin-field", width, 2400)
 }
 
-/// VUI-07 (ADR-130/155): «Bluetooth устройства» lists live `bt-scan`
-/// rows. Empty only after `DONE`. Scan-in-progress with no devices is
-/// `SurfacePattern::loading`, not a blank. Paired is a SAVED name.
+/// VUI-07 (ADR-130/155/156): «Bluetooth устройства» lists live
+/// `bt-scan` rows. Empty only after `DONE`. Scan-in-progress with no
+/// devices is loading. `PAIR-ERROR` is Failed and wins over scan.
+/// Paired is a SAVED name. Slot 0 of a pattern is not Сопрячь.
+fn bluetooth_failed_pattern(reason: &str) -> SurfacePattern {
+    SurfacePattern::failed(format!("Ошибка сопряжения: {reason}"))
+}
+
 fn bluetooth_scan_pattern(device_count: usize, scan_done: bool) -> Option<SurfacePattern> {
     if device_count > 0 {
         None
@@ -4437,27 +4963,35 @@ fn bluetooth_scan_pattern(device_count: usize, scan_done: bool) -> Option<Surfac
     }
 }
 
+fn bluetooth_list_pattern(
+    device_count: usize,
+    scan_done: bool,
+    pair_error: Option<&str>,
+) -> Option<SurfacePattern> {
+    if let Some(reason) = pair_error {
+        return Some(bluetooth_failed_pattern(reason));
+    }
+    bluetooth_scan_pattern(device_count, scan_done)
+}
+
 fn bluetooth_list_rows(
     devices: &[BluetoothDevice],
     scan_done: bool,
     saved: &[String],
+    pair_error: Option<&str>,
 ) -> Vec<BluetoothRow> {
-    if devices.is_empty() {
-        return bluetooth_scan_pattern(0, scan_done)
-            .into_iter()
-            .map(|pattern| BluetoothRow::from_pattern(&pattern))
-            .collect();
-    }
-    devices
-        .iter()
-        .map(|device| {
-            BluetoothRow::open(
-                device.name.clone(),
-                device.transport.clone(),
-                saved.iter().any(|name| name == &device.name),
-            )
-        })
-        .collect()
+    let mut rows: Vec<BluetoothRow> = bluetooth_list_pattern(devices.len(), scan_done, pair_error)
+        .into_iter()
+        .map(|pattern| BluetoothRow::from_pattern(&pattern))
+        .collect();
+    rows.extend(devices.iter().map(|device| {
+        BluetoothRow::open(
+            device.name.clone(),
+            device.transport.clone(),
+            saved.iter().any(|name| name == &device.name),
+        )
+    }));
+    rows
 }
 
 fn bluetooth_card_from_row(row: &BluetoothRow) -> render::ActionCardView {
@@ -4471,7 +5005,12 @@ fn bluetooth_card_from_row(row: &BluetoothRow) -> render::ActionCardView {
     } else {
         ""
     };
-    render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.paired)
+    let mut card =
+        render::ActionCardView::new(row.row.primary.clone(), status, action).selected(row.paired);
+    if let Some(indicator) = row.indicator.clone() {
+        card = card.with_indicator(indicator);
+    }
+    card
 }
 
 /// VUI-07 (ADR-131): «Доверенные клиенты» lists live
@@ -4522,11 +5061,6 @@ fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
     )
 }
 
-#[allow(dead_code)]
-fn diagnostic_status_line(row_count: usize) -> String {
-    format!("{row_count} показателей")
-}
-
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
 /// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
@@ -4559,6 +5093,30 @@ fn now_attention_row(item: &AttentionItem) -> SystemSectionRow {
     )
 }
 
+fn inbox_v2_source(entities: &[Entity], store_connected: bool) -> String {
+    let mut src = String::from("sui 2\nscreen inbox {\n");
+    src.push_str(&v2_header_block("inbox.header"));
+    if !store_connected {
+        src.push_str(&v2_stacked_block("EventRow", "Status", "inbox.offline"));
+    } else {
+        let rows = inbox_rows(entities);
+        if rows.is_empty() {
+            src.push_str(&v2_stacked_block("EventRow", "Status", "inbox.empty"));
+        } else {
+            for (_, entity) in &rows {
+                src.push_str(&v2_stacked_block(
+                    "EventRow",
+                    "Button",
+                    &entity.id.to_string(),
+                ));
+            }
+        }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
 fn inbox_row_at(
     pos: (f64, f64),
     width: u32,
@@ -4569,11 +5127,38 @@ fn inbox_row_at(
     if !store_connected {
         return None;
     }
+    let (id, action) = live_v2_hit(
+        &inbox_v2_source(entities, true),
+        "ADR-218 inbox",
+        pos,
+        width,
+        height,
+    )?;
+    if action.as_deref() != Some("open_object") {
+        return None;
+    }
+    let id = Uuid::parse_str(&id).ok()?;
     inbox_rows(entities)
         .into_iter()
-        .enumerate()
-        .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
-        .map(|(_, (kind, entity))| (kind, entity.id))
+        .find(|(_, entity)| entity.id == id)
+        .map(|(kind, entity)| (kind, entity.id))
+}
+
+fn spaces_v2_source(spaces: &[Space], store_connected: bool) -> String {
+    let mut src = String::from("sui 2\nscreen spaces {\n");
+    src.push_str(&v2_header_block("spaces.header"));
+    if !store_connected {
+        src.push_str(&v2_stacked_block("SpaceRow", "Status", "spaces.offline"));
+    } else if spaces.is_empty() {
+        src.push_str(&v2_stacked_block("SpaceRow", "Status", "spaces.empty"));
+    } else {
+        for space in spaces {
+            src.push_str(&v2_stacked_block("SpaceRow", "Button", &space.id));
+        }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
 }
 
 fn space_row_at(
@@ -4586,29 +5171,37 @@ fn space_row_at(
     if !store_connected {
         return None;
     }
-    spaces
-        .iter()
-        .enumerate()
-        .find(|(index, _)| stacked_row_rect(*index, width, height).contains(pos.0, pos.1))
-        .map(|(_, space)| space.id.clone())
+    let (_, action) = live_v2_hit(
+        &spaces_v2_source(spaces, true),
+        "ADR-218 spaces",
+        pos,
+        width,
+        height,
+    )?;
+    action
+        .as_deref()
+        .and_then(|action| action.strip_prefix("select_space:"))
+        .map(str::to_string)
 }
 
-/// ADR-138: the apps grid only hits live `installed_apps`. The two
-/// leftover `root.sui` NOW cards (`inspect_selected_entity`,
-/// `open_intent_input`) live on the composed footer, not as extra
-/// tiles. S23 still owns the 3-column `now_grid_rect` math.
+/// ADR-138 / ADR-187 / ADR-220: the apps grid only hits live
+/// `installed_apps`. Intent compose stays on the composed footer,
+/// not as extra tiles. Hits come from generated `compile_v2()`
+/// `Button` tiles laid out like `now_grid_rect`.
 fn now_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     installed_apps: &BTreeMap<String, AppSummary>,
 ) -> Option<String> {
-    for (index, app) in installed_apps.values().enumerate() {
-        if now_grid_rect(index, width, height).contains(pos.0, pos.1) {
-            return Some(format!("manage_app:{}", app.id));
-        }
-    }
-    None
+    let (_, action) = live_v2_hit(
+        &apps_v2_source(installed_apps),
+        "ADR-220 apps",
+        pos,
+        width,
+        height,
+    )?;
+    action.filter(|value| value.starts_with("manage_app:"))
 }
 
 /// ADR-138: section title is always `Приложения`. Offline `appd`
@@ -4689,6 +5282,18 @@ fn consent_header(space_name: &str) -> ContextHeader {
 /// setup names the keypad, not store health.
 fn pin_setup_header(space_name: &str) -> ContextHeader {
     ContextHeader::new(space_name).with_section_title("PIN")
+}
+
+/// ADR-161: section title is always `Намерение`. Draft text stays on
+/// the Field; store-offline is Field help, not a lifecycle.
+fn intent_compose_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Намерение")
+}
+
+/// ADR-161: section title is always `Пароль`. SSID stays on the Field
+/// label; the PSK never becomes the heading.
+fn wifi_password_compose_header(space_name: &str) -> ContextHeader {
+    ContextHeader::new(space_name).with_section_title("Пароль")
 }
 
 /// ADR-144: section title is always `SSH`. No invented lifecycle —
@@ -4804,7 +5409,7 @@ fn scrolled_row_rect(
 /// How far "Я"'s content list can scroll before its last row's bottom
 /// edge reaches the content area's own bottom edge -- the usual
 /// "don't scroll past the end" clamp, shared by the live drag in
-/// `TouchHandler::motion` and the defensive clamp `me_content_cards`/
+/// `TouchHandler::motion` and the defensive clamp Frame::Me /
 /// `me_action_at` apply in case `installed_apps` shrank while "Я"
 /// wasn't the visible tab and left a stale, now-too-large offset.
 fn me_max_scroll_offset(total_rows: usize, width: u32, height: u32, content_rect: Rect) -> i32 {
@@ -4862,6 +5467,7 @@ struct MeFacts {
     space_name: String,
     orb_enabled: bool,
     reduced_motion: bool,
+    haptics_enabled: bool,
     entityd_connected: bool,
     appd_connected: bool,
     apps: Vec<MeAppFact>,
@@ -4914,9 +5520,14 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         "Выключен -- только таб-бар"
     };
     let motion_status = if facts.reduced_motion {
-        "Включено -- Running не busy"
+        "Вкл -- без анимации"
     } else {
-        "Выключено"
+        "Выкл"
+    };
+    let haptic_status = if facts.haptics_enabled {
+        "Вкл"
+    } else {
+        "Выкл"
     };
 
     let mut sections = vec![
@@ -4982,6 +5593,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                     "cycle_volume",
                 )
                 .row,
+                SettingRow::cycle("Виброотклик", haptic_status, "toggle_haptics").row,
             ],
         ),
         me_section_data(
@@ -5077,6 +5689,7 @@ fn intern_me_action(action: Option<&str>) -> Option<&'static str> {
         Some("cycle_space_color") => Some("cycle_space_color"),
         Some("toggle_orb") => Some("toggle_orb"),
         Some("toggle_reduced_motion") => Some("toggle_reduced_motion"),
+        Some("toggle_haptics") => Some("toggle_haptics"),
         _ => None,
     }
 }
@@ -5124,6 +5737,146 @@ fn flatten_me_rows(sections: &[SystemSection]) -> Vec<MeRow> {
     rows
 }
 
+fn me_v2_source(rows: &[MeRow]) -> String {
+    let mut src = String::from("sui 2\nscreen me {\n");
+    src.push_str(&v2_header_block("me.header"));
+    for (index, row) in rows.iter().enumerate() {
+        let loc = me_row_loc(index, row);
+        if row.dispatch.is_some() {
+            src.push_str(&v2_stacked_block("SettingRow", "Button", &loc));
+        } else {
+            src.push_str(&v2_stacked_block("SettingRow", "Status", &loc));
+        }
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
+fn apps_v2_source(installed_apps: &BTreeMap<String, AppSummary>) -> String {
+    let mut src = String::from("sui 2\nscreen apps {\n");
+    src.push_str(&v2_header_block("apps.header"));
+    for app in installed_apps.values() {
+        src.push_str(&v2_stacked_block(
+            "Button",
+            "Button",
+            &format!("manage_app:{}", app.id),
+        ));
+    }
+    if installed_apps.is_empty() {
+        src.push_str(&v2_stacked_block("SurfacePattern", "Status", "apps.empty"));
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push('}');
+    src
+}
+
+fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
+    let mut src = format!("sui 2\nscreen {screen_id} {{\n");
+    src.push_str(&v2_header_block(&format!("{screen_id}.header")));
+    for loc in locs {
+        src.push_str(&v2_stacked_block("Button", "Button", loc));
+    }
+    src.push('}');
+    src
+}
+
+/// ADR-229: decision-row paint from the same generated tree hits use.
+fn overlay_decision_paint(
+    screen_id: &str,
+    locs: &[&str],
+    why: &'static str,
+    width: u32,
+    height: u32,
+) -> (Rect, Vec<Rect>) {
+    let tree = layout_live_v2(
+        &overlay_buttons_v2_source(screen_id, locs),
+        why,
+        width,
+        height,
+    );
+    let header = tree.children[0].rect;
+    let buttons = locs
+        .iter()
+        .map(|id| v2_named_rect(&tree, id, why))
+        .collect();
+    (header, buttons)
+}
+
+fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
+    overlay_field_v2_source_with(screen_id, field_id, true)
+}
+
+fn overlay_field_v2_source_with(screen_id: &str, field_id: &str, with_keyboard: bool) -> String {
+    let keyboard = if with_keyboard {
+        format!(
+            "  component Keyboard {{\n    a11y = Status\n    loc = {}\n  }}\n",
+            v2_loc_token(&format!("{screen_id}-keyboard"))
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "sui 2\nscreen {screen_id} {{\n{}  component Field {{\n    text = Body\n    a11y = Status\n    loc = {}\n  }}\n{keyboard}}}\n",
+        v2_header_block(&format!("{screen_id}.header")),
+        v2_loc_token(field_id)
+    )
+}
+
+/// ADR-223: live Orb hits are a generated `OrbHost` plus `orb-menu:`
+/// Buttons. Closed omits the menu Buttons so `layout_v2` docks only
+/// the dot. Paint still uses `orb_view`.
+fn orb_v2_source(menu_actions: &[OrbAction]) -> String {
+    let mut src = String::from(
+        "sui 2\nscreen now {\n  component OrbHost {\n    a11y = Status\n    loc = \"orb:toggle\"\n  }\n",
+    );
+    for action in menu_actions {
+        src.push_str(&v2_stacked_block("Button", "Button", action.wire()));
+    }
+    src.push('}');
+    src
+}
+
+fn overlay_field_rect(screen_id: &str, field_id: &str, width: u32, height: u32) -> Rect {
+    overlay_field_rect_with(screen_id, field_id, width, height, true)
+}
+
+fn overlay_field_rect_with(
+    screen_id: &str,
+    field_id: &str,
+    width: u32,
+    height: u32,
+    with_keyboard: bool,
+) -> Rect {
+    let source = if with_keyboard {
+        overlay_field_v2_source(screen_id, field_id)
+    } else {
+        overlay_field_v2_source_with(screen_id, field_id, false)
+    };
+    let tree = layout_live_v2(&source, "ADR-221 field", width, height);
+    saai_ui_compiler::layout_v1_find(&tree, field_id)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| stacked_row_rect(0, width, height))
+}
+
+fn me_dispatch_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    rows: &[MeRow],
+    scroll_offset: i32,
+) -> Option<&'static str> {
+    let (_, action) = live_v2_hit_scrolled(
+        &me_v2_source(rows),
+        "ADR-219 me",
+        pos,
+        width,
+        height,
+        scroll_offset,
+    )?;
+    intern_me_action(action.as_deref())
+}
+
 fn me_fixture_facts() -> MeFacts {
     MeFacts {
         space_count: 2,
@@ -5153,6 +5906,7 @@ fn me_fixture_facts() -> MeFacts {
         space_name: "Дом".into(),
         orb_enabled: true,
         reduced_motion: false,
+        haptics_enabled: true,
         entityd_connected: true,
         appd_connected: true,
         apps: Vec::new(),
@@ -5354,8 +6108,16 @@ fn main() {
         last_touch_pos: (0.0, 0.0),
         tab_touch_pending: false,
         pressed_tab: None,
+        tab_finger_down: false,
         pressed_key: None,
+        key_finger_down: false,
+        touch_down_action: None,
         haptic: haptic::HapticMotor::open(),
+        motion_clock: None,
+        activity_clock: None,
+        motion_last_tick: Instant::now(),
+        frame_pace: FramePace::new(),
+        frame_input_at: None,
         layer,
         layer_width: 0,
         layer_height: status_layer_height(),
@@ -5381,6 +6143,7 @@ fn main() {
         trusted_clients_open: false,
         pin_setup: None,
         pin_entry_buffer: String::new(),
+        hardware_keyboard: None,
         me_scroll_offset: 0,
         me_drag: None,
         me_scroll_dirty: false,
@@ -5456,8 +6219,10 @@ fn main() {
         shell.refresh_statusbar_if_due(&qh);
         shell.refresh_context_signals_if_due();
         shell.poll_portal();
+        shell.poll_hardware_keyboard(&conn, &qh);
         shell.check_idle_timeout(&qh);
         shell.check_deep_idle(&conn, &qh);
+        shell.tick_motion(&conn, &qh);
     }
 }
 
@@ -5544,13 +6309,35 @@ struct Shell {
     /// through the tab bar doesn't switch pages by accident).
     tab_touch_pending: bool,
     /// Tab currently under a live finger -- feeds `NavigationItem::
-    /// pressed`. Cleared on up/cancel/sleep-wake. `None` when the
-    /// finger is not on a tab.
+    /// pressed`. After up, ADR-168 keeps it until `MotionClock`
+    /// finishes `Selection`, unless reduced motion. `None` when the
+    /// finger is not on a tab and the clock does not need a frame.
     pressed_tab: Option<RootPage>,
+    /// Finger is still down on a tab.
+    tab_finger_down: bool,
     /// Keyboard key under a live finger (ADR-151). Drawn as
-    /// `ColorRole::Pressed`. Cleared on up/cancel/sleep-wake.
+    /// `ColorRole::Pressed`. After up, ADR-167 keeps it until
+    /// `MotionClock` finishes `MicroFeedback`, unless reduced motion.
     pressed_key: Option<String>,
+    /// Finger is still down on a keyboard/PIN key.
+    key_finger_down: bool,
+    /// Action under the finger at `down()` on a keyboard/PIN frame.
+    /// `up()` commits only when it still names this action (ADR-163).
+    touch_down_action: Option<String>,
     haptic: haptic::HapticMotor,
+    /// ADR-167: in-flight one-shot `MotionToken` clock. `None` when
+    /// idle so `draw()` does not request another compositor frame.
+    motion_clock: Option<MotionClock>,
+    /// ADR-170: looping activity clock while Orb is Running. Separate
+    /// from `motion_clock` so compose Focus cannot see it.
+    activity_clock: Option<MotionClock>,
+    motion_last_tick: Instant,
+    /// ADR-172: last 32 main-surface commits. Written to
+    /// `FRAME_PACE_PATH` / `FRAME_TRACE_PATH` after each commit.
+    frame_pace: FramePace,
+    /// Instant of the latest `down()`. Taken on the next main commit
+    /// so later Selection holds log `input_ms=-`.
+    frame_input_at: Option<Instant>,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -5633,6 +6420,9 @@ struct Shell {
     /// be open at the same time -- `locked` is always `true` while
     /// this one matters and always `false` while `pin_setup` does).
     pin_entry_buffer: String,
+    /// Open USB HID evdev node while a hardware Keyboard source is
+    /// attached. Never volume, power, touch, or haptic.
+    hardware_keyboard: Option<File>,
     /// Vertical drag-to-scroll position for "Я"'s content list, in
     /// pixels -- 0 is the top. Deliberately not reset when leaving "Я"
     /// for another tab -- returning to it keeps the scroll position
@@ -5810,13 +6600,15 @@ impl CompositorHandler for Shell {
 
     fn frame(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        // The shell is event-driven. Presentation feedback must not
-        // redraw an unchanged full-screen scene forever.
+        if *self.window.wl_surface() != *surface {
+            return;
+        }
+        self.tick_motion(conn, qh);
     }
 
     fn surface_enter(
@@ -5906,6 +6698,7 @@ impl SessionLockHandler for Shell {
     fn locked(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, session_lock: SessionLock) {
         println!("saai-shell: session locked, creating lock surface(s)");
         self.locked = true;
+        self.activity_clock = None;
         for output in self.output_state.outputs() {
             let surface = self.compositor.create_surface(qh);
             let lock_surface = session_lock.create_lock_surface(surface, &output, qh);
@@ -6034,6 +6827,7 @@ impl TouchHandler for Shell {
         position: (f64, f64),
     ) {
         self.last_activity = Instant::now();
+        self.frame_input_at = Some(self.last_activity);
         self.last_touch_pos = position;
         if lock_wake_tap(self.sleeping) == LockWakeTap::ShowLock {
             // First touch after AOD just wakes the lock — it does not
@@ -6043,7 +6837,12 @@ impl TouchHandler for Shell {
             self.unlock_pending = false;
             self.tab_touch_pending = false;
             self.pressed_tab = None;
+            self.tab_finger_down = false;
             self.pressed_key = None;
+            self.key_finger_down = false;
+            self.motion_clock = None;
+            self.activity_clock = None;
+            self.touch_down_action = None;
             self.me_drag = None;
             self.pin_entry_buffer.clear();
             self.present_lock_pin_entry(qh);
@@ -6065,7 +6864,9 @@ impl TouchHandler for Shell {
         // `me_scroll_offset` from here on while it stays `Some`, and
         // `up` uses the stored start position to tell a real drag
         // apart from a tap.
-        self.me_drag = if self.tab_touch_pending
+        self.me_drag = if self.tab_touch_pending && self.dev_surface_open {
+            Some((position.1, self.me_scroll_offset))
+        } else if self.tab_touch_pending
             && self.current_page == RootPage::Me
             && !self.any_modal_open()
             && root_view(self.width, self.height).children[0]
@@ -6078,6 +6879,7 @@ impl TouchHandler for Shell {
         } else {
             None
         };
+        self.touch_down_action = self.keyboard_frame_action_at(position);
         self.sync_pressed_tab(conn, qh);
         self.sync_pressed_key(conn, qh);
     }
@@ -6100,8 +6902,16 @@ impl TouchHandler for Shell {
         let was_me_drag = me_drag.is_some_and(|(start_y, _)| {
             (self.last_touch_pos.1 - start_y).abs() > ME_DRAG_TAP_SLOP_PX
         });
-        let had_pressed_tab = self.pressed_tab.take().is_some();
-        let had_pressed_key = self.pressed_key.take().is_some();
+        self.tab_finger_down = false;
+        self.key_finger_down = false;
+        let clock = self.motion_clock;
+        let had_pressed_tab = self.pressed_tab.is_some();
+        let had_pressed_key = self.pressed_key.is_some();
+        self.pressed_tab =
+            retain_pressed_while_clock(self.pressed_tab.take(), clock.as_ref(), false);
+        self.pressed_key =
+            retain_pressed_while_clock(self.pressed_key.take(), clock.as_ref(), false);
+        let down_action = self.touch_down_action.take();
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
         // starts on the lock surface but ends elsewhere (or a
@@ -6122,13 +6932,24 @@ impl TouchHandler for Shell {
                     println!("saai-shell: unlocked by touch");
                 }
                 Some(pin_code) => {
-                    if let Some(key) =
-                        pin_keypad_action_at(self.last_touch_pos, self.lock_width, self.lock_height)
-                    {
+                    let hardware =
+                        hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware;
+                    if let Some(key) = committed_action(
+                        down_action.as_deref(),
+                        if hardware {
+                            None
+                        } else {
+                            pin_keypad_action_at(
+                                self.last_touch_pos,
+                                self.lock_width,
+                                self.lock_height,
+                            )
+                        },
+                    ) {
                         if key == "⌫" {
                             self.pin_entry_buffer.pop();
                         } else {
-                            self.pin_entry_buffer.push_str(key);
+                            self.pin_entry_buffer.push_str(&key);
                         }
                         if self.pin_entry_buffer.len() >= pin_code.len() {
                             if self.pin_entry_buffer == pin_code {
@@ -6213,22 +7034,35 @@ impl TouchHandler for Shell {
                 let mode = self
                     .intent_input
                     .as_ref()
-                    .map_or(KeyboardMode::Letters, |state| state.mode);
-                if let Some(action) =
+                    .map_or(KeyboardMode::Letters, |state| state.keyboard.mode);
+                let shows = self
+                    .intent_input
+                    .as_ref()
+                    .is_none_or(|state| state.keyboard.shows_panel());
+                let up = if shows {
                     intent_action_at(self.last_touch_pos, self.width, self.height, mode)
-                {
+                } else {
+                    None
+                };
+                if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
                     self.handle_intent_input_action(&action, conn, qh);
                 }
-            } else if self.pin_setup.is_some() {
-                // S24: modal, same as the others.
-                let has_existing_pin = self.settings.pin_code.is_some();
-                if let Some(key) = pin_setup_action_at(
-                    self.last_touch_pos,
-                    self.width,
-                    self.height,
-                    has_existing_pin,
-                ) {
-                    self.handle_pin_setup_action(key, conn, qh);
+            } else if let Some(state) = self.pin_setup.as_ref() {
+                // S24: modal, same as the others. Hardware source
+                // replaces the on-screen pad.
+                if state.keyboard.shows_panel() {
+                    let has_existing_pin = self.settings.pin_code.is_some();
+                    if let Some(key) = committed_action(
+                        down_action.as_deref(),
+                        pin_setup_action_at(
+                            self.last_touch_pos,
+                            self.width,
+                            self.height,
+                            has_existing_pin,
+                        ),
+                    ) {
+                        self.handle_pin_setup_action(&key, conn, qh);
+                    }
                 }
             } else if self.wifi_password.is_some() {
                 // S19: same keyboard tree as `intent_input` above
@@ -6238,10 +7072,17 @@ impl TouchHandler for Shell {
                 let mode = self
                     .wifi_password
                     .as_ref()
-                    .map_or(KeyboardMode::Letters, |state| state.mode);
-                if let Some(action) =
+                    .map_or(KeyboardMode::Letters, |state| state.keyboard.mode);
+                let shows = self
+                    .wifi_password
+                    .as_ref()
+                    .is_none_or(|state| state.keyboard.shows_panel());
+                let up = if shows {
                     intent_action_at(self.last_touch_pos, self.width, self.height, mode)
-                {
+                } else {
+                    None
+                };
+                if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
                     self.handle_wifi_password_action(&action, conn, qh);
                 }
             } else if self.wifi_list.is_some() {
@@ -6260,12 +7101,15 @@ impl TouchHandler for Shell {
                 // comment) rather than reading a stored snapshot.
                 let (devices, done) = bluetooth_scan_results();
                 let device_count = devices.len();
+                let pair_error = bluetooth_pair_error_reason();
+                let status_rows = bluetooth_list_pattern(device_count, done, pair_error.as_deref())
+                    .is_some() as usize;
                 if let Some(tap) = bluetooth_list_action_at(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     device_count,
-                    done,
+                    status_rows,
                 ) {
                     self.handle_bluetooth_list_tap(tap, conn, qh);
                 }
@@ -6286,12 +7130,22 @@ impl TouchHandler for Shell {
             } else if self.dev_surface_open {
                 // HIA-20: modal, same as the others -- every row here
                 // is read-only diagnostic text, only "Назад" (the row
-                // right after them) does anything.
-                let row_count = self.dev_surface_rows().len();
-                if dev_surface_back_tapped(self.last_touch_pos, self.width, self.height, row_count)
-                {
-                    self.dev_surface_open = false;
-                    self.draw(conn, qh);
+                // right after them) does anything. A drag that ends
+                // over that card is still a scroll, not an exit.
+                if was_me_drag {
+                    self.me_scroll_dirty = true;
+                } else {
+                    let row_count = self.dev_surface_rows().len();
+                    if dev_surface_back_tapped(
+                        self.last_touch_pos,
+                        self.width,
+                        self.height,
+                        row_count,
+                    ) {
+                        self.dev_surface_open = false;
+                        self.me_scroll_offset = 0;
+                        self.draw(conn, qh);
+                    }
                 }
             } else if was_me_drag {
                 // A scroll may end over the bottom navigation bar. Consume
@@ -6373,15 +7227,12 @@ impl TouchHandler for Shell {
                     self.invoke_select_space(&space_id);
                 }
             } else if self.current_page == RootPage::Now && !self.apps_open {
-                // VUI-03 (ADR-113): footer rows stay tappable. ADR-137:
-                // the ObjectSummary is the same HIA-07 entry as an Inbox
-                // row -- explicit tap, not auto-popup.
-                let content_rect = root_view(self.width, self.height).children[0].rect;
-                let has_lifecycle = self.now_context_header().lifecycle.is_some();
+                // VUI-03 (ADR-113): footer rows stay tappable. ADR-217:
+                // ObjectSummary and footer hits come from compile_v2.
                 if now_object_tapped(
                     self.last_touch_pos,
-                    content_rect,
-                    has_lifecycle,
+                    self.width,
+                    self.height,
                     self.now_object_summary().as_ref(),
                 ) {
                     if let Some(id) = self.selected_entities.first().map(|entity| entity.id) {
@@ -6395,7 +7246,8 @@ impl TouchHandler for Shell {
                         self.apps_open = true;
                         self.draw(conn, qh);
                     } else if action == "open_intent_input" {
-                        self.intent_input = Some(IntentInputState::default());
+                        self.intent_input = Some(open_intent_state());
+                        self.begin_compose_context();
                         self.draw(conn, qh);
                     }
                 }
@@ -6419,7 +7271,8 @@ impl TouchHandler for Shell {
                         let app_id = app_id.to_string();
                         self.invoke_app_launch(&app_id, conn, qh);
                     } else if action_str == "open_intent_input" {
-                        self.intent_input = Some(IntentInputState::default());
+                        self.intent_input = Some(open_intent_state());
+                        self.begin_compose_context();
                         self.draw(conn, qh);
                     }
                     // "inspect_selected_entity" has no tap behavior --
@@ -6461,8 +7314,18 @@ impl TouchHandler for Shell {
     ) {
         self.last_touch_pos = position;
         if let Some((start_y, start_offset)) = self.me_drag {
-            let content_rect = root_view(self.width, self.height).children[0].rect;
-            let total = self.capture_me_rows();
+            let (total, content_rect) = if self.dev_surface_open {
+                let total = self.dev_surface_rows().len();
+                (
+                    total,
+                    dev_surface_scroll_content(self.width, self.height, total),
+                )
+            } else {
+                (
+                    self.capture_me_rows(),
+                    root_view(self.width, self.height).children[0].rect,
+                )
+            };
             let max_offset = me_max_scroll_offset(total, self.width, self.height, content_rect);
             // Finger moving up (position.1 decreasing) scrolls the
             // content down (offset increases) -- the usual touch-
@@ -6505,6 +7368,10 @@ impl TouchHandler for Shell {
         self.tab_touch_pending = false;
         self.me_drag = None;
         self.me_row_cache = None;
+        self.touch_down_action = None;
+        self.key_finger_down = false;
+        self.tab_finger_down = false;
+        self.motion_clock = None;
         let had_pressed = self.pressed_tab.take().is_some() || self.pressed_key.take().is_some();
         if had_pressed {
             if self.locked {
@@ -6517,6 +7384,152 @@ impl TouchHandler for Shell {
 }
 
 impl Shell {
+    /// ADR-167/170: advance in-flight clocks and redraw only while
+    /// either still needs a frame. Instant is the time source;
+    /// compositor `frame` timestamps are not trusted.
+    fn tick_motion(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        let activity_changed = self.sync_activity_clock();
+        if self.motion_clock.is_none() && self.activity_clock.is_none() && !activity_changed {
+            return;
+        }
+        let now = Instant::now();
+        let dt_ms = now
+            .saturating_duration_since(self.motion_last_tick)
+            .as_millis() as u32;
+        if dt_ms < 8 && !activity_changed {
+            return;
+        }
+        if dt_ms >= 8 {
+            self.motion_last_tick = now;
+        }
+        let mut dirty = activity_changed;
+        if dt_ms >= 8 {
+            if let Some(clock) = self.activity_clock.as_mut() {
+                let was = clock.pulse_visible();
+                clock.advance(dt_ms);
+                dirty |= was != clock.pulse_visible();
+            }
+            if let Some(clock) = self.motion_clock.as_mut() {
+                clock.advance(dt_ms);
+                dirty = true;
+                if !clock.needs_frame() {
+                    self.motion_clock = None;
+                    self.pressed_key = retain_pressed_while_clock(
+                        self.pressed_key.take(),
+                        None,
+                        self.key_finger_down,
+                    );
+                    self.pressed_tab = retain_pressed_while_clock(
+                        self.pressed_tab.take(),
+                        None,
+                        self.tab_finger_down,
+                    );
+                }
+            }
+        }
+        if !dirty {
+            return;
+        }
+        if self.locked {
+            self.present_lock_pin_entry(qh);
+        } else {
+            self.draw(conn, qh);
+        }
+    }
+
+    fn orb_wants_activity_pulse(&self) -> bool {
+        if self.locked
+            || self.sleeping
+            || self.settings.reduced_motion
+            || !self.settings.orb_enabled
+        {
+            return false;
+        }
+        OrbHost::new(orb_visual_state(
+            self.appd.is_connected(),
+            self.entityd.is_connected(),
+            orb_attention_from_entities(&self.selected_entities),
+            !in_progress_work(&self.selected_entities).is_empty(),
+            self.orb_menu_open,
+        ))
+        .motion()
+            == MotionCue::ActivityPulse
+    }
+
+    fn sync_activity_clock(&mut self) -> bool {
+        if !self.orb_wants_activity_pulse() {
+            return self.activity_clock.take().is_some();
+        }
+        if self.activity_clock.is_none() {
+            self.activity_clock = activity_clock_for(true);
+            if self.motion_clock.is_none() {
+                self.motion_last_tick = Instant::now();
+            }
+            return true;
+        }
+        false
+    }
+
+    fn clocks_need_frame(&self) -> bool {
+        self.motion_clock.is_some_and(MotionClock::needs_frame)
+            || self.activity_clock.is_some_and(MotionClock::needs_frame)
+    }
+
+    /// ADR-172: stamp one commit into `FramePace` and refresh the last
+    /// line plus the chronological trace. `requested_frame` is the
+    /// pre-paint `clocks_need_frame`. `backend` is the buffer that
+    /// actually attached (ADR-178).
+    fn finish_frame(
+        &mut self,
+        produce_ms: u32,
+        requested_frame: bool,
+        scrolled: bool,
+        backend: FrameBackend,
+    ) {
+        let input_to_commit_ms = self.frame_input_at.take().map(|at| {
+            u32::try_from(Instant::now().saturating_duration_since(at).as_millis())
+                .unwrap_or(u32::MAX)
+        });
+        let pending_depth = u8::from(self.clocks_need_frame()) + u8::from(self.me_scroll_dirty);
+        self.frame_pace.record(FrameSample {
+            produce_ms,
+            input_to_commit_ms,
+            requested_frame,
+            pending_depth,
+            dropped: 0,
+            coalesced: 0,
+            reason: frame_reason(scrolled, requested_frame),
+            surface: self.current_frame_surface(scrolled),
+            backend,
+        });
+        if let Some(line) = self.frame_pace.line() {
+            write_frame_pace_last(&line);
+        }
+        write_frame_pace_trace(&self.frame_pace.trace());
+    }
+
+    /// ADR-175: classify the chrome that produced this commit.
+    fn current_frame_surface(&self, scrolled: bool) -> FrameSurface {
+        let overlay = self.pending_consent.is_some()
+            || self.pending_pair_request.is_some()
+            || self.viewing_entity_id.is_some();
+        let keyboard =
+            self.intent_input.is_some() || self.wifi_password.is_some() || self.pin_setup.is_some();
+        let list = self.wifi_list.is_some()
+            || self.bluetooth_list_open
+            || self.trusted_clients_open
+            || self.dev_surface_open
+            || self.apps_open;
+        let orb = !scrolled && self.activity_clock.is_some_and(MotionClock::needs_frame);
+        let tab = match self.current_page {
+            RootPage::Now => FrameSurface::Now,
+            RootPage::Inbox => FrameSurface::Inbox,
+            RootPage::Spaces => FrameSurface::Spaces,
+            RootPage::Me => FrameSurface::Me,
+        };
+        frame_surface(self.locked, overlay, keyboard, list, orb, tab)
+    }
+
     /// Present at most one coalesced "Я" scroll frame after a complete
     /// Wayland dispatch batch. If both dma-buf slots are still owned by
     /// the compositor, keep the latest position dirty and retry after the
@@ -6525,7 +7538,11 @@ impl Shell {
         if !self.me_scroll_dirty {
             return;
         }
-        if self.current_page != RootPage::Me || self.locked || self.sleeping {
+        if self.locked || self.sleeping {
+            self.me_scroll_dirty = false;
+            return;
+        }
+        if !self.dev_surface_open && self.current_page != RootPage::Me {
             self.me_scroll_dirty = false;
             return;
         }
@@ -6534,6 +7551,7 @@ impl Shell {
             .as_ref()
             .is_some_and(|canvas| !canvas.has_free_slot())
         {
+            self.frame_pace.note_coalesced();
             return;
         }
         self.scroll_content_only = true;
@@ -6542,6 +7560,25 @@ impl Shell {
         if self.me_drag.is_none() {
             self.me_row_cache = None;
         }
+    }
+
+    /// ADR-169: entering a compose overlay is a Context transition.
+    fn begin_compose_context(&mut self) {
+        self.motion_clock = motion_clock_for(MotionToken::Context, self.settings.reduced_motion);
+        if self.motion_clock.is_some() {
+            self.motion_last_tick = Instant::now();
+        }
+    }
+
+    fn end_compose_context(&mut self) {
+        if self
+            .motion_clock
+            .is_some_and(|clock| clock.token() == MotionToken::Context && !clock.is_looping())
+        {
+            self.motion_clock = None;
+        }
+        self.pressed_key = None;
+        self.key_finger_down = false;
     }
 
     /// Renders the active root section's placeholder content plus the
@@ -6560,6 +7597,7 @@ impl Shell {
         } else {
             Rect::new(0, 0, width, height)
         };
+        self.sync_activity_clock();
 
         // Every `&self` read this frame needs (content cards, context
         // label, consent labels) happens here, before `buffer`/`canvas`
@@ -6568,9 +7606,13 @@ impl Shell {
         // label()` need the whole of `self`, not just those two fields.
         let pressed_key = self.pressed_key.clone();
         let frame = if let Some(pending) = &self.pending_consent {
-            let view = consent_view(width, height);
-            let content_rect = view.children[0].rect;
-            let buttons = &view.children[1].children;
+            let (content_rect, buttons) = overlay_decision_paint(
+                "consent",
+                &[CONSENT_ACCEPT_ACTION, CONSENT_DECLINE_ACTION],
+                "ADR-229 overlay paint",
+                width,
+                height,
+            );
             let labels = pending
                 .requested
                 .iter()
@@ -6580,29 +7622,43 @@ impl Shell {
                 content_rect,
                 header: consent_header(&space_display_name(&self.spaces, &self.selected_space_id)),
                 rows: consent_content_cards(&pending.app_name, &labels, width, height),
-                accept: buttons[0].rect,
-                decline: buttons[1].rect,
+                accept: buttons[0],
+                decline: buttons[1],
             }
         } else if let Some(entity) = self.viewing_entity() {
             let content = object_view_content(entity, &self.selected_entities, &self.relationships);
-            let view = object_view(width, height, content.actions.len());
-            let header = view.children[0].rect;
-            let actions: Vec<(Rect, &'static str)> = if content.actions.is_empty() {
-                Vec::new()
+            let (header, actions) = if content.actions.is_empty() {
+                (object_view(width, height, 0).children[0].rect, Vec::new())
             } else {
-                let button_rects = &view.children[1].children;
-                content
-                    .actions
-                    .iter()
-                    .zip(button_rects.iter())
-                    .map(|(label, node)| (node.rect, *label))
-                    .collect()
+                let locs: Vec<String> = (0..content.actions.len())
+                    .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
+                    .collect();
+                let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+                let (header, rects) = overlay_decision_paint(
+                    "object",
+                    &loc_refs,
+                    "ADR-229 overlay paint",
+                    width,
+                    height,
+                );
+                (
+                    header,
+                    content
+                        .actions
+                        .iter()
+                        .zip(rects)
+                        .map(|(label, rect)| (rect, *label))
+                        .collect(),
+                )
             };
             let details = object_view_details(&content);
+            let permission = object_view_permission_pattern(&content);
             Frame::ObjectView {
                 summary: object_view_summary(entity, &content),
                 related: content.related,
                 details,
+                decision: content.decision,
+                permission,
                 header,
                 actions,
             }
@@ -6611,9 +7667,13 @@ impl Shell {
             // header-plus-two-buttons shape) -- only the drawn text
             // and the touch handler's meaning differ. ADR-144: the
             // header leaf is `content_rect` for `ContextHeader`.
-            let view = task_confirm_view(width, height);
-            let content_rect = view.children[0].rect;
-            let buttons = &view.children[1].children;
+            let (content_rect, buttons) = overlay_decision_paint(
+                "consent",
+                &[TASK_CONFIRM_ACCEPT_ACTION, TASK_CONFIRM_DECLINE_ACTION],
+                "ADR-229 overlay paint",
+                width,
+                height,
+            );
             Frame::RemotePairing {
                 content_rect,
                 header: remote_pair_header(&space_display_name(
@@ -6622,14 +7682,29 @@ impl Shell {
                 )),
                 rows: remote_pair_content_cards(&pending.client_name, width, height),
                 fingerprint: key_fingerprint(&pending.public_key),
-                accept: buttons[0].rect,
-                decline: buttons[1].rect,
+                accept: buttons[0],
+                decline: buttons[1],
             }
         } else if let Some(state) = &self.intent_input {
-            let (header, keys) = intent_keyboard_keys(width, height, state.mode);
+            let keys = if state.keyboard.shows_panel() {
+                intent_keyboard_keys(width, height, state.keyboard.mode).1
+            } else {
+                Vec::new()
+            };
             Frame::IntentInput {
+                content_rect: Rect::new(0, 0, width, height),
+                header: intent_compose_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 field: intent_input_field(&state.buffer, self.entityd.is_connected()),
-                header,
+                field_rect: overlay_field_rect_with(
+                    "intent",
+                    INTENT_FIELD_ID,
+                    width,
+                    height,
+                    state.keyboard.shows_panel(),
+                ),
                 keys,
             }
         } else if let Some(state) = &self.pin_setup {
@@ -6641,119 +7716,154 @@ impl Shell {
                     &self.selected_space_id,
                 )),
                 field: pin_setup_field(&state.buffer),
-                field_rect: stacked_row_rect(0, width, height),
-                keys: pin_keyboard_keys(
+                field_rect: overlay_field_rect_with(
+                    "pin-setup",
+                    PIN_SETUP_FIELD_ID,
                     width,
                     height,
-                    PinKeyboardKind::Setup {
-                        forget: has_existing_pin,
-                    },
+                    state.keyboard.shows_panel(),
                 ),
+                keys: if state.keyboard.shows_panel() {
+                    pin_keyboard_keys(
+                        width,
+                        height,
+                        PinKeyboardKind::Setup {
+                            forget: has_existing_pin,
+                        },
+                    )
+                } else {
+                    Vec::new()
+                },
             }
         } else if let Some(state) = &self.wifi_password {
-            // Same tree as `intent_input` above, reused verbatim --
-            // see `WifiPasswordState`'s doc comment.
-            let (header, keys) = intent_keyboard_keys(width, height, state.mode);
+            let keys = if state.keyboard.shows_panel() {
+                intent_keyboard_keys(width, height, state.keyboard.mode).1
+            } else {
+                Vec::new()
+            };
             Frame::WifiPasswordInput {
+                content_rect: Rect::new(0, 0, width, height),
+                header: wifi_password_compose_header(&space_display_name(
+                    &self.spaces,
+                    &self.selected_space_id,
+                )),
                 field: wifi_password_field(&state.ssid, &state.buffer),
-                header,
+                field_rect: overlay_field_rect_with(
+                    "intent",
+                    INTENT_FIELD_ID,
+                    width,
+                    height,
+                    state.keyboard.shows_panel(),
+                ),
                 keys,
             }
         } else if let Some(networks) = &self.wifi_list {
             // S19 / ADR-129: runtime-sized WifiRow list plus trailing
             // refresh/back cards -- see `wifi_list_action_at`.
             // ADR-146: header is a real `ContextHeader`, not a Surface
-            // strip.
+            // strip. ADR-226: paint rects from the same tree as hits.
             let connected = wifi_connected_ssid();
             let wifi_rows = wifi_list_rows(networks, connected.as_deref());
-            let mut rows: Vec<(Rect, render::ActionCardView)> = wifi_rows
-                .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        wifi_card_from_row(row),
-                    )
-                })
-                .collect();
-            let controls = rows.len();
-            rows.push((
-                stacked_row_rect(controls, width, height),
-                render::ActionCardView::new("Обновить", "", "Обновить"),
-            ));
-            rows.push((
-                stacked_row_rect(controls + 1, width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            let tree = layout_live_v2(
+                &wifi_v2_source(networks.len()),
+                "ADR-226 wifi paint",
+                width,
+                height,
+            );
+            let mut ids: Vec<String> = if networks.is_empty() {
+                vec!["wifi.empty".into()]
+            } else {
+                (0..networks.len())
+                    .map(|index| format!("wifi.{index}"))
+                    .collect()
+            };
+            ids.push("refresh".into());
+            ids.push("back".into());
+            let mut cards: Vec<render::ActionCardView> =
+                wifi_rows.iter().map(wifi_card_from_row).collect();
+            cards.push(render::ActionCardView::new("Обновить", "", "Обновить"));
+            cards.push(render::ActionCardView::new("Назад", "", "Назад"));
             Frame::WifiList {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: wifi_header(&space_display_name(&self.spaces, &self.selected_space_id)),
-                rows,
+                rows: list_paint_cards(&tree, "ADR-226 wifi paint", cards, &ids),
             }
         } else if self.bluetooth_list_open {
             // S20 / ADR-130: runtime-sized BluetoothRow list plus
             // trailing scan/refresh/back cards. ADR-145: header is a
-            // real `ContextHeader`, not a Surface strip.
+            // real `ContextHeader`, not a Surface strip. ADR-226:
+            // paint rects from the same tree as hits.
             let (devices, done) = bluetooth_scan_results();
             let saved = bluetooth_saved_names();
-            let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved);
-            let mut rows: Vec<(Rect, render::ActionCardView)> = bluetooth_rows
-                .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        bluetooth_card_from_row(row),
-                    )
-                })
+            let pair_error = bluetooth_pair_error_reason();
+            let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved, pair_error.as_deref());
+            let status_rows = bluetooth_list_pattern(devices.len(), done, pair_error.as_deref())
+                .is_some() as usize;
+            let tree = layout_live_v2(
+                &bluetooth_v2_source(devices.len(), status_rows),
+                "ADR-226 bluetooth paint",
+                width,
+                height,
+            );
+            let mut ids: Vec<String> = (0..status_rows)
+                .map(|index| format!("bluetooth.status.{index}"))
                 .collect();
-            let controls = rows.len();
-            rows.push((
-                stacked_row_rect(controls, width, height),
-                render::ActionCardView::new("Искать устройства", "~8 с", "Искать"),
+            ids.extend((0..devices.len()).map(|index| format!("bluetooth.{index}")));
+            ids.push("scan".into());
+            ids.push("refresh".into());
+            ids.push("back".into());
+            let mut cards: Vec<render::ActionCardView> =
+                bluetooth_rows.iter().map(bluetooth_card_from_row).collect();
+            cards.push(render::ActionCardView::new(
+                "Искать устройства",
+                "~8 с",
+                "Искать",
             ));
-            rows.push((
-                stacked_row_rect(controls + 1, width, height),
-                render::ActionCardView::new("Обновить список", "", "Обновить"),
+            cards.push(render::ActionCardView::new(
+                "Обновить список",
+                "",
+                "Обновить",
             ));
-            rows.push((
-                stacked_row_rect(controls + 2, width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            cards.push(render::ActionCardView::new("Назад", "", "Назад"));
             Frame::BluetoothList {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: bluetooth_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
-                rows,
+                rows: list_paint_cards(&tree, "ADR-226 bluetooth paint", cards, &ids),
             }
         } else if self.trusted_clients_open {
             // Same runtime-sized-list shape as the Bluetooth branch
             // above -- `trusted_clients()`'s own doc comment explains
             // why this reads straight from disk instead of a cached
             // snapshot. ADR-147: header is a real `ContextHeader`,
-            // not a Surface strip.
+            // not a Surface strip. ADR-226: paint from layout_v2.
             let clients = trusted_clients();
             let trusted_rows = trusted_client_list_rows(&clients);
-            let mut rows: Vec<(Rect, render::ActionCardView)> = trusted_rows
+            let tree = layout_live_v2(
+                &trusted_v2_source(clients.len()),
+                "ADR-226 trusted paint",
+                width,
+                height,
+            );
+            let mut ids: Vec<String> = if clients.is_empty() {
+                vec!["trusted.empty".into()]
+            } else {
+                (0..clients.len())
+                    .map(|index| format!("trusted.{index}"))
+                    .collect()
+            };
+            ids.push("back".into());
+            let mut cards: Vec<render::ActionCardView> = trusted_rows
                 .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        trusted_client_card_from_row(row),
-                    )
-                })
+                .map(trusted_client_card_from_row)
                 .collect();
-            rows.push((
-                stacked_row_rect(trusted_rows.len(), width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            cards.push(render::ActionCardView::new("Назад", "", "Назад"));
             Frame::TrustedClients {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: trusted_header(&space_display_name(&self.spaces, &self.selected_space_id)),
-                rows,
+                rows: list_paint_cards(&tree, "ADR-226 trusted paint", cards, &ids),
             }
         } else if self.dev_surface_open {
             // HIA-20: same runtime-sized-list shape as trusted
@@ -6761,97 +7871,125 @@ impl Shell {
             // ADR-152: header is a real `ContextHeader`, not a Surface
             // strip. `dev_surface_rows()` is always read fresh.
             let data_rows = self.dev_surface_rows();
-            let mut rows: Vec<(Rect, render::ActionCardView)> = data_rows
-                .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    (
-                        stacked_row_rect(index, width, height),
-                        diagnostic_card_from_row(row),
-                    )
-                })
-                .collect();
-            rows.push((
-                stacked_row_rect(data_rows.len(), width, height),
-                render::ActionCardView::new("Назад", "", "Назад"),
-            ));
+            let content = dev_surface_scroll_content(width, height, data_rows.len());
+            let offset = self.me_scroll_offset.clamp(
+                0,
+                me_max_scroll_offset(data_rows.len(), width, height, content),
+            );
+            let tree = layout_live_v2_scrolled(
+                &diagnostic_v2_source(data_rows.len()),
+                "ADR-231 diagnostic paint",
+                width,
+                height,
+                offset,
+            );
             Frame::DevSurface {
-                content_rect: Rect::new(0, 0, width, height),
+                content_rect: tree.rect,
                 header: diagnostic_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
-                rows,
+                rows: diagnostic_paint_cards(&tree, &data_rows),
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
-            let view = root_view(width, height);
+            let view = now_view(width, height);
             Frame::Now {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: self.now_context_header(),
+                chrome: now_paint_chrome_from(&view),
                 sections: self.now_sections(),
                 object: self.now_object_summary(),
-                footer_actions: now_footer_action_views(width, height),
+                footer_actions: now_footer_action_views_from(&view),
             }
         } else if self.current_page == RootPage::Now && self.apps_open {
-            let view = root_view(width, height);
+            let view = layout_live_v2(
+                &apps_v2_source(&self.installed_apps),
+                "ADR-228 apps paint",
+                width,
+                height,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::AppsGrid {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: apps_grid_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
                     self.appd.is_connected(),
                     archived,
                 ),
-                apps: self.apps_grid_cards(width, height),
+                apps: apps_paint_cards(&view, &self.installed_apps),
                 empty_pattern: apps_grid_empty_pattern(
                     self.appd.is_connected(),
                     self.installed_apps.len(),
                 ),
             }
         } else if self.current_page == RootPage::Inbox {
-            let view = root_view(width, height);
+            let connected = self.entityd.is_connected();
+            let view = layout_live_v2(
+                &inbox_v2_source(&self.selected_entities, connected),
+                "ADR-226 inbox paint",
+                width,
+                height,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::Inbox {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: inbox_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
-                    self.entityd.is_connected(),
+                    connected,
                     archived,
                 ),
-                rows: self.inbox_content_cards(width, height),
+                rows: self.inbox_content_cards_from(&view),
             }
         } else if self.current_page == RootPage::Spaces {
-            let view = root_view(width, height);
+            let connected = self.entityd.is_connected();
+            let view = layout_live_v2(
+                &spaces_v2_source(&self.spaces, connected),
+                "ADR-226 spaces paint",
+                width,
+                height,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::Spaces {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: spaces_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
-                    self.entityd.is_connected(),
+                    connected,
                     archived,
                 ),
-                rows: self.spaces_content_cards(width, height),
+                rows: self.spaces_content_cards_from(&view),
             }
         } else if self.current_page == RootPage::Me {
-            let view = root_view(width, height);
+            let all = self.me_all_rows();
+            let content_rect = root_view(width, height).children[0].rect;
+            let offset = self.me_scroll_offset.clamp(
+                0,
+                me_max_scroll_offset(all.len(), width, height, content_rect),
+            );
+            let view = layout_live_v2_scrolled(
+                &me_v2_source(&all),
+                "ADR-227 me paint",
+                width,
+                height,
+                offset,
+            );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::Me {
                 content_rect: view.children[0].rect,
-                tabs: self.root_navigation_items(width, height),
+                tabs: self.navigation_items_from(&view),
                 header: me_header(
                     &space_display_name(&self.spaces, &self.selected_space_id),
                     self.entityd.is_connected(),
                     archived,
                 ),
-                rows: self.me_content_cards(width, height),
+                rows: me_paint_cards(&view, &all),
                 paint_navigation: !content_only,
             }
         } else {
@@ -6902,6 +8040,8 @@ impl Shell {
 
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
+        let field_focused = field_shows_context_focus(self.motion_clock.as_ref());
+        let need_frame = self.clocks_need_frame();
         let current_page_index = self.current_page.index();
         let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
@@ -6992,6 +8132,8 @@ impl Shell {
                     summary,
                     related,
                     details,
+                    decision,
+                    permission,
                     header,
                     actions,
                 } => {
@@ -7000,6 +8142,8 @@ impl Shell {
                         &summary,
                         related.as_deref(),
                         &details,
+                        decision.as_ref(),
+                        permission.as_ref(),
                         header,
                         &actions,
                         fonts,
@@ -7025,16 +8169,21 @@ impl Shell {
                     );
                 }
                 Frame::IntentInput {
-                    field,
+                    content_rect,
                     header,
+                    field,
+                    field_rect,
                     keys,
                 } => {
                     render::draw_intent_input(
                         &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &header,
                         &field,
-                        header,
+                        field_rect,
                         &keys,
                         pressed_key.as_deref(),
+                        field_focused,
                         fonts,
                     );
                 }
@@ -7053,20 +8202,26 @@ impl Shell {
                         field_rect,
                         &keys,
                         pressed_key.as_deref(),
+                        field_focused,
                         fonts,
                     );
                 }
                 Frame::WifiPasswordInput {
-                    field,
+                    content_rect,
                     header,
+                    field,
+                    field_rect,
                     keys,
                 } => {
                     render::draw_wifi_password(
                         &mut render::Canvas::new(canvas, width, height),
+                        content_rect,
+                        &header,
                         &field,
-                        header,
+                        field_rect,
                         &keys,
                         pressed_key.as_deref(),
+                        field_focused,
                         fonts,
                     );
                 }
@@ -7153,6 +8308,7 @@ impl Shell {
                     content_rect,
                     tabs,
                     header,
+                    chrome,
                     sections,
                     object,
                     footer_actions,
@@ -7162,6 +8318,7 @@ impl Shell {
                         content_rect,
                         &tabs,
                         &header,
+                        &chrome,
                         &sections,
                         object.as_ref(),
                         &footer_actions,
@@ -7256,12 +8413,15 @@ impl Shell {
         };
 
         if dmabuf_ready {
+            let produce_started = Instant::now();
             let main_dmabuf = self
                 .main_dmabuf
                 .as_mut()
                 .expect("just confirmed ready above");
             match main_dmabuf.paint(paint_frame) {
                 Ok(wl_buffer) => {
+                    let produce_ms =
+                        u32::try_from(produce_started.elapsed().as_millis()).unwrap_or(u32::MAX);
                     let surface = self.window.wl_surface();
                     surface.attach(Some(wl_buffer), 0, 0);
                     surface.damage_buffer(
@@ -7270,7 +8430,11 @@ impl Shell {
                         surface_damage.width as i32,
                         surface_damage.height as i32,
                     );
+                    if need_frame {
+                        surface.frame(qh, surface.clone());
+                    }
                     self.window.commit();
+                    self.finish_frame(produce_ms, need_frame, content_only, FrameBackend::Dmabuf);
                 }
                 Err(error) => {
                     eprintln!(
@@ -7307,10 +8471,13 @@ impl Shell {
         // is current by then. Drag scrolling avoids reaching this path
         // while its dma-buf slots are busy (`draw_pending_scroll`).
         let Some(canvas) = self.pool.canvas(buffer) else {
+            self.frame_pace.note_dropped();
             return;
         };
 
+        let produce_started = Instant::now();
         paint_frame(canvas);
+        let produce_ms = u32::try_from(produce_started.elapsed().as_millis()).unwrap_or(u32::MAX);
 
         self.window.wl_surface().damage_buffer(
             surface_damage.x as i32,
@@ -7318,10 +8485,15 @@ impl Shell {
             surface_damage.width as i32,
             surface_damage.height as i32,
         );
+        if need_frame {
+            let surface = self.window.wl_surface();
+            surface.frame(qh, surface.clone());
+        }
         buffer
             .attach_to(self.window.wl_surface())
             .expect("buffer attach");
         self.window.commit();
+        self.finish_frame(produce_ms, need_frame, content_only, FrameBackend::Shm);
     }
 
     /// The lifecycle-cycle gesture's actual write path -- full-replace
@@ -7449,7 +8621,8 @@ impl Shell {
             return;
         }
         if action.action == "open_intent_input" {
-            self.intent_input = Some(IntentInputState::default());
+            self.intent_input = Some(open_intent_state());
+            self.begin_compose_context();
             self.draw(conn, qh);
         }
     }
@@ -7506,15 +8679,30 @@ impl Shell {
             self.width,
             self.height,
         );
-        if next != self.pressed_tab {
-            self.pressed_tab = next;
-            self.draw(conn, qh);
+        if next == self.pressed_tab {
+            return;
         }
+        let tick = next.is_some();
+        self.pressed_tab = next;
+        self.tab_finger_down = tick;
+        if tick {
+            self.motion_clock =
+                motion_clock_for(MotionToken::Selection, self.settings.reduced_motion);
+            if self.motion_clock.is_some() {
+                self.motion_last_tick = Instant::now();
+            }
+        } else {
+            self.motion_clock = None;
+        }
+        self.draw(conn, qh);
     }
 
     fn live_keyboard_keys(&self) -> Vec<(Rect, String)> {
         if self.locked {
             if self.settings.pin_code.is_some() {
+                if hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware {
+                    return Vec::new();
+                }
                 return pin_keyboard_keys(
                     self.lock_width,
                     self.lock_height,
@@ -7524,12 +8712,21 @@ impl Shell {
             return Vec::new();
         }
         if let Some(state) = &self.intent_input {
-            return intent_keyboard_keys(self.width, self.height, state.mode).1;
+            if !state.keyboard.shows_panel() {
+                return Vec::new();
+            }
+            return intent_keyboard_keys(self.width, self.height, state.keyboard.mode).1;
         }
         if let Some(state) = &self.wifi_password {
-            return intent_keyboard_keys(self.width, self.height, state.mode).1;
+            if !state.keyboard.shows_panel() {
+                return Vec::new();
+            }
+            return intent_keyboard_keys(self.width, self.height, state.keyboard.mode).1;
         }
-        if self.pin_setup.is_some() {
+        if let Some(state) = &self.pin_setup {
+            if !state.keyboard.shows_panel() {
+                return Vec::new();
+            }
             return pin_keyboard_keys(
                 self.width,
                 self.height,
@@ -7541,6 +8738,41 @@ impl Shell {
         Vec::new()
     }
 
+    fn keyboard_frame_action_at(&self, pos: (f64, f64)) -> Option<String> {
+        if let Some(state) = self.intent_input.as_ref() {
+            if !state.keyboard.shows_panel() {
+                return None;
+            }
+            return intent_action_at(pos, self.width, self.height, state.keyboard.mode);
+        }
+        if let Some(state) = self.wifi_password.as_ref() {
+            if !state.keyboard.shows_panel() {
+                return None;
+            }
+            return intent_action_at(pos, self.width, self.height, state.keyboard.mode);
+        }
+        if let Some(state) = self.pin_setup.as_ref() {
+            if !state.keyboard.shows_panel() {
+                return None;
+            }
+            return pin_setup_action_at(
+                pos,
+                self.width,
+                self.height,
+                self.settings.pin_code.is_some(),
+            )
+            .map(str::to_string);
+        }
+        if self.locked && self.settings.pin_code.is_some() {
+            if hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware {
+                return None;
+            }
+            return pin_keypad_action_at(pos, self.lock_width, self.lock_height)
+                .map(str::to_string);
+        }
+        None
+    }
+
     fn sync_pressed_key(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
         let next = pressed_key_from_keys(&self.live_keyboard_keys(), self.last_touch_pos);
         if next == self.pressed_key {
@@ -7548,8 +8780,21 @@ impl Shell {
         }
         let tick = next.is_some();
         self.pressed_key = next;
+        self.key_finger_down = tick;
         if tick {
-            self.haptic.play(haptic::haptic_intent_for_key_press());
+            if let Some(intent) = haptic::haptic_intent_for(
+                haptic::HapticEvent::KeyPress,
+                self.settings.haptics_enabled,
+            ) {
+                self.haptic.play(intent);
+            }
+            self.motion_clock =
+                motion_clock_for(MotionToken::MicroFeedback, self.settings.reduced_motion);
+            if self.motion_clock.is_some() {
+                self.motion_last_tick = Instant::now();
+            }
+        } else {
+            self.motion_clock = None;
         }
         if self.locked {
             self.present_lock_pin_entry(qh);
@@ -7570,20 +8815,16 @@ impl Shell {
     }
 
     /// Hit-test uses the same flattened `me_all_rows` list
-    /// `me_content_cards` draws, so section headers stay inert and
+    /// `me_paint_cards` draws, so section headers stay inert and
     /// dispatch keys do not depend on a frozen index table.
     fn me_action_at(&self, pos: (f64, f64), width: u32, height: u32) -> Option<&'static str> {
         let all = self.me_all_rows();
-        let total = all.len();
         let content_rect = root_view(width, height).children[0].rect;
-        let offset = self
-            .me_scroll_offset
-            .clamp(0, me_max_scroll_offset(total, width, height, content_rect));
-        (0..total).find_map(|index| {
-            scrolled_row_rect(index, width, height, offset, content_rect)
-                .filter(|rect| rect.contains(pos.0, pos.1))
-                .and_then(|_| all.get(index).and_then(|row| row.dispatch))
-        })
+        let offset = self.me_scroll_offset.clamp(
+            0,
+            me_max_scroll_offset(all.len(), width, height, content_rect),
+        );
+        me_dispatch_at(pos, width, height, &all, offset)
     }
 
     fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
@@ -7598,6 +8839,7 @@ impl Shell {
                 if self.dev_surface_tap_count >= DEV_SURFACE_TAP_THRESHOLD {
                     self.dev_surface_tap_count = 0;
                     self.dev_surface_open = true;
+                    self.me_scroll_offset = 0;
                 }
                 self.draw(conn, qh);
                 return;
@@ -7645,7 +8887,8 @@ impl Shell {
             }
             "open_pin_setup" => {
                 // Same reasoning as "open_wifi_list" above.
-                self.pin_setup = Some(PinSetupState::default());
+                self.pin_setup = Some(open_pin_setup_state());
+                self.begin_compose_context();
                 self.draw(conn, qh);
                 return;
             }
@@ -7674,6 +8917,24 @@ impl Shell {
             }
             "toggle_reduced_motion" => {
                 self.settings.reduced_motion = !self.settings.reduced_motion;
+                let (motion, activity) = drop_clocks_if_reduced(
+                    self.settings.reduced_motion,
+                    self.motion_clock.take(),
+                    self.activity_clock.take(),
+                );
+                self.motion_clock = motion;
+                self.activity_clock = activity;
+                if self.settings.reduced_motion {
+                    if !self.tab_finger_down {
+                        self.pressed_tab = None;
+                    }
+                    if !self.key_finger_down {
+                        self.pressed_key = None;
+                    }
+                }
+            }
+            "toggle_haptics" => {
+                self.settings.haptics_enabled = !self.settings.haptics_enabled;
             }
             "toggle_remote_access" => {
                 self.settings.remote_access_enabled = !self.settings.remote_access_enabled;
@@ -7710,6 +8971,7 @@ impl Shell {
             match intent_submit(self.entityd.is_connected(), &text) {
                 IntentSubmit::Persist => {
                     self.intent_input = None;
+                    self.end_compose_context();
                     let focused = self.viewing_entity().cloned();
                     let context = intent_context::capture_intent_context(
                         &self.selected_space_id,
@@ -7731,6 +8993,7 @@ impl Shell {
                 }
                 IntentSubmit::CloseEmpty => {
                     self.intent_input = None;
+                    self.end_compose_context();
                 }
                 IntentSubmit::KeepDraft => {}
             }
@@ -7740,26 +9003,15 @@ impl Shell {
         let Some(state) = self.intent_input.as_mut() else {
             return;
         };
-        match action {
-            INTENT_CANCEL_ACTION => {
+        match Keyboard::keystroke_from_osk_action(action) {
+            Some(Keystroke::Escape) => {
                 self.intent_input = None;
+                self.end_compose_context();
             }
-            INTENT_MODE_TOGGLE_ACTION => {
-                state.mode = state.mode.toggled();
+            Some(stroke) => {
+                let _ = state.keyboard.handle(stroke, &mut state.buffer);
             }
-            INTENT_SPACE_ACTION => {
-                state.buffer.push(' ');
-            }
-            INTENT_BACKSPACE_ACTION => {
-                state.buffer.pop();
-            }
-            other => {
-                if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
-                    if let Some(ch) = key.chars().next() {
-                        state.buffer.push(ch);
-                    }
-                }
-            }
+            None => {}
         }
         self.draw(conn, qh);
     }
@@ -7777,9 +9029,7 @@ impl Shell {
         match key {
             "Отмена" => {
                 self.pin_setup = None;
-            }
-            "⌫" => {
-                state.buffer.pop();
+                self.end_compose_context();
             }
             "Готово" => {
                 let pin = state.buffer.clone();
@@ -7787,6 +9037,7 @@ impl Shell {
                     self.settings.pin_code = Some(pin);
                     self.settings.save();
                     self.pin_setup = None;
+                    self.end_compose_context();
                 }
                 // Too short: stays open, same as before the tap --
                 // no error UI, but also no silent partial save.
@@ -7795,9 +9046,12 @@ impl Shell {
                 self.settings.pin_code = None;
                 self.settings.save();
                 self.pin_setup = None;
+                self.end_compose_context();
             }
-            digit => {
-                state.buffer.push_str(digit);
+            other => {
+                if let Some(stroke) = Keyboard::keystroke_from_osk_action(other) {
+                    let _ = state.keyboard.handle(stroke, &mut state.buffer);
+                }
             }
         }
         self.draw(conn, qh);
@@ -7817,18 +9071,6 @@ impl Shell {
             return;
         };
         match action {
-            INTENT_CANCEL_ACTION => {
-                self.wifi_password = None;
-            }
-            INTENT_MODE_TOGGLE_ACTION => {
-                state.mode = state.mode.toggled();
-            }
-            INTENT_SPACE_ACTION => {
-                state.buffer.push(' ');
-            }
-            INTENT_BACKSPACE_ACTION => {
-                state.buffer.pop();
-            }
             INTENT_SEND_ACTION => {
                 let ssid = state.ssid.clone();
                 let psk = state.buffer.clone();
@@ -7838,12 +9080,15 @@ impl Shell {
                 }
                 self.wifi_password = None;
                 self.wifi_list = None;
+                self.end_compose_context();
+            }
+            INTENT_CANCEL_ACTION => {
+                self.wifi_password = None;
+                self.end_compose_context();
             }
             other => {
-                if let Some(key) = other.strip_prefix(INTENT_KEY_PREFIX) {
-                    if let Some(ch) = key.chars().next() {
-                        state.buffer.push(ch);
-                    }
+                if let Some(stroke) = Keyboard::keystroke_from_osk_action(other) {
+                    let _ = state.keyboard.handle(stroke, &mut state.buffer);
                 }
             }
         }
@@ -7868,8 +9113,9 @@ impl Shell {
                     self.wifi_password = Some(WifiPasswordState {
                         ssid: network.ssid.clone(),
                         buffer: String::new(),
-                        mode: KeyboardMode::Letters,
+                        keyboard: live_keyboard(INTENT_FIELD_ID, KeyboardLayout::Qwerty),
                     });
+                    self.begin_compose_context();
                 } else {
                     let ssid = network.ssid.clone();
                     wifi_connect_open(&ssid);
@@ -7965,6 +9211,117 @@ impl Shell {
             &mut self.entityd,
             &self.selected_space_id,
         );
+    }
+
+    fn poll_hardware_keyboard(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        self.sync_hardware_keyboard_source();
+        let codes = {
+            let Some(file) = self.hardware_keyboard.as_mut() else {
+                return;
+            };
+            hardware_keyboard::read_key_presses(file)
+        };
+        for code in codes {
+            self.apply_hardware_key(code, conn, qh);
+        }
+    }
+
+    fn sync_hardware_keyboard_source(&mut self) {
+        let source = hardware_keyboard::detect_keyboard_source();
+        if let Some(state) = self.intent_input.as_mut() {
+            state.keyboard.set_source(source);
+        }
+        if let Some(state) = self.wifi_password.as_mut() {
+            state.keyboard.set_source(source);
+        }
+        if let Some(state) = self.pin_setup.as_mut() {
+            state.keyboard.set_source(source);
+        }
+        match source {
+            KeyboardSource::Hardware if self.hardware_keyboard.is_none() => {
+                self.hardware_keyboard = hardware_keyboard::open_hardware_keyboard();
+            }
+            KeyboardSource::OnScreen => {
+                self.hardware_keyboard = None;
+            }
+            KeyboardSource::Hardware => {}
+        }
+    }
+
+    fn apply_hardware_key(&mut self, code: u16, conn: &Connection, qh: &QueueHandle<Self>) {
+        if let Some(state) = self.intent_input.as_mut() {
+            let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
+                return;
+            };
+            match state.keyboard.handle(stroke, &mut state.buffer) {
+                KeyboardCommand::Submit => {
+                    self.handle_intent_input_action(INTENT_SEND_ACTION, conn, qh);
+                }
+                KeyboardCommand::Cancel => {
+                    self.handle_intent_input_action(INTENT_CANCEL_ACTION, conn, qh);
+                }
+                KeyboardCommand::Edited => self.draw(conn, qh),
+                KeyboardCommand::Ignored => {}
+            }
+            return;
+        }
+        if let Some(state) = self.wifi_password.as_mut() {
+            let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
+                return;
+            };
+            match state.keyboard.handle(stroke, &mut state.buffer) {
+                KeyboardCommand::Submit => {
+                    self.handle_wifi_password_action(INTENT_SEND_ACTION, conn, qh);
+                }
+                KeyboardCommand::Cancel => {
+                    self.handle_wifi_password_action(INTENT_CANCEL_ACTION, conn, qh);
+                }
+                KeyboardCommand::Edited => self.draw(conn, qh),
+                KeyboardCommand::Ignored => {}
+            }
+            return;
+        }
+        if let Some(state) = self.pin_setup.as_mut() {
+            let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
+                return;
+            };
+            match state.keyboard.handle(stroke, &mut state.buffer) {
+                KeyboardCommand::Submit => self.handle_pin_setup_action("Готово", conn, qh),
+                KeyboardCommand::Cancel => self.handle_pin_setup_action("Отмена", conn, qh),
+                KeyboardCommand::Edited => self.draw(conn, qh),
+                KeyboardCommand::Ignored => {}
+            }
+            return;
+        }
+        if self.locked {
+            if let Some(pin_code) = self.settings.pin_code.clone() {
+                let Some(stroke) = Keyboard::keystroke_from_evdev(code, KeyboardLayout::Pin) else {
+                    return;
+                };
+                match stroke {
+                    Keystroke::Char(digit) => self.pin_entry_buffer.push(digit),
+                    Keystroke::Backspace => {
+                        let _ = self.pin_entry_buffer.pop();
+                    }
+                    _ => return,
+                }
+                if self.pin_entry_buffer.len() >= pin_code.len() {
+                    if self.pin_entry_buffer == pin_code {
+                        self.pin_entry_buffer.clear();
+                        if let Some(session_lock) = self.session_lock.take() {
+                            session_lock.unlock();
+                        }
+                        self.lock_surfaces.clear();
+                        self.locked = false;
+                        println!("saai-shell: unlocked by PIN");
+                        return;
+                    }
+                    println!("saai-shell: PIN mismatch, retry");
+                    self.pin_entry_buffer.clear();
+                }
+                self.present_lock_pin_entry(qh);
+            }
+        }
     }
 
     /// Keeps the portal's authorization caches (`apps_by_pid`,
@@ -8112,65 +9469,51 @@ impl Shell {
     /// rather than the placeholder gray rows `draw_root` would
     /// otherwise draw for a page with zero real cards -- Acceptance
     /// criteria explicitly called this out during the DoR.
-    fn inbox_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        inbox_event_rows(&self.selected_entities, self.entityd.is_connected())
-            .into_iter()
-            .enumerate()
-            .map(|(index, event)| {
-                (
-                    stacked_row_rect(index, width, height),
-                    inbox_card_from_event(&event),
-                )
-            })
-            .collect()
+    fn inbox_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
+        let connected = self.entityd.is_connected();
+        let events = inbox_event_rows(&self.selected_entities, connected);
+        let ids: Vec<String> = if !connected {
+            vec!["inbox.offline".into()]
+        } else {
+            let rows = inbox_rows(&self.selected_entities);
+            if rows.is_empty() {
+                vec!["inbox.empty".into()]
+            } else {
+                rows.into_iter()
+                    .map(|(_, entity)| entity.id.to_string())
+                    .collect()
+            }
+        };
+        list_paint_cards(
+            tree,
+            "ADR-226 inbox paint",
+            events.iter().map(inbox_card_from_event).collect(),
+            &ids,
+        )
     }
 
-    fn spaces_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        space_list_rows(
+    fn spaces_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
+        let connected = self.entityd.is_connected();
+        let rows = space_list_rows(
             &self.spaces,
             &self.selected_space_id,
-            self.entityd.is_connected(),
+            connected,
             &self.entity_counts,
             &self.system_space_entities,
-        )
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| {
-            (
-                stacked_row_rect(index, width, height),
-                space_card_from_row(&row),
-            )
-        })
-        .collect()
-    }
-
-    /// S13 Change 3: "Я" -- a device/apps summary built entirely from
-    /// state this client already tracks (`spaces`, `entity_counts`,
-    /// `installed_apps`) plus each app's currently granted
-    /// capabilities (`capability_label`, same vocabulary the consent
-    /// screen already uses). Read-only -- no protocol supports
-    /// revoking one capability from an already-decided app (see
-    /// ADR-054's notes on `saai-app-protocol`), so there is nothing
-    /// for a tap here to do yet.
-    /// Real drag-to-scroll (`TouchHandler::down`/`motion`/`up`) --
-    /// every row of `me_all_rows` that currently fits inside
-    /// the content area at `self.me_scroll_offset`, positioned by
-    /// `scrolled_row_rect`. No more "Ещё"/"Назад" nav rows to append:
-    /// the scroll gesture itself is the navigation now.
-    fn me_content_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        let all = self.me_all_rows();
-        let content_rect = root_view(width, height).children[0].rect;
-        let offset = self.me_scroll_offset.clamp(
-            0,
-            me_max_scroll_offset(all.len(), width, height, content_rect),
         );
-        all.into_iter()
-            .enumerate()
-            .filter_map(|(index, row)| {
-                scrolled_row_rect(index, width, height, offset, content_rect)
-                    .map(|rect| (rect, row.card))
-            })
-            .collect()
+        let ids: Vec<String> = if !connected {
+            vec!["spaces.offline".into()]
+        } else if self.spaces.is_empty() {
+            vec!["spaces.empty".into()]
+        } else {
+            self.spaces.iter().map(|space| space.id.clone()).collect()
+        };
+        list_paint_cards(
+            tree,
+            "ADR-226 spaces paint",
+            rows.iter().map(space_card_from_row).collect(),
+            &ids,
+        )
     }
 
     fn me_facts(&self) -> MeFacts {
@@ -8231,6 +9574,7 @@ impl Shell {
             space_name: space_display_name(&self.spaces, &self.selected_space_id),
             orb_enabled: self.settings.orb_enabled,
             reduced_motion: self.settings.reduced_motion,
+            haptics_enabled: self.settings.haptics_enabled,
             entityd_connected: self.entityd.is_connected(),
             appd_connected: self.appd.is_connected(),
             apps,
@@ -8323,30 +9667,6 @@ impl Shell {
         rows
     }
 
-    /// ADR-138: one letter-square tile per live installed app. The
-    /// leftover `root.sui` NOW cards are not tiles -- intent lives on
-    /// the composed footer, object inspect on the NOW summary.
-    fn apps_grid_cards(&self, width: u32, height: u32) -> Vec<(Rect, render::ActionCardView)> {
-        self.installed_apps
-            .values()
-            .enumerate()
-            .map(|(index, app)| {
-                (
-                    now_grid_rect(index, width, height),
-                    render::ActionCardView::new(
-                        app.name.clone(),
-                        app_state_label(&app.state),
-                        if app.state == "running" {
-                            "Работает"
-                        } else {
-                            "Запустить"
-                        },
-                    ),
-                )
-            })
-            .collect()
-    }
-
     /// VUI-03 (ADR-112): replaces `context_label()`'s own
     /// name-plus-"(архив)"-suffix string with the real `ContextHeader`
     /// composite -- a non-default lifecycle becomes a nested
@@ -8365,9 +9685,16 @@ impl Shell {
     /// finger (`pressed_tab`); `disabled` stays at its default `false`
     /// -- no tab is ever actually disabled today.
     fn root_navigation_items(&self, width: u32, height: u32) -> Vec<(Rect, NavigationItem)> {
+        self.navigation_items_from(&root_view(width, height))
+    }
+
+    /// ADR-225: tab rects from the same compiled tree the screen paints.
+    fn navigation_items_from(&self, tree: &LayoutNode) -> Vec<(Rect, NavigationItem)> {
         let inbox_badge = inbox_rows(&self.selected_entities).len() as u32;
-        root_view(width, height).children[1]
-            .children
+        let Some(nav) = saai_ui_compiler::layout_v1_find(tree, "BottomNavigation") else {
+            return Vec::new();
+        };
+        nav.children
             .iter()
             .zip(ROOT_TABS)
             .map(|(node, tab)| {
@@ -8758,7 +10085,8 @@ impl Shell {
             }
             OrbAction::OpenIntent => {
                 self.orb_menu_open = false;
-                self.intent_input = Some(IntentInputState::default());
+                self.intent_input = Some(open_intent_state());
+                self.begin_compose_context();
             }
             OrbAction::OpenBluetooth => {
                 self.orb_menu_open = false;
@@ -8784,7 +10112,12 @@ impl Shell {
         } else {
             Vec::new()
         };
-        let view = orb_view(width, height, &menu_actions);
+        let view = layout_live_v2(
+            &orb_v2_source(&menu_actions),
+            "ADR-230 orb paint",
+            width,
+            height,
+        );
         let orb_host = OrbHost::new(orb_visual_state(
             self.appd.is_connected(),
             self.entityd.is_connected(),
@@ -8812,30 +10145,26 @@ impl Shell {
             }
             other => render::state_color(other),
         };
-        if menu_actions.is_empty() {
-            return OrbFrame {
-                dot: view.rect,
-                dot_color,
-                mark: orb_host.mark(),
-                attention_ring: orb_host.attention_ring(),
-                quantity: orb_host.quantity_percent(),
-                activity_pulse: orb_host.motion() == MotionCue::ActivityPulse,
-                menu_rows: Vec::new(),
-            };
-        }
-        let dot_rect = view.children[menu_actions.len()].rect;
+        let dot = v2_named_rect(&view, ORB_TOGGLE_ACTION, "ADR-230 orb paint");
         let menu_rows = menu_actions
             .iter()
-            .enumerate()
-            .map(|(index, action)| (view.children[index].rect, action.label()))
+            .map(|action| {
+                (
+                    v2_named_rect(&view, action.wire(), "ADR-230 orb paint"),
+                    action.label(),
+                )
+            })
             .collect();
         OrbFrame {
-            dot: dot_rect,
+            dot,
             dot_color,
             mark: orb_host.mark(),
             attention_ring: orb_host.attention_ring(),
             quantity: orb_host.quantity_percent(),
-            activity_pulse: orb_host.motion() == MotionCue::ActivityPulse,
+            activity_pulse: orb_shows_activity_pulse(
+                orb_host.motion() == MotionCue::ActivityPulse,
+                self.activity_clock.as_ref(),
+            ),
             menu_rows,
         }
     }
@@ -9010,10 +10339,8 @@ impl Shell {
 
     /// Fills the lock surface -- the panel's actual visible content
     /// while locked; the toplevel stays hidden underneath it (ADR-016) --
-    /// with one solid color and commits it. Shared by the initial
-    /// `LOCK_SCREEN_COLOR` placeholder (`SessionLockSurfaceHandler::
-    /// configure`, above) and the `SLEEP_INDICATOR_COLOR` frame
-    /// `check_deep_idle()` shows around a real suspend. Reuses the
+    /// with one packed panel color and commits it. ADR-187: callers pass
+    /// `theme_color(...)`, not a production RGB literal. Reuses the
     /// already-created pool/buffer the same way `draw()` reuses its own
     /// for the toplevel; a no-op before the first configure
     /// (`lock_width`/`lock_height` still 0) or if the lock surface
@@ -9385,7 +10712,11 @@ impl Shell {
             (None, None)
         };
         let keys = if !sleeping && pin_code.is_some() {
-            pin_keyboard_keys(width, height, PinKeyboardKind::Unlock)
+            if hardware_keyboard::detect_keyboard_source() == KeyboardSource::Hardware {
+                Vec::new()
+            } else {
+                pin_keyboard_keys(width, height, PinKeyboardKind::Unlock)
+            }
         } else {
             Vec::new()
         };
@@ -9532,8 +10863,8 @@ impl Shell {
 
     /// S11 Change 2 (ADR-041), revised in ADR-051: once the screen has
     /// already been locked (`check_idle_timeout`) and stays untouched
-    /// for a further `deep_idle_timeout`, blanks the lock surface to
-    /// `SLEEP_INDICATOR_COLOR` instead of leaving the lock screen lit
+    /// for a further `deep_idle_timeout`, redraws the lock through
+    /// `present_lock_pin_entry` instead of leaving the lock screen lit
     /// forever. An earlier version of this also wrote `mem` to
     /// `/sys/power/state` to actually suspend the kernel; ADR-051 found
     /// that write reliably fails with EBUSY on this hardware whenever a
@@ -9552,6 +10883,8 @@ impl Shell {
         }
         println!("saai-shell: deep idle timeout, screen off");
         self.sleeping = true;
+        self.activity_clock = None;
+        self.motion_clock = None;
         self.present_lock_pin_entry(qh);
     }
 }
@@ -9559,35 +10892,43 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
-        bluetooth_list_action_at, bluetooth_list_rows, bluetooth_scan_pattern,
-        calibration_requested, capability_label, consent_action_at, consent_content_cards,
-        consent_header, content_action_at, dev_surface_back_tapped, diagnostic_card_from_row,
-        diagnostic_header, diagnostic_row, diagnostic_status_line, effective_context_space,
-        ensure_me_row_cache, flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
-        input_idle_for_at_least, intent_action_at, intent_input_field, known_surfaces,
-        lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
-        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header,
-        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source, space_color,
-        space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_lifecycle_entity, space_list_rows, space_relation_targets, space_row_at,
-        spaces_header, stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_rows,
+        activity_clock_for, apps_grid_empty_pattern, apps_grid_header, bluetooth_card_from_row,
+        bluetooth_header, bluetooth_list_action_at, bluetooth_list_pattern,
+        bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
+        bluetooth_scan_pattern, calibration_requested, capability_label, consent_action_at,
+        consent_content_cards, consent_header, content_action_at, dev_surface_back_tapped,
+        diagnostic_card_from_row, diagnostic_header, diagnostic_row, diagnostic_v2_source,
+        drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
+        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
+        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
+        intent_field_rect, intent_input_field, known_surfaces, lock_attention_tap,
+        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
+        lock_sleep_view, lock_wake_tap, me_fixture_facts, me_header, me_system_sections,
+        motion_clock_for, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
+        object_view_action_at, object_view_content, object_view_details,
+        object_view_permission_pattern, object_view_summary, orb_action_at,
+        orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
+        orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header, pressed_key_from_keys,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, retain_pressed_while_clock, space_color, space_color_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
+        stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
         trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
-        wifi_list_rows, wifi_password_field, AgentSummary, AppSummary, BluetoothDevice,
-        BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind,
-        KeyboardMode, LockAttentionTap, LockWakeTap, ObjectSummary, OrbAction, Rect, RootPage,
-        SafeInsets, Space, SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow,
-        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
-        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
-        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
-        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
+        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, DataRowVariant, Entity, FieldKind, Keyboard, KeyboardCommand,
+        KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap,
+        MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -10002,6 +11343,26 @@ mod tests {
     }
 
     #[test]
+    fn wifi_list_back_docks_on_screen_when_networks_overflow() {
+        let width = 1080;
+        let height = 2400;
+        let network_count = 20;
+        let back_index = wifi_list_row_count(network_count) + 1;
+        let desired = stacked_row_rect(back_index, width, height);
+        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        assert!(desired.y + desired.height > height);
+        assert!(back.y + back.height <= height);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(matches!(
+            wifi_list_action_at(center, width, height, network_count),
+            Some(WifiListTap::Back)
+        ));
+    }
+
+    #[test]
     fn pin_keypad_action_at_finds_digits_and_backspace_but_not_the_blank_cell() {
         let width = 1080;
         let height = 2400;
@@ -10130,6 +11491,40 @@ mod tests {
     }
 
     #[test]
+    fn me_dispatch_at_follows_layout_v2_scrolled() {
+        let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
+        let width = 1080;
+        let height = 2400;
+        let content = super::root_view(width, height).children[0].rect;
+        let index = rows
+            .iter()
+            .position(|row| row.dispatch == Some("cycle_timezone"))
+            .expect("fixture timezone");
+        let rest = super::scrolled_row_rect(index, width, height, 0, content)
+            .expect("timezone visible at rest");
+        let center = (
+            (rest.x + rest.width / 2) as f64,
+            (rest.y + rest.height / 2) as f64,
+        );
+        assert_eq!(
+            super::me_dispatch_at(center, width, height, &rows, 0),
+            Some("cycle_timezone")
+        );
+        let offset = 220;
+        let moved = super::scrolled_row_rect(index, width, height, offset, content)
+            .expect("timezone visible after drag");
+        let moved_center = (
+            (moved.x + moved.width / 2) as f64,
+            (moved.y + moved.height / 2) as f64,
+        );
+        assert_eq!(
+            super::me_dispatch_at(moved_center, width, height, &rows, offset),
+            Some("cycle_timezone")
+        );
+        assert_ne!(center, moved_center);
+    }
+
+    #[test]
     fn root_content_and_navigation_do_not_overlap() {
         for (width, height) in [(1080, 2400), (800, 480), (1440, 3120)] {
             let content = super::root_content_rect(width, height);
@@ -10236,13 +11631,24 @@ mod tests {
         let min_touch = super::physical_unit(MIN_TOUCH_TARGET);
         for (width, height) in [(1080, 2400), (2400, 1080)] {
             let view = super::intent_view(width, height, KeyboardMode::Letters);
-            let header = view.children[0].rect;
-            let keyboard = view.children[1].rect;
+            let header = super::layout_node_by_id(&view, super::INTENT_HEADER_ID)
+                .expect("intent header")
+                .rect;
+            let keyboard = super::layout_node_by_id(&view, super::INTENT_ROWS_ID)
+                .expect("intent keyboard")
+                .rect;
+            let field = super::layout_node_by_id(&view, super::INTENT_FIELD_ID)
+                .expect("intent field")
+                .rect;
             assert!(
                 header.intersection(keyboard).is_none(),
                 "keyboard overlaps header at {width}x{height}"
             );
-            assert_eq!(header.y + header.height, keyboard.y);
+            assert!(
+                field.intersection(keyboard).is_none(),
+                "keyboard overlaps field at {width}x{height}"
+            );
+            assert_eq!(field.y + field.height, keyboard.y);
             let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
             assert!(!keys.is_empty());
             for (rect, label) in &keys {
@@ -10364,6 +11770,39 @@ mod tests {
     }
 
     #[test]
+    fn bluetooth_pair_error_is_failed_and_not_a_device_row() {
+        assert_eq!(bluetooth_pair_error_from("PAIRING\n"), None);
+        assert_eq!(bluetooth_pair_error_from("PAIRED\tPixel Buds\n"), None);
+        assert_eq!(
+            bluetooth_pair_error_from("PAIR-ERROR\ttimeout\n"),
+            Some("timeout".to_string())
+        );
+        assert_eq!(
+            bluetooth_list_pattern(0, false, Some("timeout")),
+            Some(SurfacePattern::failed("Ошибка сопряжения: timeout"))
+        );
+        let saved: Vec<String> = Vec::new();
+        let failed = bluetooth_list_rows(&[], false, &saved, Some("timeout"));
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].row.primary, "Ошибка сопряжения: timeout");
+        assert!(!failed[0].row.is_actionable());
+        assert!(failed[0].indicator.is_some());
+        let failed_card = bluetooth_card_from_row(&failed[0]);
+        assert_eq!(failed_card.action, "");
+        assert!(failed_card.indicator.is_some());
+        let devices = vec![BluetoothDevice {
+            name: "Speaker".into(),
+            transport: String::new(),
+        }];
+        let with_device = bluetooth_list_rows(&devices, true, &saved, Some("timeout"));
+        assert_eq!(with_device.len(), 2);
+        assert_eq!(with_device[0].row.primary, "Ошибка сопряжения: timeout");
+        assert!(!with_device[0].row.is_actionable());
+        assert_eq!(with_device[1].row.primary, "Speaker");
+        assert_eq!(bluetooth_card_from_row(&with_device[1]).action, "Сопрячь");
+    }
+
+    #[test]
     fn inbox_header_names_the_section_and_offline() {
         let online = inbox_header("Дом", true, false);
         assert_eq!(online.heading_text(), "Дом · Входящие");
@@ -10468,6 +11907,62 @@ mod tests {
         let header = pin_setup_header("Работа");
         assert_eq!(header.heading_text(), "Работа · PIN");
         assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn intent_compose_header_names_the_section() {
+        let header = intent_compose_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Намерение");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn wifi_password_compose_header_names_the_section() {
+        let header = wifi_password_compose_header("Дом");
+        assert_eq!(header.heading_text(), "Дом · Пароль");
+        assert!(header.lifecycle.is_none());
+    }
+
+    #[test]
+    fn intent_field_rect_sits_on_the_keyboard_and_misses_keys() {
+        for (width, height) in [(1080, 2400), (2400, 1080)] {
+            let view = super::intent_view(width, height, KeyboardMode::Letters);
+            let keyboard = super::layout_node_by_id(&view, super::INTENT_ROWS_ID)
+                .expect("intent keyboard")
+                .rect;
+            let field = intent_field_rect(width, height, KeyboardMode::Letters);
+            assert!(
+                field.intersection(keyboard).is_none(),
+                "field overlaps keyboard at {width}x{height}"
+            );
+            assert_eq!(field.y + field.height, keyboard.y);
+            let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
+            for (rect, label) in &keys {
+                assert!(
+                    field.intersection(*rect).is_none(),
+                    "field overlaps key {label} at {width}x{height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn intent_focus_order_starts_at_the_field_and_ends_at_send() {
+        let view = super::intent_view(1080, 2400, KeyboardMode::Letters);
+        let stops = super::layout_focus_stops(&view);
+        assert_eq!(
+            stops.first().map(|(_, id)| id.as_str()),
+            Some(super::INTENT_FIELD_ID)
+        );
+        assert_eq!(stops.last().map(|(_, id)| id.as_str()), Some("intent-send"));
+        let ids: Vec<&str> = stops.iter().map(|(_, id)| id.as_str()).collect();
+        let cancel = ids.iter().position(|id| *id == "intent-cancel").unwrap();
+        let send = ids.iter().position(|id| *id == "intent-send").unwrap();
+        let q = ids.iter().position(|id| *id == "intent-key-q").unwrap();
+        assert!(q > 0);
+        assert!(cancel > q);
+        assert!(send > cancel);
+        assert!(!ids.iter().any(|id| *id == super::INTENT_HEADER_ID));
     }
 
     #[test]
@@ -10625,6 +12120,337 @@ mod tests {
             super::now_footer_action_at((540.0, 400.0), width, height),
             None
         );
+        assert_eq!(
+            super::now_footer_action_at((540.0, 1860.0), width, height),
+            Some(super::NOW_FOOTER_OPEN_APPS_ACTION)
+        );
+        assert_eq!(
+            super::now_footer_action_at((540.0, 2080.0), width, height),
+            Some("open_intent_input")
+        );
+    }
+
+    #[test]
+    fn now_paint_chrome_matches_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let view = super::now_view(width, height);
+        let chrome = super::now_paint_chrome_from(&view);
+        let header = saai_ui_compiler::layout_v1_find(&view, "ContextHeader").expect("header");
+        let object = saai_ui_compiler::layout_v1_find(&view, "ObjectSummary").expect("object");
+        let empty = saai_ui_compiler::layout_v1_find(&view, "SurfacePattern").expect("empty");
+        let nav = saai_ui_compiler::layout_v1_find(&view, "BottomNavigation").expect("tabs");
+        assert_eq!(chrome.header, header.rect);
+        assert_eq!(chrome.object, object.rect);
+        assert_eq!(chrome.empty, empty.rect);
+        assert_eq!(chrome.header.y, 0);
+        assert_eq!(chrome.object.y, 263);
+        assert_eq!(chrome.object.height, 144);
+        assert_eq!(nav.children.len(), 4);
+        let root = super::root_view(width, height);
+        let root_nav =
+            saai_ui_compiler::layout_v1_find(&root, "BottomNavigation").expect("root tabs");
+        for (now_tab, root_tab) in nav.children.iter().zip(root_nav.children.iter()) {
+            assert_eq!(now_tab.id, root_tab.id);
+            assert_eq!(now_tab.rect, root_tab.rect);
+        }
+        let footer = super::now_footer_action_views_from(&view);
+        assert_eq!(footer[0].0, super::now_node_rect(&view, "apps"));
+        assert_eq!(footer[1].0, super::now_node_rect(&view, "intent"));
+        let main = include_str!("main.rs");
+        assert!(main.contains("now_paint_chrome_from"));
+        assert!(main.contains("navigation_items_from"));
+        let draw_now = include_str!("render.rs")
+            .split("pub fn draw_now(")
+            .nth(1)
+            .expect("draw_now")
+            .split("pub fn draw_status_bar(")
+            .next()
+            .expect("status");
+        assert!(draw_now.contains("chrome.header"));
+        assert!(draw_now.contains("chrome.object"));
+        assert!(draw_now.contains("chrome.empty"));
+        assert!(draw_now.contains("draw_tab_bar(canvas, tabs, fonts)"));
+    }
+
+    #[test]
+    fn list_paint_rows_match_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let inbox = super::layout_live_v2(
+            &super::inbox_v2_source(&[], true),
+            "ADR-226 inbox empty",
+            width,
+            height,
+        );
+        assert_eq!(
+            super::v2_named_rect(&inbox, "inbox.empty", "empty"),
+            stacked_row_rect(0, width, height)
+        );
+        let nav = saai_ui_compiler::layout_v1_find(&inbox, "BottomNavigation").expect("tabs");
+        assert_eq!(nav.children.len(), 4);
+        let wifi = super::layout_live_v2(
+            &super::wifi_v2_source(0),
+            "ADR-226 wifi empty",
+            width,
+            height,
+        );
+        assert_eq!(
+            super::v2_named_rect(&wifi, "wifi.empty", "wifi"),
+            stacked_row_rect(0, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&wifi, "refresh", "wifi"),
+            stacked_trailing_rect(1, 2, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&wifi, "back", "wifi"),
+            stacked_trailing_rect(2, 2, width, height)
+        );
+        let two =
+            super::layout_live_v2(&super::wifi_v2_source(2), "ADR-226 wifi two", width, height);
+        assert_eq!(
+            super::v2_named_rect(&two, "wifi.0", "wifi"),
+            stacked_row_rect(0, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&two, "wifi.1", "wifi"),
+            stacked_row_rect(1, width, height)
+        );
+        let main = include_str!("main.rs");
+        assert!(main.contains("list_paint_cards"));
+        assert!(main.contains("ADR-226 inbox paint"));
+        assert!(main.contains("ADR-226 spaces paint"));
+        assert!(main.contains("ADR-226 wifi paint"));
+        assert!(main.contains("ADR-226 bluetooth paint"));
+        assert!(main.contains("ADR-226 trusted paint"));
+    }
+
+    #[test]
+    fn me_paint_rows_match_layout_v2_scrolled_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
+        let content = super::root_view(width, height).children[0].rect;
+        let view = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-227 me paint",
+            width,
+            height,
+            0,
+        );
+        let first = super::me_row_loc(0, &rows[0]);
+        assert_eq!(
+            super::v2_named_rect(&view, &first, "me"),
+            super::scrolled_row_rect(0, width, height, 0, content).expect("row0")
+        );
+        let index = rows
+            .iter()
+            .position(|row| row.dispatch == Some("cycle_timezone"))
+            .expect("fixture timezone");
+        let rest = super::scrolled_row_rect(index, width, height, 0, content)
+            .expect("timezone visible at rest");
+        assert_eq!(super::v2_named_rect(&view, "cycle_timezone", "me"), rest);
+        let cards = super::me_paint_cards(&view, &rows);
+        assert_eq!(
+            cards
+                .iter()
+                .find(|(rect, _)| *rect == rest)
+                .map(|(_, card)| card.label.as_str()),
+            Some("Часовой пояс")
+        );
+        let last = rows.len() - 1;
+        let hidden = (0..=last)
+            .rev()
+            .find(|&index| super::scrolled_row_rect(index, width, height, 0, content).is_none())
+            .expect("fixture overflows content");
+        assert!(
+            saai_ui_compiler::layout_v1_find(&view, &super::me_row_loc(hidden, &rows[hidden]))
+                .is_none()
+        );
+        let offset = 220;
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-227 me paint",
+            width,
+            height,
+            offset,
+        );
+        let moved = super::scrolled_row_rect(index, width, height, offset, content)
+            .expect("timezone visible after drag");
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "cycle_timezone", "me"),
+            moved
+        );
+        assert_ne!(rest, moved);
+        let nav = saai_ui_compiler::layout_v1_find(&view, "BottomNavigation").expect("tabs");
+        assert_eq!(nav.children.len(), 4);
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-227 me paint"));
+        assert!(main.contains("me_paint_cards"));
+        assert!(main.contains("layout_live_v2_scrolled"));
+    }
+
+    #[test]
+    fn apps_paint_tiles_match_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let mut apps = std::collections::BTreeMap::new();
+        apps.insert("demo".to_string(), test_app("demo", "Saai Demo"));
+        apps.insert("alpha".to_string(), test_app("alpha", "Alpha"));
+        let tree = super::layout_live_v2(
+            &super::apps_v2_source(&apps),
+            "ADR-228 apps paint",
+            width,
+            height,
+        );
+        assert_eq!(
+            super::v2_named_rect(&tree, "manage_app:alpha", "apps"),
+            super::now_grid_rect(0, width, height)
+        );
+        assert_eq!(
+            super::v2_named_rect(&tree, "manage_app:demo", "apps"),
+            super::now_grid_rect(1, width, height)
+        );
+        let cards = super::apps_paint_cards(&tree, &apps);
+        assert_eq!(cards[0].0, super::now_grid_rect(0, width, height));
+        assert_eq!(cards[0].1.label, "Alpha");
+        assert_eq!(cards[1].0, super::now_grid_rect(1, width, height));
+        assert_eq!(cards[1].1.label, "Saai Demo");
+        let empty_apps = std::collections::BTreeMap::new();
+        let empty = super::layout_live_v2(
+            &super::apps_v2_source(&empty_apps),
+            "ADR-228 apps empty",
+            width,
+            height,
+        );
+        assert!(saai_ui_compiler::layout_v1_find(&empty, "SurfacePattern").is_some());
+        assert!(super::apps_v2_source(&empty_apps).contains("apps.empty"));
+        let nav = saai_ui_compiler::layout_v1_find(&tree, "BottomNavigation").expect("tabs");
+        assert_eq!(nav.children.len(), 4);
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-228 apps paint"));
+        assert!(main.contains("apps_paint_cards"));
+    }
+
+    #[test]
+    fn overlay_paint_buttons_match_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let (header, buttons) = super::overlay_decision_paint(
+            "consent",
+            &[super::CONSENT_ACCEPT_ACTION, super::CONSENT_DECLINE_ACTION],
+            "ADR-229 overlay paint",
+            width,
+            height,
+        );
+        let old = super::consent_view(width, height);
+        assert_eq!(header, old.children[0].rect);
+        assert_eq!(buttons[0], old.children[1].children[0].rect);
+        assert_eq!(buttons[1], old.children[1].children[1].rect);
+        let pair = super::overlay_decision_paint(
+            "consent",
+            &[
+                super::TASK_CONFIRM_ACCEPT_ACTION,
+                super::TASK_CONFIRM_DECLINE_ACTION,
+            ],
+            "ADR-229 overlay paint",
+            width,
+            height,
+        );
+        assert_eq!(pair.1[0].y, buttons[0].y);
+        assert_eq!(pair.1[0].height, 300);
+        let field =
+            super::overlay_field_rect_with("intent", super::INTENT_FIELD_ID, width, height, true);
+        assert!(field.height > 0);
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-229 overlay paint"));
+        assert!(main.contains("overlay_decision_paint"));
+        assert!(main.contains("overlay_field_rect_with"));
+    }
+
+    #[test]
+    fn orb_paint_matches_layout_v2_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let closed = super::layout_live_v2(&orb_v2_source(&[]), "ADR-230 orb paint", width, height);
+        assert_eq!(
+            super::v2_named_rect(&closed, "orb:toggle", "orb"),
+            orb_zone_rect(width, height, 0)
+        );
+        let actions = [OrbAction::OpenInbox, OrbAction::OpenBluetooth];
+        let open =
+            super::layout_live_v2(&orb_v2_source(&actions), "ADR-230 orb paint", width, height);
+        let old = super::orb_view(width, height, &actions);
+        assert_eq!(
+            super::v2_named_rect(&open, "orb-menu:inbox", "orb"),
+            old.children[0].rect
+        );
+        assert_eq!(
+            super::v2_named_rect(&open, "orb:toggle", "orb"),
+            old.children[2].rect
+        );
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-230 orb paint"));
+    }
+
+    #[test]
+    fn diagnostic_paint_rows_match_layout_v2_scrolled_nodes() {
+        let width = 1080;
+        let height = 2400;
+        let n = 3;
+        let tree = super::layout_live_v2_scrolled(
+            &diagnostic_v2_source(n),
+            "ADR-231 diagnostic paint",
+            width,
+            height,
+            0,
+        );
+        let content = super::dev_surface_scroll_content(width, height, n);
+        for index in 0..n {
+            assert_eq!(
+                saai_ui_compiler::layout_v1_find(&tree, &format!("diagnostic.{index}"))
+                    .expect("row")
+                    .rect,
+                super::scrolled_row_rect(index, width, height, 0, content).expect("visible")
+            );
+        }
+        assert_eq!(
+            super::v2_named_rect(&tree, "back", "ADR-231 diagnostic paint"),
+            stacked_control_rect(n, width, height)
+        );
+        let overflow = 9;
+        let offset = 220;
+        let scrolled = super::layout_live_v2_scrolled(
+            &diagnostic_v2_source(overflow),
+            "ADR-231 diagnostic paint",
+            width,
+            height,
+            offset,
+        );
+        let scrolled_content = super::dev_surface_scroll_content(width, height, overflow);
+        assert!(saai_ui_compiler::layout_v1_find(&scrolled, "diagnostic.0").is_none());
+        assert_eq!(
+            saai_ui_compiler::layout_v1_find(&scrolled, "diagnostic.1")
+                .expect("row1")
+                .rect,
+            super::scrolled_row_rect(1, width, height, offset, scrolled_content).expect("moved")
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "back", "ADR-231 diagnostic paint"),
+            stacked_control_rect(overflow, width, height)
+        );
+        let rows: Vec<_> = (0..overflow)
+            .map(|index| diagnostic_row(format!("r{index}"), "v"))
+            .collect();
+        let cards = super::diagnostic_paint_cards(&scrolled, &rows);
+        assert!(!cards.iter().any(|(_, card)| card.label == "r0"));
+        assert!(cards.iter().any(|(rect, card)| {
+            card.label == "Назад" && *rect == stacked_control_rect(overflow, width, height)
+        }));
+        let main = include_str!("main.rs");
+        assert!(main.contains("ADR-231 diagnostic paint"));
+        assert!(main.contains("fn diagnostic_paint_cards"));
     }
 
     #[test]
@@ -10643,32 +12469,64 @@ mod tests {
             )
         };
         assert!(matches!(
-            bluetooth_list_action_at(center(device_0), width, height, device_count, false),
+            bluetooth_list_action_at(center(device_0), width, height, device_count, 0),
             Some(BluetoothListTap::Device(0))
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(scan), width, height, device_count, false),
+            bluetooth_list_action_at(center(scan), width, height, device_count, 0),
             Some(BluetoothListTap::Scan)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(refresh), width, height, device_count, false),
+            bluetooth_list_action_at(center(refresh), width, height, device_count, 0),
             Some(BluetoothListTap::Refresh)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(back), width, height, device_count, false),
+            bluetooth_list_action_at(center(back), width, height, device_count, 0),
             Some(BluetoothListTap::Back)
         ));
         let empty = stacked_row_rect(0, width, height);
         let scan_empty = stacked_row_rect(1, width, height);
-        assert!(bluetooth_list_action_at(center(empty), width, height, 0, true).is_none());
+        assert!(bluetooth_list_action_at(center(empty), width, height, 0, 1).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(scan_empty), width, height, 0, true),
+            bluetooth_list_action_at(center(scan_empty), width, height, 0, 1),
             Some(BluetoothListTap::Scan)
         ));
-        assert!(bluetooth_list_action_at(center(empty), width, height, 0, false).is_none());
+        assert!(bluetooth_list_action_at(center(empty), width, height, 0, 1).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(scan_empty), width, height, 0, false),
+            bluetooth_list_action_at(center(scan_empty), width, height, 0, 1),
             Some(BluetoothListTap::Scan)
+        ));
+        let failed = stacked_row_rect(0, width, height);
+        let device_after_failed = stacked_row_rect(1, width, height);
+        let scan_after_failed = stacked_row_rect(2, width, height);
+        assert!(bluetooth_list_action_at(center(failed), width, height, 1, 1).is_none());
+        assert!(matches!(
+            bluetooth_list_action_at(center(device_after_failed), width, height, 1, 1),
+            Some(BluetoothListTap::Device(0))
+        ));
+        assert!(matches!(
+            bluetooth_list_action_at(center(scan_after_failed), width, height, 1, 1),
+            Some(BluetoothListTap::Scan)
+        ));
+    }
+
+    #[test]
+    fn bluetooth_list_back_docks_on_screen_when_devices_overflow() {
+        let width = 1080;
+        let height = 2400;
+        let device_count = 20;
+        let back_index = bluetooth_list_row_count(device_count, 0) + 2;
+        let desired = stacked_row_rect(back_index, width, height);
+        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        assert!(desired.y + desired.height > height);
+        assert!(back.y + back.height <= height);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(matches!(
+            bluetooth_list_action_at(center, width, height, device_count, 0),
+            Some(BluetoothListTap::Back)
         ));
     }
 
@@ -10699,6 +12557,24 @@ mod tests {
         assert!(trusted_client_action_at(center(empty), width, height, 0).is_none());
         assert!(matches!(
             trusted_client_action_at(center(back_empty), width, height, 0),
+            Some(TrustedClientTap::Back)
+        ));
+    }
+
+    #[test]
+    fn trusted_client_back_docks_on_screen_when_clients_overflow() {
+        let width = 1080;
+        let height = 2400;
+        let client_count = 20;
+        let back_index = trusted_client_list_row_count(client_count);
+        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        assert!(back.y + back.height <= height);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(matches!(
+            trusted_client_action_at(center, width, height, client_count),
             Some(TrustedClientTap::Back)
         ));
     }
@@ -10747,33 +12623,49 @@ mod tests {
 
     #[test]
     fn now_page_static_actions_come_from_sui_markup() {
-        // S13 Change 4 removed the compiled-in demo-app card -- "Сейчас"
-        // now has exactly the two entries that were always meant to
-        // stay static (the app list itself is runtime data, handled by
-        // `now_action_at`/`apps_grid_cards`, not this table).
-        assert_eq!(ROOT_CONTENT_ACTIONS.len(), 2);
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
-            Some("selected-entity")
-        );
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 1000.0), 1080, 2400).map(|action| action.id),
-            Some("new-intent")
-        );
+        // ADR-187: leftover NOW cards are gone from `root.sui`. Live
+        // NOW hits ObjectSummary + footer, not compiled content actions.
+        assert!(ROOT_CONTENT_ACTIONS.is_empty());
+        assert!(content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).is_none());
+        assert!(content_action_at(RootPage::Now, (540.0, 1000.0), 1080, 2400).is_none());
         assert!(content_action_at(RootPage::Inbox, (540.0, 500.0), 1080, 2400).is_none());
     }
 
     #[test]
     fn space_actions_come_from_live_spaces_not_sui_markup() {
         assert!(content_action_at(RootPage::Spaces, (540.0, 500.0), 1080, 2400).is_none());
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).map(|action| action.id),
-            Some("selected-entity")
-        );
-        assert_eq!(
-            content_action_at(RootPage::Now, (540.0, 1020.0), 1080, 2400).map(|action| action.id),
-            Some("new-intent")
-        );
+        assert!(content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).is_none());
+        assert!(content_action_at(RootPage::Now, (540.0, 1020.0), 1080, 2400).is_none());
+    }
+
+    #[test]
+    fn production_main_has_no_panel_color_literals() {
+        let src = include_str!("main.rs");
+        let lock = format!("{}{}", "LOCK_SCREEN", "_COLOR");
+        let sleep = format!("{}{}", "SLEEP_INDICATOR", "_COLOR");
+        assert!(!src.contains(&lock));
+        assert!(!src.contains(&sleep));
+        let diagnostic_red = format!("{}{}", "[0x00, 0xd0", ", 0x00, 0x00]");
+        assert!(!src.contains(&diagnostic_red));
+        let packed = format!("{}{}", "[u8; 4] = ", "[0x");
+        assert!(!src.contains(&packed));
+    }
+
+    #[test]
+    fn text_scale_cycle_includes_one_hundred_fifty() {
+        assert_eq!(super::TEXT_SCALE_LEVELS_PCT, [85, 100, 125, 150]);
+    }
+
+    #[test]
+    fn radio_off_is_wlan0_operstate_not_entityd() {
+        let src = include_str!("main.rs");
+        assert!(src.contains("/sys/class/net/wlan0/operstate"));
+        assert!(src.contains(".with_network_up(wifi_is_up())"));
+    }
+
+    #[test]
+    fn unlocked_restart_uses_the_dev_no_lock_marker() {
+        assert_eq!(super::DEV_NO_LOCK_MARKER, "/run/saaios/dev-no-lock");
     }
 
     #[test]
@@ -10888,7 +12780,9 @@ mod tests {
         let width = 1080;
         let height = 2400;
         let view = super::intent_view(width, height, KeyboardMode::Letters);
-        let keyboard = view.children[1].rect;
+        let keyboard = super::layout_node_by_id(&view, super::INTENT_ROWS_ID)
+            .expect("intent keyboard")
+            .rect;
         assert!(keyboard.y >= height / 2);
         assert!(keyboard.height <= height / 2);
         let (_, keys) = super::intent_keyboard_keys(width, height, KeyboardMode::Letters);
@@ -10917,9 +12811,253 @@ mod tests {
     }
 
     #[test]
+    fn committed_action_requires_the_same_target_on_down_and_up() {
+        let width = 1080;
+        let height = 2400;
+        let q = super::intent_labeled_center("Q", width, height, KeyboardMode::Letters);
+        let w = super::intent_labeled_center("W", width, height, KeyboardMode::Letters);
+        let cancel = super::intent_labeled_center("Отмена", width, height, KeyboardMode::Letters);
+        let send = super::intent_labeled_center("Отправить", width, height, KeyboardMode::Letters);
+        let field = super::intent_field_rect(width, height, KeyboardMode::Letters);
+        let field_pos = (
+            field.x as f64 + field.width as f64 / 2.0,
+            field.y as f64 + field.height as f64 / 2.0,
+        );
+        let at = |pos| intent_action_at(pos, width, height, KeyboardMode::Letters);
+        let q_action = at(q);
+        let w_action = at(w);
+        let cancel_action = at(cancel);
+        let send_action = at(send);
+        assert!(q_action.is_some());
+        assert_ne!(q_action, w_action);
+        assert_eq!(
+            super::committed_action(q_action.as_deref(), q_action.as_deref()),
+            q_action
+        );
+        assert_eq!(
+            super::committed_action(at(field_pos).as_deref(), q_action.as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(q_action.as_deref(), w_action.as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(q_action.as_deref(), at((540.0, 100.0)).as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(cancel_action.as_deref(), send_action.as_deref()),
+            None
+        );
+        assert_eq!(
+            super::committed_action(cancel_action.as_deref(), cancel_action.as_deref()),
+            cancel_action
+        );
+    }
+
+    #[test]
+    fn pressed_key_holds_after_release_only_while_the_micro_clock_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::MicroFeedback, false);
+        assert_eq!(
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&clock), false).as_deref(),
+            Some("Q")
+        );
+        clock.advance(120);
+        assert_eq!(
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&clock), false),
+            None
+        );
+        assert_eq!(
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&clock), true).as_deref(),
+            Some("Q")
+        );
+        let reduced = MotionClock::one_shot(MotionToken::MicroFeedback, true);
+        assert_eq!(
+            retain_pressed_while_clock(Some(String::from("Q")), Some(&reduced), false),
+            None
+        );
+    }
+
+    #[test]
+    fn pressed_tab_holds_after_release_only_while_the_selection_clock_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::Selection, false);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), false),
+            Some(RootPage::Inbox)
+        );
+        clock.advance(179);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), false),
+            Some(RootPage::Inbox)
+        );
+        clock.advance(1);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), false),
+            None
+        );
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&clock), true),
+            Some(RootPage::Inbox)
+        );
+        let reduced = MotionClock::one_shot(MotionToken::Selection, true);
+        assert_eq!(
+            retain_pressed_while_clock(Some(RootPage::Inbox), Some(&reduced), false),
+            None
+        );
+    }
+
+    #[test]
+    fn field_shows_context_focus_only_while_the_context_clock_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::Context, false);
+        assert!(field_shows_context_focus(Some(&clock)));
+        clock.advance(239);
+        assert!(field_shows_context_focus(Some(&clock)));
+        clock.advance(1);
+        assert!(!field_shows_context_focus(Some(&clock)));
+        let selection = MotionClock::one_shot(MotionToken::Selection, false);
+        assert!(!field_shows_context_focus(Some(&selection)));
+        let reduced = MotionClock::one_shot(MotionToken::Context, true);
+        assert!(!field_shows_context_focus(Some(&reduced)));
+        assert!(!field_shows_context_focus(None));
+        let looping = MotionClock::looping(MotionToken::Context, false);
+        assert!(!field_shows_context_focus(Some(&looping)));
+    }
+
+    #[test]
+    fn orb_shows_activity_pulse_only_on_the_looping_on_phase() {
+        let mut clock = MotionClock::looping(MotionToken::Context, false);
+        assert!(orb_shows_activity_pulse(true, Some(&clock)));
+        clock.advance(240);
+        assert!(!orb_shows_activity_pulse(true, Some(&clock)));
+        clock.advance(240);
+        assert!(orb_shows_activity_pulse(true, Some(&clock)));
+        assert!(!orb_shows_activity_pulse(false, Some(&clock)));
+        assert!(!orb_shows_activity_pulse(true, None));
+        let reduced = MotionClock::looping(MotionToken::Context, true);
+        assert!(!orb_shows_activity_pulse(true, Some(&reduced)));
+    }
+
+    #[test]
+    fn motion_clock_for_is_absent_when_reduced_and_drop_clears_both() {
+        assert!(motion_clock_for(MotionToken::Selection, true).is_none());
+        assert!(
+            motion_clock_for(MotionToken::Selection, false).is_some_and(MotionClock::needs_frame)
+        );
+        assert!(activity_clock_for(true).is_some_and(MotionClock::needs_frame));
+        assert!(activity_clock_for(false).is_none());
+        let (motion, activity) = drop_clocks_if_reduced(
+            true,
+            motion_clock_for(MotionToken::MicroFeedback, false),
+            activity_clock_for(true),
+        );
+        assert!(motion.is_none());
+        assert!(activity.is_none());
+        let keep_motion = motion_clock_for(MotionToken::Context, false);
+        let (motion, activity) = drop_clocks_if_reduced(false, keep_motion, None);
+        assert!(motion.is_some());
+        assert!(activity.is_none());
+    }
+
+    #[test]
+    fn frame_reason_prefers_scroll_then_motion() {
+        use saai_ui_core::{frame_reason, FrameReason};
+        assert_eq!(frame_reason(true, true), FrameReason::Scroll);
+        assert_eq!(frame_reason(false, true), FrameReason::Motion);
+        assert_eq!(frame_reason(false, false), FrameReason::Input);
+    }
+
+    #[test]
+    fn frame_surface_names_lock_overlay_keyboard_list_orb_then_tab() {
+        use saai_ui_core::{frame_surface, FrameSurface};
+        assert_eq!(
+            frame_surface(true, false, false, false, false, FrameSurface::Now),
+            FrameSurface::Lock
+        );
+        assert_eq!(
+            frame_surface(false, true, false, false, false, FrameSurface::Now),
+            FrameSurface::Overlay
+        );
+        assert_eq!(
+            frame_surface(false, false, true, false, false, FrameSurface::Now),
+            FrameSurface::Keyboard
+        );
+        assert_eq!(
+            frame_surface(false, false, false, true, false, FrameSurface::Now),
+            FrameSurface::List
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, true, FrameSurface::Now),
+            FrameSurface::Orb
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, false, FrameSurface::Spaces),
+            FrameSurface::Spaces
+        );
+    }
+
+    #[test]
+    fn scroll_p95_limit_is_fifty_milliseconds() {
+        use saai_ui_core::FRAME_PACE_P95_LIMIT_MS;
+        assert_eq!(FRAME_PACE_P95_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn first_feedback_limit_is_fifty_milliseconds() {
+        use saai_ui_core::FIRST_FEEDBACK_LIMIT_MS;
+        assert_eq!(FIRST_FEEDBACK_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn frame_pace_idle_ok_is_the_inverse_of_requested_frame() {
+        use saai_ui_core::{FrameBackend, FramePace, FrameReason, FrameSample, FrameSurface};
+        let mut pace = FramePace::new();
+        pace.record(FrameSample {
+            produce_ms: 6,
+            input_to_commit_ms: None,
+            requested_frame: false,
+            pending_depth: 0,
+            dropped: 0,
+            coalesced: 0,
+            reason: FrameReason::Input,
+            surface: FrameSurface::Now,
+            backend: FrameBackend::Dmabuf,
+        });
+        assert_eq!(pace.seq(), 1);
+        assert_eq!(pace.idle_ok(), Some(true));
+        assert!(pace.line().expect("recorded").contains("idle_ok=1"));
+        assert!(pace.line().expect("recorded").contains("backend=dmabuf"));
+    }
+
+    #[test]
+    fn frame_backend_names_the_two_staging_paths() {
+        use saai_ui_core::FrameBackend;
+        assert_eq!(FrameBackend::Dmabuf.as_str(), "dmabuf");
+        assert_eq!(FrameBackend::Shm.as_str(), "shm");
+    }
+
+    #[test]
     fn keyboard_mode_toggles_both_ways() {
         assert_eq!(KeyboardMode::Letters.toggled(), KeyboardMode::Symbols);
         assert_eq!(KeyboardMode::Symbols.toggled(), KeyboardMode::Letters);
+    }
+
+    #[test]
+    fn hardware_keyboard_source_hides_osk_hits() {
+        let keyboard = Keyboard::bind(super::INTENT_FIELD_ID, KeyboardLayout::Qwerty)
+            .with_source(KeyboardSource::Hardware);
+        assert!(!keyboard.shows_panel());
+        let mut value = String::new();
+        let mut bound = keyboard;
+        assert_eq!(
+            bound.handle(Keystroke::Char('q'), &mut value),
+            KeyboardCommand::Edited
+        );
+        assert_eq!(value, "q");
+        assert_eq!(
+            Keyboard::keystroke_from_evdev(saai_ui_core::EVDEV_KEY_A, KeyboardLayout::Qwerty),
+            Some(Keystroke::Char('a'))
+        );
     }
 
     #[test]
@@ -11346,6 +13484,64 @@ mod tests {
     }
 
     #[test]
+    fn pin_setup_field_rect_sits_on_the_dialer_and_misses_keys() {
+        let min_touch = super::physical_unit(MIN_TOUCH_TARGET);
+        for (width, height) in [(1080, 2400), (2400, 1080)] {
+            let field = super::pin_setup_field_rect(width, height, false);
+            let keys = super::pin_keyboard_keys(
+                width,
+                height,
+                super::PinKeyboardKind::Setup { forget: false },
+            );
+            let keyboard = super::pin_keyboard_bounds(
+                width,
+                height,
+                super::PinKeyboardKind::Setup { forget: false },
+            );
+            assert_eq!(field.y + field.height, keyboard.y);
+            for (rect, label) in &keys {
+                assert!(
+                    field.intersection(*rect).is_none(),
+                    "field overlaps key {label} at {width}x{height}"
+                );
+                assert!(
+                    rect.height >= min_touch,
+                    "key {label} height {} < min touch at {width}x{height}",
+                    rect.height
+                );
+            }
+            let cancel = keys.iter().find(|(_, label)| label == "Отмена").unwrap().0;
+            assert_eq!(
+                super::pin_setup_action_at(
+                    (
+                        cancel.x as f64 + cancel.width as f64 / 2.0,
+                        cancel.y as f64 + cancel.height as f64 / 2.0
+                    ),
+                    width,
+                    height,
+                    false
+                ),
+                Some("Отмена")
+            );
+        }
+    }
+
+    #[test]
+    fn pin_setup_focus_order_starts_at_the_field_and_ends_at_done() {
+        let view = super::pin_setup_view(1080, 2400, false);
+        let stops = super::layout_focus_stops(&view);
+        assert_eq!(
+            stops.first().map(|(_, id)| id.as_str()),
+            Some(super::PIN_SETUP_FIELD_ID)
+        );
+        assert_eq!(
+            stops.last().map(|(_, id)| id.as_str()),
+            Some("pin-control-1")
+        );
+        assert!(!stops.iter().any(|(_, id)| id == super::PIN_SETUP_HEADER_ID));
+    }
+
+    #[test]
     fn bluetooth_list_rows_use_scan_facts_and_name_empty_only_after_done() {
         let devices = vec![
             BluetoothDevice {
@@ -11358,7 +13554,7 @@ mod tests {
             },
         ];
         let saved = vec!["Pixel Buds".to_string()];
-        let live = bluetooth_list_rows(&devices, true, &saved);
+        let live = bluetooth_list_rows(&devices, true, &saved, None);
         assert_eq!(live.len(), 2);
         assert_eq!(live[0].row.primary, "Pixel Buds");
         assert!(live[0].paired);
@@ -11371,12 +13567,12 @@ mod tests {
         assert!(!live.iter().any(|row| row.row.primary.contains("dBm")
             || row.row.value.as_deref().unwrap_or("").contains("RSSI")));
 
-        let pending = bluetooth_list_rows(&[], false, &saved);
+        let pending = bluetooth_list_rows(&[], false, &saved, None);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].row.primary, "Сканирование…");
         assert!(!pending[0].row.is_actionable());
         assert_eq!(bluetooth_card_from_row(&pending[0]).action, "");
-        let empty = bluetooth_list_rows(&[], true, &saved);
+        let empty = bluetooth_list_rows(&[], true, &saved, None);
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].row.primary, "Нет устройств");
         assert!(!empty[0].row.is_actionable());
@@ -11823,7 +14019,10 @@ mod tests {
         let content = object_view_content(&task, &[task.clone(), action.clone()], &[]);
         assert_eq!(content.state, UniversalState::Attention);
         assert_eq!(content.consequence, None);
-        let decision = content.decision.expect("waiting task shows a decision");
+        let decision = content
+            .decision
+            .as_ref()
+            .expect("waiting task shows a decision");
         assert_eq!(decision.actor.as_deref(), Some("Система"));
         assert_eq!(decision.action.as_deref(), Some("process.kill_request"));
         assert_eq!(decision.object, "Подтвердите: убить процесс");
@@ -11842,6 +14041,13 @@ mod tests {
             Some("Исполнение: process.kill_request".into())
         );
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+        let details = object_view_details(&content);
+        assert!(!details.iter().any(|line| line.starts_with("Актёр:")));
+        assert!(!details.iter().any(|line| line.starts_with("Последствие:")));
+        assert_eq!(
+            details,
+            vec!["Исполнение: process.kill_request".to_string()]
+        );
     }
 
     #[test]
@@ -11854,6 +14060,12 @@ mod tests {
             Some("Состояние экрана: нет инструмента")
         );
         assert!(content.actions.is_empty());
+        let details = object_view_details(&content);
+        assert!(!details.iter().any(|line| line.contains("нет инструмента")));
+        assert_eq!(
+            object_view_permission_pattern(&content),
+            Some(SurfacePattern::blocked("Состояние экрана: нет инструмента"))
+        );
     }
 
     #[test]
@@ -12217,6 +14429,18 @@ mod tests {
     }
 
     #[test]
+    fn orb_live_source_names_orbhost_and_menu_buttons() {
+        let closed = orb_v2_source(&[]);
+        assert!(closed.contains("OrbHost"));
+        assert!(closed.contains("orb:toggle"));
+        assert!(!closed.contains("orb-menu:"));
+        let open = orb_v2_source(&[OrbAction::OpenInbox, OrbAction::OpenBluetooth]);
+        assert!(open.contains("orb-menu:inbox"));
+        assert!(open.contains("orb-menu:bluetooth"));
+        assert!(!open.contains("manage_app:"));
+    }
+
+    #[test]
     fn orb_action_at_toggles_the_closed_dot() {
         let dot = orb_zone_rect(1080, 2400, 0);
         let point = (
@@ -12386,6 +14610,18 @@ mod tests {
         assert!(rows
             .iter()
             .any(|row| row.dispatch == Some("toggle_reduced_motion")));
+        let motion = rows
+            .iter()
+            .find(|row| row.dispatch == Some("toggle_reduced_motion"))
+            .expect("reduced motion");
+        assert_eq!(motion.card.status, "Выкл");
+        let mut reduced_facts = me_fixture_facts();
+        reduced_facts.reduced_motion = true;
+        let reduced_rows = flatten_me_rows(&me_system_sections(&reduced_facts));
+        assert!(reduced_rows.iter().any(|row| {
+            row.dispatch == Some("toggle_reduced_motion")
+                && row.card.status.contains("без анимации")
+        }));
         assert!(rows
             .iter()
             .any(|row| row.card.label == "Устройство" && row.dispatch.is_none()));
@@ -12469,6 +14705,49 @@ mod tests {
             .iter()
             .any(|row| row.dispatch == Some("cycle_brightness")));
         assert!(rows.iter().any(|row| row.dispatch == Some("cycle_volume")));
+        assert!(rows
+            .iter()
+            .any(|row| row.dispatch == Some("toggle_haptics")));
+    }
+
+    #[test]
+    fn haptic_switch_lives_in_sound_not_interface() {
+        let sections = me_system_sections(&me_fixture_facts());
+        let sound = sections
+            .iter()
+            .find(|section| section.title == "Звук")
+            .expect("sound section");
+        let sound_rows = flatten_me_rows(std::slice::from_ref(sound));
+        let haptic = sound_rows
+            .iter()
+            .find(|row| row.card.label == "Виброотклик")
+            .expect("haptic row");
+        assert_eq!(haptic.dispatch, Some("toggle_haptics"));
+        assert_eq!(haptic.card.status, "Вкл");
+        let interface = sections
+            .iter()
+            .find(|section| section.title == "Интерфейс")
+            .expect("interface");
+        let interface_rows = flatten_me_rows(std::slice::from_ref(interface));
+        assert!(!interface_rows
+            .iter()
+            .any(|row| row.dispatch == Some("toggle_haptics")));
+        assert!(interface_rows
+            .iter()
+            .any(|row| row.dispatch == Some("toggle_reduced_motion")));
+        let mut off = me_fixture_facts();
+        off.haptics_enabled = false;
+        off.reduced_motion = true;
+        let off_rows = flatten_me_rows(&me_system_sections(&off));
+        let haptic_off = off_rows
+            .iter()
+            .find(|row| row.dispatch == Some("toggle_haptics"))
+            .expect("haptic off");
+        assert_eq!(haptic_off.card.status, "Выкл");
+        assert!(off_rows.iter().any(|row| {
+            row.dispatch == Some("toggle_reduced_motion")
+                && row.card.status.contains("без анимации")
+        }));
     }
 
     #[test]
@@ -12507,6 +14786,15 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_live_source_names_readonly_rows_and_back() {
+        let source = diagnostic_v2_source(3);
+        assert!(source.contains("screen diagnostic"));
+        assert!(source.contains("DataRow"));
+        assert!(source.contains("row back"));
+        assert!(!source.contains("a11y = Button"));
+    }
+
+    #[test]
     fn diagnostic_card_from_row_keeps_label_and_value_apart() {
         let row = diagnostic_row("Сборка", "abc123");
         assert_eq!(row.variant, DataRowVariant::Static);
@@ -12517,11 +14805,6 @@ mod tests {
         assert_eq!(card.label, "Сборка");
         assert_eq!(card.status, "abc123");
         assert_eq!(card.action, "");
-    }
-
-    #[test]
-    fn diagnostic_status_line_names_the_real_row_count() {
-        assert_eq!(diagnostic_status_line(8), "8 показателей");
     }
 
     #[test]
@@ -12546,22 +14829,21 @@ mod tests {
     fn now_object_tapped_finds_the_summary_and_misses_the_footer() {
         let width = 1080;
         let height = 2400;
-        let content = super::root_view(width, height).children[0].rect;
         let summary = ObjectSummary::new("vnnnmb", "saaios.intent · версия 1");
-        let object_rect = crate::render::now_object_summary_rect(content, false, &summary);
-        let center = (
-            f64::from(object_rect.x + object_rect.width / 2),
-            f64::from(object_rect.y + object_rect.height / 2),
-        );
-        assert!(now_object_tapped(center, content, false, Some(&summary)));
+        assert!(now_object_tapped(
+            (540.0, 335.0),
+            width,
+            height,
+            Some(&summary)
+        ));
         let footer = super::now_footer_action_rect(1, width, height);
         assert!(!now_object_tapped(
             (f64::from(footer.x + 10), f64::from(footer.y + 10)),
-            content,
-            false,
+            width,
+            height,
             Some(&summary)
         ));
-        assert!(!now_object_tapped(center, content, false, None));
+        assert!(!now_object_tapped((540.0, 335.0), width, height, None));
     }
 
     #[test]
@@ -12576,9 +14858,65 @@ mod tests {
             )
         };
         let data_row = center(stacked_row_rect(1, width, height));
-        let back_row = center(stacked_row_rect(row_count, width, height));
+        let back_row = center(stacked_control_rect(row_count, width, height));
         assert!(!dev_surface_back_tapped(data_row, width, height, row_count));
         assert!(dev_surface_back_tapped(back_row, width, height, row_count));
+    }
+
+    #[test]
+    fn stacked_control_rect_docks_overflowing_back_on_screen() {
+        let width = 1080;
+        let height = 2400;
+        let row_count = 9;
+        let desired = stacked_row_rect(row_count, width, height);
+        let back = stacked_control_rect(row_count, width, height);
+        assert!(desired.y + desired.height > height);
+        assert!(back.y + back.height <= height);
+        assert_eq!(back.x, desired.x);
+        assert_eq!(back.height, desired.height);
+        let last_visible = stacked_row_rect(7, width, height);
+        assert!(stacked_row_fits_above(last_visible, back));
+        assert!(!stacked_row_fits_above(
+            stacked_row_rect(8, width, height),
+            back
+        ));
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(dev_surface_back_tapped(center, width, height, row_count));
+        assert!(!dev_surface_back_tapped(
+            (
+                (last_visible.x + last_visible.width / 2) as f64,
+                (last_visible.y + last_visible.height / 2) as f64,
+            ),
+            width,
+            height,
+            row_count
+        ));
+    }
+
+    #[test]
+    fn dev_surface_overflow_rows_scroll_above_docked_back() {
+        let width = 1080;
+        let height = 2400;
+        let row_count = 9;
+        let back = stacked_control_rect(row_count, width, height);
+        let content = super::dev_surface_scroll_content(width, height, row_count);
+        assert_eq!(content.y, stacked_row_rect(0, width, height).y);
+        assert_eq!(content.y + content.height, back.y);
+        let max_offset = super::me_max_scroll_offset(row_count, width, height, content);
+        assert!(max_offset > 0);
+        assert!(super::scrolled_row_rect(8, width, height, 0, content).is_none());
+        let last = super::scrolled_row_rect(8, width, height, max_offset, content);
+        assert!(last.is_some());
+        assert!(stacked_row_fits_above(last.unwrap(), back));
+        assert_eq!(stacked_control_rect(row_count, width, height), back);
+        let center = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert!(dev_surface_back_tapped(center, width, height, row_count));
     }
 }
 

@@ -337,6 +337,414 @@ impl MotionToken {
     }
 }
 
+/// One in-flight motion. Elapsed time is injected so host tests do not
+/// depend on a wall clock. The shell copies `Instant` deltas into
+/// `advance`. Reduced motion never asks for another frame.
+/// ADR-170: `looping` wraps at two token windows so Orb activity can
+/// pulse without a new duration number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MotionClock {
+    token: MotionToken,
+    reduced_motion: bool,
+    elapsed_ms: u32,
+    looping: bool,
+}
+
+impl MotionClock {
+    pub fn one_shot(token: MotionToken, reduced_motion: bool) -> Self {
+        Self {
+            token,
+            reduced_motion,
+            elapsed_ms: 0,
+            looping: false,
+        }
+    }
+
+    pub fn looping(token: MotionToken, reduced_motion: bool) -> Self {
+        Self {
+            token,
+            reduced_motion,
+            elapsed_ms: 0,
+            looping: true,
+        }
+    }
+
+    pub fn duration_ms(self) -> u16 {
+        self.token.milliseconds(self.reduced_motion)
+    }
+
+    pub fn token(self) -> MotionToken {
+        self.token
+    }
+
+    pub fn is_looping(self) -> bool {
+        self.looping
+    }
+
+    fn cycle_ms(self) -> u32 {
+        u32::from(self.duration_ms()).saturating_mul(2)
+    }
+
+    pub fn advance(&mut self, dt_ms: u32) {
+        if self.reduced_motion {
+            return;
+        }
+        if self.looping {
+            let cycle = self.cycle_ms();
+            if cycle == 0 {
+                return;
+            }
+            self.elapsed_ms = self.elapsed_ms.saturating_add(dt_ms) % cycle;
+            return;
+        }
+        let cap = u32::from(self.duration_ms());
+        self.elapsed_ms = self.elapsed_ms.saturating_add(dt_ms).min(cap);
+    }
+
+    pub fn progress_percent(self) -> u8 {
+        let duration = u32::from(self.duration_ms());
+        if duration == 0 {
+            return 100;
+        }
+        if self.looping {
+            return ((self.elapsed_ms.saturating_mul(100)) / duration).min(100) as u8;
+        }
+        ((self.elapsed_ms.saturating_mul(100)) / duration).min(100) as u8
+    }
+
+    pub fn needs_frame(self) -> bool {
+        if self.reduced_motion {
+            return false;
+        }
+        if self.looping {
+            return self.cycle_ms() > 0;
+        }
+        self.elapsed_ms < u32::from(self.duration_ms())
+    }
+
+    /// ADR-170: inset on for the first token window, off for the second.
+    pub fn pulse_visible(self) -> bool {
+        if self.reduced_motion || !self.looping {
+            return false;
+        }
+        self.elapsed_ms < u32::from(self.duration_ms())
+    }
+}
+
+pub const FRAME_PACE_CAP: usize = 32;
+/// VUI-08 drag gate (ADR-173). Compared only to scroll samples.
+pub const FRAME_PACE_P95_LIMIT_MS: u32 = 50;
+/// VUI-08 first-visible gate (ADR-176). Compared to non-scroll
+/// `input_to_commit_ms` remembered on the ring.
+pub const FIRST_FEEDBACK_LIMIT_MS: u32 = 50;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameReason {
+    Input,
+    Motion,
+    Scroll,
+}
+
+impl FrameReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Motion => "motion",
+            Self::Scroll => "scroll",
+        }
+    }
+}
+
+/// Visible chrome that produced a main-surface commit (ADR-175).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameSurface {
+    Now,
+    Inbox,
+    Spaces,
+    Me,
+    List,
+    Keyboard,
+    Overlay,
+    Orb,
+    Lock,
+}
+
+impl FrameSurface {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Now => "now",
+            Self::Inbox => "inbox",
+            Self::Spaces => "spaces",
+            Self::Me => "me",
+            Self::List => "list",
+            Self::Keyboard => "keyboard",
+            Self::Overlay => "overlay",
+            Self::Orb => "orb",
+            Self::Lock => "lock",
+        }
+    }
+}
+
+/// Staging path that attached the main-surface buffer (ADR-178).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameBackend {
+    Dmabuf,
+    Shm,
+}
+
+impl FrameBackend {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dmabuf => "dmabuf",
+            Self::Shm => "shm",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameSample {
+    pub produce_ms: u32,
+    pub input_to_commit_ms: Option<u32>,
+    pub requested_frame: bool,
+    pub pending_depth: u8,
+    pub dropped: u32,
+    pub coalesced: u32,
+    pub reason: FrameReason,
+    pub surface: FrameSurface,
+    pub backend: FrameBackend,
+}
+
+/// Ring of recent main-surface commits. Elapsed times are injected.
+/// Presentation timestamps are out of scope (compositor time is not
+/// trusted).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FramePace {
+    samples: [Option<FrameSample>; FRAME_PACE_CAP],
+    next: usize,
+    count: usize,
+    dropped: u32,
+    coalesced: u32,
+    last_feedback_ms: Option<u32>,
+    seq: u32,
+}
+
+impl Default for FramePace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FramePace {
+    pub fn new() -> Self {
+        Self {
+            samples: [None; FRAME_PACE_CAP],
+            next: 0,
+            count: 0,
+            dropped: 0,
+            coalesced: 0,
+            last_feedback_ms: None,
+            seq: 0,
+        }
+    }
+
+    pub fn note_dropped(&mut self) {
+        self.dropped = self.dropped.saturating_add(1);
+    }
+
+    pub fn note_coalesced(&mut self) {
+        self.coalesced = self.coalesced.saturating_add(1);
+    }
+
+    pub fn record(&mut self, mut sample: FrameSample) {
+        sample.dropped = self.dropped;
+        sample.coalesced = self.coalesced;
+        if sample.reason != FrameReason::Scroll {
+            if let Some(ms) = sample.input_to_commit_ms {
+                self.last_feedback_ms = Some(ms);
+            }
+        }
+        self.seq = self.seq.saturating_add(1);
+        self.samples[self.next] = Some(sample);
+        self.next = (self.next + 1) % FRAME_PACE_CAP;
+        if self.count < FRAME_PACE_CAP {
+            self.count += 1;
+        }
+    }
+
+    pub fn last(&self) -> Option<FrameSample> {
+        if self.count == 0 {
+            return None;
+        }
+        let index = (self.next + FRAME_PACE_CAP - 1) % FRAME_PACE_CAP;
+        self.samples[index]
+    }
+
+    /// Oldest to newest. Wrap-around starts at `next` once the ring is full.
+    pub fn chronological(&self) -> Vec<FrameSample> {
+        let start = if self.count < FRAME_PACE_CAP {
+            0
+        } else {
+            self.next
+        };
+        (0..self.count)
+            .filter_map(|i| self.samples[(start + i) % FRAME_PACE_CAP])
+            .collect()
+    }
+
+    /// ADR-175: one line per sample, oldest first. Empty ring is empty.
+    pub fn trace(&self) -> String {
+        let mut out = String::new();
+        for sample in self.chronological() {
+            let input = sample
+                .input_to_commit_ms
+                .map(|ms| ms.to_string())
+                .unwrap_or_else(|| "-".into());
+            out.push_str(&format!(
+                "surface={} reason={} backend={} produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={}\n",
+                sample.surface.as_str(),
+                sample.reason.as_str(),
+                sample.backend.as_str(),
+                sample.produce_ms,
+                input,
+                u8::from(sample.requested_frame),
+                sample.pending_depth,
+                sample.dropped,
+                sample.coalesced,
+            ));
+        }
+        out
+    }
+
+    pub fn p95_produce_ms(&self) -> Option<u32> {
+        self.p95_produce_ms_matching(|_| true)
+    }
+
+    pub fn p95_produce_ms_for(&self, reason: FrameReason) -> Option<u32> {
+        self.p95_produce_ms_matching(|sample| sample.reason == reason)
+    }
+
+    /// `None` when the ring has no scroll commit yet.
+    pub fn scroll_p95_within_limit(&self) -> Option<bool> {
+        self.p95_produce_ms_for(FrameReason::Scroll)
+            .map(|ms| ms <= FRAME_PACE_P95_LIMIT_MS)
+    }
+
+    /// ADR-176: last non-scroll `input_to_commit_ms`. Scroll coalescing
+    /// does not count as first visible Pressed.
+    pub fn first_feedback_within_limit(&self) -> Option<bool> {
+        self.last_feedback_ms
+            .map(|ms| ms <= FIRST_FEEDBACK_LIMIT_MS)
+    }
+
+    /// ADR-177: total main-surface commits, including those that wrapped
+    /// out of the ring.
+    pub fn seq(&self) -> u32 {
+        self.seq
+    }
+
+    /// `None` with no samples. `Some(true)` when the last commit did
+    /// not request `wl_surface.frame`.
+    pub fn idle_ok(&self) -> Option<bool> {
+        self.last().map(|sample| !sample.requested_frame)
+    }
+
+    fn p95_produce_ms_matching(&self, keep: impl Fn(&FrameSample) -> bool) -> Option<u32> {
+        let mut values = [0u32; FRAME_PACE_CAP];
+        let mut n = 0usize;
+        for slot in &self.samples {
+            if let Some(sample) = slot {
+                if keep(sample) {
+                    values[n] = sample.produce_ms;
+                    n += 1;
+                }
+            }
+        }
+        if n == 0 {
+            return None;
+        }
+        values[..n].sort_unstable();
+        Some(values[(n - 1) * 95 / 100])
+    }
+
+    pub fn line(&self) -> Option<String> {
+        let sample = self.last()?;
+        let input = sample
+            .input_to_commit_ms
+            .map(|ms| ms.to_string())
+            .unwrap_or_else(|| "-".into());
+        let p95_scroll = self
+            .p95_produce_ms_for(FrameReason::Scroll)
+            .map(|ms| ms.to_string())
+            .unwrap_or_else(|| "-".into());
+        let p95_ok = match self.scroll_p95_within_limit() {
+            Some(true) => "1",
+            Some(false) => "0",
+            None => "-",
+        };
+        let input_ok = match self.first_feedback_within_limit() {
+            Some(true) => "1",
+            Some(false) => "0",
+            None => "-",
+        };
+        let idle_ok = match self.idle_ok() {
+            Some(true) => "1",
+            Some(false) => "0",
+            None => "-",
+        };
+        Some(format!(
+            "produce_ms={} input_ms={} frame={} pending={} dropped={} coalesced={} reason={} surface={} backend={} p95_scroll={} p95_ok={} input_ok={} seq={} idle_ok={}",
+            sample.produce_ms,
+            input,
+            u8::from(sample.requested_frame),
+            sample.pending_depth,
+            sample.dropped,
+            sample.coalesced,
+            sample.reason.as_str(),
+            sample.surface.as_str(),
+            sample.backend.as_str(),
+            p95_scroll,
+            p95_ok,
+            input_ok,
+            self.seq,
+            idle_ok,
+        ))
+    }
+}
+
+pub fn frame_reason(scroll: bool, motion: bool) -> FrameReason {
+    if scroll {
+        FrameReason::Scroll
+    } else if motion {
+        FrameReason::Motion
+    } else {
+        FrameReason::Input
+    }
+}
+
+/// ADR-175: lock, overlay, keyboard, list, then Orb activity, then the tab.
+pub fn frame_surface(
+    locked: bool,
+    overlay: bool,
+    keyboard: bool,
+    list: bool,
+    orb: bool,
+    tab: FrameSurface,
+) -> FrameSurface {
+    if locked {
+        FrameSurface::Lock
+    } else if overlay {
+        FrameSurface::Overlay
+    } else if keyboard {
+        FrameSurface::Keyboard
+    } else if list {
+        FrameSurface::List
+    } else if orb {
+        FrameSurface::Orb
+    } else {
+        tab
+    }
+}
+
 pub const MIN_TOUCH_TARGET: LogicalUnit = LogicalUnit::new(48);
 pub const CONTROL_VISUAL_HEIGHT: LogicalUnit = LogicalUnit::new(40);
 pub const TWO_LINE_ROW_HEIGHT: LogicalUnit = LogicalUnit::new(64);
@@ -435,6 +843,258 @@ mod tests {
         assert_eq!(MotionToken::Selection.milliseconds(false), 180);
         assert_eq!(MotionToken::Context.milliseconds(false), 240);
         assert_eq!(MotionToken::Context.milliseconds(true), 0);
+    }
+
+    #[test]
+    fn motion_clock_one_shot_needs_a_frame_until_the_token_duration() {
+        let mut clock = MotionClock::one_shot(MotionToken::MicroFeedback, false);
+        assert!(clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 0);
+        clock.advance(60);
+        assert!(clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 50);
+        clock.advance(60);
+        assert!(!clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 100);
+        clock.advance(40);
+        assert_eq!(clock.progress_percent(), 100);
+        assert_eq!(clock.token(), MotionToken::MicroFeedback);
+    }
+
+    #[test]
+    fn motion_clock_reduced_motion_never_needs_a_frame() {
+        let mut clock = MotionClock::one_shot(MotionToken::MicroFeedback, true);
+        assert!(!clock.needs_frame());
+        assert_eq!(clock.progress_percent(), 100);
+        clock.advance(120);
+        assert!(!clock.needs_frame());
+    }
+
+    #[test]
+    fn motion_clock_looping_needs_a_frame_and_pulse_toggles_once_per_token() {
+        let mut clock = MotionClock::looping(MotionToken::Context, false);
+        assert!(clock.is_looping());
+        assert!(clock.needs_frame());
+        assert!(clock.pulse_visible());
+        clock.advance(239);
+        assert!(clock.pulse_visible());
+        clock.advance(1);
+        assert!(clock.needs_frame());
+        assert!(!clock.pulse_visible());
+        clock.advance(240);
+        assert!(clock.needs_frame());
+        assert!(clock.pulse_visible());
+        let mut reduced = MotionClock::looping(MotionToken::Context, true);
+        assert!(!reduced.needs_frame());
+        assert!(!reduced.pulse_visible());
+        reduced.advance(240);
+        assert!(!reduced.needs_frame());
+        assert!(!MotionClock::one_shot(MotionToken::Context, false).pulse_visible());
+    }
+
+    fn sample(produce_ms: u32, reason: FrameReason, surface: FrameSurface) -> FrameSample {
+        FrameSample {
+            produce_ms,
+            input_to_commit_ms: None,
+            requested_frame: false,
+            pending_depth: 0,
+            dropped: 0,
+            coalesced: 0,
+            reason,
+            surface,
+            backend: FrameBackend::Dmabuf,
+        }
+    }
+
+    #[test]
+    fn frame_pace_p95_and_last_line_use_injected_samples() {
+        let mut pace = FramePace::new();
+        assert!(pace.last().is_none());
+        assert!(pace.p95_produce_ms().is_none());
+        for _ in 0..18 {
+            let mut input = sample(10, FrameReason::Input, FrameSurface::Now);
+            input.input_to_commit_ms = Some(20);
+            input.pending_depth = 1;
+            pace.record(input);
+        }
+        let mut high = sample(50, FrameReason::Input, FrameSurface::Now);
+        high.input_to_commit_ms = Some(20);
+        high.requested_frame = true;
+        high.pending_depth = 1;
+        pace.record(high);
+        pace.record(high);
+        assert_eq!(pace.last().map(|sample| sample.produce_ms), Some(50));
+        assert_eq!(pace.p95_produce_ms(), Some(50));
+        pace.note_dropped();
+        pace.note_coalesced();
+        pace.note_coalesced();
+        pace.record(sample(8, FrameReason::Motion, FrameSurface::Orb));
+        let line = pace.line().expect("recorded");
+        assert!(line.contains("produce_ms=8"));
+        assert!(line.contains("input_ms=-"));
+        assert!(line.contains("frame=0"));
+        assert!(line.contains("dropped=1"));
+        assert!(line.contains("coalesced=2"));
+        assert!(line.contains("reason=motion"));
+        assert!(line.contains("surface=orb"));
+        assert!(line.contains("p95_scroll=-"));
+        assert!(line.contains("p95_ok=-"));
+        assert!(line.contains("input_ok=1"));
+        assert!(line.contains("seq="));
+        assert!(line.contains("idle_ok=1"));
+        assert_eq!(frame_reason(true, true), FrameReason::Scroll);
+        assert_eq!(frame_reason(false, true), FrameReason::Motion);
+        assert_eq!(frame_reason(false, false), FrameReason::Input);
+    }
+
+    fn record_scroll(pace: &mut FramePace, produce_ms: u32) {
+        let mut scroll = sample(produce_ms, FrameReason::Scroll, FrameSurface::Me);
+        scroll.pending_depth = 1;
+        pace.record(scroll);
+    }
+
+    #[test]
+    fn scroll_p95_gate_ignores_input_frames_and_uses_the_50ms_limit() {
+        let mut pace = FramePace::new();
+        assert_eq!(pace.scroll_p95_within_limit(), None);
+        for _ in 0..18 {
+            let mut input = sample(80, FrameReason::Input, FrameSurface::Inbox);
+            input.input_to_commit_ms = Some(20);
+            pace.record(input);
+            record_scroll(&mut pace, 10);
+        }
+        record_scroll(&mut pace, 40);
+        record_scroll(&mut pace, 40);
+        assert_eq!(pace.p95_produce_ms_for(FrameReason::Scroll), Some(40));
+        assert_eq!(pace.scroll_p95_within_limit(), Some(true));
+        assert!(pace.line().expect("recorded").contains("p95_ok=1"));
+        assert!(pace.line().expect("recorded").contains("surface=me"));
+
+        let mut slow = FramePace::new();
+        for _ in 0..18 {
+            record_scroll(&mut slow, 10);
+        }
+        record_scroll(&mut slow, 80);
+        record_scroll(&mut slow, 80);
+        assert_eq!(slow.p95_produce_ms_for(FrameReason::Scroll), Some(80));
+        assert_eq!(slow.scroll_p95_within_limit(), Some(false));
+        assert!(slow.line().expect("recorded").contains("p95_ok=0"));
+        assert_eq!(FRAME_PACE_P95_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn frame_surface_prefers_lock_then_overlay_keyboard_list_orb_then_tab() {
+        assert_eq!(
+            frame_surface(true, true, true, true, true, FrameSurface::Me),
+            FrameSurface::Lock
+        );
+        assert_eq!(
+            frame_surface(false, true, true, true, true, FrameSurface::Me),
+            FrameSurface::Overlay
+        );
+        assert_eq!(
+            frame_surface(false, false, true, true, true, FrameSurface::Me),
+            FrameSurface::Keyboard
+        );
+        assert_eq!(
+            frame_surface(false, false, false, true, true, FrameSurface::Me),
+            FrameSurface::List
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, true, FrameSurface::Now),
+            FrameSurface::Orb
+        );
+        assert_eq!(
+            frame_surface(false, false, false, false, false, FrameSurface::Inbox),
+            FrameSurface::Inbox
+        );
+    }
+
+    #[test]
+    fn frame_pace_trace_is_chronological_and_names_each_surface() {
+        let mut pace = FramePace::new();
+        assert!(pace.trace().is_empty());
+        pace.record(sample(12, FrameReason::Scroll, FrameSurface::Me));
+        pace.record(sample(6, FrameReason::Input, FrameSurface::Inbox));
+        pace.record(sample(7, FrameReason::Input, FrameSurface::List));
+        pace.record(sample(9, FrameReason::Motion, FrameSurface::Keyboard));
+        pace.record(sample(5, FrameReason::Motion, FrameSurface::Overlay));
+        pace.record(sample(4, FrameReason::Motion, FrameSurface::Orb));
+        let trace = pace.trace();
+        let me = trace.find("surface=me ").expect("me");
+        let inbox = trace.find("surface=inbox ").expect("inbox");
+        let list = trace.find("surface=list ").expect("list");
+        let keyboard = trace.find("surface=keyboard ").expect("keyboard");
+        let overlay = trace.find("surface=overlay ").expect("overlay");
+        let orb = trace.find("surface=orb ").expect("orb");
+        assert!(
+            me < inbox && inbox < list && list < keyboard && keyboard < overlay && overlay < orb
+        );
+        assert!(trace.contains("reason=scroll backend=dmabuf produce_ms=12"));
+        assert!(trace.contains("reason=input backend=dmabuf produce_ms=6"));
+    }
+
+    #[test]
+    fn first_feedback_gate_ignores_scroll_and_uses_the_50ms_limit() {
+        let mut pace = FramePace::new();
+        assert_eq!(pace.first_feedback_within_limit(), None);
+        let mut drag = sample(14, FrameReason::Scroll, FrameSurface::Me);
+        drag.input_to_commit_ms = Some(100);
+        pace.record(drag);
+        assert_eq!(pace.first_feedback_within_limit(), None);
+        assert!(pace.line().expect("recorded").contains("input_ok=-"));
+
+        let mut tap = sample(8, FrameReason::Motion, FrameSurface::Inbox);
+        tap.input_to_commit_ms = Some(20);
+        pace.record(tap);
+        assert_eq!(pace.first_feedback_within_limit(), Some(true));
+        pace.record(sample(6, FrameReason::Motion, FrameSurface::Inbox));
+        assert_eq!(pace.first_feedback_within_limit(), Some(true));
+        assert!(pace.line().expect("recorded").contains("input_ok=1"));
+
+        let mut slow = FramePace::new();
+        let mut late = sample(8, FrameReason::Input, FrameSurface::Now);
+        late.input_to_commit_ms = Some(80);
+        slow.record(late);
+        assert_eq!(slow.first_feedback_within_limit(), Some(false));
+        assert!(slow.line().expect("recorded").contains("input_ok=0"));
+        assert_eq!(FIRST_FEEDBACK_LIMIT_MS, 50);
+    }
+
+    #[test]
+    fn idle_ok_follows_requested_frame_and_seq_counts_wraps() {
+        let mut pace = FramePace::new();
+        assert_eq!(pace.seq(), 0);
+        assert_eq!(pace.idle_ok(), None);
+        let mut clock = sample(8, FrameReason::Motion, FrameSurface::Now);
+        clock.requested_frame = true;
+        pace.record(clock);
+        assert_eq!(pace.seq(), 1);
+        assert_eq!(pace.idle_ok(), Some(false));
+        assert!(pace.line().expect("recorded").contains("idle_ok=0"));
+        pace.record(sample(5, FrameReason::Input, FrameSurface::Now));
+        assert_eq!(pace.seq(), 2);
+        assert_eq!(pace.idle_ok(), Some(true));
+        let line = pace.line().expect("recorded");
+        assert!(line.contains("seq=2"));
+        assert!(line.contains("idle_ok=1"));
+    }
+
+    #[test]
+    fn frame_backend_names_dmabuf_and_shm_on_the_line() {
+        let mut pace = FramePace::new();
+        pace.record(sample(6, FrameReason::Input, FrameSurface::Now));
+        assert!(pace.line().expect("recorded").contains("backend=dmabuf"));
+        let mut shm = sample(9, FrameReason::Input, FrameSurface::Now);
+        shm.backend = FrameBackend::Shm;
+        pace.record(shm);
+        let line = pace.line().expect("recorded");
+        assert!(line.contains("backend=shm"));
+        let trace = pace.trace();
+        assert!(trace.contains("backend=dmabuf"));
+        assert!(trace.contains("backend=shm"));
+        assert_eq!(FrameBackend::Dmabuf.as_str(), "dmabuf");
+        assert_eq!(FrameBackend::Shm.as_str(), "shm");
     }
 
     #[test]

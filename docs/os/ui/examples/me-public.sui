@@ -1,0 +1,45 @@
+sui 2
+screen me {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = me.header
+    focus = 0
+    inset = safe
+  }
+  component SystemSection {
+    text = Title
+    a11y = Heading
+    loc = me.device
+  }
+  component SettingRow {
+    text = Body
+    a11y = Status
+    loc = me.device.readout
+  }
+  component SettingRow {
+    text = Body
+    a11y = Button
+    loc = tap_build_info
+  }
+  component SettingRow {
+    text = Body
+    a11y = Status
+    loc = me.updates.readout
+  }
+  component SettingRow {
+    text = Body
+    a11y = Button
+    loc = cycle_timezone
+  }
+  component BottomNavigation {
+    a11y = Button
+    focus = 1
+    scroll = none
+    inset = safe
+    tab now { loc = now }
+    tab inbox { loc = inbox }
+    tab spaces { loc = spaces }
+    tab me { loc = me }
+  }
+}

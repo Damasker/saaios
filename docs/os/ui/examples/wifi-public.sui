@@ -1,0 +1,17 @@
+sui 2
+screen wifi {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = wifi.header
+    focus = 0
+    inset = safe
+  }
+  component WifiRow {
+    text = Body
+    a11y = Button
+    loc = wifi.item
+  }
+  row refresh {}
+  row back {}
+}

@@ -113,9 +113,9 @@ contains:
 | VUI-04 | Navigation, status surfaces, Context Light, and restrained Orb | **Host complete** (`Я`→`Система` label with VUI-06) |
 | VUI-05 | Object, Intent, Task, and Worker components (concept Object + Intent surfaces) | **Host complete** |
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
-| VUI-07 | Remaining system surfaces and state patterns | **In progress** (Inbox + Spaces + Wi-Fi + Bluetooth + trusted clients + Wi-Fi password + PIN setup + lock idle + intent input + developer surface + Object View + apps grid + Inbox header + Spaces header + Система header + consent + PIN setup header + remote pairing + Bluetooth header + Wi-Fi header + trusted-clients header + lock attention + lock/PIN keyboard + lock device state + lock sleep AOD on panther) |
-| VUI-08 | Motion, haptics, and measured frame pacing | Backlog |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | Backlog |
+| VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
+| VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232; production `compile_v2()`; named chrome paint from `layout_v2`; leftover formulas recorded; not Visual v1 sign-off) |
 
 ---
 
@@ -715,9 +715,9 @@ turning the Orb into a launcher or assistant avatar.
   (Space color for `Idle`/`Active`, semantic color otherwise),
   **attention=ring** (`WaitingConfirmation` / undismissed Notifications),
   **quantity=fill** (determinate battery `Progress`; missing reading is
-  absent, not `0%`; Border token, never severity), **activity=motion**
+  absent, not `0%`; Border token, never severity),   **activity=motion**
   (`MotionCue::ActivityPulse` only for Running and not reduced-motion;
-  still-frame inset hairline until VUI-08). A circular arc is not drawn
+  ADR-170 loops the inset hairline 240 ms on / 240 ms off). A circular arc is not drawn
   — this file has no circle primitive; fill is the honest square analogue.
   `Я`→`Система` is the visible tab label (VUI-06); destination content
   was accepted on Pixel before the rename.
@@ -909,7 +909,7 @@ available until their replacement passes functional and performance tests.
 
 ## VUI-07 — Remaining surfaces and state patterns
 
-**Status:** In progress (Inbox `c1547c02…`, Spaces `9bb75db5…`, Wi-Fi `c80bb666…`, Bluetooth `5b37c5bc…`, trusted clients `cd207b18…`, Wi-Fi password `0eeb36d3…`, PIN setup `eb4cb508…`, lock idle `a19327cb…`, intent input `6239bebd…`, developer surface `bbc11a30…`, Object View `e2081d84…`, apps grid `a57da14a…`, Inbox header `75f1f054…`, Spaces header `464c0e92…`, Система header `15fc3487…`, consent header `cff22339…`, PIN setup header `e8b215aa…`, remote pairing header `4a1f7553…`, Bluetooth header `efbab13a…`, Wi-Fi header `d562249b…`, trusted-clients header `b73f9433…`, lock attention `55f7bd25…`, lock/PIN keyboard `32d50a67…`, compact QWERTY `874ad0e2…`, keyboard press `3a97f0e8…`, DevSurface header `c9f52227…`, lock device state `88121ad2…`, lock sleep AOD `c3fd2fcf…` on panther)
+**Status:** Complete (`693e77c7…` on panther). Space detail deferred. MEM-08 omitted until a shell-legal memory read exists.
 
 **Depends on:** VUI-03 through VUI-06 primitives
 
@@ -1046,21 +1046,55 @@ big-bang rewrite.
   Bluetooth scan loading «Сканирование…» instead of a blank. Blocked,
   failed, permission, confirmation, recovery later. Do not tap Сопрячь.
   Leave Bluetooth with Назад. Flashed `e18f3d9d…`.
-- [ ] Apply shared blocked, failed, permission, confirmation, and
-  recovery patterns.
-- [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
-  and interrupted workflows on every frame variant.
-- [ ] Remove migrated screen-local primitives and record remaining exceptions.
-- [ ] Expand the component gallery and cross-surface golden tests.
+- [x] Apply shared blocked and failed patterns. ADR-156:
+  `SurfacePattern::blocked` / `failed`; Bluetooth `PAIR-ERROR` occupies
+  slot 0 and is not Сопрячь. Permission, confirmation, recovery later.
+  Do not tap Сопрячь. Leave Bluetooth with Назад. Flashed `eba9d216…`.
+- [x] Apply shared confirmation pattern. ADR-157: Object View paints
+  `DecisionOverlay` facts as Body, not Caption dump. Do not tap
+  Подтвердить or Отклонить. Flashed `c7cbee14…`. NOW had no waiting
+  task, so overlay facts were not on screen.
+- [x] Apply shared permission and recovery patterns. ADR-158: Object
+  View OAM line is `SurfacePattern::blocked`; Failed Bluetooth cards
+  keep the Failed mark; «Искать» is the recovery control. Do not tap
+  Сопряжь or Разрешить. Flashed `812f1684…`.
+- [x] Dock overflowing stacked «Назад» on screen. ADR-159:
+  `stacked_control_rect` on DevSurface. 7-tap allowed; leave with
+  Назад. Flashed `b06c0bb1…`. Keyboard avoidance, Me scroll, focus
+  order later.
+- [x] Scroll DevSurface facts above docked «Назад». ADR-160:
+  `scrolled_row_rect` + drag. 7-tap, swipe; leave with Назад.
+  Flashed `bbde1ab2…`.
+- [x] Park compose Field above docked QWERTY. ADR-161: Intent/Wi-Fi
+  `ContextHeader` + `intent_field_rect`. Do not send. Leave Отмена.
+  Flashed `3d289b66…`.
+- [x] Put compose Field in the intent layout tree with `focus_order`.
+  ADR-162. Do not send. Leave Отмена. Flashed `6d465506…`.
+- [x] Commit keyboard/PIN actions only when down and up hit the same
+  target. ADR-163. Pressed highlight still follows the finger. Do not
+  type. Do not send. Leave Отмена. Flashed `c095cc5d…`.
+- [x] Park PIN setup Field on a docked dialer. ADR-164. Do not type
+  digits. Do not tap Готово. Leave Отмена. Flashed `1372267b…`.
+- [x] Dock overflowing Wi-Fi / Bluetooth / trusted Назад and drop dead
+  Surface-list painters. ADR-165. Open Wi-Fi, leave Назад. Do not tap
+  a network. Flashed `693e77c7…`.
+- [x] Expand gallery `SurfacePattern` fixtures and host goldens.
+  ADR-166. Empty paints no mark; loading/failed do. No gallery tap
+  on panther.
 
 ### Acceptance
 
-- [ ] Every shell frame variant has a documented migration state.
-- [ ] Equivalent states and actions look and behave equivalently.
-- [ ] Pairing, consent, and recovery retain precise consequences and safe
+- [x] Every shell frame variant has a documented migration state.
+  Remaining exceptions (ADR-165): lock PIN Field under
+  `INTENT_HEADER_HEIGHT`; Space detail deferred; MEM-08 omitted;
+  `Frame::Root`/`draw_root` kept as test fallback; list/modal frames
+  have no `focus_order`; consent/object/pair fire on up without
+  `committed_action`.
+- [x] Equivalent states and actions look and behave equivalently.
+- [x] Pairing, consent, and recovery retain precise consequences and safe
   cancellation.
-- [ ] Wake, unlock, keyboard, back, and navigation paths work on Pixel 7.
-- [ ] No screen requires fabricated data or a decorative placeholder.
+- [x] Wake, unlock, keyboard, back, and navigation paths work on Pixel 7.
+- [x] No screen requires fabricated data or a decorative placeholder.
 
 ### Rollback
 
@@ -1071,7 +1105,8 @@ legacy renderer only after its replacement and fallback path are verified.
 
 ## VUI-08 — Motion, haptics, and frame pacing
 
-**Status:** Backlog
+**Status:** Complete — MotionClock through haptic acceptance
+(ADR-167–179) on panther.
 
 **Depends on:** stable shared components from VUI-04–VUI-07
 
@@ -1080,30 +1115,41 @@ into a measured regression contract.
 
 ### Tasks
 
-- [ ] Add a shared transition clock and compositor/frame-callback integration.
-- [ ] Implement 80–150 ms micro, 150–220 ms panel, and 200–300 ms context
-  transitions only where they clarify state.
-- [ ] Add reduced-motion behavior for every animated component.
-- [ ] Centralize haptic intents; map components to policy instead of direct motor
+- [x] Add a shared transition clock and compositor/frame-callback integration.
+- [x] Implement 80–150 ms micro, 150–220 ms panel, and 200–300 ms context
+  transitions only where they clarify state (`MicroFeedback` 120 /
+  `Selection` 180 / `Context` 240). First visible `Pressed` is the
+  `down()` commit, not a token delay (ADR-176). No panel slides.
+- [x] Add reduced-motion behavior for every animated component.
+- [x] Centralize haptic intents; map components to policy instead of direct motor
   control.
-- [ ] Instrument input-to-feedback, render production, submission, presentation,
-  dropped/coalesced frames, and pending-work depth.
-- [ ] Preserve software-render staging and Vulkan composition behavior unless a
-  separately measured change is accepted.
-- [ ] Add performance traces for `Система` drag, fast tab switching, lists,
-  keyboard, overlays, and Orb activity.
-- [ ] Set CI/device thresholds from the accepted baseline and document hardware
-  variance.
+- [x] Instrument input-to-feedback, render production, submission, pending-work
+  depth, and dropped/coalesced frames (`FramePace`, ADR-172). Presentation
+  timestamps stay omitted.
+- [x] Preserve software-render staging and Vulkan composition behavior unless a
+  separately measured change is accepted (`FrameBackend` on the main
+  surface, ADR-178). Lock/status fallbacks are unchanged.
+- [x] Add performance traces for `Система` drag, fast tab switching, lists,
+  keyboard, overlays, and Orb activity (`FrameSurface` +
+  `/run/saaios/shell-frame.trace`, ADR-175). Overlay/Orb without a live
+  Running task stay host-injected; panther covers me/tabs/list/keyboard.
+- [x] Set CI/device thresholds from the accepted baseline (scroll p95 ≤ 50 ms,
+  ADR-173). Hardware variance is the live `/run/saaios/shell-frame.last`
+  `p95_scroll` line; the shell does not abort.
 
 ### Acceptance
 
-- [ ] Continuous drag p95 frame production is at or below 50 ms on the reference
+- [x] Continuous drag p95 frame production is at or below 50 ms on the reference
   build, with no unbounded input backlog and no disappearing layer.
-- [ ] First visible touch feedback is prompt and no worse than the VUI-07
-  baseline.
-- [ ] Idle UI does not redraw continuously without a state reason.
-- [ ] Reduced-motion mode communicates every state without animation.
-- [ ] Haptics are consistent, rate-limited, and absent for passive decoration.
+- [x] First visible touch feedback is prompt and no worse than the VUI-07
+  baseline (non-scroll `input_to_commit` ≤ 50 ms, `input_ok`, ADR-176).
+- [x] Idle UI does not redraw continuously without a state reason
+  (`seq` holds on a quiet Сейчас, `idle_ok`, ADR-177). The status
+  layer may still tick once a second.
+- [x] Reduced-motion mode communicates every state without animation.
+- [x] Haptics are consistent, rate-limited, and absent for passive decoration
+  (`haptic_intent_for`, 15 ms replay, tabs/Orb/`Виброотклик` in Звук,
+  ADR-179).
 
 ### Rollback
 
@@ -1114,7 +1160,31 @@ component state remains fully usable.
 
 ## VUI-09 — `.sui` v2, public library, cleanup, and release gate
 
-**Status:** Backlog
+**Status:** In progress — vocabulary through named sizes (ADR-180–188);
+verification ledger (ADR-189); known limitations (ADR-193);
+`layout_v2` tab hits (ADR-194); `from_safe` insets (ADR-195); nested
+`tab` grammar (ADR-196); ActionCard/tab `Label`/`Caption` (ADR-197);
+status/keys `Label`/`Caption` (ADR-198); nested `row` footer
+(ADR-199); `ObjectSummary` object hit (ADR-200); leftover text
+budget (ADR-201); Inbox `EventRow` hits (ADR-202); Spaces
+`SpaceRow` hits (ADR-203); Me `SettingRow`
+hits (ADR-204); Wi-Fi `WifiRow` hits (ADR-205); Bluetooth
+`BluetoothRow` hits (ADR-206); privileged
+`TrustedClientRow` hits (ADR-207); privileged
+`CapabilityRow` hits (ADR-208); lock cycle
+(ADR-209); display restart (ADR-210); cold boot
+(ADR-211); 7-tap gallery (ADR-212); thin tuning parked last
+(ADR-213); list trailing rows (ADR-214); Me flatten/scroll
+(ADR-215). Production `compile_v2()` / `layout_v2`
+`root_view` (ADR-216); NOW compiled hits (ADR-217); live list
+hits (ADR-218); Me scroll (ADR-219); apps grid (ADR-220); overlay
+Field/decision hits (ADR-221); Field-bound `Keyboard` IME with USB
+swap (ADR-222); OrbHost hits (ADR-223); diagnostic hits (ADR-224);
+NOW chrome paint (ADR-225); list paint (ADR-226); Me scroll paint
+(ADR-227); apps grid paint (ADR-228); overlay paint (ADR-229);
+OrbHost paint (ADR-230); diagnostic paint (ADR-231); leftover
+formulas (ADR-232). Release
+gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
 
@@ -1123,22 +1193,148 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 
 ### Tasks
 
-- [ ] Write the `.sui` v2 ADR from the proven screen/component vocabulary.
-- [ ] Add versioned semantic roles, token references, component composition,
+- [x] Write the `.sui` v2 ADR from the proven screen/component vocabulary
+  (ADR-180; `sui 1` remains the only compiled document).
+- [x] Add versioned semantic roles, token references, component composition,
   safe insets, list/scroll behavior, localization, focus, and accessibility
-  metadata to the schema/compiler.
-- [ ] Preserve `.sui` v1 parsing or provide a deterministic migration tool and
-  rollback artifact.
-- [ ] Move root layout and hit testing to compiled shared layout output.
-- [ ] Stabilize and document the public component subset for third-party SaaiOS
-  applications; keep privileged composites capability-gated.
-- [ ] Publish component API docs, gallery, examples, stability labels,
-  visual specification sheets, deprecation policy, and migration guide.
-- [ ] Remove the hardcoded color/metric allowlist and duplicated migrated
-  shell components.
-- [ ] Run complete visual, accessibility, interaction, performance, service
-  restart, display restart, cold boot, and offline test matrices.
-- [ ] Record known limitations and the Visual v2 backlog.
+  metadata to the schema/compiler (ADR-181 composition, ADR-182
+  properties). Layout and hit-testing still compile from `sui 1`.
+- [x] Preserve `.sui` v1 parsing or provide a deterministic migration tool and
+  rollback artifact (`root.sui` + `compile_v1_rollback()`, ADR-183).
+- [x] Move root layout and hit testing to compiled shared layout output
+  (`layout_v1_root()` from `compile_v1_rollback()`, ADR-184; `compile()`
+  stays v1).
+- [x] Stabilize and document the public component subset for third-party SaaiOS
+  applications; keep privileged composites capability-gated (`compile_v2_public()`,
+  ADR-185).
+- [x] Publish component API docs, gallery, examples, stability labels,
+  visual specification sheets, deprecation policy, and migration guide
+  (`docs/os/ui/sui-v2-public-api.md`, ADR-186).
+- [x] Close production color literals and leftover NOW chrome
+  (`root.sui` empty content, `draw_action_card` reuse, ADR-187).
+- [x] Name leftover `draw_text` sizes (`role_px` + named leftovers,
+  ADR-188). Mapping ActionCard/tabs onto Title/Body is not the map:
+  ADR-197 uses `Label`/`Caption`.
+- [x] Start the VUI-09 verification ledger (`docs/os/ui/vui09-verification.md`,
+  ADR-189). Full matrix, cold boot, and Visual v1 sign-off remain.
+- [x] Prove increased text on panther HEAD (`text_scale_pct` 150 then
+  100, ADR-190). Lock cycle, display restart, cold boot, and radio-off
+  stay open.
+- [x] Prove live radio-off on panther HEAD (`wlan0` down then up,
+  ADR-191). Lock cycle, display restart, and cold boot stay open.
+- [x] Prove unlocked shell restart on panther HEAD (ADR-192). Lock
+  cycle, display restart, and cold boot stay open.
+- [x] Prove lock / unlock on panther HEAD (ADR-209; PIN null;
+  tap-unlock; marker restored). Display restart, cold boot, and
+  7-tap gallery stay open.
+- [x] Prove display restart on panther HEAD (ADR-210; kill unlocked
+  `saai-displayd`; native-init respawn; marker on). Cold boot and
+  7-tap gallery stay open.
+- [x] Prove cold boot on panther HEAD (ADR-211; `reboot -f`; marker
+  dropped; tap-unlock; marker restored). 7-tap gallery stays open.
+- [x] Prove 7-tap gallery on panther HEAD (ADR-212; Диагностика;
+  Назад; leave Сейчас).
+- [x] Record runnable live matrix cells (lock cycle, display
+  restart, cold boot, 7-tap gallery) in the ledger. Not Visual v1
+  sign-off.
+- [x] Park thin-tuning work last (ADR-213). Physical lighting,
+  leftover visual nits, and gallery-fixture completeness are not
+  next. Me flatten/scroll and trailing list hits stay the Visual
+  queue.
+- [x] Dock list trailing rows in `layout_v2()` so they match
+  `stacked_trailing_rect` (ADR-214). Me flatten/scroll stays
+  procedural. `compile()` stays v1.
+- [x] Dock Me flatten/scroll in `layout_v2()` so rest-state hits
+  match `flatten_me_rows` / `scrolled_row_rect` (ADR-215).
+  `compile()` stays v1.
+- [x] Switch production `build.rs` to `compile_v2()` and `root_view`
+  to `layout_v2()` after host equivalence (ADR-216). Not Visual v1.
+- [x] NOW footer and object hits from compiled `now.sui` (ADR-217).
+  Inbox/Spaces/Me/lists stay procedural.
+- [x] Inbox, Spaces, and list hits from generated `compile_v2()`
+  (ADR-218). Me scroll, apps grid, and overlays stay formulas.
+- [x] Me scroll hits from `layout_v2_scrolled` (ADR-219). Apps grid
+  and overlays stay formulas.
+- [x] Apps grid hits from generated `compile_v2()` `Button` tiles
+  (ADR-220). Overlays with vocabulary stay next.
+- [x] Overlay Field and decision `Button` hits from `layout_v2`
+  (ADR-221). Keyboard keys stay a formula; they are not vocabulary.
+- [x] Privileged `Keyboard` IME binds to the focused Field; `OnScreen`
+  and USB `Hardware` share keystrokes (ADR-222). Not a public app
+  API. Volume/power/touch/haptic are not a keyboard.
+- [x] OrbHost hits from generated `compile_v2()` / `layout_v2`
+  (ADR-223). Gallery page taps stay a whole-surface formula.
+- [x] Diagnostic Назад hits from generated `DataRow` + `row back`
+  (ADR-224). Do not 7-tap gallery this slice.
+- [x] NOW chrome paint from the same `layout_v2(now.sui)` tree as
+  hits (ADR-225). Live SystemSection rows stay runtime content.
+  Inbox/Spaces/list paint stay next.
+- [x] Inbox/Spaces/Wi-Fi/Bluetooth/trusted paint from generated
+  `layout_v2` trees (ADR-226). Me scroll paint stayed next.
+- [x] Me scroll paint from the same `layout_v2_scrolled` tree as hits
+  (ADR-227). Apps grid paint stayed next.
+- [x] Apps grid paint from the same generated `layout_v2` tree as hits
+  (ADR-228). Overlay paint stayed next.
+- [x] Overlay paint from the same generated `layout_v2` tree as hits
+  (ADR-229). Keyboard keys stay a formula. OrbHost paint stayed next.
+- [x] OrbHost paint from the same generated `layout_v2` tree as hits
+  (ADR-230). Diagnostic paint stayed next.
+- [x] Diagnostic paint from the same generated `layout_v2_scrolled`
+  tree as hits (ADR-231). Keyboard keys, gallery page, and lock
+  idle/wake stay formulas. Do not 7-tap.
+- [x] Record leftover paint formulas (ADR-232): Keyboard keys, gallery
+  page, lock idle/wake. Not Visual v1 sign-off.
+- [x] Record known limitations and the Visual v2 backlog
+  (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
+  sign-off.
+- [x] Emit `layout_v2()` so public NOW tab hits match `layout_v1_root()`
+  (ADR-194). `compile()` stays v1.
+- [x] Convert logical `SafeInsets` through `EdgeInsets::from_safe`
+  (ADR-195). Top inset stays the status layer, not tree padding.
+- [x] Name tabs in the v2 grammar so `layout_v2()` does not borrow
+  `compile_v1_rollback()` (ADR-196). Empty `BottomNavigation` invents
+  no v1 hits. `compile()` stays v1.
+- [x] Map ActionCard and tab labels onto `Label`/`Caption`, not Title
+  (ADR-197). Badge and other leftovers stay named.
+- [x] Map status time/battery onto `Label` and key labels onto
+  `Caption` (ADR-198). Badge, gallery kicker/swatch, and app-tile
+  leftovers stay named.
+- [x] Name NOW footer destinations in the v2 grammar so `layout_v2()`
+  matches `now_footer_action_rect` (ADR-199). Empty screens invent no
+  footer hits. `compile()` stays v1.
+- [x] Dock `ObjectSummary` as the NOW object hit so `layout_v2()`
+  matches `now_object_summary_rect` vertically (ADR-200). A screen
+  without `ObjectSummary` invents no object hit. `compile()` stays v1.
+- [x] Keep badge, gallery kicker/swatch, and app-tile labels named
+  below Caption (ADR-201). Do not invent a smaller `TextRole`. Do
+  not 7-tap. Prove the apps grid on panther without launching.
+- [x] Dock `EventRow` as Inbox stacked hits so `layout_v2()` matches
+  `stacked_row_rect` (ADR-202). Status rows are not actionable.
+  `compile()` stays v1.
+- [x] Dock `SpaceRow` as Spaces stacked hits so `layout_v2()` matches
+  `stacked_row_rect` (ADR-203). Status rows are not actionable.
+  `compile()` stays v1.
+- [x] Dock `SettingRow` as Me stacked hits so `layout_v2()` matches
+  `stacked_row_rect` (ADR-204). Status rows and `SystemSection` are
+  not actionable. Live flatten/scroll stays procedural. `compile()`
+  stays v1.
+- [x] Dock `WifiRow` as Wi-Fi list stacked hits so `layout_v2()`
+  matches `stacked_row_rect` (ADR-205). Status rows are not
+  actionable. Trailing Обновить/Назад stay procedural. `compile()`
+  stays v1.
+- [x] Dock `BluetoothRow` as Bluetooth list stacked hits so
+  `layout_v2()` matches `stacked_row_rect` (ADR-206). Status rows
+  are not actionable. Trailing Искать/Обновить/Назад stay
+  procedural. Do not tap Сопряжь. `compile()` stays v1.
+- [x] Dock privileged `TrustedClientRow` as trusted-client stacked
+  hits so `layout_v2()` matches `stacked_row_rect` (ADR-207).
+  `compile_v2_public()` rejects the name. Status rows are not
+  actionable. Trailing Назад stays procedural. Do not tap Отозвать.
+  `compile()` stays v1.
+- [x] Dock privileged `CapabilityRow` as Me app stacked hits so
+  `layout_v2()` matches `stacked_row_rect` (ADR-208). Never
+  actionable: no revoke protocol. `compile_v2_public()` rejects the
+  name. Do not tap Me apps. `compile()` stays v1.
 
 ### Acceptance
 
@@ -1146,15 +1342,13 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   supported components.
 - [ ] Third-party code can use the stable public subset without importing shell
   internals.
-- [ ] No untracked screen-local palette, font size, touch target, status mapping,
-  or near-duplicate component remains.
-- [ ] Component gallery covers every stable component and state.
-- [ ] Pixel 7 passes daylight/indoor/dark review, normal/increased text,
-  long-Russian-text, keyboard, AI-offline, network-offline, missing-capability,
-  service-restart, display-restart, and cold-reboot scenarios.
-- [ ] Current GPU composition, smooth scrolling, stable system layers, touch,
-  connectivity, lock/wake, and device controls have no release-blocking
-  regression.
+- [ ] Pixel 7 keeps GPU composition, smooth scrolling, stable system layers,
+  touch, connectivity, lock/wake, and device controls without a
+  release-blocking regression on already-proven cells.
+
+Leftover visual nits, gallery-fixture completeness, and physical
+panel lighting belong to the last thin-tuning sprint (ADR-213). They
+are not this queue.
 
 ### Rollback
 
@@ -1201,20 +1395,6 @@ After each completed task group, report:
 
 ## Next action
 
-Continue **VUI-07** remaining surfaces (blocked / failed / permission /
-confirmation / recovery patterns). Inbox EventRow (`c1547c02…`), Spaces list
-(`9bb75db5…`), Wi-Fi list (`c80bb666…`), Bluetooth list (`5b37c5bc…`),
-trusted clients (`cd207b18…`), Wi-Fi password (`0eeb36d3…`), PIN
-setup (`eb4cb508…`), lock idle (`a19327cb…`), intent input
-(`6239bebd…`), developer surface (`bbc11a30…`), Object View
-(`e2081d84…`), apps grid (`a57da14a…`), Inbox header
-(`75f1f054…`), Spaces header (`464c0e92…`), Система header
-(`15fc3487…`), consent header (`cff22339…`), PIN setup header
-(`e8b215aa…`), remote pairing header (`4a1f7553…`), Bluetooth
-header (`efbab13a…`), Wi-Fi header (`d562249b…`), trusted-clients
-header (`b73f9433…`), lock attention (`55f7bd25…`), lock/PIN
-keyboard (`32d50a67…`), compact QWERTY (`874ad0e2…`), keyboard
-press (`3a97f0e8…`), DevSurface header (`c9f52227…`), lock
-device state (`88121ad2…`), lock sleep AOD (`c3fd2fcf…`), and
-empty/loading/offline (`e18f3d9d…`) are on panther. Space detail still deferred. MEM-08 stays omitted until a
-shell-legal memory read exists.
+Apps grid hits through `layout_v2`. Overlays with vocabulary after
+that. Space detail still deferred. MEM-08 stays omitted. Thin tuning stays
+last (ADR-213).

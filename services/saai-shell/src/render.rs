@@ -1,11 +1,11 @@
 use fontdue::{Font, FontSettings};
 use saai_ui_core::{
     composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
-    DataRow, DataRowVariant, Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon,
-    IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
-    ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, StrokeToken, SurfacePattern, SurfaceScale, SystemSection,
-    SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
+    DataRow, DataRowVariant, DecisionOverlay, Disclosure, Divider, Field, FieldKind, FontFamily,
+    FontWeight, Icon, IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem,
+    ObjectSummary, ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken,
+    StatusIndicator, StatusIndicatorVariant, StatusMark, StrokeToken, SurfacePattern, SurfaceScale,
+    SystemSection, SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
@@ -93,6 +93,7 @@ pub struct ActionCardView {
     pub status: String,
     pub action: String,
     pub selected: bool,
+    pub indicator: Option<StatusIndicator>,
 }
 
 impl ActionCardView {
@@ -106,11 +107,17 @@ impl ActionCardView {
             status: status.into(),
             action: action.into(),
             selected: false,
+            indicator: None,
         }
     }
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    pub fn with_indicator(mut self, indicator: StatusIndicator) -> Self {
+        self.indicator = Some(indicator);
         self
     }
 }
@@ -204,8 +211,7 @@ impl Fonts {
             (FontFamily::Sans, FontWeight::Semibold) => &self.semibold,
             (FontFamily::Sans, FontWeight::Regular) => &self.regular,
         };
-        let size = SurfaceScale::PIXEL_7.logical_to_physical(style.size) as f32;
-        (font, size)
+        (font, role_px(role))
     }
 
     /// `None` when the optional icon font (ADR-100) failed to load --
@@ -333,7 +339,7 @@ pub fn draw_consent(
         canvas,
         &fonts.semibold,
         "Разрешить",
-        40.0,
+        role_px(TextRole::Label),
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
         theme_color(ColorRole::Canvas),
@@ -342,132 +348,61 @@ pub fn draw_consent(
         canvas,
         &fonts.semibold,
         "Отклонить",
-        40.0,
+        role_px(TextRole::Label),
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
         theme_color(ColorRole::TextPrimary),
     );
 }
 
-/// S09 Change 2 / ADR-030: the bespoke touch-hit-test on-screen keyboard
-/// ADR-029 proved on a throwaway spike, now the real, committed way to
-/// type a `saaios.intent`'s text. `keys` is already laid out and
-/// hit-tested by `main.rs`'s `intent_view()` -- this only draws the
-/// rectangles it's handed, the same "no second set of rectangles" rule
-/// `draw_root()` follows for the tab bar and content cards.
-/// `title` is a parameter (S19) rather than a hardcoded "Новое
-/// намерение" -- `saai-shell` reuses this same keyboard tree verbatim
-/// for the Wi-Fi password screen (see `WifiPasswordState`'s doc
-/// comment), which needs its own header text. `status` is store-offline
-/// on the intent screen (`Нет связи`); Wi-Fi password passes `None`.
+/// ADR-161: Intent compose through `ContextHeader`. The Text `Field`
+/// sits immediately above the docked QWERTY. Keys stay the ADR-029
+/// rectangles from `intent_view()`. No Surface fill of the Fill slot.
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
+    content: Rect,
+    header: &ContextHeader,
     field: &Field,
-    header: Rect,
+    field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
+    field_focused: bool,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-
-    let Some(fonts) = fonts else {
-        paint_keyboard_keys(canvas, None, keys, pressed_key);
-        return;
-    };
-
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        &field.label,
-        42.0,
-        header.x + 30,
-        header.y + 140,
-        theme_color(ColorRole::TextPrimary),
-    );
-    let empty = field.is_empty();
-    let preview = if empty {
-        field
-            .help
-            .clone()
-            .or_else(|| field.placeholder.clone())
-            .unwrap_or_else(|| "Наберите текст…".to_string())
-    } else {
-        field.accessible_value()
-    };
-    let preview_color = if empty {
-        theme_color(ColorRole::TextSecondary)
-    } else {
-        theme_color(ColorRole::TextPrimary)
-    };
-    draw_text(
-        canvas,
-        &fonts.regular,
-        &preview,
-        34.0,
-        header.x + 30,
-        header.y + 200,
-        preview_color,
-    );
-
-    paint_keyboard_keys(canvas, Some(fonts), keys, pressed_key);
+    canvas.set_clip(Some(content));
+    if let Some(fonts) = fonts {
+        paint_context_header(canvas, fonts, content, header);
+        draw_gallery_field(canvas, fonts, field, field_rect, field_focused);
+    }
+    canvas.set_clip(None);
+    paint_keyboard_keys(canvas, fonts, keys, pressed_key);
 }
 
-/// VUI-07 (ADR-132): Wi-Fi password reuses the intent keyboard keys
-/// but previews a `Field` (masked unless revealed) and sits both
-/// lines below the 120px PIXEL_7 status layer, same inset as
-/// `draw_action_row_list`. Intent input uses the same inset via
-/// ADR-135's `Field`.
+/// ADR-161: Wi-Fi password is the same avoidance layout as Intent.
+/// The Password `Field` still masks; SSID stays on the Field label.
 pub fn draw_wifi_password(
     canvas: &mut Canvas<'_>,
+    content: Rect,
+    header: &ContextHeader,
     field: &Field,
-    header: Rect,
+    field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
+    field_focused: bool,
     fonts: Option<&Fonts>,
 ) {
-    canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-
-    let Some(fonts) = fonts else {
-        paint_keyboard_keys(canvas, None, keys, pressed_key);
-        return;
-    };
-
-    draw_text(
+    draw_intent_input(
         canvas,
-        &fonts.semibold,
-        &field.label,
-        42.0,
-        header.x + 30,
-        header.y + 140,
-        theme_color(ColorRole::TextPrimary),
+        content,
+        header,
+        field,
+        field_rect,
+        keys,
+        pressed_key,
+        field_focused,
+        fonts,
     );
-    let empty = field.is_empty();
-    let preview = if empty {
-        field
-            .placeholder
-            .clone()
-            .unwrap_or_else(|| "Введите пароль…".to_string())
-    } else {
-        field.accessible_value()
-    };
-    let preview_color = if empty {
-        theme_color(ColorRole::TextSecondary)
-    } else {
-        theme_color(ColorRole::TextPrimary)
-    };
-    draw_text(
-        canvas,
-        &fonts.regular,
-        &preview,
-        34.0,
-        header.x + 30,
-        header.y + 200,
-        preview_color,
-    );
-
-    paint_keyboard_keys(canvas, Some(fonts), keys, pressed_key);
 }
 
 /// HIA-07: one screen for any entity, instead of a dedicated view per
@@ -481,6 +416,9 @@ pub fn draw_wifi_password(
 /// ADR-137: identity paint shared by NOW and Object View. Returns the
 /// y just below the trailing status/value, matching the cursor math
 /// `now_object_summary_rect` uses for hit-testing.
+/// ADR-157: `waiting_confirmation` paints `DecisionOverlay` facts as
+/// Body, not the same Caption dump as activity/OAM. Identity stays
+/// `ObjectSummary`; overlay `heading()` is not painted.
 fn draw_object_summary(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -513,7 +451,18 @@ fn draw_object_summary(
     y
 }
 
-/// Hit rect for the NOW `ObjectSummary`, same stacking as `draw_now`.
+/// ADR-225: live NOW chrome slots from `layout_v2(now.sui)`. Header,
+/// object, and empty pattern paint into these rects so draw cannot
+/// drift from hit-test. Live SystemSection rows are not chrome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NowPaintChrome {
+    pub header: Rect,
+    pub object: Rect,
+    pub empty: Rect,
+}
+
+/// Historical cursor math for the NOW `ObjectSummary`. Live paint and
+/// hit-test use `NowPaintChrome.object` from `layout_v2` (ADR-225).
 pub fn now_object_summary_rect(content: Rect, has_lifecycle: bool, object: &ObjectSummary) -> Rect {
     let margin = (content.width / 20).max(12);
     let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
@@ -547,6 +496,8 @@ pub fn draw_object_view(
     summary: &ObjectSummary,
     related: Option<&str>,
     details: &[String],
+    decision: Option<&DecisionOverlay>,
+    permission: Option<&SurfacePattern>,
     header: Rect,
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
@@ -587,12 +538,50 @@ pub fn draw_object_view(
             canvas,
             &fonts.regular,
             related,
-            28.0,
+            role_px(TextRole::Caption),
             header.x + margin,
             y,
             theme_color(ColorRole::TextSecondary),
         );
         y = y.saturating_add(scaled_line_height(TextRole::Body));
+    }
+    if let Some(overlay) = decision {
+        for fact in overlay.fact_lines() {
+            if y + 40 >= header.y + header.height {
+                break;
+            }
+            draw_semantic_text(
+                canvas,
+                fonts,
+                &SemanticText::new(fact, TextRole::Body, ColorRole::TextPrimary),
+                header.x + margin,
+                y,
+                content_width,
+            );
+            y = y.saturating_add(scaled_line_height(TextRole::Body));
+        }
+    }
+    if let Some(pattern) = permission {
+        if y + 40 < header.y + header.height {
+            if pattern.paints_mark() {
+                let mark_size = physical(IconSize::Medium.value());
+                draw_calibration_mark(
+                    canvas,
+                    Rect::new(header.x + margin, y, mark_size, mark_size),
+                    pattern.state.style().mark,
+                    theme_color(pattern.state.style().color),
+                );
+            }
+            draw_semantic_text(
+                canvas,
+                fonts,
+                &pattern.message_text(),
+                header.x + margin,
+                y,
+                content_width,
+            );
+            y = y.saturating_add(scaled_line_height(TextRole::Body));
+        }
     }
     for detail in details {
         if y + 40 >= header.y + header.height {
@@ -602,7 +591,7 @@ pub fn draw_object_view(
             canvas,
             &fonts.regular,
             detail,
-            28.0,
+            role_px(TextRole::Caption),
             header.x + margin,
             y,
             theme_color(ColorRole::TextSecondary),
@@ -610,12 +599,21 @@ pub fn draw_object_view(
         y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
 
+    let overlay_labels: Option<[&str; 2]> = decision.map(|overlay| {
+        [
+            overlay.accept.label.as_str(),
+            overlay.decline.label.as_str(),
+        ]
+    });
     for (index, (rect, label)) in actions.iter().enumerate() {
+        let text = overlay_labels
+            .and_then(|labels| labels.get(index).copied())
+            .unwrap_or(*label);
         draw_text_centered(
             canvas,
             &fonts.semibold,
-            label,
-            40.0,
+            text,
+            role_px(TextRole::Label),
             rect.x + rect.width / 2,
             rect.y + rect.height / 2 - 20,
             if index == 0 {
@@ -670,7 +668,7 @@ pub fn draw_orb(
                 canvas,
                 &fonts.regular,
                 label,
-                32.0,
+                role_px(TextRole::Caption),
                 rect.x + 24,
                 rect.y + rect.height / 2 - 16,
                 theme_color(ColorRole::TextPrimary),
@@ -679,6 +677,7 @@ pub fn draw_orb(
     }
     draw_calibration_mark(canvas, dot_rect, mark, dot_color);
     if activity_pulse {
+        // ADR-170: inset hairline is the on-phase of the activity loop.
         let inset = physical(StrokeToken::Focus.value()).max(1);
         if dot_rect.width > inset * 2 && dot_rect.height > inset * 2 {
             draw_square_ring(
@@ -820,7 +819,7 @@ pub fn draw_remote_pair(
         canvas,
         &fonts.semibold,
         "Разрешить",
-        40.0,
+        role_px(TextRole::Label),
         accept_button.x + accept_button.width / 2,
         accept_button.y + accept_button.height / 2 - 20,
         theme_color(ColorRole::Canvas),
@@ -829,74 +828,11 @@ pub fn draw_remote_pair(
         canvas,
         &fonts.semibold,
         "Отклонить",
-        40.0,
+        role_px(TextRole::Label),
         decline_button.x + decline_button.width / 2,
         decline_button.y + decline_button.height / 2 - 20,
         theme_color(ColorRole::TextPrimary),
     );
-}
-
-/// S19: "Wi-Fi сети" -- one row per `wifi_scan_results()` entry plus
-/// the fixed trailing control rows already baked into `rows` by the
-/// caller (see `wifi_list_action_at`'s doc comment for why the row
-/// count is runtime-sized rather than a `root.sui` screen). Same
-/// simple header-plus-list shape as `draw_object_view`, just with N
-/// rows instead of a button row. S20 generalized this from a
-/// Wi-Fi-only `draw_wifi_list` to also draw "Bluetooth устройства" --
-/// same shape both times, only the title and row contents differ.
-/// ADR-136: last caller (`Frame::DevSurface`) moved to
-/// `draw_action_row_list`. Kept until the VUI-07 primitives-cleanup
-/// slice deletes it.
-#[allow(dead_code)]
-pub fn draw_row_list(
-    canvas: &mut Canvas<'_>,
-    title: &str,
-    status_line: &str,
-    header: Rect,
-    rows: &[(Rect, String)],
-    fonts: Option<&Fonts>,
-) {
-    canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-
-    let Some(fonts) = fonts else {
-        for (rect, _) in rows {
-            canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
-        }
-        return;
-    };
-
-    draw_text(
-        canvas,
-        &fonts.semibold,
-        title,
-        42.0,
-        header.x + 30,
-        header.y + 40,
-        theme_color(ColorRole::TextPrimary),
-    );
-    draw_text(
-        canvas,
-        &fonts.regular,
-        status_line,
-        30.0,
-        header.x + 30,
-        header.y + 130,
-        theme_color(ColorRole::TextSecondary),
-    );
-
-    for (rect, label) in rows {
-        canvas.fill_rect(*rect, theme_color(ColorRole::Surface));
-        draw_text(
-            canvas,
-            &fonts.regular,
-            label,
-            32.0,
-            rect.x + 30,
-            rect.y + rect.height / 2 - 18,
-            theme_color(ColorRole::TextPrimary),
-        );
-    }
 }
 
 fn draw_action_card(
@@ -920,6 +856,15 @@ fn draw_action_card(
             theme_color(ColorRole::Accent),
         );
         rect.x + 174
+    } else if let Some(indicator) = &card.indicator {
+        let mark_size = physical(IconSize::Medium.value());
+        draw_calibration_mark(
+            canvas,
+            Rect::new(rect.x + 34, rect.y + 72, mark_size, mark_size),
+            indicator.mark(),
+            theme_color(indicator.color()),
+        );
+        rect.x + 34 + mark_size + physical(SpacingToken::Small.value())
     } else {
         rect.x + 34
     };
@@ -937,78 +882,37 @@ fn draw_action_card(
     let Some(fonts) = fonts else {
         return;
     };
+    let (title_font, title_size) = fonts.resolve(TextRole::Label);
     draw_text(
         canvas,
-        &fonts.semibold,
+        title_font,
         &card.label,
-        38.0,
+        title_size,
         text_left,
         rect.y + 48,
         theme_color(ColorRole::TextPrimary),
     );
+    let (status_font, status_size) = fonts.resolve(TextRole::Caption);
     draw_text(
         canvas,
-        &fonts.regular,
+        status_font,
         &card.status,
-        27.0,
+        status_size,
         text_left,
         rect.y + 108,
         theme_color(ColorRole::TextSecondary),
     );
     if let Some(button) = button {
+        let (button_font, button_size) = fonts.resolve(TextRole::Label);
         draw_text_centered(
             canvas,
-            &fonts.semibold,
+            button_font,
             &card.action,
-            25.0,
+            button_size,
             button.x + button.width / 2,
             button.y + 24,
             theme_color(ColorRole::Canvas),
         );
-    }
-}
-
-/// ADR-129: same header as `draw_row_list`, rows are `ActionCardView`
-/// (SSID + scan facts + connect button) instead of one concatenated
-/// label. ADR-152: last caller (`Frame::DevSurface`) moved to
-/// `draw_context_row_list`. Kept until the VUI-07 primitives-cleanup
-/// slice deletes it.
-#[allow(dead_code)]
-pub fn draw_action_row_list(
-    canvas: &mut Canvas<'_>,
-    title: &str,
-    status_line: &str,
-    header: Rect,
-    rows: &[(Rect, ActionCardView)],
-    fonts: Option<&Fonts>,
-) {
-    canvas.fill(theme_color(ColorRole::Canvas));
-    canvas.fill_rect(header, theme_color(ColorRole::Surface));
-    // Status layer is 120px (PIXEL_7 top inset). `draw_row_list`'s
-    // 40/130 offsets hide the title under the clock; both lines sit
-    // in this header below that layer.
-    if let Some(fonts) = fonts {
-        draw_text(
-            canvas,
-            &fonts.semibold,
-            title,
-            42.0,
-            header.x + 30,
-            header.y + 140,
-            theme_color(ColorRole::TextPrimary),
-        );
-        draw_text(
-            canvas,
-            &fonts.regular,
-            status_line,
-            30.0,
-            header.x + 30,
-            header.y + 200,
-            theme_color(ColorRole::TextSecondary),
-        );
-    }
-    for (rect, card) in rows {
-        draw_action_card(canvas, *rect, card, fonts);
     }
 }
 
@@ -1051,13 +955,14 @@ pub fn draw_pin_setup(
     field_rect: Rect,
     keys: &[(Rect, String)],
     pressed_key: Option<&str>,
+    field_focused: bool,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
         paint_context_header(canvas, fonts, content, header);
-        draw_gallery_field(canvas, fonts, field, field_rect);
+        draw_gallery_field(canvas, fonts, field, field_rect, field_focused);
     }
     canvas.set_clip(None);
     paint_keyboard_keys(canvas, fonts, keys, pressed_key);
@@ -1076,7 +981,7 @@ pub fn draw_lock_pin_entry(
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
     if let Some(fonts) = fonts {
-        draw_gallery_field(canvas, fonts, field, field_rect);
+        draw_gallery_field(canvas, fonts, field, field_rect, false);
     }
     paint_keyboard_keys(canvas, fonts, keys, pressed_key);
 }
@@ -1118,7 +1023,7 @@ fn paint_keyboard_keys(
             canvas,
             fonts,
             label,
-            32.0,
+            role_px(TextRole::Caption),
             key.x + key.width / 2,
             key.y + key.height / 2 - 18,
             theme_color(ColorRole::TextPrimary),
@@ -1146,8 +1051,8 @@ pub fn draw_lock_idle(
     let hint_y = time_y + physical_line_height(TextRole::Display) + physical(LogicalUnit::new(16));
     let left = width / 22;
     if let Some(fonts) = fonts {
-        let time_size = physical(TextRole::Display.style().size) as f32;
-        let hint_size = physical(TextRole::Body.style().size) as f32;
+        let time_size = role_px(TextRole::Display);
+        let hint_size = role_px(TextRole::Body);
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -1210,7 +1115,7 @@ pub fn draw_lock_sleep(
     canvas.fill(theme_color(ColorRole::Canvas));
     let time_y = ((height as u64 * 480) / 2400) as u32;
     if let Some(fonts) = fonts {
-        let time_size = physical(TextRole::Display.style().size) as f32;
+        let time_size = role_px(TextRole::Display);
         draw_text_centered(
             canvas,
             &fonts.semibold,
@@ -1288,7 +1193,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.semibold,
             "SaaiOS Visual v1 · VUI-01",
-            42.0,
+            role_px(TextRole::Label),
             margin,
             height / 24,
             theme_color(ColorRole::TextPrimary),
@@ -1297,7 +1202,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.regular,
             "SEMANTIC PALETTE",
-            24.0,
+            GALLERY_KICKER_PX,
             margin,
             palette_top.saturating_sub(42),
             theme_color(ColorRole::TextSecondary),
@@ -1328,7 +1233,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
                 canvas,
                 &fonts.regular,
                 label,
-                18.0,
+                GALLERY_SWATCH_PX,
                 x,
                 y + swatch_height + 8,
                 theme_color(ColorRole::TextSecondary),
@@ -1342,7 +1247,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.regular,
             "CONTEXT COLOR · NOT STATUS",
-            24.0,
+            GALLERY_KICKER_PX,
             margin,
             context_top.saturating_sub(42),
             theme_color(ColorRole::TextSecondary),
@@ -1363,7 +1268,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
                 canvas,
                 &fonts.regular,
                 label,
-                18.0,
+                GALLERY_SWATCH_PX,
                 x,
                 y + swatch_height + 8,
                 theme_color(ColorRole::TextSecondary),
@@ -1380,7 +1285,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
             canvas,
             &fonts.regular,
             "UNIVERSAL STATE · COLOR + MARK",
-            24.0,
+            GALLERY_KICKER_PX,
             margin,
             state_top.saturating_sub(42),
             theme_color(ColorRole::TextSecondary),
@@ -1409,7 +1314,7 @@ pub fn draw_calibration(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts:
                 canvas,
                 &fonts.semibold,
                 &description,
-                24.0,
+                GALLERY_KICKER_PX,
                 mark.x + mark.width + 28,
                 row.y + row.height / 2 - 14,
                 theme_color(ColorRole::TextPrimary),
@@ -1611,6 +1516,24 @@ fn physical(value: LogicalUnit) -> u32 {
     SurfaceScale::PIXEL_7.logical_to_physical(value)
 }
 
+/// Pixel-7 physical size of a `TextRole`. Draw calls that already
+/// match a role go through this instead of a raw `NN.0`.
+fn role_px(role: TextRole) -> f32 {
+    physical(role.style().size) as f32
+}
+
+/// ADR-188 leftover sizes: not a `TextRole` at Pixel 7 scale 3.
+/// Add a name here rather than a new raw draw-call literal.
+/// ADR-197/198: ActionCard, tabs, status time/battery, keys, Orb
+/// menu, decision buttons, related line, and gallery heading use
+/// `Label`/`Caption`. Do not map those onto Title. ADR-201: badge,
+/// gallery kicker/swatch, and app-tile labels stay named — each is
+/// smaller than Caption (36) and would overflow its mark.
+const GALLERY_KICKER_PX: f32 = 24.0;
+const GALLERY_SWATCH_PX: f32 = 18.0;
+const APP_TILE_LABEL_PX: f32 = 26.0;
+const TAB_BADGE_PX: f32 = 24.0;
+
 /// Greedy word-wrap: breaks `text` into lines whose rendered width (in
 /// `font` at `size`) fits within `max_width`. A single word wider than
 /// `max_width` on its own is not split further -- the practical limit any
@@ -1774,7 +1697,13 @@ fn draw_gallery_button(canvas: &mut Canvas<'_>, fonts: &Fonts, button: &Button, 
     );
 }
 
-fn draw_gallery_field(canvas: &mut Canvas<'_>, fonts: &Fonts, field: &Field, rect: Rect) {
+fn draw_gallery_field(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    field: &Field,
+    rect: Rect,
+    focused: bool,
+) {
     let (label_font, label_size) = fonts.resolve(TextRole::Caption);
     draw_text(
         canvas,
@@ -1798,6 +1727,14 @@ fn draw_gallery_field(canvas: &mut Canvas<'_>, fonts: &Fonts, field: &Field, rec
         ColorRole::Surface
     };
     canvas.fill_rect(box_rect, theme_color(box_fill));
+    if focused {
+        draw_square_ring(
+            canvas,
+            box_rect,
+            physical(StrokeToken::Focus.value()).max(1),
+            theme_color(ColorRole::Focus),
+        );
+    }
     let (value_font, value_size) = fonts.resolve(TextRole::Body);
     let inset = physical(SpacingToken::Small.value());
     let (display, color): (String, ColorRole) = if field.is_empty() {
@@ -1953,7 +1890,7 @@ fn draw_gallery_disclosure(
 /// was a layout-math error a host test on exactly this function would have
 /// caught before a physical screenshot had to.
 const GALLERY_ROW_COUNT: usize = 11;
-const COMPOSITE_GALLERY_ROW_COUNT: usize = 12;
+const COMPOSITE_GALLERY_ROW_COUNT: usize = 13;
 
 fn stacked_gallery_row_positions<const N: usize>(height: u32) -> [u32; N] {
     // Same clearance `draw_calibration`'s own `palette_top` uses -- the
@@ -2054,7 +1991,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         canvas,
         &fonts.semibold,
         "SaaiOS Component Gallery · VUI-02",
-        32.0,
+        role_px(TextRole::Caption),
         margin,
         rows[0],
         theme_color(ColorRole::TextPrimary),
@@ -2115,6 +2052,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         fonts,
         &field,
         Rect::new(margin, rows[7], content_width, field_height),
+        false,
     );
 
     let data_row = DataRow::new("Wi-Fi", DataRowVariant::Navigation)
@@ -2180,6 +2118,20 @@ pub fn draw_composite_gallery(
         );
     }
 
+    let pattern_cell = content_width / fixtures.patterns.len() as u32;
+    for (index, pattern) in fixtures.patterns.iter().enumerate() {
+        if !pattern.paints_mark() {
+            continue;
+        }
+        let left = margin + index as u32 * pattern_cell;
+        draw_calibration_mark(
+            canvas,
+            Rect::new(left, rows[12], mark_size, mark_size),
+            pattern.state.style().mark,
+            theme_color(pattern.state.style().color),
+        );
+    }
+
     let Some(fonts) = fonts else {
         return;
     };
@@ -2188,7 +2140,7 @@ pub fn draw_composite_gallery(
         canvas,
         &fonts.semibold,
         fixtures.title,
-        32.0,
+        role_px(TextRole::Caption),
         margin,
         rows[0],
         theme_color(ColorRole::TextPrimary),
@@ -2316,7 +2268,7 @@ pub fn draw_root(
             canvas,
             &fonts.semibold,
             &header,
-            54.0,
+            role_px(TextRole::Section),
             content.x + content.width / 2,
             210,
             theme_color(ColorRole::TextPrimary),
@@ -2361,73 +2313,7 @@ pub fn draw_root(
         draw_app_icon_grid(canvas, fonts, content_actions);
     } else {
         for (rect, card) in content_actions {
-            canvas.fill_rect(
-                *rect,
-                if card.selected {
-                    theme_color(ColorRole::Elevated)
-                } else {
-                    theme_color(ColorRole::Surface)
-                },
-            );
-            // S13 Change 5: an empty `action` means this card has nothing to
-            // tap (an info summary -- "Это устройство", "Я"'s app grants,
-            // "Входящие"'s empty state) -- the icon block and the
-            // accent-colored button were drawn unconditionally before, which
-            // made every such card look clickable even though nothing
-            // happened when tapped. text starts at the icon's own left edge
-            // instead of after it when there's no icon to make room for.
-            let has_action = !card.action.is_empty();
-            let text_left = if has_action {
-                canvas.fill_rect(
-                    Rect::new(rect.x + 34, rect.y + 52, 104, 104),
-                    theme_color(ColorRole::Accent),
-                );
-                rect.x + 174
-            } else {
-                rect.x + 34
-            };
-            let button = has_action.then(|| {
-                let button_width = 250.min(rect.width / 3);
-                let button = Rect::new(
-                    rect.x + rect.width.saturating_sub(button_width + 34),
-                    rect.y + 58,
-                    button_width,
-                    88,
-                );
-                canvas.fill_rect(button, theme_color(ColorRole::Accent));
-                button
-            });
-            if let Some(fonts) = fonts {
-                draw_text(
-                    canvas,
-                    &fonts.semibold,
-                    &card.label,
-                    38.0,
-                    text_left,
-                    rect.y + 48,
-                    theme_color(ColorRole::TextPrimary),
-                );
-                draw_text(
-                    canvas,
-                    &fonts.regular,
-                    &card.status,
-                    27.0,
-                    text_left,
-                    rect.y + 108,
-                    theme_color(ColorRole::TextSecondary),
-                );
-                if let Some(button) = button {
-                    draw_text_centered(
-                        canvas,
-                        &fonts.semibold,
-                        &card.action,
-                        25.0,
-                        button.x + button.width / 2,
-                        button.y + 24,
-                        theme_color(ColorRole::Canvas),
-                    );
-                }
-            }
+            draw_action_card(canvas, *rect, card, fonts);
         }
     }
 
@@ -2490,7 +2376,7 @@ fn draw_app_icon_grid(
                 canvas,
                 &fonts.semibold,
                 &initial,
-                54.0,
+                role_px(TextRole::Section),
                 icon_x + icon_size / 2,
                 rect.y + icon_size / 2 - 27,
                 theme_color(ColorRole::Canvas),
@@ -2499,7 +2385,7 @@ fn draw_app_icon_grid(
                 canvas,
                 &fonts.regular,
                 &card.label,
-                26.0,
+                APP_TILE_LABEL_PX,
                 rect.x + rect.width / 2,
                 rect.y + icon_size + 16,
                 theme_color(ColorRole::TextPrimary),
@@ -2673,7 +2559,7 @@ pub fn draw_tab_bar(
                     &fonts.regular
                 },
                 &item.label,
-                if is_selected { 31.0 } else { 27.0 },
+                role_px(TextRole::Caption),
                 rect.x + rect.width / 2,
                 rect.y + 172,
                 text_color,
@@ -2703,7 +2589,7 @@ pub fn draw_tab_bar(
                     canvas,
                     &fonts.semibold,
                     &count.to_string(),
-                    24.0,
+                    TAB_BADGE_PX,
                     badge_rect.x + badge_rect.width / 2,
                     badge_rect.y + badge_rect.height / 2 - 12,
                     theme_color(ColorRole::HighContrastText),
@@ -2725,14 +2611,15 @@ pub fn draw_now(
     content: Rect,
     tabs: &[(Rect, NavigationItem)],
     header: &ContextHeader,
+    chrome: &NowPaintChrome,
     sections: &[SystemSection],
     object: Option<&ObjectSummary>,
     footer_actions: &[(Rect, DataRow)],
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
-    let margin = (content.width / 20).max(12);
-    let content_width = content.width.saturating_sub(margin * 2);
+    let left = chrome.header.x;
+    let content_width = chrome.header.width;
     canvas.set_clip(Some(content));
 
     if let Some(fonts) = fonts {
@@ -2740,21 +2627,18 @@ pub fn draw_now(
             draw_data_row(canvas, fonts, row, *rect);
         }
 
+        // ADR-225: heading sits inside the compiled ContextHeader slot.
         // `content` spans the full canvas from y=0 -- the status bar is a
-        // separate, always-on-top compositor surface (`layer.set_size(0,
-        // 120)` in `main.rs`), not a reserved inset inside this one. Content
-        // drawn at `content.y` alone renders directly underneath it and is
-        // invisible; `draw_root`'s own header/card rows avoid this with
-        // hardcoded 150/430 (2400-scale) starting offsets -- this scales the
-        // same 150 proportionally instead of repeating the literal, matching
-        // `now_grid_rect`'s own scaling convention for its 2400-scale numbers.
-        let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
-        let mut cursor_y = content.y + top_inset;
+        // separate, always-on-top compositor surface, not a reserved inset
+        // in this tree. The 150/2400 clearance is painted *inside* the
+        // header rect so copy is not drawn underneath that layer.
+        let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
+        let mut cursor_y = chrome.header.y + top_inset;
         draw_semantic_text(
             canvas,
             fonts,
             &header.heading(),
-            content.x + margin,
+            left,
             cursor_y,
             content_width,
         );
@@ -2769,19 +2653,17 @@ pub fn draw_now(
         // whenever `sections`/`object` still have real, possibly-stale
         // content to show.
         if let Some(lifecycle) = &header.lifecycle {
-            draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
-            cursor_y += scaled_line_height(TextRole::Body);
+            draw_status_indicator(canvas, fonts, lifecycle, left, cursor_y);
         }
 
         if let Some(object) = object {
-            cursor_y += physical(SpacingToken::Medium.value());
-            cursor_y = draw_object_summary(
+            draw_object_summary(
                 canvas,
                 fonts,
                 object,
-                content.x + margin,
-                cursor_y,
-                content_width,
+                chrome.object.x,
+                chrome.object.y,
+                chrome.object.width,
             );
         }
 
@@ -2804,15 +2686,28 @@ pub fn draw_now(
                 header.lifecycle.as_ref().map(|status| status.state),
                 Some(UniversalState::Offline)
             );
-            draw_surface_pattern(canvas, Some(fonts), content, &now_empty_pattern(offline));
+            draw_surface_pattern(
+                canvas,
+                Some(fonts),
+                chrome.empty,
+                &now_empty_pattern(offline),
+            );
         } else {
+            // Live SystemSection rows are not in now.sui. They paint below
+            // the compiled object slot, or the header when there is no live
+            // object, using the same inset as chrome.
+            cursor_y = if object.is_some() {
+                chrome.object.y.saturating_add(chrome.object.height)
+            } else {
+                chrome.header.y.saturating_add(chrome.header.height)
+            };
             for section in sections {
                 cursor_y += physical(SpacingToken::Medium.value());
                 draw_semantic_text(
                     canvas,
                     fonts,
                     &section.heading(),
-                    content.x + margin,
+                    left,
                     cursor_y,
                     content_width,
                 );
@@ -2821,7 +2716,7 @@ pub fn draw_now(
                 draw_divider(
                     canvas,
                     &section.divider(),
-                    Rect::new(content.x + margin, cursor_y, content_width, hairline),
+                    Rect::new(left, cursor_y, content_width, hairline),
                 );
                 cursor_y += physical(SpacingToken::Small.value());
 
@@ -2840,18 +2735,12 @@ pub fn draw_now(
                                 canvas,
                                 fonts,
                                 data_row,
-                                Rect::new(content.x + margin, cursor_y, content_width, row_height),
+                                Rect::new(left, cursor_y, content_width, row_height),
                             );
                             cursor_y += row_height;
                         }
                         SystemSectionRow::Status(status) => {
-                            draw_status_indicator(
-                                canvas,
-                                fonts,
-                                status,
-                                content.x + margin,
-                                cursor_y,
-                            );
+                            draw_status_indicator(canvas, fonts, status, left, cursor_y);
                             cursor_y += scaled_line_height(TextRole::Body);
                             if status.visible_reason().is_some() {
                                 cursor_y += scaled_line_height(TextRole::Caption);
@@ -2859,13 +2748,7 @@ pub fn draw_now(
                         }
                         SystemSectionRow::Task(task) => {
                             let status = task.status();
-                            draw_status_indicator(
-                                canvas,
-                                fonts,
-                                &status,
-                                content.x + margin,
-                                cursor_y,
-                            );
+                            draw_status_indicator(canvas, fonts, &status, left, cursor_y);
                             cursor_y += scaled_line_height(TextRole::Body);
                             if status.visible_reason().is_some() {
                                 cursor_y += scaled_line_height(TextRole::Caption);
@@ -2875,7 +2758,7 @@ pub fn draw_now(
                                     canvas,
                                     fonts,
                                     &related,
-                                    content.x + margin,
+                                    left,
                                     cursor_y,
                                     content_width,
                                 );
@@ -2887,20 +2770,14 @@ pub fn draw_now(
                                 canvas,
                                 fonts,
                                 &intent.heading(),
-                                content.x + margin,
+                                left,
                                 cursor_y,
                                 content_width,
                             );
                             cursor_y += scaled_line_height(TextRole::Body);
                             if let Some(task) = &intent.task {
                                 let status = task.status();
-                                draw_status_indicator(
-                                    canvas,
-                                    fonts,
-                                    &status,
-                                    content.x + margin,
-                                    cursor_y,
-                                );
+                                draw_status_indicator(canvas, fonts, &status, left, cursor_y);
                                 cursor_y += scaled_line_height(TextRole::Body);
                                 if status.visible_reason().is_some() {
                                     cursor_y += scaled_line_height(TextRole::Caption);
@@ -2910,7 +2787,7 @@ pub fn draw_now(
                                     canvas,
                                     fonts,
                                     &missing,
-                                    content.x + margin,
+                                    left,
                                     cursor_y,
                                     content_width,
                                 );
@@ -2924,7 +2801,7 @@ pub fn draw_now(
                                 label_font,
                                 &metric.label,
                                 label_size,
-                                content.x + margin,
+                                left,
                                 cursor_y,
                                 theme_color(ColorRole::TextSecondary),
                             );
@@ -2943,7 +2820,7 @@ pub fn draw_now(
                                 value_font,
                                 &value_text,
                                 value_size,
-                                content.x + margin,
+                                left,
                                 cursor_y,
                                 theme_color(ColorRole::TextPrimary),
                             );
@@ -2987,11 +2864,12 @@ pub fn draw_status_bar(
     };
     let baseline = height / 2 - 22;
     let time_x = margin + dot_size + 16;
+    let time_size = role_px(TextRole::Label);
     draw_text(
         canvas,
         &fonts.semibold,
         &status.time_text,
-        44.0,
+        time_size,
         time_x,
         baseline,
         theme_color(ColorRole::TextPrimary),
@@ -3006,26 +2884,31 @@ pub fn draw_status_bar(
     let battery_label = status.battery_label().unwrap_or_default();
 
     let gap = 40.0;
-    let battery_width = text_width(&fonts.semibold, &battery_label, 40.0 * text_scale());
+    let battery_size = role_px(TextRole::Label);
+    let battery_width = text_width(&fonts.semibold, &battery_label, battery_size * text_scale());
     let battery_left = width as f32 - margin as f32 - battery_width;
     if !battery_label.is_empty() {
         draw_text(
             canvas,
             &fonts.semibold,
             &battery_label,
-            40.0,
+            battery_size,
             battery_left.round() as u32,
             baseline,
             theme_color(ColorRole::TextPrimary),
         );
     }
-    let wifi_width = text_width(&fonts.regular, wifi_label, 36.0 * text_scale());
+    let wifi_width = text_width(
+        &fonts.regular,
+        wifi_label,
+        role_px(TextRole::Caption) * text_scale(),
+    );
     let wifi_left = battery_left - gap - wifi_width;
     draw_text(
         canvas,
         &fonts.regular,
         wifi_label,
-        36.0,
+        role_px(TextRole::Caption),
         wifi_left.round() as u32,
         baseline + 4,
         wifi_color,
@@ -3182,16 +3065,18 @@ fn draw_text(
 mod tests {
     use super::{
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
-        context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
-        draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_lock_sleep,
-        draw_orb, draw_pin_setup, draw_remote_pair, draw_root, draw_status_bar,
-        draw_surface_pattern, draw_tab_bar, gallery_row_positions, now_empty_pattern, physical,
-        physical_line_height, state_color, theme_color, ActionCardView, Canvas,
+        context_color, draw_action_card, draw_apps_grid, draw_calibration, draw_composite_gallery,
+        draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
+        draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
+        draw_remote_pair, draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar,
+        gallery_row_positions, now_empty_pattern, physical, physical_line_height, role_px,
+        state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
-        ColorRole, ContextColor, ContextHeader, Field, FieldKind, IconSize, LogicalUnit,
-        NavigationItem, ObjectSummary, Progress, Rect, SpacingToken, StatusIndicator, StatusMark,
-        SurfacePattern, SystemStatus, TextRole, UniversalState, MIN_TOUCH_TARGET,
+        composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,
+        FieldKind, IconSize, LogicalUnit, NavigationItem, ObjectSummary, Progress, Rect,
+        SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus, TextRole,
+        UniversalState, MIN_TOUCH_TARGET,
     };
 
     #[test]
@@ -3510,7 +3395,7 @@ mod tests {
     }
 
     #[test]
-    fn activity_pulse_is_a_static_inset_not_an_attention_ring() {
+    fn activity_pulse_inset_is_not_an_attention_ring() {
         let render = |pulse: bool| -> Vec<u8> {
             let mut pixels = vec![0u8; 200 * 200 * 4];
             let mut canvas = Canvas::new(&mut pixels, 200, 200);
@@ -3584,6 +3469,104 @@ mod tests {
         // rather than only implied.
         assert_eq!(physical_line_height(TextRole::Body), 72);
         assert_eq!(physical_line_height(TextRole::Caption), 48);
+        assert_eq!(role_px(TextRole::Display), 96.0);
+        assert_eq!(role_px(TextRole::Title), 72.0);
+        assert_eq!(role_px(TextRole::Section), 54.0);
+        assert_eq!(role_px(TextRole::Body), 48.0);
+        assert_eq!(role_px(TextRole::Label), 42.0);
+        assert_eq!(role_px(TextRole::Caption), 36.0);
+        assert_eq!(role_px(TextRole::MonoBody), 42.0);
+    }
+
+    #[test]
+    fn production_draw_text_sizes_are_named() {
+        let src = include_str!("render.rs");
+        let production = src.split("#[cfg(test)]\nmod tests").next().expect("tests");
+        let mut leftover = Vec::new();
+        for (index, line) in production.lines().enumerate() {
+            let trimmed = line.trim().trim_end_matches(',');
+            if trimmed.parse::<f32>().is_ok() && trimmed.contains('.') {
+                leftover.push((index + 1, line.trim().to_string()));
+            }
+        }
+        assert!(
+            leftover.is_empty(),
+            "untracked draw-text size literals: {leftover:?}"
+        );
+    }
+
+    #[test]
+    fn action_card_and_tabs_use_text_roles() {
+        let src = include_str!("render.rs");
+        let production = src.split("#[cfg(test)]\nmod tests").next().expect("tests");
+        assert!(!production.contains("ACTION_CARD_TITLE_PX"));
+        assert!(!production.contains("ACTION_CARD_STATUS_PX"));
+        assert!(!production.contains("ACTION_CARD_BUTTON_PX"));
+        assert!(!production.contains("TAB_SELECTED_PX"));
+        assert!(!production.contains("TAB_IDLE_PX"));
+        assert!(production.contains("TAB_BADGE_PX"));
+        assert!(production.contains("GALLERY_KICKER_PX"));
+        assert!(production.contains("GALLERY_SWATCH_PX"));
+        assert!(production.contains("APP_TILE_LABEL_PX"));
+        assert!(!production.contains("STATUS_TIME_PX"));
+        assert!(!production.contains("STATUS_BATTERY_PX"));
+        assert!(!production.contains("KEY_LABEL_PX"));
+        assert!(!production.contains("DECISION_BUTTON_PX"));
+        assert!(!production.contains("ORB_MENU_PX"));
+        assert!(!production.contains("OBJECT_RELATED_PX"));
+        assert!(!production.contains("GALLERY_HEADING_PX"));
+        let status = production
+            .split("pub fn draw_status_bar(")
+            .nth(1)
+            .expect("draw_status_bar")
+            .split("fn draw_text(")
+            .next()
+            .expect("draw_text");
+        assert!(status.contains("role_px(TextRole::Label)"));
+        assert!(!status.contains("TextRole::Title"));
+        let keys = production
+            .split("fn paint_keyboard_keys(")
+            .nth(1)
+            .expect("paint_keyboard_keys")
+            .split("pub fn draw_lock_idle(")
+            .next()
+            .expect("draw_lock_idle");
+        assert!(keys.contains("role_px(TextRole::Caption)"));
+        assert!(!keys.contains("TextRole::Title"));
+        let card = production
+            .split("fn draw_action_card(")
+            .nth(1)
+            .expect("draw_action_card")
+            .split("fn draw_keypad_label(")
+            .next()
+            .expect("keypad");
+        assert!(card.contains("fonts.resolve(TextRole::Label)"));
+        assert!(card.contains("fonts.resolve(TextRole::Caption)"));
+        assert!(!card.contains("TextRole::Title"));
+        let tabs = production
+            .split("pub fn draw_tab_bar(")
+            .nth(1)
+            .expect("draw_tab_bar")
+            .split("pub fn draw_now(")
+            .next()
+            .expect("draw_now");
+        assert!(tabs.contains("role_px(TextRole::Caption)"));
+        assert!(!tabs.contains("TextRole::Title"));
+    }
+
+    #[test]
+    fn leftover_text_sizes_stay_below_caption() {
+        let caption = super::role_px(TextRole::Caption);
+        assert_eq!(caption, 36.0);
+        assert!(super::TAB_BADGE_PX < caption);
+        assert!(super::GALLERY_KICKER_PX < caption);
+        assert!(super::GALLERY_SWATCH_PX < caption);
+        assert!(super::APP_TILE_LABEL_PX < caption);
+        assert!(super::TAB_BADGE_PX < 40.0);
+        assert_eq!(super::TAB_BADGE_PX, 24.0);
+        assert_eq!(super::GALLERY_KICKER_PX, 24.0);
+        assert_eq!(super::GALLERY_SWATCH_PX, 18.0);
+        assert_eq!(super::APP_TILE_LABEL_PX, 26.0);
     }
 
     #[test]
@@ -3822,10 +3805,29 @@ mod tests {
         let field_rect = Rect::new(49, 430, 982, 190);
         let keys = vec![(Rect::new(108, 900, 264, 240), "1".to_string())];
         draw_pin_setup(
-            canvas, content, &header, &field, field_rect, &keys, None, None,
+            canvas, content, &header, &field, field_rect, &keys, None, false, None,
         );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
+    }
+
+    #[test]
+    fn intent_input_does_not_paint_the_root_surface_bar() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let content = Rect::new(0, 0, width, height);
+        let header = ContextHeader::new("Дом").with_section_title("Намерение");
+        let field =
+            Field::new("Новое намерение", FieldKind::Text).with_placeholder("Наберите текст…");
+        let field_rect = Rect::new(49, 1490, 982, 190);
+        let keys = vec![(Rect::new(108, 1700, 96, 144), "Q".to_string())];
+        draw_intent_input(
+            canvas, content, &header, &field, field_rect, &keys, None, false, None,
+        );
+        assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
+        assert_eq!(canvas.pixel(156, 1772), theme_color(ColorRole::Elevated));
     }
 
     #[test]
@@ -4158,9 +4160,96 @@ mod tests {
 
         let rows = composite_gallery_row_positions(height);
         let margin = (width / 20).max(12);
+        let content_width = width.saturating_sub(margin * 2);
         assert_ne!(
             canvas.pixel(margin + 4, rows[9] + 4),
             theme_color(ColorRole::Canvas)
         );
+
+        let fixtures = composite_gallery_fixtures();
+        let pattern_cell = content_width / fixtures.patterns.len() as u32;
+        let mark_size = physical(IconSize::Medium.value());
+        let empty_x = margin + 4;
+        let loading_x = margin + pattern_cell + mark_size / 2;
+        let failed_x = margin + 4 * pattern_cell + mark_size / 2;
+        let sample_y = rows[12] + mark_size / 2;
+        assert_eq!(
+            canvas.pixel(empty_x, sample_y),
+            theme_color(ColorRole::Canvas)
+        );
+        assert_ne!(
+            canvas.pixel(loading_x, sample_y),
+            theme_color(ColorRole::Canvas)
+        );
+        assert_ne!(
+            canvas.pixel(failed_x, sample_y),
+            theme_color(ColorRole::Canvas)
+        );
+    }
+
+    #[test]
+    fn object_view_decision_buttons_use_accent_and_surface_without_a_font() {
+        let width = 1080;
+        let height = 2400;
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let canvas = &mut Canvas::new(&mut pixels, width, height);
+        let accept = Rect::new(0, 2200, 540, 200);
+        let decline = Rect::new(540, 2200, 540, 200);
+        let overlay = DecisionOverlay::new("Подтвердите: убить процесс")
+            .with_actor("Система")
+            .with_action("process.kill_request");
+        draw_object_view(
+            canvas,
+            &ObjectSummary::new("Подтвердите: убить процесс", "saaios.task · версия 1"),
+            None,
+            &[],
+            Some(&overlay),
+            None,
+            Rect::new(0, 0, width, 2200),
+            &[(accept, "Подтвердить"), (decline, "Отклонить")],
+            None,
+        );
+        assert_eq!(
+            canvas.pixel(accept.x + 4, accept.y + 4),
+            theme_color(ColorRole::Accent)
+        );
+        assert_eq!(
+            canvas.pixel(decline.x + 4, decline.y + 4),
+            theme_color(ColorRole::Surface)
+        );
+    }
+
+    #[test]
+    fn failed_action_card_paints_a_mark_and_is_not_a_pair_button() {
+        let mut pixels = vec![0u8; 1080 * 2400 * 4];
+        let canvas = &mut Canvas::new(&mut pixels, 1080, 2400);
+        let rect = Rect::new(40, 430, 1000, 200);
+        let card = ActionCardView::new("Ошибка сопряжения: timeout", "", "").with_indicator(
+            StatusIndicator::new(UniversalState::Failed, "Ошибка сопряжения: timeout"),
+        );
+        draw_action_card(canvas, rect, &card, None);
+        assert_ne!(
+            canvas.pixel(rect.x + 40, rect.y + 80),
+            theme_color(ColorRole::Canvas)
+        );
+        assert_ne!(
+            canvas.pixel(rect.x + 40, rect.y + 80),
+            theme_color(ColorRole::Accent)
+        );
+    }
+
+    #[test]
+    fn draw_root_reuses_draw_action_card() {
+        let src = include_str!("render.rs");
+        let draw_root = src
+            .split("pub fn draw_root(")
+            .nth(1)
+            .expect("draw_root")
+            .split("fn paint_context_header(")
+            .next()
+            .expect("paint_context_header");
+        assert!(draw_root.contains("draw_action_card(canvas, *rect, card, fonts)"));
+        assert!(!draw_root.contains("38.0"));
+        assert!(!draw_root.contains("27.0"));
     }
 }

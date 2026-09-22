@@ -15,7 +15,7 @@ fontdue = { version = "0.9.3", default-features = false }
 # on stable instead of waiting on that to land.
 nix = { version = "0.31", features = ["socket"] }
 # ADR-151: `HapticMotor` talks to `/dev/input/haptic` via EVIOCSFF.
-# Displayd has no haptic protocol yet (VUI-08).
+# Displayd has no haptic protocol (S04). ADR-171 keeps the motor here.
 libc = "0.2"
 # S26 follow-up: a real fingerprint for the pairing consent screen
 # (docs/os/ideas.md) -- SHA256 over the key blob's decoded bytes,
@@ -29,6 +29,7 @@ intent-resolution.workspace = true
 chrono.workspace = true
 saai-portal-protocol.workspace = true
 saai-ui-core.workspace = true
+saai-ui-compiler.workspace = true
 saai-attention.workspace = true
 saai-object-actions.workspace = true
 policy-engine.workspace = true

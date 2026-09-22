@@ -7,7 +7,8 @@
 //! inventory table; VUI-05 adds `IntentSummary`/`TaskSummary`/
 //! `DecisionOverlay`/`AgentSummary`. VUI-06 adds `SettingRow`/
 //! `CapabilityRow`. VUI-07 adds `EventRow`/`SpaceRow`/`WifiRow`/
-//! `BluetoothRow`/`TrustedClientRow`.
+//! `BluetoothRow`/`TrustedClientRow`. VUI-09 adds privileged `Keyboard`
+//! (ADR-222) as the Field-bound IME object; it lives in `keyboard.rs`.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
@@ -716,6 +717,9 @@ impl WifiRow {
 pub struct BluetoothRow {
     pub row: DataRow,
     pub paired: bool,
+    /// ADR-158: SurfacePattern mark when this row is empty/loading/
+    /// failed. Device rows keep `None`.
+    pub indicator: Option<StatusIndicator>,
 }
 
 impl BluetoothRow {
@@ -725,7 +729,11 @@ impl BluetoothRow {
         if !transport.is_empty() {
             row = row.with_value(transport);
         }
-        Self { row, paired }
+        Self {
+            row,
+            paired,
+            indicator: None,
+        }
     }
 
     pub fn empty() -> Self {
@@ -740,6 +748,9 @@ impl BluetoothRow {
         Self {
             row: DataRow::new(pattern.message.clone(), DataRowVariant::Static),
             paired: false,
+            indicator: pattern
+                .paints_mark()
+                .then(|| StatusIndicator::new(pattern.state, pattern.message.clone())),
         }
     }
 
@@ -1437,6 +1448,15 @@ mod tests {
         assert_eq!(loading.row.primary, "Сканирование…");
         assert!(!loading.row.is_actionable());
         assert!(!loading.paired);
+        assert!(loading.indicator.is_some());
+        assert!(empty.indicator.is_none());
+        let failed =
+            BluetoothRow::from_pattern(&SurfacePattern::failed("Ошибка сопряжения: timeout"));
+        assert!(failed.indicator.is_some());
+        assert_eq!(
+            failed.indicator.as_ref().map(|i| i.state),
+            Some(UniversalState::Failed)
+        );
 
         let blob = format!(
             "{} {} {} {}",

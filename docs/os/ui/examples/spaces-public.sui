@@ -1,0 +1,25 @@
+sui 2
+screen spaces {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = spaces.header
+    focus = 0
+    inset = safe
+  }
+  component SpaceRow {
+    text = Body
+    a11y = Button
+    loc = spaces.item
+  }
+  component BottomNavigation {
+    a11y = Button
+    focus = 1
+    scroll = none
+    inset = safe
+    tab now { loc = now }
+    tab inbox { loc = inbox }
+    tab spaces { loc = spaces }
+    tab me { loc = me }
+  }
+}

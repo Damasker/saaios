@@ -7,9 +7,11 @@ Product source: [Visual Language v1](../architecture/visual-language-v1.md)
 Delivery source: [Visual System roadmap](../sprints/VISUAL-ROADMAP.md)
 
 This document is the reviewed design boundary for the first reusable SaaiOS
-components. It defines meaning and behavior before public Rust or `.sui` APIs
-are made stable. It is not a gallery of decoration and it does not move shell
-business logic into the library.
+components. It defines meaning and behavior. Public `.sui` v2 API docs,
+stability labels, and the NOW example live in
+[`sui-v2-public-api.md`](sui-v2-public-api.md) (ADR-186). `sui 1` is still
+the only compiled production document. It is not a gallery of decoration
+and it does not move shell business logic into the library.
 
 ## 1. Reference surface and coordinate model
 
@@ -34,8 +36,34 @@ business logic into the library.
 | Stable | Contract, gallery, accessibility, golden render, layout, hit-test, and migration tests have passed on Pixel 7. |
 
 No component in this document is stable merely because it has been drawn.
-Promotion is explicit and versioned. The public third-party subset is selected
-in VUI-09; privileged system composites are not automatically public.
+Promotion is explicit and versioned.
+
+### 2.1 Public subset (ADR-185)
+
+Third-party `.sui` v2 uses `compile_v2_public()`. The name is public when
+it is a proven primitive, composite, or live surface and is not privileged.
+The subset is still Experimental. It is not Stable until the VUI-09
+promotion checklist passes on Pixel 7.
+
+**Public primitives:** `SemanticText`, `Icon`, `Divider`, `StatusIndicator`,
+`Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure`,
+`SurfacePattern`.
+
+**Public composites:** `ContextHeader`, `SystemSection`, `ObjectSummary`,
+`BottomNavigation`, `IntentSummary`, `TaskSummary`, `AgentSummary`,
+`SettingRow`, `EventRow`, `SpaceRow`, `WifiRow`, `BluetoothRow`.
+
+**Public surfaces:** `now`, `inbox`, `spaces`, `me`, `object`, `intent`,
+`apps`, `wifi`, `bluetooth`, `trusted`, `wifi-password`, `pin-setup`,
+`consent`, `remote-pair`.
+
+**Privileged (shell `compile_v2()` only):** `OrbHost`, `SystemStatus`,
+`DecisionOverlay`, `CapabilityRow`, `TrustedClientRow`, `Keyboard`, `lock`,
+`diagnostic`, `gallery`. Deferred names (`SpaceDetail`, `MemoryReview`,
+`ChatThread`, `Widget`) remain outside the vocabulary.
+
+Gallery fixtures may show privileged rows so reviewers can see them.
+Those rows are not an app API.
 
 ## 3. Inventory
 
@@ -46,17 +74,17 @@ in VUI-09; privileged system composites are not automatically public.
 | Primitive | `SemanticText`, `Icon`, `Divider`, `StatusIndicator` | Experimental | gallery, `Сейчас`, no-PIN lock |
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
-| Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status layer |
+| Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04; Orb hits ADR-223) | shell navigation, Orb, status layer |
 | Composite | `IntentSummary`, `TaskSummary`, `DecisionOverlay`, `AgentSummary` | Experimental (VUI-05) | Object View |
 | Composite | `SettingRow`, `CapabilityRow` | Experimental (VUI-06) | `Я` / `Система` |
 | Composite | `EventRow` | Experimental (VUI-07) | `Входящие` |
 | Composite | `SpaceRow` | Experimental (VUI-07) | `Пространства` |
 | Composite | `WifiRow` | Experimental (VUI-07) | `Wi-Fi сети` |
 | Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
-| Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
-| Composite | `BluetoothRow` | Experimental (VUI-07) | `Bluetooth устройства` |
-| Pattern | empty, loading, offline | Experimental (VUI-07 ADR-155) | NOW, apps grid, Bluetooth scan |
-| Pattern | blocked, failed, confirmation, permission, recovery | Deferred to VUI-07 | system surfaces |
+| Composite | `TrustedClientRow` | Experimental (VUI-07) | `Доверенные клиенты` |
+| Composite | `Keyboard` | Privileged (VUI-09 ADR-222) | Field-bound IME; USB HID may replace the panel |
+| Pattern | empty, loading, offline, blocked, failed | Experimental (VUI-07 ADR-155/156) | NOW, apps grid, Bluetooth scan/pair |
+| Pattern | confirmation, permission, recovery | Deferred to VUI-07 | system surfaces |
 
 ## 4. Shared state contract
 
@@ -220,10 +248,27 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
   occupancy is dummy length, never `pin_code`.
 - First real consumer of `FieldKind::Text`: intent composer (ADR-135).
   Placeholder `Наберите текст…` is distinct from empty. Offline is
-  `help` (`Нет связи`), not `error`.
+  `help` (`Нет связи`), not `error`. ADR-161 parks the Field on the
+  docked QWERTY under `ContextHeader` «Намерение»; Wi-Fi password
+  reuses that avoidance as «Пароль». ADR-162 puts the Field in the
+  `intent_view` tree as focus stop 0. ADR-163 commits a key only when
+  down and up hit the same action; pressed still follows the finger.
+  ADR-164 docks the PIN setup dialer the same way; lock unlock is
+  unchanged.
+- ADR-222: a privileged `Keyboard` IME binds to the focused Field.
+  On-screen keys are that object's `OnScreen` source. USB HID with
+  `KEY_A` is `Hardware` and hides the panel. The Field does not embed
+  keys. Volume/power/touch/haptic nodes are not a keyboard.
+- ADR-169: opening intent / Wi-Fi password / PIN setup starts
+  `MotionToken::Context`. The Field paints a 2-unit `Focus` outline
+  while that clock needs a frame, unless reduced motion. Lock PIN
+  stays without it. Size does not change.
 - Keyboard keys (ADR-151): pressed fill is `ColorRole::Pressed` while
-  the finger is down; one `KeyTick` haptic on down. Release still
-  emits the key. Size does not change.
+  the finger is down; one `KeyTick` haptic on down if
+  `haptics_enabled` (ADR-171). Tabs and Orb do not tick. ADR-167 keeps
+  `Pressed` for `MotionToken::MicroFeedback` after release unless
+  reduced motion (ADR-174 drops that clock on the same tap as
+  «Меньше движения»). Release still emits the key. Size does not change.
 
 ### 6.8 `DataRow`
 
@@ -240,8 +285,13 @@ font-dependent symbols, and unrelated icon packs are not valid fallbacks.
 - Long content reflows vertically. Technical identifiers may use mono body and
   expose a copy action when useful.
 - First diagnostic consumer of a bare Static `DataRow`: HIA-20
-  «Диагностика» (ADR-136, header ADR-152). Flattened to `ActionCardView`. «Назад»
-  stays a trailing control card. The 7-tap gesture is unchanged.
+  «Диагностика» (ADR-136, header ADR-152). Flattened to `ActionCardView`.
+  Overflowing «Назад» docks on-screen (`stacked_control_rect`, ADR-159).
+  Facts that do not fit above it scroll (`scrolled_row_rect`, ADR-160).
+  Live Назад hits generated `layout_v2` `DataRow` + `row back` (ADR-224).
+  Do not 7-tap gallery this slice. Wi-Fi / Bluetooth / trusted trailing
+  controls dock as a cluster (`stacked_trailing_rect`, ADR-165). The
+  7-tap gesture is unchanged.
 
 ### 6.9 `Metric`
 
@@ -349,6 +399,13 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   when present)/disabled state independently; `BottomNavigation` itself
   does not flatten them into one combined string, the same never-flatten
   rule every other composite in this document follows.
+- ADR-168: `pressed` holds `ColorRole::Pressed` for `MotionToken::
+  Selection` after release unless reduced motion. Size does not change.
+- ADR-196: `.sui` v2 lists destinations as nested `tab <id> { loc = … }`
+  under `BottomNavigation`. Empty navigation invents no v1 hits.
+  `NavigationItem` stays a Rust type, not a v2 component name.
+- ADR-197: tab labels paint `TextRole::Caption` for selected and idle.
+  Selected stays semibold. Size does not encode selection.
 
 ### 7.5 `OrbHost`
 
@@ -363,7 +420,68 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - "Understandable without animation": the state's own non-color mark and
   `label_key` are always present regardless of whether a renderer is
   currently animating anything.
-- First real consumer: the existing Orb dot/menu.
+- First real consumer: the existing Orb dot/menu. ADR-223: live hits
+  come from `layout_v2()` `OrbHost` plus `orb-menu:` Buttons. Paint
+  stays `orb_view`. Do not tap Изменить.
+- ADR-170: while `motion()` is `ActivityPulse`, the inset hairline
+  follows a looping `MotionClock` (on 240 ms / off 240 ms, Context
+  duration reused). Reduced motion keeps the `StatusMark` only.
+  ADR-174 drops the looping clock when «Меньше движения» turns on.
+- ADR-172: `FramePace` is a diagnostic ring, not a visible component.
+  The shell writes the last commit line to `/run/saaios/shell-frame.last`.
+  ADR-173 adds `p95_scroll` / `p95_ok` for scroll samples against 50 ms.
+  The live shell does not abort when over the limit.
+  ADR-175 tags each sample with `FrameSurface` and dumps the ring to
+  `/run/saaios/shell-frame.trace`.
+  ADR-176 remembers the last non-scroll `input_to_commit` as `input_ok`
+  against 50 ms so first visible Pressed is the down commit.
+  ADR-177 counts commits as `seq` and `idle_ok` so a quiet Сейчас is
+  a still main surface.
+  ADR-178 names the attached buffer `backend=dmabuf` or `backend=shm`
+  without changing either path. ADR-179 closes VUI-08 haptics on that
+  same KeyPress map: rate-limited, silent for tabs and Orb.
+  ADR-180 lists the `.sui` v2 component/surface vocabulary; it does not
+  compile `sui 2`. ADR-181 parses `sui 2` component composition through
+  `compile_v2()`; `compile()` still builds only `root.sui`. ADR-182
+  adds `text`/`color`/`spacing`/`inset`/`scroll`/`loc`/`focus`/`a11y`
+  on those blocks from live `saai-ui-core` names. ADR-183 keeps
+  `root.sui` compiled through `compile()` as the v1 rollback artifact.
+  ADR-184 emits that compiled `ScreenSpec` as one `layout_v1_root()`
+  tree so tabs share hit-test; `compile_v2()` still does not build
+  production chrome. ADR-185 names the public third-party subset and
+  gates privileged names behind `compile_v2_public()`. ADR-186
+  publishes the public NOW example, stability labels, and the
+  migration page. ADR-187 removes leftover NOW cards from `root.sui`
+  and the diagnostic panel-color literals from production `main.rs`.
+  ADR-188 names leftover `draw_text` sizes through `role_px` and an
+  explicit leftover list. ADR-197 maps ActionCard and tab labels onto
+  `Label`/`Caption`, not Title. ADR-198 maps status time/battery and
+  key labels the same way; badge and app-tile leftovers stay.
+  ADR-189 is the verification ledger, not Visual v1 sign-off.
+  ADR-190 proves 150% text on panther HEAD without a Система tap.
+  ADR-191 proves live radio-off: status `Нет сети` while `wlan0` is
+  down; Сейчас keeps live object chrome because entityd is still up.
+  ADR-192 proves an unlocked `saai-shell` restart on HEAD without a
+  lock surface. ADR-193 records known limitations and the Visual v2
+  backlog; it is not Visual v1 sign-off. ADR-194 emits `layout_v2()`
+  so public NOW tab hits match v1; production still uses
+  `layout_v1_root()`. ADR-195 converts logical `SafeInsets` through
+  `EdgeInsets::from_safe`; the top inset stays the status layer.
+  ADR-196 names nested `tab` ids on `BottomNavigation` so `layout_v2`
+  does not borrow `compile_v1_rollback()`. ADR-199 names nested
+  `row` ids so `layout_v2` matches the live NOW footer. ADR-200
+  docks `ObjectSummary` as the NOW object hit (`open_object`).
+  ADR-201 keeps badge, gallery kicker/swatch, and app-tile labels
+  named below Caption. ADR-202 docks `EventRow` as Inbox stacked
+  hits (`open_object`). ADR-203 docks `SpaceRow` as Spaces stacked
+  hits (`select_space:<loc>`). ADR-204 docks `SettingRow` as Me stacked
+  hits (interned `loc`). ADR-205 docks `WifiRow` as Wi-Fi stacked
+  hits (`connect_wifi`). ADR-206 docks `BluetoothRow` as Bluetooth
+  stacked hits (`pair_bluetooth`). ADR-207 docks privileged
+  `TrustedClientRow` as trusted-client stacked hits
+  (`revoke_trusted_client`); `compile_v2_public` rejects the name.
+  ADR-208 docks privileged `CapabilityRow` as Me app stacked hits
+  with no action; `compile_v2_public` rejects the name.
 
 ### 7.6 `TaskSummary`
 
@@ -414,7 +532,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Built from `SemanticText` plus two `Button`s. No local color, no
   invented agent actor.
 - First real consumer: Object View while a Task/Action is
-  `waiting_confirmation`.
+  `waiting_confirmation` (ADR-157). Facts paint as Body; identity stays
+  `ObjectSummary`. Buttons are the overlay's `accept` / `decline`.
 - Accessibility: name is the object; value is the action id when
   present; role is dialog. Each button keeps its own contract.
 
@@ -444,7 +563,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Distinct from `CapabilityRow`: this is a device setting, not an app
   grant list.
 - First real consumer: `me_system_sections` (ADR-126). Still flattened
-  to `ActionCardView` for `draw_context_row_list` (ADR-141).
+  to `ActionCardView` for `draw_context_row_list` (ADR-141). ADR-204
+  docks public `SettingRow` onto `stacked_row_rect`; live flatten
+  and scroll stay procedural.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.11 `CapabilityRow`
@@ -454,6 +575,9 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Empty grant set is «без разрешений», not invented scopes.
 - Omit the parent `Приложения` section when there are no apps.
 - First real consumer: `me_system_sections` installed-app rows.
+  ADR-208 docks privileged `CapabilityRow` onto `stacked_row_rect`
+  with no action; `compile_v2_public` rejects the name. Do not tap
+  Me apps.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.12 `EventRow`
@@ -496,6 +620,8 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
 - Not a password field, not a Bluetooth list, not a Space binding.
 - First real consumer: `wifi_list_rows` (ADR-129). Flattened to
   `ActionCardView`. «Обновить» / «Назад» stay trailing control cards.
+  ADR-205 docks public `WifiRow` onto `stacked_row_rect`; trailing
+  controls stay procedural.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.15 `BluetoothRow`
@@ -505,11 +631,16 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   `paired` is a `SAVED` name, not live connection.
 - Empty after a finished scan: `SurfacePattern` empty «Нет устройств»
   as a static card. While a scan has not finished: `SurfacePattern`
-  loading «Сканирование…» as a static card, not a blank. Missing
-  adapter is named on Система and does not open this list.
+  loading «Сканирование…» as a static card, not a blank. A `PAIR-ERROR`
+  log line is `SurfacePattern` failed «Ошибка сопряжения: …» in slot 0,
+  with the Failed mark and without Сопрячь. «Искать» is the recovery
+  control. Missing adapter is named on Система and does not open
+  this list.
 - Not RSSI, not a trusted-client row, not a Space binding.
-- First real consumer: `bluetooth_list_rows` (ADR-130/155). Flattened to
+- First real consumer: `bluetooth_list_rows` (ADR-130/155/156). Flattened to
   `ActionCardView`. Scan / Refresh / Back stay trailing control cards.
+  ADR-206 docks public `BluetoothRow` onto `stacked_row_rect`; trailing
+  controls stay procedural. Do not tap Сопряжь.
 - Accessibility: delegated to the nested `DataRow`.
 
 ### 7.16 `TrustedClientRow`
@@ -523,16 +654,35 @@ VUI-07 on the Wi-Fi password keyboard and on PIN setup.
   binding.
 - First real consumer: `trusted_client_list_rows` (ADR-131). Flattened
   to `ActionCardView`. «Назад» stays a trailing control card.
+  ADR-207 docks privileged `TrustedClientRow` onto `stacked_row_rect`;
+  `compile_v2_public` rejects the name. Trailing Назад stays
+  procedural. Do not tap Отозвать.
 - Accessibility: delegated to the nested `DataRow`.
 
-### SurfacePattern (empty / loading / offline)
+### 7.17 `Keyboard`
+
+- Anatomy: an IME object bound to a `Field` loc, not a child of the
+  Field. Sources: `OnScreen` (ADR-029 QWERTY / PIN pad) and
+  `Hardware` (USB HID evdev with `KEY_A`). Hardware hides the panel.
+- Not gpio-keys, not power-keys, not the touchscreen, not haptic.
+  No libxkbcommon. Privileged; `compile_v2_public()` rejects the name.
+- First real consumer: intent, Wi-Fi password, PIN setup, lock PIN
+  (ADR-222). Do not type intent. PIN stays null.
+- Accessibility: the bound Field keeps `TextField`; the panel is
+  not a second accessible editor.
+
+### SurfacePattern (empty / loading / offline / blocked / failed)
 
 - Anatomy: `UniversalState` plus a caller-supplied message. Empty is
   Idle and paints no mark. Loading is Waiting plus the Waiting mark.
-  Offline is Offline plus the Offline mark. Message is Body.
+  Offline is Offline plus the Offline mark. Blocked and Failed use
+  those states' marks. Message is Body.
 - First consumers: NOW empty/offline (ADR-114 copy), apps-grid
   empty/offline (ADR-138 copy), Bluetooth scan loading / empty
-  (ADR-155). Blocked, failed, permission, confirmation, recovery later.
+  (ADR-155), Bluetooth `PAIR-ERROR` failed (ADR-156). Confirmation is
+  `DecisionOverlay` on Object View (ADR-157). Permission is Object View
+  `SurfacePattern::blocked` (ADR-158). Recovery is the Failed mark plus
+  Bluetooth «Искать».
 - Accessibility: `Status`; busy only while Waiting.
 
 ## 8. Required gallery matrix
@@ -555,6 +705,8 @@ Tap switches pages.
 The gallery must expose layout bounds and hit bounds in an optional developer
 overlay. Golden renders verify visual output; structural tests verify geometry,
 hit targets, overflow, focus order, and state transitions independently.
+`DecisionOverlay` and `TrustedClientRow` fixtures are privileged (ADR-185);
+they stay on the gallery page and are not part of `compile_v2_public()`.
 
 ## 9. API ownership
 

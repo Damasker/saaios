@@ -1,0 +1,16 @@
+sui 2
+screen trusted {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = trusted.header
+    focus = 0
+    inset = safe
+  }
+  component TrustedClientRow {
+    text = Body
+    a11y = Button
+    loc = trusted.item
+  }
+  row back {}
+}

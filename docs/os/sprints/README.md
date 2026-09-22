@@ -22,11 +22,77 @@ S00–S32 закрыли базовый трек — рабочий телефо
 
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
 ([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;
-VUI-04 remainder и VUI-06 на panther; **выполняется VUI-07** (Inbox
-`EventRow`, Spaces list, Wi-Fi list, Bluetooth list, trusted clients,
-Wi-Fi password, PIN setup, lock idle, intent input, developer
-surface, Object View, apps grid, Inbox header, Spaces header, Система header, consent header, PIN setup header, remote pairing header, Bluetooth header, Wi-Fi header, trusted-clients header, lock attention, lock/PIN keyboard, compact QWERTY, keyboard press, DevSurface header, lock device state, lock sleep AOD и empty/loading/offline на panther). VUI-02 остаётся почти закрытым (шрифты в boot-image —
-единственный blocked item). Этот трек не переоткрывает S00–S32.
+VUI-04 remainder и VUI-06 на panther; **VUI-07 закрыт** на panther
+(`693e77c7…`; Space detail deferred, MEM-08 omitted). **VUI-08 закрыт**
+на panther (`37a8014d…`; ADR-167–179):
+ADR-167 MotionClock + keyboard micro hold on panther.
+ADR-168 tab Selection hold on panther.
+ADR-169 compose Field Focus on panther.
+ADR-170 Orb ActivityPulse on panther.
+ADR-171 haptic policy on panther.
+ADR-172 FramePace commit log on panther.
+ADR-173 50 ms scroll p95 on panther.
+ADR-174 reduced motion is immediate on panther.
+ADR-175 FramePace surface traces on panther.
+ADR-176 first visible down commit on panther.
+ADR-177 idle main-surface seq on panther.
+ADR-178 dma-buf / wl_shm backend tag on panther.
+ADR-179 haptic acceptance closeout on panther.
+ADR-180 `.sui` v2 vocabulary (host; v1 root chrome unchanged).
+ADR-181 `.sui` v2 grammar (host; `compile()` stays v1).
+ADR-182 `.sui` v2 component properties (host; `root.sui` unchanged).
+ADR-183 `.sui` v1 rollback artifact (`compile()` on `root.sui`).
+ADR-184 shared v1 layout/hit-test (`layout_v1_root()`, not `compile_v2()`).
+ADR-185 public `.sui` v2 subset (`compile_v2_public()`, privileged gated).
+ADR-186 public API docs, NOW example, and stability labels.
+ADR-187 close production color literals and leftover NOW chrome.
+ADR-188 name leftover `draw_text` sizes (`role_px`).
+ADR-189 VUI-09 verification ledger (not Visual v1 sign-off).
+ADR-190 increased text 150% on panther HEAD, then restored 100%.
+ADR-191 live radio-off on panther HEAD (`wlan0` down → `Нет сети`, then up).
+ADR-192 unlocked shell restart on panther HEAD (same `e8865301…`).
+ADR-193 VUI-09 known limitations and Visual v2 backlog (not Visual v1 sign-off).
+ADR-194 `layout_v2` public NOW tab hits match v1 (host; `compile()` stays v1).
+ADR-195 `EdgeInsets::from_safe` converts logical SafeInsets (host; top stays a layer).
+ADR-196 nested `tab` ids on `BottomNavigation`; `layout_v2` does not borrow v1 (host).
+ADR-197 ActionCard/tab labels use `Label`/`Caption`, not Title (paint; flashes).
+ADR-198 status time/battery `Label`, keys `Caption` (paint; flashes).
+ADR-199 nested `row` footer ids; `layout_v2` matches `now_footer_action_rect` (host).
+ADR-200 `ObjectSummary` docks as the NOW object hit (`open_object`, host).
+ADR-201 leftover text sizes stay below Caption; apps grid on panther, no launch.
+ADR-202 `EventRow` docks as Inbox stacked hits (`open_object`, host).
+ADR-203 `SpaceRow` docks as Spaces stacked hits (`select_space:<loc>`, host).
+ADR-204 `SettingRow` docks as Me stacked hits (interned `cycle_timezone`, host).
+ADR-205 `WifiRow` docks as Wi-Fi list stacked hits (`connect_wifi`, host).
+ADR-206 `BluetoothRow` docks as Bluetooth list stacked hits (`pair_bluetooth`, host).
+ADR-207 `TrustedClientRow` docks as trusted-client stacked hits (`revoke_trusted_client`, privileged host).
+ADR-208 `CapabilityRow` docks as Me app stacked hits (no action, privileged host).
+ADR-209 lock / unlock cycle on panther HEAD (no-PIN tap-unlock; marker restored).
+ADR-210 display restart on panther HEAD (`saai-displayd` kill; native-init respawn).
+ADR-211 cold boot on panther HEAD (`reboot -f`; marker dropped then restored).
+ADR-212 7-tap gallery on panther HEAD (Диагностика then Назад).
+ADR-213 thin-tuning sprint parked last (not next Visual work).
+ADR-214 list trailing rows in `layout_v2` (`list_refresh`/`list_scan`/`list_back`, host).
+ADR-215 Me flatten/scroll in `layout_v2` (`flatten_me_rows` / `scrolled_row_rect`, host).
+ADR-216 production `compile_v2()` / `layout_v2` `root_view`.
+ADR-217 NOW content hits from compiled `now.sui`.
+ADR-218 Inbox/Spaces/list hits from generated `compile_v2()`.
+ADR-219 Me scroll hits from `layout_v2_scrolled`.
+ADR-220 apps grid hits from generated `compile_v2()` `Button` tiles.
+ADR-221 overlay Field/decision hits from `layout_v2`.
+ADR-222 privileged `Keyboard` IME bound to Field; USB HID may replace the panel.
+ADR-223 OrbHost hits from `layout_v2`; gallery page taps stay a whole-surface formula.
+ADR-224 diagnostic Назад hits from `layout_v2` `DataRow` + `row back`.
+ADR-225 NOW chrome paint from the same `now_view()` tree as hits.
+ADR-226 Inbox/Spaces/list paint from generated `layout_v2` trees.
+ADR-227 Me scroll paint from the same `layout_v2_scrolled` tree as hits.
+ADR-228 apps grid paint from generated `layout_v2` `Button` tiles.
+ADR-229 overlay Field/decision paint from generated `layout_v2`.
+ADR-230 OrbHost paint from the same generated `layout_v2` tree as hits.
+ADR-231 diagnostic paint from the same generated `layout_v2_scrolled` tree as hits.
+ADR-232 leftover formulas: Keyboard keys, gallery page, lock idle/wake.
+VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
+blocked item). Этот трек не переоткрывает S00–S32.
 
 **Service queue (параллельно shell):** прошивка `saaios-runtime` /
 `saai-taskd` не считается вторым DRM-экспериментом. P0 — MEM-01

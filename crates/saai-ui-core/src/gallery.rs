@@ -1,10 +1,12 @@
 //! Labelled fixture data for the VUI-05 composite gallery plus VUI-07
-//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`. No live telemetry.
+//! `EventRow`/`SpaceRow`/`WifiRow`/`BluetoothRow`/`TrustedClientRow`.
+//! No live telemetry. `DecisionOverlay` and `TrustedClientRow` are
+//! privileged (ADR-185); they are review fixtures, not a public subset.
 
 use crate::{
     AgentSummary, BluetoothRow, ContextHeader, DecisionOverlay, EventRow, IntentSummary,
-    ObjectSummary, SpaceRow, StatusIndicator, TaskSummary, TrustedClientRow, UniversalState,
-    WifiRow,
+    ObjectSummary, SpaceRow, StatusIndicator, SurfacePattern, TaskSummary, TrustedClientRow,
+    UniversalState, WifiRow,
 };
 
 pub struct CompositeGalleryFixtures {
@@ -30,6 +32,7 @@ pub struct CompositeGalleryFixtures {
     pub trusted_named: TrustedClientRow,
     pub trusted_empty: TrustedClientRow,
     pub states: [StatusIndicator; 9],
+    pub patterns: [SurfacePattern; 5],
 }
 
 pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
@@ -62,7 +65,34 @@ pub fn composite_gallery_fixtures() -> CompositeGalleryFixtures {
         trusted_empty: TrustedClientRow::empty(),
         states: UniversalState::ALL
             .map(|state| StatusIndicator::new(state, state_fixture_label(state))),
+        patterns: [
+            SurfacePattern::empty("Ничего срочного"),
+            SurfacePattern::loading("Сканирование…"),
+            SurfacePattern::offline("Нет связи"),
+            SurfacePattern::blocked("Нет адаптера"),
+            SurfacePattern::failed("Ошибка сопряжения: timeout"),
+        ],
     }
+}
+
+pub fn public_gallery_type_names() -> &'static [&'static str] {
+    &[
+        "ContextHeader",
+        "ObjectSummary",
+        "TaskSummary",
+        "IntentSummary",
+        "AgentSummary",
+        "EventRow",
+        "SpaceRow",
+        "WifiRow",
+        "BluetoothRow",
+        "StatusIndicator",
+        "SurfacePattern",
+    ]
+}
+
+pub fn privileged_gallery_type_names() -> &'static [&'static str] {
+    &["DecisionOverlay", "TrustedClientRow"]
 }
 
 pub fn state_fixture_label(state: UniversalState) -> &'static str {
@@ -96,6 +126,20 @@ mod tests {
         for indicator in &fixtures.states {
             assert_eq!(indicator.label, state_fixture_label(indicator.state));
         }
+        assert_eq!(
+            fixtures
+                .patterns
+                .iter()
+                .map(|pattern| pattern.state)
+                .collect::<Vec<_>>(),
+            vec![
+                UniversalState::Idle,
+                UniversalState::Waiting,
+                UniversalState::Offline,
+                UniversalState::Blocked,
+                UniversalState::Failed,
+            ]
+        );
     }
 
     #[test]
@@ -134,6 +178,14 @@ mod tests {
         assert_eq!(fixtures.bluetooth_loading.row.primary, "Сканирование…");
         assert_eq!(fixtures.trusted_named.row.primary, "home-mike");
         assert_eq!(fixtures.trusted_empty.row.primary, "Нет клиентов");
+        assert_eq!(fixtures.patterns[0].message, "Ничего срочного");
+        assert!(!fixtures.patterns[0].paints_mark());
+        assert!(fixtures.patterns[1].paints_mark());
+        assert!(fixtures.patterns[4].paints_mark());
+        assert_eq!(fixtures.patterns[1].message, "Сканирование…");
+        assert_eq!(fixtures.patterns[2].message, "Нет связи");
+        assert_eq!(fixtures.patterns[3].message, "Нет адаптера");
+        assert_eq!(fixtures.patterns[4].message, "Ошибка сопряжения: timeout");
         let blob = format!(
             "{} {} {} {} {} {} {} {} {} {} {} {} {} {}",
             fixtures.title,
@@ -154,5 +206,22 @@ mod tests {
         assert!(!blob.contains("Воркеры"));
         assert!(!blob.contains("ResearchAgent"));
         assert!(!blob.contains("% CPU"));
+    }
+
+    #[test]
+    fn gallery_type_names_split_public_from_privileged() {
+        for name in public_gallery_type_names() {
+            assert!(
+                !privileged_gallery_type_names().contains(name),
+                "{name} listed as both public and privileged"
+            );
+        }
+        assert_eq!(
+            privileged_gallery_type_names(),
+            &["DecisionOverlay", "TrustedClientRow"]
+        );
+        assert!(public_gallery_type_names().contains(&"ContextHeader"));
+        assert!(public_gallery_type_names().contains(&"SurfacePattern"));
+        assert!(!public_gallery_type_names().contains(&"OrbHost"));
     }
 }

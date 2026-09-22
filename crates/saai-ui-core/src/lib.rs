@@ -8,6 +8,7 @@ mod components;
 mod composites;
 mod foundations;
 mod gallery;
+mod keyboard;
 
 pub use components::{
     AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, DataRow, DataRowVariant,
@@ -21,11 +22,20 @@ pub use composites::{
     TrustedClientRow, WifiRow,
 };
 pub use foundations::{
-    FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,
-    SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle, TextRole, TextStyle,
-    CONTROL_VISUAL_HEIGHT, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    frame_reason, frame_surface, FontFamily, FontWeight, FrameBackend, FramePace, FrameReason,
+    FrameSample, FrameSurface, IconGlyph, IconSize, LogicalUnit, MotionClock, MotionToken,
+    RadiusToken, SafeInsets, SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle,
+    TextRole, TextStyle, CONTROL_VISUAL_HEIGHT, FIRST_FEEDBACK_LIMIT_MS, FRAME_PACE_CAP,
+    FRAME_PACE_P95_LIMIT_MS, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
-pub use gallery::{composite_gallery_fixtures, CompositeGalleryFixtures};
+pub use gallery::{
+    composite_gallery_fixtures, privileged_gallery_type_names, public_gallery_type_names,
+    CompositeGalleryFixtures,
+};
+pub use keyboard::{
+    hardware_keyboard_present, hardware_keyboards, HardwareKeyboardDevice, Keyboard,
+    KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, EVDEV_KEY_A,
+};
 
 /// Backend-independent sRGB color. Renderers are responsible for converting
 /// this logical value to their native pixel/scanout packing.
@@ -372,12 +382,10 @@ impl Rect {
 }
 
 /// Padding for one `Node`, in the same physical-pixel space `Rect`/
-/// `Length::Px` already use here -- deliberately not `foundations::
-/// SafeInsets` (logical units), since this layout tree has no `SurfaceScale`
-/// to convert with today (`layout()` takes none). Reconciling the two unit
-/// domains is future work, likely alongside VUI-09's compiled shared layout
-/// output; this stays self-contained and consistent with what every other
-/// field in this tree already assumes.
+/// `Length::Px` already use. Logical `SafeInsets` convert through
+/// `EdgeInsets::from_safe` at a `SurfaceScale` (ADR-195). `layout()`
+/// still takes no scale. Top safe inset is the status layer, not tree
+/// padding (ADR-112).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EdgeInsets {
     pub top: u32,
@@ -409,6 +417,17 @@ impl EdgeInsets {
             right: horizontal,
             bottom: vertical,
             left: horizontal,
+        }
+    }
+
+    /// Convert surface-provided logical insets at this scale. Markup
+    /// never invents cutout numbers.
+    pub fn from_safe(insets: SafeInsets, scale: SurfaceScale) -> Self {
+        Self {
+            top: scale.logical_to_physical(insets.top),
+            right: scale.logical_to_physical(insets.right),
+            bottom: scale.logical_to_physical(insets.bottom),
+            left: scale.logical_to_physical(insets.left),
         }
     }
 }
@@ -454,6 +473,22 @@ impl Node {
         Self {
             id: id.into(),
             kind: NodeKind::Linear(axis),
+            width: Length::Fill,
+            height: Length::Fill,
+            padding: EdgeInsets::ZERO,
+            focus_order: None,
+            action: None,
+            children,
+        }
+    }
+
+    /// Overlay children share the same bounds. Each child that needs a
+    /// y-offset is a vertical linear of a spacer then the row — ADR-219
+    /// Me scroll places stacked rows under the header this way.
+    pub fn stack(id: impl Into<String>, children: Vec<Node>) -> Self {
+        Self {
+            id: id.into(),
+            kind: NodeKind::Stack,
             width: Length::Fill,
             height: Length::Fill,
             padding: EdgeInsets::ZERO,
@@ -631,7 +666,7 @@ fn cross_size(length: Length, available: u32) -> u32 {
 mod tests {
     use super::{
         layout, Axis, ColorRole, ContextColor, EdgeInsets, Length, MotionCue, Node, Rect, Rgb,
-        StatusMark, Theme, UniversalState,
+        SafeInsets, StatusMark, SurfaceScale, Theme, UniversalState,
     };
 
     fn four_tabs() -> Node {
@@ -707,6 +742,20 @@ mod tests {
         let root = Node::leaf("card").with_padding(EdgeInsets::all(1000));
         let tree = layout(&root, Rect::new(0, 0, 100, 100));
         assert_eq!(tree.rect, Rect::new(0, 0, 100, 100));
+    }
+
+    #[test]
+    fn from_safe_converts_pixel_7_insets_to_physical_edges() {
+        let edges = EdgeInsets::from_safe(SafeInsets::PIXEL_7_PORTRAIT, SurfaceScale::PIXEL_7);
+        assert_eq!(edges.top, 120);
+        assert_eq!(edges.bottom, 300);
+        assert_eq!(edges.left, 0);
+        assert_eq!(edges.right, 0);
+        let tree = layout(
+            &Node::leaf("header").with_padding(EdgeInsets { top: 0, ..edges }),
+            Rect::new(0, 0, 1080, 2400),
+        );
+        assert_eq!(tree.rect, Rect::new(0, 0, 1080, 2400));
     }
 
     #[test]

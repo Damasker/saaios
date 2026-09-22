@@ -1,26 +1,49 @@
-//! Keyboard haptic policy for ADR-151.
+//! Haptic policy for ADR-151 / ADR-171 / ADR-179.
 //!
-//! Painters request `HapticIntent`; only `HapticMotor` talks to
-//! `/dev/input/haptic`. Displayd still has no haptic protocol (S04 /
-//! VUI-08). Missing device is a silent no-op so host tests do not
-//! need the Pixel motor.
+//! Components name a `HapticEvent`. Policy returns a `HapticIntent`.
+//! Only `HapticMotor` talks to `/dev/input/haptic`. Displayd still
+//! has no haptic protocol (S04). Missing device is a silent no-op
+//! so host tests do not need the Pixel motor.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
+use std::time::Instant;
 
-/// Product meaning, not a waveform. VUI-08 may remap these later.
+/// Who asked. Not a waveform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HapticEvent {
+    KeyPress,
+    TabPress,
+    OrbActivity,
+}
+
+/// Product meaning, not a waveform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HapticIntent {
     KeyTick,
 }
 
-pub fn haptic_intent_for_key_press() -> HapticIntent {
-    HapticIntent::KeyTick
+/// Uploaded FF replay length. A second play inside this window overlaps.
+pub const KEY_TICK_REPLAY_MS: u16 = 15;
+
+pub fn haptic_intent_for(event: HapticEvent, enabled: bool) -> Option<HapticIntent> {
+    if !enabled {
+        return None;
+    }
+    match event {
+        HapticEvent::KeyPress => Some(HapticIntent::KeyTick),
+        HapticEvent::TabPress | HapticEvent::OrbActivity => None,
+    }
+}
+
+pub fn haptic_rate_limit_allows(elapsed_since_last_ms: u32) -> bool {
+    elapsed_since_last_ms >= u32::from(KEY_TICK_REPLAY_MS)
 }
 
 pub struct HapticMotor {
     inner: Option<LinuxHaptic>,
+    last_play: Option<Instant>,
 }
 
 struct LinuxHaptic {
@@ -34,14 +57,22 @@ impl HapticMotor {
     pub fn open() -> Self {
         Self {
             inner: LinuxHaptic::open(),
+            last_play: None,
         }
     }
 
     pub fn play(&mut self, intent: HapticIntent) {
         let HapticIntent::KeyTick = intent;
+        let now = Instant::now();
+        if let Some(last) = self.last_play {
+            if !haptic_rate_limit_allows(now.saturating_duration_since(last).as_millis() as u32) {
+                return;
+            }
+        }
         if let Some(inner) = self.inner.as_mut() {
             inner.play();
         }
+        self.last_play = Some(now);
     }
 }
 
@@ -223,10 +254,44 @@ impl LinuxHaptic {
 
 #[cfg(test)]
 mod tests {
-    use super::{haptic_intent_for_key_press, HapticIntent};
+    use super::{
+        haptic_intent_for, haptic_rate_limit_allows, HapticEvent, HapticIntent, KEY_TICK_REPLAY_MS,
+    };
 
     #[test]
-    fn key_press_requests_a_key_tick_not_a_painter_owned_motor() {
-        assert_eq!(haptic_intent_for_key_press(), HapticIntent::KeyTick);
+    fn key_press_requests_a_key_tick_when_haptics_are_on() {
+        assert_eq!(
+            haptic_intent_for(HapticEvent::KeyPress, true),
+            Some(HapticIntent::KeyTick)
+        );
+        assert_eq!(haptic_intent_for(HapticEvent::KeyPress, false), None);
+    }
+
+    #[test]
+    fn tabs_and_orb_do_not_own_a_tick() {
+        assert_eq!(haptic_intent_for(HapticEvent::TabPress, true), None);
+        assert_eq!(haptic_intent_for(HapticEvent::OrbActivity, true), None);
+    }
+
+    #[test]
+    fn rate_limit_matches_the_uploaded_replay() {
+        assert_eq!(KEY_TICK_REPLAY_MS, 15);
+        assert!(!haptic_rate_limit_allows(0));
+        assert!(!haptic_rate_limit_allows(14));
+        assert!(haptic_rate_limit_allows(15));
+        assert!(haptic_rate_limit_allows(120));
+    }
+
+    #[test]
+    fn vui08_haptics_are_consistent_rate_limited_and_silent_for_decoration() {
+        assert_eq!(
+            haptic_intent_for(HapticEvent::KeyPress, true),
+            Some(HapticIntent::KeyTick)
+        );
+        assert_eq!(haptic_intent_for(HapticEvent::KeyPress, false), None);
+        assert_eq!(haptic_intent_for(HapticEvent::TabPress, true), None);
+        assert_eq!(haptic_intent_for(HapticEvent::OrbActivity, true), None);
+        assert!(!haptic_rate_limit_allows(14));
+        assert!(haptic_rate_limit_allows(u32::from(KEY_TICK_REPLAY_MS)));
     }
 }
