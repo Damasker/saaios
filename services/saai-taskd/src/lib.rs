@@ -40,15 +40,15 @@ use chrono::Utc;
 use client::{ClientError, EntitydConn};
 use intent_resolution::{
     resolve_deterministic, AllowedContext, ClarificationResolution, IntentInput, IntentSource,
-    ResolutionOutcome, ResolveAttempt, SOURCE_PROPERTY,
+    ResolutionOutcome, ResolveAttempt, PLAN_PROPERTY, SEMANTIC_ACTION_PROPERTY, SOURCE_PROPERTY,
 };
 use model::{
     action_properties, dangerous_action_of, find_action_for_task, has_open_task_for_intent,
     has_task_for_intent, intent_id_of, is_schedule_due, result_properties, safe_title,
     schedule_every_secs, schedule_fire_count, schedule_properties, schedule_text,
-    should_retry_failed_task, status_of, task_properties, WorkflowStatus, ACTION_TYPE,
-    DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, RESULT_TYPE, RUNTIME_ACTION_KIND,
-    SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
+    should_retry_failed_task, status_of, task_properties, with_depends_on, WorkflowStatus,
+    ACTION_TYPE, DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY,
+    RESULT_TYPE, RUNTIME_ACTION_KIND, SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
 use saai_entity_protocol::{
     Entity, EntitydEvent, RELATION_EXECUTES, RELATION_PRODUCES, RELATION_REALIZES,
@@ -57,6 +57,7 @@ use saai_entity_store::EventPayload;
 use saai_object_actions::{display_inspect_spec, ObjectActionRegistry};
 use scheduler::{admit_frontier, derive_ready_set, mutating_in_flight, MAX_MUTATING_IN_FLIGHT};
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use uuid::Uuid;
@@ -384,9 +385,19 @@ impl Daemon {
                 self.process_unsupported(intent, &text, &unsupported.reason)
                     .await
             }
+            ResolveAttempt::Resolved {
+                outcome: ResolutionOutcome::Plan(plan),
+                ..
+            } => {
+                eprintln!(
+                    "IRAB: intent={} outcome=plan goal={}",
+                    intent.id, plan.goal
+                );
+                self.process_plan_intent(intent, &plan.goal).await
+            }
             ResolveAttempt::NeedsModel
             | ResolveAttempt::Resolved {
-                outcome: ResolutionOutcome::Answer(_) | ResolutionOutcome::Plan(_),
+                outcome: ResolutionOutcome::Answer(_),
                 ..
             } => {
                 eprintln!(
@@ -660,6 +671,76 @@ impl Daemon {
         self.fail_task(&task, intent.id, reason).await
     }
 
+    /// ADR-238: a structured PlanProposal becomes a DAG of Tasks, never
+    /// one diagnose. Invalid graphs fail one Task so the Intent is not
+    /// left empty. Confirmation stays per Action; the plan does not
+    /// bulk-allow.
+    async fn process_plan_intent(
+        &mut self,
+        intent: &Entity,
+        goal: &str,
+    ) -> Result<(), ClientError> {
+        let Some(raw) = intent.properties.get(PLAN_PROPERTY).cloned() else {
+            return self
+                .process_unsupported(intent, goal, "plan outcome without a plan body")
+                .await;
+        };
+        let proposal: graph::PlanProposal = match serde_json::from_value(raw) {
+            Ok(proposal) => proposal,
+            Err(error) => {
+                return self
+                    .process_unsupported(intent, goal, &format!("malformed plan: {error}"))
+                    .await;
+            }
+        };
+        let bound = match graph::bind_plan(&proposal) {
+            Ok(bound) => bound,
+            Err(error) => {
+                return self
+                    .process_unsupported(intent, goal, &error.to_string())
+                    .await;
+            }
+        };
+        eprintln!(
+            "IRAB: intent={} persist plan tasks={}",
+            intent.id,
+            bound.len()
+        );
+        let mut ids = HashMap::new();
+        for step in &bound {
+            let deps = graph::remap_depends_on(step, &ids);
+            let mut properties = with_depends_on(
+                task_properties(intent.id, WorkflowStatus::Pending),
+                &deps,
+            );
+            properties.insert(PROPOSAL_ID_PROPERTY.into(), json!(step.proposal_id));
+            if let Some(action_id) = &step.action_id {
+                properties.insert(SEMANTIC_ACTION_PROPERTY.into(), json!(action_id));
+            }
+            if let Some(target) = &step.target {
+                properties.insert("target".into(), target.clone());
+            }
+            if !step.parameters.is_null() {
+                properties.insert("parameters".into(), step.parameters.clone());
+            }
+            let task = self
+                .conn
+                .create_entity(
+                    &self.space_id,
+                    TASK_TYPE,
+                    &safe_title(&step.title, "Задача"),
+                    properties,
+                )
+                .await?;
+            ids.insert(step.proposal_id.clone(), task.id);
+            self.remember_task(task.clone());
+            self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+                .await;
+        }
+        self.dispatch_ready().await?;
+        Ok(())
+    }
+
     /// S10 Change 2 (ADR-033): asks the already-running `saaios-runtime`
     /// what a free-form intent's text means, instead of a hardcoded
     /// transform. The Task starts `Pending` -- neither `Done` nor
@@ -739,12 +820,164 @@ impl Daemon {
         Ok(started)
     }
 
+    async fn start_ready_plan_step(
+        &mut self,
+        task: &Entity,
+        intent_id: Uuid,
+        action_id: &str,
+    ) -> Result<(), ClientError> {
+        let Some(target) = task
+            .properties
+            .get("target")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+        else {
+            return self
+                .fail_task(task, intent_id, "plan step missing target")
+                .await;
+        };
+        let parameters = task
+            .properties
+            .get("parameters")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let action = intent_resolution::ActionResolution {
+            target,
+            action_id: action_id.to_string(),
+            parameters,
+            target_revision: None,
+        };
+        if Self::action_requires_confirmation(action_id) {
+            return self.gate_existing_task(task, intent_id, &action).await;
+        }
+        self.complete_existing_semantic_task(task, intent_id, &action)
+            .await
+    }
+
+    async fn gate_existing_task(
+        &mut self,
+        task: &Entity,
+        intent_id: Uuid,
+        action: &intent_resolution::ActionResolution,
+    ) -> Result<(), ClientError> {
+        let action_input = json!({
+            "semantic_action_id": action.action_id,
+            "target": action.target,
+            "parameters": action.parameters,
+            "target_revision": action.target_revision,
+        });
+        let stored_action = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                ACTION_TYPE,
+                &safe_title(&format!("Действие: {}", action.action_id), "Действие"),
+                action_properties(
+                    task.id,
+                    SEMANTIC_ACTION_KIND,
+                    WorkflowStatus::WaitingConfirmation,
+                    &action_input,
+                    None,
+                ),
+            )
+            .await?;
+        self.record_lineage(stored_action.id, task.id, RELATION_EXECUTES)
+            .await;
+        let updated = self
+            .conn
+            .update_entity(
+                task,
+                task_properties(intent_id, WorkflowStatus::WaitingConfirmation),
+            )
+            .await?;
+        self.remember_task(updated);
+        eprintln!(
+            "saai-taskd: task {} plan step waiting for confirmation ({})",
+            task.id, action.action_id
+        );
+        Ok(())
+    }
+
+    async fn complete_existing_semantic_task(
+        &mut self,
+        task: &Entity,
+        intent_id: Uuid,
+        action: &intent_resolution::ActionResolution,
+    ) -> Result<(), ClientError> {
+        let running_task = self
+            .conn
+            .update_entity(task, task_properties(intent_id, WorkflowStatus::Running))
+            .await?;
+        let summary = format!(
+            "Распознано: {} → {}",
+            target_label(&action.target),
+            action.action_id
+        );
+        let action_input = json!({
+            "semantic_action_id": action.action_id,
+            "target": action.target,
+            "parameters": action.parameters,
+            "target_revision": action.target_revision,
+        });
+        let action_output = json!({ "summary": summary, "executed": false });
+        let stored_action = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                ACTION_TYPE,
+                &safe_title(&format!("Действие: {}", action.action_id), "Действие"),
+                action_properties(
+                    running_task.id,
+                    SEMANTIC_ACTION_KIND,
+                    WorkflowStatus::Done,
+                    &action_input,
+                    Some(&action_output),
+                ),
+            )
+            .await?;
+        self.record_lineage(stored_action.id, running_task.id, RELATION_EXECUTES)
+            .await;
+        let result = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                RESULT_TYPE,
+                &safe_title(&summary, "Результат"),
+                result_properties(running_task.id, stored_action.id, &summary),
+            )
+            .await?;
+        self.record_lineage(stored_action.id, result.id, RELATION_PRODUCES)
+            .await;
+        let mut done_properties = task_properties(intent_id, WorkflowStatus::Done);
+        done_properties.insert("result_id".into(), json!(result.id.to_string()));
+        let updated_task = self
+            .conn
+            .update_entity(&running_task, done_properties)
+            .await?;
+        self.remember_task(updated_task);
+        eprintln!(
+            "saai-taskd: task {} plan step {} done",
+            running_task.id, action.action_id
+        );
+        Ok(())
+    }
+
     async fn start_ready_planner_task(&mut self, task: &Entity) -> Result<(), ClientError> {
         let Some(intent_id) = intent_id_of(task) else {
             return self
                 .fail_task(task, Uuid::nil(), "task missing intent_id")
                 .await;
         };
+        if let Some(action_id) = task
+            .properties
+            .get(SEMANTIC_ACTION_PROPERTY)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        {
+            return self
+                .start_ready_plan_step(task, intent_id, &action_id)
+                .await;
+        }
         let entities = self.conn.list_entities(&self.space_id).await?;
         let actions: Vec<Entity> = entities
             .iter()

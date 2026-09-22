@@ -1,7 +1,7 @@
 use crate::context::{ContextSnapshot, IntentInput, ObjectSummary};
 use crate::outcome::{
-    ActionResolution, ClarificationOption, ClarificationResolution, ResolutionMethod,
-    ResolutionOutcome, ResolutionTrace, ResolveAttempt, UnsupportedResolution,
+    ActionResolution, ClarificationOption, ClarificationResolution, PlanResolution,
+    ResolutionMethod, ResolutionOutcome, ResolutionTrace, ResolveAttempt, UnsupportedResolution,
 };
 use saai_entity_store::ObjectRef;
 use serde_json::json;
@@ -78,6 +78,9 @@ pub fn resolve_deterministic(input: &IntentInput, allowed: &AllowedContext) -> R
     if let Some(action_id) = input.explicit_action_id.as_deref() {
         return resolve_explicit(input, allowed, action_id);
     }
+    if let Some(attempt) = resolve_structured_plan(input) {
+        return attempt;
+    }
     if let Some(attempt) = resolve_pronoun_inspect(input, allowed) {
         return attempt;
     }
@@ -88,6 +91,26 @@ pub fn resolve_deterministic(input: &IntentInput, allowed: &AllowedContext) -> R
         return attempt;
     }
     ResolveAttempt::NeedsModel
+}
+
+fn resolve_structured_plan(input: &IntentInput) -> Option<ResolveAttempt> {
+    let plan = input.plan.as_ref()?;
+    let tasks = plan.get("tasks")?.as_array()?;
+    if tasks.is_empty() {
+        return None;
+    }
+    let goal = plan
+        .get("goal")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(&input.text)
+        .to_string();
+    Some(ResolveAttempt::Resolved {
+        outcome: ResolutionOutcome::Plan(PlanResolution { goal }),
+        trace: trace(
+            ResolutionMethod::DeterministicRule,
+            ResolutionMethod::DeterministicRule,
+        ),
+    })
 }
 
 fn resolve_explicit(

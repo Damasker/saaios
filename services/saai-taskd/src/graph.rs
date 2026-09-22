@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Starting evidence values (spec §61), not product constants.
 pub const PROPOSAL_SCHEMA_V1: u32 = 1;
@@ -114,6 +115,53 @@ pub fn validate_plan(proposal: &PlanProposal) -> Result<ValidatedPlan, PlanError
         goal: proposal.goal.clone(),
         order,
     })
+}
+
+/// Proposal steps in topological order, ready to persist as Tasks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundPlanTask {
+    pub proposal_id: String,
+    pub title: String,
+    pub action_id: Option<String>,
+    pub target: Option<Value>,
+    pub parameters: Value,
+    pub depends_on_proposal_ids: Vec<String>,
+}
+
+pub fn bind_plan(proposal: &PlanProposal) -> Result<Vec<BoundPlanTask>, PlanError> {
+    let validated = validate_plan(proposal)?;
+    let by_id: HashMap<&str, &ProposedTask> = proposal
+        .tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task))
+        .collect();
+    Ok(validated
+        .order
+        .iter()
+        .map(|id| {
+            let task = by_id[id.as_str()];
+            BoundPlanTask {
+                proposal_id: task.id.clone(),
+                title: if task.title.is_empty() {
+                    task.id.clone()
+                } else {
+                    task.title.clone()
+                },
+                action_id: task.action_id.clone(),
+                target: task.target.clone(),
+                parameters: task.parameters.clone(),
+                depends_on_proposal_ids: task.depends_on.clone(),
+            }
+        })
+        .collect())
+}
+
+pub fn remap_depends_on(bound: &BoundPlanTask, ids: &HashMap<String, Uuid>) -> Vec<Uuid> {
+    bound
+        .depends_on_proposal_ids
+        .iter()
+        .filter_map(|proposal_id| ids.get(proposal_id).copied())
+        .collect()
 }
 
 fn topological_order(tasks: &[ProposedTask]) -> Result<Vec<String>, PlanError> {
@@ -318,6 +366,18 @@ mod tests {
         });
         let proposal: PlanProposal = serde_json::from_value(raw).expect("parse");
         validate_plan(&proposal).expect("valid");
+    }
+
+    #[test]
+    fn bind_plan_remaps_proposal_ids_in_topo_order() {
+        let bound = bind_plan(&proposal(vec![task("t1", &[]), task("t2", &["t1"])])).unwrap();
+        assert_eq!(bound[0].proposal_id, "t1");
+        assert_eq!(bound[1].proposal_id, "t2");
+        assert_eq!(bound[1].depends_on_proposal_ids, vec!["t1".to_string()]);
+        let mut ids = HashMap::new();
+        ids.insert("t1".into(), Uuid::from_u128(1));
+        ids.insert("t2".into(), Uuid::from_u128(2));
+        assert_eq!(remap_depends_on(&bound[1], &ids), vec![Uuid::from_u128(1)]);
     }
 
     #[test]

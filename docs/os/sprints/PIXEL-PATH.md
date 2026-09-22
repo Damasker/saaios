@@ -22,7 +22,7 @@ vertical slices в существующие процессы и VUI-04…09.
 | Слой | ADR | Host сейчас | На телефоне |
 |---|---|---|---|
 | SOM / OAM / IRAB | 118–120 | crates + entityd | не прошито как продукт |
-| Work Scheduler v2 | 121 | DAG + derived ready set в `saai-taskd` | ADR-233 live; ADR-234 boot; ADR-235 follows selection; ADR-236 timeout; ADR-237 dispatch |
+| Work Scheduler v2 | 121 | DAG + derived ready set в `saai-taskd` | ADR-233–237 live; ADR-238 Plan DAG |
 | World Model | 122 | `saai-observation` types | нет `saai-deviced`, не нужно для P0 |
 | Attention | 123 | `saai-attention` projection | Orb + NOW + Inbox **на panther** |
 | UAM | 124 | `saai-authority` + live `decide_named` | `TaskConfirm` живой; AUTH-04 host |
@@ -79,7 +79,8 @@ AUTH-04 runtime прошит 2026-09-18 (`af90a6b3…`): confirm без pending 
 Work intent больше не остаётся без Task. `SelectionChanged` retargets
 the watch (ADR-235, `2d3224af…`). Diagnose timeout is Failed +
 retryable, not Pending (ADR-236, `d91e22a6…`). WORK-02 live dispatch
-concurrency=1 (ADR-237, `e0365939…`).
+concurrency=1 (ADR-237, `e0365939…`). IRAB Plan persists a DAG, not
+diagnose (ADR-238).
 
 ## P2 — едет на VUI, не отдельным треком
 

@@ -44,8 +44,9 @@ S11+ maybe; this file is the track index; Visual track is not renamed.
 
 **Goal:** a PlanProposal is either a valid DAG or wholly rejected.
 
-**Current state:** `saai-taskd` creates one Task per Intent; no
-`depends_on`; IRAB `Plan` still falls through to legacy diagnose.
+**Current state:** `saai-taskd` persists a validated PlanProposal as
+Tasks with `depends_on_task_ids` (ADR-238). IRAB `Plan` no longer
+falls through to legacy diagnose.
 
 **Change:** `graph.rs` — unique ids, missing deps, cycle, task-count and
 depth limits; optional `depends_on_task_ids` properties. No dispatch change.
