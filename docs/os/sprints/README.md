@@ -1,5 +1,9 @@
 # Дорожная карта спринтов SaaiOS
 
+**Lock-screen follow-up:** [LW-01…03](LOCK-WIDGETS.md), policy-controlled
+system widgets (ADR-425). Separate host-only track; no device flash while
+APP-04 experiments are active. Documentation precedes implementation.
+
 Roadmap описывает порядок доказуемых вертикальных результатов. Он не является
 обещанием дат: каждый спринт закрывается по критериям, а не по количеству
 написанного кода. Процесс и Definition of Done находятся в
