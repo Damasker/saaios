@@ -5109,6 +5109,7 @@ fn main() {
         last_statusbar_snapshot: None,
         last_statusbar_refresh: Instant::now(),
         last_lock_idle_time: None,
+        last_lock_idle_attention: None,
         low_battery_notified: false,
         fonts,
         appd: appd_client::AppdClient::new(appd_socket),
@@ -5319,6 +5320,7 @@ struct Shell {
     /// so a status tick can skip the lock commit until the minute
     /// changes. `None` until the first idle lock paint.
     last_lock_idle_time: Option<String>,
+    last_lock_idle_attention: Option<bool>,
     /// S21: guards `check_low_battery` against creating a fresh
     /// notification every second while the battery stays low.
     low_battery_notified: bool,
@@ -7555,9 +7557,9 @@ impl Shell {
             TrustedClientTap::Revoke(index) => {
                 let clients = trusted_clients();
                 let recent = recently_authenticated_key_fingerprints();
-                let protected = clients
-                    .get(index)
-                    .is_some_and(|client| trusted_client_is_protected(&client.fingerprint, &recent));
+                let protected = clients.get(index).is_some_and(|client| {
+                    trusted_client_is_protected(&client.fingerprint, &recent)
+                });
                 if !protected {
                     let (pending, confirmed) =
                         trusted_client_revoke_decision(self.pending_revoke_trusted_client, index);
@@ -8758,14 +8760,18 @@ impl Shell {
 
     /// VUI-07 (ADR-134): the lock surface is the visible clock while
     /// locked (displayd ignores status commits). Repaint only when the
-    /// minute string changes, never over the deep-idle blank, and never
+    /// minute or attention changes, never over the deep-idle blank, and never
     /// on the PIN keypad.
     fn refresh_lock_idle_if_due(&mut self, qh: &QueueHandle<Self>) {
         if !self.locked || self.sleeping || self.settings.pin_code.is_some() {
             return;
         }
         let time = current_time_string(self.settings.utc_offset_minutes);
-        if self.last_lock_idle_time.as_deref() == Some(time.as_str()) {
+        let attention = self.entityd.is_connected()
+            && has_orb_attention(&project_from_entities(&self.selected_entities));
+        if self.last_lock_idle_time.as_deref() == Some(time.as_str())
+            && self.last_lock_idle_attention == Some(attention)
+        {
             return;
         }
         self.present_lock_pin_entry(qh);
@@ -8944,6 +8950,13 @@ impl Shell {
         let has_pin = pin_code.is_some();
         let idle_time = idle.time;
         let idle_hint = idle.hint;
+        // Presence only, no titles, counts, or context names. A lost
+        // connection must not keep displaying stale attention as current.
+        let has_lock_attention = self.entityd.is_connected()
+            && has_orb_attention(&project_from_entities(&self.selected_entities));
+        if !has_pin {
+            self.last_lock_idle_attention = Some(has_lock_attention);
+        }
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
 
@@ -8979,7 +8992,13 @@ impl Shell {
                         );
                     } else {
                         render::draw_lock_idle(
-                            &mut frame, width, height, &idle_time, idle_hint, fonts,
+                            &mut frame,
+                            width,
+                            height,
+                            &idle_time,
+                            idle_hint,
+                            has_lock_attention,
+                            fonts,
                         );
                     }
                     render::apply_contrast_boost(canvas, contrast_pct);
@@ -9040,9 +9059,25 @@ impl Shell {
 
         let mut frame = render::Canvas::new(canvas, width, height);
         if has_pin {
-            render::draw_lock_pin_entry(&mut frame, width, height, entered_len, pin_len, &keys, fonts);
+            render::draw_lock_pin_entry(
+                &mut frame,
+                width,
+                height,
+                entered_len,
+                pin_len,
+                &keys,
+                fonts,
+            );
         } else {
-            render::draw_lock_idle(&mut frame, width, height, &idle_time, idle_hint, fonts);
+            render::draw_lock_idle(
+                &mut frame,
+                width,
+                height,
+                &idle_time,
+                idle_hint,
+                has_lock_attention,
+                fonts,
+            );
         }
         render::apply_contrast_boost(canvas, contrast_pct);
 
@@ -9083,31 +9118,31 @@ mod tests {
     use super::{
         apps_grid_empty_message, apps_grid_header, bluetooth_card_from_row, bluetooth_header,
         bluetooth_list_action_at, bluetooth_list_rows, calibration_requested, capability_label,
-        consent_action_at, consent_content_cards, consent_header,
-        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_row, diagnostic_status_line,
-        effective_context_space, ensure_me_row_cache, flatten_me_rows, format_utc_offset,
-        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
-        intent_input_field, known_surfaces, lock_idle_view, me_fixture_facts, me_header,
-        me_system_sections, next_in_cycle, next_pending_action, now_action_at, now_object_tapped,
-        object_view_action_at, object_view_content, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_visual_state, orb_zone_rect,
-        pin_setup_field, pin_setup_header, pressed_tab_from_touch, remote_pair_content_cards,
-        remote_pair_header, remove_context_source, space_color, space_color_entity,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_list_rows, space_relation_targets, space_row_at, spaces_header, stacked_row_rect,
-        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
-        trusted_client_card_from_row, trusted_client_is_protected,
-        trusted_client_list_rows, trusted_client_revoke_decision, trusted_header,
-        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at, wifi_list_rows,
-        wifi_password_field, AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap,
-        ContextFrameEntry, ContextSource, DataRowVariant, Entity, FieldKind, KeyboardMode,
-        ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
-        SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
-        WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
-        INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
-        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
-        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
-        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        consent_action_at, consent_content_cards, consent_header, dev_surface_back_tapped,
+        diagnostic_card_from_row, diagnostic_row, diagnostic_status_line, effective_context_space,
+        ensure_me_row_cache, flatten_me_rows, format_utc_offset, in_progress_work, inbox_header,
+        input_idle_for_at_least, intent_action_at, intent_input_field, known_surfaces,
+        lock_idle_view, me_fixture_facts, me_header, me_system_sections, next_in_cycle,
+        next_pending_action, now_action_at, now_object_tapped, object_view_action_at,
+        object_view_content, object_view_summary, orb_action_at, orb_attention_from_entities,
+        orb_menu_actions, orb_visual_state, orb_zone_rect, pin_setup_field, pin_setup_header,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, space_color, space_color_entity, space_display_name,
+        space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_list_rows,
+        space_relation_targets, space_row_at, spaces_header, stacked_row_rect, tab_at,
+        task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_is_protected, trusted_client_list_rows,
+        trusted_client_revoke_decision, trusted_header, upsert_context_entry, wifi_card_from_row,
+        wifi_header, wifi_list_action_at, wifi_list_rows, wifi_password_field, AgentSummary,
+        AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource,
+        DataRowVariant, Entity, FieldKind, KeyboardMode, ObjectSummary, OrbAction, Rect, RootPage,
+        SafeInsets, Space, SpaceColor, SpaceLifecycle, SystemSectionRow, TrustedClient,
+        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
+        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
+        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
+        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
+        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
+        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
@@ -10771,7 +10806,10 @@ mod tests {
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].row.primary, "Нет клиентов");
         assert!(!empty[0].row.is_actionable());
-        assert_eq!(trusted_client_card_from_row(&empty[0], false, false).action, "");
+        assert_eq!(
+            trusted_client_card_from_row(&empty[0], false, false).action,
+            ""
+        );
     }
 
     #[test]
@@ -11592,9 +11630,14 @@ mod tests {
         let note = notification_entity("Notice", "body");
         let stale = super::inbox_event_rows(std::slice::from_ref(&waiting), false);
         assert_eq!(stale[0].row.primary, "Нет связи");
-        assert!(
-            super::inbox_row_at((540.0, 500.0), 1080, 2400, std::slice::from_ref(&waiting), false).is_none()
-        );
+        assert!(super::inbox_row_at(
+            (540.0, 500.0),
+            1080,
+            2400,
+            std::slice::from_ref(&waiting),
+            false
+        )
+        .is_none());
 
         let live = super::inbox_event_rows(&[waiting.clone(), note], true);
         assert_eq!(live.len(), 2);

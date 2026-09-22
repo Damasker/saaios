@@ -1207,22 +1207,39 @@ pub fn draw_lock_pin_entry(
 /// VUI-07 (ADR-134): no-PIN lock. Canvas instead of the S04 diagnostic
 /// red fill. Time and hint are passed in; this does not invent
 /// attention or Inbox content. PIN unlock stays `draw_lock_pin_entry`.
+/// ADR-152: `has_attention` is Visual Language 9.6's own "essential
+/// attention" -- the same body-free `has_orb_attention()` boolean the
+/// orb already shows post-unlock, presence only, never a title, count,
+/// or which Space it came from. Absence of a mark is not a claim that all
+/// spaces are clear: this signal covers the selected-space projection only.
 pub fn draw_lock_idle(
     canvas: &mut Canvas<'_>,
     width: u32,
     height: u32,
     time: &str,
     hint: &str,
+    has_attention: bool,
     fonts: Option<&Fonts>,
 ) {
     canvas.fill(theme_color(ColorRole::Canvas));
+    if has_attention {
+        // Drawn before the fonts check below so it still shows even
+        // with no font loaded, same as this screen's own Canvas fill.
+        let mark = lock_attention_rect(width, height, text_scale());
+        draw_calibration_mark(
+            canvas,
+            mark,
+            StatusMark::Alert,
+            theme_color(ColorRole::Attention),
+        );
+    }
     let Some(fonts) = fonts else {
         return;
     };
     let time_size = physical(TextRole::Display.style().size) as f32;
     let hint_size = physical(TextRole::Body.style().size) as f32;
     let time_y = ((height as u64 * 480) / 2400) as u32;
-    let hint_y = time_y + physical_line_height(TextRole::Display) + physical(LogicalUnit::new(16));
+    let hint_y = time_y + scaled_line_height(TextRole::Display) + physical(LogicalUnit::new(16));
     draw_text_centered(
         canvas,
         &fonts.semibold,
@@ -1241,6 +1258,22 @@ pub fn draw_lock_idle(
         hint_y,
         theme_color(ColorRole::TextSecondary),
     );
+}
+
+fn lock_attention_rect(width: u32, height: u32, scale: f32) -> Rect {
+    let gap = physical(LogicalUnit::new(16));
+    let time_y = ((height as u64 * 480) / 2400) as u32;
+    let lines = physical_line_height(TextRole::Display) + physical_line_height(TextRole::Body);
+    let top = time_y
+        .saturating_add((lines as f32 * scale).ceil() as u32)
+        .saturating_add(gap * 2);
+    let size = physical(LogicalUnit::new(20)).min(width).min(height);
+    Rect::new(
+        width.saturating_sub(size) / 2,
+        top.min(height.saturating_sub(size)),
+        size,
+        size,
+    )
 }
 
 /// VUI-01's deterministic, device-runnable calibration fixture. It is selected
@@ -3018,8 +3051,7 @@ mod tests {
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_apps_grid, draw_calibration, draw_composite_gallery, draw_consent,
         draw_context_row_list, draw_gallery, draw_lock_idle, draw_lock_pin_entry, draw_orb,
-        draw_pin_setup,
-        draw_remote_pair, draw_status_bar, draw_tab_bar, gallery_row_positions,
+        draw_pin_setup, draw_remote_pair, draw_status_bar, draw_tab_bar, gallery_row_positions,
         physical, physical_line_height, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
@@ -3690,10 +3722,55 @@ mod tests {
             height,
             "22:46",
             "Коснитесь, чтобы разблокировать",
+            false,
             None,
         );
         assert_eq!(canvas.pixel(540, 1200), theme_color(ColorRole::Canvas));
         assert_ne!(canvas.pixel(540, 1200), [0x00, 0xd0, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn lock_idle_attention_dot_only_draws_when_true() {
+        let width = 1080;
+        let height = 2400;
+        let mark = super::lock_attention_rect(width, height, 1.0);
+        let dot_pixel = (mark.x + mark.width / 2, mark.y);
+
+        let mut with_attention = vec![0u8; width as usize * height as usize * 4];
+        draw_lock_idle(
+            &mut Canvas::new(&mut with_attention, width, height),
+            width,
+            height,
+            "22:46",
+            "Коснитесь, чтобы разблокировать",
+            true,
+            None,
+        );
+        let canvas = Canvas::new(&mut with_attention, width, height);
+        assert_eq!(
+            canvas.pixel(dot_pixel.0, dot_pixel.1),
+            theme_color(ColorRole::Attention)
+        );
+
+        let mut without_attention = vec![0u8; width as usize * height as usize * 4];
+        draw_lock_idle(
+            &mut Canvas::new(&mut without_attention, width, height),
+            width,
+            height,
+            "22:46",
+            "Коснитесь, чтобы разблокировать",
+            false,
+            None,
+        );
+        let canvas = Canvas::new(&mut without_attention, width, height);
+        assert_ne!(
+            canvas.pixel(dot_pixel.0, dot_pixel.1),
+            theme_color(ColorRole::Attention)
+        );
+        assert_eq!(
+            canvas.pixel(dot_pixel.0, dot_pixel.1),
+            theme_color(ColorRole::Canvas)
+        );
     }
 
     #[test]

@@ -1082,9 +1082,19 @@ big-bang rewrite.
   (`bluetooth_pair_result`) but has zero callers in the live draw path
   (same shape as ADR-114's own second finding). Both recorded in
   ADR-150's Consequences, not silently dropped.
-- [ ] Restyle remaining lock and wake-on-touch states (PIN keypad
-  chrome, essential attention without exposing bodies) without
-  triggering privileged actions.
+- [x] Restyle remaining lock and wake-on-touch states -- essential
+  attention (ADR-152). `draw_lock_idle` (no-PIN lock) now draws a
+  single body-free dot in `ColorRole::Attention` when
+  `has_orb_attention()` (the same signal the orb already uses
+  post-unlock) is true, nothing when false -- presence only, never a
+  title, count, or Space name. PIN keypad chrome itself was already
+  restyled (ADR-148); wake-on-touch already never performs a
+  privileged action (tap-to-unlock only unlocks). A general
+  lock-screen *widget* system with per-widget content-visibility
+  policy was raised alongside this task -- real, larger, future work,
+  recorded in `docs/os/ideas.md`, not attempted here. Host: 1 new
+  test, full workspace test/clippy clean. Not yet physically
+  confirmed.
 - [ ] Verify keyboard avoidance, scroll overflow, back behavior, focus order,
   and interrupted workflows on every frame variant.
 - [ ] Expand the component gallery and cross-surface golden tests.
