@@ -25,8 +25,10 @@
 //! executor underneath it.
 //!
 //! `native-init.c` starts it from `/data/saaios/system/saai-taskd`
-//! after entityd and `saaios-runtime` (ADR-233). Missing binary is
-//! skipped, not a boot failure.
+//! after entityd and `saaios-runtime` (ADR-233/234). Missing binary is
+//! skipped, not a boot failure. `--space` is the boot selection;
+//! `SelectionChanged` retargets the watch (ADR-235) so Home/personal
+//! intents are not stalled on a Work-only daemon.
 
 pub mod client;
 pub mod graph;
@@ -99,6 +101,33 @@ impl Daemon {
         })
     }
 
+    pub fn watch_space(&self) -> &str {
+        &self.space_id
+    }
+
+    /// ADR-235: entityd already broadcasts `SelectionChanged`. Follow it
+    /// instead of staying on the `--space` passed at exec. Same-space
+    /// events are a no-op. Switching reloads this space's tasks and
+    /// reconciles intents/confirmed work that arrived while we watched
+    /// somewhere else. In-flight work in the previous space stays there.
+    pub async fn follow_selected_space(&mut self, space_id: String) -> Result<bool, ClientError> {
+        if space_id == self.space_id {
+            return Ok(false);
+        }
+        eprintln!("saai-taskd: follow space {} -> {}", self.space_id, space_id);
+        self.space_id = space_id;
+        self.known_tasks = self
+            .conn
+            .list_entities(&self.space_id)
+            .await?
+            .into_iter()
+            .filter(|entity| entity.entity_type == TASK_TYPE)
+            .collect();
+        self.reconcile_existing_intents().await?;
+        self.reconcile_confirmed_tasks().await?;
+        Ok(true)
+    }
+
     /// Catches up on any `saaios.intent` created while this daemon
     /// wasn't running (or before it ever ran once) -- the same
     /// `intent_id`-on-`saaios.task` idempotency guard `run()` uses, so
@@ -166,33 +195,38 @@ impl Daemon {
         loop {
             tokio::select! {
                 event = self.conn.next_event() => {
-                    let EntitydEvent::EntityChanged { record } = event? else {
-                        continue;
-                    };
-                    if record.space_id != self.space_id {
-                        continue;
-                    }
-                    let entity = match record.payload {
-                        EventPayload::EntityCreated { entity } | EventPayload::EntityUpdated { entity } => {
-                            entity
+                    match event? {
+                        EntitydEvent::SelectionChanged { selection } => {
+                            self.follow_selected_space(selection.space_id).await?;
                         }
-                        EventPayload::SpaceCreated { .. } | EventPayload::EntityDeleted { .. } => continue,
-                    };
-                    if entity.entity_type == INTENT_TYPE {
-                        if !has_task_for_intent(&self.known_tasks, entity.id) {
-                            self.process_intent(&entity).await?;
-                        }
-                    } else if entity.entity_type == TASK_TYPE {
-                        self.remember_task(entity.clone());
-                        match status_of(&entity) {
-                            Some(WorkflowStatus::Running) => {
-                                self.try_resume_confirmed_task(&entity).await?;
+                        EntitydEvent::EntityChanged { record } => {
+                            if record.space_id != self.space_id {
+                                continue;
                             }
-                            Some(WorkflowStatus::Cancelled) => {
-                                self.try_cancel_pending_action(&entity).await?;
+                            let entity = match record.payload {
+                                EventPayload::EntityCreated { entity }
+                                | EventPayload::EntityUpdated { entity } => entity,
+                                EventPayload::SpaceCreated { .. }
+                                | EventPayload::EntityDeleted { .. } => continue,
+                            };
+                            if entity.entity_type == INTENT_TYPE {
+                                if !has_task_for_intent(&self.known_tasks, entity.id) {
+                                    self.process_intent(&entity).await?;
+                                }
+                            } else if entity.entity_type == TASK_TYPE {
+                                self.remember_task(entity.clone());
+                                match status_of(&entity) {
+                                    Some(WorkflowStatus::Running) => {
+                                        self.try_resume_confirmed_task(&entity).await?;
+                                    }
+                                    Some(WorkflowStatus::Cancelled) => {
+                                        self.try_cancel_pending_action(&entity).await?;
+                                    }
+                                    _ => {}
+                                }
                             }
-                            _ => {}
                         }
+                        EntitydEvent::RelationshipChanged { .. } => continue,
                     }
                 }
                 _ = schedule_tick.tick() => {
@@ -491,7 +525,9 @@ impl Daemon {
         action: &intent_resolution::ActionResolution,
     ) -> Result<(), ClientError> {
         if Self::action_requires_confirmation(&action.action_id) {
-            return self.process_action_requiring_confirmation(intent, action).await;
+            return self
+                .process_action_requiring_confirmation(intent, action)
+                .await;
         }
         let task = self
             .conn
@@ -1192,6 +1228,78 @@ mod confirmation_gate_tests {
         // must be treated the same as one that explicitly requires
         // confirmation, not the same as one explicitly cleared for
         // auto-completion.
-        assert!(Daemon::action_requires_confirmation("storage.delete_everything"));
+        assert!(Daemon::action_requires_confirmation(
+            "storage.delete_everything"
+        ));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod follow_space_tests {
+    use super::Daemon;
+    use saai_entity_protocol::{ClientRequest, ResponseResult, ServerMessage};
+    use std::io::{BufRead, BufReader as StdBufReader, Write};
+    use std::os::unix::net::{UnixListener, UnixStream as StdUnixStream};
+    use std::thread;
+
+    fn respond(stream: &StdUnixStream, message: &ServerMessage) {
+        let mut encoded = serde_json::to_vec(message).unwrap();
+        encoded.push(b'\n');
+        (&*stream).write_all(&encoded).unwrap();
+    }
+
+    fn read_request(reader: &mut impl BufRead) -> Option<ClientRequest> {
+        let mut line = String::new();
+        if reader.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        serde_json::from_str(&line).ok()
+    }
+
+    fn serve_empty_lists(stream: StdUnixStream) {
+        let mut reader = StdBufReader::new(stream.try_clone().unwrap());
+        while let Some(request) = read_request(&mut reader) {
+            match request {
+                ClientRequest::Subscribe { request_id, .. } => respond(
+                    &stream,
+                    &ServerMessage::success(request_id, ResponseResult::Subscribed),
+                ),
+                ClientRequest::ListEntities {
+                    request_id,
+                    space_id,
+                    ..
+                } => respond(
+                    &stream,
+                    &ServerMessage::success(
+                        request_id,
+                        ResponseResult::Entities {
+                            space_id,
+                            entities: vec![],
+                        },
+                    ),
+                ),
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn follow_selected_space_retargets_the_watch() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("entityd.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve_empty_lists(stream);
+        });
+        let mut daemon = Daemon::connect(&socket, "work".into(), "127.0.0.1:1".into())
+            .await
+            .unwrap();
+        assert_eq!(daemon.watch_space(), "work");
+        assert!(!daemon.follow_selected_space("work".into()).await.unwrap());
+        assert!(daemon.follow_selected_space("home".into()).await.unwrap());
+        assert_eq!(daemon.watch_space(), "home");
+        drop(daemon);
+        handle.join().unwrap();
     }
 }
