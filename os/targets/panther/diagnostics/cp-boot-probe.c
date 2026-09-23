@@ -112,6 +112,13 @@ int main(int argc, char **argv) {
         if (ipc_fd < 0 || rfs_fd < 0) die("runtime endpoints unavailable; no FIN");
         result = sit_req_resp(SIT_FIN, SIT_FIN_ACK, SIT_ACK_DEADLINE_MS);
         if (result == 0) result = do_ioctl("COMPLETE", IOCTL_COMPLETE_NORMAL_BOOTUP, NULL);
+#ifdef PROBE_QUERY_SIM
+        if (result == 0) {
+            log_line("SIM query with IPC/RFS held open; no RFS filesystem service");
+            int query = system("/tmp/sit-sim-status query-sim-status");
+            log_line("SIM query process status=%d (separate from boot result)", query);
+        }
+#endif
         for (int i = 0; i < 10; i++) { print_modem_state("post-complete"); sleep(1); }
         close(ipc_fd); close(rfs_fd);
     }

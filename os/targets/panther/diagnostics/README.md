@@ -36,3 +36,18 @@ Opening ipc0/rfs0 allows kernel INIT_END; this probe does not implement an
 RFS server or telephony service. It observes for ten seconds and exits.
 ONLINE is kernel/CP boot acceptance, not SIM registration, calls or data.
 No runtime NV writes are serviced. This is not suitable for unattended use.
+
+## One-shot SIM query
+
+Build `sit-sim-status.c` with the same static ARM64 compiler. Run `self-test`
+on the host build first. `query-sim-status` sends only GET_SIM_STATUS, with
+bounded receive time, no retransmission and no identifier/payload logging.
+It consumes unrelated queued events; use only on the isolated diagnostic
+stack, never alongside a production reader. It does not service RFS.
+
+Optional PROBE_QUERY_SIM on the full boot wrapper invokes
+`/tmp/sit-sim-status query-sim-status` immediately after COMPLETE, while
+IPC/RFS remain open. The SIM result is separate from the boot exit status.
+This packaging was subsequently live-tested: boot ONLINE succeeds again,
+but the query remains unconsumed in FMT TX. See MODEM-RUNTIME-2026-09-24.md;
+neither a working SIM query nor cellular service is claimed.
