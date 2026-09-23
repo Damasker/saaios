@@ -186,3 +186,30 @@ original signature through a read-only verified source, and test a strict
 builder with synthetic fixtures. Only then send the authentic block to RAM
 at the factory-proven point in one bounded fresh-boot test. No claim that
 handover alone fixes SIM access is justified yet.
+
+## Signature source located on the original phone
+
+The host vendor extraction's `etc/fstab.persist` maps the `persist` partition
+to `/mnt/vendor/persist` (ext4/f2fs alternatives). This explains why checking
+the unmounted Android pathname in native SaaiOS found nothing.
+
+Read-only device audit:
+
+- Sysfs identifies sda1 as PARTNAME=persist, device 8:1. Mountinfo showed
+  it was not mounted before the audit.
+- An initial availability check stopped because blkid is not installed;
+  its temporary device node/directory were cleaned without mounting.
+- A second check read only the ext-family superblock magic (53 ef at byte
+  1080), then explicitly mounted as ext4 with ro,noload,nosuid,nodev,noexec.
+  Kernel mount options confirmed `ro,nosuid,nodev,noexec,relatime,norecovery`.
+- `modem/cpsha` exists as a readable regular file, 64 bytes, matching the
+  factory builder's read length. The path and its parent were not symlinks.
+- No signature contents or hashes were printed, copied, committed or sent
+  to CP. File existence/length is NOT cryptographic validation.
+- The temporary mount was unmounted and temporary node/directories removed.
+  Follow-up mount listing confirmed persist was no longer mounted.
+
+The missing signature *source* is therefore resolved. Do not fabricate a
+replacement, alter persist, or use the vendor fstab's writable/check/format
+options. The remaining gates are exact handover ABI/field mapping and a
+tested RAM-only builder. No modem boot experiment was run in this search.
