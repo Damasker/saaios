@@ -20,6 +20,15 @@ static int exchange(void *ctx, const uint8_t *p, size_t n, uint32_t ack) {
 }
 
 int main(void) {
+    assert(saaios_sit_firmware_crc_required("MAIN", 2) == 1);
+    assert(saaios_sit_firmware_crc_required("VSS", 3) == 0);
+    assert(saaios_sit_firmware_crc_required("APM", 4) == 0);
+    assert(saaios_sit_firmware_crc_required("MAIN", 3) == -1);
+    assert(saaios_sit_firmware_crc_required("VSS", 2) == -1);
+    assert(saaios_sit_firmware_crc_required("APM", 3) == -1);
+    assert(saaios_sit_firmware_crc_required("NV_NORM", 5) == -1);
+    assert(saaios_sit_firmware_crc_required("NV_PROT", 6) == -1);
+    assert(saaios_sit_firmware_crc_required(NULL, 2) == -1);
     uint8_t image[0x410] = {'T', 'O', 'C', 0};
     saaios_sit_put_le32(image + 20, sizeof(image));
     saaios_sit_put_le32(image + 28, 7);

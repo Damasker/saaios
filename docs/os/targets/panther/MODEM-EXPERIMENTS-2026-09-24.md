@@ -136,3 +136,38 @@ The dirty original cp-boot.c remains untouched. Production integration must:
 
 No need to spend the remaining experiment allowance on blind cache, firmware,
 or chunk-size changes now that this specific failure has a verified fix.
+
+## Firmware-only extension: MAIN + VSS + APM accepted
+
+One fresh-boot B-slot probe added VSS and APM after successful MAIN, stopping
+before NV, FIN and COMPLETE. Before POWER_ON, both extra entries were checked
+for expected indices (3, 4), nonempty in-file extents and nonzero offsets.
+
+Additional descriptor finding: CBD `1a148..1a160` compares the TOC name with
+`MAIN` (string at 0x48db) and writes the CRC-enabled flag only on equality.
+`f828..f82c` gates the CRC exchange on that flag. Thus VSS and APM use
+START/BIN/DONE without CRC despite nonzero CRC fields in the image TOC.
+The private native loader's unconditional CRC for every stage is incorrect
+for this factory sequence. The diagnostic now gates CRC on MAIN.
+
+Observed acknowledgements:
+
+| Stage | Result |
+|---|---|
+| MAIN (2) | All BINs, CRC 0xc320 and DONE 0xc12d accepted again |
+| VSS (3) | All BINs and DONE 0xc13d accepted, no CRC sent |
+| APM (4), size 0xb498 | All BINs and DONE 0xc14d accepted, no CRC sent |
+
+`FIRMWARE ONLY END`, result 0, CP BOOTING. This is the intentional NV boundary,
+NOT a modem crash or proof of ONLINE service. No original or copied NV was
+read by this probe. Log: `/data/saaios/var/probe-b-fwonly-20260924.log`.
+
+Reusable helper `saaios_sit_firmware_crc_required` captures this policy with
+an allowlist for reviewed stage names/indices and returns -1 for anything
+else, including NV. Host tests cover allowed stages, wrong indices and NV
+rejection. The live diagnostic used the equivalent MAIN-name comparison;
+the new policy helper does not by itself integrate the production loader.
+
+Next gate: review NV-copy provenance, exact NV descriptor handling, final FIN
+and kernel completion/ONLINE handshake before any expansion beyond this probe.
+Never use missing/zero-filled NV or original EFS as a shortcut to boot.

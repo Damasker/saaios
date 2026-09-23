@@ -14,6 +14,18 @@
 typedef int (*saaios_sit_exchange)(void *context, const uint8_t *packet,
                                   size_t length, uint32_t expected_ack);
 
+/* Reviewed Panther firmware-only stages. -1 means outside this probe scope.
+ * Do not infer NV handling from the CRC value in a TOC entry: CBD enables
+ * CRC by descriptor policy, and only MAIN has that flag in this set.
+ */
+static inline int saaios_sit_firmware_crc_required(const char *name, uint32_t idx) {
+    if (!name) return -1;
+    if (strcmp(name, "MAIN") == 0 && idx == 2) return 1;
+    if (strcmp(name, "VSS") == 0 && idx == 3) return 0;
+    if (strcmp(name, "APM") == 0 && idx == 4) return 0;
+    return -1;
+}
+
 static inline uint32_t saaios_sit_get_le32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
