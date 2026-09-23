@@ -132,3 +132,69 @@ Concrete reference-version discrepancy found; several unsupported hypotheses
 narrowed. Root cause remains unproven. No new device load or claim of ONLINE.
 Next gate: source/artifact matching and existing diagnostics, not another
 chunk-size sweep. No installable modem fix is produced by this research.
+
+## Follow-up: live read-only evidence (2026-09-24 session)
+
+Access recovered through the existing dedicated reconnect SSH identity on
+R620. No key replacement or phone authorization change. Active slot is `_a`.
+Kernel: `6.1.157-android14-11-gbd23337e42e7-ab14791245`.
+Installed cpif.ko SHA-256:
+`8cdd21d771189af08035dc6b8fc2b90708a83a520ccb0a45570836a0bce1e79c`.
+The cpif modem_state sysfs node is absent on this boot; no modules were loaded.
+
+Both radio partitions were checked against sysfs PARTNAME and mounted only
+as ext4 `ro,noload`, then unmounted. Temporary device nodes removed:
+
+| Partition | modem.bin version | SHA-256 |
+|---|---|---|
+| modem_a / sda19 | g5300q-251202-260127-B-14784800 | 57465ab9b78d06027e3cb39df36fec99bd158f0f2b6a05fd1bdfcb0c40d694ef |
+| modem_b / sda29 | g5300q-260317-260505-B-15346003 | 449eeab3bf70fc4ed0793dce3a1f245447bf54a23b4e666df9881317bfc2344b |
+
+The different versions are now directly confirmed, not inferred from old
+logs. Different A/B versions can be normal after updates; incompatibility
+is still unproven. No slot switch or firmware copy to the phone was performed.
+
+Existing `cp-boot-ipc-20260924.txt` is 2162 bytes. It contains sysfs snapshots,
+NOT physical IPC/MSI memory: both reads failed (`ipc=-1 msi=-1`, /dev/mem open
+reported ENXIO). After 16633 successful BIN replies, before sending the next
+frame, TX head=tail=706560 and RX head=tail=266144. GET_CP_STATUS=3. The
+helper then deliberately stopped. This run itself did NOT attempt the failing
+next frame; it does not independently reproduce or prove the older stall.
+cp2ap_msg changed from 0 to 0x83; no interpretation as a new command is claimed.
+
+### New vendor cbd reference recovered without executing it
+
+Read super metadata from the sysfs-identified super partition sda30. Checked
+geometry/header/table SHA-256 checksums and decoded linear vendor_a extents
+according to AOSP liblp metadata_format.h. Copied only those extents to R620:
+`/home/mike/saaios-audit-20260924-vendor_a.img` (about 744 MiB).
+No device-mapper setup, super write, phone reboot, or filesystem repair.
+
+Important limitation: partition attributes are 5 (READONLY|UPDATED), and
+vendor_a/vendor_b share extents. The base vendor_a image is not a proven
+snapshot-aware reconstruction of Android's effective vendor_a. Ordinary
+debugfs reports an allocation-bitmap read failure; read-only `debugfs -c`
+can recover the CBD inode and its 39 contiguous blocks. Do not boot or flash
+this reconstructed image and do not claim filesystem consistency.
+
+Recovered build.prop says `google/panther/panther:17/CP2A.260705.006/15641320:user/release-keys`.
+Recovered cbd: 157744 bytes, Android 37 ELF, build ID
+`dd163105a986f1c6d81ad5a21bbeb625`, SHA-256
+`9b2fc0a9f3c28f3b611c6983e7ba181393dd6f2ae54310e2599cb955988ebc2b`.
+Host files: `/home/mike/saaios-audit-20260924-cbd` and corresponding `.dis`.
+Not committed: vendor binaries, images or device-specific state.
+
+Static disassembly confirms for this newer reference:
+
+- f3b0–f3d4: the same stage-index START/request and expected response encoding;
+- f420–f434: 0xC000 default payload, 0x7D00 fallback;
+- f66c–f674: BIN ACK still 0xC10B OR stage bits;
+- f690–f6d8: min(remaining, block), zero-based offset and total-size fields;
+- 21920–2197c: copy payload, length+8 field, ONE write(payload+12), exact-length check;
+- ee38–ee58: read four bytes and compare reply.
+
+Thus switching from AP3A to this newer cbd reference does NOT reveal a new
+BIN header or chunk-size solution in the inspected routines. Init rc selects
+`modem${ro.boot.slot_suffix}`; this supports checking slots separately, not
+silently substituting modem_b. Whole startup-sequence equivalence and the
+effective snapshot view still need validation. Root cause remains open.
