@@ -92,3 +92,47 @@ one simply to consume another hardware trial. Follow the factory sequence.
 Next bounded extension: full MAIN, then its real CRC/DONE, stopping before
 VSS/APM/NV and final FIN/COMPLETE. Never send a full-image CRC for a partial
 image. This is a new explicit experiment scope, not relaxing identity/EFS safety.
+
+### Full MAIN validation: successful
+
+Fresh AP boot; verified B image; same ACK4 and 0x7e8 ring-fit transport.
+The probe now uses the repository's `sit-boot-preamble.h` through a callback
+that sends one whole packet and validates the expected four-byte ACK.
+The 36-MiB stop was disabled ONLY for this full-MAIN probe; 180-second process
+alarm and stop-before-other-stages remain. All 0x5917acc = 93,420,236 bytes
+were sent in 46157 BIN frames. The CP then returned:
+
+```text
+MAIN CRC request 0xa321 / expected CRC 0xb0f14905 -> ACK 0xc320
+MAIN DONE request 0xa12d -> ACK 0xc12d
+UDL MAIN complete
+PROBE END result=0
+modem_state=BOOTING
+```
+
+This verifies transfer and stage acceptance, not ONLINE, SIM service or calls.
+No VSS, APM, NV, final FIN or COMPLETE was sent. Device log:
+`/data/saaios/var/probe-b-fullmain-20260924.log`; host copy on R620 at
+`/tmp/probe-b-fullmain-20260924.log`. Diagnostic binary SHA-256:
+`00a21cad5898a831e952b6c02e4af32749a7d49e6f2dd26d1770ad6bc803f056`.
+
+## Reusable implementation and integration gate
+
+`os/targets/panther/src/sit-boot-preamble.h` implements only the four
+pre-MAIN exchanges, explicitly little-endian, without device opens or retries.
+`test-sit-boot-preamble.c` checks all packet bytes/order, early termination
+at each exchange, malformed input and null callbacks. Verified with GCC
+`-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined` on R620.
+That exact helper was used in the successful full-MAIN live test.
+
+The dirty original cp-boot.c remains untouched. Production integration must:
+
+1. Keep the ACK reader correction and its tests.
+2. Call the preamble after successful START_CP_BOOTLOADER and before MAIN.
+3. Remove the temporary 0x201b098 diagnostic stop only on the tested path.
+4. Do not repeat the initial BOOT READY as an end-of-download operation.
+5. Validate remaining factory stage descriptors and final FIN independently,
+   before enabling later stages or declaring modem boot complete.
+
+No need to spend the remaining experiment allowance on blind cache, firmware,
+or chunk-size changes now that this specific failure has a verified fix.

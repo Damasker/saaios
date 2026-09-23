@@ -1,7 +1,11 @@
 # Panther modem: evidence review, 2026-09-24
 
-Status: research, NOT a modem fix or device acceptance. No modem boot,
-partition write, reset, EFS access or radio installation in this review.
+Status update: the missing factory preamble is now verified to fix the MAIN
+transfer stall, including full MAIN CRC/DONE acceptance. See
+[bounded experiments](MODEM-EXPERIMENTS-2026-09-24.md). This is NOT complete
+modem boot or cellular acceptance. Earlier sections below are chronological
+research notes; their no-live-test statements describe the initial review.
+No radio partition writes, EFS access or radio installation were performed.
 
 ## Finding: establish a coherent reference before more loads
 
