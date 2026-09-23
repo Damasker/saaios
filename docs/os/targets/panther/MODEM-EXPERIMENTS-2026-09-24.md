@@ -10,7 +10,7 @@ POWER_OFF, or repeated reset loops. No NV/stage completion in partial-MAIN probe
 |---|---|---|
 | 1 | A/B firmware comparison with identical bounded RAM transfer | Completed before this authorization: identical 0x201b098 stall; reference baseline, not a new attempt. |
 | 2 | Exact four-byte ACK reader preserving partial bytes | Four host failures before, four passes after. Live B probe reproduced the identical stall; not the wall fix. |
-| 3 | Match actual s5100sit CBD dispatch, stage descriptors and initial stage | Found missing BOOT READY and TOC sequence; bounded live comparison prepared (details below). |
+| 3 | Match actual s5100sit CBD dispatch, stage descriptors and initial stage | SUCCESS at bounded transfer: all 36 MiB ACKed after initial READY + TOC, past old wall. Full MAIN validation next. |
 | 4 | Match installed kernel/module with source and live DT | Static/read-only; CPIF version alone is insufficient. No module replacement without matching provenance. |
 | 5 | Validate shared-memory/IOMMU range and ring mapping | Existing evidence places TX inside mapped IPC. Need observed mapping discrepancy before changing memory layout. |
 | 6 | Inspect outstanding frame at the stall | Use supported read-only driver diagnostics if available. /dev/mem previously failed ENXIO; no arbitrary register pokes. |
@@ -74,3 +74,21 @@ On any failure, no MAIN. Otherwise the same 36-MiB-bounded MAIN follows.
 This explicitly permits the initial READY and **TOC** DONE for approach 3;
 MAIN CRC/DONE, final FIN/COMPLETE and NV remain prohibited. No live result
 is assumed until its log is inspected.
+
+### Live result: preamble resolves the bounded-transfer wall
+
+Fresh AP boot and the same B image, ACK4 reader and 0x7e8 ring-fit transfer.
+The new preamble's acknowledgements succeeded. MAIN reached exactly
+0x02400000 (36 MiB), 18652 acknowledged BIN frames, last offset 0x23fff10.
+TX head=tail=0xa3908, empty=1. `PROBE END result=2` is the intentional bound
+success. CP stays BOOTING as expected: no full-image completion/NV/ONLINE.
+Log: `/data/saaios/var/probe-b-preamble-20260924.log`.
+
+This live differential supports the missing preamble as the cause of the
+observed transfer failure, but does not establish which of READY or TOC is
+individually necessary, nor guarantee full boot. Do not deliberately omit
+one simply to consume another hardware trial. Follow the factory sequence.
+
+Next bounded extension: full MAIN, then its real CRC/DONE, stopping before
+VSS/APM/NV and final FIN/COMPLETE. Never send a full-image CRC for a partial
+image. This is a new explicit experiment scope, not relaxing identity/EFS safety.
