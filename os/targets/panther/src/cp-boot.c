@@ -1,7 +1,10 @@
 #define _GNU_SOURCE
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -120,15 +123,28 @@ struct toc_entry {
  * s5100sit / PCIE still one write() of header+payload (1fec0).
  *
  * Live boot0 has no iod,max_tx_size, so bootdump_write does not split a
- * 0xC00C write. format=IPC_BOOT forces EXYNOS SINGLE. ipc_write SIT and
- * exynos_build_fr_config use SZ_2K; live DT pktproc_ul_max_packet_size=0x800.
- * A 0xC00C SINGLE therefore becomes one illegal-sized PCIE/legacy frame
- * (CRASH_EXIT after first MAIN BIN). Keep the cbd 12-byte header, but size
- * the payload so EXYNOS(12)+SIT hdr(12)+chunk == SZ_2K.
+ * 0xC00C write. format=IPC_BOOT forces EXYNOS SINGLE (wire 0xC018).
+ * Live 2026-09-21: that frame is consumed (TX tail catches head) and the
+ * CP sends no 0xC12B within 30s. Live 2026-09-22: SZ_2K frames are ACKed,
+ * including past the old third ring wrap, then the CP stops reading at
+ * MAIN offset 0x201b098 with one 0x800 frame left queued.
+ *
+ * Live 2026-09-22: 0xC000 frames are consumed with no BIN ACK, then the CP
+ * publishes zero RX and the driver raises CP_CRASH_REQ (BAD CFG 0x00).
+ * That happened on the first wrapping frame (c48, after 42 frames) and
+ * again on a non-wrapping frame (fit48, after 3 frames). SZ_2K frames
+ * that end on the ring boundary are ACKed through MAIN offset 0x201b098
+ * and the CP stays BOOTING. This load uses that path. On the first BIN
+ * ACK timeout it sends the stage CRC once and logs the reply.
  */
 #define EXYNOS_HEADER_SIZE 12u
 #define SIT_HDR_SIZE 12u
-#define SIT_CHUNK 0xC000u
+/* Payload 0x7E8: wire EXYNOS+SIT+payload = 0x800. Ring-fit so a frame
+ * never wraps 0x1FD000. A BIN chunk counts only on 0xC12B. This is the
+ * path that stalls at MAIN offset 0x201b098. */
+#define SIT_CHUNK 0x7E8u
+#define SIT_BIN_REQUIRE_ACK 1
+#define SIT_CONSUME_DEADLINE_MS 15000
 /* cbd e2a0: one poll(POLLIN, 2000). BIN ACK is a 4-byte read after that. */
 #define SIT_POLL_MS 2000
 #define SIT_ACK_DEADLINE_MS 30000
@@ -597,6 +613,182 @@ static int sit_req_resp(uint32_t req, uint32_t exp, int deadline_ms) {
     return sit_req_resp_ex(req, exp, deadline_ms, true);
 }
 
+/* NORM_RAW TX pointers. The CP owns the tail; head is where the next
+ * EXYNOS frame will be written. head==tail means the CP has consumed
+ * every published frame. */
+static int norm_raw_tx_ptrs(uint32_t *head_out, uint32_t *tail_out) {
+    FILE *file = fopen("/sys/devices/platform/cpif/legacy/status", "r");
+    if (!file) {
+        return -1;
+    }
+    char line[256];
+    int in_raw = 0;
+    int found = -1;
+    while (fgets(line, sizeof(line), file)) {
+        if (strstr(line, "name:NORM_RAW")) {
+            in_raw = 1;
+        } else if (strncmp(line, "ID:", 3) == 0) {
+            in_raw = 0;
+        }
+        if (!in_raw) {
+            continue;
+        }
+        unsigned head = 0;
+        unsigned tail = 0;
+        if (sscanf(line, "TX busy:%*d head:%u tail:%u", &head, &tail) == 2) {
+            if (head_out) {
+                *head_out = head;
+            }
+            if (tail_out) {
+                *tail_out = tail;
+            }
+            found = 0;
+        }
+    }
+    fclose(file);
+    return found;
+}
+
+static int norm_raw_tx_head(uint32_t *head_out) {
+    return norm_raw_tx_ptrs(head_out, NULL);
+}
+
+/* Read any 4-byte ACKs already queued. Does not block in bootdump_read. */
+static int sit_take_acks(uint32_t exp) {
+    if (sit_poll_in(0) <= 0) {
+        return 0;
+    }
+    uint8_t buf[64];
+    ssize_t n = read(boot_fd, buf, sizeof(buf));
+    if (n < 4) {
+        return 0;
+    }
+    int good = 0;
+    for (ssize_t i = 0; i + 4 <= n; i += 4) {
+        uint32_t ack = 0;
+        memcpy(&ack, buf + i, 4);
+        if (ack == exp) {
+            good++;
+        } else {
+            log_line("SIT RX during BIN 0x%08x (expect 0x%08x)", ack, exp);
+        }
+    }
+    return good;
+}
+
+/* Factory cbd blocks on a 4-byte BIN ACK. Live CP consumes a 0xC018
+ * SINGLE and does not send that ACK. Progress is tail==head. */
+static int sit_wait_bin_landed(uint32_t exp_ack, uint32_t off, uint32_t chunk_i,
+                               uint32_t head_before) {
+    int64_t start = sit_now_ms();
+    int64_t last_log = 0;
+    int acks = 0;
+    while (sit_now_ms() - start < SIT_CONSUME_DEADLINE_MS) {
+        int n = sit_take_acks(exp_ack);
+        if (n > 0) {
+            acks += n;
+        }
+        uint32_t head = 0;
+        uint32_t tail = 0;
+        int ptrs = norm_raw_tx_ptrs(&head, &tail);
+        /* ACK without consume is not progress: the previous 0xC000 frame
+         * was taken from the ring and never ACKed. Wait until tail==head. */
+        /* head==tail at the pre-write pointer means sysfs has not
+         * observed this write yet. One frame cannot wrap the ring
+         * back onto the same head. */
+        if (ptrs == 0 && head == tail && head != head_before) {
+            return acks;
+        }
+        int64_t now = sit_now_ms();
+        if (last_log == 0) {
+            last_log = now;
+        }
+        if (now - last_log >= 1000) {
+            log_line("UDL consume wait off=0x%x chunk=%u head=0x%x tail=0x%x acks=%d",
+                     off, chunk_i, head, tail, acks);
+            last_log = now;
+        }
+        usleep(50000);
+    }
+    return -1;
+}
+
+/* Payload that keeps EXYNOS+SIT+payload inside the ring. A frame that
+ * would wrap is shortened so it ends exactly at 0x1FD000. */
+static uint32_t chunk_fit_ring(uint32_t head, uint32_t remain) {
+    uint32_t chunk = remain > SIT_CHUNK ? SIT_CHUNK : remain;
+    uint32_t wire = EXYNOS_HEADER_SIZE + SIT_HDR_SIZE + chunk;
+    uint32_t room = LEGACY_RAW_TXQ_SIZE - head;
+    if (wire <= room) {
+        return chunk;
+    }
+    if (room <= EXYNOS_HEADER_SIZE + SIT_HDR_SIZE) {
+        return chunk;
+    }
+    return room - EXYNOS_HEADER_SIZE - SIT_HDR_SIZE;
+}
+
+static int modem_is_online(void) {
+    char state[64];
+    read_trimmed(MODEM_STATE_PATH, state, sizeof(state));
+    return strcmp(state, "ONLINE") == 0;
+}
+
+static void log_rmnet_bearer(void) {
+    char rx[64];
+    char tx[64];
+    read_trimmed("/sys/class/net/rmnet0/statistics/rx_bytes", rx, sizeof(rx));
+    read_trimmed("/sys/class/net/rmnet0/statistics/tx_bytes", tx, sizeof(tx));
+    log_line("rmnet0 rx_bytes=%s tx_bytes=%s", rx, tx);
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        log_line("rmnet0 ipv4 socket: %s", strerror(errno));
+        return;
+    }
+    struct ifreq req;
+    memset(&req, 0, sizeof(req));
+    snprintf(req.ifr_name, sizeof(req.ifr_name), "rmnet0");
+    if (ioctl(fd, SIOCGIFADDR, &req) == 0) {
+        struct sockaddr_in *addr = (struct sockaddr_in *)&req.ifr_addr;
+        log_line("rmnet0 ipv4 %s", inet_ntoa(addr->sin_addr));
+    } else {
+        log_line("rmnet0 ipv4 none errno=%d (%s)", errno, strerror(errno));
+    }
+    close(fd);
+}
+
+/* Ring is empty: the frame at this offset was not written. COMPLETE,
+ * then FIN, then READY. Stop after that. No more BIN. */
+static void probe_finish_at_wall(void) {
+    int saved = 0;
+    int rc = ioctl(boot_fd, IOCTL_COMPLETE_NORMAL_BOOTUP, NULL);
+    saved = errno;
+    if (rc < 0) {
+        log_line("IOCTL_COMPLETE_NORMAL_BOOTUP probe rc=%d errno=%d (%s)",
+                 rc, saved, strerror(saved));
+    } else {
+        log_line("IOCTL_COMPLETE_NORMAL_BOOTUP probe rc=%d", rc);
+    }
+    print_modem_state("after-complete-probe");
+    if (!modem_is_online()) {
+        log_line("wall probe FIN 0x%x expect 0x%x", SIT_FIN, SIT_FIN_ACK);
+        if (sit_req_resp(SIT_FIN, SIT_FIN_ACK, 5000) < 0) {
+            log_line("wall probe FIN no match");
+        }
+        print_modem_state("after-fin-probe");
+    }
+    if (!modem_is_online()) {
+        log_line("wall probe READY 0x%x expect 0x%x", SIT_READY, SIT_READY_ACK);
+        if (sit_req_resp(SIT_READY, SIT_READY_ACK, 5000) < 0) {
+            log_line("wall probe READY no match");
+        }
+        print_modem_state("after-ready-probe");
+    }
+    log_rmnet_bearer();
+}
+
+static int dmesg_has_bad_cfg(void);
+
 static int sit_send_stage(uint32_t idx, const char *name, const uint8_t *data,
                           uint32_t size, uint32_t crc) {
     uint32_t start = sit_cmd(SIT_START, idx);
@@ -619,18 +811,21 @@ static int sit_send_stage(uint32_t idx, const char *name, const uint8_t *data,
     uint32_t off = 0;
     uint32_t last_good = 0;
     uint32_t chunks = 0;
+    uint32_t tx_head = 16;
+    if (norm_raw_tx_head(&tx_head) < 0) {
+        log_line("UDL %s: TX head unreadable, assuming 16", name);
+    } else {
+        log_line("UDL %s TX head before BIN 0x%x", name, tx_head);
+    }
     uint8_t *frame = malloc(sizeof(struct sit_udl_hdr) + SIT_CHUNK);
     if (!frame) {
         die("oom UDL frame");
     }
     while (off < size) {
-        uint32_t chunk = size - off;
-        if (chunk > SIT_CHUNK) {
-            chunk = SIT_CHUNK;
-        }
-        if (off != 0 && (off % SIT_CHUNK) != 0) {
-            log_line("UDL %s offset 0x%x not a %u-byte multiple (drift)",
-                     name, off, SIT_CHUNK);
+        uint32_t chunk = chunk_fit_ring(tx_head, size - off);
+        if (chunk != SIT_CHUNK && chunk != size - off) {
+            log_line("UDL %s shrink payload 0x%x -> 0x%x so wire ends at ring (head 0x%x)",
+                     name, SIT_CHUNK, chunk, tx_head);
         }
         /* cbd f55c–f568 then 1fec0: store chunk at +2, rewrite to chunk+8. */
         struct sit_udl_hdr *hdr = (struct sit_udl_hdr *)frame;
@@ -654,26 +849,71 @@ static int sit_send_stage(uint32_t idx, const char *name, const uint8_t *data,
             log_line("UDL %s chunk off=0x%x payload=0x%x write=0x%zx acked=%u last_good=0x%x",
                      name, off, chunk, wrote, chunks, last_good);
         }
+        uint32_t head_before = tx_head;
         if (sit_write_bytes(frame, wrote) < 0) {
             log_line("UDL %s chunk write: %s", name, strerror(errno));
             free(frame);
             return -1;
         }
+        tx_head += EXYNOS_HEADER_SIZE + (uint32_t)wrote;
+        if (tx_head >= LEGACY_RAW_TXQ_SIZE) {
+            tx_head -= LEGACY_RAW_TXQ_SIZE;
+        }
+#if SIT_BIN_REQUIRE_ACK
         if (sit_req_resp_ex(0, sit_cmd(SIT_BIN_ACK, idx), SIT_ACK_DEADLINE_MS,
                             off == 0) < 0) {
-            log_line("UDL %s BIN ACK fail at 0x%x chunk=%u last_good=0x%x (cbd waits 0x%08x after every BIN write)",
-                     name, off, chunks, last_good, sit_cmd(SIT_BIN_ACK, idx));
+            uint32_t head = 0;
+            uint32_t tail = 0;
+            int ptrs_ok = norm_raw_tx_ptrs(&head, &tail);
+            log_line("UDL %s BIN ACK fail at 0x%x chunk=%u last_good=0x%x head=0x%x tail=0x%x consumed=%d",
+                     name, off, chunks, last_good, head, tail,
+                     (ptrs_ok == 0 && head == tail) ? 1 : 0);
+            print_legacy_status("bin-ack-fail", chunks, off);
+            print_modem_state("bin-ack-fail");
+            log_line("UDL %s bad_cfg=%d", name, dmesg_has_bad_cfg());
             free(frame);
             return -1;
         }
+#else
+        int landed = sit_wait_bin_landed(sit_cmd(SIT_BIN_ACK, idx), off, chunks,
+                                         head_before);
+        if (landed < 0) {
+            uint32_t head = 0;
+            uint32_t tail = 0;
+            (void)norm_raw_tx_ptrs(&head, &tail);
+            log_line("UDL %s BIN not consumed at 0x%x chunk=%u last_good=0x%x head=0x%x tail=0x%x",
+                     name, off, chunks, last_good, head, tail);
+            free(frame);
+            return -1;
+        }
+        if (chunks < 3 || (chunks & 0x3fu) == 0) {
+            log_line("UDL %s BIN landed off=0x%x chunk=%u acks=%d",
+                     name, off, chunks, landed);
+        }
+#endif
         last_good = off;
         chunks++;
-        if ((chunks % LEGACY_FRAMES_PER_WRAP) == 0)
-            print_legacy_status("post-wrap-ACK", chunks, off);
         off += chunk;
+        if (last_good < 0x201b098u && off >= 0x201b098u) {
+            log_line("UDL %s ACKs continued past 0x201b098 next=0x%x chunk=%u",
+                     name, off, chunks);
+            print_legacy_status("past-wall", chunks, last_good);
+        }
+        if ((chunks & 0x1ffu) == 0) {
+            print_legacy_status("progress", chunks, last_good);
+            char state[64];
+            read_trimmed(MODEM_STATE_PATH, state, sizeof(state));
+            if (strcmp(state, "BOOTING") != 0) {
+                log_line("UDL %s state left BOOTING: %s at off=0x%x",
+                         name, state, off);
+                free(frame);
+                return -1;
+            }
+        }
     }
     free(frame);
 
+    sit_drain_rx("pre-crc");
     uint32_t crc_pkt[2] = { sit_cmd(SIT_CRC, idx), crc };
     log_line("UDL %s crc cmd=0x%x crc=0x%x after %u BIN chunks",
              name, crc_pkt[0], crc, chunks);
@@ -739,6 +979,111 @@ static void print_status(void) {
     }
     rc = do_ioctl("IOCTL_GET_CP_STATUS", IOCTL_GET_CP_STATUS, NULL);
     log_line("GET_CP_STATUS raw=%d", rc);
+}
+
+static void log_no_reset_sample(int sec) {
+    print_modem_state(sec > 0 ? "no-reset-wait" : "no-reset");
+    FILE *file = fopen("/sys/devices/platform/cpif/legacy/status", "r");
+    if (!file) {
+        log_line("no-reset t=%d legacy status missing", sec);
+        return;
+    }
+    char line[256];
+    int in_raw = 0;
+    log_line("no-reset t=%d", sec);
+    while (fgets(line, sizeof(line), file)) {
+        if (strstr(line, "name:NORM_RAW")) {
+            in_raw = 1;
+            continue;
+        }
+        if (strncmp(line, "ID:", 3) == 0) {
+            in_raw = 0;
+        }
+        if (!in_raw) {
+            continue;
+        }
+        if (strncmp(line, "TX ", 3) == 0 || strncmp(line, "RX ", 3) == 0) {
+            line[strcspn(line, "\r\n")] = '\0';
+            log_line("  %s", line);
+        }
+    }
+    fclose(file);
+}
+
+/* 1 = BAD CFG present, 0 = not present, -1 = dmesg unreadable. */
+static int dmesg_has_bad_cfg(void) {
+    FILE *pipe = popen("dmesg", "r");
+    if (!pipe) {
+        log_line("dmesg popen: %s", strerror(errno));
+        return -1;
+    }
+    char line[512];
+    int found = 0;
+    while (fgets(line, sizeof(line), pipe)) {
+        if (strstr(line, "BAD CFG")) {
+            found = 1;
+            break;
+        }
+    }
+    int rc = pclose(pipe);
+    if (rc < 0 && !found) {
+        log_line("dmesg pclose: %s", strerror(errno));
+        return -1;
+    }
+    return found;
+}
+
+/* One factory-sized MAIN BIN. No second frame, no COMPLETE. */
+static int send_one_c000_bin(uint32_t idx, const uint8_t *data, uint32_t size) {
+    uint32_t chunk = 0xC000u;
+    uint32_t start = sit_cmd(SIT_START, idx);
+    uint32_t start_ack = sit_cmd(SIT_START_ACK, idx);
+    log_line("one BIN MAIN start=0x%x expect=0x%x size=0x%x", start, start_ack, size);
+    if (sit_req_resp(start, start_ack, SIT_START_DEADLINE_MS) < 0) {
+        log_line("one BIN START fail");
+        return -1;
+    }
+    uint8_t *frame = malloc(sizeof(struct sit_udl_hdr) + chunk);
+    if (!frame) {
+        die("oom one BIN");
+    }
+    struct sit_udl_hdr *hdr = (struct sit_udl_hdr *)frame;
+    memset(frame, 0, sizeof(*hdr) + chunk);
+    hdr->cmd = (uint16_t)sit_cmd(SIT_BIN, idx);
+    hdr->total = size;
+    hdr->offset = 0;
+    memcpy(frame + sizeof(*hdr), data, chunk);
+    hdr->len = (uint16_t)(chunk + 8);
+    size_t wrote = sizeof(*hdr) + chunk;
+    log_line("one BIN write=0x%zx cmd=0x%x len=0x%x (no shrink)",
+             wrote, hdr->cmd, hdr->len);
+    if (sit_write_bytes(frame, wrote) < 0) {
+        log_line("one BIN write failed");
+        free(frame);
+        return -1;
+    }
+    free(frame);
+    uint32_t ack = sit_cmd(SIT_BIN_ACK, idx);
+    int got = sit_req_resp(0, ack, 10000);
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    int ptrs = norm_raw_tx_ptrs(&head, &tail);
+    int bad = dmesg_has_bad_cfg();
+    char state[64];
+    read_trimmed(MODEM_STATE_PATH, state, sizeof(state));
+    if (got == 0) {
+        log_line("one BIN result: ACK 0x%x", ack);
+    } else if (ptrs == 0 && head == tail) {
+        log_line("one BIN result: consumed no ACK head=0x%x tail=0x%x", head, tail);
+    } else {
+        log_line("one BIN result: no ACK head=0x%x tail=0x%x ptrs=%d", head, tail, ptrs);
+    }
+    log_line("one BIN after: bad_cfg=%d modem_state=%s", bad, state);
+    if (strcmp(state, "CRASH_EXIT") == 0 || bad == 1) {
+        log_line("one BIN followed by %s",
+                 strcmp(state, "CRASH_EXIT") == 0 ? "CRASH_EXIT" : "BAD CFG");
+    }
+    return got;
 }
 
 static int cmd_load(void) {
@@ -819,19 +1164,23 @@ static int cmd_load(void) {
     if (do_ioctl("IOCTL_POWER_ON", IOCTL_POWER_ON, NULL) < 0) {
         die("POWER_ON failed");
     }
-
-    /*
-     * Factory start_shannon5100_boot does not call std_security_req and the
-     * PCIE link leaves ld->security_req null. POWER_RESET is also absent:
-     * stock goes POWER_ON -> LOAD BOOT -> START. Calling POWER_RESET after
-     * POWER_ON performs a second GPIO power cycle and tears down PCIe state.
-     *
-     * LOAD_CP_IMAGE on PCIE copies into a small staging buffer and sets
-     * boot_img_size = img.size *before* the range check. A failed MAIN/NV
-     * load therefore clobbers the BOOT size used by set_cp_rom_boot_img.
-     * Only BOOT may use this ioctl. MAIN/VSS/APM/NV need the SIT UDL path.
-     */
-    log_line("REQ_SECURITY skipped (PCIE security_req is null)");
+    log_line("POWER_RESET skipped; wait 3s before START");
+    for (int sec = 1; sec <= 3; ++sec) {
+        sleep(1);
+        log_no_reset_sample(sec);
+    }
+    int bad_cfg = dmesg_has_bad_cfg();
+    char state_now[64];
+    read_trimmed(MODEM_STATE_PATH, state_now, sizeof(state_now));
+    if (bad_cfg < 0 || bad_cfg == 1 || strcmp(state_now, "OFFLINE") != 0) {
+        log_line("no-reset: not starting (bad_cfg=%d modem_state=%s)",
+                 bad_cfg, state_now);
+        print_modem_state("no-start");
+        free(bin);
+        free(nv_norm);
+        free(nv_prot);
+        return bad_cfg < 0 ? 1 : 0;
+    }
 
     const struct toc_entry *boot = find_toc(toc, toc_count, "BOOT");
     if (!boot || boot->b_off == 0 || boot->size == 0 ||
@@ -856,7 +1205,23 @@ static int cmd_load(void) {
     }
     log_line("boot_stage checkpoint after START (kernel requires DONE_MASK=0x3fff)");
     print_modem_state("after-start");
-    log_line("boot_stage checkpoint before first MAIN BIN");
+    log_no_reset_sample(0);
+    if (dmesg_has_bad_cfg() == 1) {
+        log_line("no-reset: BAD CFG after START, no BIN");
+        print_modem_state("after-start-bad");
+        free(bin);
+        free(nv_norm);
+        free(nv_prot);
+        return 1;
+    }
+    read_trimmed(MODEM_STATE_PATH, state_now, sizeof(state_now));
+    if (strcmp(state_now, "BOOTING") != 0) {
+        log_line("no-reset: state after START is %s, no BIN", state_now);
+        free(bin);
+        free(nv_norm);
+        free(nv_prot);
+        return 1;
+    }
 
     static const char *const udl_from_bin[] = { "MAIN", "VSS", "APM", "INFO" };
     for (size_t i = 0; i < sizeof(udl_from_bin) / sizeof(udl_from_bin[0]); ++i) {
@@ -868,9 +1233,11 @@ static int cmd_load(void) {
         }
         if (sit_send_stage(entry->idx, udl_from_bin[i],
                            bin + entry->b_off, entry->size, entry->crc) < 0) {
-            log_line("UDL %s failed — abort (no further stages, no COMPLETE)",
-                     udl_from_bin[i]);
+            log_line("UDL %s failed — stop, no further stages", udl_from_bin[i]);
             print_modem_state("bin-fail");
+            free(bin);
+            free(nv_norm);
+            free(nv_prot);
             return 1;
         }
     }
@@ -880,33 +1247,55 @@ static int cmd_load(void) {
     if (nvn && nv_norm && nv_norm_size > 0) {
         if (sit_send_stage(nvn->idx, "NV_NORM", nv_norm,
                            (uint32_t)nv_norm_size, nvn->crc) < 0) {
-            log_line("UDL NV_NORM failed — continuing");
+            log_line("UDL NV_NORM failed — stop");
+            print_modem_state("nv-fail");
+            free(bin);
+            free(nv_norm);
+            free(nv_prot);
+            return 1;
         }
     }
     if (nvp && nv_prot && nv_prot_size > 0) {
         if (sit_send_stage(nvp->idx, "NV_PROT", nv_prot,
                            (uint32_t)nv_prot_size, nvp->crc) < 0) {
-            log_line("UDL NV_PROT failed — continuing");
+            log_line("UDL NV_PROT failed — stop");
+            print_modem_state("nv-fail");
+            free(bin);
+            free(nv_norm);
+            free(nv_prot);
+            return 1;
         }
     }
 
     log_line("UDL finish handshake READY 0x%x then FIN 0x%x",
              SIT_READY, SIT_FIN);
     if (sit_req_resp(SIT_READY, SIT_READY_ACK, SIT_ACK_DEADLINE_MS) < 0) {
-        log_line("UDL READY fail");
+        log_line("UDL READY fail — stop");
+        print_modem_state("ready-fail");
+        free(bin);
+        free(nv_norm);
+        free(nv_prot);
+        return 1;
     }
     if (sit_req_resp(SIT_FIN, SIT_FIN_ACK, SIT_ACK_DEADLINE_MS) < 0) {
-        log_line("UDL FIN fail");
+        log_line("UDL FIN fail — stop");
+        print_modem_state("fin-fail");
+        free(bin);
+        free(nv_norm);
+        free(nv_prot);
+        return 1;
     }
 
     (void)do_ioctl("IOCTL_COMPLETE_NORMAL_BOOTUP",
                    IOCTL_COMPLETE_NORMAL_BOOTUP, NULL);
     print_modem_state("after");
+    log_rmnet_bearer();
 
     int status = ioctl(boot_fd, IOCTL_GET_CP_STATUS, NULL);
     log_line("GET_CP_STATUS after=%d", status);
-
-    log_line("stock s5100sit closes boot args after COMPLETE; no ipc/rfs holder");
+    free(bin);
+    free(nv_norm);
+    free(nv_prot);
     return 0;
 }
 

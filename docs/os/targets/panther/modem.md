@@ -867,12 +867,281 @@ the CP. Userspace also cannot supply its own EXYNOS MULTI headers because
 boot0 link-header insertion cannot be disabled at runtime or through a
 confirmed alternate boot node.
 
-No eighth live load was made: the requested MULTI/framing mechanism is
-source-disproved, so testing it would violate the one-load safety gate.
-Phone remains **OFFLINE**, original EFS unmounted, and rmnet has no traffic.
-The precise blocker is now the unexplained difference outside fragmentation:
-factory accepts a legal `0xC018` SINGLE boot frame, while the helper's prior
-nominally identical large BIN write reached `CRASH_EXIT`. Before another load,
-the complete factory pre-UDL boot setup/argument sequence must be compared
-against `cp-boot` (especially boot-mode/ioctl arguments and BOOT staging);
-the transport should not be converted to guessed MULTI framing.
+No eighth live load was made on 2026-09-06: the requested MULTI/framing
+mechanism is source-disproved. Later loads below did not retry MULTI.
+
+## Ninth–twelfth loads LIVE (2026-09-21/22)
+
+Signed CPIF was not in the flashed PID 1. Each boot: `insmod` `shm_ipc.ko`,
+`cpif_page.ko`, `cpif.ko`, `cp_thermal_zone.ko` from `/lib/modules`, then
+`mknod` `/dev/umts_boot0` from `/sys/class/cpif/umts_boot0/dev` (major 493).
+Original EFS stayed unmounted. NV came from the userdata copy. No
+`IOCTL_POWER_OFF`, no vendor `cbd` / `rild`. A stuck `BOOTING` or
+`CRASH_EXIT` was cleared only with `echo b > /proc/sysrq-trigger`.
+
+| Load | BIN geometry | Result |
+|---|---|---|
+| no `POWER_RESET`, one `0xC000` | wire `0xC018` | Inside `START`, before MAIN BIN: `NORM_RAW BAD CFG 0x00 (in:32 out:16 rest:16)`, 32 zero bytes, `CP_CRASH_REQ`. `BOOTING` → `CRASH_EXIT`. |
+| `POWER_RESET`, one `0xC000` | wire `0xC018` | START ACK `0xC120`. CP consumed the frame (`TX head==tail`) and sent no `0xC12B` in 30s. Stayed `BOOTING`. No `BAD MSG`. |
+| `POWER_RESET`, `SIT_CHUNK=0x7E8`, shrink so the wire frame never crosses `0x1FD000` | wire `0x800`, one short frame `0x7F0` at the first ring end | ACKed through MAIN offset `0x201a8b0` (16633 BIN ACKs). Next frame at `0x201b098` stayed queued (`TX head=0xAD000 tail=0xAC800`, one `0x800` frame). `RX head==tail==266144` = `(1+16633)*16`. No `BAD MSG`. Stayed `BOOTING`. Log: `/data/saaios/var/cp-boot-20260922-align.log`. |
+| `POWER_RESET`, `0xC000`, wrap allowed, progress = TX consumed rather than BIN ACK | wire `0xC018` | 42 frames consumed, `acks=0`. Frame 42 at `0x1f8000` wrapped (`head=0x7418 tail=0x1f8400`) and was not consumed. Then the same zero-RX `BAD CFG` / `CP_CRASH_REQ` / `CRASH_EXIT`. Log: `cp-boot-20260922-c48.log`. |
+| `POWER_RESET`, `0xC000`, shrink-to-ring-end, progress = TX consumed | first frames still `0xC018` (no shrink yet) | 3 frames consumed, `acks=0`. Frame 3 at `0x24000` did not wrap (`head=0x30070 tail=0x24058`) and was not consumed. `boot_stage 0x3FFF` at uptime 85.817s, first `BAD CFG 0x00 (in:32 …)` at 86.050s, then `CRASH_EXIT`. Log: `cp-boot-20260922-fit48.log`, `dmesg-fit48.txt`. |
+
+`0xC000` is not a silent-ACK download. The CP can advance the TX tail for
+those frames and still never send `0xC12B`, then publish zeros on RX. The
+driver treats that as a bad CP message and issues `CP_CRASH_REQ`. The crash
+is not specific to a wrapped frame: fit48 crashed on a frame that sat
+entirely inside the ring. Repeating `0xC000` is not the next step.
+
+The `0x7E8` ring-aligned path is the one the CP answers. It gets past the
+old third-wrap stop (`0x5e49c8`) and stops later, still `BOOTING`, with one
+unread `0x800` frame at payload offset `0x201b098` (~32.1 MiB of the
+93 MiB MAIN image). That offset is not a ring wrap: post-wrap samples in
+the same log show `TX head==tail==0`. It is 110744 bytes past 32 MiB, not
+on that boundary. RX was not full (`0x200000` ring, 266144 bytes used).
+
+A repeat of the aligned `0x7E8` load stalled at the same offset
+(`0x201b098`, chunk 16633). A stage CRC (`0xA321`, TOC crc `0x68f46d27`)
+written behind that unread frame produced no RX in 5s (`SIT UDL timeout
+waiting 0x0000c320`, last read 0). After the probe the ring was
+`TX head=708632 tail=706560`: the original `0x800` frame plus a 24-byte
+padded CRC, neither consumed. The CP had stopped reading the ring, so a
+command queued behind the stuck frame cannot be a test of CRC. State
+stayed `BOOTING`. Log: `/data/saaios/var/cp-boot-20260922-crcprobe.log`.
+
+The same stall with payload `0x3E8` (wire `0x400`, so about twice as many
+frames) stopped at MAIN offset `0x201abf0`, chunk 33664, `last_good=0x201a808`.
+That is 33663984 bytes, 1192 bytes short of the `0x7E8` high-water mark
+`0x201b098`. Frame count scaled with the inverse of the chunk size, so this
+is a byte offset near 33.66 MiB, not a 16633-frame cap and not a timeout.
+The CRC probe behind that frame again timed out with 0 bytes RX. State
+stayed `BOOTING`. Log: `/data/saaios/var/cp-boot-20260922-1k.log`.
+
+Pausing 20s with the TX ring empty at offset `0x201a8b0` (head==tail==704512)
+did not move the wall. The next frame, at `0x201b098` chunk 16633, again got
+no `0xC12B`, and the CRC behind it again got no `0xC320`. No `BAD MSG`.
+`boot_stage` reached `0x3FFF`. State stayed `BOOTING`. Log:
+`/data/saaios/var/cp-boot-20260922-pause.log`.
+
+Sending the stage CRC at offset `0x201b098` with the TX ring empty
+(`head==tail==706560`, 16633 BIN ACKs, no further BIN frame queued) also
+got no reply: `SIT UDL timeout waiting 0x0000c320 (last read 0 bytes)`.
+The CP does not treat that offset as the end of MAIN. State stayed
+`BOOTING`. No `BAD MSG`. Log:
+`/data/saaios/var/cp-boot-20260922-crcwall.log`.
+
+Payload `0xF00` (wire `0xF18`, ring-fit, `POWER_RESET`, BIN success only
+on `0xC12B`) does ACK. The first MAIN BIN returned `0xC12B`. It then
+stopped far earlier than the 2 KiB wall: `BIN ACK fail at 0xfb400
+chunk=268 last_good=0xfa500`. The ring was empty (`TX head==tail==0xfdc48`,
+1039432), so the CP consumed that frame and sent no ACK. No `BAD MSG`,
+no `CP_CRASH_REQ`. `boot_stage` reached `0x3FFF`. State stayed `BOOTING`.
+Offset `0xfb400` is about 0.98 MiB, not past `0x201b098`. VSS, APM, NV,
+and COMPLETE were not issued. Log: `/data/saaios/var/cp-boot-20260922-f00.log`,
+`dmesg-f00.txt`. AP sysrq-b after the stall.
+
+## BOOT slice search (2026-09-22, no new load)
+
+While `modem_state=OFFLINE`, `modem_a` (`sda19`) was mounted ext4
+`ro,noload` only long enough to copy BOOT: file offset `0x410`, size
+`0x16800`, to `/data/saaios/var/boot-slice.bin` (md5
+`c66fdb1c1fb11096441836db75f31179`). The image was then unmounted.
+Original EFS was not mounted. No `cp-boot load` was run after this search.
+
+The slice is Thumb-2 CP boot code (PCIe link, dump, `SitRom,`,
+`Mode=0x`, `Stage:`, `Msg Size Err`, `Frame Err`, `header`). It is not
+an AArch64 literal pool of host commands.
+
+| Looked for | Result |
+|---|---|
+| aligned `u32` `0x02000000` | one hit, at `0xd1a8`, inside a table of `0xff000000` flags and `0x0202xxxx` pointers. Not next to a UDL opcode. Not equal to the stop offset `0x201b098`. |
+| `0x01f90000`, `0x0201b000`, `0x0201b098`, `0x00c00000` | no aligned hit |
+| raw `u16` `0xA100`, `0xA301`, `0xA400`, `0xC100`, `0xC12B` | none |
+| raw `u16` `0xA10B` / `0xA10D` at `0x47a8` / `0x47ae` | Thumb `add r1, pc, #imm`, six bytes apart, followed by the string `vref_mem_lv`. Not a command table. |
+| raw `u16` `0xA00B` at `0xb86`, `0x20ee`, `0x2a00` | Thumb `add r0, pc, #imm` |
+| ARM `MOVW`/`MOVT` of those opcodes | none that is a host command |
+
+No extra UDL command and no size constant that is the `0x201b098` stop.
+Guessing a new opcode and running another framed load would not be
+evidence.
+
+### `Msg Size Err` / `Frame Err` (same BOOT slice, no load)
+
+Both strings are referenced from one Thumb function whose prologue is
+`push` at file offset `0x1a24`. References are `add r0, pc`:
+
+| String | File offset | ADR | Taken from |
+|---|---:|---:|---|
+| `Msg Size Err` | `0x1c18` | `0x1b0c` | `0x1aca` `blo` |
+| `Frame Err` | `0x1c28` | `0x1b60` | `0x1b44` `bne` |
+| `ChID Err` | `0x1c34` | `0x1b8a` | `0x1b4e` `bhs` |
+
+`Msg Size Err` is a minimum, not a maximum:
+
+```
+0x1ac6  cmp.w r11, #0x10     ; f1bb 0f10
+0x1aca  blo  0x1b0c          ; r11 < 16 → "Msg Size Err"
+```
+
+`Frame Err` checks the EXYNOS sync halfword, not a length:
+
+```
+0x1b20  movw  r1, #0xabcd
+0x1b40  ldrh  r0, [r5]
+0x1b42  cmp   r0, r1
+0x1b44  bne   0x1b60         ; halfword != 0xABCD → "Frame Err"
+```
+
+The next check is the channel id, and it only allows 0 or 1:
+
+```
+0x1b4c  cmp   r0, #2
+0x1b4e  bhs   0x1b8a         ; channel >= 2 → "ChID Err"
+```
+
+Boot channel `0xF1` would fail that check, so this function is the
+normal IPC checker, not the UDL downloader. Inside this function there
+is no compare against `0x800`, `0x1000`, `0x7e8`, `0xc000`, `0xc018`, or
+`0x2000000`. The 16-bit compares here are `#16`, `#2`, and `#242`
+(`0xF2`, equality).
+
+A different function, which returns at `0x190c`, does clamp a value:
+
+```
+0x18a6  movw r2, #0xfe8
+0x18ae  cmp  r1, r2
+0x18b0  blo  0x18c6          ; if r1 >= 0xFE8, store 0xFE8
+```
+
+That is not on the path that prints `Msg Size Err` or `Frame Err`, and
+the surrounding stores are small byte fields, not the SIT header. It is
+not a demonstrated UDL frame cap, so `cp-boot` was not changed and no
+load was run.
+
+### `movw` of the UDL immediates
+
+Thumb-2 `movw` (first halfword `0xF240`–`0xF24F` or `0xF640`–`0xF64F`) and
+ARM `movw` (`(insn >> 20) & 0xFF == 0x30`) were scanned for
+`0xA100`, `0xA10B`, `0xA301`, `0xA10D`, `0xA00B`, `0xA400`, `0xC100`,
+`0xC10B`, `0xC300`, `0xC10D`, `0xC00B`, `0xC400`.
+
+BOOT (`0x410`..`0x16c10`) has **zero** hits. The whole `modem.bin`
+(98265168 bytes) has 196 Thumb hits and 90 ARM hits, all inside MAIN.
+The first Thumb hit is at file offset 18223996.
+
+The tight cluster at file offset 19788598 is a name table, not a
+downloader. Each slot is `movw r0, #opcode` / `movw r3, #0x36a` for
+sequential ids `0xA0FB`..`0xA124`, including `0xA10B` at 19788598 and
+`0xA10D` at 19788646. There is no `cmp` in that table.
+
+Within 160 bytes of every Thumb `movw` of `0xA10B`, `0xC10B`, `0xA301`,
+or `0xA10D` the only compares are 16-bit and small: `#0`, `#1`, `#2`,
+`#3`, `#8`, `#9`, `#31`, `#32`, `#35`, `#77`, `#114`, `#128`, `#148`.
+There is no 32-bit `cmp` there, and none of those immediates is a frame
+size of `0x800` / `0x7E8` / `0xC000` / `0xC018`. `cp-boot` was not
+changed. No load was run.
+
+Modem left **OFFLINE**.
+
+## Stall logs at `0x201b098` (2026-09-22, one `0x7E8` load)
+
+Fresh `OFFLINE` after `insmod` of `shm_ipc.ko`, `cpif_page.ko`, `cpif.ko`,
+`cp_thermal_zone.ko`. Char nodes created from sysfs (`major:minor`):
+
+| Node | dev |
+|---|---|
+| `umts_boot0` | 493:7 |
+| `umts_dm0` | 493:4 |
+| `umts_ipc0` | 493:0 |
+| `umts_ipc1` | 493:1 |
+| `umts_loopback` | 493:5 |
+| `umts_rcs0` | 493:8 |
+| `umts_rcs1` | 493:9 |
+| `umts_rfs0` | 493:2 |
+| `umts_router` | 493:3 |
+| `umts_wfc0` | 493:10 |
+| `umts_wfc1` | 493:11 |
+| `umts_toe0` | 10:102 |
+| `logbuffer_cpif` | 10:103 |
+| `logbuffer_bd` | 10:111 |
+| `logbuffer_cpm` | 10:113 |
+| `logbuffer_maxfg` | 10:118 |
+| `logbuffer_maxfg_monitor` | 10:117 |
+| `logbuffer_maxq` | 10:116 |
+| `logbuffer_pcie0` | 10:106 |
+| `logbuffer_pcie1` | 10:105 |
+| `logbuffer_ssoc` | 10:112 |
+| `logbuffer_tcpm` | 10:115 |
+| `logbuffer_ttf` | 10:104 |
+| `logbuffer_tty18` | 10:110 |
+| `logbuffer_usbpd` | 10:114 |
+
+One load, ring-fit payload `0x7E8`, `POWER_RESET(NORMAL)`, BIN success
+only on `0xC12B`. It stalled where the earlier `0x7E8` runs stalled:
+`BIN ACK fail at 0x201b098 chunk=16633 last_good=0x201a8b0`, NORM_RAW
+`head=708608` (`0xad000`) `tail=706560` (`0xac800`), one unread `0x800`
+frame. `modem_state` stayed `BOOTING`. No `BAD MSG`. Log:
+`/data/saaios/var/cp-boot-20260922-stalllog.log`.
+
+Before reboot, dmesg lines matching `cpif`, `BAD`, `boot_stage`, `sit`,
+or `udl` were saved to `/data/saaios/var/dmesg-stall-log.txt` (214 lines).
+They record the usual power-on path and nothing about a download limit
+or a missing command:
+
+- `clear_boot_stage` then `boot_stage == 0xFF` then `boot_stage == 0x3FFF`
+- `CP2AP_WAKEUP == 0x0` three times, then `0x1`
+- `start_normal_boot`
+- `shmem_enqueue_snapshot: invalid intr 0x0` twice during PCIe probe
+- `bootdump_release: umts_boot0` when the loader exited
+- the `sit` hits are the kernel IPv6 `sit` tunnel driver, not SIT UDL
+- no `BAD`, no `udl`, no crash line
+
+`/dev/umts_boot0` was not read (the loader had it). Every other new node
+was polled for 300 ms. All `umts_*` returned no data. `logbuffer_cpif`
+(887 bytes) is only the GPIO/PCIe power sequence, ending at
+`DBG: doorbell: pcie_registered = 1`. The other `logbuffer_*` files
+(pcie, tcpm, usbpd, tty, battery) contain no `udl`, `crash`, `frame`,
+or `boot_stage` string. They do not name a limit or a missing command.
+
+AP sysrq-b after the dump. Modules reloaded. `modem_state=OFFLINE`.
+No second load.
+
+## COMPLETE / FIN / READY at an empty ring (2026-09-22)
+
+One `0x7E8` ring-fit load with `POWER_RESET(NORMAL)`. At MAIN offset
+`0x201b098` (chunk 16633, previous frame ACKed) the next BIN was not
+written. NORM_RAW was empty: `head==tail==706560`. Then, in order:
+
+| Step | Result |
+|---|---|
+| `IOCTL_COMPLETE_NORMAL_BOOTUP` | `rc=-1 errno=11` (`EAGAIN`) |
+| state after COMPLETE | `BOOTING` |
+| FIN `0xA400`, wait 5s for `0xC400` | timeout, last read **0 bytes** |
+| state after FIN | `BOOTING` |
+| READY `0xA00B`, wait 5s for `0xC00B` | timeout, last read **0 bytes** |
+| state after READY | `BOOTING` |
+| `rmnet0` | `rx_bytes=0 tx_bytes=0`, no IPv4 (`EADDRNOTAVAIL`) |
+
+No further BIN. No `rild`. Log:
+`/data/saaios/var/cp-boot-20260922-wallprobe.log`. AP sysrq-b afterwards.
+Modules reloaded. Modem returned to **OFFLINE**.
+
+## No `POWER_RESET`, 3s wait, one `0xC000` BIN (2026-09-22)
+
+`IOCTL_POWER_ON`, then no `IOCTL_POWER_RESET`. Once a second for 3s,
+`modem_state` stayed `OFFLINE` and NORM_RAW was `TX head=tail=0`,
+`RX head=tail=0`. dmesg had no `BAD CFG`, so `START` was issued.
+
+| Step | Result |
+|---|---|
+| `LOAD_CP_IMAGE` BOOT `0x16800` | OK |
+| `START_CP_BOOTLOADER` NORMAL | OK, `rc=0`. `OFFLINE` → `BOOTING`. Ring still `head=tail=0` on TX and RX. The earlier no-wait START crash did not repeat. |
+| MAIN UDL START `0xA120` | ACK `0xC120` |
+| one BIN, payload `0xC000`, one `write(0xC00C)`, no shrink | no `0xC12B` in 10s (last read 0). TX `head==tail==0xc028` (frame consumed). Then `bad_cfg=1`, `modem_state=CRASH_EXIT`. |
+| after the crash | TX `head=tail=49192` (`0xc028`), RX `head=tail=32` |
+
+No second frame. No `COMPLETE`. Log:
+`/data/saaios/var/cp-boot-20260922-noreset.log`. AP sysrq-b afterwards.
+
+Not yet reached: VSS, APM, NV, a successful `COMPLETE_NORMAL_BOOTUP`,
+`ONLINE`, or any `rmnet` byte. Wi-Fi is not a substitute for that.
