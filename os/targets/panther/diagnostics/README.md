@@ -51,3 +51,11 @@ IPC/RFS remain open. The SIM result is separate from the boot exit status.
 This packaging was subsequently live-tested: boot ONLINE succeeds again,
 but the query remains unconsumed in FMT TX. See MODEM-RUNTIME-2026-09-24.md;
 neither a working SIM query nor cellular service is claimed.
+
+## Passive runtime snapshot
+
+`sh runtime-snapshot.sh snapshot` reads an allowlist of ring/control/counter
+attributes, CPU policy names and selected kernel diagnostics. No modem
+endpoint is opened and no commands are sent. Missing attributes are labelled
+unavailable. IRQ counters include boot traffic; `rx_int_enable` is not a
+PCI-MSI enable verdict. See the runtime investigation for interpretation.

@@ -84,3 +84,52 @@ Log: `/data/saaios/var/probe-held-sim-20260924.log` on the phone, copied to
 `/tmp/probe-held-sim-20260924.log` on R620. Guarded repository boot packaging
 is now live-validated (superseding the earlier compile-only note). Its SIM
 child result is logged separately from CP boot success.
+
+## Passive transport audit after the held-endpoint test
+
+No reboot, retransmission, register write or new boot approach in this audit.
+The allowlisted `diagnostics/runtime-snapshot.sh snapshot` was syntax-checked
+on R620 and executed through the phone's shell. ONLINE and FMT TX 24/0
+persisted; both RX rings were empty. PCIe retry counters remained zero.
+
+Reference source: Google's s5300 checkout at
+232fb16b3dbc3c4126d9ac0b2a0f0f514e1290c8. Exact equivalence to the installed
+cpif.ko remains unproven; source interpretations below need that caveat.
+
+- `cp2ap_msg=0xc8` decodes to VALID|COMMAND|PHONE_START, not an error.
+- `ap2cp_msg=0x82` decodes to VALID|SEND_FMT. This proves the shared control
+  field was updated, NOT that CP received/handled a PCIe doorbell.
+- `pcie_send_ap2cp_irq` writes that field both when sending immediately and
+  when reserving an interrupt because PCIe is off or transitioning. Thus
+  the field alone cannot distinguish those cases. No matching reserve/send
+  failure messages were found in the retained kernel log.
+- PCI-MSI `mif_cp2ap_msg`, RX interrupt count and RX poll count all read
+  49046. This is cumulative, including firmware-transfer acknowledgements;
+  it does not demonstrate receipt of any runtime response.
+- `napi/rx_int_enable=0` is NOT sufficient evidence of disabled PCIe IRQs.
+  In this source its setters update the field only for INTERRUPT_MAILBOX,
+  whereas this device uses PCI-MSI. Do not change interrupt controls based
+  on this value alone.
+
+A separate integration defect was observed: at boot completion the kernel
+warned in `freq_qos_update_request`, called by `tpmon_set_cpu_freq` in cpif.
+The phone has no CPU frequency policy directories. Reference tpmon checks
+only a non-null request pointer before updating it; request activation
+depends on CPU policy setup. This is consistent with an unregistered QoS
+request, not yet proven against the installed module. Execution continued
+through INIT_END and ONLINE. There is no causal proof connecting this warning
+to the stalled FMT queue; do not present a QoS change as a modem fix.
+
+Next bounded work:
+
+1. Establish installed module/source and CPU-frequency dependency provenance;
+   repair/guard inactive QoS requests only with a matching build and tests.
+2. Compare the factory CBD post-FIN/COMPLETE sequence and runtime handover
+   metadata with the native probe, then instrument notification delivery if
+   the passive evidence remains insufficient.
+3. Only after a concrete difference is established, run one fresh-boot
+   comparison with one SIM query and the same ring/counter snapshots.
+
+The snapshot script does not open modem endpoints, consume events, mount EFS,
+or print NV, packet payloads or subscriber identifiers. It is not a service
+health verdict: ONLINE with an unconsumed TX request is still a failure.
