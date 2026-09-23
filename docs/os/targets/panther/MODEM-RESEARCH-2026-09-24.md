@@ -198,3 +198,49 @@ BIN header or chunk-size solution in the inspected routines. Init rc selects
 `modem${ro.boot.slot_suffix}`; this supports checking slots separately, not
 silently substituting modem_b. Whole startup-sequence equivalence and the
 effective snapshot view still need validation. Root cause remains open.
+
+## B-slot RAM-only experiment (2026-09-24)
+
+User authorized a bounded live probe. Loaded the existing kernel modules from
+the running installation; initial CP state OFFLINE. Mounted sysfs-verified
+modem_b (sda29, 259:13) ext4 read-only with `noload`, copied modem.bin to
+tmpfs, verified SHA-256 against the B hash above, then unmounted it and removed
+the temporary block node. No partition writes or slot change.
+
+Built a separate static ARM64 diagnostic from a snapshot of the uncommitted
+local cp-boot.c, without changing that user's working copy. Its entry point
+requires an explicit argument, OFFLINE state and no BAD CFG. It reads only
+the verified tmpfs firmware, validates BOOT/MAIN bounds and stage indices,
+loads BOOT, starts CP and transfers MAIN with the existing 0x7e8 ring-fit
+path. Bound: 0x02400000 bytes, 180-second process alarm. No NV reads,
+CRC/DONE/READY/FIN, COMPLETE, POWER_RESET or POWER_OFF in the executed path.
+No automatic retry. The ordinary loader entry point is not dispatched.
+
+Result: **same exact stall with B as previously observed with A**:
+
+```text
+BIN ACK fail at 0x201b098 chunk=16633 last_good=0x201a8b0
+head=0xad000 tail=0xac800 consumed=0
+modem_state=BOOTING; bad_cfg=0
+PROBE END result=-1
+```
+
+The diagnostic's inherited `ACKs continued past` message is misleading:
+it logs when the NEXT offset reaches the threshold, before sending that
+frame. It is NOT evidence that an ACK arrived beyond the wall.
+
+The probe exited normally after its ACK timeout, before its 36-MiB bound.
+CP remains BOOTING, not ONLINE; cellular service is not implemented or fixed.
+Phone UI/network host remained reachable. Do not immediately retry against
+this CP state; a fresh AP boot is required for another controlled experiment.
+
+This weakens a firmware-version-specific explanation. It does not distinguish
+between shared BOOT behavior, kernel/shared-memory layout, transport and
+loader protocol/state. Next investigation should trace the exact outstanding
+frame and CP memory/ring mapping against the matching kernel and the actual
+CBD s5100sit dispatch path, rather than change firmware or chunk sizes blindly.
+
+Private local evidence: `/data/saaios/var/probe-b-20260924.log` on the phone;
+R620 `/tmp/cp-boot-probe-base.c`, `/tmp/cp-boot-probe-b.c`,
+`/tmp/saaios-probe-b`. These are experimental artifacts, not a production
+loader and not installed into startup. Firmware and device data stay out of Git.
