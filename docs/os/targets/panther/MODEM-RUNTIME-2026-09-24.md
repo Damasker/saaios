@@ -133,3 +133,56 @@ Next bounded work:
 The snapshot script does not open modem endpoints, consume events, mount EFS,
 or print NV, packet payloads or subscriber identifiers. It is not a service
 health verdict: ONLINE with an unconsumed TX request is still a failure.
+
+## Factory handover gap found in the s5100sit path
+
+Read-only disassembly of the previously hashed factory CBD establishes a
+specific missing step, not yet a proven explanation of the FMT stall:
+
+- s5100sit caller at 0x17f50 invokes descriptor preparation (0x16fa0),
+  then calls 0x20f30 at 0x17f68, before the stage transfer at 0x182a4.
+- 0x20f30 calls handover builder 0x1b630 at 0x21158. The ordinary branch
+  (property_get_bool false at 0x20f88) also reaches this call.
+- The builder issues ioctl 0x6f57 at 0x1bfbc/0x1bfc0. Reference kernel
+  names this IOCTL_HANDOVER_BLOCK_INFO; it copies the supplied structure
+  into the shared handover control region. Our probe does not call it.
+- Successful COMPLETE (0x6f23) at 0xfe70 is followed by 0x6f48 at 0xfef0.
+  That second ioctl only clears the CP boot log in the reference kernel;
+  it is not an extra runtime-start command. No need to erase evidence to
+  reproduce it during diagnostics.
+
+Handover builder evidence: version=1 at 0x1b754; CDT property parser at
+0x1c0f0 uses ro.boot.cdt_hwid (fallback/override behavior still under review).
+Format at 0x367a is `0x%04x%02x%02x%04x%02x%02x%02x%02x%04x%08x`.
+Do not emulate sscanf's overlapping writes or invent default board values.
+Table at 0x25230 has sources chosen/config/imei1 and imei2, 16 bytes each,
+destination offsets 64 and 80, plus chosen/plat/rfid, 4 bytes at offset 44.
+Builder reads 64 bytes from /mnt/vendor/persist/modem/cpsha into offset 96
+at 0x1bb74..0x1bb84. The zero-initialized local structure is 161 bytes.
+These are device-bound inputs: never substitute identifiers/signatures,
+copy them from another phone, or commit/log their contents.
+
+Live source availability check, no ioctl and no source contents printed:
+
+- Both identity properties readable, 16 bytes each; rfid readable, 4 bytes.
+- androidboot.cdt_hwid key exists in bootconfig (not cmdline).
+- DT handover descriptor is two big-endian cells: type 2, offset 0x82c.
+- chosen/plat/hwinfo and chosen/config/modem_flag not available at those
+  paths. The former is a candidate input; its exact factory source mapping
+  still needs completion. Missing optional sources are not automatically fatal.
+- /mnt/vendor/persist/modem/cpsha unavailable. A filename-only search under
+  /data/saaios/var, /mnt and /persist found no cpsha; this does NOT establish
+  that the signature is absent from its original partition.
+
+`handover-preflight.sh check-sources` reports this inventory without opening
+modem endpoints. Exit 1 means at least one listed source is unavailable,
+not that the modem or SIM has failed. Live run returned 1 as expected;
+host shell syntax check passed. No mounts, partition writes, reboot or new
+boot attempt were performed.
+
+Before a handover comparison: finish the field/source/endian mapping and
+factory fallback branches, establish the installed ioctl ABI, locate the
+original signature through a read-only verified source, and test a strict
+builder with synthetic fixtures. Only then send the authentic block to RAM
+at the factory-proven point in one bounded fresh-boot test. No claim that
+handover alone fixes SIM access is justified yet.

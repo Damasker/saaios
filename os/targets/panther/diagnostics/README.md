@@ -59,3 +59,10 @@ attributes, CPU policy names and selected kernel diagnostics. No modem
 endpoint is opened and no commands are sent. Missing attributes are labelled
 unavailable. IRQ counters include boot traffic; `rx_int_enable` is not a
 PCI-MSI enable verdict. See the runtime investigation for interpretation.
+
+`sh handover-preflight.sh check-sources` inventories candidate factory
+handover inputs using only availability/length checks. It prints no source
+contents and never sends a handover ioctl. Exit 1 denotes missing sources
+(including potentially optional ones), not a modem failure. Presence does
+not validate contents, field mapping or ABI. Do not construct a zero-filled
+or guessed hardware identity block to bypass missing inputs.
