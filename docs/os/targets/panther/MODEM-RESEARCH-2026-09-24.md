@@ -1,9 +1,9 @@
 # Panther modem: evidence review, 2026-09-24
 
-Status update: the missing factory preamble is now verified to fix the MAIN
-transfer stall, including full MAIN CRC/DONE acceptance. See
+Status update: native CP boot reached ONLINE after the corrected factory
+preamble, firmware/NV stages and FIN/COMPLETE handshake. See
 [bounded experiments](MODEM-EXPERIMENTS-2026-09-24.md). This is NOT complete
-modem boot or cellular acceptance. Earlier sections below are chronological
+cellular-service acceptance. Earlier sections below are chronological
 research notes; their no-live-test statements describe the initial review.
 No radio partition writes, EFS access or radio installation were performed.
 

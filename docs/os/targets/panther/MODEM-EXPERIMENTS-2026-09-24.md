@@ -171,3 +171,51 @@ the new policy helper does not by itself integrate the production loader.
 Next gate: review NV-copy provenance, exact NV descriptor handling, final FIN
 and kernel completion/ONLINE handshake before any expansion beyond this probe.
 Never use missing/zero-filled NV or original EFS as a shortcut to boot.
+
+## Full native boot: ONLINE achieved
+
+The existing userdata NV copies have documented provenance in the legacy
+September 6 journal: one read-only/norecovery copy, then original EFS unmounted.
+Both copies are 524288 bytes with 32-byte checksum sidecars. Plain MD5 and
+the older Samsung_Android_RIL suffix did NOT match; that was not corruption.
+
+Read-only extraction of factory `/bin/rfsd` from the existing host vendor
+image identified SHA-256
+`58d7f885e7533a328268f0de47ef9eb9995cdfa6b317d755b57973d4f5dfb71b`.
+At `bf30..bf84` and `fdd0..fe24`, it hashes file bytes through EOF, then
+appends `Samsung_SIT_RIL` from 0x4219 using strlen (no trailing NUL).
+Both saved NV checksums match this exact algorithm. Only match results,
+not NV contents, identifiers or checksum values, were displayed.
+Factory rfsd was NOT executed. No sidecar or NV modification occurred.
+
+One fresh-OFFLINE native test then performed:
+
+1. Reviewed BOOT/READY/TOC and MAIN/VSS/APM sequence.
+2. NV_NORM index 5 and NV_PROT index 6, from verified copies, 0x80000 bytes
+   each; START/BIN/DONE, no CRC, matching factory descriptor policy.
+3. Open ipc0 and rfs0 without a filesystem-serving daemon.
+4. FIN 0xa400 -> 0xc400, then COMPLETE ioctl 0x6f23 -> rc 0.
+5. Ten consecutive one-second observations of ONLINE, and another ONLINE
+   observation after the diagnostic exited.
+
+Kernel log confirms `PHONE_START <- s5300`, then `INIT_END -> s5300`, and
+successful return from complete_normal_boot. This is kernel/CP boot success,
+NOT proof of SIM registration, calls, SMS, packet data, or sustained uptime.
+No RFS/NV writes were serviced; no vendor cbd/rild/rfsd was launched.
+
+Evidence: phone `/data/saaios/var/probe-b-complete-20260924.log`, host
+`/tmp/probe-b-complete-20260924.log`. Tested binary SHA-256:
+`b0159200174ab0b8db94bb3fe8fc033e02c6f0caec29be5e3c303104f42d5183`.
+The phone remains ONLINE at the last observation; no auto-start installed.
+
+The separate `diagnostics/` source pair now preserves the tested transfer
+implementation without modifying the dirty original cp-boot.c. Repackaging
+adds explicit full-mode argument, firmware digest and NV verifier gates,
+and compiles out the historical loader entry. ARM64 static compilation and
+no-argument refusal were checked; that guarded packaging has not had a
+second complete device run. See its README before use.
+
+Next work: integrate a maintained loader into the active development branch,
+test recovery/lifetime handling, and design isolated RFS plus SIT telephony
+services before claiming a usable cellular stack. Never expose original EFS
+to a newly implemented filesystem server.
