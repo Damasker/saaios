@@ -442,9 +442,10 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .map(str::to_string)
 }
 use saai_ui_core::{
-    layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
-    NavigationItem, Node, ObjectSummary, OrbHost, Rect, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, SystemSection, SystemSectionRow, UniversalState,
+    layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length, Metric,
+    MetricValue, NavigationItem, Node, ObjectSummary, OrbHost, Rect, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, SystemSection, SystemSectionRow, SystemStatus,
+    UniversalState,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -767,6 +768,11 @@ struct ShellSettings {
     /// `contrast_pct`/`text_scale_pct` already use for their own
     /// defaults.
     orb_enabled: bool,
+    /// VUI-04 (ADR-117): rendering modifier for Orb/`OrbHost`, not a
+    /// sixth Orb state. `false` by default so an existing settings
+    /// file without the field keeps the current (animated-allowed)
+    /// behavior.
+    reduced_motion: bool,
 }
 
 impl ShellSettings {
@@ -793,6 +799,7 @@ impl ShellSettings {
             contrast_pct: 0,
             remote_access_enabled: false,
             orb_enabled: true,
+            reduced_motion: false,
         };
         let Some(value) = std::fs::read_to_string(SETTINGS_PATH)
             .ok()
@@ -848,6 +855,10 @@ impl ShellSettings {
                 .get("orb_enabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(default.orb_enabled),
+            reduced_motion: value
+                .get("reduced_motion")
+                .and_then(Value::as_bool)
+                .unwrap_or(default.reduced_motion),
         }
     }
 
@@ -863,6 +874,7 @@ impl ShellSettings {
             "contrast_pct": self.contrast_pct,
             "remote_access_enabled": self.remote_access_enabled,
             "orb_enabled": self.orb_enabled,
+            "reduced_motion": self.reduced_motion,
         });
         let Ok(text) = serde_json::to_string_pretty(&value) else {
             return;
@@ -2213,6 +2225,28 @@ struct StatusBarSnapshot {
     dot_color: render::Pixel,
 }
 
+fn system_status_model(
+    time_text: &str,
+    wifi_up: bool,
+    battery: Option<(u8, bool)>,
+) -> SystemStatus {
+    let network = if wifi_up {
+        StatusIndicator::new(UniversalState::Active, "Wi-Fi")
+    } else {
+        StatusIndicator::new(UniversalState::Offline, "Нет сети")
+    };
+    let mut status = SystemStatus::new(time_text, network);
+    if let Some((percent, charging)) = battery {
+        let value = if charging {
+            format!("{percent}% +")
+        } else {
+            format!("{percent}%")
+        };
+        status = status.with_battery(Metric::new("Батарея", MetricValue::Known(value)));
+    }
+    status
+}
+
 fn intent_key_action(ch: char) -> String {
     format!("{INTENT_KEY_PREFIX}{ch}")
 }
@@ -2881,7 +2915,7 @@ fn me_max_scroll_offset(total_rows: usize, width: u32, height: u32, content_rect
 /// length, since `me_fixed_card_action` has to agree with it and
 /// there's no way to assert two functions' lengths match at compile
 /// time anyway.
-const ME_FIXED_CARD_COUNT: usize = 18;
+const ME_FIXED_CARD_COUNT: usize = 19;
 
 /// HIA-20: how many silent taps on the build-id card
 /// (`me_fixed_card_action`'s index 1) open the hidden diagnostic
@@ -2912,6 +2946,7 @@ fn me_fixed_card_action(logical_index: usize) -> Option<&'static str> {
         15 => Some("open_trusted_clients"),
         16 => Some("cycle_space_color"),
         17 => Some("toggle_orb"),
+        18 => Some("toggle_reduced_motion"),
         _ => None,
     }
 }
@@ -3110,6 +3145,7 @@ fn main() {
         current_page: RootPage::Now,
         last_touch_pos: (0.0, 0.0),
         tab_touch_pending: false,
+        pressed_tab: None,
         layer,
         layer_width: 0,
         layer_height: 120,
@@ -3294,6 +3330,9 @@ struct Shell {
     /// (same "release, not press" rule as `unlock_pending`, so a drag
     /// through the tab bar doesn't switch pages by accident).
     tab_touch_pending: bool,
+    /// VUI-04 (ADR-117): which tab currently has a finger down on it.
+    /// Independent of `current_page` / `selected`. Cleared on up/cancel.
+    pressed_tab: Option<RootPage>,
 
     layer: LayerSurface,
     layer_width: u32,
@@ -3741,7 +3780,7 @@ impl SeatHandler for Shell {
 impl TouchHandler for Shell {
     fn down(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _serial: u32,
@@ -3763,6 +3802,7 @@ impl TouchHandler for Shell {
             self.tab_touch_pending = false;
             self.me_drag = None;
             self.pin_entry_buffer.clear();
+            self.pressed_tab = None;
             self.present_lock_pin_entry(qh);
             println!("saai-shell: woke from pseudo-sleep");
             return;
@@ -3793,6 +3833,7 @@ impl TouchHandler for Shell {
         } else {
             None
         };
+        self.refresh_pressed_tab(conn, qh);
     }
 
     fn up(
@@ -3813,6 +3854,10 @@ impl TouchHandler for Shell {
         let was_me_drag = me_drag.is_some_and(|(start_y, _)| {
             (self.last_touch_pos.1 - start_y).abs() > ME_DRAG_TAP_SLOP_PX
         });
+        let had_press = self.pressed_tab.take().is_some();
+        if had_press {
+            self.draw(conn, qh);
+        }
         // Release, not just touch-start, is what unlocks -- matches
         // drm-splash.c's own `touch_released` gate, so a drag that
         // starts on the lock surface but ends elsewhere (or a
@@ -4131,8 +4176,8 @@ impl TouchHandler for Shell {
 
     fn motion(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _time: u32,
         _id: i32,
@@ -4154,6 +4199,7 @@ impl TouchHandler for Shell {
                 self.me_scroll_dirty = true;
             }
         }
+        self.refresh_pressed_tab(conn, qh);
     }
 
     fn shape(
@@ -4177,10 +4223,13 @@ impl TouchHandler for Shell {
     ) {
     }
 
-    fn cancel(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
+    fn cancel(&mut self, conn: &Connection, qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
         self.unlock_pending = false;
         self.tab_touch_pending = false;
         self.me_drag = None;
+        if self.pressed_tab.take().is_some() {
+            self.draw(conn, qh);
+        }
     }
 }
 
@@ -5114,6 +5163,9 @@ impl Shell {
                     self.orb_menu_open = false;
                 }
             }
+            "toggle_reduced_motion" => {
+                self.settings.reduced_motion = !self.settings.reduced_motion;
+            }
             "toggle_remote_access" => {
                 self.settings.remote_access_enabled = !self.settings.remote_access_enabled;
                 apply_remote_access(self.settings.remote_access_enabled);
@@ -5762,6 +5814,17 @@ impl Shell {
                 },
                 "Изменить",
             ),
+            // VUI-04 (ADR-117): real setting feeding `OrbHost.reduced_
+            // motion`, not a sixth Orb state.
+            render::ActionCardView::new(
+                "Уменьшить движение",
+                if self.settings.reduced_motion {
+                    "Включено"
+                } else {
+                    "Выключено"
+                },
+                "Изменить",
+            ),
         ];
         debug_assert_eq!(cards.len(), ME_FIXED_CARD_COUNT);
         for app in self.installed_apps.values() {
@@ -5899,11 +5962,9 @@ impl Shell {
     /// page now draws through -- real `selected` (matches the current
     /// page), real `badge`/`attention` for "Входящие" (the same
     /// `inbox_rows` count "Входящие" itself lists, not a separate
-    /// tally that could drift from it). `pressed`/`disabled` stay at
-    /// their default `false`: no touch-down tracking feeds `pressed`
-    /// yet, and no tab is ever actually disabled today -- both are
-    /// real contract fields with no real trigger yet, not silently
-    /// dropped.
+    /// tally that could drift from it). `pressed` is a live touch-down
+    /// on that tab (ADR-117); `disabled` still has no real trigger
+    /// (no tab is ever actually disabled today).
     fn root_navigation_items(&self, width: u32, height: u32) -> Vec<(Rect, NavigationItem)> {
         let inbox_badge = inbox_rows(&self.selected_entities).len() as u32;
         root_view(width, height).children[1]
@@ -5915,12 +5976,27 @@ impl Shell {
                 if page_from_id(tab.id) == Some(self.current_page) {
                     item = item.selected();
                 }
+                if page_from_id(tab.id) == self.pressed_tab {
+                    item = item.pressed();
+                }
                 if tab.id == "inbox" && inbox_badge > 0 {
                     item = item.with_badge(inbox_badge).with_attention();
                 }
                 (node.rect, item)
             })
             .collect()
+    }
+
+    fn refresh_pressed_tab(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        let next = if self.tab_touch_pending && !self.any_modal_open() {
+            tab_at(self.last_touch_pos, self.width, self.height)
+        } else {
+            None
+        };
+        if self.pressed_tab != next {
+            self.pressed_tab = next;
+            self.draw(conn, qh);
+        }
     }
 
     fn now_context_header(&self) -> ContextHeader {
@@ -6330,7 +6406,8 @@ impl Shell {
             !inbox_notifications(&self.selected_entities).is_empty(),
             !in_progress_work(&self.selected_entities).is_empty(),
             self.orb_menu_open,
-        ));
+        ))
+        .with_reduced_motion(self.settings.reduced_motion);
         // Context Light: color still means context (the selected
         // Space's own color) for the two states that are not urgent
         // enough to override it -- `Idle`/`Active` -- matching this
@@ -6588,9 +6665,11 @@ impl Shell {
                             &mut render::Canvas::new(canvas, width, height),
                             width,
                             height,
-                            &snapshot.time_text,
-                            snapshot.wifi_up,
-                            snapshot.battery,
+                            &system_status_model(
+                                &snapshot.time_text,
+                                snapshot.wifi_up,
+                                snapshot.battery,
+                            ),
                             snapshot.dot_color,
                             fonts,
                         );
@@ -6657,9 +6736,7 @@ impl Shell {
             &mut render::Canvas::new(canvas, width, height),
             width,
             height,
-            &snapshot.time_text,
-            snapshot.wifi_up,
-            snapshot.battery,
+            &system_status_model(&snapshot.time_text, snapshot.wifi_up, snapshot.battery),
             snapshot.dot_color,
             self.fonts.as_ref(),
         );
@@ -6985,10 +7062,10 @@ mod tests {
         object_view_content, orb_action_at, orb_menu_actions, orb_visual_state, orb_zone_rect,
         remove_context_source, space_color, space_color_entity, space_display_name,
         space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity, space_relation_targets,
-        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
+        stacked_row_rect, system_status_model, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, upsert_context_entry, wifi_list_action_at, BluetoothListTap,
-        ContextFrameEntry, ContextSource, Entity, KeyboardMode, OrbAction, Rect, RootPage, Space,
-        SpaceColor, SpaceLifecycle, TrustedClientTap, UniversalState, WifiListTap,
+        ContextFrameEntry, ContextSource, Entity, KeyboardMode, MetricValue, OrbAction, Rect,
+        RootPage, Space, SpaceColor, SpaceLifecycle, TrustedClientTap, UniversalState, WifiListTap,
         ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
         MANUAL_CONFIDENCE, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
         SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE,
@@ -7383,7 +7460,7 @@ mod tests {
             super::me_max_scroll_offset(0, width, height, content_rect),
             0
         );
-        // ME_FIXED_CARD_COUNT (18) real rows at this row height
+        // ME_FIXED_CARD_COUNT (19) real rows at this row height
         // comfortably overflows a 1700px-tall content area -- this
         // asserts the clamp actually engages, not a specific number.
         assert!(
@@ -8219,6 +8296,21 @@ mod tests {
         // exactly the index the build-id card occupies in `me_all_
         // card_views`, not silently lost to some future edit there.
         assert_eq!(me_fixed_card_action(1), Some("tap_build_info"));
+        assert_eq!(me_fixed_card_action(18), Some("toggle_reduced_motion"));
+    }
+
+    #[test]
+    fn system_status_model_keeps_clock_and_charging_strings_literal() {
+        let status = system_status_model("04:14", true, Some((87, true)));
+        assert_eq!(status.time_text, "04:14");
+        assert_eq!(status.network.state, UniversalState::Active);
+        assert_eq!(
+            status.battery.unwrap().value,
+            MetricValue::Known("87% +".into())
+        );
+        let offline = system_status_model("00:00", false, None);
+        assert_eq!(offline.network.state, UniversalState::Offline);
+        assert!(offline.battery.is_none());
     }
 
     #[test]

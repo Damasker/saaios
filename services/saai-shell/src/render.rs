@@ -4,8 +4,8 @@ use saai_ui_core::{
     Disclosure, Divider, Field, FieldKind, FontFamily, FontWeight, Icon, IconGlyph, IconSize,
     LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary, ObjectSummaryTrailing,
     Progress, Rect, Rgb, SemanticText, SpacingToken, StatusIndicator, StatusIndicatorVariant,
-    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, TextOverflow, TextRole,
-    Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    StatusMark, StrokeToken, SurfaceScale, SystemSection, SystemSectionRow, SystemStatus,
+    TextOverflow, TextRole, Theme, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1981,11 +1981,10 @@ pub fn draw_root(
 /// all come from that item's own data, not a separate index parameter
 /// (which `draw_root` still needs for its own unrelated title-lookup/
 /// row-count logic, so it keeps its own `selected: usize`, just no
-/// longer forwards it here). `pressed` is part of the contract
-/// (`NavigationItem::pressed`) but has no real trigger anywhere yet --
-/// no touch-down tracking feeds it -- so it is read here for
-/// completeness but never actually true today; flagged, not silently
-/// dropped from the type.
+/// longer forwards it here). `pressed` is a real touch-down on that
+/// tab (ADR-117): it fills `ColorRole::Pressed` without changing
+/// layout sizes, matching section 4's "press does not change component
+/// size" rule.
 pub fn draw_tab_bar(
     canvas: &mut Canvas<'_>,
     tabs: &[(Rect, NavigationItem)],
@@ -2025,6 +2024,16 @@ pub fn draw_tab_bar(
                     14,
                 ),
                 theme_color(ColorRole::Accent),
+            );
+        } else if item.pressed && !item.disabled {
+            canvas.fill_rect(
+                Rect::new(
+                    rect.x.saturating_add(12),
+                    rect.y.saturating_add(12),
+                    rect.width.saturating_sub(24),
+                    rect.height.saturating_sub(24),
+                ),
+                theme_color(ColorRole::Pressed),
             );
         }
 
@@ -2327,18 +2336,16 @@ pub fn draw_now(
     }
 }
 
-/// The permanent system layer's real content (S13 Change 1) -- time on
-/// the left, network and battery state on the right. Replaces the
-/// solid-color placeholder that namespace's own `"...-test"` suffix
-/// (`main.rs`) had been honestly admitting to since ADR-015.
-#[allow(clippy::too_many_arguments)]
+/// The permanent system layer's real content (S13 Change 1, VUI-04
+/// ADR-117): clock, network, battery from one `SystemStatus` contract
+/// instead of a loose argument list. Context/Space color stays a
+/// surface argument -- not a field on the composite -- so status color
+/// cannot be confused with Space identity.
 pub fn draw_status_bar(
     canvas: &mut Canvas<'_>,
     width: u32,
     height: u32,
-    time_text: &str,
-    wifi_up: bool,
-    battery: Option<(u8, bool)>,
+    status: &SystemStatus,
     space_color: Pixel,
     fonts: Option<&Fonts>,
 ) {
@@ -2363,41 +2370,40 @@ pub fn draw_status_bar(
     draw_text(
         canvas,
         &fonts.semibold,
-        time_text,
+        &status.time_text,
         44.0,
         time_x,
         baseline,
         theme_color(ColorRole::TextPrimary),
     );
 
-    let wifi_label = if wifi_up { "Wi-Fi" } else { "Нет сети" };
-    let wifi_color = if wifi_up {
+    let wifi_label = status.network.label.as_str();
+    let wifi_color = if status.network.state == UniversalState::Active {
         theme_color(ColorRole::Accent)
     } else {
         theme_color(ColorRole::TextSecondary)
     };
-    let battery_label = battery
-        .map(|(percent, charging)| {
-            if charging {
-                format!("{percent}% +")
-            } else {
-                format!("{percent}%")
-            }
+    let battery_label = status
+        .battery
+        .as_ref()
+        .and_then(|metric| match &metric.value {
+            MetricValue::Known(text) => Some(text.as_str()),
+            _ => None,
         })
-        .unwrap_or_default();
+        .unwrap_or("");
 
     // Right-aligned: battery flush with the margin, Wi-Fi immediately to
     // its left with a fixed gap -- same "measure, then place" approach
     // `draw_text_centered` already uses, just anchored from the right
     // edge instead of a center point.
     let gap = 40.0;
-    let battery_width = text_width(&fonts.semibold, &battery_label, 40.0 * text_scale());
+    let battery_width = text_width(&fonts.semibold, battery_label, 40.0 * text_scale());
     let battery_left = width as f32 - margin as f32 - battery_width;
     if !battery_label.is_empty() {
         draw_text(
             canvas,
             &fonts.semibold,
-            &battery_label,
+            battery_label,
             40.0,
             battery_left.round() as u32,
             baseline,

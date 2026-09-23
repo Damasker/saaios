@@ -15,7 +15,7 @@ pub use components::{
 };
 pub use composites::{
     BottomNavigation, ContextHeader, NavigationItem, ObjectSummary, ObjectSummaryTrailing, OrbHost,
-    SystemSection, SystemSectionRow,
+    SystemSection, SystemSectionRow, SystemStatus,
 };
 pub use foundations::{
     FontFamily, FontWeight, IconGlyph, IconSize, LogicalUnit, MotionToken, RadiusToken, SafeInsets,

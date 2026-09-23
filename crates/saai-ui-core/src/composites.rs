@@ -2,10 +2,10 @@
 //! -- built entirely from section 6 primitives, per that section's own
 //! rule: composites never draw their own text or own a rendering path a
 //! primitive does not already provide. VUI-03's three
-//! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's two
-//! (`BottomNavigation`, `OrbHost`) per section 3's inventory table;
-//! `EventRow`/`IntentSummary`/`TaskSummary`/`AgentSummary` remain
-//! deferred to VUI-05 and do not exist here.
+//! (`ContextHeader`, `SystemSection`, `ObjectSummary`) plus VUI-04's
+//! (`BottomNavigation`, `OrbHost`, `SystemStatus`) per section 3's
+//! inventory table; `EventRow`/`IntentSummary`/`TaskSummary`/
+//! `AgentSummary` remain deferred to VUI-05 and do not exist here.
 
 use crate::{
     AccessibilityInfo, AccessibilityRole, ColorRole, DataRow, Divider, IconGlyph, Metric,
@@ -362,10 +362,60 @@ impl OrbHost {
     }
 }
 
+/// Section 7.6. Permanent system status layer: clock, network, optional
+/// battery. Context/Space color is not a field here -- the surface owns
+/// that HIA context identity so this composite cannot confuse it with
+/// severity. Built from `SemanticText` / `StatusIndicator` / `Metric`;
+/// it does not invent a parallel wifi/battery vocabulary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemStatus {
+    pub time_text: String,
+    pub network: StatusIndicator,
+    pub battery: Option<Metric>,
+}
+
+impl SystemStatus {
+    pub fn new(time_text: impl Into<String>, network: StatusIndicator) -> Self {
+        Self {
+            time_text: time_text.into(),
+            network,
+            battery: None,
+        }
+    }
+
+    pub fn with_battery(mut self, battery: Metric) -> Self {
+        self.battery = Some(battery);
+        self
+    }
+
+    pub fn time(&self) -> SemanticText {
+        SemanticText::new(
+            self.time_text.clone(),
+            TextRole::Title,
+            ColorRole::TextPrimary,
+        )
+    }
+
+    pub fn time_accessibility(&self) -> AccessibilityInfo {
+        AccessibilityInfo {
+            name: Some(self.time_text.clone()),
+            ..AccessibilityInfo::new(AccessibilityRole::Status)
+        }
+    }
+
+    pub fn network_accessibility(&self) -> AccessibilityInfo {
+        self.network.accessibility()
+    }
+
+    pub fn battery_accessibility(&self) -> Option<AccessibilityInfo> {
+        Some(self.battery.as_ref()?.accessibility())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DataRowVariant, UniversalState};
+    use crate::{DataRowVariant, MetricValue, UniversalState};
 
     #[test]
     fn context_header_heading_text_matches_draw_roots_current_format() {
@@ -458,5 +508,24 @@ mod tests {
             attention.accessibility().value.as_deref(),
             Some("state.attention")
         );
+    }
+
+    #[test]
+    fn system_status_keeps_clock_network_and_battery_accessibility_separate() {
+        let status = SystemStatus::new(
+            "04:14",
+            StatusIndicator::new(UniversalState::Offline, "Нет сети"),
+        )
+        .with_battery(Metric::new("Батарея", MetricValue::Known("87%".into())));
+        assert_eq!(status.time_accessibility().name.as_deref(), Some("04:14"));
+        assert_eq!(
+            status.network_accessibility().name.as_deref(),
+            Some("Нет сети")
+        );
+        assert_eq!(
+            status.battery_accessibility().unwrap().name.as_deref(),
+            Some("Батарея")
+        );
+        assert_eq!(status.time().content, "04:14");
     }
 }

@@ -46,7 +46,7 @@ in VUI-09; privileged system composites are not automatically public.
 | Primitive | `SemanticText`, `Icon`, `Divider`, `StatusIndicator` | Experimental | gallery and `Сейчас` |
 | Primitive | `Progress`, `Button`, `Field`, `DataRow`, `Metric`, `Disclosure` | Experimental | gallery and `Сейчас` |
 | Composite | `ContextHeader`, `SystemSection`, `ObjectSummary` | Experimental (VUI-03) | `Сейчас` |
-| Composite | `BottomNavigation`, `OrbHost` | Experimental (VUI-04) | shell navigation, Orb |
+| Composite | `BottomNavigation`, `OrbHost`, `SystemStatus` | Experimental (VUI-04) | shell navigation, Orb, status bar |
 | Composite | `IntentSummary`, `TaskSummary`, `AgentSummary` | Deferred to VUI-05 | entity surfaces |
 | Composite | `EventRow`, `DecisionOverlay` | Deferred to VUI-04/05 | shell surfaces |
 | Pattern | empty, loading, offline, blocked, failed, confirmation, permission, recovery | Deferred to VUI-03/07 | system surfaces |
@@ -325,6 +325,19 @@ remain deferred to VUI-04/05.
   `label_key` are always present regardless of whether a renderer is
   currently animating anything.
 - First real consumer: the existing Orb dot/menu.
+
+### 7.6 `SystemStatus`
+
+- Anatomy: clock text, a compact `StatusIndicator` for network, and an
+  optional `Metric` for battery. Context color (the active Space) is
+  supplied by the surface, not by this composite -- status color never
+  means Space, matching Context Light's context=color / state=shape split.
+- Shared, not per-page: one status layer, independent of the scrolling
+  content underneath it.
+- First real consumer: replaces the S13 hardcoded status-bar argument
+  list (`time_text`, `wifi_up`, `battery`) with one contract.
+- Accessibility: clock, network, and battery keep separate names; the
+  composite never flattens them into one string.
 
 ## 8. Required gallery matrix
 

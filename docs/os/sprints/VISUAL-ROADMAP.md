@@ -208,10 +208,11 @@ protocol, storage, or authorization changes are included.
 
 ## VUI-02 — Typography, geometry, icons, and base components
 
-**Status:** In progress — base component contract reviewed; typography and
-mono font shipped and re-verified (ADR-096, ADR-099); a real device
-screenshot tool now exists for physical review; foundation tokens and device
-gallery remain
+**Status:** Acceptance complete except one environment-blocked item —
+base component contract, typography, and mono font shipped
+(ADR-096, ADR-099); gallery and primitives physically reviewed.
+The remaining open acceptance item is boot-image font packaging,
+blocked without stock Pixel firmware on this machine.
 
 **Depends on:** VUI-01
 
@@ -648,7 +649,7 @@ to the pre-VUI-03 app-grid-default behavior (ADR-115).
 
 ## VUI-04 — Navigation, status, Context Light, and Orb
 
-**Status:** In progress (ADR-116)
+**Status:** In progress (ADR-116, ADR-117)
 
 **Depends on:** VUI-03
 
@@ -657,24 +658,23 @@ turning the Orb into a launcher or assistant avatar.
 
 ### Tasks
 
-- [ ] Implement shared bottom-navigation and system-status components with
+- [x] Implement shared bottom-navigation and system-status components with
   safe insets and stable layering. Bottom navigation done (ADR-116):
   `BottomNavigation`/`NavigationItem` in `saai-ui-core`, `Shell::
   root_navigation_items` shared by both `Frame::Root` and `Frame::Now`, one
-  navigation strip rather than two implementations. **Not done**: a
-  `system-status` composite for the status bar itself -- `draw_status_bar`
-  is still the original hardcoded-pixel-position renderer from S13, not
-  built on any `saai-ui-core` primitive/composite. Safe insets/stable
-  layering not separately audited yet.
+  navigation strip rather than two implementations. System status done
+  (ADR-117): `SystemStatus` in `saai-ui-core`, `draw_status_bar` takes that
+  contract; Space color remains a surface argument. **Not done**:
+  safe insets/stable layering vs scrolling content damage -- not
+  separately audited yet.
 - [ ] Preserve `Сейчас`, `Входящие`, and `Пространства`; stage `Я` → `Система`
   only when the destination content is truthful.
 - [x] Add explicit selected, pressed, disabled, attention, and badge states
-  (ADR-116). Four of five have a real trigger today: `selected` (current
-  page), `disabled`/`attention` (rendered correctly when set, tested),
-  `badge` (a real count -- "Входящие"'s own `inbox_rows().len()`, not a
-  separate tally). `pressed` is a real field `draw_tab_bar` already reads,
-  but nothing in `saai-shell` sets it yet -- no touch-down tracking feeds
-  it, so it is always `false` in practice. Flagged, not silently dropped.
+  (ADR-116, ADR-117). Five of five now have a real trigger: `selected`
+  (current page), `pressed` (live touch-down on that tab), `disabled`/
+  `attention` (rendered when set, tested; no tab is disabled in
+  production yet), `badge` (a real count -- "Входящие"'s own
+  `inbox_rows().len()`).
 - [ ] Apply Context Light grammar: context=color, state=shape,
   activity=motion, quantity=arc/fill, attention=ring. Two of five axes
   live so far (ADR-116, on the Orb only): state=shape (every
@@ -685,16 +685,12 @@ turning the Orb into a launcher or assistant avatar.
   quantity visual, and a dedicated ring cue beyond the `Alert` mark all
   remain open.
 - [x] Integrate a restrained Orb host with quiet, active, progress, attention,
-  offline, and reduced-motion states (ADR-116). All five real states
-  reuse `UniversalState` (`Idle`/`Active`/`Running`/`Attention`/`Offline`)
-  with real triggers -- `Offline` from real `appd`/`entityd` connection
-  checks, `Attention` from undismissed notifications, `Running` from the
-  same `in_progress_work` query VUI-03's "Продолжается" already uses,
-  `Active` from the menu being open. **Not done**: `reduced_motion` is a
-  real field `OrbHost`/`draw_calibration_mark`'s caller can read, but no
-  `ShellSettings` field or system setting exists anywhere yet to actually
-  set it -- always `false` in practice, same honesty gap as `pressed`
-  above.
+  offline, and reduced-motion states (ADR-116, ADR-117). All five real
+  states reuse `UniversalState` (`Idle`/`Active`/`Running`/`Attention`/
+  `Offline`) with real triggers. `reduced_motion` is a persisted
+  `ShellSettings` field, toggled from `Я` ("Уменьшить движение"), and
+  passed to `OrbHost::with_reduced_motion`. Motion/arc/ring Context
+  Light axes remain open below.
 - [ ] Retain direct tab navigation during Orb work; do not make the Orb the only
   route.
 - [ ] Make status/navigation layers independent of scrolling content damage.
@@ -975,7 +971,9 @@ After each completed task group, report:
 
 ## Next action
 
-Finish **VUI-01** physical sign-off: review and photograph the raw calibration
-fixture, remove the volatile marker, verify normal navigation/touch/scrolling,
-then cold reboot and repeat the smoke test. Only after that gate should VUI-02
-begin drawing and implementing the base graphical component library.
+Continue **VUI-04**: Context Light remaining axes (activity=motion,
+quantity=arc/fill, attention=ring), status/navigation independence from
+scrolling content damage, and rotation/inset/keyboard plus rapid-tab-switch
+tests. Do not rename `Я` → `Система` until that destination's content is
+truthful. Do not treat VUI-02's boot-image font path as closed without
+stock firmware.
