@@ -1,4 +1,5 @@
-/* Read-only representation check. No ioctl, output block, or identity logging. */
+/* Read-only source adapter. No ioctl, output file or identity logging.
+ * Standalone discards the block; internal caller may receive it in RAM. */
 #include "../src/sit-handover.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +29,7 @@ static int check_identity(const char *path)
     return ok ? 0 : -1;
 }
 
-int main(int argc, char **argv)
+static int check_handover_sources(int argc, char **argv, uint8_t *prepared)
 {
     int candidate = argc == 3 && !strcmp(argv[1], "candidate-no-json");
     if (!candidate && (argc != 2 || strcmp(argv[1], "check-sources"))) return 64;
@@ -107,11 +108,17 @@ int main(int argc, char **argv)
         input.identity_size[0] = input.identity_size[1] = 16;
         input.signature = sig; input.signature_size = 64;
         if (!bad) bad |= saaios_build_handover(output, sizeof(output), &input) != 0;
-        puts(bad ? "Candidate: refused" : "Candidate: 161 bytes assembled in memory and discarded");
+        if (!bad && prepared) memcpy(prepared, output, sizeof(output));
+        puts(bad ? "Candidate: refused" : "Candidate: 161 bytes assembled in memory");
         wipe(output, sizeof(output)); wipe(&input, sizeof(input));
         wipe(ids_bytes, sizeof(ids_bytes)); wipe(sig, sizeof(sig)); wipe(rf, sizeof(rf));
     }
     wipe(fields, sizeof(fields));
-    puts("No block sent or saved; source values withheld. Candidate is not deployment approval.");
+    puts(prepared ? "Handover prepared in caller RAM; source values withheld." :
+         "No block sent or saved; source values withheld. Candidate is not deployment approval.");
     return bad ? 1 : 0;
 }
+
+#ifndef SAAIOS_HANDOVER_INTERNAL
+int main(int argc, char **argv) { return check_handover_sources(argc, argv, NULL); }
+#endif

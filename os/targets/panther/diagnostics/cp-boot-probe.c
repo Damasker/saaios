@@ -7,6 +7,14 @@
 #include "cp-boot-probe-support.inc"
 #undef main
 
+#ifdef PROBE_HANDOVER
+#ifndef PROBE_COMPLETE
+#error "Handover comparison requires complete guarded probe"
+#endif
+#define SAAIOS_HANDOVER_INTERNAL 1
+#include "handover-source-check.c"
+#endif
+
 #ifdef PROBE_PREAMBLE
 #include "../src/sit-boot-preamble.h"
 static int probe_exchange(void *ctx, const uint8_t *packet, size_t n, uint32_t ack) {
@@ -22,10 +30,17 @@ static int send_factory_preamble(const uint8_t *bin, size_t len) {
 
 int main(int argc, char **argv) {
 #ifdef PROBE_COMPLETE
+#ifdef PROBE_HANDOVER
+    if (argc != 3 || strcmp(argv[1], "boot-b-with-verified-nv-handover") != 0) return 64;
+    uint8_t handover[SAAIOS_HANDOVER_SIZE] = {0};
+    char *source_args[] = {argv[0], "candidate-no-json", argv[2], NULL};
+    if (check_handover_sources(3, source_args, handover)) die("handover sources refused");
+#else
     if (argc != 2 || strcmp(argv[1], "boot-b-with-verified-nv") != 0) {
         fprintf(stderr, "Requires boot-b-with-verified-nv; never run automatically\n");
         return 64;
     }
+#endif
     if (system("sh /tmp/saaios-verify-nv-copies.sh") != 0)
         die("NV verification failed; no hardware operations");
 #else
@@ -89,6 +104,11 @@ int main(int argc, char **argv) {
     if (do_ioctl("START", IOCTL_START_CP_BOOTLOADER, &mode) < 0) die("START failed");
     read_trimmed(MODEM_STATE_PATH, state, sizeof(state));
     if (strcmp(state, "BOOTING") != 0 || dmesg_has_bad_cfg() != 0) die("not safe after START");
+#ifdef PROBE_HANDOVER
+    int handover_rc = do_ioctl("HANDOVER_RAM_ONLY", 0x6f57, handover);
+    wipe(handover, sizeof(handover));
+    if (handover_rc < 0) die("handover failed; no firmware stages");
+#endif
 #ifdef PROBE_PREAMBLE
     log_line("FACTORY PREAMBLE: READY, TOC START/BIN/DONE");
     if (send_factory_preamble(bin, len) < 0) die("preamble failed; no MAIN");

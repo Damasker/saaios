@@ -1,5 +1,10 @@
 # Native modem runtime: status query investigation
 
+**Latest result:** the opt-in handover comparison returned the first matching
+SIM status response without a protocol error. See the final section; earlier
+stalled-ring observations below are preserved as controls. Cellular service
+and SIM state interpretation are not yet established.
+
 CP boot ONLINE is verified separately in MODEM-EXPERIMENTS-2026-09-24.md.
 No SIM presence/registration, voice/SMS or data service is yet established.
 
@@ -323,3 +328,43 @@ rechecking source/module/firmware guards and the exact pre-stage timing.
 Run one fresh-boot handover comparison with one SIM query; retain existing
 no-handover result as control. Do not enable boot-time autostart or claim
 the runtime transport fixed until the queue is actually consumed.
+
+## Live handover comparison: first successful runtime response
+
+One fresh AP reboot, same verified B modem.bin and factory-checksummed NV
+copies, same held IPC/RFS endpoints and one SIM request. The new
+PROBE_HANDOVER mode prepares the authentic block before POWER_ON, then
+issues HANDOVER_RAM_ONLY (0x6f57) after START/BOOTING and before READY/TOC.
+ioctl returned 0. No reset/erase/factory controls were enabled.
+
+Results:
+
+- All firmware stages, FIN and COMPLETE passed; CP remained ONLINE.
+- SIM query received a matching response, length 80, error_raw=0; child
+  exit status 0. Earlier identical held-endpoint query timed out.
+- FMT TX head=24 tail=24: CP consumed the request (previous control: 24/0).
+- FMT RX head=2448 tail=2448, RAW RX head=64 tail=64. These are transport
+  counters, not a claim that every queued event was serviced by userspace.
+- Reply small raw fields: card_state=0, universal_pin=0, applications=0.
+  Do not translate these into a SIM-present/absent conclusion until the
+  adapter's enum/layout is independently verified.
+- cp2ap_msg changed to 0x83; PCIe linkdown/CPL retry counts still zero.
+- CP sleep/wakeup counters now move. CPU QoS warning still occurs, so fixing
+  that separate integration issue was not necessary for this response.
+
+This provides strong controlled evidence that missing handover was blocking
+normal runtime progress. It establishes one successful SIM-status exchange,
+not registration, calls, SMS, mobile data or long-term stability. There is
+still no RFS filesystem service, and this remains an opt-in diagnostic.
+
+`run-handover-comparison.sh run-once` checks fresh OFFLINE, the audited cpif
+hash, current endpoint major/minor values and persist partition identity.
+It mounts persist ro,noload,nosuid,nodev,noexec, uses its original 64-byte
+cpsha in RAM and cleans its temporary mount/node. Follow-up inspection
+confirmed persist unmounted and no temporary audit directory remained.
+No original EFS was mounted/written, no partition flashing or slot change.
+
+Phone log: `/data/saaios/var/probe-handover-20260924.log`; host copy:
+`/tmp/probe-handover-20260924.log`. No identifiers or signature contents
+are included in the documented result. Next: validate status enums and
+normal radio/SIM initialization before considering any registration test.

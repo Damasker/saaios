@@ -93,3 +93,22 @@ the documented fresh no-JSON/normal-user assumptions and a verified read-only
 signature source. Project 4 and non-neutral control words are rejected.
 Core dumps/dumpability are disabled and execution has a 15-second deadline.
 The candidate path was live-tested; no handover was sent to CP.
+
+## Opt-in handover comparison (subsequent successful live test)
+
+Add `-DPROBE_HANDOVER -DPROBE_QUERY_SIM` to the complete guarded build.
+It now also includes handover-source-check.c and ../src/sit-handover.h.
+Requires the distinct argument `boot-b-with-verified-nv-handover` followed
+by the verified read-only signature pathname. It builds the block in RAM,
+sends ioctl 0x6f57 after START before the preamble, then clears its buffer.
+This is intentionally not the default diagnostic mode or a boot service.
+
+The reviewed device wrapper `run-handover-comparison.sh run-once` expects
+fresh module/B firmware preparation and binaries at /tmp/probe-handover and
+/tmp/sit-sim-status, plus the existing NV verifier. It creates runtime nodes
+only if absent and never replaces existing ones. No concurrent loaders or
+RIL consumers are allowed. The no-JSON normal profile remains device-specific.
+
+One live comparison succeeded: SIM response length 80, error_raw 0, TX ring
+consumed 24/24. This supersedes the prior statement that all runtime queries
+stall; it does not establish cellular service. See the runtime report.
