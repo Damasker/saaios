@@ -16,7 +16,7 @@ struct saaios_handover_inputs {
 };
 
 /* Strict fixed-width form observed in CBD; not its permissive sscanf. */
-static int saaios_parse_cdt(const char *s, size_t n, uint32_t out[10])
+static inline int saaios_parse_cdt(const char *s, size_t n, uint32_t out[10])
 {
     static const unsigned widths[10] = {4,2,2,4,2,2,2,2,4,8};
     uint32_t parsed[10] = {0};
@@ -41,7 +41,7 @@ static int saaios_parse_cdt(const char *s, size_t n, uint32_t out[10])
  * Caller must establish provenance and map every word; zero is not a fallback.
  * Successful serialization does NOT authenticate signature or hardware inputs.
  */
-static int saaios_build_handover(uint8_t *out, size_t capacity,
+static inline int saaios_build_handover(uint8_t *out, size_t capacity,
                                const struct saaios_handover_inputs *in)
 {
     if (!out || !in || capacity < SAAIOS_HANDOVER_SIZE || in->words[0] != 1 ||

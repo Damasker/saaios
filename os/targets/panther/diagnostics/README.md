@@ -79,3 +79,10 @@ gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
 It validates encoding and forbids reset/factory control fields, but does not
 establish field provenance or authenticate signatures. Never supply guessed
 zeros for unresolved board fields simply to obtain a serialized block.
+
+`handover-source-check.c` is an independent read-only ARM64 diagnostic:
+compile with C11 -Wall -Wextra -Werror -static, invoke `check-sources`.
+It checks the bootconfig CDT syntax and both identity representations without
+printing their values. No signature access, block creation or ioctl exists
+in its execution path. Exit 0 is representation acceptance only, not modem
+readiness. It was live-tested successfully on the diagnostic phone.

@@ -251,3 +251,35 @@ all relevant normal-boot metadata/default branches, validate the bootconfig
 CDT and actual identity representation without logging contents, then add
 a read-only source adapter and test it. No block was sent to CP at this
 checkpoint, and the FMT stall is not claimed fixed.
+
+## Native source-format validation and JSON revision path
+
+The new read-only `diagnostics/handover-source-check.c` was cross-compiled
+with C11 -Wall -Wextra -Werror, transferred to phone tmpfs and run explicitly
+with `check-sources`. It does not open modem devices, construct an output
+block or issue ioctls. Result: bootconfig CDT passed the strict 34-character
+parser; both device identity properties passed 15 decimal digits plus NUL.
+Only pass/fail labels were printed. Input buffers are cleared after use.
+This validates representation, not signature authenticity or field semantics.
+
+Factory revision source tracing has advanced:
+
+- 0x1ade0 calls rfid setter 0x1cb10 with a JSON integer; 0x1adec calls
+  hwinfo setter 0x1cba0 with a JSON integer. The latter stores the value at
+  global offset 536 and sets presence flag 545 (0x1cc10..0x1cc18).
+- Handover builder 0x1b854..0x1b868 checks that presence flag and copies
+  hwinfo into block offset 8 (revision). Thus the earlier speculative DT
+  path chosen/plat/hwinfo is not established as this factory source.
+- Factory strings identify `hardware_config.json`, a property override
+  `persist.vendor.modem.hw_config.json_table`, and fallback pathname
+  `/mnt/vendor/modem_img/images/default/hardware_config.json`.
+- Read-only ext4 ro,noload audit of verified modem_b (sda29, 259:13)
+  found NO hardware_config.json anywhere on that filesystem. The regular
+  files listed within three directory levels were modem.bin, pw_token_db
+  and pw_token_db.csv in the known g5300q-260317-260505-B-15346003 directory.
+  Token databases were not read. Temporary mount/node were cleaned.
+
+Consequently, do not transfer new-CBD JSON behavior to this firmware as if
+the packaging matched. The no-table fallback and/or matching-generation
+CBD still need tracing before deciding whether an unset revision is the
+factory-intended result. No hardware test with an invented revision was run.
