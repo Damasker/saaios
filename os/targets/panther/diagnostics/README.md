@@ -66,3 +66,16 @@ contents and never sends a handover ioctl. Exit 1 denotes missing sources
 (including potentially optional ones), not a modem failure. Presence does
 not validate contents, field mapping or ABI. Do not construct a zero-filled
 or guessed hardware identity block to bypass missing inputs.
+
+The pure `../src/sit-handover.h` helper is not integrated into the loader.
+Run its synthetic host tests before any source-adapter work:
+
+```sh
+gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  ../src/test-sit-handover.c -o /tmp/test-sit-handover
+/tmp/test-sit-handover
+```
+
+It validates encoding and forbids reset/factory control fields, but does not
+establish field provenance or authenticate signatures. Never supply guessed
+zeros for unresolved board fields simply to obtain a serialized block.

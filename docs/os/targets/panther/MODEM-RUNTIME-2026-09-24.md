@@ -213,3 +213,41 @@ The missing signature *source* is therefore resolved. Do not fabricate a
 replacement, alter persist, or use the vendor fstab's writable/check/format
 options. The remaining gates are exact handover ABI/field mapping and a
 tested RAM-only builder. No modem boot experiment was run in this search.
+
+## Serializer and installed-module ABI checkpoint
+
+Host `/home/mike/panthor-backport/factory-r54-modules/modules/cpif.ko`
+SHA-256 is 8cdd21d771189af08035dc6b8fc2b90708a83a520ccb0a45570836a0bce1e79c,
+matching the earlier phone module fingerprint. Its actual
+`update_handover_block_info` disassembly uses 0xa1 (161) for both
+copy_from_user (0xec24) and memcpy into shared memory (0xec98). This
+establishes this function's copy size against the binary, without asserting
+that the entire reference source tree matches this module.
+
+New pure helper `src/sit-handover.h` provides strict fixed-width CDT parsing
+and explicit little-endian 161-byte serialization. It has no device/file
+access or ioctl; it is deliberately NOT wired into the live boot probe.
+The caller must supply all 16 words with reviewed provenance. Neither valid
+length nor successful serialization authenticates a signature or proves
+correct board values. Identity shape is restricted to 15 ASCII digits plus
+NUL; compatibility with actual property contents is not yet checked.
+
+The helper rejects nonzero cpinfo0/1/2 and reserved[3]. Factory disassembly
+contains EFS-clear action handling and factory/debug/boot-mode branches
+(0x1bc94 onward), including writes into these control fields. We do not
+replicate those branches or permit guessed control words. This restriction
+may require a separately justified revision if normal board metadata uses
+one of these fields; do not silently bypass the guard.
+
+`test-sit-handover.c` uses only synthetic identities/signature bytes. Host
+GCC C11 -Wall -Wextra -Werror with ASan/UBSan passed; static ARM64 build and
+qemu-aarch64 execution passed. Tests compare every serialized byte against
+an independent layout fixture, check boundary canaries, reject truncated
+CDT/output buffers and malformed identities, check forbidden controls, and
+ensure failed validation leaves output unchanged.
+
+Remaining before live integration: trace revision/hwinfo initialization and
+all relevant normal-boot metadata/default branches, validate the bootconfig
+CDT and actual identity representation without logging contents, then add
+a read-only source adapter and test it. No block was sent to CP at this
+checkpoint, and the FMT stall is not claimed fixed.
