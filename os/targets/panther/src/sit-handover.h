@@ -15,6 +15,26 @@ struct saaios_handover_inputs {
     size_t signature_size;
 };
 
+/* Reviewed fresh-process, no-JSON, normal/user boot profile only.
+ * Caller must independently verify absent modem_flag and no overrides.
+ * Project 4 has extra factory-mode branches: reject, do not guess.
+ */
+static inline int saaios_handover_no_json_words(const uint32_t cdt[10],
+                                               uint32_t rfid, uint32_t out[16])
+{
+    if (!cdt || !out || !cdt[0] || cdt[0] == 4 || !cdt[1] || !cdt[2]) return -1;
+    static const uint32_t max[10] = {
+        0xffff,0xff,0xff,0xffff,0xff,0xff,0xff,0xff,0xffff,0xffffffff
+    };
+    for (unsigned i = 0; i < 10; ++i) if (cdt[i] > max[i]) return -1;
+    const uint32_t words[16] = {
+        1, cdt[0], 0, cdt[3], cdt[4], cdt[6], cdt[7], 0, 0, 0,
+        cdt[8], rfid, cdt[1], cdt[2], cdt[5], 0
+    };
+    memcpy(out, words, sizeof(words));
+    return 0;
+}
+
 /* Strict fixed-width form observed in CBD; not its permissive sscanf. */
 static inline int saaios_parse_cdt(const char *s, size_t n, uint32_t out[10])
 {

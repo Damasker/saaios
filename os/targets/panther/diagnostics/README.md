@@ -86,3 +86,10 @@ It checks the bootconfig CDT syntax and both identity representations without
 printing their values. No signature access, block creation or ioctl exists
 in its execution path. Exit 0 is representation acceptance only, not modem
 readiness. It was live-tested successfully on the diagnostic phone.
+
+Optional `candidate-no-json <signature-path>` constructs and discards a
+candidate in memory, with no device ioctl or output artifact. Use only with
+the documented fresh no-JSON/normal-user assumptions and a verified read-only
+signature source. Project 4 and non-neutral control words are rejected.
+Core dumps/dumpability are disabled and execution has a 15-second deadline.
+The candidate path was live-tested; no handover was sent to CP.

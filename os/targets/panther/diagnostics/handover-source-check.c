@@ -2,6 +2,11 @@
 #include "../src/sit-handover.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/resource.h>
+#include <sys/prctl.h>
+#include <unistd.h>
 
 static void wipe(void *p, size_t n)
 {
@@ -25,7 +30,11 @@ static int check_identity(const char *path)
 
 int main(int argc, char **argv)
 {
-    if (argc != 2 || strcmp(argv[1], "check-sources")) return 64;
+    int candidate = argc == 3 && !strcmp(argv[1], "candidate-no-json");
+    if (!candidate && (argc != 2 || strcmp(argv[1], "check-sources"))) return 64;
+    const struct rlimit core_limit = {0, 0};
+    if (setrlimit(RLIMIT_CORE, &core_limit) || prctl(PR_SET_DUMPABLE, 0)) return 1;
+    alarm(15);
     FILE *f = fopen("/proc/bootconfig", "rb");
     if (!f) return 1;
     char *buf = calloc(1, 65537);
@@ -60,7 +69,7 @@ int main(int argc, char **argv)
     }
     bad |= matches != 1;
     puts(bad ? "CDT: unsupported or missing representation" : "CDT: strict format accepted");
-    wipe(fields, sizeof(fields)); wipe(buf, 65537); free(buf);
+    wipe(buf, 65537); free(buf);
     const char *ids[] = {
         "/sys/firmware/devicetree/base/chosen/config/imei1",
         "/sys/firmware/devicetree/base/chosen/config/imei2"
@@ -70,6 +79,39 @@ int main(int argc, char **argv)
         printf("Identity source %u: %s\n", i+1, result ? "unsupported or unavailable" : "15 digits plus NUL accepted");
         bad |= result != 0;
     }
-    puts("No handover block constructed or sent; source values withheld.");
+    if (candidate && !bad) {
+        /* Candidate only: no ioctl or output artifact even on success. */
+        uint8_t ids_bytes[2][16] = {{0}}, sig[64] = {0}, rf[4] = {0};
+        uint8_t output[SAAIOS_HANDOVER_SIZE] = {0};
+        struct saaios_handover_inputs input = {0};
+        const char *paths[] = {ids[0], ids[1], argv[2],
+            "/sys/firmware/devicetree/base/chosen/plat/rfid"};
+        uint8_t *targets[] = {ids_bytes[0], ids_bytes[1], sig, rf};
+        const size_t lengths[] = {16,16,64,4};
+        struct stat st;
+        errno = 0;
+        if (!stat("/sys/firmware/devicetree/base/chosen/config/modem_flag", &st) ||
+            errno != ENOENT) bad = 1;
+        for (unsigned i = 0; i < 4 && !bad; ++i) {
+            f = fopen(paths[i], "rb");
+            if (!f) { bad = 1; break; }
+            size_t got = fread(targets[i], 1, lengths[i], f);
+            int extra = fgetc(f);
+            bad |= got != lengths[i] || extra != EOF || ferror(f);
+            fclose(f);
+        }
+        uint32_t rfid = ((uint32_t)rf[0]<<24) | ((uint32_t)rf[1]<<16) |
+                        ((uint32_t)rf[2]<<8) | rf[3];
+        if (!bad) bad |= saaios_handover_no_json_words(fields, rfid, input.words) != 0;
+        input.identity[0] = ids_bytes[0]; input.identity[1] = ids_bytes[1];
+        input.identity_size[0] = input.identity_size[1] = 16;
+        input.signature = sig; input.signature_size = 64;
+        if (!bad) bad |= saaios_build_handover(output, sizeof(output), &input) != 0;
+        puts(bad ? "Candidate: refused" : "Candidate: 161 bytes assembled in memory and discarded");
+        wipe(output, sizeof(output)); wipe(&input, sizeof(input));
+        wipe(ids_bytes, sizeof(ids_bytes)); wipe(sig, sizeof(sig)); wipe(rf, sizeof(rf));
+    }
+    wipe(fields, sizeof(fields));
+    puts("No block sent or saved; source values withheld. Candidate is not deployment approval.");
     return bad ? 1 : 0;
 }

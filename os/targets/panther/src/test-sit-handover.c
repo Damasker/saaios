@@ -14,6 +14,16 @@ int main(void)
     uint32_t fields[10], before[10];
     assert(saaios_parse_cdt(valid, sizeof(valid)-1, fields) == 0);
     assert(memcmp(fields, expected, sizeof(fields)) == 0);
+    uint32_t mapped[16];
+    const uint32_t mapped_expected[16] = {
+        1,0x1234,0,0x9abc,0xde,0x12,0x34,0,0,0,0x5678,0xaabbccdd,0x56,0x78,0xf0,0
+    };
+    assert(saaios_handover_no_json_words(fields, 0xaabbccdd, mapped) == 0);
+    assert(memcmp(mapped, mapped_expected, sizeof(mapped)) == 0);
+    fields[0] = 4;
+    assert(saaios_handover_no_json_words(fields, 0, mapped) == -1);
+    fields[0] = expected[0];
+    assert(memcmp(mapped, mapped_expected, sizeof(mapped)) == 0);
     memcpy(before, fields, sizeof(fields));
     for (size_t n = 0; n < sizeof(valid)-1; ++n)
         assert(saaios_parse_cdt(valid, n, fields) == -1);

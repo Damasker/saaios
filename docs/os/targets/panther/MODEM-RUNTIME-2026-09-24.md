@@ -283,3 +283,43 @@ Consequently, do not transfer new-CBD JSON behavior to this firmware as if
 the packaging matched. The no-table fallback and/or matching-generation
 CBD still need tracing before deciding whether an unset revision is the
 factory-intended result. No hardware test with an invented revision was run.
+
+## No-JSON profile and live in-memory candidate
+
+Further CBD tracing: table lookup is conditional at 0xc224..0xc240.
+The lookup failure path 0x1ac04..0x1ac2c tries the literal
+`/mnt/vendor/modem_img/images/default/RF_CFG_DEFAULT` using stat helper
+0x1b570; it does not call the hwinfo/rfid setters. Builder 0x1b854..0x1b890
+logs a missing hwinfo flag but does not overwrite its initially zero revision.
+Therefore revision zero is supported for a **fresh process with no applied
+JSON override**, not a universal replacement for unknown board revision.
+
+Added an explicit pure no-JSON normal/user profile mapping with these words:
+version=1; project=CDT[0]; revision=0; major/minor=CDT[3]/[4];
+SKU/HW=CDT[6]/[7]; rf_sub=CDT[8]; rf_config=DT rfid; reserved[0..2]=
+CDT[1]/[2]/[5]. Control words and reserved[3] are zero. CDT[9] is parsed
+but not mapped by this profile. Reject project 4 (extra factory branches),
+missing required CDT header values and fields outside their parsed widths.
+Mapping tests compare an explicit synthetic expected array; ASan/UBSan pass.
+
+`handover-source-check candidate-no-json <signature-path>` is **candidate
+construction only**, not an executable boot profile. It requires the caller
+to establish the no-JSON/normal-user assumptions, refuses a present or
+uncheckable modem_flag, reads exact-size sources, converts DT rfid from
+big endian, builds 161 bytes in RAM, and immediately clears them. No output
+file, ioctl or modem endpoint is implemented. Core dumps are disabled,
+process dumpability disabled, and a 15-second alarm bounds execution.
+
+This mode was built with ARM64 GCC warnings-as-errors and run on the phone
+using cpsha directly from a temporary persist ro,noload mount. Strict CDT,
+both identities, exact source reads and candidate construction all passed.
+The final version with core-dump/alarm guards was also run successfully.
+Only labels/sizes were printed, no original partition was written, and the
+mount was cleaned on exit. This does not authenticate the signature, prove
+all factory properties match, or prove CP accepts the candidate.
+
+Next: integrate only the reviewed normal profile into an opt-in probe after
+rechecking source/module/firmware guards and the exact pre-stage timing.
+Run one fresh-boot handover comparison with one SIM query; retain existing
+no-handover result as control. Do not enable boot-time autostart or claim
+the runtime transport fixed until the queue is actually consumed.
