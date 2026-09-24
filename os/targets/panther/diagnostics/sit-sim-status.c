@@ -38,10 +38,14 @@ int main(int argc, char **argv) {
         p[4]=11; if (frame_size(p,15)!=-1) return 1;
         p[0]=2; p[4]=8; if (frame_size(p,15)!=8) return 1;
         p[0]=3; if (frame_size(p,15)!=-1) return 1;
-        puts("PASS: partial frames, length, type and token"); return 0;
+        uint8_t r[16]={1,0,1,8,16,0,2,0,0,0,0,0,10,0,0,0};
+        if (frame_size(r,15)!=0 || frame_size(r,16)!=16 ||
+            le16(r+2)!=0x801 || le32(r+6)!=2 || le32(r+12)!=10) return 1;
+        puts("PASS: partial frames, length, type, token and radio payload"); return 0;
     }
-    if (argc != 2 || strcmp(argv[1], "query-sim-status")) {
-        fprintf(stderr,"usage: sit-sim-status self-test|query-sim-status\n"); return 64;
+    int radio = argc == 2 && !strcmp(argv[1], "query-radio-state");
+    if (argc != 2 || (!radio && strcmp(argv[1], "query-sim-status"))) {
+        fprintf(stderr,"usage: sit-sim-status self-test|query-sim-status|query-radio-state\n"); return 64;
     }
     alarm(15);
     FILE *f=fopen("/sys/devices/platform/cpif/modem_state","r");
@@ -61,7 +65,10 @@ int main(int argc, char **argv) {
     if (fd<0 || fstat(fd,&st) || !S_ISCHR(st.st_mode) ||
         major(st.st_rdev)!=maj || minor(st.st_rdev)!=min) return 1;
     /* Factory BuildSimGetStatus: type 0, id 0x0200, length 12, token 1. */
-    const uint8_t request[12]={0,0,0,2,12,0,1,0,0,0,0,0};
+    /* Factory BuildGetRadioState at 0x746a0: id 0x0801, length 12. */
+    const unsigned request_id = radio ? 0x0801 : 0x0200;
+    const uint32_t token = radio ? 2 : 1;
+    const uint8_t request[12]={0,0,(uint8_t)request_id,(uint8_t)(request_id>>8),12,0,(uint8_t)token,0,0,0,0,0};
     if (write(fd,request,sizeof(request)) != sizeof(request)) {
         perror("one-shot write"); return 1; /* Never resend or split. */
     }
@@ -83,7 +90,13 @@ int main(int argc, char **argv) {
             if (len<0) { puts("malformed framing; stop"); return 1; }
             if (!len) break;
             frames++;
-            if (buffer[0]==1 && le16(buffer+2)==0x200 && le32(buffer+6)==1) {
+            if (buffer[0]==1 && le16(buffer+2)==request_id && le32(buffer+6)==token) {
+                if (radio) {
+                    printf("Radio response: length=%d error_raw=%u\n",len,buffer[10]);
+                    if (!buffer[10] && len>=16) printf("radio_state_raw=%u\n",le32(buffer+12));
+                    close(fd); close(lock);
+                    return buffer[10] ? 2 : (len>=16 ? 0 : 1);
+                }
                 printf("SIM response: length=%d error_raw=%u\n",len,buffer[10]);
                 if (!buffer[10] && len>=15)
                     printf("card_state_raw=%u universal_pin_raw=%u applications=%u\n",buffer[12],buffer[13],buffer[14]);
@@ -95,6 +108,6 @@ int main(int argc, char **argv) {
         }
         if (used==sizeof(buffer)) return 1;
     }
-    printf("No matching SIM response; observed_frames=%u\n",frames);
+    printf("No matching %s response; observed_frames=%u\n",radio ? "radio" : "SIM",frames);
     close(fd); close(lock); return 3;
 }

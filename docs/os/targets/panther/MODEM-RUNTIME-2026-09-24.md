@@ -368,3 +368,34 @@ Phone log: `/data/saaios/var/probe-handover-20260924.log`; host copy:
 `/tmp/probe-handover-20260924.log`. No identifiers or signature contents
 are included in the documented result. Next: validate status enums and
 normal radio/SIM initialization before considering any registration test.
+
+## Runtime follow-up: radio on and later SIM application
+
+Factory stream BuildGetRadioState at 0x746a0 builds ID 0x0801, 12-byte
+header, no payload. ProtocolNetRadioStateRespAdapter at 0x48770 reads a
+32-bit little-endian state at offset 12. Table 0x2a9c8 maps value 10 to
+string 0x2a77b, `SIT_PWR_RADIO_SIM_STATE_ON`. This GET changes no radio power.
+
+The diagnostic now supports `query-radio-state`, token 2 versus SIM token 1.
+It retains node/ONLINE checks, lock, single write, no retries and bounded
+receive. Raw state is printed only for a matching successful response of
+at least 16 bytes. Host sanitizer tests and ARM64 warnings-as-errors build
+passed. No identifier/payload dumps were added.
+
+Without reboot or additional initialization writes, GET_RADIO_STATE returned
+length=16, error_raw=0, state_raw=10 (ON). TX ring advanced to 48/48. One
+subsequent GET_SIM_STATUS returned length=143, error_raw=0, card_state_raw=1,
+universal_pin_raw=3, applications=1. The immediate post-boot response had
+length 80, state 0 and applications 0. Do not equate that early snapshot
+with permanent SIM absence. Deferred initialization is plausible, not proven
+without an event timeline and confirmation of unchanged SIM insertion.
+
+Factory libsitril FillRilCardStatusFromAdapter (0x1554c4..0x1554d4) copies
+the adapter card byte to RIL card state; setNoSim (0x11c534) stores zero.
+The later response demonstrates one reported application. PIN state 3 and
+ds_detect=2 are left uninterpreted. No PIN/PUK/APDU or subscriber identifiers
+were accessed or changed. Radio ON is not network registration.
+
+Next: verify registration GET builders and response fields, then observe
+registration without operator changes, calls or SMS. No automatic polling
+or RFS filesystem service was installed.

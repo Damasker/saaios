@@ -112,3 +112,9 @@ RIL consumers are allowed. The no-JSON normal profile remains device-specific.
 One live comparison succeeded: SIM response length 80, error_raw 0, TX ring
 consumed 24/24. This supersedes the prior statement that all runtime queries
 stall; it does not establish cellular service. See the runtime report.
+
+`sit-sim-status query-radio-state` sends one factory-verified GET_RADIO_STATE
+(0x0801) with token 2 and prints only the raw 32-bit state. Live response:
+error 0, state 10 (factory ON enum). A later SIM query reports one application;
+early post-boot zero-application snapshots must not be treated as permanent
+absence. Neither query proves network registration.
