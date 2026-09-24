@@ -118,3 +118,8 @@ stall; it does not establish cellular service. See the runtime report.
 error 0, state 10 (factory ON enum). A later SIM query reports one application;
 early post-boot zero-application snapshots must not be treated as permanent
 absence. Neither query proves network registration.
+
+`query-data-registration` sends only the factory domain-2 status GET (0x0701,
+token 3), printing registration/reject/technology bytes without location or
+subscriber data. Live result was error 0, registration 0 (not registered,
+not searching). No operator selection or attachment command is implemented.

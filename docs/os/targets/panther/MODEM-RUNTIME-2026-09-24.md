@@ -399,3 +399,27 @@ were accessed or changed. Radio ON is not network registration.
 Next: verify registration GET builders and response fields, then observe
 registration without operator changes, calls or SMS. No automatic polling
 or RFS filesystem service was installed.
+
+## Data registration query: not registered, not searching
+
+User confirmed a physical SIM is inserted. Added an explicit bounded
+`query-data-registration` mode, ID 0x0701, token 3, no payload or resends.
+Factory BuildNetworkRegistrationState at 0x743a0 selects ID 0x0701 for
+domain 2 and builds a 12-byte request (domain 1 uses 0x0700, not sent here).
+Data adapter accessors at 0x47c50/0x47c80/0x47ce0 read registration byte
+12, rejection byte 13 and technology byte 15. Only these fields are logged;
+cell/location and subscriber fields are not printed.
+
+One live request on the already-running handover boot returned length 86,
+error_raw=0, registration_raw=0, reject_cause_raw=0, radio_tech_raw=0.
+The vendor state conversion at 0x47620..0x47698 maps raw zero to RIL zero.
+[AOSP RegState](https://android.googlesource.com/platform/hardware/interfaces/+/0adfb810ae03c6f13fc24f30ab4beb89638aea0e/radio/aidl/android/hardware/radio/network/RegState.aidl)
+defines zero as not registered and not currently searching. This is a
+packet-domain snapshot, not a voice-domain result or proof of operator
+rejection. No network-selection or radio-power command was sent.
+
+Host ASan/UBSan self-test and warnings-as-errors static ARM64 build passed;
+the self-test also covers the registration ID/token fixture. Next investigate
+factory post-SIM initialization and prerequisites for registration. Do not
+infer that GET itself initiates attachment or that an APN is already needed
+to explain the current registration state.
