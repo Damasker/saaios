@@ -332,6 +332,181 @@ rmnet rx=0; **no** cbd/rild.
 
 **Next:** recover OEM app header from stock capture / host OEM writer binary (not cbd boot path), or typed encode in `oem_ipc_message_utils` with proven body; then ONE soft INIT on openable `oem_ipc0`.
 
+### 2026-10-01 — host OEM encoder hunt (no send)
+
+**Live brief (COM13 / USB NCM):** modem_state=ONLINE; radio=10; app=PIN(2)
+pin1=2 remain=3; `present_infer=notin`; data reg=0 tech=UMTS; preferred=LTE_ONLY;
+oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild; vendor `/vendor/lib64/*ril*` absent on
+SaaiOS image; oem_ipc iod has **no** of_node attrs exposed.
+
+| Source | Result |
+| --- | --- |
+| sit-stream `BuildOemSimRequest` `@0x806d0` | Builds **SIT** ids `0x208/0x20c/0x20f/0x247` + **12B** SIT hdr — **not** OEM `0x2f50` |
+| sit-stream `BuildSimGetStatus` | SIT `0x0200` len12 — umts_ipc path (already soft) |
+| sit-base `SIT_OEM_*` | OEM-over-**SIT** names (PIN_ENC / CQI / SVN…) — **no** `SIM_INIT_REQ` / `0x2f50` |
+| libsitril IoChannel | `/dev/umts_ipc0` (+ipc1) only — **no** `/dev/oem_ipc*` |
+| libsitril `@0x95660` | registry `0x2f50\|0x23\|0\|0x402\|0x3fc` — table-init MOVZ only; **0** builder |
+| libsitril MOVZ `#0x2f52` | **0** |
+| libsec-ril `OemIpcRecord` / `IpcTxSimInitMessage` | Samsung classic SIPC/STK — **0** MOVZ `0x2f50`/`0x2f52`; not Pixel Shannon OEM IPC |
+| raw-cbd | boot/ramdump only (reconfirmed) |
+| MAIN `oem_ipc_message_utils` | encode/decode strings; app header still unrecovered |
+| sit-stream u16 `0x2f52` “hits” | instruction-encoding false-friends (e.g. `80 52 2f …`), not msgids |
+
+**Encoder found?** **No** host writer that opens `oem_ipc*` and encodes `0x2f50`.
+Closest builders speak **SIT FMT on umts_ipc**, which does not alias to OEM catalog
+`SIM_INIT_REQ`.
+
+**Exact missing (unchanged; no invent):**
+1. OEM **app-layer header** layout (SIT-12B reuse **unproven** for oem_ipc)
+2. **2-byte body** for catalog `flags=2`
+3. Token/seq/transaction rules
+4. Which `oem_ipcN` stock uses
+5. Binary offset hint: still need stock OEM writer (not in libsitril/sit-stream/cbd/libsec-ril) — candidates: stock radio HAL / oemhook dump from factory vendor image, or MAIN typed encode in `oem_ipc_message_utils.c` / dispatcher near `[OEM][IPC] Unable to encode` `@0x6dfcf3` / not-REQUEST `@0x6dfe0d` (lit `@0x6dff00`; nearby LDRB imm `#9/#18/#19` = object fields, **not** proven wire offsets)
+
+**Live SIM_INIT?** **none** (no send). **Bearer verified?** no.
+
+**Next:** (1) pull stock Pixel vendor radio/oemhook binary that opens `oem_ipc*` (factory
+image / vendor partition dump — not start rild); (2) or finish MAIN encode RE to
+recover app header+body sizes from typed `kMessageId` paths; then ONE soft write.
+
+### 2026-10-01 — MAIN encode RE + factory vendor oem_ipc0 (no send)
+
+**Live brief (COM13 / USB NCM `172.31.7.1`):** modem_state=**ONLINE**;
+`sit-sim-status`: card=PRESENT apps=1 **app=PIN(2)** pin1=2 remain=3;
+oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild; rmnet rx=0 all; **no bearer**.
+
+#### MAIN `@0x6dfcf3` / `@0x6dfe0d`
+
+Those file offs are **rodata strings** (`Unable to encode IPC message` /
+`[OEM][IPC] Message is not a REQUEST`), not Thumb code. Band `0x6de000..0x6e1000`
+is catalog + string + **pointer-table island** (0 PUSH). Full-image MOVW+MOVT /
+LDR.W-pc to encode-fail / not-REQUEST / utils.c VAs: **0 hits**.
+
+Catalog (stride **28**, walk start `@0x6de708`):
+
+| Entry | body (`flags`) | msgid | meta | rsp | name |
+| --- | --- | --- | --- | --- | --- |
+| `@0x6de740` | **2** | `0x2f50` | `0x10104` | `0` | `SIM_INIT_REQ` |
+| `@0x6de874` | **10** | `0x2f52` | `0x10104` | `0x2fa1` | `SIM_VERIFYPIN_REQ` |
+| `@0x6de724` | **2** | `0x2f57` | `0x10104` | `0x2fa8` | `SIM_INFO_REQ` |
+
+Catalog xrefs exist (e.g. MOVW/MOVT `0x406d7b30` `@0x32e4494`, start
+`0x406d7af8` `@0x331a566`) but go through helper `BL 0xca893e` and mutate
+**C++ message objects** (`STRB` +8/+9/+14…); `MOVS #12` on that path is an
+**error-path return**, not proven wire-header length. **No wire STR of
+msgid/body recovered.**
+
+#### Factory vendor.img oem_ipc writer (no rild start)
+
+From `panther-td1a.221105.001` factory → nested `image-*.zip` → **vendor.img**
+(extracted under `diagnostics/fw/cdma-hunt/factory-td1a-vendor/`).
+
+| Hit | Meaning |
+| --- | --- |
+| `/dev/oem_ipc0` in carved ELF `@vendor+0x25e7b000` | **`SitOemHandler` / `ModemData` / `ModemDataTransmitter`** |
+| Wire | **protobuf** `sit_ipc_message::IpcMessage` (`SerializeToArray`, `protobufSerialDataLen`, `initialMessageHeader`) |
+| Messages present | Ping / Config / Thermal / DeviceState / Metrics / Traffic / Txas / Coex / Debug / Scone — **no SIM_*** |
+| `SIM_INIT_REQ` / ASCII `0x2f50` in vendor.img | **0** |
+| `/dev/oem_ipc1` carved ELF | extended-log / modemstat helper — not SIM_INIT |
+| ueventd / sepolicy | `oem_ipc[0-7]` → `radio_dev` |
+
+**Encoder for catalog `0x2f50`?** Still **no**. Stock opener of `oem_ipc0` is the
+SitOem **protobuf** channel and does **not** implement `SIM_INIT_REQ`.
+
+**Exact bytes still missing for soft `0x2f50` (no invent):**
+1. OEM **app-layer / protobuf** framing that CP demuxes as catalog msgid `0x2f50` — SitOem protobuf schema has **no** SIM payload; classic raw header still **unproven**
+2. **2-byte body** for catalog `flags=2` (zeros unproven)
+3. Token/seq/transaction rules for that frame
+4. Which host binary (if any) emits catalog `0x2f50` on which `oem_ipcN` — **not** the carved SitOem `.so`
+
+**Live SIM_INIT?** **none**. **Bearer verified?** no.
+
+**Next:** find who maps to CP catalog `0x2f50` (other vendor ELF / MAIN decode of
+SitOem protobuf → internal msgid, or non-SitOem opener); do **not** send
+SitOem ping/config as fake SIM_INIT; no start rild/cbd.
+
+### 2026-10-01 — SitOem protobuf ↛ catalog `0x2f50` (demux proof)
+
+**Live brief (COM13 / USB NCM `172.31.7.1`):** modem_state=**ONLINE**;
+card=PRESENT apps=1 **app=PIN(2)** pin1=2 remain=3; oem_ipc0 **OEM_RDWR_OK**;
+**no** cbd/rild (absent on SaaiOS image); rmnet0–29 **rx=0**; **no rmnet IPv4**.
+
+Scripts: `tmp-sitoem-demux-2f50.py`, `tmp-sitoem-demux-2f50b.py`,
+`tmp-cbd-2f50-hunt.py`.
+
+| Axis | Evidence | Demux to `0x2f50`? |
+| --- | --- | --- |
+| SitOem carved `.so` types | Ping/Config/Thermal/Metrics/DeviceState/Traffic/Txas/Scone/Coex/Debug/DataFlow/DataValidation/Mch — **no** SimInit/SIM_* | **no** |
+| SitOem immediates | MOVZ `#0x2f50` **0**; u16 LE `0x2f50` **0** | **no** |
+| MAIN `[OEM][IPC]` protobuf | encode family = PERCALLSTATSKPI_IND / audio/RAT/band/… telemetry; **0** `[OEM][IPC]` strings contain `SIM_` | **no** |
+| Catalog `SIM_*` ∩ protobuf OEM names | **empty** (45 catalog SIM_* incl. `SIM_INIT_REQ` `@0x6de740`) | **no** |
+| Kernel CPIF | chardev pipe only; no protobuf→msgid demux in host path | n/a |
+| vendor.img `/dev/oem_ipc*` | **only** SitOem→`oem_ipc0`, log helper→`oem_ipc1` | — |
+| vendor `SIM_INIT_REQ` / `IpcTxSimInit` / `SimInitMessage` | **0** | — |
+| libsitril | `MOVZ #0x2f50` table-init only; IoChannel=`umts_ipc0`; **no** oem_ipc / **no** builder | not emitter |
+| factory `cbd` / `rild_exynos` | referenced in init.rc; **not** on live SaaiOS; **banned to start**; binary carve from rc path failed | unproven / banned |
+
+**SitOem→`0x2f50`?** **No** — two separate OEM dialects (protobuf SitOem vs binary
+SIM catalog). Do **not** soft-send Ping/Config as SIM_INIT.
+
+**Alternate catalog-`0x2f50` emitter?** **Not found** under bans in factory
+vendor/SitOem/libsitril/MAIN protobuf path.
+
+**Live SIM_INIT?** **none** (frame still incomplete; no invent). **Bearer?** no.
+
+**Next:** recover **binary catalog** OEM app header+2B body from MAIN
+`oem_ipc_message_*` typed encode / stock capture (not SitOem protobuf), **or**
+offline-extract factory `cbd` ELF properly and RE without starting it; then ONE
+soft INIT. Same bans.
+
+### 2026-10-01 — MAIN catalog encode island + carved cbd (no send)
+
+**Live brief (COM13 / USB NCM):** modem_state=**ONLINE**;
+card=PRESENT apps=1 **app=PIN(2)** pin1=2 remain=3; oem_ipc0 **OEM_RDWR_OK**;
+**no** cbd/rild; rmnet0–2 **rx=0**; GetPsService ok; **no bearer**.
+
+Scripts: `tmp-oem-frame-2f50-re.py`, `tmp-oem-encode-island.py`,
+`tmp-carve-cbd-2f50.py` (+ carved ELFs under
+`diagnostics/fw/cdma-hunt/factory-td1a-vendor/carved-cbd/`).
+
+#### MAIN `@0x6de740` / `oem_ipc_message_*`
+
+| Item | Result |
+| --- | --- |
+| Catalog `SIM_INIT_REQ` | body=`2` msgid=`0x2f50` meta=`0x10104` rsp=`0` `+0x18=4` |
+| Cross-check `SIM_VERIFYPIN_REQ` `@0x6de874` | body=`10` msgid=`0x2f52` rsp=`0x2fa1` |
+| Cross-check `SIM_INFO_REQ` / `SIM_STOP_REQ` | body=`2`; STOP also `+0x18=4` rsp=`0` |
+| Encode-island `@0x6dfc00..` | **log metadata** only (msg string + `oem_ipc_message_utils.c` / `dispatcher.c` / `oem_sit_main.c` path ptrs) |
+| Thumb CODE slots in island | telemetry/handler objects — **no** proven wire STR of msgid/len/token/body |
+| Catalog xref `@0x32e4494` → `BL 0x42ca1d2e` | C++ message-object mutate (`STRB +8/+9`); **not** app wire encode |
+| Bare `MOVW #0x2f50` | name-reg / log-id banks via `BL 0x420caeea` — **not** senders |
+| USIM table `@0x10fb078` | handler `0x43909d49`; size word `0x10000` — **internal**, ≠ catalog body=2 |
+| Typed `kMessageInfo->size` assert | present in rodata; **0** litpool xrefs recovered to wire path |
+
+**App-layer header layout?** **No** (still unrecovered).
+**2-byte body for `flags=2`?** **No** (contents unproven; zeros not assumed).
+
+#### Factory `cbd` carve (offline; **not started**)
+
+`/vendor/bin/cbd` path strings sit in init.rc text (no adjacent ELF). Real binary
+carved via `/dev/umts_boot0` → **`carved-cbd-a45e000.elf`** (ELF64 AArch64,
+~163KB, many `cbd:` / `S5300` strings).
+
+| Check on carved cbd | Result |
+| --- | --- |
+| `/dev/umts_boot0`, `/dev/umts_ramdump0` | **yes** (boot/ramdump) |
+| `/dev/oem_ipc*`, `SIM_INIT_REQ`, `MOVZ #0x2f50` | **0** |
+| Other carved boot0-near ELFs | helpers / prior oem_ipc1 log ELF; **no** catalog `0x2f50` encoder |
+
+**cbd encodes `SIM_INIT_REQ`?** **No** — boot/ramdump only (reconfirmed by carve).
+
+**Live SIM_INIT?** **none** (no invent; frame incomplete). **Bearer verified?** no.
+
+**Next:** need stock capture of catalog OEM wire on `oem_ipc*` **or** another
+host binary that actually encodes msgid `0x2f50` (not cbd, not SitOem protobuf);
+until then no soft write. Same bans (no start cbd/rild; no ATU MAIN; no BAR;
+no 0x0704 spam).
+
 ### 2026-09-30 — FN_A vs LTE/SADR (re-confirmed)
 
 Whole-MAIN BL scan: **FN_A callers = 2 only** (CDMA MEAS IND + CDMA TIMING_LATCH).  
@@ -498,7 +673,7 @@ ready; GOAL still incomplete until verified bearer.
 | Boot modem_a instead of B | ROADMAP slot-switch ban + **same** No-CDMA gate |
 | SET#5 / aliased Present bypass on this MAIN | **falsified** |
 | Force `0x0704` START_NETWORK while PIN | **CP err=2**; app stays PIN; no reg/rmnet — CP-enforced |
-| Find non-FN_A Present=2 / USIM boot-init writer | **open** — `0x2f50` sender = **AP OEM IPC** (catalog `@0x6de740`), not GMC; INIT handlers ≠ Present=2; Present=2 still FN_A-only in MAIN |
+| Find non-FN_A Present=2 / USIM boot-init writer | **open** — `0x2f50` catalog dialect; SitOem **↛** demux; factory **cbd** carved = boot/ramdump only (no `0x2f50`); MAIN encode island = log metadata only; **app hdr + 2B body still missing**; INIT ≠ Present=2 |
 
 Post-READY plumbing already on device: SetupDataCall `0x0600` len246,
 GetDataCallList, APN file, chase pipeline — **unreachable** until app∈{1,4,5}.

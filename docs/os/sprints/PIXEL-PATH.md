@@ -240,11 +240,13 @@ diagnose (ADR-238, `351b0b6f…`).
   registration snapshot). Soft-lock: PIN + `present_infer=notin` (no bearer).
   `SIM_INIT_REQ` (`0x2f50`) is **AP OEM IPC** (catalog/`ipc_message_server`), not
   GMC/soft-CPIF; stock `cbd` is boot/ramdump only. Present=2 still FN_A-only in
-  MAIN RE. Soft VerifyPin is SIT `0x0201` (not OEM `0x2f52`); OEM app header +
+  MAIN RE.   Soft VerifyPin is SIT `0x0201` (not OEM `0x2f52`); OEM app header +
   2B body unrecovered — no invent-byte send. `oem_ipc0` openable (mknod/chmod)
-  without starting cbd/rild. This is diagnostic, not a modem service, and not
-  cellular registration/calls/SMS/data. See `docs/os/targets/panther/MODEM-*.md`
-  and [MODEM-ROADMAP.md](MODEM-ROADMAP.md).
+  without starting cbd/rild. Host hunt: sit-stream `BuildOemSimRequest` is
+  SIT `0x208/20c/20f/247` (umts_ipc), not OEM `0x2f50`; libsitril/cbd/libsec-ril
+  have no oem_ipc encoder — frame still incomplete. This is diagnostic, not a
+  modem service, and not cellular registration/calls/SMS/data. See
+  `docs/os/targets/panther/MODEM-*.md` and [MODEM-ROADMAP.md](MODEM-ROADMAP.md).
 - Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
 - Playback: tinyplay + test-tone presence, no auto-play (ADR-257; host)
 - Bluetooth adapter is `hci0`, not `bt-scan` (ADR-258; host)
