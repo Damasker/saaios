@@ -234,6 +234,17 @@ diagnose (ADR-238, `351b0b6f…`).
 - Volume: tinymix Digital PCM Volume 400–817 **на panther** (ADR-253; `79e753fc…`; pid 2480; `/run/audio-volume`=712)
 - Power: KEY_POWER from `/dev/input/power-button` **на panther** (ADR-254; `5ba2ef7b…`; pid 2586; fd 16 → event1; dest-no-lock)
 - Modem: cellular row from live `rmnet`/`wwan` bearer; panther has none (ADR-255; host)
+- Modem diagnostics: native S5100SIT CP boot reaches `ONLINE`; factory
+  preamble + reviewed firmware/NV stages + FIN/COMPLETE accepted; RAM-only
+  handover unlocks first SIT runtime responses (SIM status, radio state, data
+  registration snapshot). Soft-lock: PIN + `present_infer=notin` (no bearer).
+  `SIM_INIT_REQ` (`0x2f50`) is **AP OEM IPC** (catalog/`ipc_message_server`), not
+  GMC/soft-CPIF; stock `cbd` is boot/ramdump only. Present=2 still FN_A-only in
+  MAIN RE. Soft VerifyPin is SIT `0x0201` (not OEM `0x2f52`); OEM app header +
+  2B body unrecovered — no invent-byte send. `oem_ipc0` openable (mknod/chmod)
+  without starting cbd/rild. This is diagnostic, not a modem service, and not
+  cellular registration/calls/SMS/data. See `docs/os/targets/panther/MODEM-*.md`
+  and [MODEM-ROADMAP.md](MODEM-ROADMAP.md).
 - Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
 - Playback: tinyplay + test-tone presence, no auto-play (ADR-257; host)
 - Bluetooth adapter is `hci0`, not `bt-scan` (ADR-258; host)

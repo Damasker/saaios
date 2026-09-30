@@ -39,6 +39,7 @@ members = [
     "services/saai-ota-stage",
     "services/saai-ota-write",
     "services/saai-ota-health",
+    "services/saai-modemd",
 ]
 
 [workspace.package]

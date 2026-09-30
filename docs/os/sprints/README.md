@@ -19,6 +19,9 @@ S00–S32 закрыли базовый трек — рабочий телефо
 
 Текущее направление на устройство — один путь
 [PIXEL-PATH.md](PIXEL-PATH.md), не восемь параллельных `*-10` weekend'ов.
+Модемный прорыв вынесен в отдельный
+[MODEM-ROADMAP.md](MODEM-ROADMAP.md): diagnostic CP `ONLINE` и первые SIT
+runtime responses уже доказаны, но production modem service ещё не открыт.
 
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
 ([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;

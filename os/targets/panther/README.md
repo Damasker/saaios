@@ -12,6 +12,12 @@ fallback.
 ## Repository contents
 
 - `src/` — production PID 1, DRM UI, Wi-Fi, Bluetooth, time and input tools.
+- `src/sit-boot-preamble.h`, `src/sit-handover.h` — pure, tested helpers for
+  the Pixel S5100SIT modem boot preamble and RAM-only handover block encoding.
+  They do not open devices, mount partitions, issue ioctls, or provide a boot
+  service by themselves.
+- `diagnostics/` — opt-in Pixel modem probes and read-only audits preserved
+  from the September 24 investigation. These are not started by PID 1.
 - `scripts/` — runtime audio, brightness and network helpers.
 - `config/` — non-secret wpa_supplicant build/runtime defaults.
 - `tools/` — small hardware diagnostics used during bring-up.
@@ -32,6 +38,72 @@ Binary firmware, signed Google modules, stock boot images, per-device
 calibration and credentials are intentionally not committed. Extract them from
 the matching factory image/device into one local directory and point
 `SAAIOS_PANTHER_ARTIFACTS` at it.
+
+## Native modem diagnostics
+
+The modem work is intentionally staged as guarded diagnostics, not as an
+unattended service. The September 24 investigation reached native CP boot
+`ONLINE`, then proved that a factory RAM-only handover block is required before
+normal SIT runtime requests are consumed. A one-shot SIM status request, radio
+state request, and packet-domain data-registration request have been observed
+through this diagnostic path. This does not yet establish cellular service,
+network registration, calls, SMS, mobile data, or long-term modem lifecycle
+handling.
+
+**Current blocker (MODEM-06 soft-lock):** after stock ONLINE the CP often
+reports `app_state=PIN` with `pin1=DISABLED`, so START_NETWORK never runs.
+ATU/SHMEM Present pokes are dead. See
+`docs/os/targets/panther/MODEM-BLOCKER.md`. Operator unblock while ONLINE:
+
+```sh
+WATCH_ROUNDS=12 sh os/targets/panther/diagnostics/tray-bearer-chase.sh
+```
+
+Pull/reseat the SIM tray during the watch; the script chases Radio/LTE/reg
+and checks `rmnet` IPv4. Remote FN_A/RatMap lever is **blocked** (EU No-CDMA
+NV/TCS only — see MODEM-BLOCKER). Do not mark the modem goal complete without
+bearer.
+
+The reusable pieces in `src/` are pure C helpers with host tests:
+
+```sh
+gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  os/targets/panther/src/test-sit-boot-preamble.c \
+  -o /tmp/test-sit-boot-preamble
+/tmp/test-sit-boot-preamble
+
+gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  os/targets/panther/src/test-sit-handover.c \
+  -o /tmp/test-sit-handover
+/tmp/test-sit-handover
+```
+
+The hardware-facing code remains under `diagnostics/`. Build it explicitly and
+run only on a fresh `OFFLINE` modem state with the documented verified B-slot
+firmware, NV-copy verifier, matching `cpif.ko`, and read-only persist signature
+source. It refuses no-argument execution and is not included in
+`build-native-c-image.sh`.
+
+```sh
+aarch64-linux-gnu-gcc -O2 -static -ffunction-sections -fdata-sections \
+  -Wl,--gc-sections -DPROBE_PREAMBLE -DPROBE_FULL_MAIN \
+  -DPROBE_FIRMWARE_ONLY -DPROBE_COMPLETE -DPROBE_HANDOVER \
+  -DPROBE_QUERY_SIM \
+  os/targets/panther/diagnostics/cp-boot-probe.c \
+  -o /tmp/probe-handover
+
+aarch64-linux-gnu-gcc -O2 -static -Wall -Wextra -Werror \
+  os/targets/panther/diagnostics/sit-sim-status.c \
+  -o /tmp/sit-sim-status
+```
+
+Start with `os/targets/panther/diagnostics/README.md` and the modem reports in
+`docs/os/targets/panther/` before any device run. Never mount original EFS for
+write, never copy or invent NV/identity/signature data, never flash radio
+partitions, and never add the diagnostic probe to PID 1. A production
+`saai-modemd` still needs a separate design for lifetime, RFS, registration,
+failure recovery, and policy before the shell may present cellular service as
+available.
 
 The working GPU stack is deliberately split the same way. Keep the two tested
 kernel modules on the persistent data volume:

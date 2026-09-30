@@ -47,6 +47,18 @@
 - Проверен полностью локальный провайдер Ollama на USB-хосте `172.31.7.2` с моделью `qwen2.5:3b-instruct`: ответы на русском, потоковая выдача и стандартный цикл вызова инструментов работают, вычисления выполняются на GPU компьютера без облачного API.
 - Для встроенного экрана `saaios-console --ask` выполняет одиночный запрос без терминального интерфейса. Установленный образ прошёл полный цикл `SYSTEM HEALTH`: один вызов `system.metrics` и итоговый ответ с CPU, load average и свободной памятью.
 - Карточка `ASK A QUESTION` открывает нативную экранную QWERTY-клавиатуру с цифрами, пробелом, удалением, Cancel и Send. Вопрос длиной до 72 символов отправляется локальной модели, а короткий ответ возвращается в карточку `AI RESPONSE` прямо на телефоне.
+- Нативная модемная ветка вынесена в отдельные guarded diagnostics, а не в
+  автозапуск PID 1. На Pixel 7 доказан CP boot до `ONLINE` через заводскую
+  S5100SIT-последовательность: BOOT/READY/TOC, MAIN/VSS/APM, проверенные
+  NV_NORM/NV_PROT, FIN и COMPLETE. Затем доказано, что RAM-only handover block
+  нужен для normal runtime progress: после него SIT `GET_SIM_STATUS` получает
+  ответ, `GET_RADIO_STATE` возвращает factory raw ON, а более поздний SIM
+  status показывает одну application. Packet-domain registration snapshot пока
+  raw 0: не зарегистрирован и не ищет. Это не готовая сотовая связь, не RFS
+  service, не звонки/SMS/data и не долгоживущий modem daemon. Подробности:
+  [MODEM-RESEARCH-2026-09-24.md](MODEM-RESEARCH-2026-09-24.md),
+  [MODEM-EXPERIMENTS-2026-09-24.md](MODEM-EXPERIMENTS-2026-09-24.md),
+  [MODEM-RUNTIME-2026-09-24.md](MODEM-RUNTIME-2026-09-24.md).
 
 ## Политика данных и разделов тестового телефона
 
@@ -128,6 +140,12 @@ fastboot reboot
 - `rfkill.ko`, `cfg80211.ko`, `bcmdhd4389.ko` — подписанный сетевой стек и драйвер Wi-Fi.
 - `fw_bcmdhd.bin`, `bcmdhd.cal`, `bcmdhd_clm.blob` — прошивка, калибровка и регуляторные данные BCM4389.
 - `bluetooth.ko`, `btqca.ko`, `btbcm.ko`, `hci_uart.ko` и `BCM.hcd` — штатный подписанный Bluetooth-стек и точная прошивка контроллера.
+- `os/targets/panther/src/sit-boot-preamble.h` и `sit-handover.h` — чистые
+  проверяемые helper'ы для S5100SIT pre-MAIN preamble и 161-байтного handover
+  block; сами не открывают устройства и не являются сервисом.
+- `os/targets/panther/diagnostics/` — opt-in модемные пробы и read-only
+  аудиты. Их нельзя добавлять в init или запускать рядом с другим IPC/RIL
+  consumer.
 
 ## Проверено на устройстве
 
@@ -162,5 +180,9 @@ fastboot reboot
 - аппаратная регулировка яркости и восстановление выбранного уровня после холодной загрузки;
 - автоматическое монтирование F2FS userdata и сохранность контрольного файла после перезагрузки;
 - сохранение штатного Android в независимом слоте B.
+- guarded modem diagnostics: native CP boot до `ONLINE`; RAM-only handover
+  unlocks first SIT runtime response; one radio-state response reports raw ON;
+  one later SIM-status response reports one application; data registration
+  query currently reports not registered/not searching.
 
-После очистки userdata Android в слоте B при возврате потребует первоначальной настройки, но сам резервный слот и его загрузочные разделы сохранены. Пока не реализованы ввод PIN-кода Bluetooth, фактическая передача звука по A2DP/LE Audio, модем, камера, глубокое энергосбережение, WPA3 и полноценная система приложений. Для следующего Bluetooth-аудио этапа нужна реальная гарнитура или колонка в режиме сопряжения: доступное `LE_THRII` аудиопрофилей не имеет.
+После очистки userdata Android в слоте B при возврате потребует первоначальной настройки, но сам резервный слот и его загрузочные разделы сохранены. Пока не реализованы ввод PIN-кода Bluetooth, фактическая передача звука по A2DP/LE Audio, полноценный modem service/cellular registration, камера, глубокое энергосбережение, WPA3 и полноценная система приложений. Для следующего Bluetooth-аудио этапа нужна реальная гарнитура или колонка в режиме сопряжения: доступное `LE_THRII` аудиопрофилей не имеет.
