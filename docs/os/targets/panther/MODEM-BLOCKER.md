@@ -717,6 +717,40 @@ is **not** success.
 | SADR / STATUS_WRAP inject | no signed AP path |
 | getobj`#0x10` STRB=2 | L1LC timer object; not Present |
 | modem_a slot switch | same EU No-CDMA Present=2; banned anyway |
+| OemSim SIT `0x0208` SIM_IO STATUS | live SW9000; app stayed PIN; no bearer |
+| OemSim `0x020c`/`0x020f`/`0x0247` as soft-init | same as prior APDU/OpenChannel — already live-negated |
+
+### 2026-10-01 — BuildOemSimRequest RE + live SIM_IO 0x0208
+
+**Live pre (COM13 / USB NCM):** ONLINE; radio=10; card=PRESENT apps=1
+**app=PIN(2)** pin1=2 remain=3; data reg=0 tech=UMTS; rmnet rx=0; **no**
+cbd/rild.
+
+**RE (sit-stream `BuildOemSimRequest` `@0x806d0`, no invent):**
+
+| RIL req (`w1`) | SIT id | Named builder | Purpose |
+| --- | --- | --- | --- |
+| **28** (`RIL_REQUEST_SIM_IO`) | **0x0208** | `BuildSimIO` | classic SIM_IO (STATUS/READ/GET_RESPONSE/…) |
+| **114** (`SIM_TRANSMIT_APDU_BASIC`) | **0x020c** | `BuildSimTransmitApduBasic` | basic APDU |
+| **115** (`SIM_OPEN_CHANNEL`) | **0x0247** | `BuildSimOpenChannelWithP2` | open channel **with P2** (not `0x020d`) |
+| **117** (`SIM_TRANSMIT_APDU_CHANNEL`) | **0x020f** | `BuildSimTransmitApduChannel` | channel APDU |
+
+`BuildOemSimRequest` is a thin remap: stamps SIT id + **12B** hdr, memcpy
+caller payload (`len+12`). **Not** catalog OEM `0x2f50`.
+
+`BuildSimIO` factory: id `0x0208`, length **0x23c**. Body: cmd@12,
+fileid_lo@13, u16@14, path_len@16, path@17, p1@29, p2@30, p3@31,
+data_len@32, data@34, pin2_len@546, pin2@547, aid_len@555, aid@556.
+Command switch accepts `0xB0/B2/C0/D6/DC/F2`.
+
+**Live try (ONE):** empty-default `SIM_IO` **STATUS** (`cmd=0xF2`, rest
+zero). Response length=528 error=0 **SW=`9000`**. Post `0x0200`: still
+app=2 pin1=2 remain=3. **No VerifyPin** (pin1=2, not EDGE window).
+**No** bearer chase. **Bearer verified? no.**
+
+**Next:** OemSim umts_ipc path closed for soft-lock exit. Resume OEM
+catalog `0x2f50` wire recovery (stock capture / non-cbd host encoder) —
+no invent; same bans.
 
 ## Constraints (unchanged)
 

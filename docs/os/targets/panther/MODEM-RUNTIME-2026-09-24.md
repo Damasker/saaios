@@ -5116,3 +5116,39 @@ rmnet0?2 rx=0; **no bearer**.
 2. Only with proven app header + 2B body: ONE soft write on `oem_ipc0` ? poll
    READY ? bearer chase. Same bans.
 
+## 2026-10-01: BuildOemSimRequest RE + live SIM_IO 0x0208 (still PIN)
+
+Scripts: `tmp-oemsim-layout-re.py`, `tmp-buildsimio-layout.py`,
+`tmp-oemsim-simio-once.c`.
+
+### Live brief
+
+COM13 + USB NCM `172.31.7.1`. modem_state=**ONLINE**; radio=10; SIM
+**PIN** pin1=2 remain=3; data reg=0 tech=UMTS; rmnet rx=0; **no** cbd/rild.
+
+### BuildOemSimRequest map (sit-stream `@0x806d0`)
+
+| RIL `w1` | SIT id | Builder | Notes |
+| --- | --- | --- | --- |
+| 28 | `0x0208` | `BuildSimIO` | SIM_IO; len `0x23c` |
+| 114 | `0x020c` | `BuildSimTransmitApduBasic` | prior live SELECT/STATUS |
+| 115 | `0x0247` | `BuildSimOpenChannelWithP2` | prior live OpenChannel+STATUS |
+| 117 | `0x020f` | `BuildSimTransmitApduChannel` | prior live channel STATUS |
+
+Passthrough builder (hdr+12 memcpy). **Not** OEM catalog `0x2f50`.
+
+`BuildSimIO` layout (factory): cmd@12, fileid_lo@13, u16@14, path_len@16,
+path@17, p1@29 p2@30 p3@31, data_len@32 data@34, pin2@546/547, aid@555/556.
+Accepted cmds include `0xF2` STATUS.
+
+### Live try
+
+ONE empty-default `0x0208` STATUS (`0xF2`, zero body). rsp length=528
+error=0 SW=`9000`. Post-status: app=2 pin1=2 remain=3 -- **unchanged**.
+No VerifyPin (not EDGE). No SetupDataCall. **Bearer verified? no.**
+
+### Next
+
+OemSim SIT quartet exhausted for soft-lock exit. OEM `0x2f50` framing still
+unrecovered -- stock `oem_ipc*` capture or non-cbd encoder only.
+
