@@ -110,6 +110,14 @@ PIN entry or account balance alone. Next isolate the missing camp trigger
 from any RFS prerequisite with a bounded, single-owner experiment; neither
 cause is proven. Details: [runtime log](../targets/panther/MODEM-RUNTIME-2026-09-24.md).
 
+**Latest scan control (2026-10-01):** A separate guarded one-shot owner ran
+on two PIN-free READY boots. Both `0x0706` requests were promptly rejected;
+the second recorded `error_raw=2`, with radio ON, broad preferred RAT,
+automatic selection, signal technology-presence mask 0 and no network
+registration. PIN lock is not the sole cause. Stop scan repeats; MODEM-06
+now needs an isolated factory AP/RFS/CP-radio prerequisite check before
+any registration or bearer work.
+
 **Extended network control (2026-10-01):** A separately reviewed owner
 build kept the same single-owner handoff and added only four bounded,
 redacted status GETs after the +60-second SIM/radio/registration sweep.
@@ -128,8 +136,9 @@ one SaaiOS IPC owner, its own queue can establish the analogous *AP-request*
 idle condition, but cannot prove that either CP/eSIM stack is autonomously
 RF-idle. Require a separately reviewed opt-in single-owner scan state machine,
 verified no-competing-client boundary, bounded timeout and `0x0707` cancel
-path before any live scan. The current owner lacks that state machine; no
-live scan was sent. See [the factory guard audit](MODEM-07-RFS-QUARANTINE.md#separate-active-rf-scan-gate).
+path before any live scan. At the time of this passive control, the owner
+lacked that state machine; the later guarded scan result is above. See
+[the factory guard audit](MODEM-07-RFS-QUARANTINE.md#separate-active-rf-scan-gate).
 No further PIN or blind radio SET is justified by this data.
 
 A [host-only scan state model](../targets/panther/SIT-NETWORK-SCAN-HOST-MODEL.md)

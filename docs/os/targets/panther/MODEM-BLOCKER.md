@@ -1,12 +1,22 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**Confirmed scan rejection (2026-10-01):** A second guarded boot, using the
+same one-scan protocol but logging only the 16-bit result, returned
+`0x0706 error_raw=2` immediately under SIM READY/PIN1 DISABLED, radio ON,
+automatic selection and preferred raw 16. The prior error 2 was observed
+under PIN lock; its recurrence in the PIN-free control rules out PIN lock as
+the sole cause. Both boots had signal technology-presence mask low seven
+bits 0 and no registration/bearer. Stop repeating scans. Next isolate the
+factory AP/RFS startup prerequisite and CP RF state; error 2 alone is a
+generic refusal, not proof which prerequisite is missing.
+
 **One-shot scan control (2026-10-01):** A separately named, guarded
 single-owner build sent one factory-shaped `0x0706` available-network scan
 after fresh same-boot READY/PIN-disabled, radio-ON, automatic-selection and
 broad-RAT checks. CP promptly returned a matching 12-byte **nonzero-error**
-response; there was no timeout, cancellation or retry. The error number was
-not logged, so it must not be conflated with the older error 2 observed under
-PIN lock. The preceding signal GET's technology-presence mask had low seven
+response; there was no timeout, cancellation or retry in this first boot.
+Its error number was not logged; the later controlled boot above captured it.
+The preceding signal GET's technology-presence mask had low seven
 bits 0. CP stayed ONLINE, but registration remained 0 and `rmnet0` down.
 The physical SIM and data worked in another handset. No eSIM profile was
 deleted; an unfinished eSIM attempt does not prove that stack's RF-idle

@@ -5959,3 +5959,27 @@ It does **not** distinguish a missing factory AP/RFS prerequisite from CP RF
 state or other modem-side refusal. The earlier `0x0706` error 2 was under a
 PIN-locked state; assigning that same number to this new response would be
 an inference, not an observation. Do not repeat the active scan blindly.
+
+## 2026-10-01: guarded result-scalar follow-up confirms error 2
+
+Commit `160941b` added logging of only the full 16-bit `0x0706` result
+field, with a synthetic high-byte fixture. The new static ARM64 scan owner
+SHA-256 was
+`cb8653530881118bd7ededea4bfced0593bce3672b1abfcdaf99f9a41690d750`.
+It passed its phone self-test and replaced only the separate diagnostic
+owner; the first owner's binary and both first-run logs were retained with
+`.first-20261001` names. The default owner/probe/script stayed untouched.
+
+A fresh AP reboot and guarded no-gap handoff again returned 0 with CP
+ONLINE. The SIM became READY(5)/PIN1 DISABLED(3), the +60-second settled
+radio was ON(10), voice/data registration remained 0/reject 0/tech 0,
+selection was automatic 0, preferred raw 16, and the signal technology
+presence mask's low seven bits remained 0. One 16-byte `0x0706` request
+then received a matching 12-byte response immediately:
+`network_scan result=remote-error error_raw=2 late_scan_reply=0`.
+There was no timeout, cancel or repeat in this boot. CP stayed ONLINE,
+but `rmnet0` remained down. This matches the numeric error seen in an
+earlier PIN-locked scan, and now shows the PIN lock was **not** its sole
+cause. Factory-facing error 2 is a generic refusal; it does not identify
+which AP/RFS startup or CP radio precondition is missing. No more scan
+replays are planned without a new isolated hypothesis.

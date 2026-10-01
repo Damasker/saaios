@@ -197,12 +197,13 @@ ordinary no-type path). Its timeout handler at `0x19a0a0` sends the
 factory `0x0707` cancel. A single-owner SaaiOS boot with no Android RIL
 can establish that *it* has no competing scan/call requests, but cannot
 infer CP-autonomous or embedded-SIM RF idleness from registration=0, slot
-metadata, or the four passive network GETs. The current owner has no scan
-timeout/cancel state machine; do not send `0x0706` from it. Any future
-one-shot live scan needs separate review, exclusive-client proof, strict
-response framing/redaction, a bounded timeout, cancel and fail-closed
-handling of ambiguous writes. An inconclusive or failed scan does not by
-itself establish an RFS or registration cause.
+metadata, or the four passive network GETs. The default owner remains
+passive. A separately built, reviewed one-shot owner with strict framing,
+exclusive-client checks, redaction, timeout/cancel and fail-closed ambiguous
+write handling ran on two guarded PIN-free boots. Both scans returned an
+immediate 12-byte error response; the second logged `error_raw=2`. This is
+not a working scan and does not by itself establish an RFS or registration
+cause. Do not repeat `0x0706` without a new isolated hypothesis.
 
 Evidence and corrections: [runtime notes](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
 and [modem roadmap](MODEM-ROADMAP.md).
