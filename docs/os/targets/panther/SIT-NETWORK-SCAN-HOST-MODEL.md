@@ -1,10 +1,12 @@
 # TD1A available-network scan: host-only state model
 
-Status: **synthetic test fixture only; no phone build or live-send approval**.
-The pure C core under `os/targets/panther/diagnostics/sit-network-scan-host.*`
-has no IPC transport, device path, thread, sleep, or logging. Compilation
-requires `SAAIOS_NETWORK_SCAN_HOST_ONLY` and rejects ARM targets. The existing
-`modem-channel-owner` is unchanged. Nothing from this model is deployed.
+Status: **synthetic test fixture only**. The pure C core under
+`os/targets/panther/diagnostics/sit-network-scan-host.*` has no IPC transport,
+device path, thread, sleep, or logging. Compilation requires
+`SAAIOS_NETWORK_SCAN_HOST_ONLY` and rejects ARM targets. Nothing from this
+model is deployed. A separate, manually selected scan-owner implementation is
+documented in the diagnostics README; its safety and results require their
+own review and must not be inferred from these host fixtures.
 
 ## Factory provenance and scope
 
