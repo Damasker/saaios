@@ -132,6 +132,14 @@ path before any live scan. The current owner lacks that state machine; no
 live scan was sent. See [the factory guard audit](MODEM-07-RFS-QUARANTINE.md#separate-active-rf-scan-gate).
 No further PIN or blind radio SET is justified by this data.
 
+**Passive follow-up (2026-10-01):** after 22 minutes of the same single-owner
+boot, the owner process was still alive and `rmnet0` remained down with zero
+RX/TX. The owner makes no registration GET after its +60-second settled pass,
+so this later observation is **not** a fresh registration reading. The same
+SIM had working registration and mobile data in another handset after the
+top-up. Keep the current boot passive; the redacted signal-mask extension is
+committed but not yet installed on the phone.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),
