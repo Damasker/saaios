@@ -18,6 +18,14 @@ jobs:
             os/targets/panther/diagnostics/modem-channel-owner.c \
             -o /tmp/modem-channel-owner-fixture
           /tmp/modem-channel-owner-fixture self-test
+          test "$(/tmp/modem-channel-owner-fixture --mode)" = passive
+          cc -O2 -Wall -Wextra -Werror -DSAAIOS_SCAN_ONCE \
+            os/targets/panther/diagnostics/modem-channel-owner.c \
+            -o /tmp/modem-channel-owner-scan-fixture
+          /tmp/modem-channel-owner-scan-fixture self-test
+          test "$(/tmp/modem-channel-owner-scan-fixture --mode)" = scan-once
+          sh -n os/targets/panther/diagnostics/owner-handoff-bringup.sh
+          sh -n os/targets/panther/diagnostics/build-owner-scan-once.sh
           cc -O2 -Wall -Wextra -Werror \
             os/targets/panther/diagnostics/ready-network-once.c \
             -o /tmp/ready-network-once-fixture

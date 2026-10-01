@@ -185,6 +185,18 @@ static int probe_owner_start(int ipc_fd, int rfs_fd, pid_t *owner_pid) {
 #endif
 
 int main(int argc, char **argv) {
+#ifdef PROBE_OWNER_HANDOFF
+    /* Read-only artifact identity for the separately compiled scan probe.
+     * The deployed passive probe need not support this optional interface. */
+    if (argc == 2 && strcmp(argv[1], "--owner-exec") == 0) {
+        puts(PROBE_OWNER_EXEC);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--owner-log") == 0) {
+        puts(PROBE_OWNER_LOG);
+        return 0;
+    }
+#endif
 #ifdef PROBE_COMPLETE
 #ifdef PROBE_HANDOVER
     if (argc != 3 || strcmp(argv[1], "boot-b-with-verified-nv-handover") != 0) return 64;

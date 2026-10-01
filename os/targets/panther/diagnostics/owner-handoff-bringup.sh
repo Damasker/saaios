@@ -4,18 +4,42 @@
 set -eu
 umask 077
 
-PROBE=/data/saaios/bin/probe-handover-owner
-OWNER=/data/saaios/bin/modem-channel-owner
+case "$#:$*" in
+    '0:')
+        PROBE=/data/saaios/bin/probe-handover-owner
+        OWNER=/data/saaios/bin/modem-channel-owner
+        OWNER_MODE=passive
+        LOG=/data/saaios/var/owner-handoff-bringup.log
+        OWNER_LOG=/data/saaios/var/modem-channel-owner.log
+        ;;
+    '1:scan-once')
+        # A distinct probe is compiled with PROBE_OWNER_EXEC/LOG pointing at
+        # a distinct owner built with SAAIOS_SCAN_ONCE. Never swap the default.
+        PROBE=/data/saaios/bin/probe-handover-scan-once
+        OWNER=/data/saaios/bin/modem-channel-owner-scan-once
+        OWNER_MODE=scan-once
+        LOG=/data/saaios/var/owner-handoff-scan-once.log
+        OWNER_LOG=/data/saaios/var/modem-channel-owner-scan-once.log
+        ;;
+    *) printf 'usage: %s [scan-once]\n' "$0" >&2; exit 64 ;;
+esac
+
 VERIFIER=/data/saaios/bin/saaios-verify-nv-copies.sh
 FIRMWARE=/data/saaios/bin/saaios-probe-b-modem.bin
-LOG=/data/saaios/var/owner-handoff-bringup.log
-OWNER_LOG=/data/saaios/var/modem-channel-owner.log
 PERSIST=/mnt/vendor/persist
 STATE=/sys/devices/platform/cpif/modem_state
 
 fail() { printf 'ABORT %s\n' "$*" >&2; exit 1; }
 [ -x "$PROBE" ] || fail 'owner handoff probe missing'
 [ -x "$OWNER" ] || fail 'owner binary missing'
+if [ "$OWNER_MODE" = scan-once ]; then
+    [ "$("$OWNER" --mode 2>/dev/null)" = scan-once ] ||
+        fail 'scan owner binary mode mismatch'
+    [ "$("$PROBE" --owner-exec 2>/dev/null)" = "$OWNER" ] ||
+        fail 'scan probe owner path mismatch'
+    [ "$("$PROBE" --owner-log 2>/dev/null)" = "$OWNER_LOG" ] ||
+        fail 'scan probe log path mismatch'
+fi
 [ -x "$VERIFIER" ] || fail 'NV-copy verifier missing'
 [ -f "$FIRMWARE" ] || fail 'reviewed B firmware missing'
 if [ -e "$STATE" ]; then
@@ -32,7 +56,8 @@ mkdir -p /data/saaios/var "$PERSIST" /dev/block
 : > "$LOG"
 : > "$OWNER_LOG"
 chmod 600 "$LOG" "$OWNER_LOG"
-printf 'BEGIN owner handoff; no APN/PIN/CardPower/NV/EFS writes\n' >> "$LOG"
+printf 'BEGIN owner handoff; scan_mode=%s; no APN/PIN/CardPower/NV/EFS writes\n' \
+    "$OWNER_MODE" >> "$LOG"
 
 insmod /lib/modules/shm_ipc.ko 2>/dev/null || true
 insmod /lib/modules/cpif_page.ko 2>/dev/null || true

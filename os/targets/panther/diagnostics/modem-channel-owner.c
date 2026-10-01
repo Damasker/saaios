@@ -8,7 +8,9 @@
  * read-only SIM status refreshes through the same IPC reader. One separate
  * settled pass of four read-only GETs is eligible after 60 seconds. Once
  * that pass finishes, four more factory read-only network GETs run once.
- * It never sends RFS replies or accesses NV/EFS.
+ * A separate, explicit guarded-boot opt-in may send one active RF network
+ * scan after fresh same-boot status gates, with one bounded cancel on timeout.
+ * The default remains passive. It never sends RFS replies or accesses NV/EFS.
  * It consumes unknown RFS requests without replying, so CP may still wait or
  * fail: this is observability only, not a substitute for the factory rfsd.
  * Logs contain frame-header metadata and allowlisted raw status fields,
@@ -52,10 +54,56 @@ enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        SIM_SLOT_IND_LEN = 9 + SIM_SLOT_MAX_SLOTS * SIM_SLOT_RECORD_STRIDE,
        SIM_SLOT_PORT_COUNT_OFFSET = 52, SIM_SLOT_PORTS_OFFSET = 64,
        SIM_SLOT_PORT_STRIDE = 13, SIM_SLOT_MAX_PORTS = 3,
-       SIM_SLOT_TRACE_LIMIT = 2 };
+       SIM_SLOT_TRACE_LIMIT = 2,
+       SCAN_WAIT_MS = 300000, SCAN_CANCEL_WAIT_MS = 5000,
+       SCAN_DISPATCH_WAIT_MS = 5000, SCAN_GATE_WAIT_MS = 10000,
+       SCAN_EVIDENCE_MAX_AGE_MS = 90000,
+       SCAN_MAX_NETWORK_COUNT = 64 };
 enum channel_kind { CHANNEL_IPC, CHANNEL_RFS };
 enum sim_query_kind {
     SIM_QUERY_NONE, SIM_QUERY_CHANGE, SIM_QUERY_SETTLED, SIM_QUERY_FACTORY
+};
+
+enum live_scan_phase {
+    LIVE_SCAN_IDLE, LIVE_SCAN_WAITING, LIVE_SCAN_CANCEL_READY,
+    LIVE_SCAN_CANCEL_WAITING, LIVE_SCAN_DONE
+};
+enum live_scan_result {
+    LIVE_SCAN_NONE, LIVE_SCAN_GATE_NOT_MET, LIVE_SCAN_COUNT, LIVE_SCAN_ERROR,
+    LIVE_SCAN_MALFORMED_CANCEL_ACK, LIVE_SCAN_TIMEOUT_CANCEL_ACK,
+    LIVE_SCAN_WRITE_CANCEL_ACK, LIVE_SCAN_GATE_LOST_CANCEL_ACK,
+    LIVE_SCAN_CANCEL_ERROR,
+    LIVE_SCAN_CANCEL_MALFORMED, LIVE_SCAN_CANCEL_TIMEOUT,
+    LIVE_SCAN_CANCEL_NOT_SENT, LIVE_SCAN_CANCEL_WRITE_AMBIGUOUS,
+    LIVE_SCAN_FRAMING_CANCEL_SENT, LIVE_SCAN_FRAMING_CANCEL_AMBIGUOUS,
+    LIVE_SCAN_FRAMING_ALREADY_CANCELING, LIVE_SCAN_CP_LOST
+};
+enum live_scan_cancel_cause {
+    LIVE_SCAN_CAUSE_NONE, LIVE_SCAN_CAUSE_MALFORMED,
+    LIVE_SCAN_CAUSE_TIMEOUT, LIVE_SCAN_CAUSE_WRITE_AMBIGUOUS,
+    LIVE_SCAN_CAUSE_GATE_LOST
+};
+
+struct scan_evidence {
+    unsigned valid; /* settled SIM/radio/voice/data, then factory selection/RAT */
+    int spoiled;
+    int64_t observed_ms[6];
+};
+enum { SCAN_SIM = 0, SCAN_RADIO, SCAN_VOICE, SCAN_DATA,
+       SCAN_SELECTION, SCAN_PREFERRED, SCAN_EVIDENCE_COUNT };
+
+struct live_scan {
+    enum live_scan_phase phase;
+    enum live_scan_result result;
+    enum live_scan_cancel_cause cancel_cause;
+    uint32_t scan_token;
+    uint32_t cancel_token;
+    uint32_t count;
+    unsigned late_reply_seen;
+    int64_t deadline_ms;
+    int64_t gate_started_ms;
+    int reported;
+    int poisoned;
 };
 
 static const struct {
@@ -329,14 +377,14 @@ static int factory_scalar(unsigned id, const uint8_t *p, size_t n,
 static int factory_signal_mask(const uint8_t *p, size_t n,
                                uint32_t token, uint32_t *value) {
     if (n < 210 || !is_reply(p, n, 0x0900, token) ||
-        le16(p + 4) != n || p[10]) return 0;
+        le16(p + 4) != n || le16(p + 10)) return 0;
     *value = le16(p + 12) & 0x7fU;
     return 1;
 }
 
 static int factory_reply_ok(struct sim_refresh *refresh, unsigned id,
                             const uint8_t *p, size_t n, uint32_t *value) {
-    if (n < 12 || p[10] ||
+    if (n < 12 || le16(p + 4) != n || le16(p + 10) ||
         ((id == SIT_NET_SELECTION_MODE || id == SIT_NET_PREFERRED_GET) &&
          !factory_scalar(id, p, n, value)) ||
         (id == 0x0900 &&
@@ -381,6 +429,215 @@ static int sim_status_scalars(const uint8_t *p, size_t size,
         out->full_app_record = 1;
     }
     return 1;
+}
+
+/* Scan evidence comes only from successful, fully framed replies in this
+ * owner's current boot. A timeout advancing a status sweep proves nothing. */
+static int strict_success(const uint8_t *p, size_t n,
+                          unsigned id, uint32_t token, size_t minimum) {
+    return n >= minimum && n <= UINT16_MAX && is_reply(p, n, id, token) &&
+           le16(p + 4) == n && le16(p + 10) == 0;
+}
+
+static void scan_evidence_note_status(struct scan_evidence *evidence,
+                                      unsigned field, const uint8_t *p,
+                                      size_t n, uint32_t token,
+                                      int64_t now_ms) {
+    if (field > SCAN_DATA || evidence->spoiled) return;
+    unsigned id = snapshot_gets[field].id;
+    size_t minimum = field == SCAN_SIM ? 15 + SIT_SIM_APP_STRIDE :
+                     field == SCAN_RADIO ? 16 :
+                     field == SCAN_VOICE ? 14 : 16;
+    if (!strict_success(p, n, id, token, minimum)) return;
+    int valid = 0;
+    if (field == SCAN_SIM) {
+        struct sim_status_scalars sim;
+        valid = sim_status_scalars(p, n, &sim) && sim.full_app_record &&
+                sim.card == 1 && sim.apps == 1 && sim.app_state == 5 &&
+                sim.pin1 == 3;
+    } else if (field == SCAN_RADIO)
+        valid = le32(p + 12) == 10;
+    else
+        valid = p[SIT_NET_REG_STATE_OFFSET] == 0 &&
+                p[SIT_NET_REJECT_OFFSET] == 0;
+    if (!valid) return;
+    evidence->valid |= 1U << field;
+    evidence->observed_ms[field] = now_ms;
+}
+
+static void scan_evidence_note_factory(struct scan_evidence *evidence,
+                                       unsigned id, const uint8_t *p,
+                                       size_t n, uint32_t token,
+                                       int64_t now_ms) {
+    if (evidence->spoiled) return;
+    unsigned field;
+    uint32_t expected;
+    if (id == SIT_NET_SELECTION_MODE) {
+        field = SCAN_SELECTION;
+        expected = 0;
+        if (!strict_success(p, n, id, token, 13) || p[12] != expected) return;
+    } else if (id == SIT_NET_PREFERRED_GET) {
+        field = SCAN_PREFERRED;
+        expected = 16; /* Samsung SIT NR/LTE/GSM/WCDMA, not Android enum 16. */
+        if (!strict_success(p, n, id, token, 16) ||
+            le32(p + 12) != expected) return;
+    } else return;
+    evidence->valid |= 1U << field;
+    evidence->observed_ms[field] = now_ms;
+}
+
+static int scan_evidence_ready(const struct scan_evidence *evidence,
+                                int64_t now_ms) {
+    if (evidence->spoiled ||
+        evidence->valid != (1U << SCAN_EVIDENCE_COUNT) - 1U) return 0;
+    for (unsigned i = 0; i < SCAN_EVIDENCE_COUNT; ++i) {
+        if (evidence->observed_ms[i] < 0 ||
+            now_ms < evidence->observed_ms[i] ||
+            now_ms - evidence->observed_ms[i] > SCAN_EVIDENCE_MAX_AGE_MS)
+            return 0;
+    }
+    return 1;
+}
+
+/* Any later SIM, radio, or network unsolicited event makes the gathered
+ * point-in-time status stale. Do not infer CP/eUICC RF idleness from it. */
+static int scan_evidence_unsolicited(struct scan_evidence *evidence,
+                                      const uint8_t *p, size_t n) {
+    if (n < 8 || p[0] != 2 || !evidence->valid) return 0;
+    unsigned id = le16(p + 2);
+    if (id == 0x0210 || id == 0x024e ||
+        (id >= 0x0700 && id <= 0x07ff) ||
+        (id >= 0x0800 && id <= 0x08ff)) {
+        evidence->spoiled = 1;
+        return 1;
+    }
+    return 0;
+}
+
+static void make_scan_request(uint8_t request[16], uint32_t token) {
+    memset(request, 0, 16);
+    request[2] = 0x06;
+    request[3] = 0x07;
+    request[4] = 16;
+    put32(request + 6, token);
+    /* TD1A BuildQueryAvailableNetwork(0): LE32 argument at +12 is zero. */
+}
+
+static void make_cancel_request(uint8_t request[12], uint32_t token) {
+    memset(request, 0, 12);
+    request[2] = 0x07;
+    request[3] = 0x07;
+    request[4] = 12;
+    put32(request + 6, token);
+}
+
+static void live_scan_request_cancel(struct live_scan *scan,
+                                     enum live_scan_cancel_cause cause,
+                                     int64_t now_ms) {
+    if (scan->phase != LIVE_SCAN_WAITING) return;
+    int64_t deadline = cause == LIVE_SCAN_CAUSE_TIMEOUT ?
+                       scan->deadline_ms + SCAN_DISPATCH_WAIT_MS :
+                       now_ms + SCAN_DISPATCH_WAIT_MS;
+    scan->cancel_cause = cause;
+    if (now_ms >= deadline) {
+        scan->phase = LIVE_SCAN_DONE;
+        scan->result = LIVE_SCAN_CANCEL_NOT_SENT;
+        scan->poisoned = 1;
+    } else {
+        scan->phase = LIVE_SCAN_CANCEL_READY;
+        scan->deadline_ms = deadline;
+    }
+}
+
+static void live_scan_tick(struct live_scan *scan, int64_t now_ms) {
+    if (scan->phase == LIVE_SCAN_WAITING && now_ms >= scan->deadline_ms)
+        live_scan_request_cancel(scan, LIVE_SCAN_CAUSE_TIMEOUT, now_ms);
+    else if (scan->phase == LIVE_SCAN_CANCEL_READY &&
+             now_ms >= scan->deadline_ms) {
+        scan->phase = LIVE_SCAN_DONE;
+        scan->result = LIVE_SCAN_CANCEL_NOT_SENT;
+        scan->poisoned = 1;
+    } else if (scan->phase == LIVE_SCAN_CANCEL_WAITING &&
+               now_ms >= scan->deadline_ms) {
+        scan->phase = LIVE_SCAN_DONE;
+        scan->result = LIVE_SCAN_CANCEL_TIMEOUT;
+        scan->poisoned = 1;
+    }
+}
+
+static void live_scan_scan_written(struct live_scan *scan,
+                                   int exact, int64_t now_ms) {
+    if (scan->phase != LIVE_SCAN_IDLE) return;
+    scan->phase = LIVE_SCAN_WAITING;
+    if (!exact)
+        live_scan_request_cancel(scan,
+                                 LIVE_SCAN_CAUSE_WRITE_AMBIGUOUS, now_ms);
+    else
+        scan->deadline_ms = now_ms + SCAN_WAIT_MS;
+}
+
+static void live_scan_cancel_written(struct live_scan *scan,
+                                     int exact, int64_t now_ms) {
+    if (scan->phase != LIVE_SCAN_CANCEL_READY) return;
+    if (!exact) {
+        scan->phase = LIVE_SCAN_DONE;
+        scan->result = LIVE_SCAN_CANCEL_WRITE_AMBIGUOUS;
+        scan->poisoned = 1;
+    } else {
+        scan->phase = LIVE_SCAN_CANCEL_WAITING;
+        scan->deadline_ms = now_ms + SCAN_CANCEL_WAIT_MS;
+    }
+}
+
+static int scan_addressed(const uint8_t *p, size_t n, unsigned id,
+                          uint32_t token) {
+    return n >= 10 && le16(p + 2) == id && le32(p + 6) == token;
+}
+
+static void live_scan_frame(struct live_scan *scan, const uint8_t *p,
+                            size_t n, int64_t now_ms) {
+    if (scan->phase == LIVE_SCAN_IDLE || scan->phase == LIVE_SCAN_DONE) return;
+    live_scan_tick(scan, now_ms); /* deadline wins over late success */
+    if (scan->phase == LIVE_SCAN_DONE) return;
+    if (scan->phase == LIVE_SCAN_CANCEL_READY ||
+        scan->phase == LIVE_SCAN_CANCEL_WAITING) {
+        if (scan_addressed(p, n, 0x0706, scan->scan_token))
+            scan->late_reply_seen = 1;
+        if (scan->phase != LIVE_SCAN_CANCEL_WAITING ||
+            !scan_addressed(p, n, 0x0707, scan->cancel_token)) return;
+        scan->phase = LIVE_SCAN_DONE;
+        if (n != 12 || p[0] != 1 || le16(p + 4) != n)
+            scan->result = LIVE_SCAN_CANCEL_MALFORMED;
+        else if (le16(p + 10) != 0)
+            scan->result = LIVE_SCAN_CANCEL_ERROR;
+        else
+            scan->result = scan->cancel_cause == LIVE_SCAN_CAUSE_TIMEOUT ?
+                LIVE_SCAN_TIMEOUT_CANCEL_ACK :
+                scan->cancel_cause == LIVE_SCAN_CAUSE_MALFORMED ?
+                LIVE_SCAN_MALFORMED_CANCEL_ACK :
+                scan->cancel_cause == LIVE_SCAN_CAUSE_GATE_LOST ?
+                LIVE_SCAN_GATE_LOST_CANCEL_ACK :
+                LIVE_SCAN_WRITE_CANCEL_ACK;
+        if (scan->result == LIVE_SCAN_CANCEL_MALFORMED ||
+            scan->result == LIVE_SCAN_CANCEL_ERROR)
+            scan->poisoned = 1;
+        return;
+    }
+    if (scan->phase != LIVE_SCAN_WAITING ||
+        !scan_addressed(p, n, 0x0706, scan->scan_token)) return;
+    if (n < 12 || p[0] != 1 || le16(p + 4) != n) {
+        live_scan_request_cancel(scan, LIVE_SCAN_CAUSE_MALFORMED, now_ms);
+    } else if (le16(p + 10) != 0) {
+        scan->phase = LIVE_SCAN_DONE;
+        scan->result = LIVE_SCAN_ERROR;
+    } else if (n < 16 || le32(p + 12) > SCAN_MAX_NETWORK_COUNT ||
+               le32(p + 12) > (n - 16) / 14) {
+        live_scan_request_cancel(scan, LIVE_SCAN_CAUSE_MALFORMED, now_ms);
+    } else {
+        scan->count = le32(p + 12);
+        scan->phase = LIVE_SCAN_DONE;
+        scan->result = LIVE_SCAN_COUNT;
+    }
 }
 
 static int make_get_request(uint8_t request[12], unsigned id,
@@ -799,7 +1056,192 @@ static int fixture_signal_mask(void) {
     return 0;
 }
 
+static void fixture_scan_reply(uint8_t *p, size_t n, unsigned id,
+                               uint32_t token, unsigned error) {
+    memset(p, 0, n);
+    p[0] = 1;
+    p[2] = (uint8_t)id;
+    p[3] = (uint8_t)(id >> 8);
+    p[4] = (uint8_t)n;
+    p[5] = (uint8_t)(n >> 8);
+    put32(p + 6, token);
+    p[10] = (uint8_t)error;
+    p[11] = (uint8_t)(error >> 8);
+}
+
+static int fixture_scan(void) {
+    const uint32_t token = 0x12345678U;
+    uint8_t request[16];
+    make_scan_request(request, token);
+    if (request[0] || le16(request + 2) != 0x0706 ||
+        le16(request + 4) != 16 || le32(request + 6) != token ||
+        le32(request + 12)) return 81;
+    make_cancel_request(request, token + 1);
+    if (request[0] || le16(request + 2) != 0x0707 ||
+        le16(request + 4) != 12 || le32(request + 6) != token + 1 ||
+        request[10] || request[11]) return 82;
+
+    struct scan_evidence evidence = {0};
+    uint8_t sim[15 + SIT_SIM_APP_STRIDE];
+    fixture_scan_reply(sim, sizeof sim, 0x0200, token, 0x0100);
+    sim[SIT_SIM_CARD] = 1; sim[SIT_SIM_APPS] = 1;
+    sim[SIT_SIM_APP_STATE] = 5; sim[SIT_SIM_PIN1] = 3;
+    scan_evidence_note_status(&evidence, SCAN_SIM, sim, sizeof sim,
+                              token, 60000);
+    if (evidence.valid) return 83; /* High error byte is not success. */
+    sim[11] = 0;
+    sim[SIT_SIM_PIN1] = 2; /* PIN is still enabled. */
+    scan_evidence_note_status(&evidence, SCAN_SIM, sim, sizeof sim,
+                              token, 60000);
+    if (evidence.valid) return 103;
+    sim[SIT_SIM_PIN1] = 3;
+    scan_evidence_note_status(&evidence, SCAN_SIM, sim, sizeof sim,
+                              token, 60000);
+    if (evidence.valid != 1U) return 84;
+    uint8_t radio[16];
+    fixture_scan_reply(radio, sizeof radio, 0x0801, token, 0);
+    put32(radio + 12, 10);
+    scan_evidence_note_status(&evidence, SCAN_RADIO, radio,
+                              sizeof radio, token, 60001);
+    uint8_t voice[14];
+    fixture_scan_reply(voice, sizeof voice, SIT_NET_VOICE_REG, token, 0);
+    voice[SIT_NET_REJECT_OFFSET] = 1;
+    scan_evidence_note_status(&evidence, SCAN_VOICE, voice,
+                              sizeof voice, token, 60002);
+    if (evidence.valid & (1U << SCAN_VOICE)) return 104;
+    voice[SIT_NET_REJECT_OFFSET] = 0;
+    scan_evidence_note_status(&evidence, SCAN_VOICE, voice,
+                              sizeof voice, token, 60002);
+    uint8_t data[16];
+    fixture_scan_reply(data, sizeof data, SIT_NET_DATA_REG, token, 0);
+    scan_evidence_note_status(&evidence, SCAN_DATA, data,
+                              sizeof data, token, 60003);
+    uint8_t selection[13];
+    fixture_scan_reply(selection, sizeof selection,
+                       SIT_NET_SELECTION_MODE, token, 0);
+    scan_evidence_note_factory(&evidence, SIT_NET_SELECTION_MODE,
+                                selection, sizeof selection, token, 60004);
+    uint8_t preferred[16];
+    fixture_scan_reply(preferred, sizeof preferred,
+                       SIT_NET_PREFERRED_GET, token, 0);
+    put32(preferred + 12, 12); /* Restrictive LTE/WCDMA fails this gate. */
+    scan_evidence_note_factory(&evidence, SIT_NET_PREFERRED_GET,
+                                preferred, sizeof preferred, token, 60005);
+    if (evidence.valid & (1U << SCAN_PREFERRED)) return 105;
+    put32(preferred + 12, 16);
+    scan_evidence_note_factory(&evidence, SIT_NET_PREFERRED_GET,
+                                preferred, sizeof preferred, token, 60005);
+    if (!scan_evidence_ready(&evidence, 60006) ||
+        scan_evidence_ready(&evidence, 150001)) return 85;
+    uint8_t unsol[8] = {2, 0, 0x10, 0x02, 8, 0, 0, 0};
+    if (!scan_evidence_unsolicited(&evidence, unsol, sizeof unsol) ||
+        !evidence.spoiled || scan_evidence_ready(&evidence, 60006)) return 86;
+
+    struct live_scan scan = {.phase = LIVE_SCAN_WAITING,
+                             .scan_token = token,
+                             .cancel_token = token + 1,
+                             .deadline_ms = 300000};
+    live_scan_tick(&scan, 299999);
+    if (scan.phase != LIVE_SCAN_WAITING) return 87;
+    live_scan_tick(&scan, 300000);
+    if (scan.phase != LIVE_SCAN_CANCEL_READY ||
+        scan.cancel_cause != LIVE_SCAN_CAUSE_TIMEOUT) return 88;
+    scan.phase = LIVE_SCAN_CANCEL_WAITING;
+    scan.deadline_ms = 305000;
+    uint8_t reply[44];
+    fixture_scan_reply(reply, sizeof reply, 0x0706, token, 0);
+    put32(reply + 12, 2);
+    live_scan_frame(&scan, reply, sizeof reply, 300001);
+    if (!scan.late_reply_seen || scan.phase != LIVE_SCAN_CANCEL_WAITING ||
+        scan.result != LIVE_SCAN_NONE) return 89;
+    fixture_scan_reply(reply, 12, 0x0707, token + 1, 0);
+    live_scan_frame(&scan, reply, 12, 305000);
+    if (scan.result != LIVE_SCAN_CANCEL_TIMEOUT ||
+        scan.phase != LIVE_SCAN_DONE) return 90; /* Late ACK loses. */
+
+    scan = (struct live_scan){.phase = LIVE_SCAN_WAITING,
+                               .scan_token = token,
+                               .cancel_token = token + 1,
+                               .deadline_ms = 300000};
+    fixture_scan_reply(reply, sizeof reply, 0x0706, token, 0);
+    put32(reply + 12, 2);
+    live_scan_frame(&scan, reply, sizeof reply, 1000);
+    if (scan.phase != LIVE_SCAN_DONE || scan.result != LIVE_SCAN_COUNT ||
+        scan.count != 2) return 91;
+    scan = (struct live_scan){.phase = LIVE_SCAN_WAITING,
+                               .scan_token = token,
+                               .cancel_token = token + 1,
+                               .deadline_ms = 300000};
+    fixture_scan_reply(reply, 16, 0x0706, token, 0);
+    put32(reply + 12, 2); /* Count exceeds available 14-byte entries. */
+    live_scan_frame(&scan, reply, 16, 1000);
+    if (scan.phase != LIVE_SCAN_CANCEL_READY ||
+        scan.cancel_cause != LIVE_SCAN_CAUSE_MALFORMED) return 92;
+    scan = (struct live_scan){.phase = LIVE_SCAN_WAITING,
+                               .scan_token = token,
+                               .cancel_token = token + 1,
+                               .deadline_ms = 300000};
+    fixture_scan_reply(reply, 12, 0x0706, token, 0x0100);
+    live_scan_frame(&scan, reply, 12, 1000);
+    if (scan.phase != LIVE_SCAN_DONE || scan.result != LIVE_SCAN_ERROR)
+        return 93;
+    scan = (struct live_scan){.phase = LIVE_SCAN_WAITING,
+                               .scan_token = token,
+                               .cancel_token = token + 1,
+                               .deadline_ms = 300000};
+    live_scan_request_cancel(&scan, LIVE_SCAN_CAUSE_WRITE_AMBIGUOUS, 1000);
+    if (scan.phase != LIVE_SCAN_CANCEL_READY ||
+        scan.cancel_cause != LIVE_SCAN_CAUSE_WRITE_AMBIGUOUS) return 94;
+    scan.phase = LIVE_SCAN_CANCEL_WAITING;
+    scan.deadline_ms = 6000;
+    fixture_scan_reply(reply, 12, 0x0707, token + 1, 0);
+    live_scan_frame(&scan, reply, 12, 1001);
+    if (scan.phase != LIVE_SCAN_DONE ||
+        scan.result != LIVE_SCAN_WRITE_CANCEL_ACK) return 95;
+    scan = (struct live_scan){.phase = LIVE_SCAN_IDLE};
+    live_scan_scan_written(&scan, 0, 1000); /* partial/EAGAIN: no retry */
+    if (scan.phase != LIVE_SCAN_CANCEL_READY ||
+        scan.cancel_cause != LIVE_SCAN_CAUSE_WRITE_AMBIGUOUS) return 96;
+    live_scan_cancel_written(&scan, 0, 1001);
+    if (scan.phase != LIVE_SCAN_DONE ||
+        scan.result != LIVE_SCAN_CANCEL_WRITE_AMBIGUOUS ||
+        !scan.poisoned) return 97;
+    scan = (struct live_scan){.phase = LIVE_SCAN_WAITING,
+                               .deadline_ms = 300000};
+    live_scan_tick(&scan, 306000); /* no delayed cancel dispatch */
+    if (scan.phase != LIVE_SCAN_DONE ||
+        scan.result != LIVE_SCAN_CANCEL_NOT_SENT ||
+        !scan.poisoned) return 98;
+    scan = (struct live_scan){.phase = LIVE_SCAN_WAITING,
+                               .scan_token = token,
+                               .cancel_token = token + 1,
+                               .deadline_ms = 300000};
+    fixture_scan_reply(reply, 16, 0x0706, token, 0);
+    reply[4] = 15; /* matching token, malformed declared length */
+    live_scan_frame(&scan, reply, 16, 1000);
+    if (scan.phase != LIVE_SCAN_CANCEL_READY ||
+        scan.cancel_cause != LIVE_SCAN_CAUSE_MALFORMED) return 99;
+    scan.phase = LIVE_SCAN_CANCEL_WAITING;
+    scan.deadline_ms = 6000;
+    fixture_scan_reply(reply, 12, 0x0707, token + 1, 0x0100);
+    live_scan_frame(&scan, reply, 12, 1001);
+    if (scan.phase != LIVE_SCAN_DONE ||
+        scan.result != LIVE_SCAN_CANCEL_ERROR ||
+        !scan.poisoned) return 100;
+    evidence = (struct scan_evidence){.valid = 1U << SCAN_SIM};
+    unsol[2] = 0x02; unsol[3] = 0x08; /* radio changed */
+    if (!scan_evidence_unsolicited(&evidence, unsol, sizeof unsol) ||
+        !evidence.spoiled) return 101;
+    evidence = (struct scan_evidence){.valid = 1U << SCAN_SIM};
+    unsol[2] = 0x08; unsol[3] = 0x07; /* network changed */
+    if (!scan_evidence_unsolicited(&evidence, unsol, sizeof unsol) ||
+        !evidence.spoiled) return 102;
+    return 0;
+}
+
 static int fixture(void) {
+    int scan_check = fixture_scan();
+    if (scan_check) return scan_check;
     int slot_check = fixture_slot_status();
     if (slot_check) return slot_check;
     int refresh_check = fixture_sim_refresh();
@@ -887,6 +1329,7 @@ struct channel {
     size_t used;
     uint64_t frames;
     int64_t backoff_until_ms;
+    int64_t last_rx_ms;
 };
 
 struct metadata_entry {
@@ -1216,8 +1659,10 @@ static void expire_sim_query(struct sim_refresh *refresh, int64_t now_ms) {
                factory_gets[factory_index].label);
 }
 
-static void sim_refresh_reply(struct sim_refresh *refresh, const uint8_t *p,
-                              size_t size, int64_t now_ms) {
+static void sim_refresh_reply(struct sim_refresh *refresh,
+                              struct scan_evidence *evidence,
+                              const uint8_t *p, size_t size,
+                              int64_t now_ms) {
     size_t settled_index = refresh->settled_next;
     size_t factory_index = refresh->factory_next;
     enum sim_query_kind kind = sim_refresh_match_reply(refresh, p, size, now_ms);
@@ -1226,6 +1671,8 @@ static void sim_refresh_reply(struct sim_refresh *refresh, const uint8_t *p,
         unsigned id = factory_gets[factory_index].id;
         uint32_t scalar = 0;
         int ok = factory_reply_ok(refresh, id, p, size, &scalar);
+        if (ok) scan_evidence_note_factory(evidence, id, p, size,
+                                           refresh->token, now_ms);
         printf("net_factory %s response=yes success=%s length=%zu error_raw=%u",
                factory_gets[factory_index].label, ok ? "yes" : "no",
                size, (unsigned)p[10]);
@@ -1245,9 +1692,12 @@ static void sim_refresh_reply(struct sim_refresh *refresh, const uint8_t *p,
     if (kind == SIM_QUERY_CHANGE)
         printf("sim_refresh response=yes request=%u error_raw=%u",
                refresh->sent, (unsigned)p[10]);
-    else
+    else {
+        scan_evidence_note_status(evidence, (unsigned)settled_index,
+                                   p, size, refresh->token, now_ms);
         printf("sim_settled %s response=yes error_raw=%u",
                snapshot_gets[settled_index].label, (unsigned)p[10]);
+    }
     if (!p[10])
         print_status_fields(kind == SIM_QUERY_CHANGE ? 0x0200 :
                             snapshot_gets[settled_index].id, p, size);
@@ -1304,6 +1754,181 @@ static void sim_refresh_advance(struct sim_refresh *refresh,
     }
 }
 
+static int live_scan_active(const struct live_scan *scan) {
+    return scan->phase == LIVE_SCAN_WAITING ||
+           scan->phase == LIVE_SCAN_CANCEL_READY ||
+           scan->phase == LIVE_SCAN_CANCEL_WAITING;
+}
+
+static const char *live_scan_result_name(enum live_scan_result result) {
+    switch (result) {
+    case LIVE_SCAN_GATE_NOT_MET: return "gate-not-met";
+    case LIVE_SCAN_COUNT: return "network-count";
+    case LIVE_SCAN_ERROR: return "remote-error";
+    case LIVE_SCAN_MALFORMED_CANCEL_ACK: return "malformed-cancel-acked";
+    case LIVE_SCAN_TIMEOUT_CANCEL_ACK: return "timeout-cancel-acked";
+    case LIVE_SCAN_WRITE_CANCEL_ACK: return "write-ambiguous-cancel-acked";
+    case LIVE_SCAN_GATE_LOST_CANCEL_ACK: return "gate-lost-cancel-acked";
+    case LIVE_SCAN_CANCEL_ERROR: return "cancel-error";
+    case LIVE_SCAN_CANCEL_MALFORMED: return "cancel-malformed";
+    case LIVE_SCAN_CANCEL_TIMEOUT: return "cancel-timeout";
+    case LIVE_SCAN_CANCEL_NOT_SENT: return "cancel-not-sent";
+    case LIVE_SCAN_CANCEL_WRITE_AMBIGUOUS: return "cancel-write-ambiguous";
+    case LIVE_SCAN_FRAMING_CANCEL_SENT: return "framing-cancel-sent";
+    case LIVE_SCAN_FRAMING_CANCEL_AMBIGUOUS:
+        return "framing-cancel-ambiguous";
+    case LIVE_SCAN_FRAMING_ALREADY_CANCELING:
+        return "framing-already-canceling";
+    case LIVE_SCAN_CP_LOST: return "cp-lost";
+    default: return "none";
+    }
+}
+
+/* This is the existing owner, not a second IPC reader. An exclusive-open
+ * observation and empty AP queue prove no competing AP requests right now;
+ * they do not prove the CP/eUICC RF is idle. The explicit scan variant is a
+ * reviewed risk policy for one active diagnostic attempt only. */
+static void live_scan_advance(struct live_scan *scan, int armed,
+                              const struct scan_evidence *evidence,
+                              struct snapshot *snapshot,
+                              const struct sim_refresh *refresh,
+                              int ipc_fd, int rfs_fd,
+                              size_t ipc_buffered, size_t rfs_buffered,
+                              int64_t ipc_backoff_ms, int64_t rfs_backoff_ms,
+                              int64_t last_rx_ms,
+                              int64_t now_ms) {
+    if (!armed) return;
+    live_scan_tick(scan, now_ms);
+    if (scan->phase == LIVE_SCAN_IDLE) {
+        if (snapshot->aborted || refresh->disabled ||
+            refresh->factory_stopped) {
+            scan->phase = LIVE_SCAN_DONE;
+            scan->result = LIVE_SCAN_GATE_NOT_MET;
+        }
+    }
+    if (scan->phase == LIVE_SCAN_IDLE) {
+        if (!snapshot_finished(snapshot) || !refresh->settled_started ||
+            refresh->settled_next != SNAPSHOT_GET_COUNT ||
+            refresh->factory_next != FACTORY_GET_COUNT ||
+            refresh->pending_kind != SIM_QUERY_NONE || refresh->queued)
+            return;
+        if (!scan->gate_started_ms) scan->gate_started_ms = now_ms;
+        if (now_ms - scan->gate_started_ms >= SCAN_GATE_WAIT_MS) {
+            scan->phase = LIVE_SCAN_DONE;
+            scan->result = LIVE_SCAN_GATE_NOT_MET;
+            goto report_scan;
+        }
+        if (!scan_evidence_ready(evidence, now_ms)) {
+            scan->phase = LIVE_SCAN_DONE;
+            scan->result = LIVE_SCAN_GATE_NOT_MET;
+        } else if (ipc_buffered || rfs_buffered ||
+                   now_ms < ipc_backoff_ms || now_ms < rfs_backoff_ms ||
+                   now_ms - last_rx_ms < 500) {
+            /* First drain the reply/indication stream, then observe a quiet
+             * interval before checking ownership and dispatching active RF. */
+            return;
+        } else {
+            struct pollfd pending[2] = {
+                {.fd = ipc_fd, .events = POLLIN},
+                {.fd = rfs_fd, .events = POLLIN}
+            };
+            if (poll(pending, 2, 0) != 0) return;
+            if (cp_state() != CP_ONLINE ||
+                opened_once(ipc_fd) || opened_once(rfs_fd)) {
+                scan->phase = LIVE_SCAN_DONE;
+                scan->result = LIVE_SCAN_GATE_NOT_MET;
+                goto report_scan;
+            }
+            uint8_t request[16];
+            /* The snapshot token is session-specific; no other request is
+             * outstanding, and the cancel token is reserved immediately. */
+            scan->scan_token = snapshot->token + 1;
+            scan->cancel_token = snapshot->token + 2;
+            if (!scan->scan_token || !scan->cancel_token) {
+                scan->phase = LIVE_SCAN_DONE;
+                scan->result = LIVE_SCAN_GATE_NOT_MET;
+            } else {
+                /* Recheck after the ownership ioctls; any newly queued frame
+                 * must be drained before the one active RF request. */
+                if (poll(pending, 2, 0) != 0 || cp_state() != CP_ONLINE)
+                    return;
+                snapshot->token += 2; /* Never reuse scan/cancel tokens later. */
+                make_scan_request(request, scan->scan_token);
+                /* A short/EAGAIN write is ambiguous after queue acceptance.
+                 * Never resend 0x0706; attempt one 0x0707 cancellation. */
+                ssize_t written = write(ipc_fd, request, sizeof request);
+                live_scan_scan_written(scan,
+                                       written == (ssize_t)sizeof request,
+                                       now_ms);
+                if (written != (ssize_t)sizeof request) {
+                    puts("network_scan request=ambiguous no-retry cancel=required");
+                } else {
+                    puts("network_scan request=sent active-rf=yes payload=redacted");
+                }
+            }
+        }
+    }
+    if (scan->phase == LIVE_SCAN_CANCEL_READY) {
+        uint8_t request[12];
+        make_cancel_request(request, scan->cancel_token);
+        /* No second attempt even when the driver returns an ambiguous write. */
+        ssize_t written = write(ipc_fd, request, sizeof request);
+        live_scan_cancel_written(scan,
+                                 written == (ssize_t)sizeof request, now_ms);
+        if (written != (ssize_t)sizeof request) {
+            puts("network_scan cancel=ambiguous no-retry owner=retained");
+        } else {
+            puts("network_scan cancel=sent once");
+        }
+    }
+report_scan:
+    if (scan->phase == LIVE_SCAN_DONE && !scan->reported) {
+        printf("network_scan result=%s", live_scan_result_name(scan->result));
+        if (scan->result == LIVE_SCAN_COUNT)
+            printf(" count=%u", scan->count);
+        printf(" late_scan_reply=%u", scan->late_reply_seen);
+        if (scan->poisoned) printf(" owner=quarantine-until-cp-offline");
+        putchar('\n');
+        scan->reported = 1;
+    }
+}
+
+/* Once framing is lost, no response can be trusted or resynchronized. Send
+ * at most one cancel if none was dispatched, then retain both device FDs
+ * without further parsing or writes until CP goes OFFLINE. */
+static void live_scan_framing_poison(struct live_scan *scan, int ipc_fd) {
+    if (!live_scan_active(scan)) return;
+    int64_t now_ms = monotonic_ms();
+    if (now_ms < 0) {
+        scan->phase = LIVE_SCAN_DONE;
+        scan->result = LIVE_SCAN_CANCEL_NOT_SENT;
+        scan->poisoned = 1;
+        puts("network_scan result=clock-error owner=quarantine-until-cp-offline");
+        scan->reported = 1;
+        return;
+    }
+    live_scan_tick(scan, now_ms);
+    if (scan->phase == LIVE_SCAN_DONE) {
+        /* A delayed poll failure cannot extend the cancel window. */
+    } else if (scan->phase == LIVE_SCAN_CANCEL_WAITING) {
+        scan->result = LIVE_SCAN_FRAMING_ALREADY_CANCELING;
+    } else if (cp_state() != CP_ONLINE) {
+        scan->result = LIVE_SCAN_CP_LOST;
+    } else {
+        uint8_t cancel[12];
+        make_cancel_request(cancel, scan->cancel_token);
+        ssize_t written = write(ipc_fd, cancel, sizeof cancel);
+        scan->result = written == (ssize_t)sizeof cancel ?
+            LIVE_SCAN_FRAMING_CANCEL_SENT :
+            LIVE_SCAN_FRAMING_CANCEL_AMBIGUOUS;
+    }
+    scan->phase = LIVE_SCAN_DONE;
+    scan->poisoned = 1;
+    printf("network_scan result=%s owner=quarantine-until-cp-offline\n",
+           live_scan_result_name(scan->result));
+    scan->reported = 1;
+}
+
 static void trace_slot_status(struct slot_status_trace *trace,
                               const uint8_t *p, size_t size,
                               int64_t now_ms, int64_t owner_start_ms) {
@@ -1327,6 +1952,8 @@ struct live_frame_context {
     struct metadata_counts *counts;
     struct snapshot *snapshot;
     struct sim_refresh *refresh;
+    struct scan_evidence *evidence;
+    struct live_scan *scan;
     struct slot_status_trace *slot_trace;
     struct rfs_header_trace *trace;
     int64_t now_ms;
@@ -1342,8 +1969,14 @@ static void live_frame(void *opaque, enum channel_kind kind,
                           context->now_ms, context->owner_start_ms);
         expire_sim_query(context->refresh, context->now_ms);
         snapshot_reply(context->snapshot, p, (size_t)size);
-        sim_refresh_reply(context->refresh, p, (size_t)size,
-                          context->now_ms);
+        sim_refresh_reply(context->refresh, context->evidence,
+                          p, (size_t)size, context->now_ms);
+        live_scan_frame(context->scan, p, (size_t)size, context->now_ms);
+        if (scan_evidence_unsolicited(context->evidence, p, (size_t)size) &&
+            context->scan->phase == LIVE_SCAN_WAITING)
+            live_scan_request_cancel(context->scan,
+                                     LIVE_SCAN_CAUSE_GATE_LOST,
+                                     context->now_ms);
         sim_refresh_note_indication(context->refresh, p, (size_t)size,
                                     context->now_ms);
     } else
@@ -1355,6 +1988,8 @@ static void live_frame(void *opaque, enum channel_kind kind,
 static int drain_channel(struct channel *channel, struct metadata_counts *counts,
                          struct snapshot *snapshot,
                          struct sim_refresh *refresh,
+                         struct scan_evidence *evidence,
+                         struct live_scan *scan,
                          struct slot_status_trace *slot_trace,
                          struct rfs_header_trace *trace,
                          int64_t owner_start_ms) {
@@ -1374,9 +2009,11 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
     channel->used += (size_t)n;
     int64_t now = monotonic_ms();
     if (now < 0) return -1;
+    channel->last_rx_ms = now;
     struct live_frame_context context = {
         .channel = channel, .counts = counts, .snapshot = snapshot,
-        .refresh = refresh, .slot_trace = slot_trace, .trace = trace,
+        .refresh = refresh, .evidence = evidence, .scan = scan,
+        .slot_trace = slot_trace, .trace = trace,
         .now_ms = now, .owner_start_ms = owner_start_ms
     };
     return parse_available(channel->kind, channel->rx, &channel->used,
@@ -1384,6 +2021,11 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
 }
 
 static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
+#ifdef SAAIOS_SCAN_ONCE
+    const int scan_armed = !attached;
+#else
+    const int scan_armed = 0;
+#endif
     struct rlimit no_core = {0, 0};
     if (setrlimit(RLIMIT_CORE, &no_core) || prctl(PR_SET_DUMPABLE, 0)) {
         fputs("ABORT could not disable core dumps\n", stderr);
@@ -1427,6 +2069,8 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     struct metadata_counts counts = {0};
     struct snapshot snapshot = {0};
     struct sim_refresh refresh = {0};
+    struct scan_evidence evidence = {0};
+    struct live_scan scan = {0};
     struct slot_status_trace slot_trace = {0};
     int64_t start = monotonic_ms();
     struct rfs_header_trace trace = {.enabled = !attached, .start_ms = start};
@@ -1445,6 +2089,8 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     puts(attached ?
          "owner=attach-online history=unknown channels=ipc0,rfs0 payload=redacted rfs_responses=none" :
          "owner=ready channels=ipc0,rfs0 payload=redacted rfs_responses=none");
+    if (scan_armed)
+        puts("network_scan=armed_once policy=reviewed-rf-risk cp_rf_idle=unproven");
     int rc = 0;
     int deferred_stop_logged = 0;
     for (;;) {
@@ -1467,9 +2113,24 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             report_metadata(&counts, now);
             report_rfs_overflow(&trace);
         }
+        if (scan.poisoned) {
+            /* A malformed stream cannot be resynchronized safely. Keep the
+             * sole IPC/RFS owner alive without more GETs or writes. */
+            (void)poll(NULL, 0, POLL_SLICE_MS);
+            continue;
+        }
         if (state == CP_ONLINE) {
             snapshot_advance(&snapshot, ipc, now);
-            sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
+            if (!live_scan_active(&scan))
+                sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
+            live_scan_advance(&scan, scan_armed, &evidence, &snapshot,
+                              &refresh, ipc, rfs,
+                              channels[0].used, channels[1].used,
+                              channels[0].backoff_until_ms,
+                              channels[1].backoff_until_ms,
+                              channels[0].last_rx_ms > channels[1].last_rx_ms ?
+                              channels[0].last_rx_ms : channels[1].last_rx_ms,
+                              now);
         }
         struct pollfd fds[2];
         int timeout = POLL_SLICE_MS;
@@ -1484,21 +2145,37 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         }
         int events = poll(fds, 2, timeout);
         if (events < 0 && errno == EINTR) continue;
-        if (events < 0) { perror("owner poll"); rc = 1; break; }
+        if (events < 0) {
+            perror("owner poll");
+            if (live_scan_active(&scan)) {
+                live_scan_framing_poison(&scan, ipc);
+                continue;
+            }
+            rc = 1; break;
+        }
         for (int i = 0; i < 2; ++i) {
             if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 fprintf(stderr, "%s poll failure event=0x%x\n",
                         i ? "RFS" : "IPC", fds[i].revents);
+                if (live_scan_active(&scan)) {
+                    live_scan_framing_poison(&scan, ipc);
+                    break;
+                }
                 rc = 1; break;
             }
             if ((fds[i].revents & POLLIN) &&
                 drain_channel(&channels[i], &counts, &snapshot, &refresh,
-                              &slot_trace, &trace, start)) {
+                              &evidence, &scan, &slot_trace, &trace, start)) {
                 fprintf(stderr, "%s read/framing failure or buffer cap\n",
                         i ? "RFS" : "IPC");
+                if (live_scan_active(&scan)) {
+                    live_scan_framing_poison(&scan, ipc);
+                    break;
+                }
                 rc = 1; break;
             }
         }
+        if (scan.poisoned) continue;
         if (rc) break;
     }
     if (counts.ipc_total || counts.rfs_total) {
@@ -1506,6 +2183,15 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         report_metadata(&counts, now >= 0 ? now : counts.window_start_ms);
     }
     report_rfs_overflow(&trace);
+    if (live_scan_active(&scan)) {
+        scan.phase = LIVE_SCAN_DONE;
+        scan.result = LIVE_SCAN_CP_LOST;
+    }
+    if (scan.phase == LIVE_SCAN_DONE && !scan.reported) {
+        printf("network_scan result=%s late_scan_reply=%u\n",
+               live_scan_result_name(scan.result), scan.late_reply_seen);
+        scan.reported = 1;
+    }
     if (trace.enabled)
         printf("rfs_header_trace_logged=%u overflow=%llu\n", trace.logged,
                (unsigned long long)trace.overflow);
@@ -1520,6 +2206,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     return rc;
 }
 
+#ifndef SAAIOS_SCAN_ONCE
 static int open_verified_node(const char *node, const char *sysdev) {
     int fd = open(node, O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) return -1;
@@ -1555,17 +2242,32 @@ static int attach_online(void) {
     return rc;
 }
 #endif
+#endif
 
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "self-test")) return fixture();
+    if (argc == 2 && !strcmp(argv[1], "--mode")) {
+#ifdef SAAIOS_SCAN_ONCE
+        puts("scan-once");
+#else
+        puts("passive");
+#endif
+        return 0;
+    }
 #ifdef _WIN32
     (void)argc;
     (void)argv;
     fputs("Live channel ownership requires Linux.\n", stderr);
     return 69;
 #else
-    if (argc == 2 && !strcmp(argv[1], "--attach-online"))
+    if (argc == 2 && !strcmp(argv[1], "--attach-online")) {
+#ifdef SAAIOS_SCAN_ONCE
+        fputs("ABORT scan-once requires a fresh guarded pre-FIN handoff\n", stderr);
+        return 64;
+#else
         return attach_online();
+#endif
+    }
     int ipc, rfs, ready;
     if (parse_args(argc, argv, &ipc, &rfs, &ready)) {
         fputs("usage: modem-channel-owner self-test | "

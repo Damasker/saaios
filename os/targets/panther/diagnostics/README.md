@@ -221,3 +221,33 @@ sh post-init-chase.sh --frame /data/saaios/var/oem-2f50.frame
 `oem-ipc-inject inject <file> [N]` writes once to `/dev/oem_ipcN`, refuses
 empty/all-zero frames, logs length/errno only. `post-init-chase` polls
 GET_APP for `app∈{1,4,5}` then runs the existing post-edge bearer pipeline.
+
+## One-shot available-network scan variant (opt-in only)
+
+The default `owner-handoff-bringup.sh` remains the passive diagnostic. A
+separately compiled probe/owner pair can perform **one active RF scan** after
+the same-boot settled SIM/radio/registration and factory network GETs all
+return valid, fresh values. The build helper creates distinct artifact names;
+it neither installs nor runs them on the phone:
+
+```sh
+mkdir -p /tmp/saaios-scan-build
+sh os/targets/panther/diagnostics/build-owner-scan-once.sh \
+  /tmp/saaios-scan-build
+# Review both hashes and --owner-exec/--owner-log identity before staging.
+```
+
+The scan owner must be built with `SAAIOS_SCAN_ONCE`; the scan probe must use
+`probe-scan-once-config.h`. The guarded `scan-once` script argument selects
+only those separately named files and a distinct log. It refuses an ONLINE
+attach, a second IPC/RFS owner, stale/PIN-locked SIM, radio off, manual or
+restricted network mode, registered service, pending GETs, and a busy/draining
+receive queue. Its one `0x0706` request is the factory TD1A 16-byte form with
+zero argument. It logs only the returned count; a timeout or malformed reply
+causes at most one `0x0707` cancel. Ambiguous cancel or lost framing leaves
+the owner holding both channels until CP goes OFFLINE.
+
+This is an explicitly reviewed diagnostic risk policy, **not proof that the
+modem or an unfinished eSIM profile has idle RF**. Do not delete, disable, or
+switch eSIM profiles as part of this scan. RFS cmd7/6 may remain unserved, and
+the probe still never writes NV/EFS, enters a PIN, or sets APN/network policy.
