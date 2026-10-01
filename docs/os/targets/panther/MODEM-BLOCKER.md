@@ -1,15 +1,27 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**One-shot scan control (2026-10-01):** A separately named, guarded
+single-owner build sent one factory-shaped `0x0706` available-network scan
+after fresh same-boot READY/PIN-disabled, radio-ON, automatic-selection and
+broad-RAT checks. CP promptly returned a matching 12-byte **nonzero-error**
+response; there was no timeout, cancellation or retry. The error number was
+not logged, so it must not be conflated with the older error 2 observed under
+PIN lock. The preceding signal GET's technology-presence mask had low seven
+bits 0. CP stayed ONLINE, but registration remained 0 and `rmnet0` down.
+The physical SIM and data worked in another handset. No eSIM profile was
+deleted; an unfinished eSIM attempt does not prove that stack's RF-idle
+state. Next isolate the CP rejection/missing factory AP or RFS prerequisite,
+not another blind active scan. See [live details](MODEM-RUNTIME-2026-09-24.md).
+
 **Extended control (2026-10-01):** With SIM READY/PIN1 DISABLED and radio
 ON, the single-owner +60-second network GETs returned automatic selection
 (0), preferred type raw 16, and successful operator/signal responses.
 Registration remained 0 and `rmnet0` had no bearer. Operator and signal
 payloads were suppressed. The Samsung factory table identifies SIT raw 16
 as NR/LTE/GSM/WCDMA and maps it to Android mode 26; a restrictive preferred
-mode is not supported as the blocker. The next possible discriminator is one
-reviewed, bounded available-network scan; it occupies RF and needs an
-opposite-stack RF-idle check plus a cancel path on timeout, so it has **not**
-been sent. See [the runtime control](MODEM-RUNTIME-2026-09-24.md).
+mode is not supported as the blocker. At the time of this passive control,
+the active scan had not yet been sent; the later one-shot result is above.
+See [the runtime control](MODEM-RUNTIME-2026-09-24.md).
 
 **Latest SIM-in control (2026-10-01):** The operator confirmed the card's PIN
 prompt was actually enabled, then disabled it in another phone, reinserted

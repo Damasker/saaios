@@ -5918,3 +5918,44 @@ timeout it sends `0x0707` cancel. The current owner cannot verify the
 opposite SIM stack's RF-idle state or cancel a scan. Its bounded response/count
 parser, RF arbitration and cancel behavior must be reviewed in a separate
 opt-in single-owner build before any live send.
+
+## 2026-10-01: one guarded active network scan is rejected immediately
+
+The operator clarified that an earlier attempt to provision an eSIM profile
+never completed and that its data need not be preserved. This does not prove
+the embedded-SIM RF stack idle; no eSIM profile was deleted or switched.
+The physical SIM also registered and carried mobile data in another phone
+after the account top-up, so this control is specific to the Pixel/SaaiOS
+path rather than evidence of an unusable SIM or blocked account.
+
+The separately named scan owner (ARM64 SHA-256
+`9d501aa68a83caa85abc83549621115dd9d668aaa0b61a40788c38d191a01078`)
+and probe (`82fd4ff3edd3dc308592b99eaa99b9a597cda5d0fbb04e9841da9f8d4fe0b6d3`)
+were built from commit `9f9371c`, checked on the phone by SHA-256, mode,
+probe path and self-test, and installed under new names without replacing
+the default binaries. The new guarded script used its own log paths and
+started only after an AP reboot. Its NV-copy verification and pre-FIN owner
+handoff returned 0; CP remained ONLINE, with one owner holding IPC0/RFS0.
+No PIN, APN, slot mapping, original EFS or NV write was made.
+
+At +9.770 s, two-slot metadata repeated the slot 0/logical 1 and slot
+1/logical 0 mapping. The indication-driven SIM GET and +60 s settled GET
+both reported card 1/apps 1, READY(5), PIN1 DISABLED(3). At +60 s radio was
+ON(10), voice/data registration 0/reject 0/tech 0, automatic selection 0,
+preferred raw 16, operator GET success and signal GET success. The signal
+presence mask's low seven bits were **0**; this is not itself a calibrated
+signal-strength or RF-power measurement. Once the owner observed a quiet
+receive queue and no competing endpoint opener, it sent exactly one
+factory-shaped 16-byte `0x0706` request. CP promptly returned a matching
+12-byte response with a nonzero 16-bit result; the owner recorded
+`network_scan result=remote-error` without logging the numeric result or
+any network/PLMN payload. No timeout, cancellation, second scan, or scan
+retry occurred. The owner stayed alive and CP ONLINE, but `rmnet0` remained
+down. The numeric cause cannot be reconstructed from this redacted log.
+
+The control rules out a missing scan command as the only reason no networks
+appeared: CP accepted the transport transaction but rejected the operation.
+It does **not** distinguish a missing factory AP/RFS prerequisite from CP RF
+state or other modem-side refusal. The earlier `0x0706` error 2 was under a
+PIN-locked state; assigning that same number to this new response would be
+an inference, not an observation. Do not repeat the active scan blindly.
