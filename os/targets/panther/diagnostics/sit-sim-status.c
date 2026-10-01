@@ -59,20 +59,29 @@ int main(int argc, char **argv) {
     alarm(15);
     FILE *f=fopen("/sys/devices/platform/cpif/modem_state","r");
     char state[32]={0};
-    if (!f) return 1;
+    if (!f) { perror("modem_state open"); return 1; }
     int got=fscanf(f,"%31s",state); fclose(f);
-    if (got!=1 || strcmp(state,"ONLINE")) { puts("requires ONLINE"); return 1; }
+    if (got!=1 || strcmp(state,"ONLINE")) { fputs("requires ONLINE\n", stderr); return 1; }
     unsigned maj=0,min=0;
     f=fopen("/sys/class/cpif/umts_ipc0/dev","r");
-    if (!f) return 1;
+    if (!f) { perror("umts_ipc0 identity open"); return 1; }
     got=fscanf(f,"%u:%u",&maj,&min); fclose(f);
-    if (got!=2) return 1;
+    if (got!=2) { fputs("umts_ipc0 identity invalid\n", stderr); return 1; }
     int lock=open("/run/saaios-sit-status.lock",O_CREAT|O_RDWR|O_CLOEXEC,0600);
-    if (lock<0 || flock(lock,LOCK_EX|LOCK_NB)) return 1;
+    if (lock<0) { perror("SIT lock open"); return 1; }
+    if (flock(lock,LOCK_EX|LOCK_NB)) {
+        fputs("SIT lock busy or unavailable\n", stderr);
+        close(lock);
+        return 1;
+    }
     int fd=open("/dev/umts_ipc0",O_RDWR|O_NONBLOCK|O_CLOEXEC|O_NOFOLLOW);
     struct stat st;
-    if (fd<0 || fstat(fd,&st) || !S_ISCHR(st.st_mode) ||
-        major(st.st_rdev)!=maj || minor(st.st_rdev)!=min) return 1;
+    if (fd<0) { perror("umts_ipc0 open"); close(lock); return 1; }
+    if (fstat(fd,&st) || !S_ISCHR(st.st_mode) ||
+        major(st.st_rdev)!=maj || minor(st.st_rdev)!=min) {
+        fputs("umts_ipc0 device identity mismatch\n", stderr);
+        close(fd); close(lock); return 1;
+    }
     /* Factory BuildSimGetStatus: type 0, id 0x0200, length 12, token 1. */
     /* Factory BuildGetRadioState at 0x746a0: id 0x0801, length 12. */
     /* Factory registration builder domain 2: id 0x0701, no payload. */
@@ -87,13 +96,19 @@ int main(int argc, char **argv) {
     while (now_ms()<deadline && frames<128) {
         struct pollfd pfd={fd,POLLIN,0};
         int ready=poll(&pfd,1,500);
-        if (ready<0) { if(errno==EINTR) continue; return 1; }
+        if (ready<0) { if(errno==EINTR) continue; perror("SIT poll"); return 1; }
         if (!ready) continue;
-        if (pfd.revents & (POLLERR|POLLHUP|POLLNVAL)) return 1;
+        if (pfd.revents & (POLLERR|POLLHUP|POLLNVAL)) {
+            fprintf(stderr,"SIT poll event 0x%x\n",pfd.revents);
+            return 1;
+        }
         if (!(pfd.revents&POLLIN)) continue;
         ssize_t n=read(fd,buffer+used,sizeof(buffer)-used);
         if (n<0 && (errno==EINTR||errno==EAGAIN)) continue;
-        if (n<=0) return 1;
+        if (n<=0) {
+            if (n<0) perror("SIT read"); else fputs("SIT EOF\n",stderr);
+            return 1;
+        }
         used+=(size_t)n;
         while (used) {
             int len=frame_size(buffer,used);
