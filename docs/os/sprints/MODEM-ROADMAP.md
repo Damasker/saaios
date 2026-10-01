@@ -11,12 +11,16 @@ that telemetry is **not** a proven cause of the camp failure. Implement one
 continuous IPC reader/dispatcher plus an RFS owner, with a no-gap boot
 handoff, to make all runtime traffic observable and safely serviceable.
 
-An opt-in single-reader diagnostic owner now attaches to the already-ONLINE
-CP. Its first live read-only snapshot still has READY/ON and registration=0;
-two one-minute windows saw 46 and 47 signal indications but no RFS request.
-The owner has no RFS response service and attached too late to establish what
-happened during FIN/COMPLETE. A no-gap pre-FIN fork/exec handoff is compiled
-and gated, but not yet device-tested; do not treat it as production MODEM-08.
+An opt-in single-reader diagnostic owner first attached to the already-ONLINE
+CP. Its read-only snapshot had READY/ON but registration=0; several one-minute
+windows saw about 47 signal indications each and no RFS requests. A later
+fresh-AP-boot test of the guarded no-gap pre-FIN handoff succeeded: CP reached
+ONLINE, the owner remained alive, and the first minute captured RFS command 7
+at +7.282 s followed by command 6 (sequence 1, payload 16) at +17.282 s.
+No RFS reply was sent. The initial read-only SIT snapshot had card=0/apps=0,
+radio=1, registration=0; `rmnet0` RX stayed 0. This establishes early RFS
+traffic, not its causal role in SIM/network failure. The handoff is still a
+one-shot diagnostic, not production MODEM-08.
 
 Status: **MODEM-00/01 complete. MODEM-02 diagnostic complete, not a
 service. MODEM-03 diagnostic complete with first runtime responses. MODEM-04

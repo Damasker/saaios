@@ -5686,3 +5686,36 @@ ONLINE; SIM reset to PIN+pin1=1; VerifyPin>READY **reproduced**.
    after camp.
 3. Debug why READY + `0x0704` err0 still yields reg=0 (RF/PLMN/antenna /
    further signed NET inds — no invent `0x2f50`).
+
+## 2026-10-01: first passive no-gap IPC/RFS owner boot
+
+The guarded `owner-handoff-bringup.sh` was run after a fresh AP reboot. It
+verified the existing NV copies and reviewed modem image, opened IPC0/RFS0
+before FIN, forked a detached single reader, then completed the modem boot.
+The probe returned 0 and CP remained ONLINE. The owner (PID 594 in this
+run) held both descriptors and sent only four read-only SIT snapshot GETs;
+it sent **no RFS replies**, no PIN/APN/network mutations and no NV writes.
+The original EFS was not mounted.
+
+The initial snapshot returned SIM card raw 0/apps 0, radio raw 1, voice/data
+registration raw 0. Header-only RFS trace from the owner's READY point:
+
+| Elapsed | Command | Sequence | Payload length |
+| --- | ---: | ---: | ---: |
+| 7.282 s | 7 | 0 | 4 |
+| 17.282 s | 6 | 1 | 16 |
+
+The first 60.169 s window counted two RFS frames and nine other IPC
+indications beyond the four GET replies. `rmnet0` RX remained 0. No command 3
+was observed in this no-reply run. This proves that the RFS traffic occurs
+early while the single owner holds both endpoints; it does **not** prove
+which unserved request prevents SIM or network registration. The earlier
+already-ONLINE attach could not observe this boot window. Device logs:
+`/data/saaios/var/owner-handoff-bringup.log` and
+`/data/saaios/var/modem-channel-owner.log`.
+
+Before the successful run, the first script attempt stopped with `sh: missing
+]` during device-node identity checking. CP stayed OFFLINE and no modem stage
+was sent. That one-line shell error was fixed in commit `40c2b7e`; the two
+short failed-run logs and script were retained with `.syntax-failed-20261001`
+suffixes on the phone.
