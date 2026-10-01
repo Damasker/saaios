@@ -5609,3 +5609,65 @@ blocker; catalog `0x2f50` / policy path still required.
 
 Policy-gated stock `oem_ipc*` capture for `SIM_INIT_REQ` (`0x2f50`) or
 external evidenced frame â€” same bans; do not invent.
+
+## 2026-10-01: VerifyPin A+AID (pin1=1, no CardPower) > READY
+
+Overnight live was ONLINE / app=PIN(2) / pin1=**1** / reg=0 / no IPv4.
+Careful soft-lock path: **VerifyPin A+AID only** (skip CardPower because
+pin1 already NOT_VERIFIED). Tool:
+`diagnostics/tmp-verifypin-a-uns-watch.c` (RFS-aware; logs type/id/len/err
+only — never PIN/AID/IMSI/ICCID).
+
+### Result (reproduced twice this turn)
+
+| Field | Pre | Post VerifyPin |
+| --- | --- | --- |
+| modem_state | ONLINE | ONLINE |
+| app_state | PIN (2) | **READY (5)** |
+| pin1 | 1 | **2** (ENABLED_VERIFIED) |
+| remain | 3 | 3 |
+| data/voice reg | 0 | 0 |
+| rmnet IPv4 | none | none |
+
+Direct `0x0201` match often **times out** (45–90s) while RFS `cmd=7` is
+seen as `rfs ignored` (byte pattern ? stock unprotect). Response then
+appears as **late UNSOL** when a follow-up GET is sent:
+
+- `0x0201` tok=7 len=16 **err=0** (VerifyPin OK, delayed)
+- `0x0200` > UNSOL_SIM **app=5 pin1=2**
+- Also: `0x0210` (len=8), `0x4604`, `0x4602`, `0x0303`, `0x000d`
+  (ids/lens only; no payload decode / no invented OEM frames)
+
+Independent `sit-sim-status` confirmed `app0_state_raw=5` /
+`pin1_state_raw=2` / `layout=app16-perso17-v1`.
+
+### Post-edge chase (READY held)
+
+`diagnostics/tmp-ready-bearer-chase.c` (skip Radio ON — already
+`radio_state_raw=10`):
+
+| Cmd | Result |
+| --- | --- |
+| preferred LTE `0x070a` | err **0** |
+| selection auto `0x0704` | err **0** (was err=2 under PIN) |
+| AllowData `0x0710` | err 0 |
+| GetPs `0x0711` | err 0 |
+| SetupDataCall | **deferred_no_apn** — `/data/saaios/etc/apn` is 8-byte
+  `internet` with **no dot**; `apn_usable()` requires `.` (do not invent
+  carrier APN) |
+| ~60s camp poll | registration_raw=**0**, tech=0, rmnet rx=0 |
+
+One AP soft-reboot occurred mid-session (uptime>0); cause not attributed
+to `do_cp_crash` (never written). Soft handover not needed — CP returned
+ONLINE; SIM reset to PIN+pin1=1; VerifyPin>READY **reproduced**.
+
+**Soft-lock chicken-egg for GET_APP>READY: broken** on this pin1=1 path.
+**Bearer verified?** **no** — still no camp / rmnet IPv4.
+
+### Next
+
+1. Fix RFS unprotect match so `0x0201` lands inside the wait window.
+2. Operator-supplied dotted APN in `/data/saaios/etc/apn` for SetupDataCall
+   after camp.
+3. Debug why READY + `0x0704` err0 still yields reg=0 (RF/PLMN/antenna /
+   further signed NET inds — no invent `0x2f50`).
