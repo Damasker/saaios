@@ -80,8 +80,12 @@ control series.
 
 **SIM-in control update (2026-10-01):** The operator found that the physical
 card had indeed required PIN, disabled its PIN prompt in another phone,
-returned it to the Pixel and reported replenishing the account. Hot insertion
-under the existing owner gave card PRESENT/app READY(5)/PIN1 DISABLED(3)
+returned it to the Pixel and reported replenishing the account. The tester
+later confirmed that the same SIM registered and mobile internet worked in
+another handset **after** the top-up. This is a useful control against an
+account/SIM-wide block, not proof that Pixel RF hardware or SaaiOS camp is
+healthy. Hot insertion under the existing owner gave card PRESENT/app
+READY(5)/PIN1 DISABLED(3)
 without a SaaiOS VerifyPin. One new guarded AP boot then deployed the
 redacted two-slot logger and reached CP ONLINE with one IPC0/RFS0 owner.
 Slot 0 reported card 1/port 0 logical 1; slot 1 card 1/port 0 logical 0.
