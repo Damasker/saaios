@@ -5,9 +5,15 @@
 one `umts_rfs0 is not opened` packet drop. A bounded, header-only IPC reader
 then received 23 unsolicited `type=2, id=0x0906, len=206` frames in 30 s,
 roughly one every 1.28 s. No frame payload or subscriber identity was logged.
-This proves CP→AP traffic exists while an IPC reader is open; it does **not**
-yet identify the meaning of `0x0906` or prove that missed frames alone block
-camp. The s5300 kernel discards RX when an endpoint has no opener, and the
+The stock TD1A `libsitril.so` route table maps `0x0906` to
+`MiscService::OnUnsolSignalStrength`, which forwards RIL unsolicited 1009
+(`RIL_UNSOL_SIGNAL_STRENGTH`) without a command back to CP. The factory
+library SHA-256 is
+`efcca0d5fa5a3eb3a09d8c9f68fc35f8b194bb511379987fd4a353f12ed2d5b1`;
+[AOSP defines RIL 1009 as signal-strength telemetry](https://android.googlesource.com/platform/hardware/ril/+/android-4.2.2_r1/include/telephony/ril.h).
+Therefore losing these **particular** frames does not explain failure to camp;
+other lost IPC events remain possible. The s5300 kernel discards RX when an
+endpoint has no opener, and the
 last close purges its shared RX queue. A long-lived, single-reader IPC/RFS
 owner and safe boot handoff now precede more radio-setting experiments. A
 bounded observer cannot substitute for that service.

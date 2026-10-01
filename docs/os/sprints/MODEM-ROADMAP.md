@@ -5,10 +5,11 @@
 (23 headers in a 30 s redacted observation). Without an opener, the kernel
 drops them; the last close purges the shared queue. The currently short-lived
 diagnostics therefore cannot establish reliable modem runtime ownership.
-Implement one continuous IPC reader/dispatcher plus an RFS owner, with a
-no-gap handoff from boot, before running the prepared reversible preferred-RAT
-experiment or attributing registration failure to LTE coverage. Do not treat
-the observed unsolicited ID as decoded until its contract is verified.
+Stock TD1A `libsitril.so` identifies `0x0906` as the signal-strength
+indication forwarded to RIL 1009; its handler sends no modem command. Loss of
+that telemetry is **not** a proven cause of the camp failure. Implement one
+continuous IPC reader/dispatcher plus an RFS owner, with a no-gap boot
+handoff, to make all runtime traffic observable and safely serviceable.
 
 Status: **MODEM-00/01 complete. MODEM-02 diagnostic complete, not a
 service. MODEM-03 diagnostic complete with first runtime responses. MODEM-04
