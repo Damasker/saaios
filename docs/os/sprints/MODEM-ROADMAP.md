@@ -116,7 +116,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-04 | Maintained boot model library, no hardware actions | **Started** (host TOC/stage/plan/executor/failure model) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
-| MODEM-07 | RFS design and refusal policy | **Started** (quarantine design + JS/C synthetic host models; no phone broker) | no |
+| MODEM-07 | RFS design and refusal policy | **Started** (quarantine design + JS/C host models + Linux host storage fixture; no phone broker) | no |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | Backlog | **yes** |
 
@@ -747,7 +747,9 @@ soft-lock` / `post-edge` + chase `SOFT_LOCK_STATUS` report
 [host-only model](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-HOST.md)
 and [host-only C core](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md)
 cover the observed file-3 write request, bounded 95-chunk exchange and
-factory final status. Synthetic fixtures and Linux ASan/UBSan pass; there is no phone-side
+factory final status. The [Linux private-storage host fixture](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
+also tests copy isolation, fsync/reread and withholding the final ACK on
+faults. Synthetic fixtures and Linux ASan/UBSan pass; there is no phone-side
 candidate store or service. The live no-gap owner is passive and cannot
 claim MODEM-07 completion.
 
