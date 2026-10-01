@@ -16,13 +16,20 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/file.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <time.h>
 #include <unistd.h>
 #endif
 
-enum { MAX_EVENTS = 3, TOTAL_TIMEOUT_MS = 60000, READ_CAP = 64 };
+enum { MAX_EVENTS = 3, TOTAL_TIMEOUT_MS = 60000, READ_CAP = 64,
+       MONITOR_MS = 120000, MONITOR_SAMPLE_MS = 5000 };
+
+#ifndef _WIN32
+/* Google/Samsung modem_prj.h: _IOR(IOCTL_MAGIC='o', 0x59, int). */
+#define IOCTL_GET_OPENED_STATUS _IOR('o', 0x59, int)
+#endif
 
 /* CP messages observed on the RFS device, including the complete header. */
 static const uint8_t request_unprotect[12] = {
@@ -123,14 +130,14 @@ static enum cp_state get_cp_state(void) {
     return CP_INVALID;
 }
 
-static int open_verified_rfs(void) {
+static int open_verified_node(const char *path, const char *sysdev) {
     unsigned maj, min;
-    FILE *f = fopen("/sys/class/cpif/umts_rfs0/dev", "r");
+    FILE *f = fopen(sysdev, "r");
     if (!f) return -1;
     int n = fscanf(f, "%u:%u", &maj, &min);
     fclose(f);
     if (n != 2) return -1;
-    int fd = open("/dev/umts_rfs0", O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
+    int fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) return -1;
     struct stat st;
     if (fstat(fd, &st) || !S_ISCHR(st.st_mode) ||
@@ -139,6 +146,10 @@ static int open_verified_rfs(void) {
         return -1;
     }
     return fd;
+}
+
+static int open_verified_rfs(void) {
+    return open_verified_node("/dev/umts_rfs0", "/sys/class/cpif/umts_rfs0/dev");
 }
 
 static int wait_for(int fd, short events, int64_t deadline) {
@@ -168,7 +179,85 @@ static int wait_cp_online(int64_t deadline) {
     }
 }
 
-static int run_exact(void) {
+/* Only POLLIN readiness is observed; unknown packets are not consumed. */
+static int observe_channel(int fd) {
+    struct pollfd pfd = {.fd = fd, .events = POLLIN};
+    int rc = poll(&pfd, 1, 0);
+    if (rc < 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) return -1;
+    return rc > 0 && (pfd.revents & POLLIN) ? 1 : 0;
+}
+
+static int monitor_channels(int ipc, int rfs) {
+    int64_t start = monotonic_ms();
+    if (start < 0) return 20;
+    int64_t end = start + MONITOR_MS;
+    for (;;) {
+        int64_t now = monotonic_ms();
+        if (now < 0 || get_cp_state() != CP_ONLINE) {
+            fputs("Monitor stopped: CP left ONLINE or clock failed\n", stderr);
+            return 21;
+        }
+        int ipc_pending = observe_channel(ipc);
+        int rfs_pending = observe_channel(rfs);
+        if (ipc_pending < 0 || rfs_pending < 0) {
+            fputs("Monitor stopped: IPC or RFS poll failed\n", stderr);
+            return 22;
+        }
+        printf("monitor_ms=%lld ipc_pending=%d rfs_pending=%d\n",
+               (long long)(now - start), ipc_pending, rfs_pending);
+        fflush(stdout);
+        if (now >= end) return 0;
+        int64_t remaining = end - now;
+        int64_t delay_ms = remaining < MONITOR_SAMPLE_MS ? remaining : MONITOR_SAMPLE_MS;
+        struct timespec delay = {.tv_sec = delay_ms / 1000,
+                                 .tv_nsec = (delay_ms % 1000) * 1000000};
+        while (nanosleep(&delay, &delay) && errno == EINTR) { }
+    }
+}
+
+static int hold_monitor_online(void) {
+    int lock = open("/run/saaios-sit-status.lock",
+                    O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (lock < 0 || flock(lock, LOCK_EX | LOCK_NB)) {
+        fputs("Monitor refused: common SIT lock busy or unavailable\n", stderr);
+        if (lock >= 0) close(lock);
+        return 30;
+    }
+    if (get_cp_state() != CP_ONLINE) {
+        fputs("Monitor refused: CP not ONLINE\n", stderr);
+        close(lock);
+        return 31;
+    }
+    int ipc = open_verified_node("/dev/umts_ipc0", "/sys/class/cpif/umts_ipc0/dev");
+    int rfs = open_verified_rfs();
+    if (ipc < 0 || rfs < 0) {
+        fputs("Monitor refused: IPC0/RFS0 device identity failed\n", stderr);
+        if (ipc >= 0) close(ipc);
+        if (rfs >= 0) close(rfs);
+        close(lock);
+        return 32;
+    }
+    int rfs_opened = 0;
+    if (ioctl(rfs, IOCTL_GET_OPENED_STATUS, &rfs_opened) != 0 || rfs_opened != 1) {
+        fputs("Monitor refused: another RFS owner exists or open count is unknown\n", stderr);
+        close(rfs);
+        close(ipc);
+        close(lock);
+        return 33;
+    }
+    /* ready-network-once is IPC-only and may now take the common SIT lock. */
+    flock(lock, LOCK_UN);
+    close(lock);
+    puts("MONITOR_READY IPC0+RFS0 held; common SIT lock released; IPC-only queries may run");
+    fflush(stdout);
+    int rc = monitor_channels(ipc, rfs);
+    fputs("WARNING: closing a last channel descriptor may purge queued CP requests.\n", stderr);
+    close(rfs);
+    close(ipc);
+    return rc;
+}
+
+static int run_exact(int monitor_after) {
     /* Share the existing diagnostic lock with SIT tools that also open RFS. */
     int lock = open("/run/saaios-sit-status.lock",
                     O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -188,8 +277,21 @@ static int run_exact(void) {
         close(lock);
         return 12;
     }
+    int ipc = -1;
+    if (monitor_after) {
+        ipc = open_verified_node("/dev/umts_ipc0", "/sys/class/cpif/umts_ipc0/dev");
+        if (ipc < 0) {
+            fputs("IPC0 device identity could not be verified\n", stderr);
+            close(fd);
+            close(lock);
+            return 23;
+        }
+    }
     int64_t start = monotonic_ms();
-    if (start < 0) { close(fd); close(lock); return 13; }
+    if (start < 0) {
+        if (ipc >= 0) close(ipc);
+        close(fd); close(lock); return 13;
+    }
     int64_t deadline = start + TOTAL_TIMEOUT_MS;
     int rc = 0;
     for (unsigned step = 0; step < MAX_EVENTS; ++step) {
@@ -233,23 +335,52 @@ static int run_exact(void) {
             fprintf(stderr, "RFS sequence completed, CP did not reach ONLINE\n");
         }
     }
+    if (rc == 0 && monitor_after) {
+        /* Let a dedicated SIT client use its shared lock during the window. */
+        flock(lock, LOCK_UN);
+        close(lock);
+        lock = -1;
+        puts("RFS exact sequence completed; IPC0 and RFS0 held for 120 seconds");
+        fflush(stdout);
+        rc = monitor_channels(ipc, fd);
+    }
+    if (ipc >= 0) close(ipc);
+    if (monitor_after)
+        fputs("WARNING: closing a last channel descriptor may purge queued CP requests.\n", stderr);
     close(fd);
-    close(lock);
+    if (lock >= 0) close(lock);
     if (rc == 0) puts("RFS exact three-step diagnostic completed");
     return rc;
 }
 #endif
 
 int main(int argc, char **argv) {
+    setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc == 2 && strcmp(argv[1], "--fixture") == 0) return fixture();
     if (argc == 2 && strcmp(argv[1], "--run-exact-rfs-20260929") == 0) {
 #ifndef _WIN32
-        return run_exact();
+        return run_exact(0);
 #else
         fputs("Device run requires Linux\n", stderr);
         return 2;
 #endif
     }
-    fprintf(stderr, "Usage: %s --fixture | --run-exact-rfs-20260929\n", argv[0]);
+    if (argc == 2 && strcmp(argv[1], "--run-exact-and-monitor-120s") == 0) {
+#ifndef _WIN32
+        return run_exact(1);
+#else
+        fputs("Device run requires Linux\n", stderr);
+        return 2;
+#endif
+    }
+    if (argc == 2 && strcmp(argv[1], "--hold-monitor-online-120s") == 0) {
+#ifndef _WIN32
+        return hold_monitor_online();
+#else
+        fputs("Device run requires Linux\n", stderr);
+        return 2;
+#endif
+    }
+    fprintf(stderr, "Usage: %s --fixture | --run-exact-rfs-20260929 | --run-exact-and-monitor-120s | --hold-monitor-online-120s\n", argv[0]);
     return 2;
 }
