@@ -102,6 +102,7 @@ Local inference (via Ollama), A/B `BOOT_OK` updates, and local memory facts land
 - [Platform 0.5 streaming / multi-turn](docs/platform-0.5-streaming.md)
 - [Platform 0.5 appliance packaging](docs/platform-0.5-appliance.md)
 - [Platform 0.6 Stage GUI](docs/platform-0.6-gui.md)
+- [Orb design brief](docs/orb-design-brief.md)
 - [Platform 0.6 token streaming](docs/platform-0.6-streaming-tokens.md)
 - [Raspberry Pi / Linux appliance](docs/appliance.md)
 
