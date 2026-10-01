@@ -592,6 +592,11 @@ msgid table only; **app header + 2B body still missing**. `oem_ipc0` now
 **RDWR-openable** (mknod+chmod; no daemon). **No INIT send.** Bearer **no**.
 Next: stock capture / host OEM writer (not cbd). MODEM-BLOCKER §§ encode.
 
+**OemSim AID-filled OCH (2026-10-01):** Hypothesis post-VerifyPin
+`0x0247`→`0x020f` SELECT→`0x0208` STATUS+AID. Live all SW9000; app stayed
+PIN pin1=2; reg/rmnet unchanged; **no bearer**. `OnVerifyPinDone` does not
+emit those SITs. OemSim soft-lock exit closed. Next: `0x2f50` wire only.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

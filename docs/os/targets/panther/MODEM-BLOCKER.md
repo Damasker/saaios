@@ -719,6 +719,7 @@ is **not** success.
 | modem_a slot switch | same EU No-CDMA Present=2; banned anyway |
 | OemSim SIT `0x0208` SIM_IO STATUS | live SW9000; app stayed PIN; no bearer |
 | OemSim `0x020c`/`0x020f`/`0x0247` as soft-init | same as prior APDU/OpenChannel — already live-negated |
+| OemSim `0x0247`+`0x020f` SELECT+`0x0208` STATUS **with AID** (post-VerifyPin) | all SW9000; app stayed PIN pin1=2; no bearer |
 
 ### 2026-10-01 — BuildOemSimRequest RE + live SIM_IO 0x0208
 
@@ -748,9 +749,22 @@ zero). Response length=528 error=0 **SW=`9000`**. Post `0x0200`: still
 app=2 pin1=2 remain=3. **No VerifyPin** (pin1=2, not EDGE window).
 **No** bearer chase. **Bearer verified? no.**
 
-**Next:** OemSim umts_ipc path closed for soft-lock exit. Resume OEM
-catalog `0x2f50` wire recovery (stock capture / non-cbd host encoder) —
-no invent; same bans.
+### 2026-10-01 — post-VerifyPin AID-filled OpenChannel/SELECT/STATUS
+
+**Hypothesis:** after VerifyPin, stock may `0x0247`+`0x020f`+`0x0208`
+SELECT/STATUS before GET_APP leaves PIN; empty SIM_IO was insufficient.
+
+**RE:** `OnVerifyPinDone` does **not** emit those SITs. `BuildSimIO` has
+no `0xA4`; ADF SELECT is OpenChannel / channel APDU. Layouts match prior
+factory decode (session@12; channel words @12..32; SIM_IO aid@555).
+
+**Live ONE (COM13):** `0x0200` → `0x0247`(AID,P2=0) → `0x020f`(SELECT) →
+`0x0208`(STATUS+AID) → `0x0200` → `0x020e`. All err0 SW=`9000`.
+Post: app=**PIN(2)** pin1=**2** remain=3; data reg=0; rmnet rx=0.
+**Bearer verified? no.** Tool: `diagnostics/tmp-post-verify-och-once`.
+
+**Next:** OemSim umts_ipc soft-lock exit closed (empty **and** AID-filled).
+Resume OEM catalog `0x2f50` wire recovery only — no invent; same bans.
 
 ## Constraints (unchanged)
 

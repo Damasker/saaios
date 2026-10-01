@@ -5152,3 +5152,42 @@ No VerifyPin (not EDGE). No SetupDataCall. **Bearer verified? no.**
 OemSim SIT quartet exhausted for soft-lock exit. OEM `0x2f50` framing still
 unrecovered -- stock `oem_ipc*` capture or non-cbd encoder only.
 
+## 2026-10-01: post-VerifyPin OpenChannel+SELECT+SIM_IO+AID (still PIN)
+
+Scripts: `tmp-post-verify-och-re.py` / `.out`, `tmp-och-fields-re.py`,
+`tmp-post-verify-och-once.c`.
+
+### Live brief
+
+COM13 + USB NCM `172.31.7.1`. modem_state=**ONLINE**; radio=10; SIM
+**PIN** pin1=2 remain=3; data reg=0 tech=UMTS; rmnet rx=0; **no** cbd/rild.
+
+### RE (sitril / sit-stream)
+
+| Finding | Result |
+| --- | --- |
+| `OnVerifyPinDone` | **no** BL to OpenChannel / TransmitApdu / SimIO (not a literal post-PIN SIT emitter) |
+| `BuildSimOpenChannelWithP2` | id `0x0247` len 30; aid_len@12 aid@13 p2@29 |
+| OpenChannel rsp adapter | session u32@12; SW1@16 SW2@17 |
+| `BuildSimTransmitApduChannel` | id `0x020f`; session/CLA/INS/P1/P2/P3 words @12..32; data@38 |
+| `BuildSimIO` switch | accepts `0xB0/B2/C0/D6/DC/F2` ? **not** `0xA4`; ADF SELECT is via `0x0247`/`0x020f` |
+
+### Live try (ONE, AID from GetSimStatus, never printed)
+
+Opcodes: `0x0200` ? `0x0247`(P2=0) ? `0x020f`(SELECT A4/04) ?
+`0x0208`(STATUS F2 **+AID**) ? `0x0200` ? `0x020e`.
+
+| Step | Result |
+| --- | --- |
+| OpenChannel | len 276 err0 session=1 SW=`9000` |
+| Channel SELECT | err0 SW=`9000` apdu_hint=70 |
+| SIM_IO STATUS+AID | len 528 err0 SW=`9000` |
+| Post GetSimStatus | app=**2** pin1=**2** remain=3 |
+
+**No** EDGE READY. **No** SetupDataCall. **Bearer verified? no.**
+
+### Next
+
+AID-filled OemSim OpenChannel/SELECT/STATUS path closed under soft-lock.
+Resume OEM catalog `0x2f50` wire recovery only (no invent). Same bans.
+
