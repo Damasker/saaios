@@ -6,6 +6,12 @@ with the ACK reader and CRC policy corrections, bounded MAIN options, and
 the historical loader entry point explicitly compiled out. It is not a clean
 production implementation. Do not add it to init or run concurrent loaders.
 
+Current hardware evidence and approved next steps live in
+[MODEM-ROADMAP](../../../../docs/os/sprints/MODEM-ROADMAP.md). The older
+PIN/chase recipes below are historical diagnostics, not instructions to
+repeat them: the current physical SIM is READY with its PIN request disabled.
+Never start those short-lived readers alongside the continuous owner.
+
 Build on the host with an ARM64 cross-compiler:
 
 ```sh
@@ -315,3 +321,33 @@ This is an explicitly reviewed diagnostic risk policy, **not proof that the
 modem or an unfinished eSIM profile has idle RF**. Do not delete, disable, or
 switch eSIM profiles as part of this scan. RFS cmd7/6 may remain unserved, and
 the probe still never writes NV/EFS, enters a PIN, or sets APN/network policy.
+
+## One-shot late factory carrier configuration (opt-in only)
+
+This is the preserved controlled experiment, not a recommended repeat after
+its negative registration result and not a boot service.
+
+`build-owner-sgc-once.sh ABSOLUTE_EXISTING_OUTPUT_DIRECTORY` creates separate
+static ARM64 `modem-channel-owner-sgc-once` and `probe-handover-sgc-once`
+artifacts; it does not install or run them. The owner reports `sgc-once` for
+`--mode`, accepts `self-test` (without `--`), and refuses ONLINE attachment.
+The probe's `--owner-exec` and `--owner-log` identify its distinct paths.
+
+After hash checks, tests, a fresh AP boot, and a successful read-only original
+EFS comparison, an explicitly selected `sgc-once` wrapper mode may send one
+factory-derived `0x0404` request. It first requires the same-boot settled
+READY/ON/stack-enabled/unregistered baseline and exclusive, drained channels.
+The reviewed TD1A `europen` profile maps target 400 to body words
+`0x0101, 0, 0`; no input is guessed from the SIM or an operator name.
+Install the reviewed wrapper under a separate name when retaining an older
+manifest-pinned passive wrapper; do not silently replace recovery files.
+
+A matched, well-formed ACK permits one five-GET status sweep ten seconds
+later. An ambiguous write, timeout or invalid response stops IPC writes and
+retains channel ownership until OFFLINE. There is no retry, scan, RFS reply,
+PIN attempt or host NV/EFS write. ACK alone is not network registration;
+CP-side effects are not fully established. Preserve logs, reboot AP, repeat
+the read-only original-EFS comparison, and restore the passive baseline.
+This deliberately late single-command comparison does not reproduce the
+entire factory initialization order. Provenance, limits and live results are
+in [MODEM-07](../../../../docs/os/sprints/MODEM-07-RFS-QUARANTINE.md#isolated-delayed-sgc-experiment).

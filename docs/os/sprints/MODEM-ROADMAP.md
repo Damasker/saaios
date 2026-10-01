@@ -208,6 +208,27 @@ same boot retained READY/ON and registration 0. A disabled logical stack
 does not explain that measured state; do not send the corresponding enable
 SET `0x080f`. See [factory evidence, live results and concrete rollback](MODEM-07-RFS-QUARANTINE.md#native-radio-service-boundary-and-logical-stack-check-2026-10-01).
 
+**Late factory-SGC comparison (2026-10-01):** commit `c44ead4` adds a
+separate, reviewed one-shot owner/probe; the default passive files stay
+unchanged. Factory config resolution proves TD1A `europen` target 400 maps
+to SGC `0x0101`, with two zero auxiliary words from the exact caller. In a
+fresh single-owner phone boot, the settled baseline was READY/ON/stack
+enabled and registration 0. One `0x0404` sent at +60785 ms received error 0
+at +60830 ms. The independent five-GET sweep at +70.9 s still reported
+READY/ON/stack enabled and voice/data registration 0; `rmnet0` remained down
+with RX/TX 0. The late request did not establish registration in that
+window. Original/userdata NV equality passed read-only checks before and
+after the run. See [exact artifacts and observations](MODEM-07-RFS-QUARANTINE.md#late-sgc-phone-result-2026-10-01).
+
+Next MODEM-06 task: separately specify and review an **early** one-shot SGC
+comparison at the proven factory radio-available transition, using the same
+payload and no additional SET or RFS reply. ACK0 is not proof of application
+before network startup. Preserve the existing late variant and its guards;
+the early experiment needs its own eligibility state machine and control.
+Do not port Android or replay the entire factory callback list to bypass
+this evidence gap. MODEM-06 remains open until actual registration and a
+cellular bearer are observed.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),

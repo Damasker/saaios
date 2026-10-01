@@ -1,8 +1,9 @@
 # MODEM-07: quarantined protected-NV RFS experiment
 
-Status: **one-grant diagnostic exercised on phone; separate full-transfer
-owner built and host-tested only**. The full transaction and modem service
-are not deployed.
+Status: **one-grant and full-transfer diagnostics exercised on phone;
+scalar, logical-stack and isolated late-SGC observations also completed**.
+Registration and a cellular bearer remain absent. These are manual diagnostic
+boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
 The Linux x86_64 host fixture now composes the protocol, transport and
@@ -773,8 +774,8 @@ uses the verified static TD1A `europen` profile, not a claim about an earlier
 Android runtime's overrides. Both known persistent-property file paths were
 absent on the current SaaiOS filesystem. No Android vendor daemon is run.
 
-Prepare a separate compile-time `sgc-once` owner/probe/wrapper mode and unique
-logs; passive and scan defaults do not send SGC. First collect the normal
+Commit `c44ead4` adds a separate compile-time `sgc-once` owner/probe/wrapper
+mode and unique logs; passive and scan defaults do not send SGC. First collect the normal
 settled baseline and require fresh same-boot SIM READY/PIN disabled, radio
 ON, logical stack enabled, unregistered voice/data, automatic selection and
 the already observed broad preferred RAT. Also require sole ownership,
@@ -803,6 +804,87 @@ does not exclude the earlier factory timing, other startup dependencies or
 their ordering. Preserve logs and return to the manifest-pinned passive
 baseline after the controlled run. This experiment does not promote a new
 boot service or an RFS candidate.
+
+### Late SGC phone result (2026-10-01)
+
+The `c44ead4` owner/probe were built as static ARM64 binaries, with host
+default/scan/SGC fixtures, actual-dispatch injected-I/O tests, ASan/UBSan,
+CLI/refusal tests and independent review passing before installation.
+Distinct phone paths left the manifest-pinned passive recovery files intact:
+
+| Artifact under `/data/saaios/bin/` | Installed SHA-256 |
+| --- | --- |
+| `modem-channel-owner-sgc-once` | `5955d5fd926391f8898f474053755aaa8948a81d4a8236f2503a0d324335bbc0` |
+| `probe-handover-sgc-once` | `201e94c3adca98c2341acabe7920effcb6665019886951d8fab91c9f952f547d` |
+| `owner-handoff-sgc-once.sh` | `6c1b46b75ab5b8880092fdc25d539dc06d44fca1190997711663658249ef7dc2` |
+
+On-device `self-test`, mode, probe owner/log identity and shell syntax checks
+passed. An initial `--self-test` invocation only printed usage; the correct
+`self-test` verb was then run and passed before CP boot. Its simulated
+request lines are fixture output, not live modem traffic.
+
+After AP reboot CPIF was unloaded. The original-EFS verifier first refused
+the absent `/dev/block` parent before mounting anything. Creating that fresh
+root-owned mode-0700 directory allowed the unchanged verifier to compare all
+four original/userdata NV files and unmount successfully. The explicit
+`sgc-once` wrapper then booted CP ONLINE with one pre-FIN IPC/RFS owner.
+
+The early indications were `0x0803` and `0x0802` raw 0/INITIALIZED at
+owner-relative +9808 ms. At the settled baseline, SIM was READY/PIN disabled,
+radio raw 10, voice/data registration 0 with reject 0, automatic selection 0,
+preferred SIT 16, signal mask 0 and logical stack enabled. No RFS reply was
+sent. The single active request and separate post-observation were:
+
+| Owner-relative time | Observation |
+| --- | --- |
+| +60785 ms | One factory `0x0404` request sent; 2000 ms deadline. |
+| +60830 ms | Matched response `error_raw=0`, accepted; no retry. |
+| +70912 ms | Post-SIM READY/PIN disabled, error 0. |
+| +70916 ms | Post-radio raw 10, error 0. |
+| +70919 ms | Post-voice registration 0/reject 0, error 0. |
+| +70922 ms | Post-data registration 0/reject 0/technology 0, error 0. |
+| +70931 ms | Post-logical-stack enabled, error 0; observation complete. |
+
+The independent sysfs observation still had `rmnet0` down and RX/TX 0.
+Thus the **late single SGC request was accepted but did not establish
+registration in the measured window**. This does not prove the early factory
+sequence unnecessary, nor identify a firmware/carrier/eSIM root cause.
+It also does not prove the carrier setting was applied merely from ACK0.
+
+Logs remain on the phone at
+`/data/saaios/var/modem-channel-owner-sgc-once.log` and
+`/data/saaios/var/owner-handoff-sgc-once.log`. The successful preflight is
+`/data/saaios/var/sgc-c44ead4-efs-preflight.log`. No raw subscriber payload,
+PIN, EID/ICCID or NV content was printed.
+
+After preserving those logs, AP was rebooted again; CPIF was unloaded.
+The unchanged verifier again returned PASS for all four original/userdata
+files and confirmed EFS unmounted. Its result is
+`/data/saaios/var/sgc-c44ead4-efs-postflight.log`. The original three-file
+rollback manifest and passive owner's on-device `self-test` passed.
+Previous baseline logs were preserved with `.before-sgc-c44ead4.log`
+suffixes. The original default wrapper then reached CP ONLINE; PID 643 was
+the sole observed modem-channel owner, with READY/PIN-disabled SIM from its
+post-indication query. Its fd 6/8 still held IPC0/RFS0, and its subsequent
++60-second sweep confirmed READY/PIN disabled, radio 10, registration 0,
+automatic selection 0 and preferred SIT 16; `rmnet0` remained down with
+RX/TX 0. The legacy passive baseline has no logical-stack GET, so its
+restoration is not a new stack-status measurement. Separate SGC files
+remain inactive, not autostarted.
+
+After reboot the preserved owner log (3744 bytes) had SHA-256
+`dbba07a72fe76a672156ee191c9a804d7c5246bc41930a1b0fa8d7b8658920c3`;
+the wrapper log (25843 bytes) had SHA-256
+`d6d315a8e10d839d0bf48785de0ab3327c1bf2d494fac90b60fc7c69b7f964b1`.
+
+The next isolated hypothesis is **timing**, not another command: the exact
+factory callback runs on the early UNAVAILABLE-to-OFF transition, before
+our settled +60-second intervention. A future early-SGC variant needs its
+own reviewed eligibility/timeout state machine at `0x0803` followed by
+`0x0802` raw 0, with the same payload and no added SET/RFS behavior. The
+late variant's READY/ON gate must not simply be removed. An early callback
+comparison is not yet implemented, installed or authorized as an autostart
+service. Porting Android wholesale would not answer this timing question.
 
 ## Separate active RF scan gate
 

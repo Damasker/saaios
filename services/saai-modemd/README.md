@@ -11,6 +11,10 @@ notes below are historical cases, not the current blocker. See the
 [factory evidence/live results](../../docs/os/sprints/MODEM-07-RFS-QUARANTINE.md#native-radio-service-boundary-and-logical-stack-check-2026-10-01).
 The native service must keep SIM, logical-stack, radio, registration and
 bearer observations separate; READY/ON/enabled do not imply registration.
+An isolated late factory-carrier SGC request was also accepted, but its
+separate post-request status sweep still showed registration 0. The next
+diagnostic hypothesis is early factory initialization timing, not a missing
+Android application framework or a proven need for another enable command.
 
 This service is intentionally conservative. It does not power on the modem,
 issue ioctls, mount EFS, serve RFS, start a RIL consumer, or run the September
