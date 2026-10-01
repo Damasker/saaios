@@ -5769,3 +5769,32 @@ RX remained 0. The live log is
 `/data/saaios/var/modem-channel-owner.log`; the prior boot logs were retained
 under `.pre-refresh-20261001.log` names. This diagnostic still does not
 isolate the cause of failed network registration.
+
+## 2026-10-01: 60-second settled control, SIM still absent on third boot
+
+A third explicit no-gap owner boot used the bounded 60-second follow-up
+build (SHA-256
+`ff065132dfbfd63baf274fc253bea669c361625f7c0a36d89a78949237e84c76`).
+The probe again returned 0/CP `ONLINE`; the owner had one IPC0/RFS0 reader,
+sent only four initial GETs, one SIM-indication GET, and one settled sweep of
+four read-only GETs. No RFS reply, PIN, APN, radio-power or NV/EFS write was
+sent. The initial and indication-driven SIM replies both had card 0/apps 0.
+Unlike the preceding boot, the settled +60-second SIM reply **still** had
+card 0/apps 0. The settled radio reply was raw 3; voice/data registration
+remained 0 and `rmnet0` RX remained 0. RFS headers again appeared at
++7.272 s (cmd7/seq0) and +17.272 s (cmd6/seq1). Thus SIM visibility is
+not deterministic across otherwise similar no-reply boots; neither the
+earlier card-present/PIN result nor this card-absent result should be
+treated as a stable diagnosis.
+
+Factory TD1A `sit-stream.so` SHA-256
+`cef8756461c74102f9a78f91177d1baff80fb9af11c14994497fb8854e0f530a`
+maps `0x0801` raw 3 via `ProtocolNetRadioStateRespAdapter::GetRadioState`
+(`0x48770`, string table `0x2a9c8`) to
+`SIT_PWR_RADIO_SIM_STATE_SIM_LOCK_OR_ABSENT`; it is **not** raw 10 `ON`, but
+is in the radio-powered/available class mapped to external RIL `ON` by the
+adapter (`0x48818-0x4882c`). Together with card 0/apps 0 this identifies a
+SIM-absent-or-locked *report*, not whether the physical card, RFS exchange,
+or CP-internal initialization caused it. Replaying `0x0800` ON without a
+new isolated hypothesis is not justified; a prior READY/ON test acknowledged
+that command yet remained unregistered.
