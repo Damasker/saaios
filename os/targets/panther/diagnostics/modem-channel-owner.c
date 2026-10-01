@@ -7,7 +7,8 @@
  * SIM-status-change indications may then schedule up to three debounced,
  * read-only SIM status refreshes through the same IPC reader. One separate
  * settled pass of four read-only GETs is eligible after 60 seconds. Once
- * that pass finishes, four more factory read-only network GETs run once.
+ * that pass finishes, four factory read-only network GETs and one logical
+ * modem-stack status GET run once.
  * A separate, explicit guarded-boot opt-in may send one active RF network
  * scan after fresh same-boot status gates, with one bounded cancel on timeout.
  * The default remains passive. It never sends RFS replies or accesses NV/EFS.
@@ -49,6 +50,7 @@ enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        SIM_REFRESH_MAX = 3, SIM_REFRESH_DEBOUNCE_MS = 500,
        SIM_REFRESH_COALESCE_MS = 2000, SIM_REFRESH_MIN_GAP_MS = 3000,
        SIM_REFRESH_REPLY_MS = 10000, SIM_SETTLED_DELAY_MS = 60000,
+       MODEM_STACK_STATUS_GET = 0x0810, MODEM_STACK_REPLY_MS = 5000,
        SIM_WIRE_UNIVERSAL_PIN = 13,
        SIM_SLOT_MAX_SLOTS = 4, SIM_SLOT_LOG_SLOTS = 2,
        SIM_SLOT_RECORD_STRIDE = 105,
@@ -85,13 +87,13 @@ enum live_scan_cancel_cause {
     LIVE_SCAN_CAUSE_GATE_LOST
 };
 
-struct scan_evidence {
-    unsigned valid; /* settled SIM/radio/voice/data, then factory selection/RAT */
-    int spoiled;
-    int64_t observed_ms[6];
-};
 enum { SCAN_SIM = 0, SCAN_RADIO, SCAN_VOICE, SCAN_DATA,
-       SCAN_SELECTION, SCAN_PREFERRED, SCAN_EVIDENCE_COUNT };
+       SCAN_SELECTION, SCAN_PREFERRED, SCAN_STACK, SCAN_EVIDENCE_COUNT };
+struct scan_evidence {
+    unsigned valid; /* settled statuses, then selection/RAT/logical stack */
+    int spoiled;
+    int64_t observed_ms[SCAN_EVIDENCE_COUNT];
+};
 
 struct live_scan {
     enum live_scan_phase phase;
@@ -124,7 +126,8 @@ static const struct {
     {SIT_NET_SELECTION_MODE, "selection"},
     {SIT_NET_PREFERRED_GET, "preferred"},
     {SIT_NET_OPERATOR, "operator"},
-    {0x0900, "signal"}
+    {0x0900, "signal"},
+    {MODEM_STACK_STATUS_GET, "modem_stack"}
 };
 enum { FACTORY_GET_COUNT = sizeof factory_gets / sizeof factory_gets[0] };
 
@@ -333,7 +336,10 @@ static void sim_factory_mark_sent(struct sim_refresh *refresh,
                                   uint32_t token, int64_t now_ms) {
     refresh->pending_kind = SIM_QUERY_FACTORY;
     refresh->token = token;
-    refresh->reply_deadline_ms = now_ms + SIM_REFRESH_REPLY_MS;
+    refresh->reply_deadline_ms = now_ms +
+        (refresh->factory_next < FACTORY_GET_COUNT &&
+         factory_gets[refresh->factory_next].id == MODEM_STACK_STATUS_GET ?
+         MODEM_STACK_REPLY_MS : SIM_REFRESH_REPLY_MS);
 }
 
 static enum sim_query_kind sim_refresh_match_reply(struct sim_refresh *refresh,
@@ -384,6 +390,22 @@ static int factory_signal_mask(const uint8_t *p, size_t n,
     return 1;
 }
 
+/* Exact TD1A libsitril.so (efcca0d5...): BuildGetStatckStatus at 0x22d140
+ * builds the empty 12-byte 0x0810 GET. GetMode at 0x2297e0 reads byte +12.
+ * Unlike radio power 0x0800/0x0801, this observes the logical modem stack.
+ * Factory converts any nonzero byte to true; our stricter policy accepts
+ * only 0/1. Error, malformed and other values remain unknown, never OFF.
+ * Factory does not establish exact response length; the shared framing
+ * bound applies and trailing bytes are neither inspected nor logged. */
+static int factory_stack_mode(const uint8_t *p, size_t n,
+                              uint32_t token, uint32_t *value) {
+    if (n < 13 || n > UINT16_MAX ||
+        !is_reply(p, n, MODEM_STACK_STATUS_GET, token) ||
+        le16(p + 4) != n || le16(p + 10) || p[12] > 1) return 0;
+    *value = p[12];
+    return 1;
+}
+
 static int factory_reply_ok(struct sim_refresh *refresh, unsigned id,
                             const uint8_t *p, size_t n, uint32_t *value) {
     if (n < 12 || le16(p + 4) != n || le16(p + 10) ||
@@ -391,8 +413,11 @@ static int factory_reply_ok(struct sim_refresh *refresh, unsigned id,
          !factory_scalar(id, p, n, value)) ||
         (id == 0x0900 &&
          !factory_signal_mask(p, n, refresh->token, value)) ||
+        (id == MODEM_STACK_STATUS_GET &&
+         !factory_stack_mode(p, n, refresh->token, value)) ||
         (id != SIT_NET_SELECTION_MODE && id != SIT_NET_PREFERRED_GET &&
-         id != SIT_NET_OPERATOR && id != 0x0900)) {
+         id != SIT_NET_OPERATOR && id != 0x0900 &&
+         id != MODEM_STACK_STATUS_GET)) {
         refresh->factory_stopped = 1;
         return 0;
     }
@@ -483,6 +508,10 @@ static void scan_evidence_note_factory(struct scan_evidence *evidence,
         expected = 16; /* Samsung SIT NR/LTE/GSM/WCDMA, not Android enum 16. */
         if (!strict_success(p, n, id, token, 16) ||
             le32(p + 12) != expected) return;
+    } else if (id == MODEM_STACK_STATUS_GET) {
+        uint32_t mode;
+        field = SCAN_STACK;
+        if (!factory_stack_mode(p, n, token, &mode) || mode != 1) return;
     } else return;
     evidence->valid |= 1U << field;
     evidence->observed_ms[field] = now_ms;
@@ -694,7 +723,8 @@ static int make_get_request(uint8_t request[12], unsigned id,
     if (id != 0x0200 && id != 0x0801 &&
         id != SIT_NET_VOICE_REG && id != SIT_NET_DATA_REG &&
         id != SIT_NET_SELECTION_MODE && id != SIT_NET_PREFERRED_GET &&
-        id != SIT_NET_OPERATOR && id != 0x0900) return -1;
+        id != SIT_NET_OPERATOR && id != 0x0900 &&
+        id != MODEM_STACK_STATUS_GET) return -1;
     memset(request, 0, 12);
     request[2] = (uint8_t)id;
     request[3] = (uint8_t)(id >> 8);
@@ -981,11 +1011,12 @@ static int fixture_sim_refresh(void) {
 }
 
 static int fixture_factory(void) {
-    if (FACTORY_GET_COUNT != 4 ||
+    if (FACTORY_GET_COUNT != 5 ||
         factory_gets[0].id != SIT_NET_SELECTION_MODE ||
         factory_gets[1].id != SIT_NET_PREFERRED_GET ||
         factory_gets[2].id != SIT_NET_OPERATOR ||
-        factory_gets[3].id != 0x0900) return 59;
+        factory_gets[3].id != 0x0900 ||
+        factory_gets[4].id != MODEM_STACK_STATUS_GET) return 59;
     struct sim_refresh refresh = {
         .settled_started = 1, .settled_next = SNAPSHOT_GET_COUNT
     };
@@ -1043,9 +1074,18 @@ static int fixture_factory(void) {
                                 sizeof signal_reply, 70508) !=
         SIM_QUERY_FACTORY || !factory_reply_ok(&refresh,
         0x0900, signal_reply, sizeof signal_reply, &scalar) ||
-        scalar != 0x45U || refresh.factory_next != FACTORY_GET_COUNT ||
-        sim_factory_ready(&refresh, 1) ||
+        scalar != 0x45U || refresh.factory_next != 4 ||
+        !sim_factory_ready(&refresh, 1) ||
         sim_refresh_ready(&refresh, 1, 70508)) return 65;
+    sim_factory_mark_sent(&refresh, 74, 70509);
+    reply[2] = 0x10; reply[3] = 8; reply[4] = 13; reply[12] = 1;
+    put32(reply + 6, 74);
+    if (refresh.reply_deadline_ms != 75509 ||
+        sim_refresh_match_reply(&refresh, reply, 13, 70510) !=
+        SIM_QUERY_FACTORY || !factory_reply_ok(&refresh,
+        MODEM_STACK_STATUS_GET, reply, 13, &scalar) || scalar != 1 ||
+        refresh.factory_next != FACTORY_GET_COUNT ||
+        sim_factory_ready(&refresh, 1)) return 122;
 
     struct sim_refresh timeout = {
         .settled_started = 1, .settled_next = SNAPSHOT_GET_COUNT
@@ -1118,6 +1158,66 @@ static void fixture_scan_reply(uint8_t *p, size_t n, unsigned id,
     p[11] = (uint8_t)(error >> 8);
 }
 
+static int fixture_stack_status(void) {
+    const uint32_t token = 0x13579bdfU;
+    uint8_t reply[16];
+    uint32_t mode = 99;
+    fixture_scan_reply(reply, sizeof reply, MODEM_STACK_STATUS_GET, token, 0);
+    for (unsigned value = 0; value <= 1; ++value) {
+        reply[12] = (uint8_t)value;
+        if (!factory_stack_mode(reply, sizeof reply, token, &mode) ||
+            mode != value) return 123;
+    }
+    /* A 13-byte response is sufficient; bounded trailing bytes are ignored. */
+    reply[4] = 13;
+    if (!factory_stack_mode(reply, 13, token, &mode) || mode != 1 ||
+        factory_stack_mode(reply, 12, token, &mode) ||
+        factory_stack_mode(reply, sizeof reply, token, &mode)) return 124;
+    reply[4] = sizeof reply;
+    if (factory_stack_mode(reply, sizeof reply, token + 1, &mode)) return 125;
+    reply[0] = 2;
+    if (factory_stack_mode(reply, sizeof reply, token, &mode)) return 126;
+    reply[0] = 1; reply[2] = 0x0f;
+    if (factory_stack_mode(reply, sizeof reply, token, &mode)) return 127;
+    reply[2] = 0x10;
+    for (unsigned value = 2; value <= UINT8_MAX; ++value) {
+        reply[12] = (uint8_t)value;
+        mode = 99;
+        if (factory_stack_mode(reply, sizeof reply, token, &mode) ||
+            mode != 99) return 128;
+    }
+    reply[12] = 1;
+    for (unsigned i = 10; i <= 11; ++i) {
+        reply[i] = 1;
+        mode = 99;
+        struct sim_refresh invalid = {.token = token};
+        if (factory_stack_mode(reply, sizeof reply, token, &mode) ||
+            factory_reply_ok(&invalid, MODEM_STACK_STATUS_GET,
+                             reply, sizeof reply, &mode) ||
+            mode != 99 || !invalid.factory_stopped) return 129;
+        reply[i] = 0;
+    }
+    struct sim_refresh timeout = {
+        .settled_started = 1, .settled_next = SNAPSHOT_GET_COUNT,
+        .factory_next = FACTORY_GET_COUNT - 1
+    };
+    sim_factory_mark_sent(&timeout, token, 80000);
+    if (timeout.reply_deadline_ms != 85000 ||
+        sim_refresh_expire(&timeout, 84999) ||
+        sim_refresh_match_reply(&timeout, reply, sizeof reply, 85000) ||
+        sim_refresh_expire(&timeout, 85000) != SIM_QUERY_FACTORY ||
+        !timeout.factory_stopped || sim_factory_ready(&timeout, 1) ||
+        sim_refresh_match_reply(&timeout, reply, sizeof reply, 85001)) return 130;
+    uint8_t request[12];
+    if (make_get_request(request, MODEM_STACK_STATUS_GET, token) ||
+        le16(request + 2) != MODEM_STACK_STATUS_GET ||
+        le16(request + 4) != 12 || le32(request + 6) != token ||
+        request[0] || request[1] || request[10] || request[11] ||
+        make_get_request(request, 0x080f, token) == 0 ||
+        make_get_request(request, 0x0800, token) == 0) return 131;
+    return 0;
+}
+
 static int fixture_scan(void) {
     const uint32_t token = 0x12345678U;
     uint8_t request[16];
@@ -1180,6 +1280,23 @@ static int fixture_scan(void) {
     put32(preferred + 12, 16);
     scan_evidence_note_factory(&evidence, SIT_NET_PREFERRED_GET,
                                 preferred, sizeof preferred, token, 60005);
+    if (scan_evidence_ready(&evidence, 60006)) return 132;
+    uint8_t stack[13];
+    fixture_scan_reply(stack, sizeof stack, MODEM_STACK_STATUS_GET, token, 0);
+    scan_evidence_note_factory(&evidence, MODEM_STACK_STATUS_GET,
+                                stack, sizeof stack, token, 60006);
+    if (scan_evidence_ready(&evidence, 60006)) return 133;
+    stack[12] = 2;
+    scan_evidence_note_factory(&evidence, MODEM_STACK_STATUS_GET,
+                                stack, sizeof stack, token, 60006);
+    if (scan_evidence_ready(&evidence, 60006)) return 134;
+    stack[12] = 1; stack[11] = 1;
+    scan_evidence_note_factory(&evidence, MODEM_STACK_STATUS_GET,
+                                stack, sizeof stack, token, 60006);
+    if (scan_evidence_ready(&evidence, 60006)) return 135;
+    stack[11] = 0;
+    scan_evidence_note_factory(&evidence, MODEM_STACK_STATUS_GET,
+                                stack, sizeof stack, token, 60006);
     if (!scan_evidence_ready(&evidence, 60006) ||
         scan_evidence_ready(&evidence, 150001)) return 85;
     uint8_t unsol[8] = {2, 0, 0x10, 0x02, 8, 0, 0, 0};
@@ -1372,6 +1489,8 @@ static int fixture(void) {
     if (factory_check) return factory_check;
     int signal_check = fixture_signal_mask();
     if (signal_check) return signal_check;
+    int stack_check = fixture_stack_status();
+    if (stack_check) return stack_check;
     int cp_ind_check = fixture_cp_ind_trace();
     if (cp_ind_check) return cp_ind_check;
     int radio_ind_check = fixture_cp_ind_radio_state();
@@ -1439,7 +1558,7 @@ static int fixture(void) {
     memcpy(stream + used, rfs + 6, 6); used += 6;
     if (parse_available(CHANNEL_RFS, stream, &used, fixture_frame, &frames) ||
         used != 0 || frames != 2) return 13;
-    puts("PASS modem-channel-owner framing, slot-status, bounded status-query and CP-indication trace fixtures");
+    puts("PASS modem-channel-owner framing, slot-status, bounded status-query, modem-stack and CP-indication trace fixtures");
     return 0;
 }
 
@@ -1746,8 +1865,8 @@ static void snapshot_reply(struct snapshot *snapshot, const uint8_t *p,
     const char *label = snapshot_gets[snapshot->next].label;
     snapshot->pending = 0;
     snapshot->next++;
-    printf("snapshot %s response=yes error_raw=%u", label, (unsigned)p[10]);
-    if (p[10]) { putchar('\n'); return; }
+    printf("snapshot %s response=yes error_raw=%u", label, le16(p + 10));
+    if (le16(p + 10)) { putchar('\n'); return; }
     print_status_fields(id, p, size);
     putchar('\n');
 }
@@ -1806,8 +1925,10 @@ static void expire_sim_query(struct sim_refresh *refresh, int64_t now_ms) {
         printf("sim_settled %s response=no status=timeout\n",
                snapshot_gets[settled_index].label);
     else if (kind == SIM_QUERY_FACTORY)
-        printf("net_factory %s response=no status=timeout no-retry stopped=yes\n",
-               factory_gets[factory_index].label);
+        printf("net_factory %s response=no status=timeout%s no-retry stopped=yes\n",
+               factory_gets[factory_index].label,
+               factory_gets[factory_index].id == MODEM_STACK_STATUS_GET ?
+               " enabled=unknown" : "");
 }
 
 static void sim_refresh_reply(struct sim_refresh *refresh,
@@ -1826,14 +1947,16 @@ static void sim_refresh_reply(struct sim_refresh *refresh,
                                            refresh->token, now_ms);
         printf("net_factory %s response=yes success=%s length=%zu error_raw=%u",
                factory_gets[factory_index].label, ok ? "yes" : "no",
-               size, (unsigned)p[10]);
+               size, le16(p + 10));
+        if (id == MODEM_STACK_STATUS_GET)
+            printf(" enabled=%s", ok ? (scalar ? "yes" : "no") : "unknown");
         if (ok && id == SIT_NET_SELECTION_MODE)
             printf(" mode_raw=%u", (unsigned)scalar);
         else if (ok && id == SIT_NET_PREFERRED_GET)
             printf(" preferred_raw=%u", (unsigned)scalar);
         else if (ok && id == 0x0900)
             printf(" mask_low7=%u", (unsigned)scalar);
-        else if (!ok && !p[10])
+        else if (!ok && !le16(p + 10))
             printf(" status=invalid-scalar stopped=yes");
         else if (!ok)
             printf(" stopped=yes");
@@ -1842,14 +1965,14 @@ static void sim_refresh_reply(struct sim_refresh *refresh,
     }
     if (kind == SIM_QUERY_CHANGE)
         printf("sim_refresh response=yes request=%u error_raw=%u",
-               refresh->sent, (unsigned)p[10]);
+               refresh->sent, le16(p + 10));
     else {
         scan_evidence_note_status(evidence, (unsigned)settled_index,
                                    p, size, refresh->token, now_ms);
         printf("sim_settled %s response=yes error_raw=%u",
-               snapshot_gets[settled_index].label, (unsigned)p[10]);
+               snapshot_gets[settled_index].label, le16(p + 10));
     }
-    if (!p[10])
+    if (!le16(p + 10))
         print_status_fields(kind == SIM_QUERY_CHANGE ? 0x0200 :
                             snapshot_gets[settled_index].id, p, size);
     putchar('\n');
