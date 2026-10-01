@@ -235,6 +235,29 @@ chunk arithmetic and no-promotion invariants. A phone run requires a
 separate reviewed opt-in build and an explicit rollback plan; it is not a
 PID-1/autostart feature.
 
+## Gate for the next full-transfer phone experiment
+
+The separate full-transfer owner is a **development artifact**, not a boot
+service or permission to run it on the phone. Before a live attempt, require
+host success and injected failures across the 95-grant sequence, an ARM64
+static build and on-device self-test, independent source review, confirmation
+of the running CPIF write contract, and a measured rollback to the passive
+owner. The original EFS stays read-only; the verified userdata NV source is
+also never a write destination. The private candidate is never promoted.
+
+The live comparison must use two fresh AP boots with the same physical SIM
+(PIN request disabled), reviewed B firmware and independently verified NV
+copies. Control A gives no RFS response; experimental B completes the
+quarantined file-3 exchange and releases the final success status only after
+candidate/sidecar fsync and reread. Both runs must have one IPC/RFS owner
+from before FIN through CP OFFLINE. In that same owner, collect identical
+read-only SIM, radio, voice/data registration and bearer observations at
+defined times (including after the RFS window and at +60 seconds). A second
+IPC reader would invalidate the comparison. An RFS completion without camp
+or bearer is a negative result, not cellular-service success; a positive
+result needs a repeat control before causal attribution. No blind AP/radio
+SET is part of this experiment.
+
 ## Factory radio-available path: evidence, not a replay list
 
 In the stock TD1A `libsitril.so` (SHA-256
