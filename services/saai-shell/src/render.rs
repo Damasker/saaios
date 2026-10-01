@@ -300,6 +300,50 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// Circular arc stroke, clockwise from 12 o'clock, `fraction` of a full
+    /// turn (clamped to 0..=1). Radial edges are anti-aliased through
+    /// `blend`; the two angular ends are cut square, which is honest for a
+    /// determinate reading. Outer radius `outer`, stroke `thickness`.
+    pub fn arc(
+        &mut self,
+        center: (f32, f32),
+        outer: f32,
+        thickness: f32,
+        fraction: f32,
+        color: Pixel,
+    ) {
+        let fraction = fraction.clamp(0.0, 1.0);
+        if fraction <= 0.0 || outer <= 0.0 || thickness <= 0.0 {
+            return;
+        }
+        let inner = (outer - thickness).max(0.0);
+        let sweep = fraction * std::f32::consts::TAU;
+        let reach = outer.ceil() as i32 + 1;
+        let (cx, cy) = center;
+        for y in (cy as i32 - reach)..=(cy as i32 + reach) {
+            for x in (cx as i32 - reach)..=(cx as i32 + reach) {
+                let dx = x as f32 + 0.5 - cx;
+                let dy = y as f32 + 0.5 - cy;
+                let distance = (dx * dx + dy * dy).sqrt();
+                let radial = (distance - (inner - 0.5))
+                    .min((outer + 0.5) - distance)
+                    .clamp(0.0, 1.0);
+                if radial <= 0.0 {
+                    continue;
+                }
+                // 0 at 12 o'clock, growing clockwise (screen y points down).
+                let mut angle = dx.atan2(-dy);
+                if angle < 0.0 {
+                    angle += std::f32::consts::TAU;
+                }
+                if angle > sweep {
+                    continue;
+                }
+                self.blend(x, y, color, (radial * 255.0).round() as u8);
+            }
+        }
+    }
+
     #[cfg(test)]
     fn pixel(&self, x: u32, y: u32) -> Pixel {
         let start = (y as usize * self.width as usize + x as usize) * 4;
@@ -702,26 +746,26 @@ pub fn draw_orb(
         );
     }
     if let Some(percent) = quantity {
-        draw_quantity_fill(canvas, dot_rect, percent);
+        draw_quantity_arc(canvas, dot_rect, percent);
     }
 }
 
-fn draw_quantity_fill(canvas: &mut Canvas<'_>, rect: Rect, percent: u8) {
-    let track_height = physical(Progress::MIN_TRACK_HEIGHT).max(1);
-    if rect.height <= track_height {
+/// Context Light quantity=arc: a clockwise sweep from 12 o'clock inscribed in
+/// the Orb dot. Border token, never severity. Missing reading draws nothing.
+fn draw_quantity_arc(canvas: &mut Canvas<'_>, rect: Rect, percent: u8) {
+    let thickness = physical(Progress::MIN_TRACK_HEIGHT).max(2) as f32;
+    let outer = rect.width.min(rect.height) as f32 / 2.0;
+    if outer <= thickness || percent == 0 {
         return;
     }
-    let filled_width = (u64::from(rect.width) * u64::from(percent.min(100)) / 100) as u32;
-    if filled_width == 0 {
-        return;
-    }
-    canvas.fill_rect(
-        Rect::new(
-            rect.x,
-            rect.y + rect.height.saturating_sub(track_height),
-            filled_width,
-            track_height,
+    canvas.arc(
+        (
+            rect.x as f32 + rect.width as f32 / 2.0,
+            rect.y as f32 + rect.height as f32 / 2.0,
         ),
+        outer,
+        thickness,
+        f32::from(percent.min(100)) / 100.0,
         theme_color(ColorRole::Border),
     );
 }
@@ -3361,49 +3405,95 @@ mod tests {
         assert_ne!(render(true), render(false));
     }
 
-    #[test]
-    fn quantity_fill_uses_border_not_severity_and_missing_stays_absent() {
-        let rect = Rect::new(50, 50, 100, 100);
-        let render = |quantity: Option<u8>| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                rect,
-                theme_color(ColorRole::Accent),
-                StatusMark::Outline,
-                false,
-                quantity,
-                false,
-                &[],
-                None,
-            );
-            pixels
+    fn render_quantity(quantity: Option<u8>) -> Vec<u8> {
+        let mut pixels = vec![0u8; 200 * 200 * 4];
+        let mut canvas = Canvas::new(&mut pixels, 200, 200);
+        draw_orb(
+            &mut canvas,
+            Rect::new(50, 50, 100, 100),
+            theme_color(ColorRole::Accent),
+            StatusMark::ActiveDot,
+            false,
+            quantity,
+            false,
+            &[],
+            None,
+        );
+        pixels
+    }
+
+    /// Arc stroke midline is at `outer - thickness / 2` from the dot center.
+    fn arc_probe(side: &str) -> (u32, u32) {
+        let thickness = physical(Progress::MIN_TRACK_HEIGHT).max(2) as f32;
+        let radius = 50.0 - thickness / 2.0;
+        let (dx, dy) = match side {
+            "top" => (0.0, -radius),
+            "right" => (radius, 0.0),
+            "bottom" => (0.0, radius),
+            _ => (-radius, 0.0),
         };
-        let missing = render(None);
-        let filled = render(Some(87));
-        assert_ne!(missing, filled);
-        let mut filled_pixels = filled;
-        let canvas = Canvas::new(&mut filled_pixels, 200, 200);
-        let track_y = rect.y + rect.height - physical(Progress::MIN_TRACK_HEIGHT).max(1);
+        ((100.0 + dx) as u32, (100.0 + dy) as u32)
+    }
+
+    #[test]
+    fn quantity_arc_sweeps_clockwise_from_twelve_in_border_not_severity() {
+        let mut half = render_quantity(Some(50));
+        let canvas = Canvas::new(&mut half, 200, 200);
+        let border = theme_color(ColorRole::Border);
+        let (tx, ty) = arc_probe("top");
+        let (rx, ry) = arc_probe("right");
+        let (bx, by) = arc_probe("bottom");
+        let (lx, ly) = arc_probe("left");
+        assert_eq!(canvas.pixel(tx + 6, ty), border, "just clockwise of 12");
+        assert_eq!(canvas.pixel(rx, ry), border, "3 o'clock is inside 50%");
+        assert_ne!(canvas.pixel(lx, ly), border, "9 o'clock is outside 50%");
+        assert_ne!(
+            canvas.pixel(tx - 6, ty),
+            border,
+            "just counter-clockwise of 12"
+        );
+        assert_ne!(canvas.pixel(bx - 6, by), border);
+        assert_ne!(border, theme_color(ColorRole::Attention));
+        assert_ne!(border, theme_color(ColorRole::Critical));
+    }
+
+    #[test]
+    fn quantity_arc_grows_with_the_reading_and_missing_stays_absent() {
+        let missing = render_quantity(None);
+        let zero = render_quantity(Some(0));
+        assert_eq!(missing, zero, "0% draws no arc; unknown draws none either");
+        let count_border = |pixels: &mut Vec<u8>| -> usize {
+            let canvas = Canvas::new(pixels, 200, 200);
+            (0..200)
+                .flat_map(|y| (0..200).map(move |x| (x, y)))
+                .filter(|&(x, y)| canvas.pixel(x, y) == theme_color(ColorRole::Border))
+                .count()
+        };
+        let quarter = count_border(&mut render_quantity(Some(25)));
+        let half = count_border(&mut render_quantity(Some(50)));
+        let full = count_border(&mut render_quantity(Some(100)));
+        assert!(0 < quarter && quarter < half && half < full);
         assert_eq!(
-            canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Border)
+            count_border(&mut render_quantity(Some(250))),
+            full,
+            "out-of-range reading is clamped, never wraps"
         );
-        assert_ne!(
-            canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Attention)
-        );
-        assert_ne!(
-            canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Critical)
-        );
-        let mut missing_pixels = missing;
-        let missing_canvas = Canvas::new(&mut missing_pixels, 200, 200);
-        assert_ne!(
-            missing_canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Border)
-        );
+    }
+
+    #[test]
+    fn quantity_arc_stays_inside_the_dot_rect() {
+        let mut full = render_quantity(Some(100));
+        let canvas = Canvas::new(&mut full, 200, 200);
+        for y in 0..200u32 {
+            for x in 0..200u32 {
+                if canvas.pixel(x, y) != [0, 0, 0, 0] && canvas.pixel(x, y) != [0, 0, 0, 255] {
+                    assert!(
+                        (50..150).contains(&x) && (50..150).contains(&y),
+                        "painted outside the dot at ({x},{y})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

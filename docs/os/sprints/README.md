@@ -282,6 +282,7 @@ ADR-423 host Qt 6.8 Falkon LineEdit mouse-ignore keeps v2 (no flash).
 ADR-426 Система shows RAM/storage capacity only from live Observations (host, no flash).
 ADR-427 ATTN-05 attention order: priority, actionability, deterministic context relevance (host).
 ADR-428 WORK-05 admission order: priority, oldest first; «Далее» names the same Task (host).
+ADR-429 Orb quantity is a clockwise arc (`Canvas::arc`), not a bottom line (host, no flash).
 ADR-404 packed GTK 4.14 ComboBox popup maps xdg_popup (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).

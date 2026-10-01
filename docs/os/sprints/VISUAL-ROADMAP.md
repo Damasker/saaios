@@ -710,15 +710,17 @@ turning the Orb into a launcher or assistant avatar.
   `ColorRole::Pressed` plus a bottom hairline without changing icon size.
   `disabled` still has no real trigger -- no tab is actually disabled.
 - [ ] Apply Context Light grammar: context=color, state=shape,
-  activity=motion, quantity=arc/fill, attention=ring. Four of five axes
+  activity=motion, quantity=arc, attention=ring. All five axes
   live on the Orb (host): state=shape (`StatusMark`), context=color
   (Space color for `Idle`/`Active`, semantic color otherwise),
   **attention=ring** (`WaitingConfirmation` / undismissed Notifications),
-  **quantity=fill** (determinate battery `Progress`; missing reading is
+  **quantity=arc** (determinate battery `Progress`, ADR-429: clockwise
+  sweep from 12 o'clock inscribed in the Orb dot; missing reading is
   absent, not `0%`; Border token, never severity),   **activity=motion**
   (`MotionCue::ActivityPulse` only for Running and not reduced-motion;
-  ADR-170 loops the inset hairline 240 ms on / 240 ms off). A circular arc is not drawn
-  — this file has no circle primitive; fill is the honest square analogue.
+  ADR-170 loops the inset hairline 240 ms on / 240 ms off). `Canvas::arc` (ADR-429)
+  replaced the old bottom fill line, so the concept's Orb ring is real
+  on the host; it is not yet looked at on the Pixel panel.
   `Я`→`Система` is the visible tab label (VUI-06); destination content
   was accepted on Pixel before the rename.
 - [x] Integrate a restrained Orb host with quiet, active, progress, attention,
