@@ -47,6 +47,14 @@ returned registration=0/reject=0 and zero RX. A subsequent eight-GET snapshot
 confirmed READY(5), radio ON(10), auto selection and preferred LTE_ONLY(11)
 were unchanged. Do not repeat ON-only as an established camp trigger.
 
+**Reversible RAT check (same boot):** after fresh READY/ON/preferred=11 gates,
+factory-encoded `0x070a` temporarily set LTE_WCDMA(12); its ACK and readback
+both confirmed 12. Ten voice/data registration polls over about 30 s all
+returned 0/reject=0/tech=0, with `rmnet0–5` RX remaining 0. A restore SET and
+GET confirmed the original LTE_ONLY(11). Thus forced LTE_ONLY alone is not the
+observed blocker. This test did not provide continuous RFS ownership, so it
+does not exclude a boot/runtime RFS prerequisite.
+
 **RFS observation caveat:** opening and closing `/dev/umts_rfs0` is not a
 harmless one-shot probe: the kernel discards incoming packets while no RFS
 reader is open and purges its receive queue when the last reader closes.
