@@ -571,7 +571,7 @@ fn read_meminfo() -> Option<(f64, f64)> {
 fn read_disk_usage() -> Value {
     // Prefer libc-free approach: parse `df -Bk` for / and a few common mounts.
     let output = std::process::Command::new("df")
-        .args(["-Bk", "/", "/home", "/var", "/tmp"])
+        .args(["-Bk", "/", "/data", "/home", "/var", "/tmp"])
         .output();
     let Ok(out) = output else {
         return json!({

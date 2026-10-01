@@ -6183,6 +6183,43 @@ fn format_observation_value(value: &Value, unit: Option<&str>) -> Option<String>
     })
 }
 
+/// Capacity pairs the Система board shows as one readout («3.2 / 8.0 ГБ»).
+/// A pair without both halves is dropped, never shown as half a number.
+const CAPACITY_PAIRS: [CapacityPair; 2] = [
+    CapacityPair {
+        used_key: "system.memory.used_mb",
+        total_key: "system.memory.total_mb",
+        percent_key: Some("system.memory.used_percent"),
+        key: "system.memory.capacity",
+        label: "Память",
+    },
+    CapacityPair {
+        used_key: "system.storage.used_mb",
+        total_key: "system.storage.total_mb",
+        percent_key: None,
+        key: "system.storage.capacity",
+        label: "Хранилище",
+    },
+];
+
+struct CapacityPair {
+    used_key: &'static str,
+    total_key: &'static str,
+    percent_key: Option<&'static str>,
+    key: &'static str,
+    label: &'static str,
+}
+
+fn is_capacity_key(key: &str) -> bool {
+    CAPACITY_PAIRS
+        .iter()
+        .any(|pair| pair.used_key == key || pair.total_key == key)
+}
+
+fn format_gigabytes(megabytes: f64) -> String {
+    format!("{:.1}", megabytes / 1024.0)
+}
+
 fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> {
     let Some(rows) = blob
         .get("status")
@@ -6191,7 +6228,8 @@ fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> 
     else {
         return Vec::new();
     };
-    rows.iter()
+    let sourced: Vec<(&str, &Value, Option<&str>, &str)> = rows
+        .iter()
         .filter_map(|row| {
             let key = row
                 .get("key")
@@ -6202,15 +6240,65 @@ fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> 
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())?;
             let unit = row.get("unit").and_then(Value::as_str);
-            let value = format_observation_value(row.get("value")?, unit)?;
+            Some((key, row.get("value")?, unit, source))
+        })
+        .collect();
+    let number_of = |key: &str| -> Option<(f64, &str)> {
+        sourced
+            .iter()
+            .find(|(k, ..)| *k == key)
+            .and_then(|(_, value, _, source)| {
+                value
+                    .as_f64()
+                    .filter(|n| n.is_finite())
+                    .map(|n| (n, *source))
+            })
+    };
+
+    let mut folded: Vec<LiveObservationFact> = Vec::new();
+    let mut absorbed_percent: Vec<&str> = Vec::new();
+    for pair in &CAPACITY_PAIRS {
+        let (Some((used, source)), Some((total, _))) =
+            (number_of(pair.used_key), number_of(pair.total_key))
+        else {
+            continue;
+        };
+        if total <= 0.0 || used < 0.0 || used > total {
+            continue;
+        }
+        let mut value = format!(
+            "{} / {} ГБ",
+            format_gigabytes(used),
+            format_gigabytes(total)
+        );
+        if let Some(percent_key) = pair.percent_key {
+            if let Some((percent, _)) = number_of(percent_key) {
+                value.push_str(&format!(" ({percent:.0}%)"));
+                absorbed_percent.push(percent_key);
+            }
+        }
+        folded.push(LiveObservationFact {
+            key: pair.key.to_string(),
+            label: pair.label.to_string(),
+            value,
+            source: source.to_string(),
+        });
+    }
+
+    let mut facts: Vec<LiveObservationFact> = sourced
+        .iter()
+        .filter(|(key, ..)| !is_capacity_key(key) && !absorbed_percent.contains(key))
+        .filter_map(|(key, value, unit, source)| {
             Some(LiveObservationFact {
                 label: observation_row_label(key),
                 key: key.to_string(),
-                value,
+                value: format_observation_value(value, *unit)?,
                 source: source.to_string(),
             })
         })
-        .collect()
+        .collect();
+    facts.extend(folded);
+    facts
 }
 
 fn live_memory_records_from_status_json(blob: &Value) -> Vec<LiveMemoryFact> {
@@ -16945,6 +17033,47 @@ mod tests {
         assert_eq!(rows[1].label, "Нагрузка");
         assert_eq!(rows[1].value, "0.3");
         assert!(!rows.iter().any(|row| row.key.contains("weather")));
+    }
+
+    #[test]
+    fn capacity_observations_fold_into_one_readout_or_vanish() {
+        let row = |key: &str, value: f64, unit: &str, source: &str| serde_json::json!({ "key": key, "value": value, "unit": unit, "source": source });
+        let rows = super::live_observations_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": { "observations": [
+                row("system.cpu.usage", 24.0, "percent", "procfs.cpu"),
+                row("system.memory.used_mb", 3276.8, "megabyte", "procfs.meminfo"),
+                row("system.memory.total_mb", 8192.0, "megabyte", "procfs.meminfo"),
+                row("system.memory.used_percent", 40.0, "percent", "derived.memory_percentage"),
+                row("system.storage.used_mb", 40960.0, "megabyte", "df.mount"),
+                row("system.storage.total_mb", 131072.0, "megabyte", "df.mount"),
+            ] }
+        }));
+        let by_label = |label: &str| rows.iter().find(|r| r.label == label).expect(label);
+        assert_eq!(by_label("Процессор").value, "24%");
+        assert_eq!(by_label("Память").value, "3.2 / 8.0 ГБ (40%)");
+        assert_eq!(by_label("Память").source, "procfs.meminfo");
+        assert_eq!(by_label("Хранилище").value, "40.0 / 128.0 ГБ");
+        assert_eq!(
+            rows.len(),
+            3,
+            "raw halves and the percent row are folded away"
+        );
+
+        let half = super::live_observations_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": { "observations": [
+                row("system.storage.used_mb", 10.0, "megabyte", "df.mount"),
+                row("system.memory.total_mb", 8192.0, "megabyte", "procfs.meminfo"),
+                row("system.memory.used_mb", 9000.0, "megabyte", "procfs.meminfo"),
+                row("system.memory.used_percent", 40.0, "percent", "derived.memory_percentage"),
+            ] }
+        }));
+        assert!(!half.iter().any(|r| r.label == "Хранилище"));
+        assert!(!half.iter().any(|r| r.value.contains("ГБ")));
+        assert_eq!(half.len(), 1);
+        assert_eq!(half[0].label, "Память");
+        assert_eq!(half[0].value, "40%");
     }
 
     #[test]
