@@ -18,7 +18,10 @@ fail() { printf 'ABORT %s\n' "$*" >&2; exit 1; }
 [ -x "$OWNER" ] || fail 'owner binary missing'
 [ -x "$VERIFIER" ] || fail 'NV-copy verifier missing'
 [ -f "$FIRMWARE" ] || fail 'reviewed B firmware missing'
-[ "$(cat "$STATE" 2>/dev/null)" = OFFLINE ] || fail 'CP must start OFFLINE'
+if [ -e "$STATE" ]; then
+    [ "$(cat "$STATE" 2>/dev/null)" = OFFLINE ] ||
+        fail 'CP must be OFFLINE before diagnostic setup'
+fi
 [ ! -L "$LOG" ] && [ ! -L "$OWNER_LOG" ] || fail 'log path is a symlink'
 [ ! -e "$LOG" ] && [ ! -e "$OWNER_LOG" ] || fail 'diagnostic logs already exist'
 if grep -q " $PERSIST " /proc/mounts; then
@@ -35,7 +38,8 @@ insmod /lib/modules/shm_ipc.ko 2>/dev/null || true
 insmod /lib/modules/cpif_page.ko 2>/dev/null || true
 insmod /lib/modules/cpif.ko 2>/dev/null || true
 insmod /lib/modules/cp_thermal_zone.ko 2>/dev/null || true
-[ "$(cat "$STATE" 2>/dev/null)" = OFFLINE ] || fail 'CP changed state during module setup'
+[ "$(cat "$STATE" 2>/dev/null)" = OFFLINE ] ||
+    fail 'CP must be OFFLINE after module setup'
 
 if [ ! -e /dev/block/sda1 ]; then
     set -- $(cat /sys/block/sda/sda1/dev | tr : ' ')
@@ -72,4 +76,4 @@ printf 'probe_rc=%s cp_state=%s\n' "$probe_rc" "$(cat "$STATE" 2>/dev/null)" >> 
 tail -n 8 "$LOG"
 [ "$probe_rc" -eq 0 ] || exit "$probe_rc"
 [ "$(cat "$STATE" 2>/dev/null)" = ONLINE ] || fail 'CP did not reach ONLINE'
-printf 'owner handoff diagnostic ONLINE; inspect %s\n' "$OWNER_LOG"
+printf 'probe returned ONLINE; verify owner continuity in %s\n' "$OWNER_LOG"

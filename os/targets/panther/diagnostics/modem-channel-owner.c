@@ -35,7 +35,8 @@
 
 enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        BOOTING_LIMIT_MS = 60000, POLL_SLICE_MS = 250,
-       HEARTBEAT_MS = 60000, METADATA_KEYS = 16 };
+       HEARTBEAT_MS = 60000, METADATA_KEYS = 16,
+       RFS_HEADER_TRACE_LIMIT = 16 };
 enum channel_kind { CHANNEL_IPC, CHANNEL_RFS };
 
 static unsigned le16(const uint8_t *p) {
@@ -44,6 +45,22 @@ static unsigned le16(const uint8_t *p) {
 
 static uint32_t le32(const uint8_t *p) {
     return (uint32_t)le16(p) | ((uint32_t)le16(p + 2) << 16);
+}
+
+struct rfs_header_fields {
+    unsigned command;
+    unsigned sequence;
+    uint32_t payload_len;
+};
+
+/* Caller supplies a complete RFS frame (minimum eight-byte header). */
+static struct rfs_header_fields rfs_header_fields(const uint8_t *p) {
+    uint32_t word = le32(p);
+    return (struct rfs_header_fields){
+        .command = word & 0xffffU,
+        .sequence = word >> 16,
+        .payload_len = le32(p + 4)
+    };
 }
 
 static void put32(uint8_t *p, uint32_t value) {
@@ -132,6 +149,13 @@ static int fixture(void) {
         if (frame_size(CHANNEL_RFS, rfs, n) != 0) return 3;
     if (frame_size(CHANNEL_RFS, rfs, sizeof rfs) != 12 ||
         le32(rfs) != 7) return 4;
+    struct rfs_header_fields header = rfs_header_fields(rfs);
+    if (header.command != 7 || header.sequence != 0 ||
+        header.payload_len != 4) return 15;
+    const uint8_t rfs_next[] = {6, 0, 1, 0, 16, 0, 0, 0};
+    header = rfs_header_fields(rfs_next);
+    if (header.command != 6 || header.sequence != 1 ||
+        header.payload_len != 16) return 16;
     uint8_t bad[12];
     memcpy(bad, rfs, sizeof bad);
     bad[7] = 1;
@@ -216,6 +240,14 @@ struct snapshot {
     int64_t deadline_ms;
 };
 
+struct rfs_header_trace {
+    int enabled;
+    unsigned logged;
+    uint64_t overflow;
+    uint64_t overflow_reported;
+    int64_t start_ms;
+};
+
 static const struct {
     unsigned id;
     const char *label;
@@ -295,6 +327,12 @@ static int verify_ready_pipe(int fd) {
     int flags = fcntl(fd, F_GETFL);
     return flags >= 0 && (flags & O_ACCMODE) == O_WRONLY &&
            fstat(fd, &st) == 0 && S_ISFIFO(st.st_mode) ? 0 : -1;
+}
+
+static int opened_once(int fd) {
+    int opened = -1;
+    return ioctl(fd, IOCTL_GET_OPENED_STATUS, &opened) == 0 &&
+           opened == 1 ? 0 : -1;
 }
 
 static int acquire_lock(void) {
@@ -386,6 +424,27 @@ static void report_metadata(struct metadata_counts *counts, int64_t now) {
     counts->window_start_ms = now;
 }
 
+static void trace_rfs_header(struct rfs_header_trace *trace,
+                             const uint8_t *p, int64_t now_ms) {
+    if (!trace->enabled) return;
+    if (trace->logged >= RFS_HEADER_TRACE_LIMIT) {
+        if (trace->overflow != UINT64_MAX) trace->overflow++;
+        return;
+    }
+    struct rfs_header_fields header = rfs_header_fields(p);
+    printf("rfs_header_ms=%lld cmd=%u seq=%u payload_len=%u\n",
+           (long long)(now_ms - trace->start_ms),
+           header.command, header.sequence, (unsigned)header.payload_len);
+    trace->logged++;
+}
+
+static void report_rfs_overflow(struct rfs_header_trace *trace) {
+    if (!trace->enabled || trace->overflow == trace->overflow_reported) return;
+    printf("rfs_header_overflow=%llu\n",
+           (unsigned long long)trace->overflow);
+    trace->overflow_reported = trace->overflow;
+}
+
 static void snapshot_reply(struct snapshot *snapshot, const uint8_t *p,
                            size_t size) {
     if (!snapshot->pending || snapshot->next >=
@@ -462,6 +521,8 @@ struct live_frame_context {
     struct channel *channel;
     struct metadata_counts *counts;
     struct snapshot *snapshot;
+    struct rfs_header_trace *trace;
+    int64_t now_ms;
 };
 
 static void live_frame(void *opaque, enum channel_kind kind,
@@ -470,12 +531,15 @@ static void live_frame(void *opaque, enum channel_kind kind,
     count_frame(context->channel, p, size, context->counts);
     if (kind == CHANNEL_IPC)
         snapshot_reply(context->snapshot, p, (size_t)size);
+    else
+        trace_rfs_header(context->trace, p, context->now_ms);
     context->channel->frames++;
 }
 
 /* Return -1 on malformed/over-cap framing; never retain payload after parse. */
 static int drain_channel(struct channel *channel, struct metadata_counts *counts,
-                         struct snapshot *snapshot) {
+                         struct snapshot *snapshot,
+                         struct rfs_header_trace *trace) {
     if (channel->used == sizeof channel->rx) return -1;
     ssize_t n = read(channel->fd, channel->rx + channel->used,
                      sizeof channel->rx - channel->used);
@@ -490,7 +554,9 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
     }
     if (n < 0) return -1;
     channel->used += (size_t)n;
-    struct live_frame_context context = {channel, counts, snapshot};
+    int64_t now = monotonic_ms();
+    if (now < 0) return -1;
+    struct live_frame_context context = {channel, counts, snapshot, trace, now};
     return parse_available(channel->kind, channel->rx, &channel->used,
                            live_frame, &context);
 }
@@ -510,8 +576,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         return 1;
     }
     enum cp_state state = cp_state();
-    if (attached ? state != CP_ONLINE :
-                   (state != CP_BOOTING && state != CP_ONLINE)) {
+    if (attached ? state != CP_ONLINE : state != CP_BOOTING) {
         fputs("ABORT CP state changed before owner startup\n", stderr);
         if (lock >= 0) close(lock);
         return 1;
@@ -526,6 +591,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGTERM, &action, NULL) ||
         sigaction(SIGINT, &action, NULL) ||
+        signal(SIGHUP, SIG_IGN) == SIG_ERR ||
         signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
         fputs("ABORT signal setup failed\n", stderr);
         close(lock);
@@ -539,7 +605,14 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     struct metadata_counts counts = {0};
     struct snapshot snapshot = {0};
     int64_t start = monotonic_ms();
+    struct rfs_header_trace trace = {.enabled = !attached, .start_ms = start};
     counts.window_start_ms = start;
+    if (!attached && (cp_state() != CP_BOOTING ||
+                      opened_once(ipc) || opened_once(rfs))) {
+        fputs("ABORT pre-FIN BOOTING or exclusive endpoint check failed\n", stderr);
+        close(lock);
+        return 1;
+    }
     if (start < 0 || (!attached && acknowledge_ready(ready))) {
         fputs("ABORT READY pipe unavailable\n", stderr);
         close(lock);
@@ -566,8 +639,10 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
                 deferred_stop_logged = 1;
             }
         }
-        if (now - counts.window_start_ms >= HEARTBEAT_MS)
+        if (now - counts.window_start_ms >= HEARTBEAT_MS) {
             report_metadata(&counts, now);
+            report_rfs_overflow(&trace);
+        }
         if (state == CP_ONLINE) snapshot_advance(&snapshot, ipc, now);
         struct pollfd fds[2];
         int timeout = POLL_SLICE_MS;
@@ -590,7 +665,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
                 rc = 1; break;
             }
             if ((fds[i].revents & POLLIN) &&
-                drain_channel(&channels[i], &counts, &snapshot)) {
+                drain_channel(&channels[i], &counts, &snapshot, &trace)) {
                 fprintf(stderr, "%s read/framing failure or buffer cap\n",
                         i ? "RFS" : "IPC");
                 rc = 1; break;
@@ -602,6 +677,10 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         int64_t now = monotonic_ms();
         report_metadata(&counts, now >= 0 ? now : counts.window_start_ms);
     }
+    report_rfs_overflow(&trace);
+    if (trace.enabled)
+        printf("rfs_header_trace_logged=%u overflow=%llu\n", trace.logged,
+               (unsigned long long)trace.overflow);
     printf("owner=stopped ipc_frames=%llu rfs_frames=%llu result=%d\n",
            (unsigned long long)channels[0].frames,
            (unsigned long long)channels[1].frames, rc);

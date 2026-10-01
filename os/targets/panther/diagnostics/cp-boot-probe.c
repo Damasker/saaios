@@ -42,10 +42,41 @@ static int send_factory_preamble(const uint8_t *bin, size_t len) {
 #define PROBE_OWNER_LOG "/data/saaios/var/modem-channel-owner.log"
 #endif
 #define PROBE_OWNER_READY_TIMEOUT_MS 5000
+/* This is an observation, not a kernel-enforced exclusive open. Repeat it
+ * under the owner's cooperative lock just before FIN. */
+#define PROBE_IOCTL_GET_OPENED_STATUS _IOR(IOCTL_MAGIC, 0x59, int)
+
+static int probe_owner_endpoints_opened_once(int ipc_fd, int rfs_fd) {
+    int opened = -1;
+    if (ioctl(ipc_fd, PROBE_IOCTL_GET_OPENED_STATUS, &opened) != 0 ||
+        opened != 1) return -1;
+    opened = -1;
+    if (ioctl(rfs_fd, PROBE_IOCTL_GET_OPENED_STATUS, &opened) != 0 ||
+        opened != 1) return -1;
+    return 0;
+}
+
+static int probe_owner_open_log(void) {
+    int fd = open(PROBE_OWNER_LOG,
+                  O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC,
+                  0600);
+    struct stat st;
+    if (fd < 0) return -1;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_uid != geteuid() || st.st_nlink != 1 ||
+        (st.st_mode & 0777) != 0600) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
 
 /* fork/dup keeps the same open file descriptions. The parent never reads
  * IPC/RFS; the child becomes their only reader before FIN is sent. */
 static void probe_owner_child(int ipc_fd, int rfs_fd, int ready_write) {
+    /* Detach from the invoking SSH terminal before READY. The parent still
+     * retains this child's pid and can abort it on a failed boot. */
+    if (setsid() < 0) _exit(126);
     int ipc_owned = fcntl(ipc_fd, F_DUPFD, 3);
     int rfs_owned = fcntl(rfs_fd, F_DUPFD, 3);
     int ready_owned = fcntl(ready_write, F_DUPFD, 3);
@@ -54,12 +85,8 @@ static void probe_owner_child(int ipc_fd, int rfs_fd, int ready_write) {
     close(rfs_fd);
     close(ready_write);
 
-    int log_fd = open(PROBE_OWNER_LOG,
-                      O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0600);
-    struct stat log_stat;
-    if (log_fd < 0 || fstat(log_fd, &log_stat) || !S_ISREG(log_stat.st_mode) ||
-        log_stat.st_uid != geteuid() || log_stat.st_nlink != 1 ||
-        (log_stat.st_mode & 0777) != 0600 ||
+    int log_fd = probe_owner_open_log();
+    if (log_fd < 0 ||
         dup2(log_fd, STDOUT_FILENO) < 0 || dup2(log_fd, STDERR_FILENO) < 0)
         _exit(126);
     if (log_fd > STDERR_FILENO) close(log_fd);
@@ -183,6 +210,10 @@ int main(int argc, char **argv) {
     if (lstat(PROBE_OWNER_EXEC, &owner_exec_stat) != 0 ||
         !S_ISREG(owner_exec_stat.st_mode) || access(PROBE_OWNER_EXEC, X_OK) != 0)
         die("runtime owner executable unavailable; no hardware operations");
+    int owner_log_fd = probe_owner_open_log();
+    if (owner_log_fd < 0)
+        die("runtime owner log unavailable or unsafe; no hardware operations");
+    close(owner_log_fd);
 #endif
     alarm(420);
     /* Our soft gate only: stock B or READY-patch COPY. OEM IOCTL_REQ_SECURITY
@@ -275,6 +306,15 @@ int main(int argc, char **argv) {
         if (probe_owner_start(ipc_fd, rfs_fd, &owner_pid) < 0)
             die("runtime owner did not confirm READY; no FIN sent");
         log_line("runtime owner READY before FIN pid=%ld", (long)owner_pid);
+        read_trimmed(MODEM_STATE_PATH, state, sizeof(state));
+        if (strcmp(state, "BOOTING") != 0) {
+            log_line("CP left BOOTING before FIN; no FIN sent: %s", state);
+            result = -1;
+        }
+        if (result == 0 && probe_owner_endpoints_opened_once(ipc_fd, rfs_fd)) {
+            log_line("runtime endpoints not exclusively opened before FIN; no FIN sent");
+            result = -1;
+        }
         if (!probe_owner_alive(owner_pid)) {
             log_line("runtime owner exited before FIN; no FIN sent");
             result = -1;
@@ -285,6 +325,10 @@ int main(int argc, char **argv) {
         result = sit_req_resp(SIT_FIN, SIT_FIN_ACK, SIT_ACK_DEADLINE_MS);
 #endif
 #ifdef PROBE_OWNER_HANDOFF
+        if (result == 0 && probe_owner_endpoints_opened_once(ipc_fd, rfs_fd)) {
+            log_line("runtime endpoints gained another opener after FIN; refusing COMPLETE");
+            result = -1;
+        }
         if (result == 0 && !probe_owner_alive(owner_pid)) {
             log_line("runtime owner exited after FIN; refusing COMPLETE");
             result = -1;
