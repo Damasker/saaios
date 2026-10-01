@@ -280,6 +280,7 @@ ADR-421 host Qt 5.15 URL mouse click above WebEngine keeps v2 (no flash).
 ADR-422 host Qt 6.8 URL mouse click above WebEngine keeps v2 (no flash).
 ADR-423 host Qt 6.8 Falkon LineEdit mouse-ignore keeps v2 (no flash).
 ADR-426 Система shows RAM/storage capacity only from live Observations (host, no flash).
+ADR-427 ATTN-05 attention order: priority, actionability, deterministic context relevance (host).
 ADR-404 packed GTK 4.14 ComboBox popup maps xdg_popup (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).

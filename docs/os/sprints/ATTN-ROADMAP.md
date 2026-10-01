@@ -1,6 +1,6 @@
 # SaaiOS Attention & Proactive Context — delivery roadmap
 
-Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит. ATTN-06 host (ADR-291 + shell wire ADR-293) + panther `4dc19018…` (ADR-308).**
+Status: **ATTN-00/01/02/03/04/05 host complete. ATTN-02/03/04 shell прошит. ATTN-06 host (ADR-291 + shell wire ADR-293) + panther `4dc19018…` (ADR-308).**
 Phone: ATTN-02/03 ride VUI-05; ATTN-04 rides VUI-04. See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-123](../../adr/ADR-123-attention-projection.md)
@@ -21,7 +21,7 @@ No second notification subsystem. No attention database.
 | ATTN-02 | NOW «Требует внимания» uses projection | **Done** (host) | **yes (VUI-05)** |
 | ATTN-03 | Inbox uses same projection | **Done** (host + panther) | **yes** |
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
-| ATTN-05 | Context relevance (no AI) | Backlog | no |
+| ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-427) | no |
 | ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
 | ATTN-07 | One OAM suggested action | Backlog | **yes** |
 
@@ -61,6 +61,23 @@ Task/Notification filter.
 **Test:** `inbox_rows_follow_the_attention_projection`.
 
 **Rollback:** restore the local Task-then-Notification filters.
+
+## ATTN-05
+
+**Goal:** attention is ordered by priority, actionability, then where the
+user is. No AI, no score.
+
+**Change:** `AttentionContext` + `project_in_context`. Relevance is
+`CurrentObject` / `CurrentContext` / `Global`; stable sort by priority,
+actionability, relevance. Membership never changes. `project_with_health`
+is the no-context call.
+
+**Test:** host `cargo test -p saai-attention`.
+
+**Rollback:** drop the sort and `relevance_of`.
+
+**Threat:** none — pure function, no IPC, no phone binary. Shell wiring
+waits for a cross-space feed (ADR-427).
 
 ## ATTN-06
 

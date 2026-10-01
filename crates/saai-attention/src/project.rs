@@ -5,15 +5,25 @@ use crate::model::{
     AttentionRelevance, AttentionSource, AttentionSurfaces,
 };
 use chrono::Utc;
-use saai_entity_store::Entity;
+use saai_entity_store::{Entity, ObjectRef};
 use saai_observation::{HealthReport, HealthState};
 use serde_json::Value;
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use uuid::Uuid;
 
 const TASK_TYPE: &str = "saaios.task";
 const NOTIFICATION_TYPE: &str = "saaios.notification";
 const WAITING_CONFIRMATION: &str = "waiting_confirmation";
+
+/// ATTN-05: where the user is right now. Deterministic input for relevance;
+/// no AI, no history, no profile. Absent fields mean "unknown", which
+/// keeps every item `Global`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AttentionContext {
+    pub space_id: Option<String>,
+    pub object: Option<ObjectRef>,
+}
 
 pub fn project_from_entities(entities: &[Entity]) -> AttentionProjection {
     project_with_health(entities, None)
@@ -25,17 +35,35 @@ pub fn project_with_health(
     entities: &[Entity],
     health: Option<&HealthReport>,
 ) -> AttentionProjection {
+    project_in_context(entities, health, &AttentionContext::default())
+}
+
+/// ATTN-05: relevance from the user's space/object, then a total order:
+/// priority, actionability, relevance (all descending). Ties keep input
+/// order, so the projection stays deterministic and a pending decision
+/// never sinks below an informational notice.
+///
+/// Relevance is `CurrentObject` when the item *is* the open object,
+/// `CurrentContext` when it lives in the selected space, otherwise
+/// `Global`. `RelatedContext` needs relationships and is not derived here.
+pub fn project_in_context(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+    context: &AttentionContext,
+) -> AttentionProjection {
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for entity in entities {
-        if let Some(item) = from_waiting_confirmation_task(entity) {
+        if let Some(mut item) = from_waiting_confirmation_task(entity) {
+            item.relevance = relevance_of(entity, context);
             if seen.insert(item.key.clone()) {
                 items.push(item);
             }
         }
     }
     for entity in entities {
-        if let Some(item) = from_undismissed_notification(entity) {
+        if let Some(mut item) = from_undismissed_notification(entity) {
+            item.relevance = relevance_of(entity, context);
             if seen.insert(item.key.clone()) {
                 items.push(item);
             }
@@ -46,9 +74,26 @@ pub fn project_with_health(
             items.push(item);
         }
     }
+    items.sort_by_key(|item| {
+        (
+            Reverse(item.priority),
+            Reverse(item.actionability),
+            Reverse(item.relevance),
+        )
+    });
     AttentionProjection {
         generated_at: Utc::now(),
         items,
+    }
+}
+
+fn relevance_of(entity: &Entity, context: &AttentionContext) -> AttentionRelevance {
+    if context.object == Some(ObjectRef::Entity { id: entity.id }) {
+        AttentionRelevance::CurrentObject
+    } else if context.space_id.as_deref() == Some(entity.space_id.as_str()) {
+        AttentionRelevance::CurrentContext
+    } else {
+        AttentionRelevance::Global
     }
 }
 
@@ -432,5 +477,109 @@ mod tests {
             })
             .collect();
         assert_eq!(inbox, vec![waiting.id, note.id]);
+    }
+
+    fn in_space(mut e: Entity, space: &str, title: &str) -> Entity {
+        e.space_id = space.into();
+        e.title = title.into();
+        e
+    }
+
+    fn titles(proj: &AttentionProjection) -> Vec<&str> {
+        proj.items.iter().map(|i| i.title.as_str()).collect()
+    }
+
+    #[test]
+    fn no_context_keeps_everything_global_and_input_ordered() {
+        let a = in_space(notification(false, Map::new()), "home", "a");
+        let b = in_space(notification(false, Map::new()), "work", "b");
+        let proj = project_from_entities(&[a, b]);
+        assert_eq!(titles(&proj), ["a", "b"]);
+        assert!(proj
+            .items
+            .iter()
+            .all(|i| i.relevance == AttentionRelevance::Global));
+    }
+
+    #[test]
+    fn current_space_outranks_other_spaces_at_equal_priority() {
+        let home = in_space(notification(false, Map::new()), "home", "home note");
+        let work = in_space(notification(false, Map::new()), "work", "work note");
+        let ctx = AttentionContext {
+            space_id: Some("work".into()),
+            object: None,
+        };
+        let proj = project_in_context(&[home, work], None, &ctx);
+        assert_eq!(titles(&proj), ["work note", "home note"]);
+        assert_eq!(proj.items[0].relevance, AttentionRelevance::CurrentContext);
+        assert_eq!(proj.items[1].relevance, AttentionRelevance::Global);
+    }
+
+    #[test]
+    fn open_object_outranks_its_space() {
+        let first = in_space(notification(false, Map::new()), "work", "first");
+        let open = in_space(notification(false, Map::new()), "work", "open");
+        let ctx = AttentionContext {
+            space_id: Some("work".into()),
+            object: Some(ObjectRef::Entity { id: open.id }),
+        };
+        let proj = project_in_context(&[first, open], None, &ctx);
+        assert_eq!(titles(&proj), ["open", "first"]);
+        assert_eq!(proj.items[0].relevance, AttentionRelevance::CurrentObject);
+    }
+
+    #[test]
+    fn relevance_never_outranks_a_pending_decision() {
+        let decision = in_space(task(WAITING_CONFIRMATION), "home", "decision elsewhere");
+        let local = in_space(notification(false, Map::new()), "work", "local note");
+        let ctx = AttentionContext {
+            space_id: Some("work".into()),
+            object: None,
+        };
+        let proj = project_in_context(&[local, decision], None, &ctx);
+        assert_eq!(titles(&proj), ["decision elsewhere", "local note"]);
+    }
+
+    #[test]
+    fn unhealthy_sits_between_decisions_and_notices() {
+        let decision = task(WAITING_CONFIRMATION);
+        let note = notification(false, Map::new());
+        let proj = project_with_health(&[note, decision], Some(&report(HealthState::Unhealthy)));
+        let sources: Vec<_> = proj.items.iter().map(|i| &i.source).collect();
+        assert!(matches!(sources[0], AttentionSource::WorkflowTask { .. }));
+        assert!(matches!(sources[1], AttentionSource::Health { .. }));
+        assert!(matches!(sources[2], AttentionSource::Notification { .. }));
+    }
+
+    #[test]
+    fn context_does_not_change_membership_or_inbox_parity() {
+        let entities = vec![
+            in_space(notification(false, Map::new()), "home", "n1"),
+            in_space(task(WAITING_CONFIRMATION), "home", "t1"),
+            in_space(notification(true, Map::new()), "work", "dismissed"),
+        ];
+        let ctx = AttentionContext {
+            space_id: Some("work".into()),
+            object: None,
+        };
+        let plain: HashSet<_> = project_from_entities(&entities)
+            .items
+            .into_iter()
+            .map(|i| i.key)
+            .collect();
+        let scoped: HashSet<_> = project_in_context(&entities, None, &ctx)
+            .items
+            .into_iter()
+            .map(|i| i.key)
+            .collect();
+        assert_eq!(plain, scoped);
+        let mut legacy = legacy_inbox_ids(&entities);
+        let mut projected: Vec<Uuid> = inbox_source_ids(&entities)
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
+        legacy.sort();
+        projected.sort();
+        assert_eq!(legacy, projected);
     }
 }

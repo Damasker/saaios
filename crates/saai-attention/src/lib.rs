@@ -11,6 +11,7 @@ pub use model::{
     AttentionRelevance, AttentionSource, AttentionSurfaces,
 };
 pub use project::{
-    has_orb_attention, inbox_source_ids, project_from_entities, project_with_health,
+    has_orb_attention, inbox_source_ids, project_from_entities, project_in_context,
+    project_with_health, AttentionContext,
 };
 pub use saai_observation::{HealthReport, HealthState};
