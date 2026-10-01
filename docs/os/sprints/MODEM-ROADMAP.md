@@ -86,7 +86,19 @@ without a SaaiOS VerifyPin. One new guarded AP boot then deployed the
 redacted two-slot logger and reached CP ONLINE with one IPC0/RFS0 owner.
 Slot 0 reported card 1/port 0 logical 1; slot 1 card 1/port 0 logical 0.
 This is consistent with an embedded-SIM record plus the removable SIM, but
-does not prove an active eSIM profile. At +60 s IPC0 remained READY/DISABLED,
+does not prove an active eSIM profile. The TD1A `sit-stream.so` (SHA-256
+`cef8756461c74102f9a78f91177d1baff80fb9af11c14994497fb8854e0f530a`)
+parses 105-byte slot records at `0x626ac–0x626ec` and `0x62940–0x62970`:
+card state at +0, EID length at +35, port count at +52, port-0 ICCID
+length at +53, logical ID at +64 and port state at +65. State 1 describes
+an active port-to-modem mapping, not an enabled subscription: [AOSP explicitly
+allows an active eSIM port without an enabled profile](https://android.googlesource.com/platform/hardware/interfaces/+/2e2c6e7b316f9f23844c2becfa5109e28bc6afd1/radio/aidl/android/hardware/radio/config/SimSlotStatus.aidl),
+and [its ICCID may come from a default boot profile](https://android.googlesource.com/platform/hardware/interfaces/+/2e2c6e7b316f9f23844c2becfa5109e28bc6afd1/radio/aidl/android/hardware/radio/config/SimPortInfo.aidl).
+With the tray out, IPC0 had card 0/apps 0 while slot 0 still reported card 1;
+with the tray in, IPC0 had card 1/apps 1 READY and logical 0 mapped to slot 1.
+Together these strongly identify IPC0 with the removable slot 1, although
+`0x0200` carries no explicit physical-slot ID. No EID/ICCID bytes were logged.
+At +60 s IPC0 remained READY/DISABLED,
 radio was ON(10), yet voice/data registration were 0, `rmnet0` had no IPv4
 address and RX/TX stayed 0. RFS cmd7/cmd6 repeated without replies. The
 current blocker is **network camp/registration**, not physical SIM absence,
