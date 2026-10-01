@@ -36,7 +36,8 @@ pub struct RuntimeFrame {
     pub channel: u8,
     pub message_id: u16,
     pub len: usize,
-    pub token: u32,
+    /// Solicited frames carry a token; short unsolicited frames do not.
+    pub token: Option<u32>,
     bytes: Vec<u8>,
 }
 
@@ -159,11 +160,16 @@ pub fn parse_runtime_frame(bytes: &[u8]) -> Result<RuntimeFrame> {
     let RuntimeFrameStatus::Complete(len) = runtime_frame_status(bytes) else {
         return Err(anyhow!("runtime frame is not complete"));
     };
+    let channel = bytes[0];
     Ok(RuntimeFrame {
-        channel: bytes[0],
+        channel,
         message_id: le_u16(&bytes[2..4]),
         len,
-        token: le_u32(&bytes[6..10]),
+        token: if channel == 2 {
+            None
+        } else {
+            Some(le_u32(&bytes[6..10]))
+        },
         bytes: bytes[..len].to_vec(),
     })
 }
@@ -173,7 +179,10 @@ pub fn parse_matching_response(
     frame: &RuntimeFrame,
 ) -> Option<RuntimeObservation> {
     let spec = runtime_query_spec(query);
-    if frame.channel != 1 || frame.message_id != spec.request_id || frame.token != spec.token {
+    if frame.channel != 1
+        || frame.message_id != spec.request_id
+        || frame.token != Some(spec.token)
+    {
         return None;
     }
     let error_raw = *frame.bytes.get(10)?;
@@ -262,6 +271,53 @@ mod tests {
         assert_eq!(runtime_frame_status(&sim[..15]), RuntimeFrameStatus::Complete(8));
         sim[0] = 3;
         assert_eq!(runtime_frame_status(&sim[..15]), RuntimeFrameStatus::Malformed);
+    }
+
+    #[test]
+    fn short_unsolicited_frame_has_no_token() {
+        let indication = [2, 0, 0x10, 0x02, 8, 0, 0, 0];
+        let frame = parse_runtime_frame(&indication).unwrap();
+        assert_eq!(frame.channel, 2);
+        assert_eq!(frame.message_id, 0x0210);
+        assert_eq!(frame.len, 8);
+        assert_eq!(frame.token, None);
+        assert_eq!(parse_matching_response(RuntimeQuery::SimStatus, &frame), None);
+    }
+
+    #[test]
+    fn truncated_and_malformed_frames_return_errors_without_panicking() {
+        let indication = [2, 0, 0x10, 0x02, 8, 0, 0, 0];
+        for len in 0..indication.len() {
+            assert_eq!(runtime_frame_status(&indication[..len]), RuntimeFrameStatus::Incomplete);
+            assert!(parse_runtime_frame(&indication[..len]).is_err());
+        }
+
+        let response = radio_response_frame(10);
+        for len in 0..response.len() {
+            assert_eq!(runtime_frame_status(&response[..len]), RuntimeFrameStatus::Incomplete);
+            assert!(parse_runtime_frame(&response[..len]).is_err());
+        }
+
+        let mut malformed = response;
+        malformed[4..6].copy_from_slice(&11u16.to_le_bytes());
+        assert_eq!(runtime_frame_status(&malformed), RuntimeFrameStatus::Malformed);
+        assert!(parse_runtime_frame(&malformed).is_err());
+    }
+
+    #[test]
+    fn reader_preserves_short_unsolicited_before_solicited_response() {
+        let indication = [2, 0, 0x10, 0x02, 8, 0, 0, 0];
+        let radio = radio_response_frame(10);
+        let mut reader = RuntimeFrameReader::default();
+        assert!(reader.push(&indication[..7]).unwrap().is_empty());
+
+        let mut remainder = indication[7..].to_vec();
+        remainder.extend_from_slice(&radio);
+        let frames = reader.push(&remainder).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].token, None);
+        assert_eq!(frames[1].token, Some(2));
+        assert_eq!(reader.pending_len(), 0);
     }
 
     #[test]
