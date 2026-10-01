@@ -107,11 +107,16 @@ ASan/UBSan, and the owner/probe cross-compile statically for AArch64.
 This is **not** an on-device result. The full owner has not been installed or
 run on the Pixel. It currently drains IPC0 but has no same-owner SIT snapshot,
 so registration cannot yet be compared causally with the passive control.
-The copied `cpif.ko` write path was reviewed at binary level, but its
-`vermagic` differs from the previously recorded phone kernel; the currently
-loaded module needs a read-only identity check. Before a live run, independently
-verify installed hashes, on-device self-test, wrapper/probe gates, a cold
-opt-in launch, passive restoration and read-only EFS checks before/after.
+The copied `cpif.ko` write path was reviewed at binary level. A later
+read-only live check found the phone's `/lib/modules/cpif.ko` SHA-256 equal to
+the reviewed local copy (`8cdd21d7...e1e79c`); the loaded module's sysfs
+GNU build-ID note and Linux note hashes matched the corresponding sections
+of that same local binary, and its `scmversion` matched. Its `vermagic`
+still differs from `uname -r`; do not infer source-tree parity from version
+strings alone. CP remained `ONLINE` during this check, with no modem command
+sent. Before a live run, independently verify newly installed owner/probe
+hashes, on-device self-test, wrapper gates, cold opt-in launch, passive
+restoration and read-only EFS checks before/after.
 
 ## Why this exists
 
