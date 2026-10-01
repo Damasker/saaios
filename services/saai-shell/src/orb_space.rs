@@ -5,10 +5,11 @@
 
 use saai_orb::{
     camera::REST_EXPOSURE_UNITS, compose, depth_threshold, detail, layout, lower, nearest_anchor,
-    Camera, Context, Delta, Entry, Geo, Geography, Inertia, Layout, Lift, Motion, NavInput,
-    ObjectClass, OrbObject, Pointers, Presence, Route, Stage, Tier, Unavailable, ZOOM_MAX,
+    search as search_entries, Camera, Context, Delta, Entry, Geo, Geography, Hit, Inertia, Layout,
+    Lift, Motion, NavInput, ObjectClass, OrbObject, Pointers, Presence, Projector, Route, Stage,
+    Tier, Unavailable, ZOOM_MAX,
 };
-use saai_ui_core::Rect;
+use saai_ui_core::{Keyboard, Rect};
 
 pub const GEOGRAPHY_PATH: &str = "/data/saaios/var/orb-geography.json";
 
@@ -129,6 +130,61 @@ const CAPABILITIES: [(&str, ObjectClass, &str, &[&str]); 8] = [
     ),
 ];
 
+/// The on-screen and USB keyboards type Latin only, so every name that can
+/// be Cyrillic also carries its Latin spelling as a search keyword.
+pub fn latin_spelling(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars().flat_map(char::to_lowercase) {
+        let t = match c {
+            'а' => "a",
+            'б' => "b",
+            'в' => "v",
+            'г' => "g",
+            'д' => "d",
+            'е' | 'э' => "e",
+            'ё' => "yo",
+            'ж' => "zh",
+            'з' => "z",
+            'и' => "i",
+            'й' | 'ы' => "y",
+            'к' => "k",
+            'л' => "l",
+            'м' => "m",
+            'н' => "n",
+            'о' => "o",
+            'п' => "p",
+            'р' => "r",
+            'с' => "s",
+            'т' => "t",
+            'у' => "u",
+            'ф' => "f",
+            'х' => "kh",
+            'ц' => "ts",
+            'ч' => "ch",
+            'ш' => "sh",
+            'щ' => "shch",
+            'ъ' | 'ь' => "",
+            'ю' => "yu",
+            'я' => "ya",
+            other => {
+                out.push(other);
+                continue;
+            }
+        };
+        out.push_str(t);
+    }
+    out
+}
+
+fn with_latin(object: OrbObject, name: &str) -> OrbObject {
+    let latin = latin_spelling(name);
+    if latin == name.to_lowercase() {
+        object
+    } else {
+        object.keywords(&[latin.as_str()])
+    }
+}
+
 pub fn build_objects(f: &Facts) -> (Vec<OrbObject>, Context) {
     let mut objects: Vec<OrbObject> = CAPABILITIES
         .iter()
@@ -137,35 +193,43 @@ pub fn build_objects(f: &Facts) -> (Vec<OrbObject>, Context) {
         })
         .collect();
     for (id, name) in &f.apps {
-        let mut o = OrbObject::new(&format!("app:{id}"), ObjectClass::Application, name, 2)
-            .child_of("apps")
-            .tier(Tier::Contextual);
+        let mut o = with_latin(
+            OrbObject::new(&format!("app:{id}"), ObjectClass::Application, name, 2)
+                .child_of("apps")
+                .tier(Tier::Contextual),
+            name,
+        );
         if !f.appd_connected {
             o = o.unavailable(Unavailable::Offline);
         }
         objects.push(o);
     }
     for (id, name) in &f.spaces {
-        let mut o = OrbObject::new(&format!("space:{id}"), ObjectClass::Environment, name, 2)
-            .child_of("spaces");
+        let mut o = with_latin(
+            OrbObject::new(&format!("space:{id}"), ObjectClass::Environment, name, 2)
+                .child_of("spaces"),
+            name,
+        );
         if !f.entityd_connected {
             o = o.unavailable(Unavailable::Offline);
         }
         objects.push(o);
     }
     for (id, title) in f.tasks.iter().take(TASK_LIMIT) {
-        objects.push(
+        objects.push(with_latin(
             OrbObject::new(&format!("task:{id}"), ObjectClass::Task, title, 2)
                 .child_of("tasks")
                 .tier(Tier::Suggestion),
-        );
+            title,
+        ));
     }
     for name in &f.bluetooth {
-        objects.push(
+        objects.push(with_latin(
             OrbObject::new(&format!("bt:{name}"), ObjectClass::Device, name, 2)
                 .child_of("devices")
                 .tier(Tier::Contextual),
-        );
+            name,
+        ));
     }
     let mut ctx = Context {
         space: (!f.selected_space.is_empty()).then(|| f.selected_space.clone()),
@@ -230,6 +294,62 @@ pub enum Outcome {
     Activate(Activation),
 }
 
+/// Where the sphere's search stands. The text lives here so that closing the
+/// sphere closes the search with it.
+pub struct SearchState {
+    pub buffer: String,
+    pub keyboard: Keyboard,
+    /// The hit the trail points at; the best hit until the user moves it.
+    target: Option<String>,
+}
+
+pub const SEARCH_LIMIT: usize = 8;
+const TRAIL_POINTS: usize = 28;
+
+/// The strip above the sphere while searching: the field, then a fixed
+/// number of result rows. The count never changes with the results, so the
+/// sphere below does not jump as the text does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchPanel {
+    pub backdrop: Rect,
+    pub field: Rect,
+    pub rows: Vec<Rect>,
+    /// What is left for the sphere.
+    pub viewport: Rect,
+}
+
+pub fn search_panel(width: u32, top: u32, bottom: u32, rows: usize, unit: f32) -> SearchPanel {
+    let u = |v: f32| (v * unit).round() as u32;
+    let margin = u(16.0);
+    let (field_h, row_h, gap) = (u(52.0), u(48.0), u(4.0));
+    let min_viewport = u(160.0);
+    let mut rows = rows.max(1);
+    loop {
+        let field_y = top + u(8.0);
+        let rows_y = field_y + field_h + u(8.0);
+        let rows_end = rows_y + rows as u32 * (row_h + gap);
+        let view_y = rows_end + u(8.0);
+        if bottom.saturating_sub(view_y) >= min_viewport || rows == 1 {
+            return SearchPanel {
+                backdrop: Rect::new(0, 0, width, view_y.min(bottom)),
+                field: Rect::new(margin, field_y, width.saturating_sub(margin * 2), field_h),
+                rows: (0..rows as u32)
+                    .map(|i| {
+                        Rect::new(
+                            margin,
+                            rows_y + i * (row_h + gap),
+                            width.saturating_sub(margin * 2),
+                            row_h,
+                        )
+                    })
+                    .collect(),
+                viewport: Rect::new(0, view_y.min(bottom), width, bottom.saturating_sub(view_y)),
+            };
+        }
+        rows -= 1;
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Flight {
     route: Route,
@@ -247,6 +367,7 @@ pub struct OrbSpace {
     flight: Option<Flight>,
     entries: Vec<Entry>,
     pub selected: Option<String>,
+    search: Option<SearchState>,
     dirty: bool,
 }
 
@@ -265,6 +386,7 @@ impl OrbSpace {
             flight: None,
             entries: Vec::new(),
             selected: None,
+            search: None,
             dirty: false,
         }
     }
@@ -342,11 +464,125 @@ impl OrbSpace {
     }
 
     pub fn dismiss(&mut self) {
+        self.search = None;
         self.presence.dismiss();
         self.flight = None;
         self.inertia.stop();
         self.selected = None;
         self.dirty = true;
+    }
+
+    /// Opens the search field over the risen sphere. Nothing leaves the
+    /// device: it only reads the entries already on the sphere.
+    pub fn open_search(&mut self, keyboard: Keyboard) {
+        self.presence.summon();
+        self.search = Some(SearchState {
+            buffer: String::new(),
+            keyboard,
+            target: None,
+        });
+        self.selected = None;
+        self.dirty = true;
+    }
+
+    pub fn close_search(&mut self) {
+        if self.search.take().is_some() {
+            self.selected = None;
+            self.dirty = true;
+        }
+    }
+
+    pub fn search(&self) -> Option<&SearchState> {
+        self.search.as_ref()
+    }
+
+    pub fn search_mut(&mut self) -> Option<&mut SearchState> {
+        self.search.as_mut()
+    }
+
+    /// The text changed: the best hit becomes the target again.
+    pub fn search_edited(&mut self) {
+        if let Some(s) = self.search.as_mut() {
+            s.target = None;
+        }
+        self.selected = None;
+        self.dirty = true;
+    }
+
+    pub fn search_hits(&self) -> Vec<Hit> {
+        match self.search.as_ref() {
+            Some(s) => search_entries(&self.entries, &s.buffer, self.camera, SEARCH_LIMIT),
+            None => Vec::new(),
+        }
+    }
+
+    /// Index of the hit the trail points at.
+    pub fn search_focus(&self, hits: &[Hit]) -> Option<usize> {
+        let target = self.search.as_ref()?.target.as_deref();
+        match target {
+            Some(id) => hits.iter().position(|h| h.id == id).or(Some(0)),
+            None => (!hits.is_empty()).then_some(0),
+        }
+        .filter(|i| *i < hits.len())
+    }
+
+    /// Moves the trail to the next or previous hit without moving the camera.
+    pub fn step_search(&mut self, delta: i32) {
+        let hits = self.search_hits();
+        let Some(current) = self.search_focus(&hits) else {
+            return;
+        };
+        let next = (current as i32 + delta).clamp(0, hits.len() as i32 - 1) as usize;
+        if let Some(s) = self.search.as_mut() {
+            s.target = Some(hits[next].id.clone());
+        }
+        self.dirty = true;
+    }
+
+    /// First time: fly there along the route. Once there: open it. A hit
+    /// that is a cluster, offline or only remembered is shown, never forced.
+    pub fn choose(&mut self, id: &str) -> Outcome {
+        let hits = self.search_hits();
+        let Some(hit) = hits.iter().find(|h| h.id == id) else {
+            return Outcome::Nothing;
+        };
+        if let Some(s) = self.search.as_mut() {
+            s.target = Some(id.to_string());
+        }
+        self.dirty = true;
+        let arrived = self.selected.as_deref() == Some(id) && self.flight.is_none();
+        if !arrived {
+            self.selected = Some(id.to_string());
+            self.inertia.stop();
+            self.fly_to(hit.route.clone());
+            return Outcome::Redraw;
+        }
+        match activation_for(id) {
+            Some(action) if hit.availability.is_available() && !hit.ghost => {
+                Outcome::Activate(action)
+            }
+            _ => Outcome::Redraw,
+        }
+    }
+
+    /// The route to the target as a screen polyline of what is on the
+    /// visible hemisphere, shortening as the camera arrives.
+    pub fn trail(&self, viewport: Rect, unit: f32) -> Vec<(f32, f32)> {
+        let hits = self.search_hits();
+        let Some(i) = self.search_focus(&hits) else {
+            return Vec::new();
+        };
+        let route = Route {
+            from: self.camera.center,
+            ..hits[i].route.clone()
+        };
+        let proj = Projector::new(self.camera, self.stage(viewport, unit));
+        route
+            .trail(TRAIL_POINTS)
+            .into_iter()
+            .filter_map(|g| proj.project(g))
+            .map(|p| (p.x, p.y))
+            .collect()
     }
 
     fn has_children(&self, id: &str) -> bool {
@@ -957,5 +1193,160 @@ mod tests {
                 assert!((x - cx).hypot(y - cy) <= r + 1.0);
             }
         }
+    }
+
+    fn typed(s: &mut OrbSpace, text: &str) {
+        s.open_search(Keyboard::bind("orb-search", saai_ui_core::KeyboardLayout::Qwerty));
+        s.search_mut().unwrap().buffer = text.into();
+        s.search_edited();
+    }
+
+    fn settle(s: &mut OrbSpace) {
+        for _ in 0..120 {
+            s.tick(1.0 / 60.0, VP, U);
+        }
+    }
+
+    #[test]
+    fn cyrillic_names_can_be_found_by_typing_latin() {
+        assert_eq!(latin_spelling("Почта"), "pochta");
+        assert_eq!(latin_spelling("Щётка"), "shchyotka");
+        assert_eq!(latin_spelling("Wi-Fi 6"), "wi-fi 6");
+        let mut s = open_space();
+        typed(&mut s, "pochta");
+        let hits = s.search_hits();
+        assert_eq!(hits.first().map(|h| h.id.as_str()), Some("app:mail"));
+        typed(&mut s, "bluetooth");
+        assert_eq!(s.search_hits()[0].id, "devices");
+    }
+
+    #[test]
+    fn search_finds_but_does_not_move_until_asked() {
+        let mut s = open_space();
+        let before = s.camera;
+        typed(&mut s, "pochta");
+        assert_eq!(s.camera, before, "typing never moves the camera");
+        assert!(!s.trail(VP, U).is_empty() || s.search_hits()[0].route.distance() > 1.2);
+        assert!(s.search_focus(&s.search_hits()).is_some());
+    }
+
+    #[test]
+    fn choosing_flies_along_the_route_then_opens_on_the_second_choice() {
+        let mut s = open_space();
+        typed(&mut s, "pochta");
+        let id = s.search_hits()[0].id.clone();
+        assert_eq!(s.choose(&id), Outcome::Redraw);
+        assert_eq!(s.selected.as_deref(), Some("app:mail"));
+        assert!(s.needs_frame());
+        assert_eq!(
+            s.choose(&id),
+            Outcome::Redraw,
+            "still flying: a second press does not skip the journey"
+        );
+        settle(&mut s);
+        let target = s.entries().iter().find(|e| e.id == "app:mail").unwrap().geo;
+        assert!(s.camera.center.distance(target) < 0.01, "arrived");
+        assert_eq!(
+            s.choose(&id),
+            Outcome::Activate(Activation::LaunchApp("mail".into()))
+        );
+    }
+
+    #[test]
+    fn the_trail_shortens_as_the_camera_arrives() {
+        let mut s = open_space();
+        typed(&mut s, "pochta");
+        let far = s.search_hits()[0].route.distance();
+        let id = s.search_hits()[0].id.clone();
+        s.choose(&id);
+        settle(&mut s);
+        let near = s.search_hits()[0].route.distance();
+        assert!(near < far.max(0.02));
+        assert!(near < 0.01);
+    }
+
+    #[test]
+    fn offline_and_remembered_objects_are_found_and_shown_but_not_opened() {
+        let mut off = facts();
+        off.appd_connected = false;
+        let mut s = OrbSpace::new(Geography::default(), false);
+        let (o, c) = build_objects(&off);
+        s.refresh(&o, &c);
+        s.presence.summon();
+        for _ in 0..120 {
+            s.presence.step(1.0 / 60.0);
+        }
+        typed(&mut s, "pochta");
+        let id = s.search_hits()[0].id.clone();
+        assert_eq!(s.search_hits()[0].id, "app:mail", "an offline app still exists");
+        s.choose(&id);
+        settle(&mut s);
+        assert_eq!(s.choose(&id), Outcome::Redraw, "shown, never forced open");
+    }
+
+    #[test]
+    fn stepping_moves_the_trail_to_the_next_hit_without_flying() {
+        let mut s = open_space();
+        typed(&mut s, "a");
+        let hits = s.search_hits();
+        assert!(hits.len() >= 2);
+        let camera = s.camera;
+        assert_eq!(s.search_focus(&hits), Some(0));
+        s.step_search(1);
+        assert_eq!(s.search_focus(&s.search_hits()), Some(1));
+        s.step_search(-5);
+        assert_eq!(s.search_focus(&s.search_hits()), Some(0));
+        s.step_search(100);
+        assert_eq!(
+            s.search_focus(&s.search_hits()),
+            Some(s.search_hits().len() - 1)
+        );
+        assert_eq!(s.camera, camera);
+    }
+
+    #[test]
+    fn no_text_and_no_match_are_honestly_empty() {
+        let mut s = open_space();
+        typed(&mut s, "");
+        assert!(s.search_hits().is_empty());
+        assert!(s.trail(VP, U).is_empty());
+        typed(&mut s, "zzzzqqqq");
+        assert!(s.search_hits().is_empty());
+        assert_eq!(s.search_focus(&[]), None);
+        assert_eq!(s.choose("search"), Outcome::Nothing);
+    }
+
+    #[test]
+    fn dismissing_the_sphere_closes_the_search() {
+        let mut s = open_space();
+        typed(&mut s, "pochta");
+        s.dismiss();
+        assert!(s.search().is_none());
+        assert!(s.search_hits().is_empty());
+    }
+
+    #[test]
+    fn search_panel_reserves_a_fixed_strip_and_leaves_the_rest_to_the_sphere() {
+        let p3 = search_panel(1080, 100, 1700, 3, U);
+        let p3_again = search_panel(1080, 100, 1700, 3, U);
+        assert_eq!(p3, p3_again);
+        assert_eq!(p3.rows.len(), 3);
+        assert!(p3.field.y >= 100);
+        assert!(p3.rows[0].y >= p3.field.y + p3.field.height);
+        assert!(p3.rows[1].y >= p3.rows[0].y + p3.rows[0].height);
+        assert_eq!(p3.viewport.y, p3.backdrop.height);
+        assert_eq!(p3.viewport.y + p3.viewport.height, 1700);
+        assert!(p3.rows.iter().all(|r| r.height >= (44.0 * U) as u32));
+        let p4 = search_panel(1080, 100, 1700, 4, U);
+        assert!(p4.viewport.y > p3.viewport.y);
+    }
+
+    #[test]
+    fn search_panel_gives_up_rows_before_it_squeezes_the_sphere_out() {
+        let tight = search_panel(1080, 100, 1200, 4, U);
+        assert!(tight.rows.len() < 4);
+        assert!(tight.viewport.height >= (160.0 * U) as u32);
+        let hopeless = search_panel(1080, 100, 300, 4, U);
+        assert_eq!(hopeless.rows.len(), 1);
     }
 }
