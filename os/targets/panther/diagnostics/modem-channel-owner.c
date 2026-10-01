@@ -44,7 +44,8 @@ enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        SIM_REFRESH_MAX = 3, SIM_REFRESH_DEBOUNCE_MS = 500,
        SIM_REFRESH_COALESCE_MS = 2000, SIM_REFRESH_MIN_GAP_MS = 3000,
        SIM_REFRESH_REPLY_MS = 10000, SIM_SETTLED_DELAY_MS = 60000,
-       SIM_WIRE_UNIVERSAL_PIN = 13 };
+       SIM_WIRE_UNIVERSAL_PIN = 13, SIM_SLOT_IND_MIN_LEN = 429,
+       SIM_SLOT_MAX_SLOTS = 4, SIM_SLOT_TRACE_LIMIT = 2 };
 enum channel_kind { CHANNEL_IPC, CHANNEL_RFS };
 enum sim_query_kind { SIM_QUERY_NONE, SIM_QUERY_CHANGE, SIM_QUERY_SETTLED };
 
@@ -96,6 +97,39 @@ static int is_reply(const uint8_t *p, size_t n, unsigned id, uint32_t token) {
 /* Factory TD1A: 0x0210 is SIT_IND_SIM_STATUS_CHANGED, not a reply. */
 static int is_sim_status_changed(const uint8_t *p, size_t n) {
     return n >= 8 && p[0] == 2 && le16(p + 2) == 0x0210;
+}
+
+struct slot_status_scalars {
+    unsigned slot_count;
+    unsigned slot0_card_state;
+};
+
+struct slot_status_trace {
+    unsigned seen;
+};
+
+/* Factory sit-stream.so: unsolicited 0x024e requires at least 429 bytes;
+ * slot count is at +8 and first card state at +9.
+ * Never inspect or print the following ATR/ICCID/EID-bearing bytes. */
+static int slot_status_scalars(const uint8_t *p, size_t n,
+                               struct slot_status_scalars *out) {
+    if (n < SIM_SLOT_IND_MIN_LEN || p[0] != 2 ||
+        le16(p + 2) != 0x024e || le16(p + 4) != n ||
+        p[8] < 1 || p[8] > SIM_SLOT_MAX_SLOTS) return 0;
+    out->slot_count = p[8];
+    out->slot0_card_state = p[9];
+    return 1;
+}
+
+/* Count the first two matching indications even if their body is malformed:
+ * later traffic cannot cause an unbounded or selectively repeated log. */
+static int slot_status_take(struct slot_status_trace *trace,
+                            const uint8_t *p, size_t n,
+                            struct slot_status_scalars *out) {
+    if (n < 8 || p[0] != 2 || le16(p + 2) != 0x024e ||
+        trace->seen >= SIM_SLOT_TRACE_LIMIT) return 0;
+    trace->seen++;
+    return slot_status_scalars(p, n, out);
 }
 
 struct sim_refresh {
@@ -292,6 +326,47 @@ static void fixture_frame(void *opaque, enum channel_kind kind,
     (*count)++;
 }
 
+static int fixture_slot_status(void) {
+    uint8_t indication[SIM_SLOT_IND_MIN_LEN] = {0};
+    indication[0] = 2;
+    indication[2] = 0x4e; indication[3] = 0x02;
+    indication[4] = (uint8_t)sizeof indication;
+    indication[5] = (uint8_t)(sizeof indication >> 8);
+    indication[8] = 2; indication[9] = 1;
+    struct slot_status_scalars status;
+    if (!slot_status_scalars(indication, sizeof indication, &status) ||
+        status.slot_count != 2 || status.slot0_card_state != 1 ||
+        slot_status_scalars(indication, sizeof indication - 1, &status))
+        return 50;
+    indication[8] = 0;
+    if (slot_status_scalars(indication, sizeof indication, &status)) return 51;
+    indication[8] = SIM_SLOT_MAX_SLOTS + 1;
+    if (slot_status_scalars(indication, sizeof indication, &status)) return 52;
+    indication[8] = 2;
+    indication[4]--;
+    if (slot_status_scalars(indication, sizeof indication, &status)) return 53;
+    indication[4]++;
+    indication[0] = 1;
+    if (slot_status_scalars(indication, sizeof indication, &status)) return 54;
+    indication[0] = 2; indication[2] = 0x4d;
+    if (slot_status_scalars(indication, sizeof indication, &status)) return 55;
+    indication[2] = 0x4e;
+    struct slot_status_trace trace = {0};
+    if (!slot_status_take(&trace, indication, sizeof indication, &status) ||
+        !slot_status_take(&trace, indication, sizeof indication, &status) ||
+        slot_status_take(&trace, indication, sizeof indication, &status) ||
+        trace.seen != SIM_SLOT_TRACE_LIMIT) return 56;
+    struct slot_status_trace malformed = {0};
+    indication[8] = 0;
+    if (slot_status_take(&malformed, indication, sizeof indication, &status) ||
+        malformed.seen != 1) return 57;
+    indication[8] = 2;
+    if (!slot_status_take(&malformed, indication, sizeof indication, &status) ||
+        slot_status_take(&malformed, indication, sizeof indication, &status))
+        return 58;
+    return 0;
+}
+
 static int fixture_sim_refresh(void) {
     uint8_t indication[8] = {2, 0, 0x10, 0x02, 8, 0, 0, 0};
     uint8_t reply[12] = {1, 0, 0, 2, 12, 0};
@@ -429,6 +504,8 @@ static int fixture_sim_refresh(void) {
 }
 
 static int fixture(void) {
+    int slot_check = fixture_slot_status();
+    if (slot_check) return slot_check;
     int refresh_check = fixture_sim_refresh();
     if (refresh_check) return refresh_check;
     const uint8_t ipc[] = {2, 0, 0x34, 0x12, 8, 0, 0, 0};
@@ -488,7 +565,7 @@ static int fixture(void) {
     memcpy(stream + used, rfs + 6, 6); used += 6;
     if (parse_available(CHANNEL_RFS, stream, &used, fixture_frame, &frames) ||
         used != 0 || frames != 2) return 13;
-    puts("PASS modem-channel-owner framing and bounded status-query fixtures");
+    puts("PASS modem-channel-owner framing, slot-status and bounded status-query fixtures");
     return 0;
 }
 
@@ -884,13 +961,26 @@ static void sim_refresh_advance(struct sim_refresh *refresh,
     }
 }
 
+static void trace_slot_status(struct slot_status_trace *trace,
+                              const uint8_t *p, size_t size,
+                              int64_t now_ms, int64_t owner_start_ms) {
+    struct slot_status_scalars status;
+    if (!slot_status_take(trace, p, size, &status)) return;
+    printf("sim_slot_ind elapsed_ms=%lld slot_count=%u"
+           " slot0_card_state_raw=%u\n",
+           (long long)(now_ms - owner_start_ms), status.slot_count,
+           status.slot0_card_state);
+}
+
 struct live_frame_context {
     struct channel *channel;
     struct metadata_counts *counts;
     struct snapshot *snapshot;
     struct sim_refresh *refresh;
+    struct slot_status_trace *slot_trace;
     struct rfs_header_trace *trace;
     int64_t now_ms;
+    int64_t owner_start_ms;
 };
 
 static void live_frame(void *opaque, enum channel_kind kind,
@@ -898,6 +988,8 @@ static void live_frame(void *opaque, enum channel_kind kind,
     struct live_frame_context *context = opaque;
     count_frame(context->channel, p, size, context->counts);
     if (kind == CHANNEL_IPC) {
+        trace_slot_status(context->slot_trace, p, (size_t)size,
+                          context->now_ms, context->owner_start_ms);
         expire_sim_query(context->refresh, context->now_ms);
         snapshot_reply(context->snapshot, p, (size_t)size);
         sim_refresh_reply(context->refresh, p, (size_t)size,
@@ -913,7 +1005,9 @@ static void live_frame(void *opaque, enum channel_kind kind,
 static int drain_channel(struct channel *channel, struct metadata_counts *counts,
                          struct snapshot *snapshot,
                          struct sim_refresh *refresh,
-                         struct rfs_header_trace *trace) {
+                         struct slot_status_trace *slot_trace,
+                         struct rfs_header_trace *trace,
+                         int64_t owner_start_ms) {
     if (channel->used == sizeof channel->rx) return -1;
     ssize_t n = read(channel->fd, channel->rx + channel->used,
                      sizeof channel->rx - channel->used);
@@ -931,7 +1025,9 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
     int64_t now = monotonic_ms();
     if (now < 0) return -1;
     struct live_frame_context context = {
-        channel, counts, snapshot, refresh, trace, now
+        .channel = channel, .counts = counts, .snapshot = snapshot,
+        .refresh = refresh, .slot_trace = slot_trace, .trace = trace,
+        .now_ms = now, .owner_start_ms = owner_start_ms
     };
     return parse_available(channel->kind, channel->rx, &channel->used,
                            live_frame, &context);
@@ -981,6 +1077,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     struct metadata_counts counts = {0};
     struct snapshot snapshot = {0};
     struct sim_refresh refresh = {0};
+    struct slot_status_trace slot_trace = {0};
     int64_t start = monotonic_ms();
     struct rfs_header_trace trace = {.enabled = !attached, .start_ms = start};
     counts.window_start_ms = start;
@@ -1046,7 +1143,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             }
             if ((fds[i].revents & POLLIN) &&
                 drain_channel(&channels[i], &counts, &snapshot, &refresh,
-                              &trace)) {
+                              &slot_trace, &trace, start)) {
                 fprintf(stderr, "%s read/framing failure or buffer cap\n",
                         i ? "RFS" : "IPC");
                 rc = 1; break;
