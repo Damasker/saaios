@@ -54,8 +54,7 @@ for name in umts_boot0 umts_ipc0 umts_rfs0; do
         mknod "/dev/$name" c "$1" "$2"
     fi
     set -- $(cat "/sys/class/cpif/$name/dev" | tr : ' ')
-    [ "$(stat -c '%t:%T' "/dev/$name")" =
-      "$(printf '%x:%x' "$1" "$2")" ] ||
+    [ "$(stat -c '%t:%T' "/dev/$name")" = "$(printf '%x:%x' "$1" "$2")" ] ||
         fail "$name character-node identity mismatch"
 done
 
