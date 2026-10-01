@@ -50,6 +50,32 @@ enum { BASELINE_BYTES = 524288, FIRST_CHUNK = 2012,
 enum phase { WAIT_7, WAIT_3, WAIT_6, WAIT_DATA, TERMINAL };
 enum action { BAD_FRAME, NO_REPLY, STATUS_7, GRANT_1, STORE_CHUNK };
 enum cp_state { CP_UNKNOWN, CP_OFFLINE, CP_BOOTING, CP_ONLINE, CP_CRASH };
+enum failure_stage {
+    STAGE_NONE, STAGE_GRANT, STAGE_FINAL_GRANT, STAGE_RFS_FRAME,
+    STAGE_FINAL_FRAME, STAGE_STORE_CHUNK, STAGE_FINALIZE, STAGE_FINAL_ACK,
+    STAGE_DEADLINE
+};
+enum failure_reason {
+    REASON_NONE, REASON_STATE, REASON_GATE, REASON_SEND, REASON_NO_READ,
+    REASON_PARTIAL_READ, REASON_LENGTH, REASON_MALFORMED, REASON_TRAILING,
+    REASON_IO, REASON_READBACK, REASON_TIMEOUT, REASON_RX_OVERFLOW
+};
+enum {
+    MISMATCH_LENGTH = 1u << 0, MISMATCH_COMMAND = 1u << 1,
+    MISMATCH_SEQUENCE = 1u << 2, MISMATCH_PAYLOAD_SIZE = 1u << 3,
+    MISMATCH_STATUS = 1u << 4, MISMATCH_FILE = 1u << 5,
+    MISMATCH_CHUNK_SIZE = 1u << 6
+};
+
+static const char *const failure_stage_name[] = {
+    "none", "grant", "final_grant", "rfs_frame", "final_rfs_frame",
+    "store_chunk", "finalize", "final_ack", "deadline"
+};
+static const char *const failure_reason_name[] = {
+    "none", "state", "gate", "send_ambiguous", "no_read", "partial_read",
+    "length", "malformed", "trailing", "io", "readback", "timeout",
+    "rx_overflow"
+};
 
 struct sha256 {
     uint32_t h[8];
@@ -89,6 +115,9 @@ struct owner {
     int final_ack_attempted;
     int final_ack_sent;
     int pin_consumed;
+    enum failure_stage failure_stage;
+    enum failure_reason failure_reason;
+    unsigned frame_mismatch_mask;
     struct sit_observer sit;
 };
 
@@ -120,6 +149,23 @@ static void zero_bytes(void *pointer, size_t count)
 {
     volatile uint8_t *p = (volatile uint8_t *)pointer;
     while (count--) *p++ = 0;
+}
+
+/* Only fixed stage/reason labels reach the terminal log; never frame data. */
+static void diagnose(struct owner *o, enum failure_stage stage,
+                     enum failure_reason reason)
+{
+    if (o->failure_stage == STAGE_NONE) {
+        o->failure_stage = stage;
+        o->failure_reason = reason;
+    }
+}
+
+static enum failure_stage frame_stage(const struct owner *o)
+{
+    return o->grant_attempted == RFS_GRANTS_MAX &&
+           o->chunks_stored == RFS_GRANTS_MAX - 1 ?
+           STAGE_FINAL_FRAME : STAGE_RFS_FRAME;
 }
 
 static uint32_t rotate_right(uint32_t n, unsigned bits)
@@ -815,6 +861,27 @@ static enum action classify(const struct owner *o, const uint8_t *frame,
     return BAD_FRAME;
 }
 
+/* Compare only against public protocol constants; retain no observed fields. */
+static unsigned data_mismatch_mask(const struct owner *o,
+                                   const uint8_t *frame, size_t len)
+{
+    unsigned mask = 0;
+    if (len != 20u + o->expected_chunk) mask |= MISMATCH_LENGTH;
+    if (!frame || len < 2 || little16(frame) != 2) mask |= MISMATCH_COMMAND;
+    if (!frame || len < 4 || little16(frame + 2) != 1)
+        mask |= MISMATCH_SEQUENCE;
+    if (!frame || len < 8 ||
+        little32(frame + 4) != 12u + o->expected_chunk)
+        mask |= MISMATCH_PAYLOAD_SIZE;
+    if (!frame || len < 12 || little32(frame + 8) != 0)
+        mask |= MISMATCH_STATUS;
+    if (!frame || len < 16 || little32(frame + 12) != 3)
+        mask |= MISMATCH_FILE;
+    if (!frame || len < 20 || little32(frame + 16) != o->expected_chunk)
+        mask |= MISMATCH_CHUNK_SIZE;
+    return mask;
+}
+
 static void put_little32(uint8_t *p, uint32_t value)
 {
     p[0] = (uint8_t)value;
@@ -837,8 +904,17 @@ static uint32_t next_chunk_length(const struct owner *o)
 static int send_next_grant(struct owner *o)
 {
     uint32_t length = next_chunk_length(o);
+    enum failure_stage stage = o->grant_attempted == RFS_GRANTS_MAX - 1 ?
+                               STAGE_FINAL_GRANT : STAGE_GRANT;
     if (!length || o->grant_attempted >= RFS_GRANTS_MAX ||
-        o->chunks_stored != o->grant_attempted || reply_gate(o)) return -1;
+        o->chunks_stored != o->grant_attempted) {
+        diagnose(o, stage, REASON_STATE);
+        return -1;
+    }
+    if (reply_gate(o)) {
+        diagnose(o, stage, REASON_GATE);
+        return -1;
+    }
     uint8_t grant[20] = {2,0,1,0, 12,0,0,0, 3,0,0,0};
     put_little32(grant + 12, o->received_bytes);
     put_little32(grant + 16, length);
@@ -847,7 +923,10 @@ static int send_next_grant(struct owner *o)
     o->expected_chunk = length;
     int rc = send_modem_once(o, grant, sizeof grant);
     zero_bytes(grant, sizeof grant);
-    if (rc) return -1;
+    if (rc) {
+        diagnose(o, stage, REASON_SEND);
+        return -1;
+    }
     o->phase = WAIT_DATA;
     return 0;
 }
@@ -867,7 +946,7 @@ static int reply_gate(const struct owner *o)
     if (stop_requested || now < 0 || now >= o->deadline_ms ||
         now >= o->total_deadline_ms) return -1;
 #ifdef RFS_HOST_TEST
-    if (host_gate_override) return 0;
+    if (host_gate_override) return host_gate_override > 0 ? 0 : -1;
 #endif
     return cp_state() == CP_ONLINE && opened_once(o->ipc) == 0 &&
            endpoint_fault_free(o->ipc) == 0 &&
@@ -908,14 +987,18 @@ struct chunk_io {
 /* A grant is never advanced until this exact chunk is durable and read back. */
 static int apply_chunk(int candidate, int source, uint32_t offset,
                        const uint8_t *bytes, uint32_t length,
-                       const struct chunk_io *io)
+                       const struct chunk_io *io,
+                       enum failure_reason *failure_reason)
 {
     uint8_t check[4096];
+    enum failure_reason reason = REASON_STATE;
     if (!length || length > FIRST_CHUNK ||
-        offset > RFS_TRANSFER_BYTES - length ||
-        write_all_at(candidate, bytes, length, offset) ||
-        io->sync(candidate) ||
-        io->read(candidate, check, length, offset) ||
+        offset > RFS_TRANSFER_BYTES - length) goto failure;
+    reason = REASON_IO;
+    if (write_all_at(candidate, bytes, length, offset) ||
+        io->sync(candidate)) goto failure;
+    reason = REASON_READBACK;
+    if (io->read(candidate, check, length, offset) ||
         !same_bytes(check, bytes, length)) goto failure;
     for (off_t off = (off_t)offset + length; off < BASELINE_BYTES;) {
         size_t amount = (size_t)(BASELINE_BYTES - off);
@@ -929,6 +1012,7 @@ static int apply_chunk(int candidate, int source, uint32_t offset,
     zero_bytes(check, sizeof check);
     return 0;
 failure:
+    if (failure_reason) *failure_reason = reason;
     zero_bytes(check, sizeof check);
     return -1;
 }
@@ -936,13 +1020,26 @@ failure:
 static int store_chunk(struct owner *o, const uint8_t *bytes)
 {
     static const struct chunk_io io = {fsync, read_all_at};
-    if (reply_gate(o) ||
-        o->received_bytes > RFS_TRANSFER_BYTES - o->expected_chunk ||
-        apply_chunk(o->candidate, o->source, o->received_bytes, bytes,
-                    o->expected_chunk, &io)) return -1;
+    enum failure_reason reason = REASON_NONE;
+    if (reply_gate(o)) {
+        diagnose(o, STAGE_STORE_CHUNK, REASON_GATE);
+        return -1;
+    }
+    if (o->received_bytes > RFS_TRANSFER_BYTES - o->expected_chunk) {
+        diagnose(o, STAGE_STORE_CHUNK, REASON_STATE);
+        return -1;
+    }
+    if (apply_chunk(o->candidate, o->source, o->received_bytes, bytes,
+                    o->expected_chunk, &io, &reason)) {
+        diagnose(o, STAGE_STORE_CHUNK, reason);
+        return -1;
+    }
     struct stat current;
-    if (fstat(o->candidate, &current) ||
-        current.st_dev != o->candidate_stat.st_dev ||
+    if (fstat(o->candidate, &current)) {
+        diagnose(o, STAGE_STORE_CHUNK, REASON_IO);
+        return -1;
+    }
+    if (current.st_dev != o->candidate_stat.st_dev ||
         current.st_ino != o->candidate_stat.st_ino ||
         current.st_uid != 0 || current.st_nlink != 1 ||
         (current.st_mode & 07777) != 0600 ||
@@ -950,8 +1047,10 @@ static int store_chunk(struct owner *o, const uint8_t *bytes)
         quarantine_location_stable(o) ||
         named_regular(o->quarantine_dir, CANDIDATE_NAME,
                       o->candidate, &current) ||
-        !stable_sources(o) || original_efs_unmounted() || stop_requested)
+        !stable_sources(o) || original_efs_unmounted() || stop_requested) {
+        diagnose(o, STAGE_STORE_CHUNK, REASON_GATE);
         return -1;
+    }
     o->candidate_stat = current;
     sha_update(&o->received_hash, bytes, o->expected_chunk);
     o->received_bytes += o->expected_chunk;
@@ -1134,18 +1233,42 @@ static void terminal(struct owner *o, const char *reason)
     o->used = 0;
     zero_bytes(o->rx, sizeof o->rx);
     printf("rfs_full_quarantine=%s grants_attempted=%d chunks_stored=%d "
-           "bytes_stored=%u final_ack_attempted=%d final_ack_sent=%d\n",
+           "bytes_stored=%u final_ack_attempted=%d final_ack_sent=%d "
+           "failure_stage=%s failure_reason=%s frame_mismatch_mask=0x%02x\n",
            reason, o->grant_attempted, o->chunks_stored,
-           o->received_bytes, o->final_ack_attempted, o->final_ack_sent);
+           o->received_bytes, o->final_ack_attempted, o->final_ack_sent,
+           failure_stage_name[o->failure_stage],
+           failure_reason_name[o->failure_reason], o->frame_mismatch_mask);
+}
+
+static void diagnose_waiting(struct owner *o)
+{
+    if (o->phase == WAIT_DATA && frame_stage(o) == STAGE_FINAL_FRAME)
+        diagnose(o, STAGE_FINAL_FRAME,
+                 o->used ? REASON_PARTIAL_READ : REASON_NO_READ);
+    else
+        diagnose(o, STAGE_DEADLINE, REASON_TIMEOUT);
 }
 
 static int complete_frame(struct owner *o, const uint8_t *frame,
                           size_t len, size_t trailing, int64_t now)
 {
     if (stop_requested || now < 0 || now >= o->deadline_ms ||
-        now >= o->total_deadline_ms) return -1;
+        now >= o->total_deadline_ms) {
+        diagnose(o, frame_stage(o), REASON_TIMEOUT);
+        return -1;
+    }
     enum action action = classify(o, frame, len);
-    if (action == BAD_FRAME || (trailing && action != NO_REPLY)) return -1;
+    if (action == BAD_FRAME) {
+        if (o->phase == WAIT_DATA)
+            o->frame_mismatch_mask = data_mismatch_mask(o, frame, len);
+        diagnose(o, frame_stage(o), REASON_MALFORMED);
+        return -1;
+    }
+    if (trailing && action != NO_REPLY) {
+        diagnose(o, frame_stage(o), REASON_TRAILING);
+        return -1;
+    }
     if (action == STATUS_7) {
         if (reply_gate(o) ||
             send_modem_once(o, status_7, sizeof status_7)) return -1;
@@ -1174,31 +1297,53 @@ static int complete_frame(struct owner *o, const uint8_t *frame,
         } else {
             if (o->received_bytes != RFS_TRANSFER_BYTES ||
                 o->chunks_stored != RFS_GRANTS_MAX ||
-                o->grant_attempted != RFS_GRANTS_MAX)
+                o->grant_attempted != RFS_GRANTS_MAX) {
+                diagnose(o, STAGE_FINALIZE, REASON_STATE);
                 return -1;
+            }
             int finished;
 #ifdef RFS_HOST_TEST
             if (host_finish_override) finished = 0;
             else
 #endif
             finished = finish_candidate(o);
-            if (finished || reply_gate(o)) return -1;
+            if (finished) {
+                diagnose(o, STAGE_FINALIZE, REASON_IO);
+                return -1;
+            }
+            if (reply_gate(o)) {
+                diagnose(o, STAGE_FINAL_ACK, REASON_GATE);
+                return -1;
+            }
 #ifndef RFS_HOST_TEST
-            if (sidecar_stable(o)) return -1;
+            if (sidecar_stable(o)) {
+                diagnose(o, STAGE_FINAL_ACK, REASON_GATE);
+                return -1;
+            }
 #else
-            if (!host_finish_override && sidecar_stable(o)) return -1;
+            if (!host_finish_override && sidecar_stable(o)) {
+                diagnose(o, STAGE_FINAL_ACK, REASON_GATE);
+                return -1;
+            }
 #endif
             o->final_ack_attempted = 1;
-            if (send_modem_once(o, final_status, sizeof final_status))
+            if (send_modem_once(o, final_status, sizeof final_status)) {
+                diagnose(o, STAGE_FINAL_ACK, REASON_SEND);
                 return -1;
+            }
             o->final_ack_sent = 1;
             terminal(o, "complete_quarantined_ack");
             return 0;
         }
-    } else return -1;
-    int64_t progressed_at = monotonic_ms();
-    if (progressed_at < 0 || progressed_at >= o->total_deadline_ms)
+    } else {
+        diagnose(o, frame_stage(o), REASON_STATE);
         return -1;
+    }
+    int64_t progressed_at = monotonic_ms();
+    if (progressed_at < 0 || progressed_at >= o->total_deadline_ms) {
+        diagnose(o, STAGE_DEADLINE, REASON_TIMEOUT);
+        return -1;
+    }
     o->deadline_ms = progressed_at + STEP_DEADLINE_MS;
     if (o->deadline_ms > o->total_deadline_ms)
         o->deadline_ms = o->total_deadline_ms;
@@ -1208,13 +1353,18 @@ static int complete_frame(struct owner *o, const uint8_t *frame,
 static int feed_rfs(struct owner *o, const uint8_t *bytes,
                     size_t len, int64_t now)
 {
-    if (o->phase == TERMINAL || !bytes || len > sizeof o->rx - o->used)
+    if (o->phase == TERMINAL || !bytes || len > sizeof o->rx - o->used) {
+        diagnose(o, frame_stage(o), REASON_RX_OVERFLOW);
         return -1;
+    }
     memcpy(o->rx + o->used, bytes, len);
     o->used += len;
     while (o->used) {
         int size = valid_frame_length(o->rx, o->used);
-        if (size < 0) return -1;
+        if (size < 0) {
+            diagnose(o, frame_stage(o), REASON_LENGTH);
+            return -1;
+        }
         if (size == 0) break;
         size_t trailing = o->used - (size_t)size;
         if (complete_frame(o, o->rx, (size_t)size, trailing, now)) return -1;
@@ -1223,7 +1373,11 @@ static int feed_rfs(struct owner *o, const uint8_t *bytes,
         memset(o->rx + trailing, 0, (size_t)size);
         o->used = trailing;
     }
-    return o->used == sizeof o->rx ? -1 : 0;
+    if (o->used == sizeof o->rx) {
+        diagnose(o, frame_stage(o), REASON_RX_OVERFLOW);
+        return -1;
+    }
+    return 0;
 }
 
 /* This observer shares the existing exclusive IPC owner. It never opens a
@@ -1548,7 +1702,15 @@ static int run_owner(int ipc, int rfs, int ready)
     for (;;) {
         int64_t now = monotonic_ms();
         state = cp_state();
-        if (state == CP_OFFLINE) break;
+        if (state == CP_OFFLINE) {
+            if (o.phase != TERMINAL) {
+                if (o.phase == WAIT_DATA &&
+                    frame_stage(&o) == STAGE_FINAL_FRAME)
+                    diagnose_waiting(&o);
+                terminal(&o, "cp_offline");
+            }
+            break;
+        }
         if (now < 0) {
             terminal(&o, "clock_refused");
         } else if (state == CP_CRASH || state == CP_UNKNOWN) {
@@ -1557,8 +1719,10 @@ static int run_owner(int ipc, int rfs, int ready)
                    now - started > BOOTING_LIMIT_MS) {
             terminal(&o, "booting_deadline");
         } else if (o.phase != TERMINAL && now >= o.total_deadline_ms) {
+            diagnose_waiting(&o);
             terminal(&o, "total_deadline");
         } else if (o.phase != TERMINAL && now >= o.deadline_ms) {
+            diagnose_waiting(&o);
             terminal(&o, "step_deadline");
         }
         if (stop_requested) {
@@ -1601,10 +1765,15 @@ static int run_owner(int ipc, int rfs, int ready)
                 continue;
             }
             if (got < 0) {
-                if (i == 0) terminal(&o, "rfs_read_refused");
+                if (i == 0) {
+                    diagnose(&o, frame_stage(&o), REASON_IO);
+                    terminal(&o, "rfs_read_refused");
+                }
                 else sit_endpoint_fault(&o);
             } else if (i == 0) {
                 int64_t received_at = monotonic_ms();
+                if (received_at < 0 || received_at >= o.deadline_ms)
+                    diagnose(&o, frame_stage(&o), REASON_TIMEOUT);
                 if (received_at < 0 || received_at >= o.deadline_ms ||
                     feed_rfs(&o, bytes, (size_t)got, received_at))
                     terminal(&o, "rfs_frame_or_io_refused");
@@ -1904,6 +2073,7 @@ static int test_host_storage_faults(void)
     static const struct chunk_io actual = {fsync, read_all_at};
     static const struct chunk_io failed_sync = {host_sync_fail, read_all_at};
     static const struct chunk_io failed_readback = {fsync, host_readback_corrupt};
+    enum failure_reason reason = REASON_NONE;
     uint8_t zero[4096] = {0}, chunk[FIRST_CHUNK], verify[FIRST_CHUNK];
     FILE *source = tmpfile(), *candidate = tmpfile();
     int rc = -1;
@@ -1916,20 +2086,21 @@ static int test_host_storage_faults(void)
             write_all_at(candidate_fd, zero, sizeof zero, off)) goto done;
     }
     if (apply_chunk(candidate_fd, source_fd, 0, chunk, FIRST_CHUNK,
-                    &failed_sync) == 0 ||
+                    &failed_sync, &reason) == 0 || reason != REASON_IO ||
         apply_chunk(candidate_fd, source_fd, 0, chunk, FIRST_CHUNK,
-                    &failed_readback) == 0 ||
+                    &failed_readback, &reason) == 0 ||
+        reason != REASON_READBACK ||
         apply_chunk(candidate_fd, source_fd, 0, chunk, FIRST_CHUNK,
-                    &actual) ||
+                    &actual, NULL) ||
         read_all_at(candidate_fd, verify, FIRST_CHUNK, 0) ||
         !same_bytes(verify, chunk, FIRST_CHUNK) ||
         apply_chunk(candidate_fd, source_fd, RFS_TRANSFER_BYTES - 318,
-                    chunk, 318, &actual) ||
+                    chunk, 318, &actual, NULL) ||
         read_all_at(candidate_fd, verify, 318,
                     RFS_TRANSFER_BYTES - 318) ||
         !same_bytes(verify, chunk, 318) ||
         apply_chunk(candidate_fd, source_fd, RFS_TRANSFER_BYTES - 317,
-                    chunk, 318, &actual) == 0)
+                    chunk, 318, &actual, NULL) == 0)
         goto done;
     rc = 0;
 done:
@@ -1938,6 +2109,91 @@ done:
     zero_bytes(zero, sizeof zero);
     zero_bytes(chunk, sizeof chunk);
     zero_bytes(verify, sizeof verify);
+    return rc;
+}
+
+static int test_host_failure_diagnostics(void)
+{
+    struct owner o = {0};
+    uint8_t frame[20 + 318 + 1] = {0};
+    int64_t now = monotonic_ms();
+    int rc = -1;
+    if (now < 0) return -1;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    o.phase = WAIT_DATA;
+    o.grant_attempted = o.chunks_stored = RFS_GRANTS_MAX - 1;
+    o.received_bytes = (RFS_GRANTS_MAX - 1) * FIRST_CHUNK;
+    host_gate_override = -1;
+    host_write_override = host_short_write;
+    host_write_calls = 0;
+    if (send_next_grant(&o) == 0 ||
+        o.failure_stage != STAGE_FINAL_GRANT ||
+        o.failure_reason != REASON_GATE ||
+        o.grant_attempted != RFS_GRANTS_MAX - 1 || host_write_calls)
+        goto done;
+    o.failure_stage = STAGE_NONE;
+    o.failure_reason = REASON_NONE;
+    host_gate_override = 1;
+    if (send_next_grant(&o) == 0 ||
+        o.failure_stage != STAGE_FINAL_GRANT ||
+        o.failure_reason != REASON_SEND ||
+        o.grant_attempted != RFS_GRANTS_MAX || host_write_calls != 1)
+        goto done;
+
+    o.failure_stage = STAGE_NONE;
+    o.failure_reason = REASON_NONE;
+    o.expected_chunk = 318;
+    put_little32(frame + 4, 12 + 318);
+    put_little32(frame + 12, 3);
+    put_little32(frame + 16, 318);
+    frame[0] = 2;
+    frame[2] = 2;
+    if (feed_rfs(&o, frame, 20 + 318, now) == 0 ||
+        o.failure_stage != STAGE_FINAL_FRAME ||
+        o.failure_reason != REASON_MALFORMED ||
+        o.frame_mismatch_mask != MISMATCH_SEQUENCE) goto done;
+    o.failure_stage = STAGE_NONE;
+    o.failure_reason = REASON_NONE;
+    o.frame_mismatch_mask = 0;
+    o.used = 0;
+    frame[2] = 1;
+    if (feed_rfs(&o, frame, sizeof frame, now) == 0 ||
+        o.failure_stage != STAGE_FINAL_FRAME ||
+        o.failure_reason != REASON_TRAILING ||
+        o.frame_mismatch_mask) goto done;
+    o.failure_stage = STAGE_NONE;
+    o.failure_reason = REASON_NONE;
+    o.used = 0;
+    diagnose_waiting(&o);
+    if (o.failure_stage != STAGE_FINAL_FRAME ||
+        o.failure_reason != REASON_NO_READ) goto done;
+    o.failure_stage = STAGE_NONE;
+    o.failure_reason = REASON_NONE;
+    o.used = 7;
+    diagnose_waiting(&o);
+    if (o.failure_stage != STAGE_FINAL_FRAME ||
+        o.failure_reason != REASON_PARTIAL_READ) goto done;
+    o.failure_stage = STAGE_NONE;
+    o.failure_reason = REASON_NONE;
+    host_gate_override = -1;
+    if (store_chunk(&o, frame + 20) == 0 ||
+        o.failure_stage != STAGE_STORE_CHUNK ||
+        o.failure_reason != REASON_GATE) goto done;
+    o.failure_stage = STAGE_NONE;
+    o.failure_reason = REASON_NONE;
+    o.used = 0;
+    host_gate_override = 1;
+    o.candidate = -1;
+    if (store_chunk(&o, frame + 20) == 0 ||
+        o.failure_stage != STAGE_STORE_CHUNK ||
+        o.failure_reason != REASON_IO) goto done;
+    rc = 0;
+done:
+    host_gate_override = 0;
+    host_write_override = NULL;
+    host_write_calls = 0;
+    zero_bytes(frame, sizeof frame);
+    zero_bytes(&o, sizeof o);
     return rc;
 }
 
@@ -2226,7 +2482,8 @@ static int self_test(void)
 #ifdef RFS_HOST_TEST
     if (test_host_storage_faults() || test_host_finish_candidate(0) ||
         test_host_finish_candidate(1) || test_host_finish_candidate(2) ||
-        test_host_transcript() || test_sit_observer())
+        test_host_transcript() || test_sit_observer() ||
+        test_host_failure_diagnostics())
         return 8;
 #endif
     zero_bytes(data, sizeof data);
