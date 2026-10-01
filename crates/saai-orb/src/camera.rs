@@ -11,8 +11,10 @@ pub const ZOOM_MAX: f32 = 3.2;
 pub const MAX_CENTER_LAT: f64 = 75.0 * PI / 180.0;
 /// Sphere radius at zoom 1, as a fraction of the larger screen side.
 pub const RADIUS_FRACTION: f32 = 0.9;
-/// How much of the sphere shows above the bottom edge at rest, in units.
-pub const REST_EXPOSURE_UNITS: f32 = 22.0;
+/// At rest the sphere is a small dome: this radius, of which only
+/// `REST_EXPOSURE_UNITS` shows above the bottom edge of the viewport.
+pub const REST_RADIUS_UNITS: f32 = 40.0;
+pub const REST_EXPOSURE_UNITS: f32 = 20.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -88,18 +90,31 @@ impl Stage {
         }
     }
 
-    pub fn radius(&self, zoom: f32) -> f32 {
-        RADIUS_FRACTION * self.width.max(self.height) * zoom
+    fn eased_rise(&self) -> f32 {
+        smoothstep(0.0, 1.0, self.rise)
     }
 
-    /// Centre of the projected disc: below the screen at rest, in the middle
-    /// of it when risen.
+    fn rest_radius(&self) -> f32 {
+        REST_RADIUS_UNITS * self.unit
+    }
+
+    /// Screen radius of the sphere. It grows from the resting dome to its
+    /// full size geometrically, so the rise reads as one steady swelling.
+    pub fn radius(&self, zoom: f32) -> f32 {
+        let full = (RADIUS_FRACTION * self.width.max(self.height) * zoom).max(self.rest_radius());
+        let rest = self.rest_radius();
+        rest * (full / rest).powf(self.eased_rise())
+    }
+
+    /// Centre of the projected disc: below the viewport at rest, in the
+    /// middle of it when risen.
     pub fn disc_center(&self, zoom: f32) -> (f32, f32) {
-        let r = self.radius(zoom);
-        let rest_y = self.height + r - REST_EXPOSURE_UNITS * self.unit;
+        let rest_y = self.height + self.rest_radius() - REST_EXPOSURE_UNITS * self.unit;
         let mid_y = self.height * 0.5;
-        let k = smoothstep(0.0, 1.0, self.rise);
-        (self.width * 0.5, rest_y + (mid_y - rest_y) * k)
+        (
+            self.width * 0.5,
+            rest_y + (mid_y - rest_y) * self.eased_rise(),
+        )
     }
 }
 
@@ -265,6 +280,24 @@ mod tests {
             last = y;
         }
         assert!((stage(1.0).disc_center(1.0).1 - 1200.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_dome_is_a_small_point_that_swells_steadily_into_the_whole_sphere() {
+        let rest = stage(0.0);
+        assert_eq!(rest.radius(1.0), REST_RADIUS_UNITS * rest.unit);
+        let (_, cy) = rest.disc_center(1.0);
+        let r = rest.radius(1.0);
+        let depth = rest.height - (cy - r);
+        let chord = 2.0 * (r * r - (r - depth).powi(2)).sqrt();
+        assert!(chord < rest.width * 0.35, "a point, not a horizon: {chord}");
+        let mut last = rest.radius(1.0);
+        for i in 1..=20 {
+            let now = stage(i as f32 / 20.0).radius(1.0);
+            assert!(now >= last);
+            last = now;
+        }
+        assert_eq!(stage(1.0).radius(1.0), RADIUS_FRACTION * 2400.0);
     }
 
     #[test]
