@@ -1,14 +1,16 @@
 # MODEM-07: quarantined protected-NV RFS experiment
 
-Status: **one-grant diagnostic exercised on phone**; full transaction and
-modem service are not deployed.
+Status: **one-grant diagnostic exercised on phone; separate full-transfer
+owner built and host-tested only**. The full transaction and modem service
+are not deployed.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
 The Linux x86_64 host fixture now composes the protocol, transport and
 private-storage models end to end. It proves, on synthetic bytes only, that
 the final success response is sent after durable quarantine completion and
 is withheld on a final-fsync failure. The immutable synthetic baseline is
-checked after both runs. This is not an ARM build or CP transaction. Original
+checked after both runs. That fixture is not a CP transaction or the separate
+ARM owner described below. Original
 EFS may be read only for provenance checks; it must never be an RFS destination.
 
 The device's existing private verifier checks each userdata NV copy against
@@ -91,6 +93,25 @@ comparison. The AP reboot ended the one-grant owner, so its early
 `first_chunk_quarantined_no_ack` log is **not** a post-OFFLINE exit-code PASS
 and is not evidence of a completed 95-chunk RFS transaction or cellular
 service. No candidate was promoted to a boot copy or original EFS.
+
+## Separate full-transfer owner prepared (2026-10-01)
+
+The manual `rfs-full-quarantine` mode has its own ARM64 static owner and
+handoff probe; it does not replace the passive default or the one-grant
+binary. The host self-test exercises the exact 95-grant/189446-byte exchange,
+including the final 318-byte frame; a real temporary candidate plus binary
+SHA-256 sidecar passes the durability/integrity gate. Injected sidecar fsync
+and close failures prevent any final ACK attempt. The host test also passes
+ASan/UBSan, and the owner/probe cross-compile statically for AArch64.
+
+This is **not** an on-device result. The full owner has not been installed or
+run on the Pixel. It currently drains IPC0 but has no same-owner SIT snapshot,
+so registration cannot yet be compared causally with the passive control.
+The copied `cpif.ko` write path was reviewed at binary level, but its
+`vermagic` differs from the previously recorded phone kernel; the currently
+loaded module needs a read-only identity check. Before a live run, independently
+verify installed hashes, on-device self-test, wrapper/probe gates, a cold
+opt-in launch, passive restoration and read-only EFS checks before/after.
 
 ## Why this exists
 
@@ -175,16 +196,16 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
 
 The final CP-visible status was verified in factory code. The isolated
 one-grant adapter has now observed the first real CP data frame and written
-it only to quarantine. Remaining local file/backup/checksum transitions and
-the full 95-chunk sequence still require review before enabling a full
-phone-side transaction. The synthetic
+it only to quarantine. The separate full owner now models the 95-chunk
+sequence on host, but the remaining factory local-file/backup/checksum
+transitions and the phone-side behavior still require review. The synthetic
 [protocol](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md),
 [private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
 and [transport](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-TRANSPORT-HOST.md)
-fixtures remain the model for the unimplemented full exchange. Their
+fixtures remain independent models for the unrun phone exchange. Their
 host-only integration test is not a phone broker.
 
-## Implementation sequence before any phone-side RFS reply
+## Implementation sequence before a full phone-side exchange
 
 1. Keep the present passive owner as the default. Build a separately named,
    manually launched ARM diagnostic variant that uses the same pre-FIN
@@ -218,9 +239,11 @@ host-only integration test is not a phone broker.
    CP-state-changing diagnostic, not a harmless read-only probe. The verified
    boot copy remained byte-identical to original EFS, and the incomplete
    candidate remains quarantined evidence, never a boot source.
-5. Only after the real command-2 sequence, RFS write semantics, failure
-   paths and ARM build are verified may a separately reviewed full exchange
-   attempt all 95 chunks and consider the final durable-quarantine ACK.
+5. The separate full owner now passes host, sanitizer and ARM build gates;
+   this is not permission to run it on the phone. Verify installed binary
+   hashes, the currently loaded driver, same-owner SIT observations, wrapper
+   and rollback before one guarded opt-in attempt of all 95 chunks and the
+   final durable-quarantine ACK.
    A completed RFS transfer alone does not establish SIM READY, network
    registration or a data bearer.
 

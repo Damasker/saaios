@@ -33,7 +33,16 @@ case "$#:$*" in
         LOG=/data/saaios/var/owner-handoff-rfs-one-grant.log
         OWNER_LOG=/data/saaios/var/modem-rfs-one-grant-owner.log
         ;;
-    *) printf 'usage: %s [scan-once|rfs-one-grant]\n' "$0" >&2; exit 64 ;;
+    '1:rfs-full-quarantine')
+        # A separate manual full-transfer diagnostic. It does not replace the
+        # passive or one-grant owner and has no boot-time activation.
+        PROBE=/data/saaios/bin/probe-handover-rfs-full-quarantine
+        OWNER=/data/saaios/bin/modem-rfs-full-quarantine-owner
+        OWNER_MODE=rfs-full-quarantine
+        LOG=/data/saaios/var/owner-handoff-rfs-full-quarantine.log
+        OWNER_LOG=/data/saaios/var/modem-rfs-full-quarantine-owner.log
+        ;;
+    *) printf 'usage: %s [scan-once|rfs-one-grant|rfs-full-quarantine]\n' "$0" >&2; exit 64 ;;
 esac
 
 VERIFIER=/data/saaios/bin/saaios-verify-nv-copies.sh
@@ -45,7 +54,8 @@ RFS_PIN=/run/saaios-rfs-one-grant/expected.sha256
 RFS_QUARANTINE=/data/saaios/var/rfs-quarantine
 
 fail() { printf 'ABORT %s\n' "$*" >&2; exit 1; }
-if [ "$OWNER_MODE" = rfs-one-grant ]; then
+if [ "$OWNER_MODE" = rfs-one-grant ] ||
+   [ "$OWNER_MODE" = rfs-full-quarantine ]; then
     efs_dev=$(cat /sys/block/sda/sda5/dev 2>/dev/null) ||
         fail 'original EFS device identity unavailable'
     efs_mounts=$(awk -v dev="$efs_dev" '$3 == dev { n++ } END { print n+0 }' \
@@ -78,8 +88,10 @@ mkdir -p /data/saaios/var "$PERSIST" /dev/block
 : > "$LOG"
 : > "$OWNER_LOG"
 chmod 600 "$LOG" "$OWNER_LOG"
-if [ "$OWNER_MODE" = rfs-one-grant ]; then
-    printf 'BEGIN one-grant RFS handoff; original EFS read-only; quarantine-only writes\n' >> "$LOG"
+if [ "$OWNER_MODE" = rfs-one-grant ] ||
+   [ "$OWNER_MODE" = rfs-full-quarantine ]; then
+    printf 'BEGIN %s RFS handoff; original EFS read-only; quarantine-only writes\n' \
+        "$OWNER_MODE" >> "$LOG"
 else
     printf 'BEGIN owner handoff; scan_mode=%s; no APN/PIN/CardPower/NV/EFS writes\n' \
         "$OWNER_MODE" >> "$LOG"
@@ -109,7 +121,8 @@ for name in umts_boot0 umts_ipc0 umts_rfs0; do
         fail "$name character-node identity mismatch"
 done
 
-if [ "$OWNER_MODE" = rfs-one-grant ]; then
+if [ "$OWNER_MODE" = rfs-one-grant ] ||
+   [ "$OWNER_MODE" = rfs-full-quarantine ]; then
     [ -x "$ORIGINAL_VERIFIER" ] || fail 'read-only original-EFS verifier missing'
     [ ! -L "$RFS_QUARANTINE" ] || fail 'quarantine parent is linked'
     if [ ! -e "$RFS_QUARANTINE" ]; then

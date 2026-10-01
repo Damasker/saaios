@@ -29,10 +29,22 @@ jobs:
             -o /tmp/modem-rfs-one-grant-owner-fixture
           /tmp/modem-rfs-one-grant-owner-fixture self-test
           test "$(/tmp/modem-rfs-one-grant-owner-fixture --mode)" = rfs-one-grant
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -DRFS_HOST_TEST \
+            os/targets/panther/diagnostics/modem-rfs-full-quarantine-owner.c \
+            -o /tmp/modem-rfs-full-quarantine-owner-fixture
+          /tmp/modem-rfs-full-quarantine-owner-fixture self-test
+          test "$(/tmp/modem-rfs-full-quarantine-owner-fixture --mode)" = rfs-full-quarantine
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -DRFS_HOST_TEST \
+            os/targets/panther/diagnostics/modem-rfs-full-quarantine-owner.c \
+            -o /tmp/modem-rfs-full-quarantine-owner-san
+          /tmp/modem-rfs-full-quarantine-owner-san self-test
           sh -n os/targets/panther/diagnostics/owner-handoff-bringup.sh
           sh -n os/targets/panther/diagnostics/build-owner-scan-once.sh
           sh -n os/targets/panther/diagnostics/build-rfs-one-grant-owner.sh
           sh -n os/targets/panther/diagnostics/build-probe-rfs-one-grant.sh
+          sh -n os/targets/panther/diagnostics/build-rfs-full-quarantine-owner.sh
+          sh -n os/targets/panther/diagnostics/build-probe-rfs-full-quarantine.sh
           sh -n os/targets/panther/diagnostics/verify-original-efs-readonly.sh
           cc -O2 -Wall -Wextra -Werror \
             os/targets/panther/diagnostics/ready-network-once.c \
@@ -220,7 +232,17 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential curl ca-certificates xz-utils git patch dpkg-dev bison \
             meson ninja-build autoconf automake libtool gperf pkg-config \
-            libseat-dev libudev-dev libinput-dev libxkbcommon-dev
+            libseat-dev libudev-dev libinput-dev libxkbcommon-dev \
+            gcc-aarch64-linux-gnu
+
+      - name: cross-compile manual full-RFS quarantine diagnostic
+        run: |
+          sh os/targets/panther/diagnostics/build-rfs-full-quarantine-owner.sh /tmp
+          sh os/targets/panther/diagnostics/build-probe-rfs-full-quarantine.sh /tmp
+          file /tmp/modem-rfs-full-quarantine-owner | grep -q 'ARM aarch64'
+          file /tmp/modem-rfs-full-quarantine-owner | grep -q 'statically linked'
+          file /tmp/probe-handover-rfs-full-quarantine | grep -q 'ARM aarch64'
+          file /tmp/probe-handover-rfs-full-quarantine | grep -q 'statically linked'
 
       - name: install rust
         run: |

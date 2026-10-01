@@ -1,0 +1,1782 @@
+/*
+ * Separate, opt-in S5300 RFS quarantine diagnostic. The passive owner and
+ * one-grant owner are unchanged. The original EFS is never opened for writing.
+ * CP bytes may only replace a bounded prefix of a private candidate copy.
+ * A final success response is gated on durable readback and a binary SHA-256
+ * sidecar; neither response nor sidecar authorizes promotion to live NV.
+ * Never logs NV bytes, digests, or identifiers.
+ */
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/file.h>
+#include <sys/ioctl.h>
+#include <sys/prctl.h>
+#include <sys/random.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <sys/vfs.h>
+#include <linux/magic.h>
+#include <time.h>
+#include <unistd.h>
+
+enum { BASELINE_BYTES = 524288, FIRST_CHUNK = 2012,
+       RFS_TRANSFER_BYTES = 189446, RFS_GRANTS_MAX = 95,
+       RFS_FRAME_MAX = 20 + FIRST_CHUNK, RX_CAP = 4096,
+       POLL_MS = 250, EMPTY_BACKOFF_MS = 100,
+       FIRST_DEADLINE_MS = 60000, STEP_DEADLINE_MS = 30000,
+       TOTAL_DEADLINE_MS = 300000, BOOTING_LIMIT_MS = 60000 };
+#define IOCTL_GET_OPENED_STATUS _IOR('o', 0x59, int)
+#define SOURCE_NAME "nv_protected.bin"
+#define PIN_NAME "expected.sha256"
+#define USED_PIN_NAME "consumed.sha256"
+#define MARKER_NAME "NO_PROMOTION"
+#define CANDIDATE_NAME "candidate.bin"
+#define SIDECAR_NAME "candidate.sha256"
+
+enum phase { WAIT_7, WAIT_3, WAIT_6, WAIT_DATA, TERMINAL };
+enum action { BAD_FRAME, NO_REPLY, STATUS_7, GRANT_1, STORE_CHUNK };
+enum cp_state { CP_UNKNOWN, CP_OFFLINE, CP_BOOTING, CP_ONLINE, CP_CRASH };
+
+struct sha256 {
+    uint32_t h[8];
+    uint64_t bits;
+    uint8_t block[64];
+    size_t used;
+};
+
+struct owner {
+    int ipc, rfs, ready, lock;
+    int source, pin_fd, source_dir, pin_dir;
+    int quarantine_parent, quarantine_dir, candidate, marker_fd, sidecar_fd;
+    struct stat source_stat, pin_stat, candidate_stat, marker_stat, sidecar_stat;
+    struct stat source_dir_stat, pin_dir_stat;
+    struct stat quarantine_parent_stat, quarantine_dir_stat;
+    char quarantine_leaf[48];
+    uint8_t pin_digest[32];
+    uint8_t rx[RX_CAP];
+    size_t used;
+    enum phase phase;
+    int64_t deadline_ms;
+    int64_t total_deadline_ms;
+    int grant_attempted;
+    int chunks_stored;
+    uint32_t received_bytes, expected_chunk;
+    struct sha256 received_hash;
+    uint8_t candidate_digest[32];
+    int final_ack_attempted;
+    int final_ack_sent;
+    int pin_consumed;
+};
+
+static volatile sig_atomic_t stop_requested;
+#ifdef RFS_HOST_TEST
+static ssize_t (*host_write_override)(int, const void *, size_t);
+static unsigned host_write_calls;
+static int host_gate_override;
+static int host_store_override;
+static int host_finish_override;
+static int host_sidecar_close_error;
+static int host_sidecar_sync_error;
+#endif
+static const uint8_t request_7[12] =
+    {7,0,0,0, 4,0,0,0, 3,0,0,0};
+static const uint8_t request_3[20] =
+    {3,0,0,0, 12,0,0,0, 0,0,0,0, 3,0,0,0, 0,0,0,0};
+static const uint8_t request_6[24] =
+    {6,0,1,0, 16,0,0,0, 3,0,0,0, 0,0,0,0,
+     0x06,0xe4,0x02,0, 2,0,0,0};
+static const uint8_t status_7[16] =
+    {3,0,0,0, 8,0,0,0, 0,0,0,0, 3,0,0,0};
+static const uint8_t final_status[16] =
+    {3,0,1,0, 8,0,0,0, 0,0,0,0, 3,0,0,0};
+
+static void zero_bytes(void *pointer, size_t count)
+{
+    volatile uint8_t *p = (volatile uint8_t *)pointer;
+    while (count--) *p++ = 0;
+}
+
+static uint32_t rotate_right(uint32_t n, unsigned bits)
+{
+    return (n >> bits) | (n << (32u - bits));
+}
+
+static uint32_t big32(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | p[3];
+}
+
+static uint16_t little16(const uint8_t *p)
+{
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static uint32_t little32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int same_bytes(const uint8_t *a, const uint8_t *b, size_t n)
+{
+    uint8_t difference = 0;
+    for (size_t i = 0; i < n; ++i) difference |= (uint8_t)(a[i] ^ b[i]);
+    return difference == 0;
+}
+
+/* SHA-256 is local so the ARM diagnostic needs no Android crypto service. */
+static void sha_transform(struct sha256 *ctx, const uint8_t block[64])
+{
+    static const uint32_t k[64] = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,
+        0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,
+        0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,
+        0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,
+        0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,
+        0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,
+        0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,
+        0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,
+        0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    };
+    uint32_t w[64];
+    uint32_t a, b, c, d, e, f, g, h;
+    for (unsigned i = 0; i < 16; ++i) w[i] = big32(block + 4u * i);
+    for (unsigned i = 16; i < 64; ++i) {
+        uint32_t s0 = rotate_right(w[i-15], 7) ^
+                      rotate_right(w[i-15], 18) ^ (w[i-15] >> 3);
+        uint32_t s1 = rotate_right(w[i-2], 17) ^
+                      rotate_right(w[i-2], 19) ^ (w[i-2] >> 10);
+        w[i] = w[i-16] + s0 + w[i-7] + s1;
+    }
+    a=ctx->h[0]; b=ctx->h[1]; c=ctx->h[2]; d=ctx->h[3];
+    e=ctx->h[4]; f=ctx->h[5]; g=ctx->h[6]; h=ctx->h[7];
+    for (unsigned i = 0; i < 64; ++i) {
+        uint32_t s1 = rotate_right(e,6) ^ rotate_right(e,11) ^ rotate_right(e,25);
+        uint32_t ch = (e & f) ^ (~e & g);
+        uint32_t t1 = h + s1 + ch + k[i] + w[i];
+        uint32_t s0 = rotate_right(a,2) ^ rotate_right(a,13) ^ rotate_right(a,22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t t2 = s0 + maj;
+        h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    }
+    ctx->h[0]+=a; ctx->h[1]+=b; ctx->h[2]+=c; ctx->h[3]+=d;
+    ctx->h[4]+=e; ctx->h[5]+=f; ctx->h[6]+=g; ctx->h[7]+=h;
+    zero_bytes(w, sizeof w);
+}
+
+static void sha_init(struct sha256 *ctx)
+{
+    static const uint32_t initial[8] = {
+        0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+        0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19
+    };
+    memset(ctx, 0, sizeof *ctx);
+    memcpy(ctx->h, initial, sizeof initial);
+}
+
+static void sha_update(struct sha256 *ctx, const uint8_t *data, size_t len)
+{
+    ctx->bits += (uint64_t)len * 8u;
+    while (len) {
+        size_t space = 64u - ctx->used;
+        size_t take = len < space ? len : space;
+        memcpy(ctx->block + ctx->used, data, take);
+        ctx->used += take;
+        data += take;
+        len -= take;
+        if (ctx->used == 64u) {
+            sha_transform(ctx, ctx->block);
+            ctx->used = 0;
+        }
+    }
+}
+
+static void sha_final(struct sha256 *ctx, uint8_t out[32])
+{
+    uint64_t bits = ctx->bits;
+    ctx->block[ctx->used++] = 0x80;
+    if (ctx->used > 56u) {
+        memset(ctx->block + ctx->used, 0, 64u - ctx->used);
+        sha_transform(ctx, ctx->block);
+        ctx->used = 0;
+    }
+    memset(ctx->block + ctx->used, 0, 56u - ctx->used);
+    for (unsigned i = 0; i < 8; ++i)
+        ctx->block[56u+i] = (uint8_t)(bits >> (56u - 8u*i));
+    sha_transform(ctx, ctx->block);
+    for (unsigned i = 0; i < 8; ++i) {
+        out[4u*i] = (uint8_t)(ctx->h[i] >> 24);
+        out[4u*i+1] = (uint8_t)(ctx->h[i] >> 16);
+        out[4u*i+2] = (uint8_t)(ctx->h[i] >> 8);
+        out[4u*i+3] = (uint8_t)ctx->h[i];
+    }
+    zero_bytes(ctx, sizeof *ctx);
+}
+
+static int read_all_at(int fd, void *out, size_t len, off_t offset)
+{
+    size_t done = 0;
+    while (done < len) {
+        ssize_t got = pread(fd, (uint8_t *)out + done, len - done,
+                            offset + (off_t)done);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) return -1;
+        done += (size_t)got;
+    }
+    return 0;
+}
+
+static int write_all_at(int fd, const void *bytes, size_t len, off_t offset)
+{
+    size_t done = 0;
+    while (done < len) {
+        ssize_t count = pwrite(fd, (const uint8_t *)bytes + done, len - done,
+                               offset + (off_t)done);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return -1;
+        done += (size_t)count;
+    }
+    return 0;
+}
+
+static int same_file(const struct stat *a, const struct stat *b)
+{
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
+           a->st_mode == b->st_mode && a->st_uid == b->st_uid &&
+           a->st_nlink == b->st_nlink && a->st_size == b->st_size &&
+           a->st_mtim.tv_sec == b->st_mtim.tv_sec &&
+           a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+           a->st_ctim.tv_sec == b->st_ctim.tv_sec &&
+           a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+}
+
+static int same_directory_identity(const struct stat *a,
+                                   const struct stat *b)
+{
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
+           a->st_mode == b->st_mode && a->st_uid == b->st_uid &&
+           a->st_gid == b->st_gid && a->st_nlink == b->st_nlink &&
+           S_ISDIR(a->st_mode);
+}
+
+static int host_fixture_mode(void)
+{
+#ifdef RFS_HOST_TEST
+    return host_gate_override;
+#else
+    return 0;
+#endif
+}
+
+static int regular_exact(int fd, off_t size, mode_t mode, struct stat *out)
+{
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY ||
+        fstat(fd, out) || !S_ISREG(out->st_mode) ||
+        out->st_uid != 0 || out->st_nlink != 1 ||
+        (out->st_mode & 07777) != mode || out->st_size != size)
+        return -1;
+    return 0;
+}
+
+static int directory_exact(int fd, mode_t mode)
+{
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISDIR(st.st_mode) || st.st_uid != 0 ||
+        (st.st_mode & 07777) != mode || st.st_nlink < 2) return -1;
+    return 0;
+}
+
+/* O_NOFOLLOW on every component, including trusted fixed-path ancestors. */
+static int walk_directory(const char *const *parts, size_t count)
+{
+    int fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return -1;
+    for (size_t i = 0; i < count; ++i) {
+        int next = openat(fd, parts[i],
+                          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        close(fd);
+        if (next < 0) return -1;
+        fd = next;
+    }
+    return fd;
+}
+
+static int named_regular(int dirfd, const char *name, int fd,
+                         const struct stat *expected)
+{
+    struct stat named, held;
+    return fstat(fd, &held) == 0 && same_file(&held, expected) &&
+           fstatat(dirfd, name, &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+           same_file(&named, expected) && S_ISREG(named.st_mode) ? 0 : -1;
+}
+
+static int named_directory(const char *path, int fd,
+                           const struct stat *expected)
+{
+    struct stat held, named;
+    return fstat(fd, &held) == 0 && same_file(&held, expected) &&
+           lstat(path, &named) == 0 && same_file(&named, expected) &&
+           S_ISDIR(named.st_mode) ? 0 : -1;
+}
+
+static int decode_lower_hex(const uint8_t chars[64], uint8_t digest[32])
+{
+    for (size_t i = 0; i < 32; ++i) {
+        unsigned high, low;
+        uint8_t a = chars[2*i], b = chars[2*i+1];
+        if (a >= '0' && a <= '9') high = a - '0';
+        else if (a >= 'a' && a <= 'f') high = a - 'a' + 10u;
+        else return -1;
+        if (b >= '0' && b <= '9') low = b - '0';
+        else if (b >= 'a' && b <= 'f') low = b - 'a' + 10u;
+        else return -1;
+        digest[i] = (uint8_t)((high << 4) | low);
+    }
+    return 0;
+}
+
+static int original_efs_unmounted(void)
+{
+    FILE *f = fopen("/sys/block/sda/sda5/uevent", "r");
+    char line[4096];
+    unsigned partname = 0, devname = 0;
+    unsigned major_seen = 0, minor_seen = 0;
+    unsigned major = 0, minor = 0;
+    if (!f) return -1;
+    while (fgets(line, sizeof line, f)) {
+        if (!strchr(line, '\n') && !feof(f)) { fclose(f); return -1; }
+        line[strcspn(line, "\r\n")] = 0;
+        if (!strcmp(line, "PARTNAME=efs")) ++partname;
+        else if (!strcmp(line, "DEVNAME=sda5")) ++devname;
+        else if (!strncmp(line, "MAJOR=", 6)) {
+            char extra;
+            if (sscanf(line + 6, "%u%c", &major, &extra) != 1) {
+                fclose(f); return -1;
+            }
+            ++major_seen;
+        } else if (!strncmp(line, "MINOR=", 6)) {
+            char extra;
+            if (sscanf(line + 6, "%u%c", &minor, &extra) != 1) {
+                fclose(f); return -1;
+            }
+            ++minor_seen;
+        } else if (!strncmp(line, "PARTNAME=", 9) ||
+                   !strncmp(line, "DEVNAME=", 8)) {
+            fclose(f); return -1;
+        }
+    }
+    int io_error = ferror(f);
+    int close_error = fclose(f);
+    if (io_error || close_error != 0 || partname != 1 || devname != 1 ||
+        major_seen != 1 || minor_seen != 1) return -1;
+    f = fopen("/sys/block/sda/sda5/dev", "r");
+    if (!f) return -1;
+    unsigned actual_major = 0, actual_minor = 0;
+    int got = fscanf(f, "%u:%u", &actual_major, &actual_minor);
+    if (fclose(f) != 0 || got != 2 || actual_major != major ||
+        actual_minor != minor) return -1;
+    f = fopen("/proc/self/mountinfo", "r");
+    if (!f) return -1;
+    while (fgets(line, sizeof line, f)) {
+        unsigned mounted_major = 0, mounted_minor = 0;
+        if (!strchr(line, '\n') && !feof(f)) { fclose(f); return -1; }
+        if (sscanf(line, "%*u %*u %u:%u", &mounted_major,
+                   &mounted_minor) != 2) { fclose(f); return -1; }
+        if (mounted_major == major && mounted_minor == minor) {
+            fclose(f); return -1;
+        }
+    }
+    io_error = ferror(f);
+    close_error = fclose(f);
+    int ok = !io_error && close_error == 0;
+    return ok ? 0 : -1;
+}
+
+/* A dedicated /run tmpfs makes this pin boot-local, not persisted userdata. */
+static int run_tmpfs(int pin_dir)
+{
+    int run_fd = open("/run", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    struct stat held, named, pin_stat;
+    struct statfs fs;
+    char line[4096], mountpoint[256], fstype[64];
+    unsigned matches = 0;
+    if (run_fd < 0) return -1;
+    int valid = fstat(run_fd, &held) == 0 &&
+                lstat("/run", &named) == 0 &&
+                S_ISDIR(held.st_mode) && held.st_uid == 0 &&
+                (held.st_mode & 07777) == 0755 &&
+                held.st_dev == named.st_dev && held.st_ino == named.st_ino &&
+                held.st_mode == named.st_mode &&
+                fstatfs(run_fd, &fs) == 0 &&
+                (unsigned long)fs.f_type == TMPFS_MAGIC &&
+                fstat(pin_dir, &pin_stat) == 0 &&
+                pin_stat.st_dev == held.st_dev;
+    close(run_fd);
+    if (!valid) return -1;
+    FILE *f = fopen("/proc/self/mountinfo", "r");
+    if (!f) return -1;
+    while (fgets(line, sizeof line, f)) {
+        if (!strchr(line, '\n') && !feof(f)) {
+            fclose(f); return -1;
+        }
+        char *split = strstr(line, " - ");
+        if (!split) { fclose(f); return -1; }
+        *split = 0;
+        if (sscanf(line, "%*s %*s %*s %*s %255s", mountpoint) != 1 ||
+            sscanf(split + 3, "%63s", fstype) != 1) {
+            fclose(f); return -1;
+        }
+        if (!strcmp(mountpoint, "/run")) {
+            ++matches;
+            if (strcmp(fstype, "tmpfs")) { fclose(f); return -1; }
+        }
+    }
+    int io_error = ferror(f);
+    int close_error = fclose(f);
+    return !io_error && close_error == 0 && matches == 1 ? 0 : -1;
+}
+
+static int load_source_and_pin(struct owner *o)
+{
+    static const char *const source_path[] =
+        {"data", "saaios", "var", "efs-copy"};
+    static const char *const pin_path[] =
+        {"run", "saaios-rfs-one-grant"};
+    uint8_t chars[64];
+    o->source_dir = walk_directory(source_path, 4);
+    o->pin_dir = walk_directory(pin_path, 2);
+    if (o->source_dir < 0 || o->pin_dir < 0) return -1;
+    if (fstat(o->source_dir, &o->source_dir_stat) ||
+        !S_ISDIR(o->source_dir_stat.st_mode) ||
+        o->source_dir_stat.st_uid != 0 ||
+        ((o->source_dir_stat.st_mode & 07777) != 0700 &&
+         (o->source_dir_stat.st_mode & 07777) != 0755) ||
+        fstat(o->pin_dir, &o->pin_dir_stat) ||
+        directory_exact(o->pin_dir, 0700) || run_tmpfs(o->pin_dir) ||
+        named_directory("/data/saaios/var/efs-copy", o->source_dir,
+                        &o->source_dir_stat) ||
+        named_directory("/run/saaios-rfs-one-grant", o->pin_dir,
+                        &o->pin_dir_stat))
+        return -1;
+    struct stat used;
+    if (fstatat(o->pin_dir, USED_PIN_NAME, &used,
+                AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT) return -1;
+    o->source = openat(o->source_dir, SOURCE_NAME,
+                       O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    o->pin_fd = openat(o->pin_dir, PIN_NAME,
+                       O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (o->source < 0 || o->pin_fd < 0 ||
+        regular_exact(o->source, BASELINE_BYTES, 0600, &o->source_stat) ||
+        regular_exact(o->pin_fd, 64, 0600, &o->pin_stat) ||
+        named_regular(o->source_dir, SOURCE_NAME, o->source,
+                      &o->source_stat) ||
+        named_regular(o->pin_dir, PIN_NAME, o->pin_fd, &o->pin_stat) ||
+        read_all_at(o->pin_fd, chars, sizeof chars, 0) ||
+        decode_lower_hex(chars, o->pin_digest)) {
+        zero_bytes(chars, sizeof chars);
+        return -1;
+    }
+    zero_bytes(chars, sizeof chars);
+    return named_regular(o->pin_dir, PIN_NAME, o->pin_fd,
+                         &o->pin_stat);
+}
+
+static int stable_sources(const struct owner *o)
+{
+    if (named_directory("/data/saaios/var/efs-copy", o->source_dir,
+                        &o->source_dir_stat) ||
+        named_directory("/run/saaios-rfs-one-grant", o->pin_dir,
+                        &o->pin_dir_stat) ||
+        named_regular(o->source_dir, SOURCE_NAME, o->source,
+                      &o->source_stat) ||
+        directory_exact(o->pin_dir, 0700) || run_tmpfs(o->pin_dir))
+        return 0;
+    if (!o->pin_consumed)
+        return named_regular(o->pin_dir, PIN_NAME, o->pin_fd,
+                             &o->pin_stat) == 0;
+    struct stat unexpected;
+    if (named_regular(o->pin_dir, USED_PIN_NAME, o->pin_fd,
+                      &o->pin_stat) ||
+        fstatat(o->pin_dir, PIN_NAME, &unexpected,
+                AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT)
+        return 0;
+    return 1;
+}
+
+/* Once linked under the no-overwrite consumed name, no retry may use it. */
+static int consume_pin(struct owner *o)
+{
+    struct stat used;
+    if (!stable_sources(o) || o->pin_consumed ||
+        fstatat(o->pin_dir, USED_PIN_NAME, &used,
+                AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT ||
+        linkat(o->pin_dir, PIN_NAME, o->pin_dir, USED_PIN_NAME, 0) ||
+        unlinkat(o->pin_dir, PIN_NAME, 0) ||
+        regular_exact(o->pin_fd, 64, 0600, &o->pin_stat) ||
+        named_regular(o->pin_dir, USED_PIN_NAME, o->pin_fd,
+                      &o->pin_stat) || fsync(o->pin_dir) ||
+        fstat(o->pin_dir, &o->pin_dir_stat)) return -1;
+    o->pin_consumed = 1;
+    return stable_sources(o) ? 0 : -1;
+}
+
+static int fresh_leaf(char leaf[48])
+{
+    static const char hex[] = "0123456789abcdef";
+    uint8_t random_bytes[16];
+    size_t done = 0;
+    memset(leaf, 0, 48);
+    memcpy(leaf, "full-rfs-", 9);
+    while (done < sizeof random_bytes) {
+        ssize_t got = getrandom(random_bytes + done,
+                                sizeof random_bytes - done, 0);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) return -1;
+        done += (size_t)got;
+    }
+    for (size_t i = 0; i < sizeof random_bytes; ++i) {
+        leaf[9 + 2*i] = hex[random_bytes[i] >> 4];
+        leaf[10 + 2*i] = hex[random_bytes[i] & 15];
+    }
+    leaf[41] = 0;
+    zero_bytes(random_bytes, sizeof random_bytes);
+    return 0;
+}
+
+static int quarantine_location_stable(const struct owner *o)
+{
+    static const uint8_t marker[] = "QUARANTINE_NO_PROMOTION\n";
+    struct stat held_parent, named_parent, held_dir, named_dir;
+    uint8_t content[sizeof marker - 1];
+    int valid = o->candidate >= 0 && o->marker_fd >= 0 &&
+           o->quarantine_dir >= 0 &&
+           directory_exact(o->quarantine_parent, 0700) == 0 &&
+           fstat(o->quarantine_parent, &held_parent) == 0 &&
+           same_file(&held_parent, &o->quarantine_parent_stat) &&
+           lstat("/data/saaios/var/rfs-quarantine", &named_parent) == 0 &&
+           same_file(&named_parent, &o->quarantine_parent_stat) &&
+           directory_exact(o->quarantine_dir, 0700) == 0 &&
+           fstat(o->quarantine_dir, &held_dir) == 0 &&
+           same_file(&held_dir, &o->quarantine_dir_stat) &&
+           fstatat(o->quarantine_parent, o->quarantine_leaf, &named_dir,
+                   AT_SYMLINK_NOFOLLOW) == 0 &&
+           same_file(&named_dir, &o->quarantine_dir_stat) &&
+           named_regular(o->quarantine_dir, MARKER_NAME,
+                         o->marker_fd, &o->marker_stat) == 0 &&
+           read_all_at(o->marker_fd, content, sizeof content, 0) == 0 &&
+           same_bytes(content, marker, sizeof content) &&
+           named_regular(o->quarantine_dir, MARKER_NAME,
+                         o->marker_fd, &o->marker_stat) == 0;
+    zero_bytes(content, sizeof content);
+    return valid ? 0 : -1;
+}
+
+static int candidate_stable(const struct owner *o)
+{
+    struct stat st;
+    return quarantine_location_stable(o) == 0 &&
+           fstat(o->candidate, &st) == 0 &&
+           same_file(&st, &o->candidate_stat) &&
+           named_regular(o->quarantine_dir, CANDIDATE_NAME,
+                         o->candidate, &o->candidate_stat) == 0 ? 0 : -1;
+}
+
+static int prepare_quarantine(struct owner *o)
+{
+    static const char *const quarantine_path[] =
+        {"data", "saaios", "var", "rfs-quarantine"};
+    static const uint8_t marker[] = "QUARANTINE_NO_PROMOTION\n";
+    uint8_t buffer[4096], digest[32];
+    struct sha256 source_hash, candidate_hash;
+    char leaf[48];
+    o->quarantine_parent = walk_directory(quarantine_path, 4);
+    if (o->quarantine_parent < 0 ||
+        directory_exact(o->quarantine_parent, 0700) ||
+        fstat(o->quarantine_parent, &o->quarantine_parent_stat)) return -1;
+    for (unsigned attempt = 0; attempt < 16; ++attempt) {
+        if (fresh_leaf(leaf)) return -1;
+        if (mkdirat(o->quarantine_parent, leaf, 0700) == 0) break;
+        if (errno != EEXIST || attempt == 15) return -1;
+    }
+    o->quarantine_dir = openat(o->quarantine_parent, leaf,
+                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (o->quarantine_dir < 0 ||
+        directory_exact(o->quarantine_dir, 0700) ||
+        fstat(o->quarantine_dir, &o->quarantine_dir_stat)) return -1;
+    memcpy(o->quarantine_leaf, leaf, sizeof leaf);
+    o->marker_fd = openat(o->quarantine_dir, MARKER_NAME,
+                          O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                          0600);
+    if (o->marker_fd < 0 || fstat(o->marker_fd, &o->marker_stat) ||
+        !S_ISREG(o->marker_stat.st_mode) || o->marker_stat.st_uid != 0 ||
+        o->marker_stat.st_nlink != 1 ||
+        (o->marker_stat.st_mode & 07777) != 0600 ||
+        write_all_at(o->marker_fd, marker, sizeof marker - 1, 0) ||
+        fsync(o->marker_fd) ||
+        fstat(o->marker_fd, &o->marker_stat) ||
+        o->marker_stat.st_size != (off_t)(sizeof marker - 1)) goto failure;
+    o->candidate = openat(o->quarantine_dir, CANDIDATE_NAME,
+                          O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                          0600);
+    if (o->candidate < 0) return -1;
+    sha_init(&source_hash);
+    for (off_t off = 0; off < BASELINE_BYTES; off += sizeof buffer) {
+        if (read_all_at(o->source, buffer, sizeof buffer, off) ||
+            write_all_at(o->candidate, buffer, sizeof buffer, off))
+            goto failure;
+        sha_update(&source_hash, buffer, sizeof buffer);
+    }
+    sha_final(&source_hash, digest);
+    if (!same_bytes(digest, o->pin_digest, sizeof digest) ||
+        !stable_sources(o) || fsync(o->candidate)) goto failure;
+    sha_init(&candidate_hash);
+    for (off_t off = 0; off < BASELINE_BYTES; off += sizeof buffer) {
+        if (read_all_at(o->candidate, buffer, sizeof buffer, off)) goto failure;
+        sha_update(&candidate_hash, buffer, sizeof buffer);
+    }
+    sha_final(&candidate_hash, digest);
+    if (!same_bytes(digest, o->pin_digest, sizeof digest) ||
+        fstat(o->candidate, &o->candidate_stat) ||
+        !S_ISREG(o->candidate_stat.st_mode) ||
+        o->candidate_stat.st_uid != 0 || o->candidate_stat.st_nlink != 1 ||
+        (o->candidate_stat.st_mode & 07777) != 0600 ||
+        o->candidate_stat.st_size != BASELINE_BYTES ||
+        fstat(o->quarantine_parent, &o->quarantine_parent_stat) ||
+        fstat(o->quarantine_dir, &o->quarantine_dir_stat) ||
+        candidate_stable(o) || fsync(o->quarantine_dir) ||
+        fsync(o->quarantine_parent) || !stable_sources(o)) goto failure;
+    zero_bytes(buffer, sizeof buffer);
+    zero_bytes(digest, sizeof digest);
+    return 0;
+failure:
+    zero_bytes(buffer, sizeof buffer);
+    zero_bytes(digest, sizeof digest);
+    zero_bytes(&source_hash, sizeof source_hash);
+    zero_bytes(&candidate_hash, sizeof candidate_hash);
+    return -1;
+}
+
+static int64_t monotonic_ms(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now)) return -1;
+    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static enum cp_state cp_state(void)
+{
+    char state[32] = {0};
+    FILE *f = fopen("/sys/devices/platform/cpif/modem_state", "r");
+    if (!f) return CP_UNKNOWN;
+    int got = fscanf(f, "%31s", state);
+    if (fclose(f) != 0 || got != 1) return CP_UNKNOWN;
+    if (!strcmp(state, "OFFLINE")) return CP_OFFLINE;
+    if (!strcmp(state, "BOOTING")) return CP_BOOTING;
+    if (!strcmp(state, "ONLINE")) return CP_ONLINE;
+    if (!strcmp(state, "CRASH_EXIT")) return CP_CRASH;
+    return CP_UNKNOWN;
+}
+
+static int verify_device(int fd, const char *sysdev)
+{
+    FILE *f = fopen(sysdev, "r");
+    unsigned expected_major = 0, expected_minor = 0;
+    struct stat st;
+    if (!f) return -1;
+    int got = fscanf(f, "%u:%u", &expected_major, &expected_minor);
+    if (fclose(f) != 0 || got != 2 || fstat(fd, &st) ||
+        !S_ISCHR(st.st_mode) || major(st.st_rdev) != expected_major ||
+        minor(st.st_rdev) != expected_minor) return -1;
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0 || (flags & O_ACCMODE) != O_RDWR) return -1;
+    if (!(flags & O_NONBLOCK) && fcntl(fd, F_SETFL, flags | O_NONBLOCK))
+        return -1;
+    return 0;
+}
+
+static int opened_once(int fd)
+{
+    int opened = -1;
+    return ioctl(fd, IOCTL_GET_OPENED_STATUS, &opened) == 0 &&
+           opened == 1 ? 0 : -1;
+}
+
+static int ready_pipe(int fd)
+{
+    struct stat st;
+    int flags = fcntl(fd, F_GETFL);
+    return flags >= 0 && (flags & O_ACCMODE) == O_WRONLY &&
+           fstat(fd, &st) == 0 && S_ISFIFO(st.st_mode) ? 0 : -1;
+}
+
+static int acquire_lock(void)
+{
+    static const char path[] = "/run/saaios-sit-status.lock";
+    int fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    struct stat held, named;
+    if (fd < 0) return -1;
+    if (fstat(fd, &held) || !S_ISREG(held.st_mode) ||
+        held.st_uid != 0 || held.st_nlink != 1 ||
+        (held.st_mode & 07777) != 0600 ||
+        flock(fd, LOCK_EX | LOCK_NB) ||
+        lstat(path, &named) || !same_file(&held, &named)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static int send_ready(int fd)
+{
+    static const char ready[] = "READY\n";
+    /* This pipe is not a modem endpoint; handling a short write is safe. */
+    size_t done = 0;
+    while (done < sizeof ready - 1) {
+        ssize_t n = write(fd, ready + done, sizeof ready - 1 - done);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return -1;
+        done += (size_t)n;
+    }
+    return 0;
+}
+
+static enum action classify(const struct owner *o, const uint8_t *frame,
+                            size_t len)
+{
+    if (!frame) return BAD_FRAME;
+    switch (o->phase) {
+    case WAIT_7:
+        return len == sizeof request_7 &&
+               same_bytes(frame, request_7, len) ? STATUS_7 : BAD_FRAME;
+    case WAIT_3:
+        return len == sizeof request_3 &&
+               same_bytes(frame, request_3, len) ? NO_REPLY : BAD_FRAME;
+    case WAIT_6:
+        return len == sizeof request_6 &&
+               same_bytes(frame, request_6, len) ? GRANT_1 : BAD_FRAME;
+    case WAIT_DATA:
+        return o->grant_attempted > 0 &&
+               o->grant_attempted <= RFS_GRANTS_MAX &&
+               o->chunks_stored + 1 == o->grant_attempted &&
+               o->expected_chunk > 0 && o->expected_chunk <= FIRST_CHUNK &&
+               len == 20u + o->expected_chunk && little16(frame) == 2 &&
+               little16(frame + 2) == 1 &&
+               little32(frame + 4) == 12u + o->expected_chunk &&
+               little32(frame + 8) == 0 &&
+               little32(frame + 12) == 3 &&
+               little32(frame + 16) == o->expected_chunk ?
+               STORE_CHUNK : BAD_FRAME;
+    case TERMINAL:
+        return BAD_FRAME;
+    }
+    return BAD_FRAME;
+}
+
+static void put_little32(uint8_t *p, uint32_t value)
+{
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+    p[2] = (uint8_t)(value >> 16);
+    p[3] = (uint8_t)(value >> 24);
+}
+
+static int reply_gate(const struct owner *o);
+static int send_modem_once(const struct owner *o, const uint8_t *reply,
+                           size_t len);
+
+static uint32_t next_chunk_length(const struct owner *o)
+{
+    if (o->received_bytes >= RFS_TRANSFER_BYTES) return 0;
+    uint32_t remain = RFS_TRANSFER_BYTES - o->received_bytes;
+    return remain < FIRST_CHUNK ? remain : FIRST_CHUNK;
+}
+
+static int send_next_grant(struct owner *o)
+{
+    uint32_t length = next_chunk_length(o);
+    if (!length || o->grant_attempted >= RFS_GRANTS_MAX ||
+        o->chunks_stored != o->grant_attempted || reply_gate(o)) return -1;
+    uint8_t grant[20] = {2,0,1,0, 12,0,0,0, 3,0,0,0};
+    put_little32(grant + 12, o->received_bytes);
+    put_little32(grant + 16, length);
+    /* Attempt is consumed even if the endpoint reports a short write. */
+    o->grant_attempted++;
+    o->expected_chunk = length;
+    int rc = send_modem_once(o, grant, sizeof grant);
+    zero_bytes(grant, sizeof grant);
+    if (rc) return -1;
+    o->phase = WAIT_DATA;
+    return 0;
+}
+
+static int valid_frame_length(const uint8_t *rx, size_t used)
+{
+    if (used < 8) return 0;
+    uint32_t payload = little32(rx + 4);
+    if (payload < 4 || payload > RFS_FRAME_MAX - 8u) return -1;
+    size_t total = 8u + payload;
+    return used < total ? 0 : (int)total;
+}
+
+static int reply_gate(const struct owner *o)
+{
+    int64_t now = monotonic_ms();
+    if (stop_requested || now < 0 || now >= o->deadline_ms ||
+        now >= o->total_deadline_ms) return -1;
+#ifdef RFS_HOST_TEST
+    if (host_gate_override) return 0;
+#endif
+    return cp_state() == CP_ONLINE && opened_once(o->ipc) == 0 &&
+           opened_once(o->rfs) == 0 && original_efs_unmounted() == 0 &&
+           stable_sources(o) && candidate_stable(o) == 0 ? 0 : -1;
+}
+
+/* An unexpected result may already have reached the CP. Never retry it. */
+static int send_modem_once(const struct owner *o, const uint8_t *reply,
+                           size_t len)
+{
+    sigset_t blocked, old;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGTERM);
+    sigaddset(&blocked, SIGINT);
+    if (sigprocmask(SIG_BLOCK, &blocked, &old)) return -1;
+    int64_t now = monotonic_ms();
+    ssize_t written = -1;
+    if (!stop_requested && now >= 0 && now < o->deadline_ms &&
+        now < o->total_deadline_ms) {
+#ifdef RFS_HOST_TEST
+        if (host_write_override) {
+            ++host_write_calls;
+            written = host_write_override(o->rfs, reply, len);
+        } else
+#endif
+        written = write(o->rfs, reply, len);
+    }
+    int restore = sigprocmask(SIG_SETMASK, &old, NULL);
+    return restore == 0 && written == (ssize_t)len ? 0 : -1;
+}
+
+struct chunk_io {
+    int (*sync)(int);
+    int (*read)(int, void *, size_t, off_t);
+};
+
+/* A grant is never advanced until this exact chunk is durable and read back. */
+static int apply_chunk(int candidate, int source, uint32_t offset,
+                       const uint8_t *bytes, uint32_t length,
+                       const struct chunk_io *io)
+{
+    uint8_t check[4096];
+    if (!length || length > FIRST_CHUNK ||
+        offset > RFS_TRANSFER_BYTES - length ||
+        write_all_at(candidate, bytes, length, offset) ||
+        io->sync(candidate) ||
+        io->read(candidate, check, length, offset) ||
+        !same_bytes(check, bytes, length)) goto failure;
+    for (off_t off = (off_t)offset + length; off < BASELINE_BYTES;) {
+        size_t amount = (size_t)(BASELINE_BYTES - off);
+        if (amount > sizeof check / 2) amount = sizeof check / 2;
+        if (io->read(source, check, amount, off) ||
+            io->read(candidate, check + sizeof check / 2, amount, off) ||
+            !same_bytes(check, check + sizeof check / 2, amount))
+            goto failure;
+        off += (off_t)amount;
+    }
+    zero_bytes(check, sizeof check);
+    return 0;
+failure:
+    zero_bytes(check, sizeof check);
+    return -1;
+}
+
+static int store_chunk(struct owner *o, const uint8_t *bytes)
+{
+    static const struct chunk_io io = {fsync, read_all_at};
+    if (reply_gate(o) ||
+        o->received_bytes > RFS_TRANSFER_BYTES - o->expected_chunk ||
+        apply_chunk(o->candidate, o->source, o->received_bytes, bytes,
+                    o->expected_chunk, &io)) return -1;
+    struct stat current;
+    if (fstat(o->candidate, &current) ||
+        current.st_dev != o->candidate_stat.st_dev ||
+        current.st_ino != o->candidate_stat.st_ino ||
+        current.st_uid != 0 || current.st_nlink != 1 ||
+        (current.st_mode & 07777) != 0600 ||
+        current.st_size != BASELINE_BYTES ||
+        quarantine_location_stable(o) ||
+        named_regular(o->quarantine_dir, CANDIDATE_NAME,
+                      o->candidate, &current) ||
+        !stable_sources(o) || original_efs_unmounted() || stop_requested)
+        return -1;
+    o->candidate_stat = current;
+    sha_update(&o->received_hash, bytes, o->expected_chunk);
+    o->received_bytes += o->expected_chunk;
+    o->chunks_stored++;
+    return 0;
+}
+
+/* Verify the source pin, all received bytes, and the unchanged baseline tail. */
+static int verify_full_candidate(struct owner *o, uint8_t digest[32])
+{
+    uint8_t source[4096], candidate[4096], source_digest[32];
+    uint8_t prefix_digest[32], received_digest[32];
+    struct sha256 source_hash, prefix_hash, candidate_hash, received_hash;
+    int result = -1;
+    if (stop_requested ||
+        (!host_fixture_mode() &&
+         (original_efs_unmounted() || !stable_sources(o) ||
+          candidate_stable(o))) ||
+        o->received_bytes != RFS_TRANSFER_BYTES ||
+        o->chunks_stored != RFS_GRANTS_MAX ||
+        o->grant_attempted != RFS_GRANTS_MAX) return -1;
+    sha_init(&source_hash);
+    sha_init(&prefix_hash);
+    sha_init(&candidate_hash);
+    received_hash = o->received_hash;
+    sha_final(&received_hash, received_digest);
+    for (off_t off = 0; off < BASELINE_BYTES; off += sizeof source) {
+        size_t amount = (size_t)(BASELINE_BYTES - off);
+        if (amount > sizeof source) amount = sizeof source;
+        if (read_all_at(o->source, source, amount, off) ||
+            read_all_at(o->candidate, candidate, amount, off)) goto done;
+        sha_update(&source_hash, source, amount);
+        sha_update(&candidate_hash, candidate, amount);
+        size_t prefix = off >= RFS_TRANSFER_BYTES ? 0 :
+                        (size_t)(RFS_TRANSFER_BYTES - off);
+        if (prefix > amount) prefix = amount;
+        if (prefix) sha_update(&prefix_hash, candidate, prefix);
+        if (prefix < amount &&
+            !same_bytes(source + prefix, candidate + prefix,
+                        amount - prefix)) goto done;
+    }
+    sha_final(&source_hash, source_digest);
+    sha_final(&prefix_hash, prefix_digest);
+    sha_final(&candidate_hash, digest);
+    if (same_bytes(source_digest, o->pin_digest, 32) &&
+        same_bytes(prefix_digest, received_digest, 32) &&
+        !stop_requested &&
+        (host_fixture_mode() ||
+         (!original_efs_unmounted() && stable_sources(o) &&
+          candidate_stable(o) == 0)))
+        result = 0;
+done:
+    zero_bytes(source, sizeof source);
+    zero_bytes(candidate, sizeof candidate);
+    zero_bytes(source_digest, sizeof source_digest);
+    zero_bytes(prefix_digest, sizeof prefix_digest);
+    zero_bytes(received_digest, sizeof received_digest);
+    zero_bytes(&source_hash, sizeof source_hash);
+    zero_bytes(&prefix_hash, sizeof prefix_hash);
+    zero_bytes(&candidate_hash, sizeof candidate_hash);
+    zero_bytes(&received_hash, sizeof received_hash);
+    if (result) zero_bytes(digest, 32);
+    return result;
+}
+
+static int sidecar_stable(const struct owner *o)
+{
+    struct stat held;
+    uint8_t digest[32];
+    uid_t owner_uid = host_fixture_mode() ? geteuid() : 0;
+    int valid = o->sidecar_fd >= 0 &&
+        (fcntl(o->sidecar_fd, F_GETFL) & O_ACCMODE) == O_RDONLY &&
+        fstat(o->sidecar_fd, &held) == 0 &&
+        same_file(&held, &o->sidecar_stat) &&
+        S_ISREG(held.st_mode) && held.st_uid == owner_uid &&
+        held.st_nlink == 1 && (held.st_mode & 07777) == 0600 &&
+        held.st_size == 32 &&
+        named_regular(o->quarantine_dir, SIDECAR_NAME, o->sidecar_fd,
+                      &o->sidecar_stat) == 0 &&
+        read_all_at(o->sidecar_fd, digest, sizeof digest, 0) == 0 &&
+        same_bytes(digest, o->candidate_digest, sizeof digest) &&
+        (host_fixture_mode() || quarantine_location_stable(o) == 0);
+    zero_bytes(digest, sizeof digest);
+    return valid ? 0 : -1;
+}
+
+static int close_sidecar_once(struct owner *o)
+{
+    int fd = o->sidecar_fd;
+    o->sidecar_fd = -1;
+    int result = close(fd);
+#ifdef RFS_HOST_TEST
+    if (host_sidecar_close_error) return -1;
+#endif
+    return result;
+}
+
+static int sync_sidecar_once(int fd)
+{
+#ifdef RFS_HOST_TEST
+    if (host_sidecar_sync_error) {
+        errno = EIO;
+        return -1;
+    }
+#endif
+    return fsync(fd);
+}
+
+/* The new sidecar changes directory timestamps; only its identity may carry. */
+static int refresh_quarantine_dir_stat(struct owner *o)
+{
+    struct stat parent, held, named;
+    uid_t owner_uid = host_fixture_mode() ? geteuid() : 0;
+    if (fstat(o->quarantine_parent, &parent) ||
+        !same_file(&parent, &o->quarantine_parent_stat) ||
+        fstat(o->quarantine_dir, &held) ||
+        !same_directory_identity(&held, &o->quarantine_dir_stat) ||
+        held.st_uid != owner_uid || (held.st_mode & 07777) != 0700 ||
+        fstatat(o->quarantine_parent, o->quarantine_leaf, &named,
+                AT_SYMLINK_NOFOLLOW) ||
+        !same_file(&held, &named)) return -1;
+    if (!host_fixture_mode() &&
+        (directory_exact(o->quarantine_parent, 0700) ||
+         named_directory("/data/saaios/var/rfs-quarantine",
+                         o->quarantine_parent, &o->quarantine_parent_stat) ||
+         named_regular(o->quarantine_dir, MARKER_NAME, o->marker_fd,
+                       &o->marker_stat) ||
+         named_regular(o->quarantine_dir, CANDIDATE_NAME, o->candidate,
+                       &o->candidate_stat))) return -1;
+    o->quarantine_dir_stat = held;
+    return host_fixture_mode() || quarantine_location_stable(o) == 0 ? 0 : -1;
+}
+
+/* The sidecar is a quarantine integrity record, never a promotion signal. */
+static int finish_candidate(struct owner *o)
+{
+    uint8_t digest[32], again[32];
+    int rc = -1;
+    uid_t owner_uid = host_fixture_mode() ? geteuid() : 0;
+    if (reply_gate(o) || fsync(o->candidate) ||
+        verify_full_candidate(o, digest)) goto done;
+    o->sidecar_fd = openat(o->quarantine_dir, SIDECAR_NAME,
+                           O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                           0600);
+    if (o->sidecar_fd < 0 ||
+        write_all_at(o->sidecar_fd, digest, sizeof digest, 0) ||
+        sync_sidecar_once(o->sidecar_fd) ||
+        fstat(o->sidecar_fd, &o->sidecar_stat) ||
+        !S_ISREG(o->sidecar_stat.st_mode) ||
+        o->sidecar_stat.st_uid != owner_uid ||
+        o->sidecar_stat.st_nlink != 1 ||
+        (o->sidecar_stat.st_mode & 07777) != 0600 ||
+        o->sidecar_stat.st_size != 32 ||
+        fsync(o->quarantine_dir) || fsync(o->quarantine_parent) ||
+        refresh_quarantine_dir_stat(o))
+        goto done;
+    /* A close failure is ambiguous: never retry and never ACK. */
+    if (close_sidecar_once(o)) goto done;
+    o->sidecar_fd = openat(o->quarantine_dir, SIDECAR_NAME,
+                            O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (o->sidecar_fd < 0 ||
+        named_regular(o->quarantine_dir, SIDECAR_NAME, o->sidecar_fd,
+                      &o->sidecar_stat)) goto done;
+    memcpy(o->candidate_digest, digest, sizeof digest);
+    if (sidecar_stable(o) || verify_full_candidate(o, again) ||
+        !same_bytes(digest, again, sizeof digest) ||
+        sidecar_stable(o) || reply_gate(o))
+        goto done;
+    rc = 0;
+done:
+    zero_bytes(digest, sizeof digest);
+    zero_bytes(again, sizeof again);
+    return rc;
+}
+
+static void terminal(struct owner *o, const char *reason)
+{
+    if (o->phase == TERMINAL) return;
+    o->phase = TERMINAL;
+    o->used = 0;
+    zero_bytes(o->rx, sizeof o->rx);
+    printf("rfs_full_quarantine=%s grants_attempted=%d chunks_stored=%d "
+           "bytes_stored=%u final_ack_attempted=%d final_ack_sent=%d\n",
+           reason, o->grant_attempted, o->chunks_stored,
+           o->received_bytes, o->final_ack_attempted, o->final_ack_sent);
+}
+
+static int complete_frame(struct owner *o, const uint8_t *frame,
+                          size_t len, size_t trailing, int64_t now)
+{
+    if (stop_requested || now < 0 || now >= o->deadline_ms ||
+        now >= o->total_deadline_ms) return -1;
+    enum action action = classify(o, frame, len);
+    if (action == BAD_FRAME || (trailing && action != NO_REPLY)) return -1;
+    if (action == STATUS_7) {
+        if (reply_gate(o) ||
+            send_modem_once(o, status_7, sizeof status_7)) return -1;
+        o->phase = WAIT_3;
+    } else if (action == NO_REPLY) {
+        o->phase = WAIT_6;
+    } else if (action == GRANT_1) {
+        if (send_next_grant(o)) return -1;
+    } else if (action == STORE_CHUNK) {
+        int stored;
+#ifdef RFS_HOST_TEST
+        if (host_store_override) stored = 0;
+        else
+#endif
+        stored = store_chunk(o, frame + 20);
+        if (stored) return -1;
+#ifdef RFS_HOST_TEST
+        if (host_store_override) {
+            sha_update(&o->received_hash, frame + 20, o->expected_chunk);
+            o->received_bytes += o->expected_chunk;
+            o->chunks_stored++;
+        }
+#endif
+        if (o->received_bytes < RFS_TRANSFER_BYTES) {
+            if (send_next_grant(o)) return -1;
+        } else {
+            if (o->received_bytes != RFS_TRANSFER_BYTES ||
+                o->chunks_stored != RFS_GRANTS_MAX ||
+                o->grant_attempted != RFS_GRANTS_MAX)
+                return -1;
+            int finished;
+#ifdef RFS_HOST_TEST
+            if (host_finish_override) finished = 0;
+            else
+#endif
+            finished = finish_candidate(o);
+            if (finished || reply_gate(o)) return -1;
+#ifndef RFS_HOST_TEST
+            if (sidecar_stable(o)) return -1;
+#else
+            if (!host_finish_override && sidecar_stable(o)) return -1;
+#endif
+            o->final_ack_attempted = 1;
+            if (send_modem_once(o, final_status, sizeof final_status))
+                return -1;
+            o->final_ack_sent = 1;
+            terminal(o, "complete_quarantined_ack");
+            return 0;
+        }
+    } else return -1;
+    int64_t progressed_at = monotonic_ms();
+    if (progressed_at < 0 || progressed_at >= o->total_deadline_ms)
+        return -1;
+    o->deadline_ms = progressed_at + STEP_DEADLINE_MS;
+    if (o->deadline_ms > o->total_deadline_ms)
+        o->deadline_ms = o->total_deadline_ms;
+    return 0;
+}
+
+static int feed_rfs(struct owner *o, const uint8_t *bytes,
+                    size_t len, int64_t now)
+{
+    if (o->phase == TERMINAL || !bytes || len > sizeof o->rx - o->used)
+        return -1;
+    memcpy(o->rx + o->used, bytes, len);
+    o->used += len;
+    while (o->used) {
+        int size = valid_frame_length(o->rx, o->used);
+        if (size < 0) return -1;
+        if (size == 0) break;
+        size_t trailing = o->used - (size_t)size;
+        if (complete_frame(o, o->rx, (size_t)size, trailing, now)) return -1;
+        if (o->phase == TERMINAL) return 0;
+        memmove(o->rx, o->rx + size, trailing);
+        memset(o->rx + trailing, 0, (size_t)size);
+        o->used = trailing;
+    }
+    return o->used == sizeof o->rx ? -1 : 0;
+}
+
+static void request_stop(int signal_number)
+{
+    (void)signal_number;
+    stop_requested = 1;
+}
+
+static int parse_fd(const char *text)
+{
+    char *end = NULL;
+    errno = 0;
+    long value = strtol(text, &end, 10);
+    return errno || end == text || *end || value < 3 || value > INT_MAX ?
+           -1 : (int)value;
+}
+
+static int parse_args(int argc, char **argv, int *ipc, int *rfs, int *ready)
+{
+    *ipc = *rfs = *ready = -1;
+    if (argc != 7) return -1;
+    for (int i = 1; i < argc; i += 2) {
+        int fd = parse_fd(argv[i + 1]);
+        if (fd < 0) return -1;
+        if (!strcmp(argv[i], "--ipc-fd") && *ipc < 0) *ipc = fd;
+        else if (!strcmp(argv[i], "--rfs-fd") && *rfs < 0) *rfs = fd;
+        else if (!strcmp(argv[i], "--ready-fd") && *ready < 0) *ready = fd;
+        else return -1;
+    }
+    return *ipc >= 0 && *rfs >= 0 && *ready >= 0 &&
+           *ipc != *rfs && *ipc != *ready && *rfs != *ready ? 0 : -1;
+}
+
+static void close_if_open(int fd)
+{
+    if (fd >= 0) (void)close(fd);
+}
+
+static int run_owner(int ipc, int rfs, int ready)
+{
+    struct owner o = {
+        .ipc = ipc, .rfs = rfs, .ready = ready,
+        .lock = -1, .source = -1, .pin_fd = -1,
+        .source_dir = -1, .pin_dir = -1,
+        .quarantine_parent = -1, .quarantine_dir = -1,
+        .candidate = -1, .marker_fd = -1, .sidecar_fd = -1,
+        .phase = WAIT_7
+    };
+    struct rlimit no_core = {0, 0};
+    struct sigaction action = {0};
+    enum cp_state state = CP_UNKNOWN;
+    int rc = 1;
+    if (geteuid() != 0 || setrlimit(RLIMIT_CORE, &no_core) ||
+        prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)) {
+        fputs("ABORT root or dump protection unavailable\n", stderr);
+        goto done;
+    }
+    (void)umask(0077);
+    action.sa_handler = request_stop;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGTERM, &action, NULL) ||
+        sigaction(SIGINT, &action, NULL) ||
+        signal(SIGHUP, SIG_IGN) == SIG_ERR ||
+        signal(SIGPIPE, SIG_IGN) == SIG_ERR ||
+        verify_device(ipc, "/sys/class/cpif/umts_ipc0/dev") ||
+        verify_device(rfs, "/sys/class/cpif/umts_rfs0/dev") ||
+        ready_pipe(ready) || cp_state() != CP_BOOTING) {
+        fputs("ABORT owner handoff descriptors or CP state refused\n", stderr);
+        goto done;
+    }
+    if (original_efs_unmounted()) {
+        fputs("ABORT original EFS mount gate refused\n", stderr);
+        goto done;
+    }
+    o.lock = acquire_lock();
+    if (o.lock < 0 || opened_once(ipc) || opened_once(rfs) ||
+        original_efs_unmounted() || load_source_and_pin(&o) ||
+        consume_pin(&o) ||
+        prepare_quarantine(&o) || !stable_sources(&o) ||
+        candidate_stable(&o) || original_efs_unmounted() ||
+        cp_state() != CP_BOOTING || opened_once(ipc) || opened_once(rfs) ||
+        stop_requested) {
+        fputs("ABORT source, quarantine, EFS, or exclusive owner gate refused\n",
+              stderr);
+        goto done;
+    }
+    int64_t started = monotonic_ms();
+    if (started < 0 || send_ready(ready)) {
+        fputs("ABORT READY unavailable\n", stderr);
+        goto done;
+    }
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    puts("owner=rfs-full-quarantine-ready payload=redacted "
+         "responses_max=97 grants_max=95 no_promotion=1");
+    sha_init(&o.received_hash);
+    o.deadline_ms = started + FIRST_DEADLINE_MS;
+    o.total_deadline_ms = started + TOTAL_DEADLINE_MS;
+    for (;;) {
+        int64_t now = monotonic_ms();
+        state = cp_state();
+        if (state == CP_OFFLINE) break;
+        if (now < 0) {
+            terminal(&o, "clock_refused");
+        } else if (state == CP_CRASH || state == CP_UNKNOWN) {
+            terminal(&o, "cp_state_lost");
+        } else if (state == CP_BOOTING &&
+                   now - started > BOOTING_LIMIT_MS) {
+            terminal(&o, "booting_deadline");
+        } else if (o.phase != TERMINAL && now >= o.total_deadline_ms) {
+            terminal(&o, "total_deadline");
+        } else if (o.phase != TERMINAL && now >= o.deadline_ms) {
+            terminal(&o, "step_deadline");
+        }
+        if (stop_requested) {
+            terminal(&o, "requested_stop");
+        }
+        if (o.phase == TERMINAL || state != CP_ONLINE) {
+            (void)poll(NULL, 0, POLL_MS);
+            continue;
+        }
+        struct pollfd fds[2] = {
+            {.fd = ipc, .events = POLLIN},
+            {.fd = rfs, .events = POLLIN}
+        };
+        int events = poll(fds, 2, POLL_MS);
+        if (events < 0 && errno == EINTR) continue;
+        if (events < 0) { terminal(&o, "poll_refused"); continue; }
+        if (events == 0) continue;
+        for (size_t i = 0; i < 2 && o.phase != TERMINAL; ++i) {
+            if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                terminal(&o, "endpoint_lost");
+                break;
+            }
+            if (!(fds[i].revents & POLLIN)) continue;
+            uint8_t bytes[RX_CAP];
+            ssize_t got = read(fds[i].fd, bytes, sizeof bytes);
+            if (got < 0 && errno == EINTR) continue;
+            if (got == 0 || (got < 0 &&
+                (errno == EAGAIN || errno == EWOULDBLOCK))) {
+                (void)poll(NULL, 0, EMPTY_BACKOFF_MS);
+                continue;
+            }
+            if (got < 0) {
+                terminal(&o, "read_refused");
+            } else if (i == 1) {
+                int64_t received_at = monotonic_ms();
+                if (received_at < 0 || received_at >= o.deadline_ms ||
+                    feed_rfs(&o, bytes, (size_t)got, received_at))
+                    terminal(&o, "rfs_frame_or_io_refused");
+            }
+            zero_bytes(bytes, sizeof bytes);
+        }
+    }
+    if (state != CP_OFFLINE)
+        fputs("WARNING owner exit before CP OFFLINE may purge RX\n", stderr);
+    if (o.chunks_stored &&
+        (candidate_stable(&o) || !stable_sources(&o) ||
+         original_efs_unmounted())) {
+        fputs("ABORT post-run quarantine or source identity changed\n", stderr);
+        rc = 1;
+    } else {
+        rc = o.final_ack_sent && sidecar_stable(&o) == 0 ? 0 : 1;
+    }
+done:
+    close_if_open(o.candidate);
+    close_if_open(o.sidecar_fd);
+    close_if_open(o.marker_fd);
+    close_if_open(o.quarantine_dir);
+    close_if_open(o.quarantine_parent);
+    close_if_open(o.source);
+    close_if_open(o.pin_fd);
+    close_if_open(o.source_dir);
+    close_if_open(o.pin_dir);
+    close_if_open(o.lock);
+    close_if_open(ready);
+    close_if_open(rfs);
+    close_if_open(ipc);
+    zero_bytes(o.pin_digest, sizeof o.pin_digest);
+    zero_bytes(o.candidate_digest, sizeof o.candidate_digest);
+    zero_bytes(&o.received_hash, sizeof o.received_hash);
+    zero_bytes(o.rx, sizeof o.rx);
+    return rc;
+}
+
+static int test_framing(void)
+{
+    int64_t now = monotonic_ms();
+    if (now < 0) return -1;
+    struct owner o = {.phase = WAIT_3, .deadline_ms = now + 10000,
+                      .total_deadline_ms = now + 10000};
+    uint8_t coalesced[sizeof request_3 + 12];
+    if (feed_rfs(&o, request_3, 7, now) || o.phase != WAIT_3 || o.used != 7 ||
+        feed_rfs(&o, request_3 + 7, sizeof request_3 - 7, now) ||
+        o.phase != WAIT_6 || o.used != 0)
+        return -1;
+    memset(&o, 0, sizeof o);
+    o.phase = WAIT_3;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    memcpy(coalesced, request_3, sizeof request_3);
+    memcpy(coalesced + sizeof request_3, request_6, 12);
+    if (feed_rfs(&o, coalesced, sizeof coalesced, now) ||
+        o.phase != WAIT_6 || o.used != 12)
+        return -1;
+    o.phase = TERMINAL;
+    if (feed_rfs(&o, request_6, sizeof request_6, now) == 0)
+        return -1;
+    zero_bytes(coalesced, sizeof coalesced);
+    zero_bytes(&o, sizeof o);
+    return 0;
+}
+
+#ifdef RFS_HOST_TEST
+static uint8_t host_last_reply[20];
+static size_t host_last_reply_len;
+
+static ssize_t host_short_write(int fd, const void *bytes, size_t len)
+{
+    (void)fd; (void)bytes;
+    return (ssize_t)len - 1;
+}
+
+static ssize_t host_full_write(int fd, const void *bytes, size_t len)
+{
+    (void)fd;
+    if (len > sizeof host_last_reply) return -1;
+    memcpy(host_last_reply, bytes, len);
+    host_last_reply_len = len;
+    return (ssize_t)len;
+}
+
+static int host_sync_fail(int fd)
+{
+    (void)fd;
+    return -1;
+}
+
+static int host_readback_corrupt(int fd, void *out, size_t len, off_t offset)
+{
+    if (read_all_at(fd, out, len, offset)) return -1;
+    if (offset == 0 && len == FIRST_CHUNK)
+        ((uint8_t *)out)[0] ^= 1;
+    return 0;
+}
+
+static int test_host_storage_faults(void)
+{
+    static const struct chunk_io actual = {fsync, read_all_at};
+    static const struct chunk_io failed_sync = {host_sync_fail, read_all_at};
+    static const struct chunk_io failed_readback = {fsync, host_readback_corrupt};
+    uint8_t zero[4096] = {0}, chunk[FIRST_CHUNK], verify[FIRST_CHUNK];
+    FILE *source = tmpfile(), *candidate = tmpfile();
+    int rc = -1;
+    if (!source || !candidate) goto done;
+    memset(chunk, 0x5a, sizeof chunk);
+    int source_fd = fileno(source), candidate_fd = fileno(candidate);
+    if (source_fd < 0 || candidate_fd < 0) goto done;
+    for (off_t off = 0; off < BASELINE_BYTES; off += sizeof zero) {
+        if (write_all_at(source_fd, zero, sizeof zero, off) ||
+            write_all_at(candidate_fd, zero, sizeof zero, off)) goto done;
+    }
+    if (apply_chunk(candidate_fd, source_fd, 0, chunk, FIRST_CHUNK,
+                    &failed_sync) == 0 ||
+        apply_chunk(candidate_fd, source_fd, 0, chunk, FIRST_CHUNK,
+                    &failed_readback) == 0 ||
+        apply_chunk(candidate_fd, source_fd, 0, chunk, FIRST_CHUNK,
+                    &actual) ||
+        read_all_at(candidate_fd, verify, FIRST_CHUNK, 0) ||
+        !same_bytes(verify, chunk, FIRST_CHUNK) ||
+        apply_chunk(candidate_fd, source_fd, RFS_TRANSFER_BYTES - 318,
+                    chunk, 318, &actual) ||
+        read_all_at(candidate_fd, verify, 318,
+                    RFS_TRANSFER_BYTES - 318) ||
+        !same_bytes(verify, chunk, 318) ||
+        apply_chunk(candidate_fd, source_fd, RFS_TRANSFER_BYTES - 317,
+                    chunk, 318, &actual) == 0)
+        goto done;
+    rc = 0;
+done:
+    if (source) fclose(source);
+    if (candidate) fclose(candidate);
+    zero_bytes(zero, sizeof zero);
+    zero_bytes(chunk, sizeof chunk);
+    zero_bytes(verify, sizeof verify);
+    return rc;
+}
+
+/* Test the real finish/sidecar durability path with only device gates mocked. */
+static int test_host_finish_candidate(int fault)
+{
+    char parent_path[] = "/tmp/saaios-rfs-full-test-XXXXXX";
+    static const char leaf[] = "run";
+    uint8_t zero[4096] = {0}, chunk[FIRST_CHUNK], digest[32], again[32];
+    uint8_t frame[20 + 318] = {0};
+    struct sha256 source_hash;
+    struct owner o = {.source = -1, .candidate = -1, .sidecar_fd = -1,
+                      .quarantine_parent = -1, .quarantine_dir = -1};
+    FILE *source = NULL;
+    int parent_created = 0, child_created = 0, rc = -1;
+    if (!mkdtemp(parent_path)) goto done;
+    parent_created = 1;
+    o.quarantine_parent = open(parent_path,
+                                O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+                                O_CLOEXEC);
+    if (o.quarantine_parent < 0 ||
+        mkdirat(o.quarantine_parent, leaf, 0700)) goto done;
+    child_created = 1;
+    o.quarantine_dir = openat(o.quarantine_parent, leaf,
+                              O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+                              O_CLOEXEC);
+    if (o.quarantine_dir < 0) goto done;
+    memcpy(o.quarantine_leaf, leaf, sizeof leaf);
+    o.candidate = openat(o.quarantine_dir, CANDIDATE_NAME,
+                         O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                         0600);
+    source = tmpfile();
+    if (o.candidate < 0 || !source) goto done;
+    o.source = fileno(source);
+    if (o.source < 0) goto done;
+    sha_init(&source_hash);
+    for (off_t off = 0; off < BASELINE_BYTES; off += sizeof zero) {
+        if (write_all_at(o.source, zero, sizeof zero, off) ||
+            write_all_at(o.candidate, zero, sizeof zero, off)) goto done;
+        sha_update(&source_hash, zero, sizeof zero);
+    }
+    sha_final(&source_hash, o.pin_digest);
+    sha_init(&o.received_hash);
+    for (unsigned i = 0; i < RFS_GRANTS_MAX; ++i) {
+        uint32_t length = i == RFS_GRANTS_MAX - 1 ? 318 : FIRST_CHUNK;
+        uint32_t offset = i * FIRST_CHUNK;
+        memset(chunk, (int)(i + 1), length);
+        if (write_all_at(o.candidate, chunk, length, offset)) goto done;
+        sha_update(&o.received_hash, chunk, length);
+    }
+    o.received_bytes = RFS_TRANSFER_BYTES;
+    o.chunks_stored = o.grant_attempted = RFS_GRANTS_MAX;
+    int64_t now = monotonic_ms();
+    if (now < 0 || fsync(o.candidate) ||
+        fstat(o.candidate, &o.candidate_stat) ||
+        fstat(o.quarantine_parent, &o.quarantine_parent_stat) ||
+        fstat(o.quarantine_dir, &o.quarantine_dir_stat)) goto done;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    host_gate_override = 1; /* Non-root test fixture only. */
+    if (fault) {
+        sha_init(&o.received_hash);
+        for (unsigned i = 0; i < RFS_GRANTS_MAX - 1; ++i) {
+            memset(chunk, (int)(i + 1), FIRST_CHUNK);
+            sha_update(&o.received_hash, chunk, FIRST_CHUNK);
+        }
+        o.received_bytes = 94 * FIRST_CHUNK;
+        o.chunks_stored = RFS_GRANTS_MAX - 1;
+        o.grant_attempted = RFS_GRANTS_MAX;
+        o.expected_chunk = 318;
+        o.phase = WAIT_DATA;
+        host_store_override = 1;
+        host_write_override = host_short_write;
+        host_write_calls = 0;
+        host_sidecar_close_error = fault == 1;
+        host_sidecar_sync_error = fault == 2;
+        memset(frame, RFS_GRANTS_MAX, sizeof frame);
+        frame[0] = 2; frame[1] = 0;
+        frame[2] = 1; frame[3] = 0;
+        put_little32(frame + 4, 12 + 318);
+        put_little32(frame + 8, 0);
+        put_little32(frame + 12, 3);
+        put_little32(frame + 16, 318);
+        struct stat sidecar;
+        if (feed_rfs(&o, frame, sizeof frame, now) == 0 ||
+            o.final_ack_attempted || o.final_ack_sent ||
+            host_write_calls != 0 ||
+            fstatat(o.quarantine_dir, SIDECAR_NAME, &sidecar,
+                    AT_SYMLINK_NOFOLLOW))
+            goto done;
+        if (fault == 1 && o.sidecar_fd != -1) goto done;
+        rc = 0;
+        goto done;
+    }
+    int finish_result = finish_candidate(&o);
+    if (finish_result || sidecar_stable(&o) ||
+        verify_full_candidate(&o, digest) ||
+        !same_bytes(digest, o.candidate_digest, sizeof digest) ||
+        read_all_at(o.sidecar_fd, again, sizeof again, 0) ||
+        !same_bytes(digest, again, sizeof digest))
+        goto done;
+    /* Corrupting the unchanged tail must make a second content gate fail. */
+    chunk[0] = 0x7f;
+    if (write_all_at(o.candidate, chunk, 1, RFS_TRANSFER_BYTES) ||
+        fsync(o.candidate) ||
+        verify_full_candidate(&o, again) == 0)
+        goto done;
+    rc = 0;
+done:
+    host_gate_override = 0;
+    host_store_override = 0;
+    host_sidecar_close_error = 0;
+    host_sidecar_sync_error = 0;
+    host_write_override = NULL;
+    host_write_calls = 0;
+    close_if_open(o.sidecar_fd);
+    close_if_open(o.candidate);
+    if (source) fclose(source);
+    if (o.quarantine_dir >= 0) {
+        (void)unlinkat(o.quarantine_dir, SIDECAR_NAME, 0);
+        (void)unlinkat(o.quarantine_dir, CANDIDATE_NAME, 0);
+    }
+    close_if_open(o.quarantine_dir);
+    if (o.quarantine_parent >= 0 && child_created)
+        (void)unlinkat(o.quarantine_parent, leaf, AT_REMOVEDIR);
+    close_if_open(o.quarantine_parent);
+    if (parent_created) (void)rmdir(parent_path);
+    zero_bytes(zero, sizeof zero);
+    zero_bytes(chunk, sizeof chunk);
+    zero_bytes(digest, sizeof digest);
+    zero_bytes(again, sizeof again);
+    zero_bytes(frame, sizeof frame);
+    zero_bytes(&o, sizeof o);
+    return rc;
+}
+
+static int test_host_transcript(void)
+{
+    struct owner o = {.rfs = -1, .phase = WAIT_6};
+    uint8_t frame[RFS_FRAME_MAX] = {0};
+    int rc = -1;
+    int64_t now = monotonic_ms();
+    if (now < 0) return -1;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    sha_init(&o.received_hash);
+    host_gate_override = 1;
+    host_write_override = host_short_write;
+    host_write_calls = 0;
+    if (complete_frame(&o, request_6, sizeof request_6, 0, now) == 0 ||
+        host_write_calls != 1 || o.grant_attempted != 1)
+        goto done;
+    memset(&o, 0, sizeof o);
+    o.rfs = -1; o.phase = WAIT_6;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    stop_requested = 1;
+    host_write_calls = 0;
+    if (complete_frame(&o, request_6, sizeof request_6, 0, now) == 0 ||
+        host_write_calls != 0 || o.grant_attempted != 0)
+        goto done;
+    stop_requested = 0;
+    memset(&o, 0, sizeof o);
+    o.rfs = -1; o.phase = WAIT_7;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    sha_init(&o.received_hash);
+    host_store_override = 1;
+    host_finish_override = 1;
+    host_write_override = host_full_write;
+    host_write_calls = 0;
+    if (feed_rfs(&o, request_7, sizeof request_7, now) ||
+        o.phase != WAIT_3 || host_write_calls != 1 ||
+        host_last_reply_len != sizeof status_7 ||
+        !same_bytes(host_last_reply, status_7, sizeof status_7) ||
+        feed_rfs(&o, request_3, sizeof request_3, now) ||
+        o.phase != WAIT_6 ||
+        feed_rfs(&o, request_6, sizeof request_6, now) ||
+        o.phase != WAIT_DATA || host_write_calls != 2)
+        goto done;
+    for (unsigned i = 0; i < RFS_GRANTS_MAX; ++i) {
+        uint32_t expected_offset = i * FIRST_CHUNK;
+        uint32_t expected_length = i == RFS_GRANTS_MAX - 1 ?
+                                   318 : FIRST_CHUNK;
+        if (o.received_bytes != expected_offset ||
+            o.expected_chunk != expected_length ||
+            host_last_reply_len != 20 ||
+            little16(host_last_reply) != 2 ||
+            little16(host_last_reply + 2) != 1 ||
+            little32(host_last_reply + 12) != expected_offset ||
+            little32(host_last_reply + 16) != expected_length)
+            goto done;
+        memset(frame, (int)(i & 0xff), sizeof frame);
+        frame[0] = 2; frame[1] = 0;
+        frame[2] = 1; frame[3] = 0;
+        put_little32(frame + 4, 12 + expected_length);
+        put_little32(frame + 8, 0);
+        put_little32(frame + 12, 3);
+        put_little32(frame + 16, expected_length);
+        if (feed_rfs(&o, frame, 20 + expected_length, monotonic_ms()))
+            goto done;
+    }
+    if (o.phase != TERMINAL || !o.final_ack_sent ||
+        !o.final_ack_attempted || o.grant_attempted != RFS_GRANTS_MAX ||
+        o.chunks_stored != RFS_GRANTS_MAX ||
+        o.received_bytes != RFS_TRANSFER_BYTES ||
+        host_write_calls != 97 ||
+        host_last_reply_len != sizeof final_status ||
+        !same_bytes(host_last_reply, final_status, sizeof final_status) ||
+        feed_rfs(&o, frame, 20 + 318, monotonic_ms()) == 0)
+        goto done;
+    rc = 0;
+done:
+    host_gate_override = 0;
+    host_store_override = 0;
+    host_finish_override = 0;
+    host_write_override = NULL;
+    host_write_calls = 0;
+    host_last_reply_len = 0;
+    stop_requested = 0;
+    zero_bytes(host_last_reply, sizeof host_last_reply);
+    zero_bytes(frame, sizeof frame);
+    zero_bytes(&o, sizeof o);
+    return rc;
+}
+#endif
+
+static int self_test(void)
+{
+    static const uint8_t abc[] = {'a', 'b', 'c'};
+    static const uint8_t abc_sha256[32] = {
+        0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,
+        0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23,
+        0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,
+        0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad
+    };
+    struct sha256 hash;
+    struct owner o = {.phase = WAIT_7};
+    uint8_t digest[32], data[RFS_FRAME_MAX] = {0};
+    sha_init(&hash);
+    sha_update(&hash, abc, sizeof abc);
+    sha_final(&hash, digest);
+    if (!same_bytes(digest, abc_sha256, sizeof digest)) return 11;
+    if (classify(&o, request_7, sizeof request_7) != STATUS_7) return 12;
+    o.phase = WAIT_3;
+    if (classify(&o, request_3, sizeof request_3) != NO_REPLY)
+        return 2;
+    o.phase = WAIT_6;
+    if (classify(&o, request_6, sizeof request_6) != GRANT_1 ||
+        RFS_TRANSFER_BYTES != 94 * FIRST_CHUNK + 318 ||
+        test_framing())
+        return 3;
+    o.phase = WAIT_DATA;
+    o.grant_attempted = RFS_GRANTS_MAX;
+    o.chunks_stored = RFS_GRANTS_MAX - 1;
+    o.received_bytes = 94 * FIRST_CHUNK;
+    o.expected_chunk = 318;
+    data[0] = 2; data[2] = 1;
+    put_little32(data + 4, 12 + 318);
+    put_little32(data + 12, 3);
+    put_little32(data + 16, 318);
+    if (valid_frame_length(data, 338) != 338 ||
+        classify(&o, data, 338) != STORE_CHUNK)
+        return 4;
+    data[2] = 2;
+    if (classify(&o, data, 338) != BAD_FRAME)
+        return 5;
+    data[2] = 1;
+    put_little32(data + 16, 319);
+    if (classify(&o, data, 338) != BAD_FRAME)
+        return 6;
+    o.phase = TERMINAL;
+    if (classify(&o, data, 338) != BAD_FRAME)
+        return 7;
+#ifdef RFS_HOST_TEST
+    if (test_host_storage_faults() || test_host_finish_candidate(0) ||
+        test_host_finish_candidate(1) || test_host_finish_candidate(2) ||
+        test_host_transcript())
+        return 8;
+#endif
+    zero_bytes(data, sizeof data);
+    zero_bytes(digest, sizeof digest);
+    puts("PASS full-RFS quarantine protocol and SHA-256 self-test");
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 2 && (!strcmp(argv[1], "--mode") ||
+                      !strcmp(argv[1], "--mode=rfs-full-quarantine"))) {
+        puts("rfs-full-quarantine");
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "self-test"))
+        return self_test();
+    int ipc, rfs, ready;
+    if (parse_args(argc, argv, &ipc, &rfs, &ready)) {
+        fputs("usage: modem-rfs-full-quarantine-owner self-test | --mode | "
+              "--ipc-fd N --rfs-fd N --ready-fd N\n", stderr);
+        return 64;
+    }
+    return run_owner(ipc, rfs, ready);
+}
