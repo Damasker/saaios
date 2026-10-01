@@ -233,7 +233,7 @@ jobs:
             build-essential curl ca-certificates xz-utils git patch dpkg-dev bison \
             meson ninja-build autoconf automake libtool gperf pkg-config \
             libseat-dev libudev-dev libinput-dev libxkbcommon-dev \
-            gcc-aarch64-linux-gnu
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: cross-compile manual full-RFS quarantine diagnostic
         run: |
