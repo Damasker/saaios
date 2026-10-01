@@ -4,10 +4,13 @@
  * descriptors, and must wait for READY\n before sending FIN or COMPLETE.
  *
  * After ONLINE it sends four allowlisted, read-only SIT status GETs once.
+ * SIM-status-change indications may then schedule up to three debounced,
+ * read-only SIM status refreshes through the same IPC reader.
  * It never sends RFS replies or accesses NV/EFS.
  * It consumes unknown RFS requests without replying, so CP may still wait or
  * fail: this is observability only, not a substitute for the factory rfsd.
- * Logs contain frame-header metadata only, never payload bytes.
+ * Logs contain frame-header metadata and allowlisted raw status fields,
+ * never payload dumps or SIM identifiers.
  */
 #define _GNU_SOURCE
 #include <limits.h>
@@ -36,7 +39,10 @@
 enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        BOOTING_LIMIT_MS = 60000, POLL_SLICE_MS = 250,
        HEARTBEAT_MS = 60000, METADATA_KEYS = 16,
-       RFS_HEADER_TRACE_LIMIT = 16 };
+       RFS_HEADER_TRACE_LIMIT = 16,
+       SIM_REFRESH_MAX = 3, SIM_REFRESH_DEBOUNCE_MS = 500,
+       SIM_REFRESH_COALESCE_MS = 2000, SIM_REFRESH_MIN_GAP_MS = 3000,
+       SIM_REFRESH_REPLY_MS = 10000 };
 enum channel_kind { CHANNEL_IPC, CHANNEL_RFS };
 
 static unsigned le16(const uint8_t *p) {
@@ -73,6 +79,71 @@ static void put32(uint8_t *p, uint32_t value) {
 static int is_reply(const uint8_t *p, size_t n, unsigned id, uint32_t token) {
     return n >= 12 && p[0] == 1 && le16(p + 2) == id &&
            le32(p + 6) == token;
+}
+
+/* Factory TD1A: 0x0210 is SIT_IND_SIM_STATUS_CHANGED, not a reply. */
+static int is_sim_status_changed(const uint8_t *p, size_t n) {
+    return n >= 8 && p[0] == 2 && le16(p + 2) == 0x0210;
+}
+
+struct sim_refresh {
+    uint32_t token;
+    unsigned sent;
+    int queued;
+    int pending;
+    int disabled;
+    int64_t first_queued_ms;
+    int64_t due_ms;
+    int64_t next_allowed_ms;
+    int64_t reply_deadline_ms;
+};
+
+/* Repeated indications form one bounded queue entry; continuous traffic
+ * cannot postpone that entry beyond the first indication +2 seconds. */
+static void sim_refresh_note_indication(struct sim_refresh *refresh,
+                                        const uint8_t *p, size_t n,
+                                        int64_t now_ms) {
+    if (!is_sim_status_changed(p, n) || refresh->disabled ||
+        refresh->sent >= SIM_REFRESH_MAX) return;
+    if (!refresh->queued) {
+        refresh->queued = 1;
+        refresh->first_queued_ms = now_ms;
+    }
+    int64_t latest = now_ms + SIM_REFRESH_DEBOUNCE_MS;
+    int64_t cap = refresh->first_queued_ms + SIM_REFRESH_COALESCE_MS;
+    refresh->due_ms = latest < cap ? latest : cap;
+}
+
+static int sim_refresh_expire(struct sim_refresh *refresh, int64_t now_ms) {
+    if (!refresh->pending || now_ms < refresh->reply_deadline_ms) return 0;
+    refresh->pending = 0;
+    return 1;
+}
+
+static int sim_refresh_ready(const struct sim_refresh *refresh,
+                             int initial_done, int64_t now_ms) {
+    return initial_done && !refresh->disabled && !refresh->pending &&
+           refresh->queued && refresh->sent < SIM_REFRESH_MAX &&
+           now_ms >= refresh->due_ms && now_ms >= refresh->next_allowed_ms;
+}
+
+static void sim_refresh_mark_sent(struct sim_refresh *refresh,
+                                  uint32_t token, int64_t now_ms) {
+    refresh->queued = 0;
+    refresh->pending = 1;
+    refresh->token = token;
+    refresh->sent++;
+    refresh->reply_deadline_ms = now_ms + SIM_REFRESH_REPLY_MS;
+    refresh->next_allowed_ms = now_ms + SIM_REFRESH_MIN_GAP_MS;
+}
+
+static int sim_refresh_match_reply(struct sim_refresh *refresh,
+                                   const uint8_t *p, size_t n,
+                                   int64_t now_ms) {
+    if (!refresh->pending || now_ms >= refresh->reply_deadline_ms ||
+        !is_reply(p, n, 0x0200, refresh->token)) return 0;
+    refresh->pending = 0;
+    return 1;
 }
 
 static int make_get_request(uint8_t request[12], unsigned id,
@@ -138,7 +209,67 @@ static void fixture_frame(void *opaque, enum channel_kind kind,
     (*count)++;
 }
 
+static int fixture_sim_refresh(void) {
+    uint8_t indication[8] = {2, 0, 0x10, 0x02, 8, 0, 0, 0};
+    uint8_t reply[12] = {1, 0, 0, 2, 12, 0};
+    if (!is_sim_status_changed(indication, sizeof indication) ||
+        is_sim_status_changed(indication, 7)) return 17;
+    indication[0] = 1;
+    if (is_sim_status_changed(indication, sizeof indication)) return 18;
+    indication[0] = 2; indication[2] = 0x11;
+    if (is_sim_status_changed(indication, sizeof indication)) return 19;
+    indication[2] = 0x10;
+
+    struct sim_refresh refresh = {0};
+    sim_refresh_note_indication(&refresh, indication, sizeof indication, 1000);
+    if (!refresh.queued || refresh.due_ms != 1500 ||
+        sim_refresh_ready(&refresh, 0, 1500)) return 20;
+    sim_refresh_note_indication(&refresh, indication, sizeof indication, 1300);
+    if (refresh.due_ms != 1800) return 21;
+    sim_refresh_note_indication(&refresh, indication, sizeof indication, 2900);
+    if (refresh.due_ms != 3000 ||
+        sim_refresh_ready(&refresh, 1, 2999) ||
+        !sim_refresh_ready(&refresh, 1, 3000)) return 22;
+    sim_refresh_mark_sent(&refresh, 11, 3000);
+    if (refresh.queued || !refresh.pending || refresh.sent != 1 ||
+        sim_refresh_ready(&refresh, 1, 3500)) return 23;
+    put32(reply + 6, 10);
+    if (sim_refresh_match_reply(&refresh, reply, sizeof reply, 3200) ||
+        !refresh.pending) return 24;
+    sim_refresh_note_indication(&refresh, indication, sizeof indication, 3100);
+    if (sim_refresh_expire(&refresh, 12999) ||
+        sim_refresh_match_reply(&refresh, reply, sizeof reply, 13000) ||
+        !sim_refresh_expire(&refresh, 13000) ||
+        !sim_refresh_ready(&refresh, 1, 13000)) return 25;
+    sim_refresh_mark_sent(&refresh, 12, 13000);
+    put32(reply + 6, 11);
+    if (sim_refresh_match_reply(&refresh, reply, sizeof reply, 13001)) return 26;
+    put32(reply + 6, 12);
+    if (!sim_refresh_match_reply(&refresh, reply, sizeof reply, 13001) ||
+        refresh.pending) return 27;
+    sim_refresh_note_indication(&refresh, indication, sizeof indication, 13010);
+    if (sim_refresh_ready(&refresh, 1, 15999) ||
+        !sim_refresh_ready(&refresh, 1, 16000)) return 28;
+    sim_refresh_mark_sent(&refresh, 13, 16000);
+    sim_refresh_note_indication(&refresh, indication, sizeof indication, 16010);
+    if (refresh.queued || refresh.sent != SIM_REFRESH_MAX) return 29;
+    put32(reply + 6, 13);
+    if (!sim_refresh_match_reply(&refresh, reply, sizeof reply, 16001) ||
+        sim_refresh_ready(&refresh, 1, 17000)) return 30;
+
+    struct sim_refresh no_retry = {0};
+    sim_refresh_note_indication(&no_retry, indication, sizeof indication, 0);
+    sim_refresh_mark_sent(&no_retry, 21, 500);
+    if (!sim_refresh_expire(&no_retry, 10500) || no_retry.queued ||
+        sim_refresh_ready(&no_retry, 1, 20000)) return 31;
+    put32(reply + 6, 21);
+    if (sim_refresh_match_reply(&no_retry, reply, sizeof reply, 10501)) return 32;
+    return 0;
+}
+
 static int fixture(void) {
+    int refresh_check = fixture_sim_refresh();
+    if (refresh_check) return refresh_check;
     const uint8_t ipc[] = {2, 0, 0x34, 0x12, 8, 0, 0, 0};
     const uint8_t rfs[] = {7, 0, 0, 0, 4, 0, 0, 0, 3, 0, 0, 0};
     for (size_t n = 0; n < sizeof ipc; ++n)
@@ -196,7 +327,7 @@ static int fixture(void) {
     memcpy(stream + used, rfs + 6, 6); used += 6;
     if (parse_available(CHANNEL_RFS, stream, &used, fixture_frame, &frames) ||
         used != 0 || frames != 2) return 13;
-    puts("PASS modem-channel-owner framing and response-token fixtures");
+    puts("PASS modem-channel-owner framing, response-token and SIM-refresh fixtures");
     return 0;
 }
 
@@ -445,6 +576,17 @@ static void report_rfs_overflow(struct rfs_header_trace *trace) {
     trace->overflow_reported = trace->overflow;
 }
 
+static void print_sim_fields(const uint8_t *p, size_t size) {
+    if (size < 15) { printf(" status=short"); return; }
+    unsigned apps = p[SIT_SIM_APPS];
+    printf(" card_raw=%u apps=%u", p[SIT_SIM_CARD], apps);
+    if (apps > 0 && apps <= 4 &&
+        size >= 15U + SIT_SIM_APP_STRIDE * apps &&
+        size > SIT_SIM_PIN1)
+        printf(" app_state_raw=%u pin1_raw=%u",
+               p[SIT_SIM_APP_STATE], p[SIT_SIM_PIN1]);
+}
+
 static void snapshot_reply(struct snapshot *snapshot, const uint8_t *p,
                            size_t size) {
     if (!snapshot->pending || snapshot->next >=
@@ -457,14 +599,8 @@ static void snapshot_reply(struct snapshot *snapshot, const uint8_t *p,
     snapshot->next++;
     printf("snapshot %s response=yes error_raw=%u", label, (unsigned)p[10]);
     if (p[10]) { putchar('\n'); return; }
-    if (id == 0x0200 && size >= 15) {
-        unsigned apps = p[SIT_SIM_APPS];
-        printf(" card_raw=%u apps=%u", p[SIT_SIM_CARD], apps);
-        if (apps > 0 && apps <= 4 &&
-            size >= 15U + SIT_SIM_APP_STRIDE * apps &&
-            size > SIT_SIM_PIN1)
-            printf(" app_state_raw=%u pin1_raw=%u",
-                   p[SIT_SIM_APP_STATE], p[SIT_SIM_PIN1]);
+    if (id == 0x0200) {
+        print_sim_fields(p, size);
     } else if (id == 0x0801 && size >= 16) {
         printf(" radio_raw=%u", le32(p + 12));
     } else if ((id == SIT_NET_VOICE_REG && size >= 14) ||
@@ -517,10 +653,46 @@ static void snapshot_advance(struct snapshot *snapshot, int ipc_fd,
     snapshot->deadline_ms = now_ms + 10000;
 }
 
+static int snapshot_finished(const struct snapshot *snapshot) {
+    return snapshot->started && !snapshot->aborted && !snapshot->pending &&
+           snapshot->next >= sizeof snapshot_gets / sizeof snapshot_gets[0];
+}
+
+static void sim_refresh_reply(struct sim_refresh *refresh, const uint8_t *p,
+                              size_t size, int64_t now_ms) {
+    if (!sim_refresh_match_reply(refresh, p, size, now_ms)) return;
+    printf("sim_refresh response=yes request=%u error_raw=%u",
+           refresh->sent, (unsigned)p[10]);
+    if (!p[10]) print_sim_fields(p, size);
+    putchar('\n');
+}
+
+static void sim_refresh_advance(struct sim_refresh *refresh,
+                                struct snapshot *snapshot, int ipc_fd,
+                                int64_t now_ms) {
+    if (sim_refresh_expire(refresh, now_ms))
+        printf("sim_refresh response=no request=%u status=timeout\n",
+               refresh->sent);
+    if (!sim_refresh_ready(refresh, snapshot_finished(snapshot), now_ms))
+        return;
+    uint8_t request[12];
+    uint32_t token = ++snapshot->token;
+    if (make_get_request(request, 0x0200, token) ||
+        write(ipc_fd, request, sizeof request) != (ssize_t)sizeof request) {
+        puts("sim_refresh request=failed no-retry disabled=yes");
+        refresh->disabled = 1;
+        refresh->queued = 0;
+        return;
+    }
+    sim_refresh_mark_sent(refresh, token, now_ms);
+    printf("sim_refresh request=sent request=%u\n", refresh->sent);
+}
+
 struct live_frame_context {
     struct channel *channel;
     struct metadata_counts *counts;
     struct snapshot *snapshot;
+    struct sim_refresh *refresh;
     struct rfs_header_trace *trace;
     int64_t now_ms;
 };
@@ -529,9 +701,16 @@ static void live_frame(void *opaque, enum channel_kind kind,
                        const uint8_t *p, int size) {
     struct live_frame_context *context = opaque;
     count_frame(context->channel, p, size, context->counts);
-    if (kind == CHANNEL_IPC)
+    if (kind == CHANNEL_IPC) {
+        if (sim_refresh_expire(context->refresh, context->now_ms))
+            printf("sim_refresh response=no request=%u status=timeout\n",
+                   context->refresh->sent);
         snapshot_reply(context->snapshot, p, (size_t)size);
-    else
+        sim_refresh_reply(context->refresh, p, (size_t)size,
+                          context->now_ms);
+        sim_refresh_note_indication(context->refresh, p, (size_t)size,
+                                    context->now_ms);
+    } else
         trace_rfs_header(context->trace, p, context->now_ms);
     context->channel->frames++;
 }
@@ -539,6 +718,7 @@ static void live_frame(void *opaque, enum channel_kind kind,
 /* Return -1 on malformed/over-cap framing; never retain payload after parse. */
 static int drain_channel(struct channel *channel, struct metadata_counts *counts,
                          struct snapshot *snapshot,
+                         struct sim_refresh *refresh,
                          struct rfs_header_trace *trace) {
     if (channel->used == sizeof channel->rx) return -1;
     ssize_t n = read(channel->fd, channel->rx + channel->used,
@@ -556,7 +736,9 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
     channel->used += (size_t)n;
     int64_t now = monotonic_ms();
     if (now < 0) return -1;
-    struct live_frame_context context = {channel, counts, snapshot, trace, now};
+    struct live_frame_context context = {
+        channel, counts, snapshot, refresh, trace, now
+    };
     return parse_available(channel->kind, channel->rx, &channel->used,
                            live_frame, &context);
 }
@@ -604,6 +786,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     };
     struct metadata_counts counts = {0};
     struct snapshot snapshot = {0};
+    struct sim_refresh refresh = {0};
     int64_t start = monotonic_ms();
     struct rfs_header_trace trace = {.enabled = !attached, .start_ms = start};
     counts.window_start_ms = start;
@@ -643,7 +826,10 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             report_metadata(&counts, now);
             report_rfs_overflow(&trace);
         }
-        if (state == CP_ONLINE) snapshot_advance(&snapshot, ipc, now);
+        if (state == CP_ONLINE) {
+            snapshot_advance(&snapshot, ipc, now);
+            sim_refresh_advance(&refresh, &snapshot, ipc, now);
+        }
         struct pollfd fds[2];
         int timeout = POLL_SLICE_MS;
         for (int i = 0; i < 2; ++i) {
@@ -665,7 +851,8 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
                 rc = 1; break;
             }
             if ((fds[i].revents & POLLIN) &&
-                drain_channel(&channels[i], &counts, &snapshot, &trace)) {
+                drain_channel(&channels[i], &counts, &snapshot, &refresh,
+                              &trace)) {
                 fprintf(stderr, "%s read/framing failure or buffer cap\n",
                         i ? "RFS" : "IPC");
                 rc = 1; break;
