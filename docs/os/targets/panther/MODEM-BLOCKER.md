@@ -29,6 +29,18 @@ registration polls over roughly 10 seconds stayed 0 with no RX. Thus an
 accepted AllowData request alone does not start camp on this boot. No PIN,
 CardPower, RadioPower OFF, APN or NV/EFS write was performed in this check.
 
+**Next isolated result (same boot):** guarded RadioPower **ON-only** `0x0800`
+was accepted under freshly checked READY/ON. Four voice and data polls still
+returned registration=0/reject=0 and zero RX. A subsequent eight-GET snapshot
+confirmed READY(5), radio ON(10), auto selection and preferred LTE_ONLY(11)
+were unchanged. Do not repeat ON-only as an established camp trigger.
+
+**RFS observation caveat:** opening and closing `/dev/umts_rfs0` is not a
+harmless one-shot probe: the kernel discards incoming packets while no RFS
+reader is open and purges its receive queue when the last reader closes.
+The 7→3→6 broker exited before these network tests, so later RFS traffic
+remains unmeasured. The old `rfs-poll` tool now refuses to run by default.
+
 ## Achieved remotely
 
 | Milestone | Evidence |

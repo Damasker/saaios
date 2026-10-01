@@ -28,6 +28,13 @@ and four subsequent data-registration polls stayed 0. This rules out a
 missing AllowData request alone; the next isolated experiment must target
 the start of network search, not SetupDataCall/APN.
 
+Guarded RadioPower ON-only `0x0800` was also accepted under READY/ON; four
+voice/data registration polls remained 0 and the subsequent snapshot kept
+READY/ON/auto/LTE_ONLY unchanged. The next bounded test is whether the
+historically forced LTE_ONLY(11) masks fallback coverage; any preferred-mode
+change must be read back and reversible. A short-lived RFS poll is unsafe
+because closing the final channel descriptor purges pending packets.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),
