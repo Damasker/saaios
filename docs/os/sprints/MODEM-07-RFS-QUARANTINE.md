@@ -10,6 +10,15 @@ is withheld on a final-fsync failure. The immutable synthetic baseline is
 checked after both runs. This is not an ARM build, CP transaction or approval
 to use original EFS/NV paths on the phone.
 
+The device's existing private verifier checks each userdata NV copy against
+its **adjacent** factory-format MD5 sidecar. That verifies local consistency,
+not independent provenance. A new host-only verified-fd fixture additionally
+requires a read-only regular descriptor, single link, owner-only mode, exact
+length and a SHA-256 pin supplied independently of the source file. Its test
+checks refusal on changed digest, mode, link count, length and writable fd.
+It cannot attest a phone path or supply a trusted pin; those remain blockers
+before any phone-side RFS reply.
+
 ## Why this exists
 
 The no-gap boot owner observed RFS command 7 at +7.282 s and command 6 at
@@ -110,6 +119,9 @@ transport adapters still need separate design and review.
    before replying to command 7. Create the unique candidate and durable
    `NO_PROMOTION` marker first. Establish descriptor identity, bounded size,
    full re-read and directory durability without opening original EFS.
+   Do not treat the adjacent `.md5` as an independent pin. A trusted expected
+   SHA-256 must be established separately; the host-only fd model is not an
+   on-device provenance adapter.
 3. Make RFS packet parsing stop at each complete response boundary. Allow
    at most one outstanding CP request/grant, with a bounded deadline and a
    fail-closed transition. The current passive owner's callback cannot

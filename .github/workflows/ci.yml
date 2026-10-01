@@ -136,6 +136,25 @@ jobs:
             os/targets/panther/diagnostics/rfs-quarantine-integration-host.test.c \
             -o /tmp/rfs-quarantine-integration-host-san
           /tmp/rfs-quarantine-integration-host-san
+      - name: quarantined RFS independently pinned source fd
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -DRFS_QUARANTINE_HOST_ONLY \
+            os/targets/panther/diagnostics/rfs-quarantine-core-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-source-host-linux.c \
+            os/targets/panther/diagnostics/rfs-quarantine-source-host-linux.test.c \
+            -o /tmp/rfs-quarantine-source-host-test
+          /tmp/rfs-quarantine-source-host-test
+      - name: quarantined RFS source fd sanitizers
+        run: |
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -DRFS_QUARANTINE_HOST_ONLY \
+            os/targets/panther/diagnostics/rfs-quarantine-core-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-source-host-linux.c \
+            os/targets/panther/diagnostics/rfs-quarantine-source-host-linux.test.c \
+            -o /tmp/rfs-quarantine-source-host-san
+          /tmp/rfs-quarantine-source-host-san
 
   test:
     runs-on: ubuntu-latest
