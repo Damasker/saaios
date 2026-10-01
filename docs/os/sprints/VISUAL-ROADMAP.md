@@ -2,6 +2,10 @@
 
 Status: **VUI-00, VUI-01, and VUI-03 complete; VUI-02 Task List complete, Acceptance checklist complete except one item blocked by the environment (see "The sans and mono faces survive the actual Pixel boot-image asset path" below)**
 
+> **Orb (2026-10-01):** всё, что в этом roadmap описывает Orb как точку,
+> радиальное меню и Context Light на полной точке, заменено
+> [ADR-430](../../adr/ADR-430-orb-spatial-navigation.md) / [ORB-ROADMAP](ORB-ROADMAP.md).
+
 **A note on `[x]` in VUI-04 through VUI-06 below**: VUI-00 through VUI-03
 held one consistent rule -- `[x]` means confirmed on the real Pixel 7, not
 merely implemented. VUI-04/05/06's own Task List checkboxes drifted from

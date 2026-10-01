@@ -2,6 +2,9 @@
 
 ## Статус
 
+Частично заменён [ADR-430](ADR-430-orb-spatial-navigation.md): шкала количества
+теперь на открытом ободе купола (`arc_span`), `Canvas::arc` удалён.
+
 Принято, 2026-10-01. Host rendering only; no flash, not looked at on the
 Pixel 7 panel yet (that review is the end-of-queue hardware pass). Не S33.
 

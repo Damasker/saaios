@@ -305,6 +305,7 @@ phone sprints.
 - [ATTN-ROADMAP.md](ATTN-ROADMAP.md) / [ADR-123](../../adr/ADR-123-attention-projection.md)
 - [AUTH-ROADMAP.md](AUTH-ROADMAP.md) / [ADR-124](../../adr/ADR-124-unified-authority-model.md)
 - [MEM-ROADMAP.md](MEM-ROADMAP.md) / [ADR-125](../../adr/ADR-125-memory-learning-provenance-v1.md)
+- [ORB-ROADMAP.md](ORB-ROADMAP.md) / [ADR-430](../../adr/ADR-430-orb-spatial-navigation.md) — Orb как пространство навигации
 
 Новых фундаментальных одноустройственных моделей не добавлять.
 
