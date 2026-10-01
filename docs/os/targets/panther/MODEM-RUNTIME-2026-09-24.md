@@ -5878,3 +5878,35 @@ RFS again showed file-3 command 7 at +7.271 s and command 6/sequence 1 at
 +17.272 s without a reply. Thus PIN and absence of the physical SIM no
 longer explain this boot's failure to register; the missing network-search
 prerequisite versus incomplete RFS transaction remains to be isolated.
+
+## 2026-10-01: extended network-status control under PIN-free READY
+
+A second guarded SIM-in AP boot deployed the reviewed read-only owner build
+SHA-256 `b5e9fa744e6bb47a1055043926057897902f78796d506d2d393efa03f5b5e04e`
+(source commit `ecc32f8`). Its ARM self-test passed before deployment; the
+previous binary and logs were retained under `.pre-network-20261001` names.
+The no-gap handoff returned `probe_rc=0`; CP was `ONLINE` and one owner
+(PID 554) held IPC0/RFS0. It sent no PIN, radio SET, network-selection SET,
+active scan, RFS reply or NV/EFS write.
+
+The +9.768-second two-slot metadata again had slot 0 card 1/port 0 logical 1
+and slot 1 card 1/port 0 logical 0. Indication and +60-second SIM GETs
+reported card 1/apps 1, READY(5), PIN1 DISABLED(3). The +60-second radio
+was ON(10), while voice/data registration remained 0, reject 0, data tech
+0; `rmnet0` had no IPv4 address and RX 0. The new one-at-a-time GET series
+then returned selection mode **0 (automatic)**, preferred network type
+**raw 16**, operator response success/length 119, and signal response
+success/length 210. Operator names, PLMN and signal payloads were neither
+parsed nor logged. Raw 16 is recorded without assuming the AOSP enum equals
+the Samsung SIT mode table; a prior boot also defaulted to 16 before the
+manual LTE-only experiments. RFS again showed cmd7/seq0 at +7.271 seconds
+and cmd6/seq1 at +17.273 seconds without replies. These status GETs confirm
+that manual network selection alone is not the blocker, but a successful
+operator/signal response does **not** prove RF search or network camp.
+
+The next discriminating diagnostic candidate is one factory-shaped
+`0x0706` available-network query under READY/ON, not a blind replay of
+radio/allow-data SETs. Unlike the four status GETs, this can actively occupy
+RF and has a factory cancel path on timeout. Its 16-byte request, bounded
+response/count parser, opposite-stack RF arbitration and cancel behavior
+must be reviewed in an opt-in single-owner build before any live send.

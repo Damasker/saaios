@@ -1,5 +1,14 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**Extended control (2026-10-01):** With SIM READY/PIN1 DISABLED and radio
+ON, the single-owner +60-second network GETs returned automatic selection
+(0), preferred type raw 16, and successful operator/signal responses.
+Registration remained 0 and `rmnet0` had no bearer. Operator and signal
+payloads were suppressed. Raw 16 is not yet identified from the Samsung
+mode table. The next possible discriminator is one reviewed, bounded
+available-network scan; it occupies RF and needs a cancel path on timeout,
+so it has **not** been sent. See [the runtime control](MODEM-RUNTIME-2026-09-24.md).
+
 **Latest SIM-in control (2026-10-01):** The operator confirmed the card's PIN
 prompt was actually enabled, then disabled it in another phone, reinserted
 the card and reported replenishing the account. With one continuous IPC0/RFS0

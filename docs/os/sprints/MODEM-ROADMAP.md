@@ -94,6 +94,20 @@ PIN entry or account balance alone. Next isolate the missing camp trigger
 from any RFS prerequisite with a bounded, single-owner experiment; neither
 cause is proven. Details: [runtime log](../targets/panther/MODEM-RUNTIME-2026-09-24.md).
 
+**Extended network control (2026-10-01):** A separately reviewed owner
+build kept the same single-owner handoff and added only four bounded,
+redacted status GETs after the +60-second SIM/radio/registration sweep.
+Under SIM READY/PIN disabled/radio ON, selection mode was automatic (0),
+preferred type raw 16, and operator and signal GETs succeeded. Voice/data
+registration stayed 0 and `rmnet0` had no bearer. Payloads containing
+operator names/PLMN or signal data were not logged. Raw preferred 16 still
+needs factory-table interpretation; do not change it based on an assumed
+AOSP mapping. One `0x0706` available-network query is the next possible
+search-vs-registration discriminator, but it is an **active RF scan** with
+factory timeout/cancel behavior, not another passive GET. Require a
+reviewed opt-in single-owner implementation and bounded cancel path before
+any live scan. No further PIN or blind radio SET is justified by this data.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),
