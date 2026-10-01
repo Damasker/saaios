@@ -190,13 +190,35 @@ and writes exactly `chunk_len` bytes from the data region
 (`0xa014–0xa030`); no inner-length-versus-outer-length check was found.
 Thus a 2032-byte final frame with outer payload length 2024 and inner chunk
 length 318 would be factory-accepted, with its extra 1694 bytes ignored.
-The live mismatch mask does **not** prove those are the actual lengths: the
-two set bits are coupled because SaaiOS derives frame length from the outer
-field. Next, capture only bounded numeric frame/read lengths and a padding
-predicate in one reviewed cold run. Any later parser change must require
-enough actual bytes for the inner chunk, accept only an observed bounded
-shape and keep the existing quarantine durability gate before ACK; do not
-copy the factory handler's missing bounds check.
+The second-run mismatch mask alone did **not** prove those hypothetical
+lengths: its two set bits were coupled because SaaiOS derives frame length
+from the outer field. The third run below captured the actual bounded shape.
+Any parser change must require enough actual bytes for the inner chunk,
+accept only that observed shape and keep the existing quarantine durability
+gate before ACK; do not copy the factory handler's missing bounds check.
+
+## Third full-transfer diagnostic: exact final frame (2026-10-01)
+
+A third reviewed owner changed only scalar diagnostics, not acceptance or
+modem I/O. After a fresh boot and successful read-only original-EFS pin, it
+again reached 95 grant attempts and 94 stored chunks before refusing the
+final frame without ACK. This time it recorded
+`final_parsed_len=340`, `final_outer_payload_len=332`,
+`final_trailing=0`, `final_padding_zero=1`. The inner chunk length remained
+318 and all previously checked command, sequence, status and file fields
+matched. The final two bytes are zero padding at offsets 338–339. This is
+consistent with 4-byte alignment, but only this exact final shape has been
+observed. No candidate or sidecar was promoted; the third candidate and
+`NO_PROMOTION` marker remain in quarantine.
+
+After another controlled AP reboot, the original EFS passed the four-file
+read-only comparison and was unmounted. The passive owner restored CP
+`ONLINE`; its settled SIM remained READY and registration remained 0. Next,
+review and host-test a narrow parser rule accepting only the existing exact
+338/330 final frame or the observed 340/332 frame with two zero padding
+bytes. All other fields, no-trailing rule, private candidate durability and
+final ACK gate stay unchanged. Run this only as another guarded cold opt-in,
+never as an automatic boot service.
 
 ## Why this exists
 
