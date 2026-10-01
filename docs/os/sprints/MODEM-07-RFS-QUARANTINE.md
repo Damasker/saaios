@@ -55,27 +55,37 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
    2012 bytes. The request is 20 bytes: command/sequence, payload length 12,
    file id, offset, chunk length. Accept the corresponding CP data frame
    only if its status is 0, file id is 3, sequence echoes the command-6
-   sequence (1 in the observed run), and chunk length matches the grant and
-   remaining bound. The factory receive handler is at
+   sequence (1 in the observed run), and chunk length remains bounded.
+   Requiring the chunk to equal the advertised grant is an additional
+   fail-closed SaaiOS policy; stock code checks `chunk <= remaining` and may
+   allow smaller chunks. The factory receive handler is at
    `0xe50c→0xe9d0→0x9e10`; the grant builder is at `0x9ba4–0x9bec`.
    Command 6 stores the sequence in `[obj+0x40]` at `0xe90c`; the grant
    copies it at `0x9bb4–0x9bd4`. For incoming command 2, the common dispatch
    compares the frame sequence with `[obj+0x40]` at `0xe2e4–0xe2ec` and an
    active-transfer mismatch yields status 6. Command 3 alone bypasses that
    comparison (`0xe2d8–0xe2e0`).
-4. For 189446 bytes the maximum is 95 chunks: 94 × 2012 and a final 318.
+4. With exact-grant-size policy, 189446 bytes take 95 chunks: 94 × 2012
+   and a final 318.
    Write only into the private candidate at verified offsets, with checked
    short-write handling. Require exact total length, fsync, size 524288,
    candidate integrity validation and a private checksum sidecar. Do not
    overwrite the baseline or use the factory's non-atomic destination copy.
-5. Keep the owner alive after completion, then compare read-only SIM, radio,
+5. After the final chunk, stock code fsyncs, calls `OnWriteDone`, then sends
+   a 16-byte command-3 success status with the same sequence and file id 3
+   (`0xa150–0xa180→0xa7f0`). It does not check the callback return before
+   the success status. A SaaiOS broker must improve this: send modeled
+   success only after quarantine durability/integrity gates; otherwise fail
+   without claiming completion or touching the baseline.
+6. Keep the owner alive after completion, then compare read-only SIM, radio,
    registration and bearer observations with the no-reply control. ONLINE,
    RFS completion and SIM READY are separate milestones; cellular service
    requires observed registration and a real bearer.
 
-Any final CP-visible status and all remaining state transitions must be
-verified from factory code or a redacted capture before enabling phone I/O.
-Until then, only a host-only parser/state-machine fixture is permitted.
+The final CP-visible status was verified in factory code. Remaining local
+file/backup/checksum transitions and real CP data-frame bytes still require
+review before enabling phone I/O. Until then, only a host-only
+parser/state-machine fixture is permitted.
 
 ## Failure and verification gates
 

@@ -534,6 +534,14 @@ length 12, then file id, offset, and a chunk capped at 2012. The 189446
 bytes are not in the 24-byte request. They would arrive only after a
 grant. The probe sent no grant and accepted no data; the factory branch
 also depends on local NV-file checks that this probe did not reproduce.
+Disassembly review on 2026-10-01 identified the continuation: command-2
+data echoes the command-6 sequence; 94 full 2012-byte chunks plus a final
+318-byte chunk cover 189446 bytes if each uses the full grant. After the
+last chunk, the handler fsyncs and calls `OnWriteDone`, then sends a 16-byte
+command-3 success status (`0xa150–0xa180→0xa7f0`). Its caller does not
+check the callback return before that status. A native implementation must
+instead verify a private quarantine candidate before claiming success and
+must never overwrite the verified boot NV copy or original EFS.
 
 The following boot kept the RFS channel open after that refusal. No
 further request arrived within 3 seconds. The modem stayed ONLINE and
