@@ -5,7 +5,8 @@
  *
  * After ONLINE it sends four allowlisted, read-only SIT status GETs once.
  * SIM-status-change indications may then schedule up to three debounced,
- * read-only SIM status refreshes through the same IPC reader.
+ * read-only SIM status refreshes through the same IPC reader. One separate
+ * settled pass of four read-only GETs is eligible after 60 seconds.
  * It never sends RFS replies or accesses NV/EFS.
  * It consumes unknown RFS requests without replying, so CP may still wait or
  * fail: this is observability only, not a substitute for the factory rfsd.
@@ -42,8 +43,19 @@ enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        RFS_HEADER_TRACE_LIMIT = 16,
        SIM_REFRESH_MAX = 3, SIM_REFRESH_DEBOUNCE_MS = 500,
        SIM_REFRESH_COALESCE_MS = 2000, SIM_REFRESH_MIN_GAP_MS = 3000,
-       SIM_REFRESH_REPLY_MS = 10000 };
+       SIM_REFRESH_REPLY_MS = 10000, SIM_SETTLED_DELAY_MS = 60000,
+       SIM_WIRE_UNIVERSAL_PIN = 13 };
 enum channel_kind { CHANNEL_IPC, CHANNEL_RFS };
+enum sim_query_kind { SIM_QUERY_NONE, SIM_QUERY_CHANGE, SIM_QUERY_SETTLED };
+
+static const struct {
+    unsigned id;
+    const char *label;
+} snapshot_gets[] = {
+    {0x0200, "sim"}, {0x0801, "radio"},
+    {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"}
+};
+enum { SNAPSHOT_GET_COUNT = sizeof snapshot_gets / sizeof snapshot_gets[0] };
 
 static unsigned le16(const uint8_t *p) {
     return (unsigned)p[0] | ((unsigned)p[1] << 8);
@@ -89,8 +101,10 @@ static int is_sim_status_changed(const uint8_t *p, size_t n) {
 struct sim_refresh {
     uint32_t token;
     unsigned sent;
+    size_t settled_next;
     int queued;
-    int pending;
+    enum sim_query_kind pending_kind;
+    int settled_started;
     int disabled;
     int64_t first_queued_ms;
     int64_t due_ms;
@@ -114,35 +128,104 @@ static void sim_refresh_note_indication(struct sim_refresh *refresh,
     refresh->due_ms = latest < cap ? latest : cap;
 }
 
-static int sim_refresh_expire(struct sim_refresh *refresh, int64_t now_ms) {
-    if (!refresh->pending || now_ms < refresh->reply_deadline_ms) return 0;
-    refresh->pending = 0;
-    return 1;
+static enum sim_query_kind sim_refresh_expire(struct sim_refresh *refresh,
+                                              int64_t now_ms) {
+    if (refresh->pending_kind == SIM_QUERY_NONE ||
+        now_ms < refresh->reply_deadline_ms) return SIM_QUERY_NONE;
+    enum sim_query_kind expired = refresh->pending_kind;
+    refresh->pending_kind = SIM_QUERY_NONE;
+    if (expired == SIM_QUERY_SETTLED) refresh->settled_next++;
+    return expired;
 }
 
 static int sim_refresh_ready(const struct sim_refresh *refresh,
                              int initial_done, int64_t now_ms) {
-    return initial_done && !refresh->disabled && !refresh->pending &&
+    return initial_done && !refresh->disabled &&
+           refresh->pending_kind == SIM_QUERY_NONE &&
+           !(refresh->settled_started &&
+             refresh->settled_next < SNAPSHOT_GET_COUNT) &&
            refresh->queued && refresh->sent < SIM_REFRESH_MAX &&
            now_ms >= refresh->due_ms && now_ms >= refresh->next_allowed_ms;
+}
+
+static int sim_settled_ready(const struct sim_refresh *refresh,
+                             int initial_done, int64_t now_ms,
+                             int64_t owner_start_ms) {
+    if (!initial_done || refresh->disabled ||
+        refresh->pending_kind != SIM_QUERY_NONE ||
+        refresh->settled_next >= SNAPSHOT_GET_COUNT) return 0;
+    if (refresh->settled_started) return 1;
+    return !refresh->queued &&
+           now_ms - owner_start_ms >= SIM_SETTLED_DELAY_MS &&
+           now_ms >= refresh->next_allowed_ms;
 }
 
 static void sim_refresh_mark_sent(struct sim_refresh *refresh,
                                   uint32_t token, int64_t now_ms) {
     refresh->queued = 0;
-    refresh->pending = 1;
+    refresh->pending_kind = SIM_QUERY_CHANGE;
     refresh->token = token;
     refresh->sent++;
     refresh->reply_deadline_ms = now_ms + SIM_REFRESH_REPLY_MS;
     refresh->next_allowed_ms = now_ms + SIM_REFRESH_MIN_GAP_MS;
 }
 
-static int sim_refresh_match_reply(struct sim_refresh *refresh,
-                                   const uint8_t *p, size_t n,
-                                   int64_t now_ms) {
-    if (!refresh->pending || now_ms >= refresh->reply_deadline_ms ||
-        !is_reply(p, n, 0x0200, refresh->token)) return 0;
-    refresh->pending = 0;
+static void sim_settled_mark_sent(struct sim_refresh *refresh,
+                                  uint32_t token, int64_t now_ms) {
+    refresh->settled_started = 1;
+    refresh->pending_kind = SIM_QUERY_SETTLED;
+    refresh->token = token;
+    refresh->reply_deadline_ms = now_ms + SIM_REFRESH_REPLY_MS;
+    refresh->next_allowed_ms = now_ms + SIM_REFRESH_MIN_GAP_MS;
+}
+
+static enum sim_query_kind sim_refresh_match_reply(struct sim_refresh *refresh,
+                                                   const uint8_t *p, size_t n,
+                                                   int64_t now_ms) {
+    if (refresh->pending_kind == SIM_QUERY_NONE ||
+        (refresh->pending_kind == SIM_QUERY_SETTLED &&
+         refresh->settled_next >= SNAPSHOT_GET_COUNT) ||
+        now_ms >= refresh->reply_deadline_ms ||
+        !is_reply(p, n, refresh->pending_kind == SIM_QUERY_CHANGE ?
+                  0x0200 : snapshot_gets[refresh->settled_next].id,
+                  refresh->token)) return SIM_QUERY_NONE;
+    enum sim_query_kind matched = refresh->pending_kind;
+    refresh->pending_kind = SIM_QUERY_NONE;
+    if (matched == SIM_QUERY_SETTLED) refresh->settled_next++;
+    return matched;
+}
+
+struct sim_status_scalars {
+    unsigned card;
+    unsigned apps;
+    unsigned universal_pin;
+    unsigned app_type;
+    unsigned app_state;
+    unsigned perso;
+    unsigned pin1;
+    unsigned pin1_remaining;
+    int full_app_record;
+};
+
+/* Only scalar status bytes are extracted. Do not expose AID or identifiers.
+ * The first app fields are valid only when every declared app record fits. */
+static int sim_status_scalars(const uint8_t *p, size_t size,
+                              struct sim_status_scalars *out) {
+    memset(out, 0, sizeof *out);
+    if (size < 15) return 0;
+    out->card = p[SIT_SIM_CARD];
+    out->apps = p[SIT_SIM_APPS];
+    if (out->apps > 0 && out->apps <= 4 &&
+        size >= 15U + SIT_SIM_APP_STRIDE * out->apps &&
+        size > SIT_SIM_PIN1_REMAIN) {
+        out->universal_pin = p[SIM_WIRE_UNIVERSAL_PIN];
+        out->app_type = p[SIT_SIM_APP_TYPE];
+        out->app_state = p[SIT_SIM_APP_STATE];
+        out->perso = p[SIT_SIM_PERSO_STATE];
+        out->pin1 = p[SIT_SIM_PIN1];
+        out->pin1_remaining = p[SIT_SIM_PIN1_REMAIN];
+        out->full_app_record = 1;
+    }
     return 1;
 }
 
@@ -231,11 +314,12 @@ static int fixture_sim_refresh(void) {
         sim_refresh_ready(&refresh, 1, 2999) ||
         !sim_refresh_ready(&refresh, 1, 3000)) return 22;
     sim_refresh_mark_sent(&refresh, 11, 3000);
-    if (refresh.queued || !refresh.pending || refresh.sent != 1 ||
+    if (refresh.queued || refresh.pending_kind != SIM_QUERY_CHANGE ||
+        refresh.sent != 1 ||
         sim_refresh_ready(&refresh, 1, 3500)) return 23;
     put32(reply + 6, 10);
     if (sim_refresh_match_reply(&refresh, reply, sizeof reply, 3200) ||
-        !refresh.pending) return 24;
+        refresh.pending_kind != SIM_QUERY_CHANGE) return 24;
     sim_refresh_note_indication(&refresh, indication, sizeof indication, 3100);
     if (sim_refresh_expire(&refresh, 12999) ||
         sim_refresh_match_reply(&refresh, reply, sizeof reply, 13000) ||
@@ -245,8 +329,8 @@ static int fixture_sim_refresh(void) {
     put32(reply + 6, 11);
     if (sim_refresh_match_reply(&refresh, reply, sizeof reply, 13001)) return 26;
     put32(reply + 6, 12);
-    if (!sim_refresh_match_reply(&refresh, reply, sizeof reply, 13001) ||
-        refresh.pending) return 27;
+    if (sim_refresh_match_reply(&refresh, reply, sizeof reply, 13001) !=
+        SIM_QUERY_CHANGE || refresh.pending_kind != SIM_QUERY_NONE) return 27;
     sim_refresh_note_indication(&refresh, indication, sizeof indication, 13010);
     if (sim_refresh_ready(&refresh, 1, 15999) ||
         !sim_refresh_ready(&refresh, 1, 16000)) return 28;
@@ -264,6 +348,83 @@ static int fixture_sim_refresh(void) {
         sim_refresh_ready(&no_retry, 1, 20000)) return 31;
     put32(reply + 6, 21);
     if (sim_refresh_match_reply(&no_retry, reply, sizeof reply, 10501)) return 32;
+
+    struct sim_refresh settled = {0};
+    if (sim_settled_ready(&settled, 0, 60000, 0) ||
+        sim_settled_ready(&settled, 1, 59999, 0) ||
+        !sim_settled_ready(&settled, 1, 60000, 0)) return 33;
+    sim_refresh_note_indication(&settled, indication, sizeof indication, 59900);
+    if (sim_settled_ready(&settled, 1, 60500, 0)) return 34;
+    sim_refresh_mark_sent(&settled, 31, 60500);
+    if (sim_settled_ready(&settled, 1, 63500, 0)) return 35;
+    put32(reply + 6, 31);
+    if (sim_refresh_match_reply(&settled, reply, sizeof reply, 60501) !=
+        SIM_QUERY_CHANGE || sim_settled_ready(&settled, 1, 63499, 0) ||
+        !sim_settled_ready(&settled, 1, 63500, 0)) return 36;
+    sim_settled_mark_sent(&settled, 32, 63500);
+    if (!settled.settled_started || settled.settled_next != 0 ||
+        settled.pending_kind != SIM_QUERY_SETTLED ||
+        sim_settled_ready(&settled, 1, 70000, 0)) return 37;
+    put32(reply + 6, 31);
+    if (sim_refresh_match_reply(&settled, reply, sizeof reply, 63501)) return 38;
+    sim_refresh_note_indication(&settled, indication, sizeof indication, 63501);
+    if (sim_refresh_ready(&settled, 1, 64001)) return 39;
+    put32(reply + 6, 32);
+    if (sim_refresh_match_reply(&settled, reply, sizeof reply, 63501) !=
+        SIM_QUERY_SETTLED || settled.settled_next != 1 ||
+        sim_refresh_ready(&settled, 1, 64001) ||
+        !sim_settled_ready(&settled, 1, 63501, 0)) return 40;
+    sim_settled_mark_sent(&settled, 33, 63502);
+    put32(reply + 6, 33);
+    if (sim_refresh_match_reply(&settled, reply, sizeof reply, 63503)) return 41;
+    reply[2] = 0x01; reply[3] = 0x08;
+    if (sim_refresh_match_reply(&settled, reply, sizeof reply, 63503) !=
+        SIM_QUERY_SETTLED || settled.settled_next != 2) return 42;
+    sim_settled_mark_sent(&settled, 34, 63504);
+    reply[2] = (uint8_t)SIT_NET_VOICE_REG;
+    reply[3] = (uint8_t)(SIT_NET_VOICE_REG >> 8);
+    put32(reply + 6, 34);
+    if (sim_refresh_match_reply(&settled, reply, sizeof reply, 73504) ||
+        sim_refresh_expire(&settled, 73504) != SIM_QUERY_SETTLED ||
+        settled.settled_next != 3 ||
+        sim_refresh_match_reply(&settled, reply, sizeof reply, 73505)) return 46;
+    if (!sim_settled_ready(&settled, 1, 73504, 0)) return 47;
+    sim_settled_mark_sent(&settled, 35, 73504);
+    reply[2] = (uint8_t)SIT_NET_DATA_REG;
+    reply[3] = (uint8_t)(SIT_NET_DATA_REG >> 8);
+    put32(reply + 6, 35);
+    if (sim_refresh_match_reply(&settled, reply, sizeof reply, 73505) !=
+        SIM_QUERY_SETTLED || settled.settled_next != SNAPSHOT_GET_COUNT ||
+        sim_settled_ready(&settled, 1, 80000, 0) ||
+        sim_refresh_ready(&settled, 1, 76503) ||
+        !sim_refresh_ready(&settled, 1, 76504)) return 48;
+    for (size_t i = 0; i < SNAPSHOT_GET_COUNT; ++i) {
+        uint8_t request[12];
+        if (make_get_request(request, snapshot_gets[i].id,
+                             (uint32_t)(100 + i)) ||
+            le16(request + 2) != snapshot_gets[i].id ||
+            le32(request + 6) != (uint32_t)(100 + i)) return 49;
+    }
+
+    uint8_t sim[15 + SIT_SIM_APP_STRIDE] = {0};
+    sim[SIT_SIM_CARD] = 1; sim[SIM_WIRE_UNIVERSAL_PIN] = 2;
+    sim[SIT_SIM_APPS] = 1; sim[SIT_SIM_APP_TYPE] = 3;
+    sim[SIT_SIM_APP_STATE] = 4; sim[SIT_SIM_PERSO_STATE] = 5;
+    sim[SIT_SIM_PIN1] = 6; sim[SIT_SIM_PIN1_REMAIN] = 7;
+    struct sim_status_scalars scalars;
+    if (sim_status_scalars(sim, 14, &scalars) ||
+        !sim_status_scalars(sim, sizeof sim, &scalars) ||
+        !scalars.full_app_record || scalars.card != 1 || scalars.apps != 1 ||
+        scalars.universal_pin != 2 || scalars.app_type != 3 ||
+        scalars.app_state != 4 || scalars.perso != 5 ||
+        scalars.pin1 != 6 || scalars.pin1_remaining != 7) return 43;
+    if (!sim_status_scalars(sim, sizeof sim - 1, &scalars) ||
+        scalars.full_app_record || scalars.universal_pin || scalars.app_type ||
+        scalars.app_state || scalars.perso || scalars.pin1 ||
+        scalars.pin1_remaining) return 44;
+    sim[SIT_SIM_APPS] = 2;
+    if (!sim_status_scalars(sim, sizeof sim, &scalars) ||
+        scalars.full_app_record) return 45;
     return 0;
 }
 
@@ -327,7 +488,7 @@ static int fixture(void) {
     memcpy(stream + used, rfs + 6, 6); used += 6;
     if (parse_available(CHANNEL_RFS, stream, &used, fixture_frame, &frames) ||
         used != 0 || frames != 2) return 13;
-    puts("PASS modem-channel-owner framing, response-token and SIM-refresh fixtures");
+    puts("PASS modem-channel-owner framing and bounded status-query fixtures");
     return 0;
 }
 
@@ -377,14 +538,6 @@ struct rfs_header_trace {
     uint64_t overflow;
     uint64_t overflow_reported;
     int64_t start_ms;
-};
-
-static const struct {
-    unsigned id;
-    const char *label;
-} snapshot_gets[] = {
-    {0x0200, "sim"}, {0x0801, "radio"},
-    {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"}
 };
 
 static volatile sig_atomic_t stop_requested;
@@ -577,14 +730,33 @@ static void report_rfs_overflow(struct rfs_header_trace *trace) {
 }
 
 static void print_sim_fields(const uint8_t *p, size_t size) {
-    if (size < 15) { printf(" status=short"); return; }
-    unsigned apps = p[SIT_SIM_APPS];
-    printf(" card_raw=%u apps=%u", p[SIT_SIM_CARD], apps);
-    if (apps > 0 && apps <= 4 &&
-        size >= 15U + SIT_SIM_APP_STRIDE * apps &&
-        size > SIT_SIM_PIN1)
-        printf(" app_state_raw=%u pin1_raw=%u",
-               p[SIT_SIM_APP_STATE], p[SIT_SIM_PIN1]);
+    struct sim_status_scalars status;
+    if (!sim_status_scalars(p, size, &status)) {
+        printf(" status=short");
+        return;
+    }
+    printf(" card_raw=%u apps=%u", status.card, status.apps);
+    if (status.full_app_record)
+        printf(" universal_pin_raw=%u app_type_raw=%u app_state_raw=%u"
+               " perso_raw=%u pin1_raw=%u pin1_remaining_raw=%u",
+               status.universal_pin, status.app_type, status.app_state,
+               status.perso, status.pin1, status.pin1_remaining);
+}
+
+static void print_status_fields(unsigned id, const uint8_t *p, size_t size) {
+    if (id == 0x0200) {
+        print_sim_fields(p, size);
+    } else if (id == 0x0801 && size >= 16) {
+        printf(" radio_raw=%u", le32(p + 12));
+    } else if ((id == SIT_NET_VOICE_REG && size >= 14) ||
+               (id == SIT_NET_DATA_REG && size >= 16)) {
+        printf(" registration_raw=%u reject_raw=%u",
+               p[SIT_NET_REG_STATE_OFFSET], p[SIT_NET_REJECT_OFFSET]);
+        if (id == SIT_NET_DATA_REG)
+            printf(" tech_raw=%u", p[SIT_NET_DATA_TECH_OFFSET]);
+    } else {
+        printf(" status=short");
+    }
 }
 
 static void snapshot_reply(struct snapshot *snapshot, const uint8_t *p,
@@ -599,19 +771,7 @@ static void snapshot_reply(struct snapshot *snapshot, const uint8_t *p,
     snapshot->next++;
     printf("snapshot %s response=yes error_raw=%u", label, (unsigned)p[10]);
     if (p[10]) { putchar('\n'); return; }
-    if (id == 0x0200) {
-        print_sim_fields(p, size);
-    } else if (id == 0x0801 && size >= 16) {
-        printf(" radio_raw=%u", le32(p + 12));
-    } else if ((id == SIT_NET_VOICE_REG && size >= 14) ||
-               (id == SIT_NET_DATA_REG && size >= 16)) {
-        printf(" registration_raw=%u reject_raw=%u",
-               p[SIT_NET_REG_STATE_OFFSET], p[SIT_NET_REJECT_OFFSET]);
-        if (id == SIT_NET_DATA_REG)
-            printf(" tech_raw=%u", p[SIT_NET_DATA_TECH_OFFSET]);
-    } else {
-        printf(" status=short");
-    }
+    print_status_fields(id, p, size);
     putchar('\n');
 }
 
@@ -658,34 +818,70 @@ static int snapshot_finished(const struct snapshot *snapshot) {
            snapshot->next >= sizeof snapshot_gets / sizeof snapshot_gets[0];
 }
 
+static void expire_sim_query(struct sim_refresh *refresh, int64_t now_ms) {
+    size_t settled_index = refresh->settled_next;
+    enum sim_query_kind kind = sim_refresh_expire(refresh, now_ms);
+    if (kind == SIM_QUERY_CHANGE)
+        printf("sim_refresh response=no request=%u status=timeout\n",
+               refresh->sent);
+    else if (kind == SIM_QUERY_SETTLED)
+        printf("sim_settled %s response=no status=timeout\n",
+               snapshot_gets[settled_index].label);
+}
+
 static void sim_refresh_reply(struct sim_refresh *refresh, const uint8_t *p,
                               size_t size, int64_t now_ms) {
-    if (!sim_refresh_match_reply(refresh, p, size, now_ms)) return;
-    printf("sim_refresh response=yes request=%u error_raw=%u",
-           refresh->sent, (unsigned)p[10]);
-    if (!p[10]) print_sim_fields(p, size);
+    size_t settled_index = refresh->settled_next;
+    enum sim_query_kind kind = sim_refresh_match_reply(refresh, p, size, now_ms);
+    if (kind == SIM_QUERY_NONE) return;
+    if (kind == SIM_QUERY_CHANGE)
+        printf("sim_refresh response=yes request=%u error_raw=%u",
+               refresh->sent, (unsigned)p[10]);
+    else
+        printf("sim_settled %s response=yes error_raw=%u",
+               snapshot_gets[settled_index].label, (unsigned)p[10]);
+    if (!p[10])
+        print_status_fields(kind == SIM_QUERY_CHANGE ? 0x0200 :
+                            snapshot_gets[settled_index].id, p, size);
     putchar('\n');
 }
 
 static void sim_refresh_advance(struct sim_refresh *refresh,
                                 struct snapshot *snapshot, int ipc_fd,
-                                int64_t now_ms) {
-    if (sim_refresh_expire(refresh, now_ms))
-        printf("sim_refresh response=no request=%u status=timeout\n",
-               refresh->sent);
-    if (!sim_refresh_ready(refresh, snapshot_finished(snapshot), now_ms))
-        return;
+                                int64_t now_ms, int64_t owner_start_ms) {
+    expire_sim_query(refresh, now_ms);
+    int initial_done = snapshot_finished(snapshot);
+    enum sim_query_kind kind;
+    if (sim_refresh_ready(refresh, initial_done, now_ms))
+        kind = SIM_QUERY_CHANGE;
+    else if (sim_settled_ready(refresh, initial_done, now_ms,
+                               owner_start_ms))
+        kind = SIM_QUERY_SETTLED;
+    else return;
+    unsigned id = kind == SIM_QUERY_CHANGE ? 0x0200 :
+                  snapshot_gets[refresh->settled_next].id;
     uint8_t request[12];
     uint32_t token = ++snapshot->token;
-    if (make_get_request(request, 0x0200, token) ||
+    if (make_get_request(request, id, token) ||
         write(ipc_fd, request, sizeof request) != (ssize_t)sizeof request) {
-        puts("sim_refresh request=failed no-retry disabled=yes");
+        if (kind == SIM_QUERY_CHANGE)
+            puts("sim_refresh request=failed no-retry disabled=yes");
+        else
+            printf("sim_settled %s request=failed no-retry disabled=yes\n",
+                   snapshot_gets[refresh->settled_next].label);
         refresh->disabled = 1;
         refresh->queued = 0;
+        if (kind == SIM_QUERY_SETTLED) refresh->settled_started = 1;
         return;
     }
-    sim_refresh_mark_sent(refresh, token, now_ms);
-    printf("sim_refresh request=sent request=%u\n", refresh->sent);
+    if (kind == SIM_QUERY_CHANGE) {
+        sim_refresh_mark_sent(refresh, token, now_ms);
+        printf("sim_refresh request=sent request=%u\n", refresh->sent);
+    } else {
+        sim_settled_mark_sent(refresh, token, now_ms);
+        printf("sim_settled %s request=sent\n",
+               snapshot_gets[refresh->settled_next].label);
+    }
 }
 
 struct live_frame_context {
@@ -702,9 +898,7 @@ static void live_frame(void *opaque, enum channel_kind kind,
     struct live_frame_context *context = opaque;
     count_frame(context->channel, p, size, context->counts);
     if (kind == CHANNEL_IPC) {
-        if (sim_refresh_expire(context->refresh, context->now_ms))
-            printf("sim_refresh response=no request=%u status=timeout\n",
-                   context->refresh->sent);
+        expire_sim_query(context->refresh, context->now_ms);
         snapshot_reply(context->snapshot, p, (size_t)size);
         sim_refresh_reply(context->refresh, p, (size_t)size,
                           context->now_ms);
@@ -828,7 +1022,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         }
         if (state == CP_ONLINE) {
             snapshot_advance(&snapshot, ipc, now);
-            sim_refresh_advance(&refresh, &snapshot, ipc, now);
+            sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
         }
         struct pollfd fds[2];
         int timeout = POLL_SLICE_MS;
