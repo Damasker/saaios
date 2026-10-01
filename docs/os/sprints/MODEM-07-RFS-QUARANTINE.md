@@ -754,10 +754,55 @@ of a previous Android session. No SGC GET was identified in the exported
 factory symbols; do not invent `0x0405` as a getter.
 
 This corrects the earlier "property absent, payload unknown" research
-conclusion. A separate, bounded factory-profile startup experiment still
-needs explicit payload/response/timing review; the passive owner sends no
-`0x0404`. Do not import an entire Android runtime merely to reproduce this
+conclusion. Do not import an entire Android runtime merely to reproduce this
 small property-resolution and startup-dispatch responsibility.
+
+Independent review also establishes initialization order. Decoded APS2
+relocations put `LoadConfigToRilProperty` in vtable slot +64 and
+`OnInitialize` in slot +48 (address point `0x295358`). `InitInstance`
+calls them in that order at `0x12daa4` and `0x12dab4`, before the contexts
+are created. Thus the factory target property exists before radio callbacks.
+The observed `0x0803` UNAVAILABLE followed by `0x0802` raw 0/OFF qualifies
+for the factory radio-available hook; an ON indication is not required.
+
+### Isolated delayed SGC experiment
+
+Hypothesis: the missing factory carrier-configuration command alone can
+explain the currently unregistered state. This is unproven. The experiment
+uses the verified static TD1A `europen` profile, not a claim about an earlier
+Android runtime's overrides. Both known persistent-property file paths were
+absent on the current SaaiOS filesystem. No Android vendor daemon is run.
+
+Prepare a separate compile-time `sgc-once` owner/probe/wrapper mode and unique
+logs; passive and scan defaults do not send SGC. First collect the normal
+settled baseline and require fresh same-boot SIM READY/PIN disabled, radio
+ON, logical stack enabled, unregistered voice/data, automatic selection and
+the already observed broad preferred RAT. Also require sole ownership,
+CP ONLINE, empty receive buffers and no pending AP transaction. Those are
+AP-request gates, not proof of CP-autonomous RF idleness.
+
+The sole active request is factory `0x0404`: 24 bytes, type 0, reserved
+bytes 1/10/11 zero, fresh token at +6, LE32 words `0x0101, 0, 0` at +12,
++16 and +20. The auxiliary words' meanings are not established; zero comes
+from the exact caller, not an invented default. Use the factory 2000 ms
+deadline (`DoSendSGC`, `0x17fa28`). The reply needs type 1, matching ID/token,
+declared length and at least 12 bytes, with full 16-bit zero error for
+acceptance; the factory generic adapter does not prove exact length 12.
+
+Record the attempt before its single write. Never retry or cancel it. A
+well-formed reply permits one independent read-only SIM/radio/voice/data/
+logical-stack sweep ten seconds later. Timeout, ambiguous write or lost
+framing stops further IPC writes while retaining ownership until OFFLINE;
+recover through AP reboot. No RFS reply or original-EFS write is added.
+The AP completion callback (`0x17fae0`) has no follow-up SET/reset/file
+write, but CP-side persistence and reset behavior are not established.
+
+Success requires actual registration, not merely an ACK. A negative result
+only excludes this **late single-command** intervention in that boot; it
+does not exclude the earlier factory timing, other startup dependencies or
+their ordering. Preserve logs and return to the manifest-pinned passive
+baseline after the controlled run. This experiment does not promote a new
+boot service or an RFS candidate.
 
 ## Separate active RF scan gate
 
