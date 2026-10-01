@@ -6,11 +6,12 @@
 //! ready file to replay.
 
 use crate::model::{
-    dependencies_satisfied, depends_on_of, intent_id_of, status_of, WorkflowStatus,
+    dependencies_satisfied, depends_on_of, intent_id_of, priority_of, status_of, WorkflowStatus,
     PROPOSAL_ID_PROPERTY, TASK_TYPE,
 };
 use saai_entity_protocol::Entity;
 use serde_json::Value;
+use std::cmp::Reverse;
 use uuid::Uuid;
 
 pub const MAX_MUTATING_IN_FLIGHT: usize = 1;
@@ -43,9 +44,13 @@ pub fn completed_ids(tasks: &[Entity]) -> Vec<Uuid> {
 /// Pending tasks whose hard parents are Done. Failed parents are omitted
 /// from the completed set, so the child stays blocked. Confirmation and
 /// clarification waits are not ready.
+///
+/// WORK-05: the result is in admission order — priority (high first),
+/// then oldest first, then id as the last deterministic tie-break. The
+/// first element is what `next_admission` starts.
 pub fn derive_ready_set(tasks: &[Entity]) -> Vec<Uuid> {
     let completed = completed_ids(tasks);
-    let mut ready: Vec<Uuid> = tasks
+    let mut ready: Vec<&Entity> = tasks
         .iter()
         .filter(|task| {
             task.entity_type == TASK_TYPE
@@ -53,10 +58,9 @@ pub fn derive_ready_set(tasks: &[Entity]) -> Vec<Uuid> {
                 && dependencies_satisfied(&depends_on_of(task), &completed)
                 && !plan_confirmation_blocks(task, tasks)
         })
-        .map(|task| task.id)
         .collect();
-    ready.sort();
-    ready
+    ready.sort_by_key(|task| (Reverse(priority_of(task)), task.created_at, task.id));
+    ready.into_iter().map(|task| task.id).collect()
 }
 
 fn is_plan_step(task: &Entity) -> bool {
@@ -265,5 +269,82 @@ mod tests {
     #[test]
     fn ready_is_not_a_persisted_status() {
         assert!(WorkflowStatus::parse("ready").is_none());
+    }
+
+    fn at(mut entity: Entity, seconds: i64) -> Entity {
+        entity.created_at = Utc::now() + chrono::Duration::seconds(seconds);
+        entity
+    }
+
+    fn with_priority_prop(mut entity: Entity, raw: &str) -> Entity {
+        entity.properties.insert("priority".into(), json!(raw));
+        entity
+    }
+
+    #[test]
+    fn equal_priority_admits_oldest_first_not_random_id_order() {
+        let newer = at(task(WorkflowStatus::Pending, &[]), 10);
+        let older = at(task(WorkflowStatus::Pending, &[]), -10);
+        let middle = at(task(WorkflowStatus::Pending, &[]), 0);
+        let ready = derive_ready_set(&[newer.clone(), older.clone(), middle.clone()]);
+        assert_eq!(ready, vec![older.id, middle.id, newer.id]);
+        assert_eq!(
+            next_admission(&[newer, middle, older.clone()]),
+            Some(older.id)
+        );
+    }
+
+    #[test]
+    fn high_priority_jumps_the_queue_low_waits() {
+        let old_low = with_priority_prop(at(task(WorkflowStatus::Pending, &[]), -30), "low");
+        let normal = at(task(WorkflowStatus::Pending, &[]), -20);
+        let new_high = with_priority_prop(at(task(WorkflowStatus::Pending, &[]), 5), "high");
+        let ready = derive_ready_set(&[old_low.clone(), normal.clone(), new_high.clone()]);
+        assert_eq!(ready, vec![new_high.id, normal.id, old_low.id]);
+    }
+
+    #[test]
+    fn unknown_priority_is_normal_not_promoted_or_stranded() {
+        let junk = with_priority_prop(at(task(WorkflowStatus::Pending, &[]), -5), "urgent!!");
+        let high = with_priority_prop(at(task(WorkflowStatus::Pending, &[]), 5), "high");
+        assert_eq!(
+            derive_ready_set(&[junk.clone(), high.clone()]),
+            vec![high.id, junk.id]
+        );
+        assert_eq!(priority_of(&junk), crate::model::TaskPriority::Normal);
+    }
+
+    #[test]
+    fn priority_never_bypasses_dependencies_or_the_cap() {
+        let parent = at(task(WorkflowStatus::Pending, &[]), 0);
+        let urgent_child =
+            with_priority_prop(at(task(WorkflowStatus::Pending, &[parent.id]), -50), "high");
+        assert_eq!(
+            derive_ready_set(&[parent.clone(), urgent_child.clone()]),
+            vec![parent.id]
+        );
+        let running = task(WorkflowStatus::Running, &[]);
+        let high = with_priority_prop(task(WorkflowStatus::Pending, &[]), "high");
+        assert_eq!(next_admission(&[running, high]), None);
+    }
+
+    #[test]
+    fn priority_survives_the_result_property_rebuild() {
+        let high = with_priority_prop(task(WorkflowStatus::Running, &[]), "high");
+        let rebuilt = crate::model::task_properties_after_result(
+            &high,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            WorkflowStatus::Verifying,
+        );
+        assert_eq!(rebuilt.get("priority"), Some(&json!("high")));
+        let normal = task(WorkflowStatus::Running, &[]);
+        let rebuilt = crate::model::task_properties_after_result(
+            &normal,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            WorkflowStatus::Verifying,
+        );
+        assert!(rebuilt.get("priority").is_none());
     }
 }

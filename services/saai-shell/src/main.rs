@@ -4884,14 +4884,58 @@ fn live_task_trailing(
     ))
 }
 
-/// WORK-08: «Далее» is a pending Action if one exists, otherwise the
-/// first derived-ready Task. WaitingConfirmation stays on NOW attention.
-fn next_ready_task(entities: &[Entity]) -> Option<&Entity> {
-    entities.iter().find(|entity| {
-        entity.entity_type == "saaios.task"
-            && workflow_status_of(entity) == Some(TASK_STATUS_PENDING)
-            && task_dependencies_ready(entity, entities)
+/// WORK-05 admission rank, mirroring `saai-taskd` `derive_ready_set`:
+/// high priority first, then oldest, then id. Unknown values are normal.
+fn task_admission_rank(
+    entity: &Entity,
+) -> (std::cmp::Reverse<u8>, chrono::DateTime<chrono::Utc>, Uuid) {
+    let priority = match entity.properties.get("priority").and_then(Value::as_str) {
+        Some("high") => 2u8,
+        Some("low") => 0,
+        _ => 1,
+    };
+    (std::cmp::Reverse(priority), entity.created_at, entity.id)
+}
+
+fn task_intent_id(entity: &Entity) -> Option<&str> {
+    entity.properties.get("intent_id").and_then(Value::as_str)
+}
+
+/// A plan does not bulk-allow (scheduler `plan_confirmation_blocks`): while
+/// any step of the same Intent waits for confirmation, sibling plan steps
+/// are not next.
+fn plan_confirmation_blocks_task(entity: &Entity, entities: &[Entity]) -> bool {
+    if entity
+        .properties
+        .get("proposal_id")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return false;
+    }
+    let Some(intent) = task_intent_id(entity) else {
+        return false;
+    };
+    entities.iter().any(|other| {
+        other.entity_type == "saaios.task"
+            && task_intent_id(other) == Some(intent)
+            && workflow_status_of(other) == Some(TASK_STATUS_WAITING_CONFIRMATION)
     })
+}
+
+/// WORK-08: «Далее» is a pending Action if one exists, otherwise the
+/// Task the scheduler would admit first (WORK-02 ready rule, WORK-05
+/// order). WaitingConfirmation stays on NOW attention.
+fn next_ready_task(entities: &[Entity]) -> Option<&Entity> {
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == "saaios.task"
+                && workflow_status_of(entity) == Some(TASK_STATUS_PENDING)
+                && task_dependencies_ready(entity, entities)
+                && !plan_confirmation_blocks_task(entity, entities)
+        })
+        .min_by_key(|entity| task_admission_rank(entity))
 }
 
 fn next_work(entities: &[Entity]) -> Option<&Entity> {
@@ -12729,6 +12773,58 @@ mod tests {
         assert_eq!(
             super::next_ready_task(&unblocked).map(|entity| entity.id),
             Some(child.id)
+        );
+    }
+
+    #[test]
+    fn next_ready_task_follows_scheduler_admission_order() {
+        let pending = |title: &str, age_secs: i64, priority: Option<&str>| {
+            let mut properties = serde_json::Map::new();
+            properties.insert("status".into(), serde_json::Value::String("pending".into()));
+            if let Some(priority) = priority {
+                properties.insert("priority".into(), serde_json::json!(priority));
+            }
+            let mut entity = test_entity("saaios.task", properties);
+            entity.title = title.into();
+            entity.created_at = chrono::Utc::now() - chrono::Duration::seconds(age_secs);
+            entity
+        };
+        let oldest = pending("oldest", 300, None);
+        let newest = pending("newest", 10, None);
+        let urgent = pending("urgent", 5, Some("high"));
+        let lazy = pending("lazy", 900, Some("low"));
+        let title =
+            |list: &[Entity]| super::next_ready_task(list).map(|entity| entity.title.clone());
+        assert_eq!(
+            title(&[newest.clone(), lazy.clone(), oldest.clone()]).as_deref(),
+            Some("oldest"),
+            "store order must not decide «Далее»"
+        );
+        assert_eq!(
+            title(&[newest, lazy, oldest, urgent]).as_deref(),
+            Some("urgent")
+        );
+    }
+
+    #[test]
+    fn next_ready_task_skips_plan_steps_while_a_sibling_awaits_confirmation() {
+        let intent = uuid::Uuid::new_v4().to_string();
+        let step = |status: &str, proposal: &str| {
+            let mut properties = serde_json::Map::new();
+            properties.insert("status".into(), serde_json::json!(status));
+            properties.insert("intent_id".into(), serde_json::json!(intent));
+            properties.insert("proposal_id".into(), serde_json::json!(proposal));
+            test_entity("saaios.task", properties)
+        };
+        let waiting = step("waiting_confirmation", "a");
+        let sibling = step("pending", "b");
+        assert!(super::next_ready_task(&[waiting.clone(), sibling.clone()]).is_none());
+        let mut done = waiting;
+        done.properties
+            .insert("status".into(), serde_json::json!("done"));
+        assert_eq!(
+            super::next_ready_task(&[done, sibling.clone()]).map(|e| e.id),
+            Some(sibling.id)
         );
     }
 

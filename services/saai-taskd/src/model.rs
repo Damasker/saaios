@@ -151,6 +151,10 @@ pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
 /// Temporary property form of Task DAG edges (ADR-121 WORK-01).
 /// Prefer SOM `saaios.depends-on` once that relation is the only format.
 pub const DEPENDS_ON_PROPERTY: &str = "depends_on_task_ids";
+/// WORK-05: optional admission priority among ready Tasks. Missing or
+/// unknown values mean `normal`; it never bypasses dependencies,
+/// confirmation, or the concurrency cap.
+pub const PRIORITY_PROPERTY: &str = "priority";
 /// Proposal id from a PlanProposal step (ADR-238). Distinct from Task UUID.
 pub const PROPOSAL_ID_PROPERTY: &str = "proposal_id";
 /// WORK-03: Observation key that must be Fresh and match before Done.
@@ -249,6 +253,54 @@ pub fn status_after_verification(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    Low,
+    Normal,
+    High,
+}
+
+impl TaskPriority {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "low" => Some(Self::Low),
+            "normal" => Some(Self::Normal),
+            "high" => Some(Self::High),
+            _ => None,
+        }
+    }
+}
+
+/// Unknown or missing is `Normal`: a malformed value must not strand or
+/// promote a Task.
+pub fn priority_of(entity: &Entity) -> TaskPriority {
+    entity
+        .properties
+        .get(PRIORITY_PROPERTY)
+        .and_then(Value::as_str)
+        .and_then(TaskPriority::parse)
+        .unwrap_or(TaskPriority::Normal)
+}
+
+/// `Normal` is the default and is not written.
+pub fn with_priority(
+    mut properties: Map<String, Value>,
+    priority: TaskPriority,
+) -> Map<String, Value> {
+    if priority != TaskPriority::Normal {
+        properties.insert(PRIORITY_PROPERTY.into(), json!(priority.as_str()));
+    }
+    properties
+}
+
 pub fn task_properties_after_result(
     task: &Entity,
     intent_id: Uuid,
@@ -269,6 +321,7 @@ pub fn task_properties_after_result(
     if status == WorkflowStatus::Failed {
         properties = with_failure_class(properties, FailureClass::VerificationMismatch);
     }
+    let properties = with_priority(properties, priority_of(task));
     with_depends_on(properties, &depends_on_of(task))
 }
 

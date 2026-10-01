@@ -46,19 +46,20 @@ use intent_resolution::{
 use model::{
     action_properties, dangerous_action_of, evidence_from_fresh_rows, find_action_for_task,
     has_open_task_for_intent, has_task_for_intent, intent_id_of, is_schedule_due_with,
-    observation_threshold_of, result_id_of, result_properties, safe_title, schedule_every_secs, schedule_fire_count, schedule_properties,
-    schedule_text, should_retry_failed_task, status_after_verification, status_of, task_properties,
-    task_properties_after_result, verification_key_of, with_depends_on, with_failure_class,
-    with_observation_threshold, FailureClass, ObservationEvidence, WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND,
+    observation_threshold_of, result_id_of, result_properties, safe_title, schedule_every_secs,
+    schedule_fire_count, schedule_properties, schedule_text, should_retry_failed_task,
+    status_after_verification, status_of, task_properties, task_properties_after_result,
+    verification_key_of, with_depends_on, with_failure_class, with_observation_threshold,
+    FailureClass, ObservationEvidence, WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND,
     INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY, RESULT_TYPE, RUNTIME_ACTION_KIND,
     SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
+use replan::{should_issue_replan, REPLAN_COUNT_PROPERTY};
 use saai_entity_protocol::{
     Entity, EntitydEvent, RELATION_EXECUTES, RELATION_PRODUCES, RELATION_REALIZES,
 };
 use saai_entity_store::EventPayload;
 use saai_object_actions::{display_inspect_spec, ObjectActionRegistry};
-use replan::{should_issue_replan, REPLAN_COUNT_PROPERTY};
 use scheduler::{admit_frontier, derive_ready_set, mutating_in_flight, MAX_MUTATING_IN_FLIGHT};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -298,9 +299,7 @@ impl Daemon {
             if let Some((key, gte)) = observation_threshold_of(&schedule) {
                 fired_properties = with_observation_threshold(fired_properties, &key, gte);
             }
-            self.conn
-                .update_entity(&schedule, fired_properties)
-                .await?;
+            self.conn.update_entity(&schedule, fired_properties).await?;
             let mut intent_properties = serde_json::Map::new();
             intent_properties.insert("text".into(), json!(text));
             intent_properties.insert("schedule_id".into(), json!(schedule.id.to_string()));
