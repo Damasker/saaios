@@ -154,6 +154,21 @@ SIM had working registration and mobile data in another handset after the
 top-up. Keep the current boot passive; the redacted signal-mask extension is
 committed but not yet installed on the phone.
 
+**Completed quarantined RFS control (2026-10-01):** a guarded, manual,
+single-owner boot stored all 95 file-3 chunks (189446 bytes) in a private
+candidate and sent one final success ACK only after candidate/sidecar
+durability and integrity checks. No candidate was promoted or used as a boot
+source, and original EFS was not written; it passed a read-only four-file
+comparison again after reboot. At READY+60 s, SIM was READY/PIN disabled and
+radio ON, but voice/data registration stayed 0 and `rmnet0` was down with
+RX/TX 0, matching the passive no-reply control. Completing this RFS exchange
+is therefore insufficient to establish camp or a bearer. The passive owner
+is restored. Next, resolve the stock radio-available startup gates and exact
+timing offline, then use only a separately reviewed, same-owner redacted
+status/signal snapshot if another phone comparison is needed. Do not infer RF
+power from the signal technology-presence mask or replay factory SETs without
+an isolated hypothesis and bounded control.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),
@@ -212,7 +227,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-04 | Maintained boot model library, no hardware actions | **Started** (host TOC/stage/plan/executor/failure model) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
-| MODEM-07 | RFS design and refusal policy | **In progress** (one quarantined grant/first chunk on phone; full exchange and service pending) | diagnostic only |
+| MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | Backlog | **yes** |
 
@@ -850,15 +865,22 @@ tests split/coalesced packets, one outstanding grant, ambiguous writes and
 deadlines. A synthetic end-to-end fixture now integrates protocol, transport
 and storage; a separate host-only verified-FD fixture tests source integrity.
 Linux ASan/UBSan passes. A read-only, no-recovery phone check found both NV
-files and their sidecars byte-identical to the userdata copies. The guarded
-one-grant phone owner used a fresh, single-use EFS provenance pin, reached CP
-`ONLINE`, sent one grant, and stored the first real CP data chunk only in a
-root-only quarantine candidate. No second grant, final ACK or promotion was
-sent. After reboot the original EFS still matched the four userdata files,
-the incomplete candidate remained isolated, and the passive owner was
-restored. Registration and bearer remain absent; this is **not** MODEM-07
-completion. The full 95-chunk exchange, durable final status and production
-service remain gated by separate review and tests.
+files and their sidecars byte-identical to the userdata copies. After an
+initial one-grant run and three fail-closed full-transfer diagnostics, the
+separate guarded full owner completed a manual 95-chunk/189446-byte file-3
+exchange in a private quarantine candidate. It sent the final ACK only after
+candidate and sidecar durability/integrity checks. The candidate was not
+promoted to a boot copy; original EFS was not written and passed a read-only
+post-reboot comparison. The passive owner was restored. Its no-reply control
+and the completed exchange both had READY/ON but registration 0 and no
+`rmnet0` bearer at +60 s. This is a completed diagnostic transaction, not a
+production RFS service or MODEM-06 camp success. MODEM-07 remains in progress
+for general refusal policy and maintained service integration. The next camp
+investigation is read-only: audit the factory radio-available startup gates
+offline and, if needed, compare redacted registration/reject/technology and
+signal-presence scalars through one continuous owner at matched times. Do not
+send an unreviewed radio, carrier, SIM or network SET to imitate factory
+startup.
 
 **Change:** specify what requests may be served from verified copies, what is
 read-only, what is denied, and how writes are rejected or quarantined. Original
