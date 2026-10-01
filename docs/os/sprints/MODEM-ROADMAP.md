@@ -1,5 +1,15 @@
 # SaaiOS Pixel Modem — delivery roadmap
 
+**Priority correction (2026-10-01):** the CP sends unsolicited
+`type=2/id=0x0906/len=206` frames about every 1.28 s when IPC0 is held open
+(23 headers in a 30 s redacted observation). Without an opener, the kernel
+drops them; the last close purges the shared queue. The currently short-lived
+diagnostics therefore cannot establish reliable modem runtime ownership.
+Implement one continuous IPC reader/dispatcher plus an RFS owner, with a
+no-gap handoff from boot, before running the prepared reversible preferred-RAT
+experiment or attributing registration failure to LTE coverage. Do not treat
+the observed unsolicited ID as decoded until its contract is verified.
+
 Status: **MODEM-00/01 complete. MODEM-02 diagnostic complete, not a
 service. MODEM-03 diagnostic complete with first runtime responses. MODEM-04
 started: maintained host boot model, reviewed boot plan, executor-facing

@@ -1,5 +1,17 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**New channel evidence (2026-10-01):** the live kernel repeatedly reported
+`umts_ipc0 is not opened` (190 matching entries in the inspected ring) and
+one `umts_rfs0 is not opened` packet drop. A bounded, header-only IPC reader
+then received 23 unsolicited `type=2, id=0x0906, len=206` frames in 30 s,
+roughly one every 1.28 s. No frame payload or subscriber identity was logged.
+This proves CP→AP traffic exists while an IPC reader is open; it does **not**
+yet identify the meaning of `0x0906` or prove that missed frames alone block
+camp. The s5300 kernel discards RX when an endpoint has no opener, and the
+last close purges its shared RX queue. A long-lived, single-reader IPC/RFS
+owner and safe boot handoff now precede more radio-setting experiments. A
+bounded observer cannot substitute for that service.
+
 **Current status (2026-10-01):** SIM reached **READY(5)** twice after a
 signed `0x0201` VerifyPin request with AID and **without CardPower**.
 Neither test consumed a PIN attempt (`remain=3`). The owner says the SIM
