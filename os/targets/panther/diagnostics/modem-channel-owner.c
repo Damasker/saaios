@@ -44,8 +44,13 @@ enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        SIM_REFRESH_MAX = 3, SIM_REFRESH_DEBOUNCE_MS = 500,
        SIM_REFRESH_COALESCE_MS = 2000, SIM_REFRESH_MIN_GAP_MS = 3000,
        SIM_REFRESH_REPLY_MS = 10000, SIM_SETTLED_DELAY_MS = 60000,
-       SIM_WIRE_UNIVERSAL_PIN = 13, SIM_SLOT_IND_MIN_LEN = 429,
-       SIM_SLOT_MAX_SLOTS = 4, SIM_SLOT_TRACE_LIMIT = 2 };
+       SIM_WIRE_UNIVERSAL_PIN = 13,
+       SIM_SLOT_MAX_SLOTS = 4, SIM_SLOT_LOG_SLOTS = 2,
+       SIM_SLOT_RECORD_STRIDE = 105,
+       SIM_SLOT_IND_LEN = 9 + SIM_SLOT_MAX_SLOTS * SIM_SLOT_RECORD_STRIDE,
+       SIM_SLOT_PORT_COUNT_OFFSET = 52, SIM_SLOT_PORTS_OFFSET = 64,
+       SIM_SLOT_PORT_STRIDE = 13, SIM_SLOT_MAX_PORTS = 3,
+       SIM_SLOT_TRACE_LIMIT = 2 };
 enum channel_kind { CHANNEL_IPC, CHANNEL_RFS };
 enum sim_query_kind { SIM_QUERY_NONE, SIM_QUERY_CHANGE, SIM_QUERY_SETTLED };
 
@@ -99,25 +104,56 @@ static int is_sim_status_changed(const uint8_t *p, size_t n) {
     return n >= 8 && p[0] == 2 && le16(p + 2) == 0x0210;
 }
 
+struct slot_record_scalars {
+    unsigned card_state;
+    unsigned port0_logical;
+    unsigned port0_state;
+    int has_port0;
+};
+
 struct slot_status_scalars {
     unsigned slot_count;
-    unsigned slot0_card_state;
+    unsigned logged_slots;
+    struct slot_record_scalars slot[SIM_SLOT_LOG_SLOTS];
 };
 
 struct slot_status_trace {
     unsigned seen;
 };
 
-/* Factory sit-stream.so: unsolicited 0x024e requires at least 429 bytes;
- * slot count is at +8 and first card state at +9.
- * Never inspect or print the following ATR/ICCID/EID-bearing bytes. */
+/* Factory sit-stream.so: unsolicited 0x024e has four fixed 105-byte slot
+ * records after byte +8 (total 429). Within each record: card +0,
+ * port_count +52, port0 logical/state +64/+65. Never inspect or print
+ * the ATR/ICCID/EID-bearing fields elsewhere in the record. */
 static int slot_status_scalars(const uint8_t *p, size_t n,
                                struct slot_status_scalars *out) {
-    if (n < SIM_SLOT_IND_MIN_LEN || p[0] != 2 ||
+    if (n != SIM_SLOT_IND_LEN || p[0] != 2 ||
         le16(p + 2) != 0x024e || le16(p + 4) != n ||
         p[8] < 1 || p[8] > SIM_SLOT_MAX_SLOTS) return 0;
+    memset(out, 0, sizeof *out);
     out->slot_count = p[8];
-    out->slot0_card_state = p[9];
+    out->logged_slots = out->slot_count < SIM_SLOT_LOG_SLOTS ?
+                        out->slot_count : SIM_SLOT_LOG_SLOTS;
+    for (unsigned i = 0; i < out->slot_count; ++i) {
+        size_t record = 9U + (size_t)i * SIM_SLOT_RECORD_STRIDE;
+        size_t record_end = record + SIM_SLOT_RECORD_STRIDE;
+        size_t port_count_offset = record + SIM_SLOT_PORT_COUNT_OFFSET;
+        if (record_end > n || port_count_offset >= record_end) return 0;
+        unsigned port_count = p[port_count_offset];
+        size_t ports_end = record + SIM_SLOT_PORTS_OFFSET +
+                           SIM_SLOT_PORT_STRIDE * (size_t)port_count;
+        if (port_count > SIM_SLOT_MAX_PORTS || ports_end > record_end) return 0;
+        if (i >= SIM_SLOT_LOG_SLOTS) continue;
+        struct slot_record_scalars *slot = &out->slot[i];
+        slot->card_state = p[record];
+        if (port_count) {
+            size_t port0 = record + SIM_SLOT_PORTS_OFFSET;
+            if (port0 + 1 >= record_end) return 0;
+            slot->port0_logical = p[port0];
+            slot->port0_state = p[port0 + 1];
+            slot->has_port0 = 1;
+        }
+    }
     return 1;
 }
 
@@ -327,17 +363,65 @@ static void fixture_frame(void *opaque, enum channel_kind kind,
 }
 
 static int fixture_slot_status(void) {
-    uint8_t indication[SIM_SLOT_IND_MIN_LEN] = {0};
+    if (SIM_SLOT_IND_LEN != 429 ||
+        9 + SIM_SLOT_RECORD_STRIDE != 114 ||
+        9 + SIM_SLOT_PORT_COUNT_OFFSET != 61 ||
+        9 + SIM_SLOT_PORTS_OFFSET != 73 ||
+        9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET != 166 ||
+        9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORTS_OFFSET != 178)
+        return 64;
+    uint8_t indication[SIM_SLOT_IND_LEN] = {0};
     indication[0] = 2;
     indication[2] = 0x4e; indication[3] = 0x02;
     indication[4] = (uint8_t)sizeof indication;
     indication[5] = (uint8_t)(sizeof indication >> 8);
-    indication[8] = 2; indication[9] = 1;
+    indication[8] = 2;
+    indication[9] = 1;
+    indication[9 + SIM_SLOT_PORT_COUNT_OFFSET] = 2;
+    indication[9 + SIM_SLOT_PORTS_OFFSET] = 0xff;
+    indication[9 + SIM_SLOT_PORTS_OFFSET + 1] = 1;
+    indication[9 + SIM_SLOT_RECORD_STRIDE] = 0;
+    indication[9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 1;
+    indication[9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORTS_OFFSET] = 1;
+    indication[9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORTS_OFFSET + 1] = 2;
     struct slot_status_scalars status;
     if (!slot_status_scalars(indication, sizeof indication, &status) ||
-        status.slot_count != 2 || status.slot0_card_state != 1 ||
+        status.slot_count != 2 || status.logged_slots != 2 ||
+        status.slot[0].card_state != 1 || !status.slot[0].has_port0 ||
+        status.slot[0].port0_logical != 0xff ||
+        status.slot[0].port0_state != 1 ||
+        status.slot[1].card_state != 0 || !status.slot[1].has_port0 ||
+        status.slot[1].port0_logical != 1 ||
+        status.slot[1].port0_state != 2 ||
         slot_status_scalars(indication, sizeof indication - 1, &status))
         return 50;
+    indication[8] = 1;
+    if (!slot_status_scalars(indication, sizeof indication, &status) ||
+        status.logged_slots != 1 || status.slot[1].has_port0) return 59;
+    indication[8] = 2;
+    indication[9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 0;
+    if (!slot_status_scalars(indication, sizeof indication, &status) ||
+        status.slot[1].has_port0) return 60;
+    indication[9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 4;
+    if (slot_status_scalars(indication, sizeof indication, &status)) return 61;
+    indication[9 + SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 1;
+    indication[8] = 3;
+    indication[9 + 2 * SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 4;
+    if (slot_status_scalars(indication, sizeof indication, &status)) return 62;
+    indication[9 + 2 * SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 0;
+    if (!slot_status_scalars(indication, sizeof indication, &status) ||
+        status.slot_count != 3 || status.logged_slots != 2) return 63;
+    indication[8] = 4;
+    indication[9 + 3 * SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 3;
+    if (!slot_status_scalars(indication, sizeof indication, &status) ||
+        status.slot_count != 4 || status.logged_slots != 2) return 65;
+    indication[9 + 3 * SIM_SLOT_RECORD_STRIDE + SIM_SLOT_PORT_COUNT_OFFSET] = 0;
+    indication[8] = 2;
+    uint8_t oversized[SIM_SLOT_IND_LEN + 1];
+    memcpy(oversized, indication, sizeof indication);
+    oversized[sizeof indication] = 0;
+    oversized[4]++;
+    if (slot_status_scalars(oversized, sizeof oversized, &status)) return 66;
     indication[8] = 0;
     if (slot_status_scalars(indication, sizeof indication, &status)) return 51;
     indication[8] = SIM_SLOT_MAX_SLOTS + 1;
@@ -966,10 +1050,17 @@ static void trace_slot_status(struct slot_status_trace *trace,
                               int64_t now_ms, int64_t owner_start_ms) {
     struct slot_status_scalars status;
     if (!slot_status_take(trace, p, size, &status)) return;
-    printf("sim_slot_ind elapsed_ms=%lld slot_count=%u"
-           " slot0_card_state_raw=%u\n",
-           (long long)(now_ms - owner_start_ms), status.slot_count,
-           status.slot0_card_state);
+    printf("sim_slot_ind elapsed_ms=%lld slot_count=%u",
+           (long long)(now_ms - owner_start_ms), status.slot_count);
+    for (unsigned i = 0; i < status.logged_slots; ++i) {
+        const struct slot_record_scalars *slot = &status.slot[i];
+        printf(" slot%u_card_state_raw=%u", i, slot->card_state);
+        if (slot->has_port0)
+            printf(" slot%u_port0_logical_raw=%u"
+                   " slot%u_port0_state_raw=%u",
+                   i, slot->port0_logical, i, slot->port0_state);
+    }
+    putchar('\n');
 }
 
 struct live_frame_context {
