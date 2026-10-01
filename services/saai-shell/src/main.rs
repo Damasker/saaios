@@ -2412,6 +2412,23 @@ enum Frame {
     },
 }
 
+impl Frame {
+    /// The navigation strip of a page frame, which is all that stays
+    /// visible when the sphere covers the rest.
+    fn tabs(&self) -> Option<&[(Rect, NavigationItem)]> {
+        match self {
+            Frame::Root { tabs, .. }
+            | Frame::AppsGrid { tabs, .. }
+            | Frame::Inbox { tabs, .. }
+            | Frame::Spaces { tabs, .. }
+            | Frame::Search { tabs, .. }
+            | Frame::Me { tabs, .. }
+            | Frame::Now { tabs, .. } => Some(tabs),
+            _ => None,
+        }
+    }
+}
+
 fn task_confirm_view(width: u32, height: u32) -> LayoutNode {
     let buttons = Node::linear(
         TASK_CONFIRM_BUTTONS_ID,
@@ -2875,6 +2892,7 @@ struct OrbFrame {
     selected: Option<String>,
     point: render::OrbPoint,
     trail: Vec<(f32, f32)>,
+    chip: Option<(Rect, String)>,
     search: Option<render::SearchView>,
     /// Keyboard keys and the strip they sit on, when the on-screen one is up.
     search_keys: Option<(Rect, Vec<(Rect, String)>)>,
@@ -9415,6 +9433,14 @@ impl Shell {
             ))
         .then(|| self.build_orb_frame(width, height));
 
+        // Once the sphere is opaque over the whole page window nothing of
+        // the page can show through, so it is not painted at all while the
+        // sphere is panned and zoomed. Only the navigation strip below it is.
+        let covered_tabs = orb_frame
+            .as_ref()
+            .filter(|orb| orb_space::page_is_covered(orb.rise))
+            .and_then(|_| frame.tabs().map(<[_]>::to_vec));
+
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
         let field_focused = field_shows_context_focus(self.motion_clock.as_ref());
@@ -9487,302 +9513,310 @@ impl Shell {
                 }
                 return;
             }
-            match frame {
-                Frame::Consent {
-                    content_rect,
-                    header,
-                    rows,
-                    accept,
-                    decline,
-                } => {
-                    render::draw_consent(
-                        &mut render::Canvas::new(canvas, width, height),
+            if let Some(tabs) = &covered_tabs {
+                render::draw_covered_page(
+                    &mut render::Canvas::new(canvas, width, height),
+                    tabs,
+                    fonts,
+                );
+            } else {
+                match frame {
+                    Frame::Consent {
                         content_rect,
-                        &header,
-                        &rows,
-                        accept,
-                        decline,
-                        fonts,
-                    );
-                }
-                Frame::ObjectView {
-                    summary,
-                    related,
-                    details,
-                    decision,
-                    permission,
-                    header,
-                    actions,
-                } => {
-                    render::draw_object_view(
-                        &mut render::Canvas::new(canvas, width, height),
-                        &summary,
-                        related.as_deref(),
-                        &details,
-                        decision.as_ref(),
-                        permission.as_ref(),
                         header,
-                        &actions,
-                        fonts,
-                    );
-                }
-                Frame::RemotePairing {
-                    content_rect,
-                    header,
-                    rows,
-                    fingerprint,
-                    accept,
-                    decline,
-                } => {
-                    render::draw_remote_pair(
-                        &mut render::Canvas::new(canvas, width, height),
-                        content_rect,
-                        &header,
-                        &rows,
-                        &fingerprint,
+                        rows,
                         accept,
                         decline,
-                        fonts,
-                    );
-                }
-                Frame::IntentInput {
-                    content_rect,
-                    header,
-                    field,
-                    field_rect,
-                    keys,
-                } => {
-                    render::draw_intent_input(
-                        &mut render::Canvas::new(canvas, width, height),
+                    } => {
+                        render::draw_consent(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &rows,
+                            accept,
+                            decline,
+                            fonts,
+                        );
+                    }
+                    Frame::ObjectView {
+                        summary,
+                        related,
+                        details,
+                        decision,
+                        permission,
+                        header,
+                        actions,
+                    } => {
+                        render::draw_object_view(
+                            &mut render::Canvas::new(canvas, width, height),
+                            &summary,
+                            related.as_deref(),
+                            &details,
+                            decision.as_ref(),
+                            permission.as_ref(),
+                            header,
+                            &actions,
+                            fonts,
+                        );
+                    }
+                    Frame::RemotePairing {
                         content_rect,
-                        &header,
-                        &field,
+                        header,
+                        rows,
+                        fingerprint,
+                        accept,
+                        decline,
+                    } => {
+                        render::draw_remote_pair(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &rows,
+                            &fingerprint,
+                            accept,
+                            decline,
+                            fonts,
+                        );
+                    }
+                    Frame::IntentInput {
+                        content_rect,
+                        header,
+                        field,
                         field_rect,
-                        &keys,
-                        pressed_key.as_deref(),
-                        field_focused,
-                        fonts,
-                    );
-                }
-                Frame::PinSetup {
-                    content_rect,
-                    header,
-                    field,
-                    field_rect,
-                    keys,
-                } => {
-                    render::draw_pin_setup(
-                        &mut render::Canvas::new(canvas, width, height),
+                        keys,
+                    } => {
+                        render::draw_intent_input(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &field,
+                            field_rect,
+                            &keys,
+                            pressed_key.as_deref(),
+                            field_focused,
+                            fonts,
+                        );
+                    }
+                    Frame::PinSetup {
                         content_rect,
-                        &header,
-                        &field,
+                        header,
+                        field,
                         field_rect,
-                        &keys,
-                        pressed_key.as_deref(),
-                        field_focused,
-                        fonts,
-                    );
-                }
-                Frame::WifiPasswordInput {
-                    content_rect,
-                    header,
-                    field,
-                    field_rect,
-                    keys,
-                } => {
-                    render::draw_wifi_password(
-                        &mut render::Canvas::new(canvas, width, height),
+                        keys,
+                    } => {
+                        render::draw_pin_setup(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &field,
+                            field_rect,
+                            &keys,
+                            pressed_key.as_deref(),
+                            field_focused,
+                            fonts,
+                        );
+                    }
+                    Frame::WifiPasswordInput {
                         content_rect,
-                        &header,
-                        &field,
+                        header,
+                        field,
                         field_rect,
-                        &keys,
-                        pressed_key.as_deref(),
-                        field_focused,
-                        fonts,
-                    );
-                }
-                Frame::WifiList {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        keys,
+                    } => {
+                        render::draw_wifi_password(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &field,
+                            field_rect,
+                            &keys,
+                            pressed_key.as_deref(),
+                            field_focused,
+                            fonts,
+                        );
+                    }
+                    Frame::WifiList {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::BluetoothList {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::BluetoothList {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::TrustedClients {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::TrustedClients {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::DevSurface {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::DevSurface {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::Root {
-                    content_rect,
-                    tabs,
-                    content_cards,
-                    context_label,
-                    paint_navigation,
-                } => {
-                    render::draw_root(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::Root {
                         content_rect,
-                        &tabs,
-                        current_page_index,
-                        &context_label,
-                        fonts,
-                        &content_cards,
-                        current_page_is_now,
+                        tabs,
+                        content_cards,
+                        context_label,
                         paint_navigation,
-                    );
-                }
-                Frame::Now {
-                    content_rect,
-                    tabs,
-                    header,
-                    chrome,
-                    sections,
-                    object,
-                    footer_actions,
-                } => {
-                    render::draw_now(
-                        &mut render::Canvas::new(canvas, width, height),
+                    } => {
+                        render::draw_root(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            current_page_index,
+                            &context_label,
+                            fonts,
+                            &content_cards,
+                            current_page_is_now,
+                            paint_navigation,
+                        );
+                    }
+                    Frame::Now {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &chrome,
-                        &sections,
-                        object.as_ref(),
-                        &footer_actions,
-                        fonts,
-                    );
-                }
-                Frame::AppsGrid {
-                    content_rect,
-                    tabs,
-                    header,
-                    apps,
-                    empty_pattern,
-                } => {
-                    render::draw_apps_grid(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        chrome,
+                        sections,
+                        object,
+                        footer_actions,
+                    } => {
+                        render::draw_now(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &chrome,
+                            &sections,
+                            object.as_ref(),
+                            &footer_actions,
+                            fonts,
+                        );
+                    }
+                    Frame::AppsGrid {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &apps,
-                        empty_pattern.as_ref(),
-                        fonts,
-                    );
-                }
-                Frame::Inbox {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        apps,
+                        empty_pattern,
+                    } => {
+                        render::draw_apps_grid(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &apps,
+                            empty_pattern.as_ref(),
+                            fonts,
+                        );
+                    }
+                    Frame::Inbox {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
-                        true,
-                        fonts,
-                    );
-                }
-                Frame::Search {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            true,
+                            fonts,
+                        );
+                    }
+                    Frame::Search {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
-                        true,
-                        fonts,
-                    );
-                }
-                Frame::Spaces {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            true,
+                            fonts,
+                        );
+                    }
+                    Frame::Spaces {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
-                        true,
-                        fonts,
-                    );
-                }
-                Frame::Me {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                    paint_navigation,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            true,
+                            fonts,
+                        );
+                    }
+                    Frame::Me {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
+                        tabs,
+                        header,
+                        rows,
                         paint_navigation,
-                        fonts,
-                    );
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            paint_navigation,
+                            fonts,
+                        );
+                    }
                 }
             }
             // HIA-04b: unconditional -- `orb_frame` is already `None`
@@ -9798,6 +9832,7 @@ impl Shell {
                         disc: orb.disc,
                         graticule: &orb.graticule,
                         trail: &orb.trail,
+                        chip: orb.chip.as_ref(),
                         items: &orb.items,
                         selected: orb.selected.as_deref(),
                         point: orb.point,
@@ -10825,6 +10860,7 @@ impl Shell {
         const KEY_LEFT: u16 = 105;
         const KEY_RIGHT: u16 = 106;
         const KEY_DOWN: u16 = 108;
+        const KEY_DELETE: u16 = 111;
         const KEY_LEFTMETA: u16 = 125;
         const KEY_RIGHTMETA: u16 = 126;
         if !self.orb_available() {
@@ -10875,6 +10911,9 @@ impl Shell {
             KEY_SLASH => {
                 self.activate_orb(orb_space::Activation::OpenSearch, conn, qh);
                 return true;
+            }
+            KEY_DELETE => {
+                self.orb.forget_selected();
             }
             KEY_ESC => self.orb.dismiss(),
             _ => return false,
@@ -12060,6 +12099,7 @@ impl Shell {
             } else {
                 Vec::new()
             },
+            chip: self.orb.forget_chip(viewport, unit),
             search: search_panel
                 .as_ref()
                 .map(|panel| self.orb_search_view(panel)),

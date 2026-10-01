@@ -10,7 +10,8 @@ use saai_ui_core::{
 };
 mod orb_paint;
 pub use orb_paint::{
-    draw_orb_space, draw_search_panel, orb_unit, OrbPaint, OrbPoint, SearchRowView, SearchView,
+    draw_covered_page, draw_orb_space, draw_search_panel, orb_unit, OrbPaint, OrbPoint,
+    SearchRowView, SearchView,
 };
 
 use std::fs;

@@ -32,6 +32,9 @@ pub struct OrbPaint<'a> {
     pub trail: &'a [(f32, f32)],
     pub items: &'a [Item],
     pub selected: Option<&'a str>,
+    /// A one-tap action offered for the selected object, e.g. forgetting a
+    /// ghost.
+    pub chip: Option<&'a (Rect, String)>,
     pub point: OrbPoint,
 }
 
@@ -553,6 +556,17 @@ pub fn draw_search_panel(canvas: &mut Canvas<'_>, view: &SearchView, fonts: Opti
     }
 }
 
+/// The page while the sphere is opaque over it: the canvas colour the sphere
+/// would have been tinted onto anyway, plus the navigation strip.
+pub fn draw_covered_page(
+    canvas: &mut Canvas<'_>,
+    tabs: &[(Rect, saai_ui_core::NavigationItem)],
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill(theme_color(ColorRole::Canvas));
+    super::draw_tab_bar(canvas, tabs, fonts);
+}
+
 pub fn draw_orb_space(canvas: &mut Canvas<'_>, paint: &OrbPaint<'_>, fonts: Option<&Fonts>) {
     canvas.set_clip(Some(paint.viewport));
     let bottom = (paint.viewport.y + paint.viewport.height) as f32;
@@ -596,6 +610,29 @@ pub fn draw_orb_space(canvas: &mut Canvas<'_>, paint: &OrbPaint<'_>, fonts: Opti
             paint.selected == Some(item.id.as_str()),
             fonts,
         );
+    }
+    if let Some((rect, label)) = paint.chip {
+        canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
+        draw_square_ring(
+            canvas,
+            *rect,
+            physical(StrokeToken::Hairline.value()).max(1) * 2,
+            theme_color(ColorRole::Border),
+        );
+        if let Some(fonts) = fonts {
+            let size = role_px(TextRole::Caption);
+            let top = (rect.y as f32 + (rect.height as f32 - size * super::text_scale()) / 2.0)
+                .max(0.0) as u32;
+            draw_text_centered(
+                canvas,
+                &fonts.regular,
+                label,
+                size,
+                rect.x + rect.width / 2,
+                top,
+                theme_color(ColorRole::TextPrimary),
+            );
+        }
     }
     draw_point(canvas, &paint.point, bottom);
     canvas.set_clip(None);
@@ -645,6 +682,7 @@ mod tests {
                 trail: &[],
                 items: &[],
                 selected: None,
+                chip: None,
                 point: p,
             },
             None,
@@ -839,6 +877,7 @@ mod tests {
                 trail: &[],
                 items: &[item(ObjectClass::Person, Availability::Available, false)],
                 selected: None,
+                chip: None,
                 point: point(StatusMark::ActiveDot, false, None, false),
             },
             None,
@@ -870,6 +909,7 @@ mod tests {
                     trail: &[],
                     items: &[],
                     selected: None,
+                    chip: None,
                     point: point(StatusMark::ActiveDot, false, None, false),
                 },
                 None,
@@ -945,5 +985,68 @@ mod tests {
             theme_color(ColorRole::Accent),
             "nothing below the panel is touched"
         );
+    }
+
+    #[test]
+    fn skipping_the_page_under_an_opaque_sphere_changes_no_pixel() {
+        let rise = crate::orb_space::COVER_RISE;
+        let viewport = Rect::new(0, 0, W, 450);
+        let draw = |page: Pixel| {
+            let mut buf = blank();
+            Canvas::new(&mut buf, W, H).fill(page);
+            draw_orb_space(
+                &mut Canvas::new(&mut buf, W, H),
+                &OrbPaint {
+                    viewport,
+                    rise,
+                    disc: (W as f32 / 2.0, 260.0, 200.0),
+                    graticule: &[],
+                    trail: &[],
+                    items: &[],
+                    selected: None,
+                    chip: None,
+                    point: point(StatusMark::Outline, false, None, false),
+                },
+                None,
+            );
+            buf
+        };
+        let busy_page = draw(theme_color(ColorRole::Accent));
+        let skipped = draw(theme_color(ColorRole::Canvas));
+        let row = (W * 4) as usize;
+        assert_eq!(
+            &busy_page[..viewport.height as usize * row],
+            &skipped[..viewport.height as usize * row],
+            "an opaque sphere hides the page completely"
+        );
+        let less = draw_alpha_at(crate::orb_space::COVER_RISE - 0.1);
+        assert!(less < 255, "just below the threshold the page still shows");
+    }
+
+    fn draw_alpha_at(rise: f32) -> u8 {
+        alpha_u8(smooth(0.35, 0.85, rise))
+    }
+
+    #[test]
+    fn the_forget_chip_is_an_opaque_bordered_button_over_the_sphere() {
+        let mut buf = blank();
+        let chip = (Rect::new(100, 300, 200, 60), "Забыть «Почта»".to_string());
+        draw_orb_space(
+            &mut Canvas::new(&mut buf, W, H),
+            &OrbPaint {
+                viewport: Rect::new(0, 0, W, 450),
+                rise: 1.0,
+                disc: (W as f32 / 2.0, 260.0, 200.0),
+                graticule: &[],
+                trail: &[],
+                items: &[],
+                selected: None,
+                chip: Some(&chip),
+                point: point(StatusMark::Outline, false, None, false),
+            },
+            None,
+        );
+        assert_eq!(px(&mut buf, 150, 330), theme_color(ColorRole::Elevated));
+        assert_eq!(px(&mut buf, 100, 330), theme_color(ColorRole::Border));
     }
 }

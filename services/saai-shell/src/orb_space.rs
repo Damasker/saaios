@@ -244,6 +244,28 @@ pub fn build_objects(f: &Facts) -> (Vec<OrbObject>, Context) {
     (objects, ctx)
 }
 
+/// From this rise on the sphere's backdrop is fully opaque over the page
+/// window (`orb_paint` fades it in over `0.35..0.85`).
+pub const COVER_RISE: f32 = 0.85;
+
+pub fn page_is_covered(rise: f32) -> bool {
+    rise >= COVER_RISE
+}
+
+/// Where the "forget" chip sits: centred, just above the resting point.
+pub fn forget_chip_rect(viewport: Rect, unit: f32) -> Rect {
+    let u = |v: f32| (v * unit).round() as u32;
+    let width = u(300.0).min(viewport.width);
+    let height = u(48.0);
+    let bottom = (viewport.y + viewport.height).saturating_sub(u(REST_EXPOSURE_UNITS + 40.0));
+    Rect::new(
+        viewport.x + (viewport.width - width) / 2,
+        bottom.saturating_sub(height),
+        width,
+        height,
+    )
+}
+
 /// Geometry of the resting point inside `viewport`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PointGeometry {
@@ -284,6 +306,8 @@ enum Grab {
     Sink,
     /// A finger on the sphere itself.
     Sphere,
+    /// A finger on the "forget" chip.
+    Chip,
 }
 
 /// What the shell should do after a touch ended.
@@ -506,6 +530,41 @@ impl OrbSpace {
         self.presence.reduced_motion = on;
     }
 
+    /// A remembered object that is no longer reported can be let go, on
+    /// purpose and only on purpose.
+    pub fn forgettable(&self) -> Option<&Entry> {
+        let id = self.selected.as_deref()?;
+        self.entries.iter().find(|e| e.id == id && e.ghost)
+    }
+
+    pub fn forget_chip(&self, viewport: Rect, unit: f32) -> Option<(Rect, String)> {
+        if !self.presence.is_open() || self.search.is_some() {
+            return None;
+        }
+        let e = self.forgettable()?;
+        let mut label: String = e.label.chars().take(18).collect();
+        if e.label.chars().count() > 18 {
+            label.push('…');
+        }
+        Some((
+            forget_chip_rect(viewport, unit),
+            format!("Забыть «{label}»"),
+        ))
+    }
+
+    pub fn forget_selected(&mut self) -> bool {
+        let Some(id) = self.forgettable().map(|e| e.id.clone()) else {
+            return false;
+        };
+        let gone = self.geography.forget(&id);
+        self.entries.retain(|e| e.id != id);
+        self.selected = None;
+        self.geography_dirty |= gone;
+        self.save_if_changed();
+        self.dirty = true;
+        gone
+    }
+
     /// Raises the sphere without a finger (a key, a button).
     pub fn raise(&mut self) {
         self.presence.summon();
@@ -709,7 +768,12 @@ impl OrbSpace {
         }
         let point = point_geometry(viewport, unit);
         let on_point = point.hit.contains(f64::from(pos.0), f64::from(pos.1));
-        let grab = if self.presence.rise() <= 0.0 && !self.presence.wants_open() {
+        let on_chip = self
+            .forget_chip(viewport, unit)
+            .is_some_and(|(rect, _)| rect.contains(f64::from(pos.0), f64::from(pos.1)));
+        let grab = if on_chip {
+            Grab::Chip
+        } else if self.presence.rise() <= 0.0 && !self.presence.wants_open() {
             if on_point {
                 Grab::Point
             } else {
@@ -788,6 +852,10 @@ impl OrbSpace {
             }
             (Grab::Sink, Lift::Release { vy, .. }) if vy > 600.0 => {
                 self.dismiss();
+                Outcome::Redraw
+            }
+            (Grab::Chip, Lift::Tap { .. }) => {
+                self.forget_selected();
                 Outcome::Redraw
             }
             (Grab::Sphere, Lift::Tap { x, y }) => self.tap_sphere(x, y, viewport, unit),
@@ -1697,5 +1765,216 @@ mod tests {
         assert!(tight.viewport.height >= (160.0 * U) as u32);
         let hopeless = search_panel(1080, 100, 300, 4, U);
         assert_eq!(hopeless.rows.len(), 1);
+    }
+
+    fn space_with(f: &Facts, extra: Vec<OrbObject>) -> OrbSpace {
+        let mut s = OrbSpace::new(Geography::default(), false);
+        let (mut o, c) = build_objects(f);
+        o.extend(extra);
+        s.refresh(&o, &c);
+        s.presence.summon();
+        for _ in 0..120 {
+            s.presence.step(1.0 / 60.0);
+        }
+        s
+    }
+
+    fn tap(s: &mut OrbSpace, id: &str, t: f32) -> Outcome {
+        let l = s.layout(VP, U);
+        let it = l
+            .items
+            .iter()
+            .find(|i| i.id == id)
+            .unwrap_or_else(|| panic!("{id} is not in view"));
+        s.touch_down(1, (it.x, it.y), t, VP, U);
+        s.touch_up(1, t + 0.05, VP, U)
+    }
+
+    #[test]
+    fn scenario_a_rest_then_rise_then_reach_a_capability() {
+        let mut s = OrbSpace::new(Geography::default(), false);
+        let (o, c) = build_objects(&facts());
+        s.refresh(&o, &c);
+        assert!(!s.layout(VP, U).interactive, "at rest nothing is touchable");
+        s.touch_down(1, (540.0, 1990.0), 0.0, VP, U);
+        s.touch_up(1, 0.05, VP, U);
+        settle(&mut s);
+        assert!(s.layout(VP, U).interactive);
+        let inbox = s.entries().iter().find(|e| e.id == "inbox").unwrap().geo;
+        s.camera = Camera {
+            center: inbox,
+            zoom: 1.0,
+        };
+        assert_eq!(
+            tap(&mut s, "inbox", 1.0),
+            Outcome::Activate(Activation::OpenInbox)
+        );
+    }
+
+    #[test]
+    fn scenario_b_zooming_in_reveals_the_next_echelon_without_moving_anything() {
+        let mut s = open_space();
+        let apps = s.entries().iter().find(|e| e.id == "apps").unwrap().geo;
+        s.camera = Camera {
+            center: apps,
+            zoom: 0.9,
+        };
+        let seen = |s: &OrbSpace, id: &str| {
+            s.layout(VP, U)
+                .items
+                .iter()
+                .find(|i| i.id == id)
+                .map(|i| (i.x, i.y, i.alpha, i.show_label))
+        };
+        let apps_before = seen(&s, "apps").unwrap();
+        assert!(
+            seen(&s, "app:mail").is_none_or(|m| m.2 < 0.25),
+            "E2 is not legible yet"
+        );
+        s.navigate(
+            NavInput::Pinch {
+                scale: 2.0,
+                ax: 540.0,
+                ay: 1000.0,
+            },
+            VP,
+            U,
+        );
+        let mail = seen(&s, "app:mail").expect("E2 appears with zoom");
+        assert!(mail.2 >= 0.25);
+        let center_after = seen(&s, "apps").unwrap();
+        assert!(
+            (apps_before.0 - 540.0).abs() < 5.0 && (center_after.0 - 540.0).abs() < 60.0,
+            "zoom about the middle keeps the cluster under the finger"
+        );
+        assert_eq!(
+            tap(&mut s, "app:mail", 2.0),
+            Outcome::Activate(Activation::LaunchApp("mail".into()))
+        );
+    }
+
+    #[test]
+    fn scenario_c_search_finds_what_is_out_of_view_and_shows_the_way() {
+        let mut s = open_space();
+        s.camera = Camera {
+            center: Geo::from_degrees(-120.0, -40.0),
+            zoom: 0.7,
+        };
+        typed(&mut s, "bluetooth");
+        let hit = s.search_hits().remove(0);
+        assert_eq!(hit.id, "devices");
+        assert!(hit.route.distance() > 0.5, "far away on the sphere");
+        assert!(route_hint(&hit).ends_with('°'));
+        assert_eq!(s.choose("devices"), Outcome::Redraw);
+        settle(&mut s);
+        assert_eq!(
+            s.choose("devices"),
+            Outcome::Activate(Activation::OpenDevices)
+        );
+    }
+
+    #[test]
+    fn scenario_d_services_going_away_dims_things_without_moving_them() {
+        let online = open_space();
+        let mut off = facts();
+        off.appd_connected = false;
+        off.entityd_connected = false;
+        let mut s = space_with(&off, vec![]);
+        for id in ["app:mail", "app:notes", "space:home", "space:work"] {
+            let a = online.entries().iter().find(|e| e.id == id).unwrap();
+            let b = s.entries().iter().find(|e| e.id == id).unwrap();
+            assert_eq!(a.geo, b.geo, "{id} keeps its place");
+            assert!(!b.availability.is_available(), "{id} is dimmed");
+        }
+        let mail = s.entries().iter().find(|e| e.id == "app:mail").unwrap().geo;
+        s.camera = Camera {
+            center: mail,
+            zoom: 2.0,
+        };
+        assert_eq!(
+            tap(&mut s, "app:mail", 1.0),
+            Outcome::Redraw,
+            "never opened offline"
+        );
+        assert_eq!(s.selected.as_deref(), Some("app:mail"));
+    }
+
+    #[test]
+    fn scenario_e_an_object_class_nobody_planned_for_is_still_a_citizen() {
+        let alien = OrbObject::new(
+            "x:probe",
+            ObjectClass::Unknown("telescope".into()),
+            "Телескоп",
+            2,
+        )
+        .child_of("devices")
+        .keywords(&["telescope"]);
+        let mut s = space_with(&facts(), vec![alien]);
+        let e = s
+            .entries()
+            .iter()
+            .find(|e| e.id == "x:probe")
+            .unwrap()
+            .clone();
+        s.camera = Camera {
+            center: e.geo,
+            zoom: 2.0,
+        };
+        let l = s.layout(VP, U);
+        let it = l.items.iter().find(|i| i.id == "x:probe").unwrap();
+        assert!(it.alpha >= 0.25, "drawn with a generic primitive");
+        typed(&mut s, "telescope");
+        assert_eq!(s.search_hits()[0].id, "x:probe");
+        assert_eq!(activation_for("x:probe"), None);
+        assert_eq!(
+            tap(&mut s, "x:probe", 1.0),
+            Outcome::Redraw,
+            "selectable, nothing to launch"
+        );
+    }
+
+    fn with_ghost() -> OrbSpace {
+        let mut s = open_space();
+        let mut gone = facts();
+        gone.apps.clear();
+        let (o, c) = build_objects(&gone);
+        s.refresh(&o, &c);
+        s
+    }
+
+    #[test]
+    fn a_vanished_app_stays_a_ghost_until_the_user_forgets_it() {
+        let mut s = with_ghost();
+        let mail = s.entries().iter().find(|e| e.id == "app:mail").unwrap();
+        assert!(mail.ghost);
+        assert!(s.geography().place("app:mail").is_some());
+        assert!(
+            s.forget_chip(VP, U).is_none(),
+            "nothing selected, nothing offered"
+        );
+        s.selected = Some("app:mail".into());
+        let (rect, label) = s.forget_chip(VP, U).expect("a ghost can be forgotten");
+        assert!(label.starts_with("Забыть"));
+        assert!(rect.width >= (200.0 * U) as u32 && rect.height >= (44.0 * U) as u32);
+        s.touch_down(1, (rect.x as f32 + 5.0, rect.y as f32 + 5.0), 0.0, VP, U);
+        assert_eq!(s.touch_up(1, 0.05, VP, U), Outcome::Redraw);
+        assert!(s.entries().iter().all(|e| e.id != "app:mail"));
+        assert!(s.geography().place("app:mail").is_none());
+        assert!(s.selected.is_none());
+        let notes = s.entries().iter().find(|e| e.id == "app:notes");
+        assert!(notes.is_some_and(|e| e.ghost), "the others are untouched");
+    }
+
+    #[test]
+    fn only_ghosts_can_be_forgotten_live_objects_never() {
+        let mut s = open_space();
+        s.selected = Some("app:mail".into());
+        assert!(s.forget_chip(VP, U).is_none());
+        assert!(!s.forget_selected());
+        assert!(s.entries().iter().any(|e| e.id == "app:mail"));
+        let mut ghost = with_ghost();
+        ghost.selected = Some("app:mail".into());
+        ghost.open_search(Keyboard::bind("s", saai_ui_core::KeyboardLayout::Qwerty));
+        assert!(ghost.forget_chip(VP, U).is_none(), "not while searching");
     }
 }
