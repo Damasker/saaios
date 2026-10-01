@@ -212,7 +212,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-04 | Maintained boot model library, no hardware actions | **Started** (host TOC/stage/plan/executor/failure model) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
-| MODEM-07 | RFS design and refusal policy | **Started** (quarantine design + JS/C host models + Linux host storage fixture; no phone broker) | no |
+| MODEM-07 | RFS design and refusal policy | **In progress** (one quarantined grant/first chunk on phone; full exchange and service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | Backlog | **yes** |
 
@@ -849,14 +849,16 @@ faults. A separate [host-only transport fixture](../../../os/targets/panther/dia
 tests split/coalesced packets, one outstanding grant, ambiguous writes and
 deadlines. A synthetic end-to-end fixture now integrates protocol, transport
 and storage; a separate host-only verified-FD fixture tests source integrity.
-Linux ASan/UBSan passes. A manual read-only, no-recovery EFS check on the
-phone found both NV files and their sidecars byte-identical to the userdata
-copies. A separate, manually invoked device verifier now repeats that check
-and passed on the phone; an explicit mode also created a same-boot protected
-NV pin from original EFS and was verified without logging its digest. The
-opt-in launch path is not yet approved for a live RFS exchange.
-There is no phone-side candidate store or RFS service. The live no-gap owner
-is passive and cannot claim MODEM-07 completion.
+Linux ASan/UBSan passes. A read-only, no-recovery phone check found both NV
+files and their sidecars byte-identical to the userdata copies. The guarded
+one-grant phone owner used a fresh, single-use EFS provenance pin, reached CP
+`ONLINE`, sent one grant, and stored the first real CP data chunk only in a
+root-only quarantine candidate. No second grant, final ACK or promotion was
+sent. After reboot the original EFS still matched the four userdata files,
+the incomplete candidate remained isolated, and the passive owner was
+restored. Registration and bearer remain absent; this is **not** MODEM-07
+completion. The full 95-chunk exchange, durable final status and production
+service remain gated by separate review and tests.
 
 **Change:** specify what requests may be served from verified copies, what is
 read-only, what is denied, and how writes are rejected or quarantined. Original

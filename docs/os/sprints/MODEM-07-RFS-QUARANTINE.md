@@ -1,7 +1,8 @@
 # MODEM-07: quarantined protected-NV RFS experiment
 
-Status: design under review; **not deployed and not a modem service**.
-Target: Pixel 7 `panther` S5300, one explicit diagnostic boot only.
+Status: **one-grant diagnostic exercised on phone**; full transaction and
+modem service are not deployed.
+Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
 The Linux x86_64 host fixture now composes the protocol, transport and
 private-storage models end to end. It proves, on synthetic bytes only, that
@@ -54,9 +55,42 @@ The verifier's explicit `pin-read-only` mode now derives a protected-NV
 SHA-256 from original EFS and publishes it only after a second successful
 read-only comparison, confirmed unmount and private-node cleanup. Its
 same-boot `/run` pin matched the userdata copy in a phone test; the test pin
-was then removed. No digest was logged, no active RFS reply was sent, and the
-CP remained `ONLINE`. A separate one-grant owner still needs review before
-the opt-in handoff can be run.
+was then removed. No digest was logged in that preparatory test. The
+subsequent separately reviewed one-grant owner consumes a fresh pin before
+READY; it cannot reuse the authorization in the same boot.
+
+## First one-grant phone result (2026-10-01)
+
+The separately built ARM64 owner/probe and explicit `rfs-one-grant` wrapper
+passed host fault tests, independent source review, installed SHA-256 checks
+and an on-device owner self-test. A cold-boot script dependency initially
+stopped the wrapper before EFS access or CP boot; another attempt was
+interrupted by the serial console during firmware transfer, before the owner
+started. Both refusal logs were preserved. The final attempt used a
+non-interrupting console after a fresh AP reboot.
+
+That attempt rechecked original EFS read-only, compared both NV files and
+their sidecars, unmounted EFS, then consumed a boot-local protected-NV pin.
+The CP reached `ONLINE`; the owner logged exactly one file-3 command-2 grant
+attempt and one first data chunk stored into a root-only 524288-byte
+quarantine candidate. Its `NO_PROMOTION` marker remained present. The owner
+entered terminal state without a second grant or final success ACK and held
+IPC/RFS while CP was online. An independent silent check confirmed that the
+verified source still matched its pin, the candidate tail from byte 2012
+matched the source, and only the first chunk differed. No NV bytes or digest
+were printed. Original EFS was not mounted during this exchange.
+
+After a controlled AP reboot, the original EFS again matched all four
+userdata files through a read-only, no-recovery mount and was unmounted.
+The quarantined candidate and logs were retained; the passive no-reply owner
+was restored and CP reached `ONLINE`. A later passive SIM refresh reported
+`card=1`, `apps=1`, `app_state=5` (READY), but the earlier registration
+snapshot was 0, `rmnet0` RX remained 0 and no IPv4 bearer appeared. Do not
+attribute SIM READY to the partial RFS attempt without a controlled
+comparison. The AP reboot ended the one-grant owner, so its early
+`first_chunk_quarantined_no_ack` log is **not** a post-OFFLINE exit-code PASS
+and is not evidence of a completed 95-chunk RFS transaction or cellular
+service. No candidate was promoted to a boot copy or original EFS.
 
 ## Why this exists
 
@@ -139,15 +173,16 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
    RFS completion and SIM READY are separate milestones; cellular service
    requires observed registration and a real bearer.
 
-The final CP-visible status was verified in factory code. Remaining local
-file/backup/checksum transitions and real CP data-frame bytes still require
-review before enabling phone I/O. Until then, only host-only synthetic
+The final CP-visible status was verified in factory code. The isolated
+one-grant adapter has now observed the first real CP data frame and written
+it only to quarantine. Remaining local file/backup/checksum transitions and
+the full 95-chunk sequence still require review before enabling a full
+phone-side transaction. The synthetic
 [protocol](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md),
 [private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
 and [transport](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-TRANSPORT-HOST.md)
-fixtures are permitted. Their new host-only integration test is not a phone
-broker; verified on-device baseline provenance, descriptor and one-grant
-transport adapters still need separate design and review.
+fixtures remain the model for the unimplemented full exchange. Their
+host-only integration test is not a phone broker.
 
 ## Implementation sequence before any phone-side RFS reply
 
@@ -177,14 +212,12 @@ transport adapters still need separate design and review.
    link framing. Unexpected short results and response timeouts are therefore
    indeterminate and must not trigger an automatic retry. Exact parity of
    this checkout with the running phone module remains unverified.
-4. First live stage, only after separate review and a documented physical-SIM
-   state: allow *one* bounded grant and inspect the first real command-2
-   metadata, storing any CP data solely in the candidate. Stop without a
-   final success ACK and return to the passive build after a controlled
-   reboot. This is a CP-state-changing diagnostic even though it never
-   promotes NV; do not describe it as a harmless read-only probe. Check that
-   the verified boot copy remained byte-identical and preserve failed
-   candidates as invalid evidence.
+4. The first live stage is complete: one bounded grant produced a real
+   command-2 data frame stored only in the candidate. No final ACK was sent;
+   the passive build was restored after a controlled reboot. This was a
+   CP-state-changing diagnostic, not a harmless read-only probe. The verified
+   boot copy remained byte-identical to original EFS, and the incomplete
+   candidate remains quarantined evidence, never a boot source.
 5. Only after the real command-2 sequence, RFS write semantics, failure
    paths and ARM build are verified may a separately reviewed full exchange
    attempt all 95 chunks and consider the final durable-quarantine ACK.

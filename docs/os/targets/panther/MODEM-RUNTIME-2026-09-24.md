@@ -5983,3 +5983,32 @@ earlier PIN-locked scan, and now shows the PIN lock was **not** its sole
 cause. Factory-facing error 2 is a generic refusal; it does not identify
 which AP/RFS startup or CP radio precondition is missing. No more scan
 replays are planned without a new isolated hypothesis.
+
+## 2026-10-01: first quarantined RFS grant
+
+The reviewed separate owner/probe were installed with matching ARM64 static
+hashes; the passive binaries were unchanged. A first cold-boot attempt
+refused before original EFS access because Toybox `/bin/sh` could not find
+the BusyBox-only `awk` applet. The explicit BusyBox path fixed that. A
+second attempt was interrupted by a serial-console Ctrl-C during MAIN
+firmware transfer, before the RFS owner started. Both failure logs were
+retained; neither sent an RFS response.
+
+The next fresh AP boot used a non-interrupting console. The wrapper verified
+original EFS read-only, matched the four NV/sidecar files to the existing
+userdata copies, unmounted EFS, and created a volatile protected-NV pin.
+The owner consumed that pin before READY; CP reached `ONLINE`. It logged
+`grant_attempted=1 first_chunk_stored=1` and terminalized without a second
+grant or final ACK. A 524288-byte root-only candidate with `NO_PROMOTION`
+was retained; a silent independent check found its tail equal to the source
+and its first 2012 bytes different. The source still matched the consumed
+pin and EFS was unmounted. No file bytes or digests were logged.
+
+A controlled AP reboot ended this partial experiment. A new read-only EFS
+check again matched all four userdata files, and the passive no-reply owner
+was restored with CP `ONLINE`. Its SIM refresh reported card=1/apps=1,
+app_state=READY(5), while the initial registration snapshot was 0 and
+`rmnet0` had no RX or IPv4. This does not prove RFS caused READY or that a
+bearer works. Because reboot ended the one-grant process, its pre-reboot
+terminal log is not a post-OFFLINE exit-code PASS. Full RFS transfer remains
+unimplemented and no candidate was promoted.
