@@ -851,7 +851,8 @@ deadlines. A synthetic end-to-end fixture now integrates protocol, transport
 and storage; a separate host-only verified-FD fixture tests source integrity.
 Linux ASan/UBSan passes. A manual read-only, no-recovery EFS check on the
 phone found both NV files and their sidecars byte-identical to the userdata
-copies. This is a point-in-time provenance check, not a reusable device gate.
+copies. A separate, manually invoked device verifier now repeats that check
+and passed on the phone; it is not wired into boot or an active RFS owner.
 There is no phone-side candidate store or RFS service. The live no-gap owner
 is passive and cannot claim MODEM-07 completion.
 

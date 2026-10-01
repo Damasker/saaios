@@ -22,6 +22,35 @@ No-argument invocation refuses execution. Complete mode requires explicit
 Only existing userdata NV copies are read. No EFS mounting or copying is
 performed here. Never substitute invented/default/zero NV.
 
+## Manual original-EFS provenance comparison
+
+`verify-original-efs-readonly.sh` is a separate, root-only verifier. It is not
+called by the boot probe, owner, init or any bringup script. On a phone where
+the original EFS is unmounted, run it only with an explicit diagnostic choice:
+
+```sh
+sh verify-original-efs-readonly.sh verify-read-only
+```
+
+The script accepts only sysfs `sda5` with exact `PARTNAME=efs` and matching
+block major/minor. It verifies that `/dev/block` is a root-owned mode-0700
+directory, not a symlink, and pins its identity across cleanup. It creates a
+mode-0400 block node inside a private directory there; `/tmp` is `nodev` on
+this phone. It refuses an existing mount of that device, mounts F2FS with
+`ro,norecovery,nodiscard,nosuid,nodev,noexec,noatime`, and verifies the live
+mount's device and options before reading files. It silently compares the two
+NV files and both `.md5` sidecars with `/data/saaios/var/efs-copy`, then
+rechecks each file's identity, size and timestamps. Userdata files must be
+root-owned, mode 0600 and single-link. Core dumps are disabled. It unmounts
+and removes only its unchanged private node and directories. A PASS is printed
+only after cleanup. If unmount fails, it leaves the private mountpoint for
+manual recovery and exits with a failure. It never prints file contents or
+digests, writes EFS, or serves RFS. This is a point-in-time comparison, not a
+persistent provenance pin or permission to send an RFS response.
+It checks the current mount namespace and assumes a quiescent source; it is
+not a cross-namespace mount audit or a defense against a concurrent root
+process changing the userdata copy.
+
 The operator must verify original EFS remains unmounted, current CP is
 fresh OFFLINE, module provenance matches the running kernel, and device
 nodes match current sysfs major/minor. BOOTING/ONLINE/CRASH_EXIT is not a

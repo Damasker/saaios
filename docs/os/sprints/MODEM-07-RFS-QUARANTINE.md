@@ -40,6 +40,16 @@ proof of network registration. Repeat the same read-only provenance check
 or establish a separately protected digest immediately before any active
 RFS experiment.
 
+The separately named, manual
+[`verify-original-efs-readonly.sh`](../../../os/targets/panther/diagnostics/verify-original-efs-readonly.sh)
+now repeats the identity, read-only mount and four-file comparison with
+fail-closed cleanup. Its first test refused a device node under nodev `/tmp`;
+the corrected version uses a private `/dev/block` directory. The corrected
+script returned `PASS` on the phone, with EFS unmounted, no private nodes left
+and CP still `ONLINE`. It is installed as a mode-0700 manual tool under
+`/data/saaios/bin`, but it is not called by boot or the passive owner. A
+future active RFS launch must run a fresh check; today's PASS is not a pin.
+
 ## Why this exists
 
 The no-gap boot owner observed RFS command 7 at +7.282 s and command 6 at

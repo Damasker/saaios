@@ -26,6 +26,7 @@ jobs:
           test "$(/tmp/modem-channel-owner-scan-fixture --mode)" = scan-once
           sh -n os/targets/panther/diagnostics/owner-handoff-bringup.sh
           sh -n os/targets/panther/diagnostics/build-owner-scan-once.sh
+          sh -n os/targets/panther/diagnostics/verify-original-efs-readonly.sh
           cc -O2 -Wall -Wextra -Werror \
             os/targets/panther/diagnostics/ready-network-once.c \
             -o /tmp/ready-network-once-fixture
