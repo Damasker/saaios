@@ -27,13 +27,18 @@
 #include <linux/magic.h>
 #include <time.h>
 #include <unistd.h>
+#include "sit-network-layout.h"
+#include "sit-sim-layout.h"
 
 enum { BASELINE_BYTES = 524288, FIRST_CHUNK = 2012,
        RFS_TRANSFER_BYTES = 189446, RFS_GRANTS_MAX = 95,
        RFS_FRAME_MAX = 20 + FIRST_CHUNK, RX_CAP = 4096,
        POLL_MS = 250, EMPTY_BACKOFF_MS = 100,
        FIRST_DEADLINE_MS = 60000, STEP_DEADLINE_MS = 30000,
-       TOTAL_DEADLINE_MS = 300000, BOOTING_LIMIT_MS = 60000 };
+       TOTAL_DEADLINE_MS = 300000, BOOTING_LIMIT_MS = 60000,
+       SIT_RX_CAP = 65536, SIT_READ_SLICE = 1024,
+       SIT_REPLY_MS = 10000, SIT_SETTLED_MS = 60000,
+       SIT_RFS_GUARD_MS = 1000, SIT_GET_COUNT = 4 };
 #define IOCTL_GET_OPENED_STATUS _IOR('o', 0x59, int)
 #define SOURCE_NAME "nv_protected.bin"
 #define PIN_NAME "expected.sha256"
@@ -51,6 +56,15 @@ struct sha256 {
     uint64_t bits;
     uint8_t block[64];
     size_t used;
+};
+
+struct sit_observer {
+    uint8_t rx[SIT_RX_CAP];
+    size_t used;
+    uint32_t token;
+    unsigned pass, next;
+    int started, pending, poisoned, endpoint_failed;
+    int64_t ready_ms, deadline_ms, backoff_until_ms;
 };
 
 struct owner {
@@ -75,6 +89,7 @@ struct owner {
     int final_ack_attempted;
     int final_ack_sent;
     int pin_consumed;
+    struct sit_observer sit;
 };
 
 static volatile sig_atomic_t stop_requested;
@@ -86,6 +101,8 @@ static int host_store_override;
 static int host_finish_override;
 static int host_sidecar_close_error;
 static int host_sidecar_sync_error;
+static ssize_t (*host_sit_write_override)(int, const void *, size_t);
+static unsigned host_sit_write_calls;
 #endif
 static const uint8_t request_7[12] =
     {7,0,0,0, 4,0,0,0, 3,0,0,0};
@@ -719,6 +736,14 @@ static int opened_once(int fd)
            opened == 1 ? 0 : -1;
 }
 
+static int endpoint_fault_free(int fd)
+{
+    struct pollfd p = {.fd = fd, .events = 0};
+    int checked = poll(&p, 1, 0);
+    return checked >= 0 && !(p.revents & (POLLERR | POLLHUP | POLLNVAL)) ?
+           0 : -1;
+}
+
 static int ready_pipe(int fd)
 {
     struct stat st;
@@ -845,6 +870,7 @@ static int reply_gate(const struct owner *o)
     if (host_gate_override) return 0;
 #endif
     return cp_state() == CP_ONLINE && opened_once(o->ipc) == 0 &&
+           endpoint_fault_free(o->ipc) == 0 &&
            opened_once(o->rfs) == 0 && original_efs_unmounted() == 0 &&
            stable_sources(o) && candidate_stable(o) == 0 ? 0 : -1;
 }
@@ -1200,6 +1226,229 @@ static int feed_rfs(struct owner *o, const uint8_t *bytes,
     return o->used == sizeof o->rx ? -1 : 0;
 }
 
+/* This observer shares the existing exclusive IPC owner. It never opens a
+ * second endpoint, issues a SET, or gives RFS work to the SIT parser. */
+static const struct {
+    uint16_t id;
+    const char *name;
+} sit_gets[SIT_GET_COUNT] = {
+    {0x0200, "sim"}, {0x0801, "radio"},
+    {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"}
+};
+
+static const char *sit_pass_name(unsigned pass)
+{
+    return pass == 0 ? "online" : "settled";
+}
+
+static void sit_unknown(struct sit_observer *s, const char *status)
+{
+    printf("sit_snapshot pass=%s field=%s status=%s\n",
+           sit_pass_name(s->pass), sit_gets[s->next].name, status);
+}
+
+static void sit_disable(struct sit_observer *s, const char *reason)
+{
+    if (!s->poisoned)
+        printf("sit_observer=%s no_more_gets=1\n", reason);
+    s->poisoned = 1;
+    s->pending = 0;
+    s->used = 0;
+    zero_bytes(s->rx, sizeof s->rx);
+}
+
+static void sit_poison(struct sit_observer *s)
+{
+    sit_disable(s, "framing_unknown");
+}
+
+static void sit_endpoint_fault(struct owner *o)
+{
+    o->sit.endpoint_failed = 1;
+    sit_disable(&o->sit, "endpoint_lost");
+    /* The RFS reply gate requires both channel descriptors. Losing IPC
+     * before the final ACK disarms quarantine, as in the prior owner. */
+    if (o->phase != TERMINAL) terminal(o, "ipc_endpoint_lost");
+}
+
+static void poll_faults_before_rfs(struct owner *o,
+                                   short rfs_revents, short ipc_revents)
+{
+    const short faults = POLLERR | POLLHUP | POLLNVAL;
+    /* A co-reported final RFS chunk must not be acknowledged while IPC is
+     * already in fault state. Inspect both endpoints before either read. */
+    if (ipc_revents & faults) sit_endpoint_fault(o);
+    if (rfs_revents & faults) terminal(o, "rfs_endpoint_lost");
+}
+
+/* Response size is the exact SIT header length, not the read() boundary. */
+static int sit_frame_length(const uint8_t *p, size_t used)
+{
+    if (used < 6) return 0;
+    if (p[0] > 2) return -1;
+    uint16_t length = little16(p + 4);
+    unsigned minimum = p[0] == 2 ? 8u : 12u;
+    /* The 16-bit wire length cannot exceed the 65536-byte parser cap. */
+    if (length < minimum) return -1;
+    return used < length ? 0 : (int)length;
+}
+
+static int sit_sim_status_complete(const uint8_t *p, size_t len)
+{
+    if (len < 15) return 0;
+    unsigned apps = p[SIT_SIM_APPS];
+    return apps <= 4 && len >= 15u + (size_t)apps * SIT_SIM_APP_STRIDE;
+}
+
+static void sit_on_frame(struct sit_observer *s, const uint8_t *p, size_t len,
+                         int64_t received_at)
+{
+    if (!s->pending || s->pass >= 2 || s->next >= SIT_GET_COUNT ||
+        (s->deadline_ms > 0 && received_at >= s->deadline_ms) ||
+        len < 12 || p[0] != 1 ||
+        little16(p + 2) != sit_gets[s->next].id ||
+        little16(p + 4) != len || little32(p + 6) != s->token)
+        return; /* Unsolicited and stale responses are never evidence. */
+    unsigned id = sit_gets[s->next].id;
+    unsigned error = little16(p + 10);
+    const char *name = sit_gets[s->next].name;
+    printf("sit_snapshot pass=%s field=%s response=yes error_raw=%u",
+           sit_pass_name(s->pass), name, error);
+    if (error) {
+        puts(" status=unknown_remote_error");
+    } else if (id == 0x0200) {
+        if (!sit_sim_status_complete(p, len))
+            puts(" status=unknown_short");
+        else {
+            unsigned apps = p[SIT_SIM_APPS];
+            printf(" card_raw=%u apps=%u", p[SIT_SIM_CARD], apps);
+            if (apps)
+                printf(" app_state_raw=%u pin1_raw=%u",
+                       p[SIT_SIM_APP_STATE], p[SIT_SIM_PIN1]);
+            putchar('\n');
+        }
+    } else if (id == 0x0801) {
+        if (len < 16) puts(" status=unknown_short");
+        else printf(" radio_raw=%u\n", little32(p + 12));
+    } else if (len < (id == SIT_NET_DATA_REG ? 16u : 14u)) {
+        puts(" status=unknown_short");
+    } else {
+        printf(" registration_raw=%u reject_raw=%u",
+               p[SIT_NET_REG_STATE_OFFSET], p[SIT_NET_REJECT_OFFSET]);
+        if (id == SIT_NET_DATA_REG)
+            printf(" tech_raw=%u", p[SIT_NET_DATA_TECH_OFFSET]);
+        putchar('\n');
+    }
+    s->pending = 0;
+    s->next++;
+}
+
+/* A separate, bounded streaming buffer handles fragmented and coalesced IPC.
+ * Malformed/oversized IPC disables only this observer, never RFS quarantine. */
+static void sit_feed(struct sit_observer *s, const uint8_t *bytes, size_t len,
+                     int64_t received_at)
+{
+    if (s->poisoned) return;
+    while (len && !s->poisoned) {
+        size_t space = sizeof s->rx - s->used;
+        if (!space) { sit_poison(s); break; }
+        size_t take = len < space ? len : space;
+        memcpy(s->rx + s->used, bytes, take);
+        s->used += take;
+        bytes += take;
+        len -= take;
+        size_t offset = 0;
+        while (offset < s->used) {
+            int length = sit_frame_length(s->rx + offset, s->used - offset);
+            if (length < 0) { sit_poison(s); break; }
+            if (!length) break;
+            sit_on_frame(s, s->rx + offset, (size_t)length, received_at);
+            offset += (size_t)length;
+        }
+        if (s->poisoned) break;
+        if (offset) {
+            size_t remaining = s->used - offset;
+            memmove(s->rx, s->rx + offset, remaining);
+            zero_bytes(s->rx + remaining, offset);
+            s->used = remaining;
+        }
+    }
+}
+
+/* A short or ambiguous IPC write consumes the request; never resend it. */
+static int sit_send_get_once(int ipc, uint16_t id, uint32_t token)
+{
+    uint8_t request[12] = {0};
+    request[2] = (uint8_t)id;
+    request[3] = (uint8_t)(id >> 8);
+    request[4] = sizeof request;
+    put_little32(request + 6, token);
+    sigset_t blocked, old;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGTERM);
+    sigaddset(&blocked, SIGINT);
+    if (sigprocmask(SIG_BLOCK, &blocked, &old)) return -1;
+    ssize_t written = -1;
+    if (!stop_requested) {
+#ifdef RFS_HOST_TEST
+        if (host_sit_write_override) {
+            host_sit_write_calls++;
+            written = host_sit_write_override(ipc, request, sizeof request);
+        } else
+#endif
+        written = write(ipc, request, sizeof request);
+    }
+    int restored = sigprocmask(SIG_SETMASK, &old, NULL);
+    zero_bytes(request, sizeof request);
+    return restored == 0 && written == 12 ? 0 : -1;
+}
+
+static void sit_advance(struct owner *o, int64_t now)
+{
+    struct sit_observer *s = &o->sit;
+    if (s->poisoned || s->pass >= 2 || stop_requested) return;
+    /* RFS failure or ambiguous ACK forbids any further modem writes, even
+     * read-only GETs. A completed, acknowledged quarantine may be observed. */
+    if (o->phase == TERMINAL && !o->final_ack_sent) return;
+    if (s->pending) {
+        if (now < s->deadline_ms) return;
+        sit_unknown(s, "unknown_timeout");
+        /* The CP may still be completing this request. Do not overlap it
+         * with another GET, even if its late reply is ignored by token. */
+        sit_disable(s, "reply_timeout");
+        return;
+    }
+    if (s->next == SIT_GET_COUNT) {
+        s->pass++;
+        s->next = 0;
+        s->started = 0;
+        if (s->pass >= 2) return;
+    }
+    if (s->pass == 1 && now < s->ready_ms + SIT_SETTLED_MS) return;
+    /* The loop services RFS before IPC and reaches here only afterward.
+     * Keep away from partial RFS frames and its deadline; do not poll the
+     * CPIF fd again here, because it may report POLLIN for an empty read. */
+    if (o->phase != TERMINAL) {
+        if (now + SIT_RFS_GUARD_MS >= o->deadline_ms ||
+            o->used != 0) return;
+    }
+    if (!s->started) {
+        s->started = 1;
+        printf("sit_snapshot=%s_started elapsed_ms=%lld read_only=1\n",
+               sit_pass_name(s->pass), (long long)(now - s->ready_ms));
+    }
+    if (!s->token)
+        s->token = (uint32_t)now ^ (uint32_t)getpid() ^ 0x5a170000u;
+    ++s->token;
+    if (sit_send_get_once(o->ipc, sit_gets[s->next].id, s->token)) {
+        sit_unknown(s, "unknown_write_no_retry");
+        s->poisoned = 1; /* Do not start a later pass after ambiguous write. */
+        return;
+    }
+    s->pending = 1;
+    s->deadline_ms = now + SIT_REPLY_MS;
+}
+
 static void request_stop(int signal_number)
 {
     (void)signal_number;
@@ -1295,6 +1544,7 @@ static int run_owner(int ipc, int rfs, int ready)
     sha_init(&o.received_hash);
     o.deadline_ms = started + FIRST_DEADLINE_MS;
     o.total_deadline_ms = started + TOTAL_DEADLINE_MS;
+    o.sit.ready_ms = started;
     for (;;) {
         int64_t now = monotonic_ms();
         state = cp_state();
@@ -1314,42 +1564,62 @@ static int run_owner(int ipc, int rfs, int ready)
         if (stop_requested) {
             terminal(&o, "requested_stop");
         }
-        if (o.phase == TERMINAL || state != CP_ONLINE) {
+        if (o.phase == TERMINAL && !o.final_ack_sent && !o.sit.poisoned)
+            sit_disable(&o.sit, "rfs_terminal");
+        if (state != CP_ONLINE) {
             (void)poll(NULL, 0, POLL_MS);
             continue;
         }
         struct pollfd fds[2] = {
-            {.fd = ipc, .events = POLLIN},
-            {.fd = rfs, .events = POLLIN}
+            {.fd = o.phase == TERMINAL ? -1 : rfs, .events = POLLIN},
+            {.fd = o.sit.endpoint_failed ||
+                   now < o.sit.backoff_until_ms ? -1 : ipc,
+             .events = POLLIN}
         };
         int events = poll(fds, 2, POLL_MS);
         if (events < 0 && errno == EINTR) continue;
-        if (events < 0) { terminal(&o, "poll_refused"); continue; }
-        if (events == 0) continue;
-        for (size_t i = 0; i < 2 && o.phase != TERMINAL; ++i) {
-            if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                terminal(&o, "endpoint_lost");
-                break;
-            }
+        if (events < 0) {
+            terminal(&o, "poll_refused");
+            (void)poll(NULL, 0, POLL_MS);
+            continue;
+        }
+        poll_faults_before_rfs(&o, fds[0].revents, fds[1].revents);
+        if (o.phase == TERMINAL && !o.final_ack_sent && !o.sit.poisoned)
+            sit_disable(&o.sit, "rfs_terminal");
+        for (size_t i = 0; i < 2; ++i) {
+            if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) continue;
+            if (i == 0 && o.phase == TERMINAL) continue;
             if (!(fds[i].revents & POLLIN)) continue;
             uint8_t bytes[RX_CAP];
-            ssize_t got = read(fds[i].fd, bytes, sizeof bytes);
+            size_t cap = i == 0 ? sizeof bytes : SIT_READ_SLICE;
+            ssize_t got = read(fds[i].fd, bytes, cap);
             if (got < 0 && errno == EINTR) continue;
             if (got == 0 || (got < 0 &&
                 (errno == EAGAIN || errno == EWOULDBLOCK))) {
-                (void)poll(NULL, 0, EMPTY_BACKOFF_MS);
+                if (i == 0) (void)poll(NULL, 0, EMPTY_BACKOFF_MS);
+                else o.sit.backoff_until_ms = now + EMPTY_BACKOFF_MS;
                 continue;
             }
             if (got < 0) {
-                terminal(&o, "read_refused");
-            } else if (i == 1) {
+                if (i == 0) terminal(&o, "rfs_read_refused");
+                else sit_endpoint_fault(&o);
+            } else if (i == 0) {
                 int64_t received_at = monotonic_ms();
                 if (received_at < 0 || received_at >= o.deadline_ms ||
                     feed_rfs(&o, bytes, (size_t)got, received_at))
                     terminal(&o, "rfs_frame_or_io_refused");
+                if (o.phase == TERMINAL && !o.final_ack_sent &&
+                    !o.sit.poisoned)
+                    sit_disable(&o.sit, "rfs_terminal");
+            } else {
+                int64_t received_at = monotonic_ms();
+                if (received_at < 0) sit_poison(&o.sit);
+                else sit_feed(&o.sit, bytes, (size_t)got, received_at);
             }
             zero_bytes(bytes, sizeof bytes);
         }
+        int64_t observed_at = monotonic_ms();
+        if (observed_at >= 0) sit_advance(&o, observed_at);
     }
     if (state != CP_OFFLINE)
         fputs("WARNING owner exit before CP OFFLINE may purge RX\n", stderr);
@@ -1379,6 +1649,7 @@ done:
     zero_bytes(o.candidate_digest, sizeof o.candidate_digest);
     zero_bytes(&o.received_hash, sizeof o.received_hash);
     zero_bytes(o.rx, sizeof o.rx);
+    zero_bytes(o.sit.rx, sizeof o.sit.rx);
     return rc;
 }
 
@@ -1412,6 +1683,7 @@ static int test_framing(void)
 #ifdef RFS_HOST_TEST
 static uint8_t host_last_reply[20];
 static size_t host_last_reply_len;
+static uint8_t host_last_sit_request[12];
 
 static ssize_t host_short_write(int fd, const void *bytes, size_t len)
 {
@@ -1426,6 +1698,191 @@ static ssize_t host_full_write(int fd, const void *bytes, size_t len)
     memcpy(host_last_reply, bytes, len);
     host_last_reply_len = len;
     return (ssize_t)len;
+}
+
+static ssize_t host_sit_full_write(int fd, const void *bytes, size_t len)
+{
+    (void)fd;
+    if (len != sizeof host_last_sit_request) return -1;
+    memcpy(host_last_sit_request, bytes, len);
+    return (ssize_t)len;
+}
+
+static ssize_t host_sit_short_write(int fd, const void *bytes, size_t len)
+{
+    (void)fd; (void)bytes;
+    return (ssize_t)len - 1;
+}
+
+static void host_sit_reply(uint8_t *frame, size_t length, uint16_t id,
+                           uint32_t token, uint16_t error)
+{
+    memset(frame, 0, length);
+    frame[0] = 1;
+    frame[2] = (uint8_t)id;
+    frame[3] = (uint8_t)(id >> 8);
+    frame[4] = (uint8_t)length;
+    frame[5] = (uint8_t)(length >> 8);
+    put_little32(frame + 6, token);
+    frame[10] = (uint8_t)error;
+    frame[11] = (uint8_t)(error >> 8);
+}
+
+static int test_sit_observer(void)
+{
+    struct sit_observer s = {.pending = 1, .token = 0xabcdef12u};
+    struct owner o = {.phase = TERMINAL, .final_ack_sent = 1,
+                      .ipc = -1, .rfs = -1};
+    uint8_t sim[15 + SIT_SIM_APP_STRIDE], sim_short[15];
+    uint8_t radio[16], voice[14], data[16];
+    uint8_t combined[32], invalid[6] = {3,0,0,0,12,0};
+    uint8_t indication[8] = {2,0,0x10,0x02,8,0,0,0};
+    uint8_t final_frame[20 + 318] = {0};
+    int64_t now = monotonic_ms();
+    int rc = -1;
+    if (now < 0) return -1;
+    host_sit_reply(sim, sizeof sim, 0x0200, s.token, 0);
+    sim[SIT_SIM_CARD] = 1;
+    sim[SIT_SIM_APPS] = 1;
+    sim[SIT_SIM_APP_STATE] = 5;
+    sim[SIT_SIM_PIN1] = 3;
+    host_sit_reply(sim_short, sizeof sim_short, 0x0200, s.token, 0);
+    sim_short[SIT_SIM_APPS] = 1;
+    if (!sit_sim_status_complete(sim, sizeof sim) ||
+        sit_sim_status_complete(sim_short, sizeof sim_short)) goto done;
+    sit_feed(&s, sim, 5, now);
+    if (s.used != 5 || !s.pending || s.next) goto done;
+    sit_feed(&s, sim + 5, sizeof sim - 5, now);
+    if (s.used || s.pending || s.next != 1) goto done;
+    sit_feed(&s, sim, sizeof sim, now); /* Old reply cannot match next field. */
+    if (s.next != 1) goto done;
+    s.pending = 1;
+    ++s.token;
+    host_sit_reply(radio, sizeof radio, 0x0801, s.token, 0);
+    put_little32(radio + 12, 10);
+    memcpy(combined, radio, sizeof radio);
+    memcpy(combined + sizeof radio, radio, sizeof radio);
+    sit_feed(&s, combined, sizeof combined, now);
+    if (s.used || s.pending || s.next != 2) goto done;
+    s.pending = 1;
+    ++s.token;
+    host_sit_reply(voice, sizeof voice, SIT_NET_VOICE_REG, s.token + 1, 0);
+    sit_feed(&s, voice, sizeof voice, now); /* Stale token. */
+    if (!s.pending || s.next != 2) goto done;
+    sit_feed(&s, indication, sizeof indication, now); /* Not a reply. */
+    if (!s.pending || s.next != 2) goto done;
+    host_sit_reply(data, sizeof data, SIT_NET_DATA_REG, s.token, 0);
+    sit_feed(&s, data, sizeof data, now); /* Wrong ID. */
+    if (!s.pending || s.next != 2) goto done;
+    host_sit_reply(voice, sizeof voice, SIT_NET_VOICE_REG, s.token, 0);
+    sit_feed(&s, voice, sizeof voice, now);
+    if (s.pending || s.next != 3) goto done;
+    s.pending = 1;
+    ++s.token;
+    host_sit_reply(data, sizeof data, SIT_NET_DATA_REG, s.token, 5);
+    sit_feed(&s, data, sizeof data, now); /* Error is unknown, not a scalar. */
+    if (s.pending || s.next != 4) goto done;
+    s = (struct sit_observer){.pending = 1, .token = 42};
+    host_sit_reply(sim_short, sizeof sim_short, 0x0200, s.token, 0);
+    sim_short[SIT_SIM_APPS] = 1;
+    sit_feed(&s, sim_short, sizeof sim_short, now);
+    if (s.pending || s.next != 1 || s.poisoned) goto done;
+    s = (struct sit_observer){.pending = 1, .token = 10,
+                              .deadline_ms = now - 1, .ready_ms = now};
+    host_sit_reply(sim, sizeof sim, 0x0200, s.token, 0);
+    sit_feed(&s, sim, sizeof sim, now); /* Late reply is not evidence. */
+    if (!s.pending || s.next) goto done;
+    o.sit = s;
+    host_sit_write_override = host_sit_full_write;
+    host_sit_write_calls = 0;
+    o.final_ack_sent = 0;
+    sit_advance(&o, now);
+    if (host_sit_write_calls || o.sit.next != 0 || !o.sit.pending)
+        goto done; /* A failed RFS terminal cannot dispatch new GETs. */
+    o.final_ack_sent = 1;
+    sit_advance(&o, now);
+    if (!o.sit.poisoned || o.sit.pending || host_sit_write_calls)
+        goto done; /* Timed-out GET cannot be followed by another. */
+    o.sit = (struct sit_observer){.ready_ms = now};
+    sit_advance(&o, now);
+    if (!o.sit.pending || host_sit_write_calls != 1 ||
+        little16(host_last_sit_request + 2) != 0x0200 ||
+        little16(host_last_sit_request + 4) != 12 ||
+        host_last_sit_request[0] != 0) goto done;
+    o.sit.deadline_ms = now + 1;
+    sit_advance(&o, now + 1);
+    sit_advance(&o, now + SIT_SETTLED_MS);
+    if (!o.sit.poisoned || o.sit.pending || host_sit_write_calls != 1)
+        goto done; /* One send total, even after the settled threshold. */
+    o.sit = (struct sit_observer){.ready_ms = now,
+                                  .started = 1, .next = SIT_GET_COUNT};
+    host_sit_write_calls = 0;
+    sit_advance(&o, now + SIT_SETTLED_MS - 1);
+    if (o.sit.pass != 1 || o.sit.pending || host_sit_write_calls)
+        goto done;
+    sit_advance(&o, now + SIT_SETTLED_MS);
+    if (o.sit.pass != 1 || !o.sit.pending ||
+        host_sit_write_calls != 1 ||
+        little16(host_last_sit_request + 2) != 0x0200) goto done;
+    o.sit = (struct sit_observer){.ready_ms = now};
+    host_sit_write_override = host_sit_short_write;
+    host_sit_write_calls = 0;
+    sit_advance(&o, now);
+    if (!o.sit.poisoned || o.sit.pending ||
+        host_sit_write_calls != 1) goto done;
+    host_sit_write_override = host_sit_full_write;
+    sit_advance(&o, now + SIT_SETTLED_MS);
+    if (host_sit_write_calls != 1) goto done; /* No retry or later pass. */
+    s = (struct sit_observer){0};
+    sit_feed(&s, invalid, sizeof invalid, now);
+    if (!s.poisoned || s.used) goto done;
+    o.phase = WAIT_6;
+    o.final_ack_sent = 0;
+    o.sit = (struct sit_observer){0};
+    sit_endpoint_fault(&o);
+    if (o.phase != TERMINAL || !o.sit.poisoned ||
+        !o.sit.endpoint_failed) goto done;
+    o.phase = TERMINAL;
+    o.final_ack_sent = 1;
+    o.sit = (struct sit_observer){0};
+    sit_endpoint_fault(&o);
+    if (o.phase != TERMINAL || !o.final_ack_sent || !o.sit.poisoned ||
+        !o.sit.endpoint_failed)
+        goto done;
+    final_frame[0] = 2;
+    final_frame[2] = 1;
+    put_little32(final_frame + 4, 12 + 318);
+    put_little32(final_frame + 12, 3);
+    put_little32(final_frame + 16, 318);
+    o.phase = WAIT_DATA;
+    o.final_ack_sent = 0;
+    o.final_ack_attempted = 0;
+    o.sit = (struct sit_observer){0};
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    host_write_override = host_full_write;
+    host_write_calls = 0;
+    poll_faults_before_rfs(&o, POLLIN, POLLERR);
+    if (o.phase != TERMINAL || !o.sit.poisoned ||
+        o.final_ack_attempted || host_write_calls ||
+        feed_rfs(&o, final_frame, sizeof final_frame, now) == 0)
+        goto done; /* Simultaneous final RFS data + IPC fault: no ACK. */
+    rc = 0;
+done:
+    host_write_override = NULL;
+    host_write_calls = 0;
+    host_sit_write_override = NULL;
+    host_sit_write_calls = 0;
+    zero_bytes(host_last_sit_request, sizeof host_last_sit_request);
+    zero_bytes(&s, sizeof s);
+    zero_bytes(&o.sit, sizeof o.sit);
+    zero_bytes(sim, sizeof sim);
+    zero_bytes(sim_short, sizeof sim_short);
+    zero_bytes(radio, sizeof radio);
+    zero_bytes(voice, sizeof voice);
+    zero_bytes(data, sizeof data);
+    zero_bytes(combined, sizeof combined);
+    zero_bytes(final_frame, sizeof final_frame);
+    return rc;
 }
 
 static int host_sync_fail(int fd)
@@ -1678,6 +2135,21 @@ static int test_host_transcript(void)
         put_little32(frame + 16, expected_length);
         if (feed_rfs(&o, frame, 20 + expected_length, monotonic_ms()))
             goto done;
+        if (i == 19) {
+            uint8_t sim[15 + SIT_SIM_APP_STRIDE];
+            unsigned grants = (unsigned)o.grant_attempted;
+            o.sit.pending = 1;
+            o.sit.token = 0x15302026u;
+            host_sit_reply(sim, sizeof sim, 0x0200, o.sit.token, 0);
+            sim[SIT_SIM_CARD] = 1;
+            sim[SIT_SIM_APPS] = 1;
+            sit_feed(&o.sit, sim, 7, now);
+            sit_feed(&o.sit, sim + 7, sizeof sim - 7, now);
+            zero_bytes(sim, sizeof sim);
+            if (o.sit.next != 1 || o.sit.pending ||
+                o.grant_attempted != (int)grants || o.phase != WAIT_DATA)
+                goto done;
+        }
     }
     if (o.phase != TERMINAL || !o.final_ack_sent ||
         !o.final_ack_attempted || o.grant_attempted != RFS_GRANTS_MAX ||
@@ -1754,12 +2226,12 @@ static int self_test(void)
 #ifdef RFS_HOST_TEST
     if (test_host_storage_faults() || test_host_finish_candidate(0) ||
         test_host_finish_candidate(1) || test_host_finish_candidate(2) ||
-        test_host_transcript())
+        test_host_transcript() || test_sit_observer())
         return 8;
 #endif
     zero_bytes(data, sizeof data);
     zero_bytes(digest, sizeof digest);
-    puts("PASS full-RFS quarantine protocol and SHA-256 self-test");
+    puts("PASS full-RFS quarantine, SIT observer, and SHA-256 self-test");
     return 0;
 }
 

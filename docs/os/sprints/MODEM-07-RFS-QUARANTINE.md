@@ -105,8 +105,15 @@ and close failures prevent any final ACK attempt. The host test also passes
 ASan/UBSan, and the owner/probe cross-compile statically for AArch64.
 
 This is **not** an on-device result. The full owner has not been installed or
-run on the Pixel. It currently drains IPC0 but has no same-owner SIT snapshot,
-so registration cannot yet be compared causally with the passive control.
+run on the Pixel. Its single IPC0 owner now includes bounded, read-only SIM,
+radio and voice/data registration GET snapshots at ONLINE and READY+60 s.
+Host tests cover fragmented/coalesced replies, matching token and length,
+timeout as unknown, no retry after ambiguous IPC write, and an IPC fault
+co-reported with the final RFS data frame withholding the ACK. Timeout ends
+the observer rather than starting another outstanding GET. Only scalar
+fields are logged; a bearer check must be collected separately through
+read-only network-interface state, never a second IPC reader. Live A/B
+registration causality is still unproven.
 The copied `cpif.ko` write path was reviewed at binary level. A later
 read-only live check found the phone's `/lib/modules/cpif.ko` SHA-256 equal to
 the reviewed local copy (`8cdd21d7...e1e79c`); the loaded module's sysfs
@@ -246,7 +253,7 @@ host-only integration test is not a phone broker.
    candidate remains quarantined evidence, never a boot source.
 5. The separate full owner now passes host, sanitizer and ARM build gates;
    this is not permission to run it on the phone. Verify installed binary
-   hashes, the currently loaded driver, same-owner SIT observations, wrapper
+   hashes, the currently loaded driver, working same-owner SIT observations, wrapper
    and rollback before one guarded opt-in attempt of all 95 chunks and the
    final durable-quarantine ACK.
    A completed RFS transfer alone does not establish SIM READY, network
