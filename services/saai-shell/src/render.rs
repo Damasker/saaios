@@ -8,6 +8,9 @@ use saai_ui_core::{
     SystemSection, SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
+mod orb_paint;
+pub use orb_paint::{draw_orb_space, orb_unit, OrbPaint, OrbPoint};
+
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -297,50 +300,6 @@ impl<'a> Canvas<'a> {
             self.pixels[start + channel] =
                 ((src as u16 * alpha as u16 + self.pixels[start + channel] as u16 * inverse + 127)
                     / 255) as u8;
-        }
-    }
-
-    /// Circular arc stroke, clockwise from 12 o'clock, `fraction` of a full
-    /// turn (clamped to 0..=1). Radial edges are anti-aliased through
-    /// `blend`; the two angular ends are cut square, which is honest for a
-    /// determinate reading. Outer radius `outer`, stroke `thickness`.
-    pub fn arc(
-        &mut self,
-        center: (f32, f32),
-        outer: f32,
-        thickness: f32,
-        fraction: f32,
-        color: Pixel,
-    ) {
-        let fraction = fraction.clamp(0.0, 1.0);
-        if fraction <= 0.0 || outer <= 0.0 || thickness <= 0.0 {
-            return;
-        }
-        let inner = (outer - thickness).max(0.0);
-        let sweep = fraction * std::f32::consts::TAU;
-        let reach = outer.ceil() as i32 + 1;
-        let (cx, cy) = center;
-        for y in (cy as i32 - reach)..=(cy as i32 + reach) {
-            for x in (cx as i32 - reach)..=(cx as i32 + reach) {
-                let dx = x as f32 + 0.5 - cx;
-                let dy = y as f32 + 0.5 - cy;
-                let distance = (dx * dx + dy * dy).sqrt();
-                let radial = (distance - (inner - 0.5))
-                    .min((outer + 0.5) - distance)
-                    .clamp(0.0, 1.0);
-                if radial <= 0.0 {
-                    continue;
-                }
-                // 0 at 12 o'clock, growing clockwise (screen y points down).
-                let mut angle = dx.atan2(-dy);
-                if angle < 0.0 {
-                    angle += std::f32::consts::TAU;
-                }
-                if angle > sweep {
-                    continue;
-                }
-                self.blend(x, y, color, (radial * 255.0).round() as u8);
-            }
         }
     }
 
@@ -667,107 +626,6 @@ pub fn draw_object_view(
             },
         );
     }
-}
-
-/// HIA-04b: drawn last, unconditionally, on top of whatever
-/// `Frame::Root` just rendered -- not a modal, coexists with the
-/// tab-bar/cards underneath it (see `orb_zone_rect`'s own doc comment
-/// in `main.rs` for why it never overlaps their hit-test space).
-/// `menu_rows` is empty in `Idle`/`Attention`; two rows in `Menu`.
-/// HIA-16: `is_attention` draws a real shape difference, not just a
-/// different fill color -- a hollow ring-square (outer `dot_color`
-/// frame, `canvas background`-colored center) instead of the solid square
-/// every other state uses. `ATTENTION`'s own color (a fixed alert
-/// red, `main.rs`'s `build_orb_frame`) already told a sighted user
-/// something needs them; this is the same signal for anyone who
-/// can't rely on color alone (HIA-ROADMAP.md's own acceptance line,
-/// document section 52) -- a colorblind user, or a photo/screen-
-/// share that's lost its color fidelity, still sees "hollow" as
-/// distinct from "solid" regardless of hue.
-/// VUI-04 (ADR-116): `mark` is the Orb's own `OrbHost::mark()` --
-/// `draw_calibration_mark` already renders a distinct shape per
-/// `StatusMark` variant (used by `StatusIndicator`'s own compact mark
-/// and the calibration fixture), so every real Orb state
-/// (Idle/Active/Running/Attention/Offline) now gets a shape of its own
-/// instead of the old binary filled-square-or-hollow-ring. Non-color by
-/// construction: `dot_color` and `mark` are computed independently by
-/// the caller, so a state is legible even for a viewer who cannot use
-/// `dot_color` at all.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_orb(
-    canvas: &mut Canvas<'_>,
-    dot_rect: Rect,
-    dot_color: Pixel,
-    mark: StatusMark,
-    attention_ring: bool,
-    quantity: Option<u8>,
-    activity_pulse: bool,
-    menu_rows: &[(Rect, &str)],
-    fonts: Option<&Fonts>,
-) {
-    for (rect, label) in menu_rows {
-        canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
-        if let Some(fonts) = fonts {
-            draw_text(
-                canvas,
-                &fonts.regular,
-                label,
-                role_px(TextRole::Caption),
-                rect.x + 24,
-                rect.y + rect.height / 2 - 16,
-                theme_color(ColorRole::TextPrimary),
-            );
-        }
-    }
-    draw_calibration_mark(canvas, dot_rect, mark, dot_color);
-    if activity_pulse {
-        // ADR-170: inset hairline is the on-phase of the activity loop.
-        let inset = physical(StrokeToken::Focus.value()).max(1);
-        if dot_rect.width > inset * 2 && dot_rect.height > inset * 2 {
-            draw_square_ring(
-                canvas,
-                Rect::new(
-                    dot_rect.x + inset,
-                    dot_rect.y + inset,
-                    dot_rect.width - inset * 2,
-                    dot_rect.height - inset * 2,
-                ),
-                physical(StrokeToken::Hairline.value()).max(1),
-                theme_color(ColorRole::TextSecondary),
-            );
-        }
-    }
-    if attention_ring {
-        draw_square_ring(
-            canvas,
-            dot_rect,
-            physical(StrokeToken::Focus.value()).max(1),
-            dot_color,
-        );
-    }
-    if let Some(percent) = quantity {
-        draw_quantity_arc(canvas, dot_rect, percent);
-    }
-}
-
-/// Context Light quantity=arc: a clockwise sweep from 12 o'clock inscribed in
-/// the Orb dot. Border token, never severity. Missing reading draws nothing.
-fn draw_quantity_arc(canvas: &mut Canvas<'_>, rect: Rect, percent: u8) {
-    let thickness = physical(Progress::MIN_TRACK_HEIGHT).max(2) as f32;
-    let outer = rect.width.min(rect.height) as f32 / 2.0;
-    if outer <= thickness || percent == 0 {
-        return;
-    }
-    canvas.arc(
-        (
-            rect.x as f32 + rect.width as f32 / 2.0,
-            rect.y as f32 + rect.height as f32 / 2.0,
-        ),
-        outer,
-        thickness,
-        f32::from(percent.min(100)) / 100.0,
-        theme_color(ColorRole::Border),
-    );
 }
 
 fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: Pixel) {
@@ -3123,10 +2981,10 @@ mod tests {
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_action_card, draw_apps_grid, draw_calibration, draw_composite_gallery,
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
-        draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
-        draw_remote_pair, draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        gallery_row_positions, now_empty_pattern, physical, physical_line_height, role_px,
-        state_color, theme_color, ActionCardView, Canvas,
+        draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_pin_setup, draw_remote_pair,
+        draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar, gallery_row_positions,
+        now_empty_pattern, physical, physical_line_height, role_px, state_color, theme_color,
+        ActionCardView, Canvas,
     };
     use saai_ui_core::{
         composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,
@@ -3348,189 +3206,6 @@ mod tests {
         assert_eq!(canvas.pixel(540, 1000), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(540, 2200), theme_color(ColorRole::Surface));
         assert_ne!(canvas.pixel(540, 2050), theme_color(ColorRole::Surface));
-    }
-
-    #[test]
-    fn orb_mark_shapes_differ_between_states() {
-        // HIA-16's own acceptance line (HIA-ROADMAP.md), now carried by
-        // VUI-04's real `StatusMark` per state (ADR-116) instead of a
-        // binary solid-square-or-hollow-ring: every state must be
-        // distinguishable by shape, not only by color. Compares whole
-        // rendered buffers rather than hand-picked pixel coordinates,
-        // since each `StatusMark` variant's exact geometry is
-        // `draw_calibration_mark`'s own concern, not this test's.
-        let render_mark = |mark: StatusMark| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            let dot_rect = Rect::new(50, 50, 100, 100);
-            draw_orb(
-                &mut canvas,
-                dot_rect,
-                theme_color(ColorRole::Accent),
-                mark,
-                false,
-                None,
-                false,
-                &[],
-                None,
-            );
-            pixels
-        };
-        let idle = render_mark(StatusMark::Outline);
-        let attention = render_mark(StatusMark::Alert);
-        let offline = render_mark(StatusMark::Offline);
-        assert_ne!(idle, attention);
-        assert_ne!(idle, offline);
-        assert_ne!(attention, offline);
-    }
-
-    #[test]
-    fn attention_ring_is_drawn_beyond_the_alert_mark() {
-        let render = |ring: bool| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                Rect::new(50, 50, 100, 100),
-                theme_color(ColorRole::Accent),
-                StatusMark::Alert,
-                ring,
-                None,
-                false,
-                &[],
-                None,
-            );
-            pixels
-        };
-        assert_ne!(render(true), render(false));
-    }
-
-    fn render_quantity(quantity: Option<u8>) -> Vec<u8> {
-        let mut pixels = vec![0u8; 200 * 200 * 4];
-        let mut canvas = Canvas::new(&mut pixels, 200, 200);
-        draw_orb(
-            &mut canvas,
-            Rect::new(50, 50, 100, 100),
-            theme_color(ColorRole::Accent),
-            StatusMark::ActiveDot,
-            false,
-            quantity,
-            false,
-            &[],
-            None,
-        );
-        pixels
-    }
-
-    /// Arc stroke midline is at `outer - thickness / 2` from the dot center.
-    fn arc_probe(side: &str) -> (u32, u32) {
-        let thickness = physical(Progress::MIN_TRACK_HEIGHT).max(2) as f32;
-        let radius = 50.0 - thickness / 2.0;
-        let (dx, dy) = match side {
-            "top" => (0.0, -radius),
-            "right" => (radius, 0.0),
-            "bottom" => (0.0, radius),
-            _ => (-radius, 0.0),
-        };
-        ((100.0 + dx) as u32, (100.0 + dy) as u32)
-    }
-
-    #[test]
-    fn quantity_arc_sweeps_clockwise_from_twelve_in_border_not_severity() {
-        let mut half = render_quantity(Some(50));
-        let canvas = Canvas::new(&mut half, 200, 200);
-        let border = theme_color(ColorRole::Border);
-        let (tx, ty) = arc_probe("top");
-        let (rx, ry) = arc_probe("right");
-        let (bx, by) = arc_probe("bottom");
-        let (lx, ly) = arc_probe("left");
-        assert_eq!(canvas.pixel(tx + 6, ty), border, "just clockwise of 12");
-        assert_eq!(canvas.pixel(rx, ry), border, "3 o'clock is inside 50%");
-        assert_ne!(canvas.pixel(lx, ly), border, "9 o'clock is outside 50%");
-        assert_ne!(
-            canvas.pixel(tx - 6, ty),
-            border,
-            "just counter-clockwise of 12"
-        );
-        assert_ne!(canvas.pixel(bx - 6, by), border);
-        assert_ne!(border, theme_color(ColorRole::Attention));
-        assert_ne!(border, theme_color(ColorRole::Critical));
-    }
-
-    #[test]
-    fn quantity_arc_grows_with_the_reading_and_missing_stays_absent() {
-        let missing = render_quantity(None);
-        let zero = render_quantity(Some(0));
-        assert_eq!(missing, zero, "0% draws no arc; unknown draws none either");
-        let count_border = |pixels: &mut Vec<u8>| -> usize {
-            let canvas = Canvas::new(pixels, 200, 200);
-            (0..200)
-                .flat_map(|y| (0..200).map(move |x| (x, y)))
-                .filter(|&(x, y)| canvas.pixel(x, y) == theme_color(ColorRole::Border))
-                .count()
-        };
-        let quarter = count_border(&mut render_quantity(Some(25)));
-        let half = count_border(&mut render_quantity(Some(50)));
-        let full = count_border(&mut render_quantity(Some(100)));
-        assert!(0 < quarter && quarter < half && half < full);
-        assert_eq!(
-            count_border(&mut render_quantity(Some(250))),
-            full,
-            "out-of-range reading is clamped, never wraps"
-        );
-    }
-
-    #[test]
-    fn quantity_arc_stays_inside_the_dot_rect() {
-        let mut full = render_quantity(Some(100));
-        let canvas = Canvas::new(&mut full, 200, 200);
-        for y in 0..200u32 {
-            for x in 0..200u32 {
-                if canvas.pixel(x, y) != [0, 0, 0, 0] && canvas.pixel(x, y) != [0, 0, 0, 255] {
-                    assert!(
-                        (50..150).contains(&x) && (50..150).contains(&y),
-                        "painted outside the dot at ({x},{y})"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn activity_pulse_inset_is_not_an_attention_ring() {
-        let render = |pulse: bool| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                Rect::new(50, 50, 100, 100),
-                theme_color(ColorRole::Accent),
-                StatusMark::Activity,
-                false,
-                None,
-                pulse,
-                &[],
-                None,
-            );
-            pixels
-        };
-        assert_ne!(render(true), render(false));
-        assert_ne!(render(true), {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                Rect::new(50, 50, 100, 100),
-                theme_color(ColorRole::Accent),
-                StatusMark::Activity,
-                true,
-                None,
-                false,
-                &[],
-                None,
-            );
-            pixels
-        });
     }
 
     #[test]

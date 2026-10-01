@@ -159,16 +159,16 @@ pub fn layout(entries: &[Entry], camera: Camera, stage: Stage) -> Layout {
     let mut items = Vec::new();
     if rise_fade > 0.0 {
         for e in entries {
-            let Some(p) = proj.project(e.geo) else { continue };
+            let Some(p) = proj.project(e.geo) else {
+                continue;
+            };
             let limb = smoothstep(0.03, 0.3, p.facing);
             let alpha = detail(e.echelon, camera.zoom) * e.prominence.alpha() * limb * rise_fade;
             if alpha < MIN_ALPHA {
                 continue;
             }
-            let mut radius = base_radius(e.echelon)
-                * stage.unit
-                * zoom_scale
-                * (0.55 + 0.45 * p.facing);
+            let mut radius =
+                base_radius(e.echelon) * stage.unit * zoom_scale * (0.55 + 0.45 * p.facing);
             if e.prominence == Prominence::Now {
                 radius *= 1.12;
             }
@@ -269,10 +269,12 @@ mod tests {
     use crate::model::ObjectClass as C;
 
     fn caps() -> Vec<OrbObject> {
-        ["search", "sai", "tasks", "apps", "alerts", "system", "recent"]
-            .iter()
-            .map(|id| OrbObject::new(id, C::Capability, id, 1))
-            .collect()
+        [
+            "search", "sai", "tasks", "apps", "alerts", "system", "recent",
+        ]
+        .iter()
+        .map(|id| OrbObject::new(id, C::Capability, id, 1))
+        .collect()
     }
 
     fn stage(rise: f32) -> Stage {
@@ -363,9 +365,7 @@ mod tests {
     fn zoom_out_hides_the_fine_echelon_and_zoom_in_shows_it() {
         let mut objs = caps();
         for i in 0..4 {
-            objs.push(
-                OrbObject::new(&format!("a{i}"), C::Application, "App", 2).child_of("apps"),
-            );
+            objs.push(OrbObject::new(&format!("a{i}"), C::Application, "App", 2).child_of("apps"));
         }
         let (g, c) = compose_default(&objs);
         let apps = g.place("apps").unwrap().geo;

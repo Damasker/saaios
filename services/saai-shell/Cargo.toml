@@ -31,6 +31,7 @@ saai-portal-protocol.workspace = true
 saai-ui-core.workspace = true
 saai-ui-compiler.workspace = true
 saai-attention.workspace = true
+saai-orb.workspace = true
 saai-object-actions.workspace = true
 policy-engine.workspace = true
 saai-authority.workspace = true

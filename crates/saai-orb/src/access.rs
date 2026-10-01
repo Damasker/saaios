@@ -220,7 +220,12 @@ mod tests {
         let l = open_layout();
         let first = step_focus(&l, None, Direction::Right).unwrap();
         let cur = l.items.iter().find(|i| i.id == first).unwrap();
-        for d in [Direction::Left, Direction::Right, Direction::Up, Direction::Down] {
+        for d in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
             if let Some(n) = step_focus(&l, Some(&first), d) {
                 let it = l.items.iter().find(|i| i.id == n).unwrap();
                 match d {
@@ -244,7 +249,12 @@ mod tests {
             seen.insert(c.clone());
             guard += 1;
             assert!(guard < 200);
-            for d in [Direction::Right, Direction::Down, Direction::Left, Direction::Up] {
+            for d in [
+                Direction::Right,
+                Direction::Down,
+                Direction::Left,
+                Direction::Up,
+            ] {
                 if let Some(n) = step_focus(&l, Some(&c), d) {
                     if !seen.contains(&n) {
                         cur = Some(n);

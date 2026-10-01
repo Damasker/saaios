@@ -164,10 +164,9 @@ impl Geography {
         };
         let h = fnv1a(&o.id);
         let bearing = (h % 3600) as f64 / 3600.0 * std::f64::consts::TAU;
-        Some(quantize(anchor.offset(
-            bearing,
-            cluster_scale(o.echelon.max(2)) * 1.6,
-        )))
+        Some(quantize(
+            anchor.offset(bearing, cluster_scale(o.echelon.max(2)) * 1.6),
+        ))
     }
 
     /// Explicit user action only; the sole way a place is ever released.
@@ -218,7 +217,9 @@ mod tests {
 
     #[test]
     fn first_seen_order_is_the_layout_and_later_arrivals_do_not_disturb() {
-        let ids = ["search", "sai", "tasks", "apps", "alerts", "system", "recent"];
+        let ids = [
+            "search", "sai", "tasks", "apps", "alerts", "system", "recent",
+        ];
         let mut a = Geography::default();
         for id in ids {
             a.register(&cap(id));

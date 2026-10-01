@@ -34,8 +34,15 @@ pub enum NavInput {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Motion {
     /// Move the surface by this many pixels, as if dragged.
-    Pan { dx: f32, dy: f32 },
-    Zoom { factor: f32, ax: Option<f32>, ay: Option<f32> },
+    Pan {
+        dx: f32,
+        dy: f32,
+    },
+    Zoom {
+        factor: f32,
+        ax: Option<f32>,
+        ay: Option<f32>,
+    },
     None,
 }
 
@@ -60,7 +67,11 @@ fn deadzone(v: f32) -> f32 {
 /// `unit` is pixels per design unit, so physical size of a step is the same
 /// on every display.
 pub fn lower(input: NavInput, unit: f32) -> Motion {
-    let u = if unit.is_finite() && unit > 0.0 { unit } else { 1.0 };
+    let u = if unit.is_finite() && unit > 0.0 {
+        unit
+    } else {
+        1.0
+    };
     match input {
         NavInput::Drag { dx, dy } => Motion::Pan {
             dx: finite(dx),
@@ -291,7 +302,13 @@ mod tests {
     fn every_device_lowers_to_the_same_motion() {
         let u = 2.0;
         let travel = WHEEL_NOTCH_UNITS * u * 3.0;
-        let swipe = pan(lower(NavInput::Drag { dx: 0.0, dy: travel }, u));
+        let swipe = pan(lower(
+            NavInput::Drag {
+                dx: 0.0,
+                dy: travel,
+            },
+            u,
+        ));
         let wheel = pan(lower(
             NavInput::Wheel {
                 steps: 3.0,
@@ -328,21 +345,58 @@ mod tests {
     #[test]
     fn stick_has_a_deadzone_and_garbage_does_not_move_anything() {
         assert_eq!(
-            lower(NavInput::Stick { x: 0.1, y: -0.14, dt: 0.016 }, 1.0),
+            lower(
+                NavInput::Stick {
+                    x: 0.1,
+                    y: -0.14,
+                    dt: 0.016
+                },
+                1.0
+            ),
             Motion::Pan { dx: 0.0, dy: 0.0 }
         );
-        let (dx, _) = pan(lower(NavInput::Stick { x: 1.0, y: 0.0, dt: 0.1 }, 1.0));
+        let (dx, _) = pan(lower(
+            NavInput::Stick {
+                x: 1.0,
+                y: 0.0,
+                dt: 0.1,
+            },
+            1.0,
+        ));
         assert!((dx - STICK_UNITS_PER_S * 0.1).abs() < 1e-3);
         assert_eq!(
-            pan(lower(NavInput::Drag { dx: f32::NAN, dy: f32::INFINITY }, 1.0)),
+            pan(lower(
+                NavInput::Drag {
+                    dx: f32::NAN,
+                    dy: f32::INFINITY
+                },
+                1.0
+            )),
             (0.0, 0.0)
         );
         assert_eq!(
-            lower(NavInput::Pinch { scale: -1.0, ax: 0.0, ay: 0.0 }, 1.0),
+            lower(
+                NavInput::Pinch {
+                    scale: -1.0,
+                    ax: 0.0,
+                    ay: 0.0
+                },
+                1.0
+            ),
             Motion::None
         );
-        let (dx, _) = pan(lower(NavInput::Stick { x: 1.0, y: 0.0, dt: 99.0 }, 1.0));
-        assert!(dx <= STICK_UNITS_PER_S * 0.25 + 1e-3, "a stalled frame cannot teleport");
+        let (dx, _) = pan(lower(
+            NavInput::Stick {
+                x: 1.0,
+                y: 0.0,
+                dt: 99.0,
+            },
+            1.0,
+        ));
+        assert!(
+            dx <= STICK_UNITS_PER_S * 0.25 + 1e-3,
+            "a stalled frame cannot teleport"
+        );
     }
 
     #[test]
@@ -379,7 +433,10 @@ mod tests {
         }
         assert!(total > 100.0 && total < 400.0, "{total}");
         assert!(!i.is_moving());
-        assert!(!Inertia::fling(3.0, 2.0, 1.0).is_moving(), "a slow lift is not a fling");
+        assert!(
+            !Inertia::fling(3.0, 2.0, 1.0).is_moving(),
+            "a slow lift is not a fling"
+        );
         let capped = Inertia::fling(1e9, 0.0, 1.0);
         assert!(capped.vx <= MAX_FLING_SPEED + 1.0);
     }

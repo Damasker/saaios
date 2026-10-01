@@ -84,6 +84,7 @@ mod entityd_client;
 mod haptic;
 mod hardware_keyboard;
 mod intent_context;
+mod orb_space;
 mod osk_layer;
 mod portal_server;
 mod power_button;
@@ -2836,167 +2837,16 @@ fn object_view_fact_status(entity: &Entity) -> String {
     }
 }
 
-const ORB_DOT_ID: &str = "orb-dot";
-const ORB_TOGGLE_ACTION: &str = "orb:toggle";
-const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
-const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
-const ORB_MENU_BLUETOOTH_ACTION: &str = "orb-menu:bluetooth";
-fn orb_dot_size(width: u32, height: u32) -> u32 {
-    saai_ui_compiler::v2_orb_dot_size(width, height)
-}
-
-/// HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb must
-/// never occupy hit-test space the tab-bar/cards already use. Every
-/// `Frame::Root` page's cards start at `y=430` (2400-scale --
-/// `stacked_row_rect`/`now_grid_rect` both hardcode that same
-/// constant) and the tab bar sits at the very bottom of the screen;
-/// this zone's bottom edge is pinned to `y=410`, twenty px of margin
-/// short of where a card could ever start, in EVERY state including
-/// an open menu, regardless of how many rows it holds -- HIA-05 adds
-/// a variable action count (1-3 today) but keeps the exact same fixed
-/// zone bounds, just splitting the available fill-space among however
-/// many rows there are. The menu grows upward into the header box's
-/// own dead space (`draw_root`'s `SURFACE`-filled rect at
-/// `y=150..340`, which has never had a hit-test target of its own),
-/// never downward into card territory.
-fn orb_zone_rect(width: u32, height: u32, menu_action_count: usize) -> Rect {
-    saai_ui_compiler::v2_orb_zone_rect(width, height, menu_action_count)
-}
-
-/// HIA-05: which real thing a tapped Orb row does -- `Toggle` is
-/// always the dot itself (open/close), never a labeled row. The other
-/// three are `orb_menu_actions`' own vocabulary; adding a
-/// fourth someday only needs a new variant plus its `wire()`/`parse()`/
-/// `label()` arms, `orb_view`/`orb_action_at` already handle any
-/// length list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OrbAction {
-    Toggle,
-    OpenInbox,
-    OpenIntent,
-    OpenBluetooth,
-}
-
-impl OrbAction {
-    fn wire(self) -> &'static str {
-        match self {
-            OrbAction::Toggle => ORB_TOGGLE_ACTION,
-            OrbAction::OpenInbox => ORB_MENU_INBOX_ACTION,
-            OrbAction::OpenIntent => ORB_MENU_INTENT_ACTION,
-            OrbAction::OpenBluetooth => ORB_MENU_BLUETOOTH_ACTION,
-        }
-    }
-
-    fn parse(action: &str) -> Option<Self> {
-        match action {
-            ORB_TOGGLE_ACTION => Some(OrbAction::Toggle),
-            ORB_MENU_INBOX_ACTION => Some(OrbAction::OpenInbox),
-            ORB_MENU_INTENT_ACTION => Some(OrbAction::OpenIntent),
-            ORB_MENU_BLUETOOTH_ACTION => Some(OrbAction::OpenBluetooth),
-            _ => None,
-        }
-    }
-
-    /// Never called for `Toggle` -- that one's drawn as the dot
-    /// itself, not a text row (`build_orb_frame` never puts it in
-    /// `menu_rows`).
-    fn label(self) -> &'static str {
-        match self {
-            OrbAction::Toggle => "",
-            OrbAction::OpenInbox => "Входящие",
-            OrbAction::OpenIntent => "Новое намерение",
-            OrbAction::OpenBluetooth => "Bluetooth устройства",
-        }
-    }
-}
-
-/// HIA-05: the two real, already-live signals that vary this list --
-/// which space is active (`is_system_space` -- HIA-02's own
-/// ContextFrame is what decides `selected_space_id` in the first
-/// place) and whether Bluetooth has any paired device at all
-/// (`bluetooth_paired`, from `bluetooth_paired_count() > 0`, S20,
-/// real -- "paired", not necessarily "currently connected"; no live-
-/// connection-state concept exists anywhere in this codebase, an
-/// honest gap noted in `docs/os/ideas.md` rather than papered over
-/// here). `OpenInbox` is the one action every context keeps --
-/// "Входящие" always makes sense regardless of which space or device
-/// state is active. Pure, no `Shell` needed -- the two booleans are
-/// all the real-world state this decision actually depends on, same
-/// split `orb_state` already uses.
-fn orb_menu_actions(is_system_space: bool, bluetooth_paired: bool) -> Vec<OrbAction> {
-    let mut actions = vec![OrbAction::OpenInbox];
-    if !is_system_space {
-        actions.push(OrbAction::OpenIntent);
-    }
-    if bluetooth_paired {
-        actions.push(OrbAction::OpenBluetooth);
-    }
-    actions
-}
-
-/// Closed (`menu_actions` empty): the whole zone IS the dot, one
-/// leaf, nothing to stack. Open: a vertical list within the (now
-/// taller) zone -- one row per `menu_actions` entry, the dot itself
-/// last, doubling as the close control. Host tests still compare
-/// against this tree. Live paint and hits read `layout_v2()` over
-/// `orb_v2_source` (ADR-230).
-fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
-    let zone = orb_zone_rect(width, height, menu_actions.len());
-    if menu_actions.is_empty() {
-        return layout(&Node::leaf(ORB_DOT_ID).with_action(ORB_TOGGLE_ACTION), zone);
-    }
-    let mut children: Vec<Node> = menu_actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| Node::leaf(format!("orb-menu-{index}")).with_action(action.wire()))
-        .collect();
-    children.push(
-        Node::leaf(ORB_DOT_ID)
-            .with_action(ORB_TOGGLE_ACTION)
-            .with_size(Length::Fill, Length::Px(orb_dot_size(width, height))),
-    );
-    layout(&Node::linear("orb-menu", Axis::Vertical, children), zone)
-}
-
-fn orb_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    menu_actions: &[OrbAction],
-) -> Option<OrbAction> {
-    if width == 0 || height == 0 {
-        return None;
-    }
-    live_v2_hit(
-        &orb_v2_source(menu_actions),
-        "ADR-223 orb",
-        pos,
-        width,
-        height,
-    )
-    .and_then(|(_, action)| action.as_deref().and_then(OrbAction::parse))
-}
-
-/// What `draw_orb` needs, computed once per frame in `build_orb_
-/// frame` (a `Shell` method -- needs `&self` for the current space's
-/// color and notification state, which `orb_view`/`orb_state` alone
-/// can't see).
+/// Everything `render::draw_orb_space` needs for one frame, built before
+/// the canvas takes its mutable borrow of `self` (ADR-430).
 struct OrbFrame {
-    dot: Rect,
-    dot_color: render::Pixel,
-    /// HIA-16/VUI-04 (ADR-116): drives `draw_orb`'s non-color signal --
-    /// `OrbHost::mark()`'s real `StatusMark` shape, not just a hollow
-    /// ring for `Attention` alone.
-    mark: StatusMark,
-    /// Context Light attention=ring, from `OrbHost::attention_ring()`.
-    attention_ring: bool,
-    /// Context Light quantity=fill, determinate battery percent.
-    /// `None` if `read_battery` has no reading — not `0`.
-    quantity: Option<u8>,
-    /// Context Light activity=motion, ADR-170: inset on the activity
-    /// clock's visible phase. Still-frame when reduced motion.
-    activity_pulse: bool,
-    menu_rows: Vec<(Rect, &'static str)>,
+    viewport: Rect,
+    rise: f32,
+    disc: (f32, f32, f32),
+    graticule: Vec<Vec<(f32, f32)>>,
+    items: Vec<saai_orb::Item>,
+    selected: Option<String>,
+    point: render::OrbPoint,
 }
 
 /// ADR-093 follow-up: what actually needs to change for `present_
@@ -7001,20 +6851,6 @@ fn overlay_field_v2_source_with(screen_id: &str, field_id: &str, with_keyboard: 
     )
 }
 
-/// ADR-223: live Orb hits are a generated `OrbHost` plus `orb-menu:`
-/// Buttons. Closed omits the menu Buttons so `layout_v2` docks only
-/// the dot. Paint still uses `orb_view`.
-fn orb_v2_source(menu_actions: &[OrbAction]) -> String {
-    let mut src = String::from(
-        "sui 2\nscreen now {\n  component OrbHost {\n    a11y = Status\n    loc = \"orb:toggle\"\n  }\n",
-    );
-    for action in menu_actions {
-        src.push_str(&v2_stacked_block("Button", "Button", action.wire()));
-    }
-    src.push('}');
-    src
-}
-
 fn overlay_field_rect(screen_id: &str, field_id: &str, width: u32, height: u32) -> Rect {
     overlay_field_rect_with(screen_id, field_id, width, height, true)
 }
@@ -7362,7 +7198,10 @@ fn main() {
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
         viewing_entity_id: None,
-        orb_menu_open: false,
+        orb: orb_space::OrbSpace::load(),
+        orb_last_tick: Instant::now(),
+        orb_touch_epoch: Instant::now(),
+        orb_touch: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
         calibration_mode,
@@ -7712,10 +7551,14 @@ struct Shell {
     /// auto-popup" shape S13 Change 2 already established, covering
     /// any entity_type "Входящие" or NOW ever names.
     viewing_entity_id: Option<Uuid>,
-    /// HIA-04b: `true` only while the Orb's own menu is showing --
-    /// `orb_state()` reports `Menu` whenever this is set, regardless
-    /// of any pending notification underneath it.
-    orb_menu_open: bool,
+    /// ADR-430: the Orb as a place — geography, camera, rise, gestures.
+    orb: orb_space::OrbSpace,
+    orb_last_tick: Instant,
+    /// Clock for gesture velocity; restarted at every first touch-down.
+    orb_touch_epoch: Instant,
+    /// True from the moment the Orb claims a touch until it ends, so no
+    /// other surface sees the same finger.
+    orb_touch: bool,
     /// HIA-20: silent, un-hinted tap counter on the build-id card
     /// (`tap_build_info`) -- the
     /// same well-known convention Android's own "tap build number"
@@ -8170,6 +8013,27 @@ impl TouchHandler for Shell {
             println!("saai-shell: woke from pseudo-sleep");
             return;
         }
+        if self.orb_available() && surface == *self.window.wl_surface() {
+            let viewport = self.orb_viewport();
+            if !self.orb.is_visible() || !self.orb_touch {
+                self.orb_touch_epoch = Instant::now();
+            }
+            let claimed = self.orb.touch_down(
+                _id,
+                (position.0 as f32, position.1 as f32),
+                self.orb_touch_seconds(),
+                viewport,
+                render::orb_unit(),
+            );
+            if claimed {
+                self.orb_touch = true;
+                self.unlock_pending = false;
+                self.tab_touch_pending = false;
+                self.me_drag = None;
+                self.touch_down_action = None;
+                return;
+            }
+        }
         self.unlock_pending = self.locked
             && self
                 .lock_surfaces
@@ -8212,9 +8076,24 @@ impl TouchHandler for Shell {
         _touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
-        _id: i32,
+        id: i32,
     ) {
         self.last_activity = Instant::now();
+        if self.orb_touch {
+            let viewport = self.orb_viewport();
+            let outcome =
+                self.orb
+                    .touch_up(id, self.orb_touch_seconds(), viewport, render::orb_unit());
+            if !self.orb.is_pointer_down() {
+                self.orb_touch = false;
+            }
+            match outcome {
+                orb_space::Outcome::Activate(action) => self.activate_orb(action, conn, qh),
+                orb_space::Outcome::Redraw => self.draw(conn, qh),
+                orb_space::Outcome::Nothing => {}
+            }
+            return;
+        }
         // Taken (not just read) here, once, regardless of which
         // branch below actually runs -- `down()` always sets a fresh
         // value (`Some` or `None`) on the next touch, so nothing is
@@ -8490,35 +8369,11 @@ impl TouchHandler for Shell {
                 // that release as part of the gesture instead of switching
                 // tabs, and make sure its final position is presented.
                 self.me_scroll_dirty = true;
-            } else if let Some(action) = self
-                .settings
-                .orb_enabled
-                .then(|| {
-                    // HIA-05: only actually computes the (possibly
-                    // context-dependent) action list when the menu is
-                    // showing -- closed, an empty slice is enough to
-                    // hit-test the dot alone.
-                    let menu_actions = if self.orb_menu_open {
-                        orb_menu_actions(
-                            self.selected_space_id == SYSTEM_SPACE_ID,
-                            bluetooth_paired_count() > 0,
-                        )
-                    } else {
-                        Vec::new()
-                    };
-                    orb_action_at(self.last_touch_pos, self.width, self.height, &menu_actions)
-                })
-                .flatten()
-            {
-                // HIA-04b: only reachable once every modal above has
-                // said no -- the exact condition under which
-                // `Frame::Root` (the only frame the Orb is ever drawn
-                // on) is what's actually showing. Checked before
-                // `tab_at`/page-content below on principle, though
-                // `orb_zone_rect`'s own doc comment already guarantees
-                // their hit-test rects never overlap in practice.
-                self.handle_orb_action(action, conn, qh);
             } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
+                if self.orb.is_visible() {
+                    self.orb.dismiss();
+                    self.draw(conn, qh);
+                }
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
@@ -8681,10 +8536,21 @@ impl TouchHandler for Shell {
         qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _time: u32,
-        _id: i32,
+        id: i32,
         position: (f64, f64),
     ) {
         self.last_touch_pos = position;
+        if self.orb_touch {
+            let viewport = self.orb_viewport();
+            self.orb.touch_motion(
+                id,
+                (position.0 as f32, position.1 as f32),
+                self.orb_touch_seconds(),
+                viewport,
+                render::orb_unit(),
+            );
+            return;
+        }
         if let Some((start_y, start_offset)) = self.me_drag {
             let (total, content_rect) = if self.dev_surface_open {
                 let total = self.dev_surface_rows().len();
@@ -8736,6 +8602,11 @@ impl TouchHandler for Shell {
     }
 
     fn cancel(&mut self, conn: &Connection, qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
+        if self.orb_touch {
+            self.orb_touch = false;
+            self.orb.touch_cancel();
+            self.draw(conn, qh);
+        }
         self.unlock_pending = false;
         self.tab_touch_pending = false;
         self.me_drag = None;
@@ -8761,20 +8632,25 @@ impl Shell {
     /// compositor `frame` timestamps are not trusted.
     fn tick_motion(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
         let activity_changed = self.sync_activity_clock();
-        if self.motion_clock.is_none() && self.activity_clock.is_none() && !activity_changed {
+        let orb_changed = self.tick_orb();
+        if self.motion_clock.is_none()
+            && self.activity_clock.is_none()
+            && !activity_changed
+            && !orb_changed
+        {
             return;
         }
         let now = Instant::now();
         let dt_ms = now
             .saturating_duration_since(self.motion_last_tick)
             .as_millis() as u32;
-        if dt_ms < 8 && !activity_changed {
+        if dt_ms < 8 && !activity_changed && !orb_changed {
             return;
         }
         if dt_ms >= 8 {
             self.motion_last_tick = now;
         }
-        let mut dirty = activity_changed;
+        let mut dirty = activity_changed || orb_changed;
         if dt_ms >= 8 {
             if let Some(clock) = self.activity_clock.as_mut() {
                 let was = clock.pulse_visible();
@@ -8821,7 +8697,7 @@ impl Shell {
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
-            self.orb_menu_open,
+            self.orb.is_open(),
             read_runtime_live_facts().health.as_ref(),
         ))
         .motion()
@@ -8845,6 +8721,7 @@ impl Shell {
     fn clocks_need_frame(&self) -> bool {
         self.motion_clock.is_some_and(MotionClock::needs_frame)
             || self.activity_clock.is_some_and(MotionClock::needs_frame)
+            || self.orb.needs_frame()
     }
 
     /// ADR-172: stamp one commit into `FramePace` and refresh the last
@@ -8971,6 +8848,9 @@ impl Shell {
             Rect::new(0, 0, width, height)
         };
         self.sync_activity_clock();
+        if self.orb_available() && self.orb.is_visible() {
+            self.refresh_orb_objects();
+        }
 
         // Every `&self` read this frame needs (content cards, context
         // label, consent labels) happens here, before `buffer`/`canvas`
@@ -9436,9 +9316,7 @@ impl Shell {
         // this function's own top comment already gives for `frame`.
         // Only ever `Some` on `Frame::Root` (the only frame the Orb
         // ever draws on) and only when the Rollback setting allows it.
-        let orb_frame = (!content_only
-            && !self.calibration_mode
-            && self.settings.orb_enabled
+        let orb_frame = (self.orb_available()
             && matches!(
                 frame,
                 Frame::Root { .. }
@@ -9826,15 +9704,18 @@ impl Shell {
             // Rollback setting turned it off), computed once above before
             // this function's own mutable canvas borrow began.
             if let Some(orb) = &orb_frame {
-                render::draw_orb(
+                render::draw_orb_space(
                     &mut render::Canvas::new(canvas, width, height),
-                    orb.dot,
-                    orb.dot_color,
-                    orb.mark,
-                    orb.attention_ring,
-                    orb.quantity,
-                    orb.activity_pulse,
-                    &orb.menu_rows,
+                    &render::OrbPaint {
+                        viewport: orb.viewport,
+                        rise: orb.rise,
+                        disc: orb.disc,
+                        graticule: &orb.graticule,
+                        trail: &[],
+                        items: &orb.items,
+                        selected: orb.selected.as_deref(),
+                        point: orb.point,
+                    },
                     fonts,
                 );
             }
@@ -10345,10 +10226,7 @@ impl Shell {
             "toggle_orb" => {
                 self.settings.orb_enabled = !self.settings.orb_enabled;
                 if !self.settings.orb_enabled {
-                    // Turning it off mid-menu shouldn't leave a stale
-                    // open menu waiting for whenever it's turned back
-                    // on.
-                    self.orb_menu_open = false;
+                    self.orb.dismiss();
                 }
             }
             "toggle_reduced_motion" => {
@@ -11554,60 +11432,155 @@ impl Shell {
         }
     }
 
-    /// HIA-04b: the Orb's own action handler, same "layout returns a
-    /// position/identity, the call site decides what it means" split
-    /// as `handle_object_view_action`'s own `index`. Both menu actions
-    /// reuse already-real navigation -- `RootPage::Inbox`/
-    /// `IntentInputState` are the exact paths the tab-bar and "Сейчас"
-    /// card already drive, not new placeholder behavior invented for
-    /// this menu.
-    fn handle_orb_action(&mut self, action: OrbAction, conn: &Connection, qh: &QueueHandle<Self>) {
+    /// ADR-430: what tapping an object on the sphere does. The sphere sinks
+    /// first; the destination is always an already-real surface or action,
+    /// so Orb adds a way to reach things, not new things.
+    fn activate_orb(
+        &mut self,
+        action: orb_space::Activation,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        use orb_space::Activation as A;
+        self.orb.dismiss();
+        let show_page = |shell: &mut Shell, page: RootPage, apps: bool| {
+            shell.current_page = page;
+            shell.apps_open = apps;
+            shell.space_detail_open = false;
+        };
         match action {
-            OrbAction::Toggle => self.orb_menu_open = !self.orb_menu_open,
-            OrbAction::OpenInbox => {
-                self.orb_menu_open = false;
-                self.current_page = RootPage::Inbox;
-            }
-            OrbAction::OpenIntent => {
-                self.orb_menu_open = false;
+            A::OpenSearch => show_page(self, RootPage::Search, false),
+            A::OpenTasks => show_page(self, RootPage::Now, false),
+            A::OpenApps => show_page(self, RootPage::Now, true),
+            A::OpenInbox => show_page(self, RootPage::Inbox, false),
+            A::OpenSpaces => show_page(self, RootPage::Spaces, false),
+            A::OpenMe => show_page(self, RootPage::Me, false),
+            A::OpenIntent => {
                 self.intent_input = Some(open_intent_state());
                 self.begin_compose_context();
             }
-            OrbAction::OpenBluetooth => {
-                self.orb_menu_open = false;
-                // Same "open_bluetooth_list" behavior the fixed card
-                // on "Я" already triggers -- a fresh scan, not a
-                // stale one.
+            A::OpenDevices | A::OpenBluetooth => {
                 bluetooth_trigger_scan();
                 self.bluetooth_list_open = true;
+            }
+            A::LaunchApp(app_id) => self.invoke_app_launch(&app_id, conn, qh),
+            A::SelectSpace(space_id) => self.invoke_select_space(&space_id),
+            A::ViewTask(id) => {
+                if let Ok(id) = Uuid::parse_str(&id) {
+                    self.viewing_entity_id = Some(id);
+                }
             }
         }
         self.draw(conn, qh);
     }
 
-    /// `Attention`'s own fixed alert color, deliberately not one of
-    /// `SpaceColor`'s six values -- a space's own accent should never
-    /// be mistaken for "something needs you".
+    fn orb_available(&self) -> bool {
+        self.settings.orb_enabled
+            && !self.locked
+            && !self.sleeping
+            && !self.calibration_mode
+            && !self.gallery_mode
+            && !self.any_modal_open()
+    }
+
+    /// The window the sphere is seen through: everything above the
+    /// navigation strip, which stays usable while the sphere is risen.
+    fn orb_viewport(&self) -> Rect {
+        let tree = root_view(self.width, self.height);
+        let nav_top = saai_ui_compiler::layout_v1_find(&tree, "BottomNavigation")
+            .map_or(self.height, |nav| nav.rect.y);
+        Rect::new(0, 0, self.width, nav_top.min(self.height))
+    }
+
+    fn orb_facts(&self) -> orb_space::Facts {
+        let mut tasks: Vec<&Entity> = self
+            .selected_entities
+            .iter()
+            .filter(|entity| entity.entity_type == "saaios.task")
+            .filter(|entity| {
+                matches!(
+                    task_universal_state(entity, &self.selected_entities),
+                    UniversalState::Attention | UniversalState::Running | UniversalState::Waiting
+                )
+            })
+            .collect();
+        tasks.sort_by_key(|entity| task_visibility_rank(entity, &self.selected_entities));
+        orb_space::Facts {
+            apps: self
+                .installed_apps
+                .values()
+                .map(|app| (app.id.clone(), app.name.clone()))
+                .collect(),
+            spaces: self
+                .spaces
+                .iter()
+                .map(|space| (space.id.clone(), space.name.clone()))
+                .collect(),
+            tasks: tasks
+                .into_iter()
+                .map(|entity| (entity.id.to_string(), entity.title.clone()))
+                .collect(),
+            bluetooth: bluetooth_saved_names(),
+            selected_space: self.selected_space_id.clone(),
+            appd_connected: self.appd.is_connected(),
+            entityd_connected: self.entityd.is_connected(),
+            attention: orb_attention(&self.selected_entities, None),
+            running: !in_progress_work(&self.selected_entities).is_empty(),
+        }
+    }
+
+    fn refresh_orb_objects(&mut self) {
+        let (objects, context) = orb_space::build_objects(&self.orb_facts());
+        self.orb.refresh(&objects, &context);
+        self.orb.save_if_changed();
+    }
+
+    fn orb_touch_seconds(&self) -> f32 {
+        self.orb_touch_epoch.elapsed().as_secs_f32()
+    }
+
+    /// Advances the sphere's own animation clock; returns whether it needs
+    /// a repaint.
+    fn tick_orb(&mut self) -> bool {
+        let now = Instant::now();
+        let dt = now
+            .saturating_duration_since(self.orb_last_tick)
+            .as_secs_f32()
+            .min(0.05);
+        self.orb_last_tick = now;
+        if !self.orb_available() {
+            if self.orb.is_visible() {
+                self.orb.dismiss();
+                return true;
+            }
+            return false;
+        }
+        self.orb.set_reduced_motion(self.settings.reduced_motion);
+        if !self.orb.needs_frame() {
+            return false;
+        }
+        let viewport = self.orb_viewport();
+        self.orb.tick(dt, viewport, render::orb_unit())
+    }
+
+    /// ADR-430: the resting point and, when risen, the sphere. Built before
+    /// the canvas borrows `self`.
     fn build_orb_frame(&self, width: u32, height: u32) -> OrbFrame {
-        let menu_actions = if self.orb_menu_open {
-            orb_menu_actions(
-                self.selected_space_id == SYSTEM_SPACE_ID,
-                bluetooth_paired_count() > 0,
-            )
+        let _ = (width, height);
+        let viewport = self.orb_viewport();
+        let unit = render::orb_unit();
+        let stage = self.orb.stage(viewport, unit);
+        let layout = self.orb.layout(viewport, unit);
+        let graticule = if stage.rise > 0.5 {
+            orb_space::graticule(self.orb.camera, stage)
         } else {
             Vec::new()
         };
-        let view = layout_live_v2(
-            &orb_v2_source(&menu_actions),
-            "ADR-230 orb paint",
-            width,
-            height,
-        );
         let orb_host = OrbHost::new(orb_visual_state_with(
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
-            self.orb_menu_open,
+            self.orb.is_open(),
             read_runtime_live_facts().health.as_ref(),
         ))
         .with_reduced_motion(self.settings.reduced_motion);
@@ -11616,41 +11589,35 @@ impl Shell {
         } else {
             orb_host
         };
-        // Context Light: color still means context (the selected
-        // Space's own color) for the two states that are not urgent
-        // enough to override it -- `Idle`/`Active` -- matching this
-        // grammar's own "context=color, state=shape" split (state is
-        // already fully carried by `orb_host.mark()` below,
-        // independent of this choice). Every other state is urgent
-        // enough that its own semantic color takes over, the same way
-        // `Attention` already did before this ADR.
-        let dot_color = match orb_host.state {
+        // Context Light: color still means context (the selected Space's
+        // own color) for the two states that are not urgent enough to
+        // override it; every other state takes its own semantic color.
+        let color = match orb_host.state {
             UniversalState::Idle | UniversalState::Active => {
                 space_color(&self.system_space_entities, &self.selected_space_id).pixel()
             }
             other => render::state_color(other),
         };
-        let dot = v2_named_rect(&view, ORB_TOGGLE_ACTION, "ADR-230 orb paint");
-        let menu_rows = menu_actions
-            .iter()
-            .map(|action| {
-                (
-                    v2_named_rect(&view, action.wire(), "ADR-230 orb paint"),
-                    action.label(),
-                )
-            })
-            .collect();
+        let geometry = orb_space::point_geometry(viewport, unit);
         OrbFrame {
-            dot,
-            dot_color,
-            mark: orb_host.mark(),
-            attention_ring: orb_host.attention_ring(),
-            quantity: orb_host.quantity_percent(),
-            activity_pulse: orb_shows_activity_pulse(
-                orb_host.motion() == MotionCue::ActivityPulse,
-                self.activity_clock.as_ref(),
-            ),
-            menu_rows,
+            viewport,
+            rise: stage.rise,
+            disc: layout.disc,
+            graticule,
+            items: layout.items,
+            selected: self.orb.selected.clone(),
+            point: render::OrbPoint {
+                disc: geometry.disc,
+                half_angle: geometry.half_angle,
+                color,
+                mark: orb_host.mark(),
+                attention_ring: orb_host.attention_ring(),
+                quantity: orb_host.quantity_percent(),
+                activity_pulse: orb_shows_activity_pulse(
+                    orb_host.motion() == MotionCue::ActivityPulse,
+                    self.activity_clock.as_ref(),
+                ),
+            },
         }
     }
 
@@ -12546,32 +12513,31 @@ mod tests {
         me_fixture_facts, me_header, me_system_sections, motion_clock_for, next_in_cycle,
         next_pending_action, now_action_at, now_object_tapped, now_workflow_sections,
         object_view_action_at, object_view_content, object_view_details,
-        object_view_permission_pattern, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
-        orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
-        playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source,
-        retain_pressed_while_clock, search_header, search_row_at, search_rows, space_color,
-        space_color_entity, space_detail_action_at, space_detail_empty_card, space_detail_header,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_list_rows, space_member_kind_label, space_member_rows, space_relation_targets,
-        space_row_at, spaces_header, stacked_control_rect, stacked_row_fits_above,
-        stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
-        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
-        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
-        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
-        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
-        Entity, FieldKind, HealthReport, HealthState, Keyboard, KeyboardCommand, KeyboardLayout,
-        KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap, MotionClock,
-        MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
+        object_view_permission_pattern, object_view_summary, orb_attention_from_entities,
+        orb_shows_activity_pulse, orb_visual_state, pcm_volume_from_pct, pin_setup_field,
+        pin_setup_header, playback_ready_from_paths, playback_status, pressed_key_from_keys,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
+        search_rows, space_color, space_color_entity, space_detail_action_at,
+        space_detail_empty_card, space_detail_header, space_display_name, space_for_wifi_ssid,
+        space_lifecycle, space_lifecycle_entity, space_list_rows, space_member_kind_label,
+        space_member_rows, space_relation_targets, space_row_at, spaces_header,
+        stacked_control_rect, stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect,
+        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
+        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, DataRowVariant, Entity, FieldKind, HealthReport, HealthState, Keyboard,
+        KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap,
+        LockWakeTap, MotionClock, MotionToken, ObjectSummary, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow,
+        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_IN_SPACE,
@@ -13487,14 +13453,6 @@ mod tests {
     }
 
     #[test]
-    fn tab_at_still_finds_tabs_when_orb_menu_is_open() {
-        let tab = (135.0, 2250.0);
-        let actions = orb_menu_actions(false, true);
-        assert!(orb_action_at(tab, 1080, 2400, &actions).is_none());
-        assert_eq!(tab_at(tab, 1080, 2400), Some(RootPage::Now));
-    }
-
-    #[test]
     fn me_max_scroll_offset_is_zero_with_no_rows_and_positive_once_content_overflows() {
         let width = 1080;
         let height = 2400;
@@ -14205,31 +14163,6 @@ mod tests {
         assert!(main.contains("ADR-229 overlay paint"));
         assert!(main.contains("overlay_decision_paint"));
         assert!(main.contains("overlay_field_rect_with"));
-    }
-
-    #[test]
-    fn orb_paint_matches_layout_v2_nodes() {
-        let width = 1080;
-        let height = 2400;
-        let closed = super::layout_live_v2(&orb_v2_source(&[]), "ADR-230 orb paint", width, height);
-        assert_eq!(
-            super::v2_named_rect(&closed, "orb:toggle", "orb"),
-            orb_zone_rect(width, height, 0)
-        );
-        let actions = [OrbAction::OpenInbox, OrbAction::OpenBluetooth];
-        let open =
-            super::layout_live_v2(&orb_v2_source(&actions), "ADR-230 orb paint", width, height);
-        let old = super::orb_view(width, height, &actions);
-        assert_eq!(
-            super::v2_named_rect(&open, "orb-menu:inbox", "orb"),
-            old.children[0].rect
-        );
-        assert_eq!(
-            super::v2_named_rect(&open, "orb:toggle", "orb"),
-            old.children[2].rect
-        );
-        let main = include_str!("main.rs");
-        assert!(main.contains("ADR-230 orb paint"));
     }
 
     #[test]
@@ -16761,162 +16694,6 @@ mod tests {
             super::inbox_row_at(point, 1080, 2400, &[waiting], true).map(|(kind, _)| kind),
             Some(super::InboxRowKind::Task)
         );
-    }
-
-    #[test]
-    fn orb_zone_never_reaches_where_cards_start() {
-        // HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb
-        // must never occupy hit-test space the tab-bar/cards already
-        // use. Every Root page's cards start at y=430 (2400-scale) --
-        // confirm the zone's bottom edge always stays short of that,
-        // for every real action count HIA-05 can now produce (0-3),
-        // on a range of real panel sizes.
-        for (width, height) in [(1080, 2400), (800, 480), (1440, 3120)] {
-            let cards_start = ((430_u64 * height as u64) / 2400) as u32;
-            for menu_action_count in 0..=3 {
-                let zone = orb_zone_rect(width, height, menu_action_count);
-                assert!(
-                    zone.y + zone.height <= cards_start,
-                    "zone bottom {} exceeds cards_start {} at {width}x{height}, menu_action_count={menu_action_count}",
-                    zone.y + zone.height,
-                    cards_start
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn orb_live_source_names_orbhost_and_menu_buttons() {
-        let closed = orb_v2_source(&[]);
-        assert!(closed.contains("OrbHost"));
-        assert!(closed.contains("orb:toggle"));
-        assert!(!closed.contains("orb-menu:"));
-        let open = orb_v2_source(&[OrbAction::OpenInbox, OrbAction::OpenBluetooth]);
-        assert!(open.contains("orb-menu:inbox"));
-        assert!(open.contains("orb-menu:bluetooth"));
-        assert!(!open.contains("manage_app:"));
-    }
-
-    #[test]
-    fn orb_action_at_toggles_the_closed_dot() {
-        let dot = orb_zone_rect(1080, 2400, 0);
-        let point = (
-            (dot.x + dot.width / 2) as f64,
-            (dot.y + dot.height / 2) as f64,
-        );
-        assert_eq!(
-            orb_action_at(point, 1080, 2400, &[]),
-            Some(OrbAction::Toggle)
-        );
-    }
-
-    #[test]
-    fn orb_action_at_misses_a_normal_card_row_when_closed() {
-        // The same point a real "Пространства"/"Входящие" card would
-        // occupy (stacked_row_rect(0, ..)'s own territory) must never
-        // register as an Orb tap.
-        let first_card = stacked_row_rect(0, 1080, 2400);
-        let point = (
-            (first_card.x + first_card.width / 2) as f64,
-            (first_card.y + first_card.height / 2) as f64,
-        );
-        assert_eq!(orb_action_at(point, 1080, 2400, &[]), None);
-    }
-
-    #[test]
-    fn orb_action_at_finds_a_menu_row_and_the_close_dot_when_open() {
-        let actions = [OrbAction::OpenInbox, OrbAction::OpenIntent];
-        let view_zone = orb_zone_rect(1080, 2400, actions.len());
-        let inbox_point = (
-            (view_zone.x + view_zone.width / 2) as f64,
-            (view_zone.y + 10) as f64,
-        );
-        assert_eq!(
-            orb_action_at(inbox_point, 1080, 2400, &actions),
-            Some(OrbAction::OpenInbox)
-        );
-        let dot_point = (
-            (view_zone.x + view_zone.width / 2) as f64,
-            (view_zone.y + view_zone.height - 10) as f64,
-        );
-        assert_eq!(
-            orb_action_at(dot_point, 1080, 2400, &actions),
-            Some(OrbAction::Toggle)
-        );
-    }
-
-    #[test]
-    fn orb_action_at_finds_a_third_row_when_the_menu_has_three_actions() {
-        // HIA-05's own shape: the menu isn't fixed at two rows --
-        // confirm a real three-action list (as `Shell::orb_menu_
-        // actions` produces with a paired Bluetooth device) is fully
-        // reachable, not just the first two.
-        let actions = [
-            OrbAction::OpenInbox,
-            OrbAction::OpenIntent,
-            OrbAction::OpenBluetooth,
-        ];
-        let view_zone = orb_zone_rect(1080, 2400, actions.len());
-        let third_row_point = (
-            (view_zone.x + view_zone.width / 2) as f64,
-            (view_zone.y + view_zone.height * 2 / 3 - 10) as f64,
-        );
-        assert_eq!(
-            orb_action_at(third_row_point, 1080, 2400, &actions),
-            Some(OrbAction::OpenBluetooth)
-        );
-    }
-
-    #[test]
-    fn orb_action_wire_and_parse_round_trip_for_every_variant() {
-        for action in [
-            OrbAction::Toggle,
-            OrbAction::OpenInbox,
-            OrbAction::OpenIntent,
-            OrbAction::OpenBluetooth,
-        ] {
-            assert_eq!(OrbAction::parse(action.wire()), Some(action));
-        }
-        assert_eq!(OrbAction::parse("not-a-real-orb-action"), None);
-    }
-
-    #[test]
-    fn orb_menu_actions_differs_between_two_real_context_frames() {
-        // HIA-05's own acceptance line (HIA-ROADMAP.md): at least two
-        // different action sets for two different real ContextFrames.
-        // A user space with no paired Bluetooth device is the
-        // baseline (Входящие + Новое намерение, the same fixed pair
-        // HIA-04b shipped); the system space drops "Новое намерение"
-        // (intents don't belong there); a paired Bluetooth device
-        // adds a third action regardless of which space. All three
-        // are genuinely different lists, not the same one relabeled.
-        let home = orb_menu_actions(false, false);
-        let system_space = orb_menu_actions(true, false);
-        let home_with_bluetooth = orb_menu_actions(false, true);
-
-        assert_eq!(home, vec![OrbAction::OpenInbox, OrbAction::OpenIntent]);
-        assert_eq!(system_space, vec![OrbAction::OpenInbox]);
-        assert_eq!(
-            home_with_bluetooth,
-            vec![
-                OrbAction::OpenInbox,
-                OrbAction::OpenIntent,
-                OrbAction::OpenBluetooth
-            ]
-        );
-
-        assert_ne!(home, system_space);
-        assert_ne!(home, home_with_bluetooth);
-    }
-
-    #[test]
-    fn orb_menu_actions_always_keeps_open_inbox() {
-        for is_system_space in [false, true] {
-            for bluetooth_paired in [false, true] {
-                assert!(orb_menu_actions(is_system_space, bluetooth_paired)
-                    .contains(&OrbAction::OpenInbox));
-            }
-        }
     }
 
     #[test]

@@ -13,8 +13,8 @@ pub const MAX_CENTER_LAT: f64 = 75.0 * PI / 180.0;
 pub const RADIUS_FRACTION: f32 = 0.9;
 /// At rest the sphere is a small dome: this radius, of which only
 /// `REST_EXPOSURE_UNITS` shows above the bottom edge of the viewport.
-pub const REST_RADIUS_UNITS: f32 = 40.0;
-pub const REST_EXPOSURE_UNITS: f32 = 20.0;
+pub const REST_RADIUS_UNITS: f32 = 44.0;
+pub const REST_EXPOSURE_UNITS: f32 = 24.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -38,10 +38,7 @@ impl Camera {
             return;
         }
         let bearing = f64::from(-dx).atan2(f64::from(dy));
-        self.center = self
-            .center
-            .offset(bearing, dist)
-            .clamp_lat(MAX_CENTER_LAT);
+        self.center = self.center.offset(bearing, dist).clamp_lat(MAX_CENTER_LAT);
     }
 
     pub fn zoom_by(&mut self, factor: f32) {
@@ -86,7 +83,11 @@ impl Stage {
             width: width.max(1.0),
             height: height.max(1.0),
             rise: rise.clamp(0.0, 1.0),
-            unit: if unit.is_finite() && unit > 0.0 { unit } else { 1.0 },
+            unit: if unit.is_finite() && unit > 0.0 {
+                unit
+            } else {
+                1.0
+            },
         }
     }
 
@@ -108,7 +109,7 @@ impl Stage {
 
     /// Centre of the projected disc: below the viewport at rest, in the
     /// middle of it when risen.
-    pub fn disc_center(&self, zoom: f32) -> (f32, f32) {
+    pub fn disc_center(&self) -> (f32, f32) {
         let rest_y = self.height + self.rest_radius() - REST_EXPOSURE_UNITS * self.unit;
         let mid_y = self.height * 0.5;
         (
@@ -138,7 +139,7 @@ pub struct Projector {
 
 impl Projector {
     pub fn new(camera: Camera, stage: Stage) -> Projector {
-        let (cx, cy) = stage.disc_center(camera.zoom);
+        let (cx, cy) = stage.disc_center();
         Projector {
             camera,
             r: f64::from(stage.radius(camera.zoom)),
@@ -184,8 +185,8 @@ impl Projector {
         let lat = (cc * self.sin0 + y * sc * self.cos0 / rho)
             .clamp(-1.0, 1.0)
             .asin();
-        let lon = self.camera.center.lon
-            + (x * sc).atan2(rho * self.cos0 * cc - y * self.sin0 * sc);
+        let lon =
+            self.camera.center.lon + (x * sc).atan2(rho * self.cos0 * cc - y * self.sin0 * sc);
         Some(Geo::new(lon, lat))
     }
 }
@@ -232,7 +233,12 @@ mod tests {
             zoom: 1.3,
         };
         let p = Projector::new(cam, stage(1.0));
-        for (x, y) in [(540.0, 1200.0), (100.0, 300.0), (900.0, 2100.0), (540.0, 50.0)] {
+        for (x, y) in [
+            (540.0, 1200.0),
+            (100.0, 300.0),
+            (900.0, 2100.0),
+            (540.0, 50.0),
+        ] {
             if let Some(g) = p.unproject(x, y) {
                 let q = p.project(g).unwrap();
                 assert!((q.x - x).abs() < 0.05 && (q.y - y).abs() < 0.05, "{x},{y}");
@@ -267,26 +273,26 @@ mod tests {
     #[test]
     fn at_rest_only_a_thin_cap_shows_and_rising_is_continuous() {
         let s0 = stage(0.0);
-        let (_, cy0) = s0.disc_center(1.0);
+        let (_, cy0) = s0.disc_center();
         let r0 = s0.radius(1.0);
         let top = cy0 - r0;
         let exposed = s0.height - top;
         assert!((exposed - REST_EXPOSURE_UNITS * s0.unit).abs() < 0.5);
         assert!(exposed < s0.height * 0.05);
-        let mut last = s0.disc_center(1.0).1;
+        let mut last = s0.disc_center().1;
         for i in 1..=20 {
-            let y = stage(i as f32 / 20.0).disc_center(1.0).1;
+            let y = stage(i as f32 / 20.0).disc_center().1;
             assert!(y <= last + 1e-3, "monotone rise");
             last = y;
         }
-        assert!((stage(1.0).disc_center(1.0).1 - 1200.0).abs() < 1e-3);
+        assert!((stage(1.0).disc_center().1 - 1200.0).abs() < 1e-3);
     }
 
     #[test]
     fn the_dome_is_a_small_point_that_swells_steadily_into_the_whole_sphere() {
         let rest = stage(0.0);
         assert_eq!(rest.radius(1.0), REST_RADIUS_UNITS * rest.unit);
-        let (_, cy) = rest.disc_center(1.0);
+        let (_, cy) = rest.disc_center();
         let r = rest.radius(1.0);
         let depth = rest.height - (cy - r);
         let chord = 2.0 * (r * r - (r - depth).powi(2)).sqrt();

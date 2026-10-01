@@ -205,7 +205,10 @@ mod tests {
     #[test]
     fn all_tokens_must_match() {
         let e = world();
-        assert_eq!(search(&e, "домашний сервер", Camera::home(), 8)[0].id, "nas");
+        assert_eq!(
+            search(&e, "домашний сервер", Camera::home(), 8)[0].id,
+            "nas"
+        );
         assert!(search(&e, "домашний почта", Camera::home(), 8).is_empty());
     }
 
@@ -213,7 +216,10 @@ mod tests {
     fn offline_things_are_found_and_flagged_not_hidden() {
         let e = world();
         let hit = &search(&e, "nas", Camera::home(), 8)[0];
-        assert_eq!(hit.availability, Availability::Unavailable(Unavailable::Offline));
+        assert_eq!(
+            hit.availability,
+            Availability::Unavailable(Unavailable::Offline)
+        );
     }
 
     #[test]
@@ -252,9 +258,15 @@ mod tests {
         assert_eq!(r.at(0.0), cam);
         let end = r.at(1.0);
         assert!(end.center.distance(r.to) < 1e-9);
-        assert!(end.zoom >= depth_threshold(2), "target echelon must be legible on arrival");
+        assert!(
+            end.zoom >= depth_threshold(2),
+            "target echelon must be legible on arrival"
+        );
         let mid = r.at(0.5);
-        assert!(mid.zoom < r.zoom_to, "long routes ease out before closing in");
+        assert!(
+            mid.zoom < r.zoom_to,
+            "long routes ease out before closing in"
+        );
         assert!(mid.center.distance(r.from) < r.distance());
     }
 

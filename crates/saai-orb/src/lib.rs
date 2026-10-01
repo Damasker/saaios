@@ -21,8 +21,8 @@ pub use camera::{
     ZOOM_MIN,
 };
 pub use geo::{smoothstep, Geo};
-pub use gesture::{Delta, Lift, Pointers, VelocityTracker, TAP_SLOP_UNITS};
 pub use geography::{Geography, Place, DEPTH_FACTOR, E1_SCALE};
+pub use gesture::{Delta, Lift, Pointers, VelocityTracker, TAP_SLOP_UNITS};
 pub use model::{
     prominence_of, Availability, Context, ObjectClass, OrbObject, Primitive, Prominence, Tier,
     Unavailable,

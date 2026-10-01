@@ -193,7 +193,10 @@ mod tests {
     fn a_short_still_touch_is_a_tap_at_the_lift_point() {
         let mut p = Pointers::default();
         p.down(1, 100.0, 200.0, 0.0);
-        assert_eq!(p.motion(1, 102.0, 201.0, 0.05), Some(Delta::Pan { dx: 2.0, dy: 1.0 }));
+        assert_eq!(
+            p.motion(1, 102.0, 201.0, 0.05),
+            Some(Delta::Pan { dx: 2.0, dy: 1.0 })
+        );
         assert_eq!(p.up(1, 0.1, 30.0), Lift::Tap { x: 102.0, y: 201.0 });
         assert!(!p.is_down());
     }
