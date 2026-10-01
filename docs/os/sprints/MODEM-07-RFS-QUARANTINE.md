@@ -58,8 +58,11 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
    sequence (1 in the observed run), and chunk length matches the grant and
    remaining bound. The factory receive handler is at
    `0xe50c→0xe9d0→0x9e10`; the grant builder is at `0x9ba4–0x9bec`.
-   Sequence is stored at `0xe90c` and compared before receive dispatch at
-   `0xe2d4–0xe2ec`; it does not increment per chunk.
+   Command 6 stores the sequence in `[obj+0x40]` at `0xe90c`; the grant
+   copies it at `0x9bb4–0x9bd4`. For incoming command 2, the common dispatch
+   compares the frame sequence with `[obj+0x40]` at `0xe2e4–0xe2ec` and an
+   active-transfer mismatch yields status 6. Command 3 alone bypasses that
+   comparison (`0xe2d8–0xe2e0`).
 4. For 189446 bytes the maximum is 95 chunks: 94 × 2012 and a final 318.
    Write only into the private candidate at verified offsets, with checked
    short-write handling. Require exact total length, fsync, size 524288,
@@ -70,9 +73,9 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
    RFS completion and SIM READY are separate milestones; cellular service
    requires observed registration and a real bearer.
 
-Any final CP-visible status and all state transitions must be verified from
-factory code or a redacted capture before enabling phone I/O. Until then,
-only a host-only parser/state-machine fixture is permitted.
+Any final CP-visible status and all remaining state transitions must be
+verified from factory code or a redacted capture before enabling phone I/O.
+Until then, only a host-only parser/state-machine fixture is permitted.
 
 ## Failure and verification gates
 
