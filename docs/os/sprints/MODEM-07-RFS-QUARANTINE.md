@@ -104,8 +104,8 @@ SHA-256 sidecar passes the durability/integrity gate. Injected sidecar fsync
 and close failures prevent any final ACK attempt. The host test also passes
 ASan/UBSan, and the owner/probe cross-compile statically for AArch64.
 
-This is **not** an on-device result. The full owner has not been installed or
-run on the Pixel. Its single IPC0 owner now includes bounded, read-only SIM,
+At that stage the result was host-only. Its single IPC0 owner includes bounded,
+read-only SIM,
 radio and voice/data registration GET snapshots at ONLINE and READY+60 s.
 Host tests cover fragmented/coalesced replies, matching token and length,
 timeout as unknown, no retry after ambiguous IPC write, and an IPC fault
@@ -121,9 +121,41 @@ GNU build-ID note and Linux note hashes matched the corresponding sections
 of that same local binary, and its `scmversion` matched. Its `vermagic`
 still differs from `uname -r`; do not infer source-tree parity from version
 strings alone. CP remained `ONLINE` during this check, with no modem command
-sent. Before a live run, independently verify newly installed owner/probe
-hashes, on-device self-test, wrapper gates, cold opt-in launch, passive
-restoration and read-only EFS checks before/after.
+sent. Those gates were checked for the first phone run below; a later
+attempt requires its own review and fresh preflight.
+
+## First full-transfer phone attempt (2026-10-01)
+
+The separate owner, probe and wrapper were installed without replacing the
+passive defaults. On-device hashes matched the reviewed ARM64 builds; the
+owner's synthetic self-test passed. A fresh passive control boot with the
+same inserted SIM reached CP `ONLINE`. At +60 seconds the card and app were
+READY with PIN1 disabled, radio was on, voice/data registration remained 0,
+and `rmnet0` RX/TX were both 0. The passive owner sent no RFS replies.
+
+After a second fresh AP boot, the opt-in full wrapper reverified the four
+original-EFS files read-only, unmounted EFS, pinned the protected NV source,
+and reached CP `ONLINE` with one IPC/RFS owner. The owner logged 95 grant
+attempts, 94 stored chunks and 189128 stored bytes, then failed closed with
+`rfs_frame_or_io_refused`. The final success ACK was neither attempted nor
+sent. A root-only 524288-byte candidate and `NO_PROMOTION` marker remain in
+the unique quarantine directory; no sidecar was published. A silent slice
+comparison found the final 318-byte region and untouched tail equal to the
+verified baseline, while the earlier transfer prefix differed. No candidate
+was promoted or used for boot.
+
+This run does **not** establish whether grant 95 reached the CP. The counter
+increments before the grant write; a refused final grant, malformed/missing
+final data, deadline, or candidate I/O/gate failure share this terminal log.
+The owner deliberately stopped further SIT GETs, so there is no matched +60
+SIT snapshot for experimental B. `rmnet0` remained down with RX/TX 0; no
+registration or bearer success is claimed. Do not retry in the same boot.
+After a controlled AP reboot, the original EFS again matched all four
+userdata files through the read-only verifier and was unmounted. The passive
+owner was restored, CP returned `ONLINE`, and SIM was READY but unregistered
+at its +60-second snapshot. The full-run logs and quarantine artifact remain
+on the phone. Next, add scalar failure-stage diagnostics without logging NV
+payload or identifiers, review and retest before another cold opt-in run.
 
 ## Why this exists
 
@@ -251,13 +283,13 @@ host-only integration test is not a phone broker.
    CP-state-changing diagnostic, not a harmless read-only probe. The verified
    boot copy remained byte-identical to original EFS, and the incomplete
    candidate remains quarantined evidence, never a boot source.
-5. The separate full owner now passes host, sanitizer and ARM build gates;
-   this is not permission to run it on the phone. Verify installed binary
-   hashes, the currently loaded driver, working same-owner SIT observations, wrapper
-   and rollback before one guarded opt-in attempt of all 95 chunks and the
-   final durable-quarantine ACK.
-   A completed RFS transfer alone does not establish SIM READY, network
-   registration or a data bearer.
+5. The separate full owner passed host, sanitizer, ARM build, installed-hash
+   and on-device self-test gates. The first guarded phone run stored 94 of 95
+   chunks, then failed closed before final ACK; the passive owner was
+   restored and original EFS passed a postflight read-only check. Identify
+   the exact failure stage with reviewed scalar-only diagnostics before any
+   further cold opt-in run. A completed RFS transfer alone would not
+   establish SIM READY, network registration or a data bearer.
 
 ## Failure and verification gates
 
@@ -273,7 +305,7 @@ PID-1/autostart feature.
 ## Gate for the next full-transfer phone experiment
 
 The separate full-transfer owner is a **development artifact**, not a boot
-service or permission to run it on the phone. Before a live attempt, require
+service. Before another live attempt, require
 host success and injected failures across the 95-grant sequence, an ARM64
 static build and on-device self-test, independent source review, confirmation
 of the running CPIF write contract, and a measured rollback to the passive
