@@ -644,6 +644,12 @@ enable already err2; disable needs PIN secrets; pin1 DISABLED ≠ READY —
 policy (capture-only rild **or** external `0x2f50` dump). BLOCKER §
 alternate-breakers.
 
+**Armed for frame (2026-10-01):** Diagnostics add `oem-ipc-inject.c`,
+`post-init-chase.sh`, `OEM-IPC-CAPTURE.md`, and `tray-bearer-chase.sh`
+`CHASE_ONCE=1`. Inject refuses empty/all-zero; **no** invented `0x2f50`
+default. **No live send** until external/capture frame. Soft-lock /
+bearer still blocked. BLOCKER § armed-for-frame.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

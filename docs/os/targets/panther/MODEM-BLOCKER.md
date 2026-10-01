@@ -1062,6 +1062,26 @@ OemSim closed; GET_APP confirmed PIN; Present=2/FN_A paradox stands.
 Until (1) or (2): no invent `0x2f50`; no start rild/cbd; no ATU poke; no BAR
 `0x81400000`; no `0x0704` spam under PIN; no further L1/scan / `0x020a` hopes.
 
+### 2026-10-01 — armed for external `0x2f50` frame (no send yet)
+
+**Live try this turn:** none (no frame; ban on starting rild/cbd holds).
+
+**Tooling (sources only):** diagnostics now ship a one-shot path so bearer
+chase is immediate once an evidenced catalog OEM frame exists:
+
+| Piece | Path | Role |
+| --- | --- | --- |
+| Inject | `os/targets/panther/diagnostics/oem-ipc-inject.c` | Write operator frame once to `oem_ipcN`; refuse empty/all-zero; **no** default `0x2f50` |
+| Chase | `os/targets/panther/diagnostics/post-init-chase.sh` | Optional inject → poll GET_APP `{1,4,5}` → `CHASE_ONCE` on `tray-bearer-chase.sh` |
+| Capture recipe | `os/targets/panther/diagnostics/OEM-IPC-CAPTURE.md` | Policy-gated capture-only rild outline; **do not run now** |
+| Chase hook | `tray-bearer-chase.sh` `CHASE_ONCE=1` | Skip tray-watch; unlock + bearer pipeline once |
+
+**Armed?** **Yes** — inject+chase ready. **Sendable `0x2f50`?** **Still no**
+without external/capture frame. **Bearer verified?** **no** (expected).
+
+**Next:** (1) policy grant for capture-only stock rild **or** (2) drop in an
+external catalog OEM wire dump → `post-init-chase.sh --frame …`.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

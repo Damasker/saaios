@@ -61,8 +61,10 @@ WATCH_ROUNDS=12 sh os/targets/panther/diagnostics/tray-bearer-chase.sh
 
 Pull/reseat the SIM tray during the watch; the script chases Radio/LTE/reg
 and checks `rmnet` IPv4. Remote FN_A/RatMap lever is **blocked** (EU No-CDMA
-NV/TCS only — see MODEM-BLOCKER). Do not mark the modem goal complete without
-bearer.
+NV/TCS only — see MODEM-BLOCKER). Catalog OEM `0x2f50` still needs an
+external frame: `diagnostics/oem-ipc-inject.c` + `post-init-chase.sh` +
+`OEM-IPC-CAPTURE.md` (do not invent bytes; do not start rild/cbd under ban).
+Do not mark the modem goal complete without bearer.
 
 The reusable pieces in `src/` are pure C helpers with host tests:
 

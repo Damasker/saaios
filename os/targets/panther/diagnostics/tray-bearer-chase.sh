@@ -422,6 +422,19 @@ sim_left_pin() {
   return 1
 }
 
+# One-shot post-EDGE chase (used by post-init-chase after catalog 0x2f50 inject).
+# Skips tray-watch; still requires ONLINE. No invent / no rild.
+if [ "${CHASE_ONCE:-0}" = "1" ]; then
+  log "=== CHASE_ONCE (no tray-watch) ==="
+  unlock_after_edge || true
+  if chase_bearer; then
+    log "GOAL bearer OK"
+    exit 0
+  fi
+  log "CHASE_ONCE no bearer"
+  exit 1
+fi
+
 # Persistent outer loop: re-arm watch batches until bearer or fatal OFFLINE.
 BATCH=1
 while :; do

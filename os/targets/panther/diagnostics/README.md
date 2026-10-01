@@ -190,3 +190,25 @@ map). Do not use this as a poke tool — it only proves the mapping gap.
 token 3), printing registration/reject/technology bytes without location or
 subscriber data. Live result was error 0, registration 0 (not registered,
 not searching). No operator selection or attachment command is implemented.
+
+## Catalog OEM `0x2f50` — armed inject + chase (no invent)
+
+Soft-lock still needs an **external** catalog OEM `SIM_INIT_REQ` (`0x2f50`)
+frame. Do **not** invent header/body bytes. Do **not** start `rild`/`cbd`
+under the current ban. Capture procedure (policy-gated): `OEM-IPC-CAPTURE.md`.
+
+```sh
+# host parser self-test
+gcc -std=c11 -Wall -Wextra -Werror oem-ipc-inject.c -o /tmp/oem-ipc-inject
+/tmp/oem-ipc-inject self-test
+
+# device (once operator has a capture file — raw or hex)
+aarch64-linux-gnu-gcc -O2 -static -Wall -Wextra -Werror \
+  oem-ipc-inject.c -o /data/saaios/bin/oem-ipc-inject
+sh post-init-chase.sh --frame /data/saaios/var/oem-2f50.frame
+# CHASE_ONCE=1 is also accepted by tray-bearer-chase.sh after READY
+```
+
+`oem-ipc-inject inject <file> [N]` writes once to `/dev/oem_ipcN`, refuses
+empty/all-zero frames, logs length/errno only. `post-init-chase` polls
+GET_APP for `app∈{1,4,5}` then runs the existing post-edge bearer pipeline.
