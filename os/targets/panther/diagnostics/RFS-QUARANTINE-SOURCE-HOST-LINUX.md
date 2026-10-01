@@ -5,7 +5,8 @@ compile into an ARM phone binary and has no phone path, RFS channel or writer.
 It models one part of the future source boundary: a caller-opened read-only
 regular fd must be owned by the caller, mode 0600, link count one, exactly
 524288 bytes, stable across the read, and match a SHA-256 pin supplied
-independently of that fd. Failure zeroes the output. It never reads or trusts
+independently of that fd. Failure with a correctly sized buffer zeroes the
+output. It never reads or trusts
 an adjacent checksum sidecar.
 
 The synthetic test writes a temporary generated file under `/tmp`, opens it

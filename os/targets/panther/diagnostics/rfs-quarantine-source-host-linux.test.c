@@ -55,6 +55,10 @@ int main(void)
     assert(rqs_read_verified_fd(RQS_HOST_ACK, readonly, digest, copy,
                                 RQ_BASELINE_BYTES) == 0);
     assert(memcmp(copy, baseline, RQ_BASELINE_BYTES) == 0);
+    memset(copy, 0x7f, RQ_BASELINE_BYTES);
+    assert(rqs_read_verified_fd(RQS_HOST_ACK, readonly, digest, copy,
+                                RQ_BASELINE_BYTES - 1) == -1);
+    assert(copy[0] == 0x7f && copy[RQ_BASELINE_BYTES - 1] == 0x7f);
     assert(rqs_read_verified_fd(RQS_HOST_ACK, readonly, wrong_digest, copy,
                                 RQ_BASELINE_BYTES) == -1);
     assert_zero(copy, RQ_BASELINE_BYTES);

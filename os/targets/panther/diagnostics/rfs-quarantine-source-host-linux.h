@@ -15,7 +15,8 @@
  * independent pinned SHA-256, owner, 0600 mode, unique link, and exact size
  * agree. The caller remains responsible for proving the fd came from an
  * allowlisted O_NOFOLLOW path; this host model cannot attest pathname or
- * original-NV provenance. On failure, zeroes the whole output buffer. */
+ * original-NV provenance. With a correctly sized output buffer, failure
+ * zeroes it; an invalid pointer/length is rejected without touching it. */
 int rqs_read_verified_fd(const char *host_ack, int fd,
                          const unsigned char pinned_sha256[32],
                          unsigned char *out, size_t out_len);
