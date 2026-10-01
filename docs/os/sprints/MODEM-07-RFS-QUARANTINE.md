@@ -248,7 +248,7 @@ passed the four-file read-only comparison and was unmounted. The passive
 owner was restored and CP returned `ONLINE`. All experiment logs and
 quarantine candidates were retained.
 
-## Next discriminator: same-owner radio/network event timing
+## Same-owner radio/network event comparison (2026-10-01)
 
 The factory radio-available audit below identifies conditional startup SETs,
 but none is proven to be the missing camp prerequisite after READY/radio ON
@@ -267,22 +267,46 @@ windows are omitted to avoid indefinitely growing logs.
 The full-RFS owner also timestamps the return from its local final-ACK write.
 The trace logs no payload bytes or subscriber/network identifiers and adds no
 endpoint, GET or SET. The full-RFS owner traces during the exchange and after
-its final ACK; the
-passive owner traces the same ID ranges without answering RFS. Synthetic
-host fixtures cover type/length filtering and the trace limit. This change
-is host-tested only; the currently running phone owner was not replaced.
+its final ACK; the passive owner traces the same ID ranges without answering
+RFS. Synthetic host fixtures, Linux ASan/UBSan, static ARM64 builds and
+on-device self-tests passed before the phone comparison.
 
-A later phone comparison, if separately reviewed, requires two fresh boots
-with the same SIM and pinned source: passive control and one manual full-RFS
-run, each from pre-FIN ownership. Compare owner-receipt timestamps and the
-local ACK-write-return marker, plus the existing matched +60-second redacted
-status and `rmnet0` counters. RFS is serviced before IPC and candidate
-finalization is synchronous: an indication queued before the ACK can be read
-afterward, so receipt times do **not** prove CP emission or causal order.
-A missing indication means only that none reached the owner in that capture
-window; it does not prove that CP never searched or that RF was idle. Any
-framing failure, owner loss, ambiguous RFS write or unexpected EFS preflight
-result stops the comparison without retry or candidate promotion.
+Two fresh, pre-FIN, single-owner boots used the same physical SIM and the
+same configured, previously reviewed firmware/NV paths. This table reports
+**owner receipt times**, not CP emission times:
+
+| Observation | Passive, RFS unanswered | Full RFS quarantine |
+| --- | --- | --- |
+| RFS | cmd 7/6 observed, no reply | 95/95 chunks and 189446 bytes stored; final ACK local write returned at +7753 ms |
+| `0x0803`, length 8 | +9817 ms | +9813 ms |
+| `0x0802`, length 12 | +9818 ms | +9813 ms |
+| First 60-second trace window | 2 indications, 0 overflow; no `0x07xx` seen | 2 indications, 0 overflow; no `0x07xx` seen |
+| Owner +60-second status | SIM READY/PIN disabled; radio raw 10; voice/data registration 0, reject 0, data technology 0 | Same raw statuses |
+| `rmnet0` | down, RX/TX 0 | down, RX/TX 0 |
+
+The same two radio-range headers arrived at nearly the same owner-relative
+times even when RFS was unanswered. This narrows the early header sequence,
+not the undecoded payloads: the completed RFS exchange was not
+required for those two observed headers, and it did not establish camp. RFS
+is serviced before IPC and candidate
+finalization is synchronous, so an indication queued before an ACK can be
+read afterward; the local ACK marker does **not** establish CP emission or
+causal order. No `0x07xx` indication reached either owner in its first minute,
+but that does not prove CP never searched or RF was idle.
+
+The full wrapper's fresh original-EFS read-only pin passed. After controlled
+AP reboot, the four-file read-only postflight comparison passed and EFS was
+unmounted. The new root-only candidate, SHA sidecar and `NO_PROMOTION` marker
+remain quarantined; no source was promoted. The original owner binaries were
+restored from hash-checked backups, and the default passive owner again holds
+an ONLINE CP. Logs for both compared boots were preserved under distinct
+names. MODEM-06 camp and bearer remain unresolved; further work must isolate
+a separate startup/registration prerequisite without guessing a SET. The
+next bounded step is host-only review of the exact TD1A `0x0802` indication
+adapter and `OnRadioStateChanged`/`OnRadioAvailable` gates. Its body offset
+and value are not yet established, so these header logs cannot show that the
+early radio state became ON. Only after factory validation would a same-owner
+scalar trace be considered; it would add no GET, SET, identifier or reader.
 
 ## Why this exists
 
