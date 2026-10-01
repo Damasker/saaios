@@ -5798,3 +5798,30 @@ SIM-absent-or-locked *report*, not whether the physical card, RFS exchange,
 or CP-internal initialization caused it. Replaying `0x0800` ON without a
 new isolated hypothesis is not justified; a prior READY/ON test acknowledged
 that command yet remained unregistered.
+
+## 2026-10-01: slot-status indication separates slot 0 from IPC0 SIM
+
+One final no-gap control boot for this series used owner build SHA-256
+`3a604367b622e9012714ad83851949de94c22e3595146fe56e91dc4be942b9ea`.
+It observed only redacted scalars from the already arriving `0x024e`
+indication: at owner +8.008 s, `slot_count=2` and
+`slot0_card_state_raw=1` (PRESENT by the factory slot adapter). No extra
+SIT request was sent for this observation. Initial and event-refresh
+`0x0200` for IPC0 both returned card 0/apps 0; the +60-second settled
+`0x0200` was also card 0/apps 0. The settled radio was raw 3
+(`SIM_LOCK_OR_ABSENT`), voice/data registration 0, `rmnet0` RX 0. CP stayed
+`ONLINE`; RFS again showed cmd7/seq0 at +7.271 s and cmd6/seq1 at
++17.272 s with no replies. No PIN, radio-power, APN or NV/EFS write occurred.
+
+The factory type-2 slot-status adapter accepts length at least 429, reads
+slot count at packet byte 8 and fixed 105-byte slot records from byte 9.
+This build logged only the first record's card byte. A present *slot 0*
+alongside an absent *IPC0 logical SIM* is therefore an observed mismatch,
+not proof that the physical tray is empty. The current boot did not retain
+slot 1 or logical-port mapping scalars, so it cannot yet distinguish a
+wrong/inactive logical slot mapping from CP initialization or RFS effects.
+Earlier factory-slot diagnostics showed crossed logical/physical mapping,
+but cannot be assumed to describe this boot. The next diagnostic should
+capture both slots and validated port mapping through the **same** IPC owner,
+without logging ATR/ICCID/EID or opening a competing reader. No further
+phone reboot was made in this series.
