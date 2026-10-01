@@ -9,7 +9,9 @@ use saai_ui_core::{
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 mod orb_paint;
-pub use orb_paint::{draw_orb_space, orb_unit, OrbPaint, OrbPoint};
+pub use orb_paint::{
+    draw_orb_space, draw_search_panel, orb_unit, OrbPaint, OrbPoint, SearchRowView, SearchView,
+};
 
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -361,6 +363,19 @@ pub fn draw_consent(
 /// ADR-161: Intent compose through `ContextHeader`. The Text `Field`
 /// sits immediately above the docked QWERTY. Keys stay the ADR-029
 /// rectangles from `intent_view()`. No Surface fill of the Fill slot.
+/// The keyboard under the sphere while searching. `area` is blanked first so
+/// the page and the navigation strip behind the gaps between keys do not show.
+pub fn draw_orb_search_keys(
+    canvas: &mut Canvas<'_>,
+    area: Rect,
+    keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill_rect(area, theme_color(ColorRole::Canvas));
+    paint_keyboard_keys(canvas, fonts, keys, pressed_key);
+}
+
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
     content: Rect,

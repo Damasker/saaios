@@ -3,7 +3,8 @@
 //! Context Light. Everything here is opaque-first: no blur, no glow.
 
 use super::{
-    draw_calibration_mark, draw_text_centered, physical, role_px, theme_color, Canvas, Fonts, Pixel,
+    draw_calibration_mark, draw_square_ring, draw_text, draw_text_centered, physical, role_px,
+    text_scale, text_width, theme_color, Canvas, Fonts, Pixel,
 };
 use saai_orb::{Item, Primitive, Prominence};
 use saai_ui_core::{ColorRole, LogicalUnit, Progress, Rect, StatusMark, StrokeToken, TextRole};
@@ -386,6 +387,172 @@ fn draw_point(canvas: &mut Canvas<'_>, p: &OrbPoint, bottom: f32) {
     }
 }
 
+/// One result under the search field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchRowView {
+    pub rect: Rect,
+    pub label: String,
+    /// Where it is from here, e.g. "СВ · 42°". Empty when it is under you.
+    pub hint: String,
+    pub primitive: Primitive,
+    pub focused: bool,
+    /// Offline or only remembered: still listed, drawn hollow.
+    pub dim: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchView {
+    pub backdrop: Rect,
+    pub field: Rect,
+    pub text: String,
+    pub placeholder: String,
+    pub rows: Vec<SearchRowView>,
+    /// Said in the first row when the text matches nothing.
+    pub note: Option<String>,
+}
+
+fn draw_search_row(canvas: &mut Canvas<'_>, row: &SearchRowView, fonts: &Fonts, unit: f32) {
+    let r = row.rect;
+    let fill = if row.focused {
+        theme_color(ColorRole::Elevated)
+    } else {
+        theme_color(ColorRole::Surface)
+    };
+    canvas.fill_rect(r, fill);
+    if row.focused {
+        let bar = (unit * 3.0).round() as u32;
+        canvas.fill_rect(
+            Rect::new(r.x, r.y, bar, r.height),
+            theme_color(ColorRole::AccentHighlight),
+        );
+    }
+    let inset = unit * 14.0;
+    let glyph_r = (r.height as f32 * 0.24).max(6.0);
+    let hollow = row.dim;
+    draw_primitive(
+        canvas,
+        row.primitive,
+        (
+            r.x as f32 + inset + glyph_r,
+            r.y as f32 + r.height as f32 / 2.0,
+        ),
+        glyph_r,
+        (unit * 1.4).max(2.0),
+        (!hollow && row.primitive != Primitive::Ring).then(|| theme_color(ColorRole::Elevated)),
+        theme_color(ColorRole::Border),
+        1.0,
+    );
+    let (font, size) = fonts.resolve(TextRole::Body);
+    let text_x = r.x as f32 + inset * 2.0 + glyph_r * 2.0;
+    let color = if row.dim {
+        ColorRole::TextSecondary
+    } else {
+        ColorRole::TextPrimary
+    };
+    let line = size * text_scale();
+    let top = (r.y as f32 + (r.height as f32 - line) / 2.0).max(0.0) as u32;
+    let (hint_font, hint_size) = fonts.resolve(TextRole::Caption);
+    let hint_w = if row.hint.is_empty() {
+        0.0
+    } else {
+        text_width(hint_font, &row.hint, hint_size * text_scale())
+    };
+    let room = (r.x + r.width) as f32 - inset - hint_w - text_x - inset;
+    let mut label = row.label.clone();
+    while !label.is_empty() && text_width(font, &label, line) > room {
+        label = shorten(&label, label.chars().count().saturating_sub(1));
+    }
+    draw_text(
+        canvas,
+        font,
+        &label,
+        size,
+        text_x as u32,
+        top,
+        theme_color(color),
+    );
+    if hint_w > 0.0 {
+        let hint_top = (r.y as f32 + (r.height as f32 - hint_size * text_scale()) / 2.0) as u32;
+        draw_text(
+            canvas,
+            hint_font,
+            &row.hint,
+            hint_size,
+            ((r.x + r.width) as f32 - inset - hint_w).max(0.0) as u32,
+            hint_top,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+}
+
+/// The field and the list of where things are. Opaque, drawn over whatever
+/// page is underneath, above the sphere's own window.
+pub fn draw_search_panel(canvas: &mut Canvas<'_>, view: &SearchView, fonts: Option<&Fonts>) {
+    let unit = physical(LogicalUnit::new(1)) as f32;
+    canvas.fill_rect(view.backdrop, theme_color(ColorRole::Canvas));
+    canvas.fill_rect(view.field, theme_color(ColorRole::Surface));
+    draw_square_ring(
+        canvas,
+        view.field,
+        physical(StrokeToken::Focus.value()).max(1),
+        theme_color(ColorRole::Focus),
+    );
+    let Some(fonts) = fonts else { return };
+    let (font, size) = fonts.resolve(TextRole::Body);
+    let line = size * text_scale();
+    let top = (view.field.y as f32 + (view.field.height as f32 - line) / 2.0).max(0.0) as u32;
+    let left = view.field.x as f32 + unit * 14.0;
+    if view.text.is_empty() {
+        draw_text(
+            canvas,
+            font,
+            &view.placeholder,
+            size,
+            left as u32,
+            top,
+            theme_color(ColorRole::TextSecondary),
+        );
+    } else {
+        draw_text(
+            canvas,
+            font,
+            &view.text,
+            size,
+            left as u32,
+            top,
+            theme_color(ColorRole::TextPrimary),
+        );
+    }
+    let caret_x = left + text_width(font, &view.text, line) + unit * 2.0;
+    canvas.fill_rect(
+        Rect::new(
+            caret_x as u32,
+            top,
+            (unit * 2.0).round().max(2.0) as u32,
+            line as u32,
+        ),
+        theme_color(ColorRole::AccentHighlight),
+    );
+    for row in &view.rows {
+        draw_search_row(canvas, row, fonts, unit);
+    }
+    if let (Some(note), Some(first)) = (&view.note, view.rows.first()) {
+        canvas.fill_rect(first.rect, theme_color(ColorRole::Surface));
+        let (cap, cap_size) = fonts.resolve(TextRole::Caption);
+        let top = (first.rect.y as f32 + (first.rect.height as f32 - cap_size * text_scale()) / 2.0)
+            as u32;
+        draw_text(
+            canvas,
+            cap,
+            note,
+            cap_size,
+            first.rect.x + (unit * 14.0) as u32,
+            top,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+}
+
 pub fn draw_orb_space(canvas: &mut Canvas<'_>, paint: &OrbPaint<'_>, fonts: Option<&Fonts>) {
     canvas.set_clip(Some(paint.viewport));
     let bottom = (paint.viewport.y + paint.viewport.height) as f32;
@@ -755,5 +922,28 @@ mod tests {
     fn labels_are_shortened_with_an_ellipsis() {
         assert_eq!(shorten("Почта", 16), "Почта");
         assert_eq!(shorten("Очень длинное название объекта", 10), "Очень дли…");
+    }
+
+    #[test]
+    fn the_search_panel_is_opaque_over_the_page_and_the_field_shows_focus() {
+        let mut buf = blank();
+        Canvas::new(&mut buf, W, H).fill(theme_color(ColorRole::Accent));
+        let view = SearchView {
+            backdrop: Rect::new(0, 0, W, 200),
+            field: Rect::new(16, 20, W - 32, 52),
+            text: String::new(),
+            placeholder: "Что найти?".into(),
+            rows: Vec::new(),
+            note: None,
+        };
+        draw_search_panel(&mut Canvas::new(&mut buf, W, H), &view, None);
+        assert_eq!(px(&mut buf, 5, 150), theme_color(ColorRole::Canvas));
+        assert_eq!(px(&mut buf, 200, 46), theme_color(ColorRole::Surface));
+        assert_eq!(px(&mut buf, 16, 40), theme_color(ColorRole::Focus));
+        assert_eq!(
+            px(&mut buf, 5, 300),
+            theme_color(ColorRole::Accent),
+            "nothing below the panel is touched"
+        );
     }
 }

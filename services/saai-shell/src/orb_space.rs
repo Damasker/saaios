@@ -303,7 +303,47 @@ pub struct SearchState {
     target: Option<String>,
 }
 
+impl SearchState {
+    #[cfg(test)]
+    pub fn new_for_test(buffer: String, keyboard: Keyboard) -> SearchState {
+        SearchState {
+            buffer,
+            keyboard,
+            target: None,
+        }
+    }
+}
+
 pub const SEARCH_LIMIT: usize = 8;
+
+pub fn compass_ru(c: saai_orb::Compass) -> &'static str {
+    use saai_orb::Compass as C;
+    match c {
+        C::Here => "здесь",
+        C::North => "С",
+        C::NorthEast => "СВ",
+        C::East => "В",
+        C::SouthEast => "ЮВ",
+        C::South => "Ю",
+        C::SouthWest => "ЮЗ",
+        C::West => "З",
+        C::NorthWest => "СЗ",
+    }
+}
+
+/// "СВ · 42°" from where the camera looks now, or "здесь" when it is already
+/// under the camera.
+pub fn route_hint(hit: &Hit) -> String {
+    let direction = saai_orb::access::compass(hit.route.from, hit.route.to);
+    if direction == saai_orb::Compass::Here {
+        return compass_ru(direction).to_string();
+    }
+    format!(
+        "{} · {}°",
+        compass_ru(direction),
+        hit.route.distance().to_degrees().round() as i32
+    )
+}
 const TRAIL_POINTS: usize = 28;
 
 /// The strip above the sphere while searching: the field, then a fixed
@@ -626,7 +666,7 @@ impl OrbSpace {
         viewport: Rect,
         unit: f32,
     ) -> bool {
-        let inside = pos.1 < (viewport.y + viewport.height) as f32;
+        let inside = pos.1 >= viewport.y as f32 && pos.1 < (viewport.y + viewport.height) as f32;
         if self.pointers.is_down() {
             if self.grab == Grab::Sphere {
                 self.pointers.down(id, pos.0, pos.1, t);
@@ -1196,7 +1236,10 @@ mod tests {
     }
 
     fn typed(s: &mut OrbSpace, text: &str) {
-        s.open_search(Keyboard::bind("orb-search", saai_ui_core::KeyboardLayout::Qwerty));
+        s.open_search(Keyboard::bind(
+            "orb-search",
+            saai_ui_core::KeyboardLayout::Qwerty,
+        ));
         s.search_mut().unwrap().buffer = text.into();
         s.search_edited();
     }
@@ -1278,7 +1321,11 @@ mod tests {
         }
         typed(&mut s, "pochta");
         let id = s.search_hits()[0].id.clone();
-        assert_eq!(s.search_hits()[0].id, "app:mail", "an offline app still exists");
+        assert_eq!(
+            s.search_hits()[0].id,
+            "app:mail",
+            "an offline app still exists"
+        );
         s.choose(&id);
         settle(&mut s);
         assert_eq!(s.choose(&id), Outcome::Redraw, "shown, never forced open");
@@ -1314,6 +1361,22 @@ mod tests {
         assert!(s.search_hits().is_empty());
         assert_eq!(s.search_focus(&[]), None);
         assert_eq!(s.choose("search"), Outcome::Nothing);
+    }
+
+    #[test]
+    fn hints_say_which_way_and_how_far() {
+        let mut s = open_space();
+        typed(&mut s, "pochta");
+        let hit = s.search_hits().remove(0);
+        let hint = route_hint(&hit);
+        assert!(hint == "здесь" || hint.ends_with('°'), "{hint}");
+        let mut here = hit.clone();
+        here.route.from = here.route.to;
+        assert_eq!(route_hint(&here), "здесь");
+        let mut east = hit.clone();
+        east.route.from = Geo::from_degrees(0.0, 0.0);
+        east.route.to = Geo::from_degrees(40.0, 0.0);
+        assert_eq!(route_hint(&east), "В · 40°");
     }
 
     #[test]

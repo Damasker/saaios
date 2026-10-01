@@ -1739,6 +1739,8 @@ fn key_fingerprint(public_key: &str) -> String {
 const INTENT_SCREEN_ID: &str = "intent-input";
 const INTENT_HEADER_ID: &str = "intent-header";
 const INTENT_FIELD_ID: &str = "intent-field";
+const ORB_SEARCH_FIELD_ID: &str = "orb-search";
+const ORB_HIT_ACTION_PREFIX: &str = "orb-hit:";
 const INTENT_ROWS_ID: &str = "intent-rows";
 const INTENT_CANCEL_ACTION: &str = "intent:cancel";
 const INTENT_MODE_TOGGLE_ACTION: &str = "intent:mode:toggle";
@@ -1854,6 +1856,25 @@ fn mode_toggle_label(mode: KeyboardMode) -> String {
         KeyboardMode::Letters => "123".to_string(),
         KeyboardMode::Symbols => "ABC".to_string(),
     }
+}
+
+/// The Intent keyboard, relabelled for what its send key does here.
+fn orb_search_keys(width: u32, height: u32, state: &orb_space::SearchState) -> Vec<(Rect, String)> {
+    if !state.keyboard.shows_panel() {
+        return Vec::new();
+    }
+    intent_keyboard_keys(width, height, state.keyboard.mode)
+        .1
+        .into_iter()
+        .map(|(rect, label)| {
+            let label = if label == "Отправить" {
+                "Найти".to_string()
+            } else {
+                label
+            };
+            (rect, label)
+        })
+        .collect()
 }
 
 struct IntentControlDef {
@@ -2847,6 +2868,10 @@ struct OrbFrame {
     items: Vec<saai_orb::Item>,
     selected: Option<String>,
     point: render::OrbPoint,
+    trail: Vec<(f32, f32)>,
+    search: Option<render::SearchView>,
+    /// Keyboard keys and the strip they sit on, when the on-screen one is up.
+    search_keys: Option<(Rect, Vec<(Rect, String)>)>,
 }
 
 /// ADR-093 follow-up: what actually needs to change for `present_
@@ -8195,6 +8220,16 @@ impl TouchHandler for Shell {
                 self.draw(conn, qh);
                 return;
             }
+            if self.orb.search().is_some() {
+                let up = self.keyboard_frame_action_at(self.last_touch_pos);
+                if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
+                    self.handle_orb_search_action(&action, conn, qh);
+                    return;
+                }
+                if self.orb_search_under_keyboard(self.last_touch_pos) {
+                    return;
+                }
+            }
             if self.pending_consent.is_some() {
                 // Modal: the consent screen owns every touch while it is
                 // showing, not the tab bar or content cards underneath it.
@@ -9713,13 +9748,29 @@ impl Shell {
                         rise: orb.rise,
                         disc: orb.disc,
                         graticule: &orb.graticule,
-                        trail: &[],
+                        trail: &orb.trail,
                         items: &orb.items,
                         selected: orb.selected.as_deref(),
                         point: orb.point,
                     },
                     fonts,
                 );
+                if let Some(search) = &orb.search {
+                    render::draw_search_panel(
+                        &mut render::Canvas::new(canvas, width, height),
+                        search,
+                        fonts,
+                    );
+                }
+                if let Some((area, keys)) = &orb.search_keys {
+                    render::draw_orb_search_keys(
+                        &mut render::Canvas::new(canvas, width, height),
+                        *area,
+                        keys,
+                        pressed_key.as_deref(),
+                        fonts,
+                    );
+                }
             }
             render::apply_contrast_boost(canvas, contrast_pct);
         };
@@ -10022,6 +10073,9 @@ impl Shell {
             }
             return Vec::new();
         }
+        if let Some(state) = self.orb.search() {
+            return orb_search_keys(self.width, self.height, state);
+        }
         if let Some(state) = &self.intent_input {
             if !state.keyboard.shows_panel() {
                 return Vec::new();
@@ -10057,6 +10111,16 @@ impl Shell {
                 self.osk_height,
                 self.osk_keyboard.mode,
             );
+        }
+        if let Some(state) = self.orb.search() {
+            if state.keyboard.shows_panel() {
+                if let Some(action) =
+                    intent_action_at(pos, self.width, self.height, state.keyboard.mode)
+                {
+                    return Some(action);
+                }
+            }
+            return self.orb_search_row_at(pos);
         }
         if let Some(state) = self.intent_input.as_ref() {
             if !state.keyboard.shows_panel() {
@@ -10544,6 +10608,9 @@ impl Shell {
 
     fn sync_hardware_keyboard_source(&mut self) {
         let source = hardware_keyboard::detect_keyboard_source();
+        if let Some(state) = self.orb.search_mut() {
+            state.keyboard.set_source(source);
+        }
         if let Some(state) = self.intent_input.as_mut() {
             state.keyboard.set_source(source);
         }
@@ -10610,6 +10677,24 @@ impl Shell {
     }
 
     fn apply_hardware_key(&mut self, code: u16, conn: &Connection, qh: &QueueHandle<Self>) {
+        if let Some(state) = self.orb.search() {
+            const KEY_UP: u16 = 103;
+            const KEY_DOWN: u16 = 108;
+            match code {
+                KEY_UP | KEY_DOWN => {
+                    self.orb.step_search(if code == KEY_DOWN { 1 } else { -1 });
+                    self.draw(conn, qh);
+                }
+                _ => {
+                    if let Some(stroke) =
+                        Keyboard::keystroke_from_evdev(code, state.keyboard.layout)
+                    {
+                        self.apply_orb_search_stroke(stroke, conn, qh);
+                    }
+                }
+            }
+            return;
+        }
         if let Some(state) = self.intent_input.as_mut() {
             let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
                 return;
@@ -11444,6 +11529,12 @@ impl Shell {
         qh: &QueueHandle<Self>,
     ) {
         use orb_space::Activation as A;
+        if action == A::OpenSearch {
+            self.orb
+                .open_search(live_keyboard(ORB_SEARCH_FIELD_ID, KeyboardLayout::Qwerty));
+            self.draw(conn, qh);
+            return;
+        }
         self.orb.dismiss();
         let show_page = |shell: &mut Shell, page: RootPage, apps: bool| {
             shell.current_page = page;
@@ -11451,7 +11542,7 @@ impl Shell {
             shell.space_detail_open = false;
         };
         match action {
-            A::OpenSearch => show_page(self, RootPage::Search, false),
+            A::OpenSearch => {}
             A::OpenTasks => show_page(self, RootPage::Now, false),
             A::OpenApps => show_page(self, RootPage::Now, true),
             A::OpenInbox => show_page(self, RootPage::Inbox, false),
@@ -11485,13 +11576,152 @@ impl Shell {
             && !self.any_modal_open()
     }
 
+    fn orb_nav_top(&self) -> u32 {
+        let tree = root_view(self.width, self.height);
+        saai_ui_compiler::layout_v1_find(&tree, "BottomNavigation")
+            .map_or(self.height, |nav| nav.rect.y)
+            .min(self.height)
+    }
+
+    /// The strip above the sphere while searching. With the on-screen
+    /// keyboard up the sphere gets what is left between the two.
+    fn orb_search_panel(&self) -> Option<orb_space::SearchPanel> {
+        let state = self.orb.search()?;
+        let keys = state.keyboard.shows_panel();
+        let bottom = if keys {
+            self.height
+                .saturating_sub(intent_keyboard_height(self.height))
+        } else {
+            self.orb_nav_top()
+        };
+        Some(orb_space::search_panel(
+            self.width,
+            status_layer_height(),
+            bottom,
+            if keys { 3 } else { 4 },
+            render::orb_unit(),
+        ))
+    }
+
     /// The window the sphere is seen through: everything above the
     /// navigation strip, which stays usable while the sphere is risen.
+    /// While searching it is what the field, the results and the keyboard
+    /// leave.
     fn orb_viewport(&self) -> Rect {
-        let tree = root_view(self.width, self.height);
-        let nav_top = saai_ui_compiler::layout_v1_find(&tree, "BottomNavigation")
-            .map_or(self.height, |nav| nav.rect.y);
-        Rect::new(0, 0, self.width, nav_top.min(self.height))
+        if let Some(panel) = self.orb_search_panel() {
+            return panel.viewport;
+        }
+        Rect::new(0, 0, self.width, self.orb_nav_top())
+    }
+
+    fn orb_search_row_at(&self, pos: (f64, f64)) -> Option<String> {
+        let panel = self.orb_search_panel()?;
+        let hits = self.orb.search_hits();
+        panel
+            .rows
+            .iter()
+            .zip(&hits)
+            .find(|(rect, _)| rect.contains(pos.0, pos.1))
+            .map(|(_, hit)| format!("{ORB_HIT_ACTION_PREFIX}{}", hit.id))
+    }
+
+    /// A touch that lands on the on-screen keyboard strip but not on a key
+    /// must not fall through to the navigation tabs hidden behind it.
+    fn orb_search_under_keyboard(&self, pos: (f64, f64)) -> bool {
+        self.orb
+            .search()
+            .is_some_and(|state| state.keyboard.shows_panel())
+            && pos.1
+                >= f64::from(
+                    self.height
+                        .saturating_sub(intent_keyboard_height(self.height)),
+                )
+    }
+
+    fn apply_orb_outcome(
+        &mut self,
+        outcome: orb_space::Outcome,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match outcome {
+            orb_space::Outcome::Activate(action) => self.activate_orb(action, conn, qh),
+            orb_space::Outcome::Redraw => self.draw(conn, qh),
+            orb_space::Outcome::Nothing => {}
+        }
+    }
+
+    fn handle_orb_search_action(
+        &mut self,
+        action: &str,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let Some(id) = action.strip_prefix(ORB_HIT_ACTION_PREFIX) {
+            let outcome = self.orb.choose(id);
+            self.apply_orb_outcome(outcome, conn, qh);
+            return;
+        }
+        if let Some(stroke) = Keyboard::keystroke_from_osk_action(action) {
+            self.apply_orb_search_stroke(stroke, conn, qh);
+        }
+    }
+
+    fn apply_orb_search_stroke(
+        &mut self,
+        stroke: Keystroke,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        let Some(state) = self.orb.search_mut() else {
+            return;
+        };
+        match state.keyboard.handle(stroke, &mut state.buffer) {
+            KeyboardCommand::Edited => {
+                self.orb.search_edited();
+                self.draw(conn, qh);
+            }
+            KeyboardCommand::Submit => {
+                let hits = self.orb.search_hits();
+                let id = self.orb.search_focus(&hits).map(|i| hits[i].id.clone());
+                let outcome = id.map_or(orb_space::Outcome::Nothing, |id| self.orb.choose(&id));
+                self.apply_orb_outcome(outcome, conn, qh);
+            }
+            KeyboardCommand::Cancel => {
+                self.orb.close_search();
+                self.draw(conn, qh);
+            }
+            KeyboardCommand::Ignored => {}
+        }
+    }
+
+    fn orb_search_view(&self, panel: &orb_space::SearchPanel) -> render::SearchView {
+        let state = self.orb.search();
+        let hits = self.orb.search_hits();
+        let focus = self.orb.search_focus(&hits);
+        let rows: Vec<render::SearchRowView> = panel
+            .rows
+            .iter()
+            .zip(&hits)
+            .enumerate()
+            .map(|(i, (rect, hit))| render::SearchRowView {
+                rect: *rect,
+                label: hit.label.clone(),
+                hint: orb_space::route_hint(hit),
+                primitive: hit.class.primitive(),
+                focused: focus == Some(i),
+                dim: !hit.availability.is_available() || hit.ghost,
+            })
+            .collect();
+        let empty_query = state.is_none_or(|s| s.buffer.trim().is_empty());
+        render::SearchView {
+            backdrop: panel.backdrop,
+            field: panel.field,
+            text: state.map(|s| s.buffer.clone()).unwrap_or_default(),
+            placeholder: "Что найти?".to_string(),
+            note: (hits.is_empty() && !empty_query).then(|| "Ничего не найдено".to_string()),
+            rows,
+        }
     }
 
     fn orb_facts(&self) -> orb_space::Facts {
@@ -11569,6 +11799,7 @@ impl Shell {
     /// the canvas borrows `self`.
     fn build_orb_frame(&self, width: u32, height: u32) -> OrbFrame {
         let _ = (width, height);
+        let search_panel = self.orb_search_panel();
         let viewport = self.orb_viewport();
         let unit = render::orb_unit();
         let stage = self.orb.stage(viewport, unit);
@@ -11607,7 +11838,25 @@ impl Shell {
             disc: layout.disc,
             graticule,
             items: layout.items,
-            selected: self.orb.selected.clone(),
+            selected: self.orb.selected.clone().or_else(|| {
+                let hits = self.orb.search_hits();
+                self.orb.search_focus(&hits).map(|i| hits[i].id.clone())
+            }),
+            trail: if self.orb.search().is_some() {
+                self.orb.trail(viewport, unit)
+            } else {
+                Vec::new()
+            },
+            search: search_panel
+                .as_ref()
+                .map(|panel| self.orb_search_view(panel)),
+            search_keys: self.orb.search().and_then(|state| {
+                let keys = orb_search_keys(self.width, self.height, state);
+                let top = self
+                    .height
+                    .saturating_sub(intent_keyboard_height(self.height));
+                (!keys.is_empty()).then(|| (Rect::new(0, top, self.width, self.height - top), keys))
+            }),
             point: render::OrbPoint {
                 disc: geometry.disc,
                 half_angle: geometry.half_angle,
@@ -11805,7 +12054,10 @@ impl Shell {
     /// own pool/buffer -- called both from the layer's own `configure`
     /// (first paint) and periodically from `refresh_statusbar_if_due`.
     fn shell_owns_text_field(&self) -> bool {
-        self.intent_input.is_some() || self.wifi_password.is_some() || self.pin_setup.is_some()
+        self.intent_input.is_some()
+            || self.wifi_password.is_some()
+            || self.pin_setup.is_some()
+            || self.orb.search().is_some()
     }
 
     fn ensure_foreign_ime(&mut self, seat: &wl_seat::WlSeat, qh: &QueueHandle<Self>) {
@@ -14680,6 +14932,62 @@ mod tests {
         );
         assert_eq!(pressed_key_from_keys(&keys, center).as_deref(), Some("Q"));
         assert_eq!(pressed_key_from_keys(&keys, (540.0, 100.0)), None);
+    }
+
+    fn searching() -> crate::orb_space::SearchState {
+        let mut keyboard = saai_ui_core::Keyboard::bind(
+            crate::ORB_SEARCH_FIELD_ID,
+            saai_ui_core::KeyboardLayout::Qwerty,
+        );
+        keyboard.set_source(saai_ui_core::KeyboardSource::OnScreen);
+        crate::orb_space::SearchState::new_for_test(String::new(), keyboard)
+    }
+
+    #[test]
+    fn orb_search_keyboard_keeps_every_key_and_calls_send_find() {
+        let state = searching();
+        let (_, original) = super::intent_keyboard_keys(1080, 2400, state.keyboard.mode);
+        let relabelled = super::orb_search_keys(1080, 2400, &state);
+        assert_eq!(original.len(), relabelled.len());
+        assert!(original.iter().zip(&relabelled).all(|(a, b)| a.0 == b.0));
+        assert!(relabelled.iter().any(|(_, label)| label == "Найти"));
+        assert!(!relabelled.iter().any(|(_, label)| label == "Отправить"));
+        assert!(relabelled.iter().any(|(_, label)| label == "Отмена"));
+    }
+
+    #[test]
+    fn orb_search_hides_its_keys_for_a_hardware_keyboard() {
+        let mut state = searching();
+        state
+            .keyboard
+            .set_source(saai_ui_core::KeyboardSource::Hardware);
+        assert!(super::orb_search_keys(1080, 2400, &state).is_empty());
+    }
+
+    #[test]
+    fn the_sphere_stops_where_the_search_keyboard_starts() {
+        let (width, height) = (1080, 2400);
+        let state = searching();
+        let keys_top = super::orb_search_keys(width, height, &state)
+            .iter()
+            .map(|(rect, _)| rect.y)
+            .min()
+            .expect("keys");
+        let strip_top = height - super::intent_keyboard_height(height);
+        assert!(keys_top >= strip_top, "{keys_top} vs {strip_top}");
+        let panel = crate::orb_space::search_panel(
+            width,
+            super::status_layer_height(),
+            strip_top,
+            3,
+            crate::render::orb_unit(),
+        );
+        assert!(panel.viewport.y + panel.viewport.height <= keys_top);
+        assert!(
+            panel.viewport.height >= 160 * crate::render::orb_unit() as u32,
+            "the sphere keeps real room above the keyboard"
+        );
+        assert!(panel.field.y >= super::status_layer_height());
     }
 
     #[test]
