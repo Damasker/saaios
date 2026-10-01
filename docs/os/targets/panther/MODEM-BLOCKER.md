@@ -1222,6 +1222,52 @@ ELFs/SOs + full `vendor.img` + research `libsitril.so`:
 Scripts: `diagnostics/tmp-vendor-deep-2f50-constbuild.py`,
 `tmp-vendor-deep-2f50-constbuild-vendor.py`.
 
+### 2026-10-01 — non-vendor factory partitions: still no catalog encoder
+
+**Live brief (COM13):** modem_state=**ONLINE**; card=PRESENT apps=1
+**app=PIN(2)** pin1=2 remain=3; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild;
+rmnet* **rx=0**; usb0=`172.31.7.1` / wlan IPv4 only — **no bearer**.
+ADB absent. Injector remains armed (no frame → **no send**).
+
+**Source:** factory `panther-td1a.221105.001` → inner
+`image-panther-td1a.221105.001.zip` (extracted under
+`diagnostics/fw/cdma-hunt/factory-td1a-images/`). Vendor already closed
+prior turn; this pass is **beyond vendor**.
+
+#### Partitions scanned
+
+| Image | Size | `SIM_INIT_REQ` / `IpcTxSimInit` / `SimInitMessage` | `/dev/oem_ipc` / `oem_ipc0` | ASCII `0x2f50` | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `system.img` | 872MB | **0** | **0** | **0** | AOSP `android.hardware.radio*-V1-ndk.so` name bank only; **0** `com.android.hardware.radio` APEX package string; **0** radio `.apex` path |
+| `product.img` | 2.9GB | **0** | **0** | **0** | chunk + full string scan; no encoder |
+| `system_ext.img` | 366MB | **0** | **0** | **0** | `rild_exynos` string **2×** in rilExternal symbol bank (not `/dev/oem_ipc` writer); Samsung `IOemSlsiRadioExternal` HIDL names — **≠** catalog OEM |
+| `system_other.img` | 25MB | **0** | **0** | **0** | empty for needles |
+| standalone radio APEX in image zip | — | — | — | — | **none** (no `*.apex` members); APEX content if any is inside FS images |
+
+Scripts: `diagnostics/tmp-extract-factory-nonvendor.py` (+`.out`),
+`tmp-nonvendor-apex-radio.py` (+`.out`).
+
+**`oem_ipc` ∧ catalog `0x2f50` / `SIM_INIT_REQ` encoder?** **No** in
+system / product / system_ext / system_other. Bare `MOVZ #0x2f50` hits in
+large images are false-friends (no co-located oem_ipc / SIM_INIT).
+
+**Live SIM_INIT?** **none** (no invent). **Bearer verified?** **no**.
+
+#### Policy (unchanged; strengthened)
+
+Non-vendor factory partitions do **not** supply the missing catalog OEM
+app header + 2B body. Soft ONLINE+bearer still needs an explicit exception:
+
+1. **Capture-only stock rild** once → `oem_ipc*` userspace bytes → stop →
+   `oem-ipc-inject` + `post-init-chase` (see `OEM-IPC-CAPTURE.md`)
+2. **External evidenced `0x2f50` wire dump** (matching Shannon OEM dialect)
+3. **Keep ban** — accept soft-lock terminal on this EU image under current
+   bans (no EFS / unsigned MAIN / CDMA-RatMap / invent frame)
+
+Do **not** start cbd/rild under ban; do **not** invent `0x2f50` body/zeros;
+do **not** treat AOSP `android.hardware.radio*` or `IOemSlsiRadioExternal`
+as catalog `SIM_INIT_REQ`.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

@@ -1,0 +1,102 @@
+tmp-nonvendor-apex-radio.py
+system.img head=00000000000000000000000000000000 sparse=False
+
+## system.img size=872452096
+  b'com.android.hardware.radio': 0 first=[]
+  b'com.android.hardware.radio.deprecated': 0 first=[]
+  b'com.google.android.ril': 0 first=[]
+  b'hardware.radio': 40 first=[47154543, 47154576, 47154616, 47154654, 47154697, 47154736, 47154777, 47154814, 47171852, 47171892, 47171940, 47171988]
+    @0x2cf856f: stats-V1-ndk.so.android.hardware.radio-V1-ndk.so.android.hardware.radio.config-V1-ndk.so.android.hardwar
+    @0x2cf8590: radio-V1-ndk.so.android.hardware.radio.config-V1-ndk.so.android.hardware.radio.data-V1-ndk.so.android.ha
+    @0x2cf85b8: onfig-V1-ndk.so.android.hardware.radio.data-V1-ndk.so.android.hardware.radio.messaging-V1-ndk.so.android
+    @0x2cf85de: .data-V1-ndk.so.android.hardware.radio.messaging-V1-ndk.so.android.hardware.radio.modem-V1-ndk.so.androi
+    @0x2cf8609: aging-V1-ndk.so.android.hardware.radio.modem-V1-ndk.so.android.hardware.radio.network-V1-ndk.so.android.
+    @0x2cf8630: modem-V1-ndk.so.android.hardware.radio.network-V1-ndk.so.android.hardware.radio.sim-V1-ndk.so.android.ha
+  b'rild_exynos': 0 first=[]
+  b'libsitril': 0 first=[]
+  b'libsec-ril': 0 first=[]
+  b'SitOem': 0 first=[]
+  b'SIM_INIT_REQ': 0 first=[]
+  b'IpcTxSimInit': 0 first=[]
+  b'SimInitMessage': 0 first=[]
+  b'/dev/oem_ipc': 0 first=[]
+  b'oem_ipc0': 0 first=[]
+  b'0x2f50': 0 first=[]
+  b'oem_ipc_message': 0 first=[]
+
+### apex name strings in system.img: 0
+  .apex paths with radio/ril: 0
+  no radio APEX ZIP carved near name hits (may be erofs/ext4-packed)
+
+## product.img size=2938241024
+  b'com.android.hardware.radio': 0 first=[]
+  b'com.android.hardware.radio.deprecated': 0 first=[]
+  b'com.google.android.ril': 0 first=[]
+  b'hardware.radio': 3 first=[1136820860, 1136821585, 1136827517]
+  b'rild_exynos': 0 first=[]
+  b'libsitril': 0 first=[]
+  b'libsec-ril': 0 first=[]
+  b'SitOem': 0 first=[]
+  b'SIM_INIT_REQ': 0 first=[]
+  b'IpcTxSimInit': 0 first=[]
+  b'SimInitMessage': 0 first=[]
+  b'/dev/oem_ipc': 0 first=[]
+  b'oem_ipc0': 0 first=[]
+  b'0x2f50': 0 first=[]
+  b'oem_ipc_message': 0 first=[]
+
+## system_ext.img size=365924352
+  b'com.android.hardware.radio': 0 first=[]
+  b'com.android.hardware.radio.deprecated': 0 first=[]
+  b'com.google.android.ril': 0 first=[]
+  b'hardware.radio': 36 first=[115085944, 115086054, 115091961, 115092042, 115092126, 115092210, 116321632, 116328257, 116329067, 116330061, 116331422, 116918957]
+    @0x6dc1278: .samsung_slsi.telephony.hardware.radioExternal@1.0::IOemSlsiRadioExternal]@Proxy.l[class or subclass of 
+    @0x6dc12e6: .samsung_slsi.telephony.hardware.radioExternal@1.1::IOemSlsiRadioExternal]@Proxy..]..] < ..] size=[..]> 
+    @0x6dc29f9: .samsung_slsi.telephony.hardware.radioExternal@1.0::IOemSlsiRadioExternal.Rvendor.samsung_slsi.telephony
+    @0x6dc2a4a: .samsung_slsi.telephony.hardware.radioExternal@1.0::IOemSlsiRadioExternalInd.Rvendor.samsung_slsi.teleph
+    @0x6dc2a9e: .samsung_slsi.telephony.hardware.radioExternal@1.0::IOemSlsiRadioExternalRes.Ovendor.samsung_slsi.teleph
+    @0x6dc2af2: .samsung_slsi.telephony.hardware.radioExternal@1.1::IOemSlsiRadioExternal..vendorRilExecRadioNode..vendo
+  b'rild_exynos': 2 first=[115090440, 172513914]
+  b'libsitril': 0 first=[]
+  b'libsec-ril': 0 first=[]
+  b'SitOem': 0 first=[]
+  b'SIM_INIT_REQ': 0 first=[]
+  b'IpcTxSimInit': 0 first=[]
+  b'SimInitMessage': 0 first=[]
+  b'/dev/oem_ipc': 0 first=[]
+  b'oem_ipc0': 0 first=[]
+  b'0x2f50': 0 first=[]
+  b'oem_ipc_message': 0 first=[]
+
+### apex name strings in system_ext.img: 0
+  .apex paths with radio/ril: 0
+  no radio APEX ZIP carved near name hits (may be erofs/ext4-packed)
+
+## system_other.img size=25018368
+  b'com.android.hardware.radio': 0 first=[]
+  b'com.android.hardware.radio.deprecated': 0 first=[]
+  b'com.google.android.ril': 0 first=[]
+  b'hardware.radio': 0 first=[]
+  b'rild_exynos': 0 first=[]
+  b'libsitril': 0 first=[]
+  b'libsec-ril': 0 first=[]
+  b'SitOem': 0 first=[]
+  b'SIM_INIT_REQ': 0 first=[]
+  b'IpcTxSimInit': 0 first=[]
+  b'SimInitMessage': 0 first=[]
+  b'/dev/oem_ipc': 0 first=[]
+  b'oem_ipc0': 0 first=[]
+  b'0x2f50': 0 first=[]
+  b'oem_ipc_message': 0 first=[]
+
+### apex name strings in system_other.img: 0
+  .apex paths with radio/ril: 0
+  no radio APEX ZIP carved near name hits (may be erofs/ext4-packed)
+
+## SUMMARY
+  system.img: SIM_INIT_REQ=0 IpcTxSimInit=0 oem_ipc=0 hardware.radio=0
+  product.img: SIM_INIT_REQ=0 IpcTxSimInit=0 oem_ipc=0 hardware.radio=0
+  system_ext.img: SIM_INIT_REQ=0 IpcTxSimInit=0 oem_ipc=0 hardware.radio=0
+  system_other.img: SIM_INIT_REQ=0 IpcTxSimInit=0 oem_ipc=0 hardware.radio=0
+  Encoder found? NO — catalog 0x2f50 encoder not in system/product/system_ext/system_other (name-level + oem_ipc).
+  Note: Shannon catalog OEM SIM_INIT lives in CP catalog + host writer; AOSP com.android.hardware.radio APEX is IRadio HAL, not oem_ipc catalog encoder.

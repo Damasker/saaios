@@ -660,6 +660,15 @@ on device (`/data/saaios/bin/oem-ipc-inject`, `post-init-chase.sh`).
 **No live try** (no new lever). Soft-lock **terminal** under bans until
 capture-only rild or external frame. BLOCKER § stock-vs-soft-broad-hunt.
 
+**Non-vendor factory partitions (2026-10-01):** Live ONLINE / PIN(2) /
+pin1=2 / oem_ipc0 RDWR / rmnet rx=0 / **no bearer**. Extracted factory
+td1a `system.img` + `product.img` + `system_ext.img` + `system_other.img`
+(no standalone radio APEX in image zip). Needles `SIM_INIT_REQ` /
+`IpcTxSimInit` / `/dev/oem_ipc` / ASCII `0x2f50` all **0**. system_ext has
+`rild_exynos` symbol-bank strings only (no oem_ipc). **Encoder found? No.**
+**No live send.** Policy still: capture-only rild or external `0x2f50`
+dump. BLOCKER § non-vendor-partitions.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

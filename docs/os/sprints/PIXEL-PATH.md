@@ -255,7 +255,9 @@ diagnose (ADR-238, `351b0b6f…`).
   + `OEM-IPC-CAPTURE.md` (no invent; do not start rild/cbd under ban);
   inject tools **deployed** on panther. Stock vs soft CPIF: no missing
   signed boot/mailbox/SIT step for INIT; full factory vendor hunt still
-  finds **no** catalog `0x2f50` encoder. This is diagnostic, not a modem
+  finds **no** catalog `0x2f50` encoder; factory **system/product/
+  system_ext/system_other** also **0** `SIM_INIT_REQ`/`oem_ipc` (no
+  standalone radio APEX in image zip). This is diagnostic, not a modem
   service, and not cellular registration/calls/SMS/data.
   See `docs/os/targets/panther/MODEM-*.md` and [MODEM-ROADMAP.md](MODEM-ROADMAP.md).
 - Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
