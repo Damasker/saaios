@@ -6012,3 +6012,59 @@ app_state=READY(5), while the initial registration snapshot was 0 and
 bearer works. Because reboot ended the one-grant process, its pre-reboot
 terminal log is not a post-OFFLINE exit-code PASS. Full RFS transfer remains
 unimplemented and no candidate was promoted.
+
+## 2026-10-02: early SGC accepted on the radio edge, still no registration
+
+Interactive access was restored over the USB serial console (`COM13`, root
+shell). The SSH key the operator placed on "server 110"/R620 was unreachable
+from this host (the home LAN is not routable from here and every local key is
+refused by the phone's dropbear); it was not needed once the serial console
+gave a root shell. File transfer used the existing USB-NCM push
+(`serve-once` → `nc`). No ADB and no persistent cbd/rild.
+
+The separately named early-SGC owner (ARM64 SHA-256
+`322ac00d2e6e50bf7e5502ebf260caee80c1bad0fbad0937fe564836b22af524`) and probe
+(`435602ea456a2369f10a6b3f41a2730cadf57cdaf121e4859cf6ff2d3ee3fde6`) were
+rebuilt from the tree, checked on the phone by SHA-256, `--mode`, probe owner
+path and self-test, and installed under new names without replacing the default
+binaries. A dedicated `owner-handoff-sgc-early.sh` used its own log paths, the
+same CP-OFFLINE and log guards as the `sgc-once` wrapper, and mounted persist
+read-only only for the `cpsha`; the original EFS was never mounted.
+
+The BusyBox `reboot` applet does nothing here — native-init reboots only via
+the `reboot()` syscall — so a forced `reboot -f` (after `sync`) was used. The
+device returned at uptime 1 min with cpif modules unloaded, no owner, and no
+`modem_state` node. A read-only preflight confirmed the original EFS (`sda5`)
+unmounted and `rmnet0` rx/tx 0/0 with no IPv4. The guarded handoff then loaded
+the cpif modules (CP OFFLINE), booted the reviewed B firmware
+(`PROBE END result=0`, `probe_rc=0`, CP OFFLINE→ONLINE), unmounted persist, and
+handed the fresh channels to the early-SGC owner.
+
+The owner latched the early radio edge — `cp_ind 0x0803` len 8 then
+`cp_ind 0x0802` len 12 `radio_state_raw=0` (INITIALIZED) at +9.817 s — and sent
+the single factory 24-byte `0x0404` SGC at +10.323 s, within the 2 s deadline
+(trigger `0x0803-0x0802-raw0`, target `europen-400`). CP returned
+`response=yes error_raw=0 status=accepted observation=released`. This is the
+first run where the factory carrier SET landed on the early radio edge instead
+of the +60 s settled baseline. SIM then refreshed to card 1/apps 1,
+app_state READY(5), PIN1 DISABLED(3).
+
+The +60 s settled snapshot matched every prior boot: radio ON(10), voice
+registration 0/reject 0, data registration 0/reject 0/tech 0, automatic
+selection 0, preferred raw 16, operator response success length 119, signal
+response success length 210 with the low seven presence bits 0, modem_stack
+enabled. Registration-state indications arrived (`0x0700` len 88, `0x0701`
+len 86, `0x0703`, `0x070b`, `0x0702`, `0x0900`, `0x0810`) but registration
+never moved off 0. Over three more minutes `rmnet0` rx/tx stayed 0/0 with no
+IPv4 and CP stayed ONLINE. No PLMN, operator, signal, or SIM-secret payload was
+logged.
+
+Applying the exact factory SGC at the exact factory early stage is a real
+mechanical advance — the CP now accepts the carrier config on the
+radio-available edge — but it does **not** by itself produce camp, registration
+or a bearer. Stage-1 carrier/region timing is therefore not the sole missing
+precondition. The next isolated candidates at the same radio-edge trigger, one
+at a time, are early `SetModemsConfig 0x093f` and early camp-on `0x0800`
+(`TrySetRadioPower(10)`); each needs its own guarded mutually-exclusive build
+and self-test before a device run. No NV, APN, PIN, CardPower or EFS write was
+made.

@@ -1,5 +1,34 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**Early-SGC live run — accepted early but no camp/registration (2026-10-02):**
+Phone shell was restored over the **USB serial console** (`COM13` root shell);
+the "server 110"/R620 key was unreachable from this host and turned out to be
+unnecessary. The `sgc-early-once` owner (ARM64 SHA-256 `322ac00d…`) and probe
+(`435602ea…`) passed on-device `--mode`/owner-path/self-test checks and were
+installed without replacing the default binaries; a dedicated
+`owner-handoff-sgc-early.sh` ran only after a forced AP reboot (`reboot -f` —
+the BusyBox `reboot` applet is a no-op against native-init, which reboots only
+through the `reboot()` syscall). On the fresh boot the guarded probe booted the
+reviewed B firmware (`probe_rc=0`, CP `OFFLINE`→`ONLINE`); persist was mounted
+**read-only** only to read `cpsha`, original EFS never mounted. The owner
+latched the early radio edge — `cp_ind 0x0803` (len 8) then `0x0802` (len 12)
+`radio_state_raw=0` INITIALIZED at **+9.817 s** — and dispatched the single
+factory `0x0404` SGC at **+10.323 s**, inside its 2 s deadline (trigger
+`0x0803-0x0802-raw0`, target `europen-400`); the CP **accepted** it:
+`response=yes error_raw=0 status=accepted`. This is the first time the factory
+carrier SET landed on the early radio edge rather than the +60 s settled
+baseline. SIM then READY(5)/PIN1 DISABLED(3). But the +60 s settled snapshot
+was identical to every prior boot: radio ON(10), **voice/data
+`registration_raw=0` `reject_raw=0` `tech_raw=0`**, automatic selection,
+preferred raw 16, operator len 119, **signal len 210 `mask_low7=0`**,
+modem_stack enabled; `rmnet0` rx/tx **0/0, no IPv4**; CP stayed ONLINE.
+**Bearer verified? no.** Early-SGC acceptance is a mechanical advance but is
+**not** sufficient for camp/registration. Next isolated candidates at the same
+stage-1 trigger, one at a time: early `SetModemsConfig 0x093f`, then early
+camp-on `0x0800` (each needs a new guarded build mode). No secrets, NV, APN,
+PIN, CardPower or EFS writes were made. Detail:
+[MODEM-07 §Early SGC live run](../../sprints/MODEM-07-RFS-QUARANTINE.md#early-sgc-live-run-2026-10-02).
+
 **Factory-order RE + early-SGC implementation (2026-10-02):** With the live
 stack at SIM **READY(5)** / pin1 **DISABLED(3)** / radio ON but
 registration 0 / no `rmnet` bearer and `0x0706` active scan returning

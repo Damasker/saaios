@@ -1080,3 +1080,68 @@ artifacts build via `build-owner-sgc-early-once.sh` (owner +
 read-only EFS preflight, independent review, installed-hash + on-device
 self-test), then watch `0x0802`/registration; if registered, AllowData /
 SetupDataCall and verify `rmnet` IPv4 or rx/tx.
+
+## Early SGC live run (2026-10-02)
+
+The operator-gated early-SGC run was executed. Phone interactive access was
+restored over the **USB serial console** (`COM13`, root `/ #`); the
+"server 110"/R620 SSH key named by the operator was unreachable from this host
+and proved unnecessary once the serial console gave a root shell. All device
+I/O went through that console plus the existing USB-NCM file push
+(`serve-once` → `nc`); no ADB, no persistent cbd/rild.
+
+**Install + self-checks.** The ARM64-static `sgc-early-once` owner
+(SHA-256 `322ac00d2e6e50bf7e5502ebf260caee80c1bad0fbad0937fe564836b22af524`)
+and probe
+(`435602ea456a2369f10a6b3f41a2730cadf57cdaf121e4859cf6ff2d3ee3fde6`) were
+rebuilt reproducibly from this tree, pushed, and verified on-device by SHA-256,
+`--mode` (`sgc-early-once`), probe `--owner-exec`/`--owner-log` match, and the
+on-device `self-test` (PASS). They were installed under their own names; the
+default passive binaries, scan and late-SGC owners were untouched. A dedicated
+`owner-handoff-sgc-early.sh` (same guards as the `sgc-once` wrapper: CP-OFFLINE
+gates, log-symlink/existence checks, **read-only** persist mount only, original
+EFS never mounted) was installed and `sh -n`-clean.
+
+**Fresh boot.** The BusyBox `reboot` applet is a no-op here (native-init does
+not catch init signals; it reboots only via the `reboot()` syscall), so a
+forced `reboot -f` was used after `sync`. The device came back at uptime 1 min
+with the cpif modules unloaded, no channel owner, and no `modem_state` node —
+a clean pre-bring-up state. Read-only preflight confirmed the original EFS
+(`sda5`) was not mounted and `rmnet0` rx/tx were 0/0 with no IPv4.
+
+**Guarded bring-up.** The handoff loaded the cpif modules (CP → OFFLINE),
+mounted persist read-only for the `cpsha`, and the probe booted the reviewed B
+firmware: `PROBE END result=0`, `probe_rc=0`, CP `OFFLINE`→`ONLINE`. Persist
+was unmounted; the early-SGC owner took the fresh channels
+(`--ipc-fd 5 --rfs-fd 7 --ready-fd 8`).
+
+**Result — early SGC accepted, no camp/registration.** The owner latched the
+early radio edge: `cp_ind 0x0803` (len 8) then `cp_ind 0x0802` (len 12)
+`radio_state_raw=0` = INITIALIZED at **+9.817 s**. It then dispatched the
+single factory `0x0404` SGC at **+10.323 s**, inside its 2 s deadline
+(`trigger=0x0803-0x0802-raw0 target=europen-400`), and the CP **accepted** it:
+`response=yes error_raw=0 status=accepted observation=released no-retry`. This
+is the first run in which the factory carrier SET landed on the early radio
+edge rather than the +60 s settled baseline. SIM then refreshed to
+card 1 / apps 1, app_state READY(5), PIN1 DISABLED(3).
+
+The +60 s settled snapshot was nonetheless identical to every prior boot:
+radio ON(10); voice `registration_raw=0 reject_raw=0`; data
+`registration_raw=0 reject_raw=0 tech_raw=0`; selection automatic (mode 0);
+preferred raw 16; operator response success len 119; **signal response success
+len 210 with `mask_low7=0`**; modem_stack enabled. Registration-state
+indications arrived (`0x0700` len 88, `0x0701` len 86, `0x0703`, `0x070b`,
+`0x0702`, `0x0900`, `0x0810`) but registration never left 0. Over three more
+minutes `rmnet0` rx/tx stayed **0/0 with no IPv4** and CP stayed ONLINE. No
+PLMN, operator, signal or SIM-secret payload was logged.
+
+**Conclusion.** Applying the exact factory SGC at the exact factory early
+stage is a genuine mechanical advance — the CP now accepts the carrier SET on
+the radio-available edge — but it is **not** sufficient to make the modem camp
+or register, and no bearer appeared. **Bearer verified? no.** The stage-1
+carrier/region timing is therefore not the sole missing precondition. The next
+isolated candidates at the same `0x0803`→`0x0802`-raw-0 trigger, one at a time
+with evidence, are early `SetModemsConfig 0x093f` and early camp-on `0x0800`
+(`TrySetRadioPower(10)`); each needs its own guarded, mutually exclusive build
+mode built and self-tested the same way before any device run. No secrets, NV,
+APN, PIN, CardPower or EFS writes were made in this run.
