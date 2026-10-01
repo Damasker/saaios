@@ -1,29 +1,29 @@
 #!/bin/sh
-# After physical SIM tray reseat: watch soft-lock edge, then proven
-# CardPower-VerifyPin A (AID) if needed, then Radio/LTE/reg/rmnet.
+# Watch a SIM edge, then run the guarded post-READY network diagnostic.
 # Never logs PIN digits or AID. Stop if remain<=1. No POWER_OFF / crash.
 #
-# Handles both soft-lock shapes:
+# Observes these published PIN shapes:
 #   app=PIN + pin1=DISABLED(3)
 #   app=PIN + pin1=ENABLED_VERIFIED(2)  (Pin1Verified OK; still no START_NETWORK)
+#   app=PIN + pin1=NOT_VERIFIED(1) (VerifyPin requires explicit opt-in)
 #
-# Soft-lock terminal under bans: HotSwap + CP self-init falsified. Signed
-# CPIF caps (AP part0=3 / CP part0=7) exercised at INIT_START - not READY.
-# Blocker = waiting external catalog OEM 0x2f50 (SIM_INIT_REQ) frame;
-# inject+chase armed; do not invent; do not start rild.
+# Tested tray reseat and passive wait left app at PIN. A concurrent diagnostic
+# twice reached READY from PIN/pin1=1 using VerifyPin A+AID without CardPower.
+# It held SIT during the RFS 7->3->6 test; that test cannot prove self-init.
+# Current CP Present is not on SIT wire.
+# CPIF caps (AP part0=3 / CP part0=7) were exercised at INIT_START.
 #
-# Post-EDGE (RE): READY needs Present/+0xBF6==2 (FN_A CDMA only; EU No-CDMA
-# RatMap => remote cannot force READY). Once app in {1,4,5}:
-#   VerifyPin(if pin1 0|1) -> gate START_NETWORK -> Radio -> LTE_ONLY ->
-#   NetworkSelectionAuto -> AllowData -> GetPsService -> data-reg ->
-#   GetDataCallList -> SetupDataCall(if APN) -> rmnet IPv4/rx+tx
+# Once a fresh SIM status confirms READY(5) and radio ON(10):
+#   guarded ready-network-once (selection auto if needed + AllowData once)
+#   -> data-reg 1/5 -> optional SetupDataCall(if APN) -> rmnet IPv4/rx+tx
 #
 # WATCH_ROUNDS: each tray-watch is ~180s; default 12 (~36 min).
 # PERSIST=1: when rounds expire without bearer, re-arm another batch
-#   (same flock); reseat hours later still triggers chase. Exit only on
+#   (same flock); later state changes can trigger chase. Exit only on
 #   BEARER_OK or fatal OFFLINE/ABORT.
-# VERIFY_TOOL: optional RFS-aware CardPower+VerifyPin A binary
-#   (default: /tmp then /data/saaios/bin card-then-verify-a).
+# VERIFY_TOOL: explicitly chosen binary; never selected automatically.
+# ALLOW_PIN_VERIFY=1: explicit opt-in; default 0 never attempts PIN.
+# ALLOW_SETUP_DATA_CALL=1: explicit opt-in after registration; default 0.
 # APN_FILE: /data/saaios/etc/apn (operator-supplied host; never invent).
 set -eu
 SIT=${SIT:-/data/saaios/bin/sit-sim-status}
@@ -33,6 +33,11 @@ WATCH_ROUNDS=${WATCH_ROUNDS:-12}
 BEARER_POLLS=${BEARER_POLLS:-60}
 PERSIST=${PERSIST:-1}
 APN_FILE=${APN_FILE:-/data/saaios/etc/apn}
+ALLOW_PIN_VERIFY=${ALLOW_PIN_VERIFY:-0}
+[ "$ALLOW_PIN_VERIFY" = "1" ] || ALLOW_PIN_VERIFY=0
+ALLOW_SETUP_DATA_CALL=${ALLOW_SETUP_DATA_CALL:-0}
+[ "$ALLOW_SETUP_DATA_CALL" = "1" ] || ALLOW_SETUP_DATA_CALL=0
+PIN_VERIFY_ATTEMPTED=0
 mkdir -p "$(dirname "$OUT")" /run /data/saaios/etc
 {
   printf '=== tray-bearer-chase start %s rounds=%s persist=%s ===\n' "$(date -Iseconds 2>/dev/null || date)" "$WATCH_ROUNDS" "$PERSIST"
@@ -41,7 +46,7 @@ log() { printf '%s\n' "$*" | tee -a "$OUT"; }
 
 # Status snapshot for soft-lock hold (no secrets; matches saai-modemd soft-lock).
 log_soft_lock_status() {
-  log "SOFT_LOCK_STATUS modem06=yes cpif_caps_exercised=yes cpif_caps_note=AP_part0=3(PKTPROC_UL|CH_EXT)_CP_part0=7(+36BIT) blocker=waiting_external_catalog_oem_0x2f50_SIM_INIT_REQ_frame policy=capture_only_or_external_dump_no_invent inject_armed=oem-ipc-inject+post-init-chase goal=incomplete_until_rmnet_ipv4 ${1:-}"
+  log "SOFT_LOCK_STATUS modem06=yes cpif_caps_exercised=yes cpif_caps_note=AP_part0=3(PKTPROC_UL|CH_EXT)_CP_part0=7(+36BIT) blocker=cp_app_state_pin_blocks_start_network present_status=unknown_not_on_sit_wire panther_observed=verify_pin_a_aid_without_cardpower_ready_twice rfs_causality=unproven_concurrent_verify_pin_sit_owner goal=incomplete_until_rmnet_ipv4 ${1:-}"
 }
 
 # Resolve helper: prefer /tmp overlay, else /data/saaios/bin (deployed stock).
@@ -63,14 +68,10 @@ resolve_tool() {
 }
 
 VERIFY_TOOL=${VERIFY_TOOL:-}
-if [ -z "$VERIFY_TOOL" ]; then
-  VERIFY_TOOL=$(resolve_tool card-then-verify-a || true)
-fi
-ALLOW_DATA=$(resolve_tool allow-data-once || true)
-GET_PS=$(resolve_tool get-ps-service || true)
-RADIO_ON=$(resolve_tool radio-cycle-no-verify || true)
-GET_DCL=$(resolve_tool get-data-call-list || true)
+# No default verification tool: the proven pin1=1 path skips CardPower.
+# ALLOW_PIN_VERIFY=1 also requires an explicitly selected binary.
 SETUP_DC=$(resolve_tool setup-data-call || true)
+READY_NETWORK=${READY_NETWORK:-$BIN/ready-network-once}
 
 # Refuse concurrent chases via flock (ps cmdline matches self under nohup/env).
 CHASE_LOCK=${CHASE_LOCK:-/run/saaios-tray-chase.lock}
@@ -84,7 +85,7 @@ STATE=$(cat /sys/devices/platform/cpif/modem_state 2>/dev/null || echo DEAD)
 log "STATE=$STATE"
 [ "$STATE" = ONLINE ] || { log "need ONLINE"; exit 1; }
 
-log "TOOLS verify=${VERIFY_TOOL:-none} allow=${ALLOW_DATA:-none} getps=${GET_PS:-none} radio=${RADIO_ON:-none} getdcl=${GET_DCL:-none} setupdc=${SETUP_DC:-none} persist=$PERSIST"
+log "TOOLS verify=${VERIFY_TOOL:-none} pin_verify_opt_in=$ALLOW_PIN_VERIFY network=${READY_NETWORK:-none} setupdc=${SETUP_DC:-none} setupdc_opt_in=$ALLOW_SETUP_DATA_CALL persist=$PERSIST"
 if [ -r "$APN_FILE" ]; then
   log "APN_FILE present path=$APN_FILE (contents not logged)"
 else
@@ -105,32 +106,16 @@ sim_field() {
   echo "$2" | tr ' ' '\n' | grep -E "^${1}=" | head -1 | cut -d= -f2
 }
 
-# Mirror sit-sim-status present_infer (0x0200 has no +0xBF6).
-# Validated 2026-09-30: byte17=+0xBF4 (GET_APP), not Present/+0xBF6.
-# Maps last STATUS→SET_APP decision: Present 1→PUK(#3), 2→READY(#5),
-# 3→PERSO(#4), else (incl. 0)→PIN→notin_1_2_3. HotSwap live: still notin.
-present_infer_from_app() {
-  case "${1:-}" in
-    5) printf '%s\n' was_2 ;;
-    3) printf '%s\n' was_1 ;;
-    4) printf '%s\n' was_3 ;;
-    2) printf '%s\n' notin_1_2_3 ;;
-    1) printf '%s\n' 'n/a(DETECTED)' ;;
-    0) printf '%s\n' 'n/a(UNKNOWN)' ;;
-    *) printf '%s\n' 'n/a' ;;
-  esac
-}
-
 # Decisive falsifier line on EDGE/ABSENT/PRESENT (no secrets).
 # post_edge=yes means unlock+chase will run; no means soft-lock hold.
 log_edge_decision() {
-  # usage: log_edge_decision <tag> <app> <pin1> <card> <present_infer> <post_edge_yes_no> [extra]
-  log "EDGE_DECISION tag=$1 app=${2:-?} pin1=${3:-?} card=${4:-?} present_infer=${5:-?} post_edge=$6 ${7:-}"
+  # usage: log_edge_decision <tag> <app> <pin1> <card> <present_status> <post_edge_yes_no> [extra]
+  log "EDGE_DECISION tag=$1 app=${2:-?} pin1=${3:-?} card=${4:-?} present_status=${5:-unknown} post_edge=$6 ${7:-}"
 }
 
 remain_ok() {
   R=$(sim_field pin1_remain_raw "$1")
-  [ -n "$R" ] || return 0
+  [ -n "$R" ] || return 1
   [ "$R" -gt 1 ] 2>/dev/null
 }
 
@@ -142,147 +127,155 @@ app_start_network_ok() {
   esac
 }
 
-# After EDGE: if pin1==1, CardPower+VerifyPin A with AID (proven remote path).
-# pin1=2 already ENABLED_VERIFIED - skip CardPower (would reset to 1).
+# After a fresh PIN state: CardPower+VerifyPin requires explicit opt-in and
+# a measured pin1=0|1 with more than one attempt left.
 # Logs only app/pin1/remain/error - never PIN/AID bytes.
 unlock_after_edge() {
   log "=== phase1b Pin1Verified attempt (no secrets) ==="
-  rm -f /run/saaios-sit-status.lock
   set +e
-  SIM=$("$SIT" query-sim-status 2>/dev/null | tr '\n' ' ')
+  RAW_SIM=$("$SIT" query-sim-status 2>/dev/null)
+  SIM_RC=$?
   set -e
+  SIM=$(printf '%s' "$RAW_SIM" | tr '\n' ' ')
   APP=$(sim_field app0_state_raw "$SIM")
   PIN1=$(sim_field pin1_state_raw "$SIM")
   REM=$(sim_field pin1_remain_raw "$SIM")
-  log "pre_unlock app_raw=${APP:-?} pin1=${PIN1:-?} remain=${REM:-?}"
+  CARD=$(sim_field card_state_raw "$SIM")
+  log "pre_unlock app_raw=${APP:-?} pin1=${PIN1:-?} remain=${REM:-?} card=${CARD:-?} query_rc=$SIM_RC"
 
-  if ! remain_ok "$SIM"; then
-    log "STOP remain<=1 - VerifyPin not sent"
+  if [ "$SIM_RC" -ne 0 ] || [ -z "$APP" ] || [ -z "$PIN1" ] || [ "$CARD" != "1" ]; then
+    log "STOP SIM query failed, incomplete, or card absent - VerifyPin not sent"
     return 1
   fi
-
   # Already READY / DETECTED / PERSO - skip verify
   if app_start_network_ok "${APP:-}"; then
     log "app already ${APP} (START_NETWORK set) - skip VerifyPin"
     return 0
   fi
-
-  # pin1=2 (ENABLED_VERIFIED) - Pin1Verified already; skip CardPower (would reset)
-  if [ "${PIN1:-}" = "2" ]; then
-    log "pin1=2 already ENABLED_VERIFIED - skip CardPower/VerifyPin"
-    return 0
+  if [ "$APP" != "2" ]; then
+    log "STOP app=$APP is not a PIN verification state"
+    return 1
+  fi
+  case "$PIN1" in
+    2|3)
+      log "pin1=$PIN1 already verified or disabled - skip CardPower/VerifyPin"
+      return 0
+      ;;
+    0|1)
+      if [ "$ALLOW_PIN_VERIFY" != "1" ]; then
+        log "STOP PIN verification requires ALLOW_PIN_VERIFY=1 - VerifyPin not sent"
+        return 1
+      fi
+      ;;
+    *)
+      log "STOP unrecognized pin1=$PIN1 - VerifyPin not sent"
+      return 1
+      ;;
+  esac
+  if ! remain_ok "$SIM"; then
+    log "STOP remaining PIN attempts missing or <=1 - VerifyPin not sent"
+    return 1
+  fi
+  if [ "$PIN_VERIFY_ATTEMPTED" = "1" ]; then
+    log "STOP this watcher already made its one permitted VerifyPin attempt"
+    return 1
   fi
 
   if [ -n "${VERIFY_TOOL:-}" ] && [ -x "$VERIFY_TOOL" ]; then
-    log "running VERIFY_TOOL (CardPower then VerifyPin A+AID if pin1=1)"
+    log "running explicitly enabled VERIFY_TOOL once"
+    PIN_VERIFY_ATTEMPTED=1
     set +e
-    "$VERIFY_TOOL" 2>&1 | tee -a "$OUT" | grep -E '^(pre|after|SIM |card |radio |VerifyPin |RESULT|CONFIRMED|STOP|pin1=|B skipped|TOOL)' || true
+    "$VERIFY_TOOL" >/dev/null 2>&1
+    VERIFY_RC=$?
     set -e
+    log "VERIFY_TOOL exit=$VERIFY_RC (output withheld to protect PIN/AID)"
   else
-    log "VERIFY_TOOL missing - Radio chase only"
+    log "VERIFY_TOOL missing - VerifyPin not sent"
+    return 1
   fi
 
   set +e
-  SIM2=$("$SIT" query-sim-status 2>/dev/null | tr '\n' ' ')
+  RAW_SIM2=$("$SIT" query-sim-status 2>/dev/null)
+  SIM2_RC=$?
   set -e
-  log "post_unlock app_raw=$(sim_field app0_state_raw "$SIM2") pin1=$(sim_field pin1_state_raw "$SIM2") remain=$(sim_field pin1_remain_raw "$SIM2")"
+  SIM2=$(printf '%s' "$RAW_SIM2" | tr '\n' ' ')
+  log "post_unlock app_raw=$(sim_field app0_state_raw "$SIM2") pin1=$(sim_field pin1_state_raw "$SIM2") remain=$(sim_field pin1_remain_raw "$SIM2") query_rc=$SIM2_RC"
   return 0
 }
 
 chase_bearer() {
   log "=== phase2 bearer chase (post-EDGE pipeline) ==="
-  rm -f /run/saaios-sit-status.lock
 
-  # Gate: START_NETWORK only allows app in {1,4,5}.
+  # CP START_NETWORK accepts {1,4,5}; this guarded runner requires READY(5).
   set +e
-  SIM0=$("$SIT" query-sim-status 2>/dev/null | tr '\n' ' ')
+  RAW_SIM0=$("$SIT" query-sim-status 2>/dev/null)
+  SIM0_RC=$?
   set -e
+  SIM0=$(printf '%s' "$RAW_SIM0" | tr '\n' ' ')
   APP0=$(sim_field app0_state_raw "$SIM0")
   PIN10=$(sim_field pin1_state_raw "$SIM0")
-  log "chase_gate app_raw=${APP0:-?} pin1=${PIN10:-?} (START_NETWORK needs 1|4|5)"
+  CARD0=$(sim_field card_state_raw "$SIM0")
+  log "chase_gate app_raw=${APP0:-?} pin1=${PIN10:-?} card=${CARD0:-?} query_rc=$SIM0_RC (START_NETWORK needs 1|4|5)"
 
   START_OK=0
-  if app_start_network_ok "${APP0:-}"; then
+  if [ "$SIM0_RC" -eq 0 ] && [ "${APP0:-}" = "5" ] && [ "${CARD0:-}" = "1" ]; then
     START_OK=1
-    log "chase_gate START_NETWORK_ALLOWED=yes - running LTE/AllowData/GetPs/reg/rmnet"
+    log "chase_gate READY=yes - running guarded network diagnostic"
   else
-    log "chase_gate START_NETWORK_ALLOWED=no (app=${APP0:-?}) - Radio/LTE/AllowData still run; PS may stay idle until reseat READY"
+    log "chase_gate READY=no (app=${APP0:-?}) - guarded runner requires published READY(5)"
+    return 1
   fi
-
+  if [ ! -x "$READY_NETWORK" ]; then
+    log "guarded ready-network-once missing at $READY_NETWORK - network SETs deferred"
+    return 1
+  fi
   set +e
-  "$SIT" query-radio-state 2>&1 | tee -a "$OUT"
-  # Prefer ON-only if available; avoid full radio-power-cycle VerifyPin empty
-  if [ -n "${RADIO_ON:-}" ] && [ -x "$RADIO_ON" ]; then
-    "$RADIO_ON" 2>&1 | tee -a "$OUT" || true
-  elif "$SIT" 2>&1 | grep -q radio-power-cycle; then
-    "$SIT" radio-power-cycle 2>&1 | tee -a "$OUT"
-  fi
+  NETWORK_OUT=$("$READY_NETWORK" run 2>&1)
+  NETWORK_RC=$?
+  set -e
+  printf '%s\n' "$NETWORK_OUT" | grep -E '^(preflight|selection|AllowData|poll=|RESULT|ABORT)' | tee -a "$OUT" || true
+  log "ready-network-once exit=$NETWORK_RC"
+  [ "$NETWORK_RC" -eq 0 ] || return 1
 
-  # LTE_ONLY (preferred=11) then auto selection (0x0704) - proven signed path.
-  "$SIT" set-preferred-lte 2>&1 | tee -a "$OUT"
-  if "$SIT" 2>&1 | grep -q query-preferred-network; then
-    "$SIT" query-preferred-network 2>&1 | tee -a "$OUT" || true
-  fi
-  "$SIT" set-network-selection-auto 2>&1 | tee -a "$OUT"
-
-  if [ -n "${ALLOW_DATA:-}" ] && [ -x "$ALLOW_DATA" ]; then
-    log "AllowData 0x0710 allow=1 via $ALLOW_DATA"
-    "$ALLOW_DATA" 2>&1 | tee -a "$OUT" || true
-  else
-    log "AllowData tool missing - skip 0x0710"
-  fi
-
-  # Proven empty GET after Radio/LTE; helpful once app?{1,4,5}.
-  if [ -n "${GET_PS:-}" ] && [ -x "$GET_PS" ]; then
-    log "GetPsService 0x0711 via $GET_PS"
-    "$GET_PS" 2>&1 | tee -a "$OUT" || true
-  fi
-  if [ -n "${GET_DCL:-}" ] && [ -x "$GET_DCL" ]; then
-    log "GetDataCallList 0x0602 via $GET_DCL"
-    "$GET_DCL" 2>&1 | tee -a "$OUT" || true
-  fi
-  # SetupDataCall 0x0600 len246 only when APN file/tool present (no invent).
-  if [ "$START_OK" -eq 1 ] && [ -n "${SETUP_DC:-}" ] && [ -x "$SETUP_DC" ]; then
-    if [ -r "$APN_FILE" ]; then
-      log "SetupDataCall 0x0600 via $SETUP_DC (APN from $APN_FILE; string not logged)"
-      set +e
-      "$SETUP_DC" --apn-file "$APN_FILE" 2>&1 | tee -a "$OUT" | grep -E '^(SetupDataCall|apn_hint|requires|lock|open|write|ipc )' || true
-      set -e
-    else
-      log "SetupDataCall deferred_no_apn (write carrier APN to $APN_FILE)"
-    fi
-  elif [ "$START_OK" -eq 1 ]; then
-    log "SetupDataCall tool missing - skip 0x0600"
-  fi
+  # Old GET helpers also open RFS with incomplete handling. The guarded
+  # runner owns the SIT sequence; leave RFS to its separate broker.
+  # SetupDataCall remains deferred until a successful reg=1/5 query below.
+  log "SetupDataCall deferred_until_data_registration_1_or_5"
   set -e
 
   i=0
   while [ "$i" -lt "$BEARER_POLLS" ]; do
     set +e
-    "$SIT" query-data-registration 2>&1 | tee -a "$OUT"
-    REG=$("$SIT" query-data-registration 2>/dev/null | tr '\n' ' ')
+    REG_RAW=$("$SIT" query-data-registration 2>/dev/null)
+    REG_RC=$?
     set -e
-    # Mid-poll: if reg looks active, re-hit GetPsService (signed AP=3/CP=7 path).
-    if echo "$REG" | grep -qiE 'registered|reg_state_raw=[1-5]|registration_raw=[1-5]'; then
-      if [ -n "${GET_PS:-}" ] && [ -x "$GET_PS" ]; then
-        set +e
-        "$GET_PS" 2>&1 | tee -a "$OUT" || true
-        set -e
-      fi
-      # Re-assert LTE_ONLY + AllowData once camp looks alive.
+    REG=$(printf '%s' "$REG_RAW" | tr '\n' ' ')
+    REG_STATE=$(sim_field registration_raw "$REG")
+    log "data_registration_raw=${REG_STATE:-?} query_rc=$REG_RC poll=$i"
+    REGISTERED=0
+    if [ "$REG_RC" -eq 0 ]; then
+      case "$REG_STATE" in 1|5) REGISTERED=1 ;; esac
+    fi
+    # Only home(1) or roaming(5) permits the data-call request.
+    if [ "$REGISTERED" -eq 1 ]; then
+      # The guarded one-shot already handled selection and AllowData.
       if [ "$START_OK" -eq 1 ]; then
         set +e
-        "$SIT" set-preferred-lte 2>&1 | tee -a "$OUT" || true
-        if [ -n "${ALLOW_DATA:-}" ] && [ -x "$ALLOW_DATA" ]; then
-          "$ALLOW_DATA" 2>&1 | tee -a "$OUT" || true
-        fi
-        if [ -n "${SETUP_DC:-}" ] && [ -x "$SETUP_DC" ] && [ -r "$APN_FILE" ]; then
-          "$SETUP_DC" --apn-file "$APN_FILE" 2>&1 | tee -a "$OUT" | grep -E '^(SetupDataCall|apn_hint|requires|lock|open|write|ipc )' || true
+        if [ "$ALLOW_SETUP_DATA_CALL" != "1" ]; then
+          log "SetupDataCall deferred_explicit_opt_in_required"
+        elif [ -n "${SETUP_DC:-}" ] && [ -x "$SETUP_DC" ] && [ -r "$APN_FILE" ]; then
+          "$SETUP_DC" --apn-file "$APN_FILE" >/dev/null 2>&1
+          SETUP_RC=$?
+          log "SetupDataCall attempted after reg=$REG_STATE exit=$SETUP_RC (APN/output withheld)"
+        elif [ ! -r "$APN_FILE" ]; then
+          log "SetupDataCall deferred_no_apn (write carrier APN to $APN_FILE)"
+        else
+          log "SetupDataCall tool missing - skip 0x0600"
         fi
         set -e
       fi
     fi
-    echo "$REG" | grep -qiE 'registered|reg_state_raw=[1-5]' && break
+    [ "$REGISTERED" -eq 1 ] && break
     # Also accept early IPv4 / bidirectional rmnet mid-poll.
     for n in 0 1 2 3; do
       IF=rmnet$n
@@ -327,16 +320,8 @@ chase_bearer() {
   return 1
 }
 
-edge_ready() {
-  F=$1
-  # ASCII-only patterns: UTF-8 arrows in this script can corrupt over USB text
-  # transfer and fail to match tray-watch's ABSENT-PRESENT line.
-  grep -qE 'saw_ready=1|saw_detected=1|app=1\(|app=5\(|app=4\(|ABSENT.PRESENT|tray-watch: pin1 changed' "$F" && return 0
-  return 1
-}
-
-# Re-emit tray-watch TRANSITION / ABSENT→PRESENT with post_edge decision.
-# Physical reseat becomes a decisive falsifier in tray-bearer.log alone.
+# Re-emit tray-watch transitions as observations. Only a fresh SIM status
+# query below can authorize the bearer chase.
 log_transitions_from_round() {
   F=$1
   [ -r "$F" ] || return 0
@@ -347,97 +332,86 @@ log_transitions_from_round() {
         APP=$(echo "$LINE" | tr ' ' '\n' | grep -E '^app=' | head -1 | cut -d= -f2 | cut -d'(' -f1)
         PIN1=$(echo "$LINE" | tr ' ' '\n' | grep -E '^pin1=' | head -1 | cut -d= -f2)
         CARD=$(echo "$LINE" | tr ' ' '\n' | grep -E '^card=' | head -1 | cut -d= -f2)
-        PI=$(echo "$LINE" | tr ' ' '\n' | grep -E '^present_infer=' | head -1 | cut -d= -f2)
-        [ -n "$PI" ] || PI=$(present_infer_from_app "${APP:-}")
-        POST=no
-        case "${APP:-}" in
-          0|1|4|5) POST=yes ;;
-          2)
-            case "${PIN1:-}" in 0|1) POST=yes ;; esac
-            ;;
-        esac
-        [ "${CARD:-}" = "0" ] && POST=yes
-        log_edge_decision "transition" "${APP:-?}" "${PIN1:-?}" "${CARD:-?}" "${PI:-?}" "$POST" "src=tray-watch"
+        PI=unknown
+        CANDIDATE=no
+        if [ "${CARD:-}" = "1" ]; then
+          case "${APP:-}" in
+            5) CANDIDATE=yes ;;
+            2) if [ "$ALLOW_PIN_VERIFY" = "1" ]; then
+                 case "${PIN1:-}" in 0|1) CANDIDATE=yes ;; esac
+               fi ;;
+          esac
+        fi
+        log_edge_decision "transition" "${APP:-?}" "${PIN1:-?}" "${CARD:-?}" "${PI:-?}" "no" "src=tray-watch candidate=$CANDIDATE"
         ;;
       *ABSENT*PRESENT*|*'ABSENT→PRESENT'*|*'ABSENT-PRESENT'*)
-        log_edge_decision "absent_present" "?" "?" "?" "?" "yes" "src=tray-watch"
+        log_edge_decision "absent_present" "?" "?" "?" "unknown" "no" "src=tray-watch_unconfirmed"
         ;;
     esac
   done < "$F"
 }
 
 sim_left_pin() {
-  # Empty/failed query must NOT count as EDGE (false chase on soft-lock).
-  # BusyBox ash grep needs -E for alternation; BRE \| does not match and
-  # previously fell through to return 0 -> false EDGE while still PIN+pin1=2.
+  # Use a fresh, complete status response. A tray event alone is not a
+  # published app transition, and an empty/failed query is inconclusive.
   set +e
-  SIM=$("$SIT" query-sim-status 2>/dev/null | tr '\n' ' ')
+  RAW_SIM=$("$SIT" query-sim-status 2>/dev/null)
   RC=$?
   set -e
+  SIM=$(printf '%s' "$RAW_SIM" | tr '\n' ' ')
   # Log non-secret fields only
   APP=$(sim_field app0_state_raw "$SIM")
   PIN1=$(sim_field pin1_state_raw "$SIM")
   REM=$(sim_field pin1_remain_raw "$SIM")
   CARD=$(sim_field card_state_raw "$SIM")
-  PI=$(present_infer_from_app "${APP:-}")
-  log "SIM snapshot app=${APP:-?} pin1=${PIN1:-?} remain=${REM:-?} card=${CARD:-?} present_infer=$PI"
-  [ "$RC" -eq 0 ] || return 1
-  [ -n "$SIM" ] || return 1
-  echo "$SIM" | grep -qE 'app0_state=|app0_state_raw=|card_state=' || return 1
-  # CardPower / tray may leave app=PIN but pin1 NOT_VERIFIED(1) or UNKNOWN(0):
-  # that is a real VerifyPin window (EDGE), not the pin1=2 soft-lock chicken-egg.
-  if [ "${APP:-}" = "2" ]; then
-    case "${PIN1:-}" in
-      0|1)
-        log_edge_decision "pin_verify_window" "$APP" "$PIN1" "${CARD:-?}" "$PI" "yes" "remain=${REM:-?}"
-        log "PIN but pin1=${PIN1} (NOT_VERIFIED/UNKNOWN) - EDGE for VerifyPin"
-        return 0
-        ;;
-    esac
-    log_edge_decision "soft_lock_hold" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "no" "remain=${REM:-?}"
-    log_soft_lock_status "app=$APP pin1=${PIN1:-?} present_infer=$PI"
-    log "still PIN (app_raw=2 pin1=${PIN1:-?}) - not EDGE"
+  log "SIM snapshot app=${APP:-?} pin1=${PIN1:-?} remain=${REM:-?} card=${CARD:-?} present_status=unknown query_rc=$RC"
+  if [ "$RC" -ne 0 ] || [ -z "$APP" ] || [ -z "$CARD" ]; then
+    log_edge_decision "query_inconclusive" "${APP:-?}" "${PIN1:-?}" "${CARD:-?}" "unknown" "no"
     return 1
   fi
-  if echo "$SIM" | grep -qE 'app0_state=READY|app0_state_raw=5'; then
-    log_edge_decision "ready" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "yes"
-    return 0
-  fi
-  if echo "$SIM" | grep -qE 'app0_state=DETECTED|app0_state_raw=1'; then
-    log_edge_decision "detected" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "yes"
-    return 0
-  fi
-  if echo "$SIM" | grep -qE 'app0_state=SUBSCRIPTION_PERSO|app0_state_raw=4'; then
-    log_edge_decision "perso" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "yes"
-    return 0
-  fi
-  if echo "$SIM" | grep -qE 'app0_state=UNKNOWN|app0_state_raw=0'; then
-    log_edge_decision "unknown_app" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "yes"
-    return 0
-  fi
-  if echo "$SIM" | grep -qE 'card_state=ABSENT|card_state_raw=0'; then
-    log_edge_decision "card_absent" "${APP:-?}" "${PIN1:-?}" "${CARD:-0}" "$PI" "yes"
-    return 0
-  fi
-  if echo "$SIM" | grep -qE 'pin1_state_raw=1|pin1_state_raw=0'; then
-    log_edge_decision "pin1_unverified" "${APP:-?}" "${PIN1:-?}" "${CARD:-?}" "$PI" "yes"
-    return 0
-  fi
-  if echo "$SIM" | grep -qE 'app0_state=PIN|app0_state_raw=2'; then
-    log_edge_decision "soft_lock_hold" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "no"
-    log_soft_lock_status "app=$APP pin1=${PIN1:-?} present_infer=$PI"
+  if [ "$CARD" != "1" ]; then
+    log_edge_decision "card_not_present" "$APP" "${PIN1:-?}" "$CARD" "unknown" "no"
     return 1
   fi
-  # Unknown shape: do not chase.
-  log_edge_decision "unrecognized" "${APP:-?}" "${PIN1:-?}" "${CARD:-?}" "$PI" "no"
-  log "unrecognized SIM snapshot - not EDGE"
-  return 1
+  case "$APP" in
+    5)
+      log_edge_decision "app_ready_for_guarded_runner" "$APP" "${PIN1:-?}" "$CARD" "unknown" "yes"
+      return 0
+      ;;
+    1|4)
+      log_edge_decision "app_not_ready_for_guarded_runner" "$APP" "${PIN1:-?}" "$CARD" "unknown" "no"
+      return 1
+      ;;
+    2)
+      if [ "${PIN1:-}" = "0" ] || [ "${PIN1:-}" = "1" ]; then
+        if remain_ok "$SIM"; then
+          if [ "$ALLOW_PIN_VERIFY" = "1" ] && [ "$PIN_VERIFY_ATTEMPTED" = "0" ]; then
+            log_edge_decision "pin_verify_window" "$APP" "$PIN1" "$CARD" "unknown" "yes" "remain=$REM"
+            return 0
+          fi
+          log "PIN1=${PIN1}; VerifyPin unarmed or already attempted by this watcher"
+        else
+          log "PIN verification deferred: remaining attempts missing or <=1"
+        fi
+      fi
+      log_edge_decision "app_pin_hold" "$APP" "${PIN1:-?}" "$CARD" "unknown" "no" "remain=${REM:-?}"
+      log_soft_lock_status "app=$APP pin1=${PIN1:-?}"
+      return 1
+      ;;
+    *)
+      log_edge_decision "unrecognized_app" "$APP" "${PIN1:-?}" "$CARD" "unknown" "no"
+      return 1
+      ;;
+  esac
 }
 
-# One-shot post-EDGE chase (used by post-init-chase after catalog 0x2f50 inject).
-# Skips tray-watch; still requires ONLINE. No invent / no rild.
+# One-shot post-EDGE chase. A fresh SIM status still gates all writes.
 if [ "${CHASE_ONCE:-0}" = "1" ]; then
   log "=== CHASE_ONCE (no tray-watch) ==="
+  if ! sim_left_pin; then
+    log "CHASE_ONCE no confirmed SIM state for chase"
+    exit 1
+  fi
   unlock_after_edge || true
   if chase_bearer; then
     log "GOAL bearer OK"
@@ -490,27 +464,26 @@ while :; do
     # Re-log every TRANSITION/ABSENT→PRESENT with post_edge decision.
     log_transitions_from_round "$ROUND_LOG"
 
-    if edge_ready "$ROUND_LOG" || sim_left_pin; then
-      log "EDGE observed batch=$BATCH round=$ROUND - unlock then chase (post_edge=yes)"
+    if sim_left_pin; then
+      log "Fresh SIM status permits chase batch=$BATCH round=$ROUND"
       unlock_after_edge || true
       if chase_bearer; then
         log "GOAL bearer OK"
         exit 0
       fi
-      log "EDGE but no IPv4 yet - continue watch"
+      log "No bearer yet - continue watch"
     else
       log "no EDGE this round batch=$BATCH round=$ROUND (post_edge=no) - soft-lock or idle"
     fi
     ROUND=$((ROUND + 1))
   done
 
-  log "no DETECTED/READY/ABSENT edge in batch=$BATCH (${WATCH_ROUNDS} rounds) - soft-lock holds"
-  log_soft_lock_status "batch=$BATCH"
+  log "no fresh SIM status confirmed a usable app state in batch=$BATCH (${WATCH_ROUNDS} rounds); last state may be unknown"
   if [ "$PERSIST" != "1" ]; then
     log "GOAL incomplete (PERSIST=0)"
     exit 2
   fi
-  log "PERSIST re-arm next batch (flock held) - still waiting external 0x2f50 / EDGE"
+  log "PERSIST re-arm next batch (flock held) - observing published SIM state"
   BATCH=$((BATCH + 1))
   sleep 2
 done

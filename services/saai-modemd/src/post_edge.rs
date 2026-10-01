@@ -1,29 +1,24 @@
 //! Post-EDGE bearer pipeline (pure; no device I/O).
 //!
-//! RE (MAIN B `449eeab3…`, panther EU): READY(#5) is sole `SET_APP` at
-//! STATUS after `+0xBF6` Present copy CMP#2. Present=2 only via FN_A
-//! (CDMA L1 TIMING_LATCH/MEAS arg==3); FN_B unreachable. Image has
-//! `No CDMA in SupportedRatMap` (NV/TCS on QM_MM_INIT) — FN_A never fires.
-//! Preferred `0x070a` (11/12 live; CDMA enums exist) does **not** mutate
-//! RatMap; do not cargo-cult CDMA preferred. PresentObj `#636c` is CP heap
-//! (AP ATU/SHMEM unreachable). No signed SIT forces Present/+0xBF6=2.
-//! HotSwap INSERT ≠ Present=2 writer (DBT strings only; SET#1 callers skip
-//! FN_A). getobj`#0x10` @SET#1 = L1LC timer object, not Present — no poke.
-//! Physical HotSwap ABSENT→PRESENT is a real EDGE but **live-falsified** as a
-//! READY/bearer path on EU No-CDMA (2026-09-30): VerifyPin OK, app stayed PIN,
-//! present_infer=notin (validated as STATUS decision, not +0xBF6 peek).
+//! The published SIM application state gates START_NETWORK. On this Panther,
+//! tested tray reseat and a bounded passive wait left that state at PIN in
+//! their test windows. A concurrent diagnostic twice reached READY from
+//! PIN/pin1=1 using VerifyPin A+AID without CardPower. It held the SIT channel
+//! during an RFS test, so that test cannot establish self-init or RFS
+//! causality. The current CP Present byte is not exposed by SIT status;
+//! catalog id `0x2f50` is internal to the CP.
 //!
 //! SetupDataCall (`0x0600`): sit-stream simple builder length **246**
 //! (`0xf6`); extended TD overload length **983** (`0x3d7`). Gated by
 //! `isValidPdpApn` (non-NULL PdpContext + field). APN copied to packet
-//! offset 16 (max 100). Never invent an APN string — resolve from
+//! offset 16 (max 100). Send only after registration 1/5. Never invent an APN string — resolve from
 //! operator config (`/data/saaios/etc/apn`) or explicit CLI.
 //!
-//! After EDGE opens app∈{1,4,5}, this plan is the automatic path to
-//! `rmnet` IPv4 / bidirectional rx+tx. START_NETWORK allows only {1,4,5}.
+//! The guarded runtime runner requires a fresh READY(5) and radio ON(10).
+//! CP START_NETWORK also accepts app 1/4, but this runner does not arm on them.
 
 use crate::soft_lock::{
-    SoftLockSnapshot, APP_STATE_PIN, BLOCKER_WAITING_0X2F50, CPIF_CAPS_NOTE, PIN1_DISABLED,
+    SoftLockSnapshot, APP_STATE_PIN, BLOCKER_APP_PIN, CPIF_CAPS_NOTE, PIN1_DISABLED,
     PIN1_ENABLED_VERIFIED,
 };
 
@@ -34,15 +29,10 @@ pub const APP_SUBSCRIPTION_PERSO: u8 = 4;
 /// READY — START_NETWORK accepts.
 pub const APP_READY: u8 = 5;
 
-/// Factory preferred-network enum for LTE_ONLY (live GET=11).
-pub const PREFERRED_LTE_ONLY: u8 = 11;
-
 /// Evidenced simple `BuildSetupDataCall` frame length (sit-stream `0x78c80`).
 pub const SETUP_DATA_CALL_LEN_SIMPLE: u16 = 246;
 /// Evidenced SIT id for SetupDataCall.
 pub const SETUP_DATA_CALL_ID: u16 = 0x0600;
-/// Evidenced empty GET `BuildGetDataCallList`.
-pub const GET_DATA_CALL_LIST_ID: u16 = 0x0602;
 /// Factory RO default when DB has no protocol: IPV4V6.
 pub const SETUP_PROTO_IPV4V6: u8 = 3;
 /// On-device APN path (operator-supplied; never invent carrier string).
@@ -50,25 +40,19 @@ pub const APN_CONFIG_PATH: &str = "/data/saaios/etc/apn";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostEdgeStep {
-    /// CardPower+VerifyPin A+AID when pin1∈{0,1} and remain>1.
+    /// Explicitly opted-in VerifyPin A+AID when app=PIN, pin1∈{0,1}, remain>1.
     VerifyPinIfNeeded,
-    /// Abort chase if app still outside {1,4,5}.
+    /// The guarded runner requires READY(5) after any PIN verification.
     GateStartNetwork,
-    /// Radio ON (no empty VerifyPin cycle).
+    /// Guarded runner requires radio ON; it does not power-cycle the radio.
     RadioOn,
-    /// Preferred = LTE_ONLY (11).
-    LteOnly,
-    /// BuildSetNetworkSelectionAuto `0x0704`.
+    /// Guarded runner checks mode and sends auto `0x0704` only if manual.
     NetworkSelectionAuto,
-    /// BuildAllowData `0x0710` allow=1.
+    /// Guarded runner sends AllowData `0x0710` allow=1 once.
     AllowData,
-    /// BuildGetPsService `0x0711` (signed empty GET; err0 seen live).
-    GetPsService,
-    /// Poll data-registration `0x0701` until searching/registered.
+    /// Poll data-registration `0x0701` until home(1) or roaming(5).
     PollDataRegistration,
-    /// BuildGetDataCallList `0x0602` (proven empty GET).
-    GetDataCallList,
-    /// BuildSetupDataCall `0x0600` len 246 — only when APN resolved.
+    /// BuildSetupDataCall `0x0600` len 246 — only when APN resolved and reg=1/5.
     SetupDataCall,
     /// Prove bearer: IPv4 on rmnet* and/or rx>0 && tx>0.
     VerifyRmnetBearer,
@@ -76,13 +60,13 @@ pub enum PostEdgeStep {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PostEdgePlan {
-    /// Soft-lock still holds; START_NETWORK denied. Operator must reseat.
+    /// The guarded network runner cannot start from this app state.
     SoftLockBlocked {
         app_state: u8,
         pin1: u8,
         reason: &'static str,
     },
-    /// EDGE cleared (or already ready); run steps in order.
+    /// READY, or an explicitly opted-in conditional PIN→READY plan.
     Chase {
         app_state: u8,
         pin1: u8,
@@ -97,12 +81,21 @@ pub enum PostEdgePlan {
 /// Soft-lock gate for SetupDataCall (no invented APN / no send under PIN soft-lock).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupDataCallGate {
-    /// Included in chase steps.
+    /// Included in chase steps; runtime still requires registration 1/5.
     Armed,
     /// Chase open but no usable APN config yet.
     DeferredNoApn,
+    /// APN is available, but the separate data-call opt-in was not given.
+    DeferredOptIn,
     /// Soft-lock / START_NETWORK not open — never send.
     BlockedSoftLock,
+}
+
+/// Host-side planning permissions only. These never perform device I/O.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PostEdgeOptIns {
+    pub allow_pin_verify: bool,
+    pub allow_setup_data_call: bool,
 }
 
 /// CP START_NETWORK / camp gate: GET_APP must be DETECTED, PERSO, or READY.
@@ -113,7 +106,7 @@ pub fn start_network_allowed(app_state: u8) -> bool {
     )
 }
 
-/// pin1 needs CardPower+VerifyPin before READY/camp path.
+/// PIN verification could be considered only with a separate explicit opt-in.
 pub fn verify_pin_needed(pin1: u8) -> bool {
     matches!(pin1, 0 | 1)
 }
@@ -124,13 +117,21 @@ pub fn apn_is_usable(apn: &str) -> bool {
     if t.is_empty() || t.len() > 100 {
         return false;
     }
-    if t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("null") {
+    if ["none", "null", "unknown", "unset"]
+        .iter()
+        .any(|placeholder| t.eq_ignore_ascii_case(placeholder))
+    {
         return false;
     }
-    // Hostname-ish: alnum, dot, hyphen, underscore. Reject spaces / URLs / creds.
-    t.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-        && t.contains('.')
+    // Carrier APNs can be one label (e.g. "internet") or dotted labels.
+    // Accept only ASCII token characters; never accept a URL or credentials.
+    t.split('.').all(|label| {
+        !label.is_empty()
+            && label.chars().any(|c| c.is_ascii_alphanumeric())
+            && label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    })
 }
 
 /// Parse APN from a one-line config file / `apn=…` blob (no secrets logged by caller).
@@ -154,7 +155,7 @@ pub fn resolve_apn_from_text(text: &str) -> Option<String> {
     None
 }
 
-/// Full post-EDGE step list once gate opens.
+/// Conditional post-EDGE step list; the runtime rechecks READY and reg=1/5.
 pub fn chase_steps(include_verify_pin: bool, include_setup_data_call: bool) -> Vec<PostEdgeStep> {
     let mut steps = Vec::new();
     if include_verify_pin {
@@ -163,12 +164,9 @@ pub fn chase_steps(include_verify_pin: bool, include_setup_data_call: bool) -> V
     steps.extend_from_slice(&[
         PostEdgeStep::GateStartNetwork,
         PostEdgeStep::RadioOn,
-        PostEdgeStep::LteOnly,
         PostEdgeStep::NetworkSelectionAuto,
         PostEdgeStep::AllowData,
-        PostEdgeStep::GetPsService,
         PostEdgeStep::PollDataRegistration,
-        PostEdgeStep::GetDataCallList,
     ]);
     if include_setup_data_call {
         steps.push(PostEdgeStep::SetupDataCall);
@@ -177,15 +175,25 @@ pub fn chase_steps(include_verify_pin: bool, include_setup_data_call: bool) -> V
     steps
 }
 
-/// Plan from a soft-lock / SIM snapshot (host-safe). No APN → SetupDataCall deferred.
+/// Conservative host-safe plan: PIN verification and data call are disarmed.
 pub fn plan_from_snapshot(snap: SoftLockSnapshot) -> PostEdgePlan {
     plan_from_snapshot_with_apn(snap, None)
 }
 
-/// Plan with optional operator-supplied APN (already validated or raw).
+/// Conservative host-safe plan with APN, but no permission to use it yet.
 pub fn plan_from_snapshot_with_apn(
     snap: SoftLockSnapshot,
     apn_raw: Option<&str>,
+) -> PostEdgePlan {
+    plan_from_snapshot_with_opt_ins(snap, apn_raw, PostEdgeOptIns::default())
+}
+
+/// Plan explicitly permitted actions. On-device tools still enforce fresh
+/// status, remaining PIN attempts, and data registration independently.
+pub fn plan_from_snapshot_with_opt_ins(
+    snap: SoftLockSnapshot,
+    apn_raw: Option<&str>,
+    opt_ins: PostEdgeOptIns,
 ) -> PostEdgePlan {
     let apn = apn_raw.and_then(|s| {
         let t = s.trim();
@@ -196,11 +204,37 @@ pub fn plan_from_snapshot_with_apn(
         }
     });
 
+    let include_verify = snap.app_state == APP_STATE_PIN
+        && verify_pin_needed(snap.pin1)
+        && opt_ins.allow_pin_verify;
+    let include_setup = apn.is_some() && opt_ins.allow_setup_data_call;
+    let gate = if include_setup {
+        SetupDataCallGate::Armed
+    } else if apn.is_some() {
+        SetupDataCallGate::DeferredOptIn
+    } else {
+        SetupDataCallGate::DeferredNoApn
+    };
+
+    // Even with host-side opt-in, the on-device watcher makes a fresh check
+    // and permits no more than one PIN attempt per process.
+    if include_verify {
+        return PostEdgePlan::Chase {
+            app_state: snap.app_state,
+            pin1: snap.pin1,
+            steps: chase_steps(true, include_setup),
+            apn,
+            setup_data_call: gate,
+        };
+    }
+
     if snap.is_modem06() {
-        let reason = if snap.pin1 == PIN1_ENABLED_VERIFIED {
-            "pin1_verified_chicken_egg: Pin1Verified OK but app still PIN; Present≠2"
+        let reason = if verify_pin_needed(snap.pin1) {
+            "verify_pin_explicit_opt_in_required"
+        } else if snap.pin1 == PIN1_ENABLED_VERIFIED {
+            "pin1_verified_chicken_egg: Pin1Verified OK but app still PIN; Present unknown"
         } else if snap.pin1 == PIN1_DISABLED {
-            "pin1_disabled_soft_lock: no VerifyPin path; Present≠2"
+            "pin1_disabled_soft_lock: no VerifyPin path; Present unknown"
         } else {
             "app_pin_blocks_start_network"
         };
@@ -211,38 +245,19 @@ pub fn plan_from_snapshot_with_apn(
         };
     }
 
-    if snap.app_state == APP_STATE_PIN && !verify_pin_needed(snap.pin1) {
-        return PostEdgePlan::SoftLockBlocked {
-            app_state: snap.app_state,
-            pin1: snap.pin1,
-            reason: "app_pin_blocks_start_network",
-        };
-    }
-
-    let include_verify = verify_pin_needed(snap.pin1);
-    let include_setup = apn.is_some();
-    let gate = if include_setup {
-        SetupDataCallGate::Armed
-    } else {
-        SetupDataCallGate::DeferredNoApn
-    };
-
-    // If still PIN but pin1∈{0,1}, EDGE VerifyPin window — include verify then gate.
-    if snap.app_state == APP_STATE_PIN && include_verify {
-        return PostEdgePlan::Chase {
-            app_state: snap.app_state,
-            pin1: snap.pin1,
-            steps: chase_steps(true, include_setup),
-            apn,
-            setup_data_call: gate,
-        };
-    }
-
     if !start_network_allowed(snap.app_state) {
         return PostEdgePlan::SoftLockBlocked {
             app_state: snap.app_state,
             pin1: snap.pin1,
             reason: "app_not_in_start_network_set_1_4_5",
+        };
+    }
+
+    if snap.app_state != APP_READY {
+        return PostEdgePlan::SoftLockBlocked {
+            app_state: snap.app_state,
+            pin1: snap.pin1,
+            reason: "guarded_network_runner_requires_ready_5",
         };
     }
 
@@ -267,16 +282,13 @@ pub fn bearer_verified(ipv4: Option<&str>, rx: u64, tx: u64) -> bool {
 
 pub fn step_label(step: PostEdgeStep) -> &'static str {
     match step {
-        PostEdgeStep::VerifyPinIfNeeded => "VerifyPin_A_AID_if_pin1_0_or_1",
-        PostEdgeStep::GateStartNetwork => "gate_START_NETWORK_app_in_1_4_5",
-        PostEdgeStep::RadioOn => "Radio_ON",
-        PostEdgeStep::LteOnly => "LTE_ONLY_preferred_11",
-        PostEdgeStep::NetworkSelectionAuto => "NetworkSelectionAuto_0x0704",
-        PostEdgeStep::AllowData => "AllowData_0x0710",
-        PostEdgeStep::GetPsService => "GetPsService_0x0711",
+        PostEdgeStep::VerifyPinIfNeeded => "VerifyPin_A_AID_if_pin1_0_or_1_explicit_opt_in",
+        PostEdgeStep::GateStartNetwork => "gate_guarded_runner_READY_5",
+        PostEdgeStep::RadioOn => "guarded_runner_requires_radio_ON_10",
+        PostEdgeStep::NetworkSelectionAuto => "guarded_runner_auto_if_manual_0x0704",
+        PostEdgeStep::AllowData => "guarded_runner_allowdata_once_0x0710",
         PostEdgeStep::PollDataRegistration => "poll_data_reg_0x0701",
-        PostEdgeStep::GetDataCallList => "GetDataCallList_0x0602",
-        PostEdgeStep::SetupDataCall => "SetupDataCall_0x0600_len246_if_apn",
+        PostEdgeStep::SetupDataCall => "SetupDataCall_0x0600_len246_if_apn_and_reg_1_or_5",
         PostEdgeStep::VerifyRmnetBearer => "verify_rmnet_ipv4_or_rxtx",
     }
 }
@@ -287,29 +299,39 @@ pub fn advice_lines(plan: &PostEdgePlan) -> Vec<String> {
             app_state,
             pin1,
             reason,
-        } => vec![
-            "post_edge=blocked".into(),
-            format!("app_state={app_state}"),
-            format!("pin1={pin1}"),
-            format!("reason={reason}"),
-            "start_network_allowed=no".into(),
-            "cpif_caps_exercised=yes".into(),
-            format!("cpif_caps_note={CPIF_CAPS_NOTE}"),
-            format!("blocker={BLOCKER_WAITING_0X2F50}"),
-            "policy=capture_only_rild_or_external_0x2f50_dump_no_invent".into(),
-            "setup_data_call=blocked_soft_lock".into(),
-            format!(
-                "setup_data_call_gate={}",
-                match SetupDataCallGate::BlockedSoftLock {
-                    SetupDataCallGate::BlockedSoftLock => "blocked_soft_lock",
-                    _ => unreachable!(),
-                }
-            ),
-            "action=wait_external_0x2f50_then_oem_ipc_inject_post_init_chase".into(),
-            "re_conclusion=READY_needs_Present_eq_2_only_FN_A_CDMA_EU_NoCDMA_RatMap".into(),
-            "ratmap_lever=blocked_NV_TCS_only_preferred_cannot_add_CDMA".into(),
-            "goal=incomplete_until_rmnet_ipv4".into(),
-        ],
+        } => {
+            let is_pin = *app_state == APP_STATE_PIN;
+            let gate = if is_pin { "blocked_soft_lock" } else { "blocked_no_ready" };
+            let blocker = if is_pin {
+                BLOCKER_APP_PIN
+            } else {
+                "guarded_network_runner_requires_ready_5"
+            };
+            let pin_verify = if is_pin && verify_pin_needed(*pin1) {
+                "deferred_explicit_opt_in_required"
+            } else {
+                "not_applicable"
+            };
+            vec![
+                "post_edge=blocked".into(),
+                format!("app_state={app_state}"),
+                format!("pin1={pin1}"),
+                format!("reason={reason}"),
+                format!("start_network_allowed={}", if start_network_allowed(*app_state) { "yes" } else { "no" }),
+                "guarded_runner_allowed=no".into(),
+                "cpif_caps_exercised=yes".into(),
+                format!("cpif_caps_note={CPIF_CAPS_NOTE}"),
+                format!("blocker={blocker}"),
+                "present_status=unknown_not_on_sit_wire".into(),
+                "panther_observed=verify_pin_a_aid_without_cardpower_ready_twice".into(),
+                "rfs_causality=unproven_concurrent_verify_pin_sit_owner".into(),
+                format!("pin_verify={pin_verify}"),
+                format!("setup_data_call={gate}"),
+                format!("setup_data_call_gate={gate}"),
+                "action=repeat_fresh_sim_status_then_chase_if_ready".into(),
+                "goal=incomplete_until_rmnet_ipv4".into(),
+            ]
+        }
         PostEdgePlan::Chase {
             app_state,
             pin1,
@@ -330,13 +352,23 @@ pub fn advice_lines(plan: &PostEdgePlan) -> Vec<String> {
                     }
                 ),
                 format!("cpif_caps_note={CPIF_CAPS_NOTE}"),
-                format!("preferred_lte_only={PREFERRED_LTE_ONLY}"),
+                "preferred_policy=read_without_forcing_lte_only".into(),
+                "runtime_runner=/data/saaios/bin/ready-network-once".into(),
+                "runtime_runner_arg=run".into(),
                 format!("setup_data_call_id=0x{SETUP_DATA_CALL_ID:04x}"),
                 format!("setup_data_call_len={SETUP_DATA_CALL_LEN_SIMPLE}"),
-                format!("get_data_call_list_id=0x{GET_DATA_CALL_LIST_ID:04x}"),
+                "setup_data_call_runtime_gate=registration_1_or_5".into(),
                 format!("setup_proto_default_ipv4v6={SETUP_PROTO_IPV4V6}"),
                 format!("apn_config_path={APN_CONFIG_PATH}"),
             ];
+            lines.push(format!(
+                "pin_verify={}",
+                if steps.contains(&PostEdgeStep::VerifyPinIfNeeded) {
+                    "opted_in_conditional"
+                } else {
+                    "not_needed"
+                }
+            ));
             match setup_data_call {
                 SetupDataCallGate::Armed => {
                     lines.push("setup_data_call=armed".into());
@@ -349,6 +381,9 @@ pub fn advice_lines(plan: &PostEdgePlan) -> Vec<String> {
                     lines.push(format!(
                         "apn_hint=write_carrier_apn_to_{APN_CONFIG_PATH}_one_line"
                     ));
+                }
+                SetupDataCallGate::DeferredOptIn => {
+                    lines.push("setup_data_call=deferred_explicit_opt_in_required".into());
                 }
                 SetupDataCallGate::BlockedSoftLock => {
                     lines.push("setup_data_call=blocked_soft_lock".into());
@@ -394,8 +429,8 @@ mod tests {
         let advice = advice_lines(&plan_from_snapshot(snap));
         assert!(advice.iter().any(|l| l.contains("setup_data_call=blocked_soft_lock")));
         assert!(advice.iter().any(|l| l.contains("cpif_caps_exercised=yes")));
-        assert!(advice.iter().any(|l| l.contains("blocker=waiting_external_catalog_oem_0x2f50")));
-        assert!(advice.iter().any(|l| l.contains("wait_external_0x2f50_then_oem_ipc_inject")));
+        assert!(advice.iter().any(|l| l.contains(BLOCKER_APP_PIN)));
+        assert!(advice.iter().any(|l| l.contains("present_status=unknown")));
     }
 
     #[test]
@@ -425,13 +460,31 @@ mod tests {
     }
 
     #[test]
-    fn pin_not_verified_is_edge_chase_with_verify() {
+    fn pin_not_verified_requires_explicit_opt_in() {
         let snap = SoftLockSnapshot {
             app_state: 2,
             pin1: 1,
             present: None,
         };
-        match plan_from_snapshot(snap) {
+        assert!(matches!(
+            plan_from_snapshot(snap),
+            PostEdgePlan::SoftLockBlocked {
+                reason: "verify_pin_explicit_opt_in_required",
+                ..
+            }
+        ));
+        let advice = advice_lines(&plan_from_snapshot(snap));
+        assert!(advice
+            .iter()
+            .any(|line| line == "pin_verify=deferred_explicit_opt_in_required"));
+        match plan_from_snapshot_with_opt_ins(
+            snap,
+            None,
+            PostEdgeOptIns {
+                allow_pin_verify: true,
+                allow_setup_data_call: false,
+            },
+        ) {
             PostEdgePlan::Chase {
                 steps,
                 setup_data_call,
@@ -439,16 +492,59 @@ mod tests {
             } => {
                 assert_eq!(steps[0], PostEdgeStep::VerifyPinIfNeeded);
                 assert!(steps.contains(&PostEdgeStep::GateStartNetwork));
-                assert!(steps.contains(&PostEdgeStep::LteOnly));
+                assert!(steps.contains(&PostEdgeStep::NetworkSelectionAuto));
                 assert!(steps.contains(&PostEdgeStep::AllowData));
-                assert!(steps.contains(&PostEdgeStep::GetPsService));
-                assert!(steps.contains(&PostEdgeStep::GetDataCallList));
+                assert!(steps.contains(&PostEdgeStep::PollDataRegistration));
                 assert!(!steps.contains(&PostEdgeStep::SetupDataCall));
                 assert_eq!(setup_data_call, SetupDataCallGate::DeferredNoApn);
                 assert!(steps.contains(&PostEdgeStep::VerifyRmnetBearer));
             }
             other => panic!("expected chase, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pin_verify_opt_in_does_not_also_arm_data_call() {
+        let snap = SoftLockSnapshot {
+            app_state: APP_STATE_PIN,
+            pin1: 1,
+            present: None,
+        };
+        let plan = plan_from_snapshot_with_opt_ins(
+            snap,
+            Some("internet"),
+            PostEdgeOptIns {
+                allow_pin_verify: true,
+                allow_setup_data_call: false,
+            },
+        );
+        let PostEdgePlan::Chase { steps, setup_data_call, .. } = plan else {
+            panic!("explicit PIN plan should remain conditional");
+        };
+        assert!(steps.contains(&PostEdgeStep::VerifyPinIfNeeded));
+        assert!(!steps.contains(&PostEdgeStep::SetupDataCall));
+        assert_eq!(setup_data_call, SetupDataCallGate::DeferredOptIn);
+    }
+
+    #[test]
+    fn ready_app_never_repeats_pin_verification() {
+        let snap = SoftLockSnapshot {
+            app_state: APP_READY,
+            pin1: 1,
+            present: None,
+        };
+        let plan = plan_from_snapshot_with_opt_ins(
+            snap,
+            None,
+            PostEdgeOptIns {
+                allow_pin_verify: true,
+                allow_setup_data_call: false,
+            },
+        );
+        let PostEdgePlan::Chase { steps, .. } = plan else {
+            panic!("READY should plan a network diagnostic");
+        };
+        assert!(!steps.contains(&PostEdgeStep::VerifyPinIfNeeded));
     }
 
     #[test]
@@ -468,14 +564,14 @@ mod tests {
                 assert!(!steps.contains(&PostEdgeStep::SetupDataCall));
                 assert_eq!(setup_data_call, SetupDataCallGate::DeferredNoApn);
                 assert!(apn.is_none());
-                assert!(steps.contains(&PostEdgeStep::GetDataCallList));
+                assert!(steps.contains(&PostEdgeStep::PollDataRegistration));
             }
             other => panic!("expected chase, got {other:?}"),
         }
     }
 
     #[test]
-    fn ready_with_apn_arms_setup_data_call() {
+    fn ready_with_apn_requires_separate_data_call_opt_in() {
         let snap = SoftLockSnapshot {
             app_state: APP_READY,
             pin1: PIN1_ENABLED_VERIFIED,
@@ -485,33 +581,45 @@ mod tests {
             PostEdgePlan::Chase {
                 steps,
                 setup_data_call,
+                ..
+            } => {
+                assert_eq!(setup_data_call, SetupDataCallGate::DeferredOptIn);
+                assert!(!steps.contains(&PostEdgeStep::SetupDataCall));
+            }
+            other => panic!("expected deferred chase, got {other:?}"),
+        }
+        let opted_in_plan = plan_from_snapshot_with_opt_ins(
+            snap,
+            Some("internet.example.apn"),
+            PostEdgeOptIns {
+                allow_pin_verify: false,
+                allow_setup_data_call: true,
+            },
+        );
+        match &opted_in_plan {
+            PostEdgePlan::Chase {
+                steps,
+                setup_data_call,
                 apn,
                 ..
             } => {
-                assert_eq!(setup_data_call, SetupDataCallGate::Armed);
+                assert_eq!(*setup_data_call, SetupDataCallGate::Armed);
                 assert_eq!(apn.as_deref(), Some("internet.example.apn"));
                 assert!(steps.contains(&PostEdgeStep::SetupDataCall));
                 let setup_idx = steps
                     .iter()
                     .position(|s| *s == PostEdgeStep::SetupDataCall)
                     .unwrap();
-                let list_idx = steps
+                let registration_idx = steps
                     .iter()
-                    .position(|s| *s == PostEdgeStep::GetDataCallList)
+                    .position(|s| *s == PostEdgeStep::PollDataRegistration)
                     .unwrap();
-                assert!(list_idx < setup_idx);
+                assert!(registration_idx < setup_idx);
                 assert_eq!(*steps.last().unwrap(), PostEdgeStep::VerifyRmnetBearer);
             }
             other => panic!("expected chase, got {other:?}"),
         }
-        let advice = advice_lines(&plan_from_snapshot_with_apn(
-            SoftLockSnapshot {
-                app_state: APP_READY,
-                pin1: 2,
-                present: Some(2),
-            },
-            Some("internet.example.apn"),
-        ));
+        let advice = advice_lines(&opted_in_plan);
         assert!(advice.iter().any(|l| l.contains("setup_data_call=armed")));
         assert!(advice.iter().any(|l| l.contains("SetupDataCall_0x0600")));
         assert!(advice.iter().any(|l| l.contains("apn_len=20")));
@@ -523,7 +631,12 @@ mod tests {
     fn rejects_invented_or_unsafe_apn_tokens() {
         assert!(!apn_is_usable(""));
         assert!(!apn_is_usable("none"));
-        assert!(!apn_is_usable("internet")); // no dot — too vague / not hostname
+        assert!(apn_is_usable("internet"));
+        assert!(!apn_is_usable("unknown"));
+        assert!(!apn_is_usable("unset"));
+        assert!(!apn_is_usable("in ternet"));
+        assert!(!apn_is_usable("foo..bar"));
+        assert!(!apn_is_usable(".internet"));
         assert!(!apn_is_usable("user:pass@host"));
         assert!(!apn_is_usable("http://evil"));
         assert!(apn_is_usable("internet.example.apn"));
@@ -531,6 +644,32 @@ mod tests {
             resolve_apn_from_text("# c\napn=internet.example.apn\n"),
             Some("internet.example.apn".into())
         );
+    }
+    #[test]
+    fn single_label_apn_is_planned_after_registration_poll() {
+        let snap = SoftLockSnapshot {
+            app_state: APP_READY,
+            pin1: PIN1_ENABLED_VERIFIED,
+            present: None,
+        };
+        let plan = plan_from_snapshot_with_opt_ins(
+            snap,
+            Some("internet"),
+            PostEdgeOptIns {
+                allow_pin_verify: false,
+                allow_setup_data_call: true,
+            },
+        );
+        let PostEdgePlan::Chase { steps, apn, .. } = &plan else {
+            panic!("READY with operator APN should plan a chase");
+        };
+        assert_eq!(apn.as_deref(), Some("internet"));
+        let reg = steps.iter().position(|s| *s == PostEdgeStep::PollDataRegistration).unwrap();
+        let setup = steps.iter().position(|s| *s == PostEdgeStep::SetupDataCall).unwrap();
+        assert!(reg < setup);
+        assert!(step_label(steps[setup]).contains("reg_1_or_5"));
+        let advice = advice_lines(&plan);
+        assert!(advice.iter().any(|line| line == "setup_data_call_runtime_gate=registration_1_or_5"));
     }
 
     #[test]
@@ -554,19 +693,20 @@ mod tests {
             present: Some(2),
         }));
         assert!(advice.iter().any(|l| l.contains("start_network_allowed=yes")));
-        assert!(advice.iter().any(|l| l.contains("GetPsService")));
+        assert!(advice.iter().any(|l| l.contains("poll_data_reg_0x0701")));
         assert!(advice.iter().any(|l| l.contains("setup_data_call=deferred_no_apn")));
     }
 
     #[test]
-    fn detected_and_perso_also_start_network() {
+    fn detected_and_perso_are_cp_allowed_but_not_armed_by_guarded_runner() {
         for app in [APP_DETECTED, APP_SUBSCRIPTION_PERSO] {
+            assert!(start_network_allowed(app));
             let plan = plan_from_snapshot(SoftLockSnapshot {
                 app_state: app,
                 pin1: 2,
                 present: Some(2),
             });
-            assert!(matches!(plan, PostEdgePlan::Chase { .. }));
+            assert!(matches!(plan, PostEdgePlan::SoftLockBlocked { reason: "guarded_network_runner_requires_ready_5", .. }));
         }
     }
 
@@ -586,8 +726,9 @@ mod tests {
         let plan = plan_from_snapshot(snap);
         let advice = advice_lines(&plan);
         assert!(advice.iter().any(|l| l.contains("post_edge=blocked")));
-        assert!(advice.iter().any(|l| l.contains("FN_A_CDMA")));
-        assert!(advice.iter().any(|l| l.contains("ratmap_lever=blocked")));
+        assert!(advice.iter().any(|l| l.contains("verify_pin_a_aid_without_cardpower_ready_twice")));
+        assert!(advice.iter().any(|l| l.contains("rfs_causality=unproven")));
+        assert!(advice.iter().any(|l| l.contains("chase_if_ready")));
         assert!(advice.iter().any(|l| l.contains("setup_data_call=blocked_soft_lock")));
     }
 }

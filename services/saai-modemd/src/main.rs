@@ -62,33 +62,40 @@ enum Cmd {
         /// app_state raw (2 = PIN).
         #[arg(long)]
         app: Option<u8>,
-        /// pin1 raw (2 = ENABLED_VERIFIED, 3 = DISABLED).
+        /// pin1 raw (1 = NOT_VERIFIED, 2 = VERIFIED, 3 = DISABLED).
         #[arg(long)]
         pin1: Option<u8>,
-        /// Present byte if known; omit or pass `notin` for present_infer=notin_1_2_3.
+        /// Optional independently measured CP Present byte; SIT status cannot infer it.
         #[arg(long)]
         present: Option<String>,
         /// Optional tray-watch / chase log snippet (no secrets expected).
         #[arg(long)]
         from_text: Option<PathBuf>,
     },
-    /// Plan post-EDGE bearer path (VerifyPin→START_NETWORK gate→LTE→PS→rmnet).
-    /// Host-safe: no modem I/O. RE: READY needs Present==2 (FN_A CDMA only on EU).
+    /// Plan a guarded READY→registration→rmnet path (host-safe; no modem I/O).
+    /// PIN verification and SetupDataCall are disarmed unless separately opted in.
     PostEdge {
         #[arg(long)]
         app: Option<u8>,
         #[arg(long)]
         pin1: Option<u8>,
+        /// Optional independently measured CP Present byte; not used for the app gate.
         #[arg(long)]
         present: Option<String>,
         #[arg(long)]
         from_text: Option<PathBuf>,
-        /// Operator APN hostname (never invent). Arms SetupDataCall when chase opens.
+        /// Operator APN hostname (never invent); does not itself arm a data call.
         #[arg(long)]
         apn: Option<String>,
         /// One-line APN file (`apn=…` or bare host). Default on device: /data/saaios/etc/apn.
         #[arg(long)]
         apn_file: Option<PathBuf>,
+        /// Include a conditional PIN verification step in the host plan only.
+        #[arg(long)]
+        allow_pin_verify: bool,
+        /// Include SetupDataCall in the host plan only (also needs APN and reg=1/5).
+        #[arg(long)]
+        allow_setup_data_call: bool,
         /// Optional live counters for bearer_verified check (host-side eval).
         #[arg(long)]
         rmnet_rx: Option<u64>,
@@ -180,7 +187,7 @@ fn run() -> Result<()> {
                 let text = fs::read_to_string(&path)
                     .with_context(|| format!("reading {}", path.display()))?;
                 soft_lock::detect_from_status_text(&text).ok_or_else(|| {
-                    anyhow!("no app=/pin1=/present_infer= fields in {}", path.display())
+                    anyhow!("no usable app=/pin1= fields in {}", path.display())
                 })?
             } else {
                 let app = app.ok_or_else(|| anyhow!("need --app or --from-text"))?;
@@ -218,6 +225,8 @@ fn run() -> Result<()> {
             from_text,
             apn,
             apn_file,
+            allow_pin_verify,
+            allow_setup_data_call,
             rmnet_rx,
             rmnet_tx,
             ipv4,
@@ -226,7 +235,7 @@ fn run() -> Result<()> {
                 let text = fs::read_to_string(&path)
                     .with_context(|| format!("reading {}", path.display()))?;
                 soft_lock::detect_from_status_text(&text).ok_or_else(|| {
-                    anyhow!("no app=/pin1=/present_infer= fields in {}", path.display())
+                    anyhow!("no usable app=/pin1= fields in {}", path.display())
                 })?
             } else {
                 let app = app.ok_or_else(|| anyhow!("need --app or --from-text"))?;
@@ -254,7 +263,14 @@ fn run() -> Result<()> {
             };
             let apn_arg = apn.as_deref().filter(|s| post_edge::apn_is_usable(s));
             let apn_resolved = apn_arg.or(apn_from_file.as_deref());
-            let plan = post_edge::plan_from_snapshot_with_apn(snapshot, apn_resolved);
+            let plan = post_edge::plan_from_snapshot_with_opt_ins(
+                snapshot,
+                apn_resolved,
+                post_edge::PostEdgeOptIns {
+                    allow_pin_verify,
+                    allow_setup_data_call,
+                },
+            );
             for line in post_edge::advice_lines(&plan) {
                 println!("{line}");
             }
