@@ -24,8 +24,14 @@ jobs:
             -o /tmp/modem-channel-owner-scan-fixture
           /tmp/modem-channel-owner-scan-fixture self-test
           test "$(/tmp/modem-channel-owner-scan-fixture --mode)" = scan-once
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -DRFS_HOST_TEST \
+            os/targets/panther/diagnostics/modem-rfs-one-grant-owner.c \
+            -o /tmp/modem-rfs-one-grant-owner-fixture
+          /tmp/modem-rfs-one-grant-owner-fixture self-test
+          test "$(/tmp/modem-rfs-one-grant-owner-fixture --mode)" = rfs-one-grant
           sh -n os/targets/panther/diagnostics/owner-handoff-bringup.sh
           sh -n os/targets/panther/diagnostics/build-owner-scan-once.sh
+          sh -n os/targets/panther/diagnostics/build-rfs-one-grant-owner.sh
           sh -n os/targets/panther/diagnostics/build-probe-rfs-one-grant.sh
           sh -n os/targets/panther/diagnostics/verify-original-efs-readonly.sh
           cc -O2 -Wall -Wextra -Werror \

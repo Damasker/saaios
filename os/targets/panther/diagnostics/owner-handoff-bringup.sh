@@ -41,6 +41,13 @@ RFS_PIN=/run/saaios-rfs-one-grant/expected.sha256
 RFS_QUARANTINE=/data/saaios/var/rfs-quarantine
 
 fail() { printf 'ABORT %s\n' "$*" >&2; exit 1; }
+if [ "$OWNER_MODE" = rfs-one-grant ]; then
+    efs_dev=$(cat /sys/block/sda/sda5/dev 2>/dev/null) ||
+        fail 'original EFS device identity unavailable'
+    efs_mounts=$(awk -v dev="$efs_dev" '$3 == dev { n++ } END { print n+0 }' \
+        /proc/self/mountinfo) || fail 'cannot inspect original EFS mounts'
+    [ "$efs_mounts" -eq 0 ] || fail 'original EFS is mounted'
+fi
 [ -x "$PROBE" ] || fail 'owner handoff probe missing'
 [ -x "$OWNER" ] || fail 'owner binary missing'
 if [ "$OWNER_MODE" != passive ]; then

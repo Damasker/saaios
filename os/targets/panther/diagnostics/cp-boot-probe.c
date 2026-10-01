@@ -221,6 +221,7 @@ int main(int argc, char **argv) {
 #endif
 #ifdef PROBE_OWNER_HANDOFF
     struct stat owner_exec_stat;
+    if (efs_is_mounted()) die("original EFS mounted: refusing before owner log");
     if (lstat(PROBE_OWNER_EXEC, &owner_exec_stat) != 0 ||
         !S_ISREG(owner_exec_stat.st_mode) || access(PROBE_OWNER_EXEC, X_OK) != 0)
         die("runtime owner executable unavailable; no hardware operations");
@@ -351,9 +352,18 @@ int main(int argc, char **argv) {
         if (result == 0) result = do_ioctl("COMPLETE", IOCTL_COMPLETE_NORMAL_BOOTUP, NULL);
 #ifdef PROBE_OWNER_HANDOFF
         if (result != 0) {
+#ifdef PROBE_OWNER_HOLD_ON_FAILURE
+            /* After READY, an uncertain FIN/COMPLETE result may have left
+             * CP active. Disarm replies but retain the single owner until
+             * CP goes OFFLINE; never SIGKILL away its IPC/RFS descriptors. */
+            log_line("FIN/COMPLETE failed; disarming diagnostic owner");
+            if (owner_pid > 0 && probe_owner_alive(owner_pid))
+                (void)kill(owner_pid, SIGTERM);
+#else
             log_line("FIN/COMPLETE failed; stopping diagnostic owner");
             probe_owner_abort(owner_pid);
             owner_pid = -1;
+#endif
         }
 #endif
 #ifdef PROBE_QUERY_SIM

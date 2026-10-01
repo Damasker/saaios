@@ -60,6 +60,31 @@ for file id 3 only, and its presence alone never authorizes an RFS reply.
 The opt-in `rfs-one-grant` handoff calls this mode on a fresh CP-OFFLINE boot;
 ordinary boot and `verify-read-only` do not create it. A stale pin directory
 blocks another pin attempt until the operator reviews that run or reboots.
+The one-grant owner atomically renames the authorization state to
+`consumed.sha256` before READY. It cannot be reused in the same boot. The
+owner never logs the digest or opens original EFS, and its only writable NV
+destination is a new private quarantine candidate under
+`/data/saaios/var/rfs-quarantine` with a `NO_PROMOTION` marker. It may send
+one RFS grant and store only the first CP data chunk; it never sends a final
+success ACK, promotes a candidate, or writes the verified boot copy.
+
+Build the owner and matching probe as separate static ARM64 artifacts on the
+host, then inspect `file`, SHA-256, and the installed hashes before a manual
+run. The build helpers do not contact the phone:
+
+```sh
+mkdir -p /tmp/saaios-rfs-one-grant-build
+sh os/targets/panther/diagnostics/build-rfs-one-grant-owner.sh \
+  /tmp/saaios-rfs-one-grant-build
+sh os/targets/panther/diagnostics/build-probe-rfs-one-grant.sh \
+  /tmp/saaios-rfs-one-grant-build
+```
+
+The `rfs-one-grant` argument to `owner-handoff-bringup.sh` is an explicit
+one-boot experiment, not a service. A FIN/COMPLETE failure disarms the RFS
+owner but keeps its IPC/RFS descriptors until CP is OFFLINE. After any run,
+preserve its logs and quarantine directory, then reboot AP before returning
+to the passive owner. Never kill a live RFS owner to retry in place.
 
 The operator must verify original EFS remains unmounted, current CP is
 fresh OFFLINE, module provenance matches the running kernel, and device

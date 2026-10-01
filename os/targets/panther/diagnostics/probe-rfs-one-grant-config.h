@@ -9,3 +9,4 @@
 #define PROBE_OWNER_LOG "/data/saaios/var/modem-rfs-one-grant-owner.log"
 /* Candidate fsync and source reread happen before the owner signals READY. */
 #define PROBE_OWNER_READY_TIMEOUT_MS 15000
+#define PROBE_OWNER_HOLD_ON_FAILURE 1
