@@ -196,6 +196,15 @@ timeline. Do not guess a radio, carrier, SIM or network SET. Details and
 binary provenance are in
 [MODEM-07-RFS-QUARANTINE.md](MODEM-07-RFS-QUARANTINE.md).
 
+**Native service direction (2026-10-01):** reproduce the factory radio
+service's state handling in SaaiOS; a full Android framework port is not the
+next dependency. Exact TD1A code proves a separate logical-modem status GET
+`0x0810` (12-byte request, mode byte at response +12), distinct from radio
+power. READY/radio ON does not measure that state. After the pending scalar
+observation, add one bounded GET in the same owner's settled pass; malformed,
+error or timeout results remain unknown. The corresponding enable SET
+`0x080f` is not included. See [factory evidence and concrete rollback](MODEM-07-RFS-QUARANTINE.md#native-radio-service-boundary-and-logical-stack-check-2026-10-01).
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),

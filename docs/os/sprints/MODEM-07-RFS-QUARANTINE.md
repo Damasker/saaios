@@ -391,6 +391,68 @@ second IPC reader or an unbounded packet/kernel log. One early OFF or
 UNAVAILABLE value is not proof of an RF reset; one ON value is not proof of
 camp, completed host initialization or an eSIM/carrier cause.
 
+## Native radio-service boundary and logical-stack check (2026-10-01)
+
+SaaiOS needs the responsibilities of the factory radio service: one request
+dispatcher, explicit SIM/logical-stack/radio/registration/data states, startup
+callbacks, and bounded recovery. Porting the Android application framework or
+Binder interface alone does not supply the vendor SIT initialization. The
+factory early-camp path above can request radio power before a framework
+client connects. Keep the native `saai-modemd` direction; its current host
+models are not yet a working runtime service.
+
+The [AOSP Radio 1.3 contract](https://android.googlesource.com/platform/hardware/interfaces/+/3e9d442/radio/1.3/IRadio.hal)
+separates `enableModem` from `setRadioPower`; SIM access can remain available
+while a logical modem is disabled. This is an interface contract, not proof
+of the Panther's current stack state. The exact TD1A `libsitril.so` SHA-256
+listed above independently confirms a distinct SIT route:
+
+| Factory evidence | Wire operation |
+| --- | --- |
+| `EnableModemHandler::OnRequest` `0x1d1290`, call `0x1d1344`; `ProtocolMiscBuilder::BuildSetStatckStatus` `0x22d0c0` (factory spelling) | SET `0x080f`, length 13, normalized boolean at +12. **Not part of the planned observation.** |
+| `GetModemStackStatusHandler::OnRequest` `0x1d1600`, call `0x1d169c`; `BuildGetStatckStatus` `0x22d140` | GET `0x0810`, length 12, no body; factory timeout 5000 ms. |
+| `ProtocolMiscGetStackStatusAdapter::GetMode` `0x2297e0`, load `0x2297fc` | Checks response ID `0x0810`, reads byte +12, converts nonzero to true. |
+
+The response handler checks error before reading mode (`0x1d17d8`,
+`0x1d1848`). Its default true value on an error is not an observation and
+must not be copied into SaaiOS state. Factory code proves a minimum response
+length of 13, not an exact length. SaaiOS will additionally require matched
+type/token/ID, full-width zero error, bounded framing and mode 0 or 1;
+anything else remains unknown. These stricter bounds are SaaiOS policy.
+
+After the pending passive scalar observation, the next isolated change is
+one `0x0810` GET through the existing owner after its settled status pass.
+An enabled response excludes a disabled logical stack only at that instant.
+A disabled response supports a separately reviewed enable experiment; it
+does not itself authorize automatic recovery or prove the cause of no camp.
+No `0x080f`, carrier SET, slot remap or new IPC reader is added to this GET.
+
+### Concrete rollback for the scalar observation
+
+Before this run, the phone's known-good passive pair and wrapper were copied
+to `/data/saaios/var/rollback-0802-b5ade9e/`; its `SHA256SUMS` check passed.
+The recorded baseline hashes are:
+
+- `modem-channel-owner`: `b5e9fa744e6bb47a1055043926057897902f78796d506d2d393efa03f5b5e04e`
+- `probe-handover-owner`: `a4e15c4420e6fb8608fa04b6f986b1c6b2841016fdafc60aa61a50ed9e9047c5`
+- `owner-handoff-bringup.sh`: `33ae6dcfb02f8e2c57fbcfcbaf7088b8040a2fef759999fc15ba10cbe8645007`
+
+The separately staged passive scalar owner, built from `b5ade9e`, is
+`/data/saaios/bin/modem-channel-owner.scalar-b5ade9e`, SHA-256
+`3b044a28fa59047578a7b1a06f8a285d1125f06e418289afa2aa80a7b4319fac`.
+Its on-device synthetic self-test passed and mode is `passive`. The legacy
+baseline probe has no usable `--owner-exec`/`--owner-log` introspection;
+preserve its reviewed hash and previously validated default handoff.
+
+Before activation, reboot AP, require CP OFFLINE (or unloaded CPIF followed
+by the wrapper's OFFLINE check), and preserve both current logs under unused
+names. Install the candidate only in this offline interval and use the
+default one-shot wrapper. On failure, stop the experiment without an in-place
+retry. For return, reboot AP, verify the saved manifest, restore the passive
+pair/wrapper while offline, preserve experiment logs, and run the default
+wrapper once. Confirm CP ONLINE and owner continuity. No original EFS access
+or write is required for this passive instrumentation change.
+
 ## Why this exists
 
 The no-gap boot owner observed RFS command 7 at +7.282 s and command 6 at
