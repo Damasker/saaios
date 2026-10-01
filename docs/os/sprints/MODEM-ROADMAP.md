@@ -184,10 +184,16 @@ raw 2 (`START_NETWORK`) to ON, and raw 3/4 (`POWER_OFF`/`RESET`) to
 UNAVAILABLE. `0x0803` radio-ready is a distinct path and initially sets
 UNAVAILABLE, not ON; the solicited `0x0801` GET state resides at `+12`.
 Because the matched traces logged headers only, the early `0x0802` scalar
-and ON transition remain unknown. If pursued, the next controlled comparison
-should add only a bounded, redacted scalar to the existing exclusive owner;
-it must not add a reader, GET or SET. Do not guess a radio, carrier, SIM or
-network SET. Details and binary provenance are in
+and ON transition remain unknown. The default passive owner now has a
+host-tested, exact-12-byte, enum-bounded scalar trace, not yet installed on
+the phone. The full-RFS owner remains header-only; do not claim a new matched
+A/B until it has equivalent reviewed instrumentation. The next smallest
+observation is one passive cold boot with the existing exclusive owner and
+no added reader, GET or SET. Neither an early OFF/UNAVAILABLE indication nor
+ON alone proves RF reset, camp or eSIM/carrier causality. The past `0x0706`
+scan and full RFS exchange were separate boots, not a shared `dmesg`
+timeline. Do not guess a radio, carrier, SIM or network SET. Details and
+binary provenance are in
 [MODEM-07-RFS-QUARANTINE.md](MODEM-07-RFS-QUARANTINE.md).
 
 Evidence:

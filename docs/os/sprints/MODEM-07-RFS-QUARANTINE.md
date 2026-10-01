@@ -360,12 +360,36 @@ factory evidence above. The sketch's `google,s5300-sit`/`link_up` names and
 log-only interrupt handler cannot implement the SIT radio-state callback.
 Do not install it as a modem fix.
 
-If another controlled phone comparison is warranted, its minimal observable
+If another controlled phone observation is warranted, its minimal observable
 is only the `0x0802` scalar on the existing exclusive owner, with exact ID,
-minimum-length and bounded enum checks; log no other body bytes, identifiers
-or subscriber data. Repeat matched passive/full-RFS boots and retain the
-original-EFS read-only/postflight gates. This decode alone is not a reason
-to send a radio-power, carrier, SIM or network SET.
+length and bounded enum checks; log no other body bytes, identifiers or
+subscriber data. First validate it on a passive fresh boot. Any later
+matched passive/full-RFS comparison requires the same trace in both owners
+and the original-EFS read-only/postflight gates. This decode alone is not a
+reason to send a radio-power, carrier, SIM or network SET.
+
+The default passive `modem-channel-owner.c` now has a host-tested, opt-in
+diagnostic build that appends the scalar and factory label to its existing
+bounded indication line only for an exact 12-byte type-2 `0x0802` frame with
+matching declared length and raw value 0-4. Invalid enum values are not
+printed as numbers; other bodies and `0x0803` remain header-only. This adds
+no endpoint, GET, SET or RFS reply. GCC `-Werror`, host self-test,
+ASan/UBSan, scan-variant self-test and static ARM64 compilation passed. The
+new source has **not** been installed or run on the phone. The full-RFS owner
+still logs headers only, so a new matched RFS A/B would first require a
+separately reviewed identical scalar trace in that owner. The eight-event
+per-minute cap remains: absence of a printed scalar after overflow is
+inconclusive.
+
+The earlier active `0x0706` scan rejection and later full-RFS completion
+were different AP boots. There is no same-boot `dmesg` interval between
+them, and the existing wrappers did not preserve a complete kernel event
+timeline. Do not assign an IRQ/PCIe cause from older CPIF snapshots. A
+future bounded kernel capture should be designed separately only if the
+scalar/other evidence points to a transport transition; it must not add a
+second IPC reader or an unbounded packet/kernel log. One early OFF or
+UNAVAILABLE value is not proof of an RF reset; one ON value is not proof of
+camp, completed host initialization or an eSIM/carrier cause.
 
 ## Why this exists
 
