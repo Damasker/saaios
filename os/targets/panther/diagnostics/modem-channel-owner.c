@@ -99,6 +99,7 @@ struct live_scan {
     uint32_t scan_token;
     uint32_t cancel_token;
     uint32_t count;
+    unsigned remote_error;
     unsigned late_reply_seen;
     int64_t deadline_ms;
     int64_t gate_started_ms;
@@ -628,6 +629,7 @@ static void live_scan_frame(struct live_scan *scan, const uint8_t *p,
     if (n < 12 || p[0] != 1 || le16(p + 4) != n) {
         live_scan_request_cancel(scan, LIVE_SCAN_CAUSE_MALFORMED, now_ms);
     } else if (le16(p + 10) != 0) {
+        scan->remote_error = le16(p + 10);
         scan->phase = LIVE_SCAN_DONE;
         scan->result = LIVE_SCAN_ERROR;
     } else if (n < 16 || le32(p + 12) > SCAN_MAX_NETWORK_COUNT ||
@@ -1183,7 +1185,8 @@ static int fixture_scan(void) {
                                .deadline_ms = 300000};
     fixture_scan_reply(reply, 12, 0x0706, token, 0x0100);
     live_scan_frame(&scan, reply, 12, 1000);
-    if (scan.phase != LIVE_SCAN_DONE || scan.result != LIVE_SCAN_ERROR)
+    if (scan.phase != LIVE_SCAN_DONE || scan.result != LIVE_SCAN_ERROR ||
+        scan.remote_error != 0x0100)
         return 93;
     scan = (struct live_scan){.phase = LIVE_SCAN_WAITING,
                                .scan_token = token,
@@ -1886,6 +1889,8 @@ report_scan:
         printf("network_scan result=%s", live_scan_result_name(scan->result));
         if (scan->result == LIVE_SCAN_COUNT)
             printf(" count=%u", scan->count);
+        if (scan->result == LIVE_SCAN_ERROR)
+            printf(" error_raw=%u", scan->remote_error);
         printf(" late_scan_reply=%u", scan->late_reply_seen);
         if (scan->poisoned) printf(" owner=quarantine-until-cp-offline");
         putchar('\n');
