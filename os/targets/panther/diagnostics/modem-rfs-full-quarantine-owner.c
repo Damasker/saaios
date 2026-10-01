@@ -851,9 +851,17 @@ static enum action classify(const struct owner *o, const uint8_t *frame,
                o->grant_attempted <= RFS_GRANTS_MAX &&
                o->chunks_stored + 1 == o->grant_attempted &&
                o->expected_chunk > 0 && o->expected_chunk <= FIRST_CHUNK &&
-               len == 20u + o->expected_chunk && little16(frame) == 2 &&
+               /* The observed final CP frame has two zero bytes after the
+                * 318 granted bytes. Accept only that exact final shape. */
+               ((len == 20u + o->expected_chunk &&
+                 little32(frame + 4) == 12u + o->expected_chunk) ||
+                (o->grant_attempted == RFS_GRANTS_MAX &&
+                 o->chunks_stored == RFS_GRANTS_MAX - 1 &&
+                 o->expected_chunk == 318 && len == 340 &&
+                 little32(frame + 4) == 332 &&
+                 frame[338] == 0 && frame[339] == 0)) &&
+               little16(frame) == 2 &&
                little16(frame + 2) == 1 &&
-               little32(frame + 4) == 12u + o->expected_chunk &&
                little32(frame + 8) == 0 &&
                little32(frame + 12) == 3 &&
                little32(frame + 16) == o->expected_chunk ?
@@ -2308,13 +2316,92 @@ done:
     return rc;
 }
 
+static int host_reject_data_frame(const uint8_t *frame, size_t len,
+                                  int final, int64_t now)
+{
+    struct owner o = {.phase = WAIT_DATA, .rfs = -1,
+                      .deadline_ms = now + 10000,
+                      .total_deadline_ms = now + 10000,
+                      .grant_attempted = final ? RFS_GRANTS_MAX : 1,
+                      .chunks_stored = final ? RFS_GRANTS_MAX - 1 : 0,
+                      .received_bytes = final ? 94 * FIRST_CHUNK : 0,
+                      .expected_chunk = final ? 318 : FIRST_CHUNK};
+    sha_init(&o.received_hash);
+    host_gate_override = 1;
+    host_store_override = 1;
+    host_finish_override = 1;
+    host_write_override = host_full_write;
+    host_write_calls = 0;
+    int refused = feed_rfs(&o, frame, len, now);
+    int valid = refused != 0 && o.phase == WAIT_DATA &&
+                o.grant_attempted == (final ? RFS_GRANTS_MAX : 1) &&
+                o.chunks_stored == (final ? RFS_GRANTS_MAX - 1 : 0) &&
+                o.received_bytes == (final ? 94 * FIRST_CHUNK : 0) &&
+                !o.final_ack_attempted && !o.final_ack_sent &&
+                host_write_calls == 0;
+    host_gate_override = 0;
+    host_store_override = 0;
+    host_finish_override = 0;
+    host_write_override = NULL;
+    host_write_calls = 0;
+    zero_bytes(&o, sizeof o);
+    return valid ? 0 : -1;
+}
+
+static int test_host_padded_final_refusals(void)
+{
+    uint8_t frame[RFS_FRAME_MAX + 2] = {0};
+    int64_t now = monotonic_ms();
+    int rc = -1;
+    if (now < 0) return -1;
+    frame[0] = 2;
+    frame[2] = 1;
+    put_little32(frame + 4, 332);
+    put_little32(frame + 12, 3);
+    put_little32(frame + 16, 318);
+    frame[338] = 1;
+    if (host_reject_data_frame(frame, 340, 1, now)) goto done;
+    frame[338] = 0;
+    frame[339] = 1;
+    if (host_reject_data_frame(frame, 340, 1, now)) goto done;
+    frame[339] = 0;
+    put_little32(frame + 4, 331);
+    if (host_reject_data_frame(frame, 340, 1, now) ||
+        host_reject_data_frame(frame, 339, 1, now)) goto done;
+    put_little32(frame + 4, 333);
+    if (host_reject_data_frame(frame, 341, 1, now)) goto done;
+    put_little32(frame + 4, 332);
+    if (host_reject_data_frame(frame, 341, 1, now)) goto done;
+    frame[0] = 3;
+    if (host_reject_data_frame(frame, 340, 1, now)) goto done;
+    frame[0] = 2;
+    frame[2] = 2;
+    if (host_reject_data_frame(frame, 340, 1, now)) goto done;
+    frame[2] = 1;
+    frame[8] = 1;
+    if (host_reject_data_frame(frame, 340, 1, now)) goto done;
+    frame[8] = 0;
+    frame[12] = 4;
+    if (host_reject_data_frame(frame, 340, 1, now)) goto done;
+    frame[12] = 3;
+    put_little32(frame + 16, 319);
+    if (host_reject_data_frame(frame, 340, 1, now)) goto done;
+    put_little32(frame + 16, FIRST_CHUNK);
+    put_little32(frame + 4, 12 + FIRST_CHUNK + 2);
+    if (host_reject_data_frame(frame, RFS_FRAME_MAX + 2, 0, now)) goto done;
+    rc = 0;
+done:
+    zero_bytes(frame, sizeof frame);
+    return rc;
+}
+
 /* Test the real finish/sidecar durability path with only device gates mocked. */
-static int test_host_finish_candidate(int fault)
+static int test_host_finish_candidate(int fault, int padded_final)
 {
     char parent_path[] = "/tmp/saaios-rfs-full-test-XXXXXX";
     static const char leaf[] = "run";
     uint8_t zero[4096] = {0}, chunk[FIRST_CHUNK], digest[32], again[32];
-    uint8_t frame[20 + 318] = {0};
+    uint8_t frame[20 + 318 + 2] = {0};
     struct sha256 source_hash;
     struct owner o = {.source = -1, .candidate = -1, .sidecar_fd = -1,
                       .quarantine_parent = -1, .quarantine_dir = -1};
@@ -2387,8 +2474,16 @@ static int test_host_finish_candidate(int fault)
         put_little32(frame + 8, 0);
         put_little32(frame + 12, 3);
         put_little32(frame + 16, 318);
+        size_t frame_len = 20 + 318;
+        if (padded_final) {
+            frame_len += 2;
+            put_little32(frame + 4, 332);
+            frame[338] = frame[339] = 0;
+        }
         struct stat sidecar;
-        if (feed_rfs(&o, frame, sizeof frame, now) == 0 ||
+        if (feed_rfs(&o, frame, frame_len, now) == 0 ||
+            o.chunks_stored != RFS_GRANTS_MAX ||
+            o.received_bytes != RFS_TRANSFER_BYTES ||
             o.final_ack_attempted || o.final_ack_sent ||
             host_write_calls != 0 ||
             fstatat(o.quarantine_dir, SIDECAR_NAME, &sidecar,
@@ -2440,7 +2535,7 @@ done:
     return rc;
 }
 
-static int test_host_transcript(void)
+static int test_host_transcript(int padded_final)
 {
     struct owner o = {.rfs = -1, .phase = WAIT_6};
     uint8_t frame[RFS_FRAME_MAX] = {0};
@@ -2500,7 +2595,13 @@ static int test_host_transcript(void)
         put_little32(frame + 8, 0);
         put_little32(frame + 12, 3);
         put_little32(frame + 16, expected_length);
-        if (feed_rfs(&o, frame, 20 + expected_length, monotonic_ms()))
+        size_t frame_len = 20 + expected_length;
+        if (padded_final && i == RFS_GRANTS_MAX - 1) {
+            frame_len += 2;
+            put_little32(frame + 4, 332);
+            frame[338] = frame[339] = 0;
+        }
+        if (feed_rfs(&o, frame, frame_len, monotonic_ms()))
             goto done;
         if (i == 19) {
             uint8_t sim[15 + SIT_SIM_APP_STRIDE];
@@ -2591,10 +2692,15 @@ static int self_test(void)
     if (classify(&o, data, 338) != BAD_FRAME)
         return 7;
 #ifdef RFS_HOST_TEST
-    if (test_host_storage_faults() || test_host_finish_candidate(0) ||
-        test_host_finish_candidate(1) || test_host_finish_candidate(2) ||
-        test_host_transcript() || test_sit_observer() ||
-        test_host_failure_diagnostics() || test_host_final_frame_shape())
+    if (test_host_storage_faults() || test_host_finish_candidate(0, 0) ||
+        test_host_finish_candidate(1, 0) ||
+        test_host_finish_candidate(2, 0) ||
+        test_host_finish_candidate(1, 1) ||
+        test_host_finish_candidate(2, 1) ||
+        test_host_transcript(0) || test_host_transcript(1) ||
+        test_sit_observer() ||
+        test_host_failure_diagnostics() || test_host_final_frame_shape() ||
+        test_host_padded_final_refusals())
         return 8;
 #endif
     zero_bytes(data, sizeof data);
