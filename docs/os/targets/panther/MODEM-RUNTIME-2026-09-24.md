@@ -5722,6 +5722,18 @@ already-ONLINE attach could not observe this boot window. Device logs:
 `/data/saaios/var/owner-handoff-bringup.log` and
 `/data/saaios/var/modem-channel-owner.log`.
 
+Factory TD1A `sit-base.so` message-name dispatch labels the first-minute
+unsolicited IDs `0x024e` as SIM slot status, `0x0210` as SIM status (three
+frames), `0x0803` as radio ready, `0x0802` as radio state changed, `0x0246`
+as SIM phonebook ready and `0x000d` as emergency-call list. Factory
+`libsitril.so` maps `0x0248` to ICCID information. Only type/id/length was
+logged; **do not log these payloads**, which may contain ICCID/EID or other
+identifiers. `NetworkService::OnRadioReady`/`OnRadioStateChanged` update
+radio state and broadcast internal system event `0x101`, rather than
+directly sending a CP request. The passive owner consumes these events but
+does not yet implement that AP-side dispatch. Its absence is a candidate
+missing prerequisite, not an established cause of failed registration.
+
 Before the successful run, the first script attempt stopped with `sh: missing
 ]` during device-node identity checking. CP stayed OFFLINE and no modem stage
 was sent. That one-line shell error was fixed in commit `40c2b7e`; the two
