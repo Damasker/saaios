@@ -50,21 +50,17 @@ through this diagnostic path. This does not yet establish cellular service,
 network registration, calls, SMS, mobile data, or long-term modem lifecycle
 handling.
 
-**Current blocker (MODEM-06 soft-lock):** after stock ONLINE the CP often
-reports `app_state=PIN` with `pin1=DISABLED`, so START_NETWORK never runs.
-ATU/SHMEM Present pokes are dead. See
-`docs/os/targets/panther/MODEM-BLOCKER.md`. Operator unblock while ONLINE:
-
-```sh
-WATCH_ROUNDS=12 sh os/targets/panther/diagnostics/tray-bearer-chase.sh
-```
-
-Pull/reseat the SIM tray during the watch; the script chases Radio/LTE/reg
-and checks `rmnet` IPv4. Remote FN_A/RatMap lever is **blocked** (EU No-CDMA
-NV/TCS only — see MODEM-BLOCKER). Catalog OEM `0x2f50` still needs an
-external frame: `diagnostics/oem-ipc-inject.c` + `post-init-chase.sh` +
-`OEM-IPC-CAPTURE.md` (do not invent bytes; do not start rild/cbd under ban).
-Do not mark the modem goal complete without bearer.
+**Current blocker (MODEM-06, updated 2026-10-01):** SIM READY(5) has been
+observed twice; PIN→READY is no longer the active blocker. Under READY and
+radio ON, voice/data registration remains 0 with no `rmnet` RX or cellular
+IPv4. Guarded AllowData(1), RadioPower ON-only, and a reversible LTE_WCDMA
+fallback check did not initiate registration. IPC/RFS endpoints are currently
+short-lived; the kernel drops CP messages without an opener and purges the
+receive queue on the last close. The next architectural step is a single,
+continuous IPC/RFS owner with a safe boot handoff and read-only state API.
+The old tray chase and OEM experiments below are historical diagnostics, not
+current unblock instructions. See `docs/os/targets/panther/MODEM-BLOCKER.md`.
+Do not mark cellular service complete without registration and a bearer.
 
 The reusable pieces in `src/` are pure C helpers with host tests:
 
