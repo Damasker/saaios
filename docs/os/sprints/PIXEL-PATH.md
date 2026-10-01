@@ -247,8 +247,11 @@ diagnose (ADR-238, `351b0b6f…`).
   have no oem_ipc encoder. Preprocess/`Message ID not found` DBT-attributed to
   `oem_ipc_message_dispatcher.c` (SIT RX via `oem_sit_main.c`) but wire header
   still opaque. Non-string catalog RE: `+0x18` is class tag (INIT-family=4),
-  not token; nanopb `[OEM][PB]` ≠ SIM catalog; frame still incomplete. This is
-  diagnostic, not a modem service, and not cellular registration/calls/SMS/data.
+  not token; nanopb `[OEM][PB]` ≠ SIM catalog; frame still incomplete. SitOem
+  protobuf schema exhaust (factory carve): **no** SIM/init/card/uicc
+  PayloadCase/message with encode — Ping≠INIT; external hunt found **no**
+  complete `0x2f50` body=2 wire capture. This is diagnostic, not a modem
+  service, and not cellular registration/calls/SMS/data.
   See `docs/os/targets/panther/MODEM-*.md` and [MODEM-ROADMAP.md](MODEM-ROADMAP.md).
 - Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
 - Playback: tinyplay + test-tone presence, no auto-play (ADR-257; host)

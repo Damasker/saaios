@@ -904,6 +904,54 @@ for catalog SIM_* still missing.
 **Next:** still need catalog OEM wire on `oem_ipc*` (stock capture / non-SitOem
 encoder). Same bans. Soft-lock unchanged.
 
+### 2026-10-01 — SitOem schema exhaust + external `0x2f50` hunt (no send)
+
+**Live brief (COM13 / NCM `172.31.7.1`):** ONLINE; PRESENT apps=1 **app=PIN**
+pin1=2 remain=3; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild; rmnet rx=0;
+wlan/usb IPv4 only; **no bearer**. ADB absent (MTP phantom); SSH pubkey denied.
+
+Script: `diagnostics/tmp-sitoem-schema-exhaust.py` (+ `.out`) on carved
+`carved-oemipc-25e7b000.so` (SitOem) / `carved-oemipc-cf64000.so` (log helper).
+
+#### SitOem protobuf surface (complete type list)
+
+`sit_ipc_message::*` Arena/`CreateMaybeMessage` + wrappers (no SIM family):
+
+| Family | Types |
+| --- | --- |
+| Core | `IpcMessage`, `IpcMessageType`, PayloadCase via `initialMessageHeader` |
+| Ping | `PingMessage`, `PingRequest` |
+| Config | `ConfigMessage`, `ConfigRead/Write/Apply/VersionRequest`, `ConfigRead/VersionResponse` |
+| Thermal | `ThermalMessage`, `ThermalRequest` |
+| Metrics | `MetricsDataMessage`, `MetricsDataRequest`, `StatsAtomGetAtoms/Data Request/Response` |
+| Device | `DeviceStateMessage`, `DeviceStateUpdateRequest` |
+| Traffic / Txas | `TrafficStatsMessageModemData`, `TxasMessage`, `TxasRequest`, `TxasRead`, `TxasState` |
+| Scone | `SconeActivityInputMessage`, `SconeRequest`, `Scone*IsValid` |
+| Coex / Debug / Flow | `CoexMessage`, `BluetoothCoexInd`, `DebugMessage`, `DataFlowMessage`, `DataValidation*` |
+| Ind / KPI | `NwCongestion*`, `MarginalCoverage*`, `RadioLinkConditionInd`, `PerCallStatsKpi*`, `MchMessage` |
+
+**SIM/init/card/uicc protobuf msgs?** **NONE** (after excluding Ping⊃pin /
+sitInitModem IPC bring-up / StatsAtom⊃sat false friends). Evidenced encodes
+are Ping/Config/Thermal/Metrics/DeviceState/Traffic/Txas/Scone only —
+**no** SIM encode path → **no live SitOem SIM try**.
+
+#### External hunt (github / XDA / paste / project notes / pixel-mainline)
+
+| Source | Result |
+| --- | --- |
+| github / XDA / paste queries for `SIM_INIT_REQ` `0x2f50` / oem_ipc wire | **no** complete frame (msgid `0x2f50`, body size 2) |
+| `sit_ipc_message` / PayloadCase public dumps | **none** (unrelated IPMI/WebSocket hits) |
+| pixel-mainline/modem (`cbd-lite`, `sit-smoke`) | SIT boot/smoke only — **no** oem_ipc / `0x2f50` |
+| libsamsung-ipc / ShannonBaseband / FirmWire notes | classic SIPC / RE tooling — **not** Pixel catalog OEM INIT frame |
+| In-tree prior RE outs | catalog meta only; app hdr + 2B body still missing |
+
+**External complete frame?** **no** → **no** soft `oem_ipc0` catalog write.
+
+**SIM_INIT sent?** **no**. **Bearer?** **no**. Soft-lock unchanged.
+
+**Next:** still need stock catalog OEM capture / non-SitOem host encoder for
+app header + 2B body. Same bans.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

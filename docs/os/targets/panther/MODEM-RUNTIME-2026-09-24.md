@@ -5423,3 +5423,38 @@ ONE userspace write (raw protobuf, 11B): tags `08 01 | 10 01 | 2a 05/0a 03/0a 01
 Scripts: `tmp-revalidate-appstate-offsets.py`, `tmp-revalidate-appstate-deep.py`,
 `tmp-re-sitoem-ping.py`, `tmp-dump-sim-layout.c`, `tmp-sitoem-ping-once.c`.
 Tool: `sit-sim-status.c` now prints type/state/pin1/remain.
+
+## 2026-10-01: SitOem schema exhaust; external 0x2f50 hunt empty
+
+### Live brief
+
+COM13 + USB NCM `172.31.7.1`. modem_state=**ONLINE**; oem_ipc0 **OEM_RDWR_OK**;
+no cbd/rild. GET_APP: PRESENT apps=1 **app=PIN** pin1=2 remain=3. rmnet rx=0;
+wlan/usb IPv4 only; **no bearer**. ADB empty (Pixel as MTP); SSH pubkey denied.
+
+### SitOem protobuf exhaust (factory carve)
+
+`tmp-sitoem-schema-exhaust.py` on `carved-oemipc-25e7b000.so`:
+
+- **68** `sit_ipc_message::*` mangled types; **22** Arena `CreateMaybeMessage`
+  types; wrappers Ping/Config/Thermal/Metrics/DeviceState/Traffic/Txas/Scone/
+  Coex/Debug/DataFlow/DataValidation/Mch/KPI inds ? full list in
+  `tmp-sitoem-schema-exhaust.out` and MODEM-BLOCKER § schema-exhaust.
+- **SIM/init/card/uicc-related with encode?** **NONE** (Ping / sitInitModem /
+  StatsAtom are false friends, not catalog SIM).
+- `carved-oemipc-cf64000.so` = log helper; **0** protobuf schema.
+
+**Live SitOem SIM try?** **SKIP** ? nothing to send without inventing.
+
+### External hunt
+
+github / XDA / paste / ShannonBaseband / libsamsung-ipc / pixel-mainline modem
+(`cbd-lite`, `sit-smoke`): **no** complete catalog frame with msgid `0x2f50`
+and body size **2**. In-tree RE still has catalog meta only.
+
+**Soft catalog write?** **no**. **Bearer?** **no**.
+
+### Next
+
+Stock `oem_ipc*` catalog capture or non-SitOem host encoder for app header +
+2B body. Then ONE soft `SIM_INIT`. Same bans.

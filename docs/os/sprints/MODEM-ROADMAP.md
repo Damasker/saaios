@@ -616,6 +616,13 @@ apps=1. SitOem protobuf Ping on oem_ipc0: write_ok + RX type=RESPONSE —
 transport alive, **≠** catalog `0x2f50`. Bearer **no**. Next: catalog OEM
 wire still missing. BLOCKER + RUNTIME §§ parse/ping.
 
+**SitOem schema exhaust + external `0x2f50` hunt (2026-10-01):** Live ONLINE /
+PIN / pin1=2 / oem_ipc0 OK; no bearer. Full SitOem protobuf type list from
+factory carve — **zero** SIM/init/card/uicc messages with encode path (Ping /
+sitInitModem are not catalog INIT). External github/XDA/paste/pixel-mainline
+hunt: **no** complete `0x2f50` body=2 frame. **No live try**. Next: stock
+catalog OEM capture only. BLOCKER § schema-exhaust.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

@@ -1,0 +1,294 @@
+
+============================================================
+FILE carved-oemipc-25e7b000.so size=133560
+dynstr strings >=8: 504
+
+=== sit_ipc_message::* types (68) ===
+  BluetoothCoexInd
+  CoexMessage
+  ConfigApplyRequest
+  ConfigMessage
+  ConfigReadRequest
+  ConfigReadResponse
+  ConfigVersionRequest
+  ConfigVersionResponse
+  ConfigWriteRequest
+  DataFlowMessage
+  DataValidationMessage
+  DataValidationRequest
+  DataValidationResponse
+  DebugMessage
+  DeviceStateMessage
+  DeviceStateUpdateRequest
+  IpcMessage
+  IpcMessageType
+  MarginalCoverageIndication
+  MarginalCoverageMessage
+  MchMessage
+  MetricsDataMessage
+  MetricsDataRequest
+  NwCongestionMessage
+  NwCongestionStatusInd
+  PerCallStatsKpiInd
+  PerCallStatsKpiMessage
+  PingMessage
+  PingRequest
+  RadioLinkConditionInd
+  SconeActivityInputMessage
+  SconeBattery_IsValid
+  SconeMobility_IsValid
+  SconeRequest
+  SconeScreen_IsValid
+  SconeThermal_IsValid
+  StatsAtomGetAtomsRequest
+  StatsAtomGetAtomsResponse
+  StatsAtomGetDataRequest
+  StatsAtomGetDataResponse
+  ThermalMessage
+  ThermalRequest
+  TxasMessage
+  TxasRead
+  TxasRequest
+  TxasState
+  _AudioInfo_default_instance_
+  _BandDurationInfo_default_instance_
+  _CallDropInfo_default_instance_
+  _CoexMessage_default_instance_
+  _ConfigMessage_default_instance_
+  _DataFlowMessage_default_instance_
+  _DataValidationMessage_default_instance_
+  _DebugMessage_default_instance_
+  _DebugReportInd_default_instance_
+  _HandoverInfo_default_instance_
+  _MarginalCoverageMessage_default_instance_
+  _MchMessage_default_instance_
+  _MetricsDataMessage_default_instance_
+  _NwCongestionMessage_default_instance_
+  _PerCallStatsKpiMessage_default_instance_
+  _PingMessage_default_instance_
+  _RadioLinkConditionInd_RLD_default_instance_
+  _RatDurationInfo_default_instance_
+  _RlfRecoveryInfo_default_instance_
+  _SignalDurationInfo_default_instance_
+  _ThermalMessage_default_instance_
+  _TxasMessage_default_instance_
+
+=== *MessageModemData wrappers (40) ===
+  CoexMessageModemData
+  ConfigMessageModemData
+  DataFlowStateMessageModemData
+  DebugMessageModemData
+  DeviceStateMessageModemData
+  LastCallKpiMessageModemData
+  MarginalCoverageMessageModemData
+  MetricsDataMessageModemData
+  NwCongestionMessageModemData
+  PingMessageModemData
+  RadioLinkConditionMessageModemData
+  SconeActivityInputMessageModemData
+  ThermalMessageModemData
+  TrafficStatsMessageModemData
+  TxasMessageModemData
+  _ZN20CoexMessageModemData
+  _ZN20PingMessageModemData
+  _ZN20TxasMessageModemData
+  _ZN21DebugMessageModemData
+  _ZN22ConfigMessageModemData
+  _ZN23ThermalMessageModemData
+  _ZN27DeviceStateMessageModemData
+  _ZN27LastCallKpiMessageModemData
+  _ZN27MetricsDataMessageModemData
+  _ZN28NwCongestionMessageModemData
+  _ZN28TrafficStatsMessageModemData
+  _ZN29DataFlowStateMessageModemData
+  _ZN32MarginalCoverageMessageModemData
+  _ZN34RadioLinkConditionMessageModemData
+  _ZN34SconeActivityInputMessageModemData
+  _ZTV20PingMessageModemData
+  _ZTV20TxasMessageModemData
+  _ZTV21DebugMessageModemData
+  _ZTV22ConfigMessageModemData
+  _ZTV23ThermalMessageModemData
+  _ZTV27DeviceStateMessageModemData
+  _ZTV27MetricsDataMessageModemData
+  _ZTV28TrafficStatsMessageModemData
+  _ZTV29DataFlowStateMessageModemData
+  _ZTV34SconeActivityInputMessageModemData
+
+=== SitOemHandler send/init/register APIs (26) ===
+  _ZN13SitOemHandler12sitInitModemEPKc
+  _ZN13SitOemHandler14sitSendPingReqEPKcPc
+  _ZN13SitOemHandler21sitSendMetricsDataReqEbRNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE
+  _ZN13SitOemHandler21sitSendTxasMessageReqE17txas_state_e_type
+  _ZN13SitOemHandler22sitSendTrafficStatsReqEP24traffic_config_data_type
+  _ZN13SitOemHandler22sitSendTxasMessageReadEP17txas_state_e_type
+  _ZN13SitOemHandler23sitSendStatsAtomDataReqEiPhPjb
+  _ZN13SitOemHandler23sitSendStatsAtomListReqEPiPj
+  _ZN13SitOemHandler25sitSendReadRadioConfigReqEPKcjiPcPj
+  _ZN13SitOemHandler26sitSendApplyRadioConfigReqE23oem_radio_config_e_type
+  _ZN13SitOemHandler26sitSendWriteRadioConfigReqEPKcjiPKhj
+  _ZN13SitOemHandler27sitSendDeviceStateUpdateReqEP25radio_device_state_s_type
+  _ZN13SitOemHandler27sitSendUpdateRadioConfigReqEPKcjPKhj
+  _ZN13SitOemHandler28sitSendSconeActivityInputReqEP23radio_scone_info_s_type
+  _ZN13SitOemHandler29sitRegisterModemStateCallbackEPFv22oem_modem_state_e_typeE
+  _ZN13SitOemHandler31sitSendGetRadioConfigVersionReqEPc
+  _ZN13SitOemHandler33sitRegisterCoexIndicationCallbackEPFvP19coex_ind_msg_s_typeE
+  _ZN13SitOemHandler33sitRegisterPingIndicationCallbackEPFvPKcjE
+  _ZN13SitOemHandler35sitSendGetRadioConfigVersionMsimReqEiPc
+  _ZN13SitOemHandler36sitRegisterLastCallKpiStatusCallbackEPFvP28last_call_kpi_ind_msg_s_typeE
+  _ZN13SitOemHandler36sitSendModemThermalMitigationRequestEiijRbRi
+  _ZN13SitOemHandler39sitRegisterRadioIssueIndicationCallbackEPFvP27debug_report_ind_msg_s_typeE
+  _ZN13SitOemHandler42sitRegisterCongestionStatusChangedCallbackEPFvP28nw_congestion_ind_msg_s_typeE
+  _ZN13SitOemHandler42sitRegisterDataFlowStateIndicationCallbackEPFvP23data_flow_status_s_typeE
+  _ZN13SitOemHandler44sitRegisterRadioLinkConditionChangedCallbackEPFvP35radio_link_condition_ind_msg_s_typeE
+  _ZN13SitOemHandler46sitRegisterMarginalCoverageInfoChangedCallbackEPFvP32marginal_coverage_ind_msg_s_typeE
+
+=== PayloadCase / oneof clues ===
+mangled with PayloadCase: 1
+  _ZN9ModemData20initialMessageHeaderEN15sit_ipc_message10IpcMessage11PayloadCaseENS0_14IpcMessageTypeE
+rodata field-name hits: []
+
+=== Arena CreateMaybeMessage types (22) ===
+  PingMessage
+  PingRequest
+  TxasMessage
+  TxasRequest
+  SconeRequest
+  ConfigMessage
+  ThermalMessage
+  ThermalRequest
+  ConfigReadRequest
+  ConfigApplyRequest
+  ConfigWriteRequest
+  DeviceStateMessage
+  MetricsDataMessage
+  MetricsDataRequest
+  ConfigVersionRequest
+  DataValidationMessage
+  DataValidationRequest
+  StatsAtomGetDataRequest
+  DeviceStateUpdateRequest
+  StatsAtomGetAtomsRequest
+  SconeActivityInputMessage
+  TxasRead
+
+=== SIM/init/card/uicc-related (filtered; Ping/sitInitModem excluded) ===
+sit_ipc_message SIMISH: NONE
+MessageModemData SIMISH: NONE
+SitOemHandler API SIMISH: NONE
+Arena CreateMaybeMessage SIMISH: NONE
+NOTE: sitInitModem = SitOem startModemIPC path (protobuf family), NOT catalog SIM_INIT_REQ 0x2f50
+
+=== MOVZ #1..64 immediates (possible PayloadCase/Type) count=23 ===
+  #1 n=8 first=0x10a04
+  #2 n=8 first=0x10878
+  #3 n=8 first=0x10a08
+  #4 n=8 first=0x10064
+  #5 n=8 first=0x11414
+  #6 n=8 first=0x10bdc
+  #7 n=5 first=0x11484
+  #8 n=8 first=0x14834
+  #9 n=8 first=0x15754
+  #10 n=3 first=0x16014
+  #11 n=2 first=0x18bb8
+  #12 n=3 first=0x1afcc
+  #13 n=1 first=0x185f8
+  #14 n=1 first=0x1ae78
+  #15 n=3 first=0x1c478
+  #16 n=8 first=0x11928
+  #24 n=8 first=0x10e20
+  #29 n=1 first=0x18a1c
+  #30 n=8 first=0x156e0
+  #32 n=7 first=0x11890
+  #40 n=4 first=0x10c1c
+  #56 n=3 first=0x1a614
+  #64 n=5 first=0x13990
+
+=== Evidenced encode symbols (30) ===
+  _ZN13SitOemHandler14sitSendPingReqEPKcPc
+  _ZN13SitOemHandler21sitSendMetricsDataReqEbRNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE
+  _ZN13SitOemHandler21sitSendTxasMessageReqE17txas_state_e_type
+  _ZN13SitOemHandler22sitSendTrafficStatsReqEP24traffic_config_data_type
+  _ZN13SitOemHandler22sitSendTxasMessageReadEP17txas_state_e_type
+  _ZN13SitOemHandler23sitSendStatsAtomDataReqEiPhPjb
+  _ZN13SitOemHandler23sitSendStatsAtomListReqEPiPj
+  _ZN13SitOemHandler25sitSendReadRadioConfigReqEPKcjiPcPj
+  _ZN13SitOemHandler26sitSendApplyRadioConfigReqE23oem_radio_config_e_type
+  _ZN13SitOemHandler26sitSendWriteRadioConfigReqEPKcjiPKhj
+  _ZN13SitOemHandler27sitSendDeviceStateUpdateReqEP25radio_device_state_s_type
+  _ZN13SitOemHandler27sitSendUpdateRadioConfigReqEPKcjPKhj
+  _ZN13SitOemHandler28sitSendSconeActivityInputReqEP23radio_scone_info_s_type
+  _ZN13SitOemHandler31sitSendGetRadioConfigVersionReqEPc
+  _ZN13SitOemHandler35sitSendGetRadioConfigVersionMsimReqEiPc
+  _ZN13SitOemHandler36sitSendModemThermalMitigationRequestEiijRbRi
+  _ZN20PingMessageModemData9fillInputEPKc
+  _ZN22ConfigMessageModemData22configReadRequestInputEPKcji
+  _ZN22ConfigMessageModemData23configApplyRequestInputEi
+  _ZN22ConfigMessageModemData23configWriteRequestInputEPKcjPKhj
+  _ZN22ConfigMessageModemData23configWriteRequestInputEPKcjPKhji
+  _ZN22ConfigMessageModemData25configVersionRequestInputEi
+  _ZN22ConfigMessageModemData25configVersionRequestInputEv
+  _ZN23ThermalMessageModemData9fillInputEiji
+  _ZN27DeviceStateMessageModemData29deviceStateUpdateRequestInputEhhhhhhhNSt3__16vectorIhNS0_9allocatorIhEEEEhhiih
+  _ZN27MetricsDataMessageModemData28statsAtomGetDataRequestInputEib
+  _ZN27MetricsDataMessageModemData29statsAtomGetAtomsRequestInputEv
+  _ZN27MetricsDataMessageModemData9fillInputEb
+  _ZN28TrafficStatsMessageModemData24trafficStatsRequestInputEP24traffic_config_data_type
+  _ZN34SconeActivityInputMessageModemData9fillInputEjjjj
+
+============================================================
+FILE carved-oemipc-cf64000.so size=102792
+dynstr strings >=8: 173
+
+=== sit_ipc_message::* types (0) ===
+
+=== *MessageModemData wrappers (0) ===
+
+=== SitOemHandler send/init/register APIs (0) ===
+
+=== PayloadCase / oneof clues ===
+mangled with PayloadCase: 0
+rodata field-name hits: []
+
+=== Arena CreateMaybeMessage types (0) ===
+
+=== SIM/init/card/uicc-related (filtered; Ping/sitInitModem excluded) ===
+sit_ipc_message SIMISH: NONE
+MessageModemData SIMISH: NONE
+SitOemHandler API SIMISH: NONE
+Arena CreateMaybeMessage SIMISH: NONE
+
+=== MOVZ #1..64 immediates (possible PayloadCase/Type) count=27 ===
+  #1 n=8 first=0xa140
+  #2 n=8 first=0xa5f0
+  #3 n=8 first=0xbfa0
+  #4 n=8 first=0xa250
+  #5 n=8 first=0xba48
+  #6 n=8 first=0xa2f0
+  #7 n=7 first=0xc480
+  #8 n=8 first=0xa704
+  #9 n=6 first=0xcd5c
+  #10 n=8 first=0xa204
+  #12 n=4 first=0xa214
+  #14 n=2 first=0x12e38
+  #16 n=8 first=0xa448
+  #20 n=2 first=0xf0a4
+  #21 n=2 first=0xed64
+  #24 n=8 first=0xc044
+  #30 n=1 first=0xfe68
+  #32 n=8 first=0xba00
+  #38 n=1 first=0x10f58
+  #40 n=2 first=0xbe70
+  #44 n=3 first=0x11998
+  #47 n=1 first=0xfc90
+  #48 n=6 first=0xc8a0
+  #56 n=3 first=0x14c50
+  #58 n=1 first=0x1195c
+  #60 n=2 first=0xd194
+  #64 n=3 first=0x133b0
+
+=== Evidenced encode symbols (0) ===
+
+============================================================
+VERDICT
+NO SitOem protobuf message/PayloadCase is SIM/init/card/uicc-related with an evidenced encode path. Catalog SIM_INIT_REQ 0x2f50 remains a separate OEM IPC table family. LIVE TRY: SKIP (no invent).
