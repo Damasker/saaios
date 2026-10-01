@@ -5,6 +5,14 @@ on:
   pull_request:
 
 jobs:
+  modem-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: modem parser and model tests
+        run: cargo test -p saai-modemd --lib
+
   test:
     runs-on: ubuntu-latest
     steps:
