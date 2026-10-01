@@ -21,13 +21,16 @@ total, and the 95-grant bound. It wipes the private candidate on refusal.
 No result is persisted, so this is **not** a durability or device-readiness
 claim; the modeled success status must not be connected to a modem.
 
-The proposed storage adapter is intentionally **not implemented**. Before
-one can exist, an executable Linux fixture and independent review must cover:
+The separate [Linux host-only storage fixture](RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
+now exercises synthetic private-file durability, but it is **not** a
+device-side verified-fd storage broker. The remaining device design and
+independent review must cover:
 
 1. Caller provenance: the caller must open a unique private directory with
-   `O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC`, and a synthetic baseline with
-   `O_RDONLY|O_NOFOLLOW|O_CLOEXEC`. A callee receiving only an fd cannot
-   reconstruct whether a symlink was traversed while the caller opened it.
+   `O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC`, and the immutable, separately verified
+   NV **copy** with `O_RDONLY|O_NOFOLLOW|O_CLOEXEC`; never open original EFS.
+   A callee receiving only an fd cannot reconstruct whether a symlink was
+   traversed while the caller opened it.
 2. On both supplied fds: `fstat` type, owner, mode, link count, size and
    access flags; empty directory and pinned baseline digest checks. Reject
    wrong owner, non-regular baseline, hard links, unexpected entries, and
@@ -43,6 +46,10 @@ one can exist, an executable Linux fixture and independent review must cover:
    on I/O errors and keep payload/NV bytes out of logs.
 5. Timeouts, a single IPC/RFS reader, CP state and open-count checks, plus
    an explicit rollback plan. None belong to this host-only library.
+
+The separate [host-only transport fixture](RFS-QUARANTINE-TRANSPORT-HOST.md)
+tests synthetic stream boundaries, send failures and deadlines; it is not
+wired to this device owner or a phone-side storage broker.
 
 Run host fixtures on x86-64, for example with Zig 0.14.1 or GCC:
 

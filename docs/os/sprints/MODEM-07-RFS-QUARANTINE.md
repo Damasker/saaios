@@ -85,9 +85,11 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
 The final CP-visible status was verified in factory code. Remaining local
 file/backup/checksum transitions and real CP data-frame bytes still require
 review before enabling phone I/O. Until then, only host-only synthetic
-[protocol](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md)
-and [private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
-fixtures are permitted; neither is a phone broker.
+[protocol](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md),
+[private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
+and [transport](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-TRANSPORT-HOST.md)
+fixtures are permitted. Transport and storage are not yet integrated; none
+is a phone broker.
 
 ## Implementation sequence before any phone-side RFS reply
 

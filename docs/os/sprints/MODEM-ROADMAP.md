@@ -819,9 +819,11 @@ and [host-only C core](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-
 cover the observed file-3 write request, bounded 95-chunk exchange and
 factory final status. The [Linux private-storage host fixture](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
 also tests copy isolation, fsync/reread and withholding the final ACK on
-faults. Synthetic fixtures and Linux ASan/UBSan pass; there is no phone-side
-candidate store or service. The live no-gap owner is passive and cannot
-claim MODEM-07 completion.
+faults. A separate [host-only transport fixture](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-TRANSPORT-HOST.md)
+tests split/coalesced packets, one outstanding grant, ambiguous writes and
+deadlines. Synthetic fixtures and Linux ASan/UBSan pass; transport and storage
+are not yet integrated, and there is no phone-side candidate store or service.
+The live no-gap owner is passive and cannot claim MODEM-07 completion.
 
 **Change:** specify what requests may be served from verified copies, what is
 read-only, what is denied, and how writes are rejected or quarantined. Original

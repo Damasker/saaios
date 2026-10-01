@@ -52,6 +52,25 @@ jobs:
             os/targets/panther/diagnostics/rfs-quarantine-core-host.test.c \
             -o /tmp/rfs-quarantine-core-host-san
           /tmp/rfs-quarantine-core-host-san
+      - name: quarantined RFS transport (synthetic Linux host only)
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -DRFS_QUARANTINE_HOST_ONLY \
+            os/targets/panther/diagnostics/rfs-quarantine-core-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-transport-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-transport-host.test.c \
+            -o /tmp/rfs-quarantine-transport-host-test
+          /tmp/rfs-quarantine-transport-host-test
+      - name: quarantined RFS transport sanitizers
+        run: |
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -DRFS_QUARANTINE_HOST_ONLY \
+            os/targets/panther/diagnostics/rfs-quarantine-core-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-transport-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-transport-host.test.c \
+            -o /tmp/rfs-quarantine-transport-host-san
+          /tmp/rfs-quarantine-transport-host-san
       - name: quarantined RFS private storage (Linux host only)
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
