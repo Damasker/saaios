@@ -175,10 +175,20 @@ RX/TX 0 at +60 s. Thus a complete RFS exchange was not required for those
 two observed headers and did not establish camp. These are owner receipt
 times, not CP emission order; missing `0x07xx` headers do not prove RF idle.
 Original EFS passed read-only postflight and was unmounted; original owner
-binaries were restored and the passive owner returned CP to ONLINE. Next
-map the factory `0x0802` radio-state indication scalar and its AP callback
-gates offline; only then consider a same-owner redacted scalar comparison.
-Do not guess a radio, carrier, SIM or network SET.
+binaries were restored and the passive owner returned CP to ONLINE.
+
+**Factory `0x0802` decode (2026-10-01):** exact TD1A `libsitril.so` and
+`sit-stream.so` independently read the unsolicited radio-state scalar as
+little-endian `u32` at frame `+8`. Factory labels map raw 0/1 to RIL OFF,
+raw 2 (`START_NETWORK`) to ON, and raw 3/4 (`POWER_OFF`/`RESET`) to
+UNAVAILABLE. `0x0803` radio-ready is a distinct path and initially sets
+UNAVAILABLE, not ON; the solicited `0x0801` GET state resides at `+12`.
+Because the matched traces logged headers only, the early `0x0802` scalar
+and ON transition remain unknown. If pursued, the next controlled comparison
+should add only a bounded, redacted scalar to the existing exclusive owner;
+it must not add a reader, GET or SET. Do not guess a radio, carrier, SIM or
+network SET. Details and binary provenance are in
+[MODEM-07-RFS-QUARANTINE.md](MODEM-07-RFS-QUARANTINE.md).
 
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),

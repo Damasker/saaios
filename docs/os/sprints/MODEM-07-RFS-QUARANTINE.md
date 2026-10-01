@@ -302,11 +302,70 @@ restored from hash-checked backups, and the default passive owner again holds
 an ONLINE CP. Logs for both compared boots were preserved under distinct
 names. MODEM-06 camp and bearer remain unresolved; further work must isolate
 a separate startup/registration prerequisite without guessing a SET. The
-next bounded step is host-only review of the exact TD1A `0x0802` indication
-adapter and `OnRadioStateChanged`/`OnRadioAvailable` gates. Its body offset
-and value are not yet established, so these header logs cannot show that the
-early radio state became ON. Only after factory validation would a same-owner
-scalar trace be considered; it would add no GET, SET, identifier or reader.
+next bounded step was host-only review of the exact TD1A `0x0802`
+indication adapter and radio-state callbacks; the result is below. The
+recorded headers still do not reveal the early radio-state value.
+
+## Factory `0x0802` radio-state indication decode (2026-10-01)
+
+The exact TD1A `vendor.img` `/lib64/libsitril.so` (SHA-256
+`efcca0d5fa5a3eb3a09d8c9f68fc35f8b194bb511379987fd4a353f12ed2d5b1`)
+has `ProtocolRadioStateAdapter::GetRadioState` at `0x230a20`. It checks the
+16-bit indication ID at frame offset `+2` for `0x0802`, then reads a
+little-endian 32-bit scalar at frame offset `+8` (`0x230a3c-0x230a48`). The
+same TD1A `sit-stream.so` (SHA-256
+`cef8756461c74102f9a78f91177d1baff80fb9af11c14994497fb8854e0f530a`)
+independently checks `0x0802` and reads `+8` at `0x4890c-0x48918`. Its
+factory strings identify the raw values:
+
+| `0x0802` raw scalar | Factory label | Factory RIL state |
+| --- | --- | --- |
+| 0 | `INITIALIZED` | 0 = OFF |
+| 1 | `STOP_NETWORK` | 0 = OFF |
+| 2 | `START_NETWORK` | 10 = ON |
+| 3 | `POWER_OFF` | 1 = UNAVAILABLE |
+| 4 | `RESET` | 1 = UNAVAILABLE |
+
+The exact `libsitril.so` conversion table at `0xd2e80` is `[0, 0, 10, 1]`
+for raw 0-3 and defaults to 1 for higher values; `sit-stream.so` uses
+`[0, 0, 10]` plus the same default. The OFF/UNAVAILABLE/ON names for RIL
+states 0/1/10 are defined by the
+[AOSP RIL enum](https://android.googlesource.com/platform/hardware/ril/+/461ada9c41b674fb3e178bd91d656439228644fe/include/telephony/ril.h).
+The observed 12-byte `0x0802` frame fits an 8-byte indication header plus
+this four-byte body; the factory adapter itself does not enforce an exact
+12-byte total. Do not confuse this with the solicited `0x0801` GET response:
+its radio-state scalar is at `+12` (`ProtocolNetRadioStateRespAdapter`,
+`0x230890-0x2308b8`).
+
+`NetworkService::OnRadioStateChanged(Message*)` (`0x1943d0-0x194440`)
+passes the converted value to `UpdateRadioState(value, true)`. The latter
+stores a changed state and broadcasts system event `0x101`
+(`0x192784-0x19285c`). The distinct `0x0803` radio-ready path calls
+`UpdateRadioState(1, true)` (`0x1937c0-0x193844`), i.e. UNAVAILABLE, not
+ON. The notifier's available-hook gate checks old state 1 and new state
+different from 1 (`0x1561e8-0x1561f4`); its radio-on hook separately checks
+new state 10 (`0x1562d0-0x1562dc`). Thus `0x0802` raw 2 can establish an
+ON transition, but the two previous boots logged **only IDs and lengths**.
+Their `0x0802` values, and whether the early event was ON, remain unknown.
+The later solicited raw-10 ON observations do not retrospectively decode
+that earlier indication or prove network registration.
+
+The user-supplied `s5300_sit` kernel-driver sketch is not the implementation
+in the linked public source. In the published
+[S5300 CPIF `modem_main.c`](https://android.googlesource.com/kernel/google-modules/radio/samsung/s5300/+/refs/heads/android-gs-akita-6.1-android15-qpr2/modem_main.c),
+the OF compatible is `samsung,exynos-cp` and the platform driver is
+`cp_interface`; it parses mailbox, shared-memory and IO-device properties.
+That source is from a later branch and does not replace the exact TD1A
+factory evidence above. The sketch's `google,s5300-sit`/`link_up` names and
+log-only interrupt handler cannot implement the SIT radio-state callback.
+Do not install it as a modem fix.
+
+If another controlled phone comparison is warranted, its minimal observable
+is only the `0x0802` scalar on the existing exclusive owner, with exact ID,
+minimum-length and bounded enum checks; log no other body bytes, identifiers
+or subscriber data. Repeat matched passive/full-RFS boots and retain the
+original-EFS read-only/postflight gates. This decode alone is not a reason
+to send a radio-power, carrier, SIM or network SET.
 
 ## Why this exists
 
@@ -485,7 +544,8 @@ In the stock TD1A `libsitril.so` (SHA-256
 `NetworkService::UpdateRadioState` at `0x192690` broadcasts system event
 `0x101` at `0x19285c`. `ServiceInterface::HandleInternalMessage` dispatches
 that event at `0x158dd8-0x158e14`; the radio-state notifier at `0x156160`
-invokes `OnRadioAvailable` on transition to state 1. On RIL socket 0,
+invokes its available hook when the old RIL state is 1 (UNAVAILABLE) and
+the new state is not 1. On RIL socket 0,
 `MiscService::OnRadioAvailable` (`0x179ae0`) invokes these four actions in
 order. The request IDs below come from the named factory builders, not from
 guessing SIT names:
