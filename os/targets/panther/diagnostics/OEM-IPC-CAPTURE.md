@@ -104,3 +104,19 @@ Probe helpers (host): `tmp-run-exynos-hdr-probe.ps1`,
 
 See `docs/os/targets/panther/MODEM-BLOCKER.md` (armed-for-frame) and
 `tray-bearer-chase.sh` for the post-edge pipeline.
+
+## Public FMT mapping attempt (2026-10-01) — still incomplete
+
+Closest public layouts vs catalog `SIM_INIT_REQ` (`0x2f50`, `body_hint=2`) and
+twin `SIM_VERIFYPIN_REQ` (`0x2f52`, `body_hint=10`):
+
+| Layout | Public evidence | Enough for soft send? |
+| --- | --- | --- |
+| Classic 7B `ipc_fmt_header` (len,mseq,aseq,group,index,type) | Replicant / libsamsung-ipc / Wireshark-dev | **No** — SEC group is `0x05`, not `0x2f`; no public `SIM_INIT_REQ`; type/mseq/aseq/body contents for Shannon OEM catalog unproven |
+| Soft SIT 12B (`type,pad,id,len,token`) | our Pixel soft path | **No** — different dialect; `0x0201` ≠ OEM `0x2f52` |
+| EXYNOS 12B (sync `ABCD` … ch `0x81`) | live Ping kprobe + public `exynos_build_header` | **Outer only** — userspace still needs full app frame |
+| SitOem protobuf | live Ping + schema exhaust | **No** — not catalog |
+
+**Do not** soft-build a classic-FMT or SIT-shaped `0x2f50` from catalog
+meta alone. Remaining blockers: every app-header byte + evidenced 2B body.
+Helper notes: `tmp-public-fmt-2f50-map.py`.

@@ -5458,3 +5458,56 @@ and body size **2**. In-tree RE still has catalog meta only.
 
 Stock `oem_ipc*` catalog capture or non-SitOem host encoder for app header +
 2B body. Then ONE soft `SIM_INIT`. Same bans.
+
+## 2026-10-01: public FMT header research vs catalog `0x2f50` (no send)
+
+Scripts: `tmp-public-fmt-2f50-map.py` / `.out`; live brief helper
+`tmp-run-live-brief-com13.ps1`.
+
+### Live brief (COM13 / USB NCM `172.31.7.1`)
+
+modem_state=**ONLINE**; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild.
+`sit-sim-status`: PRESENT apps=1 **app=PIN** pin1=2 remain=3.
+rmnet* rx=0; wlan0 LAN IPv4 + usb0=`172.31.7.1` only ? **no rmnet bearer**.
+SSH pubkey denied; brief via COM13.
+
+### Public layouts researched
+
+| Dialect | Source | Layout | Maps to catalog `0x2f50`? |
+| --- | --- | --- | --- |
+| Classic samsung-ipc FMT | morphis `radio.h`; Replicant/Wireshark `ipc_fmt_header` | 7B: `len,mseq,aseq,group,index,type` | **Closest structural guess only** ? `group/index=0x2f/0x50`; public SEC is **group `0x05`** (`IPC_SEC_SIM_STATUS=0x0501`); **no** `SIM_INIT_REQ` / `0x2f50` in `sec.h` |
+| Soft SIT (Pixel) | factory sit-stream + live `sit-sim-status` | 12B: `type,pad,id,len,token` | **no** ? id space `0x02xx`; twin `0x0201` vs OEM `0x2f52` body sizes contradict |
+| Kernel EXYNOS wrap | public `exynos_build_header` + live Ping kprobe | 12B: sync `ABCD`, seq, cfg `C000`, len, ch `0x81` | **outer only** ? msgid not in header; userspace = app passthrough |
+| SitOem protobuf | factory carve + live Ping | protobuf tags | **no** ? schema exhaust has no SIM/INIT |
+| Comsecuris / Hardwear / ShannonBaseband | slides + shannonRE | SHM FMT rings + internal `qitem_header` | **no** catalog app header / 2B body |
+| AOSP sepolicy | gs201 `file_contexts` | `/dev/oem_ipc[0-7]` | node only; **no** header layout |
+
+### Catalog stride-28 cross-check (unchanged)
+
+| Entry | body_hint | msgid | meta | rsp | +0x18 |
+| --- | --- | --- | --- | --- | --- |
+| `SIM_INIT_REQ` `@0x6de740` | **2** | `0x2f50` | `0x10104` | 0 | **4** (class tag) |
+| `SIM_VERIFYPIN_REQ` `@0x6de874` | 10 | `0x2f52` | `0x10104` | `0x2fa1` | 0 |
+
+`meta=0x10104` does **not** decode to classic sipc `type`, SIT `type`, or EXYNOS
+`frag_cfg`. `+0x18=4` remains INIT-family class tag ? **not** wire token length.
+
+### Gaps blocking soft send
+
+1. OEM **app-layer header** field order/size (classic 7B binding unproven; SIT
+   reuse falsified; EXYNOS is not app).
+2. **2-byte body CONTENTS** for `body_hint=2` (size known; zeros unproven).
+3. Token/seq/type rules for catalog REQUEST.
+4. Which `oem_ipcN` stock uses for catalog SIM_INIT (SitOem owns a different
+   dialect on `oem_ipc0`).
+
+### Live try / bearer
+
+**Fully evidenced frame?** **no**. **SIM_INIT sent?** **no** (no invent).
+**Bearer verified?** **no**.
+
+### Next
+
+Stock `oem_ipc*` catalog capture (policy-gated rild one-shot per
+`OEM-IPC-CAPTURE.md`) or external dump of catalog app header + 2B body ?
+`oem-ipc-inject` + `post-init-chase`. Same bans.

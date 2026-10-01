@@ -1181,6 +1181,25 @@ another Ping/Config. Tools: `tmp-sitoem-ping-once`, host helpers
 **Next:** unchanged — capture-only stock rild **or** external catalog OEM dump
 → `oem-ipc-inject` + `post-init-chase`. Same bans.
 
+### 2026-10-01 — public FMT / shannon-ipc mapping (no send)
+
+**Live brief (COM13):** ONLINE; app=PIN pin1=2 remain=3; oem_ipc0 RDWR OK;
+no cbd/rild; rmnet rx=0; **no bearer**.
+
+Public research (osmocom/Replicant `ipc_fmt_header` 7B; morphis `sec.h`;
+Comsecuris/Hardwear SHM notes; AOSP `oem_ipc[0-7]` sepolicy; our EXYNOS Ping
+capture + catalog stride-28):
+
+| Closest public match | Binding to catalog `0x2f50` / body=2 |
+| --- | --- |
+| Classic FMT `group:index` | Hypothetical `0x2f:0x50` — **unproven**; public SEC is `0x05xx`, no `SIM_INIT_REQ` |
+| Soft SIT 12B | **Falsified** as OEM dialect (msgid/body twin mismatch) |
+| EXYNOS 12B | Evidenced wrap only; **not** app header |
+| SitOem protobuf | **≠** catalog |
+
+**SENDABLE?** **No** — app header bytes + 2B body CONTENTS still missing. **Not
+sent.** Script: `diagnostics/tmp-public-fmt-2f50-map.py`.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

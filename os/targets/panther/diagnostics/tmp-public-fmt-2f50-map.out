@@ -1,0 +1,77 @@
+=== Public FMT / app-header layouts (evidence) ===
+
+A) Classic samsung-ipc / Replicant / osmocom Wireshark FMT
+   Source: libsamsung-ipc include/radio.h (morphis); Wireshark-dev
+           202202/msg00028 (GNUtoo packet-samsung-ipc); Replicant
+           SamsungIpcDissector wiki.
+   struct ipc_header / ipc_fmt_header (packed 7B):
+     u16 length;  /* total incl. header */
+     u8  mseq;
+     u8  aseq;
+     u8  group;   /* command high */
+     u8  index;   /* command low  */
+     u8  type;    /* REQ: EXEC=1 GET=2 SET=3 CFRM=4 EVENT=5
+                    RSP: INDI=1 RESP=2 NOTI=3 */
+   command = (group<<8)|index
+   SEC bank (include/sec.h): IPC_SEC_SIM_STATUS=0x0501, ...
+     NO SIM_INIT_REQ; NO 0x2f50 / 0x2f52 in public SEC table.
+   Closest hypothetical map of catalog msgid onto this header:
+     group=0x2f index=0x50  => command word 0x2f50
+     length = 7 + body_hint(=2) = 9
+     type = ? (EXEC/GET/SET unproven for Shannon OEM catalog)
+     mseq/aseq = ?
+     body[2] = ? (zeros unproven)
+   Verdict: STRUCT known publicly; BINDING to Shannon OEM catalog
+            msgid 0x2f50 NOT evidenced (SEC group is 0x05, not 0x2f).
+
+B) Soft SIT FMT on Pixel umts_ipc0 (our factory / live)
+   App 12B: type:u8 pad:u8 id:u16le len:u16le token:u32le [body]
+   Evidenced: GetSimStatus id=0x0200 len=12; VerifyPin id=0x0201
+   Twin check: soft 0x0201 body != OEM catalog 0x2f52 body_hint=10
+   No SIT dual 0x0200<->0x2f50 / 0x0201<->0x2f52 in MAIN.
+   Verdict: NOT the OEM catalog wire dialect.
+
+C) Kernel EXYNOS 12B wrap (CPIF / sipc5 link_header)
+   Public kernel: exynos_build_header (modem_v1 / modem_if families)
+   Live kprobe (SitOem Ping on oem_ipc0):
+     sync=0xABCD | frame_seq | frag_cfg=0xC000 | len=12+count
+     | ch=0x81 | pad | <userspace app bytes passthrough>
+   Userspace write = app only; NO msgid in EXYNOS header.
+   Verdict: outer transport ONLY; does not supply catalog app hdr.
+
+D) SitOem protobuf on oem_ipc0
+   Live Ping REQUEST/RESPONSE proven; schema exhaust: no SIM/INIT.
+   Verdict: different dialect from catalog 0x2f50.
+
+E) Comsecuris / Hardwear.io / ShannonBaseband
+   Document SHM FMT/RAW rings + internal qitem_header (src/dst/msg).
+   Do NOT publish Shannon OEM catalog app header or 0x2f50 body.
+
+F) AOSP / Google sepolicy
+   /dev/oem_ipc[0-7] labeled radio_device -- node existence only;
+   no app-header layout comments for catalog SIM_INIT.
+
+=== MAIN catalog stride-28 cross-check ===
+  @0x6de740 SIM_INIT_REQ:     body_hint=2  msgid=0x2f50 meta=0x10104
+                              rsp=0  +0x18=4 (class tag, not token len)
+  @0x6de874 SIM_VERIFYPIN_REQ: body_hint=10 msgid=0x2f52 meta=0x10104
+                              rsp=0x2fa1 +0x18=0
+  meta 0x10104 common across SIM REQ bank -- opaque; NOT proven as
+  classic sipc type / SIT type / EXYNOS frag_cfg.
+
+=== Map attempt: 0x2f50 onto public headers ===
+  - classic 7B sipc_fmt: closest=group/index=0x2f/0x50; gap=mseq,aseq,type,body[2]
+  - soft SIT 12B: closest=would put id=0x2f50; gap=SIT dialect; twin sizes contradict
+  - EXYNOS 12B: closest=kernel only; gap=no msgid; app still missing
+  - SitOem protobuf: closest=n/a; gap=no SIM_INIT in schema
+  - catalog meta alone: closest=body_hint=2; gap=body CONTENTS unknown
+
+=== SENDABLE? ===
+NO -- not every app-header byte evidenced; 2B body CONTENTS unproven.
+Do NOT invent zeros / classic type=EXEC / SIT-shaped OEM frame.
+
+=== Frame sent this turn? ===
+NO
+=== Bearer verified? ===
+NO
+DONE
