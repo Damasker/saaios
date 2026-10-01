@@ -98,5 +98,40 @@ chunk arithmetic and no-promotion invariants. A phone run requires a
 separate reviewed opt-in build and an explicit rollback plan; it is not a
 PID-1/autostart feature.
 
+## Factory radio-available path: evidence, not a replay list
+
+In the stock TD1A `libsitril.so` (SHA-256
+`efcca0d5fa5a3eb3a09d8c9f68fc35f8b194bb511379987fd4a353f12ed2d5b1`),
+`NetworkService::UpdateRadioState` at `0x192690` broadcasts system event
+`0x101` at `0x19285c`. `ServiceInterface::HandleInternalMessage` dispatches
+that event at `0x158dd8-0x158e14`; the radio-state notifier at `0x156160`
+invokes `OnRadioAvailable` on transition to state 1. On RIL socket 0,
+`MiscService::OnRadioAvailable` (`0x179ae0`) invokes these four actions in
+order. The request IDs below come from the named factory builders, not from
+guessing SIT names:
+
+| Action and factory route | SIT request and payload source | Gate / risk |
+| --- | --- | --- |
+| `SetDebugTraceOffOnBoot` `0x179b30` -> `DoSetDebugTrace` `0x17b8e0` -> `ProtocolMiscBuilder::SetDebugTrace` `0x22b5b0` | `0x090b`, 13 bytes, one byte set to 0 | Only when `persist.vendor.ril.cpdebugoff.onboot` is 1, or 99 with an additional global flag (`0x179bac-0x179be4`). Changes CP debug configuration. |
+| `SetModemsConfig` `0x179c40` -> `DoSetModemsConfig` `0x188820` -> `ProtocolMiscBuilder::BuildSetModemsConfig` `0x22d1c0` | `0x093f`, 13 bytes, byte 0 for one modem or 1 for two; count comes from `IsMultiSimEnabled` (`0x179cbc-0x179cd0`) | Requested on socket 0 when a RIL context exists; the two-modem case is rejected unless `persist.vendor.radio.multisim_switch_support=true` (`0x188994-0x188a50`). Changes CP modem configuration; necessity for this single-SIM diagnostic is unproven. |
+| `SendSGCValue` `0x179d30` -> `DoSendSGC` `0x17f920` -> `ProtocolMiscBuilder::SendSGCValue` `0x22c2a0` | `0x0404`, 24 bytes; carrier value originates in `vendor.ril.app.target_carrier` (`0x179db0-0x179dc8`), then passes through the stock mapping | Requested when a RIL context exists. Changes CP carrier configuration; a possible camp dependency, not yet a demonstrated one. |
+| `SendSvnInfo` `0x179e70` -> `ProtocolNetworkBuilder::BuildSvNumber` `0x238050` | `0x4605`, 14 bytes; two decimal characters from `ro.vendor.build.svn` (`0x179efc-0x17a068`) | Sent directly only after nonempty, at-most-two-digit validation. Supplies version metadata to CP. |
+
+The more directly camp-related factory path is
+`NetworkService::OnRadioAvailable` (`0x192e90`): its log at `0xb6eee`
+identifies fields `mUseCampOnEarlier` (`+0x345`), `mFirstRunOnBoot`
+(`+0x346`) and `mDelayedRadioPower` (`+0x2d4`). When the first two are true,
+the RIL is not connected and `persist.radio.airplane_mode_on` is 0, it calls
+`TrySetRadioPower(10)` at `0x1930d4`. A deferred radio-power request is
+another conditional route (`0x192ff8-0x193084`). `DoRadioPower` at
+`0x193860` builds SIT `0x0800` via `ProtocolNetworkBuilder::BuildRadioPower`
+at `0x236350`. These gates explain why stock code may request camp-on without
+the Android framework; they do **not** prove it was necessary in the observed
+SaaiOS run. None of the four MiscService actions is read-only. Do not replay
+any of them, or radio-power-on, merely because it appears in the factory
+sequence: require an isolated hypothesis, exact payload review and a bounded
+control comparison first. This RFS quarantine sprint remains read-only on
+IPC apart from the specifically reviewed RFS transaction.
+
 Evidence and corrections: [runtime notes](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
 and [modem roadmap](MODEM-ROADMAP.md).
