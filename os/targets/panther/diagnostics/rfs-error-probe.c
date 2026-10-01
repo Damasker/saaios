@@ -1,10 +1,11 @@
 /*
- * Bounded reproduction of the observed CP2A protected-NV RFS handshake.
- * This is a diagnostic, not a filesystem service. It never opens NV or EFS.
+ * Bounded observation of the recorded CP2A protected-NV RFS requests.
+ * This is a diagnostic, not a factory RFS service. It never opens NV or EFS.
  *
  * Factory rfsd SHA-256: 58d7f885e7533a328268f0de47ef9eb9995cdfa6b317d755b57973d4f5dfb71b.
- * The command-6 error reply follows the factory RFS_IO_REQUEST operation-2
- * path (status 6). All incoming packets must match the recorded sequence.
+ * Factory handling of command 6 after state 3 depends on local NV-file
+ * checks. The diagnostic does not grant a write or invent a status reply.
+ * All incoming packets must match the recorded sequence.
  */
 #define _GNU_SOURCE
 #include <stdint.h>
@@ -42,12 +43,9 @@ static const uint8_t request_io_write[24] = {
     0x06,0,0x01,0, 0x10,0,0,0, 0x03,0,0,0,
     0,0,0,0, 0x06,0xe4,0x02,0, 0x02,0,0,0
 };
-/* CP-visible factory status messages; no local file operation is reproduced. */
+/* Proven CP-visible unprotect status; no local file operation is reproduced. */
 static const uint8_t reply_unprotect[16] = {
     0x03,0,0,0, 0x08,0,0,0, 0,0,0,0, 0x03,0,0,0
-};
-static const uint8_t reply_io_error[16] = {
-    0x03,0,0x01,0, 0x08,0,0,0, 0x06,0,0,0, 0x03,0,0,0
 };
 
 struct exchange {
@@ -59,7 +57,7 @@ struct exchange {
 static const struct exchange expected[MAX_EVENTS] = {
     {request_unprotect, sizeof request_unprotect, reply_unprotect, sizeof reply_unprotect},
     {request_op_status, sizeof request_op_status, NULL, 0},
-    {request_io_write, sizeof request_io_write, reply_io_error, sizeof reply_io_error},
+    {request_io_write, sizeof request_io_write, NULL, 0},
 };
 
 static int classify(unsigned step, const uint8_t *packet, size_t packet_len,
@@ -104,7 +102,7 @@ static int fixture(void) {
     if (classify(MAX_EVENTS, request_unprotect, sizeof request_unprotect,
                  &reply, &reply_len) == 0)
         return 6;
-    puts("rfs-error-probe fixture PASS: three exact requests, replies and rejection cases");
+    puts("rfs-error-probe fixture PASS: three observed requests, bounded replies and rejection cases");
     return 0;
 }
 
@@ -257,7 +255,7 @@ static int hold_monitor_online(void) {
     return rc;
 }
 
-static int run_exact(int monitor_after) {
+static int run_observed(int monitor_after) {
     /* Share the existing diagnostic lock with SIT tools that also open RFS. */
     int lock = open("/run/saaios-sit-status.lock",
                     O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -340,7 +338,7 @@ static int run_exact(int monitor_after) {
         flock(lock, LOCK_UN);
         close(lock);
         lock = -1;
-        puts("RFS exact sequence completed; IPC0 and RFS0 held for 120 seconds");
+        puts("RFS observed sequence completed; IPC0 and RFS0 held for 120 seconds");
         fflush(stdout);
         rc = monitor_channels(ipc, fd);
     }
@@ -349,7 +347,7 @@ static int run_exact(int monitor_after) {
         fputs("WARNING: closing a last channel descriptor may purge queued CP requests.\n", stderr);
     close(fd);
     if (lock >= 0) close(lock);
-    if (rc == 0) puts("RFS exact three-step diagnostic completed");
+    if (rc == 0) puts("RFS observed three-step diagnostic completed");
     return rc;
 }
 #endif
@@ -357,17 +355,17 @@ static int run_exact(int monitor_after) {
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc == 2 && strcmp(argv[1], "--fixture") == 0) return fixture();
-    if (argc == 2 && strcmp(argv[1], "--run-exact-rfs-20260929") == 0) {
+    if (argc == 2 && strcmp(argv[1], "--run-observed-rfs-20260929") == 0) {
 #ifndef _WIN32
-        return run_exact(0);
+        return run_observed(0);
 #else
         fputs("Device run requires Linux\n", stderr);
         return 2;
 #endif
     }
-    if (argc == 2 && strcmp(argv[1], "--run-exact-and-monitor-120s") == 0) {
+    if (argc == 2 && strcmp(argv[1], "--run-observed-and-monitor-120s") == 0) {
 #ifndef _WIN32
-        return run_exact(1);
+        return run_observed(1);
 #else
         fputs("Device run requires Linux\n", stderr);
         return 2;
@@ -381,6 +379,11 @@ int main(int argc, char **argv) {
         return 2;
 #endif
     }
-    fprintf(stderr, "Usage: %s --fixture | --run-exact-rfs-20260929 | --run-exact-and-monitor-120s | --hold-monitor-online-120s\n", argv[0]);
+    if (argc == 2 && (strcmp(argv[1], "--run-exact-rfs-20260929") == 0 ||
+                      strcmp(argv[1], "--run-exact-and-monitor-120s") == 0)) {
+        fputs("Refused: factory command-6 reply for state 3 depends on local NV-file checks\n", stderr);
+        return 3;
+    }
+    fprintf(stderr, "Usage: %s --fixture | --run-observed-rfs-20260929 | --run-observed-and-monitor-120s | --hold-monitor-online-120s\n", argv[0]);
     return 2;
 }

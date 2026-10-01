@@ -506,19 +506,34 @@ nothing back. Log: `/data/saaios/var/probe-opstatus-20260929.log`.
 After the unanswered status, the CP sent 24 bytes:
 `00010006 00000010 00000003 00000000 0002e406 00000002`.
 Command 6 is `RFS_IO_REQUEST` for file id 3. The payload is offset 0,
-length 189446, operation 2. Operation 1 is the read path. Operation 2
-is the write path, and only after the local object state is 2. The
-unprotect-then-status sequence leaves that state at 3, where operation 2
-is logged as a bad I/O request and produces no channel reply and no file
-write. The probe did the same: no reply, no open, no write. The modem
-stayed ONLINE. `rmnet0` rx and tx stayed 0. Persist was unmounted.
+length 189446, operation 2. Operation 1 is the read path; operation 2
+requests a write. The probe sent no reply, performed no open or write,
+and the modem stayed ONLINE with
+`rmnet0` rx and tx at 0. Persist was unmounted.
 Log: `/data/saaios/var/probe-ioread-20260929.log`.
 
-A write grant exists in the factory handler for state 2: a 20-byte
-packet, command 2, length 12, then file id, offset, and a chunk capped
-at 2012. This boot never entered state 2, so that grant was not sent.
-The 189446 bytes are not in the 24-byte request. They would arrive only
-after the grant, and writing them is not done here.
+**Correction, 2026-10-01:** the earlier categorical claim that the *factory*
+handler produces no channel reply was wrong. In the extracted factory
+`/bin/rfsd` (SHA-256
+`58d7f885e7533a328268f0de47ef9eb9995cdfa6b317d755b57973d4f5dfb71b`),
+a failure branch at `0xea8c` calls helper `0x98c0`, which builds and writes
+a 16-byte status-6 reply through `0x13de0`/`__write_chk`:
+`03 00 01 00 08 00 00 00 06 00 00 00 03 00 00 00`.
+But the observed 7â†’3 sequence sets local state `[obj+0x38]=3`; its command-6
+route is `0xe414â†’0xe628â†’0xe8ec`, not the state-0 branch through `0xe7ac`
+to `0xea8c`. For file 3, a valid local NV descriptor/size and successful
+seek can take `0xea5câ†’0xec84â†’0x9aa0` and send a 20-byte command-2 write
+grant. Invalid id/bounds or local file failure can instead send status 6.
+The 2026-09-29 probe did not implement either file-backed path, so its
+negative network result does not establish that RFS is irrelevant. The
+newer fixed status-6 reply in `rfs-error-probe.c` was an incorrect claim
+of factory equivalence; it is disabled pending a copy-backed RFS design.
+
+A write grant exists in the factory handler: a 20-byte packet, command 2,
+length 12, then file id, offset, and a chunk capped at 2012. The 189446
+bytes are not in the 24-byte request. They would arrive only after a
+grant. The probe sent no grant and accepted no data; the factory branch
+also depends on local NV-file checks that this probe did not reproduce.
 
 The following boot kept the RFS channel open after that refusal. No
 further request arrived within 3 seconds. The modem stayed ONLINE and
@@ -5616,7 +5631,7 @@ Overnight live was ONLINE / app=PIN(2) / pin1=**1** / reg=0 / no IPv4.
 Careful soft-lock path: **VerifyPin A+AID only** (skip CardPower because
 pin1 already NOT_VERIFIED). Tool:
 `diagnostics/tmp-verifypin-a-uns-watch.c` (RFS-aware; logs type/id/len/err
-only — never PIN/AID/IMSI/ICCID).
+only â€” never PIN/AID/IMSI/ICCID).
 
 ### Result (reproduced twice this turn)
 
@@ -5629,7 +5644,7 @@ only — never PIN/AID/IMSI/ICCID).
 | data/voice reg | 0 | 0 |
 | rmnet IPv4 | none | none |
 
-Direct `0x0201` match often **times out** (45–90s) while RFS `cmd=7` is
+Direct `0x0201` match often **times out** (45â€“90s) while RFS `cmd=7` is
 seen as `rfs ignored` (byte pattern ? stock unprotect). Response then
 appears as **late UNSOL** when a follow-up GET is sent:
 
@@ -5643,7 +5658,7 @@ Independent `sit-sim-status` confirmed `app0_state_raw=5` /
 
 ### Post-edge chase (READY held)
 
-`diagnostics/tmp-ready-bearer-chase.c` (skip Radio ON — already
+`diagnostics/tmp-ready-bearer-chase.c` (skip Radio ON â€” already
 `radio_state_raw=10`):
 
 | Cmd | Result |
@@ -5652,17 +5667,17 @@ Independent `sit-sim-status` confirmed `app0_state_raw=5` /
 | selection auto `0x0704` | err **0** (was err=2 under PIN) |
 | AllowData `0x0710` | err 0 |
 | GetPs `0x0711` | err 0 |
-| SetupDataCall | **deferred_no_apn** — `/data/saaios/etc/apn` is 8-byte
+| SetupDataCall | **deferred_no_apn** â€” `/data/saaios/etc/apn` is 8-byte
   `internet` with **no dot**; `apn_usable()` requires `.` (do not invent
   carrier APN) |
 | ~60s camp poll | registration_raw=**0**, tech=0, rmnet rx=0 |
 
 One AP soft-reboot occurred mid-session (uptime>0); cause not attributed
-to `do_cp_crash` (never written). Soft handover not needed — CP returned
+to `do_cp_crash` (never written). Soft handover not needed â€” CP returned
 ONLINE; SIM reset to PIN+pin1=1; VerifyPin>READY **reproduced**.
 
 **Soft-lock chicken-egg for GET_APP>READY: broken** on this pin1=1 path.
-**Bearer verified?** **no** — still no camp / rmnet IPv4.
+**Bearer verified?** **no** â€” still no camp / rmnet IPv4.
 
 ### Next
 
@@ -5670,4 +5685,4 @@ ONLINE; SIM reset to PIN+pin1=1; VerifyPin>READY **reproduced**.
 2. Operator-supplied dotted APN in `/data/saaios/etc/apn` for SetupDataCall
    after camp.
 3. Debug why READY + `0x0704` err0 still yields reg=0 (RF/PLMN/antenna /
-   further signed NET inds — no invent `0x2f50`).
+   further signed NET inds â€” no invent `0x2f50`).
