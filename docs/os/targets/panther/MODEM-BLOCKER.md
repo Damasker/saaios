@@ -1268,6 +1268,21 @@ Do **not** start cbd/rild under ban; do **not** invent `0x2f50` body/zeros;
 do **not** treat AOSP `android.hardware.radio*` or `IOemSlsiRadioExternal`
 as catalog `SIM_INIT_REQ`.
 
+### 2026-10-01 — CP USIM self-init (passive) **falsified**
+
+Hypothesis: without AP `0x2f50`, CP might self-init USIM to READY if AP
+avoids EngMode/CardPower/OemSim/`0x0704`/VerifyPin storms.
+
+| Step | Result |
+| --- | --- |
+| Soft sysrq → `probe-handover-clean` only | ONLINE; log clean (no early `0x0200`) |
+| Passive ~5 min (`0x0200`+reg+rmnet @~20s) | **16/16** `app=PIN(2) pin1=1 present_infer=0` |
+| READY/{1,4,5}? | **never** |
+| Bearer? | **no** (rmnet rx=0, reg=0) |
+
+Script: `diagnostics/passive-selfinit-wait.sh`. **Verdict:** self-init
+**not** observed. Soft catalog `0x2f50` policy need **unchanged**.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

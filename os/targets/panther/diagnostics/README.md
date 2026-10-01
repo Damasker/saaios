@@ -141,6 +141,15 @@ sh /data/saaios/bin/reboot-soft-bringup.sh
 
 Repo copy: `reboot-soft-bringup.sh` in this directory.
 
+**Minimal ONLINE + passive USIM self-init watch (no Radio/LTE/VerifyPin):**
+
+```sh
+# after sysrq; OFFLINE or modules unloaded OK:
+sh /data/saaios/bin/passive-selfinit-wait.sh
+# probe-handover-clean only, then ~4 min of 0x0200+reg+rmnet polls.
+# Live 2026-10-01: stayed PIN/pin1=1 — CP self-init falsified.
+```
+
 **CardPower one-shot (tray analog — not a reseat substitute):**
 
 ```sh

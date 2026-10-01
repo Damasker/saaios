@@ -5439,7 +5439,7 @@ wlan/usb IPv4 only; **no bearer**. ADB empty (Pixel as MTP); SSH pubkey denied.
 - **68** `sit_ipc_message::*` mangled types; **22** Arena `CreateMaybeMessage`
   types; wrappers Ping/Config/Thermal/Metrics/DeviceState/Traffic/Txas/Scone/
   Coex/Debug/DataFlow/DataValidation/Mch/KPI inds ? full list in
-  `tmp-sitoem-schema-exhaust.out` and MODEM-BLOCKER § schema-exhaust.
+  `tmp-sitoem-schema-exhaust.out` and MODEM-BLOCKER ? schema-exhaust.
 - **SIM/init/card/uicc-related with encode?** **NONE** (Ping / sitInitModem /
   StatsAtom are false friends, not catalog SIM).
 - `carved-oemipc-cf64000.so` = log helper; **0** protobuf schema.
@@ -5546,7 +5546,7 @@ rmnet* rx=0; wlan0 + usb0 IPv4 only -- **no rmnet bearer**. Injector armed
 | `ORR` near oem_ipc / `SIM_INIT_REQ` / `oem_ipc_message` seeds | **0** |
 | Cross: oem_ipc ELF islands ? MOVZ `#0x2f50` | **0** (`@0xcf64000`, `@0x25e7b000`) |
 | aligned u32 literal `0x00002f50` in oem islands / libsitril | **0** |
-| libsitril (2.3MB) | 1× `MOVZ #0x2f50` `@0x11f300` table-init; `umts_ipc` only; **no** builder |
+| libsitril (2.3MB) | 1? `MOVZ #0x2f50` `@0x11f300` table-init; `umts_ipc` only; **no** builder |
 
 ### Frame / live try
 
@@ -5568,3 +5568,44 @@ Under current bans (no cbd/rild, no invent frame bytes), soft catalog
 `SIM_INIT_REQ` remains blocked. Need **policy-gated** stock `oem_ipc*` capture
 (`OEM-IPC-CAPTURE.md`) or an external evidenced app header + 2B body, then
 one-shot `oem-ipc-inject` + `post-init-chase`. Same bans otherwise.
+
+## 2026-10-01: CP USIM self-init hypothesis â€” FALSIFIED
+
+Hypothesis: stock has no AP encoder for catalog `0x2f50`; maybe CP
+self-inits USIM to READY without AP `SIM_INIT`, and prior soft-lock only
+failed because SIT floods / VerifyPin-before-READY trapped PIN.
+
+### Method (live)
+
+1. Soft sysrq reboot to CPIF OFFLINE.
+2. `diagnostics/passive-selfinit-wait.sh`: `probe-handover-clean` only
+   (no `probe-no0200`, EngMode, CardPower, OemSim, `0x0704`, VerifyPin).
+3. Passive poll ~5 min: `0x0200` + data-reg + rmnet every ~20s only.
+4. Cont helper finished window after waiter loop-var bug (`for i` in snap
+   clobbered outer `i`); script fixed to use `rif`.
+
+### Result
+
+| Field | First SNAP t0 | Final cont7 | Changed? |
+| --- | --- | --- | --- |
+| modem_state | ONLINE | ONLINE | no |
+| app_state | **PIN (2)** | **PIN (2)** | no |
+| pin1 | **1** (ENABLED_NOT_VERIFIED) | **1** | no |
+| present_infer | **0** | **0** | no |
+| remain | 3 | 3 | no |
+| data reg / tech | 0 / none | 0 / none | no |
+| rmnet* rx/tx | 0 / 0 | 0 / 0 | no |
+
+16/16 PARSE lines identical. Handover log: **ONLINE clean** (no early
+`0x0200`). **No** READY/{1,4,5}. **No** VerifyPin sent. **No** cbd/rild.
+
+**Self-init observed?** **No.** CP does **not** leave PIN to READY on a
+minimal soft ONLINE + passive wait. Soft-lock floods are not the sole
+blocker; catalog `0x2f50` / policy path still required.
+
+**Bearer verified?** **no.**
+
+### Next
+
+Policy-gated stock `oem_ipc*` capture for `SIM_INIT_REQ` (`0x2f50`) or
+external evidenced frame â€” same bans; do not invent.
