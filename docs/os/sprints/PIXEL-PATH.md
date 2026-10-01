@@ -244,8 +244,10 @@ diagnose (ADR-238, `351b0b6f…`).
   2B body unrecovered — no invent-byte send. `oem_ipc0` openable (mknod/chmod)
   without starting cbd/rild. Host hunt: sit-stream `BuildOemSimRequest` is
   SIT `0x208/20c/20f/247` (umts_ipc), not OEM `0x2f50`; libsitril/cbd/libsec-ril
-  have no oem_ipc encoder — frame still incomplete. This is diagnostic, not a
-  modem service, and not cellular registration/calls/SMS/data. See
+  have no oem_ipc encoder. Preprocess/`Message ID not found` DBT-attributed to
+  `oem_ipc_message_dispatcher.c` (SIT RX via `oem_sit_main.c`) but wire header
+  still opaque — frame incomplete. This is diagnostic, not a modem service,
+  and not cellular registration/calls/SMS/data. See
   `docs/os/targets/panther/MODEM-*.md` and [MODEM-ROADMAP.md](MODEM-ROADMAP.md).
 - Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
 - Playback: tinyplay + test-tone presence, no auto-play (ADR-257; host)

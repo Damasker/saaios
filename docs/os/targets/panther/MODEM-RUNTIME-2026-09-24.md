@@ -5191,3 +5191,123 @@ Opcodes: `0x0200` ? `0x0247`(P2=0) ? `0x020f`(SELECT A4/04) ?
 AID-filled OemSim OpenChannel/SELECT/STATUS path closed under soft-lock.
 Resume OEM catalog `0x2f50` wire recovery only (no invent). Same bans.
 
+## 2026-10-01: CP RX consumer RE for catalog `0x2f50` / `0x2f52` (no send)
+
+Scripts: `tmp-rx-2f50-consumer.py`, `tmp-rx-2f50-demux-deep.py`.
+
+### Live brief
+
+COM13. modem_state=**ONLINE**; `sit-sim-status`: PRESENT apps=1 **app=PIN**
+pin1=2 remain=3; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild; rmnet rx=0;
+**no bearer**.
+
+### RX consumer / dispatch
+
+| Check | Result |
+| --- | --- |
+| Catalog `SIM_INIT_REQ` | body_hint=2 msgid=`0x2f50` meta=`0x10104` rsp=0 |
+| Catalog `SIM_VERIFYPIN_REQ` | body_hint=10 msgid=`0x2f52` meta=`0x10104` rsp=`0x2fa1` |
+| USIM `<== SIM_INIT_REQ` table | handler `0x43909d49` size_word=`0x10000` (codec / internal) |
+| USIM `<== SIM_VERIFYPIN_REQ` table | msgid=`0x2f52` rsp=`0x2fa1` size_word=`0xb` ? catalog 10 |
+| Wire header parse from RX | **not recovered** (no SIT-like LDR cluster; MOVW msgid sites are false-friends) |
+| Soft SIT `0x0201` vs OEM `0x2f52` | body sizes differ ? do not reuse soft VerifyPin as OEM frame |
+
+### Kernel oem_ipc path (live DT)
+
+`oem_ipc`: attrs=`0x2000` ch=`0x81` fmt=0 ch_count=8. No `ATTR_NO_LINK_HEADER`
+? kernel prepends EXYNOS 12B; userspace writes **app payload only**. Same
+attrs/fmt pattern as `umts_ipc` (different ch).
+
+### Frame layout / live try
+
+**RX-derived full app frame?** no. **SIM_INIT sent?** no. **Bearer?** no.
+
+### Exact missing
+
+1. OEM app-layer header layout
+2. 2-byte body for `flags=2`
+3. Token/seq rules
+4. Which `oem_ipcN` for catalog SIM_INIT
+
+### Next
+
+Stock catalog OEM capture or deeper RX preprocess/`Message ID not found` code
+path ? then ONE soft INIT. Same bans.
+
+## 2026-10-01: OEM IPC preprocess RX + `Message ID not found` (no send)
+
+Scripts: `tmp-oem-preprocess-rx-re.py`, `tmp-oem-preprocess-rx-re2.py`.
+
+### Live brief (COM13)
+
+modem_state=**ONLINE**; `sit-sim-status`: PRESENT apps=1 **app=PIN** pin1=2
+remain=3; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild; rmnet0-5 rx=0 tx=0;
+**no IPv4 / no bearer**.
+
+### DBT attribution (preprocess / msgid path -- not litpool-alone)
+
+Classic MOVW+MOVT / LDR.W to log-string VAs: **0** (confirmed again). Logs are
+Shannon **DBT** records (`magic=0xfecdba98`), not direct string loads.
+
+| Log | DBT line | File path VA | Source file |
+| --- | --- | --- | --- |
+| `[OEM][IPC] Message is not a REQUEST` | `0x51` | `0x41067caa` | `oem_ipc_message_dispatcher.c` |
+| `[OEM][IPC] Message ID not found` | `0x57` | `0x41067caa` | `oem_ipc_message_dispatcher.c` |
+| `[OEM][IPC] Failed to preprocess id %d` | `0x62` | `0x41067caa` | `oem_ipc_message_dispatcher.c` |
+| `[OEM][IPC] Invalid message` / encode-size / decode | `0x95` / ... | `0x41067cff` | `oem_ipc_message_utils.c` |
+| `[OEM][SIT] Received packet from channel %u, size %u` | `0xda` | `0x41068655` | `oem_sit_main.c` |
+
+**RX pipeline (evidenced):** `oem_sit_main.c` receives SIT/oem channel packet
+then `oem_ipc_message_dispatcher.c` looks up catalog msgid + **preprocess**;
+fail logs above. Encode path siblings live in `oem_ipc_message_utils.c`.
+
+**False friend:** ASCII `preprocess_cb` sites are **gmetrics** clients only --
+**not** OEM catalog preprocess.
+
+### Catalog entry layout (refined; still not wire hdr)
+
+28B stride; SIM bank examples:
+
+| off | body | msgid | meta | rsp | +0x14 | +0x18 | name |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `@0x6de740` | **2** | `0x2f50` | `0x10104` | `0` | `0` | **`4`** | `SIM_INIT_REQ` |
+| `@0x6de874` | 10 | `0x2f52` | `0x10104` | `0x2fa1` | `0` | `0` | `SIM_VERIFYPIN_REQ` |
+| `@0x6de724` | 2 | `0x2f57` | `0x10104` | `0x2fa8` | `0` | `0` | `SIM_INFO_REQ` |
+
+Fields: `u16 body_hint`, `u16 msgid`, `u32 name_va`, `u32 meta`, `u16 rsp`, ...
+`SIM_INIT` uniquely has `+0x18=4` in this bank (meaning still **unknown** --
+not proven as wire token length).
+
+### Code-xref gap
+
+MOVW+MOVT to DBT record VAs (`va_of(0x6dff18)` etc.): **0**. LDR pc-rel to
+msgid/preprocess/sit_recv string VAs outside the DBT island: **0**. Catalog
+`SIM_INIT` VA consumer `@0x32e4494` and bank touch `@0x3388318` are **internal
+state / other msgid (`0x2f79`)** builders -- **not** proven app-wire serializers
+for `0x2f50`.
+
+### Kernel (unchanged)
+
+`oem_ipc` DT: attrs=`0x2000` ch=`0x81` -- no `ATTR_NO_LINK_HEADER` -- EXYNOS 12B
+wrap; userspace = app payload only.
+
+### Frame / live try
+
+**App header + 2B body recovered?** **no**. **SIM_INIT sent?** **no** (no invent).
+**Bearer verified?** **no**.
+
+### Exact missing (unchanged blockers)
+
+1. OEM **app-layer header** field order/size (dispatcher preprocess still opaque
+   without DBT-emit / nanopb descriptor xrefs)
+2. **2-byte body** contents for catalog `flags/body_hint=2`
+3. Token/seq rules (catalog `+0x18=4` on INIT is a hint only -- **not** wire proof)
+4. Which `oem_ipcN` carries **catalog** SIM_INIT (SitOem protobuf already owns
+   `oem_ipc0` for a different dialect)
+
+### Next
+
+Stock catalog OEM capture on `oem_ipc*`, or recover dispatcher preprocess by
+non-string xref (nanopb / catalog binary-search emit path / host encoder). Then
+**ONE** soft `SIM_INIT`. Same bans.
+

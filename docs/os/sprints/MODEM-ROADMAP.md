@@ -597,6 +597,13 @@ Next: stock capture / host OEM writer (not cbd). MODEM-BLOCKER §§ encode.
 PIN pin1=2; reg/rmnet unchanged; **no bearer**. `OnVerifyPinDone` does not
 emit those SITs. OemSim soft-lock exit closed. Next: `0x2f50` wire only.
 
+**OEM preprocess RX (2026-10-01):** Live ONLINE/PIN/pin1=2/oem_ipc0 OK; no
+bearer. DBT pins msgid_nf/preprocess to `oem_ipc_message_dispatcher.c`, SIT
+recv to `oem_sit_main.c`; no code xref to those strings (DBT-indexed).
+`preprocess_cb` = gmetrics false friend. App hdr + 2B body still missing;
+**no INIT send**. Next: stock capture or non-string dispatcher RE. BLOCKER +
+RUNTIME §§ preprocess.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

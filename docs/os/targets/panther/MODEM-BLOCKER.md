@@ -507,6 +507,57 @@ host binary that actually encodes msgid `0x2f50` (not cbd, not SitOem protobuf);
 until then no soft write. Same bans (no start cbd/rild; no ATU MAIN; no BAR;
 no 0x0704 spam).
 
+### 2026-10-01 — CP RX consumer RE for `0x2f50` / `0x2f52` (no send)
+
+**Live brief (COM13):** modem_state=**ONLINE**; card=PRESENT apps=1
+**app=PIN(2)** pin1=2 remain=3; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild;
+rmnet0–15 **rx=0**; **no bearer**.
+
+Scripts: `tmp-rx-2f50-consumer.py`, `tmp-rx-2f50-demux-deep.py`.
+
+#### RX / dispatch evidence
+
+| Layer | Finding |
+| --- | --- |
+| Catalog `@0x6de740` | body_hint=`2` msgid=`0x2f50` meta=`0x10104` rsp=`0` `SIM_INIT_REQ` |
+| Catalog `@0x6de874` | body_hint=`10` msgid=`0x2f52` meta=`0x10104` rsp=`0x2fa1` `SIM_VERIFYPIN_REQ` |
+| USIM `<== SIM_INIT_REQ` `@0x10fb078` | handler codec `0x43909d49`; size_word=`0x10000` — **internal**, ≠ catalog body 2 |
+| USIM `<== SIM_VERIFYPIN_REQ` `@0x10fbb00` | msgid=`0x2f52` rsp=`0x2fa1` size_word=`0xb` (≠ catalog body 10) |
+| SIM_INIT handler body | builds internal codec state; **no** proven wire-header LDR of msgid/len/token |
+| Bare `MOVW #0x2f50/#0x2f52` + nearby LDRH/B | name-reg / MOVT-VA false-friends; **no** RX demux that CMPs wire msgid |
+| `[OEM][SIT] Received packet…` litpool | log-string island only; **0** MOVW+MOVT code refs to recv string |
+| SIT-like parse cluster (LDRB+0 / LDRH+2 / LDRH+4) | **0** in OEM island / typed-IPC / catalog-xref bands |
+| Soft SIT VerifyPin | umts `0x0201` hdr12+body26 — **≠** OEM `0x2f52` body 10 |
+| Link | catalog SIM_* = **OEM** dialect (not umts SIT `0x02xx`; SitOem protobuf demux already closed) |
+
+#### Kernel oem_ipc write→CP (live DT + prior CPIF)
+
+| Item | Evidence |
+| --- | --- |
+| DT `io_device_13` `oem_ipc` | `attrs=0x2000` `ch=0x81` `fmt=0` `ch_count=8` `io_type=1` `link_type=1` |
+| DT `umts_ipc` | same `attrs/fmt`; `ch=0xf5` `ch_count=2` |
+| `ATTR_NO_LINK_HEADER` (`0x100`) | **not** set → `link_header=true` |
+| Userspace write | **app payload only**; kernel prepends **EXYNOS 12B** (`sync=0xABCD`, len incl. hdr, ch=`0x81` family) |
+| Sysfs iod | only `dev`/`uevent` — **no** runtime `link_header` toggle |
+
+#### RX-derived frame layout?
+
+**No** — not fully evidenced. Kernel EXYNOS wrap + catalog body_hint=2 are known;
+**OEM app-layer header + 2B body contents** still missing.
+
+#### Exact missing (no invent; unchanged blockers)
+
+1. OEM **app-layer header** field order/size (SIT-12B reuse on `oem_ipc` still **unproven**)
+2. Exact **2-byte body** for catalog `flags=2` (zeros unproven)
+3. Token/seq/transaction rules
+4. Which `oem_ipcN` (0..7 → ch `0x81`..`0x88`) carries **catalog** `SIM_INIT` (SitOem protobuf already owns `oem_ipc0` for a different dialect)
+
+**Live SIM_INIT?** **none** (no send). **Bearer verified?** no.
+
+**Next:** stock wire capture of catalog OEM on `oem_ipc*`, or recover header
+parse from OEM RX code that consumes `[OEM][IPC] Message ID not found` /
+preprocess paths (not the log litpool alone). Same bans.
+
 ### 2026-09-30 — FN_A vs LTE/SADR (re-confirmed)
 
 Whole-MAIN BL scan: **FN_A callers = 2 only** (CDMA MEAS IND + CDMA TIMING_LATCH).  
@@ -765,6 +816,32 @@ Post: app=**PIN(2)** pin1=**2** remain=3; data reg=0; rmnet rx=0.
 
 **Next:** OemSim umts_ipc soft-lock exit closed (empty **and** AID-filled).
 Resume OEM catalog `0x2f50` wire recovery only — no invent; same bans.
+
+### 2026-10-01 — OEM IPC preprocess RX / `Message ID not found` (no send)
+
+**Live brief (COM13):** ONLINE; PRESENT apps=1 **app=PIN** pin1=2 remain=3;
+oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild; rmnet rx=0; **no bearer**.
+
+Scripts: `tmp-oem-preprocess-rx-re.py`, `tmp-oem-preprocess-rx-re2.py`.
+
+| Finding | Evidence |
+| --- | --- |
+| msgid_nf / preprocess / not-REQUEST logs | DBT (`0xfecdba98`) → **`oem_ipc_message_dispatcher.c`** lines `0x51`/`0x57`/`0x62` |
+| encode/decode/invalid logs | DBT → **`oem_ipc_message_utils.c`** |
+| SIT receive log | DBT → **`oem_sit_main.c`** |
+| MOVW/MOVT/LDR to those string or DBT-record VAs | **0** — DBT-indexed logging; litpool-alone RE insufficient |
+| ASCII `preprocess_cb` | **gmetrics only** — false friend |
+| Catalog `SIM_INIT` `@0x6de740` | body=2 msgid=`0x2f50` meta=`0x10104` rsp=0 **`+0x18=4`** (unique; not wire proof) |
+| App header + 2B body | **still unrecovered** |
+| Kernel | unchanged — EXYNOS 12B wrap; userspace app payload |
+
+**RX-derived full frame?** **no**. **SIM_INIT sent?** **no**. **Bearer?** **no**.
+
+**Exact missing:** (1) app header layout (2) 2B body for flags=2 (3) token/seq
+(4) which `oem_ipcN` for catalog INIT.
+
+**Next:** stock catalog OEM capture **or** non-string dispatcher preprocess
+xref (nanopb / catalog walk). Then ONE soft INIT. Same bans.
 
 ## Constraints (unchanged)
 
