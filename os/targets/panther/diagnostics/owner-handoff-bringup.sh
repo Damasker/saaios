@@ -4,6 +4,10 @@
 set -eu
 umask 077
 
+# Keep the early EFS mount guard independent of the invoking shell's applet
+# lookup; the native image has BusyBox awk but no /bin/awk symlink.
+awk() { /saaios/busybox awk "$@"; }
+
 case "$#:$*" in
     '0:')
         PROBE=/data/saaios/bin/probe-handover-owner

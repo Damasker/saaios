@@ -3,6 +3,10 @@
 set -eu
 umask 077
 
+# /bin/sh is Toybox on the native image, while awk is a BusyBox applet
+# without a /bin/awk symlink after a cold boot.
+awk() { /saaios/busybox awk "$@"; }
+
 fail() {
     printf 'ABORT %s\n' "$1" >&2
     exit 1
