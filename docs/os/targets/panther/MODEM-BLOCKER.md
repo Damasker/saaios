@@ -831,7 +831,7 @@ Scripts: `tmp-oem-preprocess-rx-re.py`, `tmp-oem-preprocess-rx-re2.py`.
 | SIT receive log | DBT → **`oem_sit_main.c`** |
 | MOVW/MOVT/LDR to those string or DBT-record VAs | **0** — DBT-indexed logging; litpool-alone RE insufficient |
 | ASCII `preprocess_cb` | **gmetrics only** — false friend |
-| Catalog `SIM_INIT` `@0x6de740` | body=2 msgid=`0x2f50` meta=`0x10104` rsp=0 **`+0x18=4`** (unique; not wire proof) |
+| Catalog `SIM_INIT` `@0x6de740` | body=2 msgid=`0x2f50` meta=`0x10104` rsp=0 **`+0x18=4`** (INIT-family class tag; not wire token) |
 | App header + 2B body | **still unrecovered** |
 | Kernel | unchanged — EXYNOS 12B wrap; userspace app payload |
 
@@ -842,6 +842,28 @@ Scripts: `tmp-oem-preprocess-rx-re.py`, `tmp-oem-preprocess-rx-re2.py`.
 
 **Next:** stock catalog OEM capture **or** non-string dispatcher preprocess
 xref (nanopb / catalog walk). Then ONE soft INIT. Same bans.
+
+### 2026-10-01 — non-string dispatcher / catalog / nanopb (no send)
+
+**Live brief (COM13 / NCM):** ONLINE; PRESENT apps=1 **app=PIN** pin1=2
+remain=3; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild; rmnet rx=0; **no bearer**.
+
+Scripts: `tmp-oem-dispatcher-nonstr-re.py`, `tmp-oem-dispatcher-nonstr-re2.py`.
+
+| Finding | Evidence |
+| --- | --- |
+| `body_hint==2` cohort | `SIM_INFO` (`0x2f57` +18=0), `SIM_INIT` (`0x2f50` +18=4), `SIM_STOP` (`0x2f51` +18=4) |
+| Catalog `+0x18` | **class/family tag** — INIT-family across SIM/CC/SMS/SS/SMREG/NS = **4**; PB bank = **5**; **not** wire token length |
+| Catalog MOVW consumers | object helpers (`BL 0x2ca893e`); INIT STRB `#5→obj+8`; STOP STRB `#1→obj+8`; **no** TX wire stores |
+| msgid→fn table in catalog island | **0** |
+| `[OEM][PB]` nanopb | 3 decode/varint strings; **0** SIM/`0x2f50` overlap |
+| DBT-record MOVW/lit to msgid_nf/preprocess | **0** (still DBT-indexed) |
+| App header + 2B body | **still unrecovered** |
+
+**Frame recovered?** **no**. **SIM_INIT sent?** **no**. **Bearer?** **no**.
+
+**Next:** stock `oem_ipc*` catalog capture or non-cbd/non-SitOem host encoder.
+Then ONE soft INIT. Same bans.
 
 ## Constraints (unchanged)
 

@@ -1,0 +1,426 @@
+MAIN size=98265168
+
+=== A) Catalog meta / +0x18 census (SIM bank 0x6de000..0x6deb00) ===
+meta_hist={}
++18_hist={}
+body_hist(top)={}
+meta 0x10104 bits: lo16=0x104 hi16=0x1 byte0=4 byte1=1 byte2=1 byte3=0
+
+=== B) SIM_INIT catalog consumer @0x32e4494 ===
+prolog@0x32e41b4 va=0x432dd5a4
+  0x32e41ba: MOVW r0,#0xf6a0
+  0x32e41be: MOVT r0,#0x43d7
+  0x32e41c2: LDR r0,[r0,#0]
+  0x32e41c6: BL ->0x22f9328
+  0x32e41ca: CMP r0,#3
+  0x32e41d0: MOVW r3,#0x9f72
+  0x32e41e2: CMP r4,#2
+  0x32e41e8: MOVW r6,#0xde8
+  0x32e41f4: MOVT r6,#0x497c
+  0x32e41fa: LDRB r4,[r0,#8]
+  0x32e41fc: MOVW r0,#0x9e50
+  0x32e4200: MOVT r0,#0x44d5
+  0x32e4206: BL ->0x22f9328
+  0x32e420a: MOVW r8,#0x1301
+  0x32e420e: MOVT r8,#0x4
+  0x32e421a: BL ->0x22f9328
+  0x32e421e: CMP r0,#3
+  0x32e4224: MOVW r3,#0x9f48
+  0x32e4234: CMP r5,#2
+  0x32e4246: LDRH r2,[r0,#0]
+  0x32e4248: MOVS r0,#2
+  0x32e424a: BL ->0x2e15374
+  0x32e424e: CMP r4,#30
+  0x32e4254: CMP r0,#20
+  0x32e4288: BL ->0x22f9328
+  0x32e428c: CMP r0,#3
+  0x32e4292: MOVW r3,#0x9f11
+  0x32e42a2: MOVS r0,#250
+  0x32e42a4: BL ->0x2405aa8
+  0x32e42ae: CMP r0,#7
+  0x32e42c6: BL ->0x22f9328
+  0x32e42ca: CMP r0,#3
+  0x32e42d0: MOVW r2,#0x9ff2
+  0x32e42e2: CMP r4,#2
+  0x32e42f0: LDR r0,[r0,#12]
+  0x32e42f2: BL ->0x2608e88
+  0x32e42f8: CMP r4,#31
+  0x32e42fe: CMP r4,#65
+  0x32e4304: MOVS r0,#0
+  0x32e4306: MOVS r4,#0
+  0x32e4308: BL ->0x338a904
+  0x32e430e: MOVW r2,#0x8677
+  0x32e4312: MOVS r0,#4
+  0x32e4314: MOVS r1,#8
+  0x32e4316: MOVW r3,#0x23e
+  0x32e431a: MOVT r2,#0x4103
+  0x32e431e: MOVW r6,#0xdf8d
+  0x32e4322: CMP r0,#0
+  0x32e432a: MOVS r0,#3
+  0x32e432c: BL ->0x2444346
+  0x32e4330: STRH r0,[r4,#0]
+  0x32e4332: MOVS r0,#11
+  0x32e4334: BL ->0x2444346
+  0x32e4338: MOVS r1,#0
+  0x32e433a: STRH r0,[r4,#2]
+  0x32e433c: MOVW r0,#0xa004
+  0x32e4340: MOVT r1,#0x1f1b
+  0x32e4344: MOVT r0,#0x44d5
+  0x32e4348: STR r1,[r4,#4]
+  0x32e434c: BL ->0x22f9328
+  0x32e435a: MOVS r0,#1
+  0x32e435c: LDRH r2,[r4,#2]
+  0x32e435e: BL ->0x2e15374
+  0x32e4362: LDRH r0,[r4,#2]
+  0x32e4366: BL ->0x2e979c6
+  0x32e436a: CMP r0,#10
+  0x32e4370: BL ->0x22f9328
+  0x32e4374: CMP r0,#3
+  0x32e437a: MOVW r2,#0x9f9d
+  0x32e438c: CMP r4,#2
+  0x32e439a: LDR r0,[r0,#12]
+  0x32e439c: LDRB r0,[r0,#0]
+  0x32e439e: BL ->0x336ff34
+  0x32e43a4: BL ->0x22f9328
+  0x32e43a8: CMP r0,#3
+  0x32e43ae: MOVW r2,#0x9f83
+  0x32e43c0: CMP r4,#2
+  0x32e43ce: LDR r4,[r0,#12]
+  0x32e43d2: BL ->0x260902c
+  0x32e43d8: BL ->0x2ba8f0c
+  0x32e43de: BL ->0x22f9328
+  0x32e43e2: CMP r0,#3
+  0x32e43e8: MOVW r2,#0x9f66
+  0x32e43f0: BL ->0x22f9328
+  0x32e43f4: CMP r0,#3
+  0x32e43fa: MOVW r2,#0x9f5d
+  0x32e441e: BL ->0x2e84334
+  0x32e4424: BL ->0x22f9328
+  0x32e4428: CMP r0,#3
+  0x32e442e: MOVW r2,#0x9f43
+
+Catalog entry raw @0x6de740:
+  02 00 50 2f f3 05 03 41 04 01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00
+
+=== C) MOVW sites for flags=2 siblings ===
+  INIT VA=0x406d7b30 sites=['0x32e4494']
+  STOP VA=0x406d7db4 sites=['0x32e4508']
+  INFO VA=0x406d7b14 sites=['0x3388338']
+
+=== D) [OEM][PB] string inventory (SIM overlap?) ===
+[OEM][PB] count=3
+SIM/INIT-ish OEM[PB]: []
+  @0xc21474: [OEM][PB] pb_decode_varint_cb error
+  @0xc21498: [OEM][PB] pb_decode_varint_cb value: %lld
+  @0xc214c2: [OEM][PB] buf_count = %d is greater or equal to buf_len = %d
+
+=== E) Type-enum strings near OEM IPC ---
+  b'REQUEST' @0x6dfe29 ctx='C] Message is not a REQUEST'
+  b'REQUEST' @0x4ce02cb ctx='ect TO_DATA_DRB_SVC_REQUESTED_STATE'
+  b'REQUEST' @0x4ecf942 ctx='D_RX_ANT_SEL_UPDATE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x4f8bce1 ctx='_ACTION_ID_PHY_MEAS_REQUEST: meas_cnt(%d), dur(%x)'
+  b'REQUEST' @0x5117b4a ctx='D_DSP_CMINFO_UPDATE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x511d095 ctx='ID_HS_PDSCH_DISABLE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x511d1f1 ctx='ID_HS_PDSCH_DISABLE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x511d2b1 ctx='ID_HS_PDSCH_DISABLE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x511d4a0 ctx='_ID_HS_PDSCH_ENABLE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x511d5fc ctx='_ID_HS_PDSCH_ENABLE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x511d758 ctx='_ID_HS_PDSCH_ENABLE_REQUEST] data[0]=%d'
+  b'REQUEST' @0x511d8fd ctx='S_PDSCH_HARQ_CONFIG_REQUEST] data[0]=%d'
+  b'RESPONSE' @0x66e85b ctx=None
+  b'RESPONSE' @0xe99d30 ctx='ATURE_DATA_SETUP_NO_RESPONSE'
+  b'RESPONSE' @0xf5c98e ctx='ATURE_DATA_SETUP_NO_RESPONSE_DS'
+  b'INDICATION' @0xeaede1 ctx='_GFEATURE_EARLY_OOS_INDICATION'
+  b'INDICATION' @0xeaee04 ctx='RC_R16_MPS_PRIORITY_INDICATION'
+  b'INDICATION' @0xf633d6 ctx='_GFEATURE_EARLY_OOS_INDICATION_DS'
+  b'INDICATION' @0xf633fc ctx='RC_R16_MPS_PRIORITY_INDICATION_DS'
+  b'NOTIFICATION' @0xcc9d7e ctx='D'
+  b'NOTIFICATION' @0x4f86d75 ctx=']IPC_ACTION_ID_MBMS_NOTIFICATION_CONFIG'
+  b'NOTIFICATION' @0x4f86dde ctx=']IPC_ACTION_ID_MBMS_NOTIFICATION_CONFIG'
+  b'NOTIFICATION' @0x4f86e29 ctx=' IPC_ACTION_ID_MBMS_NOTIFICATION_CONFIG'
+  b'NOTIFICATION' @0x4f96b1f ctx=' IPC_ACTION_ID_MBMS_NOTIFICATION_CONFIG scellArrayIndex[%d]'
+  b'NOTIFICATION' @0x4f96bdb ctx=' IPC_ACTION_ID_MBMS_NOTIFICATION_CONFIG CC[%d] Demod CC[%d] scellArrayIndex[%d] '
+  b'NOTIFICATION' @0x50eaba4 ctx='Type SS_CONNIF_MISC_NOTIFICATION::%d'
+  b'NOTIFICATION' @0x50eaf0b ctx='pe = SS_CONNIF_MISC_NOTIFICATION(0x%x)'
+
+=== F) Catalog body_hint readers (LDRH [rn,#0] near catalog MOVW) ---
+
+--- INIT @0x32e4494 ±0x80 load/store catalog fields ---
+  0x32e4456: BL ->0x2e75656
+  0x32e445c: BL ->0x22f9328
+  0x32e4466: MOVW r2,#0x9f27
+  0x32e4476: BL ->0x22f9328
+  0x32e4480: MOVW r2,#0x9f1a
+  0x32e448e: BL ->0x2e75566
+  0x32e4494: MOVW r0,#0x7b30
+  0x32e4498: MOVW r2,#0x8677
+  0x32e449c: MOVS r1,#0
+  0x32e449e: MOVW r3,#0x1f7
+  0x32e44a2: MOVT r0,#0x406d
+  0x32e44a6: MOVT r2,#0x4103
+  0x32e44aa: BL ->0x2ca893e
+  0x32e44b6: LDR r0,[r0,#0]
+  0x32e44b8: MOVS r1,#5
+  0x32e44ba: STRB r1,[r0,#8]
+  0x32e44bc: BL ->0x22f9328
+  0x32e44c0: BL ->0x24f07d2
+  0x32e44c4: LDRB r0,[r0,#14]
+  0x32e44c6: LDR r1,[r4,#0]
+  0x32e44c8: MOVW r2,#0x8677
+  0x32e44cc: MOVW r3,#0x207
+  0x32e44d0: MOVT r2,#0x4103
+  0x32e44dc: STRB r0,[r1,#9]
+  0x32e44de: MOVW r0,#0x77b0
+  0x32e44e2: MOVS r1,#0
+  0x32e44e4: MOVT r0,#0x406d
+  0x32e44e8: BL ->0x2ca893e
+  0x32e44f2: LDR r4,[r0,#0]
+  0x32e44f4: BL ->0x22f9328
+  0x32e44f8: BL ->0x24f07d2
+  0x32e44fc: LDRB r0,[r0,#14]
+  0x32e4502: MOVS r0,#1
+  0x32e4504: STRB r0,[r4,#8]
+  0x32e4508: MOVW r0,#0x7db4
+  0x32e450c: MOVW r2,#0x8677
+  0x32e4510: MOVS r1,#0
+  0x32e4512: MOVW r3,#0x21a
+  0x32e4516: MOVS r4,#0
+  0x32e4518: MOVT r0,#0x406d
+  0x32e451c: MOVT r2,#0x4103
+  0x32e4520: BL ->0x2ca893e
+  0x32e4528: MOVW r0,#0x9ee0
+  0x32e452c: MOVT r0,#0x44d5
+  0x32e4532: BL ->0x22f9328
+  0x32e4536: BL ->0x24f07d2
+  0x32e4542: MOVW r0,#0x33e0
+  0x32e4546: MOVW r2,#0x8677
+  0x32e454a: MOVS r1,#0
+  0x32e4550: MOVS r4,#0
+  0x32e4552: MOVT r0,#0x406d
+  0x32e4556: MOVT r2,#0x4103
+  0x32e455a: BL ->0x2ca893e
+  0x32e4562: MOVW r0,#0x9f10
+  0x32e4566: MOVT r0,#0x44d5
+  0x32e456c: BL ->0x339a306
+  0x32e4572: BL ->0x338a72e
+
+--- INFO @0x3388338 ±0x80 load/store catalog fields ---
+  0x33882f8: LDR r5,[r2,#100]
+  0x33882fa: LDR r3,[r5,#100]
+  0x33882fc: STRB r7,[r5,#29]
+  0x338831e: MOVW r0,#0xf6a0
+  0x3388322: MOVW r2,#0x13b2
+  0x3388328: MOVS r1,#0
+  0x338832a: MOVS r3,#121
+  0x338832c: MOVT r0,#0x43d7
+  0x3388330: MOVT r2,#0x4103
+  0x3388334: LDR r0,[r0,#0]
+  0x3388338: MOVW r0,#0x7b14
+  0x338833c: MOVT r0,#0x406d
+  0x3388340: BL ->0x2ca893e
+  0x3388346: LDR r1,[r0,#0]
+  0x3388348: STRB r5,[r1,#8]
+  0x338834a: LDR r0,[r0,#0]
+  0x338834c: STRB r4,[r0,#9]
+  0x3388350: MOVW r0,#0x5b54
+  0x3388354: MOVT r0,#0x44d4
+  0x338835a: BL ->0x2d26650
+  0x338835e: MOVW r1,#0x1301
+  0x3388362: MOVT r1,#0x4
+  0x338836e: MOVS r0,#0
+  0x3388370: BL ->0x2e15374
+  0x3388374: MOVW r1,#0xf6a0
+  0x338837a: MOVT r1,#0x43d7
+  0x338837e: LDR r1,[r1,#0]
+  0x3388388: BL ->0x2e14134
+  0x3388390: MOVW r0,#0xf6a0
+  0x3388394: MOVW r2,#0x13b2
+  0x3388398: MOVS r1,#8
+  0x338839a: MOVW r3,#0x14f8
+  0x338839e: MOVT r0,#0x43d7
+  0x33883a2: MOVT r2,#0x4103
+  0x33883a6: LDR r0,[r0,#0]
+  0x33883aa: MOVS r0,#4
+  0x33883ac: BL ->0x2d3203c
+  0x33883b0: MOVW r5,#0x1301
+  0x33883b4: MOVT r5,#0x4
+  0x33883bc: MOVS r0,#3
+  0x33883be: BL ->0x2444346
+  0x33883c2: STRH r0,[r4,#0]
+  0x33883c4: MOVS r0,#17
+  0x33883c6: BL ->0x2444346
+  0x33883ca: MOVS r1,#0
+  0x33883cc: STRH r0,[r4,#2]
+  0x33883ce: MOVW r0,#0x9758
+  0x33883d2: MOVT r1,#0x2f79
+  0x33883d6: MOVT r0,#0x44d4
+  0x33883da: STR r1,[r4,#4]
+  0x33883de: BL ->0x2d26650
+  0x33883e8: MOVW r2,#0x2f79
+  0x33883f0: MOVS r0,#2
+  0x33883f2: LDRH r3,[r4,#2]
+  0x33883f4: BL ->0x2e15374
+  0x33883f8: LDRH r0,[r4,#2]
+  0x33883fc: BL ->0x2e979c6
+  0x3388406: BL ->0x2ba8f0c
+  0x338840c: MOVW r0,#0x9724
+  0x3388410: MOVT r0,#0x44d4
+  0x3388416: BL ->0x2d26650
+
+--- VERIFY @0x331af14 ±0x80 load/store catalog fields ---
+  0x331aed4: BL ->0x2e15374
+  0x331aed8: MOVS r4,#12
+  0x331aeda: MOVW r1,#0xf6a0
+  0x331aee0: MOVT r1,#0x43d7
+  0x331aee4: LDR r1,[r1,#0]
+  0x331aef0: BL ->0x2e14134
+  0x331aef8: MOVW r0,#0xf6a0
+  0x331aefc: MOVW r2,#0x13b2
+  0x331af00: MOVS r1,#0
+  0x331af06: MOVS r4,#0
+  0x331af08: MOVT r0,#0x43d7
+  0x331af0c: MOVT r2,#0x4103
+  0x331af10: LDR r0,[r0,#0]
+  0x331af14: MOVW r0,#0x7c64
+  0x331af18: MOVT r0,#0x406d
+  0x331af1c: BL ->0x2ca893e
+  0x331af24: LDR r0,[r0,#0]
+  0x331af26: MOVW r1,#0x13b2
+  0x331af2a: MOVW r2,#0x217
+  0x331af2e: MOVT r1,#0x4103
+  0x331af32: BL ->0x2ebc9e8
+  0x331af36: BL ->0x2d26650
+  0x331af3a: BL ->0x2ead80a
+  0x331af3e: LDR r0,[r0,#0]
+  0x331af40: STR r0,[r5,#0]
+  0x331af42: BL ->0x2d26650
+  0x331af46: BL ->0x2ead80a
+  0x331af4a: STR r4,[r0,#0]
+  0x331af4e: MOVW r0,#0x5e24
+  0x331af52: MOVT r0,#0x44d4
+  0x331af58: BL ->0x2d26650
+  0x331af5c: MOVW r1,#0x1301
+  0x331af60: MOVT r1,#0x4
+  0x331af6c: MOVS r0,#0
+  0x331af6e: BL ->0x2e15374
+  0x331af72: MOVS r4,#12
+  0x331af74: MOVW r1,#0xf6a0
+  0x331af7a: MOVT r1,#0x43d7
+  0x331af7e: LDR r1,[r1,#0]
+  0x331af8a: BL ->0x2e14134
+  0x331af92: MOVW r0,#0xf6a0
+  0x331af96: MOVW r2,#0x13b2
+  0x331af9a: MOVS r1,#0
+  0x331af9c: MOVW r3,#0x10a4
+  0x331afa0: MOVS r4,#0
+  0x331afa2: MOVT r0,#0x43d7
+  0x331afa6: MOVT r2,#0x4103
+  0x331afaa: LDR r0,[r0,#0]
+  0x331afae: MOVW r0,#0x7c80
+  0x331afb2: MOVT r0,#0x406d
+  0x331afb6: BL ->0x2ca893e
+  0x331afbe: LDR r0,[r0,#0]
+  0x331afc0: MOVW r1,#0x13b2
+  0x331afc4: MOVW r2,#0x10a7
+  0x331afc8: MOVT r1,#0x4103
+  0x331afcc: BL ->0x2ebc9e8
+  0x331afd0: BL ->0x2d26650
+  0x331afd4: BL ->0x2ead80a
+  0x331afd8: LDR r0,[r0,#0]
+  0x331afda: STR r0,[r5,#0]
+  0x331afdc: BL ->0x2d26650
+  0x331afe0: BL ->0x2ead80a
+  0x331afe4: STR r4,[r0,#0]
+  0x331afe8: MOVW r0,#0x8ae0
+  0x331afec: MOVT r0,#0x44d4
+  0x331aff2: BL ->0x2d26650
+
+--- FIRST @0x331a13c ±0x80 load/store catalog fields ---
+  0x331a0fc: BL ->0x2e15374
+  0x331a100: MOVS r4,#12
+  0x331a102: MOVW r1,#0xf6a0
+  0x331a108: MOVT r1,#0x43d7
+  0x331a10c: LDR r1,[r1,#0]
+  0x331a118: BL ->0x2e14134
+  0x331a120: MOVW r0,#0xf6a0
+  0x331a124: MOVW r2,#0x13b2
+  0x331a128: MOVS r1,#0
+  0x331a12a: MOVW r3,#0x10c9
+  0x331a12e: MOVS r4,#0
+  0x331a130: MOVT r0,#0x43d7
+  0x331a134: MOVT r2,#0x4103
+  0x331a138: LDR r0,[r0,#0]
+  0x331a13c: MOVW r0,#0x798c
+  0x331a140: MOVT r0,#0x406d
+  0x331a144: BL ->0x2ca893e
+  0x331a14c: LDR r0,[r0,#0]
+  0x331a14e: MOVW r1,#0x13b2
+  0x331a152: MOVW r2,#0x10cc
+  0x331a156: MOVT r1,#0x4103
+  0x331a15a: BL ->0x2ebc9e8
+  0x331a15e: BL ->0x2d26650
+  0x331a162: BL ->0x2ead80a
+  0x331a166: LDR r0,[r0,#0]
+  0x331a168: STR r0,[r5,#0]
+  0x331a16a: BL ->0x2d26650
+  0x331a16e: BL ->0x2ead80a
+  0x331a172: STR r4,[r0,#0]
+  0x331a176: MOVW r0,#0x8b70
+  0x331a17a: MOVT r0,#0x44d4
+  0x331a180: BL ->0x2d26650
+  0x331a184: MOVW r1,#0x1301
+  0x331a188: MOVT r1,#0x4
+  0x331a194: MOVS r0,#0
+  0x331a196: BL ->0x2e15374
+  0x331a19a: MOVS r4,#12
+  0x331a19c: MOVW r1,#0xf6a0
+  0x331a1a2: MOVT r1,#0x43d7
+  0x331a1a6: LDR r1,[r1,#0]
+  0x331a1b2: BL ->0x2e14134
+  0x331a1be: MOVW r0,#0xf6a0
+  0x331a1c4: MOVT r0,#0x43d7
+  0x331a1c8: LDR r0,[r0,#0]
+  0x331a1dc: BL ->0x2927a60
+  0x331a1e4: MOVS r0,#0
+  0x331a1f0: MOVW r8,#0xc2c4
+  0x331a1fa: MOVT r8,#0x4a3f
+  0x331a206: STRH.W r7,[r0,#84]
+  0x331a20a: MOVS r0,#3
+  0x331a20c: BL ->0x2d3203c
+  0x331a214: BL ->0x2927a60
+
+=== G) Non-SIM OEM catalog entries with +18!=0 (sample) ===
+  @0x6d9244 body=2 id=0xf534 +18=0x1 NS_IMSSH_CALL_REJ_REQ
+  @0x6d92ec body=2 id=0xf52d +18=0x1 NS_IMSSH_CALL_DISCONNECT_REQ
+  @0x6d9da4 body=1460 id=0xf52b +18=0x1 NS_IMSSH_MOCALL_SETUP_REQ
+  @0x6da1b0 body=1 id=0x2a22 +18=0x1 CC_CALL_BLOCK_SET_REQ
+  @0x6da274 body=64 id=0x2a07 +18=0x1 CC_DISCONNECT_REQ
+  @0x6da300 body=4 id=0x2a01 +18=0x4 CC_INIT_REQ
+  @0x6da370 body=1 id=0x2a1f +18=0x1 CC_MTCALL_BLOCK_SET_REQ
+  @0x6da3e0 body=52 id=0x2a11 +18=0x1 CC_REJ_REQ
+  @0x6da434 body=712 id=0x2a13 +18=0x1 CC_SETUP_REQ
+  @0x6da8cc body=1 id=0x3ea0 +18=0x4 NS_EMM_STOP_NETWORK_REQ
+  @0x6da93c body=1 id=0x3ea1 +18=0x4 NS_EMM_VT_STATUS_REQ
+  @0x6dab18 body=1 id=0x2918 +18=0x4 NS_MM_STOP_NETWORK_REQ
+  @0x6de2fc body=1 id=0xd40e +18=0x5 PB_GET_3G_PHONEBOOK_CAPA_REQ
+  @0x6de318 body=2 id=0xd40d +18=0x5 PB_GET_ENTRIES_INFO_REQ
+  @0x6de350 body=2 id=0xd40a +18=0x5 PB_GET_STORAGE_CAPA_REQ
+  @0x6de36c body=1 id=0xd40c +18=0x5 PB_GET_STORAGE_LIST_REQ
+  @0x6de3dc body=10 id=0xd407 +18=0x5 PB_UPDATE_REQ
+  @0x6de3f8 body=8 id=0xd408 +18=0x5 PB_READ_REQ
+  @0x6de430 body=2 id=0xd40b +18=0x5 PB_SELECT_STORAGE_REQ
+  @0x6de468 body=1 id=0xd40f +18=0x5 PB_SUBSCRIBER_NUM_GET_REQ
+  @0x6de740 body=2 id=0x2f50 +18=0x4 SIM_INIT_REQ
+  @0x6de9c4 body=2 id=0x2f51 +18=0x4 SIM_STOP_REQ
+  @0x6deadc body=1 id=0x3407 +18=0x4 SMREG_INIT_REQ
+  @0x6debd8 body=4 id=0x2d07 +18=0x4 SMS_INIT_REQ
+  @0x6dee94 body=1 id=0x2200 +18=0x4 SS_INIT_REQ
+  @0x6defe4 body=1 id=0x1b85 +18=0x4 VCG_SOUND_AUDIO_DSP_SET_REQ
++18!=0 REQ sample count printed=26
+
+=== H) VERDICT ===
+flags=2 cohort: INFO(0x2f57 +18=0), INIT(0x2f50 +18=4), STOP(0x2f51 +18=4)
++18=4 shared by INIT+STOP only in SIM bank — still not proven wire token length
+Catalog consumers remain object helpers (STRB +8/+9) — not proven app wire
+OEM[PB] nanopb path exists but SIM overlap check above
+FRAME_RECOVERED=NO — no soft SIM_INIT

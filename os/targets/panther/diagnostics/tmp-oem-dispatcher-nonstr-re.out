@@ -1,0 +1,2474 @@
+MAIN=/mnt/c/Users/Admin/Projects/saaios-modem-research/os/targets/panther/diagnostics/fw/saaios-probe-b-modem.bin size=98265168
+
+=== A) Catalog walk SIM bank (28B stride) + flags=2 cohort ===
+SIM_*_REQ name-adjacent candidates=43 stride_mode=0x1c
+  @0x6de970 body=4 id=0x2f0d meta=0x10104 rsp=0x2ff4 +10=0x0 +14=0x0 +18=0x0 SIM_PIN_SKIP_REQ
+  @0x6de698 body=16 id=0x2f0e meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_ESIM_LOCK_STATUS_REQ
+  @0x6de5f0 body=18 id=0x2f13 meta=0x10104 rsp=0x2ff7 +10=0x0 +14=0x0 +18=0x0 SIM_TF_LOCK_INFO_REQ
+  @0x6de8e4 body=14 id=0x2f30 meta=0x10104 rsp=0x2fb5 +10=0x0 +14=0x0 +18=0x0 SIM_READ_REQ
+  @0x6dea6c body=4114 id=0x2f31 meta=0x10104 rsp=0x0 +10=0x0 +14=0x4 +18=0x0 SIM_UPDATE_REQ
+  @0x6de8c8 body=14 id=0x2f32 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_READRECORD_REQ
+  @0x6dea50 body=18 id=0x2f33 meta=0x10104 rsp=0x0 +10=0x0 +14=0x4 +18=0x0 SIM_UPDATERECORD_REQ
+  @0x6de91c body=10 id=0x2f34 meta=0x10104 rsp=0x0 +10=0x0 +14=0x4 +18=0x0 SIM_SEARCHRECORD_REQ
+  @0x6de8ac body=4 id=0x2f35 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_READPARAM_REQ
+  @0x6dea34 body=8 id=0x2f36 meta=0x10104 rsp=0x0 +10=0x0 +14=0x4 +18=0x0 SIM_UPDATEPARAM_REQ
+  @0x6de708 body=12 id=0x2f37 meta=0x10104 rsp=0x0 +10=0x0 +14=0x4 +18=0x0 SIM_INCREASE_REQ
+  @0x6de794 body=8 id=0x2f3a meta=0x10104 rsp=0x0 +10=0x0 +14=0x4 +18=0x0 SIM_MULTI_UPDATE_REQ
+  @0x6de778 body=8 id=0x2f3c meta=0x10104 rsp=0x0 +10=0x0 +14=0x4 +18=0x0 SIM_MULTI_UPDATE_RECORD_REQ
+  @0x6de60c body=4 id=0x2f40 meta=0x10104 rsp=0x2f90 +10=0x0 +14=0x0 +18=0x0 SIM_APPS_INFO_REQ
+  @0x6de9e0 body=514 id=0x2f41 meta=0x10104 rsp=0x2f91 +10=0x0 +14=0x0 +18=0x0 SIM_TRANSFER_APDU_REQ
+  @0x6de890 body=1 id=0x2f42 meta=0x10104 rsp=0x2f92 +10=0x0 +14=0x0 +18=0x0 SIM_POWER_CHANGE_REQ
+  @0x6dea18 body=1 id=0x2f43 meta=0x10104 rsp=0x2f93 +10=0x0 +14=0x0 +18=0x0 SIM_TRANSFER_CARD_READER_STATUS_REQ
+  @0x6de67c body=1 id=0x2f44 meta=0x10104 rsp=0x2f95 +10=0x0 +14=0x0 +18=0x0 SIM_CONNECTION_REQ
+  @0x6de7e8 body=18 id=0x2f46 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_VERIFY_SIMLOCKKEY_REQ
+  @0x6de7cc body=35 id=0x2f47 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_CHANGE_SIMLOCKKEY_REQ
+  @0x6de7b0 body=27 id=0x2f48 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_SIMLOCK_ENABLE_REQ
+  @0x6de5b8 body=1 id=0x2f4b meta=0x10104 rsp=0x2fea +10=0x0 +14=0x0 +18=0x0 SIM_LOCK_INFO_REQ
+  @0x6de954 body=4 id=0x2f4e meta=0x10104 rsp=0x2ff2 +10=0x0 +14=0x0 +18=0x0 SIM_IO_CONTROL_REQ
+  @0x6deaa4 body=8 id=0x2f4f meta=0x10104 rsp=0x2f9e +10=0x0 +14=0x0 +18=0x0 SIM_VIRTUAL_SIM_EVENT_REQ
+  @0x6de740 body=2 id=0x2f50 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x4 SIM_INIT_REQ <<<
+  @0x6de9c4 body=2 id=0x2f51 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x4 SIM_STOP_REQ
+  @0x6de874 body=10 id=0x2f52 meta=0x10104 rsp=0x2fa1 +10=0x0 +14=0x0 +18=0x0 SIM_VERIFYPIN_REQ <<<
+  @0x6de858 body=19 id=0x2f53 meta=0x10104 rsp=0x2fa2 +10=0x0 +14=0x0 +18=0x0 SIM_UNBLOCKPIN_REQ
+  @0x6de804 body=19 id=0x2f54 meta=0x10104 rsp=0x2fa3 +10=0x0 +14=0x0 +18=0x0 SIM_CHANGEPIN_REQ
+  @0x6de820 body=10 id=0x2f55 meta=0x10104 rsp=0x2fa4 +10=0x0 +14=0x0 +18=0x0 SIM_DISABLEPIN_REQ
+  @0x6de83c body=10 id=0x2f56 meta=0x10104 rsp=0x2fa5 +10=0x0 +14=0x0 +18=0x0 SIM_ENABLEPIN_REQ
+  @0x6de724 body=2 id=0x2f57 meta=0x10104 rsp=0x2fa8 +10=0x0 +14=0x0 +18=0x0 SIM_INFO_REQ <<<
+  @0x6de6b4 body=6 id=0x2f59 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_FILE_ATTRB_REQ
+  @0x6de628 body=4102 id=0x2f60 meta=0x10104 rsp=0x2fcb +10=0x0 +14=0x0 +18=0x0 SIM_ATCMD_CSIM_REQ
+  @0x6de900 body=4140 id=0x2f61 meta=0x10104 rsp=0x2fcc +10=0x0 +14=0x0 +18=0x0 SIM_ATCMD_CRSM_REQ
+  @0x6de75c body=36 id=0x2f62 meta=0x10104 rsp=0x2fcd +10=0x0 +14=0x0 +18=0x0 SIM_ISIM_AUTHENTICATION_REQ
+  @0x6de5d4 body=12 id=0x2f68 meta=0x10104 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_SERVICES_ENABLE_DISABLE_REQ
+  @0x6de9fc body=4 id=0x2f6b meta=0x10104 rsp=0x2fde +10=0x0 +14=0x0 +18=0x0 SIM_TRANSFER_ATR_REQ
+  @0x6de6ec body=515 id=0x2f6d meta=0x10304 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_GBA_CONTEXT_REQ
+  @0x6de59c body=13 id=0x2f6e meta=0x10304 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_FACTORY_CMD_REQ
+  @0x6de9a8 body=4 id=0x2f6f meta=0x10304 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_SSU_UPDATE_REQ
+  @0x6de98c body=2412 id=0x2f7d meta=0x10304 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_SET_CARRIER_RESTRICTIONS_REQ
+  @0x6de938 body=4 id=0x2f7e meta=0x10304 rsp=0x0 +10=0x0 +14=0x0 +18=0x0 SIM_GET_CARRIER_RESTRICTIONS_REQ
+
+flags/body_hint==2 count=3: ['SIM_INFO_REQ', 'SIM_INIT_REQ', 'SIM_STOP_REQ']
+  flags2 @0x6de724 id=0x2f57 +18=0x0 meta=0x10104 SIM_INFO_REQ
+  flags2 @0x6de740 id=0x2f50 +18=0x4 meta=0x10104 SIM_INIT_REQ
+  flags2 @0x6de9c4 id=0x2f51 +18=0x4 meta=0x10104 SIM_STOP_REQ
+
+=== B) Catalog VA consumers (litpool + MOVW/MOVT) ===
+  sim_info_req VA=0x406d7b14 movw=1 ['0x3388338']
+    lit=0 []
+  sim_init_req VA=0x406d7b30 movw=1 ['0x32e4494']
+    lit=0 []
+  sim_verifypin VA=0x406d7c64 movw=1 ['0x331af14']
+    lit=0 []
+  bank_page VA=0x406d73f0 movw=0 []
+    lit=0 []
+  bank_6de700 VA=0x406d7af0 movw=0 []
+    lit=0 []
+  first_sim VA=0x406d798c movw=1 ['0x331a13c']
+    lit=0 []
+
+=== C) Catalog lookup patterns (LDRH msgid + CMP + stride add) ===
+LDRH[+2]+stride0x1c candidates=49
+
+--- lookup cand @0x2d6a92 prolog@0x2d6a6e va=0x402cfe5e ---
+  0x2d6a6e: PUSH 0xb46c
+  0x2d6a7c: STR r2,[r1,#92]
+  0x2d6a80: LDRB r4,[r6,#11]
+  0x2d6a82: LDRH r2,[r7,#50]
+  0x2d6a90: LDRB r0,[r6,#3]
+  0x2d6a92: LDRH r0,[r7,#2]
+  0x2d6a94: MOVS r5,#74
+  0x2d6a96: LDR r5,[r4,#112]
+  0x2d6a98: CMP r6,#92
+  0x2d6a9a: STRB r6,[r5,#8]
+  0x2d6a9e: MOVS r4,#28
+  0x2d6ab2: LDRB r5,[r3,#19]
+  0x2d6ab4: STRB r0,[r5,#19]
+  0x2d6aba: MOVS r1,#31
+  0x2d6abc: LDR r3,[pc,#600] lit@0x2d6d18=0xdc93934f
+  0x2d6ac0: POP 0xbd61
+  0x2d6ac4: LDRH r5,[r1,#24]
+  0x2d6ac6: STRH r3,[r1,#52]
+  0x2d6ac8: LDRH r7,[r1,#16]
+  0x2d6aca: STRH r2,[r1,#44]
+  0x2d6acc: STRB r0,[r4,#3]
+  0x2d6ad4: PUSH 0xb571
+  0x2d6ad8: STR r4,[r1,#108]
+  0x2d6adc: LDR r0,[pc,#576] lit@0x2d6d20=0xf88f8f77
+  0x2d6aec: STR r2,[r0,#28]
+  0x2d6afc: STRH r7,[r2,#48]
+  0x2d6b06: MOVS r7,#29
+  0x2d6b1c: LDR r2,[r2,#28]
+  0x2d6b22: STRB r1,[r3,#3]
+  0x2d6b24: LDRH r7,[r0,#48]
+  0x2d6b26: LDRH r6,[r1,#12]
+  0x2d6b32: MOVS r2,#30
+  0x2d6b34: STRH r5,[r2,#56]
+  0x2d6b3e: LDR r1,[pc,#824] lit@0x2d6e78=0x8aa1a12b
+  0x2d6b46: LDRB r0,[r5,#0]
+  0x2d6b4a: LDRB r7,[r3,#11]
+  0x2d6b4c: LDRH r3,[r0,#32]
+  0x2d6b4e: LDRH r4,[r1,#60]
+  0x2d6b56: STRH r1,[r1,#4]
+  0x2d6b68: LDR r0,[r2,#12]
+  hdr-ish imm hist: {0: 1, 2: 2, 3: 5, 4: 1, 8: 1, 11: 2, 12: 2, 15: 1, 16: 1, 18: 1, 19: 2, 23: 1, 24: 1, 28: 3, 32: 1, 44: 3, 48: 2, 50: 2, 52: 1, 56: 1, 58: 1, 60: 1, 64: 1}
+
+--- lookup cand @0x14191b4 prolog@0x141910c va=0x414124fc ---
+  0x1419114: MOVW r0,#0xf6a0
+  0x141911a: MOVT r0,#0x43d7
+  0x141911e: LDR r0,[r0,#0]
+  0x1419122: MOVS r0,#0
+  0x1419124: STRB.W r0,[r13,#55]
+  0x141912c: BL ->0x1948544 file@?
+  0x1419130: CMP r0,#255
+  0x1419132: B.W
+  0x1419138: MOVW r3,#0x2670
+  0x141913e: MOVS r2,#0
+  0x1419140: MOVW r14,#0x17be
+  0x1419144: MOVW r12,#0x17b8
+  0x1419148: MOVT r3,#0x45a2
+  0x1419184: LDRB.W r6,[r13,#55]
+  0x1419188: CMP r6,#10
+  0x141918a: B.W
+  0x141918e: CMP r5,#3
+  0x1419190: B.W
+  0x1419194: MOVW r0,#0x1338
+  0x14191a4: MOVW r6,#0x8a1c
+  0x14191a8: MOVT r6,#0xf
+  0x14191b4: LDRH r0,[r0,#2]
+  0x14191b6: STRH r0,[r6,#0]
+  0x14191b8: LDRB.W r6,[r13,#55]
+  0x14191bc: CMP r6,#10
+  0x14191be: B.W
+  0x14191c2: CMP r5,#3
+  0x14191c4: B.W
+  0x14191d0: MOVW r4,#0x8a1c
+  0x14191d4: MOVT r4,#0xf
+  0x14191e0: STRH r0,[r4,#0]
+  0x14191e2: LDRB.W r6,[r13,#55]
+  0x14191e6: CMP r6,#10
+  0x14191e8: B.W
+  0x14191ec: CMP r5,#3
+  0x14191ee: B.W
+  0x14191f2: MOVS r0,#82
+  0x1419200: MOVW r0,#0x1338
+  hdr-ish imm hist: {0: 3, 2: 1, 55: 6}
+
+--- lookup cand @0x1831c04 prolog@0x1831b28 va=0x4182af18 ---
+  0x1831b30: MOVW r0,#0xf6a0
+  0x1831b3a: MOVT r0,#0x43d7
+  0x1831b3e: LDR r0,[r0,#0]
+  0x1831b42: MOVW r0,#0x22c5
+  0x1831b48: MOVW r0,#0x49e8
+  0x1831b4c: MOVT r0,#0x4547
+  0x1831b52: MOVS r0,#0
+  0x1831b54: BL ->0x20e184e file@?
+  0x1831b58: CMP r6,#0
+  0x1831b5c: MOVW r2,#0x14a
+  0x1831b60: MOVS r0,#4
+  0x1831b62: MOVS r1,#6
+  0x1831b64: MOVW r3,#0xa81
+  0x1831b68: MOVT r2,#0x410e
+  0x1831b6c: BL ->0x20ea040 file@?
+  0x1831b70: CMP r0,#0
+  0x1831b76: MOVS r0,#0
+  0x1831b78: MOVW r3,#0x8474
+  0x1831b7c: MOVS r1,#0
+  0x1831b80: STRH r0,[r4,#4]
+  0x1831b82: STR r0,[r4,#0]
+  0x1831b84: MOVS r0,#1
+  0x1831b86: STR r4,[r7,#0]
+  0x1831b88: MOVT r3,#0x40c5
+  0x1831b90: BL ->0x1c50862 file@?
+  0x1831b94: MOVW r8,#0xffff
+  0x1831ba2: BL ->0x1c512c4 file@?
+  0x1831ba6: CMP r0,#255
+  0x1831ba8: STRB r0,[r4,#0]
+  0x1831bac: MOVS r0,#1
+  0x1831bae: MOVW r3,#0x2ae8
+  0x1831bb2: MOVS r1,#0
+  0x1831bb8: MOVT r3,#0x4100
+  0x1831bc4: BL ->0x1c50862 file@?
+  0x1831bd2: BL ->0x1fd0bcc file@?
+  0x1831bd8: STRH r0,[r4,#2]
+  0x1831be4: BL ->0x1fd0bcc file@?
+  0x1831bea: STRH r0,[r4,#4]
+  0x1831bee: MOVW r0,#0x22c2
+  0x1831bf6: MOVW r0,#0x4a98
+  hdr-ish imm hist: {0: 8, 2: 2, 4: 3}
+
+--- lookup cand @0x193ea10 prolog@0x193e794 va=0x41937b84 ---
+  0x193e79c: MOVW r0,#0xf6a0
+  0x193e7a4: MOVT r0,#0x43d7
+  0x193e7a8: LDR r0,[r0,#0]
+  0x193e7ae: BL ->0x19a19e0 file@?
+  0x193e7b6: BL ->0x19a19e0 file@?
+  0x193e7bc: BL ->0x2251560 file@?
+  0x193e7c4: BL ->0x1899a38 file@?
+  0x193e7ca: BL ->0x217039c file@?
+  0x193e7ce: MOVW r1,#0x1827
+  0x193e7d6: MOVT r1,#0x4107
+  0x193e7da: BL ->0x223245c file@?
+  0x193e7de: MOVW r0,#0x4c76
+  0x193e7e8: MOVW r0,#0x4c64
+  0x193e7f4: MOVS r2,#18
+  0x193e7fa: STRH.W r5,[r8,#0]
+  0x193e800: BL ->0x216fc9c file@?
+  0x193e804: CMP r0,#0
+  0x193e80a: BL ->0x1a408ee file@?
+  0x193e80e: CMP r0,#0
+  0x193e812: MOVW r8,#0x1662
+  0x193e816: MOVT r8,#0x4
+  0x193e81a: BL ->0x225e8ec file@?
+  0x193e81e: CMP r0,#1
+  0x193e822: BL ->0x225140a file@?
+  0x193e826: LDR r0,[r0,#0]
+  0x193e828: CMP r0,#0
+  0x193e82a: B.W
+  0x193e82e: MOVW r6,#0xf4c8
+  0x193e832: MOVS r1,#28
+  0x193e834: MOVT r6,#0x44d9
+  0x193e83e: CMP r4,#0
+  0x193e840: B.W
+  0x193e844: LDRH r0,[r4,#0]
+  0x193e846: CMP r0,#0
+  0x193e848: B.W
+  0x193e84c: MOVW r7,#0x7b7c
+  0x193e850: MOVT r7,#0x48b8
+  0x193e854: LDR r0,[r7,#0]
+  0x193e85a: MOVW r0,#0xfa28
+  0x193e85e: MOVT r0,#0x44f7
+  hdr-ish imm hist: {0: 6, 2: 2, 4: 2, 6: 3, 8: 1, 10: 3, 12: 1, 14: 3, 16: 2, 18: 1}
+
+--- lookup cand @0x1bdbaf4 prolog@0x1bdba58 va=0x41bd4e48 ---
+  0x1bdba58: PUSH 0xb580
+  0x1bdba5e: MOVW r0,#0xf6a0
+  0x1bdba62: MOVT r0,#0x43d7
+  0x1bdba66: LDR r0,[r0,#0]
+  0x1bdba6e: LDRB r0,[r1,#0]
+  0x1bdba70: CMP r0,#2
+  0x1bdba74: CMP r0,#1
+  0x1bdba78: MOVS r0,#0
+  0x1bdba7a: STRB r0,[r2,#0]
+  0x1bdba7e: BL ->0x27054f4 file@?
+  0x1bdba84: MOVW r0,#0x3984
+  0x1bdba88: MOVT r0,#0x445f
+  0x1bdba8e: BL ->0x270505a file@?
+  0x1bdba9a: BL ->0x2706372 file@?
+  0x1bdbaa0: MOVW r0,#0x3ac7
+  0x1bdbaa4: MOVW r1,#0x2559
+  0x1bdbaaa: BL ->0x27054f4 file@?
+  0x1bdbab0: MOVW r0,#0x39d8
+  0x1bdbab4: MOVT r0,#0x445f
+  0x1bdbaba: BL ->0x270505a file@?
+  0x1bdbac6: BL ->0x2706372 file@?
+  0x1bdbacc: MOVW r0,#0x3ac7
+  0x1bdbad0: MOVW r1,#0x255a
+  0x1bdbad4: MOVT r0,#0x40ca
+  0x1bdbad8: MOVW r3,#0x82ac
+  0x1bdbae2: MOVS r0,#4
+  0x1bdbae4: MOVT r3,#0x40ca
+  0x1bdbae8: BL ->0x20e184e file@?
+  0x1bdbaec: MOVS r0,#2
+  0x1bdbaf0: MOVS r0,#1
+  0x1bdbaf2: STRB r0,[r2,#0]
+  0x1bdbaf4: LDRH r0,[r1,#2]
+  0x1bdbaf6: STRH r0,[r2,#2]
+  0x1bdbaf8: LDRH r0,[r1,#4]
+  0x1bdbafa: STRH r0,[r2,#4]
+  0x1bdbafe: BL ->0x27054f4 file@?
+  0x1bdbb04: MOVW r0,#0x3a1c
+  0x1bdbb08: MOVT r0,#0x445f
+  0x1bdbb0e: BL ->0x270505a file@?
+  0x1bdbb12: MOVW r1,#0x16e1
+  hdr-ish imm hist: {0: 7, 2: 2, 4: 2, 18: 1}
+
+--- lookup cand @0x1c3c702 prolog@0x1c3c614 va=0x41c35a04 ---
+  0x1c3c61c: MOVW r0,#0xf6a0
+  0x1c3c624: MOVW r4,#0x22a2
+  0x1c3c62a: MOVT r0,#0x43d7
+  0x1c3c630: LDR r0,[r0,#0]
+  0x1c3c634: MOVW r0,#0xa01c
+  0x1c3c63a: MOVT r0,#0x4545
+  0x1c3c640: MOVS r0,#1
+  0x1c3c642: BL ->0x20e184e file@?
+  0x1c3c646: MOVS r6,#0
+  0x1c3c648: CMP r7,#2
+  0x1c3c64a: B.W
+  0x1c3c64e: CMP r7,#1
+  0x1c3c650: B.W
+  0x1c3c654: MOVS r0,#0
+  0x1c3c65e: MOVS r0,#255
+  0x1c3c660: STRB.W r0,[r13,#11]
+  0x1c3c664: MOVW r0,#0x22a2
+  0x1c3c66a: MOVW r0,#0xa058
+  0x1c3c66e: MOVT r0,#0x4545
+  0x1c3c674: MOVS r0,#0
+  0x1c3c676: BL ->0x20e184e file@?
+  0x1c3c67a: MOVW r2,#0xf725
+  0x1c3c67e: MOVS r0,#4
+  0x1c3c680: MOVS r1,#116
+  0x1c3c682: MOVW r3,#0xdbb
+  0x1c3c686: MOVT r2,#0x410d
+  0x1c3c68a: BL ->0x20ea040 file@?
+  0x1c3c68e: CMP r0,#0
+  0x1c3c692: B.W
+  0x1c3c696: MOVS r1,#116
+  0x1c3c69e: MOVW r2,#0xf725
+  0x1c3c6a2: MOVS r0,#4
+  0x1c3c6a4: MOVS r1,#160
+  0x1c3c6a6: MOVW r3,#0xdc3
+  0x1c3c6aa: MOVT r2,#0x410d
+  0x1c3c6ae: BL ->0x20ea040 file@?
+  0x1c3c6b2: CMP r0,#0
+  0x1c3c6b6: B.W
+  0x1c3c6ba: MOVS r1,#160
+  0x1c3c6c2: MOVW r2,#0xf725
+  hdr-ish imm hist: {0: 1, 2: 1, 4: 1, 11: 1, 24: 1, 40: 1}
+
+--- lookup cand @0x1c3cc90 prolog@0x1c3cc50 va=0x41c36040 ---
+  0x1c3cc50: LDRB.W r2,[r13,#11]
+  0x1c3cc54: MOVS r0,#0
+  0x1c3cc56: MOVS r3,#2
+  0x1c3cc5c: BL ->0x1c48e06 file@?
+  0x1c3cc64: MOVW r0,#0x22a1
+  0x1c3cc6a: MOVW r0,#0xa45c
+  0x1c3cc6e: MOVT r0,#0x4545
+  0x1c3cc74: LDRB.W r2,[r13,#11]
+  0x1c3cc78: MOVW r0,#0x22a2
+  0x1c3cc7e: MOVW r0,#0xa4d0
+  0x1c3cc82: MOVT r0,#0x4545
+  0x1c3cc8a: MOVS r0,#1
+  0x1c3cc8c: BL ->0x20e184e file@?
+  0x1c3cc90: LDRH r4,[r5,#2]
+  0x1c3cc92: CMP r4,#4
+  0x1c3cc96: BL ->0x1c296bc file@?
+  0x1c3cca4: B.W
+  0x1c3ccac: MOVS r1,#0
+  0x1c3ccae: MOVS r2,#28
+  0x1c3ccb0: MOVS r4,#0
+  0x1c3ccb2: BL ->0x1c2b8a8 file@?
+  0x1c3ccb8: MOVS r1,#0
+  0x1c3ccba: MOVS r2,#84
+  0x1c3ccbc: BL ->0x1c2b8a8 file@?
+  0x1c3ccc2: CMP r0,#1
+  0x1c3ccc4: B.W
+  0x1c3ccce: MOVS r4,#1
+  0x1c3ccd4: MOVS r2,#16
+  0x1c3ccd8: STRB.W r4,[r7,#88]
+  0x1c3ccdc: BL ->0x1c27b68 file@?
+  0x1c3cce6: MOVS r2,#16
+  0x1c3cce8: STRB r4,[r7,#4]
+  0x1c3ccea: BL ->0x1c27b68 file@?
+  0x1c3ccf4: MOVS r2,#16
+  0x1c3ccf6: BL ->0x1c27b68 file@?
+  0x1c3ccfa: STRB.W r4,[r7,#40]
+  0x1c3cd00: MOVW r0,#0x22a1
+  0x1c3cd06: MOVW r0,#0xb69c
+  0x1c3cd0a: MOVT r0,#0x4545
+  0x1c3cd12: MOVS r0,#0
+  hdr-ish imm hist: {0: 4, 2: 2, 4: 3, 11: 4, 40: 1}
+
+--- lookup cand @0x1c449ec prolog@0x1c4495c va=0x41c3dd4c ---
+  0x1c44964: MOVW r0,#0xf6a0
+  0x1c4496c: MOVT r0,#0x43d7
+  0x1c44970: LDR r0,[r0,#0]
+  0x1c44974: MOVT r13,#0x5be
+  0x1c4497a: MOVW r0,#0x2938
+  0x1c4497e: MOVT r0,#0x4469
+  0x1c44984: MOVT r11,#0x569
+  0x1c44988: MOVW r1,#0x16e4
+  0x1c44992: MOVT r12,#0x15ee
+  0x1c4499a: MOVS r0,#1
+  0x1c4499c: BL ->0x20e184e file@?
+  0x1c449a4: B.W
+  0x1c449a8: CMP r4,#0
+  0x1c449aa: B.W
+  0x1c449ae: LDR r0,[r4,#0]
+  0x1c449b0: MOVW r7,#0x44b8
+  0x1c449b4: MOVS r5,#0
+  0x1c449b6: MOVT r7,#0x49b5
+  0x1c449ba: CMP r0,#0
+  0x1c449bc: B.W
+  0x1c449c0: MOVS r1,#0
+  0x1c449c2: MOVS r6,#0
+  0x1c449ca: STR.W r9,[r13,#12]
+  0x1c449ce: LDR r0,[r4,#4]
+  0x1c449da: CMP r1,#31
+  0x1c449dc: B.W
+  0x1c449e0: STRB.W r1,[r11,#4]
+  0x1c449e4: STRB.W r5,[r11,#8]
+  0x1c449ec: LDRH r0,[r0,#2]
+  0x1c449ee: STRH.W r0,[r11,#6]
+  0x1c449f2: MOVW r0,#0xdc5c
+  0x1c449f6: MOVT r0,#0x1
+  0x1c44a00: BL ->0x22f92a4 file@?
+  0x1c44a08: BL ->0x22f92a4 file@?
+  0x1c44a0e: CMP r0,#4
+  0x1c44a10: B.W
+  0x1c44a16: MOVS r1,#28
+  0x1c44a18: BL ->0x1e1507c file@?
+  0x1c44a1c: CMP r0,#0
+  0x1c44a1e: B.W
+  hdr-ish imm hist: {0: 4, 2: 2, 4: 9, 6: 2, 8: 2, 12: 2, 20: 1, 22: 1, 24: 1}
+
+--- lookup cand @0x1c7ebda prolog@0x1c7ea52 va=0x41c77e42 ---
+  0x1c7ea5a: MOVW r0,#0xf6a0
+  0x1c7ea60: MOVW r1,#0x4e04
+  0x1c7ea64: MOVT r0,#0x43d7
+  0x1c7ea68: MOVT r1,#0x4069
+  0x1c7ea6c: CMP r6,#0
+  0x1c7ea6e: LDR r0,[r0,#0]
+  0x1c7ea72: MOVW r0,#0x4e00
+  0x1c7ea76: MOVT r0,#0x4069
+  0x1c7ea7e: LDR r7,[r1,#0]
+  0x1c7ea80: CMP r7,#0
+  0x1c7ea82: B.W
+  0x1c7ea86: CMP r5,#0
+  0x1c7ea88: B.W
+  0x1c7ea8c: CMP r2,#0
+  0x1c7ea8e: B.W
+  0x1c7ea94: MOVS r1,#28
+  0x1c7ea96: BL ->0x1e1507c file@?
+  0x1c7ea9a: CMP r0,#0
+  0x1c7ea9c: B.W
+  0x1c7eaa0: STR r0,[r5,#8]
+  0x1c7eaa4: MOVS r4,#0
+  0x1c7eaa6: LDRH r0,[r7,#2]
+  0x1c7eaa8: CMP r0,#129
+  0x1c7eaaa: B.W
+  0x1c7eabe: MOVS r1,#24
+  0x1c7eac0: BL ->0x1e1507c file@?
+  0x1c7eac4: CMP r0,#0
+  0x1c7eac6: B.W
+  0x1c7eacc: STR.W r0,[r8,#8]
+  0x1c7ead4: MOVW r1,#0x1210
+  0x1c7eae0: BL ->0x20ded94 file@?
+  0x1c7eae8: LDR r0,[r0,#16]
+  0x1c7eaea: LDRB r1,[r0,#9]
+  0x1c7eaee: CMP r1,#0
+  0x1c7eaf4: STR.W r8,[r13,#28]
+  0x1c7eafe: STR.W r11,[r13,#32]
+  0x1c7eb06: LDRB r2,[r0,#10]
+  0x1c7eb0c: LDRB r7,[r0,#16]
+  0x1c7eb0e: CMP r7,#1
+  0x1c7eb14: LDRB.W r0,[r10,#4]
+  hdr-ish imm hist: {0: 6, 2: 1, 4: 7, 5: 1, 8: 2, 9: 3, 10: 1, 12: 1, 16: 3, 28: 2, 32: 2}
+
+--- lookup cand @0x1c7f280 prolog@0x1c7f0f8 va=0x41c784e8 ---
+  0x1c7f100: MOVW r0,#0xf6a0
+  0x1c7f106: MOVW r1,#0x4e04
+  0x1c7f10a: MOVT r0,#0x43d7
+  0x1c7f10e: MOVT r1,#0x4069
+  0x1c7f112: CMP r6,#0
+  0x1c7f114: LDR r0,[r0,#0]
+  0x1c7f118: MOVW r0,#0x4e00
+  0x1c7f11c: MOVT r0,#0x4069
+  0x1c7f124: LDR r7,[r1,#0]
+  0x1c7f126: CMP r7,#0
+  0x1c7f128: B.W
+  0x1c7f12c: CMP r5,#0
+  0x1c7f12e: B.W
+  0x1c7f132: CMP r2,#0
+  0x1c7f134: B.W
+  0x1c7f13a: MOVS r1,#28
+  0x1c7f13c: BL ->0x1e1507c file@?
+  0x1c7f140: CMP r0,#0
+  0x1c7f142: B.W
+  0x1c7f146: STR r0,[r5,#12]
+  0x1c7f14a: MOVS r4,#0
+  0x1c7f14c: LDRH r0,[r7,#2]
+  0x1c7f14e: CMP r0,#0
+  0x1c7f150: B.W
+  0x1c7f164: MOVS r1,#24
+  0x1c7f166: BL ->0x1e1507c file@?
+  0x1c7f16a: CMP r0,#0
+  0x1c7f16c: B.W
+  0x1c7f172: STR.W r0,[r8,#8]
+  0x1c7f17a: MOVW r1,#0x1210
+  0x1c7f186: BL ->0x20ded94 file@?
+  0x1c7f18e: LDR r0,[r0,#16]
+  0x1c7f190: LDRB r1,[r0,#9]
+  0x1c7f194: CMP r1,#0
+  0x1c7f19a: STR.W r8,[r13,#28]
+  0x1c7f1a4: STR.W r11,[r13,#32]
+  0x1c7f1ac: LDRB r2,[r0,#10]
+  0x1c7f1b2: LDRB r7,[r0,#16]
+  0x1c7f1b4: CMP r7,#1
+  0x1c7f1ba: LDRB.W r0,[r10,#4]
+  hdr-ish imm hist: {0: 6, 2: 1, 4: 7, 5: 1, 8: 1, 9: 3, 10: 1, 12: 2, 16: 3, 28: 2, 32: 2}
+
+--- lookup cand @0x27c7a4e prolog@0x27c7a10 va=0x427c0e00 ---
+  0x27c7a10: PUSH 0xb5f0
+  0x27c7a14: MOVW r0,#0xf6a0
+  0x27c7a18: MOVT r0,#0x43d7
+  0x27c7a1c: LDR r0,[r0,#0]
+  0x27c7a28: BL ->0x27c98fc file@?
+  0x27c7a2e: CMP r6,#0
+  0x27c7a32: CMP r4,#0
+  0x27c7a38: BL ->0x2a2b6d6 file@?
+  0x27c7a44: STRH r0,[r6,#0]
+  0x27c7a48: BL ->0x26f9a38 file@?
+  0x27c7a4c: LDR r0,[r0,#0]
+  0x27c7a4e: LDRH r0,[r0,#2]
+  0x27c7a50: STRH r0,[r6,#2]
+  0x27c7a52: MOVW r0,#0xbae8
+  0x27c7a56: MOVT r0,#0x4454
+  0x27c7a5c: BL ->0x210f9e6 file@?
+  0x27c7a60: MOVW r1,#0x262e
+  0x27c7a6c: BL ->0x26f9a38 file@?
+  0x27c7a70: LDR r0,[r0,#0]
+  0x27c7a74: LDRH r2,[r0,#2]
+  0x27c7a76: MOVS r0,#1
+  0x27c7a78: BL ->0x20e184e file@?
+  0x27c7a7e: BL ->0x279cd30 file@?
+  0x27c7a82: STR r0,[r6,#4]
+  0x27c7a84: MOVS r0,#28
+  0x27c7a86: STR r0,[r5,#0]
+  0x27c7a8a: MOVW r0,#0xba68
+  0x27c7a8e: MOVT r0,#0x4454
+  0x27c7a94: BL ->0x210f9e6 file@?
+  0x27c7a98: MOVW r1,#0x262c
+  0x27c7aa4: MOVS r0,#0
+  0x27c7aa6: BL ->0x20e184e file@?
+  0x27c7aac: MOVW r0,#0xbab4
+  0x27c7ab0: MOVT r0,#0x4454
+  0x27c7ab6: BL ->0x210f9e6 file@?
+  0x27c7aba: MOVW r1,#0x262c
+  0x27c7ac8: MOVS r0,#1
+  0x27c7aca: BL ->0x20e184e file@?
+  0x27c7ad2: MOVW r1,#0xf6a0
+  0x27c7ad8: MOVT r1,#0x43d7
+  hdr-ish imm hist: {0: 9, 2: 3, 4: 1, 36: 1}
+
+--- lookup cand @0x27c7a74 prolog@0x27c7a10 va=0x427c0e00 ---
+  0x27c7a10: PUSH 0xb5f0
+  0x27c7a14: MOVW r0,#0xf6a0
+  0x27c7a18: MOVT r0,#0x43d7
+  0x27c7a1c: LDR r0,[r0,#0]
+  0x27c7a28: BL ->0x27c98fc file@?
+  0x27c7a2e: CMP r6,#0
+  0x27c7a32: CMP r4,#0
+  0x27c7a38: BL ->0x2a2b6d6 file@?
+  0x27c7a44: STRH r0,[r6,#0]
+  0x27c7a48: BL ->0x26f9a38 file@?
+  0x27c7a4c: LDR r0,[r0,#0]
+  0x27c7a4e: LDRH r0,[r0,#2]
+  0x27c7a50: STRH r0,[r6,#2]
+  0x27c7a52: MOVW r0,#0xbae8
+  0x27c7a56: MOVT r0,#0x4454
+  0x27c7a5c: BL ->0x210f9e6 file@?
+  0x27c7a60: MOVW r1,#0x262e
+  0x27c7a6c: BL ->0x26f9a38 file@?
+  0x27c7a70: LDR r0,[r0,#0]
+  0x27c7a74: LDRH r2,[r0,#2]
+  0x27c7a76: MOVS r0,#1
+  0x27c7a78: BL ->0x20e184e file@?
+  0x27c7a7e: BL ->0x279cd30 file@?
+  0x27c7a82: STR r0,[r6,#4]
+  0x27c7a84: MOVS r0,#28
+  0x27c7a86: STR r0,[r5,#0]
+  0x27c7a8a: MOVW r0,#0xba68
+  0x27c7a8e: MOVT r0,#0x4454
+  0x27c7a94: BL ->0x210f9e6 file@?
+  0x27c7a98: MOVW r1,#0x262c
+  0x27c7aa4: MOVS r0,#0
+  0x27c7aa6: BL ->0x20e184e file@?
+  0x27c7aac: MOVW r0,#0xbab4
+  0x27c7ab0: MOVT r0,#0x4454
+  0x27c7ab6: BL ->0x210f9e6 file@?
+  0x27c7aba: MOVW r1,#0x262c
+  0x27c7ac8: MOVS r0,#1
+  0x27c7aca: BL ->0x20e184e file@?
+  0x27c7ad2: MOVW r1,#0xf6a0
+  0x27c7ad8: MOVT r1,#0x43d7
+  hdr-ish imm hist: {0: 9, 2: 3, 4: 1, 36: 1}
+
+--- lookup cand @0x27ccfc0 prolog@0x27ccf5c va=0x427c634c ---
+  0x27ccf62: MOVW r0,#0xf6a0
+  0x27ccf66: CMP r1,#0
+  0x27ccf68: MOVT r0,#0x43d7
+  0x27ccf6c: LDR r0,[r0,#0]
+  0x27ccf72: MOVW r0,#0xc070
+  0x27ccf7c: MOVT r0,#0x4454
+  0x27ccf82: BL ->0x210f9e6 file@?
+  0x27ccf86: MOVW r8,#0x262e
+  0x27ccf92: MOVS r0,#0
+  0x27ccf94: BL ->0x20e184e file@?
+  0x27ccf9a: BL ->0x27c98fc file@?
+  0x27ccfa2: CMP r4,#1
+  0x27ccfa8: BL ->0x2a2b6d6 file@?
+  0x27ccfac: CMP r0,#0
+  0x27ccfb2: MOVW r0,#0x1c1c
+  0x27ccfb6: STRH r0,[r6,#0]
+  0x27ccfba: BL ->0x26f9a38 file@?
+  0x27ccfbe: LDR r0,[r0,#0]
+  0x27ccfc0: LDRH r0,[r0,#2]
+  0x27ccfc2: STRH r0,[r6,#2]
+  0x27ccfc4: MOVW r0,#0xc0f0
+  0x27ccfc8: MOVT r0,#0x4454
+  0x27ccfce: BL ->0x210f9e6 file@?
+  0x27ccfd2: MOVW r1,#0x262e
+  0x27ccfde: BL ->0x26f9a38 file@?
+  0x27ccfe2: LDR r0,[r0,#0]
+  0x27ccfe6: LDRH r2,[r0,#2]
+  0x27ccfe8: MOVS r0,#1
+  0x27ccfea: BL ->0x20e184e file@?
+  0x27ccff0: BL ->0x26f9a38 file@?
+  0x27ccff4: LDR r1,[r0,#0]
+  0x27ccffa: MOVS r2,#16
+  0x27cd002: MOVS r0,#28
+  0x27cd004: STR r0,[r5,#0]
+  0x27cd006: MOVW r0,#0xc11c
+  0x27cd00a: MOVT r0,#0x4454
+  0x27cd010: BL ->0x210f9e6 file@?
+  0x27cd01e: MOVS r0,#1
+  0x27cd020: BL ->0x20e184e file@?
+  0x27cd026: MOVW r0,#0xc048
+  hdr-ish imm hist: {0: 9, 2: 3, 36: 1}
+
+--- lookup cand @0x27ccfe6 prolog@0x27ccf5c va=0x427c634c ---
+  0x27ccf62: MOVW r0,#0xf6a0
+  0x27ccf66: CMP r1,#0
+  0x27ccf68: MOVT r0,#0x43d7
+  0x27ccf6c: LDR r0,[r0,#0]
+  0x27ccf72: MOVW r0,#0xc070
+  0x27ccf7c: MOVT r0,#0x4454
+  0x27ccf82: BL ->0x210f9e6 file@?
+  0x27ccf86: MOVW r8,#0x262e
+  0x27ccf92: MOVS r0,#0
+  0x27ccf94: BL ->0x20e184e file@?
+  0x27ccf9a: BL ->0x27c98fc file@?
+  0x27ccfa2: CMP r4,#1
+  0x27ccfa8: BL ->0x2a2b6d6 file@?
+  0x27ccfac: CMP r0,#0
+  0x27ccfb2: MOVW r0,#0x1c1c
+  0x27ccfb6: STRH r0,[r6,#0]
+  0x27ccfba: BL ->0x26f9a38 file@?
+  0x27ccfbe: LDR r0,[r0,#0]
+  0x27ccfc0: LDRH r0,[r0,#2]
+  0x27ccfc2: STRH r0,[r6,#2]
+  0x27ccfc4: MOVW r0,#0xc0f0
+  0x27ccfc8: MOVT r0,#0x4454
+  0x27ccfce: BL ->0x210f9e6 file@?
+  0x27ccfd2: MOVW r1,#0x262e
+  0x27ccfde: BL ->0x26f9a38 file@?
+  0x27ccfe2: LDR r0,[r0,#0]
+  0x27ccfe6: LDRH r2,[r0,#2]
+  0x27ccfe8: MOVS r0,#1
+  0x27ccfea: BL ->0x20e184e file@?
+  0x27ccff0: BL ->0x26f9a38 file@?
+  0x27ccff4: LDR r1,[r0,#0]
+  0x27ccffa: MOVS r2,#16
+  0x27cd002: MOVS r0,#28
+  0x27cd004: STR r0,[r5,#0]
+  0x27cd006: MOVW r0,#0xc11c
+  0x27cd00a: MOVT r0,#0x4454
+  0x27cd010: BL ->0x210f9e6 file@?
+  0x27cd01e: MOVS r0,#1
+  0x27cd020: BL ->0x20e184e file@?
+  0x27cd026: MOVW r0,#0xc048
+  hdr-ish imm hist: {0: 9, 2: 3, 36: 1}
+
+--- lookup cand @0x27eb56a prolog@0x27eb240 va=0x427e4630 ---
+  0x27eb248: MOVW r0,#0xf6a0
+  0x27eb24e: CMP r2,#0
+  0x27eb250: MOVT r0,#0x43d7
+  0x27eb254: LDR r0,[r0,#0]
+  0x27eb25c: LDR r0,[r2,#28]
+  0x27eb25e: MOVS r0,#0
+  0x27eb268: BL ->0x27d4f64 file@?
+  0x27eb274: BL ->0x213d584 file@?
+  0x27eb278: MOVW r0,#0xe5a8
+  0x27eb27c: MOVT r0,#0x4454
+  0x27eb282: BL ->0x210f9e6 file@?
+  0x27eb286: MOVW r8,#0x262e
+  0x27eb292: MOVS r0,#0
+  0x27eb294: BL ->0x20e184e file@?
+  0x27eb298: MOVW r0,#0xe620
+  0x27eb29c: MOVT r0,#0x4454
+  0x27eb2a2: BL ->0x210f9e6 file@?
+  0x27eb2b4: BL ->0x27d1966 file@?
+  0x27eb2c0: MOVS r0,#3
+  0x27eb2c6: BL ->0x20e184e file@?
+  0x27eb2ce: B.W
+  0x27eb2d6: BL ->0x27ddd78 file@?
+  0x27eb2e6: BL ->0x27d1966 file@?
+  0x27eb2ee: MOVW r0,#0xe6b4
+  0x27eb2f2: MOVT r0,#0x4454
+  0x27eb2f8: BL ->0x210f9e6 file@?
+  0x27eb2fc: MOVW r1,#0x262c
+  0x27eb308: BL ->0x27ddd78 file@?
+  0x27eb310: MOVS r0,#1
+  0x27eb312: BL ->0x20e184e file@?
+  0x27eb316: LDRB.W r0,[r4,#59]
+  0x27eb31a: CMP r0,#0
+  0x27eb31c: B.W
+  0x27eb324: BL ->0x27d6274 file@?
+  0x27eb32c: CMP r0,#0
+  0x27eb32e: B.W
+  0x27eb336: STR.W r9,[r13,#32]
+  0x27eb33a: MOVW r9,#0x262e
+  hdr-ish imm hist: {0: 1, 28: 2, 32: 1, 56: 1, 59: 3}
+
+--- lookup cand @0x2804d70 prolog@0x2804ba0 va=0x427fdf90 ---
+  0x2804ba8: MOVW r0,#0xf6a0
+  0x2804bb2: MOVS r5,#0
+  0x2804bb4: MOVT r0,#0x43d7
+  0x2804bb8: LDR r0,[r0,#0]
+  0x2804bbc: MOVW r0,#0x1a02
+  0x2804bc2: MOVW r0,#0x6424
+  0x2804bc6: MOVT r0,#0x44de
+  0x2804bcc: MOVS r0,#0
+  0x2804bce: BL ->0x20e184e file@?
+  0x2804bd4: BL ->0x287aaa6 file@?
+  0x2804bdc: BL ->0x2a8bd94 file@?
+  0x2804be0: LDRB r4,[r7,#2]
+  0x2804be4: CMP r0,#4
+  0x2804be6: STRB r5,[r7,#2]
+  0x2804bee: BL ->0x292cc0a file@?
+  0x2804bf2: CMP r0,#27
+  0x2804bfc: MOVW r0,#0x647c
+  0x2804c00: MOVT r0,#0x44de
+  0x2804c0c: CMP r6,#0
+  0x2804c12: BL ->0x292cc0a file@?
+  0x2804c16: CMP r0,#47
+  0x2804c20: MOVW r0,#0x651c
+  0x2804c24: MOVT r0,#0x44de
+  0x2804c2c: MOVS r0,#0
+  0x2804c2e: BL ->0x20e184e file@?
+  0x2804c32: MOVS r0,#2
+  0x2804c36: MOVS r0,#0
+  0x2804c38: MOVS r1,#0
+  0x2804c40: MOVS r0,#3
+  0x2804c4e: MOVW r0,#0x65a4
+  0x2804c52: MOVT r0,#0x44de
+  0x2804c58: MOVS r0,#0
+  0x2804c5a: BL ->0x20e184e file@?
+  0x2804c5e: MOVS r0,#9
+  0x2804c70: MOVS r0,#17
+  0x2804c78: LDRB r1,[r4,#5]
+  0x2804c84: MOVW r0,#0x64c4
+  0x2804c88: MOVT r0,#0x44de
+  0x2804c8e: MOVS r0,#0
+  0x2804c92: MOVS r0,#0
+  hdr-ish imm hist: {0: 1, 2: 3, 5: 1}
+
+--- lookup cand @0x2b3ea26 prolog@0x2b3e9b8 va=0x42b37da8 ---
+  0x2b3e9c0: MOVW r0,#0xf6a0
+  0x2b3e9c8: MOVT r0,#0x43d7
+  0x2b3e9cc: LDR r0,[r0,#0]
+  0x2b3e9d0: MOVW r0,#0xd190
+  0x2b3e9d4: MOVT r0,#0x4501
+  0x2b3e9da: BL ->0x210f9e6 file@?
+  0x2b3e9de: MOVW r7,#0x25c1
+  0x2b3e9e2: MOVW r2,#0xb87b
+  0x2b3e9ee: MOVT r2,#0x4107
+  0x2b3e9f4: MOVS r0,#2
+  0x2b3e9f6: BL ->0x20e184e file@?
+  0x2b3e9fa: MOVW r0,#0x1c00
+  0x2b3e9fe: MOVS r1,#0
+  0x2b3ea00: MOVT r0,#0x215
+  0x2b3ea04: BL ->0x2095d1e file@?
+  0x2b3ea0a: MOVW r0,#0xd1e4
+  0x2b3ea0e: MOVT r0,#0x4501
+  0x2b3ea14: BL ->0x210f9e6 file@?
+  0x2b3ea20: LDR r0,[r4,#44]
+  0x2b3ea22: LDR.W r0,[r0,#192]
+  0x2b3ea26: LDRH r2,[r0,#2]
+  0x2b3ea28: MOVS r0,#1
+  0x2b3ea2a: BL ->0x20e184e file@?
+  0x2b3ea2e: CMP r5,#9
+  0x2b3ea34: BL ->0x2b23f26 file@?
+  0x2b3ea3c: MOVW r1,#0xfffe
+  0x2b3ea44: B.W
+  0x2b3ea48: LDR r0,[r4,#28]
+  0x2b3ea4a: MOVW r2,#0xbf1
+  0x2b3ea50: MOVS r3,#0
+  0x2b3ea56: MOVT r2,#0x42d8
+  0x2b3ea5a: BL ->0x2db2ab6 file@?
+  0x2b3ea5e: CMP r0,#1
+  0x2b3ea62: MOVW r0,#0xd21c
+  0x2b3ea66: MOVT r0,#0x4501
+  0x2b3ea6c: BL ->0x210f9e6 file@?
+  0x2b3ea70: MOVW r1,#0x25c1
+  0x2b3ea74: MOVW r2,#0xb87b
+  0x2b3ea7e: MOVT r2,#0x4107
+  0x2b3ea84: MOVS r0,#1
+  hdr-ish imm hist: {0: 1, 2: 1, 4: 1, 12: 1, 14: 1, 16: 1, 17: 2, 18: 2, 28: 2, 44: 3}
+
+--- lookup cand @0x2ec0eb0 prolog@0x2ec0e7e va=0x42eba26e ---
+  0x2ec0e7e: PUSH 0xb580
+  0x2ec0e80: LDR.W r12,[r0,#20]
+  0x2ec0e84: LDR.W r14,[r1,#0]
+  0x2ec0e88: STR.W r2,[r1,#22]
+  0x2ec0e8c: MOVW r2,#0x168c
+  0x2ec0e90: STR.W r3,[r1,#26]
+  0x2ec0e98: STR.W r14,[r1,#0]
+  0x2ec0e9e: STRH r3,[r1,#16]
+  0x2ec0ea6: LDR r0,[r0,#44]
+  0x2ec0ea8: STRH r3,[r1,#18]
+  0x2ec0eaa: MOVS r3,#0
+  0x2ec0eac: LDRH r2,[r0,#4]
+  0x2ec0eae: STR r2,[r1,#8]
+  0x2ec0eb0: LDRH r2,[r0,#2]
+  0x2ec0eb2: LDRB r0,[r0,#6]
+  0x2ec0eb4: STR r2,[r1,#12]
+  0x2ec0eb6: STRH r0,[r1,#20]
+  0x2ec0eb8: MOVS r0,#28
+  0x2ec0eba: MOVS r2,#30
+  0x2ec0ec4: PUSH 0xb510
+  0x2ec0ec6: MOVW r12,#0x16b8
+  0x2ec0eca: LDR r4,[r1,#20]
+  0x2ec0ecc: STR r2,[r1,#16]
+  0x2ec0ece: STR r3,[r1,#12]
+  0x2ec0ed0: LDRB r3,[r1,#25]
+  0x2ec0ede: LDRB.W r14,[r14,#6]
+  0x2ec0ee6: STR.W r14,[r1,#20]
+  0x2ec0eee: LDRH r4,[r4,#0]
+  0x2ec0ef4: STR.W r14,[r1,#20]
+  0x2ec0f02: LDRH r4,[r4,#2]
+  0x2ec0f0c: STR r4,[r1,#20]
+  0x2ec0f0e: LDR r4,[r0,#16]
+  0x2ec0f10: LDRB r4,[r4,#4]
+  0x2ec0f16: LDRB r4,[r1,#24]
+  0x2ec0f1e: STRB r4,[r1,#24]
+  0x2ec0f20: LDR r4,[r0,#16]
+  0x2ec0f22: LDRB r4,[r4,#6]
+  0x2ec0f28: STRB r4,[r1,#24]
+  0x2ec0f2a: LDR r2,[r0,#16]
+  0x2ec0f2c: LDRB r2,[r2,#8]
+  hdr-ish imm hist: {0: 4, 2: 3, 4: 3, 6: 4, 8: 3, 10: 2, 12: 2, 14: 2, 16: 6, 18: 1, 20: 10, 22: 1, 24: 4, 25: 3, 26: 4, 27: 3, 28: 1, 32: 1, 40: 1, 44: 2}
+
+--- lookup cand @0x2ec70c0 prolog@0x2ec6f42 va=0x42ec0332 ---
+  0x2ec6f4a: MOVW r0,#0xf6a0
+  0x2ec6f4e: MOVT r0,#0x43d7
+  0x2ec6f52: LDR r0,[r0,#0]
+  0x2ec6f56: MOVW r0,#0x14da
+  0x2ec6f5a: LDR r6,[r4,#12]
+  0x2ec6f5c: LDR.W r11,[r4,#24]
+  0x2ec6f62: LDRH r0,[r7,#8]
+  0x2ec6f64: CMP r0,#0
+  0x2ec6f66: B.W
+  0x2ec6f6a: LDR r1,[r7,#0]
+  0x2ec6f6c: LDR r0,[r4,#16]
+  0x2ec6f72: STR.W r1,[r0,#282]
+  0x2ec6f76: LDRH r1,[r7,#4]
+  0x2ec6f78: STRH.W r1,[r0,#286]
+  0x2ec6f7c: BL ->0x33c5cd4 file@?
+  0x2ec6f84: MOVW r0,#0x1a3
+  0x2ec6f88: LDRH r3,[r7,#2]
+  0x2ec6f8a: LDRH.W r12,[r7,#0]
+  0x2ec6f8e: LDRH.W r14,[r7,#4]
+  0x2ec6f92: LDRH r7,[r7,#8]
+  0x2ec6f96: MOVW r0,#0x82e4
+  0x2ec6f9a: MOVT r0,#0x454f
+  0x2ec6fa4: LDRB.W r2,[r0,#286]
+  0x2ec6fa8: LDRH.W r10,[r0,#288]
+  0x2ec6fac: LDRH.W r8,[r1,#282]
+  0x2ec6fb8: LDRH.W r0,[r0,#290]
+  0x2ec6fca: MOVS r0,#10
+  0x2ec6fd0: BL ->0x20e184e file@?
+  0x2ec6fd4: LDRH r0,[r6,#36]
+  0x2ec6fd6: MOVS r1,#0
+  0x2ec6fd8: CMP r0,#1
+  0x2ec6fdc: MOVS r1,#1
+  0x2ec6fde: LDR r0,[r4,#16]
+  0x2ec6fe0: STRH.W r1,[r0,#290]
+  0x2ec6fe6: BL ->0x2ec70e6 file@?
+  0x2ec6fea: LDR r0,[r4,#0]
+  0x2ec6ff0: MOVW r3,#0xffc
+  0x2ec6ffc: LDRH r0,[r6,#18]
+  0x2ec6ffe: LDRH.W r14,[r1,#20]
+  0x2ec7002: LDRB.W r12,[r2,#20]
+  hdr-ish imm hist: {0: 11, 2: 2, 4: 3, 8: 3, 12: 1, 16: 4, 18: 1, 20: 2, 24: 1, 36: 1, 48: 1}
+
+--- lookup cand @0x2ec70ca prolog@0x2ec6f42 va=0x42ec0332 ---
+  0x2ec6f4a: MOVW r0,#0xf6a0
+  0x2ec6f4e: MOVT r0,#0x43d7
+  0x2ec6f52: LDR r0,[r0,#0]
+  0x2ec6f56: MOVW r0,#0x14da
+  0x2ec6f5a: LDR r6,[r4,#12]
+  0x2ec6f5c: LDR.W r11,[r4,#24]
+  0x2ec6f62: LDRH r0,[r7,#8]
+  0x2ec6f64: CMP r0,#0
+  0x2ec6f66: B.W
+  0x2ec6f6a: LDR r1,[r7,#0]
+  0x2ec6f6c: LDR r0,[r4,#16]
+  0x2ec6f72: STR.W r1,[r0,#282]
+  0x2ec6f76: LDRH r1,[r7,#4]
+  0x2ec6f78: STRH.W r1,[r0,#286]
+  0x2ec6f7c: BL ->0x33c5cd4 file@?
+  0x2ec6f84: MOVW r0,#0x1a3
+  0x2ec6f88: LDRH r3,[r7,#2]
+  0x2ec6f8a: LDRH.W r12,[r7,#0]
+  0x2ec6f8e: LDRH.W r14,[r7,#4]
+  0x2ec6f92: LDRH r7,[r7,#8]
+  0x2ec6f96: MOVW r0,#0x82e4
+  0x2ec6f9a: MOVT r0,#0x454f
+  0x2ec6fa4: LDRB.W r2,[r0,#286]
+  0x2ec6fa8: LDRH.W r10,[r0,#288]
+  0x2ec6fac: LDRH.W r8,[r1,#282]
+  0x2ec6fb8: LDRH.W r0,[r0,#290]
+  0x2ec6fca: MOVS r0,#10
+  0x2ec6fd0: BL ->0x20e184e file@?
+  0x2ec6fd4: LDRH r0,[r6,#36]
+  0x2ec6fd6: MOVS r1,#0
+  0x2ec6fd8: CMP r0,#1
+  0x2ec6fdc: MOVS r1,#1
+  0x2ec6fde: LDR r0,[r4,#16]
+  0x2ec6fe0: STRH.W r1,[r0,#290]
+  0x2ec6fe6: BL ->0x2ec70e6 file@?
+  0x2ec6fea: LDR r0,[r4,#0]
+  0x2ec6ff0: MOVW r3,#0xffc
+  0x2ec6ffc: LDRH r0,[r6,#18]
+  0x2ec6ffe: LDRH.W r14,[r1,#20]
+  0x2ec7002: LDRB.W r12,[r2,#20]
+  hdr-ish imm hist: {0: 11, 2: 2, 4: 3, 8: 3, 12: 1, 16: 4, 18: 1, 20: 2, 24: 1, 36: 1, 48: 1}
+
+--- lookup cand @0x2ec9a48 prolog@0x2ec99da va=0x42ec2dca ---
+  0x2ec99e4: MOVW r1,#0xf6a0
+  0x2ec99ec: MOVT r1,#0x43d7
+  0x2ec99f0: LDR r1,[r1,#0]
+  0x2ec99f6: LDR r1,[r0,#40]
+  0x2ec99fe: LDR r1,[r0,#44]
+  0x2ec9a08: LDR r1,[r0,#64]
+  0x2ec9a0c: LDR r1,[r0,#68]
+  0x2ec9a10: LDR r1,[r0,#8]
+  0x2ec9a14: LDR r1,[r0,#12]
+  0x2ec9a18: LDR r1,[r0,#16]
+  0x2ec9a1c: LDR r1,[r0,#20]
+  0x2ec9a20: LDR r1,[r0,#24]
+  0x2ec9a24: LDR r1,[r0,#28]
+  0x2ec9a28: LDR r1,[r0,#32]
+  0x2ec9a2a: LDR r0,[r0,#36]
+  0x2ec9a3a: MOVS r0,#0
+  0x2ec9a3e: LDR r2,[r1,#4]
+  0x2ec9a46: LDRB r2,[r1,#1]
+  0x2ec9a48: LDRH r1,[r1,#2]
+  0x2ec9a5c: CMP r0,#128
+  0x2ec9a5e: STR r1,[r2,#4]
+  0x2ec9a62: MOVS r0,#0
+  0x2ec9a96: LDR r5,[r1,#12]
+  hdr-ish imm hist: {0: 2, 1: 1, 2: 1, 4: 3, 8: 2, 12: 2, 16: 1, 20: 1, 24: 1, 28: 1, 32: 1, 36: 1, 40: 1, 44: 1, 56: 1, 64: 1}
+
+--- lookup cand @0x306076a prolog@0x3060682 va=0x43059a72 ---
+  0x306068a: MOVW r0,#0xf6a0
+  0x306068e: CMP r1,#0
+  0x3060690: MOVT r0,#0x43d7
+  0x3060694: LDR r0,[r0,#0]
+  0x3060698: B.W
+  0x306069c: MOVW r0,#0x4278
+  0x30606a2: MOVW r9,#0x2762
+  0x30606ac: MOVT r0,#0x4066
+  0x30606b0: STR.W r9,[r13,#24]
+  0x30606b6: MOVS r0,#0
+  0x30606b8: BL ->0x20e184e file@?
+  0x30606bc: LDRB.W r12,[r5,#12]
+  0x30606c0: LDRB r1,[r5,#13]
+  0x30606c2: LDRB r2,[r5,#8]
+  0x30606c4: LDRB r4,[r5,#14]
+  0x30606c6: LDRH r3,[r5,#10]
+  0x30606c8: MOVW r6,#0xf40
+  0x30606cc: MOVW r0,#0x4294
+  0x30606d0: STR.W r9,[r13,#24]
+  0x30606d4: MOVT r6,#0x4852
+  0x30606d8: MOVT r0,#0x4066
+  0x30606de: MOVS r0,#5
+  0x30606e0: STRB r1,[r6,#5]
+  0x30606e8: STRB r2,[r6,#0]
+  0x30606ea: STRH r3,[r6,#2]
+  0x30606ec: STRB.W r12,[r6,#4]
+  0x30606f0: STRB r4,[r6,#6]
+  0x30606f4: BL ->0x20e184e file@?
+  0x3060704: MOVW r0,#0x42b0
+  0x3060708: MOVT r0,#0x4066
+  0x3060710: STR.W r9,[r13,#24]
+  0x3060714: LDRB r0,[r6,#10]
+  0x3060716: LDR r4,[r6,#16]
+  0x3060718: LDRB r2,[r6,#8]
+  0x306071a: LDRB r3,[r6,#9]
+  0x306071c: LDRB r1,[r6,#11]
+  0x306071e: LDRB r5,[r6,#12]
+  0x3060726: MOVS r0,#6
+  0x306072a: BL ->0x20e184e file@?
+  0x306072e: MOVW r2,#0x5579
+  hdr-ish imm hist: {0: 5, 2: 3, 4: 4, 5: 1, 6: 3, 8: 5, 9: 1, 10: 2, 11: 1, 12: 4, 13: 1, 14: 1, 16: 3, 24: 3}
+
+--- lookup cand @0x3369b3a prolog@0x3369b18 va=0x43362f08 ---
+  0x3369b18: PUSH 0xb5b0
+  0x3369b1e: MOVW r0,#0xf6a0
+  0x3369b22: MOVT r0,#0x43d7
+  0x3369b26: LDR r0,[r0,#0]
+  0x3369b2c: LDRH r1,[r4,#4]
+  0x3369b2e: BL ->0x2e96a06 file@?
+  0x3369b32: LDR r1,[r4,#16]
+  0x3369b34: LDR r3,[r4,#0]
+  0x3369b36: LDR r0,[r4,#64]
+  0x3369b38: LDR r2,[r1,#4]
+  0x3369b3a: LDRH r1,[r1,#2]
+  0x3369b3e: BL ->0x24da1b8 file@?
+  0x3369b42: LDR r0,[r4,#64]
+  0x3369b48: CMP r1,#11
+  0x3369b52: MOVS r1,#28
+  0x3369b54: CMP r3,#38
+  0x3369b5a: LDRB r4,[r5,#13]
+  0x3369b5c: MOVW r0,#0xad88
+  0x3369b60: MOVT r0,#0x44d3
+  0x3369b70: B.W
+  0x3369b74: MOVW r0,#0xb014
+  0x3369b78: MOVT r0,#0x44d3
+  0x3369b7e: MOVW r0,#0xadb8
+  0x3369b82: MOVT r0,#0x44d3
+  0x3369b88: MOVW r0,#0xade8
+  0x3369b8c: MOVT r0,#0x44d3
+  0x3369b92: MOVW r0,#0xae18
+  0x3369b96: MOVT r0,#0x44d3
+  0x3369b9c: MOVW r0,#0xae48
+  0x3369ba0: MOVT r0,#0x44d3
+  0x3369ba6: MOVW r0,#0xae78
+  0x3369baa: MOVT r0,#0x44d3
+  0x3369bb0: MOVW r0,#0xaee8
+  0x3369bb4: MOVT r0,#0x44d3
+  0x3369bba: BL ->0x2d26650 file@?
+  0x3369bbe: MOVW r1,#0x1323
+  0x3369bc2: MOVT r1,#0x4
+  0x3369bce: MOVW r0,#0xaf18
+  0x3369bd2: MOVT r0,#0x44d3
+  0x3369bd8: BL ->0x2d26650 file@?
+  hdr-ish imm hist: {0: 3, 2: 1, 4: 5, 13: 1, 16: 4, 20: 1, 24: 1, 64: 2}
+
+--- lookup cand @0x336a346 prolog@0x336a324 va=0x43363714 ---
+  0x336a324: PUSH 0xb5b0
+  0x336a32a: MOVW r0,#0xf6a0
+  0x336a32e: MOVT r0,#0x43d7
+  0x336a332: LDR r0,[r0,#0]
+  0x336a338: LDRH r1,[r4,#4]
+  0x336a33a: BL ->0x2e96a06 file@?
+  0x336a33e: LDR r1,[r4,#16]
+  0x336a340: LDR r3,[r4,#0]
+  0x336a342: LDR r0,[r4,#64]
+  0x336a344: LDR r2,[r1,#4]
+  0x336a346: LDRH r1,[r1,#2]
+  0x336a34a: BL ->0x24da1b8 file@?
+  0x336a34e: LDR r0,[r4,#64]
+  0x336a354: CMP r1,#11
+  0x336a35e: MOVS r1,#28
+  0x336a360: CMP r3,#38
+  0x336a366: LDRB r4,[r5,#13]
+  0x336a368: MOVW r0,#0xb388
+  0x336a36c: MOVT r0,#0x44d3
+  0x336a37c: B.W
+  0x336a380: MOVW r0,#0xb614
+  0x336a384: MOVT r0,#0x44d3
+  0x336a38a: MOVW r0,#0xb3b8
+  0x336a38e: MOVT r0,#0x44d3
+  0x336a394: MOVW r0,#0xb3e8
+  0x336a398: MOVT r0,#0x44d3
+  0x336a39e: MOVW r0,#0xb418
+  0x336a3a2: MOVT r0,#0x44d3
+  0x336a3a8: MOVW r0,#0xb448
+  0x336a3ac: MOVT r0,#0x44d3
+  0x336a3b2: MOVW r0,#0xb478
+  0x336a3b6: MOVT r0,#0x44d3
+  0x336a3bc: MOVW r0,#0xb4e8
+  0x336a3c0: MOVT r0,#0x44d3
+  0x336a3c6: BL ->0x2d26650 file@?
+  0x336a3ca: MOVW r1,#0x1323
+  0x336a3ce: MOVT r1,#0x4
+  0x336a3da: MOVW r0,#0xb518
+  0x336a3de: MOVT r0,#0x44d3
+  0x336a3e4: BL ->0x2d26650 file@?
+  hdr-ish imm hist: {0: 3, 2: 1, 4: 5, 13: 1, 16: 4, 20: 1, 24: 1, 64: 2}
+
+--- lookup cand @0x33863bc prolog@0x33863a6 va=0x4337f796 ---
+  0x33863a6: PUSH 0xb5f0
+  0x33863ac: MOVW r0,#0xf6a0
+  0x33863b0: MOVT r0,#0x43d7
+  0x33863b4: LDR r0,[r0,#0]
+  0x33863b8: LDRB r0,[r1,#0]
+  0x33863bc: LDRH r6,[r1,#2]
+  0x33863c2: CMP r6,#1
+  0x33863c6: MOVS r6,#1
+  0x33863ca: MOVS r6,#0
+  0x33863ce: BL ->0x33c5cd4 file@?
+  0x33863da: LDRB r2,[r5,#0]
+  0x33863dc: LDRH r3,[r5,#2]
+  0x33863e2: MOVW r0,#0x3178
+  0x33863e6: MOVT r0,#0x4549
+  0x33863ec: MOVS r0,#0
+  0x33863f0: MOVS r0,#3
+  0x33863f2: BL ->0x2e15374 file@?
+  0x33863f8: MOVS r1,#28
+  0x3386402: LDRB r0,[r5,#0]
+  0x3386404: MOVS r6,#0
+  0x3386406: MOVS r1,#5
+  0x338640e: LDRH r0,[r5,#2]
+  0x3386412: MOVW r0,#0x7efc
+  0x3386418: MOVW r0,#0x17e8
+  0x338641e: BL ->0x3ac9696 file@?
+  0x3386422: MOVW r1,#0xf6a0
+  0x3386428: MOVT r1,#0x43d7
+  0x338642c: LDR r1,[r1,#0]
+  0x3386436: POP 0xbdf0
+  0x3386438: BL ->0x2e14134 file@?
+  0x338643c: LDRH r0,[r1,#2]
+  0x338643e: LDRB r1,[r1,#0]
+  0x3386440: CMP r1,#0
+  0x3386448: BX lr
+  0x338644a: PUSH 0xb5f0
+  0x3386450: MOVW r0,#0xf6a0
+  0x3386454: MOVT r0,#0x43d7
+  0x3386458: LDR r0,[r0,#0]
+  0x338645c: LDRB r0,[r1,#0]
+  0x3386466: CMP r0,#3
+  hdr-ish imm hist: {0: 14, 2: 8}
+
+=== D) Nanopb / pb_encode/decode near OEM IPC islands ===
+  b'pb_decode' @0xc2147e va=0x40c1a86e oemish=['[OEM][PB] pb_decode_varint_cb error', 'OEM][PB] pb_decode_varint_cb error', '[OEM][PB] pb_decode_varint_cb value: %lld', 'OEM][PB] pb_decode_varint_cb value: %lld', '[OEM][PB] buf_count = %d is greater or equal to buf_len = %d', 'OEM][PB] buf_count = %d is greater or equal to buf_len = %d']
+  b'pb_decode' @0xc214a2 va=0x40c1a892 oemish=['[OEM][PB] pb_decode_varint_cb error', 'OEM][PB] pb_decode_varint_cb error', '[OEM][PB] pb_decode_varint_cb value: %lld', 'OEM][PB] pb_decode_varint_cb value: %lld', '[OEM][PB] buf_count = %d is greater or equal to buf_len = %d', 'OEM][PB] buf_count = %d is greater or equal to buf_len = %d']
+  b'pb_decode' @0xc7775f va=0x40c70b4f oemish=[]
+  b'pb_decode' @0x43bc372 va=0x443b5762 oemish=[]
+  b'pb_decode' @0x43bc3c2 va=0x443b57b2 oemish=[]
+  b'pb_decode' @0x43bc45e va=0x443b584e oemish=[]
+
+=== D2) Descriptor-ish tables near catalog / flags=2 body sizes ===
+lit words == SIM catalog entry VAs in island: 0 []
+
+=== D3) msgid→fn table candidates in 0x6d0000..0x6f0000 ===
+msgid+fn candidates=0
+
+=== E) DBT-record consumers (magic-adjacent code VAs) ===
+  not_req: no DBT near string @0x6dfe0d
+  msgid_nf: no DBT near string @0x6dfe31
+  preprocess: no DBT near string @0x6dfe51
+  invalid: DBT@0x6dff6c va=0x406d935c line=0x95 file='../../../../modem_extn/interface/ipc_message_server/src/oem_'
+  decode: no DBT near string @0x6dfc18
+  enc_size: no DBT near string @0x6dfc9c
+  encode: no DBT near string @0x6dfce8
+  sit_recv: no DBT near string @0x6dff7c
+
+=== E2) MOVW/MOVT / litpool to DBT record VAs ===
+  invalid dbt_va=0x406d935c movw=0 []
+    lit_island=0 [] lit_codeband=0 []
+
+=== F) REQUEST type field: CMP immediates near catalog / OEM island code ===
+type/hdr touch near catalog MOVW sites: 25
+  load_imm hist: {0: 15, 8: 3, 9: 2, 14: 2, 29: 1}
+  cmp_imm hist: {0: 2}
+
+=== G) Deep disasm of catalog consumers ===
+unique consumer prologs=4
+
+--- consumer @0x32e41b4 va=0x432dd5a4 ---
+  0x32e41ba: MOVW r0,#0xf6a0
+  0x32e41be: MOVT r0,#0x43d7
+  0x32e41c2: LDR r0,[r0,#0]
+  0x32e41c6: BL ->0x22f9328 file@?
+  0x32e41ca: CMP r0,#3
+  0x32e41d0: MOVW r3,#0x9f72
+  0x32e41de: B.W
+  0x32e41e2: CMP r4,#2
+  0x32e41e4: B.W
+  0x32e41e8: MOVW r6,#0xde8
+  0x32e41f4: MOVT r6,#0x497c
+  0x32e41fa: LDRB r4,[r0,#8]
+  0x32e41fc: MOVW r0,#0x9e50
+  0x32e4200: MOVT r0,#0x44d5
+  0x32e4206: BL ->0x22f9328 file@?
+  0x32e420a: MOVW r8,#0x1301
+  0x32e420e: MOVT r8,#0x4
+  0x32e421a: BL ->0x22f9328 file@?
+  0x32e421e: CMP r0,#3
+  0x32e4224: MOVW r3,#0x9f48
+  0x32e4230: B.W
+  0x32e4234: CMP r5,#2
+  0x32e4236: B.W
+  0x32e4246: LDRH r2,[r0,#0]
+  0x32e4248: MOVS r0,#2
+  0x32e424a: BL ->0x2e15374 file@?
+  0x32e424e: CMP r4,#30
+  0x32e4254: CMP r0,#20
+  0x32e4256: B.W
+  0x32e4288: BL ->0x22f9328 file@?
+  0x32e428c: CMP r0,#3
+  0x32e4292: MOVW r3,#0x9f11
+  0x32e42a2: MOVS r0,#250
+  0x32e42a4: BL ->0x2405aa8 file@?
+  0x32e42ae: CMP r0,#7
+  0x32e42c6: BL ->0x22f9328 file@?
+  0x32e42ca: CMP r0,#3
+  0x32e42d0: MOVW r2,#0x9ff2
+  0x32e42de: B.W
+  0x32e42e2: CMP r4,#2
+  0x32e42e4: B.W
+  0x32e42f0: LDR r0,[r0,#12]
+  0x32e42f2: BL ->0x2608e88 file@?
+  field touches: [('0x32e41c2', 'LDR r0,[r0,#0]', 0), ('0x32e41fa', 'LDRB r4,[r0,#8]', 8), ('0x32e4246', 'LDRH r2,[r0,#0]', 0), ('0x32e42f0', 'LDR r0,[r0,#12]', 12), ('0x32e4330', 'STRH r0,[r4,#0]', 0)]
+
+--- consumer @0x331a11c va=0x4331350c ---
+  0x331a11c: PUSH 0xb5b0
+  0x331a120: MOVW r0,#0xf6a0
+  0x331a124: MOVW r2,#0x13b2
+  0x331a128: MOVS r1,#0
+  0x331a12a: MOVW r3,#0x10c9
+  0x331a12e: MOVS r4,#0
+  0x331a130: MOVT r0,#0x43d7
+  0x331a134: MOVT r2,#0x4103
+  0x331a138: LDR r0,[r0,#0]
+  0x331a13c: MOVW r0,#0x798c
+  0x331a140: MOVT r0,#0x406d
+  0x331a144: BL ->0x2ca893e file@?
+  0x331a14c: LDR r0,[r0,#0]
+  0x331a14e: MOVW r1,#0x13b2
+  0x331a152: MOVW r2,#0x10cc
+  0x331a156: MOVT r1,#0x4103
+  0x331a15a: BL ->0x2ebc9e8 file@?
+  0x331a15e: BL ->0x2d26650 file@?
+  0x331a162: BL ->0x2ead80a file@?
+  0x331a166: LDR r0,[r0,#0]
+  0x331a168: STR r0,[r5,#0]
+  0x331a16a: BL ->0x2d26650 file@?
+  0x331a16e: BL ->0x2ead80a file@?
+  0x331a172: STR r4,[r0,#0]
+  0x331a176: MOVW r0,#0x8b70
+  0x331a17a: MOVT r0,#0x44d4
+  0x331a180: BL ->0x2d26650 file@?
+  0x331a184: MOVW r1,#0x1301
+  0x331a188: MOVT r1,#0x4
+  0x331a194: MOVS r0,#0
+  0x331a196: BL ->0x2e15374 file@?
+  0x331a19a: MOVS r4,#12
+  0x331a19c: MOVW r1,#0xf6a0
+  0x331a1a2: MOVT r1,#0x43d7
+  0x331a1a6: LDR r1,[r1,#0]
+  0x331a1b0: POP 0xbdb0
+  0x331a1b2: BL ->0x2e14134 file@?
+  0x331a1be: MOVW r0,#0xf6a0
+  0x331a1c2: CMP r1,#0
+  0x331a1c4: MOVT r0,#0x43d7
+  0x331a1c8: LDR r0,[r0,#0]
+  0x331a1ce: CMP r4,#19
+  0x331a1dc: BL ->0x2927a60 file@?
+  0x331a1e0: CMP r0,#1
+  0x331a1e4: MOVS r0,#0
+  0x331a1ec: CMP r1,#255
+  0x331a1f0: MOVW r8,#0xc2c4
+  0x331a1fa: MOVT r8,#0x4a3f
+  0x331a206: STRH.W r7,[r0,#84]
+  0x331a20a: MOVS r0,#3
+  field touches: [('0x331a138', 'LDR r0,[r0,#0]', 0), ('0x331a14c', 'LDR r0,[r0,#0]', 0), ('0x331a166', 'LDR r0,[r0,#0]', 0), ('0x331a168', 'STR r0,[r5,#0]', 0), ('0x331a172', 'STR r4,[r0,#0]', 0), ('0x331a1a6', 'LDR r1,[r1,#0]', 0), ('0x331a1c8', 'LDR r0,[r0,#0]', 0), ('0x331a230', 'STR r5,[r0,#4]', 4), ('0x331a24e', 'LDR r0,[r0,#4]', 4), ('0x331a296', 'LDR r2,[r2,#0]', 0)]
+
+--- consumer @0x331aef4 va=0x433142e4 ---
+  0x331aef4: PUSH 0xb5b0
+  0x331aef8: MOVW r0,#0xf6a0
+  0x331aefc: MOVW r2,#0x13b2
+  0x331af00: MOVS r1,#0
+  0x331af06: MOVS r4,#0
+  0x331af08: MOVT r0,#0x43d7
+  0x331af0c: MOVT r2,#0x4103
+  0x331af10: LDR r0,[r0,#0]
+  0x331af14: MOVW r0,#0x7c64
+  0x331af18: MOVT r0,#0x406d
+  0x331af1c: BL ->0x2ca893e file@?
+  0x331af24: LDR r0,[r0,#0]
+  0x331af26: MOVW r1,#0x13b2
+  0x331af2a: MOVW r2,#0x217
+  0x331af2e: MOVT r1,#0x4103
+  0x331af32: BL ->0x2ebc9e8 file@?
+  0x331af36: BL ->0x2d26650 file@?
+  0x331af3a: BL ->0x2ead80a file@?
+  0x331af3e: LDR r0,[r0,#0]
+  0x331af40: STR r0,[r5,#0]
+  0x331af42: BL ->0x2d26650 file@?
+  0x331af46: BL ->0x2ead80a file@?
+  0x331af4a: STR r4,[r0,#0]
+  0x331af4e: MOVW r0,#0x5e24
+  0x331af52: MOVT r0,#0x44d4
+  0x331af58: BL ->0x2d26650 file@?
+  0x331af5c: MOVW r1,#0x1301
+  0x331af60: MOVT r1,#0x4
+  0x331af6c: MOVS r0,#0
+  0x331af6e: BL ->0x2e15374 file@?
+  0x331af72: MOVS r4,#12
+  0x331af74: MOVW r1,#0xf6a0
+  0x331af7a: MOVT r1,#0x43d7
+  0x331af7e: LDR r1,[r1,#0]
+  0x331af88: POP 0xbdb0
+  0x331af8a: BL ->0x2e14134 file@?
+  0x331af8e: PUSH 0xb5b0
+  0x331af92: MOVW r0,#0xf6a0
+  0x331af96: MOVW r2,#0x13b2
+  0x331af9a: MOVS r1,#0
+  0x331af9c: MOVW r3,#0x10a4
+  0x331afa0: MOVS r4,#0
+  0x331afa2: MOVT r0,#0x43d7
+  0x331afa6: MOVT r2,#0x4103
+  0x331afaa: LDR r0,[r0,#0]
+  0x331afae: MOVW r0,#0x7c80
+  0x331afb2: MOVT r0,#0x406d
+  0x331afb6: BL ->0x2ca893e file@?
+  0x331afbe: LDR r0,[r0,#0]
+  0x331afc0: MOVW r1,#0x13b2
+  field touches: [('0x331af10', 'LDR r0,[r0,#0]', 0), ('0x331af24', 'LDR r0,[r0,#0]', 0), ('0x331af3e', 'LDR r0,[r0,#0]', 0), ('0x331af40', 'STR r0,[r5,#0]', 0), ('0x331af4a', 'STR r4,[r0,#0]', 0), ('0x331af7e', 'LDR r1,[r1,#0]', 0), ('0x331afaa', 'LDR r0,[r0,#0]', 0), ('0x331afbe', 'LDR r0,[r0,#0]', 0), ('0x331afd8', 'LDR r0,[r0,#0]', 0), ('0x331afda', 'STR r0,[r5,#0]', 0), ('0x331afe4', 'STR r4,[r0,#0]', 0), ('0x331b018', 'LDR r1,[r1,#0]', 0), ('0x331b044', 'LDR r0,[r0,#0]', 0), ('0x331b058', 'LDR r0,[r0,#0]', 0), ('0x331b072', 'LDR r0,[r0,#0]', 0)]
+
+--- consumer @0x3388318 va=0x43381708 ---
+  0x3388318: PUSH 0xb5b0
+  0x338831e: MOVW r0,#0xf6a0
+  0x3388322: MOVW r2,#0x13b2
+  0x3388328: MOVS r1,#0
+  0x338832a: MOVS r3,#121
+  0x338832c: MOVT r0,#0x43d7
+  0x3388330: MOVT r2,#0x4103
+  0x3388334: LDR r0,[r0,#0]
+  0x3388338: MOVW r0,#0x7b14
+  0x338833c: MOVT r0,#0x406d
+  0x3388340: BL ->0x2ca893e file@?
+  0x3388346: LDR r1,[r0,#0]
+  0x3388348: STRB r5,[r1,#8]
+  0x338834a: LDR r0,[r0,#0]
+  0x338834c: STRB r4,[r0,#9]
+  0x3388350: MOVW r0,#0x5b54
+  0x3388354: MOVT r0,#0x44d4
+  0x338835a: BL ->0x2d26650 file@?
+  0x338835e: MOVW r1,#0x1301
+  0x3388362: MOVT r1,#0x4
+  0x338836e: MOVS r0,#0
+  0x3388370: BL ->0x2e15374 file@?
+  0x3388374: MOVW r1,#0xf6a0
+  0x338837a: MOVT r1,#0x43d7
+  0x338837e: LDR r1,[r1,#0]
+  0x3388386: POP 0xbdb0
+  0x3388388: BL ->0x2e14134 file@?
+  0x338838c: PUSH 0xb5b0
+  0x3388390: MOVW r0,#0xf6a0
+  0x3388394: MOVW r2,#0x13b2
+  0x3388398: MOVS r1,#8
+  0x338839a: MOVW r3,#0x14f8
+  0x338839e: MOVT r0,#0x43d7
+  0x33883a2: MOVT r2,#0x4103
+  0x33883a6: LDR r0,[r0,#0]
+  0x33883aa: MOVS r0,#4
+  0x33883ac: BL ->0x2d3203c file@?
+  0x33883b0: MOVW r5,#0x1301
+  0x33883b4: MOVT r5,#0x4
+  0x33883bc: MOVS r0,#3
+  0x33883be: BL ->0x2444346 file@?
+  0x33883c2: STRH r0,[r4,#0]
+  0x33883c4: MOVS r0,#17
+  0x33883c6: BL ->0x2444346 file@?
+  0x33883ca: MOVS r1,#0
+  0x33883cc: STRH r0,[r4,#2]
+  0x33883ce: MOVW r0,#0x9758
+  0x33883d2: MOVT r1,#0x2f79
+  0x33883d6: MOVT r0,#0x44d4
+  0x33883da: STR r1,[r4,#4]
+  field touches: [('0x3388334', 'LDR r0,[r0,#0]', 0), ('0x3388346', 'LDR r1,[r0,#0]', 0), ('0x3388348', 'STRB r5,[r1,#8]', 8), ('0x338834a', 'LDR r0,[r0,#0]', 0), ('0x338834c', 'STRB r4,[r0,#9]', 9), ('0x338837e', 'LDR r1,[r1,#0]', 0), ('0x33883a6', 'LDR r0,[r0,#0]', 0), ('0x33883c2', 'STRH r0,[r4,#0]', 0), ('0x33883cc', 'STRH r0,[r4,#2]', 2), ('0x33883da', 'STR r1,[r4,#4]', 4), ('0x33883f2', 'LDRH r3,[r4,#2]', 2), ('0x33883f8', 'LDRH r0,[r4,#2]', 2), ('0x3388432', 'LDR r1,[r1,#0]', 0), ('0x338844c', 'LDR r0,[r0,#0]', 0), ('0x3388460', 'LDRB r0,[r0,#2]', 2), ('0x3388482', 'LDR r5,[r0,#0]', 0), ('0x338848c', 'LDRB r0,[r0,#5]', 5), ('0x3388490', 'STRB r0,[r5,#8]', 8)]
+
+=== H) Sequential header-parse clusters (LDRB/H offs 0..16 monotonic) ===
+sequential hdr-parse patterns=354
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16) @0x3040e60 prolog@0x3040e40 va=0x4303a230
+    0x3040e40: PUSH 0xb5f0
+    0x3040e44: MOVW r1,#0xf6a0
+    0x3040e48: MOVW r7,#0x11e2
+    0x3040e4c: MOVT r1,#0x43d7
+    0x3040e50: LDR r1,[r1,#0]
+    0x3040e56: LDR r4,[r0,#12]
+    0x3040e58: MOVW r0,#0xc4dc
+    0x3040e5c: MOVT r0,#0x4497
+    0x3040e62: LDRB r0,[r4,#2]
+    0x3040e64: LDRB r2,[r4,#0]
+    0x3040e66: LDRB r3,[r4,#1]
+    0x3040e68: LDRB r1,[r4,#3]
+    0x3040e6a: LDRB r5,[r4,#4]
+    0x3040e6c: LDRB r6,[r4,#5]
+    0x3040e74: MOVS r0,#6
+    0x3040e76: BL ->0x20e184e file@?
+    0x3040e7a: MOVW r0,#0xc50c
+    0x3040e80: LDRB r5,[r4,#11]
+    0x3040e82: LDRB r1,[r4,#9]
+    0x3040e84: LDRB r6,[r4,#10]
+    0x3040e86: MOVT r0,#0x4497
+    0x3040e8a: LDRB r2,[r4,#6]
+    0x3040e8c: LDRB r3,[r4,#7]
+    0x3040e90: LDRB r0,[r4,#8]
+    0x3040e9a: MOVS r0,#6
+    0x3040e9c: BL ->0x20e184e file@?
+    0x3040ea0: MOVW r0,#0xc53c
+    0x3040ea4: LDRB r2,[r4,#12]
+    0x3040ea6: LDRB r3,[r4,#13]
+    0x3040ea8: LDRB r5,[r4,#17]
+    0x3040eaa: LDRB r1,[r4,#15]
+    0x3040eac: LDRB r6,[r4,#16]
+    0x3040eb0: MOVT r0,#0x4497
+    0x3040eb6: LDRB r0,[r4,#14]
+    0x3040ec0: MOVS r0,#6
+
+  pattern offs=(0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16) @0x2d8ca00 prolog@0x2d8c9c0 va=0x42d85db0
+    0x2d8c9c0: B.W
+    0x2d8c9c4: LDR.W r4,[r11,#0]
+    0x2d8c9c8: CMP r4,#8
+    0x2d8c9cc: BL ->0x20ded94 file@?
+    0x2d8c9e2: B.W
+    0x2d8c9f0: LDR r4,[r0,#8]
+    0x2d8c9f2: MOVW r0,#0xa0d0
+    0x2d8c9f6: MOVT r0,#0x4491
+    0x2d8c9fe: LDRB r0,[r4,#2]
+    0x2d8ca00: LDRB r2,[r4,#0]
+    0x2d8ca02: LDRB r3,[r4,#1]
+    0x2d8ca04: LDRB r6,[r4,#5]
+    0x2d8ca06: LDRB r1,[r4,#3]
+    0x2d8ca08: LDRB r7,[r4,#4]
+    0x2d8ca0e: MOVS r0,#6
+    0x2d8ca14: BL ->0x20e184e file@?
+    0x2d8ca18: MOVW r0,#0xa104
+    0x2d8ca1e: LDRB r6,[r4,#11]
+    0x2d8ca20: LDRB r1,[r4,#9]
+    0x2d8ca22: LDRB r7,[r4,#10]
+    0x2d8ca24: MOVT r0,#0x4491
+    0x2d8ca28: LDRB r2,[r4,#6]
+    0x2d8ca2a: LDRB r3,[r4,#7]
+    0x2d8ca2e: LDRB r0,[r4,#8]
+    0x2d8ca36: MOVS r0,#6
+    0x2d8ca3a: BL ->0x20e184e file@?
+    0x2d8ca3e: MOVW r0,#0xa138
+    0x2d8ca42: LDRB r2,[r4,#12]
+    0x2d8ca44: LDRB r3,[r4,#13]
+    0x2d8ca46: LDRB r6,[r4,#17]
+    0x2d8ca48: LDRB r1,[r4,#15]
+    0x2d8ca4a: LDRB r7,[r4,#16]
+    0x2d8ca4e: MOVT r0,#0x4491
+    0x2d8ca54: LDRB r0,[r4,#14]
+    0x2d8ca5c: MOVS r0,#6
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14) @0x3151ee0 prolog@0x3151d08 va=0x4314b0f8
+    0x3151d10: MOVW r0,#0xf6a0
+    0x3151d1e: MOVT r0,#0x43d7
+    0x3151d22: CMP r6,#112
+    0x3151d24: LDR r0,[r0,#0]
+    0x3151d2e: BL ->0x315a4de file@?
+    0x3151d32: CMP r0,#1
+    0x3151d36: MOVW r0,#0x20c
+    0x3151d3a: MOVT r0,#0x44a2
+    0x3151d40: BL ->0x315a4de file@?
+    0x3151d44: MOVW r1,#0x6c4
+    0x3151d48: MOVS r3,#0
+    0x3151d4c: MOVT r1,#0x4
+    0x3151d66: MOVS r3,#1
+    0x3151d68: BL ->0x2e15374 file@?
+    0x3151d6c: BL ->0x315a01c file@?
+    0x3151d70: MOVS r1,#0
+    0x3151d72: CMP r0,#0
+    0x3151d76: B.W
+    0x3151d7e: MOVW r6,#0x5d0f
+    0x3151d82: MOVW r9,#0xee6c
+    0x3151d88: MOVW r8,#0x219
+    0x3151d8c: MOVW r11,#0xae88
+    0x3151d90: MOVS r7,#0
+    0x3151d96: MOVT r6,#0x1
+    0x3151d9a: MOVT r9,#0x4684
+    0x3151dae: MOVS r0,#1
+    0x3151db6: BL ->0x315a4de file@?
+    0x3151dba: CMP r0,#1
+    0x3151dbe: MOVS r0,#0
+    0x3151dc2: MOVW r0,#0x254
+    0x3151dc6: MOVT r0,#0x44a2
+    0x3151dcc: BL ->0x315a4de file@?
+    0x3151dd0: MOVW r1,#0x6c4
+    0x3151dd4: MOVT r1,#0x4
+    0x3151dde: BL ->0x315a4de file@?
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14) @0x3182ca0 prolog@0x3182c68 va=0x4317c058
+    0x3182c6e: MOVW r0,#0xf6a0
+    0x3182c72: MOVT r0,#0x43d7
+    0x3182c76: LDR r0,[r0,#0]
+    0x3182c7a: LDRB r4,[r1,#0]
+    0x3182c80: CMP r0,#15
+    0x3182c86: BL ->0x2da6fbc file@?
+    0x3182c8a: MOVW r8,#0x545
+    0x3182c90: MOVT r8,#0x4
+    0x3182c94: BL ->0x268faac file@?
+    0x3182c98: CMP r0,#1
+    0x3182c9c: MOVW r0,#0x4860
+    0x3182ca0: MOVT r0,#0x44a4
+    0x3182ca6: BL ->0x268faac file@?
+    0x3182cb0: LDRB r0,[r4,#2]
+    0x3182cb2: LDRB r2,[r4,#0]
+    0x3182cb4: LDRB r3,[r4,#1]
+    0x3182cb6: LDRB r1,[r4,#3]
+    0x3182cb8: LDRB r5,[r4,#4]
+    0x3182cba: LDRB r6,[r4,#5]
+    0x3182cbc: LDRB r7,[r4,#7]
+    0x3182cc4: MOVS r0,#7
+    0x3182cc6: BL ->0x2e15374 file@?
+    0x3182cca: BL ->0x268faac file@?
+    0x3182cce: CMP r0,#1
+    0x3182cd2: MOVW r0,#0x48e4
+    0x3182cd6: MOVT r0,#0x44a4
+    0x3182cdc: BL ->0x268faac file@?
+    0x3182ce4: LDRB r3,[r4,#8]
+    0x3182ce6: LDRH r6,[r4,#14]
+    0x3182ce8: LDRB r1,[r4,#10]
+    0x3182cea: LDRH r7,[r4,#12]
+    0x3182cee: LDRB r0,[r4,#9]
+    0x3182cf0: LDRB r2,[r4,#6]
+    0x3182cfa: MOVS r0,#6
+    0x3182cfc: BL ->0x2e15374 file@?
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) @0x2d8c9e0 prolog@0x2d8c9a0 va=0x42d85d90
+    0x2d8c9a8: B.W
+    0x2d8c9b0: LDR r0,[r0,#8]
+    0x2d8c9b2: CMP r0,#0
+    0x2d8c9b6: CMP r3,#2
+    0x2d8c9b8: B.W
+    0x2d8c9c0: B.W
+    0x2d8c9c4: LDR.W r4,[r11,#0]
+    0x2d8c9c8: CMP r4,#8
+    0x2d8c9cc: BL ->0x20ded94 file@?
+    0x2d8c9e2: B.W
+    0x2d8c9f0: LDR r4,[r0,#8]
+    0x2d8c9f2: MOVW r0,#0xa0d0
+    0x2d8c9f6: MOVT r0,#0x4491
+    0x2d8c9fe: LDRB r0,[r4,#2]
+    0x2d8ca00: LDRB r2,[r4,#0]
+    0x2d8ca02: LDRB r3,[r4,#1]
+    0x2d8ca04: LDRB r6,[r4,#5]
+    0x2d8ca06: LDRB r1,[r4,#3]
+    0x2d8ca08: LDRB r7,[r4,#4]
+    0x2d8ca0e: MOVS r0,#6
+    0x2d8ca14: BL ->0x20e184e file@?
+    0x2d8ca18: MOVW r0,#0xa104
+    0x2d8ca1e: LDRB r6,[r4,#11]
+    0x2d8ca20: LDRB r1,[r4,#9]
+    0x2d8ca22: LDRB r7,[r4,#10]
+    0x2d8ca24: MOVT r0,#0x4491
+    0x2d8ca28: LDRB r2,[r4,#6]
+    0x2d8ca2a: LDRB r3,[r4,#7]
+    0x2d8ca2e: LDRB r0,[r4,#8]
+    0x2d8ca36: MOVS r0,#6
+    0x2d8ca3a: BL ->0x20e184e file@?
+    0x2d8ca3e: MOVW r0,#0xa138
+    0x2d8ca42: LDRB r2,[r4,#12]
+    0x2d8ca44: LDRB r3,[r4,#13]
+    0x2d8ca46: LDRB r6,[r4,#17]
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 13) @0x3226640 prolog@0x3226600 va=0x4321f9f0
+    0x3226602: LDR.W r14,[r13,#76]
+    0x3226606: CMP r0,#3
+    0x322660a: LDRH.W r0,[r10,#4]
+    0x322660e: CMP r0,#1
+    0x3226612: LDRH.W r0,[r10,#6]
+    0x3226616: CMP r0,#148
+    0x3226618: B.W
+    0x322661c: LDRH r0,[r4,#4]
+    0x322663a: B.W
+    0x3226640: MOVW r0,#0x9e1
+    0x3226646: MOVW r0,#0x62f8
+    0x322664a: MOVT r0,#0x4521
+    0x322664e: LDRB.W r5,[r8,#5]
+    0x3226652: LDRB.W r6,[r8,#6]
+    0x3226656: LDRB.W r7,[r8,#4]
+    0x322665c: LDRB.W r0,[r8,#2]
+    0x3226660: LDRB.W r2,[r8,#0]
+    0x3226664: LDRB.W r3,[r8,#1]
+    0x3226668: LDRB.W r1,[r8,#3]
+    0x322666e: MOVS r5,#84
+    0x3226676: MOVS r0,#7
+    0x322667a: BL ->0x2e15374 file@?
+    0x3226684: MOVW r0,#0x9e1
+    0x3226688: LDRB.W r3,[r8,#8]
+    0x322668c: LDRB.W r6,[r8,#12]
+    0x3226690: LDRB.W r5,[r8,#13]
+    0x3226694: LDRB.W r1,[r8,#10]
+    0x3226698: LDRB.W r7,[r8,#11]
+    0x322669e: MOVW r0,#0x635c
+    0x32266a2: MOVT r0,#0x4521
+    0x32266a6: LDRB.W r2,[r8,#7]
+    0x32266ac: LDRB.W r0,[r8,#9]
+    0x32266b4: MOVS r5,#84
+    0x32266ba: MOVS r0,#7
+    0x32266be: BL ->0x2e15374 file@?
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10) @0x2d42ac0 prolog@0x2d428fc va=0x42d3bcec
+    0x2d42902: MOVW r1,#0xf6a0
+    0x2d42906: MOVT r1,#0x43d7
+    0x2d4290a: LDR r1,[r1,#0]
+    0x2d4290e: MOVW r1,#0xd46e
+    0x2d42912: MOVT r1,#0x488b
+    0x2d42916: LDRB r1,[r1,#0]
+    0x2d42918: CMP r1,#0
+    0x2d4291a: B.W
+    0x2d4291e: LDRB r6,[r0,#5]
+    0x2d42920: MOVW r3,#0x31e0
+    0x2d42924: MOVW r2,#0x31e9
+    0x2d42928: LDRB r1,[r0,#4]
+    0x2d4292a: MOVT r3,#0x43d8
+    0x2d4292e: MOVT r2,#0x43d8
+    0x2d42932: CMP r6,#0
+    0x2d42938: LDRB r3,[r2,#0]
+    0x2d42940: CMP r1,#255
+    0x2d42944: MOVW r0,#0x2762
+    0x2d4294c: MOVW r0,#0xb448
+    0x2d42950: MOVT r0,#0x4068
+    0x2d42956: MOVS r0,#1
+    0x2d42958: BL ->0x20e184e file@?
+    0x2d42960: MOVW r0,#0x2c78
+    0x2d42968: MOVW r1,#0x1e28
+    0x2d4296c: CMP r6,#0
+    0x2d4296e: MOVT r0,#0x49a1
+    0x2d42972: MOVT r1,#0x499e
+    0x2d42982: MOVW r0,#0x2762
+    0x2d42988: MOVW r0,#0xb464
+    0x2d4298c: MOVT r0,#0x4068
+    0x2d42992: MOVS r0,#2
+    0x2d42994: BL ->0x20e184e file@?
+    0x2d42998: BL ->0x2d4915c file@?
+    0x2d429aa: BL ->0x2d48492 file@?
+    0x2d429b0: MOVW r0,#0x719c
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11) @0x2fe6240 prolog@0x2fe610c va=0x42fdf4fc
+    0x2fe6114: MOVW r0,#0xf6a0
+    0x2fe611a: MOVT r0,#0x43d7
+    0x2fe611e: LDR r0,[r0,#0]
+    0x2fe6122: BL ->0x260f32c file@?
+    0x2fe612a: B.W
+    0x2fe612e: MOVW r7,#0x9c40
+    0x2fe6134: MOVW r0,#0x11e5
+    0x2fe6138: MOVW r11,#0xb17
+    0x2fe613c: MOVW r5,#0x6fff
+    0x2fe6140: MOVW r8,#0x9c4c
+    0x2fe6144: MOVT r7,#0x49f4
+    0x2fe614a: MOVW r0,#0xc334
+    0x2fe614e: MOVT r11,#0x8b64
+    0x2fe6152: MOVT r5,#0x29
+    0x2fe6156: MOVT r8,#0x49f4
+    0x2fe615e: MOVT r0,#0x4497
+    0x2fe6180: B.W
+    0x2fe618a: MOVS r0,#2
+    0x2fe618e: BL ->0x20e184e file@?
+    0x2fe619c: B.W
+    0x2fe61a6: MOVS r0,#2
+    0x2fe61aa: BL ->0x20e184e file@?
+    0x2fe61ca: MOVS r0,#23
+    0x2fe61cc: MOVS r5,#0
+    0x2fe61e0: BL ->0x20ded94 file@?
+    0x2fe61e6: CMP r0,#45
+    0x2fe61e8: B.W
+    0x2fe61ee: CMP r5,#21
+
+  pattern offs=(2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13) @0x2fe6260 prolog@0x2fe610c va=0x42fdf4fc
+    0x2fe6114: MOVW r0,#0xf6a0
+    0x2fe611a: MOVT r0,#0x43d7
+    0x2fe611e: LDR r0,[r0,#0]
+    0x2fe6122: BL ->0x260f32c file@?
+    0x2fe612a: B.W
+    0x2fe612e: MOVW r7,#0x9c40
+    0x2fe6134: MOVW r0,#0x11e5
+    0x2fe6138: MOVW r11,#0xb17
+    0x2fe613c: MOVW r5,#0x6fff
+    0x2fe6140: MOVW r8,#0x9c4c
+    0x2fe6144: MOVT r7,#0x49f4
+    0x2fe614a: MOVW r0,#0xc334
+    0x2fe614e: MOVT r11,#0x8b64
+    0x2fe6152: MOVT r5,#0x29
+    0x2fe6156: MOVT r8,#0x49f4
+    0x2fe615e: MOVT r0,#0x4497
+    0x2fe6180: B.W
+    0x2fe618a: MOVS r0,#2
+    0x2fe618e: BL ->0x20e184e file@?
+    0x2fe619c: B.W
+    0x2fe61a6: MOVS r0,#2
+    0x2fe61aa: BL ->0x20e184e file@?
+    0x2fe61ca: MOVS r0,#23
+    0x2fe61cc: MOVS r5,#0
+    0x2fe61e0: BL ->0x20ded94 file@?
+    0x2fe61e6: CMP r0,#45
+    0x2fe61e8: B.W
+    0x2fe61ee: CMP r5,#21
+
+  pattern offs=(1, 2, 4, 5, 6, 7, 8, 9, 10, 11) @0x2f7d4a0 prolog@0x2f7d498 va=0x42f76888
+    0x2f7d498: PUSH 0xb570
+    0x2f7d49c: LDRB r0,[r1,#0]
+    0x2f7d4a2: CMP r0,#255
+    0x2f7d4a6: STRB r0,[r4,#0]
+    0x2f7d4a8: LDRB r0,[r5,#1]
+    0x2f7d4aa: CMP r0,#255
+    0x2f7d4ae: STRB r0,[r4,#1]
+    0x2f7d4b0: LDRB r0,[r5,#2]
+    0x2f7d4b2: CMP r0,#255
+    0x2f7d4b6: STRB r0,[r4,#2]
+    0x2f7d4b8: MOVS r0,#1
+    0x2f7d4ba: STRB r0,[r4,#3]
+    0x2f7d4bc: LDRB r0,[r5,#4]
+    0x2f7d4be: CMP r0,#255
+    0x2f7d4c2: STRB r0,[r4,#4]
+    0x2f7d4c4: LDRB r0,[r5,#5]
+    0x2f7d4c6: CMP r0,#255
+    0x2f7d4ca: STRB r0,[r4,#5]
+    0x2f7d4cc: LDRB r0,[r5,#6]
+    0x2f7d4ce: CMP r0,#255
+    0x2f7d4d2: STRB r0,[r4,#6]
+    0x2f7d4d4: LDRB r0,[r5,#7]
+    0x2f7d4d6: CMP r0,#255
+    0x2f7d4da: STRB r0,[r4,#7]
+    0x2f7d4dc: LDRB r0,[r5,#8]
+    0x2f7d4de: CMP r0,#255
+    0x2f7d4e2: STRB r0,[r4,#8]
+    0x2f7d4e4: LDRB r0,[r5,#9]
+    0x2f7d4e6: CMP r0,#255
+    0x2f7d4ea: STRB r0,[r4,#9]
+    0x2f7d4ee: BL ->0x34d1f3a file@?
+    0x2f7d4f2: LDRB r0,[r5,#10]
+    0x2f7d4f4: CMP r0,#255
+    0x2f7d4f8: STRB r0,[r4,#10]
+    0x2f7d4fa: LDRB r0,[r5,#11]
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9) @0x2ff7e00 prolog@0x2ff7d9e va=0x42ff118e
+    0x2ff7da6: MOVW r0,#0xf6a0
+    0x2ff7dac: MOVS r1,#100
+    0x2ff7dae: MOVT r0,#0x43d7
+    0x2ff7db2: LDR r0,[r0,#0]
+    0x2ff7dbc: BL ->0x2ce99f4 file@?
+    0x2ff7dc0: CMP r6,#0
+    0x2ff7dc2: B.W
+    0x2ff7dc8: MOVW r0,#0x694c
+    0x2ff7dcc: MOVS r7,#25
+    0x2ff7dce: MOVT r0,#0x5662
+    0x2ff7dd2: STRB r7,[r6,#5]
+    0x2ff7dd4: STR.W r0,[r6,#6]
+    0x2ff7dd8: MOVW r0,#0x7265
+    0x2ff7ddc: STRH r0,[r6,#10]
+    0x2ff7de0: BL ->0x2d2acd0 file@?
+    0x2ff7de6: LDRH.W r1,[r13,#20]
+    0x2ff7dea: MOVS r2,#0
+    0x2ff7dee: MOVW r3,#0x5341
+    0x2ff7dfa: STR r2,[r5,#4]
+    0x2ff7dfc: STRH r2,[r5,#8]
+    0x2ff7e02: MOVS r0,#78
+    0x2ff7e0e: BL ->0x25ae90c file@?
+    0x2ff7e12: MOVW r0,#0x5d5c
+    0x2ff7e16: LDRB r2,[r5,#0]
+    0x2ff7e18: LDRB r3,[r5,#1]
+    0x2ff7e1a: LDRB r1,[r5,#3]
+    0x2ff7e20: LDRB r4,[r5,#4]
+    0x2ff7e22: MOVT r0,#0x44bd
+    0x2ff7e26: STR.W r9,[r13,#20]
+    0x2ff7e2c: LDRB r0,[r5,#2]
+    0x2ff7e34: MOVS r0,#5
+    0x2ff7e36: BL ->0x20e184e file@?
+    0x2ff7e3c: BL ->0x23d6e08 file@?
+    0x2ff7e40: MOVW r0,#0x5da4
+    0x2ff7e44: LDRB r2,[r5,#5]
+
+  pattern offs=(1, 3, 4, 5, 6, 7, 8, 9, 10, 11) @0x30032c0 prolog@0x3003294 va=0x42ffc684
+    0x300329c: MOVW r0,#0xf6a0
+    0x30032a2: MOVT r0,#0x43d7
+    0x30032a6: LDR r0,[r0,#0]
+    0x30032aa: BL ->0x2d0faa2 file@?
+    0x30032ae: CMP r4,#0
+    0x30032b2: CMP r6,#2
+    0x30032b8: MOVW r0,#0x896c
+    0x30032bc: LDRB r1,[r4,#2]
+    0x30032be: LDRB r3,[r4,#0]
+    0x30032c0: MOVW r7,#0x682
+    0x30032c4: CMP r6,#0
+    0x30032c6: MOVT r0,#0x44bd
+    0x30032ce: LDRB r0,[r4,#1]
+    0x30032d6: MOVS r6,#1
+    0x30032da: MOVS r0,#4
+    0x30032de: BL ->0x20e184e file@?
+    0x30032e2: MOVW r0,#0x89d0
+    0x30032e6: LDRB r2,[r4,#3]
+    0x30032e8: LDRB r3,[r4,#4]
+    0x30032ea: LDRB r1,[r4,#6]
+    0x30032ec: LDRB r5,[r4,#7]
+    0x30032f0: MOVT r0,#0x44bd
+    0x30032f6: LDRB r0,[r4,#5]
+    0x30032fe: MOVS r0,#5
+    0x3003300: BL ->0x20e184e file@?
+    0x3003304: MOVW r0,#0x8a34
+    0x3003308: LDRB r1,[r4,#11]
+    0x300330a: LDRB r2,[r4,#8]
+    0x300330c: LDRB r3,[r4,#9]
+    0x3003310: MOVT r0,#0x44bd
+    0x3003316: LDRB r0,[r4,#10]
+    0x300331e: MOVS r0,#4
+    0x3003320: BL ->0x20e184e file@?
+    0x3003324: CMP r6,#1
+    0x3003328: LDR.W r5,[r8,#68]
+
+  pattern offs=(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) @0x306cd60 prolog@0x306cc14 va=0x43066004
+    0x306cc1c: MOVW r0,#0xf6a0
+    0x306cc22: MOVS r1,#150
+    0x306cc24: MOVT r0,#0x43d7
+    0x306cc28: LDR r0,[r0,#0]
+    0x306cc32: MOVW r2,#0xd3a8
+    0x306cc38: MOVS r1,#150
+    0x306cc3a: MOVT r2,#0x488b
+    0x306cc3e: BL ->0x2d3a86e file@?
+    0x306cc42: MOVW r0,#0x2768
+    0x306cc52: MOVW r0,#0xdf78
+    0x306cc56: MOVT r0,#0x4066
+    0x306cc5c: MOVW r0,#0xba98
+    0x306cc60: MOVT r0,#0xfecd
+    0x306cc68: BL ->0x20e1614 file@?
+    0x306cc6c: MOVW r6,#0x719c
+    0x306cc70: MOVW r8,#0x79b9
+    0x306cc74: MOVW r10,#0xbeef
+    0x306cc78: MOVT r6,#0x494e
+    0x306cc7c: MOVT r8,#0x9e37
+    0x306cc80: MOVT r10,#0xfeed
+    0x306cc84: LDR r0,[r6,#0]
+    0x306cc86: CMP r0,#0
+    0x306cc88: B.W
+    0x306cc92: BL ->0x20d1bde file@?
+    0x306cc98: CMP r0,#12
+    0x306ccae: LDRB r6,[r4,#9]
+    0x306ccb0: LDRB r5,[r4,#8]
+    0x306ccb4: CMP r3,#11
+    0x306ccba: LDRB r5,[r4,#10]
+    0x306ccc0: LDRB r5,[r4,#11]
+    0x306ccc6: LDRB r5,[r4,#4]
+    0x306ccca: LDRB r6,[r4,#5]
+    0x306ccd0: LDRB r5,[r4,#6]
+    0x306ccd6: LDRB r5,[r4,#7]
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8, 10) @0x3150880 prolog@0x3150838 va=0x43149c28
+    0x3150838: PUSH 0xb5f0
+    0x315083e: MOVW r0,#0xf6a0
+    0x3150844: MOVS r1,#40
+    0x315084a: MOVT r0,#0x43d7
+    0x315084e: LDR r0,[r0,#0]
+    0x3150858: BL ->0x315a01c file@?
+    0x3150868: BL ->0x370e190 file@?
+    0x3150872: BL ->0x315a45c file@?
+    0x3150876: MOVS r0,#0
+    0x315087a: BL ->0x370e204 file@?
+    0x3150880: BL ->0x31556c4 file@?
+    0x3150884: LDRH.W r0,[r13,#8]
+    0x3150888: LDRB.W r1,[r13,#1]
+    0x315088c: LDRB.W r2,[r13,#2]
+    0x3150890: LDRB.W r3,[r13,#3]
+    0x3150894: STRH r0,[r4,#4]
+    0x3150896: LDRB.W r0,[r13,#10]
+    0x315089e: STRB r0,[r4,#6]
+    0x31508a0: LDRB.W r0,[r13,#4]
+    0x31508a8: STRB r0,[r4,#2]
+    0x31508aa: LDRB.W r0,[r13,#0]
+    0x31508b6: LDRB.W r1,[r13,#6]
+    0x31508ba: STRB r0,[r4,#0]
+    0x31508c0: LDRB.W r2,[r13,#28]
+    0x31508c8: LDRB.W r3,[r13,#29]
+    0x31508cc: STRB r0,[r4,#1]
+    0x31508ce: LDRB.W r0,[r13,#5]
+    0x31508d8: LDRB.W r1,[r13,#7]
+    0x31508e2: LDRB.W r1,[r13,#11]
+    0x31508e6: STRB r0,[r4,#3]
+    0x31508e8: LDRB.W r0,[r13,#12]
+    0x31508f4: LDRB.W r1,[r13,#14]
+    0x31508f8: STRB r0,[r4,#7]
+    0x31508fa: LDRH.W r0,[r13,#15]
+    0x3150902: STRH.W r0,[r4,#9]
+
+  pattern offs=(0, 1, 3, 7, 8, 9, 10, 11, 12, 13) @0x3226660 prolog@0x3226620 va=0x4321fa10
+    0x322663a: B.W
+    0x3226640: MOVW r0,#0x9e1
+    0x3226646: MOVW r0,#0x62f8
+    0x322664a: MOVT r0,#0x4521
+    0x322664e: LDRB.W r5,[r8,#5]
+    0x3226652: LDRB.W r6,[r8,#6]
+    0x3226656: LDRB.W r7,[r8,#4]
+    0x322665c: LDRB.W r0,[r8,#2]
+    0x3226660: LDRB.W r2,[r8,#0]
+    0x3226664: LDRB.W r3,[r8,#1]
+    0x3226668: LDRB.W r1,[r8,#3]
+    0x322666e: MOVS r5,#84
+    0x3226676: MOVS r0,#7
+    0x322667a: BL ->0x2e15374 file@?
+    0x3226684: MOVW r0,#0x9e1
+    0x3226688: LDRB.W r3,[r8,#8]
+    0x322668c: LDRB.W r6,[r8,#12]
+    0x3226690: LDRB.W r5,[r8,#13]
+    0x3226694: LDRB.W r1,[r8,#10]
+    0x3226698: LDRB.W r7,[r8,#11]
+    0x322669e: MOVW r0,#0x635c
+    0x32266a2: MOVT r0,#0x4521
+    0x32266a6: LDRB.W r2,[r8,#7]
+    0x32266ac: LDRB.W r0,[r8,#9]
+    0x32266b4: MOVS r5,#84
+    0x32266ba: MOVS r0,#7
+    0x32266be: BL ->0x2e15374 file@?
+    0x32266c8: MOVW r0,#0x9e1
+    0x32266cc: LDRB.W r2,[r8,#14]
+    0x32266d0: LDRB.W r3,[r8,#15]
+    0x32266d4: LDRB.W r6,[r8,#19]
+    0x32266d8: LDRB.W r5,[r8,#20]
+    0x32266dc: LDRB.W r1,[r8,#17]
+    0x32266e0: LDRB.W r7,[r8,#18]
+    0x32266e6: MOVW r0,#0x63c0
+
+  pattern offs=(0, 2, 4, 6, 8, 10, 12, 14, 16) @0x2c7e800 prolog@0x2c7e60a va=0x42c779fa
+    0x2c7e612: MOVW r0,#0xf6a0
+    0x2c7e616: MOVT r0,#0x43d7
+    0x2c7e61a: LDR r0,[r0,#0]
+    0x2c7e61e: MOVW r0,#0xe528
+    0x2c7e62e: MOVW r0,#0x1d56
+    0x2c7e634: MOVW r0,#0x30e4
+    0x2c7e63c: MOVW r0,#0x3108
+    0x2c7e644: MOVW r0,#0x3110
+    0x2c7e64c: MOVW r0,#0x3128
+    0x2c7e65a: BL ->0x33c5cd4 file@?
+    0x2c7e666: LDR r1,[r4,#48]
+    0x2c7e66a: MOVW r0,#0x65dc
+    0x2c7e66e: MOVT r0,#0x454f
+    0x2c7e674: LDR r0,[r4,#4]
+    0x2c7e676: LDRH r6,[r1,#36]
+    0x2c7e678: LDRH.W r14,[r1,#296]
+    0x2c7e680: LDRH.W r12,[r5,#0]
+    0x2c7e6a2: MOVS r0,#8
+    0x2c7e6a4: BL ->0x20e184e file@?
+    0x2c7e6a8: LDR r1,[r4,#4]
+    0x2c7e6aa: LDR r0,[r4,#48]
+    0x2c7e6ac: MOVS r6,#0
+    0x2c7e6ae: MOVS r7,#0
+    0x2c7e6e2: LDR r2,[r6,#0]
+    0x2c7e6e4: LDR.W r10,[r1,#0]
+    0x2c7e6fe: MOVS r7,#1
+    0x2c7e702: CMP r6,#3
+    0x2c7e708: MOVS r7,#1
+
+  pattern offs=(2, 3, 4, 5, 6, 7, 8, 9, 10) @0x2d42aa0 prolog@0x2d428fc va=0x42d3bcec
+    0x2d42902: MOVW r1,#0xf6a0
+    0x2d42906: MOVT r1,#0x43d7
+    0x2d4290a: LDR r1,[r1,#0]
+    0x2d4290e: MOVW r1,#0xd46e
+    0x2d42912: MOVT r1,#0x488b
+    0x2d42916: LDRB r1,[r1,#0]
+    0x2d42918: CMP r1,#0
+    0x2d4291a: B.W
+    0x2d4291e: LDRB r6,[r0,#5]
+    0x2d42920: MOVW r3,#0x31e0
+    0x2d42924: MOVW r2,#0x31e9
+    0x2d42928: LDRB r1,[r0,#4]
+    0x2d4292a: MOVT r3,#0x43d8
+    0x2d4292e: MOVT r2,#0x43d8
+    0x2d42932: CMP r6,#0
+    0x2d42938: LDRB r3,[r2,#0]
+    0x2d42940: CMP r1,#255
+    0x2d42944: MOVW r0,#0x2762
+    0x2d4294c: MOVW r0,#0xb448
+    0x2d42950: MOVT r0,#0x4068
+    0x2d42956: MOVS r0,#1
+    0x2d42958: BL ->0x20e184e file@?
+    0x2d42960: MOVW r0,#0x2c78
+    0x2d42968: MOVW r1,#0x1e28
+    0x2d4296c: CMP r6,#0
+    0x2d4296e: MOVT r0,#0x49a1
+    0x2d42972: MOVT r1,#0x499e
+    0x2d42982: MOVW r0,#0x2762
+    0x2d42988: MOVW r0,#0xb464
+    0x2d4298c: MOVT r0,#0x4068
+    0x2d42992: MOVS r0,#2
+    0x2d42994: BL ->0x20e184e file@?
+    0x2d42998: BL ->0x2d4915c file@?
+    0x2d429aa: BL ->0x2d48492 file@?
+    0x2d429b0: MOVW r0,#0x719c
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7, 8) @0x2dad940 prolog@0x2dad8e6 va=0x42da6cd6
+    0x2dad8ee: MOVW r0,#0xf6a0
+    0x2dad8f6: MOVT r0,#0x43d7
+    0x2dad8fa: LDR r0,[r0,#0]
+    0x2dad8fe: MOVW r0,#0x1338
+    0x2dad902: MOVT r0,#0x4504
+    0x2dad908: BL ->0x210f9e6 file@?
+    0x2dad90c: MOVW r8,#0x25c1
+    0x2dad91a: MOVS r0,#1
+    0x2dad91c: BL ->0x20e184e file@?
+    0x2dad920: LDR.W r0,[r11,#68]
+    0x2dad924: MOVS r1,#18
+    0x2dad926: MOVS r2,#255
+    0x2dad930: MOVW r0,#0x13ac
+    0x2dad934: MOVT r0,#0x4504
+    0x2dad93a: BL ->0x210f9e6 file@?
+    0x2dad946: MOVS r0,#0
+    0x2dad948: BL ->0x20e184e file@?
+    0x2dad94c: MOVW r0,#0x1424
+    0x2dad950: MOVT r0,#0x4504
+    0x2dad956: BL ->0x210f9e6 file@?
+    0x2dad95e: LDRB r2,[r7,#0]
+    0x2dad960: LDRB r3,[r7,#1]
+    0x2dad962: LDRB r1,[r7,#3]
+    0x2dad964: LDRB r4,[r7,#4]
+    0x2dad966: LDRB r5,[r7,#5]
+    0x2dad968: LDRB.W r12,[r7,#6]
+    0x2dad96e: LDRB r0,[r7,#2]
+    0x2dad976: MOVS r0,#7
+    0x2dad978: BL ->0x20e184e file@?
+    0x2dad97c: MOVW r0,#0x148c
+    0x2dad980: MOVT r0,#0x4504
+    0x2dad986: BL ->0x210f9e6 file@?
+    0x2dad98a: LDRB r2,[r7,#7]
+    0x2dad98c: LDRB r3,[r7,#8]
+    0x2dad996: MOVS r0,#2
+
+  pattern offs=(1, 3, 5, 7, 9, 13, 14, 15, 16) @0x30001e0 prolog@0x3000188 va=0x42ff9578
+    0x300018e: LDRB r2,[r0,#0]
+    0x3000192: CMP r2,#4
+    0x300019c: MOVS r4,#20
+    0x30001a0: LDRH.W r3,[r0,#1]
+    0x30001a4: LDRB r0,[r0,#13]
+    0x30001ac: LDRH.W r3,[r0,#1]
+    0x30001b0: LDRH.W r12,[r0,#3]
+    0x30001b4: LDRB r2,[r0,#13]
+    0x30001b6: LDRB r0,[r0,#14]
+    0x30001c2: LDRH.W r3,[r0,#1]
+    0x30001c6: LDRH.W r14,[r0,#3]
+    0x30001ca: LDRH.W r12,[r0,#5]
+    0x30001ce: LDRB r2,[r0,#13]
+    0x30001d0: LDRB r4,[r0,#14]
+    0x30001d2: LDRB r0,[r0,#15]
+    0x30001e2: LDRH.W r3,[r0,#1]
+    0x30001e6: LDRH.W r2,[r0,#3]
+    0x30001ea: LDRH.W r14,[r0,#5]
+    0x30001ee: LDRH.W r12,[r0,#7]
+    0x30001f2: LDRB r4,[r0,#13]
+    0x30001f4: LDRB r5,[r0,#14]
+    0x30001f6: LDRB r6,[r0,#15]
+    0x30001f8: LDRB r0,[r0,#16]
+    0x300020c: LDRH.W r3,[r0,#1]
+    0x3000210: LDRH.W r8,[r0,#3]
+    0x3000214: LDRH.W r14,[r0,#5]
+    0x3000218: LDRH.W r12,[r0,#7]
+    0x300021c: LDRB r4,[r0,#13]
+    0x300021e: LDRB r5,[r0,#14]
+    0x3000220: LDRB r6,[r0,#15]
+    0x3000222: LDRB r7,[r0,#16]
+    0x3000224: LDRH.W r2,[r0,#9]
+    0x3000228: LDRB r0,[r0,#17]
+    0x3000240: MOVS r1,#40
+    0x3000242: BL ->0x20c3b5c file@?
+
+  pattern offs=(0, 1, 2, 3, 4, 6, 7, 8, 16) @0x30c3700 prolog@0x30c3630 va=0x430bca20
+    0x30c3638: MOVW r0,#0xf6a0
+    0x30c363c: MOVS r5,#0
+    0x30c3644: MOVT r0,#0x43d7
+    0x30c3648: LDR r0,[r0,#0]
+    0x30c364c: STRB.W r5,[r13,#95]
+    0x30c3650: STRB.W r5,[r13,#94]
+    0x30c3654: STRB.W r5,[r13,#93]
+    0x30c3658: BL ->0x26ba938 file@?
+    0x30c365e: BL ->0x26d02a8 file@?
+    0x30c3664: STRB.W r5,[r13,#92]
+    0x30c366c: BL ->0x26c8516 file@?
+    0x30c3674: BL ->0x26b890e file@?
+    0x30c367a: MOVS r0,#0
+    0x30c3682: MOVW r0,#0x93cc
+    0x30c3686: MOVT r0,#0x40cd
+    0x30c368a: BL ->0x20e943c file@?
+    0x30c3692: BL ->0x20d1c22 file@?
+    0x30c3696: MOVW r0,#0x39a
+    0x30c369a: MOVT r0,#0x40ce
+    0x30c369e: BL ->0x20e943c file@?
+    0x30c36a6: BL ->0x20d1c22 file@?
+    0x30c36aa: MOVW r0,#0x930
+    0x30c36ae: MOVT r0,#0x40ce
+    0x30c36b2: BL ->0x20e943c file@?
+    0x30c36ba: BL ->0x20d1c22 file@?
+    0x30c36be: MOVW r0,#0x9dad
+    0x30c36c2: MOVT r0,#0x40cd
+    0x30c36c6: BL ->0x20e943c file@?
+    0x30c36cc: BL ->0x20d1c22 file@?
+    0x30c36d2: BL ->0x269dd8e file@?
+    0x30c36d6: LDR.W r1,[r10,#0]
+    0x30c36da: CMP r1,#1
+    0x30c36de: LDR.W r1,[r10,#12]
+    0x30c36e2: CMP r1,#1
+    0x30c36e4: B.W
+
+  pattern offs=(0, 4, 5, 6, 7, 11, 12, 14, 15) @0x31508a0 prolog@0x3150838 va=0x43149c28
+    0x3150838: PUSH 0xb5f0
+    0x315083e: MOVW r0,#0xf6a0
+    0x3150844: MOVS r1,#40
+    0x315084a: MOVT r0,#0x43d7
+    0x315084e: LDR r0,[r0,#0]
+    0x3150858: BL ->0x315a01c file@?
+    0x3150868: BL ->0x370e190 file@?
+    0x3150872: BL ->0x315a45c file@?
+    0x3150876: MOVS r0,#0
+    0x315087a: BL ->0x370e204 file@?
+    0x3150880: BL ->0x31556c4 file@?
+    0x3150884: LDRH.W r0,[r13,#8]
+    0x3150888: LDRB.W r1,[r13,#1]
+    0x315088c: LDRB.W r2,[r13,#2]
+    0x3150890: LDRB.W r3,[r13,#3]
+    0x3150894: STRH r0,[r4,#4]
+    0x3150896: LDRB.W r0,[r13,#10]
+    0x315089e: STRB r0,[r4,#6]
+    0x31508a0: LDRB.W r0,[r13,#4]
+    0x31508a8: STRB r0,[r4,#2]
+    0x31508aa: LDRB.W r0,[r13,#0]
+    0x31508b6: LDRB.W r1,[r13,#6]
+    0x31508ba: STRB r0,[r4,#0]
+    0x31508c0: LDRB.W r2,[r13,#28]
+    0x31508c8: LDRB.W r3,[r13,#29]
+    0x31508cc: STRB r0,[r4,#1]
+    0x31508ce: LDRB.W r0,[r13,#5]
+    0x31508d8: LDRB.W r1,[r13,#7]
+    0x31508e2: LDRB.W r1,[r13,#11]
+    0x31508e6: STRB r0,[r4,#3]
+    0x31508e8: LDRB.W r0,[r13,#12]
+    0x31508f4: LDRB.W r1,[r13,#14]
+    0x31508f8: STRB r0,[r4,#7]
+    0x31508fa: LDRH.W r0,[r13,#15]
+    0x3150902: STRH.W r0,[r4,#9]
+
+  pattern offs=(0, 2, 4, 6, 9, 10, 11, 12, 13) @0x316edc0 prolog@0x316eda0 va=0x43168190
+    0x316eda0: PUSH 0xb5b0
+    0x316eda6: MOVW r0,#0xf6a0
+    0x316edaa: MOVW r5,#0x722
+    0x316edae: MOVT r0,#0x43d7
+    0x316edb2: MOVT r5,#0x4
+    0x316edb6: LDR r0,[r0,#0]
+    0x316edba: BL ->0x317a128 file@?
+    0x316edbe: CMP r0,#1
+    0x316edc2: MOVW r0,#0xf280
+    0x316edc6: MOVT r0,#0x44de
+    0x316edcc: BL ->0x317a128 file@?
+    0x316edd4: LDRB r1,[r4,#10]
+    0x316edd6: LDRB r2,[r4,#11]
+    0x316edd8: LDRB r3,[r4,#12]
+    0x316eddc: LDRH r0,[r4,#2]
+    0x316ede4: MOVS r0,#4
+    0x316ede6: BL ->0x2e15374 file@?
+    0x316edea: LDRH r0,[r4,#6]
+    0x316edec: BL ->0x3723a66 file@?
+    0x316edf0: BL ->0x317a128 file@?
+    0x316edf4: CMP r0,#1
+    0x316edf8: MOVW r0,#0xf2e8
+    0x316edfc: MOVT r0,#0x44de
+    0x316ee02: BL ->0x317a128 file@?
+    0x316ee0a: LDRB r1,[r4,#13]
+    0x316ee0c: LDRH r2,[r4,#4]
+    0x316ee0e: LDRH r3,[r4,#0]
+    0x316ee12: LDRB r0,[r4,#9]
+    0x316ee1a: MOVS r0,#4
+    0x316ee1c: BL ->0x2e15374 file@?
+    0x316ee20: LDRB r0,[r4,#8]
+    0x316ee22: BL ->0x37239f6 file@?
+    0x316ee26: MOVW r1,#0xf6a0
+    0x316ee2c: MOVT r1,#0x43d7
+    0x316ee30: LDR r1,[r1,#0]
+
+  pattern offs=(2, 7, 8, 9, 10, 11, 12, 13, 14) @0x317f3a0 prolog@0x317f30e va=0x431786fe
+    0x317f316: MOVW r1,#0xf6a0
+    0x317f31c: CMP r0,#11
+    0x317f31e: MOVT r1,#0x43d7
+    0x317f322: LDR r1,[r1,#0]
+    0x317f32a: STRB.W r1,[r13,#71]
+    0x317f32e: B.W
+    0x317f332: CMP r0,#0
+    0x317f334: B.W
+    0x317f338: MOVW r1,#0xa28
+    0x317f342: B.W
+    0x317f346: MOVW r10,#0x761
+    0x317f34a: CMP r4,#0
+    0x317f34c: MOVT r10,#0x4
+    0x317f350: B.W
+    0x317f354: MOVW r1,#0x1c68
+    0x317f35e: MOVT r1,#0x40c3
+    0x317f366: MOVW r0,#0xfc18
+    0x317f36a: MOVT r0,#0x4499
+    0x317f370: BL ->0x31129cc file@?
+    0x317f37c: MOVS r0,#0
+    0x317f37e: BL ->0x2e15374 file@?
+    0x317f382: MOVW r0,#0xfcbc
+    0x317f386: MOVT r0,#0x4499
+    0x317f38c: BL ->0x31129cc file@?
+    0x317f394: LDRB r2,[r4,#0]
+    0x317f396: LDRB r3,[r4,#1]
+    0x317f398: LDRB r5,[r4,#6]
+    0x317f39a: LDRB r1,[r4,#3]
+    0x317f39c: LDRB r6,[r4,#4]
+    0x317f39e: LDRB r7,[r4,#5]
+    0x317f3a4: LDRB r0,[r4,#2]
+    0x317f3ae: MOVS r0,#7
+    0x317f3b0: BL ->0x2e15374 file@?
+    0x317f3b4: MOVW r0,#0xfd2c
+    0x317f3b8: MOVT r0,#0x4499
+
+  pattern offs=(0, 2, 4, 6, 8, 10, 11, 13, 14) @0x33efd00 prolog@0x33efcc0 va=0x433e90b0
+    0x33efcc0: MOVS r1,#234
+    0x33efcc4: MOVS r3,#12
+    0x33efcca: BL ->0x2bcd7d6 file@?
+    0x33efcce: MOVW r1,#0x6780
+    0x33efcd4: MOVW r2,#0x3467
+    0x33efcd8: MOVT r1,#0x40ff
+    0x33efcdc: BL ->0x2d2fa9c file@?
+    0x33efce0: LDR.W r10,[r13,#68]
+    0x33efce8: MOVW r5,#0x6780
+    0x33efcec: MOVS r0,#4
+    0x33efcee: MOVS r1,#1
+    0x33efcf0: MOVW r3,#0x3471
+    0x33efcf4: MOVT r5,#0x40ff
+    0x33efcfa: BL ->0x2d3203c file@?
+    0x33efcfe: LDR.W r1,[r9,#4]
+    0x33efd02: MOVW r3,#0x94a8
+    0x33efd08: MOVW r7,#0x94b0
+    0x33efd0c: MOVT r3,#0x468e
+    0x33efd10: MOVT r7,#0x468e
+    0x33efd14: LDRH r2,[r1,#2]
+    0x33efd16: LDRH r0,[r1,#0]
+    0x33efd1a: STRH r2,[r3,#0]
+    0x33efd1c: LDRH r2,[r1,#4]
+    0x33efd1e: MOVW r3,#0x94ae
+    0x33efd22: MOVT r3,#0x468e
+    0x33efd26: STRH r2,[r3,#0]
+    0x33efd28: LDRH r2,[r1,#6]
+    0x33efd2a: MOVW r3,#0x94ac
+    0x33efd2e: MOVT r3,#0x468e
+    0x33efd32: STRH r2,[r3,#0]
+    0x33efd34: LDRH r2,[r1,#8]
+    0x33efd36: MOVW r3,#0x94b2
+    0x33efd3a: MOVT r3,#0x468e
+    0x33efd3e: STRH r2,[r3,#0]
+    0x33efd40: LDRB r2,[r1,#10]
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 12, 13) @0x2c0dba0 prolog@0x2c0da54 va=0x42c06e44
+    0x2c0da54: PUSH 0xb5f0
+    0x2c0da58: MOVW r0,#0xf6a0
+    0x2c0da5e: MOVT r0,#0x43d7
+    0x2c0da62: LDR r0,[r0,#0]
+    0x2c0da6a: BL ->0x212e234 file@?
+    0x2c0da70: MOVW r0,#0x24b8
+    0x2c0da74: MOVT r0,#0x443c
+    0x2c0da7a: BL ->0x210f9e6 file@?
+    0x2c0da7e: MOVW r1,#0x2485
+    0x2c0da8e: MOVS r0,#2
+    0x2c0da90: BL ->0x20e184e file@?
+    0x2c0da9a: MOVS r6,#15
+    0x2c0da9e: MOVT r6,#0x7fe0
+    0x2c0daa4: BL ->0x29975ee file@?
+    0x2c0daaa: MOVW r0,#0xf58e
+    0x2c0dab0: MOVT r0,#0x380
+    0x2c0dab4: BL ->0x2b166da file@?
+    0x2c0daba: MOVS r0,#1
+    0x2c0dabc: STRB r0,[r4,#0]
+    0x2c0dabe: BL ->0x2c6d45e file@?
+    0x2c0daca: MOVW r0,#0x262c
+    0x2c0dace: MOVT r0,#0x443c
+    0x2c0dad4: BL ->0x210f9e6 file@?
+    0x2c0dad8: MOVW r1,#0x2484
+    0x2c0dae6: MOVS r0,#1
+    0x2c0dae8: BL ->0x20e184e file@?
+    0x2c0daee: MOVW r0,#0xf0b9
+    0x2c0daf4: MOVT r0,#0x3c0
+    0x2c0daf8: BL ->0x2b16742 file@?
+    0x2c0dafe: LDRB r0,[r4,#0]
+    0x2c0db00: STRB r0,[r5,#0]
+    0x2c0db02: LDRB r0,[r4,#1]
+    0x2c0db04: STRB r0,[r5,#2]
+    0x2c0db08: MOVW r0,#0x2548
+    0x2c0db0c: MOVT r0,#0x443c
+
+  pattern offs=(0, 1, 3, 4, 5, 6, 9, 10) @0x2c24d80 prolog@0x2c24d3e va=0x42c1e12e
+    0x2c24d3e: PUSH 0xb5b0
+    0x2c24d44: MOVW r0,#0xf6a0
+    0x2c24d48: MOVW r2,#0xe64b
+    0x2c24d4e: MOVT r0,#0x43d7
+    0x2c24d52: MOVT r2,#0x4102
+    0x2c24d56: LDR r0,[r0,#0]
+    0x2c24d5a: LDR r0,[r4,#0]
+    0x2c24d5c: LDRB r3,[r1,#0]
+    0x2c24d5e: MOVW r1,#0xfdd1
+    0x2c24d62: MOVT r1,#0x40c9
+    0x2c24d66: LDR.W r12,[r0,#20]
+    0x2c24d6e: MOVS r0,#0
+    0x2c24d74: STR r0,[r4,#32]
+    0x2c24d7a: MOVS r0,#1
+    0x2c24d7c: STRB r0,[r4,#20]
+    0x2c24d7e: LDRB r1,[r5,#4]
+    0x2c24d80: LDRB r0,[r5,#0]
+    0x2c24d82: STRB r0,[r4,#12]
+    0x2c24d86: MOVS r0,#4
+    0x2c24d88: STRB r0,[r4,#20]
+    0x2c24d8a: LDRH.W r0,[r5,#1]
+    0x2c24d8e: STRH.W r0,[r4,#13]
+    0x2c24d92: LDRB r0,[r5,#3]
+    0x2c24d94: STRB r0,[r4,#15]
+    0x2c24d96: MOVW r0,#0x58d8
+    0x2c24d9a: MOVT r0,#0x4457
+    0x2c24da0: BL ->0x210f9e6 file@?
+    0x2c24da4: MOVW r1,#0x23ea
+    0x2c24da8: LDRB r2,[r4,#13]
+    0x2c24daa: LDRB r3,[r4,#14]
+    0x2c24db4: LDRB r0,[r4,#15]
+    0x2c24db8: MOVS r0,#3
+    0x2c24dba: BL ->0x20e184e file@?
+    0x2c24dbe: LDRB r0,[r5,#10]
+    0x2c24dc2: LDRB r0,[r5,#5]
+
+  pattern offs=(2, 4, 6, 8, 10, 12, 14, 16) @0x2c7e820 prolog@0x2c7e60a va=0x42c779fa
+    0x2c7e612: MOVW r0,#0xf6a0
+    0x2c7e616: MOVT r0,#0x43d7
+    0x2c7e61a: LDR r0,[r0,#0]
+    0x2c7e61e: MOVW r0,#0xe528
+    0x2c7e62e: MOVW r0,#0x1d56
+    0x2c7e634: MOVW r0,#0x30e4
+    0x2c7e63c: MOVW r0,#0x3108
+    0x2c7e644: MOVW r0,#0x3110
+    0x2c7e64c: MOVW r0,#0x3128
+    0x2c7e65a: BL ->0x33c5cd4 file@?
+    0x2c7e666: LDR r1,[r4,#48]
+    0x2c7e66a: MOVW r0,#0x65dc
+    0x2c7e66e: MOVT r0,#0x454f
+    0x2c7e674: LDR r0,[r4,#4]
+    0x2c7e676: LDRH r6,[r1,#36]
+    0x2c7e678: LDRH.W r14,[r1,#296]
+    0x2c7e680: LDRH.W r12,[r5,#0]
+    0x2c7e6a2: MOVS r0,#8
+    0x2c7e6a4: BL ->0x20e184e file@?
+    0x2c7e6a8: LDR r1,[r4,#4]
+    0x2c7e6aa: LDR r0,[r4,#48]
+    0x2c7e6ac: MOVS r6,#0
+    0x2c7e6ae: MOVS r7,#0
+    0x2c7e6e2: LDR r2,[r6,#0]
+    0x2c7e6e4: LDR.W r10,[r1,#0]
+    0x2c7e6fe: MOVS r7,#1
+    0x2c7e702: CMP r6,#3
+    0x2c7e708: MOVS r7,#1
+
+  pattern offs=(0, 1, 2, 3, 4, 5, 6, 7) @0x2d42ae0 prolog@0x2d428fc va=0x42d3bcec
+    0x2d42902: MOVW r1,#0xf6a0
+    0x2d42906: MOVT r1,#0x43d7
+    0x2d4290a: LDR r1,[r1,#0]
+    0x2d4290e: MOVW r1,#0xd46e
+    0x2d42912: MOVT r1,#0x488b
+    0x2d42916: LDRB r1,[r1,#0]
+    0x2d42918: CMP r1,#0
+    0x2d4291a: B.W
+    0x2d4291e: LDRB r6,[r0,#5]
+    0x2d42920: MOVW r3,#0x31e0
+    0x2d42924: MOVW r2,#0x31e9
+    0x2d42928: LDRB r1,[r0,#4]
+    0x2d4292a: MOVT r3,#0x43d8
+    0x2d4292e: MOVT r2,#0x43d8
+    0x2d42932: CMP r6,#0
+    0x2d42938: LDRB r3,[r2,#0]
+    0x2d42940: CMP r1,#255
+    0x2d42944: MOVW r0,#0x2762
+    0x2d4294c: MOVW r0,#0xb448
+    0x2d42950: MOVT r0,#0x4068
+    0x2d42956: MOVS r0,#1
+    0x2d42958: BL ->0x20e184e file@?
+    0x2d42960: MOVW r0,#0x2c78
+    0x2d42968: MOVW r1,#0x1e28
+    0x2d4296c: CMP r6,#0
+    0x2d4296e: MOVT r0,#0x49a1
+    0x2d42972: MOVT r1,#0x499e
+    0x2d42982: MOVW r0,#0x2762
+    0x2d42988: MOVW r0,#0xb464
+    0x2d4298c: MOVT r0,#0x4068
+    0x2d42992: MOVS r0,#2
+    0x2d42994: BL ->0x20e184e file@?
+    0x2d42998: BL ->0x2d4915c file@?
+    0x2d429aa: BL ->0x2d48492 file@?
+    0x2d429b0: MOVW r0,#0x719c
+
+  pattern offs=(1, 2, 3, 4, 5, 6, 7, 9) @0x2d6de80 prolog@0x2d6de40 va=0x42d67230
+    0x2d6de40: STRH r4,[r2,#8]
+    0x2d6de42: BL ->0x20ded94 file@?
+    0x2d6de48: LDR.W r12,[r13,#52]
+    0x2d6de4c: MOVW r14,#0x1dcb
+    0x2d6de50: MOVT r14,#0xdca0
+    0x2d6de56: LDRB r1,[r2,#14]
+    0x2d6de5a: STRB r1,[r0,#0]
+    0x2d6de5c: LDR r0,[r7,#12]
+    0x2d6de5e: MOVW r4,#0x14e2
+    0x2d6de62: LDR.W r10,[r13,#28]
+    0x2d6de6c: CMP r1,#0
+    0x2d6de72: MOVS r1,#1
+    0x2d6de74: STRB r1,[r0,#9]
+    0x2d6de76: MOVW r0,#0x1248
+    0x2d6de7a: STRB.W r3,[r12,#268]
+    0x2d6de80: MOVT r0,#0x4503
+    0x2d6de86: BL ->0x210f9e6 file@?
+    0x2d6de92: LDR r0,[r7,#12]
+    0x2d6de98: LDRB r3,[r1,#6]
+    0x2d6de9a: LDRB r2,[r1,#7]
+    0x2d6de9c: LDRB r5,[r1,#4]
+    0x2d6de9e: LDRB r6,[r1,#3]
+    0x2d6dea0: LDRB r7,[r1,#2]
+    0x2d6dea8: LDRB r3,[r1,#5]
+    0x2d6deae: LDRB r3,[r1,#1]
+    0x2d6dec0: LDRB r3,[r1,#9]
+    0x2d6dec6: MOVS r0,#2
+    0x2d6dec8: BL ->0x20e184e file@?
+    0x2d6decc: MOVW r0,#0x1294
+    0x2d6ded0: MOVT r0,#0x4503
+    0x2d6ded6: BL ->0x210f9e6 file@?
+    0x2d6deda: MOVW r1,#0x25c2
+    0x2d6deea: MOVS r0,#1
+    0x2d6deec: BL ->0x20e184e file@?
+    0x2d6def0: LDRB.W r0,[r8,#0]
+
+  pattern offs=(1, 2, 3, 4, 5, 6, 7, 8) @0x2dad960 prolog@0x2dad8e6 va=0x42da6cd6
+    0x2dad8ee: MOVW r0,#0xf6a0
+    0x2dad8f6: MOVT r0,#0x43d7
+    0x2dad8fa: LDR r0,[r0,#0]
+    0x2dad8fe: MOVW r0,#0x1338
+    0x2dad902: MOVT r0,#0x4504
+    0x2dad908: BL ->0x210f9e6 file@?
+    0x2dad90c: MOVW r8,#0x25c1
+    0x2dad91a: MOVS r0,#1
+    0x2dad91c: BL ->0x20e184e file@?
+    0x2dad920: LDR.W r0,[r11,#68]
+    0x2dad924: MOVS r1,#18
+    0x2dad926: MOVS r2,#255
+    0x2dad930: MOVW r0,#0x13ac
+    0x2dad934: MOVT r0,#0x4504
+    0x2dad93a: BL ->0x210f9e6 file@?
+    0x2dad946: MOVS r0,#0
+    0x2dad948: BL ->0x20e184e file@?
+    0x2dad94c: MOVW r0,#0x1424
+    0x2dad950: MOVT r0,#0x4504
+    0x2dad956: BL ->0x210f9e6 file@?
+    0x2dad95e: LDRB r2,[r7,#0]
+    0x2dad960: LDRB r3,[r7,#1]
+    0x2dad962: LDRB r1,[r7,#3]
+    0x2dad964: LDRB r4,[r7,#4]
+    0x2dad966: LDRB r5,[r7,#5]
+    0x2dad968: LDRB.W r12,[r7,#6]
+    0x2dad96e: LDRB r0,[r7,#2]
+    0x2dad976: MOVS r0,#7
+    0x2dad978: BL ->0x20e184e file@?
+    0x2dad97c: MOVW r0,#0x148c
+    0x2dad980: MOVT r0,#0x4504
+    0x2dad986: BL ->0x210f9e6 file@?
+    0x2dad98a: LDRB r2,[r7,#7]
+    0x2dad98c: LDRB r3,[r7,#8]
+    0x2dad996: MOVS r0,#2
+
+=== I) Code near dispatcher.c / utils.c / sit_main.c path strings ===
+  oem_ipc_message_dispatcher.c @0x106e8f2 va=0x41067ce2 island_lits=0
+  oem_ipc_message_utils.c @0x106e947 va=0x41067d37 island_lits=0
+  oem_sit_main.c @0x106f28e va=0x4106867e island_lits=0
+
+=== J) Fixed size #2 / #12 / #14 immediates near catalog consumers ===
+size-imm near consumers: 9
+  pro@0x32e41b4 0x32e4248: MOVS r0,#2
+  pro@0x32e41b4 0x32e4312: MOVS r0,#4
+  pro@0x32e41b4 0x32e4314: MOVS r1,#8
+  pro@0x331a11c 0x331a19a: MOVS r4,#12
+  pro@0x331aef4 0x331af72: MOVS r4,#12
+  pro@0x331aef4 0x331b00c: MOVS r4,#12
+  pro@0x3388318 0x3388398: MOVS r1,#8
+  pro@0x3388318 0x33883aa: MOVS r0,#4
+  pro@0x3388318 0x33883f0: MOVS r0,#2
+
+=== K) VERDICT (evidence-only) ===
+SIM_INIT_REQ catalog: body_hint=2 meta=0x10104 rsp=0x0 +18=0x4
+catalog consumers found: 4
+lookup stride candidates: 49
+msgid→fn table candidates: 0
+sequential hdr patterns: 354
+FRAME_RECOVERED=NO (unless section G/H shows proven wire map — review above)
+Do not invent bytes. No soft SIM_INIT without proven header+body.

@@ -604,6 +604,12 @@ recv to `oem_sit_main.c`; no code xref to those strings (DBT-indexed).
 **no INIT send**. Next: stock capture or non-string dispatcher RE. BLOCKER +
 RUNTIME §§ preprocess.
 
+**Non-string dispatcher RE (2026-10-01):** Live ONLINE/PIN/oem_ipc0 OK; no
+bearer. Catalog `+0x18` = **class tag** (INIT-family=4 across SIM/CC/SMS/SS),
+not token len. Catalog MOVW sites = object helpers only; `[OEM][PB]` nanopb
+has **0** SIM overlap; app hdr + 2B body still missing; **no INIT send**.
+Next: stock `oem_ipc*` catalog capture. BLOCKER + RUNTIME §§ nonstr.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.
