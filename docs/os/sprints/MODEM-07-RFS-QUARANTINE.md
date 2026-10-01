@@ -7,8 +7,8 @@ The Linux x86_64 host fixture now composes the protocol, transport and
 private-storage models end to end. It proves, on synthetic bytes only, that
 the final success response is sent after durable quarantine completion and
 is withheld on a final-fsync failure. The immutable synthetic baseline is
-checked after both runs. This is not an ARM build, CP transaction or approval
-to use original EFS/NV paths on the phone.
+checked after both runs. This is not an ARM build or CP transaction. Original
+EFS may be read only for provenance checks; it must never be an RFS destination.
 
 The device's existing private verifier checks each userdata NV copy against
 its **adjacent** factory-format MD5 sidecar. That verifies local consistency,
@@ -16,8 +16,29 @@ not independent provenance. A new host-only verified-fd fixture additionally
 requires a read-only regular descriptor, single link, owner-only mode, exact
 length and a SHA-256 pin supplied independently of the source file. Its test
 checks refusal on changed digest, mode, link count, length and writable fd.
-It cannot attest a phone path or supply a trusted pin; those remain blockers
-before any phone-side RFS reply.
+It cannot attest a phone path or supply a trusted pin by itself. The manual
+read-only EFS comparison below establishes provenance for the current copy,
+but a repeatable phone-side gate remains necessary before any RFS reply.
+
+## Read-only original-EFS provenance check (2026-10-01)
+
+With the user's explicit read-only permission, the running phone's sysfs
+reported `sda5` as `PARTNAME=efs` (major:minor `8:5`) and `sda6` as
+`PARTNAME=efs_backup`. The first four bytes at offset 1024 of `sda5` were
+the F2FS magic `10 20 f5 f2`. Only `sda5` was opened. A mode-0400 block
+node was created and the filesystem was mounted with
+`ro,norecovery,nodiscard,nosuid,nodev,noexec,noatime`; `/proc/mounts`
+confirmed `ro`, `norecovery` and `nodiscard` before any file access.
+
+`cmp -s` found byte-for-byte equality between original EFS and the existing
+userdata copies for `nv_protected.bin`, `nv_normal.bin` and both adjacent
+`.md5` sidecars. No NV bytes, identifiers or digests were emitted. The
+filesystem was unmounted and the temporary block node and mountpoint were
+removed. This is evidence for these four files **at this instant**, not a
+permanent integrity pin, a validation of other EFS files, an RFS reply, or
+proof of network registration. Repeat the same read-only provenance check
+or establish a separately protected digest immediately before any active
+RFS experiment.
 
 ## Why this exists
 
@@ -40,8 +61,10 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
 
 ## Non-negotiable boundaries
 
-- Never mount original EFS for writing, open its NV paths, run factory
-  `rfsd`, flash radio partitions, or alter identity/calibration data.
+- Never mount original EFS for writing, open its NV paths for writing, run
+  factory `rfsd`, flash radio partitions, or alter identity/calibration data.
+  Read-only, no-recovery access is permitted solely to verify provenance;
+  never point an RFS responder at original EFS.
 - The existing verified 524288-byte userdata NV copy is an immutable input.
   Re-run the existing provenance/hash/MD5 verifier before creating a
   candidate. Never modify or rename that boot copy in this experiment.
@@ -118,10 +141,10 @@ transport adapters still need separate design and review.
 2. In that variant, verify the immutable NV-copy provenance and digest again
    before replying to command 7. Create the unique candidate and durable
    `NO_PROMOTION` marker first. Establish descriptor identity, bounded size,
-   full re-read and directory durability without opening original EFS.
-   Do not treat the adjacent `.md5` as an independent pin. A trusted expected
-   SHA-256 must be established separately; the host-only fd model is not an
-   on-device provenance adapter.
+   full re-read and directory durability. Recheck the copy against original
+   EFS through a read-only, no-recovery mount or a separately protected
+   digest derived from it. Do not treat the adjacent `.md5` as an independent
+   pin. The host-only fd model is not an on-device provenance adapter.
 3. Make RFS packet parsing stop at each complete response boundary. Allow
    at most one outstanding CP request/grant, with a bounded deadline and a
    fail-closed transition. The current passive owner's callback cannot

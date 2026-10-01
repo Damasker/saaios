@@ -847,16 +847,20 @@ factory final status. The [Linux private-storage host fixture](../../../os/targe
 also tests copy isolation, fsync/reread and withholding the final ACK on
 faults. A separate [host-only transport fixture](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-TRANSPORT-HOST.md)
 tests split/coalesced packets, one outstanding grant, ambiguous writes and
-deadlines. Synthetic fixtures and Linux ASan/UBSan pass; transport and storage
-are not yet integrated, and there is no phone-side candidate store or service.
-The live no-gap owner is passive and cannot claim MODEM-07 completion.
+deadlines. A synthetic end-to-end fixture now integrates protocol, transport
+and storage; a separate host-only verified-FD fixture tests source integrity.
+Linux ASan/UBSan passes. A manual read-only, no-recovery EFS check on the
+phone found both NV files and their sidecars byte-identical to the userdata
+copies. This is a point-in-time provenance check, not a reusable device gate.
+There is no phone-side candidate store or RFS service. The live no-gap owner
+is passive and cannot claim MODEM-07 completion.
 
 **Change:** specify what requests may be served from verified copies, what is
 read-only, what is denied, and how writes are rejected or quarantined. Original
 EFS is never exposed to a new RFS server.
 
-**Test:** host fake RFS client fixtures; refusal cases; no original EFS path
-in tests.
+**Test:** host fake RFS client fixtures and refusal cases. Read-only original
+EFS access is limited to provenance checks; synthetic tests never use it.
 
 **Acceptance:** design review and fixtures before code is wired into any boot.
 
