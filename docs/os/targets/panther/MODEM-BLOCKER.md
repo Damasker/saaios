@@ -1200,6 +1200,28 @@ capture + catalog stride-28):
 **SENDABLE?** **No** — app header bytes + 2B body CONTENTS still missing. **Not
 sent.** Script: `diagnostics/tmp-public-fmt-2f50-map.py`.
 
+### 2026-10-01 — deep const-build scan still no encoder
+
+Live: ONLINE; soft-lock **PIN**/pin1=2; oem_ipc0 RDWR; no cbd/rild; **no bearer**.
+
+Broader than prior bare-`MOVZ #0x2f50` hunts across all factory-td1a **carved**
+ELFs/SOs + full `vendor.img` + research `libsitril.so`:
+
+| Pattern | Hit that yields catalog encode? |
+| --- | --- |
+| MOVZ+MOVK / MOVN / ORR imm of `0x2f50` | **no** |
+| rodata LE `50 2f` near oem/SIM/IPC | **no** encoder |
+| oem_ipc open/write islands ∩ msgid `0x2f50` | **no** (SitOem/log only) |
+| table-driven msgid → write(`/dev/oem_ipc*`) | **no** |
+
+**Encoder found?** **No.** **Soft send?** **No** (no invent). **Bearer?** **No.**
+
+**Policy need:** stock `oem_ipc*` catalog capture or external evidenced frame
+(`OEM-IPC-CAPTURE.md`) before any inject. Injector remains armed.
+
+Scripts: `diagnostics/tmp-vendor-deep-2f50-constbuild.py`,
+`tmp-vendor-deep-2f50-constbuild-vendor.py`.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

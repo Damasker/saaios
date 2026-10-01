@@ -5511,3 +5511,60 @@ SSH pubkey denied; brief via COM13.
 Stock `oem_ipc*` catalog capture (policy-gated rild one-shot per
 `OEM-IPC-CAPTURE.md`) or external dump of catalog app header + 2B body ?
 `oem-ipc-inject` + `post-init-chase`. Same bans.
+
+## 2026-10-01: deep vendor const-build for `0x2f50` (MOVZ+MOVK/ORR/rodata)
+
+Scripts: `tmp-vendor-deep-2f50-constbuild.py`,
+`tmp-vendor-deep-2f50-constbuild-vendor.py` (+ `.out`). Prior hunts used bare
+`MOVZ #0x2f50` only.
+
+### Live brief (COM13 / USB NCM `172.31.7.1`)
+
+modem_state=**ONLINE**; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild.
+`sit-sim-status`: PRESENT apps=1 **app=PIN** pin1=2 remain=3.
+rmnet* rx=0; wlan0 + usb0 IPv4 only -- **no rmnet bearer**. Injector armed
+(`oem-ipc-inject` / `post-init-chase`); EXYNOS wrap known; public FMT incomplete.
+
+### Carved factory-td1a-vendor (11 ELFs/SOs)
+
+| Pattern | Result |
+| --- | --- |
+| `MOVZ` W/X `#0x2f50` | **0** in all carves (carved `libsitril` is **truncated** ~40KB; full research `libsitril.so` has **1** MOVZ registry site) |
+| `MOVZ`+`MOVK` exact build `0x2f50` | **0** |
+| `MOVN` `#~0x2f50` (`#0xd0af`) | **0** in carves |
+| `ORR` imm (=`0x2f50` / lo16) near IPC/SIM | **0** |
+| LE/BE `50 2f` / `2f 50` rodata near oem/SIM/IPC strings | **0** useful (no encoder binding) |
+| `/dev/oem_ipc*` openers | SitOem `?25e7b000.so` (`oem_ipc0`) + log helper `?cf64000.so` (`oem_ipc1`) -- **no** catalog msgid / **no** `SIM_INIT` |
+| False-friend "msgid table" | sitril-builder `@0xd96c0` u32s like `0x12f50` (relocs/ids), **not** catalog `0x2f50` |
+
+### Full vendor.img + research libsitril
+
+| Check | Result |
+| --- | --- |
+| vendor `MOVZ_W #0x2f50` | **29** sites; **all** islands `oem_ipc=False` |
+| `MOVZ`+`MOVK` exact `0x2f50` | **0** (325 pointer-ish MOVZ+MOVK on lo16 only) |
+| `ORR` near oem_ipc / `SIM_INIT_REQ` / `oem_ipc_message` seeds | **0** |
+| Cross: oem_ipc ELF islands ? MOVZ `#0x2f50` | **0** (`@0xcf64000`, `@0x25e7b000`) |
+| aligned u32 literal `0x00002f50` in oem islands / libsitril | **0** |
+| libsitril (2.3MB) | 1× `MOVZ #0x2f50` `@0x11f300` table-init; `umts_ipc` only; **no** builder |
+
+### Frame / live try
+
+**Constant-build encoder for catalog `0x2f50`?** **no**.
+**App header + 2B body recovered?** **no**. **SIM_INIT sent?** **no** (no invent).
+**Bearer verified?** **no**.
+
+### Miss patterns (document)
+
+1. Bare-MOVZ-only hunts were incomplete in method -- this pass closed MOVZ+MOVK /
+   MOVN / ORR / rodata / oem?msgid cross; still empty for a sendable encoder.
+2. Carved `libsitril` / small ELFs can omit the registry MOVZ; full SO still has
+   **no** oem_ipc encode path.
+3. Arithmetic u16/u32 sequences containing `?2f50` are reloc/false friends.
+
+### Policy need (restated)
+
+Under current bans (no cbd/rild, no invent frame bytes), soft catalog
+`SIM_INIT_REQ` remains blocked. Need **policy-gated** stock `oem_ipc*` capture
+(`OEM-IPC-CAPTURE.md`) or an external evidenced app header + 2B body, then
+one-shot `oem-ipc-inject` + `post-init-chase`. Same bans otherwise.

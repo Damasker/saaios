@@ -1,0 +1,297 @@
+Deep 0x2f50 constant-build scan (MOVZ/MOVK/MOVN/ORR + rodata + oem_ipc tables)
+carve_dir=/mnt/c/Users/Admin/Projects/saaios-som/os/targets/panther/diagnostics/fw/cdma-hunt/factory-td1a-vendor
+files=11
+
+========================================================================
+FILE carved-cbd-1827b000.elf size=2026772
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 3 ['0xac4de', '0xad711', '0xb9228']
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 1 ['0xb3fb6']
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 2 ['0x4d913', '0x78e28']
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 1
+  table@0x1b16d8 ids=['0x2f2e', '0x2f2f', '0x2f33', '0x2f50']
+VERDICT MISS
+
+========================================================================
+FILE carved-cbd-a45e000.elf size=163064
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-cbd-a4aa000.elf size=133392
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-cbd-cf4e000.elf size=89256
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-cbd-cf64000.elf size=102792
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 1 ['0x722c']
+  b'/dev/oem_ipc': 1 ['0x722c']
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': ['0x722c'], '/dev/oem_ipc': ['0x722c']}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-cbd-cf88000.elf size=105424
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-libsitril-0xd135000.so size=40512
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-oemipc-25e7b000.so size=133560
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 1 ['0xcfb6']
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 1 ['0xcfb6']
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 40 ['0x426d', '0x428f', '0x42c9', '0x4317']
+oem_ipc paths: {'/dev/oem_ipc0': ['0xcfb6'], '/dev/oem_ipc1': [], '/dev/oem_ipc': ['0xcfb6']}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-oemipc-cf64000.so size=102792
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 1 ['0x722c']
+  b'/dev/oem_ipc': 1 ['0x722c']
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': ['0x722c'], '/dev/oem_ipc': ['0x722c']}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-rild-hint-0xa4cb000.so size=47104
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 0 []
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 0 []
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 0 []
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 0
+VERDICT MISS
+
+========================================================================
+FILE carved-sitril-builder-0x25f54000.so size=2923696
+MOVZ_W #0x2f50 count=0 offs=[]
+MOVZ_X #0x2f50 count=0 offs=[]
+MOVZ+MOVK pairs touching #0x2f50 lo: exact_build=0 other=0
+MOVN #~0x2f50 (=#0xd0af) count=0
+ORR_imm (=0x2f50 or lo16) count=0
+rodata LE/BE 0x2f50 near keywords count=0
+strings:
+  b'/dev/oem_ipc0': 0 []
+  b'/dev/oem_ipc1': 0 []
+  b'/dev/oem_ipc': 0 []
+  b'/dev/umts_ipc0': 3 ['0xc2a5a', '0xc3cd3', '0xcfcaa']
+  b'SIM_INIT_REQ': 0 []
+  b'SIM_INIT': 1 ['0xca5a6']
+  b'IpcTxSimInit': 0 []
+  b'BuildOemSimRequest': 2 ['0x5c8bb', '0x87e89']
+  b'oem_ipc_message': 0 []
+  b'SitOem': 0 []
+oem_ipc paths: {'/dev/oem_ipc0': [], '/dev/oem_ipc1': [], '/dev/oem_ipc': []}
+msgid tables (>=3 of 0x2fxx near LE 50 2f): 1
+  table@0xd96c0 ids=['0x2f08', '0x2f20', '0x2f38', '0x2f50', '0x2f68', '0x2f80', '0x2f98', '0x2fb0', '0x2fd8', '0x2ff8']
+VERDICT MISS
+
+========================================================================
+SUMMARY
+  FILE carved-cbd-1827b000.elf size=2026772
+  VERDICT MISS
+  FILE carved-cbd-a45e000.elf size=163064
+  VERDICT MISS
+  FILE carved-cbd-a4aa000.elf size=133392
+  VERDICT MISS
+  FILE carved-cbd-cf4e000.elf size=89256
+  VERDICT MISS
+  FILE carved-cbd-cf64000.elf size=102792
+  VERDICT MISS
+  FILE carved-cbd-cf88000.elf size=105424
+  VERDICT MISS
+  FILE carved-libsitril-0xd135000.so size=40512
+  VERDICT MISS
+  FILE carved-oemipc-25e7b000.so size=133560
+  VERDICT MISS
+  FILE carved-oemipc-cf64000.so size=102792
+  VERDICT MISS
+  FILE carved-rild-hint-0xa4cb000.so size=47104
+  VERDICT MISS
+  FILE carved-sitril-builder-0x25f54000.so size=2923696
+  VERDICT MISS
+
+========================================================================
+SUMMARY
+FILE carved-cbd-1827b000.elf size=2026772 -> VERDICT MISS
+FILE carved-cbd-a45e000.elf size=163064 -> VERDICT MISS
+FILE carved-cbd-a4aa000.elf size=133392 -> VERDICT MISS
+FILE carved-cbd-cf4e000.elf size=89256 -> VERDICT MISS
+FILE carved-cbd-cf64000.elf size=102792 -> VERDICT MISS
+FILE carved-cbd-cf88000.elf size=105424 -> VERDICT MISS
+FILE carved-libsitril-0xd135000.so size=40512 -> VERDICT MISS
+FILE carved-oemipc-25e7b000.so size=133560 -> VERDICT MISS
+FILE carved-oemipc-cf64000.so size=102792 -> VERDICT MISS
+FILE carved-rild-hint-0xa4cb000.so size=47104 -> VERDICT MISS
+FILE carved-sitril-builder-0x25f54000.so size=2923696 -> VERDICT MISS

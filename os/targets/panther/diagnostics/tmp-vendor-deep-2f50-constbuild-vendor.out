@@ -1,0 +1,50 @@
+Deep vendor/libsitril 0x2f50 const-build extension
+
+=== /mnt/c/Users/Admin/Projects/saaios-modem-research/os/targets/panther/diagnostics/libsitril.so size=2356344 ===
+MOVZ_W=1 MOVZ_X=0 MOVN_~=0
+MOVZ+MOVK exact0x2f50=0 pointerish=0
+ORR_imm hits=0
+MOVZ site islands:
+  movz@0x11f300 rd=0 base=0 sz~2356344 oem=False umts=True SIM_INIT_REQ=False SIM_INIT=True SitOem=False BuildOemSim=True
+
+loading vendor /mnt/c/Users/Admin/Projects/saaios-som/os/targets/panther/diagnostics/fw/cdma-hunt/factory-td1a-vendor/vendor.img ...
+
+=== /mnt/c/Users/Admin/Projects/saaios-som/os/targets/panther/diagnostics/fw/cdma-hunt/factory-td1a-vendor/vendor.img size=664985600 ===
+MOVZ_W=29 MOVZ_X=0 MOVN_~=1
+MOVZ+MOVK exact0x2f50=0 pointerish=325
+ORR_imm hits=0
+MOVZ site islands:
+  movz@0x214ccb8 rd=9 base=0x1d8b000 sz~9990144 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x214d5fc rd=9 base=0x1d8b000 sz~9990144 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x214d684 rd=9 base=0x1d8b000 sz~9990144 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x2c068cc rd=9 base=0x2712000 sz~7412048 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x2c0720c rd=9 base=0x2712000 sz~7412048 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x2c07294 rd=9 base=0x2712000 sz~7412048 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x40d3d98 rd=9 base=None no_elf
+  movz@0x40d46d8 rd=9 base=None no_elf
+  movz@0x40d4760 rd=9 base=None no_elf
+  movz@0x6280018 rd=9 base=0x5f5f000 sz~5718016 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x628095c rd=9 base=0x5f5f000 sz~5718016 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x62809e4 rd=9 base=0x5f5f000 sz~5718016 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x6aa6340 rd=9 base=0x6716000 sz~5177344 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x6aa6c80 rd=9 base=0x6716000 sz~5177344 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x6aa6d08 rd=9 base=0x6716000 sz~5177344 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x6f2fd38 rd=9 base=0x6c06000 sz~6914048 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x6f30678 rd=9 base=0x6c06000 sz~6914048 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x6f30700 rd=9 base=0x6c06000 sz~6914048 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x7a8cf38 rd=9 base=0x7520000 sz~13258752 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x7a8d878 rd=9 base=0x7520000 sz~13258752 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x7a8d900 rd=9 base=0x7520000 sz~13258752 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x851cc98 rd=9 base=0x81c5000 sz~4321280 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x851d5d8 rd=9 base=0x81c5000 sz~4321280 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x851d660 rd=9 base=0x81c5000 sz~4321280 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x1b32eb1c rd=3 base=0x1ab48000 sz~4893336 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x2263f62c rd=9 base=0x2219e000 sz~6025216 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x2264443c rd=9 base=0x2219e000 sz~6025216 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x226444c4 rd=9 base=0x2219e000 sz~6025216 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movz@0x25d90b18 rd=9 base=0x25bca000 sz~2363392 oem=False umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+  movn@0xe4a2e28 rd=8 base=None no_elf
+
+=== CROSS: oem_ipc string islands vs 0x2f50 MOVZ ===
+oem_elf@0xcf64000 end~0xcf7e000 MOVZ_2f50_in_island=0 offs=[] flags=sz~106496 oem=True umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=False BuildOemSim=False
+oem_elf@0x25e7b000 end~0x25e9c000 MOVZ_2f50_in_island=0 offs=[] flags=sz~135168 oem=True umts=False SIM_INIT_REQ=False SIM_INIT=False SitOem=True BuildOemSim=False

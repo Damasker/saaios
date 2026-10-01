@@ -120,3 +120,11 @@ twin `SIM_VERIFYPIN_REQ` (`0x2f52`, `body_hint=10`):
 **Do not** soft-build a classic-FMT or SIT-shaped `0x2f50` from catalog
 meta alone. Remaining blockers: every app-header byte + evidenced 2B body.
 Helper notes: `tmp-public-fmt-2f50-map.py`.
+
+## Deep host const-build miss (2026-10-01)
+
+Factory carves + full `vendor.img` scanned for MOVZ+MOVK / MOVN / ORR /
+rodata `50 2f` and oem_ipc∩msgid tables (`tmp-vendor-deep-2f50-constbuild*.py`).
+**No** catalog encoder recovered. This does **not** authorize inventing a
+frame; capture (or external dump) remains the prerequisite for
+`oem-ipc-inject`.
