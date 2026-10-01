@@ -213,12 +213,40 @@ observed. No candidate or sidecar was promoted; the third candidate and
 
 After another controlled AP reboot, the original EFS passed the four-file
 read-only comparison and was unmounted. The passive owner restored CP
-`ONLINE`; its settled SIM remained READY and registration remained 0. Next,
-review and host-test a narrow parser rule accepting only the existing exact
-338/330 final frame or the observed 340/332 frame with two zero padding
-bytes. All other fields, no-trailing rule, private candidate durability and
-final ACK gate stay unchanged. Run this only as another guarded cold opt-in,
-never as an automatic boot service.
+`ONLINE`; its settled SIM remained READY and registration remained 0. The
+narrow parser rule tested in the next run accepts the existing exact 338/330
+final frame or the observed 340/332 frame with two zero padding bytes. All
+other fields, no-trailing rule, private candidate durability and final ACK
+gate remain unchanged. It is manual opt-in, never an automatic boot service.
+
+## Fourth full-transfer opt-in: complete quarantine (2026-10-01)
+
+The exact zero-padding rule passed full 95-grant host transcripts, injected
+durability failures and malformed-frame refusals under ASan/UBSan, a static
+ARM64 build and independent source review. The installed owner hash and
+on-device self-test matched before a fresh cold run. The wrapper again
+verified original EFS read-only, unmounted it and handed over one IPC/RFS
+owner from before CP FIN. CP reached `ONLINE`.
+
+The owner logged `complete_quarantined_ack`: 95 grant attempts, 95 stored
+chunks, 189446 stored bytes, and exactly one final ACK attempted and sent
+after candidate fsync/readback, full integrity validation and sidecar
+durability checks. The private 524288-byte candidate, 32-byte binary SHA
+sidecar and `NO_PROMOTION` marker remain together in a mode-0700 quarantine
+directory. Neither candidate nor original EFS was used as a boot source or
+promoted. This is a successful **manual RFS exchange**, not a production
+modem service or a post-OFFLINE owner exit-code result.
+
+At READY+60 seconds the same owner observed SIM card 1/app 1/READY with
+PIN1 disabled, radio on, but voice and data registration still 0. `rmnet0`
+was down with RX/TX 0, and remained so after an additional read-only wait.
+The fresh passive control had the same unregistered state. Therefore the
+completed RFS exchange did **not** establish cellular service; further
+radio-available/camp prerequisites must be investigated separately, without
+guessing SET commands. After a controlled AP reboot, original EFS again
+passed the four-file read-only comparison and was unmounted. The passive
+owner was restored and CP returned `ONLINE`. All experiment logs and
+quarantine candidates were retained.
 
 ## Why this exists
 
@@ -302,17 +330,18 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
    requires observed registration and a real bearer.
 
 The final CP-visible status was verified in factory code. The isolated
-one-grant adapter has now observed the first real CP data frame and written
-it only to quarantine. The separate full owner now models the 95-chunk
-sequence on host, but the remaining factory local-file/backup/checksum
-transitions and the phone-side behavior still require review. The synthetic
+one-grant adapter observed the first real CP data frame and wrote it only to
+quarantine. The separate full owner has now completed all 95 chunks and the
+final status in a guarded phone run, still without touching original EFS or
+promoting its candidate. Factory local-file/backup/checksum transitions are
+not copied: quarantine durability replaces them. The synthetic
 [protocol](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md),
 [private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
 and [transport](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-TRANSPORT-HOST.md)
-fixtures remain independent models for the unrun phone exchange. Their
-host-only integration test is not a phone broker.
+fixtures remain independent host models; their integration test is not the
+phone broker.
 
-## Implementation sequence before a full phone-side exchange
+## Implementation sequence and result
 
 1. Keep the present passive owner as the default. Build a separately named,
    manually launched ARM diagnostic variant that uses the same pre-FIN
@@ -347,13 +376,13 @@ host-only integration test is not a phone broker.
    boot copy remained byte-identical to original EFS, and the incomplete
    candidate remains quarantined evidence, never a boot source.
 5. The separate full owner passed host, sanitizer, ARM build, installed-hash
-   and on-device self-test gates. The first guarded phone run stored 94 of 95
-   chunks, then failed closed before final ACK; the passive owner was
-   restored and original EFS passed a postflight read-only check. A second
-   scalar-only run identified a final-frame length mismatch, still without
-   ACK. Establish the factory-valid short-chunk framing before any parser
-   change or further cold opt-in run. A completed RFS transfer alone would not
-   establish SIM READY, network registration or a data bearer.
+   and on-device self-test gates. Three guarded refusals exposed the exact
+   final-frame padding without ACK; after a narrow zero-padding fix, a fourth
+   cold run completed 95/95 chunks and sent the final ACK only after durable
+   candidate/sidecar verification. The passive owner and original-EFS
+   read-only postflight were restored after each run. SIM READY returned,
+   but registration and bearer remained absent. This manual exchange is not
+   an autostart modem service or evidence of cellular connectivity.
 
 ## Failure and verification gates
 
