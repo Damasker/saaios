@@ -11,6 +11,9 @@
  * modem-stack status GET run once.
  * A separate, explicit guarded-boot opt-in may send one active RF network
  * scan after fresh same-boot status gates, with one bounded cancel on timeout.
+ * A mutually exclusive SGC opt-in sends one factory-derived carrier SET
+ * after the settled baseline, then five status GETs 10s after its ACK.
+ * Uncertain SGC outcomes retain both endpoints without further IPC writes.
  * The default remains passive. It never sends RFS replies or accesses NV/EFS.
  * It consumes unknown RFS requests without replying, so CP may still wait or
  * fail: this is observability only, not a substitute for the factory rfsd.
@@ -26,6 +29,10 @@
 #include <string.h>
 #include "sit-network-layout.h"
 #include "sit-sim-layout.h"
+
+#if defined(SAAIOS_SCAN_ONCE) && defined(SAAIOS_SGC_ONCE)
+#error "SGC and active scan require separate diagnostic builds"
+#endif
 
 #ifndef _WIN32
 #include <errno.h>
@@ -732,6 +739,114 @@ static int make_get_request(uint8_t request[12], unsigned id,
     put32(request + 6, token);
     return 0;
 }
+
+#ifdef SAAIOS_SGC_ONCE
+enum { SGC_COMMAND = 0x0404, SGC_REPLY_MS = 2000,
+       SGC_POST_DELAY_MS = 10000, SGC_POST_COUNT = 5 };
+enum sgc_phase { SGC_IDLE, SGC_WAIT_ACK, SGC_POST_DELAY, SGC_POST_WAIT,
+                 SGC_DONE, SGC_HOLD };
+struct live_sgc {
+    enum sgc_phase phase;
+    uint32_t token;
+    unsigned attempted;
+    unsigned error;
+    unsigned post_next;
+    int64_t owner_start_ms;
+    int64_t gate_started_ms;
+    int64_t deadline_ms;
+    int64_t due_ms;
+    const char *hold_reason;
+    int hold_reported;
+};
+
+/* Exact TD1A europen target=400 MappingSGC: 0x0101, reserved=0, reserved=0.
+ * This late, isolated SET tests one missing factory prerequisite. It does
+ * not replay OnRadioAvailable or establish that this is the required timing.
+ * No CLI-supplied values, NV access, scan, retry, or cancellation exists. */
+static void make_sgc_request(uint8_t request[24], uint32_t token) {
+    memset(request, 0, 24);
+    request[2] = 0x04;
+    request[3] = 0x04;
+    request[4] = 24;
+    put32(request + 6, token);
+    put32(request + 12, 0x0101);
+}
+
+static void sgc_hold(struct live_sgc *sgc, const char *reason) {
+    if (sgc->phase == SGC_HOLD) return;
+    sgc->phase = SGC_HOLD;
+    sgc->hold_reason = reason;
+}
+
+static void sgc_tick(struct live_sgc *sgc, int64_t now_ms) {
+    if ((sgc->phase == SGC_WAIT_ACK || sgc->phase == SGC_POST_WAIT) &&
+        now_ms >= sgc->deadline_ms)
+        sgc_hold(sgc, sgc->phase == SGC_WAIT_ACK ?
+                 "ack-timeout" : "post-query-timeout");
+}
+
+static int sgc_begin(struct live_sgc *sgc, uint32_t token, int64_t now_ms) {
+    if (sgc->phase != SGC_IDLE || sgc->attempted || !token) return 0;
+    sgc->attempted = 1; /* Consumed before write, including short/EINTR writes. */
+    sgc->token = token;
+    sgc->phase = SGC_WAIT_ACK;
+    sgc->deadline_ms = now_ms + SGC_REPLY_MS;
+    return 1;
+}
+
+static unsigned sgc_post_id(unsigned index) {
+    return index < SNAPSHOT_GET_COUNT ? snapshot_gets[index].id :
+           index == SNAPSHOT_GET_COUNT ? MODEM_STACK_STATUS_GET : 0;
+}
+
+/* Return one only for the current addressed reply. Full 16-bit error values
+ * are retained; factory's generic error adapter does not require length=12.
+ * Trailing bytes are bounded by framing and never inspected or logged. */
+static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
+                      int64_t now_ms) {
+    sgc_tick(sgc, now_ms); /* Deadline wins over a late success. */
+    if (sgc->phase != SGC_WAIT_ACK && sgc->phase != SGC_POST_WAIT) return 0;
+    unsigned id = sgc->phase == SGC_WAIT_ACK ? SGC_COMMAND :
+                  sgc_post_id(sgc->post_next);
+    if (n < 10 || le16(p + 2) != id || le32(p + 6) != sgc->token)
+        return 0;
+    if (n < 12 || n > UINT16_MAX || p[0] != 1 || le16(p + 4) != n) {
+        sgc_hold(sgc, "malformed-response");
+        return 0;
+    }
+    sgc->error = le16(p + 10);
+    if (sgc->phase == SGC_WAIT_ACK) {
+        sgc->phase = SGC_POST_DELAY;
+        sgc->due_ms = now_ms + SGC_POST_DELAY_MS;
+    } else {
+        if (!sgc->error) {
+            struct sim_status_scalars sim;
+            uint32_t mode;
+            int valid = id == 0x0200 ?
+                (sim_status_scalars(p, n, &sim) && sim.apps <= 4 &&
+                 (!sim.apps || sim.full_app_record)) :
+                id == 0x0801 ? n >= 16 :
+                id == SIT_NET_VOICE_REG ? n >= 14 :
+                id == SIT_NET_DATA_REG ? n >= 16 :
+                factory_stack_mode(p, n, sgc->token, &mode);
+            if (!valid) {
+                sgc_hold(sgc, "malformed-post-response");
+                return 0;
+            }
+        }
+        sgc->post_next++;
+        sgc->phase = sgc->post_next == SGC_POST_COUNT ? SGC_DONE : SGC_POST_DELAY;
+        sgc->due_ms = now_ms;
+    }
+    return 1;
+}
+
+static int sgc_owns_query_slot(const struct live_sgc *sgc) {
+    /* Once the one-shot experiment ends, retain the owner without later
+     * SIM-refresh writes obscuring the separately bounded post snapshot. */
+    return sgc->phase != SGC_IDLE;
+}
+#endif
 
 /* Zero means incomplete, -1 invalid/over cap, positive a complete frame. */
 static int frame_size(enum channel_kind kind, const uint8_t *p, size_t n) {
@@ -1478,7 +1593,110 @@ static int fixture_cp_ind_radio_state(void) {
     return 0;
 }
 
+#ifdef SAAIOS_SGC_ONCE
+static void fixture_sgc_frame(void *opaque, enum channel_kind kind,
+                               const uint8_t *p, int size) {
+    if (kind == CHANNEL_IPC) (void)sgc_match(opaque, p, (size_t)size, 1500);
+}
+
+static int fixture_sgc(void) {
+    uint8_t request[24];
+    const uint8_t expected[24] = {
+        0, 0, 4, 4, 24, 0, 0x78, 0x56, 0x34, 0x12, 0, 0,
+        1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    make_sgc_request(request, 0x12345678);
+    if (memcmp(request, expected, sizeof expected)) return 123;
+    struct live_sgc sgc = {0};
+    if (sgc_begin(&sgc, 0, 1000) || !sgc_begin(&sgc, 7, 1000) ||
+        sgc_begin(&sgc, 8, 1001) || sgc.deadline_ms != 3000 ||
+        !sgc_owns_query_slot(&sgc)) return 124;
+    uint8_t reply[16];
+    fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, 8, 0);
+    if (sgc_match(&sgc, reply, sizeof reply, 1500) || sgc.phase != SGC_WAIT_ACK)
+        return 125;
+    fixture_scan_reply(reply, sizeof reply, SGC_COMMAND + 1, 7, 0);
+    if (sgc_match(&sgc, reply, sizeof reply, 1500)) return 126;
+    fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, 7, 0x0102);
+    if (!sgc_match(&sgc, reply, sizeof reply, 1500) || sgc.error != 0x0102 ||
+        sgc.phase != SGC_POST_DELAY || sgc.due_ms != 11500 ||
+        sgc_match(&sgc, reply, sizeof reply, 1501)) return 127;
+    for (unsigned i = 0; i < SGC_POST_COUNT; ++i) {
+        unsigned id = sgc_post_id(i);
+        if (!id) return 128;
+        sgc.phase = SGC_POST_WAIT;
+        sgc.token = 20 + i;
+        sgc.deadline_ms = 12000 + i;
+        fixture_scan_reply(reply, 12, id, sgc.token, 0x8102);
+        if (!sgc_match(&sgc, reply, 12, 11500 + i) ||
+            sgc.error != 0x8102 || sgc.post_next != i + 1) return 129;
+    }
+    if (sgc.phase != SGC_DONE || !sgc_owns_query_slot(&sgc) ||
+        sgc_begin(&sgc, 99, 13000) || sgc_post_id(SGC_POST_COUNT)) return 130;
+    for (int which = 0; which < 4; ++which) {
+        sgc = (struct live_sgc){0};
+        if (!sgc_begin(&sgc, 7, 1000)) return 131;
+        fixture_scan_reply(reply, 12, SGC_COMMAND, 7, 0);
+        if (which == 0) {
+            if (sgc_match(&sgc, reply, 12, 3000)) return 132;
+        } else if (which == 1) {
+            reply[4] = 13;
+            if (sgc_match(&sgc, reply, 12, 1500)) return 133;
+        } else if (which == 2) {
+            reply[0] = 0;
+            if (sgc_match(&sgc, reply, 12, 1500)) return 134;
+        } else sgc_hold(&sgc, "write-ambiguous");
+        if (sgc.phase != SGC_HOLD || !sgc_owns_query_slot(&sgc) ||
+            sgc_match(&sgc, reply, 12, 3001) || sgc_begin(&sgc, 8, 4000))
+            return 135;
+    }
+    sgc = (struct live_sgc){0};
+    if (!sgc_begin(&sgc, 7, 1000)) return 136;
+    fixture_scan_reply(reply, 12, SGC_COMMAND, 7, 0);
+    uint8_t stream[RX_CAP] = {0};
+    memcpy(stream, reply, 6);
+    size_t used = 6;
+    if (parse_available(CHANNEL_IPC, stream, &used, fixture_sgc_frame, &sgc) ||
+        used != 6 || sgc.phase != SGC_WAIT_ACK) return 137;
+    memcpy(stream + used, reply + 6, 6);
+    memcpy(stream + 12, reply, 12);
+    used = 24;
+    if (parse_available(CHANNEL_IPC, stream, &used, fixture_sgc_frame, &sgc) ||
+        used || sgc.phase != SGC_POST_DELAY || sgc.due_ms != 11500) return 138;
+    sgc.phase = SGC_POST_WAIT;
+    sgc.post_next = 1;
+    sgc.token = 8;
+    sgc.deadline_ms = 22000;
+    fixture_scan_reply(reply, 12, 0x0801, 8, 0);
+    if (sgc_match(&sgc, reply, 12, 12000) || sgc.phase != SGC_HOLD) return 139;
+    struct scan_evidence evidence = {.valid = (1U << SCAN_EVIDENCE_COUNT) - 1};
+    for (unsigned i = 0; i < SCAN_EVIDENCE_COUNT; ++i) evidence.observed_ms[i] = 60000;
+    if (!scan_evidence_ready(&evidence, 61000)) return 140;
+    for (unsigned i = 0; i < SCAN_EVIDENCE_COUNT; ++i) {
+        evidence.valid &= ~(1U << i);
+        if (scan_evidence_ready(&evidence, 61000)) return 141;
+        evidence.valid |= 1U << i;
+    }
+    if (scan_evidence_ready(&evidence, 150001)) return 142;
+    evidence.spoiled = 1;
+    if (scan_evidence_ready(&evidence, 61000)) return 143;
+    return 0;
+}
+#endif
+
+#if defined(SAAIOS_SGC_ONCE) && !defined(_WIN32)
+static int fixture_live_sgc(void);
+#endif
+
 static int fixture(void) {
+#ifdef SAAIOS_SGC_ONCE
+    int sgc_check = fixture_sgc();
+    if (sgc_check) return sgc_check;
+#ifndef _WIN32
+    sgc_check = fixture_live_sgc();
+    if (sgc_check) return sgc_check;
+#endif
+#endif
     int scan_check = fixture_scan();
     if (scan_check) return scan_check;
     int slot_check = fixture_slot_status();
@@ -2028,6 +2246,240 @@ static void sim_refresh_advance(struct sim_refresh *refresh,
     }
 }
 
+#ifdef SAAIOS_SGC_ONCE
+/* The production operations use only the inherited endpoints. Injection is
+ * limited to the host self-test, allowing the real dispatch loop to prove
+ * that refused gates and ambiguous writes cannot produce another packet. */
+struct sgc_io {
+    int (*queued)(int ipc_fd, int rfs_fd);
+    int (*online)(void);
+    int (*exclusive)(int fd);
+    ssize_t (*write_frame)(int fd, const void *frame, size_t size);
+};
+
+static int sgc_queued(int ipc_fd, int rfs_fd) {
+    struct pollfd pending[2] = {
+        {.fd = ipc_fd, .events = POLLIN}, {.fd = rfs_fd, .events = POLLIN}
+    };
+    return poll(pending, 2, 0);
+}
+
+static int sgc_online(void) { return cp_state() == CP_ONLINE; }
+
+static const struct sgc_io sgc_system_io = {
+    sgc_queued, sgc_online, opened_once, write
+};
+
+static void live_sgc_reply(struct live_sgc *sgc, const uint8_t *p,
+                           size_t size, int64_t now_ms) {
+    enum sgc_phase phase = sgc->phase;
+    unsigned index = sgc->post_next;
+    if (!sgc_match(sgc, p, size, now_ms)) return;
+    if (phase == SGC_WAIT_ACK) {
+        printf("sgc_once elapsed_ms=%lld response=yes error_raw=%u status=%s post_delay_ms=%u\n",
+               (long long)(now_ms - sgc->owner_start_ms),
+               sgc->error, sgc->error ? "remote-error" : "accepted",
+               SGC_POST_DELAY_MS);
+        return;
+    }
+    unsigned id = sgc_post_id(index);
+    const char *label = index < SNAPSHOT_GET_COUNT ?
+                        snapshot_gets[index].label : "modem_stack";
+    printf("sgc_post %s elapsed_ms=%lld response=yes error_raw=%u", label,
+           (long long)(now_ms - sgc->owner_start_ms), sgc->error);
+    if (!sgc->error) {
+        if (id == MODEM_STACK_STATUS_GET)
+            printf(" enabled=%s", p[12] ? "yes" : "no");
+        else print_status_fields(id, p, size);
+    }
+    putchar('\n');
+    if (sgc->phase == SGC_DONE) puts("sgc_once observation=complete no-retry");
+}
+
+static void live_sgc_advance(struct live_sgc *sgc,
+                             const struct scan_evidence *evidence,
+                             struct snapshot *snapshot,
+                             const struct sim_refresh *refresh,
+                             int ipc_fd, int rfs_fd,
+                             const struct channel channels[2],
+                             int64_t now_ms, const struct sgc_io *io) {
+    sgc_tick(sgc, now_ms);
+    if (sgc->phase == SGC_IDLE) {
+        if (snapshot->aborted || refresh->disabled || refresh->factory_stopped)
+            goto gate_failed;
+        if (!snapshot_finished(snapshot) || !refresh->settled_started ||
+            refresh->settled_next != SNAPSHOT_GET_COUNT ||
+            refresh->factory_next != FACTORY_GET_COUNT ||
+            snapshot->pending || refresh->pending_kind != SIM_QUERY_NONE ||
+            refresh->queued) return;
+        if (!sgc->gate_started_ms) sgc->gate_started_ms = now_ms;
+        if (now_ms - sgc->gate_started_ms >= SCAN_GATE_WAIT_MS ||
+            !scan_evidence_ready(evidence, now_ms)) goto gate_failed;
+        int64_t last_rx = channels[0].last_rx_ms > channels[1].last_rx_ms ?
+                          channels[0].last_rx_ms : channels[1].last_rx_ms;
+        if (channels[0].used || channels[1].used ||
+            now_ms < channels[0].backoff_until_ms ||
+            now_ms < channels[1].backoff_until_ms || now_ms - last_rx < 500)
+            return;
+        int queued = io->queued(ipc_fd, rfs_fd);
+        if (queued < 0) { sgc_hold(sgc, "dispatch-poll-failed"); return; }
+        if (queued) return;
+        if (!io->online() || io->exclusive(ipc_fd) || io->exclusive(rfs_fd))
+            goto gate_failed;
+        queued = io->queued(ipc_fd, rfs_fd);
+        if (queued < 0) { sgc_hold(sgc, "dispatch-poll-failed"); return; }
+        if (queued || !io->online()) return;
+        uint32_t token = snapshot->token + 1;
+        if (!token) goto gate_failed;
+        if (!sgc_begin(sgc, token, now_ms)) goto gate_failed;
+        snapshot->token = token;
+        uint8_t request[24];
+        make_sgc_request(request, token);
+        ssize_t written = io->write_frame(ipc_fd, request, sizeof request);
+        if (written != (ssize_t)sizeof request) {
+            sgc_hold(sgc, "write-ambiguous");
+            return;
+        }
+        printf("sgc_once elapsed_ms=%lld request=sent once deadline_ms=%u target=europen-400\n",
+               (long long)(now_ms - sgc->owner_start_ms), SGC_REPLY_MS);
+        return;
+    }
+    if (sgc->phase == SGC_POST_DELAY && now_ms >= sgc->due_ms) {
+        if (snapshot->pending || refresh->pending_kind != SIM_QUERY_NONE ||
+            !io->online() || io->exclusive(ipc_fd) || io->exclusive(rfs_fd)) {
+            sgc_hold(sgc, "post-query-gate-lost");
+            return;
+        }
+        if (now_ms - sgc->due_ms >= SCAN_GATE_WAIT_MS) {
+            sgc_hold(sgc, "post-dispatch-timeout");
+            return;
+        }
+        if (channels[0].used || channels[1].used ||
+            now_ms < channels[0].backoff_until_ms ||
+            now_ms < channels[1].backoff_until_ms) return;
+        int queued = io->queued(ipc_fd, rfs_fd);
+        if (queued < 0) { sgc_hold(sgc, "post-dispatch-poll-failed"); return; }
+        if (queued) return;
+        if (!io->online()) { sgc_hold(sgc, "post-query-gate-lost"); return; }
+        unsigned id = sgc_post_id(sgc->post_next);
+        uint32_t token = snapshot->token + 1;
+        uint8_t request[12];
+        if (!token || make_get_request(request, id, token)) {
+            sgc_hold(sgc, "post-query-invalid");
+            return;
+        }
+        snapshot->token = token;
+        sgc->token = token;
+        sgc->phase = SGC_POST_WAIT;
+        sgc->deadline_ms = now_ms +
+            (id == MODEM_STACK_STATUS_GET ? MODEM_STACK_REPLY_MS : SIM_REFRESH_REPLY_MS);
+        if (io->write_frame(ipc_fd, request, sizeof request) != (ssize_t)sizeof request) {
+            sgc_hold(sgc, "post-write-ambiguous");
+            return;
+        }
+        printf("sgc_post %s elapsed_ms=%lld request=sent\n",
+               sgc->post_next < SNAPSHOT_GET_COUNT ?
+               snapshot_gets[sgc->post_next].label : "modem_stack",
+               (long long)(now_ms - sgc->owner_start_ms));
+    }
+    return;
+gate_failed:
+    sgc->phase = SGC_DONE;
+    puts("sgc_once request=not-sent status=gate-not-met no-retry");
+}
+
+static struct {
+    unsigned writes;
+    unsigned id;
+    size_t size;
+    int short_write;
+    int queued;
+    int offline;
+    int another_opener;
+} sgc_fixture_io;
+
+static int fixture_sgc_queued(int ipc_fd, int rfs_fd) {
+    (void)ipc_fd; (void)rfs_fd;
+    return sgc_fixture_io.queued;
+}
+static int fixture_sgc_online(void) { return !sgc_fixture_io.offline; }
+static int fixture_sgc_exclusive(int fd) {
+    (void)fd;
+    return sgc_fixture_io.another_opener;
+}
+static ssize_t fixture_sgc_write(int fd, const void *frame, size_t size) {
+    (void)fd;
+    sgc_fixture_io.writes++;
+    sgc_fixture_io.id = le16((const uint8_t *)frame + 2);
+    sgc_fixture_io.size = size;
+    return sgc_fixture_io.short_write ? (ssize_t)size - 1 : (ssize_t)size;
+}
+
+static int fixture_live_sgc(void) {
+    const struct sgc_io io = {fixture_sgc_queued, fixture_sgc_online,
+                              fixture_sgc_exclusive, fixture_sgc_write};
+    struct scan_evidence evidence = {.valid = (1U << SCAN_EVIDENCE_COUNT) - 1};
+    for (unsigned i = 0; i < SCAN_EVIDENCE_COUNT; ++i) evidence.observed_ms[i] = 100000;
+    struct snapshot snapshot = {.started = 1, .next = SNAPSHOT_GET_COUNT, .token = 100};
+    struct sim_refresh refresh = {.settled_started = 1,
+        .settled_next = SNAPSHOT_GET_COUNT, .factory_next = FACTORY_GET_COUNT};
+    struct channel channels[2] = {{.last_rx_ms = 100000}, {.last_rx_ms = 100000}};
+    struct live_sgc sgc = {0};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 100500, &io);
+    if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != 1 ||
+        sgc_fixture_io.id != SGC_COMMAND || sgc_fixture_io.size != 24) return 144;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 100501, &io);
+    if (sgc_fixture_io.writes != 1) return 145;
+    uint8_t reply[12];
+    fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, sgc.token, 0);
+    if (!sgc_match(&sgc, reply, sizeof reply, 100600)) return 146;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 110599, &io);
+    if (sgc_fixture_io.writes != 1) return 147;
+    for (unsigned i = 0; i < SGC_POST_COUNT; ++i) {
+        live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 110600 + i, &io);
+        if (sgc.phase != SGC_POST_WAIT || sgc_fixture_io.writes != i + 2 ||
+            sgc_fixture_io.id != sgc_post_id(i) || sgc_fixture_io.size != 12) return 148;
+        live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 110600 + i, &io);
+        if (sgc_fixture_io.writes != i + 2) return 149;
+        fixture_scan_reply(reply, sizeof reply, sgc_post_id(i), sgc.token, 0x8102);
+        if (!sgc_match(&sgc, reply, sizeof reply, 110600 + i)) return 150;
+    }
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 120000, &io);
+    if (sgc.phase != SGC_DONE || sgc_fixture_io.writes != 6) return 151;
+    for (int scenario = 0; scenario < 6; ++scenario) {
+        sgc = (struct live_sgc){0};
+        memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+        sgc_fixture_io.short_write = scenario == 0;
+        sgc_fixture_io.offline = scenario == 1;
+        sgc_fixture_io.another_opener = scenario == 2;
+        sgc_fixture_io.queued = scenario == 3;
+        evidence.spoiled = scenario == 4;
+        live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 100500, &io);
+        if (sgc_fixture_io.writes != (unsigned)(scenario == 0 || scenario == 5)) return 152;
+        live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 111000, &io);
+        if (sgc_fixture_io.writes != (unsigned)(scenario == 0 || scenario == 5)) return 153;
+        if ((scenario == 0 || scenario == 5) && sgc.phase != SGC_HOLD) return 154;
+        if (scenario > 0 && scenario < 5 && sgc.phase != SGC_DONE) return 155;
+    }
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        sgc = (struct live_sgc){.phase = SGC_POST_DELAY, .attempted = 1,
+                               .due_ms = 110600};
+        memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+        sgc_fixture_io.short_write = scenario == 0;
+        sgc_fixture_io.another_opener = scenario == 1;
+        sgc_fixture_io.queued = scenario == 2;
+        channels[0].used = scenario == 3;
+        live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 110600, &io);
+        if (sgc_fixture_io.writes != (unsigned)(scenario == 0)) return 156;
+        live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels, 120600, &io);
+        if (sgc_fixture_io.writes != (unsigned)(scenario == 0) ||
+            sgc.phase != SGC_HOLD) return 157;
+    }
+    return 0;
+}
+#endif
+
 static int live_scan_active(const struct live_scan *scan) {
     return scan->phase == LIVE_SCAN_WAITING ||
            scan->phase == LIVE_SCAN_CANCEL_READY ||
@@ -2230,6 +2682,9 @@ struct live_frame_context {
     struct sim_refresh *refresh;
     struct scan_evidence *evidence;
     struct live_scan *scan;
+#ifdef SAAIOS_SGC_ONCE
+    struct live_sgc *sgc;
+#endif
     struct slot_status_trace *slot_trace;
     struct rfs_header_trace *trace;
     int64_t now_ms;
@@ -2240,6 +2695,9 @@ static void live_frame(void *opaque, enum channel_kind kind,
                        const uint8_t *p, int size) {
     struct live_frame_context *context = opaque;
     count_frame(context->channel, p, size, context->counts);
+#ifdef SAAIOS_SGC_ONCE
+    if (context->sgc->phase == SGC_HOLD) return;
+#endif
     if (kind == CHANNEL_IPC) {
         trace_cp_ind(&context->counts->cp_ind_trace, p, (size_t)size,
                      context->now_ms, context->owner_start_ms);
@@ -2249,6 +2707,9 @@ static void live_frame(void *opaque, enum channel_kind kind,
         snapshot_reply(context->snapshot, p, (size_t)size);
         sim_refresh_reply(context->refresh, context->evidence,
                           p, (size_t)size, context->now_ms);
+#ifdef SAAIOS_SGC_ONCE
+        live_sgc_reply(context->sgc, p, (size_t)size, context->now_ms);
+#endif
         live_scan_frame(context->scan, p, (size_t)size, context->now_ms);
         if (scan_evidence_unsolicited(context->evidence, p, (size_t)size) &&
             context->scan->phase == LIVE_SCAN_WAITING)
@@ -2268,6 +2729,9 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
                          struct sim_refresh *refresh,
                          struct scan_evidence *evidence,
                          struct live_scan *scan,
+#ifdef SAAIOS_SGC_ONCE
+                         struct live_sgc *sgc,
+#endif
                          struct slot_status_trace *slot_trace,
                          struct rfs_header_trace *trace,
                          int64_t owner_start_ms) {
@@ -2291,6 +2755,9 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
     struct live_frame_context context = {
         .channel = channel, .counts = counts, .snapshot = snapshot,
         .refresh = refresh, .evidence = evidence, .scan = scan,
+#ifdef SAAIOS_SGC_ONCE
+        .sgc = sgc,
+#endif
         .slot_trace = slot_trace, .trace = trace,
         .now_ms = now, .owner_start_ms = owner_start_ms
     };
@@ -2349,8 +2816,14 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     struct sim_refresh refresh = {0};
     struct scan_evidence evidence = {0};
     struct live_scan scan = {0};
+#ifdef SAAIOS_SGC_ONCE
+    struct live_sgc sgc = {0};
+#endif
     struct slot_status_trace slot_trace = {0};
     int64_t start = monotonic_ms();
+#ifdef SAAIOS_SGC_ONCE
+    sgc.owner_start_ms = start;
+#endif
     struct rfs_header_trace trace = {.enabled = !attached, .start_ms = start};
     counts.window_start_ms = start;
     if (!attached && (cp_state() != CP_BOOTING ||
@@ -2369,19 +2842,44 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
          "owner=ready channels=ipc0,rfs0 payload=redacted rfs_responses=none");
     if (scan_armed)
         puts("network_scan=armed_once policy=reviewed-rf-risk cp_rf_idle=unproven");
+#ifdef SAAIOS_SGC_ONCE
+    puts("sgc_once=armed policy=after-settled-baseline target=europen-400 no-retry");
+#endif
     int rc = 0;
     int deferred_stop_logged = 0;
     for (;;) {
         int64_t now = monotonic_ms();
         state = cp_state();
+#ifdef SAAIOS_SGC_ONCE
+        if (state == CP_OFFLINE) break;
+        if (now < 0 || state == CP_INVALID) {
+            sgc_hold(&sgc, "clock-or-cp-state-invalid");
+            if (!sgc.hold_reported) {
+                printf("sgc_once status=%s owner=hold-until-offline no-more-ipc-writes\n",
+                       sgc.hold_reason);
+                sgc.hold_reported = 1;
+            }
+            (void)poll(NULL, 0, POLL_SLICE_MS);
+            continue;
+        }
+#else
         if (now < 0 || state == CP_INVALID) { rc = 1; break; }
         if (state == CP_OFFLINE) break;
+#endif
         if (state == CP_BOOTING && now - start > BOOTING_LIMIT_MS) {
+#ifdef SAAIOS_SGC_ONCE
+            sgc_hold(&sgc, "cp-booting-timeout");
+#else
             fputs("ABORT CP stayed BOOTING after READY\n", stderr);
             rc = 1; break;
+#endif
         }
         if (stop_requested) {
+#ifdef SAAIOS_SGC_ONCE
+            sgc_hold(&sgc, "stop-requested");
+#else
             if (state == CP_BOOTING) break;
+#endif
             if (!deferred_stop_logged) {
                 fputs("SIGTERM deferred until CP OFFLINE to avoid RX purge\n", stderr);
                 deferred_stop_logged = 1;
@@ -2393,6 +2891,18 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
                                                 counts.window_start_ms));
             report_rfs_overflow(&trace);
         }
+#ifdef SAAIOS_SGC_ONCE
+        sgc_tick(&sgc, now);
+        if (sgc.phase == SGC_HOLD) {
+            if (!sgc.hold_reported) {
+                printf("sgc_once status=%s owner=hold-until-offline no-more-ipc-writes\n",
+                       sgc.hold_reason);
+                sgc.hold_reported = 1;
+            }
+            (void)poll(NULL, 0, POLL_SLICE_MS);
+            continue;
+        }
+#endif
         if (scan.poisoned) {
             /* A malformed stream cannot be resynchronized safely. Keep the
              * sole IPC/RFS owner alive without more GETs or writes. */
@@ -2400,9 +2910,18 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             continue;
         }
         if (state == CP_ONLINE) {
+#ifdef SAAIOS_SGC_ONCE
+            if (!sgc_owns_query_slot(&sgc)) {
+#endif
             snapshot_advance(&snapshot, ipc, now);
             if (!live_scan_active(&scan))
                 sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
+#ifdef SAAIOS_SGC_ONCE
+            }
+            live_sgc_advance(&sgc, &evidence, &snapshot, &refresh,
+                             ipc, rfs, channels, now, &sgc_system_io);
+            if (sgc.phase == SGC_HOLD) continue;
+#endif
             live_scan_advance(&scan, scan_armed, &evidence, &snapshot,
                               &refresh, ipc, rfs,
                               channels[0].used, channels[1].used,
@@ -2427,6 +2946,10 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         if (events < 0 && errno == EINTR) continue;
         if (events < 0) {
             perror("owner poll");
+#ifdef SAAIOS_SGC_ONCE
+            sgc_hold(&sgc, "poll-failed");
+            continue;
+#endif
             if (live_scan_active(&scan)) {
                 live_scan_framing_poison(&scan, ipc);
                 continue;
@@ -2437,6 +2960,10 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 fprintf(stderr, "%s poll failure event=0x%x\n",
                         i ? "RFS" : "IPC", fds[i].revents);
+#ifdef SAAIOS_SGC_ONCE
+                sgc_hold(&sgc, "channel-poll-failed");
+                break;
+#endif
                 if (live_scan_active(&scan)) {
                     live_scan_framing_poison(&scan, ipc);
                     break;
@@ -2445,15 +2972,26 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             }
             if ((fds[i].revents & POLLIN) &&
                 drain_channel(&channels[i], &counts, &snapshot, &refresh,
-                              &evidence, &scan, &slot_trace, &trace, start)) {
+                              &evidence, &scan,
+#ifdef SAAIOS_SGC_ONCE
+                              &sgc,
+#endif
+                              &slot_trace, &trace, start)) {
                 fprintf(stderr, "%s read/framing failure or buffer cap\n",
                         i ? "RFS" : "IPC");
+#ifdef SAAIOS_SGC_ONCE
+                sgc_hold(&sgc, "read-or-framing-failed");
+                break;
+#endif
                 if (live_scan_active(&scan)) {
                     live_scan_framing_poison(&scan, ipc);
                     break;
                 }
                 rc = 1; break;
             }
+#ifdef SAAIOS_SGC_ONCE
+            if (sgc.phase == SGC_HOLD) break;
+#endif
         }
         if (scan.poisoned) continue;
         if (rc) break;
@@ -2486,7 +3024,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     return rc;
 }
 
-#ifndef SAAIOS_SCAN_ONCE
+#if !defined(SAAIOS_SCAN_ONCE) && !defined(SAAIOS_SGC_ONCE)
 static int open_verified_node(const char *node, const char *sysdev) {
     int fd = open(node, O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) return -1;
@@ -2529,6 +3067,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--mode")) {
 #ifdef SAAIOS_SCAN_ONCE
         puts("scan-once");
+#elif defined(SAAIOS_SGC_ONCE)
+        puts("sgc-once");
 #else
         puts("passive");
 #endif
@@ -2543,6 +3083,9 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--attach-online")) {
 #ifdef SAAIOS_SCAN_ONCE
         fputs("ABORT scan-once requires a fresh guarded pre-FIN handoff\n", stderr);
+        return 64;
+#elif defined(SAAIOS_SGC_ONCE)
+        fputs("ABORT sgc-once requires a fresh guarded pre-FIN handoff\n", stderr);
         return 64;
 #else
         return attach_online();

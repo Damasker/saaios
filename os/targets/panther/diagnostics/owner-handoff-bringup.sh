@@ -25,6 +25,15 @@ case "$#:$*" in
         LOG=/data/saaios/var/owner-handoff-scan-once.log
         OWNER_LOG=/data/saaios/var/modem-channel-owner-scan-once.log
         ;;
+    '1:sgc-once')
+        # One late factory-derived carrier SET, then a separate status sweep.
+        # Separate paths preserve the passive binary and its recovery route.
+        PROBE=/data/saaios/bin/probe-handover-sgc-once
+        OWNER=/data/saaios/bin/modem-channel-owner-sgc-once
+        OWNER_MODE=sgc-once
+        LOG=/data/saaios/var/owner-handoff-sgc-once.log
+        OWNER_LOG=/data/saaios/var/modem-channel-owner-sgc-once.log
+        ;;
     '1:rfs-one-grant')
         # Separately compiled probe/owner; never replace the passive default.
         PROBE=/data/saaios/bin/probe-handover-rfs-one-grant
@@ -42,7 +51,7 @@ case "$#:$*" in
         LOG=/data/saaios/var/owner-handoff-rfs-full-quarantine.log
         OWNER_LOG=/data/saaios/var/modem-rfs-full-quarantine-owner.log
         ;;
-    *) printf 'usage: %s [scan-once|rfs-one-grant|rfs-full-quarantine]\n' "$0" >&2; exit 64 ;;
+    *) printf 'usage: %s [scan-once|sgc-once|rfs-one-grant|rfs-full-quarantine]\n' "$0" >&2; exit 64 ;;
 esac
 
 VERIFIER=/data/saaios/bin/saaios-verify-nv-copies.sh
@@ -92,6 +101,8 @@ if [ "$OWNER_MODE" = rfs-one-grant ] ||
    [ "$OWNER_MODE" = rfs-full-quarantine ]; then
     printf 'BEGIN %s RFS handoff; original EFS read-only; quarantine-only writes\n' \
         "$OWNER_MODE" >> "$LOG"
+elif [ "$OWNER_MODE" = sgc-once ]; then
+    printf 'BEGIN active sgc-once; one late factory TD1A europen carrier SET; no APN/PIN/CardPower commands or host NV/EFS writes\n' >> "$LOG"
 else
     printf 'BEGIN owner handoff; scan_mode=%s; no APN/PIN/CardPower/NV/EFS writes\n' \
         "$OWNER_MODE" >> "$LOG"

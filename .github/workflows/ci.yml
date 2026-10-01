@@ -24,6 +24,26 @@ jobs:
             -o /tmp/modem-channel-owner-scan-fixture
           /tmp/modem-channel-owner-scan-fixture self-test
           test "$(/tmp/modem-channel-owner-scan-fixture --mode)" = scan-once
+          cc -O2 -Wall -Wextra -Werror -DSAAIOS_SGC_ONCE \
+            os/targets/panther/diagnostics/modem-channel-owner.c \
+            -o /tmp/modem-channel-owner-sgc-fixture
+          /tmp/modem-channel-owner-sgc-fixture self-test
+          test "$(/tmp/modem-channel-owner-sgc-fixture --mode)" = sgc-once
+          set +e
+          /tmp/modem-channel-owner-sgc-fixture --attach-online
+          attach_result=$?
+          set -e
+          test "$attach_result" = 64
+          if cc -O2 -DSAAIOS_SCAN_ONCE -DSAAIOS_SGC_ONCE \
+            os/targets/panther/diagnostics/modem-channel-owner.c \
+            -o /tmp/modem-channel-owner-invalid-fixture; then
+            exit 1
+          fi
+          cc -O1 -g -Wall -Wextra -Werror -DSAAIOS_SGC_ONCE \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            os/targets/panther/diagnostics/modem-channel-owner.c \
+            -o /tmp/modem-channel-owner-sgc-san
+          /tmp/modem-channel-owner-sgc-san self-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -DRFS_HOST_TEST \
             os/targets/panther/diagnostics/modem-rfs-one-grant-owner.c \
             -o /tmp/modem-rfs-one-grant-owner-fixture
@@ -41,6 +61,7 @@ jobs:
           /tmp/modem-rfs-full-quarantine-owner-san self-test
           sh -n os/targets/panther/diagnostics/owner-handoff-bringup.sh
           sh -n os/targets/panther/diagnostics/build-owner-scan-once.sh
+          sh -n os/targets/panther/diagnostics/build-owner-sgc-once.sh
           sh -n os/targets/panther/diagnostics/build-rfs-one-grant-owner.sh
           sh -n os/targets/panther/diagnostics/build-probe-rfs-one-grant.sh
           sh -n os/targets/panther/diagnostics/build-rfs-full-quarantine-owner.sh
