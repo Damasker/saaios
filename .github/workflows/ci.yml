@@ -30,6 +30,11 @@ jobs:
             os/targets/panther/diagnostics/sit-unsol-observe.c \
             -o /tmp/sit-unsol-observe-fixture
           /tmp/sit-unsol-observe-fixture self-test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: quarantined RFS protocol model (synthetic host data only)
+        run: node --test os/targets/panther/diagnostics/rfs-quarantine-host.test.mjs
 
   test:
     runs-on: ubuntu-latest
