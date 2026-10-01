@@ -1,7 +1,7 @@
 #!/bin/sh
 OUT=/data/saaios/var/pa-hard.txt
 echo start > "$OUT"
-rm -f /run/saaios-sit-status.lock
+# Keep the shared SIT flock inode; the status helper refuses a live owner.
 rmmod saaios_cp_poke 2>/dev/null
 /data/saaios/bin/sit-sim-status query-radio-state >/dev/null
 /data/saaios/bin/sit-sim-status query-sim-status >/dev/null

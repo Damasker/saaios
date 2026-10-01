@@ -7,7 +7,7 @@ log() { printf '%s\n' "$*" | tee -a "$LOG"; }
 log "BEGIN UP=$(cut -d' ' -f1 /proc/uptime)"
 pkill -f tray-bearer-chase 2>/dev/null || true
 pkill -f 'sit-sim-status' 2>/dev/null || true
-rm -f /run/saaios-sit-status.lock
+# Keep the shared flock inode stable; a live owner must not be bypassed.
 insmod /lib/modules/shm_ipc.ko 2>/dev/null || true
 insmod /lib/modules/cpif_page.ko 2>/dev/null || true
 insmod /lib/modules/cpif.ko 2>/dev/null || true

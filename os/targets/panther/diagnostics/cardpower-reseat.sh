@@ -17,9 +17,8 @@ fi
 STATE=$(cat /sys/devices/platform/cpif/modem_state 2>/dev/null || echo DEAD)
 echo "STATE=$STATE" | tee -a "$LOG"
 [ "$STATE" = ONLINE ] || exit 1
-# Free sit lock if a dead holder left it; do not kill a live tray-watch here —
-# caller should pause chase / wait between rounds.
-rm -f /run/saaios-sit-status.lock
+# A dead holder releases flock automatically. Never unlink its shared inode:
+# a live owner would retain the old lock while this helper opened a new one.
 {
   printf '=== cardpower-reseat %s ===\n' "$(date -Iseconds 2>/dev/null || date)"
   "$BIN"

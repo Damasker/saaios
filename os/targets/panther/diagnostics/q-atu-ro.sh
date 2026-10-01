@@ -1,7 +1,7 @@
 #!/bin/sh
 OUT=/data/saaios/var/ob1-ro.txt
 echo start > "$OUT"
-rm -f /run/saaios-sit-status.lock
+# Keep the shared SIT flock inode; the status helper refuses a live owner.
 i=0
 while [ $i -lt 5 ]; do
   /data/saaios/bin/sit-sim-status query-sim-status >/dev/null
