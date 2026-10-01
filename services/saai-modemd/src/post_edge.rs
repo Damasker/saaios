@@ -23,7 +23,8 @@
 //! `rmnet` IPv4 / bidirectional rx+tx. START_NETWORK allows only {1,4,5}.
 
 use crate::soft_lock::{
-    SoftLockSnapshot, APP_STATE_PIN, PIN1_DISABLED, PIN1_ENABLED_VERIFIED,
+    SoftLockSnapshot, APP_STATE_PIN, BLOCKER_WAITING_0X2F50, CPIF_CAPS_NOTE, PIN1_DISABLED,
+    PIN1_ENABLED_VERIFIED,
 };
 
 /// DETECTED — START_NETWORK accepts.
@@ -35,9 +36,6 @@ pub const APP_READY: u8 = 5;
 
 /// Factory preferred-network enum for LTE_ONLY (live GET=11).
 pub const PREFERRED_LTE_ONLY: u8 = 11;
-
-/// Signed CPIF capability note (INIT_START negotiate; not a READY lever).
-pub const CPIF_CAPS_NOTE: &str = "AP_part0=3(PKTPROC_UL|CH_EXT) CP_part0=7(+36BIT)";
 
 /// Evidenced simple `BuildSetupDataCall` frame length (sit-stream `0x78c80`).
 pub const SETUP_DATA_CALL_LEN_SIMPLE: u16 = 246;
@@ -295,7 +293,10 @@ pub fn advice_lines(plan: &PostEdgePlan) -> Vec<String> {
             format!("pin1={pin1}"),
             format!("reason={reason}"),
             "start_network_allowed=no".into(),
+            "cpif_caps_exercised=yes".into(),
             format!("cpif_caps_note={CPIF_CAPS_NOTE}"),
+            format!("blocker={BLOCKER_WAITING_0X2F50}"),
+            "policy=capture_only_rild_or_external_0x2f50_dump_no_invent".into(),
             "setup_data_call=blocked_soft_lock".into(),
             format!(
                 "setup_data_call_gate={}",
@@ -304,7 +305,7 @@ pub fn advice_lines(plan: &PostEdgePlan) -> Vec<String> {
                     _ => unreachable!(),
                 }
             ),
-            "action=physical_tray_reseat_with_tray_bearer_chase".into(),
+            "action=wait_external_0x2f50_then_oem_ipc_inject_post_init_chase".into(),
             "re_conclusion=READY_needs_Present_eq_2_only_FN_A_CDMA_EU_NoCDMA_RatMap".into(),
             "ratmap_lever=blocked_NV_TCS_only_preferred_cannot_add_CDMA".into(),
             "goal=incomplete_until_rmnet_ipv4".into(),
@@ -392,6 +393,9 @@ mod tests {
         }
         let advice = advice_lines(&plan_from_snapshot(snap));
         assert!(advice.iter().any(|l| l.contains("setup_data_call=blocked_soft_lock")));
+        assert!(advice.iter().any(|l| l.contains("cpif_caps_exercised=yes")));
+        assert!(advice.iter().any(|l| l.contains("blocker=waiting_external_catalog_oem_0x2f50")));
+        assert!(advice.iter().any(|l| l.contains("wait_external_0x2f50_then_oem_ipc_inject")));
     }
 
     #[test]

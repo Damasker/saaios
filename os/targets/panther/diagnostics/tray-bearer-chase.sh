@@ -7,8 +7,13 @@
 #   app=PIN + pin1=DISABLED(3)
 #   app=PIN + pin1=ENABLED_VERIFIED(2)  (Pin1Verified OK; still no START_NETWORK)
 #
+# Soft-lock terminal under bans: HotSwap + CP self-init falsified. Signed
+# CPIF caps (AP part0=3 / CP part0=7) exercised at INIT_START - not READY.
+# Blocker = waiting external catalog OEM 0x2f50 (SIM_INIT_REQ) frame;
+# inject+chase armed; do not invent; do not start rild.
+#
 # Post-EDGE (RE): READY needs Present/+0xBF6==2 (FN_A CDMA only; EU No-CDMA
-# RatMap => remote cannot force READY). Once app?{1,4,5}:
+# RatMap => remote cannot force READY). Once app in {1,4,5}:
 #   VerifyPin(if pin1 0|1) -> gate START_NETWORK -> Radio -> LTE_ONLY ->
 #   NetworkSelectionAuto -> AllowData -> GetPsService -> data-reg ->
 #   GetDataCallList -> SetupDataCall(if APN) -> rmnet IPv4/rx+tx
@@ -33,6 +38,11 @@ mkdir -p "$(dirname "$OUT")" /run /data/saaios/etc
   printf '=== tray-bearer-chase start %s rounds=%s persist=%s ===\n' "$(date -Iseconds 2>/dev/null || date)" "$WATCH_ROUNDS" "$PERSIST"
 } >> "$OUT"
 log() { printf '%s\n' "$*" | tee -a "$OUT"; }
+
+# Status snapshot for soft-lock hold (no secrets; matches saai-modemd soft-lock).
+log_soft_lock_status() {
+  log "SOFT_LOCK_STATUS modem06=yes cpif_caps_exercised=yes cpif_caps_note=AP_part0=3(PKTPROC_UL|CH_EXT)_CP_part0=7(+36BIT) blocker=waiting_external_catalog_oem_0x2f50_SIM_INIT_REQ_frame policy=capture_only_or_external_dump_no_invent inject_armed=oem-ipc-inject+post-init-chase goal=incomplete_until_rmnet_ipv4 ${1:-}"
+}
 
 # Resolve helper: prefer /tmp overlay, else /data/saaios/bin (deployed stock).
 resolve_tool() {
@@ -385,6 +395,7 @@ sim_left_pin() {
         ;;
     esac
     log_edge_decision "soft_lock_hold" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "no" "remain=${REM:-?}"
+    log_soft_lock_status "app=$APP pin1=${PIN1:-?} present_infer=$PI"
     log "still PIN (app_raw=2 pin1=${PIN1:-?}) - not EDGE"
     return 1
   fi
@@ -414,6 +425,7 @@ sim_left_pin() {
   fi
   if echo "$SIM" | grep -qE 'app0_state=PIN|app0_state_raw=2'; then
     log_edge_decision "soft_lock_hold" "$APP" "${PIN1:-?}" "${CARD:-?}" "$PI" "no"
+    log_soft_lock_status "app=$APP pin1=${PIN1:-?} present_infer=$PI"
     return 1
   fi
   # Unknown shape: do not chase.
@@ -493,11 +505,12 @@ while :; do
   done
 
   log "no DETECTED/READY/ABSENT edge in batch=$BATCH (${WATCH_ROUNDS} rounds) - soft-lock holds"
+  log_soft_lock_status "batch=$BATCH"
   if [ "$PERSIST" != "1" ]; then
     log "GOAL incomplete (PERSIST=0)"
     exit 2
   fi
-  log "PERSIST re-arm next batch (flock held) - reseat still watched"
+  log "PERSIST re-arm next batch (flock held) - still waiting external 0x2f50 / EDGE"
   BATCH=$((BATCH + 1))
   sleep 2
 done

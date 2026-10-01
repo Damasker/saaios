@@ -10,8 +10,11 @@
 //!
 //! HotSwap ABSENT→PRESENT (2026-09-30 live) falsified tray reseat as a
 //! READY/bearer path on EU No-CDMA: VerifyPin OK, app stayed PIN,
-//! present_infer=notin_1_2_3. Remaining options are banned (EFS TCS /
-//! unsigned MAIN / stock rild). Chase remains observability + post-READY
+//! present_infer=notin_1_2_3. Passive CP USIM self-init also falsified.
+//! Soft-lock is **terminal** under bans until an external catalog OEM
+//! `0x2f50` (`SIM_INIT_REQ`) frame is captured (not invented) and injected.
+//! Signed CPIF caps (AP part0=3 / CP part0=7) were exercised at INIT_START;
+//! they are not a READY lever. Chase remains observability + post-READY
 //! plumbing only.
 
 /// Factory SIT app_state: PIN required.
@@ -26,6 +29,13 @@ pub const PRESENT_STATUS: u8 = 1;
 pub const PRESENT_READY: u8 = 2;
 pub const PRESENT_DETECTED: u8 = 3;
 
+/// Signed CPIF INIT_START negotiate (exercised live; not a READY lever).
+pub const CPIF_CAPS_NOTE: &str = "AP_part0=3(PKTPROC_UL|CH_EXT) CP_part0=7(+36BIT)";
+
+/// Hard soft-lock exit under current bans (capture-only / external dump).
+pub const BLOCKER_WAITING_0X2F50: &str =
+    "waiting_external_catalog_oem_0x2f50_SIM_INIT_REQ_frame";
+
 /// One-command operator chase after ONLINE (no secrets).
 pub const TRAY_BEARER_CHASE_CMD: &str =
     "PERSIST=1 WATCH_ROUNDS=12 OUT=/data/saaios/var/tray-bearer.log \
@@ -35,6 +45,11 @@ sh os/targets/panther/diagnostics/tray-bearer-chase.sh";
 pub const TRAY_BEARER_CHASE_ON_DEVICE: &str =
     "PERSIST=1 WATCH_ROUNDS=12 nohup sh /data/saaios/bin/tray-bearer-chase.sh \
 >/data/saaios/var/tray-bearer.nohup 2>&1 &";
+
+/// Armed inject + chase (no invent; needs evidenced frame file).
+pub const OEM_IPC_INJECT_ARMED: &str =
+    "/data/saaios/bin/oem-ipc-inject + /data/saaios/bin/post-init-chase.sh \
+(see diagnostics/OEM-IPC-CAPTURE.md; refuse empty/all-zero)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SoftLockSnapshot {
@@ -143,9 +158,14 @@ pub fn advice_lines(snapshot: SoftLockSnapshot) -> Vec<String> {
             vec![
                 "modem06_soft_lock=yes".into(),
                 format!("soft_lock_shape={shape}"),
-                format!("action={TRAY_BEARER_CHASE_CMD}"),
-                format!("on_device={TRAY_BEARER_CHASE_ON_DEVICE}"),
-                "note=reseat_sim_tray_during_watch; do_not_duplicate_concurrent_watch".into(),
+                "cpif_caps_exercised=yes".into(),
+                format!("cpif_caps_note={CPIF_CAPS_NOTE}"),
+                format!("blocker={BLOCKER_WAITING_0X2F50}"),
+                "policy=capture_only_rild_or_external_0x2f50_dump_no_invent".into(),
+                format!("inject_armed={OEM_IPC_INJECT_ARMED}"),
+                format!("observability={TRAY_BEARER_CHASE_CMD}"),
+                format!("on_device_watch={TRAY_BEARER_CHASE_ON_DEVICE}"),
+                "note=hotswap_and_selfinit_falsified; do_not_invent_0x2f50; do_not_start_rild".into(),
                 "fn_a_ratmap=blocked_EU_NoCDMA_NV_only_no_signed_SIT_no_CDMA_preferred_try".into(),
                 "cp_start_network=hard_reject_err2_while_pin".into(),
                 "goal=incomplete_until_rmnet_ipv4".into(),
@@ -206,6 +226,25 @@ mod tests {
         assert!(advice[0].contains("yes"));
         assert!(advice.iter().any(|l| l.contains("tray-bearer-chase")));
         assert!(advice.iter().any(|l| l.contains("fn_a_ratmap=blocked")));
+        assert!(advice.iter().any(|l| l.contains("cpif_caps_exercised=yes")));
+        assert!(advice.iter().any(|l| l.contains("cpif_caps_note=")));
+        assert!(advice.iter().any(|l| l.contains("blocker=waiting_external_catalog_oem_0x2f50")));
+        assert!(advice.iter().any(|l| l.contains("no_invent")));
+    }
+
+    #[test]
+    fn pin1_verified_reports_caps_and_0x2f50_blocker() {
+        let s = SoftLockSnapshot {
+            app_state: APP_STATE_PIN,
+            pin1: PIN1_ENABLED_VERIFIED,
+            present: None,
+        };
+        let advice = advice_lines(s);
+        assert!(advice.iter().any(|l| l.contains("pin1_verified_chicken_egg")));
+        assert!(advice.iter().any(|l| l == "cpif_caps_exercised=yes"));
+        assert!(advice.iter().any(|l| l.contains(CPIF_CAPS_NOTE)));
+        assert!(advice.iter().any(|l| l.contains(BLOCKER_WAITING_0X2F50)));
+        assert!(advice.iter().any(|l| l.contains("oem-ipc-inject")));
     }
 
     #[test]

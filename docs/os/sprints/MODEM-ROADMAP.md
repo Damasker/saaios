@@ -669,6 +669,13 @@ td1a `system.img` + `product.img` + `system_ext.img` + `system_other.img`
 **No live send.** Policy still: capture-only rild or external `0x2f50`
 dump. BLOCKER § non-vendor-partitions.
 
+**Overnight recheck + soft-lock polish (2026-10-01):** Live ONLINE /
+PIN(2) / pin1=**1** (reset from prior 2) / reg=0 / rmnet rx=0 / **no
+bearer**. Inject tools still on device; **no frames sent**. `saai-modemd
+soft-lock` / `post-edge` + chase `SOFT_LOCK_STATUS` report
+`cpif_caps_exercised=yes` + waiting `0x2f50` blocker. Soft-lock
+**terminal** until capture-only / external frame.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

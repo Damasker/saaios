@@ -74,7 +74,11 @@ operator unblock is physical tray reseat + diagnostics chase:
   (`WATCH_ROUNDS=12`, log `/data/saaios/var/tray-bearer.log`)
 
 Signed CPIF capabilities (AP part0=3, CP part0=7) negotiate at `INIT_START`
-and are logged by the chase; they are not a READY lever.
+and are reported by `soft-lock` / chase (`cpif_caps_exercised=yes`); they are
+**not** a READY lever. Soft-lock `blocker=` is
+`waiting_external_catalog_oem_0x2f50_SIM_INIT_REQ_frame` (capture-only rild
+or external dump → `oem-ipc-inject` + `post-init-chase`; no invent / no rild
+under ban). HotSwap reseat and CP USIM self-init were live-falsified.
 
 ### RE conclusion (PIN→READY)
 

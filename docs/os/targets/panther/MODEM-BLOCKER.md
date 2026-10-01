@@ -1283,6 +1283,22 @@ avoids EngMode/CardPower/OemSim/`0x0704`/VerifyPin storms.
 Script: `diagnostics/passive-selfinit-wait.sh`. **Verdict:** self-init
 **not** observed. Soft catalog `0x2f50` policy need **unchanged**.
 
+### 2026-10-01 — overnight live recheck (COM13 / NCM)
+
+**Live one-liner:** ONLINE; PRESENT apps=1 **app=PIN(2)** pin1=**1** remain=3;
+radio=10; data_reg=0; oem_ipc0 RDWR OK; **no** cbd/rild; rmnet* rx=0;
+usb0=`172.31.7.1` / wlan IPv4 only — **no bearer**.
+
+Overnight reset vs prior pin1=2 chicken-egg: pin1 back to NOT_VERIFIED(1)
+(VerifyPin window again). Inject tools still on device
+(`/data/saaios/bin/oem-ipc-inject`, `post-init-chase.sh`,
+`tray-bearer-chase.sh`). **No frames sent.** Soft-lock polish:
+`saai-modemd soft-lock` / `post-edge` + chase `SOFT_LOCK_STATUS` now report
+`cpif_caps_exercised=yes` + `blocker=waiting_external_catalog_oem_0x2f50…`.
+
+**Bearer verified?** **no**. Still blocked on external catalog `0x2f50` /
+capture-only policy.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.
