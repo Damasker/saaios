@@ -1,6 +1,8 @@
 /* ONE live: pin1==1 → VerifyPin A+AID (no CardPower). Watch unsolicited SIT
    on umts_ipc0 during/after. Logs type/id/len/error only — never PIN/IMSI/ICCID/AID.
    No cbd/rild, POWER_OFF, crash, EFS RW, invent 0x2f50. */
+/* Historical fixed-PIN candidate and cmd7-only RFS reader. Do not use as a
+ * network probe or concurrently with a dedicated RFS broker. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +18,7 @@
 #include <unistd.h>
 
 #include "sit-sim-layout.h"
+#include "sit-network-layout.h"
 
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t le32(const uint8_t *p) { return le16(p) | ((uint32_t)le16(p + 2) << 16); }
@@ -100,9 +103,12 @@ static void note_frame(const char *phase, const uint8_t *b, int len, unsigned wa
             printf("%s UNSOL_SIM app=%u pin1=%u remain=%u card=%u apps=%u\n",
                    phase, b[SIT_SIM_APP_STATE], b[SIT_SIM_PIN1], b[SIT_SIM_PIN1_REMAIN],
                    b[SIT_SIM_CARD], b[SIT_SIM_APPS]);
-        } else if ((fid == 0x0701 || fid == 0x0702) && len >= 16) {
-            printf("%s UNSOL_REG id=0x%04x reg=%u tech=%u\n",
-                   phase, fid, b[12], b[15]);
+        } else if (sit_net_is_registration(fid) && typ == 1 && len >= 14 && !err) {
+            printf("%s LATE_REG id=0x%04x reg=%u reject=%u", phase, fid,
+                   b[SIT_NET_REG_STATE_OFFSET], b[SIT_NET_REJECT_OFFSET]);
+            if (fid == SIT_NET_DATA_REG && len >= 16)
+                printf(" tech=%u", b[SIT_NET_DATA_TECH_OFFSET]);
+            putchar('\n');
         }
     }
     if (fid == 0x0200 && len >= SIT_SIM_APP_TYPE + SIT_SIM_APP_STRIDE && !b[10] &&
@@ -224,6 +230,7 @@ static int query_sim(int ipc, int rfs, uint32_t tok, const char *phase) {
 }
 
 static int query_reg(int ipc, int rfs, unsigned id, uint32_t tok, const char *phase) {
+    if (!sit_net_is_registration(id)) return -1;
     uint8_t req[12] = {0}, resp[512];
     int n = 0;
     req[2] = (uint8_t)(id & 0xff);
@@ -231,8 +238,13 @@ static int query_reg(int ipc, int rfs, unsigned id, uint32_t tok, const char *ph
     req[4] = 12;
     req[6] = (uint8_t)tok;
     int rc = exchange_watch(ipc, rfs, req, 12, id, (int32_t)tok, 8000, phase, resp, &n);
-    if (!rc && n >= 16)
-        printf("%s reg_byte12=%u tech=%u\n", phase, resp[12], resp[15]);
+    if (!rc && n >= 14 && resp[0] == 1 && resp[10] == 0) {
+        printf("%s reg_byte12=%u reject=%u", phase,
+               resp[SIT_NET_REG_STATE_OFFSET], resp[SIT_NET_REJECT_OFFSET]);
+        if (id == SIT_NET_DATA_REG && n >= 16)
+            printf(" tech=%u", resp[SIT_NET_DATA_TECH_OFFSET]);
+        putchar('\n');
+    }
     return rc;
 }
 
@@ -330,8 +342,8 @@ int main(void) {
     }
     puts("CONFIRMED pin1=1 NOT_VERIFIED; proceeding VerifyPin A+AID");
 
-    (void)query_reg(ipc, rfs, 0x0702, 2, "pre_voice");
-    (void)query_reg(ipc, rfs, 0x0701, 3, "pre_data");
+    (void)query_reg(ipc, rfs, SIT_NET_VOICE_REG, 2, "pre_voice");
+    (void)query_reg(ipc, rfs, SIT_NET_DATA_REG, 3, "pre_data");
 
     int err = verify_a(ipc, rfs, 7);
     puts("=== post-verify idle watch 8s ===");
@@ -339,8 +351,8 @@ int main(void) {
 
     puts("=== after ===");
     if (query_sim(ipc, rfs, 8, "after")) puts("SIM timeout");
-    (void)query_reg(ipc, rfs, 0x0702, 9, "after_voice");
-    (void)query_reg(ipc, rfs, 0x0701, 10, "after_data");
+    (void)query_reg(ipc, rfs, SIT_NET_VOICE_REG, 9, "after_voice");
+    (void)query_reg(ipc, rfs, SIT_NET_DATA_REG, 10, "after_data");
     print_rmnet();
 
     printf("RESULT app=%d pin1=%d remain=%d verify_err=%d unsol_frames=%u\n",

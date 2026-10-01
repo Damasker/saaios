@@ -1,6 +1,8 @@
 /* Post-READY bearer chase: Radio ON, LTE preferred, selection auto,
    AllowData, SetupDataCall (APN file), poll reg/rmnet. No secrets logged.
    No CardPower/VerifyPin/cbd/rild/POWER_OFF/EFS. */
+/* Historical cmd7-only RFS reader: do not run with a dedicated RFS broker.
+ * Use ready-network-once snapshot/run for a broker-compatible check. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +18,7 @@
 #include <unistd.h>
 
 #include "sit-sim-layout.h"
+#include "sit-network-layout.h"
 
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t le32(const uint8_t *p) { return le16(p) | ((uint32_t)le16(p + 2) << 16); }
@@ -86,8 +89,13 @@ static void note(const char *tag, const uint8_t *b, int len, unsigned want) {
         g_pin = b[SIT_SIM_PIN1];
         printf("%s SIM app=%d pin1=%d\n", tag, g_app, g_pin);
     }
-    if ((fid == 0x0701 || fid == 0x0702) && len >= 16)
-        printf("%s REG id=0x%04x reg=%u tech=%u\n", tag, fid, b[12], b[15]);
+    if (sit_net_is_registration(fid) && typ == 1 && len >= 14 && !err) {
+        printf("%s REG id=0x%04x reg=%u reject=%u", tag, fid,
+               b[SIT_NET_REG_STATE_OFFSET], b[SIT_NET_REJECT_OFFSET]);
+        if (fid == SIT_NET_DATA_REG && len >= 16)
+            printf(" tech=%u", b[SIT_NET_DATA_TECH_OFFSET]);
+        putchar('\n');
+    }
 }
 
 static int exchange(int ipc, int rfs, const uint8_t *req, size_t req_len, unsigned id,
@@ -283,11 +291,11 @@ int main(void) {
         n = 0;
         (void)exchange(ipc, rfs, req, 12, 0x0701, 60 + i, 8000, "data", resp, &n);
         memset(req, 0, sizeof req);
-        req[2] = 0x02;
+        req[2] = 0x00; /* BuildNetworkRegistrationState(1): voice */
         req[3] = 0x07;
         req[4] = 12;
         req[6] = (uint8_t)(80 + i);
-        (void)exchange(ipc, rfs, req, 12, 0x0702, 80 + i, 8000, "voice", resp, &n);
+        (void)exchange(ipc, rfs, req, 12, SIT_NET_VOICE_REG, 80 + i, 8000, "voice", resp, &n);
         print_rmnet();
         memset(req, 0, sizeof req);
         req[2] = 0x00;

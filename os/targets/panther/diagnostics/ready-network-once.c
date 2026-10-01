@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "sit-sim-layout.h"
+#include "sit-network-layout.h"
 
 enum { RX_CAP = 65536, REPLY_CAP = 256, TOTAL_MS = 120000, EXCHANGE_MS = 10000 };
 
@@ -97,15 +98,19 @@ static int open_verified_ipc0(void) {
 static int exchange(int fd, unsigned id, unsigned len, uint32_t token,
                     int64_t global_end, uint8_t reply[REPLY_CAP], size_t *reply_len) {
     uint8_t request[16];
+    int64_t start = now_ms();
+    if (start < 0 || start >= global_end) return -1;
     make_request(request, id, len, token);
     if (!online() || write(fd, request, len) != (ssize_t)len) return -1;
-    int64_t end = now_ms() + EXCHANGE_MS;
+    int64_t end = start + EXCHANGE_MS;
     if (end > global_end) end = global_end;
     static uint8_t rx[RX_CAP];
     size_t used = 0;
     unsigned frames = 0;
-    while (now_ms() < end && frames < 128) {
-        int64_t remain = end - now_ms();
+    while (frames < 128) {
+        int64_t now = now_ms();
+        if (now < 0) return -1;
+        int64_t remain = end - now;
         if (remain <= 0) break;
         struct pollfd pfd = { fd, POLLIN, 0 };
         int rc = poll(&pfd, 1, remain > 250 ? 250 : (int)remain);
@@ -155,6 +160,77 @@ static void print_rmnet(void) {
     }
 }
 
+/* Read-only SIT snapshot: only scalar status and response presence are exposed.
+ * In particular the 0x0702 operator payload (PLMN/names) is never copied to
+ * stdout or interpreted as registration. */
+static int snapshot_one(int fd, unsigned id, const char *label, uint32_t *token,
+                        int64_t end) {
+    uint8_t reply[REPLY_CAP];
+    size_t n = 0;
+    int rc = exchange(fd, id, 12, ++*token, end, reply, &n);
+    if (rc) {
+        printf("%s response=no status=%s\n", label, rc == 1 ? "timeout" : "io_error");
+        return 1;
+    }
+    if (n < 12) { printf("%s response=yes payload=short\n", label); return 1; }
+    printf("%s response=yes error_raw=%u", label, reply[10]);
+    if (reply[10]) { putchar('\n'); return 1; }
+    switch (id) {
+    case 0x0200:
+        if (n < 15) break;
+        printf(" card_raw=%u apps=%u", reply[SIT_SIM_CARD], reply[SIT_SIM_APPS]);
+        if (!reply[SIT_SIM_APPS]) { putchar('\n'); return 0; }
+        if (n < SIT_SIM_PIN1 + 1 ||
+            n < 15U + SIT_SIM_APP_STRIDE * reply[SIT_SIM_APPS]) break;
+        printf(" app_raw=%u pin1_raw=%u", reply[SIT_SIM_APP_STATE], reply[SIT_SIM_PIN1]);
+        putchar('\n'); return 0;
+    case 0x0801:
+        if (n < 16) break;
+        printf(" radio_raw=%u", le32(reply + 12));
+        putchar('\n'); return 0;
+    case SIT_NET_VOICE_REG:
+    case SIT_NET_DATA_REG:
+        if (n < (id == SIT_NET_DATA_REG ? 16U : 14U)) break;
+        printf(" registration_raw=%u reject_raw=%u",
+               reply[SIT_NET_REG_STATE_OFFSET], reply[SIT_NET_REJECT_OFFSET]);
+        if (id == SIT_NET_DATA_REG && n >= 16)
+            printf(" tech_raw=%u", reply[SIT_NET_DATA_TECH_OFFSET]);
+        putchar('\n'); return 0;
+    case SIT_NET_SELECTION_MODE:
+        if (n < 13) break;
+        printf(" mode_raw=%u", reply[12]);
+        putchar('\n'); return 0;
+    case SIT_NET_PREFERRED_GET:
+        if (n < 16) break;
+        printf(" preferred_raw=%u", le32(reply + 12));
+        putchar('\n'); return 0;
+    case SIT_NET_OPERATOR:
+    case 0x0900: /* Operator identifiers and signal payload are suppressed. */
+        putchar('\n'); return 0;
+    default:
+        break;
+    }
+    puts(" payload=short");
+    return 1;
+}
+
+static int snapshot(int fd, uint32_t token, int64_t end) {
+    static const struct {
+        unsigned id;
+        const char *label;
+    } reads[] = {
+        {0x0200, "sim"}, {0x0801, "radio"},
+        {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"},
+        {SIT_NET_OPERATOR, "operator"}, {SIT_NET_SELECTION_MODE, "selection"},
+        {SIT_NET_PREFERRED_GET, "preferred"}, {0x0900, "signal"}
+    };
+    int failures = 0;
+    for (size_t i = 0; i < sizeof reads / sizeof reads[0]; ++i)
+        failures += snapshot_one(fd, reads[i].id, reads[i].label, &token, end);
+    print_rmnet();
+    return failures ? 1 : 0;
+}
+
 static int self_test(void) {
     uint8_t p[256] = {0}, req[16];
     p[0] = 1; p[2] = 0; p[3] = 2; p[4] = 78;
@@ -172,23 +248,28 @@ static int self_test(void) {
     p[12] = 1; if (selection_mode(p, 13) != 1) return 1;
     p[12] = 2; if (selection_mode(p, 13) != -1) return 1;
     p[12] = 0; if (selection_mode(p, 12) != -1) return 1;
+    if (!sit_net_is_registration(SIT_NET_VOICE_REG) ||
+        !sit_net_is_registration(SIT_NET_DATA_REG) ||
+        sit_net_is_registration(SIT_NET_OPERATOR)) return 1;
     make_request(req, 0x0704, 12, 0x78563412);
     if (req[0] != 0 || req[2] != 4 || req[3] != 7 || req[4] != 12 ||
         le32(req + 6) != 0x78563412 || req[12] != 0) return 1;
     make_request(req, 0x0710, 13, 3);
     if (req[2] != 0x10 || req[3] != 7 || req[4] != 13 || req[12] != 1) return 1;
     p[0] = 3; if (frame_size(p, 13) != -1) return 1;
-    puts("PASS ready-network-once fixtures: gate, selection, framing, signed requests");
+    puts("PASS ready-network-once fixtures: gate, selection, network IDs, framing, signed requests");
     return 0;
 }
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "self-test") == 0) return self_test();
-    if (argc != 2 || strcmp(argv[1], "run") != 0) {
-        fputs("usage: ready-network-once self-test|run\n", stderr);
+    int snapshot_mode = argc == 2 && strcmp(argv[1], "snapshot") == 0;
+    if (argc != 2 || (!snapshot_mode && strcmp(argv[1], "run") != 0)) {
+        fputs("usage: ready-network-once self-test|snapshot|run\n", stderr);
         return 64;
     }
-    int lock = open("/run/saaios-sit-status.lock", O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    int lock = open("/run/saaios-sit-status.lock",
+                    O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (lock < 0 || flock(lock, LOCK_EX | LOCK_NB)) {
         fputs("ABORT common SIT lock busy\n", stderr);
         return 1;
@@ -196,11 +277,17 @@ int main(int argc, char **argv) {
     if (!online()) { fputs("ABORT modem not ONLINE\n", stderr); close(lock); return 1; }
     int fd = open_verified_ipc0();
     if (fd < 0) { fputs("ABORT unverified umts_ipc0\n", stderr); close(lock); return 1; }
-    int64_t end = now_ms() + TOTAL_MS;
-    uint32_t token = ((uint32_t)now_ms() << 8) ^ (uint32_t)getpid();
+    int64_t start = now_ms();
+    if (start < 0) { fputs("ABORT monotonic clock unavailable\n", stderr); close(fd); close(lock); return 1; }
+    int64_t end = start + TOTAL_MS;
+    uint32_t token = ((uint32_t)start << 8) ^ (uint32_t)getpid();
     if (!token) token = 1;
     uint8_t reply[REPLY_CAP]; size_t n = 0;
     int rc = 1;
+    if (snapshot_mode) {
+        rc = snapshot(fd, token, end);
+        goto done;
+    }
 #define QUERY(ID, LEN) exchange(fd, ID, LEN, ++token, end, reply, &n)
     if (QUERY(0x0200, 12) || !sim_ready(reply, n)) {
         puts("ABORT fresh SIM response is not READY(5)"); goto done;
