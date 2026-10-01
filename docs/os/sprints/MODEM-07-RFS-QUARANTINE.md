@@ -89,6 +89,45 @@ review before enabling phone I/O. Until then, only host-only synthetic
 and [private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
 fixtures are permitted; neither is a phone broker.
 
+## Implementation sequence before any phone-side RFS reply
+
+1. Keep the present passive owner as the default. Build a separately named,
+   manually launched ARM diagnostic variant that uses the same pre-FIN
+   single-owner handoff and IPC/RFS lock. The host protocol/storage fixtures
+   retain their AArch64 compile rejection; they are test models, not files
+   to link into the device image.
+2. In that variant, verify the immutable NV-copy provenance and digest again
+   before replying to command 7. Create the unique candidate and durable
+   `NO_PROMOTION` marker first. Establish descriptor identity, bounded size,
+   full re-read and directory durability without opening original EFS.
+3. Make RFS packet parsing stop at each complete response boundary. Allow
+   at most one outstanding CP request/grant, with a bounded deadline and a
+   fail-closed transition. The current passive owner's callback cannot
+   report an RFS write failure to its parser, so it must not be reused for
+   active grant/ACK handling unchanged. Review the kernel driver's write
+   contract before deciding how to handle a short or ambiguous device write;
+   never blindly retransmit a potentially accepted grant.
+   The inspected Google S5300 source at commit `232fb16b3dbc3c4126d9ac0b2a0f0f514e1290c8`
+   (`ipc_io_device.c:241-425`) returns the full userspace count after
+   nonnegative link sends, or an error; a successful return means kernel
+   queue acceptance, **not** CP consumption. A new `write` receives new
+   link framing. Unexpected short results and response timeouts are therefore
+   indeterminate and must not trigger an automatic retry. Exact parity of
+   this checkout with the running phone module remains unverified.
+4. First live stage, only after separate review and a documented physical-SIM
+   state: allow *one* bounded grant and inspect the first real command-2
+   metadata, storing any CP data solely in the candidate. Stop without a
+   final success ACK and return to the passive build after a controlled
+   reboot. This is a CP-state-changing diagnostic even though it never
+   promotes NV; do not describe it as a harmless read-only probe. Check that
+   the verified boot copy remained byte-identical and preserve failed
+   candidates as invalid evidence.
+5. Only after the real command-2 sequence, RFS write semantics, failure
+   paths and ARM build are verified may a separately reviewed full exchange
+   attempt all 95 chunks and consider the final durable-quarantine ACK.
+   A completed RFS transfer alone does not establish SIM READY, network
+   registration or a data bearer.
+
 ## Failure and verification gates
 
 Timeout, malformed frame, unexpected state, NV verification failure, short
