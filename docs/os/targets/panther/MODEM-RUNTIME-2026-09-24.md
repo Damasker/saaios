@@ -5839,3 +5839,42 @@ logging ATR/ICCID/EID or opening a competing reader. The two-slot logger is
 host-built but was **not** deployed. Do not send `0x0250` slot mapping, PIN,
 radio-power, or RFS grants based on this absent-tray run. No further phone
 reboot was made in this series.
+
+## 2026-10-01: SIM-in, PIN-disabled no-gap control reaches READY but not camp
+
+The operator tested the physical SIM in another phone, found that its PIN
+request had in fact been enabled, disabled that request, returned the SIM to
+the Pixel, and reported that the account had been topped up. The numeric PIN
+was not sent to the modem or retained in this diagnostic record. While the
+previous passive owner still held IPC0/RFS0, the hot-insertion caused two
+bounded `0x0210`-triggered read-only SIM GETs: card 1/apps 1 first had app
+state 0, then app state **5 (READY)** with PIN1 state **3 (DISABLED)** and
+three attempts remaining. CP stayed `ONLINE`; `rmnet0` had no IPv4 address
+or RX/TX packets. This is direct evidence that the physical SIM can reach
+READY without a VerifyPin command from SaaiOS on the now-disabled card.
+
+The new two-slot logger was rebuilt from the committed source, SHA-256
+`afd32e81756a3eb73e88f508ddfcedd21d8e0cd98a14cdfa49e8da43f9a5ca6f`,
+passed its ARM `self-test`, and was installed with the preceding binary
+preserved as `.pre-two-slot-20261001`. The first ordinary `reboot` request
+did not restart this native init; after confirming the old PID and uptime,
+one `sync; reboot -f` restarted the AP. The prior logs were retained under
+`.pre-sim-in-20261001` names. The guarded owner handoff completed with
+`probe_rc=0`; CP was `ONLINE` and a single owner (PID 549) held IPC0/RFS0
+before FIN. No factory daemon, PIN, APN, radio SET, slot mapping SET or RFS
+reply ran; the verified NV/EFS baseline was not modified.
+
+At +9.768 s the redacted factory `0x024e` indication reported two slot
+records: slot 0 card 1/port 0 logical 1/state 1, slot 1 card 1/port 0
+logical 0/state 1. This crossed mapping is now observed on the **current**
+SIM-in boot. Together with the preceding physical-tray-out control, it is
+consistent with slot 0 describing eUICC and slot 1 the removable SIM, but
+neither record establishes an active eSIM profile. The indication-driven
+`0x0200` for IPC0 returned card 1/apps 1, app state READY(5), PIN1
+DISABLED(3), error 0. At +60 s the settled sweep repeated READY/DISABLED;
+radio state was **ON(10)**, but voice and data registration were both 0,
+reject 0, data tech 0. `rmnet0` still had no IPv4 address and RX/TX were 0.
+RFS again showed file-3 command 7 at +7.271 s and command 6/sequence 1 at
++17.272 s without a reply. Thus PIN and absence of the physical SIM no
+longer explain this boot's failure to register; the missing network-search
+prerequisite versus incomplete RFS transaction remains to be isolated.

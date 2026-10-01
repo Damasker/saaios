@@ -73,10 +73,26 @@ unproven. The third boot's SIM-removal timing is unknown, so it is not a
 controlled comparison. [The runtime log](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
 has the exact captures. After the physical SIM is returned and its PIN state
 checked separately, take a documented SIM-in read-only comparison. A
-two-slot card/port-scalar logger is committed but **not deployed**. Do not
+two-slot card/port-scalar logger was committed for that next comparison. Do not
 infer a mapping bug, RFS causality, or a need for `0x0250`/PIN/radio SETs
 from the absent-tray boot. No additional phone reboot was made in this
 control series.
+
+**SIM-in control update (2026-10-01):** The operator found that the physical
+card had indeed required PIN, disabled its PIN prompt in another phone,
+returned it to the Pixel and reported replenishing the account. Hot insertion
+under the existing owner gave card PRESENT/app READY(5)/PIN1 DISABLED(3)
+without a SaaiOS VerifyPin. One new guarded AP boot then deployed the
+redacted two-slot logger and reached CP ONLINE with one IPC0/RFS0 owner.
+Slot 0 reported card 1/port 0 logical 1; slot 1 card 1/port 0 logical 0.
+This is consistent with an embedded-SIM record plus the removable SIM, but
+does not prove an active eSIM profile. At +60 s IPC0 remained READY/DISABLED,
+radio was ON(10), yet voice/data registration were 0, `rmnet0` had no IPv4
+address and RX/TX stayed 0. RFS cmd7/cmd6 repeated without replies. The
+current blocker is **network camp/registration**, not physical SIM absence,
+PIN entry or account balance alone. Next isolate the missing camp trigger
+from any RFS prerequisite with a bounded, single-owner experiment; neither
+cause is proven. Details: [runtime log](../targets/panther/MODEM-RUNTIME-2026-09-24.md).
 
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),

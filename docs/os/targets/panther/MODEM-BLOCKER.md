@@ -1,5 +1,17 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**Latest SIM-in control (2026-10-01):** The operator confirmed the card's PIN
+prompt was actually enabled, then disabled it in another phone, reinserted
+the card and reported replenishing the account. With one continuous IPC0/RFS0
+owner, the physical-SIM-in boot reached app READY(5)/PIN1 DISABLED(3) without
+a SaaiOS PIN command; the +60-second read-only sweep showed radio ON(10),
+voice/data registration 0, no `rmnet0` IPv4 and RX/TX 0. Two-slot metadata
+showed slot 0 port 0 logical 1 and slot 1 port 0 logical 0; the eSIM identity
+is plausible but not proven. File-3 RFS cmd7/cmd6 again arrived without
+replies. MODEM-06 is now clearly blocked at camp/registration under a
+PIN-free READY state. The account top-up is operator-reported, not a network
+attach measurement. See [the runtime control](MODEM-RUNTIME-2026-09-24.md).
+
 **New channel evidence (2026-10-01):** the live kernel repeatedly reported
 `umts_ipc0 is not opened` (190 matching entries in the inspected ring) and
 one `umts_rfs0 is not opened` packet drop. A bounded, header-only IPC reader
@@ -18,7 +30,7 @@ last close purges its shared RX queue. A long-lived, single-reader IPC/RFS
 owner and safe boot handoff now precede more radio-setting experiments. A
 bounded observer cannot substitute for that service.
 
-**Current status (2026-10-01):** SIM reached **READY(5)** twice after a
+**Earlier control (2026-10-01):** SIM reached **READY(5)** twice after a
 signed `0x0201` VerifyPin request with AID and **without CardPower**.
 Neither test consumed a PIN attempt (`remain=3`). The owner says the SIM
 PIN is disabled; do not automatically send VerifyPin or guess digits.
