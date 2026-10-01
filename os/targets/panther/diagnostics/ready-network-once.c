@@ -2,6 +2,7 @@
  * Opens only umts_ipc0. The separate RFS broker must remain the sole RFS reader.
  * No PIN, card power, APN, NV, rild/cbd, or radio-power OFF is sent here.
  * Only the explicit rearm-on mode sends one factory RadioPower ON request.
+ * test-pref12 temporarily broadens LTE_ONLY to LTE_WCDMA, then restores it.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -21,7 +22,7 @@
 #include "sit-network-layout.h"
 
 enum { RX_CAP = 65536, REPLY_CAP = 256, REQUEST_CAP = 18,
-       TOTAL_MS = 120000, EXCHANGE_MS = 10000 };
+       TOTAL_MS = 120000, EXCHANGE_MS = 10000, RESTORE_MS = 25000 };
 
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t le32(const uint8_t *p) { return le16(p) | ((uint32_t)le16(p + 2) << 16); }
@@ -61,14 +62,19 @@ static int selection_mode(const uint8_t *p, size_t n) {
     if (!response_ok(p, n, 0x0703) || n < 13 || p[12] > 1) return -1;
     return p[12]; /* 0 auto: skip 0x0704; 1 manual: send it once. */
 }
+static int preferred_is(const uint8_t *p, size_t n, uint32_t expected) {
+    return response_ok(p, n, 0x070b) && n >= 16 && le32(p + 12) == expected;
+}
 
-static void make_request(uint8_t *out, unsigned id, unsigned len, uint32_t token) {
+static void make_request(uint8_t *out, unsigned id, unsigned len,
+                         uint32_t value, uint32_t token) {
     memset(out, 0, REQUEST_CAP);
     out[2] = (uint8_t)id; out[3] = (uint8_t)(id >> 8);
     out[4] = (uint8_t)len; out[5] = (uint8_t)(len >> 8);
     put32(out + 6, token);
     if (id == 0x0710) out[12] = 1; /* factory BuildAllowData(1) */
     if (id == 0x0800) put32(out + 12, 2); /* factory BuildRadioPower(ON) */
+    if (id == 0x070a) put32(out + 12, value); /* factory BuildSetPreferredNetworkType */
 }
 
 static int online(void) {
@@ -98,13 +104,15 @@ static int open_verified_ipc0(void) {
     return fd;
 }
 
-static int exchange(int fd, unsigned id, unsigned len, uint32_t token,
-                    int64_t global_end, uint8_t reply[REPLY_CAP], size_t *reply_len) {
+static int exchange(int fd, unsigned id, unsigned len, uint32_t value, uint32_t token,
+                     int64_t global_end, uint8_t reply[REPLY_CAP], size_t *reply_len) {
     uint8_t request[REQUEST_CAP];
     int64_t start = now_ms();
     if (start < 0 || start >= global_end || len > REQUEST_CAP || len < 12 ||
-        (id == 0x0800 && len != 18)) return -1;
-    make_request(request, id, len, token);
+        (id == 0x0800 && len != 18) ||
+        (id == 0x070a && (len != 16 || (value != 11 && value != 12))) ||
+        (id != 0x070a && value != 0)) return -1;
+    make_request(request, id, len, value, token);
     if (!online() || write(fd, request, len) != (ssize_t)len) return -1;
     int64_t end = start + EXCHANGE_MS;
     if (end > global_end) end = global_end;
@@ -171,7 +179,7 @@ static int snapshot_one(int fd, unsigned id, const char *label, uint32_t *token,
                         int64_t end) {
     uint8_t reply[REPLY_CAP];
     size_t n = 0;
-    int rc = exchange(fd, id, 12, ++*token, end, reply, &n);
+    int rc = exchange(fd, id, 12, 0, ++*token, end, reply, &n);
     if (rc) {
         printf("%s response=no status=%s\n", label, rc == 1 ? "timeout" : "io_error");
         return 1;
@@ -235,6 +243,87 @@ static int snapshot(int fd, uint32_t token, int64_t end) {
     return failures ? 1 : 0;
 }
 
+/* One temporary, factory-encoded RAT change. After attempting the SET, every
+ * exit goes through a separately budgeted restore, including ACK timeouts. */
+static int test_pref12(int fd, uint32_t *token, int64_t end) {
+    uint8_t reply[REPLY_CAP];
+    size_t n = 0;
+    int experiment_ok = 1;
+    if (exchange(fd, 0x070b, 12, 0, ++*token, end, reply, &n) ||
+        !preferred_is(reply, n, 11)) {
+        puts("ABORT preferred GET is not LTE_ONLY(11); no SET sent");
+        return 1;
+    }
+    puts("preflight preferred LTE_ONLY(11)");
+    if (exchange(fd, 0x0200, 12, 0, ++*token, end, reply, &n) ||
+        !sim_ready(reply, n) ||
+        exchange(fd, 0x0801, 12, 0, ++*token, end, reply, &n) ||
+        !radio_on(reply, n)) {
+        puts("ABORT READY/ON changed before preferred SET; no SET sent");
+        return 1;
+    }
+
+    /* The SET may take effect even when its reply is lost. Never leave this
+     * function without attempting to restore 11 after entering this block. */
+    if (exchange(fd, 0x070a, 16, 12, ++*token, end, reply, &n) ||
+        !response_ok(reply, n, 0x070a)) {
+        puts("EXPERIMENT FAILED preferred LTE_WCDMA(12) SET ACK missing/error");
+        experiment_ok = 0;
+        goto restore;
+    }
+    puts("preferred LTE_WCDMA(12) SET accepted");
+    if (exchange(fd, 0x070b, 12, 0, ++*token, end, reply, &n) ||
+        !preferred_is(reply, n, 12)) {
+        puts("EXPERIMENT FAILED preferred GET did not confirm 12");
+        experiment_ok = 0;
+        goto restore;
+    }
+    puts("preferred LTE_WCDMA(12) readback confirmed");
+
+    for (int i = 0; i < 10; ++i) {
+        if (now_ms() >= end) {
+            puts("EXPERIMENT FAILED observation deadline");
+            experiment_ok = 0;
+            goto restore;
+        }
+        printf("poll=%d ", i);
+        if (snapshot_one(fd, SIT_NET_VOICE_REG, "voice", token, end) ||
+            snapshot_one(fd, SIT_NET_DATA_REG, "data", token, end)) {
+            puts("EXPERIMENT FAILED registration GET");
+            experiment_ok = 0;
+            goto restore;
+        }
+        print_rmnet();
+        if (i < 9) {
+            struct timespec pause = {3, 0};
+            while (nanosleep(&pause, &pause) && errno == EINTR) { }
+        }
+    }
+    puts("RESULT observation complete; SIT ACK does not imply camp");
+
+restore:
+    {
+        int64_t restore_start = now_ms();
+        if (restore_start < 0) {
+            puts("RESTORE FAILED monotonic clock unavailable; preferred may be 12");
+            return 1;
+        }
+        int64_t restore_end = restore_start + RESTORE_MS;
+        int restore_rc = exchange(fd, 0x070a, 16, 11, ++*token,
+                                  restore_end, reply, &n);
+        int restore_ack = restore_rc == 0 && response_ok(reply, n, 0x070a);
+        if (restore_ack) puts("RESTORE preferred LTE_ONLY(11) SET accepted");
+        else puts("RESTORE FAILED preferred LTE_ONLY(11) SET ACK missing/error");
+
+        int readback_rc = exchange(fd, 0x070b, 12, 0, ++*token,
+                                   restore_end, reply, &n);
+        int restored = readback_rc == 0 && preferred_is(reply, n, 11);
+        if (restored) puts("RESTORE CONFIRMED preferred LTE_ONLY(11) readback");
+        else puts("RESTORE UNCONFIRMED preferred may remain 12; manual recovery required");
+        return experiment_ok && restore_ack && restored ? 0 : 1;
+    }
+}
+
 static int self_test(void) {
     uint8_t p[256] = {0}, req[REQUEST_CAP];
     p[0] = 1; p[2] = 0; p[3] = 2; p[4] = 78;
@@ -255,18 +344,31 @@ static int self_test(void) {
     if (!sit_net_is_registration(SIT_NET_VOICE_REG) ||
         !sit_net_is_registration(SIT_NET_DATA_REG) ||
         sit_net_is_registration(SIT_NET_OPERATOR)) return 1;
-    make_request(req, 0x0704, 12, 0x78563412);
+    make_request(req, 0x0704, 12, 0, 0x78563412);
     if (req[0] != 0 || req[2] != 4 || req[3] != 7 || req[4] != 12 ||
         le32(req + 6) != 0x78563412 || req[12] != 0) return 1;
-    make_request(req, 0x0710, 13, 3);
+    make_request(req, 0x0710, 13, 0, 3);
     if (req[2] != 0x10 || req[3] != 7 || req[4] != 13 || req[12] != 1) return 1;
-    make_request(req, 0x0800, 18, 0x78563412);
+    make_request(req, 0x0800, 18, 0, 0x78563412);
     if (req[0] != 0 || req[1] != 0 || le16(req + 2) != 0x0800 ||
         le16(req + 4) != 18 || le32(req + 6) != 0x78563412 ||
         req[10] != 0 || req[11] != 0 || le32(req + 12) != 2 ||
         req[16] != 0 || req[17] != 0) return 1;
+    make_request(req, 0x070a, 16, 12, 0x78563412);
+    if (req[0] != 0 || req[1] != 0 || le16(req + 2) != 0x070a ||
+        le16(req + 4) != 16 || le32(req + 6) != 0x78563412 ||
+        req[10] != 0 || req[11] != 0 || le32(req + 12) != 12 ||
+        req[16] != 0 || req[17] != 0) return 1;
+    make_request(req, 0x070a, 16, 11, 0x78563413);
+    if (le16(req + 2) != 0x070a || le16(req + 4) != 16 ||
+        le32(req + 6) != 0x78563413 || le32(req + 12) != 11) return 1;
+    memset(p, 0, sizeof p); p[0] = 1; p[2] = 0x0b; p[3] = 7; p[4] = 16;
+    put32(p + 12, 12);
+    if (!preferred_is(p, 16, 12) || preferred_is(p, 16, 11) ||
+        preferred_is(p, 15, 12)) return 1;
+    p[10] = 2; if (preferred_is(p, 16, 12)) return 1;
     p[0] = 3; if (frame_size(p, 13) != -1) return 1;
-    puts("PASS ready-network-once fixtures: gate, selection, network IDs, framing, signed ON-only request");
+    puts("PASS ready-network-once fixtures: gate, selection, network IDs, framing, ON-only and preferred 11/12 requests");
     return 0;
 }
 
@@ -274,8 +376,10 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "self-test") == 0) return self_test();
     int snapshot_mode = argc == 2 && strcmp(argv[1], "snapshot") == 0;
     int rearm_on_mode = argc == 2 && strcmp(argv[1], "rearm-on") == 0;
-    if (argc != 2 || (!snapshot_mode && !rearm_on_mode && strcmp(argv[1], "run") != 0)) {
-        fputs("usage: ready-network-once self-test|snapshot|run|rearm-on\n", stderr);
+    int pref12_mode = argc == 2 && strcmp(argv[1], "test-pref12") == 0;
+    if (argc != 2 || (!snapshot_mode && !rearm_on_mode && !pref12_mode &&
+                      strcmp(argv[1], "run") != 0)) {
+        fputs("usage: ready-network-once self-test|snapshot|run|rearm-on|test-pref12\n", stderr);
         return 64;
     }
     int lock = open("/run/saaios-sit-status.lock",
@@ -298,7 +402,7 @@ int main(int argc, char **argv) {
         rc = snapshot(fd, token, end);
         goto done;
     }
-#define QUERY(ID, LEN) exchange(fd, ID, LEN, ++token, end, reply, &n)
+#define QUERY(ID, LEN) exchange(fd, ID, LEN, 0, ++token, end, reply, &n)
     if (QUERY(0x0200, 12) || !sim_ready(reply, n)) {
         puts("ABORT fresh SIM response is not READY(5)"); goto done;
     }
@@ -307,6 +411,10 @@ int main(int argc, char **argv) {
         puts("ABORT fresh radio response is not ON(10)"); goto done;
     }
     puts("preflight radio ON(10)");
+    if (pref12_mode) {
+        rc = test_pref12(fd, &token, end);
+        goto done;
+    }
     if (rearm_on_mode) {
         /* Both gates were read immediately before this one ON-only SET.
          * Never send OFF, retry the SET, or claim that an ACK means camp. */
