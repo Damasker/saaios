@@ -156,6 +156,35 @@ pub fn search(entries: &[Entry], query: &str, camera: Camera, limit: usize) -> V
         .collect()
 }
 
+/// Everything on the sphere in reading order (parents before their
+/// children), each with the route to it. The list alternative to the
+/// sphere: nothing is reachable only by gesture.
+pub fn browse(entries: &[Entry], camera: Camera) -> Vec<Hit> {
+    let by_id: std::collections::BTreeMap<&str, &Entry> =
+        entries.iter().map(|e| (e.id.as_str(), e)).collect();
+    crate::access::outline(entries, camera)
+        .into_iter()
+        .filter_map(|o| {
+            let e = by_id.get(o.id.as_str())?;
+            Some(Hit {
+                id: e.id.clone(),
+                label: e.label.clone(),
+                class: e.class.clone(),
+                availability: e.availability,
+                ghost: e.ghost,
+                score: 0,
+                route: Route {
+                    target: e.id.clone(),
+                    from: camera.center,
+                    to: e.geo,
+                    zoom_from: camera.zoom,
+                    zoom_to: zoom_for(e, camera),
+                },
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +263,18 @@ mod tests {
         let hits = search(&e, "tool", Camera::home(), 8);
         assert_eq!(hits[0].id, "music");
         assert_eq!(hits[1].id, "mail");
+    }
+
+    #[test]
+    fn browse_lists_everything_in_reading_order_with_routes() {
+        let e = world();
+        let all = browse(&e, Camera::home());
+        let ids: Vec<&str> = all.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["search", "apps", "mail", "music", "devices", "nas"]);
+        assert!(all.iter().all(|h| h.route.from == Camera::home().center));
+        let nas = all.last().unwrap();
+        assert!(!nas.availability.is_available(), "offline stays listed");
+        assert_eq!(browse(&e, Camera::home()), all, "deterministic");
     }
 
     #[test]

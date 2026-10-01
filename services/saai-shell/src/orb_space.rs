@@ -4,10 +4,10 @@
 //! here draws or talks to a service.
 
 use saai_orb::{
-    camera::REST_EXPOSURE_UNITS, compose, depth_threshold, detail, layout, lower, nearest_anchor,
-    search as search_entries, Camera, Context, Delta, Entry, Geo, Geography, Hit, Inertia, Layout,
-    Lift, Motion, NavInput, ObjectClass, OrbObject, Pointers, Presence, Projector, Route, Stage,
-    Tier, Unavailable, ZOOM_MAX,
+    browse, camera::REST_EXPOSURE_UNITS, compose, depth_threshold, detail, layout, lower,
+    nearest_anchor, search as search_entries, step_focus, Camera, Context, Delta, Direction, Entry,
+    Geo, Geography, Hit, Inertia, Layout, Lift, Motion, NavInput, ObjectClass, OrbObject, Pointers,
+    Presence, Projector, Route, Stage, Tier, Unavailable, ZOOM_MAX,
 };
 use saai_ui_core::{Keyboard, Rect};
 
@@ -301,6 +301,8 @@ pub struct SearchState {
     pub keyboard: Keyboard,
     /// The hit the trail points at; the best hit until the user moves it.
     target: Option<String>,
+    /// First visible row of the results.
+    scroll: usize,
 }
 
 impl SearchState {
@@ -310,6 +312,7 @@ impl SearchState {
             buffer,
             keyboard,
             target: None,
+            scroll: 0,
         }
     }
 }
@@ -503,6 +506,12 @@ impl OrbSpace {
         self.presence.reduced_motion = on;
     }
 
+    /// Raises the sphere without a finger (a key, a button).
+    pub fn raise(&mut self) {
+        self.presence.summon();
+        self.dirty = true;
+    }
+
     pub fn dismiss(&mut self) {
         self.search = None;
         self.presence.dismiss();
@@ -520,6 +529,7 @@ impl OrbSpace {
             buffer: String::new(),
             keyboard,
             target: None,
+            scroll: 0,
         });
         self.selected = None;
         self.dirty = true;
@@ -544,13 +554,19 @@ impl OrbSpace {
     pub fn search_edited(&mut self) {
         if let Some(s) = self.search.as_mut() {
             s.target = None;
+            s.scroll = 0;
         }
         self.selected = None;
         self.dirty = true;
     }
 
+    pub fn search_scroll(&self) -> usize {
+        self.search.as_ref().map_or(0, |s| s.scroll)
+    }
+
     pub fn search_hits(&self) -> Vec<Hit> {
         match self.search.as_ref() {
+            Some(s) if s.buffer.trim().is_empty() => browse(&self.entries, self.camera),
             Some(s) => search_entries(&self.entries, &s.buffer, self.camera, SEARCH_LIMIT),
             None => Vec::new(),
         }
@@ -566,8 +582,9 @@ impl OrbSpace {
         .filter(|i| *i < hits.len())
     }
 
-    /// Moves the trail to the next or previous hit without moving the camera.
-    pub fn step_search(&mut self, delta: i32) {
+    /// Moves the trail to the next or previous hit without moving the camera,
+    /// scrolling the list just enough to keep it in view.
+    pub fn step_search(&mut self, delta: i32, rows: usize) {
         let hits = self.search_hits();
         let Some(current) = self.search_focus(&hits) else {
             return;
@@ -575,8 +592,24 @@ impl OrbSpace {
         let next = (current as i32 + delta).clamp(0, hits.len() as i32 - 1) as usize;
         if let Some(s) = self.search.as_mut() {
             s.target = Some(hits[next].id.clone());
+            let rows = rows.max(1);
+            if next < s.scroll {
+                s.scroll = next;
+            } else if next >= s.scroll + rows {
+                s.scroll = next + 1 - rows;
+            }
         }
         self.dirty = true;
+    }
+
+    /// The hit the trail and the focus ring point at. Nothing is pointed at
+    /// before there is a question or a choice: browsing starts unopinionated.
+    pub fn search_pointing(&self) -> Option<usize> {
+        let s = self.search.as_ref()?;
+        if s.buffer.trim().is_empty() && s.target.is_none() {
+            return None;
+        }
+        self.search_focus(&self.search_hits())
     }
 
     /// First time: fly there along the route. Once there: open it. A hit
@@ -609,7 +642,7 @@ impl OrbSpace {
     /// visible hemisphere, shortening as the camera arrives.
     pub fn trail(&self, viewport: Rect, unit: f32) -> Vec<(f32, f32)> {
         let hits = self.search_hits();
-        let Some(i) = self.search_focus(&hits) else {
+        let Some(i) = self.search_pointing() else {
             return Vec::new();
         };
         let route = Route {
@@ -782,17 +815,27 @@ impl OrbSpace {
             self.selected = None;
             return Outcome::Redraw;
         };
-        let id = hit.id.clone();
+        let (id, echelon, usable) = (
+            hit.id.clone(),
+            hit.echelon,
+            hit.availability.is_available() && !hit.ghost,
+        );
+        self.open_item(id, echelon, usable)
+    }
+
+    /// The one rule for "go into this": a cluster whose children are still
+    /// hidden is dived into first; anything else is opened if it can be.
+    fn open_item(&mut self, id: String, echelon: u8, usable: bool) -> Outcome {
         let zoom = self.camera.zoom;
-        let dive_zoom = depth_threshold(hit.echelon.saturating_add(1)) * 1.1;
-        let children_hidden = self.has_children(&id) && detail(hit.echelon + 1, zoom) < 0.6;
+        let dive_zoom = depth_threshold(echelon.saturating_add(1)) * 1.1;
+        let children_hidden = self.has_children(&id) && detail(echelon + 1, zoom) < 0.6;
         if children_hidden {
             self.selected = Some(id.clone());
             self.fly_to_entry(&id, dive_zoom.max(zoom));
             return Outcome::Redraw;
         }
         match activation_for(&id) {
-            Some(action) if hit.availability.is_available() && !hit.ghost => {
+            Some(action) if usable => {
                 self.selected = Some(id);
                 Outcome::Activate(action)
             }
@@ -801,6 +844,91 @@ impl OrbSpace {
                 Outcome::Redraw
             }
         }
+    }
+
+    /// Wheel, stick, trackpad or key-driven motion: the same sphere, no
+    /// finger. Returns whether anything moved.
+    pub fn navigate(&mut self, input: NavInput, viewport: Rect, unit: f32) -> bool {
+        if !self.presence.is_open() {
+            return false;
+        }
+        match lower(input, unit) {
+            Motion::Pan { dx, dy } => {
+                let stage = self.stage(viewport, unit);
+                self.camera.pan_px(dx, dy, &stage);
+            }
+            Motion::Zoom {
+                factor,
+                ax: Some(ax),
+                ay: Some(ay),
+            } => {
+                let stage = self.stage(viewport, unit);
+                self.camera.zoom_about(factor, ax, ay, &stage);
+            }
+            Motion::Zoom { factor, .. } => self.camera.zoom_by(factor),
+            Motion::None => return false,
+        }
+        self.inertia.stop();
+        self.flight = None;
+        self.dirty = true;
+        true
+    }
+
+    /// Moves the focus ring to the nearest object in `dir`. With nothing
+    /// there the view itself moves that way, so the keys alone can reach
+    /// the whole sphere.
+    pub fn focus_step(&mut self, dir: Direction, viewport: Rect, unit: f32) -> bool {
+        if !self.presence.is_open() {
+            return false;
+        }
+        let l = self.layout(viewport, unit);
+        if let Some(id) = step_focus(&l, self.selected.as_deref(), dir) {
+            self.selected = Some(id);
+            self.dirty = true;
+            return true;
+        }
+        let (dx, dy) = match dir {
+            Direction::Left => (1.0, 0.0),
+            Direction::Right => (-1.0, 0.0),
+            Direction::Up => (0.0, 1.0),
+            Direction::Down => (0.0, -1.0),
+        };
+        let steps = 2.0;
+        let axis = if dx != 0.0 {
+            saai_orb::WheelAxis::Horizontal
+        } else {
+            saai_orb::WheelAxis::Vertical
+        };
+        self.navigate(
+            NavInput::Wheel {
+                steps: steps * (dx + dy),
+                axis,
+            },
+            viewport,
+            unit,
+        )
+    }
+
+    /// Enter on the focus ring. The first press with nothing focused picks
+    /// the object nearest the middle instead of acting blindly.
+    pub fn activate_focus(&mut self, viewport: Rect, unit: f32) -> Outcome {
+        if !self.presence.is_open() {
+            return Outcome::Nothing;
+        }
+        let l = self.layout(viewport, unit);
+        let Some(id) = self.selected.clone() else {
+            self.selected = step_focus(&l, None, Direction::Right);
+            self.dirty = true;
+            return Outcome::Redraw;
+        };
+        let Some(item) = l.items.iter().find(|i| i.id == id) else {
+            return Outcome::Nothing;
+        };
+        let (echelon, usable) = (
+            item.echelon,
+            item.availability.is_available() && !item.ghost,
+        );
+        self.open_item(id, echelon, usable)
     }
 
     /// Advance animations by `dt` seconds. Returns whether to repaint.
@@ -1339,11 +1467,11 @@ mod tests {
         assert!(hits.len() >= 2);
         let camera = s.camera;
         assert_eq!(s.search_focus(&hits), Some(0));
-        s.step_search(1);
+        s.step_search(1, 3);
         assert_eq!(s.search_focus(&s.search_hits()), Some(1));
-        s.step_search(-5);
+        s.step_search(-5, 3);
         assert_eq!(s.search_focus(&s.search_hits()), Some(0));
-        s.step_search(100);
+        s.step_search(100, 3);
         assert_eq!(
             s.search_focus(&s.search_hits()),
             Some(s.search_hits().len() - 1)
@@ -1352,15 +1480,173 @@ mod tests {
     }
 
     #[test]
-    fn no_text_and_no_match_are_honestly_empty() {
+    fn no_match_is_honestly_empty_and_no_text_browses_everything() {
         let mut s = open_space();
-        typed(&mut s, "");
-        assert!(s.search_hits().is_empty());
-        assert!(s.trail(VP, U).is_empty());
         typed(&mut s, "zzzzqqqq");
         assert!(s.search_hits().is_empty());
+        assert!(s.trail(VP, U).is_empty());
         assert_eq!(s.search_focus(&[]), None);
         assert_eq!(s.choose("search"), Outcome::Nothing);
+        typed(&mut s, "");
+        let all = s.search_hits();
+        assert_eq!(
+            all.len(),
+            s.entries().len(),
+            "the list is the whole geography"
+        );
+        assert_eq!(all[0].id, "search");
+        assert!(s.trail(VP, U).is_empty(), "browsing points at nothing yet");
+        assert_eq!(s.search_pointing(), None);
+        s.step_search(1, 3);
+        assert_eq!(s.search_pointing(), Some(1));
+        assert!(!s.trail(VP, U).is_empty() || all[1].route.distance() < 0.01);
+    }
+
+    #[test]
+    fn the_list_scrolls_only_as_far_as_the_focus_needs() {
+        let mut s = open_space();
+        typed(&mut s, "");
+        assert_eq!(s.search_scroll(), 0);
+        for _ in 0..2 {
+            s.step_search(1, 3);
+        }
+        assert_eq!(s.search_scroll(), 0, "focus 2 is still row 3 of 3");
+        s.step_search(1, 3);
+        assert_eq!(s.search_scroll(), 1);
+        s.step_search(1, 3);
+        assert_eq!(s.search_scroll(), 2);
+        s.step_search(-1, 3);
+        assert_eq!(
+            s.search_scroll(),
+            2,
+            "moving back up does not drag the list"
+        );
+        s.step_search(-1, 3);
+        s.step_search(-1, 3);
+        assert_eq!(s.search_scroll(), 1);
+        s.search_mut().unwrap().buffer = "a".into();
+        s.search_edited();
+        assert_eq!(s.search_scroll(), 0, "new text starts from the top");
+    }
+
+    #[test]
+    fn wheel_stick_and_zoom_notches_drive_the_same_sphere_as_a_finger() {
+        let mut s = open_space();
+        let c0 = s.camera;
+        assert!(s.navigate(
+            NavInput::Wheel {
+                steps: 3.0,
+                axis: saai_orb::WheelAxis::Horizontal
+            },
+            VP,
+            U
+        ));
+        assert!(s.camera.center.distance(c0.center) > 0.0);
+        let z0 = s.camera.zoom;
+        assert!(s.navigate(
+            NavInput::Wheel {
+                steps: 2.0,
+                axis: saai_orb::WheelAxis::Zoom
+            },
+            VP,
+            U
+        ));
+        assert!(s.camera.zoom > z0);
+        let c1 = s.camera;
+        assert!(
+            s.navigate(
+                NavInput::Stick {
+                    x: 0.05,
+                    y: -0.1,
+                    dt: 0.1
+                },
+                VP,
+                U
+            ),
+            "a stick inside the dead zone still counts as an input event"
+        );
+        assert_eq!(s.camera.center, c1.center, "but it moves nothing");
+        for _ in 0..40 {
+            s.navigate(
+                NavInput::Wheel {
+                    steps: 5.0,
+                    axis: saai_orb::WheelAxis::Zoom,
+                },
+                VP,
+                U,
+            );
+        }
+        assert!(s.camera.zoom <= ZOOM_MAX);
+    }
+
+    #[test]
+    fn navigation_is_ignored_while_the_sphere_rests() {
+        let mut s = OrbSpace::new(Geography::default(), false);
+        assert!(!s.navigate(
+            NavInput::Wheel {
+                steps: 1.0,
+                axis: saai_orb::WheelAxis::Vertical
+            },
+            VP,
+            U
+        ));
+        assert!(!s.focus_step(Direction::Right, VP, U));
+        assert_eq!(s.activate_focus(VP, U), Outcome::Nothing);
+    }
+
+    #[test]
+    fn arrows_walk_the_focus_ring_across_objects_and_pan_when_nothing_is_there() {
+        let mut s = open_space();
+        assert_eq!(
+            s.activate_focus(VP, U),
+            Outcome::Redraw,
+            "first Enter only focuses"
+        );
+        let first = s.selected.clone().expect("something focused");
+        let mut seen = vec![first.clone()];
+        for _ in 0..6 {
+            if s.focus_step(Direction::Right, VP, U) {
+                if let Some(id) = s.selected.clone() {
+                    if !seen.contains(&id) {
+                        seen.push(id);
+                    }
+                }
+            }
+        }
+        assert!(seen.len() >= 2, "the ring moved: {seen:?}");
+        let mut s2 = open_space();
+        s2.selected = Some("me".into());
+        s2.camera = Camera {
+            center: Geo::from_degrees(0.0, 60.0),
+            zoom: 0.55,
+        };
+        let (selected, camera) = (s2.selected.clone(), s2.camera);
+        assert!(s2.focus_step(Direction::Up, VP, U));
+        assert!(
+            s2.selected != selected || s2.camera != camera,
+            "either the ring or the view moved"
+        );
+    }
+
+    #[test]
+    fn enter_on_the_focus_ring_dives_then_opens_like_a_tap() {
+        let mut s = open_space();
+        let apps = s.entries().iter().find(|e| e.id == "apps").unwrap().geo;
+        s.camera = Camera {
+            center: apps,
+            zoom: 0.9,
+        };
+        s.selected = Some("apps".into());
+        assert_eq!(
+            s.activate_focus(VP, U),
+            Outcome::Redraw,
+            "children hidden: dive"
+        );
+        settle(&mut s);
+        assert_eq!(
+            s.activate_focus(VP, U),
+            Outcome::Activate(Activation::OpenApps)
+        );
     }
 
     #[test]

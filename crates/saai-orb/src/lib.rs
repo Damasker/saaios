@@ -29,4 +29,4 @@ pub use model::{
 };
 pub use nav::{lower, Inertia, Motion, NavInput, Presence, WheelAxis};
 pub use scene::{compose, layout, nearest_anchor, Composition, Entry, Item, Layout};
-pub use search::{search, Hit, Route, DEFAULT_LIMIT};
+pub use search::{browse, search, Hit, Route, DEFAULT_LIMIT};

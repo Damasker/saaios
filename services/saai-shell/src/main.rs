@@ -85,6 +85,7 @@ mod haptic;
 mod hardware_keyboard;
 mod intent_context;
 mod orb_space;
+use saai_orb::{Direction, NavInput, WheelAxis};
 mod osk_layer;
 mod portal_server;
 mod power_button;
@@ -493,7 +494,7 @@ use saai_ui_core::{
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
-    protocol::{wl_buffer, wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
+    protocol::{wl_buffer, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
     Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -509,12 +510,17 @@ use wayland_protocols_misc::zwp_input_method_v2::client::{
 use dmabuf_canvas::{Busy, DmabufCanvas};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_seat,
-    delegate_session_lock, delegate_shm, delegate_touch, delegate_xdg_shell, delegate_xdg_window,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_session_lock, delegate_shm, delegate_touch, delegate_xdg_shell,
+    delegate_xdg_window,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
-    seat::{touch::TouchHandler, Capability, SeatHandler, SeatState},
+    seat::{
+        pointer::{PointerEvent, PointerEventKind, PointerHandler, BTN_LEFT},
+        touch::TouchHandler,
+        Capability, SeatHandler, SeatState,
+    },
     session_lock::{
         SessionLock, SessionLockHandler, SessionLockState, SessionLockSurface,
         SessionLockSurfaceConfigure,
@@ -7132,6 +7138,8 @@ fn main() {
         output_state: OutputState::new(&globals, &qh),
         seat_state: SeatState::new(&globals, &qh),
         touch: None,
+        pointer: None,
+        orb_pointer: false,
         compositor,
         shm,
         exit: false,
@@ -7306,6 +7314,9 @@ struct Shell {
     output_state: OutputState,
     seat_state: SeatState,
     touch: Option<wl_touch::WlTouch>,
+    pointer: Option<wl_pointer::WlPointer>,
+    /// A mouse button is held on the sphere.
+    orb_pointer: bool,
     compositor: CompositorState,
     shm: Shm,
 
@@ -7958,12 +7969,18 @@ impl SeatHandler for Shell {
         capability: Capability,
     ) {
         self.ensure_foreign_ime(&seat, qh);
-        // No pointer/keyboard handling -- this is a touchscreen-only
-        // device (ADR-012 already made the same call for saai-displayd).
         if capability == Capability::Touch && self.touch.is_none() {
             match self.seat_state.get_touch(qh, &seat) {
                 Ok(touch) => self.touch = Some(touch),
                 Err(err) => eprintln!("saai-shell: failed to get wl_touch: {err}"),
+            }
+        }
+        // A USB mouse or trackpad only ever drives the Orb (wheel, drag):
+        // the rest of the shell stays touch-first (ADR-012).
+        if capability == Capability::Pointer && self.pointer.is_none() {
+            match self.seat_state.get_pointer(qh, &seat) {
+                Ok(pointer) => self.pointer = Some(pointer),
+                Err(err) => eprintln!("saai-shell: failed to get wl_pointer: {err}"),
             }
         }
     }
@@ -7980,11 +7997,43 @@ impl SeatHandler for Shell {
                 touch.release();
             }
         }
+        if capability == Capability::Pointer {
+            if let Some(pointer) = self.pointer.take() {
+                pointer.release();
+            }
+            if self.orb_pointer {
+                self.orb_pointer = false;
+                self.orb.touch_cancel();
+            }
+        }
     }
 
     fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {
     }
 }
+
+impl PointerHandler for Shell {
+    fn pointer_frame(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _pointer: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for event in events {
+            if event.surface != *self.window.wl_surface() {
+                continue;
+            }
+            self.apply_orb_pointer(&event.kind, event.position, conn, qh);
+        }
+    }
+}
+
+/// The mouse is one more finger to the sphere: a held button is a drag and
+/// the wheel is a rotation. Only the sphere listens to it.
+const ORB_MOUSE_ID: i32 = 0x4d53;
+/// Pixels of smooth scrolling that count as one wheel notch.
+const WHEEL_PX_PER_NOTCH: f64 = 15.0;
 
 impl TouchHandler for Shell {
     fn down(
@@ -10676,13 +10725,173 @@ impl Shell {
         }
     }
 
+    fn apply_orb_pointer(
+        &mut self,
+        kind: &PointerEventKind,
+        position: (f64, f64),
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if !self.orb_available() {
+            return;
+        }
+        let viewport = self.orb_viewport();
+        let unit = render::orb_unit();
+        let pos = (position.0 as f32, position.1 as f32);
+        match kind {
+            PointerEventKind::Press { button, .. } if *button == BTN_LEFT => {
+                if !self.orb.is_pointer_down() {
+                    self.orb_touch_epoch = Instant::now();
+                }
+                let t = self.orb_touch_seconds();
+                if self.orb.touch_down(ORB_MOUSE_ID, pos, t, viewport, unit) {
+                    self.orb_pointer = true;
+                    self.last_activity = Instant::now();
+                }
+            }
+            PointerEventKind::Motion { .. } if self.orb_pointer => {
+                let t = self.orb_touch_seconds();
+                self.orb.touch_motion(ORB_MOUSE_ID, pos, t, viewport, unit);
+            }
+            PointerEventKind::Release { button, .. } if *button == BTN_LEFT && self.orb_pointer => {
+                self.orb_pointer = false;
+                let t = self.orb_touch_seconds();
+                let outcome = self.orb.touch_up(ORB_MOUSE_ID, t, viewport, unit);
+                self.apply_orb_outcome(outcome, conn, qh);
+            }
+            PointerEventKind::Leave { .. } if self.orb_pointer => {
+                self.orb_pointer = false;
+                self.orb.touch_cancel();
+                self.draw(conn, qh);
+            }
+            PointerEventKind::Axis {
+                horizontal,
+                vertical,
+                ..
+            } => {
+                let notches = |axis: &smithay_client_toolkit::seat::pointer::AxisScroll| {
+                    if axis.discrete != 0 {
+                        f64::from(axis.discrete)
+                    } else {
+                        axis.absolute / WHEEL_PX_PER_NOTCH
+                    }
+                };
+                // Scrolling down moves the content up, like a drag upward.
+                let (h, v) = (-notches(horizontal) as f32, -notches(vertical) as f32);
+                let mut moved = false;
+                if h != 0.0 {
+                    moved |= self.orb.navigate(
+                        NavInput::Wheel {
+                            steps: h,
+                            axis: WheelAxis::Horizontal,
+                        },
+                        viewport,
+                        unit,
+                    );
+                }
+                if v != 0.0 {
+                    moved |= self.orb.navigate(
+                        NavInput::Wheel {
+                            steps: v,
+                            axis: WheelAxis::Vertical,
+                        },
+                        viewport,
+                        unit,
+                    );
+                }
+                if moved {
+                    self.last_activity = Instant::now();
+                    self.draw(conn, qh);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keys for the sphere itself. The keyboard reaches all of it: the
+    /// arrows walk the focus ring (or move the view when nothing is there),
+    /// Enter dives or opens, +/- zoom, / searches, Esc sinks it, and the
+    /// Super key raises or sinks it from anywhere.
+    fn apply_orb_key(&mut self, code: u16, conn: &Connection, qh: &QueueHandle<Self>) -> bool {
+        const KEY_ESC: u16 = 1;
+        const KEY_MINUS: u16 = 12;
+        const KEY_EQUAL: u16 = 13;
+        const KEY_ENTER: u16 = 28;
+        const KEY_SLASH: u16 = 53;
+        const KEY_KPMINUS: u16 = 74;
+        const KEY_KPPLUS: u16 = 78;
+        const KEY_KPENTER: u16 = 96;
+        const KEY_UP: u16 = 103;
+        const KEY_LEFT: u16 = 105;
+        const KEY_RIGHT: u16 = 106;
+        const KEY_DOWN: u16 = 108;
+        const KEY_LEFTMETA: u16 = 125;
+        const KEY_RIGHTMETA: u16 = 126;
+        if !self.orb_available() {
+            return false;
+        }
+        if matches!(code, KEY_LEFTMETA | KEY_RIGHTMETA) {
+            if self.orb.is_open() {
+                self.orb.dismiss();
+            } else {
+                self.orb.raise();
+            }
+            self.draw(conn, qh);
+            return true;
+        }
+        if !self.orb.is_open() {
+            return false;
+        }
+        let viewport = self.orb_viewport();
+        let unit = render::orb_unit();
+        let zoom = |steps: f32| NavInput::Wheel {
+            steps,
+            axis: WheelAxis::Zoom,
+        };
+        match code {
+            KEY_LEFT => {
+                self.orb.focus_step(Direction::Left, viewport, unit);
+            }
+            KEY_RIGHT => {
+                self.orb.focus_step(Direction::Right, viewport, unit);
+            }
+            KEY_UP => {
+                self.orb.focus_step(Direction::Up, viewport, unit);
+            }
+            KEY_DOWN => {
+                self.orb.focus_step(Direction::Down, viewport, unit);
+            }
+            KEY_ENTER | KEY_KPENTER => {
+                let outcome = self.orb.activate_focus(viewport, unit);
+                self.apply_orb_outcome(outcome, conn, qh);
+                return true;
+            }
+            KEY_EQUAL | KEY_KPPLUS => {
+                self.orb.navigate(zoom(1.0), viewport, unit);
+            }
+            KEY_MINUS | KEY_KPMINUS => {
+                self.orb.navigate(zoom(-1.0), viewport, unit);
+            }
+            KEY_SLASH => {
+                self.activate_orb(orb_space::Activation::OpenSearch, conn, qh);
+                return true;
+            }
+            KEY_ESC => self.orb.dismiss(),
+            _ => return false,
+        }
+        self.draw(conn, qh);
+        true
+    }
+
     fn apply_hardware_key(&mut self, code: u16, conn: &Connection, qh: &QueueHandle<Self>) {
         if let Some(state) = self.orb.search() {
             const KEY_UP: u16 = 103;
             const KEY_DOWN: u16 = 108;
             match code {
                 KEY_UP | KEY_DOWN => {
-                    self.orb.step_search(if code == KEY_DOWN { 1 } else { -1 });
+                    let rows = self.orb_search_panel().map_or(3, |p| p.rows.len());
+                    self.orb
+                        .step_search(if code == KEY_DOWN { 1 } else { -1 }, rows);
                     self.draw(conn, qh);
                 }
                 _ => {
@@ -10693,6 +10902,9 @@ impl Shell {
                     }
                 }
             }
+            return;
+        }
+        if self.apply_orb_key(code, conn, qh) {
             return;
         }
         if let Some(state) = self.intent_input.as_mut() {
@@ -11620,7 +11832,7 @@ impl Shell {
         panel
             .rows
             .iter()
-            .zip(&hits)
+            .zip(hits.iter().skip(self.orb.search_scroll()))
             .find(|(rect, _)| rect.contains(pos.0, pos.1))
             .map(|(_, hit)| format!("{ORB_HIT_ACTION_PREFIX}{}", hit.id))
     }
@@ -11699,17 +11911,18 @@ impl Shell {
         let state = self.orb.search();
         let hits = self.orb.search_hits();
         let focus = self.orb.search_focus(&hits);
+        let scroll = self.orb.search_scroll();
         let rows: Vec<render::SearchRowView> = panel
             .rows
             .iter()
-            .zip(&hits)
+            .zip(hits.iter().skip(scroll))
             .enumerate()
             .map(|(i, (rect, hit))| render::SearchRowView {
                 rect: *rect,
                 label: hit.label.clone(),
                 hint: orb_space::route_hint(hit),
                 primitive: hit.class.primitive(),
-                focused: focus == Some(i),
+                focused: focus == Some(scroll + i),
                 dim: !hit.availability.is_available() || hit.ghost,
             })
             .collect();
@@ -17726,6 +17939,7 @@ delegate_seat!(Shell);
 delegate_session_lock!(Shell);
 delegate_shm!(Shell);
 delegate_touch!(Shell);
+delegate_pointer!(Shell);
 delegate_xdg_shell!(Shell);
 delegate_xdg_window!(Shell);
 delegate_registry!(Shell);
