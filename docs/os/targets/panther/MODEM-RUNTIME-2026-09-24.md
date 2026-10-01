@@ -5783,9 +5783,12 @@ Unlike the preceding boot, the settled +60-second SIM reply **still** had
 card 0/apps 0. The settled radio reply was raw 3; voice/data registration
 remained 0 and `rmnet0` RX remained 0. RFS headers again appeared at
 +7.272 s (cmd7/seq0) and +17.272 s (cmd6/seq1). Thus SIM visibility is
-not deterministic across otherwise similar no-reply boots; neither the
-earlier card-present/PIN result nor this card-absent result should be
-treated as a stable diagnosis.
+not deterministic across otherwise similar no-reply boots. The operator
+later confirmed the physical SIM was removed before the *following* boot,
+but its removal time relative to this third boot is unknown. Therefore this
+run cannot establish nondeterminism or an RFS-induced SIM failure; neither
+the earlier card-present/PIN result nor this card-absent result alone is a
+stable diagnosis.
 
 Factory TD1A `sit-stream.so` SHA-256
 `cef8756461c74102f9a78f91177d1baff80fb9af11c14994497fb8854e0f530a`
@@ -5799,7 +5802,7 @@ or CP-internal initialization caused it. Replaying `0x0800` ON without a
 new isolated hypothesis is not justified; a prior READY/ON test acknowledged
 that command yet remained unregistered.
 
-## 2026-10-01: slot-status indication separates slot 0 from IPC0 SIM
+## 2026-10-01: slot-status indication with the physical tray removed
 
 One final no-gap control boot for this series used owner build SHA-256
 `3a604367b622e9012714ad83851949de94c22e3595146fe56e91dc4be942b9ea`.
@@ -5815,13 +5818,24 @@ SIT request was sent for this observation. Initial and event-refresh
 
 The factory type-2 slot-status adapter accepts length at least 429, reads
 slot count at packet byte 8 and fixed 105-byte slot records from byte 9.
-This build logged only the first record's card byte. A present *slot 0*
-alongside an absent *IPC0 logical SIM* is therefore an observed mismatch,
-not proof that the physical tray is empty. The current boot did not retain
-slot 1 or logical-port mapping scalars, so it cannot yet distinguish a
-wrong/inactive logical slot mapping from CP initialization or RFS effects.
-Earlier factory-slot diagnostics showed crossed logical/physical mapping,
-but cannot be assumed to describe this boot. The next diagnostic should
-capture both slots and validated port mapping through the **same** IPC owner,
-without logging ATR/ICCID/EID or opening a competing reader. No further
-phone reboot was made in this series.
+This build logged only the first record's card byte. **After this run, the
+operator clarified that the physical SIM and its tray had been removed before
+this reboot** for a PIN check in another phone. Thus IPC0 card 0/apps 0 is
+consistent with the removed physical SIM and is not evidence of a newly
+failed SIM initialization. `slot0_card_state_raw=1` may describe an embedded SIM
+(eUICC) or another slot/port representation; it does **not** establish that
+the physical tray was present or that an eSIM profile was active. The current
+boot did not retain slot 1 or logical-port mapping scalars, so even the exact
+slot identity remains unproven. Earlier factory-slot diagnostics showed a
+crossed logical/physical mapping, but cannot be assumed to describe this
+boot. The timing of physical removal relative to the preceding third boot
+was not established, so its card-absent result is not a controlled comparison
+with the card-present boot either.
+
+Next compare a clearly documented physical-SIM-insertion state (after the
+operator confirms the PIN check) using only read-only status and validated
+card/port scalars for both slot records through the **same** IPC owner, without
+logging ATR/ICCID/EID or opening a competing reader. The two-slot logger is
+host-built but was **not** deployed. Do not send `0x0250` slot mapping, PIN,
+radio-power, or RFS grants based on this absent-tray run. No further phone
+reboot was made in this series.

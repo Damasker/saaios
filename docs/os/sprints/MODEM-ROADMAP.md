@@ -62,15 +62,20 @@ is unsafe because closing the final channel descriptor purges pending packets.
 repeated RFS cmd7 at about +7.27 s and cmd6 at about +17.27 s without a
 reply. One boot's post-indication SIM GET reported card PRESENT/app PIN;
 two later boots' +60-second GETs reported card ABSENT/apps 0, radio raw 3
-(`SIM_LOCK_OR_ABSENT`), registration 0 and no `rmnet` RX. In the latest
-boot, the factory slot-status indication at +8.008 s nevertheless reported
-slot count 2 and **slot 0 card PRESENT**. This is a physical-slot versus
-IPC0 logical-SIM observation, not proof of a mapping bug or of RFS
-causality. [The runtime log](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
-has the exact captures. The next diagnostic build can log only validated
-card/port scalars for both slot records; it is committed but **not deployed**.
-Capture those scalars before contemplating a `0x0250` mapping change or
-further PIN/radio requests. No additional phone reboot is planned in this
+(`SIM_LOCK_OR_ABSENT`), registration 0 and no `rmnet` RX. The operator later
+confirmed that the physical SIM and tray were **already out before the last
+reboot**. Its IPC0 absent result is consistent with that fact, not evidence
+of a new failure.
+The same boot's factory slot-status indication at +8.008 s reported slot
+count 2 and slot-0 card PRESENT; that record may be the eUICC/another
+slot-port representation, but its identity and active-profile state are
+unproven. The third boot's SIM-removal timing is unknown, so it is not a
+controlled comparison. [The runtime log](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
+has the exact captures. After the physical SIM is returned and its PIN state
+checked separately, take a documented SIM-in read-only comparison. A
+two-slot card/port-scalar logger is committed but **not deployed**. Do not
+infer a mapping bug, RFS causality, or a need for `0x0250`/PIN/radio SETs
+from the absent-tray boot. No additional phone reboot was made in this
 control series.
 
 Evidence:
