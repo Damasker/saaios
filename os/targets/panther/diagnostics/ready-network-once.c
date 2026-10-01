@@ -1,6 +1,7 @@
 /* Bounded post-READY network check for an isolated Pixel 7 diagnostic stack.
  * Opens only umts_ipc0. The separate RFS broker must remain the sole RFS reader.
- * No PIN, card power, APN, NV, rild/cbd, or radio-power request is sent here.
+ * No PIN, card power, APN, NV, rild/cbd, or radio-power OFF is sent here.
+ * Only the explicit rearm-on mode sends one factory RadioPower ON request.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -19,7 +20,8 @@
 #include "sit-sim-layout.h"
 #include "sit-network-layout.h"
 
-enum { RX_CAP = 65536, REPLY_CAP = 256, TOTAL_MS = 120000, EXCHANGE_MS = 10000 };
+enum { RX_CAP = 65536, REPLY_CAP = 256, REQUEST_CAP = 18,
+       TOTAL_MS = 120000, EXCHANGE_MS = 10000 };
 
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t le32(const uint8_t *p) { return le16(p) | ((uint32_t)le16(p + 2) << 16); }
@@ -61,11 +63,12 @@ static int selection_mode(const uint8_t *p, size_t n) {
 }
 
 static void make_request(uint8_t *out, unsigned id, unsigned len, uint32_t token) {
-    memset(out, 0, 16);
+    memset(out, 0, REQUEST_CAP);
     out[2] = (uint8_t)id; out[3] = (uint8_t)(id >> 8);
     out[4] = (uint8_t)len; out[5] = (uint8_t)(len >> 8);
     put32(out + 6, token);
     if (id == 0x0710) out[12] = 1; /* factory BuildAllowData(1) */
+    if (id == 0x0800) put32(out + 12, 2); /* factory BuildRadioPower(ON) */
 }
 
 static int online(void) {
@@ -97,9 +100,10 @@ static int open_verified_ipc0(void) {
 
 static int exchange(int fd, unsigned id, unsigned len, uint32_t token,
                     int64_t global_end, uint8_t reply[REPLY_CAP], size_t *reply_len) {
-    uint8_t request[16];
+    uint8_t request[REQUEST_CAP];
     int64_t start = now_ms();
-    if (start < 0 || start >= global_end) return -1;
+    if (start < 0 || start >= global_end || len > REQUEST_CAP || len < 12 ||
+        (id == 0x0800 && len != 18)) return -1;
     make_request(request, id, len, token);
     if (!online() || write(fd, request, len) != (ssize_t)len) return -1;
     int64_t end = start + EXCHANGE_MS;
@@ -232,7 +236,7 @@ static int snapshot(int fd, uint32_t token, int64_t end) {
 }
 
 static int self_test(void) {
-    uint8_t p[256] = {0}, req[16];
+    uint8_t p[256] = {0}, req[REQUEST_CAP];
     p[0] = 1; p[2] = 0; p[3] = 2; p[4] = 78;
     p[SIT_SIM_CARD] = 1; p[SIT_SIM_APPS] = 1;
     p[SIT_SIM_APP_STATE] = 5; p[SIT_SIM_PIN1] = 2;
@@ -256,16 +260,22 @@ static int self_test(void) {
         le32(req + 6) != 0x78563412 || req[12] != 0) return 1;
     make_request(req, 0x0710, 13, 3);
     if (req[2] != 0x10 || req[3] != 7 || req[4] != 13 || req[12] != 1) return 1;
+    make_request(req, 0x0800, 18, 0x78563412);
+    if (req[0] != 0 || req[1] != 0 || le16(req + 2) != 0x0800 ||
+        le16(req + 4) != 18 || le32(req + 6) != 0x78563412 ||
+        req[10] != 0 || req[11] != 0 || le32(req + 12) != 2 ||
+        req[16] != 0 || req[17] != 0) return 1;
     p[0] = 3; if (frame_size(p, 13) != -1) return 1;
-    puts("PASS ready-network-once fixtures: gate, selection, network IDs, framing, signed requests");
+    puts("PASS ready-network-once fixtures: gate, selection, network IDs, framing, signed ON-only request");
     return 0;
 }
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "self-test") == 0) return self_test();
     int snapshot_mode = argc == 2 && strcmp(argv[1], "snapshot") == 0;
-    if (argc != 2 || (!snapshot_mode && strcmp(argv[1], "run") != 0)) {
-        fputs("usage: ready-network-once self-test|snapshot|run\n", stderr);
+    int rearm_on_mode = argc == 2 && strcmp(argv[1], "rearm-on") == 0;
+    if (argc != 2 || (!snapshot_mode && !rearm_on_mode && strcmp(argv[1], "run") != 0)) {
+        fputs("usage: ready-network-once self-test|snapshot|run|rearm-on\n", stderr);
         return 64;
     }
     int lock = open("/run/saaios-sit-status.lock",
@@ -297,6 +307,32 @@ int main(int argc, char **argv) {
         puts("ABORT fresh radio response is not ON(10)"); goto done;
     }
     puts("preflight radio ON(10)");
+    if (rearm_on_mode) {
+        /* Both gates were read immediately before this one ON-only SET.
+         * Never send OFF, retry the SET, or claim that an ACK means camp. */
+        if (QUERY(0x0800, 18) || !response_ok(reply, n, 0x0800)) {
+            puts("ABORT RadioPower ON SET failed"); goto done;
+        }
+        puts("RadioPower ON SET accepted");
+        int polled = 0;
+        for (int i = 0; i < 4 && now_ms() < end; ++i) {
+            printf("poll=%d ", i);
+            if (snapshot_one(fd, SIT_NET_VOICE_REG, "voice", &token, end) ||
+                snapshot_one(fd, SIT_NET_DATA_REG, "data", &token, end)) {
+                puts("ABORT registration GET failed"); goto done;
+            }
+            polled++;
+            print_rmnet();
+            if (i < 3) {
+                struct timespec pause = {3, 0};
+                while (nanosleep(&pause, &pause) && errno == EINTR) { }
+            }
+        }
+        if (!polled) { puts("ABORT no registration response before deadline"); goto done; }
+        puts("RESULT diagnostic complete; network service not inferred from SIT ACKs");
+        rc = 0;
+        goto done;
+    }
     if (QUERY(0x0703, 12)) { puts("ABORT selection-mode GET failed"); goto done; }
     int mode = selection_mode(reply, n);
     if (mode < 0) { puts("ABORT selection-mode response invalid"); goto done; }
