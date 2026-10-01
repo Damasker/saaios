@@ -112,3 +112,16 @@ recall; "Known facts" still absent.
 
 **Threat:** none — host projection, no phone binary.
 
+## MEM-09 readiness (2026-10-01)
+
+Not Ready; nothing was built. `MemoryKind::LearnedHypothesis` exists and
+`remember` already refuses it (MEM-09 is the first thing allowed to write
+it), but the roadmap names no pattern. ADR-125 fixes the rules (independent
+evidence, self-reference and model repetition do not count, promotion only
+by explicit user confirmation, no grants/relations/ContextFrame/Actions) and
+"no profiling". Choosing the *one bounded pattern* is a product decision
+with a privacy cost, so it is left to the owner.
+
+Ready when: one pattern and its evidence source are named (for example
+"the same Space was selected at the same hour on N distinct days"), with
+the confirmation surface (MEM-08 review UI) as the only promotion path.

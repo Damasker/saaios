@@ -101,3 +101,21 @@ Approximate → Degraded. CPU percent is not a threshold. Runtime
 **Rollback:** drop `is_schedule_due_with` and the two properties.
 
 **Threat:** none — host gate, no phone binary.
+
+## WORLD-03 / WORLD-04 readiness (2026-10-01)
+
+Not Ready; nothing was built.
+
+- **WORLD-03** (`saai-deviced`) is gated by this roadmap's own condition:
+  the daemon waits until `ObservationCache` has more than one
+  process-local consumer that cannot share `status`. Today there is one
+  (`saaios-runtime`). A UDS Subscribe daemon now would be speculative
+  infrastructure on a phone that is already tight on processes.
+- **WORLD-04** (shared Linux observers, no `/proc` copy) is a guard for the
+  daemon, not a refactor with a target: an audit of `/proc` reads shows the
+  parsing lives once in `crates/system-tools`; `saai-shell` reads only
+  `/proc/sys/kernel/osrelease` and the input-device list, which are not
+  observations. There is no duplicate to remove until WORLD-03 exists.
+
+Ready when: a second process needs live observations, or a concrete
+duplicate `/proc` parser is added outside `system-tools`.
