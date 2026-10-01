@@ -623,6 +623,16 @@ sitInitModem are not catalog INIT). External github/XDA/paste/pixel-mainline
 hunt: **no** complete `0x2f50` body=2 frame. **No live try**. Next: stock
 catalog OEM capture only. BLOCKER § schema-exhaust.
 
+**HARD WALL — factory vendor no catalog encoder (2026-10-01):** Live ONLINE /
+PRESENT / **app=PIN(2)** pin1=2 / oem_ipc0 RDWR OK / no rild·cbd / rmnet rx=0
+/ **no bearer**. Offline RE of factory-td1a vendor carves (SitOem, cbd,
+sitril/`BuildOemSimRequest`, oem_ipc1 helper): **no** SO opens `oem_ipc*`
+**and** encodes msgid `0x2f50`; vendor has **0** `SIM_INIT_REQ` /
+`IpcTxSimInit`. Encode unrecovered without invent bytes → **no one-shot /
+no live write**. **Policy need:** capture-only stock rild once, or external
+wire dump of catalog OEM frame; else accept soft-lock terminal under bans.
+BLOCKER § hard-wall-policy.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

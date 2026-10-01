@@ -952,6 +952,56 @@ are Ping/Config/Thermal/Metrics/DeviceState/Traffic/Txas/Scone only —
 **Next:** still need stock catalog OEM capture / non-SitOem host encoder for
 app header + 2B body. Same bans.
 
+### 2026-10-01 — HARD WALL: catalog `0x2f50` encoder not in factory vendor (policy)
+
+**Live brief (COM13 / USB NCM `172.31.7.1`):** modem_state=**ONLINE**;
+`sit-sim-status query-sim-status` → card=PRESENT apps=1 **app=PIN(2)**
+pin1=2 remain=3; radio_state=10; data_reg=0; oem_ipc0 **OEM_RDWR_OK**;
+oem_ipc1–3 missing; **no** rild/cbd processes; rmnet* **rx=0**; usb0/
+wlan IPv4 only — **no bearer**. ADB absent; SSH pubkey denied.
+
+Scripts/artifacts: `diagnostics/tmp-vendor-2f50-host-hunt.py` (+`.out`),
+`tmp-vendor-2f50-host-hunt2.py` (+`.out`), carves under
+`diagnostics/fw/cdma-hunt/factory-td1a-vendor/` (SitOem, cbd, sitril).
+
+#### Factory-td1a vendor offline RE (no daemon start)
+
+| Binary / island | Opens | Catalog `0x2f50` / `SIM_INIT_REQ` | Verdict |
+| --- | --- | --- | --- |
+| `carved-oemipc-25e7b000.so` SitOem | `/dev/oem_ipc0` | MOVZ `#0x2f50` **0**; no SIM_* protobuf | SitOem protobuf dialect only (closed) |
+| `carved-oemipc-cf64000.so` | `/dev/oem_ipc1` | **0** | log/modemstat helper |
+| `carved-sitril-builder-0x25f54000.so` (~2.9MB) | `/dev/umts_ipc0` | MOVZ `#0x2f50` **0**; has `BuildOemSimRequest` | **SIT** umts dialect ≠ OEM catalog |
+| research `libsitril.so` | `umts_ipc0` | MOVZ `#0x2f50` **only** `@0x11f300` table-init | registry, **no** packet builder |
+| carved `cbd` (`a45e000` + peers) | `umts_boot`/`ramdump` | **0** oem_ipc / **0** `0x2f50` | boot only |
+| `carved-cbd-1827b000.elf` (mislabel; sitril-like) | `umts_ipc0` | `SIM_INIT` string = FILE_UPDATE err text only; MOVZ **0** | not catalog encoder |
+| vendor.img whole | — | `SIM_INIT_REQ` **0**; `IpcTxSimInit` **0**; `SimInitMessage` **0**; ASCII `0x2f50` **0** | no name-level encoder |
+
+**Encoder SO/symbol for catalog OEM `SIM_INIT_REQ` / msgid `0x2f50`?**
+**Not found.** No offline encode path that both opens `oem_ipc*` and builds
+the catalog frame. SitOem≠SIM; OemSim/`BuildOemSimRequest`≠OEM `0x2f50`;
+cbd≠SIM_INIT. **No invent bytes → no one-shot sender → no live write.**
+
+**Live SIM_INIT?** **none**. **App after?** still **PIN(2)**. **Bearer?** **no**.
+
+#### Policy exception (needed to progress under current bans)
+
+Under bans (no start rild/cbd; no invent frame), catalog soft-INIT is
+**blocked**. Propose one explicit exception (pick one):
+
+1. **Capture-only stock rild** — brief stock Android (or pull
+   `/vendor/bin/hw/rild_exynos` + deps onto a disposable rootfs), allow
+   **start rild once** solely to capture the first catalog OEM write on
+   `oem_ipc*` (tcpdump/strace/iod dump), then stop; feed capture into a
+   minimal one-shot (still no long-running daemon on SaaiOS).
+2. **External wire dump** — accept a third-party/stock log of the exact
+   userspace bytes for msgid `0x2f50` (app header + 2B body) from a matching
+   Shannon OEM IPC dialect.
+3. **Keep ban** — accept soft-lock as terminal for ONLINE+bearer on this
+   EU No-CDMA image without CDMA-RatMap / EFS / unsigned MAIN.
+
+Until (1) or (2), do **not** soft-write SitOem Ping/Config as fake SIM_INIT,
+do **not** invent 2B body/zeros, do **not** spam `0x0704` / ATU / BAR.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.
