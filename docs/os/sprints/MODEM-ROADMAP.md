@@ -98,15 +98,18 @@ cause is proven. Details: [runtime log](../targets/panther/MODEM-RUNTIME-2026-09
 build kept the same single-owner handoff and added only four bounded,
 redacted status GETs after the +60-second SIM/radio/registration sweep.
 Under SIM READY/PIN disabled/radio ON, selection mode was automatic (0),
-preferred type raw 16, and operator and signal GETs succeeded. Voice/data
+preferred type SIT raw 16, and operator and signal GETs succeeded. Voice/data
 registration stayed 0 and `rmnet0` had no bearer. Payloads containing
-operator names/PLMN or signal data were not logged. Raw preferred 16 still
-needs factory-table interpretation; do not change it based on an assumed
-AOSP mapping. One `0x0706` available-network query is the next possible
+operator names/PLMN or signal data were not logged. The Samsung factory
+table names SIT raw 16 NR/LTE/GSM/WCDMA and maps it to Android mode 26,
+**not** Android mode 16. A restrictive preferred mode is not supported as
+the blocker; do not change it. One `0x0706` available-network query is the next possible
 search-vs-registration discriminator, but it is an **active RF scan** with
 factory timeout/cancel behavior, not another passive GET. Require a
-reviewed opt-in single-owner implementation and bounded cancel path before
-any live scan. No further PIN or blind radio SET is justified by this data.
+reviewed opt-in single-owner implementation, opposite-stack RF-idle check
+and bounded cancel path before any live scan. The current owner lacks those
+safeguards; no live scan was sent. No further PIN or blind radio SET is
+justified by this data.
 
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),

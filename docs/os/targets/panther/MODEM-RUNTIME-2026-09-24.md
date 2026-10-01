@@ -5897,9 +5897,14 @@ was ON(10), while voice/data registration remained 0, reject 0, data tech
 then returned selection mode **0 (automatic)**, preferred network type
 **raw 16**, operator response success/length 119, and signal response
 success/length 210. Operator names, PLMN and signal payloads were neither
-parsed nor logged. Raw 16 is recorded without assuming the AOSP enum equals
-the Samsung SIT mode table; a prior boot also defaulted to 16 before the
-manual LTE-only experiments. RFS again showed cmd7/seq0 at +7.271 seconds
+parsed nor logged. Factory TD1A `sit-stream.so` SHA-256
+`cef8756461c74102f9a78f91177d1baff80fb9af11c14994497fb8854e0f530a`
+names SIT raw 16 `SIT_NET_PREF_NET_TYPE_NR_LTE_GSM_WCDMA` (name-table
+entry at file offset `0x8d048`, string at `0x27676`). Its conversion
+table at `0x2a8fc` maps this to Android network mode 26, **not** Android
+mode 16. The current preferred mode already permits NR/LTE/GSM/WCDMA;
+a prior boot also defaulted to raw 16 before the manual LTE-only tests.
+RFS again showed cmd7/seq0 at +7.271 seconds
 and cmd6/seq1 at +17.273 seconds without replies. These status GETs confirm
 that manual network selection alone is not the blocker, but a successful
 operator/signal response does **not** prove RF search or network camp.
@@ -5907,6 +5912,9 @@ operator/signal response does **not** prove RF search or network camp.
 The next discriminating diagnostic candidate is one factory-shaped
 `0x0706` available-network query under READY/ON, not a blind replay of
 radio/allow-data SETs. Unlike the four status GETs, this can actively occupy
-RF and has a factory cancel path on timeout. Its 16-byte request, bounded
-response/count parser, opposite-stack RF arbitration and cancel behavior
-must be reviewed in an opt-in single-owner build before any live send.
+RF and has a factory cancel path on timeout. Factory code sends a 16-byte
+request with zero at payload offset 12 and allows up to 300 seconds; on
+timeout it sends `0x0707` cancel. The current owner cannot verify the
+opposite SIM stack's RF-idle state or cancel a scan. Its bounded response/count
+parser, RF arbitration and cancel behavior must be reviewed in a separate
+opt-in single-owner build before any live send.
