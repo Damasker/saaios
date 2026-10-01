@@ -15,6 +15,16 @@ mount_dir=
 block_node=
 node_identity=
 verified=0
+mode=
+source_pin=
+pin_dir=/run/saaios-rfs-one-grant
+pin_file=$pin_dir/expected.sha256
+run_identity=
+
+run_is_tmpfs() {
+    awk '$2 == "/run" { n++; if ($3 != "tmpfs") bad=1 }
+         END { exit (n == 1 && !bad) ? 0 : 1 }' /proc/mounts
+}
 
 # Keep the private node and directory if unmount cannot be confirmed. A
 # misleading PASS, or removing the mountpoint while EFS is mounted, is worse.
@@ -70,20 +80,72 @@ cleanup() {
         fi
         rmdir "$work_dir" || result=1
     fi
+    if [ "$result" -eq 0 ] && [ "$verified" -eq 1 ] &&
+       [ "$mode" = pin-read-only ]; then
+        # Publish only after a confirmed unmount and complete private cleanup.
+        count=$(awk -v dev="$dev_id" '$3 == dev { n++ } END { print n+0 }' \
+            /proc/self/mountinfo) || count=-1
+        current_run=$(stat -c '%d:%i:%u:%a' /run 2>/dev/null) ||
+            current_run=
+        if [ "$count" -ne 0 ] || [ -L /run ] ||
+           [ "$current_run" != "$run_identity" ] || ! run_is_tmpfs ||
+           [ -e "$pin_dir" ] || [ -L "$pin_dir" ] ||
+           ! mkdir -m 700 "$pin_dir"; then
+            printf 'ABORT cannot publish a fresh pin after EFS cleanup\n' >&2
+            result=1
+        elif [ -L "$pin_dir" ] ||
+             [ "$(stat -c '%u:%a:%h' "$pin_dir" 2>/dev/null)" != 0:700:2 ]; then
+            printf 'ABORT private pin directory identity mismatch\n' >&2
+            result=1
+        else
+            # An O_EXCL-created temp becomes the final path only after its
+            # contents and metadata have been checked. No partial final pin.
+            pin_tmp=$(mktemp "$pin_dir/.expected.XXXXXX" 2>/dev/null) ||
+                pin_tmp=
+            if [ -z "$pin_tmp" ] || [ -e "$pin_file" ] || [ -L "$pin_file" ] ||
+               ! printf '%s' "$source_pin" > "$pin_tmp" ||
+               [ -L "$pin_tmp" ] ||
+               [ "$(stat -c '%u:%a:%h:%s' "$pin_tmp" 2>/dev/null)" != \
+                 0:600:1:64 ] || ! ln "$pin_tmp" "$pin_file" ||
+               ! rm "$pin_tmp" ||
+               [ "$(stat -c '%u:%a:%h:%s' "$pin_file" 2>/dev/null)" != \
+                 0:600:1:64 ]; then
+                printf 'ABORT private pin publication failed; directory retained\n' >&2
+                result=1
+            fi
+        fi
+    fi
     if [ "$result" -eq 0 ] && [ "$verified" -eq 1 ]; then
-        printf 'PASS original EFS matches the four userdata files; EFS unmounted\n'
+        printf 'PASS original EFS matches the four userdata files; EFS unmounted'
+        if [ "$mode" = pin-read-only ]; then printf '; private pin ready'; fi
+        printf '\n'
     fi
     exit "$result"
 }
 trap cleanup 0
 trap 'exit 1' 1 2 3 15
 
-[ "$#" -eq 1 ] && [ "$1" = verify-read-only ] || {
-    printf 'usage: sh %s verify-read-only\n' "$0" >&2
+[ "$#" -eq 1 ] || {
+    printf 'usage: sh %s verify-read-only|pin-read-only\n' "$0" >&2
     exit 64
 }
+case "$1" in
+    verify-read-only|pin-read-only) mode=$1 ;;
+    *) printf 'usage: sh %s verify-read-only|pin-read-only\n' "$0" >&2; exit 64 ;;
+esac
 ulimit -c 0
 [ "$(id -u)" = 0 ] || fail 'root is required'
+if [ "$mode" = pin-read-only ]; then
+    [ -d /run ] && [ ! -L /run ] &&
+        [ "$(stat -c '%u:%a' /run 2>/dev/null)" = 0:755 ] ||
+        fail '/run is not the expected private-pin parent'
+    run_is_tmpfs ||
+        fail '/run is not a dedicated tmpfs'
+    run_identity=$(stat -c '%d:%i:%u:%a' /run 2>/dev/null) ||
+        fail '/run identity unavailable'
+    [ ! -e "$pin_dir" ] && [ ! -L "$pin_dir" ] ||
+        fail 'private pin directory already exists'
+fi
 
 sys_part=/sys/block/sda/sda5
 uevent=$sys_part/uevent
@@ -185,6 +247,17 @@ for name in $file_names; do
     cmp -s "$mount_dir/$name" "$copy_dir/$name" ||
         fail "original/copy comparison failed: $name"
 done
+if [ "$mode" = pin-read-only ]; then
+    original_sum=$(sha256sum "$mount_dir/nv_protected.bin") ||
+        fail 'original protected-NV digest failed'
+    copy_sum=$(sha256sum "$copy_dir/nv_protected.bin") ||
+        fail 'userdata protected-NV digest failed'
+    source_pin=${original_sum%% *}
+    copy_pin=${copy_sum%% *}
+    [ "${#source_pin}" -eq 64 ] && [ "$source_pin" = "$copy_pin" ] ||
+        fail 'protected-NV digest mismatch'
+    case "$source_pin" in *[!0-9a-f]*) fail 'invalid protected-NV digest' ;; esac
+fi
 after=$(snapshot_files) || fail 'original or userdata file metadata changed'
 [ "$before" = "$after" ] || fail 'original or userdata file metadata changed'
 

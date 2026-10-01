@@ -50,6 +50,14 @@ and CP still `ONLINE`. It is installed as a mode-0700 manual tool under
 `/data/saaios/bin`, but it is not called by boot or the passive owner. A
 future active RFS launch must run a fresh check; today's PASS is not a pin.
 
+The verifier's explicit `pin-read-only` mode now derives a protected-NV
+SHA-256 from original EFS and publishes it only after a second successful
+read-only comparison, confirmed unmount and private-node cleanup. Its
+same-boot `/run` pin matched the userdata copy in a phone test; the test pin
+was then removed. No digest was logged, no active RFS reply was sent, and the
+CP remained `ONLINE`. A separate one-grant owner still needs review before
+the opt-in handoff can be run.
+
 ## Why this exists
 
 The no-gap boot owner observed RFS command 7 at +7.282 s and command 6 at

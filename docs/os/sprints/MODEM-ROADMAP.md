@@ -852,7 +852,9 @@ and storage; a separate host-only verified-FD fixture tests source integrity.
 Linux ASan/UBSan passes. A manual read-only, no-recovery EFS check on the
 phone found both NV files and their sidecars byte-identical to the userdata
 copies. A separate, manually invoked device verifier now repeats that check
-and passed on the phone; it is not wired into boot or an active RFS owner.
+and passed on the phone; an explicit mode also created a same-boot protected
+NV pin from original EFS and was verified without logging its digest. The
+opt-in launch path is not yet approved for a live RFS exchange.
 There is no phone-side candidate store or RFS service. The live no-gap owner
 is passive and cannot claim MODEM-07 completion.
 

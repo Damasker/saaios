@@ -21,24 +21,35 @@ case "$#:$*" in
         LOG=/data/saaios/var/owner-handoff-scan-once.log
         OWNER_LOG=/data/saaios/var/modem-channel-owner-scan-once.log
         ;;
-    *) printf 'usage: %s [scan-once]\n' "$0" >&2; exit 64 ;;
+    '1:rfs-one-grant')
+        # Separately compiled probe/owner; never replace the passive default.
+        PROBE=/data/saaios/bin/probe-handover-rfs-one-grant
+        OWNER=/data/saaios/bin/modem-rfs-one-grant-owner
+        OWNER_MODE=rfs-one-grant
+        LOG=/data/saaios/var/owner-handoff-rfs-one-grant.log
+        OWNER_LOG=/data/saaios/var/modem-rfs-one-grant-owner.log
+        ;;
+    *) printf 'usage: %s [scan-once|rfs-one-grant]\n' "$0" >&2; exit 64 ;;
 esac
 
 VERIFIER=/data/saaios/bin/saaios-verify-nv-copies.sh
 FIRMWARE=/data/saaios/bin/saaios-probe-b-modem.bin
 PERSIST=/mnt/vendor/persist
 STATE=/sys/devices/platform/cpif/modem_state
+ORIGINAL_VERIFIER=/data/saaios/bin/verify-original-efs-readonly.sh
+RFS_PIN=/run/saaios-rfs-one-grant/expected.sha256
+RFS_QUARANTINE=/data/saaios/var/rfs-quarantine
 
 fail() { printf 'ABORT %s\n' "$*" >&2; exit 1; }
 [ -x "$PROBE" ] || fail 'owner handoff probe missing'
 [ -x "$OWNER" ] || fail 'owner binary missing'
-if [ "$OWNER_MODE" = scan-once ]; then
-    [ "$("$OWNER" --mode 2>/dev/null)" = scan-once ] ||
-        fail 'scan owner binary mode mismatch'
+if [ "$OWNER_MODE" != passive ]; then
+    [ "$("$OWNER" --mode 2>/dev/null)" = "$OWNER_MODE" ] ||
+        fail 'diagnostic owner binary mode mismatch'
     [ "$("$PROBE" --owner-exec 2>/dev/null)" = "$OWNER" ] ||
-        fail 'scan probe owner path mismatch'
+        fail 'diagnostic probe owner path mismatch'
     [ "$("$PROBE" --owner-log 2>/dev/null)" = "$OWNER_LOG" ] ||
-        fail 'scan probe log path mismatch'
+        fail 'diagnostic probe log path mismatch'
 fi
 [ -x "$VERIFIER" ] || fail 'NV-copy verifier missing'
 [ -f "$FIRMWARE" ] || fail 'reviewed B firmware missing'
@@ -56,8 +67,12 @@ mkdir -p /data/saaios/var "$PERSIST" /dev/block
 : > "$LOG"
 : > "$OWNER_LOG"
 chmod 600 "$LOG" "$OWNER_LOG"
-printf 'BEGIN owner handoff; scan_mode=%s; no APN/PIN/CardPower/NV/EFS writes\n' \
-    "$OWNER_MODE" >> "$LOG"
+if [ "$OWNER_MODE" = rfs-one-grant ]; then
+    printf 'BEGIN one-grant RFS handoff; original EFS read-only; quarantine-only writes\n' >> "$LOG"
+else
+    printf 'BEGIN owner handoff; scan_mode=%s; no APN/PIN/CardPower/NV/EFS writes\n' \
+        "$OWNER_MODE" >> "$LOG"
+fi
 
 insmod /lib/modules/shm_ipc.ko 2>/dev/null || true
 insmod /lib/modules/cpif_page.ko 2>/dev/null || true
@@ -82,6 +97,24 @@ for name in umts_boot0 umts_ipc0 umts_rfs0; do
     [ "$(stat -c '%t:%T' "/dev/$name")" = "$(printf '%x:%x' "$1" "$2")" ] ||
         fail "$name character-node identity mismatch"
 done
+
+if [ "$OWNER_MODE" = rfs-one-grant ]; then
+    [ -x "$ORIGINAL_VERIFIER" ] || fail 'read-only original-EFS verifier missing'
+    [ ! -L "$RFS_QUARANTINE" ] || fail 'quarantine parent is linked'
+    if [ ! -e "$RFS_QUARANTINE" ]; then
+        mkdir -m 700 "$RFS_QUARANTINE" || fail 'quarantine parent creation failed'
+    fi
+    [ -d "$RFS_QUARANTINE" ] &&
+        [ "$(stat -c '%u:%a' "$RFS_QUARANTINE")" = 0:700 ] ||
+        fail 'quarantine parent identity mismatch'
+    "$ORIGINAL_VERIFIER" pin-read-only >> "$LOG" 2>&1 ||
+        fail 'fresh original-EFS provenance pin failed'
+    [ -f "$RFS_PIN" ] && [ ! -L "$RFS_PIN" ] &&
+        [ "$(stat -c '%u:%a:%h:%s' "$RFS_PIN")" = 0:600:1:64 ] ||
+        fail 'fresh pin identity mismatch'
+    [ "$(cat "$STATE" 2>/dev/null)" = OFFLINE ] ||
+        fail 'CP left OFFLINE during read-only EFS check'
+fi
 
 if [ -e /tmp/saaios-probe-b-modem.bin ] &&
    [ ! -L /tmp/saaios-probe-b-modem.bin ]; then

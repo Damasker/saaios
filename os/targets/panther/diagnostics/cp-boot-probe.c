@@ -41,7 +41,9 @@ static int send_factory_preamble(const uint8_t *bin, size_t len) {
 #ifndef PROBE_OWNER_LOG
 #define PROBE_OWNER_LOG "/data/saaios/var/modem-channel-owner.log"
 #endif
+#ifndef PROBE_OWNER_READY_TIMEOUT_MS
 #define PROBE_OWNER_READY_TIMEOUT_MS 5000
+#endif
 /* This is an observation, not a kernel-enforced exclusive open. Repeat it
  * under the owner's cooperative lock just before FIN. */
 #define PROBE_IOCTL_GET_OPENED_STATUS _IOR(IOCTL_MAGIC, 0x59, int)

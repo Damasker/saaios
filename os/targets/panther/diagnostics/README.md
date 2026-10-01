@@ -51,6 +51,16 @@ It checks the current mount namespace and assumes a quiescent source; it is
 not a cross-namespace mount audit or a defense against a concurrent root
 process changing the userdata copy.
 
+The separate `pin-read-only` mode repeats the same four-file comparison and
+also hashes original `nv_protected.bin` and its userdata copy. Only after EFS
+is confirmed unmounted and the private device nodes are removed does it
+publish a 64-byte SHA-256 pin in root-only, volatile
+`/run/saaios-rfs-one-grant/expected.sha256`. It prints no digest. The pin is
+for file id 3 only, and its presence alone never authorizes an RFS reply.
+The opt-in `rfs-one-grant` handoff calls this mode on a fresh CP-OFFLINE boot;
+ordinary boot and `verify-read-only` do not create it. A stale pin directory
+blocks another pin attempt until the operator reviews that run or reboots.
+
 The operator must verify original EFS remains unmounted, current CP is
 fresh OFFLINE, module provenance matches the running kernel, and device
 nodes match current sysfs major/minor. BOOTING/ONLINE/CRASH_EXIT is not a
