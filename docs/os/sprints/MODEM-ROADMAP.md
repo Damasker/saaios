@@ -58,6 +58,21 @@ the original LTE_ONLY(11) was restored and verified. Neither ON-only nor the
 LTE-only restriction alone explains the lack of camp. A short-lived RFS poll
 is unsafe because closing the final channel descriptor purges pending packets.
 
+**No-gap control update (2026-10-01):** The passive single-owner boots
+repeated RFS cmd7 at about +7.27 s and cmd6 at about +17.27 s without a
+reply. One boot's post-indication SIM GET reported card PRESENT/app PIN;
+two later boots' +60-second GETs reported card ABSENT/apps 0, radio raw 3
+(`SIM_LOCK_OR_ABSENT`), registration 0 and no `rmnet` RX. In the latest
+boot, the factory slot-status indication at +8.008 s nevertheless reported
+slot count 2 and **slot 0 card PRESENT**. This is a physical-slot versus
+IPC0 logical-SIM observation, not proof of a mapping bug or of RFS
+causality. [The runtime log](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
+has the exact captures. The next diagnostic build can log only validated
+card/port scalars for both slot records; it is committed but **not deployed**.
+Capture those scalars before contemplating a `0x0250` mapping change or
+further PIN/radio requests. No additional phone reboot is planned in this
+control series.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),
