@@ -7,12 +7,15 @@
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "sit-sim-layout.h"
 
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t le32(const uint8_t *p) { return le16(p) | ((uint32_t)le16(p + 2) << 16); }
@@ -79,10 +82,11 @@ static int g_app = -1, g_pin = -1, g_remain = -1, g_aid_len = 0;
 static uint8_t g_aid[16];
 
 static void note_sim(const uint8_t *b, int len) {
-    if (len < 75 || b[10]) return;
-    g_app = b[17];
-    g_pin = b[72];
-    g_remain = b[74];
+    if (len < SIT_SIM_APP_TYPE + SIT_SIM_APP_STRIDE || b[10] ||
+        b[SIT_SIM_APPS] == 0) return;
+    g_app = b[SIT_SIM_APP_STATE];
+    g_pin = b[SIT_SIM_PIN1];
+    g_remain = b[SIT_SIM_PIN1_REMAIN];
     g_aid_len = 0;
     memset(g_aid, 0, sizeof g_aid);
     if (len > 18) {

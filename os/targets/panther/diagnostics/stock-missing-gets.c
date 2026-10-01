@@ -16,6 +16,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "sit-sim-layout.h"
+
 static int g_app = -1, g_pin = -1, g_card = -1, g_apps = -1, g_remain = -1;
 
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
@@ -60,12 +62,13 @@ static void service_rfs(int fd) {
     }
 }
 static void note_sim(const uint8_t *p, int len) {
-    if (len < 75 || p[0] != 1 || le16(p + 2) != 0x0200) return;
-    g_card = p[12];
-    g_apps = p[14];
-    g_app = p[17];
-    g_pin = p[72];
-    g_remain = p[74];
+    if (len < SIT_SIM_APP_TYPE + SIT_SIM_APP_STRIDE || p[0] != 1 ||
+        le16(p + 2) != 0x0200 || p[10] || p[SIT_SIM_APPS] == 0) return;
+    g_card = p[SIT_SIM_CARD];
+    g_apps = p[SIT_SIM_APPS];
+    g_app = p[SIT_SIM_APP_STATE];
+    g_pin = p[SIT_SIM_PIN1];
+    g_remain = p[SIT_SIM_PIN1_REMAIN];
 }
 static const char *app_name(int a) {
     switch (a) {
@@ -79,12 +82,12 @@ static const char *app_name(int a) {
     }
 }
 static const char *present_infer(int app) {
-    /* STATUS Present→SET: 0→PIN 1→PUK 2→READY 3→PERSO */
-    if (app == 2) return "notin_1_2_3";
-    if (app == 3) return "was_1";
-    if (app == 5) return "was_2";
-    if (app == 4) return "was_3";
-    if (app == 1) return "detected_no_present_map";
+    /* App state is on the wire; the current CP Present field is not. */
+    if (app == 2) return "unknown_app_PIN";
+    if (app == 3) return "unknown_app_PUK";
+    if (app == 5) return "unknown_app_READY";
+    if (app == 4) return "unknown_app_PERSO";
+    if (app == 1) return "unknown_app_DETECTED";
     return "unknown";
 }
 static void print_sim(const char *tag) {

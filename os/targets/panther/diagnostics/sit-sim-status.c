@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
+#include "sit-sim-layout.h"
 
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t le32(const uint8_t *p) { return le16(p) | ((uint32_t)le16(p+2) << 16); }
@@ -44,7 +45,11 @@ int main(int argc, char **argv) {
         r[2]=1; r[3]=7; r[6]=3; r[12]=0; r[13]=0; r[15]=0;
         if (frame_size(r,15)!=0 || frame_size(r,16)!=16 ||
             le16(r+2)!=0x701 || le32(r+6)!=3) return 1;
-        puts("PASS: framing, tokens, radio and registration fixtures"); return 0;
+        uint8_t sim[78] = {0};
+        sim[15]=2; sim[16]=5; sim[17]=2; sim[72]=3; sim[74]=3;
+        if (sim[SIT_SIM_APP_STATE]!=5 || sim[SIT_SIM_PERSO_STATE]!=2 ||
+            sim[SIT_SIM_APP_TYPE]!=2 || sim[SIT_SIM_PIN1]!=3) return 1;
+        puts("PASS: framing, tokens, radio, registration, READY vs perso fixtures"); return 0;
     }
     int radio = argc == 2 && !strcmp(argv[1], "query-radio-state");
     int registration = argc == 2 && !strcmp(argv[1], "query-data-registration");
@@ -112,14 +117,16 @@ int main(int argc, char **argv) {
                 printf("SIM response: length=%d error_raw=%u\n",len,buffer[10]);
                 if (!buffer[10] && len>=15)
                     printf("card_state_raw=%u universal_pin_raw=%u applications=%u\n",buffer[12],buffer[13],buffer[14]);
-                /* Factory ProtocolSimStatusAdapter: type@15 state@17 pin1@72 remain@74
-                 * (libsitril BuildRil stride 63). Print so type=USIM(2) is not
-                 * confused with state=PIN(2). No AID/IMSI. */
-                if (!buffer[10] && len>=75)
+                /* No AID/IMSI. Require a complete declared application. */
+                if (!buffer[10] && len>=78 && buffer[SIT_SIM_APPS]>0)
                     printf("app0_type_raw=%u app0_state_raw=%u pin1_state_raw=%u pin1_remain_raw=%u\n",
-                           buffer[15], buffer[17], buffer[72], buffer[74]);
+                           buffer[SIT_SIM_APP_TYPE], buffer[SIT_SIM_APP_STATE],
+                           buffer[SIT_SIM_PIN1], buffer[SIT_SIM_PIN1_REMAIN]);
+                if (!buffer[10] && len>=78 && buffer[SIT_SIM_APPS]>0)
+                    printf("app0_perso_substate_raw=%u layout=app16-perso17-v1\n", buffer[SIT_SIM_PERSO_STATE]);
                 close(fd); close(lock);
-                return buffer[10] ? 2 : (len>=15 ? 0 : 1);
+                return buffer[10] ? 2 : (len>=15 &&
+                    len>=15+SIT_SIM_APP_STRIDE*buffer[SIT_SIM_APPS] ? 0 : 1);
             }
             /* Drop unrelated events without logging private payloads. */
             used-=(size_t)len; memmove(buffer,buffer+len,used);

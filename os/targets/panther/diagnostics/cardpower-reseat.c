@@ -14,6 +14,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "sit-sim-layout.h"
+
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t le32(const uint8_t *p) { return le16(p) | ((uint32_t)le16(p + 2) << 16); }
 static int64_t now_ms(void) {
@@ -69,11 +71,12 @@ static void service_rfs(int fd) {
 static int g_app = -1, g_pin = -1, g_remain = -1, g_card = -1;
 
 static void note_sim(const uint8_t *b, int len) {
-    if (len < 75 || b[10]) return;
-    g_card = b[12];
-    g_app = b[17];
-    g_pin = b[72];
-    g_remain = b[74];
+    if (len < SIT_SIM_APP_TYPE + SIT_SIM_APP_STRIDE || b[10] ||
+        b[SIT_SIM_APPS] == 0) return;
+    g_card = b[SIT_SIM_CARD];
+    g_app = b[SIT_SIM_APP_STATE];
+    g_pin = b[SIT_SIM_PIN1];
+    g_remain = b[SIT_SIM_PIN1_REMAIN];
     printf("SIM card=%d app=%d pin1=%d remain=%d\n", g_card, g_app, g_pin, g_remain);
 }
 

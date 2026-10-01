@@ -12,6 +12,8 @@
 #include <unistd.h>
 #include <signal.h>
 
+#include "sit-sim-layout.h"
+
 /* ONE-SHOT: SetEngMode 0x0908 len 13 mode@12 — factory ProtocolMiscDebugBuilder::SetEngMode(h). */
 static unsigned le16(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static int64_t now_ms(void) {
@@ -57,14 +59,15 @@ static int exchange(int ipc, int rfs, const uint8_t *req, size_t req_len,
 }
 
 static void print_sim(const uint8_t *resp, int n, const char *tag) {
-    if (n < 18 || resp[10]) {
+    if (n < SIT_SIM_APP_TYPE + SIT_SIM_APP_STRIDE || resp[10] ||
+        resp[SIT_SIM_APPS] == 0) {
         printf("%s: n=%d err=%u\n", tag, n, n > 10 ? resp[10] : 0);
         return;
     }
-    unsigned card = resp[12];
-    unsigned apps = resp[14];
-    unsigned app = n > 17 ? resp[17] : 0;
-    unsigned pin1 = n > 72 ? resp[72] : 0xff;
+    unsigned card = resp[SIT_SIM_CARD];
+    unsigned apps = resp[SIT_SIM_APPS];
+    unsigned app = resp[SIT_SIM_APP_STATE];
+    unsigned pin1 = n > SIT_SIM_PIN1 ? resp[SIT_SIM_PIN1] : 0xff;
     printf("%s: card=%u apps=%u app=%u pin1=%u\n", tag, card, apps, app, pin1);
 }
 
