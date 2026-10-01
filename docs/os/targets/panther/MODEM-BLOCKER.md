@@ -865,6 +865,45 @@ Scripts: `tmp-oem-dispatcher-nonstr-re.py`, `tmp-oem-dispatcher-nonstr-re2.py`.
 **Next:** stock `oem_ipc*` catalog capture or non-cbd/non-SitOem host encoder.
 Then ONE soft INIT. Same bans.
 
+### 2026-10-01 — GET_APP parse re-validation + SitOem Ping (no `0x2f50`)
+
+**Live brief (COM13 / NCM):** ONLINE; oem_ipc0 **OEM_RDWR_OK**; **no** cbd/rild;
+rmnet0–3 **rx=0**; **no bearer**.
+
+#### GET_APP / `0x0200` parse vs libsitril APPSTATE
+
+| Check | Evidence | Verdict |
+| --- | --- | --- |
+| Offsets | sit-stream `GetPinState`: PIN1→`#0x58`, PIN2→`#0x59`; remain PIN1→`#0x5a`; `Init` apps@`#14` app-base`#15`; libsitril `BuildRilCardStatusApplications` **ADD #63** stride | type@15 state@17 pin1@72 remain@74 **confirmed** |
+| Enum | `covertAppStateToString` CMP `#1..#5`; `RIL_APPSTATE_PIN=2` `READY=5` | naming OK |
+| Live bytes | `len=143` `apps=1` **type=2 (USIM)** **state=2 (PIN)** `pin1=2` remain1=3 | **not** type/state swap |
+| Multi-app | `apps=1` only; no app1 slot | index OK |
+
+**Parse bug?** **no** — confirmed soft-lock **PIN(2)** (type also 2 by coincidence).
+`sit-sim-status.c` now prints type/state/pin1/remain so USIM≠PIN confusion is
+visible. **No bearer chase** (app never left PIN).
+
+#### SitOem Ping on `oem_ipc0` (protobuf dialect; ≠ catalog `0x2f50`)
+
+Evidenced from carved SitOem ELF: `IpcMessageType` REQUEST=`1`; PayloadCase
+ping=`5`; PingMessage request oneof=`1`; PingRequest string field=`1`;
+userspace = raw protobuf (kernel EXYNOS 12B).
+
+| Step | Result |
+| --- | --- |
+| ONE write len=11 | `08 01 10 01 2a 05 0a 03 0a 01 78` (tags/lengths only) |
+| write | **ok** |
+| RX len=9 | `08 02 15 00 00 00 00 20 05` — protobuf **type=RESPONSE(2)** |
+
+**Channel alive?** **yes** (SitOem protobuf transport). **Does not recover
+catalog `0x2f50` frame.** Shared EXYNOS link-header only (prior); app header
+for catalog SIM_* still missing.
+
+**Bearer verified?** **no**.
+
+**Next:** still need catalog OEM wire on `oem_ipc*` (stock capture / non-SitOem
+encoder). Same bans. Soft-lock unchanged.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

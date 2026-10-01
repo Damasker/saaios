@@ -112,6 +112,12 @@ int main(int argc, char **argv) {
                 printf("SIM response: length=%d error_raw=%u\n",len,buffer[10]);
                 if (!buffer[10] && len>=15)
                     printf("card_state_raw=%u universal_pin_raw=%u applications=%u\n",buffer[12],buffer[13],buffer[14]);
+                /* Factory ProtocolSimStatusAdapter: type@15 state@17 pin1@72 remain@74
+                 * (libsitril BuildRil stride 63). Print so type=USIM(2) is not
+                 * confused with state=PIN(2). No AID/IMSI. */
+                if (!buffer[10] && len>=75)
+                    printf("app0_type_raw=%u app0_state_raw=%u pin1_state_raw=%u pin1_remain_raw=%u\n",
+                           buffer[15], buffer[17], buffer[72], buffer[74]);
                 close(fd); close(lock);
                 return buffer[10] ? 2 : (len>=15 ? 0 : 1);
             }

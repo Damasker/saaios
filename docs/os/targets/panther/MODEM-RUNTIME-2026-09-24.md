@@ -5391,3 +5391,35 @@ preprocess: **0**. Logs remain DBT-indexed; preprocess emit path still opaque.
 Stock catalog OEM capture on `oem_ipc*`, or host encoder binary that is not
 cbd / SitOem protobuf / internal object-helper. Then **ONE** soft `SIM_INIT`.
 Same bans.
+
+## 2026-10-01: GET_APP parse confirmed PIN; SitOem Ping alive
+
+### Live
+
+COM13 + USB NCM. modem_state=**ONLINE**; oem_ipc0 RDWR OK; no cbd/rild.
+`0x0200` dump (no AID/IMSI): len=143 card=1 apps=1 **type=2 state=2** pin1=2
+remain1=3. stock-missing-gets: app=PIN(2) pin1=2 present_infer=notin; rmnet
+rx=0; **no bearer**.
+
+### libsitril / sit-stream re-validation
+
+- `ProtocolSimStatusAdapter::GetPinState`: arg1 -> adapter `#0x58` (=pkt 72),
+  arg2 -> `#0x59` (=pkt 73).
+- `GetPinRemainCount`: PIN1 -> `#0x5a` (=pkt 74).
+- `Init`: apps LDRB `#14`; app records from `#15`.
+- `BuildRilCardStatusApplications`: per-app **ADD #63**.
+- `covertAppStateToString`: values 1..5 match DETECTED..READY; **2=PIN**.
+
+Live type@15 and state@17 are **both 2** (USIM + PIN) ? parser is correct;
+this is not READY misread as PIN. Multi-app N/A (`apps=1`).
+
+### SitOem Ping (oem_ipc0)
+
+Factory evidence: REQUEST=1, PayloadCase ping=5, PingRequest string field=1.
+ONE userspace write (raw protobuf, 11B): tags `08 01 | 10 01 | 2a 05/0a 03/0a 01`
++ 1B payload. write_ok; RX 9B starting `08 02` (RESPONSE). Transport proven.
+**Not** catalog `SIM_INIT_REQ` / `0x2f50`.
+
+Scripts: `tmp-revalidate-appstate-offsets.py`, `tmp-revalidate-appstate-deep.py`,
+`tmp-re-sitoem-ping.py`, `tmp-dump-sim-layout.c`, `tmp-sitoem-ping-once.c`.
+Tool: `sit-sim-status.c` now prints type/state/pin1/remain.

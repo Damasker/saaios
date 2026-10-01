@@ -610,6 +610,12 @@ not token len. Catalog MOVW sites = object helpers only; `[OEM][PB]` nanopb
 has **0** SIM overlap; app hdr + 2B body still missing; **no INIT send**.
 Next: stock `oem_ipc*` catalog capture. BLOCKER + RUNTIME §§ nonstr.
 
+**GET_APP parse + SitOem Ping (2026-10-01):** Live ONLINE; type@15=USIM(2)
+**and** state@17=PIN(2) (libsitril offsets confirmed; not a misread); pin1=2;
+apps=1. SitOem protobuf Ping on oem_ipc0: write_ok + RX type=RESPONSE —
+transport alive, **≠** catalog `0x2f50`. Bearer **no**. Next: catalog OEM
+wire still missing. BLOCKER + RUNTIME §§ parse/ping.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.
