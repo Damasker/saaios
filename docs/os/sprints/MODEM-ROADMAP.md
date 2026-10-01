@@ -6,6 +6,20 @@ started: maintained host boot model, reviewed boot plan, executor-facing
 action contract, failure state machine + `inspect-image`. No autostart modem
 daemon.**
 
+**MODEM-06 update (2026-10-01):** The previous PIN→READY hard-blocker is
+superseded: signed VerifyPin A+AID without CardPower reached READY(5) twice.
+`0x0704` auto, `0x070a` preferred LTE and `0x0710` AllowData returned success,
+but data registration remains 0 and no cellular IPv4 bearer exists. Do not
+repeat PIN attempts automatically: the owner says the SIM PIN is disabled.
+The simultaneous RFS 7→3→6 diagnostic cannot be credited with the READY
+transition because a separate VerifyPin test ran during its passive watch.
+`0x2f50` remains an internal CP catalog message, not a proven external OEM
+command. Next milestone: capture voice/data registration, operator and signal
+under stable READY; then isolate the missing camp prerequisite. The exact
+post-READY one-shot is `diagnostics/ready-network-once.c` and requires
+exclusive SIT ownership. Do not call MODEM-06 done until registration and
+`rmnet` IPv4 are demonstrated.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),
@@ -63,7 +77,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Started** (host TOC/stage/plan/executor/failure model) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
-| MODEM-06 | Factory post-SIM init / registration prerequisites | **Hard blocker** (HotSwap falsified Present=2) | gated |
+| MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
 | MODEM-07 | RFS design and refusal policy | Backlog | no |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | Backlog | **yes** |
