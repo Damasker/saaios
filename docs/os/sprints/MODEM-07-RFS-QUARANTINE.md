@@ -886,6 +886,60 @@ late variant's READY/ON gate must not simply be removed. An early callback
 comparison is not yet implemented, installed or authorized as an autostart
 service. Porting Android wholesale would not answer this timing question.
 
+### Early SGC comparison contract (2026-10-02)
+
+The next manual experiment changes the dispatch opportunity, not the payload
+or the set of active commands. Keep late-SGC, scan and passive binaries
+unchanged, and build a mutually exclusive `sgc-early-once` mode with separate
+owner/probe/wrapper paths and logs. This section is the pre-implementation
+contract, not a phone result or a claim of network service.
+
+Preserve the ordinary four initial read-only GETs. A dedicated state machine
+sees every framed IPC indication independently of the capped trace logger.
+Require type 2, exact `0x0803` length 8, followed in order by exact `0x0802`
+length 12 with raw scalar 0, including valid declared lengths. At that raw-0
+event, all four initial GETs must have completed with structurally valid,
+zero-error responses and no pending GET or already-sent SIM refresh. If not,
+skip the active experiment for that boot rather than moving it later.
+SIM READY, radio ON and stack-enabled are not early eligibility requirements:
+the reviewed factory hook runs before those later observations.
+
+The event pair must arrive within the first 30 seconds of owner lifetime,
+with at most 1000 ms between its two events and at most 1000 ms from raw 0
+to dispatch. These are conservative **SaaiOS experimental bounds**, not
+constants recovered from the factory RIL. Duplicate, reversed, malformed or
+superseding radio events invalidate eligibility; no later event rearms it.
+Absence of the pair or failure to dispatch inside that window means
+`not-attempted`, not evidence that early SGC cannot work.
+
+Do not write from a frame callback. Parse the entire available batch first;
+the early dispatcher then takes priority over queued-but-unsent SIM refresh.
+Keep that queue entry for later, require empty IPC/RFS userspace buffers,
+no backoff or unread kernel input, and recheck CP ONLINE and sole ownership
+immediately before the one write. An already-sent refresh at the trigger
+causes a skip; no request is cancelled or intercepted. Do not import the
+late mode's 500 ms quiet delay into this early dispatch opportunity.
+
+Use the same factory 24-byte `0x0404` request and 2000 ms reply deadline.
+Consume the attempt before writing. A matched well-formed ACK, including a
+remote-error ACK, releases the ordinary bounded GET schedule; preserve the
+original owner-relative +60-second SIM/radio/registration and factory GETs.
+There is no extra ten-second post-SGC sweep in this early variant. Thus a
+queued SIM refresh can move by the bounded SGC response interval; the test
+is an exploratory timing comparison, not a perfectly schedule-matched A/B.
+Ambiguous writes, timeout, malformed reply, framing loss or CP reset retain
+both channels without further IPC writes until OFFLINE. Never retry SGC.
+
+Before installation require actual callback/dispatcher fixtures for the
+coalesced and fragmented event pair, pending/queued GET ordering, successful
+initial-response mask, conflicts, expiry, short writes and late ACKs; also
+test all old modes, ASan/UBSan, ARM64 build and independent review. On the
+phone require installed hashes, on-device self-test, a fresh AP boot and
+read-only original-EFS preflight. Preserve the one run's logs, reboot,
+repeat the four-file read-only comparison and return to the pinned passive
+baseline. Original EFS is never writable or exposed to RFS. An ACK alone
+still does not establish application of carrier configuration or camp.
+
 ## Separate active RF scan gate
 
 The possible MODEM-06 `0x0706` available-network query is **not** part of
