@@ -78,5 +78,29 @@ invent**.
   2-byte body.
 - Does not treat SitOem protobuf Ping/Config as catalog `0x2f50`.
 
+## Post-kernel EXYNOS layout (SitOem Ping teach — 2026-10-01)
+
+Live kprobe on `exynos_build_header` (+0x50 buff dump) while writing evidenced
+SitOem Ping protobuf to `/dev/oem_ipc0` (no rild/cbd):
+
+```
+userspace write (11B):  08 01 10 01 2a 05 0a 03 0a 01 78
+post-kernel (23B):      CD AB | seqLE | C0 00 | 17 00 | 81 | 00 00 00 | <protobuf>
+                        sync    frame   cfg     len=23   ch0x81  pad     app
+```
+
+- Kernel prepends **EXYNOS 12B**; app bytes are **passthrough**.
+- EXYNOS fields: sync `0xABCD`, frame_seq, frag_cfg `0xC000`, len=12+count,
+  channel=`0x81` for `oem_ipc0`. **No msgid** in this header.
+- SitOem msgid/token are protobuf tags inside the app payload, not fixed
+  binary offsets in the outer header.
+- Therefore: catalog `0x2f50` may share the **same EXYNOS wrap** if sent on
+  `oem_ipc*`, but still needs a fully evidenced **app-layer** REQUEST
+  (header + `flags=2` 2-byte body). Ping does **not** supply those bytes —
+  do not invent; do not soft-send.
+
+Probe helpers (host): `tmp-run-exynos-hdr-probe.ps1`,
+`tmp-run-ping-kprobe.ps1`. On-device Ping: `tmp-sitoem-ping-once`.
+
 See `docs/os/targets/panther/MODEM-BLOCKER.md` (armed-for-frame) and
 `tray-bearer-chase.sh` for the post-edge pipeline.

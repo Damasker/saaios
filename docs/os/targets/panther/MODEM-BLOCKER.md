@@ -1133,6 +1133,54 @@ Full `factory-td1a-vendor/vendor.img` (665MB) needle + MOVZ map:
 catalog OEM `0x2f50` wire dump → `oem-ipc-inject` + `post-init-chase.sh`.
 Injector armed on device; still refuses invent/empty/all-zero.
 
+### 2026-10-01 — post-kernel EXYNOS capture via SitOem Ping (no `0x2f50`)
+
+**Live brief (COM13 / USB NCM `172.31.7.1`):** modem_state=**ONLINE**;
+oem_ipc0 **OEM_RDWR_OK**; **no** rild/cbd; app=**PIN(2)** pin1=2 remain=3;
+rmnet0–5 **rx=0**; **no bearer**. ADB absent; SSH pubkey denied.
+
+**Method:** kprobe `exynos_build_header` (+0x50 dump of `buff`) around ONE
+SitOem Ping on `/dev/oem_ipc0` (protobuf only; no catalog invent). Also
+confirmed `vfs_write` sees userspace 11B unchanged.
+
+#### Captured post-kernel outer layout (EXYNOS 12B + app)
+
+Two Pings (frame_seq **4** then **5**); same shape:
+
+| Off | Hex (Ping #2) | Field |
+| --- | --- | --- |
+| 0–1 | `CD AB` | sync `0xABCD` LE |
+| 2–3 | `05 00` | frame_seq (increments) |
+| 4–5 | `00 C0` | frag_cfg=`0xC000` (=49152; matches probe `cfg=`) |
+| 6–7 | `17 00` | total len=`23` = 12 + userspace `count=11` |
+| 8 | `81` | channel `0x81` (oem_ipc0; matches DT) |
+| 9–11 | `00 00 00` | ch_seq / pad (live 0 on both Pings) |
+| 12+ | `08 01 10 01 2a 05 0a 03 0a 01 78` | **passthrough** SitOem protobuf |
+
+Userspace write = app payload only; kernel prepends the 12B. msgid/token for
+Ping live **inside protobuf** (`type` tag1=`08 01`, `token` tag2=`10 01`) —
+**not** in the EXYNOS header.
+
+#### Catalog `0x2f50` share this outer header with msgid at fixed offset?
+
+| Claim | Evidenced? |
+| --- | --- |
+| Same EXYNOS 12B wrap for any `oem_ipc*` `link_header` write | **yes** (kernel `exynos_build_header`; ch from iod) |
+| Msgid at a fixed offset in that outer header | **no** — EXYNOS has sync/seq/cfg/len/ch only |
+| Catalog REQUEST app header + `flags=2` 2-byte body | **still missing** (zeros unproven) |
+| SitOem Ping outer/protobuf ⇒ catalog SIM_INIT | **no** (dialects already closed) |
+
+**Enough for ONE soft `0x2f50`?** **No** — gaps remain. **Not sent.**
+**SIM_INIT / bearer?** none / **no**.
+
+**What Ping taught:** post-kernel wire = EXYNOS12 + opaque userspace bytes;
+recovering catalog still needs the **app-layer** frame (header+2B body), not
+another Ping/Config. Tools: `tmp-sitoem-ping-once`, host helpers
+`tmp-run-exynos-hdr-probe.ps1` / lean vfs probe.
+
+**Next:** unchanged — capture-only stock rild **or** external catalog OEM dump
+→ `oem-ipc-inject` + `post-init-chase`. Same bans.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.
