@@ -60,6 +60,7 @@ enum failure_reason {
     REASON_PARTIAL_READ, REASON_LENGTH, REASON_MALFORMED, REASON_TRAILING,
     REASON_IO, REASON_READBACK, REASON_TIMEOUT, REASON_RX_OVERFLOW
 };
+enum padding_zero { PADDING_UNKNOWN, PADDING_YES, PADDING_NO };
 enum {
     MISMATCH_LENGTH = 1u << 0, MISMATCH_COMMAND = 1u << 1,
     MISMATCH_SEQUENCE = 1u << 2, MISMATCH_PAYLOAD_SIZE = 1u << 3,
@@ -118,6 +119,8 @@ struct owner {
     enum failure_stage failure_stage;
     enum failure_reason failure_reason;
     unsigned frame_mismatch_mask;
+    unsigned final_parsed_len, final_outer_payload_len, final_trailing;
+    enum padding_zero final_padding_zero;
     struct sit_observer sit;
 };
 
@@ -882,6 +885,29 @@ static unsigned data_mismatch_mask(const struct owner *o,
     return mask;
 }
 
+/* Lengths are bounded by the parser; inspect only bytes already in this frame. */
+static void diagnose_final_frame_shape(struct owner *o, const uint8_t *frame,
+                                       size_t len, size_t trailing)
+{
+    if (!frame || len < 8 || len > RFS_FRAME_MAX || trailing > RX_CAP)
+        return;
+    uint32_t outer_payload_len = little32(frame + 4);
+    if (outer_payload_len > RFS_FRAME_MAX - 8u) return;
+    o->final_parsed_len = (unsigned)len;
+    o->final_outer_payload_len = outer_payload_len;
+    o->final_trailing = (unsigned)trailing;
+    o->final_padding_zero = PADDING_UNKNOWN;
+    if (o->expected_chunk > FIRST_CHUNK ||
+        len < 20u + o->expected_chunk) return;
+    o->final_padding_zero = PADDING_YES;
+    for (size_t i = 20u + o->expected_chunk; i < len; ++i) {
+        if (frame[i]) {
+            o->final_padding_zero = PADDING_NO;
+            break;
+        }
+    }
+}
+
 static void put_little32(uint8_t *p, uint32_t value)
 {
     p[0] = (uint8_t)value;
@@ -1226,19 +1252,34 @@ done:
     return rc;
 }
 
+static void log_terminal(FILE *out, const struct owner *o, const char *reason)
+{
+    char final_shape[160] = {0};
+    if (o->final_parsed_len)
+        (void)snprintf(final_shape, sizeof final_shape,
+                       " final_parsed_len=%u final_outer_payload_len=%u "
+                       "final_trailing=%u final_padding_zero=%s",
+                       o->final_parsed_len, o->final_outer_payload_len,
+                       o->final_trailing,
+                       o->final_padding_zero == PADDING_YES ? "1" :
+                       o->final_padding_zero == PADDING_NO ? "0" : "unknown");
+    fprintf(out, "rfs_full_quarantine=%s grants_attempted=%d chunks_stored=%d "
+            "bytes_stored=%u final_ack_attempted=%d final_ack_sent=%d "
+            "failure_stage=%s failure_reason=%s frame_mismatch_mask=0x%02x%s\n",
+            reason, o->grant_attempted, o->chunks_stored,
+            o->received_bytes, o->final_ack_attempted, o->final_ack_sent,
+            failure_stage_name[o->failure_stage],
+            failure_reason_name[o->failure_reason], o->frame_mismatch_mask,
+            final_shape);
+}
+
 static void terminal(struct owner *o, const char *reason)
 {
     if (o->phase == TERMINAL) return;
     o->phase = TERMINAL;
     o->used = 0;
     zero_bytes(o->rx, sizeof o->rx);
-    printf("rfs_full_quarantine=%s grants_attempted=%d chunks_stored=%d "
-           "bytes_stored=%u final_ack_attempted=%d final_ack_sent=%d "
-           "failure_stage=%s failure_reason=%s frame_mismatch_mask=0x%02x\n",
-           reason, o->grant_attempted, o->chunks_stored,
-           o->received_bytes, o->final_ack_attempted, o->final_ack_sent,
-           failure_stage_name[o->failure_stage],
-           failure_reason_name[o->failure_reason], o->frame_mismatch_mask);
+    log_terminal(stdout, o, reason);
 }
 
 static void diagnose_waiting(struct owner *o)
@@ -1260,8 +1301,11 @@ static int complete_frame(struct owner *o, const uint8_t *frame,
     }
     enum action action = classify(o, frame, len);
     if (action == BAD_FRAME) {
-        if (o->phase == WAIT_DATA)
+        if (o->phase == WAIT_DATA) {
             o->frame_mismatch_mask = data_mismatch_mask(o, frame, len);
+            if (frame_stage(o) == STAGE_FINAL_FRAME)
+                diagnose_final_frame_shape(o, frame, len, trailing);
+        }
         diagnose(o, frame_stage(o), REASON_MALFORMED);
         return -1;
     }
@@ -2197,6 +2241,73 @@ done:
     return rc;
 }
 
+static int test_host_final_frame_shape(void)
+{
+    struct owner o = {0};
+    uint8_t frame[RFS_FRAME_MAX + 1] = {0};
+    char line[512];
+    FILE *log = tmpfile();
+    int64_t now = monotonic_ms();
+    int rc = -1;
+    if (!log || now < 0) goto done;
+    o.phase = WAIT_DATA;
+    o.grant_attempted = RFS_GRANTS_MAX;
+    o.chunks_stored = RFS_GRANTS_MAX - 1;
+    o.expected_chunk = 318;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    frame[0] = 2;
+    frame[2] = 1;
+    put_little32(frame + 4, RFS_FRAME_MAX - 8);
+    put_little32(frame + 12, 3);
+    put_little32(frame + 16, 318);
+    if (feed_rfs(&o, frame, RFS_FRAME_MAX, now) == 0 ||
+        o.failure_stage != STAGE_FINAL_FRAME ||
+        o.failure_reason != REASON_MALFORMED ||
+        o.frame_mismatch_mask !=
+            (MISMATCH_LENGTH | MISMATCH_PAYLOAD_SIZE) ||
+        o.final_parsed_len != 2032 || o.final_outer_payload_len != 2024 ||
+        o.final_trailing != 0 || o.final_padding_zero != PADDING_YES)
+        goto done;
+    log_terminal(log, &o, "rfs_frame_or_io_refused");
+    if (fflush(log) || fseek(log, 0, SEEK_SET) ||
+        !fgets(line, sizeof line, log) ||
+        !strstr(line, "frame_mismatch_mask=0x09") ||
+        !strstr(line, "final_parsed_len=2032 final_outer_payload_len=2024 "
+                      "final_trailing=0 final_padding_zero=1"))
+        goto done;
+
+    memset(&o, 0, sizeof o);
+    o.phase = WAIT_DATA;
+    o.grant_attempted = RFS_GRANTS_MAX;
+    o.chunks_stored = RFS_GRANTS_MAX - 1;
+    o.expected_chunk = 318;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    frame[20 + 318] = 1;
+    if (feed_rfs(&o, frame, sizeof frame, now) == 0 ||
+        o.final_parsed_len != 2032 || o.final_outer_payload_len != 2024 ||
+        o.final_trailing != 1 || o.final_padding_zero != PADDING_NO)
+        goto done;
+
+    memset(&o, 0, sizeof o);
+    o.phase = WAIT_DATA;
+    o.grant_attempted = RFS_GRANTS_MAX;
+    o.chunks_stored = RFS_GRANTS_MAX - 1;
+    o.expected_chunk = 318;
+    o.deadline_ms = o.total_deadline_ms = now + 10000;
+    put_little32(frame + 4, 12);
+    if (feed_rfs(&o, frame, 20, now) == 0 ||
+        o.final_parsed_len != 20 || o.final_outer_payload_len != 12 ||
+        o.final_trailing != 0 || o.final_padding_zero != PADDING_UNKNOWN)
+        goto done;
+    rc = 0;
+done:
+    if (log) fclose(log);
+    zero_bytes(frame, sizeof frame);
+    zero_bytes(line, sizeof line);
+    zero_bytes(&o, sizeof o);
+    return rc;
+}
+
 /* Test the real finish/sidecar durability path with only device gates mocked. */
 static int test_host_finish_candidate(int fault)
 {
@@ -2483,7 +2594,7 @@ static int self_test(void)
     if (test_host_storage_faults() || test_host_finish_candidate(0) ||
         test_host_finish_candidate(1) || test_host_finish_candidate(2) ||
         test_host_transcript() || test_sit_observer() ||
-        test_host_failure_diagnostics())
+        test_host_failure_diagnostics() || test_host_final_frame_shape())
         return 8;
 #endif
     zero_bytes(data, sizeof data);
