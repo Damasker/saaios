@@ -6,7 +6,8 @@
  * After ONLINE it sends four allowlisted, read-only SIT status GETs once.
  * SIM-status-change indications may then schedule up to three debounced,
  * read-only SIM status refreshes through the same IPC reader. One separate
- * settled pass of four read-only GETs is eligible after 60 seconds.
+ * settled pass of four read-only GETs is eligible after 60 seconds. Once
+ * that pass finishes, four more factory read-only network GETs run once.
  * It never sends RFS replies or accesses NV/EFS.
  * It consumes unknown RFS requests without replying, so CP may still wait or
  * fail: this is observability only, not a substitute for the factory rfsd.
@@ -52,7 +53,9 @@ enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        SIM_SLOT_PORT_STRIDE = 13, SIM_SLOT_MAX_PORTS = 3,
        SIM_SLOT_TRACE_LIMIT = 2 };
 enum channel_kind { CHANNEL_IPC, CHANNEL_RFS };
-enum sim_query_kind { SIM_QUERY_NONE, SIM_QUERY_CHANGE, SIM_QUERY_SETTLED };
+enum sim_query_kind {
+    SIM_QUERY_NONE, SIM_QUERY_CHANGE, SIM_QUERY_SETTLED, SIM_QUERY_FACTORY
+};
 
 static const struct {
     unsigned id;
@@ -62,6 +65,17 @@ static const struct {
     {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"}
 };
 enum { SNAPSHOT_GET_COUNT = sizeof snapshot_gets / sizeof snapshot_gets[0] };
+
+static const struct {
+    unsigned id;
+    const char *label;
+} factory_gets[] = {
+    {SIT_NET_SELECTION_MODE, "selection"},
+    {SIT_NET_PREFERRED_GET, "preferred"},
+    {SIT_NET_OPERATOR, "operator"},
+    {0x0900, "signal"}
+};
+enum { FACTORY_GET_COUNT = sizeof factory_gets / sizeof factory_gets[0] };
 
 static unsigned le16(const uint8_t *p) {
     return (unsigned)p[0] | ((unsigned)p[1] << 8);
@@ -172,9 +186,11 @@ struct sim_refresh {
     uint32_t token;
     unsigned sent;
     size_t settled_next;
+    size_t factory_next;
     int queued;
     enum sim_query_kind pending_kind;
     int settled_started;
+    int factory_stopped;
     int disabled;
     int64_t first_queued_ms;
     int64_t due_ms;
@@ -205,6 +221,7 @@ static enum sim_query_kind sim_refresh_expire(struct sim_refresh *refresh,
     enum sim_query_kind expired = refresh->pending_kind;
     refresh->pending_kind = SIM_QUERY_NONE;
     if (expired == SIM_QUERY_SETTLED) refresh->settled_next++;
+    if (expired == SIM_QUERY_FACTORY) refresh->factory_stopped = 1;
     return expired;
 }
 
@@ -230,6 +247,18 @@ static int sim_settled_ready(const struct sim_refresh *refresh,
            now_ms >= refresh->next_allowed_ms;
 }
 
+static int sim_factory_ready(const struct sim_refresh *refresh,
+                             int initial_done) {
+    /* Let a queued SIM refresh finish its debounce/gap before the next GET. */
+    return initial_done && !refresh->disabled &&
+           refresh->pending_kind == SIM_QUERY_NONE &&
+           refresh->settled_started &&
+           refresh->settled_next == SNAPSHOT_GET_COUNT &&
+           !refresh->queued &&
+           !refresh->factory_stopped &&
+           refresh->factory_next < FACTORY_GET_COUNT;
+}
+
 static void sim_refresh_mark_sent(struct sim_refresh *refresh,
                                   uint32_t token, int64_t now_ms) {
     refresh->queued = 0;
@@ -249,20 +278,60 @@ static void sim_settled_mark_sent(struct sim_refresh *refresh,
     refresh->next_allowed_ms = now_ms + SIM_REFRESH_MIN_GAP_MS;
 }
 
+static void sim_factory_mark_sent(struct sim_refresh *refresh,
+                                  uint32_t token, int64_t now_ms) {
+    refresh->pending_kind = SIM_QUERY_FACTORY;
+    refresh->token = token;
+    refresh->reply_deadline_ms = now_ms + SIM_REFRESH_REPLY_MS;
+}
+
 static enum sim_query_kind sim_refresh_match_reply(struct sim_refresh *refresh,
                                                    const uint8_t *p, size_t n,
                                                    int64_t now_ms) {
     if (refresh->pending_kind == SIM_QUERY_NONE ||
         (refresh->pending_kind == SIM_QUERY_SETTLED &&
          refresh->settled_next >= SNAPSHOT_GET_COUNT) ||
+        (refresh->pending_kind == SIM_QUERY_FACTORY &&
+         refresh->factory_next >= FACTORY_GET_COUNT) ||
         now_ms >= refresh->reply_deadline_ms ||
         !is_reply(p, n, refresh->pending_kind == SIM_QUERY_CHANGE ?
-                  0x0200 : snapshot_gets[refresh->settled_next].id,
+                  0x0200 : refresh->pending_kind == SIM_QUERY_SETTLED ?
+                  snapshot_gets[refresh->settled_next].id :
+                  factory_gets[refresh->factory_next].id,
                   refresh->token)) return SIM_QUERY_NONE;
     enum sim_query_kind matched = refresh->pending_kind;
     refresh->pending_kind = SIM_QUERY_NONE;
     if (matched == SIM_QUERY_SETTLED) refresh->settled_next++;
+    if (matched == SIM_QUERY_FACTORY) refresh->factory_next++;
     return matched;
+}
+
+/* Factory TD1A response offsets verified by ready-network-once. Only these
+ * two scalar fields are read; operator and signal bodies are never parsed. */
+static int factory_scalar(unsigned id, const uint8_t *p, size_t n,
+                          uint32_t *value) {
+    if (id == SIT_NET_SELECTION_MODE && n >= 13 && p[12] <= 1) {
+        *value = p[12];
+        return 1;
+    }
+    if (id == SIT_NET_PREFERRED_GET && n >= 16) {
+        *value = le32(p + 12);
+        return 1;
+    }
+    return 0;
+}
+
+static int factory_reply_ok(struct sim_refresh *refresh, unsigned id,
+                            const uint8_t *p, size_t n, uint32_t *value) {
+    if (n < 12 || p[10] ||
+        ((id == SIT_NET_SELECTION_MODE || id == SIT_NET_PREFERRED_GET) &&
+         !factory_scalar(id, p, n, value)) ||
+        (id != SIT_NET_SELECTION_MODE && id != SIT_NET_PREFERRED_GET &&
+         id != SIT_NET_OPERATOR && id != 0x0900)) {
+        refresh->factory_stopped = 1;
+        return 0;
+    }
+    return 1;
 }
 
 struct sim_status_scalars {
@@ -302,7 +371,9 @@ static int sim_status_scalars(const uint8_t *p, size_t size,
 static int make_get_request(uint8_t request[12], unsigned id,
                             uint32_t token) {
     if (id != 0x0200 && id != 0x0801 &&
-        id != SIT_NET_VOICE_REG && id != SIT_NET_DATA_REG) return -1;
+        id != SIT_NET_VOICE_REG && id != SIT_NET_DATA_REG &&
+        id != SIT_NET_SELECTION_MODE && id != SIT_NET_PREFERRED_GET &&
+        id != SIT_NET_OPERATOR && id != 0x0900) return -1;
     memset(request, 0, 12);
     request[2] = (uint8_t)id;
     request[3] = (uint8_t)(id >> 8);
@@ -556,7 +627,8 @@ static int fixture_sim_refresh(void) {
         SIM_QUERY_SETTLED || settled.settled_next != SNAPSHOT_GET_COUNT ||
         sim_settled_ready(&settled, 1, 80000, 0) ||
         sim_refresh_ready(&settled, 1, 76503) ||
-        !sim_refresh_ready(&settled, 1, 76504)) return 48;
+        !sim_refresh_ready(&settled, 1, 76504) ||
+        sim_factory_ready(&settled, 1)) return 48;
     for (size_t i = 0; i < SNAPSHOT_GET_COUNT; ++i) {
         uint8_t request[12];
         if (make_get_request(request, snapshot_gets[i].id,
@@ -587,11 +659,108 @@ static int fixture_sim_refresh(void) {
     return 0;
 }
 
+static int fixture_factory(void) {
+    if (FACTORY_GET_COUNT != 4 ||
+        factory_gets[0].id != SIT_NET_SELECTION_MODE ||
+        factory_gets[1].id != SIT_NET_PREFERRED_GET ||
+        factory_gets[2].id != SIT_NET_OPERATOR ||
+        factory_gets[3].id != 0x0900) return 59;
+    struct sim_refresh refresh = {
+        .settled_started = 1, .settled_next = SNAPSHOT_GET_COUNT
+    };
+    if (sim_factory_ready(&refresh, 0) ||
+        !sim_factory_ready(&refresh, 1) ||
+        sim_refresh_ready(&refresh, 1, 70000)) return 60;
+    uint8_t reply[16] = {1, 0, 3, 7, 13, 0};
+    sim_factory_mark_sent(&refresh, 70, 70000);
+    uint8_t indication[8] = {2, 0, 0x10, 0x02, 8, 0, 0, 0};
+    sim_refresh_note_indication(&refresh, indication, sizeof indication, 70001);
+    if (!refresh.queued || refresh.due_ms != 70501 ||
+        sim_factory_ready(&refresh, 1)) return 71;
+    put32(reply + 6, 69);
+    if (sim_refresh_match_reply(&refresh, reply, 13, 70001) ||
+        refresh.factory_next || sim_factory_ready(&refresh, 1)) return 61;
+    put32(reply + 6, 70);
+    reply[12] = 1;
+    uint32_t scalar = 0;
+    if (sim_refresh_match_reply(&refresh, reply, 13, 70002) !=
+        SIM_QUERY_FACTORY || !factory_reply_ok(&refresh,
+        SIT_NET_SELECTION_MODE, reply, 13, &scalar) ||
+        scalar != 1 || refresh.factory_next != 1 ||
+        sim_factory_ready(&refresh, 1) ||
+        sim_refresh_ready(&refresh, 1, 70500) ||
+        !sim_refresh_ready(&refresh, 1, 70501)) return 62;
+    sim_refresh_mark_sent(&refresh, 90, 70501);
+    uint8_t sim_reply[12] = {1, 0, 0, 2, 12, 0};
+    put32(sim_reply + 6, 90);
+    if (refresh.queued || sim_factory_ready(&refresh, 1) ||
+        sim_refresh_match_reply(&refresh, sim_reply, sizeof sim_reply,
+                                70502) != SIM_QUERY_CHANGE ||
+        !sim_factory_ready(&refresh, 1) || refresh.factory_next != 1)
+        return 72;
+    sim_factory_mark_sent(&refresh, 71, 70503);
+    reply[2] = 0x0b; reply[4] = 16;
+    put32(reply + 6, 71);
+    put32(reply + 12, 12);
+    if (sim_refresh_match_reply(&refresh, reply, 16, 70504) !=
+        SIM_QUERY_FACTORY || !factory_reply_ok(&refresh,
+        SIT_NET_PREFERRED_GET, reply, 16, &scalar) ||
+        scalar != 12 || refresh.factory_next != 2) return 63;
+    sim_factory_mark_sent(&refresh, 72, 70505);
+    reply[2] = 2; reply[4] = 16;
+    put32(reply + 6, 72);
+    scalar = 0xdeadbeefU;
+    if (sim_refresh_match_reply(&refresh, reply, 16, 70506) !=
+        SIM_QUERY_FACTORY || !factory_reply_ok(&refresh,
+        SIT_NET_OPERATOR, reply, 16, &scalar) ||
+        scalar != 0xdeadbeefU || refresh.factory_next != 3) return 64;
+    sim_factory_mark_sent(&refresh, 73, 70507);
+    reply[2] = 0; reply[3] = 9;
+    put32(reply + 6, 73);
+    if (sim_refresh_match_reply(&refresh, reply, 16, 70508) !=
+        SIM_QUERY_FACTORY || !factory_reply_ok(&refresh,
+        0x0900, reply, 16, &scalar) ||
+        scalar != 0xdeadbeefU || refresh.factory_next != FACTORY_GET_COUNT ||
+        sim_factory_ready(&refresh, 1) ||
+        sim_refresh_ready(&refresh, 1, 70508)) return 65;
+
+    struct sim_refresh timeout = {
+        .settled_started = 1, .settled_next = SNAPSHOT_GET_COUNT
+    };
+    sim_factory_mark_sent(&timeout, 80, 80000);
+    if (sim_refresh_expire(&timeout, 89999) ||
+        sim_refresh_expire(&timeout, 90000) != SIM_QUERY_FACTORY ||
+        !timeout.factory_stopped || sim_factory_ready(&timeout, 1)) return 66;
+    struct sim_refresh error = {
+        .settled_started = 1, .settled_next = SNAPSHOT_GET_COUNT
+    };
+    sim_factory_mark_sent(&error, 81, 80000);
+    reply[2] = 3; reply[3] = 7; reply[4] = 13;
+    put32(reply + 6, 81);
+    reply[10] = 1;
+    if (sim_refresh_match_reply(&error, reply, 13, 80001) !=
+        SIM_QUERY_FACTORY || factory_reply_ok(&error,
+        SIT_NET_SELECTION_MODE, reply, 13, &scalar) ||
+        !error.factory_stopped || sim_factory_ready(&error, 1)) return 67;
+    reply[10] = 0;
+    error.factory_stopped = 0;
+    reply[12] = 2;
+    if (factory_reply_ok(&error, SIT_NET_SELECTION_MODE, reply, 13, &scalar) ||
+        !error.factory_stopped) return 68;
+    error.factory_stopped = 0;
+    reply[12] = 0;
+    if (factory_reply_ok(&error, SIT_NET_SELECTION_MODE, reply, 12, &scalar) ||
+        !error.factory_stopped) return 69;
+    return 0;
+}
+
 static int fixture(void) {
     int slot_check = fixture_slot_status();
     if (slot_check) return slot_check;
     int refresh_check = fixture_sim_refresh();
     if (refresh_check) return refresh_check;
+    int factory_check = fixture_factory();
+    if (factory_check) return factory_check;
     const uint8_t ipc[] = {2, 0, 0x34, 0x12, 8, 0, 0, 0};
     const uint8_t rfs[] = {7, 0, 0, 0, 4, 0, 0, 0, 3, 0, 0, 0};
     for (size_t n = 0; n < sizeof ipc; ++n)
@@ -629,8 +798,14 @@ static int fixture(void) {
     if (make_get_request(get, SIT_NET_DATA_REG, 0xabcdef12U) ||
         get[0] != 0 || le16(get + 2) != SIT_NET_DATA_REG ||
         le16(get + 4) != 12 || le32(get + 6) != 0xabcdef12U ||
-        make_get_request(get, SIT_NET_OPERATOR, 1) == 0 ||
+        make_get_request(get, SIT_NET_SELECTION_AUTO, 1) == 0 ||
         make_get_request(get, SIT_NET_ALLOW_DATA, 1) == 0) return 14;
+    for (size_t i = 0; i < FACTORY_GET_COUNT; ++i) {
+        if (make_get_request(get, factory_gets[i].id, (uint32_t)i + 1) ||
+            get[0] != 0 || le16(get + 2) != factory_gets[i].id ||
+            le16(get + 4) != 12 || le32(get + 6) != i + 1 ||
+            get[10] != 0 || get[11] != 0) return 70;
+    }
     uint8_t stream[RX_CAP] = {0};
     size_t used = 0;
     unsigned frames = 0;
@@ -981,6 +1156,7 @@ static int snapshot_finished(const struct snapshot *snapshot) {
 
 static void expire_sim_query(struct sim_refresh *refresh, int64_t now_ms) {
     size_t settled_index = refresh->settled_next;
+    size_t factory_index = refresh->factory_next;
     enum sim_query_kind kind = sim_refresh_expire(refresh, now_ms);
     if (kind == SIM_QUERY_CHANGE)
         printf("sim_refresh response=no request=%u status=timeout\n",
@@ -988,13 +1164,35 @@ static void expire_sim_query(struct sim_refresh *refresh, int64_t now_ms) {
     else if (kind == SIM_QUERY_SETTLED)
         printf("sim_settled %s response=no status=timeout\n",
                snapshot_gets[settled_index].label);
+    else if (kind == SIM_QUERY_FACTORY)
+        printf("net_factory %s response=no status=timeout no-retry stopped=yes\n",
+               factory_gets[factory_index].label);
 }
 
 static void sim_refresh_reply(struct sim_refresh *refresh, const uint8_t *p,
                               size_t size, int64_t now_ms) {
     size_t settled_index = refresh->settled_next;
+    size_t factory_index = refresh->factory_next;
     enum sim_query_kind kind = sim_refresh_match_reply(refresh, p, size, now_ms);
     if (kind == SIM_QUERY_NONE) return;
+    if (kind == SIM_QUERY_FACTORY) {
+        unsigned id = factory_gets[factory_index].id;
+        uint32_t scalar = 0;
+        int ok = factory_reply_ok(refresh, id, p, size, &scalar);
+        printf("net_factory %s response=yes success=%s length=%zu error_raw=%u",
+               factory_gets[factory_index].label, ok ? "yes" : "no",
+               size, (unsigned)p[10]);
+        if (ok && id == SIT_NET_SELECTION_MODE)
+            printf(" mode_raw=%u", (unsigned)scalar);
+        else if (ok && id == SIT_NET_PREFERRED_GET)
+            printf(" preferred_raw=%u", (unsigned)scalar);
+        else if (!ok && !p[10])
+            printf(" status=invalid-scalar stopped=yes");
+        else if (!ok)
+            printf(" stopped=yes");
+        putchar('\n');
+        return;
+    }
     if (kind == SIM_QUERY_CHANGE)
         printf("sim_refresh response=yes request=%u error_raw=%u",
                refresh->sent, (unsigned)p[10]);
@@ -1018,9 +1216,13 @@ static void sim_refresh_advance(struct sim_refresh *refresh,
     else if (sim_settled_ready(refresh, initial_done, now_ms,
                                owner_start_ms))
         kind = SIM_QUERY_SETTLED;
+    else if (sim_factory_ready(refresh, initial_done))
+        kind = SIM_QUERY_FACTORY;
     else return;
     unsigned id = kind == SIM_QUERY_CHANGE ? 0x0200 :
-                  snapshot_gets[refresh->settled_next].id;
+                  kind == SIM_QUERY_SETTLED ?
+                  snapshot_gets[refresh->settled_next].id :
+                  factory_gets[refresh->factory_next].id;
     uint8_t request[12];
     uint32_t token = ++snapshot->token;
     if (make_get_request(request, id, token) ||
@@ -1028,20 +1230,28 @@ static void sim_refresh_advance(struct sim_refresh *refresh,
         if (kind == SIM_QUERY_CHANGE)
             puts("sim_refresh request=failed no-retry disabled=yes");
         else
-            printf("sim_settled %s request=failed no-retry disabled=yes\n",
-                   snapshot_gets[refresh->settled_next].label);
+            printf("%s %s request=failed no-retry disabled=yes\n",
+                   kind == SIM_QUERY_SETTLED ? "sim_settled" : "net_factory",
+                   kind == SIM_QUERY_SETTLED ?
+                   snapshot_gets[refresh->settled_next].label :
+                   factory_gets[refresh->factory_next].label);
         refresh->disabled = 1;
         refresh->queued = 0;
         if (kind == SIM_QUERY_SETTLED) refresh->settled_started = 1;
+        if (kind == SIM_QUERY_FACTORY) refresh->factory_stopped = 1;
         return;
     }
     if (kind == SIM_QUERY_CHANGE) {
         sim_refresh_mark_sent(refresh, token, now_ms);
         printf("sim_refresh request=sent request=%u\n", refresh->sent);
-    } else {
+    } else if (kind == SIM_QUERY_SETTLED) {
         sim_settled_mark_sent(refresh, token, now_ms);
         printf("sim_settled %s request=sent\n",
                snapshot_gets[refresh->settled_next].label);
+    } else {
+        sim_factory_mark_sent(refresh, token, now_ms);
+        printf("net_factory %s request=sent\n",
+               factory_gets[refresh->factory_next].label);
     }
 }
 
