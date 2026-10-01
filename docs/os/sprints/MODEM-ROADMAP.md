@@ -132,6 +132,11 @@ path before any live scan. The current owner lacks that state machine; no
 live scan was sent. See [the factory guard audit](MODEM-07-RFS-QUARANTINE.md#separate-active-rf-scan-gate).
 No further PIN or blind radio SET is justified by this data.
 
+A [host-only scan state model](../targets/panther/SIT-NETWORK-SCAN-HOST-MODEL.md)
+now tests one bounded query, strict count-only parsing, late replies and a
+single cancel path. It is deliberately not linked into the owner or installed
+on the phone; passing synthetic tests is not live-scan approval.
+
 **Passive follow-up (2026-10-01):** after 22 minutes of the same single-owner
 boot, the owner process was still alive and `rmnet0` remained down with zero
 RX/TX. The owner makes no registration GET after its +60-second settled pass,

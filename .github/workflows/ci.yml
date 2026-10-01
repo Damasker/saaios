@@ -35,6 +35,23 @@ jobs:
           node-version: '22'
       - name: quarantined RFS protocol model (synthetic host data only)
         run: node --test os/targets/panther/diagnostics/rfs-quarantine-host.test.mjs
+      - name: TD1A network scan state model (synthetic host data only)
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -DSAAIOS_NETWORK_SCAN_HOST_ONLY \
+            os/targets/panther/diagnostics/sit-network-scan-host.c \
+            os/targets/panther/diagnostics/sit-network-scan-host.test.c \
+            -o /tmp/sit-network-scan-host-test
+          /tmp/sit-network-scan-host-test
+      - name: TD1A network scan state model sanitizers
+        run: |
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -DSAAIOS_NETWORK_SCAN_HOST_ONLY \
+            os/targets/panther/diagnostics/sit-network-scan-host.c \
+            os/targets/panther/diagnostics/sit-network-scan-host.test.c \
+            -o /tmp/sit-network-scan-host-san
+          /tmp/sit-network-scan-host-san
       - name: quarantined RFS C core (synthetic host data only)
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
