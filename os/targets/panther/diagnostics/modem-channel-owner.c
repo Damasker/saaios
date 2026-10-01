@@ -14,8 +14,8 @@
  * It consumes unknown RFS requests without replying, so CP may still wait or
  * fail: this is observability only, not a substitute for the factory rfsd.
  * Logs contain frame-header metadata and allowlisted raw status fields,
- * plus the low seven signal-presence bits, never payload dumps or SIM
- * identifiers.
+ * plus the bounded 0x0802 radio-state scalar and low seven signal-presence
+ * bits, never payload dumps or SIM identifiers.
  */
 #define _GNU_SOURCE
 #include <limits.h>
@@ -535,6 +535,25 @@ static int cp_ind_trace_take(struct cp_ind_trace *trace,
     }
     trace->logged++;
     return 1;
+}
+
+/* TD1A 0x0802: exact 8-byte indication header plus one LE32 state. Do not
+ * print an out-of-range scalar: malformed body bytes are not status data. */
+static int cp_ind_radio_state(const uint8_t *p, size_t n, uint32_t *raw) {
+    if (!p || !raw || n != 12 || p[0] != 2 ||
+        le16(p + 2) != 0x0802 || le16(p + 4) != n)
+        return 0;
+    uint32_t value = le32(p + 8);
+    if (value > 4) return -1;
+    *raw = value;
+    return 1;
+}
+
+static const char *cp_ind_radio_state_label(uint32_t raw) {
+    static const char *const labels[] = {
+        "INITIALIZED", "STOP_NETWORK", "START_NETWORK", "POWER_OFF", "RESET"
+    };
+    return raw < sizeof labels / sizeof labels[0] ? labels[raw] : NULL;
 }
 
 static int cp_ind_quiet_window(int64_t owner_start_ms,
@@ -1312,6 +1331,36 @@ static int fixture_cp_ind_trace(void) {
     return 0;
 }
 
+static int fixture_cp_ind_radio_state(void) {
+    uint8_t ind[12] = {2, 0, 0x02, 0x08, 12, 0, 0, 0};
+    uint32_t raw = UINT32_MAX;
+    static const char *const expected[] = {
+        "INITIALIZED", "STOP_NETWORK", "START_NETWORK", "POWER_OFF", "RESET"
+    };
+    for (uint32_t value = 0; value < 5; ++value) {
+        put32(ind + 8, value);
+        if (cp_ind_radio_state(ind, sizeof ind, &raw) != 1 ||
+            raw != value ||
+            strcmp(cp_ind_radio_state_label(raw), expected[value])) return 115;
+    }
+    put32(ind + 8, 5);
+    raw = UINT32_MAX;
+    if (cp_ind_radio_state(ind, sizeof ind, &raw) != -1 ||
+        raw != UINT32_MAX || cp_ind_radio_state_label(5)) return 116;
+    put32(ind + 8, 0x00000102U);
+    if (cp_ind_radio_state(ind, sizeof ind, &raw) != -1) return 117;
+    if (cp_ind_radio_state(ind, sizeof ind - 1, &raw) ||
+        cp_ind_radio_state(NULL, sizeof ind, &raw) ||
+        cp_ind_radio_state(ind, sizeof ind, NULL)) return 118;
+    ind[0] = 1;
+    if (cp_ind_radio_state(ind, sizeof ind, &raw)) return 119;
+    ind[0] = 2; ind[2] = 3;
+    if (cp_ind_radio_state(ind, sizeof ind, &raw)) return 120;
+    ind[2] = 2; ind[4] = 11;
+    if (cp_ind_radio_state(ind, sizeof ind, &raw)) return 121;
+    return 0;
+}
+
 static int fixture(void) {
     int scan_check = fixture_scan();
     if (scan_check) return scan_check;
@@ -1325,6 +1374,8 @@ static int fixture(void) {
     if (signal_check) return signal_check;
     int cp_ind_check = fixture_cp_ind_trace();
     if (cp_ind_check) return cp_ind_check;
+    int radio_ind_check = fixture_cp_ind_radio_state();
+    if (radio_ind_check) return radio_ind_check;
     const uint8_t ipc[] = {2, 0, 0x34, 0x12, 8, 0, 0, 0};
     const uint8_t rfs[] = {7, 0, 0, 0, 4, 0, 0, 0, 3, 0, 0, 0};
     for (size_t n = 0; n < sizeof ipc; ++n)
@@ -1640,8 +1691,19 @@ static void report_rfs_overflow(struct rfs_header_trace *trace) {
 static void trace_cp_ind(struct cp_ind_trace *trace, const uint8_t *p,
                          size_t size, int64_t now_ms, int64_t owner_start_ms) {
     if (!cp_ind_trace_take(trace, p, size)) return;
-    printf("cp_ind elapsed_ms=%lld id=0x%04x length=%zu\n",
-           (long long)(now_ms - owner_start_ms), le16(p + 2), size);
+    unsigned id = le16(p + 2);
+    printf("cp_ind elapsed_ms=%lld id=0x%04x length=%zu",
+           (long long)(now_ms - owner_start_ms), id, size);
+    if (id == 0x0802) {
+        uint32_t raw;
+        int parsed = cp_ind_radio_state(p, size, &raw);
+        if (parsed == 1)
+            printf(" radio_state_raw=%u radio_state=%s", raw,
+                   cp_ind_radio_state_label(raw));
+        else
+            printf(" radio_state=%s", parsed < 0 ? "invalid-enum" : "unparsed");
+    }
+    putchar('\n');
 }
 
 static void print_sim_fields(const uint8_t *p, size_t size) {
