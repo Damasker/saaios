@@ -44,7 +44,8 @@
 enum { RX_CAP = 65536, EMPTY_READ_BACKOFF_MS = 100,
        BOOTING_LIMIT_MS = 60000, POLL_SLICE_MS = 250,
        HEARTBEAT_MS = 60000, METADATA_KEYS = 16,
-       RFS_HEADER_TRACE_LIMIT = 16,
+       RFS_HEADER_TRACE_LIMIT = 16, CP_IND_TRACE_LIMIT = 8,
+       CP_IND_QUIET_COVERAGE_MS = 300000,
        SIM_REFRESH_MAX = 3, SIM_REFRESH_DEBOUNCE_MS = 500,
        SIM_REFRESH_COALESCE_MS = 2000, SIM_REFRESH_MIN_GAP_MS = 3000,
        SIM_REFRESH_REPLY_MS = 10000, SIM_SETTLED_DELAY_MS = 60000,
@@ -513,6 +514,33 @@ static int scan_evidence_unsolicited(struct scan_evidence *evidence,
         return 1;
     }
     return 0;
+}
+
+struct cp_ind_trace {
+    unsigned seen;
+    unsigned logged;
+    uint64_t overflow;
+};
+
+/* Header-only network/radio indications; the caller resets this each minute. */
+static int cp_ind_trace_take(struct cp_ind_trace *trace,
+                             const uint8_t *p, size_t n) {
+    if (n < 8 || p[0] != 2 || le16(p + 4) != n) return 0;
+    unsigned id = le16(p + 2);
+    if (id < 0x0700 || id > 0x08ff) return 0;
+    if (trace->seen != UINT_MAX) trace->seen++;
+    if (trace->logged >= CP_IND_TRACE_LIMIT) {
+        if (trace->overflow != UINT64_MAX) trace->overflow++;
+        return 0;
+    }
+    trace->logged++;
+    return 1;
+}
+
+static int cp_ind_quiet_window(int64_t owner_start_ms,
+                               int64_t window_start_ms) {
+    return window_start_ms >= owner_start_ms &&
+           window_start_ms - owner_start_ms < CP_IND_QUIET_COVERAGE_MS;
 }
 
 static void make_scan_request(uint8_t request[16], uint32_t token) {
@@ -1242,6 +1270,48 @@ static int fixture_scan(void) {
     return 0;
 }
 
+static int fixture_cp_ind_trace(void) {
+    struct cp_ind_trace trace = {0};
+    uint8_t ind[8] = {2, 0, 0, 7, 8, 0, 0, 0};
+    if (!cp_ind_trace_take(&trace, ind, sizeof ind) ||
+        trace.seen != 1 || trace.logged != 1)
+        return 103;
+    ind[3] = 8;
+    if (!cp_ind_trace_take(&trace, ind, sizeof ind) ||
+        trace.seen != 2 || trace.logged != 2)
+        return 104;
+    ind[0] = 1;
+    if (cp_ind_trace_take(&trace, ind, sizeof ind)) return 105;
+    ind[0] = 2;
+    ind[3] = 6;
+    if (cp_ind_trace_take(&trace, ind, sizeof ind)) return 106;
+    ind[3] = 9;
+    if (cp_ind_trace_take(&trace, ind, sizeof ind)) return 107;
+    ind[3] = 7;
+    ind[4] = 7;
+    if (cp_ind_trace_take(&trace, ind, sizeof ind) ||
+        cp_ind_trace_take(&trace, ind, sizeof ind - 1)) return 108;
+    if (trace.seen != 2 || trace.logged != 2 || trace.overflow) return 112;
+    ind[4] = 8;
+    for (unsigned i = trace.logged; i < CP_IND_TRACE_LIMIT; ++i)
+        if (!cp_ind_trace_take(&trace, ind, sizeof ind)) return 109;
+    if (cp_ind_trace_take(&trace, ind, sizeof ind) ||
+        cp_ind_trace_take(&trace, ind, sizeof ind) ||
+        trace.seen != CP_IND_TRACE_LIMIT + 2 ||
+        trace.logged != CP_IND_TRACE_LIMIT || trace.overflow != 2) return 110;
+    memset(&trace, 0, sizeof trace);
+    if (trace.seen || trace.logged || trace.overflow ||
+        !cp_ind_trace_take(&trace, ind, sizeof ind) ||
+        trace.seen != 1 || trace.logged != 1) return 111;
+    trace.seen = UINT_MAX;
+    if (!cp_ind_trace_take(&trace, ind, sizeof ind) ||
+        trace.seen != UINT_MAX || trace.logged != 2) return 113;
+    if (!cp_ind_quiet_window(100, 100 + CP_IND_QUIET_COVERAGE_MS - 1) ||
+        cp_ind_quiet_window(100, 100 + CP_IND_QUIET_COVERAGE_MS))
+        return 114;
+    return 0;
+}
+
 static int fixture(void) {
     int scan_check = fixture_scan();
     if (scan_check) return scan_check;
@@ -1253,6 +1323,8 @@ static int fixture(void) {
     if (factory_check) return factory_check;
     int signal_check = fixture_signal_mask();
     if (signal_check) return signal_check;
+    int cp_ind_check = fixture_cp_ind_trace();
+    if (cp_ind_check) return cp_ind_check;
     const uint8_t ipc[] = {2, 0, 0x34, 0x12, 8, 0, 0, 0};
     const uint8_t rfs[] = {7, 0, 0, 0, 4, 0, 0, 0, 3, 0, 0, 0};
     for (size_t n = 0; n < sizeof ipc; ++n)
@@ -1316,7 +1388,7 @@ static int fixture(void) {
     memcpy(stream + used, rfs + 6, 6); used += 6;
     if (parse_available(CHANNEL_RFS, stream, &used, fixture_frame, &frames) ||
         used != 0 || frames != 2) return 13;
-    puts("PASS modem-channel-owner framing, slot-status and bounded status-query fixtures");
+    puts("PASS modem-channel-owner framing, slot-status, bounded status-query and CP-indication trace fixtures");
     return 0;
 }
 
@@ -1345,6 +1417,7 @@ struct metadata_entry {
 struct metadata_counts {
     struct metadata_entry ipc[METADATA_KEYS];
     struct metadata_entry rfs[METADATA_KEYS];
+    struct cp_ind_trace cp_ind_trace;
     uint64_t ipc_other;
     uint64_t rfs_other;
     uint64_t ipc_total;
@@ -1508,8 +1581,9 @@ static void count_frame(struct channel *channel, const uint8_t *p,
 }
 
 /* One bounded redacted line per minute, including per-header counts. */
-static void report_metadata(struct metadata_counts *counts, int64_t now) {
-    if (!counts->ipc_total && !counts->rfs_total) {
+static void report_metadata(struct metadata_counts *counts, int64_t now,
+                            int quiet_coverage) {
+    if (!counts->ipc_total && !counts->rfs_total && !quiet_coverage) {
         counts->window_start_ms = now;
         return;
     }
@@ -1532,6 +1606,11 @@ static void report_metadata(struct metadata_counts *counts, int64_t now) {
         printf(" ipc_other=%llu", (unsigned long long)counts->ipc_other);
     if (counts->rfs_other)
         printf(" rfs_other=%llu", (unsigned long long)counts->rfs_other);
+    printf(" cp_ind_seen=%u cp_ind_logged=%u cp_ind_overflow=%llu"
+           " cp_ind_limit=%u cp_ind_window_ms=%u",
+           counts->cp_ind_trace.seen, counts->cp_ind_trace.logged,
+           (unsigned long long)counts->cp_ind_trace.overflow,
+           CP_IND_TRACE_LIMIT, HEARTBEAT_MS);
     putchar('\n');
     memset(counts, 0, sizeof *counts);
     counts->window_start_ms = now;
@@ -1556,6 +1635,13 @@ static void report_rfs_overflow(struct rfs_header_trace *trace) {
     printf("rfs_header_overflow=%llu\n",
            (unsigned long long)trace->overflow);
     trace->overflow_reported = trace->overflow;
+}
+
+static void trace_cp_ind(struct cp_ind_trace *trace, const uint8_t *p,
+                         size_t size, int64_t now_ms, int64_t owner_start_ms) {
+    if (!cp_ind_trace_take(trace, p, size)) return;
+    printf("cp_ind elapsed_ms=%lld id=0x%04x length=%zu\n",
+           (long long)(now_ms - owner_start_ms), le16(p + 2), size);
 }
 
 static void print_sim_fields(const uint8_t *p, size_t size) {
@@ -1970,6 +2056,8 @@ static void live_frame(void *opaque, enum channel_kind kind,
     struct live_frame_context *context = opaque;
     count_frame(context->channel, p, size, context->counts);
     if (kind == CHANNEL_IPC) {
+        trace_cp_ind(&context->counts->cp_ind_trace, p, (size_t)size,
+                     context->now_ms, context->owner_start_ms);
         trace_slot_status(context->slot_trace, p, (size_t)size,
                           context->now_ms, context->owner_start_ms);
         expire_sim_query(context->refresh, context->now_ms);
@@ -2115,7 +2203,9 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             }
         }
         if (now - counts.window_start_ms >= HEARTBEAT_MS) {
-            report_metadata(&counts, now);
+            report_metadata(&counts, now,
+                            cp_ind_quiet_window(start,
+                                                counts.window_start_ms));
             report_rfs_overflow(&trace);
         }
         if (scan.poisoned) {
@@ -2185,7 +2275,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     }
     if (counts.ipc_total || counts.rfs_total) {
         int64_t now = monotonic_ms();
-        report_metadata(&counts, now >= 0 ? now : counts.window_start_ms);
+        report_metadata(&counts, now >= 0 ? now : counts.window_start_ms, 1);
     }
     report_rfs_overflow(&trace);
     if (live_scan_active(&scan)) {

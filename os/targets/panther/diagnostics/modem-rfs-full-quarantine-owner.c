@@ -38,7 +38,9 @@ enum { BASELINE_BYTES = 524288, FIRST_CHUNK = 2012,
        TOTAL_DEADLINE_MS = 300000, BOOTING_LIMIT_MS = 60000,
        SIT_RX_CAP = 65536, SIT_READ_SLICE = 1024,
        SIT_REPLY_MS = 10000, SIT_SETTLED_MS = 60000,
-       SIT_RFS_GUARD_MS = 1000, SIT_GET_COUNT = 4 };
+       SIT_RFS_GUARD_MS = 1000, SIT_GET_COUNT = 4,
+       SIT_EVENT_WINDOW_MS = 60000, SIT_EVENT_TRACE_LIMIT = 8,
+       SIT_EVENT_QUIET_COVERAGE_MS = 300000 };
 #define IOCTL_GET_OPENED_STATUS _IOR('o', 0x59, int)
 #define SOURCE_NAME "nv_protected.bin"
 #define PIN_NAME "expected.sha256"
@@ -92,6 +94,9 @@ struct sit_observer {
     unsigned pass, next;
     int started, pending, poisoned, endpoint_failed;
     int64_t ready_ms, deadline_ms, backoff_until_ms;
+    int64_t event_window_ms;
+    unsigned event_seen, event_logged;
+    uint64_t event_overflow;
 };
 
 struct owner {
@@ -1384,6 +1389,12 @@ static int complete_frame(struct owner *o, const uint8_t *frame,
                 return -1;
             }
             o->final_ack_sent = 1;
+            int64_t ack_returned_at = monotonic_ms();
+            if (ack_returned_at >= o->sit.ready_ms)
+                printf("rfs_final_ack_local_write_returned owner_elapsed_ms=%lld\n",
+                       (long long)(ack_returned_at - o->sit.ready_ms));
+            else
+                puts("rfs_final_ack_local_write_returned owner_elapsed_ms=unknown");
             terminal(o, "complete_quarantined_ack");
             return 0;
         }
@@ -1506,9 +1517,54 @@ static int sit_sim_status_complete(const uint8_t *p, size_t len)
     return apps <= 4 && len >= 15u + (size_t)apps * SIT_SIM_APP_STRIDE;
 }
 
+/* Record only framed unsolicited network/radio headers. The payload may
+ * contain network or subscriber data and must not be inspected or logged. */
+static int sit_event_trace_take(struct sit_observer *s, const uint8_t *p,
+                                size_t len, unsigned *id)
+{
+    if (len < 8 || p[0] != 2 || little16(p + 4) != len) return 0;
+    unsigned value = little16(p + 2);
+    if ((value & 0xff00u) != 0x0700u &&
+        (value & 0xff00u) != 0x0800u) return 0;
+    if (s->event_seen != UINT_MAX) s->event_seen++;
+    if (s->event_logged >= SIT_EVENT_TRACE_LIMIT) {
+        if (s->event_overflow != UINT64_MAX) s->event_overflow++;
+        return 0;
+    }
+    s->event_logged++;
+    *id = value;
+    return 1;
+}
+
+static int sit_event_quiet_window(const struct sit_observer *s)
+{
+    return s->event_window_ms >= s->ready_ms &&
+           s->event_window_ms - s->ready_ms <
+           SIT_EVENT_QUIET_COVERAGE_MS;
+}
+
+static void sit_event_trace_window(struct sit_observer *s, int64_t now)
+{
+    if (now < s->event_window_ms ||
+        now - s->event_window_ms < SIT_EVENT_WINDOW_MS) return;
+    if (s->event_seen || sit_event_quiet_window(s))
+        printf("sit_event_window owner_elapsed_ms=%lld window_ms=%lld seen=%u logged=%u overflow=%llu trace_active=%u\n",
+               (long long)(now - s->ready_ms),
+               (long long)(now - s->event_window_ms), s->event_seen,
+               s->event_logged, (unsigned long long)s->event_overflow,
+               !s->poisoned && !s->endpoint_failed);
+    s->event_window_ms = now;
+    s->event_seen = s->event_logged = 0;
+    s->event_overflow = 0;
+}
+
 static void sit_on_frame(struct sit_observer *s, const uint8_t *p, size_t len,
                          int64_t received_at)
 {
+    unsigned event_id;
+    if (sit_event_trace_take(s, p, len, &event_id))
+        printf("sit_event elapsed_ms=%lld id=0x%04x len=%zu\n",
+               (long long)(received_at - s->ready_ms), event_id, len);
     if (!s->pending || s->pass >= 2 || s->next >= SIT_GET_COUNT ||
         (s->deadline_ms > 0 && received_at >= s->deadline_ms) ||
         len < 12 || p[0] != 1 ||
@@ -1751,8 +1807,10 @@ static int run_owner(int ipc, int rfs, int ready)
     o.deadline_ms = started + FIRST_DEADLINE_MS;
     o.total_deadline_ms = started + TOTAL_DEADLINE_MS;
     o.sit.ready_ms = started;
+    o.sit.event_window_ms = started;
     for (;;) {
         int64_t now = monotonic_ms();
+        if (now >= 0) sit_event_trace_window(&o.sit, now);
         state = cp_state();
         if (state == CP_OFFLINE) {
             if (o.phase != TERMINAL) {
@@ -1947,6 +2005,40 @@ static void host_sit_reply(uint8_t *frame, size_t length, uint16_t id,
     put_little32(frame + 6, token);
     frame[10] = (uint8_t)error;
     frame[11] = (uint8_t)(error >> 8);
+}
+
+static int test_sit_event_trace(void)
+{
+    struct sit_observer s = {.ready_ms = 100,
+                             .event_window_ms = 100};
+    uint8_t frame[8] = {2, 0, 0x10, 0x07, 8, 0, 0, 0};
+    unsigned id = 0;
+    for (unsigned i = 0; i < SIT_EVENT_TRACE_LIMIT; ++i)
+        if (!sit_event_trace_take(&s, frame, sizeof frame, &id) ||
+            id != 0x0710) return -1;
+    frame[3] = 0x08;
+    if (sit_event_trace_take(&s, frame, sizeof frame, &id) ||
+        s.event_seen != SIT_EVENT_TRACE_LIMIT + 1 ||
+        s.event_logged != SIT_EVENT_TRACE_LIMIT ||
+        s.event_overflow != 1) return -1;
+    frame[0] = 1;
+    if (sit_event_trace_take(&s, frame, sizeof frame, &id) ||
+        s.event_seen != SIT_EVENT_TRACE_LIMIT + 1) return -1;
+    frame[0] = 2;
+    frame[4] = 7; /* A malformed header is not a traced indication. */
+    if (sit_event_trace_take(&s, frame, sizeof frame, &id) ||
+        s.event_seen != SIT_EVENT_TRACE_LIMIT + 1) return -1;
+    sit_event_trace_window(&s, 100 + SIT_EVENT_WINDOW_MS);
+    if (s.event_seen || s.event_logged || s.event_overflow ||
+        s.event_window_ms != 100 + SIT_EVENT_WINDOW_MS) return -1;
+    frame[4] = 8;
+    if (!sit_event_trace_take(&s, frame, sizeof frame, &id) ||
+        id != 0x0810) return -1;
+    s.event_window_ms = s.ready_ms + SIT_EVENT_QUIET_COVERAGE_MS - 1;
+    if (!sit_event_quiet_window(&s)) return -1;
+    s.event_window_ms++;
+    if (sit_event_quiet_window(&s)) return -1;
+    return 0;
 }
 
 static int test_sit_observer(void)
@@ -2698,7 +2790,7 @@ static int self_test(void)
         test_host_finish_candidate(1, 1) ||
         test_host_finish_candidate(2, 1) ||
         test_host_transcript(0) || test_host_transcript(1) ||
-        test_sit_observer() ||
+        test_sit_observer() || test_sit_event_trace() ||
         test_host_failure_diagnostics() || test_host_final_frame_shape() ||
         test_host_padded_final_refusals())
         return 8;
