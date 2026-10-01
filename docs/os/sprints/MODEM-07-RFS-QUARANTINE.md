@@ -157,6 +157,34 @@ at its +60-second snapshot. The full-run logs and quarantine artifact remain
 on the phone. Next, add scalar failure-stage diagnostics without logging NV
 payload or identifiers, review and retest before another cold opt-in run.
 
+## Second full-transfer diagnostic (2026-10-01)
+
+A revised owner added fixed failure-stage/reason labels and a seven-bit
+comparison-to-constant mask; it did not add RFS retries or log frame bytes,
+NV contents, identifiers or raw header fields. Host sanitizer tests, ARM64
+static build, independent review, installed SHA-256 and on-device self-test
+passed. The earlier full-run logs and candidate were preserved before a new
+AP boot. The wrapper again passed its fresh read-only original-EFS check and
+reached CP `ONLINE` with one owner.
+
+The owner again stored 94 chunks (189128 bytes) and attempted grant 95. This
+time it identified `failure_stage=final_rfs_frame`,
+`failure_reason=malformed`, `frame_mismatch_mask=0x09`. The bitmask means the
+received final frame's total length and payload-length field did not match
+the strict 318-byte-chunk model; its command, sequence, status, file ID and
+chunk-size fields matched the expected constants. Thus a final response was
+seen, but its exact framing/padding is still unknown. No final ACK was
+attempted or sent, and no registration or bearer success is claimed. The
+second root-only candidate and `NO_PROMOTION` marker remain quarantined,
+without a sidecar or promotion.
+
+After another controlled AP reboot, the original EFS again passed the
+four-file read-only comparison and was unmounted; the passive owner returned
+CP to `ONLINE`. The next step is to compare the stock RFS handler and CPIF
+framing contract with this mismatch. If those sources do not establish the
+format, instrument only bounded frame-length scalars (never packet content)
+for one separately reviewed cold run. Do not relax the parser by guesswork.
+
 ## Why this exists
 
 The no-gap boot owner observed RFS command 7 at +7.282 s and command 6 at
@@ -286,9 +314,10 @@ host-only integration test is not a phone broker.
 5. The separate full owner passed host, sanitizer, ARM build, installed-hash
    and on-device self-test gates. The first guarded phone run stored 94 of 95
    chunks, then failed closed before final ACK; the passive owner was
-   restored and original EFS passed a postflight read-only check. Identify
-   the exact failure stage with reviewed scalar-only diagnostics before any
-   further cold opt-in run. A completed RFS transfer alone would not
+   restored and original EFS passed a postflight read-only check. A second
+   scalar-only run identified a final-frame length mismatch, still without
+   ACK. Establish the factory-valid short-chunk framing before any parser
+   change or further cold opt-in run. A completed RFS transfer alone would not
    establish SIM READY, network registration or a data bearer.
 
 ## Failure and verification gates
