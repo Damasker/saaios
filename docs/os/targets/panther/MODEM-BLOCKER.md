@@ -61,6 +61,17 @@ GET confirmed the original LTE_ONLY(11). Thus forced LTE_ONLY alone is not the
 observed blocker. This test did not provide continuous RFS ownership, so it
 does not exclude a boot/runtime RFS prerequisite.
 
+**Continuous diagnostic owner (same boot, attached after ONLINE):** the
+opt-in `modem-channel-owner --attach-online` acquired the stable common lock
+and verified exclusive IPC0/RFS0 open counts. Its single reader returned
+SIM READY(5), radio ON(10), voice/data registration=0/reject=0/tech=0 from
+four read-only GETs. In two successive one-minute windows it received 46
+and 47 `0x0906` signal indications, and **zero RFS requests**; `rmnet0–5` RX
+remained 0. The last kernel `umts_ipc0 is not opened` message precedes this
+owner's open. The owner keeps running; do not launch competing one-shot SIT
+readers. Because it attached after ONLINE, early boot RFS/IPC traffic is
+unknown. It intentionally does not service RFS or prove modem registration.
+
 **RFS observation caveat:** opening and closing `/dev/umts_rfs0` is not a
 harmless one-shot probe: the kernel discards incoming packets while no RFS
 reader is open and purges its receive queue when the last reader closes.
