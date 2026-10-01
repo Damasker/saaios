@@ -12,6 +12,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: modem parser and model tests
         run: cargo test -p saai-modemd --lib
+      - name: modem diagnostic framing fixtures (host only)
+        run: |
+          cc -O2 -Wall -Wextra -Werror \
+            os/targets/panther/diagnostics/modem-channel-owner.c \
+            -o /tmp/modem-channel-owner-fixture
+          /tmp/modem-channel-owner-fixture self-test
+          cc -O2 -Wall -Wextra -Werror \
+            os/targets/panther/diagnostics/ready-network-once.c \
+            -o /tmp/ready-network-once-fixture
+          /tmp/ready-network-once-fixture self-test
+          cc -O2 -Wall -Wextra -Werror \
+            os/targets/panther/diagnostics/rfs-error-probe.c \
+            -o /tmp/rfs-error-probe-fixture
+          /tmp/rfs-error-probe-fixture --fixture
+          cc -O2 -Wall -Wextra -Werror \
+            os/targets/panther/diagnostics/sit-unsol-observe.c \
+            -o /tmp/sit-unsol-observe-fixture
+          /tmp/sit-unsol-observe-fixture self-test
 
   test:
     runs-on: ubuntu-latest
