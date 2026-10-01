@@ -20,6 +20,14 @@ post-READY one-shot is `diagnostics/ready-network-once.c` and requires
 exclusive SIT ownership. Do not call MODEM-06 done until registration and
 `rmnet` IPv4 are demonstrated.
 
+**Live 2026-10-01 post-READY:** `ready-network-once snapshot` returned
+READY(5), radio ON(10), voice/data registration=0, automatic selection=0,
+preferred=11, and successful operator/signal response headers; all `rmnet`
+RX counters remained zero. Guarded `run` sent AllowData(1) once (accepted)
+and four subsequent data-registration polls stayed 0. This rules out a
+missing AllowData request alone; the next isolated experiment must target
+the start of network search, not SetupDataCall/APN.
+
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
 [MODEM-EXPERIMENTS-2026-09-24.md](../targets/panther/MODEM-EXPERIMENTS-2026-09-24.md),

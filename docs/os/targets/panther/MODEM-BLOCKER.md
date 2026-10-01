@@ -18,6 +18,17 @@ OEM frame is not established or required to explain the observed READY.
 Sections below preserve earlier investigations, including hypotheses now
 superseded by the signed VerifyPin→READY result.
 
+**Live post-READY check (2026-10-01):** A verified static ARM64
+`ready-network-once snapshot` read eight SIT responses under the common lock:
+SIM READY(5), pin1=2, radio ON(10), voice registration=0, data
+registration=0/reject=0/tech=0, automatic selection=0, preferred=11
+(LTE_ONLY), and successful operator/signal responses (private payloads
+suppressed). `rmnet0–5` RX remained 0. A guarded `run` sent **only**
+AllowData(1) because selection was already auto; its ACK succeeded, but four
+registration polls over roughly 10 seconds stayed 0 with no RX. Thus an
+accepted AllowData request alone does not start camp on this boot. No PIN,
+CardPower, RadioPower OFF, APN or NV/EFS write was performed in this check.
+
 ## Achieved remotely
 
 | Milestone | Evidence |
