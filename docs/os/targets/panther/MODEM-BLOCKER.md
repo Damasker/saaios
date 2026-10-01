@@ -1002,6 +1002,66 @@ Under bans (no start rild/cbd; no invent frame), catalog soft-INIT is
 Until (1) or (2), do **not** soft-write SitOem Ping/Config as fake SIM_INIT,
 do **not** invent 2B body/zeros, do **not** spam `0x0704` / ATU / BAR.
 
+### 2026-10-01 — alternate chicken-egg breakers (L1/scan + 0x020a) — both DEAD
+
+**Live brief (COM13 / USB NCM `172.31.7.1`):** modem_state=**ONLINE**;
+`sit-sim-status` → PRESENT apps=1 **app=PIN(2)** type=USIM pin1=2 remain=3;
+radio_state=10; data_reg=0 tech=UMTS; GetPsService err0 byte12=1;
+rmnet0–5 **rx=0 tx=0**; usb0/wlan IPv4 only; **no** rild/cbd. Soft-lock
+unchanged. Scripts: `diagnostics/tmp-l1-scan-sit-re.py` (+`.out`),
+`tmp-020a-facility-re.py` (+`.out`).
+
+#### 2) Signed NET/RADIO/L1 SIT → measure/camp/SADR_MEASURE_RSP w/o START_NETWORK?
+
+| Lever | Evidence | Live? |
+| --- | --- | --- |
+| sit-stream `SADR` / `Measure` builders | **absent** (string hunt 0) | n/a |
+| STATUS_WRAP callers | still **2 only** (SADR_MEASURE_RSP + L1TUNNEL) — L1-internal | no AP inject |
+| `BuildQueryAvailableNetwork` `0x0706` | signed empty GET; **prior live err=2** under soft-lock | **do not re-spam** |
+| `BuildStartNetworkScan` / Stop / Cancel | exist; Start needs RAS payload (not empty-safe); **no** evidence they post SADR_MEASURE_RSP or bypass `GET_APP∈{1,4,5}` | **no try** |
+| `BuildSetNetworkSelectionManual` `0x0705` | signed; same family as auto/`START_NETWORK` | **no try** (PIN gate) |
+| `BuildTriggerEmergencyNetworkScan` / MicroCell | incomplete / no SADR link evidenced | **no try** |
+| GapMeasure / “Not camped on any frequency” | producer needs camp → START_NETWORK → app∈{1,4,5} | chicken-egg holds |
+
+**L1/scan live sequence?** **none** — no evidenced signed SIT that triggers
+`SADR_MEASURE_RSP` / camp **without** START_NETWORK and **without**
+`GET_APP∈{1,4,5}`.
+
+#### 3) `0x020a` facility SET (pin1 DISABLED path)
+
+| Item | Evidence |
+| --- | --- |
+| Builder | `BuildSimSetFacilityLock` id **`0x020a`** len **72**; SC@12, **lock_mode@13**, pwd_len@14, digits@15+, class@54=7, AID@55+ |
+| Prior live enable (mode=1) + cand A | **err=2**; pin1 stayed **2**; remain 3 — already closed |
+| GET `0x0209` empty-pwd | facility **unlocked** (status byte13=0) historically |
+| Disable (mode=0) | stock `setIccLockEnabled(false)` needs **PIN password** — no empty-pwd accept documented; wrong pwd may burn remain |
+| pin1 DISABLED(3) → READY? | **no** — STATUS SET#5 still Present==2 only (ROADMAP/RUNTIME) |
+
+**Safe documented payload to move pin/app without secrets logging?** **No.**
+**0x020a live try this turn?** **none.**
+
+#### App / reg / bearer after
+
+Unchanged: app=**PIN(2)** pin1=2; data_reg=0; rmnet rx/tx=0; **bearer
+verified? no.**
+
+#### Policy ask (strengthened — soft-lock terminal under bans)
+
+Both alternate breakers **dead**. Catalog `0x2f50` encoder still unrecovered;
+OemSim closed; GET_APP confirmed PIN; Present=2/FN_A paradox stands.
+**Pick one explicit exception to progress:**
+
+1. **Capture-only stock rild** — start rild **once** only to capture the first
+   catalog OEM write on `oem_ipc*` (app header + 2B body for msgid `0x2f50`),
+   then stop; feed into a minimal one-shot (no long-running daemon).
+2. **External `0x2f50` wire dump** — matching Shannon OEM IPC userspace bytes
+   (header + body) from stock/third-party capture.
+3. **Keep ban** — accept ONLINE+bearer as **unreachable** on this EU No-CDMA
+   image without EFS/unsigned MAIN/CDMA-RatMap.
+
+Until (1) or (2): no invent `0x2f50`; no start rild/cbd; no ATU poke; no BAR
+`0x81400000`; no `0x0704` spam under PIN; no further L1/scan / `0x020a` hopes.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

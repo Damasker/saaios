@@ -633,6 +633,17 @@ no live write**. **Policy need:** capture-only stock rild once, or external
 wire dump of catalog OEM frame; else accept soft-lock terminal under bans.
 BLOCKER § hard-wall-policy.
 
+**Alternate breakers dead (2026-10-01):** Live ONLINE / PIN(2) / pin1=2 /
+data_reg=0 / rmnet rx=0 / **no bearer**. (1) Signed NET/L1 scan SITs
+(`0x0706` QueryAvailable, StartNetworkScan, Manual/Auto select, emergency
+scan) — **no** evidence any posts `SADR_MEASURE_RSP` or camps without
+START_NETWORK/`GET_APP∈{1,4,5}`; sit-stream has **no** SADR builder;
+`0x0706` already live err2 — **no re-try**. (2) `0x020a` facility SET —
+enable already err2; disable needs PIN secrets; pin1 DISABLED ≠ READY —
+**no safe payload / no try**. Soft-lock **terminal** under bans until
+policy (capture-only rild **or** external `0x2f50` dump). BLOCKER §
+alternate-breakers.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.
