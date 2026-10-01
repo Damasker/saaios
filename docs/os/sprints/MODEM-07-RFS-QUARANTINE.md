@@ -971,3 +971,112 @@ cause. Do not repeat `0x0706` without a new isolated hypothesis.
 
 Evidence and corrections: [runtime notes](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
 and [modem roadmap](MODEM-ROADMAP.md).
+
+## Early SGC implementation + factory-order consolidation (2026-10-02)
+
+This turn implements the `sgc-early-once` mode from the contract above and
+consolidates the factory RF/network bring-up order recovered from the stock
+TD1A `libsitril.so` (`efcca0d5…`) and `sit-stream.so` (`cef87564…`). No new
+phone run was performed: the diagnostic phone is reachable only over USB NCM
+(`172.31.7.1`) with no interactive shell (ADB is an MTP phantom, SSH pubkey
+denied), and the contract requires independent review, a fresh AP boot and a
+read-only original-EFS preflight before any early-SGC device run. Bearer is
+**not** verified.
+
+### Factory ordered bring-up (recovered), with stage deltas vs ours
+
+Order is by stock stage, not a replay list. IDs are from named factory
+builders (see the OnRadioAvailable and SGC-provenance sections above).
+
+| Stage | Factory action | SIT id | Our soft stack | Delta |
+| --- | --- | --- | --- | --- |
+| 0 pre-context (`InitInstance`: `LoadConfigToRilProperty` slot +64, then `OnInitialize` slot +48) | Resolve carrier/region: `persist.vendor.radio.sgc` → `ro.carrier` → `ro.vendor.config.build_carrier=europen` → target **400** → SGC body `0x0101,0,0`; mirror to `persist.vendor.radio.target_oper` | (property only) | not resolved on SaaiOS (no rild); value is the static `europen` profile | **region config exists before radio callbacks**; we never stage it |
+| 1 radio-available (RIL UNAVAILABLE→not; wire = `0x0803` then `0x0802` raw 0) `MiscService::OnRadioAvailable` | a. `SetDebugTraceOffOnBoot` | `0x090b` | never | conditional debug; not a camp input |
+| 1 | b. `SetModemsConfig` (modem count from `IsMultiSimEnabled`) | `0x093f` | **never** | untested; single-SIM necessity unproven |
+| 1 | c. **`SendSGCValue`** (carrier/region config) | **`0x0404`** | late (+60 s) or absent | **primary timing delta — addressed by `sgc-early-once`** |
+| 1 | d. `SendSvnInfo` | `0x4605` | never | version metadata; unlikely camp dep |
+| 1 | `NetworkService::OnRadioAvailable` → `TrySetRadioPower(10)` under `mUseCampOnEarlier`/`mFirstRunOnBoot`/airplane-off | `0x0800` | radio-on sent **late** at settled baseline | factory may request camp-on **at this early stage**; we only power radio on later |
+| 2 post radio-on | GetSimStatus / Get-Set preferred / SetNetworkSelectionAuto / reg polls / VerifyPin-if-enabled | `0x0200`,`0x070b`/`0x070a`,`0x0704`,`0x0700`/`0x0701`,`0x0201` | all sent (READY via VerifyPin A+AID; auto; LTE/broad RAT; AllowData `0x0710`) | **parity** — no missing SIT on the post-radio path |
+
+Net: the post-radio SIT set is at parity; the deltas are all at **stage 0/1**
+— carrier/region (SGC `0x0404`) applied too late, and `0x093f`/early camp-on
+never applied. `SendSGCValue` is the one stage-1 action with a plausible camp
+dependency and a verified static payload, so it is the first isolated timing
+test.
+
+### Region / regulatory findings
+
+The "regional" configuration on this No-CDMA SKU is the carrier target
+`europen` → 400 → SGC `0x0101`, resolved AP-side by
+`LoadConfigToRilProperty` before the radio callbacks and pushed to CP by
+`SendSGCValue` at stage 1. No separate OPLMN / regulatory / band-table
+builder distinct from SGC was found in `sit-stream` for this path; preferred
+RAT (`0x070a`) and selection mode (`0x0704`) are already live and are not the
+regional carrier input. So the region delta is specifically the **SGC stage/
+timing**, not a missing separate regulatory SIT.
+
+### Firmware / NV load-order finding (2b)
+
+No evidence the modem firmware/NV loads differently from factory: the live
+MAIN B (`449eeab3…`) matches the factory signed image family, UDL reaches CP
+ONLINE at parity, and the carrier/region selection is an **AP-side RilProperty
+→ SGC** runtime step, not a distinct TOC/NV/region partition section applied
+at a different firmware stage. The gap is the runtime AP→CP carrier-config SIT
+**ordering**, not firmware section order. Do not blind-UDL an alternate image
+to chase this.
+
+### Root cause of `0x0706` error 2 (hypothesis, grounded)
+
+`0x0706` is `DoQueryAvailableNetwork` — an **AP-initiated active PLMN scan**.
+Its CP reply `error_raw=2` is a generic RF refusal (`RCM_E_GENERIC_FAILURE`
+class), not a unique fingerprint. After READY, radio ON, automatic selection
+and broad preferred RAT are all satisfied (live-confirmed), the remaining
+unmet factory precondition is **stage-1 carrier/region config and/or early
+camp-on**: the stock stack applies SGC `0x0404` (and may request camp-on) on
+`OnRadioAvailable` *before* any scan, whereas our stack reaches the scan with
+carrier config either unsent or applied only +60 s after the settled baseline
+(late-SGC ACK alone did not register). The most likely precondition the signed
+SGC satisfies is the CP carrier/regulatory profile that an active scan
+requires; `0x093f` and early camp-on remain secondary untested candidates.
+This is a testable hypothesis, not proof — the `sgc-early-once` mode exists to
+apply the exact factory payload at the exact factory stage and re-measure
+registration before any further `0x0706`.
+
+### What was implemented and tested
+
+`modem-channel-owner.c` gains a mutually exclusive `SAAIOS_SGC_EARLY_ONCE`
+build (`--mode` → `sgc-early-once`), alongside the unchanged late-SGC, scan
+and passive modes (a 3-way build guard rejects combining them). It adds an
+independent radio-event observer fed every framed IPC indication, separate
+from the capped trace logger, that latches the exact `0x0803` (len 8) →
+`0x0802` raw 0 (len 12) trigger pair and invalidates on any duplicate,
+reversed, malformed, out-of-window or superseding radio event. At that
+trigger, within a 30 s owner window, ≤1000 ms inter-event gap and ≤1000 ms
+raw-0-to-dispatch bound, and only if the four initial GETs completed with no
+pending GET and no already-sent SIM refresh (a queued-but-unsent refresh does
+not block — early dispatch takes priority and keeps that entry), it sends the
+**one** factory 24-byte `0x0404` (`europen` body `0x0101,0,0`) with the 2000 ms
+reply deadline. A matched ACK (including a remote-error ACK) releases the
+ordinary bounded GET schedule with **no** post sweep and **no** retry;
+ambiguous write, timeout, malformed reply, framing loss or CP reset hold the
+owner without further IPC writes until OFFLINE. SIM READY / radio ON / stack
+enabled are intentionally not early eligibility requirements.
+
+Build + host fixtures passed under WSL native gcc 15.2 and under
+ASan/UBSan, and all four modes (passive, scan, late-SGC, early-SGC)
+cross-compile static ARM64 with `-Wall -Wextra -Werror`. New fixtures cover:
+the exact request bytes; the early ACK → DONE transition (no post sweep) for
+success and remote-error ACKs; the ownership matrix (IDLE/DONE release the
+GET slot, WAIT_ACK/HOLD retain it); the radio observer (coalesced and
+fragmented pair, reversed/duplicate/non-zero/wide-gap/out-of-window/malformed
+invalidation, superseding); and the dispatch gate (happy path, queued refresh
+priority, already-sent-refresh skip, incomplete initial GETs, invalidated
+pair, no-pair window expiry, short-write and ACK-timeout holds, offline/
+another-opener not-attempted, busy transport and recent-RX deferral). Device
+artifacts build via `build-owner-sgc-early-once.sh` (owner +
+`probe-handover-sgc-early-once` with `probe-sgc-early-once-config.h`).
+
+**Bearer verified? no.** Next: operator-gated early-SGC run (fresh AP boot,
+read-only EFS preflight, independent review, installed-hash + on-device
+self-test), then watch `0x0802`/registration; if registered, AllowData /
+SetupDataCall and verify `rmnet` IPv4 or rx/tx.

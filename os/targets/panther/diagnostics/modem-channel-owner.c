@@ -30,8 +30,11 @@
 #include "sit-network-layout.h"
 #include "sit-sim-layout.h"
 
-#if defined(SAAIOS_SCAN_ONCE) && defined(SAAIOS_SGC_ONCE)
-#error "SGC and active scan require separate diagnostic builds"
+#if (defined(SAAIOS_SCAN_ONCE) + defined(SAAIOS_SGC_ONCE) + defined(SAAIOS_SGC_EARLY_ONCE)) > 1
+#error "late SGC, early SGC and active scan require separate diagnostic builds"
+#endif
+#if defined(SAAIOS_SGC_ONCE) || defined(SAAIOS_SGC_EARLY_ONCE)
+#define SAAIOS_SGC_DIAGNOSTIC 1
 #endif
 
 #ifndef _WIN32
@@ -740,9 +743,16 @@ static int make_get_request(uint8_t request[12], unsigned id,
     return 0;
 }
 
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
 enum { SGC_COMMAND = 0x0404, SGC_REPLY_MS = 2000,
        SGC_POST_DELAY_MS = 10000, SGC_POST_COUNT = 5 };
+/* Early-SGC dispatch-opportunity bounds. These are conservative SaaiOS
+ * experimental limits on the factory OnRadioAvailable callback timing, not
+ * constants recovered from the stock RIL. The factory hook fires on the
+ * early UNAVAILABLE->OFF radio transition (0x0803 then 0x0802 raw 0),
+ * before the settled READY/ON baseline the late variant waits for. */
+enum { SGC_EARLY_WINDOW_MS = 30000, SGC_EARLY_PAIR_GAP_MS = 1000,
+       SGC_EARLY_DISPATCH_MS = 1000 };
 enum sgc_phase { SGC_IDLE, SGC_WAIT_ACK, SGC_POST_DELAY, SGC_POST_WAIT,
                  SGC_DONE, SGC_HOLD };
 struct live_sgc {
@@ -757,6 +767,14 @@ struct live_sgc {
     int64_t due_ms;
     const char *hold_reason;
     int hold_reported;
+    /* Early-SGC independent radio-event observer: 0x0803 then 0x0802 raw 0.
+     * Populated for every framed IPC indication, separate from the capped
+     * cp_ind trace. Unused by the late settled-baseline variant. */
+    int radio_stage;        /* 0 none, 1 saw exact 0x0803 */
+    int radio_invalidated;  /* duplicate/reversed/malformed/superseding */
+    int early_reported;
+    int64_t radio_unavail_ms;
+    int64_t radio_ready0_ms;
 };
 
 /* Exact TD1A europen target=400 MappingSGC: 0x0101, reserved=0, reserved=0.
@@ -816,8 +834,15 @@ static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
     }
     sgc->error = le16(p + 10);
     if (sgc->phase == SGC_WAIT_ACK) {
+#ifdef SAAIOS_SGC_EARLY_ONCE
+        /* No post sweep in the early variant: the matched ACK releases the
+         * ordinary bounded GET schedule, preserving the owner-relative
+         * +60-second SIM/radio/registration and factory GETs. */
+        sgc->phase = SGC_DONE;
+#else
         sgc->phase = SGC_POST_DELAY;
         sgc->due_ms = now_ms + SGC_POST_DELAY_MS;
+#endif
     } else {
         if (!sgc->error) {
             struct sim_status_scalars sim;
@@ -842,10 +867,58 @@ static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
 }
 
 static int sgc_owns_query_slot(const struct live_sgc *sgc) {
+#ifdef SAAIOS_SGC_EARLY_ONCE
+    /* The early variant only suspends the ordinary GET schedule while the one
+     * SGC request is in flight, or after an error hold. Before dispatch the
+     * four initial GETs must run; after a matched ACK the normal schedule
+     * resumes so the owner-relative +60-second observations are preserved. */
+    return sgc->phase == SGC_WAIT_ACK || sgc->phase == SGC_HOLD;
+#else
     /* Once the one-shot experiment ends, retain the owner without later
      * SIM-refresh writes obscuring the separately bounded post snapshot. */
     return sgc->phase != SGC_IDLE;
+#endif
 }
+
+#ifdef SAAIOS_SGC_EARLY_ONCE
+/* Independent radio-event observer. Fed every framed IPC indication, it
+ * tracks the factory-callback trigger pair: an exact 8-byte type-2 0x0803
+ * (UNAVAILABLE), then an exact 12-byte type-2 0x0802 with raw scalar 0
+ * (INITIALIZED/OFF). Any duplicate, reversed, malformed or superseding radio
+ * event invalidates eligibility; no later event rearms it. The 30-second
+ * owner window and the <=1000 ms inter-event gap are enforced here; the
+ * <=1000 ms raw-0-to-dispatch bound is enforced by the gate. */
+static void radio_observe(struct live_sgc *sgc, const uint8_t *p, size_t n,
+                          int64_t now_ms) {
+    if (sgc->radio_invalidated || sgc->radio_ready0_ms) {
+        /* After a settled pair, a further radio event supersedes it. */
+        if (n >= 8 && p[0] == 2 &&
+            (le16(p + 2) == 0x0803 || le16(p + 2) == 0x0802))
+            sgc->radio_invalidated = 1;
+        return;
+    }
+    if (n < 8 || p[0] != 2) return;
+    unsigned id = le16(p + 2);
+    if (id == 0x0803) {
+        if (n != 8 || le16(p + 4) != n) { sgc->radio_invalidated = 1; return; }
+        if (now_ms - sgc->owner_start_ms > SGC_EARLY_WINDOW_MS) return;
+        if (sgc->radio_stage != 0) { sgc->radio_invalidated = 1; return; }
+        sgc->radio_stage = 1;
+        sgc->radio_unavail_ms = now_ms;
+    } else if (id == 0x0802) {
+        uint32_t raw;
+        int parsed = cp_ind_radio_state(p, n, &raw);
+        if (sgc->radio_stage != 1 || parsed != 1 || raw != 0 ||
+            now_ms - sgc->radio_unavail_ms > SGC_EARLY_PAIR_GAP_MS ||
+            now_ms - sgc->owner_start_ms > SGC_EARLY_WINDOW_MS) {
+            /* Reversed, malformed, non-zero or out-of-window second event. */
+            sgc->radio_invalidated = 1;
+            return;
+        }
+        sgc->radio_ready0_ms = now_ms;
+    }
+}
+#endif
 #endif
 
 /* Zero means incomplete, -1 invalid/over cap, positive a complete frame. */
@@ -1593,10 +1666,24 @@ static int fixture_cp_ind_radio_state(void) {
     return 0;
 }
 
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
 static void fixture_sgc_frame(void *opaque, enum channel_kind kind,
                                const uint8_t *p, int size) {
     if (kind == CHANNEL_IPC) (void)sgc_match(opaque, p, (size_t)size, 1500);
+}
+
+#ifdef SAAIOS_SGC_EARLY_ONCE
+/* Build an exact type-2 indication: id, declared length and (for 0x0802) the
+ * trailing LE32 radio-state scalar. */
+static void fixture_radio_ind(uint8_t *buf, unsigned id, size_t len,
+                              uint32_t raw) {
+    memset(buf, 0, len);
+    buf[0] = 2;
+    buf[2] = (uint8_t)id;
+    buf[3] = (uint8_t)(id >> 8);
+    buf[4] = (uint8_t)len;
+    buf[5] = (uint8_t)(len >> 8);
+    if (id == 0x0802 && len >= 12) put32(buf + 8, raw);
 }
 
 static int fixture_sgc(void) {
@@ -1606,7 +1693,99 @@ static int fixture_sgc(void) {
         1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     make_sgc_request(request, 0x12345678);
-    if (memcmp(request, expected, sizeof expected)) return 123;
+    if (memcmp(request, expected, sizeof expected)) return 160;
+
+    /* Ownership matrix and the early ACK transition to DONE (no post sweep). */
+    struct live_sgc sgc = {0};
+    if (sgc_owns_query_slot(&sgc)) return 161; /* IDLE releases the slot */
+    if (!sgc_begin(&sgc, 7, 1000) || sgc.phase != SGC_WAIT_ACK ||
+        !sgc_owns_query_slot(&sgc)) return 162;
+    uint8_t reply[12];
+    fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, 7, 0);
+    if (!sgc_match(&sgc, reply, sizeof reply, 1500) ||
+        sgc.phase != SGC_DONE || sgc.error ||
+        sgc_owns_query_slot(&sgc) ||            /* DONE resumes the schedule */
+        sgc_match(&sgc, reply, sizeof reply, 1501)) return 163;
+    sgc_hold(&sgc, "post-mortem");
+    if (!sgc_owns_query_slot(&sgc)) return 164; /* HOLD keeps the slot */
+
+    /* A remote-error ACK is still a matched, terminal response. */
+    sgc = (struct live_sgc){0};
+    if (!sgc_begin(&sgc, 9, 2000)) return 165;
+    fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, 9, 0x8102);
+    if (!sgc_match(&sgc, reply, sizeof reply, 2500) ||
+        sgc.phase != SGC_DONE || sgc.error != 0x8102) return 166;
+
+    /* Radio observer: a clean 0x0803 -> 0x0802 raw 0 pair is eligible. */
+    uint8_t ev0803[8], ev0802[12];
+    fixture_radio_ind(ev0803, 0x0803, sizeof ev0803, 0);
+    fixture_radio_ind(ev0802, 0x0802, sizeof ev0802, 0);
+    sgc = (struct live_sgc){0};
+    radio_observe(&sgc, ev0803, sizeof ev0803, 100);
+    if (sgc.radio_stage != 1 || sgc.radio_invalidated) return 167;
+    radio_observe(&sgc, ev0802, sizeof ev0802, 300);
+    if (!sgc.radio_ready0_ms || sgc.radio_ready0_ms != 300 ||
+        sgc.radio_invalidated) return 168;
+    /* A superseding radio event after the pair invalidates it. */
+    radio_observe(&sgc, ev0802, sizeof ev0802, 400);
+    if (!sgc.radio_invalidated) return 169;
+
+    /* Reversed order (0x0802 before 0x0803) invalidates. */
+    sgc = (struct live_sgc){0};
+    radio_observe(&sgc, ev0802, sizeof ev0802, 100);
+    if (!sgc.radio_invalidated) return 170;
+
+    /* Duplicate 0x0803 invalidates. */
+    sgc = (struct live_sgc){0};
+    radio_observe(&sgc, ev0803, sizeof ev0803, 100);
+    radio_observe(&sgc, ev0803, sizeof ev0803, 200);
+    if (!sgc.radio_invalidated) return 171;
+
+    /* A non-zero 0x0802 scalar after 0x0803 is not the OFF event. */
+    uint8_t ev0802_on[12];
+    fixture_radio_ind(ev0802_on, 0x0802, sizeof ev0802_on, 2);
+    sgc = (struct live_sgc){0};
+    radio_observe(&sgc, ev0803, sizeof ev0803, 100);
+    radio_observe(&sgc, ev0802_on, sizeof ev0802_on, 200);
+    if (sgc.radio_ready0_ms || !sgc.radio_invalidated) return 172;
+
+    /* Too wide an inter-event gap invalidates the pair. */
+    sgc = (struct live_sgc){0};
+    radio_observe(&sgc, ev0803, sizeof ev0803, 100);
+    radio_observe(&sgc, ev0802, sizeof ev0802, 100 + SGC_EARLY_PAIR_GAP_MS + 1);
+    if (sgc.radio_ready0_ms || !sgc.radio_invalidated) return 173;
+
+    /* A 0x0803 after the 30-second window is ignored, not latched. */
+    sgc = (struct live_sgc){0};
+    radio_observe(&sgc, ev0803, sizeof ev0803, SGC_EARLY_WINDOW_MS + 1);
+    if (sgc.radio_stage || sgc.radio_ready0_ms || sgc.radio_invalidated)
+        return 174;
+
+    /* A malformed 0x0803 (wrong declared length) invalidates. */
+    uint8_t bad0803[8];
+    fixture_radio_ind(bad0803, 0x0803, sizeof bad0803, 0);
+    bad0803[4] = 7;
+    sgc = (struct live_sgc){0};
+    radio_observe(&sgc, bad0803, sizeof bad0803, 100);
+    if (!sgc.radio_invalidated) return 175;
+
+    /* The fragmented ACK still resolves through parse_available. */
+    sgc = (struct live_sgc){0};
+    if (!sgc_begin(&sgc, 11, 1000)) return 176;
+    fixture_scan_reply(reply, 12, SGC_COMMAND, 11, 0);
+    uint8_t stream[RX_CAP] = {0};
+    memcpy(stream, reply, 6);
+    size_t used = 6;
+    if (parse_available(CHANNEL_IPC, stream, &used, fixture_sgc_frame, &sgc) ||
+        used != 6 || sgc.phase != SGC_WAIT_ACK) return 177;
+    memcpy(stream + used, reply + 6, 6);
+    used = 12;
+    if (parse_available(CHANNEL_IPC, stream, &used, fixture_sgc_frame, &sgc) ||
+        used || sgc.phase != SGC_DONE) return 178;
+    return 0;
+}
+#else
+static int fixture_sgc(void) {
     struct live_sgc sgc = {0};
     if (sgc_begin(&sgc, 0, 1000) || !sgc_begin(&sgc, 7, 1000) ||
         sgc_begin(&sgc, 8, 1001) || sgc.deadline_ms != 3000 ||
@@ -1682,14 +1861,15 @@ static int fixture_sgc(void) {
     if (scan_evidence_ready(&evidence, 61000)) return 143;
     return 0;
 }
-#endif
+#endif  /* SAAIOS_SGC_EARLY_ONCE fixture_sgc selection */
+#endif  /* SAAIOS_SGC_DIAGNOSTIC */
 
-#if defined(SAAIOS_SGC_ONCE) && !defined(_WIN32)
+#if defined(SAAIOS_SGC_DIAGNOSTIC) && !defined(_WIN32)
 static int fixture_live_sgc(void);
 #endif
 
 static int fixture(void) {
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
     int sgc_check = fixture_sgc();
     if (sgc_check) return sgc_check;
 #ifndef _WIN32
@@ -2246,7 +2426,7 @@ static void sim_refresh_advance(struct sim_refresh *refresh,
     }
 }
 
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
 /* The production operations use only the inherited endpoints. Injection is
  * limited to the host self-test, allowing the real dispatch loop to prove
  * that refused gates and ambiguous writes cannot produce another packet. */
@@ -2276,10 +2456,17 @@ static void live_sgc_reply(struct live_sgc *sgc, const uint8_t *p,
     unsigned index = sgc->post_next;
     if (!sgc_match(sgc, p, size, now_ms)) return;
     if (phase == SGC_WAIT_ACK) {
+#ifdef SAAIOS_SGC_EARLY_ONCE
+        printf("sgc_early elapsed_ms=%lld response=yes error_raw=%u status=%s"
+               " observation=released no-retry\n",
+               (long long)(now_ms - sgc->owner_start_ms),
+               sgc->error, sgc->error ? "remote-error" : "accepted");
+#else
         printf("sgc_once elapsed_ms=%lld response=yes error_raw=%u status=%s post_delay_ms=%u\n",
                (long long)(now_ms - sgc->owner_start_ms),
                sgc->error, sgc->error ? "remote-error" : "accepted",
                SGC_POST_DELAY_MS);
+#endif
         return;
     }
     unsigned id = sgc_post_id(index);
@@ -2303,8 +2490,63 @@ static void live_sgc_advance(struct live_sgc *sgc,
                              int ipc_fd, int rfs_fd,
                              const struct channel channels[2],
                              int64_t now_ms, const struct sgc_io *io) {
+#ifdef SAAIOS_SGC_EARLY_ONCE
+    (void)evidence; /* the early gate keys off the radio observer, not scan */
+#endif
     sgc_tick(sgc, now_ms);
     if (sgc->phase == SGC_IDLE) {
+#ifdef SAAIOS_SGC_EARLY_ONCE
+        /* Dispatch on the early factory trigger (0x0803 then 0x0802 raw 0),
+         * not the settled READY/ON baseline. SIM READY, radio ON and stack
+         * enabled are not early eligibility requirements. */
+        if (snapshot->aborted || refresh->disabled)
+            goto gate_failed;
+        if (sgc->radio_invalidated) goto gate_failed;
+        if (!sgc->radio_ready0_ms) {
+            if (now_ms - sgc->owner_start_ms > SGC_EARLY_WINDOW_MS)
+                goto gate_failed; /* no trigger pair in the early window */
+            return;
+        }
+        if (now_ms - sgc->radio_ready0_ms > SGC_EARLY_DISPATCH_MS)
+            goto gate_failed; /* missed the bounded dispatch opportunity */
+        /* The four initial GETs must have completed with structurally valid,
+         * zero-error responses and no pending GET or already-sent SIM
+         * refresh. A queued-but-unsent refresh does not block: the early
+         * dispatcher takes priority and keeps that queue entry for later. */
+        if (!snapshot_finished(snapshot) || snapshot->pending ||
+            refresh->pending_kind != SIM_QUERY_NONE ||
+            refresh->settled_started || refresh->factory_next || refresh->sent)
+            return; /* becomes not-attempted when the dispatch window closes */
+        int64_t last_rx = channels[0].last_rx_ms > channels[1].last_rx_ms ?
+                          channels[0].last_rx_ms : channels[1].last_rx_ms;
+        if (channels[0].used || channels[1].used ||
+            now_ms < channels[0].backoff_until_ms ||
+            now_ms < channels[1].backoff_until_ms || now_ms - last_rx < 500)
+            return;
+        int queued = io->queued(ipc_fd, rfs_fd);
+        if (queued < 0) { sgc_hold(sgc, "dispatch-poll-failed"); return; }
+        if (queued) return;
+        if (!io->online() || io->exclusive(ipc_fd) || io->exclusive(rfs_fd))
+            goto gate_failed;
+        queued = io->queued(ipc_fd, rfs_fd);
+        if (queued < 0) { sgc_hold(sgc, "dispatch-poll-failed"); return; }
+        if (queued || !io->online()) return;
+        uint32_t token = snapshot->token + 1;
+        if (!token) goto gate_failed;
+        if (!sgc_begin(sgc, token, now_ms)) goto gate_failed;
+        snapshot->token = token;
+        uint8_t request[24];
+        make_sgc_request(request, token);
+        ssize_t written = io->write_frame(ipc_fd, request, sizeof request);
+        if (written != (ssize_t)sizeof request) {
+            sgc_hold(sgc, "write-ambiguous");
+            return;
+        }
+        printf("sgc_early elapsed_ms=%lld request=sent once deadline_ms=%u"
+               " trigger=0x0803-0x0802-raw0 target=europen-400\n",
+               (long long)(now_ms - sgc->owner_start_ms), SGC_REPLY_MS);
+        return;
+#else
         if (snapshot->aborted || refresh->disabled || refresh->factory_stopped)
             goto gate_failed;
         if (!snapshot_finished(snapshot) || !refresh->settled_started ||
@@ -2343,6 +2585,7 @@ static void live_sgc_advance(struct live_sgc *sgc,
         printf("sgc_once elapsed_ms=%lld request=sent once deadline_ms=%u target=europen-400\n",
                (long long)(now_ms - sgc->owner_start_ms), SGC_REPLY_MS);
         return;
+#endif
     }
     if (sgc->phase == SGC_POST_DELAY && now_ms >= sgc->due_ms) {
         if (snapshot->pending || refresh->pending_kind != SIM_QUERY_NONE ||
@@ -2385,7 +2628,14 @@ static void live_sgc_advance(struct live_sgc *sgc,
     return;
 gate_failed:
     sgc->phase = SGC_DONE;
+#ifdef SAAIOS_SGC_EARLY_ONCE
+    if (!sgc->early_reported) {
+        puts("sgc_early request=not-sent status=not-attempted no-retry");
+        sgc->early_reported = 1;
+    }
+#else
     puts("sgc_once request=not-sent status=gate-not-met no-retry");
+#endif
 }
 
 static struct {
@@ -2415,6 +2665,149 @@ static ssize_t fixture_sgc_write(int fd, const void *frame, size_t size) {
     return sgc_fixture_io.short_write ? (ssize_t)size - 1 : (ssize_t)size;
 }
 
+#ifdef SAAIOS_SGC_EARLY_ONCE
+/* Early dispatch fires on the factory trigger pair, before the settled
+ * READY/ON baseline, and takes priority over a queued-but-unsent SIM refresh.
+ * A matched ACK releases the ordinary GET schedule with no post sweep. */
+static int fixture_live_sgc(void) {
+    const struct sgc_io io = {fixture_sgc_queued, fixture_sgc_online,
+                              fixture_sgc_exclusive, fixture_sgc_write};
+    struct scan_evidence evidence = {0}; /* unused by the early gate */
+    struct channel channels[2] = {{0}, {0}};
+    const int64_t pair_ms = 10000, dispatch_ms = 10500;
+    struct snapshot base_snap = {.started = 1, .next = SNAPSHOT_GET_COUNT,
+                                 .token = 100};
+    uint8_t reply[12];
+
+    /* 1) Happy path: pair ready, four GETs done, nothing in flight. */
+    struct snapshot snapshot = base_snap;
+    struct sim_refresh refresh = {0};
+    struct live_sgc sgc = {.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != 1 ||
+        sgc_fixture_io.id != SGC_COMMAND || sgc_fixture_io.size != 24) return 180;
+    fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, sgc.token, 0);
+    if (!sgc_match(&sgc, reply, sizeof reply, dispatch_ms + 40) ||
+        sgc.phase != SGC_DONE || sgc_owns_query_slot(&sgc)) return 181;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms + 50, &io);
+    if (sgc_fixture_io.writes != 1) return 182; /* no post sweep */
+
+    /* 2) A queued-but-unsent SIM refresh does not block the early dispatch. */
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){.queued = 1};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != 1) return 183;
+
+    /* 3) An already-sent (in-flight) refresh skips; closes as not-attempted. */
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){.pending_kind = SIM_QUERY_CHANGE};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_IDLE || sgc_fixture_io.writes) return 184;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     pair_ms + SGC_EARLY_DISPATCH_MS + 1, &io);
+    if (sgc.phase != SGC_DONE || sgc_fixture_io.writes) return 185;
+
+    /* 4) The four initial GETs incomplete: wait, then not-attempted. */
+    snapshot = base_snap;
+    snapshot.next = SNAPSHOT_GET_COUNT - 1;
+    refresh = (struct sim_refresh){0};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_IDLE || sgc_fixture_io.writes) return 186;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     pair_ms + SGC_EARLY_DISPATCH_MS + 1, &io);
+    if (sgc.phase != SGC_DONE || sgc_fixture_io.writes) return 187;
+
+    /* 5) An invalidated radio pair is immediately not-attempted. */
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){0};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms,
+                            .radio_invalidated = 1};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_DONE || sgc_fixture_io.writes) return 188;
+
+    /* 6) No trigger pair before the 30-second window closes. */
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){0};
+    sgc = (struct live_sgc){0};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     1000, &io);
+    if (sgc.phase != SGC_IDLE || sgc_fixture_io.writes) return 189;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     SGC_EARLY_WINDOW_MS + 1, &io);
+    if (sgc.phase != SGC_DONE || sgc_fixture_io.writes) return 190;
+
+    /* 7) A short write is an ambiguous dispatch and holds the owner. */
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){0};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    sgc_fixture_io.short_write = 1;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_HOLD || sgc_fixture_io.writes != 1) return 191;
+
+    /* 8) Offline and another opener are not-attempted, not held. */
+    for (int scenario = 0; scenario < 2; ++scenario) {
+        snapshot = base_snap;
+        refresh = (struct sim_refresh){0};
+        sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+        memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+        sgc_fixture_io.offline = scenario == 0;
+        sgc_fixture_io.another_opener = scenario == 1;
+        live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1,
+                         channels, dispatch_ms, &io);
+        if (sgc.phase != SGC_DONE || sgc_fixture_io.writes) return 192;
+    }
+
+    /* 9) A busy transport waits without dispatching or holding. */
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){0};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    sgc_fixture_io.queued = 1;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_IDLE || sgc_fixture_io.writes) return 193;
+
+    /* 10) A missing ACK holds the owner at its deadline. */
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){0};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_WAIT_ACK) return 194;
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
+                     dispatch_ms + SGC_REPLY_MS, &io);
+    if (sgc.phase != SGC_HOLD || sgc_fixture_io.writes != 1) return 195;
+
+    /* 11) A recent RX or busy channel defers the dispatch. */
+    struct channel busy[2] = {{.last_rx_ms = dispatch_ms - 100}, {0}};
+    snapshot = base_snap;
+    refresh = (struct sim_refresh){0};
+    sgc = (struct live_sgc){.radio_stage = 1, .radio_ready0_ms = pair_ms};
+    memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
+    live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, busy,
+                     dispatch_ms, &io);
+    if (sgc.phase != SGC_IDLE || sgc_fixture_io.writes) return 196;
+    return 0;
+}
+#else
 static int fixture_live_sgc(void) {
     const struct sgc_io io = {fixture_sgc_queued, fixture_sgc_online,
                               fixture_sgc_exclusive, fixture_sgc_write};
@@ -2478,6 +2871,7 @@ static int fixture_live_sgc(void) {
     }
     return 0;
 }
+#endif  /* SAAIOS_SGC_EARLY_ONCE fixture_live_sgc selection */
 #endif
 
 static int live_scan_active(const struct live_scan *scan) {
@@ -2682,7 +3076,7 @@ struct live_frame_context {
     struct sim_refresh *refresh;
     struct scan_evidence *evidence;
     struct live_scan *scan;
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
     struct live_sgc *sgc;
 #endif
     struct slot_status_trace *slot_trace;
@@ -2695,19 +3089,22 @@ static void live_frame(void *opaque, enum channel_kind kind,
                        const uint8_t *p, int size) {
     struct live_frame_context *context = opaque;
     count_frame(context->channel, p, size, context->counts);
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
     if (context->sgc->phase == SGC_HOLD) return;
 #endif
     if (kind == CHANNEL_IPC) {
         trace_cp_ind(&context->counts->cp_ind_trace, p, (size_t)size,
                      context->now_ms, context->owner_start_ms);
+#ifdef SAAIOS_SGC_EARLY_ONCE
+        radio_observe(context->sgc, p, (size_t)size, context->now_ms);
+#endif
         trace_slot_status(context->slot_trace, p, (size_t)size,
                           context->now_ms, context->owner_start_ms);
         expire_sim_query(context->refresh, context->now_ms);
         snapshot_reply(context->snapshot, p, (size_t)size);
         sim_refresh_reply(context->refresh, context->evidence,
                           p, (size_t)size, context->now_ms);
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
         live_sgc_reply(context->sgc, p, (size_t)size, context->now_ms);
 #endif
         live_scan_frame(context->scan, p, (size_t)size, context->now_ms);
@@ -2729,7 +3126,7 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
                          struct sim_refresh *refresh,
                          struct scan_evidence *evidence,
                          struct live_scan *scan,
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
                          struct live_sgc *sgc,
 #endif
                          struct slot_status_trace *slot_trace,
@@ -2755,7 +3152,7 @@ static int drain_channel(struct channel *channel, struct metadata_counts *counts
     struct live_frame_context context = {
         .channel = channel, .counts = counts, .snapshot = snapshot,
         .refresh = refresh, .evidence = evidence, .scan = scan,
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
         .sgc = sgc,
 #endif
         .slot_trace = slot_trace, .trace = trace,
@@ -2816,12 +3213,12 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     struct sim_refresh refresh = {0};
     struct scan_evidence evidence = {0};
     struct live_scan scan = {0};
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
     struct live_sgc sgc = {0};
 #endif
     struct slot_status_trace slot_trace = {0};
     int64_t start = monotonic_ms();
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
     sgc.owner_start_ms = start;
 #endif
     struct rfs_header_trace trace = {.enabled = !attached, .start_ms = start};
@@ -2842,7 +3239,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
          "owner=ready channels=ipc0,rfs0 payload=redacted rfs_responses=none");
     if (scan_armed)
         puts("network_scan=armed_once policy=reviewed-rf-risk cp_rf_idle=unproven");
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
     puts("sgc_once=armed policy=after-settled-baseline target=europen-400 no-retry");
 #endif
     int rc = 0;
@@ -2850,7 +3247,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     for (;;) {
         int64_t now = monotonic_ms();
         state = cp_state();
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
         if (state == CP_OFFLINE) break;
         if (now < 0 || state == CP_INVALID) {
             sgc_hold(&sgc, "clock-or-cp-state-invalid");
@@ -2867,7 +3264,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         if (state == CP_OFFLINE) break;
 #endif
         if (state == CP_BOOTING && now - start > BOOTING_LIMIT_MS) {
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
             sgc_hold(&sgc, "cp-booting-timeout");
 #else
             fputs("ABORT CP stayed BOOTING after READY\n", stderr);
@@ -2875,7 +3272,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
 #endif
         }
         if (stop_requested) {
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
             sgc_hold(&sgc, "stop-requested");
 #else
             if (state == CP_BOOTING) break;
@@ -2891,7 +3288,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
                                                 counts.window_start_ms));
             report_rfs_overflow(&trace);
         }
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
         sgc_tick(&sgc, now);
         if (sgc.phase == SGC_HOLD) {
             if (!sgc.hold_reported) {
@@ -2910,17 +3307,30 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             continue;
         }
         if (state == CP_ONLINE) {
-#ifdef SAAIOS_SGC_ONCE
+#if defined(SAAIOS_SGC_EARLY_ONCE)
+            /* Early dispatch takes priority over a queued-but-unsent SIM
+             * refresh, so evaluate it before the ordinary GET schedule. */
+            live_sgc_advance(&sgc, &evidence, &snapshot, &refresh,
+                             ipc, rfs, channels, now, &sgc_system_io);
+            if (sgc.phase == SGC_HOLD) continue;
             if (!sgc_owns_query_slot(&sgc)) {
-#endif
-            snapshot_advance(&snapshot, ipc, now);
-            if (!live_scan_active(&scan))
-                sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
-#ifdef SAAIOS_SGC_ONCE
+                snapshot_advance(&snapshot, ipc, now);
+                if (!live_scan_active(&scan))
+                    sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
+            }
+#elif defined(SAAIOS_SGC_ONCE)
+            if (!sgc_owns_query_slot(&sgc)) {
+                snapshot_advance(&snapshot, ipc, now);
+                if (!live_scan_active(&scan))
+                    sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
             }
             live_sgc_advance(&sgc, &evidence, &snapshot, &refresh,
                              ipc, rfs, channels, now, &sgc_system_io);
             if (sgc.phase == SGC_HOLD) continue;
+#else
+            snapshot_advance(&snapshot, ipc, now);
+            if (!live_scan_active(&scan))
+                sim_refresh_advance(&refresh, &snapshot, ipc, now, start);
 #endif
             live_scan_advance(&scan, scan_armed, &evidence, &snapshot,
                               &refresh, ipc, rfs,
@@ -2946,7 +3356,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
         if (events < 0 && errno == EINTR) continue;
         if (events < 0) {
             perror("owner poll");
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
             sgc_hold(&sgc, "poll-failed");
             continue;
 #endif
@@ -2960,7 +3370,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 fprintf(stderr, "%s poll failure event=0x%x\n",
                         i ? "RFS" : "IPC", fds[i].revents);
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
                 sgc_hold(&sgc, "channel-poll-failed");
                 break;
 #endif
@@ -2973,13 +3383,13 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             if ((fds[i].revents & POLLIN) &&
                 drain_channel(&channels[i], &counts, &snapshot, &refresh,
                               &evidence, &scan,
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
                               &sgc,
 #endif
                               &slot_trace, &trace, start)) {
                 fprintf(stderr, "%s read/framing failure or buffer cap\n",
                         i ? "RFS" : "IPC");
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
                 sgc_hold(&sgc, "read-or-framing-failed");
                 break;
 #endif
@@ -2989,7 +3399,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
                 }
                 rc = 1; break;
             }
-#ifdef SAAIOS_SGC_ONCE
+#ifdef SAAIOS_SGC_DIAGNOSTIC
             if (sgc.phase == SGC_HOLD) break;
 #endif
         }
@@ -3024,7 +3434,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
     return rc;
 }
 
-#if !defined(SAAIOS_SCAN_ONCE) && !defined(SAAIOS_SGC_ONCE)
+#if !defined(SAAIOS_SCAN_ONCE) && !defined(SAAIOS_SGC_DIAGNOSTIC)
 static int open_verified_node(const char *node, const char *sysdev) {
     int fd = open(node, O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) return -1;
@@ -3067,6 +3477,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--mode")) {
 #ifdef SAAIOS_SCAN_ONCE
         puts("scan-once");
+#elif defined(SAAIOS_SGC_EARLY_ONCE)
+        puts("sgc-early-once");
 #elif defined(SAAIOS_SGC_ONCE)
         puts("sgc-once");
 #else
@@ -3083,6 +3495,9 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--attach-online")) {
 #ifdef SAAIOS_SCAN_ONCE
         fputs("ABORT scan-once requires a fresh guarded pre-FIN handoff\n", stderr);
+        return 64;
+#elif defined(SAAIOS_SGC_EARLY_ONCE)
+        fputs("ABORT sgc-early-once requires a fresh guarded pre-FIN handoff\n", stderr);
         return 64;
 #elif defined(SAAIOS_SGC_ONCE)
         fputs("ABORT sgc-once requires a fresh guarded pre-FIN handoff\n", stderr);

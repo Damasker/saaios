@@ -351,3 +351,25 @@ the read-only original-EFS comparison, and restore the passive baseline.
 This deliberately late single-command comparison does not reproduce the
 entire factory initialization order. Provenance, limits and live results are
 in [MODEM-07](../../../../docs/os/sprints/MODEM-07-RFS-QUARANTINE.md#isolated-delayed-sgc-experiment).
+
+## One-shot early factory carrier configuration (opt-in only)
+
+`build-owner-sgc-early-once.sh ABSOLUTE_EXISTING_OUTPUT_DIRECTORY` creates
+separate static ARM64 `modem-channel-owner-sgc-early-once` and
+`probe-handover-sgc-early-once` artifacts (`probe-sgc-early-once-config.h`);
+it does not install or run them. The owner reports `sgc-early-once` for
+`--mode` and accepts `self-test`. It is mutually exclusive with the late-SGC,
+scan and passive builds.
+
+Unlike the late variant, it dispatches the one factory `0x0404` (`europen`
+body `0x0101,0,0`) on the **early** radio trigger — an exact `0x0803` followed
+by `0x0802` raw 0 — within a 30 s owner window, once the four initial
+read-only GETs have completed and no SIM refresh is already in flight. SIM
+READY, radio ON and stack-enabled are deliberately **not** early eligibility
+requirements, because the stock `OnRadioAvailable` hook runs before those. A
+matched ACK releases the ordinary bounded GET schedule with no post sweep and
+no retry; an ambiguous write, timeout or lost framing holds the owner until
+OFFLINE. This replicates the factory stage/timing only; an ACK is not
+registration. Same bans and the same fresh-boot / read-only EFS preflight /
+independent-review gating as the late variant apply before any phone run. See
+[MODEM-07 §Early SGC implementation](../../../../docs/os/sprints/MODEM-07-RFS-QUARANTINE.md#early-sgc-implementation--factory-order-consolidation-2026-10-02).

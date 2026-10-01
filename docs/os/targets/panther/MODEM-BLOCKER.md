@@ -1,5 +1,28 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**Factory-order RE + early-SGC implementation (2026-10-02):** With the live
+stack at SIM **READY(5)** / pin1 **DISABLED(3)** / radio ON but
+registration 0 / no `rmnet` bearer and `0x0706` active scan returning
+`error_raw=2`, this turn reversed the stock TD1A `libsitril` RF/network
+bring-up **order** and found the deltas are all at **stage 0/1**, not on the
+post-radio SIT path (which is at parity). The factory resolves the carrier/
+region (`europen`→target 400→SGC `0x0101`) *before* radio callbacks and, on
+`OnRadioAvailable` (wire `0x0803`→`0x0802` raw 0), sends `SetDebugTrace
+0x090b` / `SetModemsConfig 0x093f` / **`SendSGCValue 0x0404`** / `SvnInfo
+0x4605` and may `TrySetRadioPower(10)` for early camp-on — whereas our stack
+applies SGC only +60 s late (or never) and never `0x093f`/early camp-on.
+**`0x0706` err2 root-cause hypothesis:** generic RF refusal because the CP
+carrier/regulatory profile (and/or early camp-on) is not established at the
+factory stage; the signed SGC at the right stage is the first testable
+precondition. Firmware/NV load order is **not** the gap (AP-side RilProperty→
+SGC runtime step, signed image at parity). Implemented the contract's
+`sgc-early-once` owner mode (radio-event observer + early dispatch of the one
+factory `0x0404` at the trigger pair, no post sweep); host fixtures pass
+native + ASan/UBSan and all four modes cross-build ARM64 `-Werror`. **No phone
+run** (device NCM-only, no shell; run is operator-gated: fresh boot + EFS
+preflight + review). **Bearer verified? no.** Detail:
+[MODEM-07 §Early SGC implementation](../../sprints/MODEM-07-RFS-QUARANTINE.md#early-sgc-implementation--factory-order-consolidation-2026-10-02).
+
 **Confirmed scan rejection (2026-10-01):** A second guarded boot, using the
 same one-scan protocol but logging only the 16-bit result, returned
 `0x0706 error_raw=2` immediately under SIM READY/PIN1 DISABLED, radio ON,
