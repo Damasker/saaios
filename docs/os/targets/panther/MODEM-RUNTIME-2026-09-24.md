@@ -5739,3 +5739,33 @@ Before the successful run, the first script attempt stopped with `sh: missing
 was sent. That one-line shell error was fixed in commit `40c2b7e`; the two
 short failed-run logs and script were retained with `.syntax-failed-20261001`
 suffixes on the phone.
+
+## 2026-10-01: event-driven SIM refresh confirms the early-read race
+
+After another explicit AP reboot, the same guarded no-gap handoff returned
+`probe_rc=0`, CP `ONLINE`, and one owner held IPC0/RFS0 (PID 545). The new
+owner build was SHA-256
+`f2db2b815273530ea8ea5699ac0a33903ac75b61e75c22d207650f6c25a11591`.
+It sent the original four read-only status GETs, then one coalesced read-only
+`0x0200` after `0x0210` SIM-status-change indications. It sent no RFS reply,
+PIN, APN, or network-configuration command and did not write NV/EFS.
+
+The initial SIM GET again returned card 0/apps 0. The event-driven refresh
+returned card 1/apps 1, app state 2, PIN1 state 1, error 0. Thus **the initial
+absent result was a startup timing artifact**, not evidence that the SIM is
+missing. Factory wire offsets in `sit-sim-layout.h` place app state at packet
+byte 16; older notes using byte 17 for app state are incorrect. The
+[AOSP `ril.h`](https://android.googlesource.com/platform/hardware/ril/+/refs/heads/main/include/telephony/ril.h#1051)
+`RIL_AppState` enum names 2 `PIN` and `RIL_PinState` names 1
+`ENABLED_NOT_VERIFIED`, but these are *modem-reported states*, not proof that
+the user's actual SIM still requests a PIN. The user states PIN is disabled;
+no guessed PIN should be sent. A later read-only status check and, ideally,
+confirmation on another handset are needed to resolve this discrepancy.
+
+RFS metadata repeated: cmd7/seq0 at +7.270 s, then cmd6/seq1 at +17.270 s;
+no cmd3 with the current no-reply owner. At +60.169 s the owner remained alive,
+CP was `ONLINE`, registration remained 0 in the initial snapshot, and `rmnet0`
+RX remained 0. The live log is
+`/data/saaios/var/modem-channel-owner.log`; the prior boot logs were retained
+under `.pre-refresh-20261001.log` names. This diagnostic still does not
+isolate the cause of failed network registration.
