@@ -180,10 +180,23 @@ without a sidecar or promotion.
 
 After another controlled AP reboot, the original EFS again passed the
 four-file read-only comparison and was unmounted; the passive owner returned
-CP to `ONLINE`. The next step is to compare the stock RFS handler and CPIF
-framing contract with this mismatch. If those sources do not establish the
-format, instrument only bounded frame-length scalars (never packet content)
-for one separately reviewed cold run. Do not relax the parser by guesswork.
+CP to `ONLINE`. Do not relax the parser by guesswork.
+
+Read-only disassembly of the matching factory TD1A `rfsd` clarifies the
+compatibility boundary. Its top-level receive path accepts outer
+`payload_len + 8 <= read_count` (`0x9080–0x908c`), rather than equality.
+For command 2, its handler checks `chunk_len <= remaining` (`0x9f50–0x9f5c`)
+and writes exactly `chunk_len` bytes from the data region
+(`0xa014–0xa030`); no inner-length-versus-outer-length check was found.
+Thus a 2032-byte final frame with outer payload length 2024 and inner chunk
+length 318 would be factory-accepted, with its extra 1694 bytes ignored.
+The live mismatch mask does **not** prove those are the actual lengths: the
+two set bits are coupled because SaaiOS derives frame length from the outer
+field. Next, capture only bounded numeric frame/read lengths and a padding
+predicate in one reviewed cold run. Any later parser change must require
+enough actual bytes for the inner chunk, accept only an observed bounded
+shape and keep the existing quarantine durability gate before ACK; do not
+copy the factory handler's missing bounds check.
 
 ## Why this exists
 
