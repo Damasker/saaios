@@ -103,13 +103,18 @@ registration stayed 0 and `rmnet0` had no bearer. Payloads containing
 operator names/PLMN or signal data were not logged. The Samsung factory
 table names SIT raw 16 NR/LTE/GSM/WCDMA and maps it to Android mode 26,
 **not** Android mode 16. A restrictive preferred mode is not supported as
-the blocker; do not change it. One `0x0706` available-network query is the next possible
-search-vs-registration discriminator, but it is an **active RF scan** with
-factory timeout/cancel behavior, not another passive GET. Require a
-reviewed opt-in single-owner implementation, opposite-stack RF-idle check
-and bounded cancel path before any live scan. The current owner lacks those
-safeguards; no live scan was sent. No further PIN or blind radio SET is
-justified by this data.
+the blocker; do not change it. One `0x0706` available-network query is the
+next possible search-vs-registration discriminator, but it is an **active RF
+scan**, not another passive GET. Exact TD1A factory RIL gates it on its own
+and the opposite stack's in-process PLMN-scan transactions and call state;
+those are not a CP/SIT read-only RF-idle measurement. With no Android RIL and
+one SaaiOS IPC owner, its own queue can establish the analogous *AP-request*
+idle condition, but cannot prove that either CP/eSIM stack is autonomously
+RF-idle. Require a separately reviewed opt-in single-owner scan state machine,
+verified no-competing-client boundary, bounded timeout and `0x0707` cancel
+path before any live scan. The current owner lacks that state machine; no
+live scan was sent. See [the factory guard audit](MODEM-07-RFS-QUARANTINE.md#separate-active-rf-scan-gate).
+No further PIN or blind radio SET is justified by this data.
 
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),

@@ -174,5 +174,33 @@ sequence: require an isolated hypothesis, exact payload review and a bounded
 control comparison first. This RFS quarantine sprint remains read-only on
 IPC apart from the specifically reviewed RFS transaction.
 
+## Separate active RF scan gate
+
+The possible MODEM-06 `0x0706` available-network query is **not** part of
+this RFS experiment. The exact factory TD1A `vendor.img` `/lib64/libsitril.so`
+(SHA-256 `efcca0d5fa5a3eb3a09d8c9f68fc35f8b194bb511379987fd4a353f12ed2d5b1`)
+has `Service::IsCurrentStackOccupyRF` at `0x151070` and the factory-spelled
+`Service::IsOppsiteStackOccupyRF` at `0x1511b0`. Each returns 1 for its
+`NetworkService::IsPlmnSearching` state, 2 for
+`CscService::IsInCallState`, or 0 otherwise. `IsPlmnSearching` at
+`0x19ecb0` tests `Service::IsInTransaction(48)` and `(5033)`; the latter at
+`0x152c50` reads RIL-local active/queued messages. `IsInCallState` at
+`0x16cd10` reads a RIL-local call-state counter. These are application-state
+arbitration checks, **not** a read-only SIT query of CP RF occupancy.
+
+`NetworkService::DoQueryAvailableNetwork` at `0x198fd0` waits when the
+opposite RIL stack reports occupancy, rejects current-stack occupancy, and
+only then builds the factory `0x0706` request (16 bytes, argument 0 in the
+ordinary no-type path). Its timeout handler at `0x19a0a0` sends the
+factory `0x0707` cancel. A single-owner SaaiOS boot with no Android RIL
+can establish that *it* has no competing scan/call requests, but cannot
+infer CP-autonomous or embedded-SIM RF idleness from registration=0, slot
+metadata, or the four passive network GETs. The current owner has no scan
+timeout/cancel state machine; do not send `0x0706` from it. Any future
+one-shot live scan needs separate review, exclusive-client proof, strict
+response framing/redaction, a bounded timeout, cancel and fail-closed
+handling of ambiguous writes. An inconclusive or failed scan does not by
+itself establish an RFS or registration cause.
+
 Evidence and corrections: [runtime notes](../targets/panther/MODEM-RUNTIME-2026-09-24.md)
 and [modem roadmap](MODEM-ROADMAP.md).
