@@ -11,6 +11,12 @@ $begin = "BEGIN_$nonce"
 $end = "END_$nonce"
 $remoteScript = "printf '%s\n' '$begin'; $Cmd; printf '%s\n' '$end'"
 $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
+$wireCommand = "printf '%s' '$encoded' | /saaios/busybox base64 -d | /bin/sh`n"
+# Keep the entire input line well below the console's canonical line limit.
+$wireBytes = [Text.Encoding]::ASCII.GetByteCount($wireCommand)
+if ($wireBytes -gt 1024) {
+  throw "Serial command is $wireBytes bytes (limit 1024); split it into shorter commands"
+}
 $portHandle = New-Object System.IO.Ports.SerialPort $Port, 115200, None, 8, one
 $portHandle.ReadTimeout = 400
 $portHandle.WriteTimeout = 4000
@@ -22,7 +28,7 @@ try {
   $portHandle.Open()
   Start-Sleep -Milliseconds 200
   $portHandle.DiscardInBuffer()
-  $portHandle.Write("printf '%s' '$encoded' | /saaios/busybox base64 -d | /bin/sh`n")
+  $portHandle.Write($wireCommand)
   $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
   while ([DateTime]::UtcNow -lt $deadline) {
     $chunk = $portHandle.ReadExisting()
@@ -43,4 +49,4 @@ foreach ($line in $all) {
   if ($line -eq $end) { break }
   if ($started) { Write-Output $line }
 }
-if (-not $found) { throw "Serial command timed out without completion marker" }
+if (-not $found) { throw "Serial command timed out without completion marker (BEGIN seen: $started)" }
