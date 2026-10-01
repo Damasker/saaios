@@ -224,6 +224,16 @@ gated diagnostic boot.
 
 **Goal:** understand factory post-SIM initialization before trying to attach.
 
+**Erratum (2026-10-01):** The 2026-09-30 conclusions below that PIN→READY
+is unreachable, that `0x2f50` must be sent externally, or that a CDMA/Present
+change is the only solution are superseded by two live VerifyPin A+AID→READY
+observations. They are historical hypotheses, **not executable next steps**.
+`0x0200` publishes app state at byte **16**, not 17; byte 17 is the
+personalization substate. The private CP Present byte was not measured.
+`0x0704` accepts automatic selection but its ACK does not prove network camp.
+The current blocker is registration=0 under READY; use the guarded read-only
+network snapshot before any further SET.
+
 **Live blocker (2026-09-30) — CP soft-lock:** `0x0200` byte17=PIN and
 byte72=pin1 DISABLED are independent CP fields. STATUS ADF TLV C6:
 card PIN disabled + life_cycle activated, matches cp pin1=3 — yet

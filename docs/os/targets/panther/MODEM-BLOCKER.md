@@ -42,6 +42,10 @@ these earlier tests, but the later VerifyPin A+AID path reached READY.
 
 ### HotSwap live falsifier (2026-09-30) — conclusive
 
+**2026-10-01 correction:** This rules out tray reseat *alone* in that test
+window, not the later VerifyPin A+AID→READY path. The asserted live Present
+value below was inferred, not measured; do not use it as a current gate.
+
 Physical tray pull/reinsert while `tray-bearer-chase` armed:
 
 1. `card=ABSENT` → reinsert `ABSENT→PRESENT`; `saw_absent=1`; **never**
@@ -97,6 +101,10 @@ writes against stub builders.
 **Newly actionable:** none proven. Need an **external signed** CP/MAIN/NV-defaults image with CDMA in RatMap (loadable via existing CPIF UDL), **or** policy change.
 
 ### 2026-09-30 — A) Soft-lock host gate vs CP gate (LIVE)
+
+**2026-10-01 correction:** `0x0704` is SetNetworkSelectionAuto. Its response
+does not establish that CP issued `NS_START_NETWORK_REQ` or camped; labels
+calling it a START_NETWORK equivalent below are historical shorthand only.
 
 Host chase refuses START_NETWORK unless `app∈{1,4,5}`. Forced the signed
 START_NETWORK trigger (`BuildSetNetworkSelectionAuto` `0x0704`) **once**
