@@ -12,7 +12,8 @@
  * It consumes unknown RFS requests without replying, so CP may still wait or
  * fail: this is observability only, not a substitute for the factory rfsd.
  * Logs contain frame-header metadata and allowlisted raw status fields,
- * never payload dumps or SIM identifiers.
+ * plus the low seven signal-presence bits, never payload dumps or SIM
+ * identifiers.
  */
 #define _GNU_SOURCE
 #include <limits.h>
@@ -307,7 +308,7 @@ static enum sim_query_kind sim_refresh_match_reply(struct sim_refresh *refresh,
 }
 
 /* Factory TD1A response offsets verified by ready-network-once. Only these
- * two scalar fields are read; operator and signal bodies are never parsed. */
+ * two scalar fields are read; the operator body is never parsed. */
 static int factory_scalar(unsigned id, const uint8_t *p, size_t n,
                           uint32_t *value) {
     if (id == SIT_NET_SELECTION_MODE && n >= 13 && p[12] <= 1) {
@@ -321,11 +322,25 @@ static int factory_scalar(unsigned id, const uint8_t *p, size_t n,
     return 0;
 }
 
+/* sit-stream.so ProtocolSignalStrengthAdapter::GetSignalStrength reads a
+ * 16-bit technology-presence mask at response +12. Its V4 parser needs at
+ * least 196 bytes after the mask (12-byte response header + 2 + 196 = 210).
+ * Do not inspect any measurements or identifiers in the remaining body. */
+static int factory_signal_mask(const uint8_t *p, size_t n,
+                               uint32_t token, uint32_t *value) {
+    if (n < 210 || !is_reply(p, n, 0x0900, token) ||
+        le16(p + 4) != n || p[10]) return 0;
+    *value = le16(p + 12) & 0x7fU;
+    return 1;
+}
+
 static int factory_reply_ok(struct sim_refresh *refresh, unsigned id,
                             const uint8_t *p, size_t n, uint32_t *value) {
     if (n < 12 || p[10] ||
         ((id == SIT_NET_SELECTION_MODE || id == SIT_NET_PREFERRED_GET) &&
          !factory_scalar(id, p, n, value)) ||
+        (id == 0x0900 &&
+         !factory_signal_mask(p, n, refresh->token, value)) ||
         (id != SIT_NET_SELECTION_MODE && id != SIT_NET_PREFERRED_GET &&
          id != SIT_NET_OPERATOR && id != 0x0900)) {
         refresh->factory_stopped = 1;
@@ -715,12 +730,14 @@ static int fixture_factory(void) {
         SIT_NET_OPERATOR, reply, 16, &scalar) ||
         scalar != 0xdeadbeefU || refresh.factory_next != 3) return 64;
     sim_factory_mark_sent(&refresh, 73, 70507);
-    reply[2] = 0; reply[3] = 9;
-    put32(reply + 6, 73);
-    if (sim_refresh_match_reply(&refresh, reply, 16, 70508) !=
+    uint8_t signal_reply[210] = {1, 0, 0, 9, 210, 0};
+    put32(signal_reply + 6, 73);
+    signal_reply[12] = 0x45;
+    if (sim_refresh_match_reply(&refresh, signal_reply,
+                                sizeof signal_reply, 70508) !=
         SIM_QUERY_FACTORY || !factory_reply_ok(&refresh,
-        0x0900, reply, 16, &scalar) ||
-        scalar != 0xdeadbeefU || refresh.factory_next != FACTORY_GET_COUNT ||
+        0x0900, signal_reply, sizeof signal_reply, &scalar) ||
+        scalar != 0x45U || refresh.factory_next != FACTORY_GET_COUNT ||
         sim_factory_ready(&refresh, 1) ||
         sim_refresh_ready(&refresh, 1, 70508)) return 65;
 
@@ -754,6 +771,34 @@ static int fixture_factory(void) {
     return 0;
 }
 
+static int fixture_signal_mask(void) {
+    uint8_t reply[210] = {1, 0, 0, 9, 210, 0};
+    put32(reply + 6, 123);
+    reply[12] = 0x45;
+    reply[13] = 0x01; /* Only the low seven bits may enter the log. */
+    uint32_t mask = 0;
+    if (!factory_signal_mask(reply, sizeof reply, 123, &mask) ||
+        mask != 0x45U) return 73;
+    if (factory_signal_mask(reply, sizeof reply - 1, 123, &mask)) return 74;
+    reply[4]--;
+    if (factory_signal_mask(reply, sizeof reply, 123, &mask)) return 75;
+    reply[4]++;
+    reply[0] = 2;
+    if (factory_signal_mask(reply, sizeof reply, 123, &mask)) return 76;
+    reply[0] = 1;
+    reply[2] = 1;
+    if (factory_signal_mask(reply, sizeof reply, 123, &mask)) return 77;
+    reply[2] = 0;
+    if (factory_signal_mask(reply, sizeof reply, 124, &mask)) return 78;
+    reply[10] = 1;
+    if (factory_signal_mask(reply, sizeof reply, 123, &mask)) return 79;
+    reply[10] = 0;
+    reply[12] = 0; reply[13] = 0;
+    if (!factory_signal_mask(reply, sizeof reply, 123, &mask) || mask)
+        return 80;
+    return 0;
+}
+
 static int fixture(void) {
     int slot_check = fixture_slot_status();
     if (slot_check) return slot_check;
@@ -761,6 +806,8 @@ static int fixture(void) {
     if (refresh_check) return refresh_check;
     int factory_check = fixture_factory();
     if (factory_check) return factory_check;
+    int signal_check = fixture_signal_mask();
+    if (signal_check) return signal_check;
     const uint8_t ipc[] = {2, 0, 0x34, 0x12, 8, 0, 0, 0};
     const uint8_t rfs[] = {7, 0, 0, 0, 4, 0, 0, 0, 3, 0, 0, 0};
     for (size_t n = 0; n < sizeof ipc; ++n)
@@ -1186,6 +1233,8 @@ static void sim_refresh_reply(struct sim_refresh *refresh, const uint8_t *p,
             printf(" mode_raw=%u", (unsigned)scalar);
         else if (ok && id == SIT_NET_PREFERRED_GET)
             printf(" preferred_raw=%u", (unsigned)scalar);
+        else if (ok && id == 0x0900)
+            printf(" mask_low7=%u", (unsigned)scalar);
         else if (!ok && !p[10])
             printf(" status=invalid-scalar stopped=yes");
         else if (!ok)
