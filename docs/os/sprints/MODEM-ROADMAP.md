@@ -650,6 +650,16 @@ alternate-breakers.
 default. **No live send** until external/capture frame. Soft-lock /
 bearer still blocked. BLOCKER § armed-for-frame.
 
+**Stock vs soft bring-up + broad vendor hunt (2026-10-01):** Live ONLINE /
+PIN(2) / pin1=2 / rmnet rx=0 / **no bearer**. Soft CPIF handover matches
+stock POWER_ON→COMPLETE; mailbox `ds_detect` inert; no signed SIT/mailbox
+alias for `USIM_WAIT_FOR_INIT` / catalog `0x2f50`. Full vendor.img hunt:
+**0** `SIM_INIT_REQ`/`IpcTxSimInit`; **0** `oem_ipc`∧`MOVZ #0x2f50`
+encoder islands (29 bare MOVZ sites are non-oem). Inject tools **deployed**
+on device (`/data/saaios/bin/oem-ipc-inject`, `post-init-chase.sh`).
+**No live try** (no new lever). Soft-lock **terminal** under bans until
+capture-only rild or external frame. BLOCKER § stock-vs-soft-broad-hunt.
+
 ## MODEM-07
 
 **Goal:** design RFS before any long-running modem service.

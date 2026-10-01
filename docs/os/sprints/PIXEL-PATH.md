@@ -252,9 +252,11 @@ diagnose (ADR-238, `351b0b6f…`).
   PayloadCase/message with encode — Ping≠INIT; external hunt found **no**
   complete `0x2f50` body=2 wire capture. Soft-lock still needs that external
   frame for bearer; diagnostics now arm `oem-ipc-inject` + `post-init-chase`
-  + `OEM-IPC-CAPTURE.md` (no invent; do not start rild/cbd under ban). This
-  is diagnostic, not a modem service, and not cellular
-  registration/calls/SMS/data.
+  + `OEM-IPC-CAPTURE.md` (no invent; do not start rild/cbd under ban);
+  inject tools **deployed** on panther. Stock vs soft CPIF: no missing
+  signed boot/mailbox/SIT step for INIT; full factory vendor hunt still
+  finds **no** catalog `0x2f50` encoder. This is diagnostic, not a modem
+  service, and not cellular registration/calls/SMS/data.
   See `docs/os/targets/panther/MODEM-*.md` and [MODEM-ROADMAP.md](MODEM-ROADMAP.md).
 - Cameras: capture row from `video*`, not `v4l-touch0` (ADR-256; host)
 - Playback: tinyplay + test-tone presence, no auto-play (ADR-257; host)

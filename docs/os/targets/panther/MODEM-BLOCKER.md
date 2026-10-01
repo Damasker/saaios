@@ -1082,6 +1082,57 @@ without external/capture frame. **Bearer verified?** **no** (expected).
 **Next:** (1) policy grant for capture-only stock rild **or** (2) drop in an
 external catalog OEM wire dump → `post-init-chase.sh --frame …`.
 
+### 2026-10-01 — stock vs soft CP bring-up + broader vendor hunt (terminal)
+
+**Live brief (COM13 / USB NCM `172.31.7.1`):** modem_state=**ONLINE**;
+`sit-sim-status` → card=PRESENT apps=1 **app=PIN(2)** pin1=2 remain=3;
+`/dev/umts_ipc0` + `/dev/oem_ipc0` present; **no** rild/cbd processes;
+rmnet0 rx=0 tx=0; **no bearer**. ADB absent; SSH pubkey denied. Inject
+tools now on device: `/data/saaios/bin/oem-ipc-inject`,
+`post-init-chase.sh` (alongside existing `sit-sim-status` /
+`tray-bearer-chase.sh`).
+
+Scripts: `diagnostics/tmp-vendor-broad-2f50-hunt.py` (+`.out`),
+`tmp-vendor-movz-2f50-owners.py` (+`.out`).
+
+#### Stock CP bring-up vs soft CPIF/handover (mailbox / stages / SIM_INIT)
+
+| Axis | Stock (Android + cbd/rild) | Soft (probe-handover) | Soft skip elicitible via signed SIT/CPIF **without** rild/cbd? |
+| --- | --- | --- | --- |
+| POWER_ON → START → HANDOVER → preamble → UDL → FIN → COMPLETE | cbd + CPIF | same ioctl path; ONLINE proven | **parity** — already done |
+| `sim/ds_detect` mailbox | dual-SIM module param (live=2) | same | **no** — prior pulse inert for Present/`+0xBF6` |
+| Boot-stage mailbox / united_status | IRQ/ctrl; `ds_det` at bring-up only | same | **no** — not SIM_INIT / Present |
+| Post-ONLINE SIT radio-on→READY | rild: `0x0800`/`0x0200`/preferred/`0x0704`/reg; VerifyPin if needed | same SITs already live (incl. missing empties `0x0245`/`0x0930`) | **no remaining signed SIT gap** |
+| `USIM_WAIT_FOR_INIT_REQ` / `SIM_INIT_REQ` | AP OEM catalog msgid **`0x2f50`** on `oem_ipc*` (not SIT) | soft never emits; sitril only re-polls SIT `0x0200` after VerifyPin | **no** — no SIT/mailbox alias; OEM frame unrecovered |
+| CardPower / HotSwap / EngMode | stock may cycle UICC | already live-falsified | closed |
+
+**Missing soft boot/init step (signed, no rild/cbd)?** **None evidenced.**
+The only soft-path gap that still blocks READY under bans is the unrecovered
+catalog OEM `0x2f50` write (or Present=2 FN_A/CDMA which EU RatMap blocks).
+
+#### Broader vendor carve hunt (not just cbd/sitril/SitOem)
+
+Full `factory-td1a-vendor/vendor.img` (665MB) needle + MOVZ map:
+
+| Needle | Count |
+| --- | --- |
+| `SIM_INIT_REQ` / `IpcTxSimInit` / `SimInitMessage` / ASCII `0x2f50` | **0** |
+| `/dev/oem_ipc0` / `oem_ipc1` ELF islands | SitOem protobuf (`0x25e7b000`) + log helper (`0xcf64000`) only |
+| Global AArch64 `MOVZ #0x2f50` | **29** sites across ~6 ELF islands — **all** `oem_ipc=False`, `SIM_INIT_REQ=False` |
+| `oem_ipc` ∧ `MOVZ #0x2f50` encoder candidate | **NONE** |
+| research `libsitril.so` (2.3MB) | `MOVZ #0x2f50` **1** @`0x11f300` table-init; `umts_ipc` only; **no** oem_ipc |
+
+**Other vendor encoder bin?** **No.**
+
+#### Live try / bearer
+
+**None** — no new signed soft-boot lever to try. Soft-lock unchanged.
+**Bearer verified?** **no**.
+
+**Next:** policy (1) capture-only stock rild once **or** (2) external
+catalog OEM `0x2f50` wire dump → `oem-ipc-inject` + `post-init-chase.sh`.
+Injector armed on device; still refuses invent/empty/all-zero.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

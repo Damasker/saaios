@@ -1,0 +1,68 @@
+vendor size=664985600
+loaded 664985600
+
+=== b'SIM_INIT_REQ' count=0 ===
+
+=== b'IpcTxSimInit' count=0 ===
+
+=== b'SimInitMessage' count=0 ===
+
+=== b'sitInformSimInit' count=0 ===
+
+=== b'WAIT_FOR_INIT' count=0 ===
+
+=== b'USIM_WAIT_FOR_INIT' count=0 ===
+
+=== b'SIM_START_STACK' count=0 ===
+
+=== b'oem_ipc_message' count=0 ===
+
+=== b'IPC_OEM' count=0 ===
+
+=== b'OemIpcRecord' count=0 ===
+
+=== b'0x2f50' count=0 ===
+
+=== b'/dev/oem_ipc0' count=1 ===
+  @0x25e87fb6: l.protobufSerialDataLen./dev/oem_ipc0.Token %d take %f second.%s .......................................................
+
+=== b'/dev/oem_ipc1' count=1 ===
+  @0xcf6b22c:  log indication..txt.w+./dev/oem_ipc1.ParseFromArray failed.~RilClientHelperDLImpl.St9exception.St8bad_cast.............
+
+=== b'/dev/oem_ipc' count=4 ===
+  @0xcf6b22c:  log indication..txt.w+./dev/oem_ipc1.ParseFromArray failed.~RilClientHelperDLImpl.St9exception.St8bad_cast.............
+  @0x11c9aee3: ame_process_hal_file:s0./dev/oem_ipc[0-7]                                                           u:object_r:radio_dev
+  @0x11d463b8: o      radio..# IPC OEM./dev/oem_ipc*             0660   radio      radio..# interactive governor parameters./sys/device
+  @0x25e87fb6: l.protobufSerialDataLen./dev/oem_ipc0.Token %d take %f second.%s .......................................................
+
+=== b'SIM_INIT' count=2 ===
+  @0x1832efb6: LE_UPDATE without EFID, SIM_INIT or SIM_RESET.SendStk.%s::%s() Response: %s.OnSatWifiCloseChannelResponseDone.%s::%s() R
+  @0x2601e5a6: LE_UPDATE without EFID, SIM_INIT or SIM_RESET.SendStk.%s::%s() Response: %s.OnSatWifiCloseChannelResponseDone.%s::%s() R
+
+=== OEM_IPC ELF ISLANDS (4 string hits) ===
+  elf@0xcf64000 size=97344 oem_str=True umts=False SIM_INIT_REQ=False SIM_INIT=False IpcTx=False MOVZ#0x2f50=0 sample=[] MOVZ#0x2f52=0 str_hit=0xcf6b22c
+    has b'protobuf' @0xcf6676e: ar_payloadEv._ZN6google8protobuf5Arena18CreateMaybeMessageIN17modem_svc_message18ExtendedLogMe
+  hit@0x11c9aee3 NO_ELF_BASE str=ame_process_hal_file:s0./dev/oem_ipc[0-7]                                           
+  hit@0x11d463b8 NO_ELF_BASE str=o      radio..# IPC OEM./dev/oem_ipc*             0660   radio      radio..# interac
+  elf@0x25e7b000 size=131024 oem_str=True umts=False SIM_INIT_REQ=False SIM_INIT=False IpcTx=False MOVZ#0x2f50=0 sample=[] MOVZ#0x2f52=0 str_hit=0x25e87fb6
+    has b'SitOem' @0x25e7f26d: _atexit.init_modem._ZN13SitOemHandler11getInstanceEv._ZN13SitOemHandler12sitInitModemEPKc.mode
+    has b'protobuf' @0x25e804ce: demDatai._ZN9ModemData21protobufSerialDataLenEv._Znam._ZN9ModemData15sendMessageDataEPci._ZdaP
+
+=== GLOBAL MOVZ #0x2f50 (sample + local OEM?) ===
+count=29
+  @0x1b32eb1c near_oemish=False ctx=...R...R...R...R...R...R...R.......R...Rk..rl..rm..rn..ro..r...R...R`..r
+  @0x214ccb8 near_oemish=False ctx=...k...T...R. .r...k...T...R...r....?..q...T*..RI!..........?......T...R
+  @0x214d5fc near_oemish=False ctx=.(.9@.?6(..R.0.9..G7.......R...r....?..q...T*..RI!..?......T...R. .r...k
+  @0x214d684 near_oemish=False ctx=...k...T...R. .r...kM..T...R...r.......q...T)..R(!......!..T*......R. .r
+  @0x2c068cc near_oemish=False ctx=...k...T...R. .r...k...T...R...r....?..q...T*..RI!..........?......T...R
+  @0x2c0720c near_oemish=False ctx=.(.9@.?6(..R.0.9..G7.......R...r....?..q...T*..RI!..?......T...R. .r...k
+  @0x2c07294 near_oemish=False ctx=...k...T...R. .r...kM..T...R...r.......q...T)..R(!......!..T*......R. .r
+  @0x40d3d98 near_oemish=False ctx=...k...T...R. .r...k...T...R...r....?..q...T*..RI!..........?......T...R
+MOVZ sites with nearby oem/SIM_INIT window: 0/29 sampled
+
+=== NEW CARVE CANDIDATES (oem_ipc + MOVZ 0x2f50) ===
+  NONE — no ELF island opens oem_ipc AND encodes MOVZ #0x2f50
+
+SIM_INIT_REQ absolute count=0
+IpcTxSimInit absolute count=0
+SimInitMessage absolute count=0

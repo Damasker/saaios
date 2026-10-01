@@ -1,0 +1,33 @@
+MOVZ#0x2f50 count=29
+
+elf@0x1d8b000 sites=3 first=['0x214ccb8', '0x214d5fc', '0x214d684']
+  sample_near@0x214d5fc: []
+  island~=9990144 oem_ipc=False umts_ipc=False SIM_INIT_REQ=False BuildOemSim=False
+
+elf@0x5f5f000 sites=3 first=['0x6280018', '0x628095c', '0x62809e4']
+  sample_near@0x628095c: []
+  island~=5718016 oem_ipc=False umts_ipc=False SIM_INIT_REQ=False BuildOemSim=False
+
+elf@0x6716000 sites=3 first=['0x6aa6340', '0x6aa6c80', '0x6aa6d08']
+  sample_near@0x6aa6c80: []
+  island~=5177344 oem_ipc=False umts_ipc=False SIM_INIT_REQ=False BuildOemSim=False
+
+elf@0x6c06000 sites=3 first=['0x6f2fd38', '0x6f30678', '0x6f30700']
+  sample_near@0x6f30678: []
+  island~=6914048 oem_ipc=False umts_ipc=False SIM_INIT_REQ=False BuildOemSim=False
+
+elf@0x81c5000 sites=3 first=['0x851cc98', '0x851d5d8', '0x851d660']
+  sample_near@0x851d5d8: []
+  island~=4321280 oem_ipc=False umts_ipc=False SIM_INIT_REQ=False BuildOemSim=False
+
+elf@0x25bca000 sites=1 first=['0x25d90b18']
+  sample_near@0x25d90b18: []
+  island~=2363392 oem_ipc=False umts_ipc=False SIM_INIT_REQ=False BuildOemSim=False
+
+elf@None sites=13 first=['0x2c068cc', '0x2c0720c', '0x2c07294', '0x40d3d98', '0x40d46d8', '0x40d4760']
+  sample_near@0x7a8cf38: []
+
+libsitril /mnt/c/Users/Admin/Projects/saaios-modem-research/os/targets/panther/diagnostics/libsitril.so: exists=True
+  size=2356344 MOVZ#0x2f50=1 sample=['0x11f300'] oem=False umts=True SIM_INIT_REQ=False
+
+libsitril /mnt/c/Users/Admin/Projects/saaios-som/os/targets/panther/diagnostics/libsitril.so: exists=False
