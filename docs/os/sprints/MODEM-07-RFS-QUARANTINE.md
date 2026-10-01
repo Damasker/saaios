@@ -84,8 +84,10 @@ factory `rfsd` or pointing it at original EFS is **out of scope**.
 
 The final CP-visible status was verified in factory code. Remaining local
 file/backup/checksum transitions and real CP data-frame bytes still require
-review before enabling phone I/O. Until then, only a host-only
-parser/state-machine fixture is permitted.
+review before enabling phone I/O. Until then, only host-only synthetic
+[protocol](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md)
+and [private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
+fixtures are permitted; neither is a phone broker.
 
 ## Failure and verification gates
 
