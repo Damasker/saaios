@@ -3,6 +3,13 @@
 Status: design under review; **not deployed and not a modem service**.
 Target: Pixel 7 `panther` S5300, one explicit diagnostic boot only.
 
+The Linux x86_64 host fixture now composes the protocol, transport and
+private-storage models end to end. It proves, on synthetic bytes only, that
+the final success response is sent after durable quarantine completion and
+is withheld on a final-fsync failure. The immutable synthetic baseline is
+checked after both runs. This is not an ARM build, CP transaction or approval
+to use original EFS/NV paths on the phone.
+
 ## Why this exists
 
 The no-gap boot owner observed RFS command 7 at +7.282 s and command 6 at
@@ -88,8 +95,9 @@ review before enabling phone I/O. Until then, only host-only synthetic
 [protocol](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-C-HOST.md),
 [private-storage](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-STORAGE-HOST-LINUX.md)
 and [transport](../../../os/targets/panther/diagnostics/RFS-QUARANTINE-TRANSPORT-HOST.md)
-fixtures are permitted. Transport and storage are not yet integrated; none
-is a phone broker.
+fixtures are permitted. Their new host-only integration test is not a phone
+broker; verified on-device baseline provenance, descriptor and one-grant
+transport adapters still need separate design and review.
 
 ## Implementation sequence before any phone-side RFS reply
 

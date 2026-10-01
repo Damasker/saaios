@@ -26,7 +26,10 @@ The test binds `accept` to the **synthetic in-memory** `rq_core` and explicitly
 mocks the durability predicate. This proves the transport's refusal logic,
 not actual filesystem durability. The separate
 `RFS-QUARANTINE-STORAGE-HOST-LINUX.md` fixture tests private synthetic-file
-durability; the two are not yet a phone broker or an integrated device test.
+durability. A new Linux x86-64 integration fixture composes both host models
+and verifies final-ACK ordering against real private synthetic-file fsync,
+including a fail-closed final-fsync fault. It is still not a phone broker or
+an integrated device test.
 The callback contract itself cannot attest NV-copy provenance or prevent a
 caller from lying about durability. Before any ARM implementation, review a
 new verified-fd provenance contract, private candidate lifetime, owner
@@ -53,3 +56,9 @@ sequence mismatches, timeout, and monotonic-clock/creation contracts. A
 failed final mocked send is **indeterminate**: the attempted ACK count does
 not prove CP acceptance, and this transport test makes no end-to-end storage
 safety claim.
+
+The composed host fixture is `rfs-quarantine-integration-host.test.c`.
+CI compiles it with `RFS_QUARANTINE_HOST_ONLY` and `RQ_STORAGE_HOST_TEST`,
+both normally and with ASan/UBSan. It uses only generated synthetic baseline
+bytes and `/tmp/rq-host-*` quarantine directories that it verifies and
+removes by exact inode; it has no phone endpoint or original NV path.

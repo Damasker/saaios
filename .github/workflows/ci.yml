@@ -115,6 +115,27 @@ jobs:
             os/targets/panther/diagnostics/rfs-quarantine-storage-host-linux.test.c \
             -o /tmp/rfs-quarantine-storage-host-san
           /tmp/rfs-quarantine-storage-host-san
+      - name: quarantined RFS transport and storage integration
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -DRFS_QUARANTINE_HOST_ONLY -DRQ_STORAGE_HOST_TEST \
+            os/targets/panther/diagnostics/rfs-quarantine-core-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-storage-host-linux.c \
+            os/targets/panther/diagnostics/rfs-quarantine-transport-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-integration-host.test.c \
+            -o /tmp/rfs-quarantine-integration-host-test
+          /tmp/rfs-quarantine-integration-host-test
+      - name: quarantined RFS integration sanitizers
+        run: |
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -DRFS_QUARANTINE_HOST_ONLY -DRQ_STORAGE_HOST_TEST \
+            os/targets/panther/diagnostics/rfs-quarantine-core-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-storage-host-linux.c \
+            os/targets/panther/diagnostics/rfs-quarantine-transport-host.c \
+            os/targets/panther/diagnostics/rfs-quarantine-integration-host.test.c \
+            -o /tmp/rfs-quarantine-integration-host-san
+          /tmp/rfs-quarantine-integration-host-san
 
   test:
     runs-on: ubuntu-latest
