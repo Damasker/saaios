@@ -374,8 +374,9 @@ bounded indication line only for an exact 12-byte type-2 `0x0802` frame with
 matching declared length and raw value 0-4. Invalid enum values are not
 printed as numbers; other bodies and `0x0803` remain header-only. This adds
 no endpoint, GET, SET or RFS reply. GCC `-Werror`, host self-test,
-ASan/UBSan, scan-variant self-test and static ARM64 compilation passed. The
-new source has **not** been installed or run on the phone. The full-RFS owner
+ASan/UBSan, scan-variant self-test and static ARM64 compilation passed.
+At that host-validation checkpoint the source had not been run on the phone;
+the later passive observation is recorded below. The full-RFS owner
 still logs headers only, so a new matched RFS A/B would first require a
 separately reviewed identical scalar trace in that owner. The eight-event
 per-minute cap remains: absence of a printed scalar after overflow is
@@ -420,12 +421,25 @@ length of 13, not an exact length. SaaiOS will additionally require matched
 type/token/ID, full-width zero error, bounded framing and mode 0 or 1;
 anything else remains unknown. These stricter bounds are SaaiOS policy.
 
-After the pending passive scalar observation, the next isolated change is
-one `0x0810` GET through the existing owner after its settled status pass.
+The next isolated change after the passive scalar observation is one
+`0x0810` GET through the existing owner after its settled status pass.
 An enabled response excludes a disabled logical stack only at that instant.
 A disabled response supports a separately reviewed enable experiment; it
 does not itself authorize automatic recovery or prove the cause of no camp.
 No `0x080f`, carrier SET, slot remap or new IPC reader is added to this GET.
+
+Commit `2d5c28a` implements that GET after the four existing factory network
+queries, with a five-second deadline and no retry. The optional scan variant
+also requires fresh stack-enabled evidence; unknown/disabled cannot arm it.
+An adjacent diagnostic correction reads the entire 16-bit response error
+for initial, SIM-refresh and settled status logging, so error `0x0100` is
+not displayed as success. Host GCC `-Werror`, default and scan-variant
+ASan/UBSan fixtures passed for the stack change; the final logging correction
+passed the host fixture and ARM64 build. The on-device passive self-test and
+hash check also passed before activation. The same ARM64 GCC toolchain as
+the scalar control produced SHA-256
+`5683e67228643af682e3dd08bd8ad6705088f6a913e36eb2276ebe751da68276`;
+the separate candidate is `/data/saaios/bin/modem-channel-owner.stack-2d5c28a`.
 
 ### Concrete rollback for the scalar observation
 
@@ -441,8 +455,9 @@ The separately staged passive scalar owner, built from `b5ade9e`, is
 `/data/saaios/bin/modem-channel-owner.scalar-b5ade9e`, SHA-256
 `3b044a28fa59047578a7b1a06f8a285d1125f06e418289afa2aa80a7b4319fac`.
 Its on-device synthetic self-test passed and mode is `passive`. The legacy
-baseline probe has no usable `--owner-exec`/`--owner-log` introspection;
-preserve its reviewed hash and previously validated default handoff.
+baseline owner lacks `--mode`, and its probe has no usable
+`--owner-exec`/`--owner-log` introspection; preserve their reviewed hashes,
+owner self-test and previously validated default handoff.
 
 Before activation, reboot AP, require CP OFFLINE (or unloaded CPIF followed
 by the wrapper's OFFLINE check), and preserve both current logs under unused
@@ -452,6 +467,48 @@ retry. For return, reboot AP, verify the saved manifest, restore the passive
 pair/wrapper while offline, preserve experiment logs, and run the default
 wrapper once. Confirm CP ONLINE and owner continuity. No original EFS access
 or write is required for this passive instrumentation change.
+
+### First scalar phone observation
+
+A fresh AP boot with the scalar-only candidate reached CP ONLINE and retained
+the sole owner. At owner-relative +9815 ms it received `0x0803`, length 8,
+then `0x0802`, length 12, raw state **0 (`INITIALIZED`)**. The first minute
+had two traced indications and zero overflow. At +60 seconds the same owner
+reported SIM READY/PIN disabled, solicited radio raw 10, voice/data
+registration 0, selection automatic, preferred SIT type 16 and signal
+technology-presence mask 0. `rmnet0` was down with RX/TX 0. This observes an
+early INITIALIZED state followed by a later ON query result; it does not
+establish an RF reset, a missing host callback or an eSIM cause. No new SET,
+RFS reply or EFS access occurred. Preserve these logs as
+`modem-channel-owner.scalar-b5ade9e.log` and
+`owner-handoff-bringup.scalar-b5ade9e.log` before the stack-status run.
+
+### Logical-stack status phone observation
+
+A separate fresh AP boot with the `2d5c28a` passive owner again reached
+ONLINE with one IPC/RFS owner. It received `0x0803` and `0x0802` at
++9807 ms; the latter was again raw 0 (`INITIALIZED`). The first trace
+window had two indications and zero overflow. After the same successful
++60-second SIM/radio/registration and four factory-network GETs, the new
+`0x0810` request returned a **13-byte success response, error 0,
+enabled=yes**. SIM remained READY/PIN disabled, radio raw 10, voice/data
+registration 0, automatic selection, preferred SIT 16, signal-presence mask
+0 and `rmnet0` down with RX/TX 0.
+
+This excludes a disabled logical modem as the explanation at the measured
+instant. Do not issue `0x080f` just because the new command exists. The
+observation does not establish RF activity or registration. No SET, active
+scan, RFS reply, or original-EFS access was part of either run. Preserve
+the second boot's logs as `modem-channel-owner.stack-2d5c28a.log` and
+`owner-handoff-bringup.stack-2d5c28a.log`; the next research target is a
+specific remaining factory startup prerequisite, not another enable request.
+
+After another AP reboot, both experiment log pairs were preserved under
+those names. The original owner/probe/wrapper were restored from the saved
+manifest and rechecked at their installed paths; all three hashes matched.
+The baseline owner self-test passed, default guarded bringup returned CP
+ONLINE, and the passive owner remained alive. Both experimental candidates
+and the rollback copies remain available; no candidate became an init service.
 
 ## Why this exists
 
@@ -658,6 +715,49 @@ any of them, or radio-power-on, merely because it appears in the factory
 sequence: require an isolated hypothesis, exact payload review and a bounded
 control comparison first. This RFS quarantine sprint remains read-only on
 IPC apart from the specifically reviewed RFS transaction.
+
+## SGC configuration provenance correction (2026-10-01)
+
+Absence of `vendor.ril.app.target_carrier` in `build.prop` is not evidence
+that the factory RIL lacks an input for SGC. Exact TD1A
+`RilApplication::LoadConfigToRilProperty` (`0x12ecc0`) computes and writes
+that **internal RilProperty** before the radio-available callback:
+
+1. Read `persist.vendor.radio.sgc`, default empty (`0x12ed9c-0x12edb8`);
+   a valid numeric override supplies the target.
+2. Otherwise, `CarrierLoader::GetTargetOperator` (`0x11cc10`) uses
+   `ro.carrier`, default `unknown`.
+3. If unresolved, `GetVendorTargetOperator` (`0x11cd30`) uses
+   `ro.vendor.config.build_carrier`, default `unknown`; an unresolved
+   vendor lookup falls back to target 400 (`0x11cdbc-0x11cdc8`).
+4. Store the resulting internal property (`0x12ee38` or `0x12eec0`) and
+   mirror it to `persist.vendor.radio.target_oper` (`0x12eec4-0x12eed0`).
+
+The offline TD1A Panther `vendor.img` SHA-256
+`09dd17f863b84601f5b14ed9a282dccd0113c290a8201a44bf4a29c10f0b113e`
+has `/build.prop` fingerprint
+`google/panther/panther:13/TD1A.221105.001/9104446:user/release-keys`,
+`ro.carrier=unknown` and `ro.vendor.config.build_carrier=europen`, with no
+SGC override there. The exact library's constructor creates the `europen`
+key at `0x11c690-0x11c6bc` and assigns 400 at `0x11c73c-0x11c744`.
+`MappingSGCValue` table `0xd86c4` maps 400 to `0x0101` (entry `0xd871c`);
+target 0 instead maps to `0x2001`. Never substitute zero for missing config.
+
+The factory `DoSendSGC` supplies `(target, 0, 0)` to the builder
+(`0x17fa08-0x17fa1c`), so the static `europen` profile yields the three
+body words `0x0101, 0, 0`. This establishes payload provenance, not a causal
+link to camp. Image inspection cannot establish a saved runtime override.
+On the current SaaiOS phone, `/data/property/persistent_properties` and
+`/data/property/persist.vendor.radio.sgc` were absent and no `rild`, `cbd`
+or `modem_svc` process was found. That observation is not a reconstruction
+of a previous Android session. No SGC GET was identified in the exported
+factory symbols; do not invent `0x0405` as a getter.
+
+This corrects the earlier "property absent, payload unknown" research
+conclusion. A separate, bounded factory-profile startup experiment still
+needs explicit payload/response/timing review; the passive owner sends no
+`0x0404`. Do not import an entire Android runtime merely to reproduce this
+small property-resolution and startup-dispatch responsibility.
 
 ## Separate active RF scan gate
 

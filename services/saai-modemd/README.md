@@ -2,6 +2,16 @@
 
 Maintained boundary for Pixel 7 native modem work.
 
+**Current hardware evidence (2026-10-01):** the separate diagnostic owner
+reaches CP ONLINE, SIM READY/PIN disabled and radio ON. Its newly reviewed
+logical-stack status GET `0x0810` also returned enabled, but voice/data
+registration remain 0 and there is no cellular bearer. The older PIN/soft-lock
+notes below are historical cases, not the current blocker. See the
+[modem roadmap](../../docs/os/sprints/MODEM-ROADMAP.md) and
+[factory evidence/live results](../../docs/os/sprints/MODEM-07-RFS-QUARANTINE.md#native-radio-service-boundary-and-logical-stack-check-2026-10-01).
+The native service must keep SIM, logical-stack, radio, registration and
+bearer observations separate; READY/ON/enabled do not imply registration.
+
 This service is intentionally conservative. It does not power on the modem,
 issue ioctls, mount EFS, serve RFS, start a RIL consumer, or run the September
 diagnostic loader. The first landed surface is a safe status/preflight CLI so

@@ -184,12 +184,12 @@ raw 2 (`START_NETWORK`) to ON, and raw 3/4 (`POWER_OFF`/`RESET`) to
 UNAVAILABLE. `0x0803` radio-ready is a distinct path and initially sets
 UNAVAILABLE, not ON; the solicited `0x0801` GET state resides at `+12`.
 Because the matched traces logged headers only, the early `0x0802` scalar
-and ON transition remain unknown. The default passive owner now has a
-host-tested, exact-12-byte, enum-bounded scalar trace, not yet installed on
-the phone. The full-RFS owner remains header-only; do not claim a new matched
-A/B until it has equivalent reviewed instrumentation. The next smallest
-observation is one passive cold boot with the existing exclusive owner and
-no added reader, GET or SET. Neither an early OFF/UNAVAILABLE indication nor
+and ON transition remained unknown in those earlier traces. The subsequent
+scalar-only passive boot observed raw 0 (`INITIALIZED`) at +9815 ms, with
+zero first-window overflow; its +60-second GETs still reported READY/ON and
+registration 0. The full-RFS owner remains header-only; do not claim a new
+matched A/B until it has equivalent reviewed instrumentation. This passive
+scalar run added no reader, GET or SET. Neither an early OFF/UNAVAILABLE indication nor
 ON alone proves RF reset, camp or eSIM/carrier causality. The past `0x0706`
 scan and full RFS exchange were separate boots, not a shared `dmesg`
 timeline. Do not guess a radio, carrier, SIM or network SET. Details and
@@ -200,10 +200,13 @@ binary provenance are in
 service's state handling in SaaiOS; a full Android framework port is not the
 next dependency. Exact TD1A code proves a separate logical-modem status GET
 `0x0810` (12-byte request, mode byte at response +12), distinct from radio
-power. READY/radio ON does not measure that state. After the pending scalar
-observation, add one bounded GET in the same owner's settled pass; malformed,
-error or timeout results remain unknown. The corresponding enable SET
-`0x080f` is not included. See [factory evidence and concrete rollback](MODEM-07-RFS-QUARANTINE.md#native-radio-service-boundary-and-logical-stack-check-2026-10-01).
+power. READY/radio ON does not measure that state. After the scalar
+observation, commit `2d5c28a` adds one bounded GET in the same owner's settled
+pass; malformed, error or timeout results remain unknown. Its fresh phone
+boot returned a 13-byte success response with **enabled=yes**, while the
+same boot retained READY/ON and registration 0. A disabled logical stack
+does not explain that measured state; do not send the corresponding enable
+SET `0x080f`. See [factory evidence, live results and concrete rollback](MODEM-07-RFS-QUARANTINE.md#native-radio-service-boundary-and-logical-stack-check-2026-10-01).
 
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
@@ -941,6 +944,25 @@ EFS access is limited to provenance checks; synthetic tests never use it.
 **Change:** one owner process for boot, handover, runtime receive loop, bounded
 failure recovery, CP crash handling, and shutdown policy. No automatic retry
 storm. No shell-facing registration claim until observed.
+
+Native implementation tasks (reuse Android's separation of responsibilities,
+not its application framework or vendor-daemon runtime):
+
+1. Preserve the verified boot-to-runtime descriptor handoff and exclusive
+   dispatcher. Associate every response with its request token, boot epoch
+   and deadline; expire observations after reset or loss of ownership.
+2. Keep SIM readiness, logical-stack enablement, radio indication/query,
+   voice/data registration and bearer state separate. Early indications and
+   later GET replies retain their observation times instead of fabricating
+   one simultaneous snapshot.
+3. Encode only reviewed factory startup transitions. Each active command
+   needs known input provenance, eligibility, response handling and bounded
+   failure behavior; do not replay the factory callback list wholesale.
+4. Integrate the separately reviewed RFS/storage policy and event dispatcher
+   without exposing original EFS as writable storage or promoting quarantine.
+5. After live registration is established, bring up the authorized data
+   context and host IP/routes/DNS, then publish timestamped facts to SaaiOS.
+   Calls, SMS and IMS remain separate milestones.
 
 **Test:** host state-machine tests; phone run with fresh boot, one runtime
 query, controlled exit, and no residual mounted sensitive partitions.
