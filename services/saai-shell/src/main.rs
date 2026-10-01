@@ -3897,6 +3897,7 @@ const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
 /// Action / derived-ready Task — «Планирует»), Complete (Result whose
 /// Task is `done`, not a worker claim), Active (menu open), Idle.
 /// Слушает stays unlit: Pixel voice is hardware-blocked (ADR-092).
+#[cfg(test)]
 fn orb_visual_state(
     appd_connected: bool,
     entityd_connected: bool,
@@ -3932,6 +3933,7 @@ fn orb_visual_state_with(
     }
 }
 
+#[cfg(test)]
 fn orb_attention_from_entities(entities: &[Entity]) -> bool {
     orb_attention(entities, None)
 }
