@@ -1720,6 +1720,67 @@ struct PendingPairRequest {
 /// doesn't even parse as `<type> <base64> [comment]` -- still shows
 /// something rather than nothing on a screen that exists specifically
 /// so a human can refuse.
+/// Ported from feat/pixel7-native-saaios ADR-150. Two-tap arm/confirm
+/// for `TrustedClientTap::Revoke`. First tap on a row arms it; a
+/// second tap on that *same* index confirms; a tap on any other index
+/// re-arms that one instead of revoking the previously-armed row.
+fn trusted_client_revoke_decision(pending: Option<usize>, tapped: usize) -> (Option<usize>, bool) {
+    if pending == Some(tapped) {
+        (None, true)
+    } else {
+        (Some(tapped), false)
+    }
+}
+
+const DROPBEAR_LOG_PATH: &str = "/run/dropbear.log";
+/// Ported from feat/pixel7-native-saaios ADR-151. Only the last 64
+/// KiB, never the whole file -- this log is unbounded and append-only
+/// (no rotation).
+const DROPBEAR_LOG_TAIL_BYTES: u64 = 65536;
+
+/// Ported from feat/pixel7-native-saaios ADR-151: which key
+/// fingerprints have a "Pubkey auth succeeded" line anywhere in the
+/// log's recent tail -- a recency proxy for "this key is in active use
+/// right now", not a precise "is a session still open" check. Fails to
+/// an empty `Vec` on any read error -- nothing gets specially
+/// protected, the ordinary two-tap confirm still applies.
+fn recently_authenticated_key_fingerprints() -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(DROPBEAR_LOG_PATH) else {
+        return Vec::new();
+    };
+    let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let start = len.saturating_sub(DROPBEAR_LOG_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut fingerprints = Vec::new();
+    for line in text.lines() {
+        if !line.contains("Pubkey auth succeeded") {
+            continue;
+        }
+        if let Some(at) = line.find("SHA256:") {
+            let fingerprint: String = line[at..]
+                .chars()
+                .take_while(|ch| !ch.is_whitespace())
+                .collect();
+            fingerprints.push(fingerprint);
+        }
+    }
+    fingerprints
+}
+
+/// Ported from feat/pixel7-native-saaios ADR-151: never let the key
+/// currently managing this device be armed or revoked.
+fn trusted_client_is_protected(fingerprint: &str, recent: &[String]) -> bool {
+    recent.iter().any(|candidate| candidate == fingerprint)
+}
+
 fn key_fingerprint(public_key: &str) -> String {
     use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
     use base64::Engine as _;
@@ -5427,7 +5488,26 @@ fn trusted_client_list_rows(clients: &[TrustedClient]) -> Vec<TrustedClientRow> 
         .collect()
 }
 
-fn trusted_client_card_from_row(row: &TrustedClientRow) -> render::ActionCardView {
+fn trusted_client_card_from_row(
+    row: &TrustedClientRow,
+    armed: bool,
+    protected: bool,
+) -> render::ActionCardView {
+    if protected {
+        return render::ActionCardView::new(
+            row.row.primary.clone(),
+            "Ключ этой сессии — нельзя отозвать",
+            "",
+        );
+    }
+    if armed {
+        return render::ActionCardView::new(
+            row.row.primary.clone(),
+            "Нажмите ещё раз, чтобы отозвать",
+            "Отозвать?",
+        )
+        .selected(true);
+    }
     let status = row.row.value.clone().unwrap_or_default();
     let action = if row.row.is_actionable() {
         "Отозвать"
@@ -7210,6 +7290,7 @@ fn main() {
         wifi_list: None,
         bluetooth_list_open: false,
         trusted_clients_open: false,
+        pending_revoke_trusted_client: None,
         pin_setup: None,
         pin_entry_buffer: String::new(),
         hardware_keyboard: None,
@@ -7502,6 +7583,12 @@ struct Shell {
     /// (opened from "Я") has no cached rows either, `trusted_clients()`
     /// is read fresh from `authorized_keys` on every touch/draw.
     trusted_clients_open: bool,
+    /// Ported from feat/pixel7-native-saaios ADR-150/151: which row,
+    /// if any, is armed waiting for a confirming second tap before
+    /// `revoke_trusted_client` actually runs -- a revoke is
+    /// irreversible and can cut off the very SSH connection an admin
+    /// is using to reach this device right now.
+    pending_revoke_trusted_client: Option<usize>,
     /// S24: set while "Изменить PIN" (opened from "Я") is composing a
     /// new PIN. Modal, same as the others.
     pin_setup: Option<PinSetupState>,
@@ -9082,6 +9169,7 @@ impl Shell {
             // not a Surface strip. ADR-226: paint from layout_v2.
             let clients = trusted_clients();
             let trusted_rows = trusted_client_list_rows(&clients);
+            let recent_fingerprints = recently_authenticated_key_fingerprints();
             let tree = layout_live_v2(
                 &trusted_v2_source(clients.len()),
                 "ADR-226 trusted paint",
@@ -9098,7 +9186,14 @@ impl Shell {
             ids.push("back".into());
             let mut cards: Vec<render::ActionCardView> = trusted_rows
                 .iter()
-                .map(trusted_client_card_from_row)
+                .enumerate()
+                .map(|(index, row)| {
+                    let armed = self.pending_revoke_trusted_client == Some(index);
+                    let protected = clients.get(index).is_some_and(|client| {
+                        trusted_client_is_protected(&client.fingerprint, &recent_fingerprints)
+                    });
+                    trusted_client_card_from_row(row, armed, protected)
+                })
                 .collect();
             cards.push(render::ActionCardView::new("Назад", "", "Назад"));
             Frame::TrustedClients {
@@ -10247,6 +10342,7 @@ impl Shell {
             "open_trusted_clients" => {
                 // Same reasoning as "open_wifi_list" above.
                 self.trusted_clients_open = true;
+                self.pending_revoke_trusted_client = None;
                 self.draw(conn, qh);
                 return;
             }
@@ -10472,10 +10568,23 @@ impl Shell {
     ) {
         match tap {
             TrustedClientTap::Revoke(index) => {
-                revoke_trusted_client(index);
+                let clients = trusted_clients();
+                let recent = recently_authenticated_key_fingerprints();
+                let protected = clients
+                    .get(index)
+                    .is_some_and(|client| trusted_client_is_protected(&client.fingerprint, &recent));
+                if !protected {
+                    let (pending, confirmed) =
+                        trusted_client_revoke_decision(self.pending_revoke_trusted_client, index);
+                    self.pending_revoke_trusted_client = pending;
+                    if confirmed {
+                        revoke_trusted_client(index);
+                    }
+                }
             }
             TrustedClientTap::Back => {
                 self.trusted_clients_open = false;
+                self.pending_revoke_trusted_client = None;
             }
         }
         self.draw(conn, qh);
@@ -12425,8 +12534,9 @@ mod tests {
         space_list_rows, space_member_kind_label, space_member_rows, space_relation_targets,
         space_row_at, spaces_header, stacked_control_rect, stacked_row_fits_above,
         stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
-        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
+        trusted_client_action_at, trusted_client_card_from_row, trusted_client_is_protected,
+        trusted_client_list_row_count, trusted_client_list_rows, trusted_client_revoke_decision,
+        trusted_header, upsert_context_entry, wifi_card_from_row,
         wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
         wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
         BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
@@ -15403,7 +15513,10 @@ mod tests {
             live[0].row.value.as_deref(),
             Some("SHA256:abcdefghijklmnopq…")
         );
-        assert_eq!(trusted_client_card_from_row(&live[0]).action, "Отозвать");
+        assert_eq!(
+            trusted_client_card_from_row(&live[0], false, false).action,
+            "Отозвать"
+        );
         assert_eq!(live[1].row.primary, "(без имени)");
         assert_eq!(live[1].row.value.as_deref(), Some("short…"));
         assert!(!live
@@ -15415,7 +15528,66 @@ mod tests {
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].row.primary, "Нет клиентов");
         assert!(!empty[0].row.is_actionable());
-        assert_eq!(trusted_client_card_from_row(&empty[0]).action, "");
+        assert_eq!(
+            trusted_client_card_from_row(&empty[0], false, false).action,
+            ""
+        );
+    }
+
+    #[test]
+    fn trusted_client_revoke_needs_a_second_tap_on_the_same_row() {
+        assert_eq!(trusted_client_revoke_decision(None, 2), (Some(2), false));
+    }
+
+    #[test]
+    fn trusted_client_revoke_confirms_on_the_matching_second_tap() {
+        assert_eq!(trusted_client_revoke_decision(Some(2), 2), (None, true));
+    }
+
+    #[test]
+    fn trusted_client_revoke_a_different_row_rearms_instead_of_revoking() {
+        assert_eq!(trusted_client_revoke_decision(Some(2), 0), (Some(0), false));
+    }
+
+    #[test]
+    fn armed_trusted_client_card_reads_as_a_confirm_prompt() {
+        let clients = vec![TrustedClient {
+            client_name: "home-mike".into(),
+            fingerprint: "SHA256:abcdefghijklmnopqrstuvwx".into(),
+        }];
+        let live = trusted_client_list_rows(&clients);
+        let armed = trusted_client_card_from_row(&live[0], true, false);
+        assert_eq!(armed.label, "home-mike");
+        assert_eq!(armed.status, "Нажмите ещё раз, чтобы отозвать");
+        assert_eq!(armed.action, "Отозвать?");
+        assert!(armed.selected);
+        let unarmed = trusted_client_card_from_row(&live[0], false, false);
+        assert_eq!(unarmed.status, "SHA256:abcdefghijklmnopq…");
+        assert_eq!(unarmed.action, "Отозвать");
+        assert!(!unarmed.selected);
+    }
+
+    #[test]
+    fn protected_trusted_client_card_has_no_action_regardless_of_armed() {
+        let clients = vec![TrustedClient {
+            client_name: "home-server-reconnect".into(),
+            fingerprint: "SHA256:abcdefghijklmnopqrstuvwx".into(),
+        }];
+        let live = trusted_client_list_rows(&clients);
+        for armed in [false, true] {
+            let protected = trusted_client_card_from_row(&live[0], armed, true);
+            assert_eq!(protected.label, "home-server-reconnect");
+            assert_eq!(protected.action, "");
+            assert!(!protected.selected);
+        }
+    }
+
+    #[test]
+    fn trusted_client_is_protected_matches_only_a_recent_fingerprint() {
+        let recent = vec!["SHA256:aaa".to_string(), "SHA256:bbb".to_string()];
+        assert!(trusted_client_is_protected("SHA256:aaa", &recent));
+        assert!(!trusted_client_is_protected("SHA256:ccc", &recent));
+        assert!(!trusted_client_is_protected("SHA256:aaa", &[]));
     }
 
     #[test]
