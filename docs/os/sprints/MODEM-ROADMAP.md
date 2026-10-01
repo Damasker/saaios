@@ -159,15 +159,19 @@ single-owner boot stored all 95 file-3 chunks (189446 bytes) in a private
 candidate and sent one final success ACK only after candidate/sidecar
 durability and integrity checks. No candidate was promoted or used as a boot
 source, and original EFS was not written; it passed a read-only four-file
-comparison again after reboot. At READY+60 s, SIM was READY/PIN disabled and
+comparison again after reboot. At owner start +60 s, SIM was READY/PIN disabled and
 radio ON, but voice/data registration stayed 0 and `rmnet0` was down with
 RX/TX 0, matching the passive no-reply control. Completing this RFS exchange
 is therefore insufficient to establish camp or a bearer. The passive owner
-is restored. Next, resolve the stock radio-available startup gates and exact
-timing offline, then use only a separately reviewed, same-owner redacted
-status/signal snapshot if another phone comparison is needed. Do not infer RF
-power from the signal technology-presence mask or replay factory SETs without
-an isolated hypothesis and bounded control.
+is restored. The stock radio-available audit found conditional startup SETs
+but no proven missing camp prerequisite or global ordering against RFS. A
+host-tested, bounded header-only radio/network indication trace is being
+prepared in both existing exclusive owners; it has not been installed on the
+phone. A separately reviewed passive/full-RFS fresh-boot comparison can then
+check relative event timing alongside matched redacted status. No indication
+is not proof of RF idleness. Do not infer RF power from the signal
+technology-presence mask or replay factory SETs without an isolated
+hypothesis and bounded control.
 
 Evidence:
 [MODEM-RESEARCH-2026-09-24.md](../targets/panther/MODEM-RESEARCH-2026-09-24.md),
@@ -875,12 +879,13 @@ post-reboot comparison. The passive owner was restored. Its no-reply control
 and the completed exchange both had READY/ON but registration 0 and no
 `rmnet0` bearer at +60 s. This is a completed diagnostic transaction, not a
 production RFS service or MODEM-06 camp success. MODEM-07 remains in progress
-for general refusal policy and maintained service integration. The next camp
-investigation is read-only: audit the factory radio-available startup gates
-offline and, if needed, compare redacted registration/reject/technology and
-signal-presence scalars through one continuous owner at matched times. Do not
-send an unreviewed radio, carrier, SIM or network SET to imitate factory
-startup.
+for general refusal policy and maintained service integration. The factory
+radio-available path has been audited offline without identifying a proven
+camp prerequisite. The next camp discriminator is a separately reviewed,
+same-owner passive/full-RFS boot comparison of bounded radio/network
+indication headers and matched redacted status; the trace is host-tested but
+not yet on the phone. Do not send an unreviewed radio, carrier, SIM or network
+SET to imitate factory startup.
 
 **Change:** specify what requests may be served from verified copies, what is
 read-only, what is denied, and how writes are rejected or quarantined. Original

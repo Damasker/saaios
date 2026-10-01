@@ -106,7 +106,7 @@ ASan/UBSan, and the owner/probe cross-compile statically for AArch64.
 
 At that stage the result was host-only. Its single IPC0 owner includes bounded,
 read-only SIM,
-radio and voice/data registration GET snapshots at ONLINE and READY+60 s.
+radio and voice/data registration GET snapshots at ONLINE and owner start +60 s.
 Host tests cover fragmented/coalesced replies, matching token and length,
 timeout as unknown, no retry after ambiguous IPC write, and an IPC fault
 co-reported with the final RFS data frame withholding the ACK. Timeout ends
@@ -237,7 +237,7 @@ directory. Neither candidate nor original EFS was used as a boot source or
 promoted. This is a successful **manual RFS exchange**, not a production
 modem service or a post-OFFLINE owner exit-code result.
 
-At READY+60 seconds the same owner observed SIM card 1/app 1/READY with
+At owner start +60 seconds the same owner observed SIM card 1/app 1/READY with
 PIN1 disabled, radio on, but voice and data registration still 0. `rmnet0`
 was down with RX/TX 0, and remained so after an additional read-only wait.
 The fresh passive control had the same unregistered state. Therefore the
@@ -247,6 +247,42 @@ guessing SET commands. After a controlled AP reboot, original EFS again
 passed the four-file read-only comparison and was unmounted. The passive
 owner was restored and CP returned `ONLINE`. All experiment logs and
 quarantine candidates were retained.
+
+## Next discriminator: same-owner radio/network event timing
+
+The factory radio-available audit below identifies conditional startup SETs,
+but none is proven to be the missing camp prerequisite after READY/radio ON
+and a completed RFS exchange. In particular, the stock carrier-configuration
+route remains a hypothesis, not permission to guess a carrier value. The
+stock notes establish local callback order, not a global ordering against
+RFS completion. Do not replay those SETs to resolve this uncertainty.
+
+Both diagnostic owners now have a bounded, header-only trace for framed SIT
+unsolicited `0x07xx` network and `0x08xx` radio indications on their
+**existing exclusive IPC reader**. Each line contains only time since the
+pre-FIN owner handoff, indication ID and frame length; at most eight event
+lines are emitted per 60-second window, followed by a count/overflow summary.
+The first five minutes include zero-traffic window summaries; later quiet
+windows are omitted to avoid indefinitely growing logs.
+The full-RFS owner also timestamps the return from its local final-ACK write.
+The trace logs no payload bytes or subscriber/network identifiers and adds no
+endpoint, GET or SET. The full-RFS owner traces during the exchange and after
+its final ACK; the
+passive owner traces the same ID ranges without answering RFS. Synthetic
+host fixtures cover type/length filtering and the trace limit. This change
+is host-tested only; the currently running phone owner was not replaced.
+
+A later phone comparison, if separately reviewed, requires two fresh boots
+with the same SIM and pinned source: passive control and one manual full-RFS
+run, each from pre-FIN ownership. Compare owner-receipt timestamps and the
+local ACK-write-return marker, plus the existing matched +60-second redacted
+status and `rmnet0` counters. RFS is serviced before IPC and candidate
+finalization is synchronous: an indication queued before the ACK can be read
+afterward, so receipt times do **not** prove CP emission or causal order.
+A missing indication means only that none reached the owner in that capture
+window; it does not prove that CP never searched or that RF was idle. Any
+framing failure, owner loss, ambiguous RFS write or unexpected EFS preflight
+result stops the comparison without retry or candidate promotion.
 
 ## Why this exists
 
