@@ -1,32 +1,44 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
-**Status:** Goal incomplete — **hard blocker**. Verizon No-CDMA proof
-**retracts** FN_A/CDMA-as-USIM-READY framing (AP1A same SET#5↔Present==2
-machine + `No CDMA in SupportedRatMap`). Soft-lock still PIN+pin1=2 /
-`present_infer=notin`. Present init-default=2 **falsified**. ATU/non-ATU
-MAIN poke **dead**. No live `rmnet`/IPv4 bearer. Do not mark complete
-without that proof.
+**Current status (2026-10-01):** SIM reached **READY(5)** twice after a
+signed `0x0201` VerifyPin request with AID and **without CardPower**.
+Neither test consumed a PIN attempt (`remain=3`). The owner says the SIM
+PIN is disabled; do not automatically send VerifyPin or guess digits.
+The post-READY `0x0704` request succeeded, but data registration remained
+0 and there is still no `rmnet` IPv4 bearer. MODEM-06 remains incomplete
+at **network camp/registration**, not at PIN→READY.
+
+The RFS diagnostic separately completed a bounded 7→3→6 exchange with
+factory-defined status frames and no NV/EFS access. Its passive SIM watch
+overlapped the other VerifyPin test: six silent query failures are
+consistent with contention for the shared SIT lock. **Do not attribute
+READY to RFS or CP self-init from this boot.** No stock AP encoder for the
+internal CP `SIM_INIT_REQ` catalog id `0x2f50` has been found; an external
+OEM frame is not established or required to explain the observed READY.
+Sections below preserve earlier investigations, including hypotheses now
+superseded by the signed VerifyPin→READY result.
 
 ## Achieved remotely
 
 | Milestone | Evidence |
 | --- | --- |
 | Stock CP ONLINE + handover | live |
+| **SIM READY(5)** | signed VerifyPin A+AID, without CardPower; repeated twice in a parallel live session |
 | **Pin1Verified** | `0x0201` candidate A **with AID** from `0x0200`, RFS-aware → **error 0**, remain unchanged; pin1 1→2 |
 | AllowData / LTE_ONLY / voice reg | AllowData err0; preferred=11; voice reg=3 under PIN |
 | Physical HotSwap ABSENT→PRESENT | live (tray pull/reinsert) — VerifyPin window only |
 
-## Remaining soft-lock — HARD after HotSwap
+## Historical soft-lock after HotSwap (superseded by READY)
 
 | Field | Live (post-HotSwap) | Gate |
 | --- | --- | --- |
 | `app_state` | **PIN (2)** | START_NETWORK allows only `{1,4,5}` — PIN denied |
 | `pin1` | **2 = ENABLED_VERIFIED** | Pin1Verified set; does **not** open camp |
-| Present `+0xBF6` | ∉ `{1,2,3}` (`present_infer=notin_1_2_3` — **validated**) | READY(#5) needs Present==2 |
+| Present `+0xBF6` | **Not measured on `0x0200` wire**; former `present_infer` claim withdrawn | Do not infer live Present from app state |
 | SET#6 | needs LTE camp / SADR PAUSE | camp needs START_NETWORK → needs app∈{1,4,5} |
 
-**Chicken-egg:** Pin1Verified OK, but GET_APP stays PIN → no START_NETWORK →
-no camp → no SET#6 → no SET#7/READY → no PS/`rmnet`.
+**Historical hypothesis (falsified for this boot):** GET_APP stayed PIN in
+these earlier tests, but the later VerifyPin A+AID path reached READY.
 
 ### HotSwap live falsifier (2026-09-30) — conclusive
 
@@ -43,19 +55,19 @@ Physical tray pull/reinsert while `tray-bearer-chase` armed:
 image. Present=`+0xBF6==2` gate still blocks. Do **not** treat further reseats
 as a path to bearer.
 
-### present_infer validation (same turn) — **valid, not a tool bug**
+### Historical `present_infer` interpretation — **withdrawn**
 
 | Claim | Result |
 | --- | --- |
-| `0x0200` layout | card@12, apps@14, type@15, **app_state@17**, pin1@72, remain@74 — matches factory HAL / `note_sim` |
-| Wire vs MAIN | byte17 = **GET_APP `LDRB +0xBF4` only** (`0x18ec8ec`); **`+0xBF6` Present never on wire** |
-| Inference | STATUS Present→SET: 0→PIN(#2), 1→PUK(#3), 2→READY(#5), 3→PERSO(#4); `present_infer` reverses that from published app_state |
-| Mis-read Present=2 while PIN? | **No.** Sole SET#5 still `LDRB +0xBF6` **CMP #2** @`0x14fb5c6`; sole STRB `+0xBF6` @`0x14fb380`; HotSwap landed PIN via Present=0 path |
-| Caveat | While GET==PIN, STATUS head skips Present re-eval — infer = **last published STATUS decision**, not a live heap peek. EU FN_A never latches Present=2, so sticky-PIN cannot hide Present=2 under bans |
+| `0x0200` layout | Factory HAL: card@12, apps@14, type@15, **app_state@16**, perso_substate@17, pin1@72, remain@74. Former app@17 was wrong. |
+| Wire vs MAIN | Byte17 is personalization substate; internal `Present +0xBF6` is **not on this wire response**. |
+| Inference | Published app state cannot be reversed into a current private Present value; former `present_infer` was a hypothesis. |
+| Mis-read Present=2 while PIN? | Undetermined from SIT status; former categorical “No” is withdrawn. |
+| Caveat | MAIN predicates remain useful static evidence but not a live measurement of Present. |
 
 Script: `diagnostics/tmp-validate-present-infer.py` (MAIN B).
 
-### Implication — no remaining signed AP path under bans
+### Historical implication — no remaining signed AP path (falsified by READY)
 
 Remote soft-lock **cannot** force READY/Present. Exhausted: EngMode, CardPower,
 ds_detect, SET_APP invent, FN_A/RatMap NV, DRAM/ATU Present poke, **physical
