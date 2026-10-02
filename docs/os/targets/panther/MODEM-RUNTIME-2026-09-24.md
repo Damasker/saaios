@@ -1,5 +1,21 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 secure-boot handshake characterized (`IOCTL_REQ_SECURITY` we omit):**
+Stock `cbd` (pulled RO) issues `ioctl(boot_fd, 0x40106f53, &{mode,p2,p3,0})` three times
+(mode 2 flag; mode 0 main-auth `p2=[cfg+0x260]`/`p3=[cfg+0x28c]`; mode 1); the kernel
+`shmem_security_request` maps the CP shmem region and `__arm_smccc_smc`s to **EL3/ldfw**.
+Our probe does the handover (`0x6f57`) + integrity-validated signed MAIN but issues none
+of the three. **Feasibility: legitimately reproducible from SaaiOS** (genuine kernel→EL3
+SMC, device-fused keys, AP supplies only mode+layout params — no secret, no forge); it's
+the EL3/ldfw path, **not** the ADR-092 GSA mailbox. Open (live-only): does EL3 accept it
+in our boot context — a `security check fail` would be the terminal boundary. Caveat: CP
+already runs validated MAIN w/ RF-rx + SIM, so REQ_SECURITY may only map secure DRAM, not
+gate MM (unproven). NV diff (RO): CP-written protected-NV == fed-in except 2 bytes (off
+20/189444, each +4 = write-gen counter) → no protected-NV downgrade; normal-NV write-out
+not captured. No reboot/NV write this session. Next: pin the two layout params, add the
+three genuine REQ_SECURITY calls at cbd order, one controlled boot + re-check. Full
+writeup in [MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 8.
+
 **2026-10-03 NV-starvation disproven (op-mode-NV falsified as the gate):** traced how
 the CP gets NV at boot. The probe **pushes** `NV_NORM`+`NV_PROT` (`0x80000` each) from
 `/data/saaios/var/efs-copy/` into the CP as SIT boot stages (like stock cbd), before

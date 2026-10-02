@@ -6,6 +6,28 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 secure-boot path characterized — genuine `IOCTL_REQ_SECURITY` we omit; legitimately reproducible (EL3/ldfw), not a GSA-secret boundary a priori.**
+Pursuing the post-VERDICT-7 lead (registration gate may be the secure-boot/auth state).
+Factory `cbd` (pulled RO) issues `ioctl(boot_fd, 0x40106f53 /*REQ_SECURITY*/, &{mode,p2,p3,0})`
+**three times** in normal boot (mode 2 flag; mode 0 main-auth with `p2=[cfg+0x260]`
+`p3=[cfg+0x28c]`; mode 1), logging `Request security : non-secure mode` /
+`ERR! IOCTL_CHECK_SECURITY fail`. The kernel `shmem_security_request` copies the struct,
+switches on mode, maps the CP shmem region, and `__arm_smccc_smc`s to **EL3/ldfw**. Our
+probe performs the handover (`0x6f57`, genuine cpsha+IMEI+CDT) + signed MAIN (integrity-
+validated at UDL DONE) but issues **none** of the three REQ_SECURITY calls. **Feasibility:
+legitimately reproducible from SaaiOS** — genuine kernel→EL3 SMC, device-fused keys do the
+crypto, AP supplies only mode+layout params (no secret, no forging); this is the EL3/ldfw
+path, **not** the ADR-092 GSA mailbox. Open question (live-only): whether EL3 accepts the
+SMC in our boot context; a `security check fail` would be the terminal boundary (no forge).
+Caveat: the CP already runs integrity-validated MAIN with RF-rx + SIM READY, so REQ_SECURITY
+may only map secure DRAM rather than gate MM — unproven. NV write-out diff (RO): CP-written
+protected-NV == fed-in except 2 bytes (off 20/189444, each +4 = write-gen counter) → no
+registration-relevant protected-NV downgrade; normal-NV write-out isn't captured (needs an
+owner extension). No reboot/NV write this session; device on safe owner, CP ONLINE, bearer
+not established. Next: pin the two layout params (or confirm kernel derives them), add the
+three genuine REQ_SECURITY calls at the cbd-matched order, one controlled boot + registration
+re-check. See [MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 8.
+
 **2026-10-03 NV-starvation disproven — op-mode-NV FALSIFIED as the registration gate; NV write is moot.**
 Operator reframe (resolve the (c) contradiction): traced exactly how the CP gets NV at
 boot and whether our boot starves it. Finding: the probe **pushes** `NV_NORM` (TOC

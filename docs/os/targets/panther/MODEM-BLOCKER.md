@@ -1,5 +1,80 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 8 — SECURE-BOOT path characterized. Stock cbd issues `IOCTL_REQ_SECURITY` (ioctl `0x40106f53`) THREE times (mode 2/0/1) → kernel `shmem_security_request` → `__arm_smccc_smc` to EL3/ldfw; OUR boot issues NONE of them (only the handover `0x6f57`). FEASIBILITY: the genuine handshake is LEGITIMATELY REPRODUCIBLE from SaaiOS (genuine kernel→EL3 SMC with device-fused keys; we'd supply only `mode`+layout params, not secrets) — this is the EL3/ldfw path, NOT the ADR-092 GSA-mailbox boundary. Whether EL3 ACCEPTS it in our boot context is the open question, answerable only by a live in-boot issue. No forging. NV write-out diff: CP does NOT downgrade protected-NV at init. No NV/EFS write, no reboot this session (2026-10-03):**
+
+### 1. CP security / boot-auth state (read-only)
+Our probe brings the CP up with: the genuine **handover** (`IOCTL_HANDOVER_BLOCK_INFO`
+= ioctl `0x6f57`, carrying the real `cpsha` signature + IMEI + CDT, 161-byte block)
++ the genuine **signed MAIN** (integrity-validated by the CP at **UDL MAIN DONE** —
+a one-byte MAIN patch is rejected there, stock passes) + the real NV. The CP reaches
+ONLINE, SIM READY, signal present. It does **not** reach registration
+(`REG_DENIED(3)`/`NOT_SEARCHING(0)`/reject 0). We do **not** issue
+`IOCTL_REQ_SECURITY`. No direct SIT "security-status" GET was found that proves the MM
+layer gates registration on secure-boot state (honest limitation); the
+`reject_cause=0` + `NOT_SEARCHING` pattern is *consistent with* a restricted/limited
+mode but does not by itself prove it.
+
+### 2. The stock secure-boot handshake we omit
+From the factory `cbd` disassembly (pulled read-only): the security call is
+`ioctl(boot_fd, 0x40106f53, &sec_req)` where `sec_req = {mode, param2, param3, 0}`
+(logged `security_req: %x:%x:%x:%x`, `Request security : non-secure mode` /
+`dump mode`, `ERR! IOCTL_CHECK_SECURITY fail`). `cbd`'s normal boot issues it **three
+times**:
+- `mode=2`, params `(0,0)` — a flag/stage check;
+- `mode=0`, `param2=[cfg+0x260]`, `param3=[cfg+0x28c]` — the **main image auth**;
+- `mode=1`, params from cfg — a second stage.
+
+The kernel handler `shmem_security_request` does `copy_from_user` of the 16-byte
+struct, `switch(mode 0..7)`, maps the CP shmem region (`cp_shmem_get_base`), and calls
+`__arm_smccc_smc` to the EL3 secure monitor (ldfw). **Our probe performs the handover
+but none of the three `REQ_SECURITY` calls**, so the EL3 secure-region authentication
+is the omitted step.
+
+### 3. Feasibility — legitimately reproducible; NOT a GSA-secret boundary a priori
+- The handshake is a **genuine kernel ioctl → genuine EL3/ldfw SMC**. The actual
+  cryptographic authentication is done by EL3 using **device-fused keys**; the AP side
+  supplies only `mode` + CP-memory-layout params — **no secret we lack, nothing to
+  forge**. Issuing it is the *genuine* handshake, exactly what stock does.
+- This is the **EL3/ldfw** path (cmdline shows `fips140.load_sequential`,
+  `kvm-arm.protected_modules=…`, EL3 present), **not** the GSA/Titan mailbox that
+  blocked AoC in ADR-092. So the ADR-092 boundary does **not** directly transfer.
+- **Open question (only a live in-boot issue resolves it):** whether EL3 *accepts* the
+  SMC given SaaiOS's boot context (the CP region was set up by our handover/RAM path,
+  not the stock LK/ABL secure flow). If EL3 returns `security check fail`, **that** is
+  the terminal boundary and we stop — we do **not** forge/bypass it.
+- Caveat on whether this is even the gate: the CP already runs the **integrity-
+  validated** stock MAIN with working RF receive + SIM — evidence the image *is*
+  trusted — so `REQ_SECURITY` may only map a secure DRAM region rather than gate MM.
+  The hypothesis is plausible but unproven.
+
+### 4. NV write-out diff (read-only secondary)
+The owner captures only the **protected-NV** write-out (`candidate.bin`, 524288 B);
+the ~476 KB **normal-NV** write-out (where op-mode lives) is observed but **not
+stored**. Diffing the CP-written protected-NV vs the fed-in `nv_protected.bin`: they
+are **identical except 2 bytes** (offset 20 and 189444, each **+4** — consistent with
+a write-generation counter). So the CP does **not** downgrade any registration-relevant
+field in protected-NV during init. A normal-NV diff would require a small read-only
+owner extension to quarantine the handle-1 write-out.
+
+### 5. Decision & pinpointed next step
+A blind boot-probe change + reboot was **not** performed this session: the exact
+`mode=0` params (`cfg+0x260`/`cfg+0x28c` = CP shmem base/size) are not yet pinned, and
+issuing `REQ_SECURITY` with guessed params would violate "recover, don't invent" and
+risk breaking the proven boot. **Next step (one controlled reboot):** (a) finish
+recovering the two layout params from `cbd`'s boot config (or confirm the kernel
+derives them itself via `cp_shmem_get_base`, in which case params can be 0); (b) add
+the three genuine `REQ_SECURITY` calls (modes 2 → 0 → 1) to `cp-boot-probe.c` at the
+cbd-matched ordering (after `START_CP_BOOTLOADER`, around the handover, before the MAIN
+stage transfer), guarded/self-tested/-Werror/reproducible-hash, inventing nothing;
+(c) one controlled boot → check CP security status + CS/PS registration; if PS
+registers → bearer chase and verify rmnet rx/tx or IPv4. If the EL3 SMC returns
+`security check fail`, record the terminal boundary.
+
+Device unchanged: stock firmware `449eeab3…`, CP ONLINE, on the safe quarantine owner;
+no NV/EFS write; bearer not established.
+
+---
+
 **VERDICT 7 — NV-STARVATION DISPROVEN / op-mode-NV FALSIFIED as the gate. The CP is fed its NV at boot by a BOOT-IMAGE STAGE PUSH of `NV_NORM`+`NV_PROT` that is BYTE-IDENTICAL to the real `sda5` EFS (RO verifier PASS), and it issues ZERO RFS reads across boot+42 min — so it is NOT starved of real NV. We already feed the exact real stock NV (op-mode included) that this phone registers with as stock, yet it still denies. Therefore the registration gate is NOT `SAE_UE_OPERATION_MODE` in FLASH-NV; the earlier verdict (c) is corrected, and the NV-write NO-GO is moot. No NV/EFS write (2026-10-03):**
 
 Operator reframe: the (c) inference ("real NV op-mode is normally normal; our boot
