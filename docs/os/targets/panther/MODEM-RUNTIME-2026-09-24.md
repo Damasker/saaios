@@ -6119,3 +6119,27 @@ out, so the sequence never runs. CP boots cleanly (`complete_normal_boot`,
 and repeated reboots did not clear it — the drop is cpif-managed CP runtime-PM
 below ASPM, and warm `sysrq b` does not reset the modem power rail; a cold power
 cycle is the likely requirement. No NV/APN/PIN/CardPower/EFS write was made.
+
+## 2026-10-02 (later): op-mode SET hunt — no constraint-safe SET; FLASH-NV boundary
+
+Follow-up to the RFS CP-STORE verdict. The last allowed avenue was a live SIT
+operational-mode / attach-enable **SET command** (not an NV write). Static RE of
+the vendor SIT/RIL carves + CP image found untried operational SETs **by name**
+(`SIT_SET_PS_SERVICE_DOMAIN`, `SIT_SET_DEVICE_SERVICE`, `SIT_SET_INTPS_SERVICE`,
+`SIT_SET_VOICE_OPERATION`, `SIT_SET_MODEM_CONFIG`, `SIT_NS_NETWORK_NORMAL_START`,
+`SIT_SET_DUAL_NTW_AND_PS_TYPE`, + GETs) but their **wire opcode ids were not
+recoverable**: the CP dispatches by numeric id and does not code-reference the
+name strings; the vendor RIL id→name table (`…sitril-builder` @ `0x217fa4`, 557 ×
+12-byte stubs) is indexed by an internal enum (non-linear vs wire id: 279→`0x800`,
+175→`0x600`, 88→`0x208`), and the truncated carve has no clean wire table that
+validates on anchors. Issuing them would require inventing bytes (forbidden). All
+wire-mappable operational SETs already known (EngMode `0x0908`, SGC `0x0404`,
+`0x093f`, `0x0800`, `0x0704`, `0x0710`, `0x070a`) were tried live and are
+ineffective. The gate value `SAE_UE_OPERATION_MODE` is mutated via the CP's
+internal registry and persisted in `SAE_FLASH_UE_OPERATION_MODE`; no SIT handler
+writes it without a FLASH-NV persist. **Verdict: no confirmed command-only path
+flips the gate; the only known mutation is a FLASH-NV write (out of scope, no
+operator authorization) — none performed.** Device unchanged: owner pid 571
+(`69f9b62d…`), CP ONLINE, SIM READY, data `NOT_SEARCHING(0)`, voice
+`REG_DENIED(3)`. **Bearer? no.**
+

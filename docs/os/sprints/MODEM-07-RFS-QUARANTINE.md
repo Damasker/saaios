@@ -6,6 +6,39 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-02 later — op-mode SET hunt: no constraint-safe SET confirmed; boundary stands; NO NV write.**
+Chasing the one remaining allowed avenue from the prior entry (a live SIT
+operational-mode / attach-enable *SET command*, not an NV write). Static RE of
+the vendor SIT/RIL carves + CP image:
+- Untried operational SETs exist **by name** (`SIT_SET_PS_SERVICE_DOMAIN`,
+  `SIT_SET_DEVICE_SERVICE`, `SIT_SET_INTPS_SERVICE`, `SIT_SET_VOICE_OPERATION`,
+  `SIT_SET_MODEM_CONFIG`, `SIT_NS_NETWORK_NORMAL_START`,
+  `SIT_SET_DUAL_NTW_AND_PS_TYPE`), with GET counterparts → handlers likely
+  present in this build.
+- Their **wire opcode ids were not recoverable**, so they cannot be issued
+  without inventing bytes (forbidden). CP dispatches by numeric id only and does
+  not code-reference the SIT name strings (handler-ptr xref = 0). The vendor RIL
+  id→name table (`…sitril-builder` @ file off `0x217fa4`, 557 × 12-byte
+  `adrp/add/ret` stubs) is indexed by an **internal enum**, not the wire opcode;
+  index→wire is non-linear (idx 279→`0x800`, 175→`0x600`, 88→`0x208`) and no
+  clean wire-opcode table in the truncated carve validates against those anchors.
+- Every wire-mappable operational SET we *do* know was already tried live and is
+  ineffective (EngMode `0x0908`, SGC `0x0404`, cfg `0x093f`, radio `0x0800`,
+  net-sel `0x0704`, AllowData `0x0710`, pref `0x070a` — all ACKed, no reg change).
+- The gate value `SAE_UE_OPERATION_MODE` is read/written via the CP's internal
+  registry (`MMC_GET/SET`, `PlmnSimDataAcc`) and persisted in
+  `SAE_FLASH_UE_OPERATION_MODE`; the untried service-SETs mutate *different*
+  state, and no SIT handler was found that writes the op-mode parameter without a
+  FLASH-NV persist.
+
+**Verdict: no confirmed command-only path flips the op-mode gate; the only known
+mutation path is a FLASH-NV write (out of scope, no operator authorization).
+Per constraint, no real NV/EFS was written. Device unchanged.** Next RE step if
+the operator wants to keep chasing the command avenue (not an NV write): recover
+the untried SETs' wire ids from the **full `libsitril.so`** (extract from
+`vendor.img`, ext4) or the **live CP RX-dispatch** (`cmp wire_id,#imm; beq
+sitRxSet…`); both multi-hour. **Bearer? no.**
+
 **2026-10-02 late — DECISIVE: gate value is CP-STORE; read-divert ruled out.**
 Instrumented the owner to log every RFS frame (header fields only) and to keep
 reading `umts_rfs0` **after** the write-out completes (the stock owner stopped

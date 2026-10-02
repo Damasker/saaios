@@ -1,6 +1,49 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
-**VERDICT — the MM registration-gate value is CP-STORE, not AP-served; we are at the real-EFS/NV constraint boundary (2026-10-02 late):**
+**VERDICT 2 — no constraint-safe operational-mode SET opcode was confirmed; the op-mode gate sits behind the FLASH-NV boundary; NO NV write performed (2026-10-02 later):**
+Follow-up to VERDICT 1 below. Having established the gate value is CP-store
+FLASH-NV, the one remaining constraint-compliant avenue was a *live SIT
+operational-mode / attach-enable SET command* (a command, not an NV/EFS file
+write) — analogous to the accepted camp SETs `0x0704`/`0x0800` — *if* such an
+opcode exists in the vendor SIT/RIL. We hunted it. Result:
+- **Untried operational SETs exist by name** in the CP string table / vendor RIL
+  name table: `SIT_SET_PS_SERVICE_DOMAIN`, `SIT_SET_DEVICE_SERVICE`,
+  `SIT_SET_INTPS_SERVICE`, `SIT_SET_VOICE_OPERATION`, `SIT_SET_MODEM_CONFIG`,
+  `SIT_NS_NETWORK_NORMAL_START`, `SIT_SET_DUAL_NTW_AND_PS_TYPE` (plus GET
+  counterparts). Their presence implies handlers exist in this build.
+- **Wire opcode ids could NOT be reliably recovered** (so they cannot be issued
+  without inventing bytes — forbidden). The CP dispatches SIT frames by *numeric
+  id only* and does **not** code-reference the SIT name strings (handler-pointer
+  xref = 0). The vendor RIL's id→name table (`…sitril-builder` @ file off
+  `0x217fa4`, 557 twelve-byte `adrp/add/ret` stubs) is indexed by an **internal
+  enum**, not the wire opcode; the index→wire map is a non-linear grouped map
+  (idx 279→`0x800`, 175→`0x600`, 88→`0x208`) and the truncated carve contains no
+  clean wire-opcode table that validates against those anchors.
+- **Every wire-mappable operational SET we already know was tried live and is
+  ineffective** (prior art, all ACKed, no reg change): EngMode `0x0908`, SGC
+  `0x0404`, SetModemsConfig `0x093f`, RadioPower `0x0800`, net-sel `0x0704`,
+  AllowData `0x0710`, pref-RAT `0x070a`.
+- **The gate parameter itself is FLASH-NV.** `SAE_UE_OPERATION_MODE` is read/
+  written through the CP's *internal* registry (`MMC_GET/SET`, `PlmnSimDataAcc`)
+  and persisted in `SAE_FLASH_UE_OPERATION_MODE`; the untried service-SETs mutate
+  *different* state (service-domain / PS-enable / voice-op), and no SIT handler
+  was found that writes the op-mode parameter without a FLASH-NV persist.
+
+**Consequence / operator decision:** no confirmed command-only path flips the
+op-mode gate. The only known mutation path for the gate value is a **FLASH-NV
+write**, which is out of scope without explicit operator authorization. Per the
+hard constraint we **did not** write real NV/EFS. If the operator wants to keep
+chasing the command avenue, the next RE step is to recover the untried SETs'
+wire ids from the **full `libsitril.so`** (extractable from `vendor.img`, ext4)
+or from the **live CP RX-dispatch** `cmp wire_id,#imm; beq handler` chain near
+`sitRxSet…` handlers — neither of which is an NV write, but both are
+multi-hour RE. See `docs/os/sprints/MODEM-07-RFS-QUARANTINE.md` for the full
+hunt log. Device unchanged (owner pid 571 `69f9b62d…`, CP ONLINE, SIM READY,
+data `NOT_SEARCHING(0)`, voice `REG_DENIED(3)`).
+
+---
+
+**VERDICT 1 — the MM registration-gate value is CP-STORE, not AP-served; we are at the real-EFS/NV constraint boundary (2026-10-02 late):**
 We instrumented the owner to log every RFS frame (header fields only — cmd,
 numeric file handle, offset/size counters; never payload) and, critically, kept
 reading `umts_rfs0` **after** the protected-NV write-out completes so the
