@@ -164,8 +164,9 @@ static void get_scalar(int ipc, int rfs, unsigned id, uint32_t tok,
  * +555 aid_len, +556 aid. Empty fields = zero. */
 static int sim_io(int ipc, int rfs, uint32_t tok, uint8_t cmd, unsigned fileid,
                   const uint8_t *path, unsigned path_len, uint8_t p1, uint8_t p2,
-                  uint8_t p3, const uint8_t *aid, unsigned aid_len,
-                  uint8_t *resp, int *resp_len)
+                  uint8_t p3, const uint8_t *data, unsigned data_len,
+                  const uint8_t *aid, unsigned aid_len, uint8_t *resp,
+                  int *resp_len)
 {
     uint8_t req[0x23c];
     memset(req, 0, sizeof req);
@@ -186,6 +187,11 @@ static int sim_io(int ipc, int rfs, uint32_t tok, uint8_t cmd, unsigned fileid,
     req[29] = p1;
     req[30] = p2;
     req[31] = p3;
+    if (data && data_len && data_len <= 256) {
+        req[32] = (uint8_t)data_len;
+        req[33] = (uint8_t)(data_len >> 8);
+        memcpy(req + 34, data, data_len);
+    }
     if (aid && aid_len && aid_len <= 16) {
         req[555] = (uint8_t)aid_len;
         memcpy(req + 556, aid, aid_len);
@@ -219,7 +225,7 @@ static unsigned get_aid(int ipc, int rfs, uint8_t *aid, unsigned aid_cap)
         uint8_t resp[512];
         int n = 0;
         if (sim_io(ipc, rfs, 30 + t, 0xB2, 0x2F00, mf, 2, 1, 0x04, try_len[t],
-                   NULL, 0, resp, &n) != 0)
+                   NULL, 0, NULL, 0, resp, &n) != 0)
             continue;
         if (n < 14) continue;
         const uint8_t *b = resp + 14;
@@ -304,46 +310,52 @@ int main(void)
     unsigned aid_len = get_aid(ipc, rfs, aid, sizeof aid);
     const uint8_t *pa = aid_len ? aid : NULL;
     static const uint8_t adf[4] = {0x3f, 0x00, 0x7f, 0xff};
-    /* Try ADF_USIM selection variants for EFad (0x6FAD), then on the variant
-     * that returns SW present, read EFfplmn (0x6F7B) and decode. */
-    struct { const char *tag; const uint8_t *path; unsigned plen;
-             const uint8_t *aidp; unsigned alen; } v[] = {
-        {"bare", NULL, 0, NULL, 0},
-        {"aid", NULL, 0, pa, aid_len},
-        {"adfpath", adf, 4, NULL, 0},
-        {"aid+adfpath", adf, 4, pa, aid_len},
-    };
-    int ok_variant = -1;
-    for (int i = 0; i < 4; i++) {
-        n = 0;
-        int rc = sim_io(ipc, rfs, 20 + (unsigned)i, 0xB0, 0x6FAD, v[i].path,
-                        v[i].plen, 0, 0, 0x04, v[i].aidp, v[i].alen, resp, &n);
-        if (rc != 0) {
-            printf("SIMIO EFad[%s] no response rc=%d\n", v[i].tag, rc);
-            continue;
-        }
-        char label[32];
-        snprintf(label, sizeof label, "EFad[%s]", v[i].tag);
-        simio_report(label, resp, n);
+    /* Two-step: SELECT (0xA4) ADF_USIM by AID, then READ_BINARY the EFs from
+     * the now-current ADF. READ_BINARY alone was rejected (error_raw=2) because
+     * ADF_USIM was not the current DF. */
+    n = 0;
+    int sel_ok = 0;
+    if (aid_len &&
+        sim_io(ipc, rfs, 50, 0xA4, 0, NULL, 0, 0x04, 0x00, aid_len, pa, aid_len,
+               pa, aid_len, resp, &n) == 0) {
+        simio_report("SELECT ADF_USIM(byAID)", resp, n);
         if (n >= 14 && (resp[12] == 0x90 || resp[12] == 0x91 ||
                         resp[12] == 0x61 || resp[12] == 0x62 ||
-                        resp[12] == 0x63))
-            ok_variant = i;
-    }
-    if (ok_variant >= 0) {
-        n = 0;
-        if (sim_io(ipc, rfs, 40, 0xB0, 0x6F7B, v[ok_variant].path,
-                   v[ok_variant].plen, 0, 0, 0x3c, v[ok_variant].aidp,
-                   v[ok_variant].alen, resp, &n) == 0) {
-            simio_report("EFfplmn", resp, n);
-            decode_fplmn(resp, n);
-        } else {
-            puts("SIMIO EFfplmn no response");
-        }
+                        resp[12] == 0x63 || resp[12] == 0x9f))
+            sel_ok = 1;
     } else {
-        puts("EFfplmn skipped: no EFad selection variant accepted (ADF_USIM "
-             "selection mechanism unresolved)");
+        puts("SELECT ADF_USIM(byAID) no response");
     }
+    /* Fallback: SELECT ADF_USIM by path alias (0x7FFF). */
+    if (!sel_ok) {
+        n = 0;
+        if (sim_io(ipc, rfs, 51, 0xA4, 0x7FFF, adf, 2, 0x08, 0x00, 0x02, NULL,
+                   0, NULL, 0, resp, &n) == 0) {
+            simio_report("SELECT ADF_USIM(byPath)", resp, n);
+            if (n >= 14 && (resp[12] == 0x90 || resp[12] == 0x61 ||
+                            resp[12] == 0x62 || resp[12] == 0x63 ||
+                            resp[12] == 0x9f))
+                sel_ok = 1;
+        }
+    }
+    /* EFad (0x6FAD) then EFfplmn (0x6F7B), read from current (ADF_USIM) DF. */
+    n = 0;
+    if (sim_io(ipc, rfs, 52, 0xB0, 0x6FAD, NULL, 0, 0, 0, 0x04, NULL, 0, NULL, 0,
+               resp, &n) == 0)
+        simio_report("EFad", resp, n);
+    else
+        puts("SIMIO EFad no response");
+    n = 0;
+    if (sim_io(ipc, rfs, 53, 0xB0, 0x6F7B, NULL, 0, 0, 0, 0x3c, NULL, 0, NULL, 0,
+               resp, &n) == 0) {
+        simio_report("EFfplmn", resp, n);
+        decode_fplmn(resp, n);
+    } else {
+        puts("SIMIO EFfplmn no response");
+    }
+    if (!sel_ok)
+        puts("note: ADF_USIM SELECT not confirmed accepted; EF reads above may "
+             "reflect the pre-selection DF");
 
     close(ipc);
     close(rfs);

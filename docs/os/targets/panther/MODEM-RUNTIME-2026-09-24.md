@@ -1,5 +1,13 @@
 # Native modem runtime: status query investigation
 
+**2026-10-02 pm:** registration blocker isolated to a CP-internal pre-PLMN local
+MM gate (reject_cause=0, no PLMN latched); not quarantine, not forbidden-PLMN.
+PCIe endpoint wedge after RadioPower-ON is now mitigated automatically in the
+handoff (RC `power/control=on` + bounded `pcie-stabilize-cp.sh` EP L1.2 disable);
+validated on a fresh warm reboot (link recovers, IPC stays up, SIM READY,
+registration reproduces the local deny). Details in the
+[MODEM-BLOCKER one-pager](MODEM-BLOCKER.md). Bearer not established.
+
 **Latest result:** the opt-in handover comparison returned the first matching
 SIM status response without a protocol error. See the final section; earlier
 stalled-ring observations below are preserved as controls. Cellular service

@@ -6,6 +6,21 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-02 pm — MM gate narrowed; PCIe mitigation baked.** The registration
+blocker is isolated to a CP-internal **pre-PLMN local MM gate** (voice/data reg
+GET `error_raw=0`, `registration_raw=3`/`0`, `reject_cause=0`, no PLMN latched),
+**not** forbidden-PLMN and **not** the RFS quarantine (`request_6` writes-out NV
+`0x0002e406`; the CP is the data source and keeps its NV in RAM, write ACKed).
+`0x20d1afa` is the SIT handler **registrar**; `error_raw=2` is a **generic SIT
+refusal** shared by RF scan (0x0706) and SIM_IO ADF ops (both SELECT 0xA4 and
+READ_BINARY blocked; only READ_RECORD/MF EFdir works). PCIe mitigation is now in
+`owner-handoff-rfs-camp.sh` (RC `power/control=on` pre-boot +
+`pcie-stabilize-cp.sh` bounded re-apply of EP L1.2 disable across 0x0800),
+validated on a fresh warm reboot: link recovers, IPC functional, SIM READY(5),
+registration reproduces the local deny. New one-shot `simdiag-once.c` reads the
+settled registration scalars + attempts the USIM EF reads. Full write-up:
+[MODEM-BLOCKER one-pager](../targets/panther/MODEM-BLOCKER.md). **Bearer? no.**
+
 The Linux x86_64 host fixture now composes the protocol, transport and
 private-storage models end to end. It proves, on synthetic bytes only, that
 the final success response is sent after durable quarantine completion and

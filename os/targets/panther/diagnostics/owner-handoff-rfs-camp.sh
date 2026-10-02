@@ -28,6 +28,8 @@ esac
 
 VERIFIER=/data/saaios/bin/saaios-verify-nv-copies.sh
 FIRMWARE=/data/saaios/bin/saaios-probe-b-modem.bin
+PCIE_STABILIZE=/data/saaios/bin/pcie-stabilize-cp.sh
+PCIE_RC=/sys/devices/platform/11920000.pcie
 PERSIST=/mnt/vendor/persist
 STATE=/sys/devices/platform/cpif/modem_state
 EFS_COPY=/data/saaios/var/efs-copy/nv_protected.bin
@@ -90,6 +92,15 @@ insmod /lib/modules/cp_thermal_zone.ko 2>/dev/null || true
 [ "$(cat "$STATE" 2>/dev/null)" = OFFLINE ] ||
     fail 'CP must be OFFLINE after module setup'
 
+# Transport stability: disable PCIe root-complex runtime suspend before the CP
+# boots so the link never enters an unrecoverable low-power state. The endpoint
+# L1.2 disable (which needs the EP enumerated) is handled by the bounded
+# background stabilizer launched after ONLINE. PCIe ASPM/PM policy only.
+if [ -w "$PCIE_RC/power/control" ]; then
+    echo on > "$PCIE_RC/power/control" 2>/dev/null || true
+    printf 'pcie_rc_runtime_pm=%s\n' "$(cat "$PCIE_RC/power/control" 2>/dev/null)" >> "$LOG"
+fi
+
 if [ ! -e /dev/block/sda1 ]; then
     set -- $(cat /sys/block/sda/sda1/dev | tr : ' ')
     mknod /dev/block/sda1 b "$1" "$2"
@@ -124,4 +135,12 @@ printf 'probe_rc=%s cp_state=%s\n' "$probe_rc" "$(cat "$STATE" 2>/dev/null)" >> 
 tail -n 8 "$LOG"
 [ "$probe_rc" -eq 0 ] || exit "$probe_rc"
 [ "$(cat "$STATE" 2>/dev/null)" = ONLINE ] || fail 'CP did not reach ONLINE'
+# Launch the bounded PCIe stabilizer in the background: it re-applies the RC
+# runtime-PM and endpoint L1.2 disable every second across the owner's
+# RadioPower-ON (0x0800) dispatch, keeping/recovering the link at L0 so cpif can
+# keep ringing the ap2cp doorbell. PCIe ASPM/PM policy only; bounded; reversible.
+if [ -x "$PCIE_STABILIZE" ]; then
+    "$PCIE_STABILIZE" 120 >> "$LOG" 2>&1 &
+    printf 'pcie_stabilizer_launched pid=%s window=120s\n' "$!" >> "$LOG"
+fi
 printf 'probe returned ONLINE; verify owner continuity in %s\n' "$OWNER_LOG"

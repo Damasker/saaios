@@ -1,5 +1,58 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**MM deny is a CP-internal pre-PLMN local gate, not quarantine, not forbidden-PLMN; PCIe mitigation now baked into handoff (2026-10-02 pm):**
+Static RE + live confirmation narrowed the registration blocker decisively. (1)
+`0x20d1afa` ("SIT_REG") is the **SIT command-handler registrar** — called
+hundreds of times as `SIT_REG(opcode_id, descriptor_ptr)` to populate the SIT
+dispatch table (0x6ff, 0x701-0x707, 0x741-0x747, SIM 0x2xx, etc.); it is the
+index to the handlers, **not** the deny gate. (2) `error_raw=2` is a **generic
+SIT "refused/precondition-failed" code** emitted by many handlers via
+`MOVS r0,#2; STRB.W r0,[obj,#0x0a]` (SIT frame error field is at +0x0a); the RF
+scan (0x0706) refusal and the SIM_IO ADF-operation refusals share this one
+generic code, so neither is a PLMN/card verdict — both are the CP declining
+operations in its current operational state. (3) The registration denial itself
+is **not** a SIT error: the voice/data registration GETs return `error_raw=0`
+with `registration_raw=3`/`0` and `reject_cause=0` in the payload, and **no
+serving PLMN is latched** — a genuine MM-internal **local deny that precedes
+PLMN evaluation**. Forbidden-PLMN is therefore ruled out behaviorally (the CP
+never gets far enough to consult a PLMN). The two-step SIM_IO
+(SELECT 0xA4 then READ_BINARY) to read EFfplmn/EFad directly is **blocked**: both
+SELECT and READ_BINARY return `error_raw=2`; only READ_RECORD (0xB2) on the
+MF-level EFdir works (USIM AID obtained, never logged).
+
+**Quarantine vs real-EFS boundary:** the RFS flow the owner serves is the CP's
+protected-NV **write-out** — `request_6` targets NV `0x0002e406` and the CP is
+the **data source** of the 189 KB stream, which the owner captures into the
+quarantine candidate and ACKs. The CP keeps its NV in RAM and gets its ACK, so
+the local deny is **not** caused by the quarantine diverting that write. The MM
+gate reads the CP's in-RAM NV/cal/operational state that originated from the
+**genuine factory EFS** (read at early boot). **Verdict on satisfiability
+without a real-EFS write: not yet definitive.** The deny is a CP operational-
+mode/provisioning latch (the err=2 refusal family), reached *after* the owner's
+accepted SGC `0x0404` / SetModemsConfig `0x093f` / RadioPower `0x0800` /
+AllowData `0x0710` — so a SIT-only provisioning step may still be missing
+(allowed path) *or* the latch reads a factory NV/cal value (which, if it must
+change, is satisfiable by diverting the CP's early-boot RFS **read** into its RAM
+— still no real-EFS write — or, only as a last resort, a real-EFS write =
+constraint boundary). **Pinpointed next step:** instrument the CP's early-boot
+RFS **read** sequence (the current owner only serves the cmd7/cmd3/cmd6
+write-out) to determine whether the operational-mode/cal value the MM gate reads
+is served from the AP (→ allowed read-divert) or from the CP's own store
+(→ real-EFS boundary).
+
+**PCIe mitigation baked + validated end-to-end:** `owner-handoff-rfs-camp.sh`
+now sets RC `power/control=on` before CP boot and launches a bounded background
+`pcie-stabilize-cp.sh` (120 s) after ONLINE that re-applies RC runtime-PM + EP
+L1.2 ASPM/PCI-PM disable every second across the owner's `0x0800` dispatch. On a
+fresh warm reboot this came up automatically: `power/control=on`, stabilizer +
+owner running, and although `pcie_send_ap2cp_irq: PCI not powered on` still logs
+transiently at 0x0800, **the link recovered and IPC stayed functional** — SIM
+READY(5), registration sequence ran to the same settled result (preferred=12,
+voice REG_DENIED(3)/reject=0, data NOT_SEARCHING(0)/tech=3). The owner's clean
+stop is SIGTERM (handled → `stop_requested` → graceful exit; deferred, not
+ignored, during critical RFS/IPC sections); SIGKILL is the hard fallback.
+**Bearer verified? no.**
+
 **RAT-broaden ruled out; deny is CP-local; PCIe wedge mitigated AP-side (2026-10-02):**
 The operator cold-power-cycled the phone, but that alone did **not** clear the
 modem PCIe endpoint wedge — the same signature recurred on the cold boot (cpif
