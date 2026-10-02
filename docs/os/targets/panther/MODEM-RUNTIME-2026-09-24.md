@@ -1,5 +1,21 @@
 # Native modem runtime: status query investigation
 
+**2026-10-02 latest:** issued every constraint-safe SIT operational-mode SET LIVE
+from the unified owner (one SET per guarded warm-reboot handoff, single
+`umts_ipc0` lock), after recovering their wire ids + body shapes from the full
+`libsitril.so` (extracted READ-ONLY from `vendor.img` via `debugfs`; SHA
+`efcca0d5…2d5b1`, exact TD1A match). Results — all four ack `error_raw=0`, none
+move registration: `voice` `0x091A` m3 (GET already=3), `intps` `0x0933` m1 (ack
+`0`, not removed), `stack` `0x080F` m1 (GET already enabled=1), `devsvc` `0x0956`
+m2 data-centric (GET was 1 voice-centric). Throughout: voice `REG_DENIED(3)`
+/reject 0, data `NOT_SEARCHING(0)`/tech 3, `mask_low7=2`. The op-mode GETs show
+the modem is already in the target operational state, so the denial sits
+below/outside the AP→CP operational-SET surface. `0x072B` not sent (body not
+pinned); NV/`0x0937`/`POWER_OFF(3)` hard-barred → **command-only avenue
+exhausted**. Owner hash `ecdf874f…` (self-test PASS); also fixed the short
+`allow_data` ACK being swallowed before `reg_complete`. Bearer not established.
+Details in the [MODEM-BLOCKER one-pager](MODEM-BLOCKER.md).
+
 **2026-10-02 late:** early-boot RFS READ sequence instrumented (owner logs every
 RFS header + keeps reading `umts_rfs0` past the write-out, through RadioPower-ON
 and the MM gate). Result: the CP's entire RFS traffic is OPEN/STAT/WRITE — a

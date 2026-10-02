@@ -1,5 +1,50 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 3 — the full `libsitril.so` was recovered and every constraint-safe operational-mode SET was issued LIVE; all ACK clean (`error_raw=0`) but NONE move registration; command-only avenue EXHAUSTED; no NV write performed (2026-10-02 latest):**
+Supersedes the "wire ids not recoverable" blocker in VERDICT 2. The full
+`/lib64/libsitril.so` was extracted READ-ONLY from `vendor.img` via `debugfs`
+(no mount/sudo) — SHA-256 `efcca0d5…2d5b1`, an **exact match** to the operator's
+expected TD1A image. The untried operational SET wire ids + body shapes were
+then recovered from the builder disassembly (`InitRequestHeader` immediates), not
+guessed, and cross-checked against the open `sitdef.h`. `BuildNvWriteItem` is a
+no-op stub (`mov x0,xzr; ret`) and `DoOemSetPsService` just calls `BuildAllowData`
+(`0x0710`), confirming these operational SETs go through `SendRequest`, **not** NV.
+
+Each was issued live, one SET per guarded boot, from the unified owner after SIM
+READY / radio ON / allow_data, with the owner holding the single `umts_ipc0`
+lock. The GETs were read first each boot:
+
+| step | SET opcode / body | GET readback before SET | SET ack | reg effect |
+|---|---|---|---|---|
+| voice | `0x091A` int32 `mode=3` (len16) | voice_operation = **3** (already enabled) | `error_raw=0` | none |
+| intps | `0x0933` int32 `mode=1` (len16) | — (deprecated in sitdef) | `error_raw=0` (**not** `2`, so live/accepted, not removed) | none |
+| stack | `0x080F` byte `mode=1` (len13) | stack_status = **1** (already enabled) | `error_raw=0` | none |
+| devsvc | `0x0956` int32 `mode=2` data-centric (len16) | device_service = **1** (voice-centric) | `error_raw=0` | none |
+
+After every SET, across ~65s of post-SET observation: voice `registration_raw=3`
+(REG_DENIED), `reject_raw=0`; data `registration_raw=0` (NOT_SEARCHING),
+`tech_raw=3`; `mask_low7=2` (UMTS). CS never left REG_DENIED(3); PS never left
+NOT_SEARCHING(0). The GETs prove the modem is **already** in the target
+operational configuration (voice-op enabled, stack enabled), so these levers are
+no-ops here — the denial originates below/outside the AP→CP operational-SET
+surface, not from a missing enable command.
+
+**Remaining opcodes are off-limits by constraint:** `0x072B`
+(`SET_DUAL_NTW_AND_PS_TYPE`) body params are not fully pinned from
+`ProtocolNetBuilder` (operator: DO NOT SEND until lifted); `0x0937`
+(`SET_RADIO_NODE`), `RadioPower POWER_OFF(3)`, and any NV/EFS write are hard-barred.
+So the command-only avenue is exhausted. Owner code hash this run `ecdf874f…`;
+`/data/saaios/etc/opx-step` cleared to GET-only after the sweep. Device left CP
+ONLINE, SIM READY, data `NOT_SEARCHING(0)`, voice `REG_DENIED(3)` — unchanged.
+
+A side bug was found + fixed during this work: the camp reg sequence's
+`allow_data` ACK (`0x0710`) is a short frame that the generic length guard in
+`camp_probe_match` swallowed before the `REG_ALLOW_DATA` branch, so `reg_complete`
+(the opx gate) never flipped. The reg SET-ack branches now precede the length
+guard; `allow_data` acks `error_raw=0` and `reg_complete` fires as intended.
+
+---
+
 **VERDICT 2 — no constraint-safe operational-mode SET opcode was confirmed; the op-mode gate sits behind the FLASH-NV boundary; NO NV write performed (2026-10-02 later):**
 Follow-up to VERDICT 1 below. Having established the gate value is CP-store
 FLASH-NV, the one remaining constraint-compliant avenue was a *live SIT

@@ -6,6 +6,38 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-02 latest — full `libsitril.so` recovered; all constraint-safe op-mode SETs issued LIVE; all ACK clean, NONE move registration; command-only avenue EXHAUSTED; NO NV write.**
+The prior entry's blocker (wire ids unrecoverable from the truncated carve) was
+resolved by extracting the **full** `/lib64/libsitril.so` READ-ONLY from
+`vendor.img` with `debugfs` (no mount, no sudo). SHA-256 `efcca0d5…2d5b1` — exact
+match to the operator's expected TD1A. Wire ids + body shapes were lifted from the
+builder disassembly (`InitRequestHeader` immediates), not guessed, and
+cross-checked against the open `sitdef.h`. `BuildNvWriteItem` is a no-op stub and
+`DoOemSetPsService`→`BuildAllowData(0x0710)`, confirming these SETs are
+`SendRequest` commands, not NV writes.
+
+Four SETs were issued live, one per guarded warm-reboot handoff, from the unified
+owner after SIM READY / radio ON / allow_data (single `umts_ipc0` lock):
+- `voice` `0x091A` int32 `mode=3` (len16): GET read voice_operation=**3** already;
+  ack `error_raw=0`; no reg change.
+- `intps` `0x0933` int32 `mode=1` (len16): ack `error_raw=0` (**not** `2` → live,
+  not removed from firmware); no reg change.
+- `stack` `0x080F` byte `mode=1` (len13): GET read stack_status=**1** already
+  enabled; ack `error_raw=0`; no reg change.
+- `devsvc` `0x0956` int32 `mode=2` data-centric (len16): GET read
+  device_service=**1** (voice-centric); ack `error_raw=0`; no reg change.
+
+Across every boot and ~65s post-SET: voice `registration_raw=3` REG_DENIED /
+`reject_raw=0`; data `registration_raw=0` NOT_SEARCHING / `tech_raw=3`;
+`mask_low7=2` UMTS. The GETs show the modem is already in the target operational
+state, so these levers are no-ops — the denial is below/outside the AP→CP
+operational-SET surface. `0x072B` (dual-ntw/PS-type) body not fully pinned → not
+sent per operator; `0x0937`/`POWER_OFF(3)`/NV all hard-barred. Owner hash this run
+`ecdf874f…`; `opx-step` cleared to GET-only afterwards. Also fixed a reg-sequence
+bug: the short `allow_data` (`0x0710`) ACK was being swallowed by the generic
+length guard before the `REG_ALLOW_DATA` branch, so `reg_complete` (the opx gate)
+never fired; SET-ack branches now precede the guard.
+
 **2026-10-02 later — op-mode SET hunt: no constraint-safe SET confirmed; boundary stands; NO NV write.**
 Chasing the one remaining allowed avenue from the prior entry (a live SIT
 operational-mode / attach-enable *SET command*, not an NV write). Static RE of

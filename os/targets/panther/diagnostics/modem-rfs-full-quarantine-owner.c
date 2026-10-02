@@ -121,7 +121,20 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        REG_RADIO_GET = 0x0801, REG_SEL_GET = 0x0703, REG_SEL_AUTO_SET = 0x0704,
        REG_PREF_GET = 0x070b, REG_PREF_SET = 0x070a, REG_ALLOW_DATA = 0x0710,
        REG_PREF_LEN = 16, REG_ALLOW_LEN = 13, REG_GET_MAX = 3,
-       RAT_LTE_ONLY = 11, RAT_LTE_WCDMA = 12, RADIO_STATE_ON = 10 };
+       RAT_LTE_ONLY = 11, RAT_LTE_WCDMA = 12, RADIO_STATE_ON = 10,
+       /* Untried operational-state SETs/GETs (open sitdef.h, same SIT family as
+        * the proven 0x0700/0x0800/0x0710/0x093f wire IDs; 0x091a body also
+        * cross-checked against the factory libsitril BuildSetVoiceOperation,
+        * payload int32=3, len16). None is an NV/EFS write. One SET per boot,
+        * selected by /data/saaios/etc/opx-step; GETs always read for the log. */
+       OPX_STACK_GET = 0x0810, OPX_STACK_SET = 0x080f, OPX_STACK_LEN = 13,
+       OPX_VOICE_GET = 0x091b, OPX_VOICE_SET = 0x091a, OPX_VOICE_LEN = 16,
+       OPX_INTPS_SET = 0x0933, OPX_INTPS_LEN = 16,
+       OPX_DEVSVC_GET = 0x0957, OPX_DEVSVC_SET = 0x0956, OPX_DEVSVC_LEN = 16,
+       OPX_VOICE_MODE = 3, OPX_INTPS_MODE = 1, OPX_STACK_MODE_ENABLE = 1,
+       OPX_DEVSVC_MODE_DATA = 2,
+       OPX_STEP_NONE = 0, OPX_STEP_VOICE = 1, OPX_STEP_INTPS = 2,
+       OPX_STEP_STACK = 3, OPX_STEP_DEVSVC = 4 };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -164,6 +177,13 @@ struct camp_driver {
     int sel_known, sel_mode, sel_auto_sent;
     int pref_known; unsigned preferred_raw; int pref_set_sent;
     int allow_data_sent, reg_complete;
+    /* Post-registration one-shot operational-SET experiment. After reg_complete
+     * the three GETs below are read once for the log, then the single SET named
+     * by opx_step is sent once (matched by id+token, non-poisoning). */
+    int opx_step;                 /* OPX_STEP_* selected at startup from file */
+    int opx_stack_get_sent, opx_voice_get_sent, opx_devsvc_get_sent;
+    int opx_stack_known; unsigned opx_stack_mode;
+    int opx_set_sent, opx_done;
 };
 #endif
 
@@ -1995,6 +2015,51 @@ static void make_allowdata_request(uint8_t request[REG_ALLOW_LEN],
     request[12] = 1;
 }
 
+/* Operational-SET request with a 4-byte little-endian payload at +12 (matches
+ * the factory sitril builders, e.g. BuildSetVoiceOperation stores int32 mode at
+ * body+0 of a len-16 request). Used for 0x091a (mode 3) and 0x0933 (mode 1). */
+static void make_opx_u32_request(uint8_t *request, uint16_t id, uint8_t len,
+                                 uint32_t token, uint32_t value)
+{
+    memset(request, 0, len);
+    request[2] = (uint8_t)id;
+    request[3] = (uint8_t)(id >> 8);
+    request[4] = len;
+    put_little32(request + 6, token);
+    put_little32(request + 12, value);
+}
+
+/* Operational-SET request with a single payload byte at +12 (SIT_SET_STACK_
+ * STATUS 0x080f, len 13, mode byte 1 = ENABLE). */
+static void make_opx_byte_request(uint8_t *request, uint16_t id, uint8_t len,
+                                  uint32_t token, uint8_t value)
+{
+    memset(request, 0, len);
+    request[2] = (uint8_t)id;
+    request[3] = (uint8_t)(id >> 8);
+    request[4] = len;
+    put_little32(request + 6, token);
+    request[12] = value;
+}
+
+/* Next post-registration operational step, or 0 when the experiment is idle or
+ * complete. Reads the three operational GETs for the log, then issues the one
+ * selected SET. GETs and the SET are each dispatched at most once. */
+static unsigned camp_opx_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || c->opx_done) return 0;
+    if (!c->opx_stack_get_sent) return OPX_STACK_GET;
+    if (!c->opx_voice_get_sent) return OPX_VOICE_GET;
+    if (!c->opx_devsvc_get_sent) return OPX_DEVSVC_GET;
+    if (!c->opx_set_sent) {
+        if (c->opx_step == OPX_STEP_VOICE) return OPX_VOICE_SET;
+        if (c->opx_step == OPX_STEP_INTPS) return OPX_INTPS_SET;
+        if (c->opx_step == OPX_STEP_STACK) return OPX_STACK_SET;
+        if (c->opx_step == OPX_STEP_DEVSVC) return OPX_DEVSVC_SET;
+    }
+    return 0;
+}
+
 /* Next one-shot registration step given current known state, or 0 when the
  * sequence has nothing to do this tick (waiting, blocked, or complete). */
 static unsigned camp_reg_next(const struct camp_driver *c)
@@ -2080,6 +2145,42 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         } else {
             printf("camp_probe field=signal status=unknown_short\n");
         }
+    } else if (id == OPX_STACK_GET) {
+        if (n >= 16) {
+            c->opx_stack_known = 1;
+            c->opx_stack_mode = little32(p + 12);
+            printf("camp_opx get=stack_status mode_raw=%u\n", little32(p + 12));
+        } else if (n >= 13) {
+            c->opx_stack_known = 1;
+            c->opx_stack_mode = p[12];
+            printf("camp_opx get=stack_status mode_raw=%u\n", p[12]);
+        } else {
+            printf("camp_opx get=stack_status status=unknown_short len=%zu\n", n);
+        }
+    } else if (id == OPX_VOICE_GET) {
+        if (n >= 16)
+            printf("camp_opx get=voice_operation mode_raw=%u\n", little32(p + 12));
+        else
+            printf("camp_opx get=voice_operation status=unknown_short\n");
+    } else if (id == OPX_DEVSVC_GET) {
+        if (n >= 16)
+            printf("camp_opx get=device_service mode_raw=%u\n", little32(p + 12));
+        else
+            printf("camp_opx get=device_service status=unknown_short\n");
+    } else if (id == OPX_VOICE_SET || id == OPX_INTPS_SET ||
+               id == OPX_STACK_SET || id == OPX_DEVSVC_SET) {
+        printf("camp_opx set=%s response=yes error_raw=%u\n", c->probe_name,
+               error);
+    } else if (id == REG_ALLOW_DATA) {
+        /* SET acks are short; handle before the generic length guard so the
+         * reg_complete gate (and the opx experiment) can actually fire. */
+        c->reg_complete = 1;
+        printf("camp_reg set=allow_data response=yes error_raw=%u\n", error);
+    } else if (id == REG_SEL_AUTO_SET) {
+        printf("camp_reg set=selection_auto response=yes error_raw=%u\n", error);
+    } else if (id == REG_PREF_SET) {
+        printf("camp_reg set=preferred_lte_wcdma response=yes error_raw=%u\n",
+               error);
     } else if (n < (id == SIT_NET_DATA_REG ? 16u : 14u)) {
         printf("camp_probe field=%s status=unknown_short\n", c->probe_name);
     } else if (id == SIT_NET_VOICE_REG || id == SIT_NET_DATA_REG) {
@@ -2117,14 +2218,9 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
             c->preferred_raw = 0;
             printf("camp_reg field=preferred status=unknown_short\n");
         }
-    } else if (id == REG_SEL_AUTO_SET) {
-        printf("camp_reg set=selection_auto response=yes error_raw=%u\n", error);
-    } else if (id == REG_PREF_SET) {
-        printf("camp_reg set=preferred_lte_wcdma response=yes error_raw=%u\n",
-               error);
-    } else if (id == REG_ALLOW_DATA) {
-        c->reg_complete = 1;
-        printf("camp_reg set=allow_data response=yes error_raw=%u\n", error);
+    } else if (id == REG_SEL_AUTO_SET || id == REG_PREF_SET ||
+               id == REG_ALLOW_DATA) {
+        /* Handled above, before the generic length guard. */
     }
 }
 
@@ -2311,6 +2407,62 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    unsigned opx = camp_opx_next(c);
+    if (opx) {
+        ++c->probe_token;
+        int wrote;
+        const char *rname;
+        if (opx == OPX_VOICE_SET) {
+            uint8_t f[OPX_VOICE_LEN];
+            make_opx_u32_request(f, OPX_VOICE_SET, OPX_VOICE_LEN,
+                                 c->probe_token, OPX_VOICE_MODE);
+            c->opx_set_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_voice_operation";
+        } else if (opx == OPX_INTPS_SET) {
+            uint8_t f[OPX_INTPS_LEN];
+            make_opx_u32_request(f, OPX_INTPS_SET, OPX_INTPS_LEN,
+                                 c->probe_token, OPX_INTPS_MODE);
+            c->opx_set_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_intps_service";
+        } else if (opx == OPX_STACK_SET) {
+            uint8_t f[OPX_STACK_LEN];
+            make_opx_byte_request(f, OPX_STACK_SET, OPX_STACK_LEN,
+                                  c->probe_token, OPX_STACK_MODE_ENABLE);
+            c->opx_set_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_stack_status";
+        } else if (opx == OPX_DEVSVC_SET) {
+            uint8_t f[OPX_DEVSVC_LEN];
+            make_opx_u32_request(f, OPX_DEVSVC_SET, OPX_DEVSVC_LEN,
+                                 c->probe_token, OPX_DEVSVC_MODE_DATA);
+            c->opx_set_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_device_service";
+        } else {
+            if (opx == OPX_STACK_GET) c->opx_stack_get_sent = 1;
+            else if (opx == OPX_VOICE_GET) c->opx_voice_get_sent = 1;
+            else if (opx == OPX_DEVSVC_GET) c->opx_devsvc_get_sent = 1;
+            wrote = sit_send_get_once(o->ipc, (uint16_t)opx, c->probe_token);
+            rname = opx == OPX_STACK_GET ? "get_stack_status" :
+                    opx == OPX_VOICE_GET ? "get_voice_operation" :
+                                           "get_device_service";
+        }
+        /* After the single SET is dispatched the experiment is done; the normal
+         * round-robin then keeps snapshotting voice/data registration. */
+        if (c->opx_set_sent) c->opx_done = 1;
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = opx;
+        c->probe_name = rname;
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_opx=sent step=%s elapsed_ms=%lld\n", rname,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     unsigned pick;
     const char *name;
     if (c->sim_change_pending && !c->sim_ready) {
@@ -2335,6 +2487,24 @@ static void camp_probe_advance(struct owner *o, int64_t now)
     c->probe_sent++;
     printf("camp_probe=sent field=%s elapsed_ms=%lld\n", name,
            (long long)(now - c->owner_start_ms));
+}
+
+/* One operational SET is run per boot; the operator selects which by writing a
+ * single token to /data/saaios/etc/opx-step. Absent/empty/unknown => GET-only
+ * (no SET). Read once at startup; never a secret and never an NV/EFS path. */
+static int read_opx_step(void)
+{
+    int fd = open("/data/saaios/etc/opx-step", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return OPX_STEP_NONE;
+    char buf[16] = {0};
+    ssize_t r = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (r <= 0) return OPX_STEP_NONE;
+    if (!strncmp(buf, "voice", 5)) return OPX_STEP_VOICE;
+    if (!strncmp(buf, "intps", 5)) return OPX_STEP_INTPS;
+    if (!strncmp(buf, "stack", 5)) return OPX_STEP_STACK;
+    if (!strncmp(buf, "devsvc", 6)) return OPX_STEP_DEVSVC;
+    return OPX_STEP_NONE;
 }
 #endif /* SAAIOS_RFS_CAMP */
 
@@ -2443,6 +2613,8 @@ static int run_owner(int ipc, int rfs, int ready)
     o.sit.event_window_ms = started;
 #ifdef SAAIOS_RFS_CAMP
     o.camp.owner_start_ms = started;
+    o.camp.opx_step = read_opx_step();
+    printf("camp_opx_step=%d\n", o.camp.opx_step);
 #endif
     for (;;) {
         int64_t now = monotonic_ms();
@@ -3699,6 +3871,62 @@ static int test_camp_reg(void)
     memset(&g, 0, sizeof g);
     g.sim_ready = 1; g.reg_complete = 1;
     if (camp_reg_next(&g) != 0) return 149;
+
+    /* OPX experiment: after reg_complete the three GETs are read, then one SET
+     * per the selected step. GET-only when no step is selected. */
+    if (camp_opx_next(&g) != OPX_STACK_GET) return 150;
+    g.opx_stack_get_sent = 1;
+    if (camp_opx_next(&g) != OPX_VOICE_GET) return 151;
+    g.opx_voice_get_sent = 1;
+    if (camp_opx_next(&g) != OPX_DEVSVC_GET) return 152;
+    g.opx_devsvc_get_sent = 1;
+    if (camp_opx_next(&g) != 0) return 153;           /* no SET step selected */
+    g.opx_step = OPX_STEP_VOICE;
+    if (camp_opx_next(&g) != OPX_VOICE_SET) return 154;
+    g.opx_set_sent = 1; g.opx_done = 1;
+    if (camp_opx_next(&g) != 0) return 155;           /* done after one SET */
+
+    struct camp_driver h;
+    memset(&h, 0, sizeof h);
+    h.sim_ready = 1; h.reg_complete = 1; h.opx_step = OPX_STEP_INTPS;
+    h.opx_stack_get_sent = h.opx_voice_get_sent = h.opx_devsvc_get_sent = 1;
+    if (camp_opx_next(&h) != OPX_INTPS_SET) return 156;
+    struct camp_driver k;
+    memset(&k, 0, sizeof k);
+    k.sim_ready = 1; k.reg_complete = 1; k.opx_step = OPX_STEP_STACK;
+    k.opx_stack_get_sent = k.opx_voice_get_sent = k.opx_devsvc_get_sent = 1;
+    if (camp_opx_next(&k) != OPX_STACK_SET) return 157;
+    struct camp_driver dv;
+    memset(&dv, 0, sizeof dv);
+    dv.sim_ready = 1; dv.reg_complete = 1; dv.opx_step = OPX_STEP_DEVSVC;
+    dv.opx_stack_get_sent = dv.opx_voice_get_sent = dv.opx_devsvc_get_sent = 1;
+    if (camp_opx_next(&dv) != OPX_DEVSVC_SET) return 161;
+
+    /* Frame byte-exactness: id@+2, len@+4, token@+6, body@+12. */
+    uint8_t vs[OPX_VOICE_LEN];
+    static const uint8_t vs_e[OPX_VOICE_LEN] =
+        {0,0,0x1a,0x09,16,0,0x78,0x56,0x34,0x12,0,0,3,0,0,0};
+    make_opx_u32_request(vs, OPX_VOICE_SET, OPX_VOICE_LEN, 0x12345678,
+                         OPX_VOICE_MODE);
+    if (!same_bytes(vs, vs_e, sizeof vs)) return 158;
+    uint8_t is[OPX_INTPS_LEN];
+    static const uint8_t is_e[OPX_INTPS_LEN] =
+        {0,0,0x33,0x09,16,0,0x78,0x56,0x34,0x12,0,0,1,0,0,0};
+    make_opx_u32_request(is, OPX_INTPS_SET, OPX_INTPS_LEN, 0x12345678,
+                         OPX_INTPS_MODE);
+    if (!same_bytes(is, is_e, sizeof is)) return 159;
+    uint8_t ss[OPX_STACK_LEN];
+    static const uint8_t ss_e[OPX_STACK_LEN] =
+        {0,0,0x0f,0x08,13,0,0x78,0x56,0x34,0x12,0,0,1};
+    make_opx_byte_request(ss, OPX_STACK_SET, OPX_STACK_LEN, 0x12345678,
+                          OPX_STACK_MODE_ENABLE);
+    if (!same_bytes(ss, ss_e, sizeof ss)) return 160;
+    uint8_t ds[OPX_DEVSVC_LEN];
+    static const uint8_t ds_e[OPX_DEVSVC_LEN] =
+        {0,0,0x56,0x09,16,0,0x78,0x56,0x34,0x12,0,0,2,0,0,0};
+    make_opx_u32_request(ds, OPX_DEVSVC_SET, OPX_DEVSVC_LEN, 0x12345678,
+                         OPX_DEVSVC_MODE_DATA);
+    if (!same_bytes(ds, ds_e, sizeof ds)) return 162;
     return 0;
 }
 #endif
