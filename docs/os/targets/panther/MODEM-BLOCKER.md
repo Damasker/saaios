@@ -1519,6 +1519,33 @@ early camp-on **`0x0800`** (`NetworkService` `TrySetRadioPower(10)` →
 `OnRequest(RADIO_POWER=23)`); needs the exact `DoRadioPower`/`BuildRadioPower`
 body recovered (no guessed body) before building/running a `0x0800` candidate.
 
+### 2026-10-02 — `sgc-camp-once`: `0x0800` accepted, START_NETWORK, zero signal
+
+Recovered the exact `0x0800` body from `TrySetRadioPower(10)`→`DoRadioPower`→
+`BuildRadioPower(1,0,0)`: 18 B, power word `+12 = 2` (ON), flags `+16/+17 = 0`
+(derived, not guessed). Added mode `SAAIOS_SGC_CAMP_ONCE` sending
+`0x093f`→`0x0404`→`0x0800` on the early edge (6 modes build `-Werror` + pass
+self-test; ARM64 owner `0597553d`, probe `7a2914d4`). **Live:** the `0x0800`
+was **accepted** (`error_raw=0`) and drove `radio_state_raw=2 = START_NETWORK` —
+the modem began an active scan (`0x0906` ×47), which earlier runs never reached.
+But `signal mask_low7=0` (no cell), `registration_raw=0`, all `rmnet rx/tx=0`,
+no IPv4. **Bearer verified? no.**
+
+**RF pivot.** Active search + zero signal ⇒ RF/NV precondition, not ordering.
+Across every camp boot the modem drives `umts_rfs0` with the protected-NV
+sequence **cmd 7 unprotect(state 3) → cmd 3 op-status → cmd 6 io_write @
+`0x02e406`** (pinned in `rfs-error-probe.c`), which the camp owner never grants
+(`rfs_responses=none`). The RIL gates RF on NV readiness
+(`RCM_E_NO_RF_CALIBRATION_INFO`, `SIT_PWR_RADIO_SIM_STATE_NV_NOT_READY/READY`,
+`GetRfCalDate`). **Most probable precondition:** the protected-NV RFS write must
+be granted (to the existing quarantine, never original EFS) for the modem to
+mark NV/RF-cal ready and produce signal. **Next action:** one owner holding
+`ipc0`+`rfs0` that serves the `cmd 7/3/6` sequence into the quarantine
+(`modem-rfs-one-grant-owner.c` / `modem-rfs-full-quarantine-owner.c`; fresh RO
+EFS provenance check first) **and** issues `0x093f`→`0x0404`→`0x0800` on the
+edge, then watch `mask_low7`/`0x0700`. Prereq: factory `cmd-6`-after-state-3
+reply shape from stock `rfsd` (`58d7f885…`); do not invent it or write EFS.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

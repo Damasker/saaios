@@ -1245,3 +1245,89 @@ exact `0x0800` body from `DoRadioPower`/`BuildRadioPower` (power word, `arg2`,
 `sgc-seq-once`) mode that issues `0x093f`→`0x0404`→`0x0800` on the same edge,
 self-test it, and live-run it one candidate at a time. No secrets, NV, APN,
 PIN, CardPower or EFS writes were made in this run.
+
+## `0x0800` RE + `sgc-camp-once`: camp-on reaches START_NETWORK, zero signal
+
+**Exact `0x0800` body (derived, not guessed).** From stock TD1A `libsitril`:
+`NetworkService::TrySetRadioPower(int)` (`0x1930f0`) issues
+`ServiceInterface::OnRequest(RIL_REQUEST_RADIO_POWER=23, &v, 4)` with the single
+int `v = (arg==10)?1:0 = 1`. `NetworkService::DoRadioPower(Message*)`
+(`0x193860`) reads `ints[0]` as the power value and only reads `ints[1]/ints[2]`
+when the request carries **≥3 ints**; with one int both are 0. It then calls
+`ProtocolNetworkBuilder::BuildRadioPower(1, 0, 0)` (`0x236350`), which emits an
+18-byte message via `InitRequestHeader(id=0x800, len=18)` with the power word at
+offset 12 = `(arg1!=0)?2:1 = 2` and the two flag bytes at offsets 16/17 =
+`arg2`/`arg3` = 0. So the camp-on `0x0800` body is: id `0x0800`, len 18, payload
+`+12 = LE32 2` (radio ON), `+16 = 0`, `+17 = 0`.
+
+**Implementation — `sgc-camp-once`.** A fifth mutually-exclusive mode
+`SAAIOS_SGC_CAMP_ONCE` (under the shared `SAAIOS_SGC_EDGE` umbrella) sends the
+full stock stage-1 in order on the `0x0803`→`0x0802`-raw-0 edge:
+`0x093f`→`0x0404`→`0x0800`. The SEQ config-step blocks were generalized to a
+`SAAIOS_SGC_CFG_STEP` macro and a new `SAAIOS_SGC_CAMP_STEP` adds the `0x0800`
+builder, back-to-back send, and ACK matching (moved above the phase gate so the
+post-SGC `0x0800` reply is logged even after the SGC ACK reaches DONE). Host
+self-test adds cases 186–190; all six modes build `-Wall -Wextra -Werror` and
+pass `self-test`; the guard rejects any combination. Artifacts:
+`build-owner-sgc-camp-once.sh`, `probe-sgc-camp-once-config.h`,
+`owner-handoff-sgc-camp.sh`; ARM64 reproducible SHA-256 — owner
+`0597553d7d0924b7ca33a3d499adfa4d1d20ea19de22dab50b695b4be3deb7cd`, probe
+`7a2914d454845336f9da32e1e7e9efebcc625ffa88fc956fde812c04e02904e9`.
+
+**Live run — `0x0800` ACCEPTED, CP enters START_NETWORK (new), still zero
+signal.** Fresh boot → RO-persist guarded handoff → CP ONLINE; verified on
+device (SHA-256, `--mode sgc-camp-once`, probe flags, `self-test` PASS). On the
+edge (`0x0803` len 8 then `0x0802` raw 0 at +9.818 s) the owner dispatched all
+three at +10.323 s. The SGC was accepted (`error_raw=0`) and — new — the
+**`0x0800` was accepted** (`sgc_camp_power … error_raw=0 status=accepted` at
++10.386 s), immediately driving `cp_ind 0x0802 radio_state_raw=2 =
+START_NETWORK`. The CP then actively searched: the owner's heartbeat recorded
+`ipc_2:0x0906` **×47** (PLMN/network-search indications), `0x074b`, `0x070e`,
+`0x0810` — activity never seen in the earlier runs, where the radio only sat at
+INITIALIZED→ON. `0x093f` even drew a (very late, +80.8 s) accept this time.
+
+But the settled result was unchanged where it matters: radio `radio_raw=10`,
+data `registration_raw=0`, `net_factory signal … mask_low7=0` (no serving
+cell), and some settled GETs timed out because the CP was busy searching. All
+`rmnet0`–`rmnet29` stayed `rx=0 tx=0`, no rmnet IPv4. **Bearer verified? no.**
+
+## RF-precondition pivot: the unserved protected-NV RFS write
+
+The camp-on moved the modem from idle to **active network search yet it detects
+zero signal** — this is an RF/NV precondition, not command ordering. The
+evidence converges on the protected-NV RFS transaction this sprint is named
+for:
+
+- Throughout every camp boot the modem drives the RFS channel
+  (`umts_rfs0`) and our camp owner answers none of it (`rfs_responses=none`):
+  the recorded sequence is **cmd 7 unprotect (state 3) → cmd 3 op-status → cmd
+  6 io_write to protected NV at offset `0x02e406`, len 2** (the exact bytes are
+  pinned in `rfs-error-probe.c`), retried across the whole run (seq 0→3 over
+  162 s).
+- The stock RIL gates the radio/RF on NV readiness: `libsitril` contains
+  `RCM_E_NO_RF_CALIBRATION_INFO`, `SIT_PWR_RADIO_SIM_STATE_NV_NOT_READY` /
+  `…NV_READY`, `ProtocolMiscVersionAdapter::GetRfCalDate`, `GetRfState`, and
+  `NvReadItem`/`NvWriteItem` handlers. The modem must complete its protected-NV
+  write/readiness handshake before the RF front-end yields valid measurements.
+- So even though camp-on now reaches START_NETWORK and scans, the modem cannot
+  finish the NV handshake (its `cmd 6` write is never granted), RF stays
+  un-ready, and `mask_low7` stays 0.
+
+**Most probable RF precondition:** the modem's protected-NV RFS write (`cmd 6`
+to `nv_protected.bin` region, offset `0x02e406`) must be granted for the modem
+to mark NV/RF-cal ready and produce signal. This is exactly the transaction the
+MODEM-07 quarantine owners (`modem-rfs-one-grant-owner.c`,
+`modem-rfs-full-quarantine-owner.c`) already serve **to a quarantined copy,
+never to original EFS**.
+
+**Concrete, constraint-safe next action:** run the early camp-on IPC sequence
+and the quarantined RFS write-grant **together** — an owner that holds both
+`umts_ipc0` and `umts_rfs0`, serves the modem's `cmd 7/3/6` protected-NV
+sequence into the existing quarantine (RAM/userdata copy, with the fresh
+read-only original-EFS provenance check first, never an EFS RW mount or a write
+to `sda5`), and issues `0x093f`→`0x0404`→`0x0800` on the radio edge. Then watch
+whether `mask_low7` becomes non-zero and registration (`0x0700`/`0x0701`)
+advances. The prerequisite is the factory `cmd-6`-after-state-3 success reply
+shape (which `rfs-error-probe.c` refuses to invent) recovered from the stock
+`rfsd` (SHA `58d7f885…`). No opcodes are invented; no RF-cal/NV is written to
+original EFS; EFS is never mounted RW.
