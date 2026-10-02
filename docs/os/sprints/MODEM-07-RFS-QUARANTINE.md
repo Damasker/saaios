@@ -6,6 +6,27 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 CP normal-NV self-downgrade FALSIFIED (read-only capture + diff).**
+Extended the quarantine owner with a guarded, self-tested, `-Werror`-clean
+`SAAIOS_RFS_NORMAL_CAPTURE` block that answers the CP's handle-1 (normal-NV)
+open/grant-request and streams the chunks to a quarantine-only `normal-candidate.bin`
+(never real EFS/sda5/nv_normal; no payload logged). First attempt got 0 bytes — the CP
+refused the grant (status-6) because the handle-1 request uses sequence 2 while the proven
+handle-3 grant echoes sequence 1; fixed by echoing the request's sequence in the grant's
+`w0` high-16. Second boot captured the full blob intact (476454 bytes,
+`NORMAL_CAPTURE done received=476454 grants=237`), CP ONLINE/SIM-READY. A fast anchored
+diff vs the fed-in `nv_normal.bin` (byte-identical to real sda5 per V7) shows 476361 equal
+bytes / 10 tiny edit regions; the entire static config body is byte-identical (zero
+mismatches over 4000 random samples). All edits are write-gen counters, per-record
+checksums, one timestamp-shaped 9-byte value, and a non-persisted ~47 KB tail — no
+registration-relevant NV item (op-mode, service-domain, limited-service, PLMN-sel, RAT/band,
+GCFMODE, attach) changed. The CP does not self-downgrade normal-NV, matching protected-NV
+(V7). Device left known-good: proven owner restored on disk (`90f403df`), CP ONLINE;
+READ-ONLY throughout. With V7/V9/V10 all falsified, the single best remaining hypothesis is
+a missing host-side RIL/SIT bring-up sequence (radio online + automatic PLMN selection / PS
+attach) rather than NV/secure-boot. See
+[MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 10.
+
 **2026-10-03 secure-boot / `IOCTL_REQ_SECURITY` FALSIFIED as the gate (live-tested, one controlled boot).**
 We implemented the GENUINE handshake and issued it. First pinned that the params are
 kernel-ignored (the handler reads only `mode`; all SMC args are kernel-derived from

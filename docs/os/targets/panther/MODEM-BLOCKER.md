@@ -1,5 +1,58 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 10 — CP NORMAL-NV SELF-DOWNGRADE FALSIFIED (read-only capture + structural diff). We extended the quarantine owner to capture the full ~476 KB handle-1 normal-NV write-out the CP emits during init (seq-matched grant; captured intact, 476454 bytes, `NORMAL_CAPTURE done received=476454 grants=237`) and diffed it against the fed-in `nv_normal.bin` (byte-identical to real sda5 EFS per V7). Result: the entire static NV config body is BYTE-IDENTICAL (4000 random samples across offsets ~1854→108784 and 108786→476439: zero mismatches). The only changes are write-generation bookkeeping: two header counters (off8 `07→10`, off24 `6b→6c`), one 9-byte record that grew with a CP-written timestamp/binary value (off790, before the `FKPSUZ` catalog token), a handful of single/double checksum bytes beside NV catalog strings (`GT-B3730 Ver 7.0`, `[-ALL-]`, `Specific #`), one 2-byte checksum before the `SINDX1` record (off108784 `3c19→bd0e`), and ~47 KB of trailing flash content the CP doesn't persist. NO op-mode / UE_OPERATION_MODE, service-domain, limited-service/emergency-only, PLMN-sel, RAT/band, GCFMODE, or attach field changed. The CP does NOT self-downgrade normal-NV at runtime — same as protected-NV (V7, only a +4 write-gen counter). With op-mode NV (V7), secure-boot/REQ_SECURITY (V9), and now CP NV self-downgrade (V10) all falsified, the deny is NOT a CP config/NV decision. Device left known-good: proven owner restored on disk (`90f403df`), CP ONLINE; READ-ONLY throughout (no NV/EFS write, nothing forged) (2026-10-03):**
+
+### 1. What we did (read-only normal-NV capture)
+The proven owner captures only the protected-NV (handle-3) write-out; handle-1 (normal-NV)
+was observed but discarded. We added a guarded, self-tested, `-Werror`-clean
+`SAAIOS_RFS_NORMAL_CAPTURE` block to `modem-rfs-full-quarantine-owner.c` that answers the
+CP's handle-1 open/grant-request and streams the chunks into a quarantine-only
+`normal-candidate.bin` (never the real EFS/sda5/nv_normal; no payload bytes logged). The
+default build is unchanged and byte-identical to the deployed proven owner (`90f403df`);
+the capture build is a separate macro variant.
+
+### 2. The sequence-echo fix
+First capture attempt got 0 bytes: the CP refused our grant with a status-6 frame
+(`cmd=65538 off8=6 file=1 len=0`). RFS_TRACE showed the handle-1 grant-request carries
+**sequence 2** (`w0=0x20006`) whereas the proven handle-3 grant echoes **sequence 1**.
+Fix: echo the request's sequence in the grant's `w0` high-16 (`2u | (seq<<16)`). Second
+boot captured the full blob: `NORMAL_CAPTURE open total=476454 seq=2`,
+`NORMAL_CAPTURE done received=476454 grants=237`.
+
+### 3. Structural diff vs fed-in `nv_normal.bin`
+Raw `cmp` reported 96% bytes differing, but that is pure misalignment: a fast anchored
+diff shows **476361 equal bytes** and only **10 edit regions**. The static configuration
+body (offsets ~1854 through 476439, excepting one 2-byte checksum) is byte-for-byte
+identical. All edits are write-generation counters, per-record checksums/CRCs, one
+timestamp-shaped 9-byte value, and the non-persisted tail — classic NV bookkeeping, no
+config field. No registration-relevant NV item (op-mode, service-domain, limited-service,
+PLMN-sel, RAT/band, GCFMODE, attach) was altered by the CP.
+
+### 4. Interpretation — no downgrade, no new lever
+Because the CP writes back our config untouched, the local registration deny is **not** a
+CP self-downgrade of NV, and the diff yields no downgraded field to re-set (so no new
+constraint-safe lever from this path; op-mode RAM SETs were already ineffective). Combined
+with V7 (op-mode NV) and V9 (secure-boot), the deny is not an NV/config or secure-boot
+decision at all.
+
+### 5. Device state & single best remaining hypothesis
+Device left known-good: proven owner restored on disk (`90f403df`), CP ONLINE; the
+`SAAIOS_RFS_NORMAL_CAPTURE` source block is inert in normal builds (build scripts don't
+pass the macro) and kept as the reproducible characterization. **Shrinking possibility set:**
+not op-mode NV (V7), not secure-boot (V9), not CP NV self-downgrade (V10). The CP reaches
+ONLINE/SIM-READY with signal, yet PS stays `NOT_SEARCHING(0)` with `reject_cause=0` and CS
+`REG_DENIED(3)`. `NOT_SEARCHING` + `reject_cause=0` means the CP is **not transmitting an
+attach/registration request** — this is not a network reject, it is the CP declining to
+search. **Best next hypothesis: the gate is a missing host-side control-plane (RIL/SIT)
+bring-up sequence** — the stock `rild`/`libsit` steps that command the radio fully online
+and trigger automatic PLMN selection / PS attach (e.g. RADIO_POWER on, set-network-selection
+automatic, set preferred RAT, set attach/operator profile) that we have not replayed.
+Next step: recover that SIT bring-up sequence from the stock `libsit`/`rild` binaries and
+replay it (constraint-safe, no NV), then re-check CS/PS; if PS registers, bearer chase
+(VerifyPin → GetPsService → SetupDataCall 0x0600 Life APN).
+
+---
+
 **VERDICT 9 — SECURE-BOOT / `IOCTL_REQ_SECURITY` FALSIFIED as the gate (live-tested). We implemented and issued the GENUINE handshake (ioctl `0x40106f53`, modes 2/0/1, byte-identical to stock cbd) on one controlled boot. All three were rejected by the kernel with `EINVAL` — dmesg: `cpif: bootdump_ioctl: umts_boot0: security_req is null` — so the EL3/ldfw SMC NEVER executed. Root cause: cpif's `create_link_device` installs the `security_request` handler (io-device offset 976) only when its arg2 is 0 AND a DT link-attribute bit is set; on panther's modem link config that slot is left NULL. Since SaaiOS loads the identical stock `cpif.ko` + the device's own DT, STOCK cbd hits the same NULL handler → its `REQ_SECURITY` also returns `EINVAL` and is non-fatal. REQ_SECURITY is therefore vestigial on panther and cannot be the registration gate. The real image authentication is the CP/PBL integrity check at UDL MAIN DONE, which we already pass. MAIN DONE still passed, CP reached ONLINE, registration UNCHANGED (CS REG_DENIED, PS NOT_SEARCHING). Device reverted to the proven probe; no NV/EFS write; nothing forged (2026-10-03):**
 
 ### 1. What we did (genuine handshake, one controlled boot)

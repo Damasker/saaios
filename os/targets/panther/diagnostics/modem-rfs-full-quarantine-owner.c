@@ -1437,6 +1437,22 @@ static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
 {
     static uint8_t pt_rx[RX_CAP];
     static size_t pt_used;
+#ifdef SAAIOS_RFS_NORMAL_CAPTURE
+    /* Read-only diagnostic (opt-in): capture the CP's handle-1 normal-NV
+     * write-OUT into a SEPARATE quarantine file so it can be diffed offline
+     * against the fed-in nv_normal.bin. The CP repeatedly issues a handle-1
+     * grant-request (cmd=6, total size in w4) that the proven drain never
+     * answers, so the data never flows. Here we answer it with the SAME grant
+     * byte layout already proven on the handle-3 path, carrying the file id
+     * (1) the CP itself declared -- recovered protocol, no invented opcode --
+     * and write the returned chunks to the quarantine copy only. Never touches
+     * real EFS/nv_normal; never logs payload bytes. */
+    static int normal_fd = -1;
+    static uint32_t normal_total, normal_received;
+    static unsigned normal_grants;
+    static uint16_t normal_seq;
+    static int normal_done;
+#endif
     if (!bytes || got > sizeof pt_rx - pt_used) {
         pt_used = 0; /* resynchronize rather than retain ambiguous bytes */
         return;
@@ -1458,6 +1474,96 @@ static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
                 done += (size_t)n;
             }
         }
+#ifdef SAAIOS_RFS_NORMAL_CAPTURE
+        if (!normal_done && (size_t)size >= 20) {
+            uint16_t cmd = little16(pt_rx);
+            if (cmd == 7 && (size_t)size == 12 && little32(pt_rx + 8) == 1) {
+                /* handle-1 open: ack with the proven status layout, file id 1 */
+                static const uint8_t st1[16] =
+                    {3,0,0,0, 8,0,0,0, 0,0,0,0, 1,0,0,0};
+                size_t done = 0;
+                while (done < sizeof st1) {
+                    ssize_t n = write(o->rfs, st1 + done, sizeof st1 - done);
+                    if (n < 0 && errno == EINTR) continue;
+                    if (n <= 0) break;
+                    done += (size_t)n;
+                }
+            } else if (cmd == 6 && (size_t)size == 24 &&
+                       little32(pt_rx + 8) == 1) {
+                /* handle-1 grant-request: w4 = total normal-NV size; echo the
+                 * CP's sequence (w0 high 16) in our grant so it is accepted. */
+                uint32_t total = little32(pt_rx + 16);
+                normal_seq = little16(pt_rx + 2);
+                if (normal_fd < 0 && total > 0 && total <= BASELINE_BYTES &&
+                    o->quarantine_dir >= 0) {
+                    normal_fd = openat(o->quarantine_dir, "normal-candidate.bin",
+                                       O_CREAT | O_RDWR | O_EXCL | O_CLOEXEC,
+                                       0600);
+                    normal_total = total;
+                    normal_received = 0;
+                    printf("NORMAL_CAPTURE open total=%u seq=%u fd=%d\n",
+                           total, normal_seq, normal_fd);
+                    fflush(stdout);
+                }
+                if (normal_fd >= 0 && normal_received < normal_total) {
+                    uint32_t remain = normal_total - normal_received;
+                    uint32_t len = remain < FIRST_CHUNK ? remain : FIRST_CHUNK;
+                    uint8_t grant[20] = {2,0,0,0, 12,0,0,0, 1,0,0,0};
+                    put_little32(grant, 2u | ((uint32_t)normal_seq << 16));
+                    put_little32(grant + 12, normal_received);
+                    put_little32(grant + 16, len);
+                    size_t done = 0;
+                    while (done < sizeof grant) {
+                        ssize_t n = write(o->rfs, grant + done,
+                                          sizeof grant - done);
+                        if (n < 0 && errno == EINTR) continue;
+                        if (n <= 0) break;
+                        done += (size_t)n;
+                    }
+                    normal_grants++;
+                }
+            } else if (cmd == 2 && normal_fd >= 0 &&
+                       little32(pt_rx + 12) == 1) {
+                /* handle-1 CP response: data chunk (len>0) or status (len==0) */
+                uint32_t clen = little32(pt_rx + 16);
+                if (clen == 0) {
+                    printf("NORMAL_CAPTURE status=%u seq=%u received=%u\n",
+                           little32(pt_rx + 8), little16(pt_rx + 2),
+                           normal_received);
+                    fflush(stdout);
+                }
+                if (clen > 0 && clen <= FIRST_CHUNK &&
+                    (size_t)size >= 20u + clen &&
+                    normal_received + clen <= normal_total &&
+                    write_all_at(normal_fd, pt_rx + 20, clen,
+                                 (off_t)normal_received) == 0)
+                    normal_received += clen;
+                if (normal_received >= normal_total) {
+                    (void)fsync(normal_fd);
+                    normal_done = 1;
+                    printf("NORMAL_CAPTURE done received=%u grants=%u\n",
+                           normal_received, normal_grants);
+                    fflush(stdout);
+                } else if (clen > 0) {
+                    uint32_t remain = normal_total - normal_received;
+                    uint32_t len = remain < FIRST_CHUNK ? remain : FIRST_CHUNK;
+                    uint8_t grant[20] = {2,0,0,0, 12,0,0,0, 1,0,0,0};
+                    put_little32(grant, 2u | ((uint32_t)normal_seq << 16));
+                    put_little32(grant + 12, normal_received);
+                    put_little32(grant + 16, len);
+                    size_t done = 0;
+                    while (done < sizeof grant) {
+                        ssize_t n = write(o->rfs, grant + done,
+                                          sizeof grant - done);
+                        if (n < 0 && errno == EINTR) continue;
+                        if (n <= 0) break;
+                        done += (size_t)n;
+                    }
+                    normal_grants++;
+                }
+            }
+        }
+#endif
         memmove(pt_rx, pt_rx + size, pt_used - (size_t)size);
         pt_used -= (size_t)size;
     }

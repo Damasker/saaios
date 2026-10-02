@@ -1,5 +1,20 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 CP normal-NV self-downgrade FALSIFIED (read-only capture + diff):** extended
+the quarantine owner with a guarded `SAAIOS_RFS_NORMAL_CAPTURE` block to capture the CP's
+handle-1 (normal-NV) write-out into a quarantine-only file (never real EFS/nv_normal; no
+payload logged). Needed a sequence-echo fix in the grant (handle-1 request uses seq 2 vs
+handle-3's seq 1) after a first status-6 refusal. Captured intact (476454 bytes,
+`received=476454 grants=237`), CP ONLINE/SIM-READY. Anchored diff vs fed-in `nv_normal.bin`
+(byte-identical to sda5 per V7): 476361 equal bytes, 10 tiny edit regions, static config
+body byte-identical (0 mismatches / 4000 samples). All edits are write-gen counters,
+per-record checksums, one timestamp-shaped 9-byte value, and a non-persisted ~47 KB tail —
+no op-mode/service-domain/limited-service/PLMN/RAT/GCFMODE/attach field changed. CP does not
+self-downgrade normal-NV (matches protected-NV V7). Device known-good: proven owner restored
+(`90f403df`), CP ONLINE; READ-ONLY throughout. With V7/V9/V10 falsified, best remaining
+hypothesis = missing host-side RIL/SIT bring-up (radio online + automatic PLMN selection /
+PS attach). Full writeup in [MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 10.
+
 **2026-10-03 `IOCTL_REQ_SECURITY` FALSIFIED as the gate (live-tested):** implemented the
 GENUINE handshake (modes 2→0→1, params 0 = kernel-ignored → byte-identical SMC) as a
 guarded, self-tested, non-fatal `PROBE_SECURITY` block (proven rebuild byte-identical
