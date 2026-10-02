@@ -1457,3 +1457,37 @@ action:** reverse-engineer the CP registration gate (`SIT_REG 0x20d1afa`;
 PresentObj `#636c +0xBF6` in CP shm) to identify exactly which internal config
 the MM validates before permitting registration — not EFS writes, not `0x0704`
 spam. No opcodes or reply bytes were invented; EFS was never mounted RW.
+
+## 2026-10-02 — registration triggers in the owner; blocked by PCIe link-drop
+
+Rather than one-shot `ipc0` tools (which race the single owner for the channel
+and never coordinate the sit-status lock), the registration triggers were
+integrated into the unified owner (Option C): once the SIM reads READY it runs a
+one-shot sequence — confirm radio ON (`0x0801`); read selection (`0x0703`) and
+force **automatic** (`0x0704`) unless already auto; read preferred RAT (`0x070b`)
+and **broaden `LTE_ONLY(11)` → `LTE_WCDMA(12)`** (`0x070a`); `AllowData(1)`
+(`0x0710`). Builders are the recovered/self-tested factory shapes from
+`ready-network-once.c`; SETs fire at most once, GETs retry a bounded number of
+times then advance (so a slow/absent reply cannot stall the chain). Reproducible
+owner `8ba92be2…`; host + on-device self-test PASS (adds `test_camp_reg`),
+`-Werror`.
+
+**Driving hypothesis:** preferred RAT `LTE_ONLY(11)` vs. only-UMTS-present
+(`mask=2`, data `tech_raw=3`) is a RAT mismatch; broadening to `LTE_WCDMA(12)`
+should let the modem register on the present UMTS cell — constraint-safe, no EFS
+write.
+
+**Live:** one clean boot showed the sequence engage (radio `radio_raw=10`, then
+selection GET); the bounded-retry fix now carries it past a non-replying
+`0x0703` to the broaden + AllowData. But the broaden was **not observed live**:
+the next **8 consecutive** `sysrq`-reboot → handoff cycles came up with the modem
+**PCIe endpoint dropping right after RadioPower-ON** (`cpif: pcie_send_ap2cp_irq:
+… PCI not powered on`) — SIM never initialized (`card_raw=0`), every IPC GET
+timed out, so the SIM-READY-gated sequence never ran. CP boots cleanly
+(`complete_normal_boot`, `CP2AP_WAKEUP=1`, no `cp_crash`; 100 %/33 °C). Recovery
+that did not help: long modem-off soak, RC `power/control=on`, disabling EP L1.2
+ASPM (`l1_2_aspm`/`l1_2_pcipm`=0), repeated reboots — the drop is cpif-managed CP
+runtime-PM below ASPM and warm `sysrq b` does not reset the modem rail; a **cold
+power cycle** is the likely requirement. The real-EFS boundary is **not** reached
+— the broaden experiment is ready and needs only one boot where the endpoint
+stays powered. Bearer verified: **no**.

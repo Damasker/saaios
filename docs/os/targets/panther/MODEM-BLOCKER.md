@@ -1598,6 +1598,55 @@ config). Next unmet precondition: CS/PS registration. Next action: RE the CP
 registration gate (`SIT_REG 0x20d1afa`; PresentObj `#636c +0xBF6`) — no EFS
 write, no `0x0704` spam. Bearer verified: **no**.
 
+## 2026-10-02 — registration triggers landed; blocked by modem PCIe link-drop
+
+Acting on the CP-config verdict, the unified owner now runs a one-shot
+registration-trigger sequence once the SIM reads READY: confirm radio ON
+(`0x0801`), read selection mode (`0x0703`) and force **automatic** (`0x0704`)
+unless already auto, read preferred RAT (`0x070b`) and **broaden `LTE_ONLY(11)`
+→ `LTE_WCDMA(12)`** (`0x070a`), then `AllowData(1)` (`0x0710`). All builders are
+the recovered/self-tested factory shapes from `ready-network-once.c` (no invented
+bytes); SETs are sent at most once, GETs retry a bounded number of times then
+advance so a slow/absent reply cannot stall the chain. Reproducible ARM64 owner
+`8ba92be2…`; host + on-device `self-test` PASS (adds `test_camp_reg`), `-Werror`.
+
+**Motivating hypothesis (RAT mismatch):** preferred RAT is `LTE_ONLY(11)` while
+the only present signal is UMTS (`mask_low7=2`, data `tech_raw=3`), so CS is
+denied on LTE and PS never searches. Broadening to `LTE_WCDMA(12)` lets the modem
+use the present UMTS cell — a fixable config mismatch, constraint-safe (no EFS
+write).
+
+**Live partial evidence (one clean boot):** the sequence engaged correctly —
+radio confirmed ON (`radio_raw=10`), then it attempted the selection GET. On that
+boot `0x0703` never replied and the *old* build blocked on it; the bounded-retry
+fix above now advances past it to the preferred-RAT broaden + AllowData. The
+broaden experiment itself was **not yet observed live** (see blocker).
+
+**Blocker (new, transport-level):** after that one boot, **7 consecutive**
+`sysrq`-reboot → handoff cycles came up with the modem **PCIe endpoint dropping
+right after RadioPower-ON** — `cpif: pcie_send_ap2cp_irq: Reserve doorbell
+interrupt: PCI not powered on`. The link works for the first ~9 s (pre-dispatch
+SIM/signal/voice/data GETs reply) and then dies after `0x0800`; the SIM never
+initializes (`card_raw=0`), every IPC GET times out, so the registration
+sequence (correctly gated on SIM READY) never runs. The CP itself boots cleanly
+(`complete_normal_boot`, `CP2AP_WAKEUP=0x1`, no `cp_crash`; battery 100 %, 33 °C),
+so this is a modem-side PCIe runtime-PM / L1.2 sleep that cpif cannot wake, not a
+CP crash and not the new code (which only runs post-SIM-READY).
+
+**Recovery attempts that did NOT help:** long power-framework settle (90 s); pin
+RC `power/control=on`; disable the EP link L1.2 ASPM
+(`.../0000:01:00.0/link/l1_2_aspm`+`l1_2_pcipm` → `0`, confirmed applied);
+repeated plain reboots. The drop is cpif-managed CP runtime-PM (deeper than ASPM
+L1.2) and warm `sysrq b` does not reset the modem power rail — a **cold hardware
+power cycle** is the likely requirement. The read-only USIM EF diagnosis
+(`EFfplmn`/`EFad`/`EFimsi` via `0x0208`) is blocked by the same dead transport.
+
+**Next unmet precondition:** a stable PCIe link that keeps the CP reachable
+through RadioPower-ON so the SIM initializes and the registration triggers run.
+We have **not** reached the real-EFS constraint boundary — the RAT-broaden
+experiment is constraint-safe and ready; it simply needs one boot where the modem
+endpoint stays powered. Bearer verified: **no**.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

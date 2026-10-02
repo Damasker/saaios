@@ -6068,3 +6068,33 @@ at a time, are early `SetModemsConfig 0x093f` and early camp-on `0x0800`
 (`TrySetRadioPower(10)`); each needs its own guarded mutually-exclusive build
 and self-test before a device run. No NV, APN, PIN, CardPower or EFS write was
 made.
+
+## 2026-10-02: registration triggers in the owner + PCIe link-drop blocker
+
+The unified owner now runs a SIM-READY-gated, one-shot registration sequence:
+confirm radio ON (`0x0801`), read selection (`0x0703`) and force automatic
+(`0x0704`) unless already auto, read preferred RAT (`0x070b`) and set
+`LTE_WCDMA(12)` (`0x070a`) unless it already reads 12, then `AllowData(1)`
+(`0x0710`). GETs retry a bounded number of times then advance; SETs fire once.
+Builders are the recovered/self-tested factory shapes; owner `b5ac7592…`,
+host + on-device self-test PASS (`test_camp_reg`), `-Werror`.
+
+Hypothesis under test: preferred RAT excludes WCDMA while the only present signal
+is UMTS (`mask_low7=2`, data `tech_raw=3`), so broadening to `LTE_WCDMA(12)`
+should let PS search the present cell. The settled `preferred raw 16` seen on
+earlier boots is exactly why the broaden fires for any value other than an
+explicit `12`.
+
+Live status: one clean boot showed the sequence engage (radio `radio_raw=10`,
+then selection GET — which did not reply; the bounded-retry fix now advances past
+it). The broaden itself was **not** observed live: the following eight
+`sysrq`-reboot → handoff cycles all came up with the modem **PCIe endpoint
+dropping right after RadioPower-ON** — `cpif: pcie_send_ap2cp_irq: Reserve
+doorbell interrupt: PCI not powered on`. The link replies for the first ~9 s then
+dies after `0x0800`; SIM never initializes (`card_raw=0`) and every IPC GET times
+out, so the sequence never runs. CP boots cleanly (`complete_normal_boot`,
+`CP2AP_WAKEUP=1`, no `cp_crash`; 100 % / 33 °C). Disabling EP L1.2 ASPM
+(`l1_2_aspm`/`l1_2_pcipm`=0), pinning RC `power/control=on`, long modem-off soak,
+and repeated reboots did not clear it — the drop is cpif-managed CP runtime-PM
+below ASPM, and warm `sysrq b` does not reset the modem power rail; a cold power
+cycle is the likely requirement. No NV/APN/PIN/CardPower/EFS write was made.

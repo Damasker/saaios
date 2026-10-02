@@ -117,7 +117,11 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        CAMP_RX_CAP = 4096, CAMP_WINDOW_MS = 30000,
        CAMP_PAIR_GAP_MS = 1000, CAMP_DISPATCH_MS = 1000,
        PROBE_START_MS = 2000, PROBE_REPLY_MS = 3000, PROBE_GAP_MS = 1500,
-       PROBE_SIGNAL_MIN = 210 };
+       PROBE_SIGNAL_MIN = 210,
+       REG_RADIO_GET = 0x0801, REG_SEL_GET = 0x0703, REG_SEL_AUTO_SET = 0x0704,
+       REG_PREF_GET = 0x070b, REG_PREF_SET = 0x070a, REG_ALLOW_DATA = 0x0710,
+       REG_PREF_LEN = 16, REG_ALLOW_LEN = 13, REG_GET_MAX = 3,
+       RAT_LTE_ONLY = 11, RAT_LTE_WCDMA = 12, RADIO_STATE_ON = 10 };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -150,6 +154,16 @@ struct camp_driver {
     unsigned probe_sent, probe_replies, probe_timeouts;
     unsigned last_mask_low7;
     int mask_seen;
+    /* One-shot registration-trigger sequence, run once the SIM is READY: confirm
+     * radio ON, read selection mode (set auto if manual), read preferred RAT
+     * (broaden LTE_ONLY->LTE_WCDMA so the present UMTS signal can be used), then
+     * AllowData(1). Recovered/self-tested factory builders; each step sent at
+     * most once, matched by id+token, non-poisoning. Then observation resumes. */
+    int radio_on;
+    int radio_get_tries, sel_get_tries, pref_get_tries;
+    int sel_known, sel_mode, sel_auto_sent;
+    int pref_known; unsigned preferred_raw; int pref_set_sent;
+    int allow_data_sent, reg_complete;
 };
 #endif
 
@@ -1887,6 +1901,65 @@ static const struct { unsigned id; const char *name; } camp_probe_gets[] = {
 enum { CAMP_PROBE_COUNT =
            (int)(sizeof camp_probe_gets / sizeof camp_probe_gets[0]) };
 
+/* Factory BuildSetPreferredNetworkType (0x070a): 16-byte request, the RAT value
+ * as a little-endian word at +12. Recovered and self-tested in
+ * ready-network-once.c; no invented bytes. */
+static void make_setpref_request(uint8_t request[REG_PREF_LEN], uint32_t value,
+                                 uint32_t token)
+{
+    memset(request, 0, REG_PREF_LEN);
+    request[2] = (uint8_t)REG_PREF_SET;        /* 0x0a */
+    request[3] = (uint8_t)(REG_PREF_SET >> 8); /* 0x07 */
+    request[4] = REG_PREF_LEN;
+    put_little32(request + 6, token);
+    put_little32(request + 12, value);
+}
+
+/* Factory BuildAllowData (0x0710): 13-byte request, allow flag 1 at +12. */
+static void make_allowdata_request(uint8_t request[REG_ALLOW_LEN],
+                                   uint32_t token)
+{
+    memset(request, 0, REG_ALLOW_LEN);
+    request[2] = (uint8_t)REG_ALLOW_DATA;        /* 0x10 */
+    request[3] = (uint8_t)(REG_ALLOW_DATA >> 8); /* 0x07 */
+    request[4] = REG_ALLOW_LEN;
+    put_little32(request + 6, token);
+    request[12] = 1;
+}
+
+/* Next one-shot registration step given current known state, or 0 when the
+ * sequence has nothing to do this tick (waiting, blocked, or complete). */
+static unsigned camp_reg_next(const struct camp_driver *c)
+{
+    if (!c->sim_ready || c->reg_complete) return 0;
+
+    /* 1. Confirm radio ON (idempotent GET, bounded retries). If the modem
+     *    never answers, stop: the SETs below are meaningless with radio off. */
+    if (!c->radio_on)
+        return c->radio_get_tries < REG_GET_MAX ? REG_RADIO_GET : 0;
+
+    /* 2. Selection mode: read (bounded), then force automatic unless the card
+     *    already reads automatic. A slow/absent 0x0703 reply must not block the
+     *    experiment, so after REG_GET_MAX reads we send 0x0704 once regardless. */
+    if (!c->sel_auto_sent) {
+        if (!c->sel_known && c->sel_get_tries < REG_GET_MAX) return REG_SEL_GET;
+        if (!(c->sel_known && c->sel_mode == 0)) return REG_SEL_AUTO_SET;
+    }
+
+    /* 3. Preferred RAT: read (bounded), then set LTE_WCDMA once so the present
+     *    UMTS signal is usable. Any value other than an explicit LTE_WCDMA
+     *    readback (including unknown-after-retries and the observed raw 16) is
+     *    broadened — PS sitting NOT_SEARCHING on UMTS means WCDMA is excluded. */
+    if (!c->pref_set_sent) {
+        if (!c->pref_known && c->pref_get_tries < REG_GET_MAX) return REG_PREF_GET;
+        if (!(c->pref_known && c->preferred_raw == RAT_LTE_WCDMA)) return REG_PREF_SET;
+    }
+
+    /* 4. Allow PS data once. */
+    if (!c->allow_data_sent) return REG_ALLOW_DATA;
+    return 0;
+}
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -1941,13 +2014,49 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         }
     } else if (n < (id == SIT_NET_DATA_REG ? 16u : 14u)) {
         printf("camp_probe field=%s status=unknown_short\n", c->probe_name);
-    } else {
+    } else if (id == SIT_NET_VOICE_REG || id == SIT_NET_DATA_REG) {
         printf("camp_probe field=%s registration_raw=%u reject_raw=%u",
                c->probe_name, p[SIT_NET_REG_STATE_OFFSET],
                p[SIT_NET_REJECT_OFFSET]);
         if (id == SIT_NET_DATA_REG)
             printf(" tech_raw=%u", p[SIT_NET_DATA_TECH_OFFSET]);
         putchar('\n');
+    } else if (id == REG_RADIO_GET) {
+        if (n >= 16) {
+            c->radio_on = little32(p + 12) == RADIO_STATE_ON;
+            printf("camp_reg field=radio radio_raw=%u\n", little32(p + 12));
+        } else {
+            printf("camp_reg field=radio status=unknown_short\n");
+        }
+    } else if (id == REG_SEL_GET) {
+        if (n >= 13 && p[12] <= 1) {
+            c->sel_known = 1;
+            c->sel_mode = p[12];
+            printf("camp_reg field=selection mode_raw=%u\n", p[12]);
+        } else {
+            c->sel_known = 1; /* unparseable: treat as auto, do not re-GET */
+            c->sel_mode = 0;
+            printf("camp_reg field=selection status=unknown_short\n");
+        }
+    } else if (id == REG_PREF_GET) {
+        if (n >= 16) {
+            c->pref_known = 1;
+            c->preferred_raw = little32(p + 12);
+            printf("camp_reg field=preferred preferred_raw=%u\n",
+                   little32(p + 12));
+        } else {
+            c->pref_known = 1;
+            c->preferred_raw = 0;
+            printf("camp_reg field=preferred status=unknown_short\n");
+        }
+    } else if (id == REG_SEL_AUTO_SET) {
+        printf("camp_reg set=selection_auto response=yes error_raw=%u\n", error);
+    } else if (id == REG_PREF_SET) {
+        printf("camp_reg set=preferred_lte_wcdma response=yes error_raw=%u\n",
+               error);
+    } else if (id == REG_ALLOW_DATA) {
+        c->reg_complete = 1;
+        printf("camp_reg set=allow_data response=yes error_raw=%u\n", error);
     }
 }
 
@@ -2091,6 +2200,49 @@ static void camp_probe_advance(struct owner *o, int64_t now)
     }
     if (now < c->probe_next_ms) return;
     if (o->used || o->sit.used || c->used) return; /* avoid mid-frame writes */
+    if (!c->probe_token)
+        c->probe_token = (uint32_t)now ^ (uint32_t)getpid() ^ 0x0b0b0000u;
+    /* Priority: once the SIM is READY, run the one-shot registration-trigger
+     * sequence before resuming round-robin observation. GETs are idempotent and
+     * may retry on timeout; the three SETs are marked sent and never resent. */
+    unsigned reg = camp_reg_next(c);
+    if (reg) {
+        ++c->probe_token;
+        int wrote;
+        const char *rname;
+        if (reg == REG_PREF_SET) {
+            uint8_t f[REG_PREF_LEN];
+            make_setpref_request(f, RAT_LTE_WCDMA, c->probe_token);
+            c->pref_set_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_preferred_lte_wcdma";
+        } else if (reg == REG_ALLOW_DATA) {
+            uint8_t f[REG_ALLOW_LEN];
+            make_allowdata_request(f, c->probe_token);
+            c->allow_data_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "allow_data";
+        } else {
+            if (reg == REG_SEL_AUTO_SET) c->sel_auto_sent = 1;
+            else if (reg == REG_RADIO_GET) c->radio_get_tries++;
+            else if (reg == REG_SEL_GET) c->sel_get_tries++;
+            else if (reg == REG_PREF_GET) c->pref_get_tries++;
+            wrote = sit_send_get_once(o->ipc, (uint16_t)reg, c->probe_token);
+            rname = reg == REG_RADIO_GET ? "get_radio" :
+                    reg == REG_SEL_GET ? "get_selection" :
+                    reg == REG_PREF_GET ? "get_preferred" : "set_selection_auto";
+        }
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = reg;
+        c->probe_name = rname;
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_reg=sent step=%s elapsed_ms=%lld\n", rname,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     unsigned pick;
     const char *name;
     if (c->sim_change_pending && !c->sim_ready) {
@@ -2102,8 +2254,6 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         name = camp_probe_gets[c->probe_idx].name;
         c->probe_idx = (c->probe_idx + 1u) % (unsigned)CAMP_PROBE_COUNT;
     }
-    if (!c->probe_token)
-        c->probe_token = (uint32_t)now ^ (uint32_t)getpid() ^ 0x0b0b0000u;
     ++c->probe_token;
     if (sit_send_get_once(o->ipc, (uint16_t)pick, c->probe_token)) {
         c->probe_next_ms = now + PROBE_GAP_MS; /* ambiguous write: back off */
@@ -2215,7 +2365,8 @@ static int run_owner(int ipc, int rfs, int ready)
 #ifdef SAAIOS_RFS_CAMP
     puts("owner=rfs-camp-combined camp=armed "
          "trigger=0x0803-0x0802-raw0 seq=0x093f,0x0404,0x0800 "
-         "probe=sim,signal,voice,data sim_drive=0x0210->0x0200");
+         "probe=sim,signal,voice,data sim_drive=0x0210->0x0200 "
+         "reg=sel_auto,pref_lte_wcdma,allow_data");
 #endif
     sha_init(&o.received_hash);
     o.deadline_ms = started + FIRST_DEADLINE_MS;
@@ -3397,6 +3548,83 @@ static int test_camp_prober(void)
     return 0;
 }
 #endif
+
+static int test_camp_reg(void)
+{
+    /* Builders: exact factory byte shapes, no invented bytes. */
+    uint8_t pref[REG_PREF_LEN];
+    static const uint8_t pref_e[REG_PREF_LEN] =
+        {0,0,0x0a,0x07,16,0,0x78,0x56,0x34,0x12,0,0,12,0,0,0};
+    make_setpref_request(pref, RAT_LTE_WCDMA, 0x12345678);
+    if (!same_bytes(pref, pref_e, sizeof pref)) return 131;
+    uint8_t allow[REG_ALLOW_LEN];
+    static const uint8_t allow_e[REG_ALLOW_LEN] =
+        {0,0,0x10,0x07,13,0,0x78,0x56,0x34,0x12,0,0,1};
+    make_allowdata_request(allow, 0x12345678);
+    if (!same_bytes(allow, allow_e, sizeof allow)) return 132;
+
+    /* Step machine: radio -> selection (read, bounded) -> auto SET ->
+     * preferred (read, bounded) -> broaden SET -> allow_data -> done. */
+    struct camp_driver c;
+    memset(&c, 0, sizeof c);
+    if (camp_reg_next(&c) != 0) return 133;          /* SIM not ready yet */
+    c.sim_ready = 1;
+    if (camp_reg_next(&c) != REG_RADIO_GET) return 134;
+    c.radio_on = 1;
+    if (camp_reg_next(&c) != REG_SEL_GET) return 135;
+    c.sel_known = 1; c.sel_mode = 1;                 /* manual -> force auto */
+    if (camp_reg_next(&c) != REG_SEL_AUTO_SET) return 136;
+    c.sel_auto_sent = 1;
+    if (camp_reg_next(&c) != REG_PREF_GET) return 137;
+    c.pref_known = 1; c.preferred_raw = RAT_LTE_ONLY;
+    if (camp_reg_next(&c) != REG_PREF_SET) return 138;
+    c.pref_set_sent = 1;
+    if (camp_reg_next(&c) != REG_ALLOW_DATA) return 139;
+    c.allow_data_sent = 1;
+    if (camp_reg_next(&c) != 0) return 140;
+
+    /* Already-auto selection skips 0x0704; already-LTE_WCDMA preferred skips
+     * 0x070a; any other preferred value (e.g. raw 16) is broadened. */
+    struct camp_driver d;
+    memset(&d, 0, sizeof d);
+    d.sim_ready = 1; d.radio_on = 1; d.sel_known = 1; d.sel_mode = 0;
+    if (camp_reg_next(&d) != REG_PREF_GET) return 141;
+    d.pref_known = 1; d.preferred_raw = RAT_LTE_WCDMA;
+    if (camp_reg_next(&d) != REG_ALLOW_DATA) return 142;
+    d.allow_data_sent = 1;
+    if (camp_reg_next(&d) != 0) return 143;
+
+    struct camp_driver d16;
+    memset(&d16, 0, sizeof d16);
+    d16.sim_ready = 1; d16.radio_on = 1; d16.sel_auto_sent = 1;
+    d16.pref_known = 1; d16.preferred_raw = 16;      /* observed settled value */
+    if (camp_reg_next(&d16) != REG_PREF_SET) return 144;
+
+    /* Bounded GET retries: unanswered 0x0703/0x070b still advance to the SETs. */
+    struct camp_driver e;
+    memset(&e, 0, sizeof e);
+    e.sim_ready = 1; e.radio_on = 1;
+    e.sel_get_tries = REG_GET_MAX;                   /* selection never answered */
+    if (camp_reg_next(&e) != REG_SEL_AUTO_SET) return 145;
+    e.sel_auto_sent = 1;
+    e.pref_get_tries = REG_GET_MAX;                  /* preferred never answered */
+    if (camp_reg_next(&e) != REG_PREF_SET) return 146;
+    e.pref_set_sent = 1;
+    if (camp_reg_next(&e) != REG_ALLOW_DATA) return 147;
+
+    /* Unanswered radio GET gives up rather than looping forever. */
+    struct camp_driver f;
+    memset(&f, 0, sizeof f);
+    f.sim_ready = 1; f.radio_get_tries = REG_GET_MAX;
+    if (camp_reg_next(&f) != 0) return 148;
+
+    /* reg_complete gate: ACK of allow_data stops all further steps. */
+    struct camp_driver g;
+    memset(&g, 0, sizeof g);
+    g.sim_ready = 1; g.reg_complete = 1;
+    if (camp_reg_next(&g) != 0) return 149;
+    return 0;
+}
 #endif
 
 static int self_test(void)
@@ -3459,7 +3687,7 @@ static int self_test(void)
         return 8;
 #endif
 #ifdef SAAIOS_RFS_CAMP
-    if (test_camp_builders() || test_camp_observer()
+    if (test_camp_builders() || test_camp_observer() || test_camp_reg()
 #ifdef RFS_HOST_TEST
         || test_camp_dispatch() || test_camp_prober()
 #endif
