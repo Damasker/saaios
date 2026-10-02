@@ -1210,3 +1210,38 @@ Artifacts: `build-owner-sgc-seq-once.sh`, `probe-sgc-seq-once-config.h`,
 `owner-handoff-sgc-seq.sh`. ARM64-static reproducible SHA-256 — owner
 `12c07414d3f7875f97a59254a3c4534420a160788f5a87525ea940bcfd322ebb`, probe
 `651515c8887f81f86fd0b9aa7ace7a5eaf620242ccb1a6cd277a356457593f2d`.
+
+**Live run — `0x093f` is a confirmed no-op; still no camp/registration.**
+Pushed the owner/probe/handoff over USB-NCM (`serve-once`→`nc`), verified
+on-device by SHA-256, `--mode` (`sgc-seq-once`), probe `--owner-exec`/`--owner-log`
+match and `self-test` (PASS); `sh -n` clean. Forced a fresh boot (`reboot -f`
+after `sync`); the device came back at uptime 0 with cpif unloaded, no
+`modem_state`, EFS unmounted and no rmnet IPv4. The guarded handoff loaded the
+modules, mounted persist read-only for the cpsha, booted the reviewed B
+firmware (`PROBE END result=0`, CP OFFLINE→ONLINE), and the owner took the
+fresh channels.
+
+The owner latched the early edge (`0x0803` len 8 then `0x0802` len 12
+`radio_state_raw=0` at +9.817 s) and dispatched the stock pair in order at
++10.322 s: `sgc_seq_config … cmd=0x093f modems=1` then the `0x0404` SGC. The CP
+**accepted the SGC** (`error_raw=0 status=accepted`) exactly as before, but
+returned **no response at all to `0x093f`** (no `sgc_seq_config … response`
+line) — the CP silently ignores a single-SIM `SetModemsConfig`, consistent with
+it being a no-op on this SKU. The +60 s settled snapshot was byte-for-byte the
+same story as the early-SGC run: radio ON (`radio_raw=10`), voice/data
+`registration_raw=0 reject_raw=0`, selection mode 0, preferred 16, operator len
+119, signal len 210 `mask_low7=0`, modem_stack enabled. All `rmnet0`–`rmnet29`
+stayed `rx=0 tx=0` with no IPv4 on any rmnet. **Bearer verified? no.**
+
+**Conclusion.** Prepending the stock `0x093f` in correct order does not move
+the CP toward camp or registration, and the CP does not even acknowledge it —
+so `SetModemsConfig` is not the missing precondition on this single-SIM SKU.
+With the SGC and `0x093f` both ruled out as sufficient, the remaining stage-1
+delta is the **early camp-on `0x0800`** that stock issues at
+`NetworkService::OnRadioAvailable` via `TrySetRadioPower(10)`
+(`OnRequest(RIL_REQUEST_RADIO_POWER=23, …, 4)`). The next step is to recover the
+exact `0x0800` body from `DoRadioPower`/`BuildRadioPower` (power word, `arg2`,
+`arg3`) — no guessed body — then add a `sgc-camp-once` (or extend
+`sgc-seq-once`) mode that issues `0x093f`→`0x0404`→`0x0800` on the same edge,
+self-test it, and live-run it one candidate at a time. No secrets, NV, APN,
+PIN, CardPower or EFS writes were made in this run.

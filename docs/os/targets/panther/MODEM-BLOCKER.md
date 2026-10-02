@@ -1499,6 +1499,26 @@ framing is **too strong** for this live path. Goal still incomplete:
 **Bearer verified?** **no**. Still blocked on **camp/reg** (and usable APN
 after camp), not on PIN→READY.
 
+### 2026-10-02 — stock stage-1 RE + `sgc-seq-once`: `0x093f` is a no-op
+
+RE'd the stock `MiscService::OnRadioAvailable` (TD1A `libsitril` `efcca0d5`):
+socket-0 stage-1 order is `0x090b`→**`0x093f`**→`0x0404`→`0x4605`; we had been
+sending only `0x0404`. Decoded `0x0706` err **2** = **`RCM_E_GENERIC_FAILURE`**
+(generic refusal, not the reg-ordering code 9). Added a 4th mutually-exclusive
+owner mode `SAAIOS_SGC_SEQ_ONCE` (shared early machinery under new
+`SAAIOS_SGC_EDGE`) that writes `0x093f` (13 B, payload 0 single-SIM) then
+`0x0404` on the `0x0803`→`0x0802`-raw-0 edge; all 5 modes build `-Werror` + pass
+self-test (ARM64 owner `12c07414`, probe `651515c8`). Live over COM13 (fresh
+boot, guarded RO-persist handoff, CP→ONLINE): SGC accepted (`error_raw=0`) but
+the CP returned **no ACK to `0x093f`**, and the +60 s snapshot was identical to
+the early-SGC run (radio ON, voice/data `registration_raw=0`, signal
+`mask_low7=0`). All `rmnet0–29` `rx=0 tx=0`, no IPv4.
+
+**Bearer verified?** **no**. `0x093f` ruled out. Next stage-1 delta =
+early camp-on **`0x0800`** (`NetworkService` `TrySetRadioPower(10)` →
+`OnRequest(RADIO_POWER=23)`); needs the exact `DoRadioPower`/`BuildRadioPower`
+body recovered (no guessed body) before building/running a `0x0800` candidate.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.
