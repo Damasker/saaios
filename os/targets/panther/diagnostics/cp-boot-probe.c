@@ -295,6 +295,33 @@ int main(int argc, char **argv) {
     wipe(handover, sizeof(handover));
     if (handover_rc < 0) die("handover failed; no firmware stages");
 #endif
+#ifdef PROBE_SECURITY
+    /* Genuine stock secure-boot handshake. Stock cbd issues IOCTL_REQ_SECURITY
+     * (ioctl 0x40106f53) three times in boot order: mode 2, then 0, then 1. The
+     * kernel handler (shmem_security_request) reads ONLY the 16-byte struct's
+     * first word (mode); it derives every __arm_smccc_smc argument itself from
+     * cp_shmem_get_base/size (regions 7,8) + fixed SIP FIDs (0x82001011,
+     * 0x82000700). cbd's param2/param3 (ctx+608/+652 for mode 0) are copied in
+     * but never forwarded to EL3, so they are passed as 0 here: this issues the
+     * byte-identical SMC to EL3/ldfw that stock does -- a genuine handshake, not
+     * a forged or bypassed one. Non-fatal: a denial must not abort the proven
+     * boot, so each result is logged and the boot continues for observation. */
+    _Static_assert(sizeof(struct modem_sec_req) == 16,
+                   "REQ_SECURITY struct must be 16 bytes for ioctl 0x40106f53");
+    _Static_assert(IOCTL_REQ_SECURITY == 0x40106f53UL,
+                   "REQ_SECURITY request number must match stock cbd");
+    {
+        static const uint32_t sec_modes[] = { 2u, 0u, 1u };
+        for (unsigned i = 0; i < 3; i++) {
+            struct modem_sec_req sr;
+            memset(&sr, 0, sizeof(sr));
+            sr.mode = sec_modes[i];
+            int src = do_ioctl("REQ_SECURITY", IOCTL_REQ_SECURITY, &sr);
+            log_line("REQ_SECURITY mode=%u rc=%d (non-fatal genuine handshake)",
+                     sec_modes[i], src);
+        }
+    }
+#endif
 #ifdef PROBE_PREAMBLE
     log_line("FACTORY PREAMBLE: READY, TOC START/BIN/DONE");
     if (send_factory_preamble(bin, len) < 0) die("preamble failed; no MAIN");

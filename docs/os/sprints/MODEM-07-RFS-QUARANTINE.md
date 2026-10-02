@@ -6,6 +6,24 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 secure-boot / `IOCTL_REQ_SECURITY` FALSIFIED as the gate (live-tested, one controlled boot).**
+We implemented the GENUINE handshake and issued it. First pinned that the params are
+kernel-ignored (the handler reads only `mode`; all SMC args are kernel-derived from
+`cp_shmem_get_base/size` regions 7/8 + fixed SIP FIDs `0x82001011`/`0x82000700`), so
+AP params `0` give a byte-identical SMC — genuine, not forged. Added a guarded, self-
+tested, non-fatal `PROBE_SECURITY` block to `cp-boot-probe.c` (modes 2→0→1 after the
+handover), `-Werror`; the proven rebuild is byte-identical (`e32538e8…`) to the deployed
+binary. On the controlled boot all three calls returned `EINVAL` and dmesg showed
+`cpif: bootdump_ioctl: umts_boot0: security_req is null` — the EL3/ldfw SMC never ran.
+Root cause: cpif `create_link_device@0x9708` writes the `security_request` pointer (io-
+device offset 976) only when arg2==0 and a DT link-attr bit is set; panther's modem link
+config leaves it NULL. Same stock `cpif.ko` + DT ⇒ stock cbd's `REQ_SECURITY` also
+`EINVAL`/non-fatal, so it is vestigial here and not the gate. MAIN DONE still passed, CP
+ONLINE, registration unchanged (CS REG_DENIED, PS NOT_SEARCHING). Reverted to the proven
+probe (`e32538e8…`), CP ONLINE; no NV/EFS write, nothing forged. Next (RO): capture and
+diff the ~476 KB normal-NV write-out vs fed-in `nv_normal.bin`. See
+[MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 9.
+
 **2026-10-03 secure-boot path characterized — genuine `IOCTL_REQ_SECURITY` we omit; legitimately reproducible (EL3/ldfw), not a GSA-secret boundary a priori.**
 Pursuing the post-VERDICT-7 lead (registration gate may be the secure-boot/auth state).
 Factory `cbd` (pulled RO) issues `ioctl(boot_fd, 0x40106f53 /*REQ_SECURITY*/, &{mode,p2,p3,0})`

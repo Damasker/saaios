@@ -1,5 +1,60 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 9 — SECURE-BOOT / `IOCTL_REQ_SECURITY` FALSIFIED as the gate (live-tested). We implemented and issued the GENUINE handshake (ioctl `0x40106f53`, modes 2/0/1, byte-identical to stock cbd) on one controlled boot. All three were rejected by the kernel with `EINVAL` — dmesg: `cpif: bootdump_ioctl: umts_boot0: security_req is null` — so the EL3/ldfw SMC NEVER executed. Root cause: cpif's `create_link_device` installs the `security_request` handler (io-device offset 976) only when its arg2 is 0 AND a DT link-attribute bit is set; on panther's modem link config that slot is left NULL. Since SaaiOS loads the identical stock `cpif.ko` + the device's own DT, STOCK cbd hits the same NULL handler → its `REQ_SECURITY` also returns `EINVAL` and is non-fatal. REQ_SECURITY is therefore vestigial on panther and cannot be the registration gate. The real image authentication is the CP/PBL integrity check at UDL MAIN DONE, which we already pass. MAIN DONE still passed, CP reached ONLINE, registration UNCHANGED (CS REG_DENIED, PS NOT_SEARCHING). Device reverted to the proven probe; no NV/EFS write; nothing forged (2026-10-03):**
+
+### 1. What we did (genuine handshake, one controlled boot)
+Pinned the handshake first, then implemented it. The two `mode=0` params stock
+passes (`ctx+0x260`/`ctx+0x28c`) are **kernel-ignored**: the kernel handler
+`shmem_security_request` reads only the struct's first word (`mode`) and derives
+every `__arm_smccc_smc` argument itself from `cp_shmem_get_base/size` (regions 7,8)
+plus fixed SIP FIDs (`0x82001011`, `0x82000700`) — confirmed from both `cbd`
+(`security()@0x12f80` builds `{mode,p2,p3,0}`, `ioctl 0x40106f53`) and `cpif.ko`
+(`shmem_security_request@0xda00`). So AP params `0` yield a byte-identical SMC —
+genuine, not forged. Added a guarded, self-tested (`_Static_assert` on struct size
+and request number), non-fatal `PROBE_SECURITY` block to `cp-boot-probe.c` issuing
+mode 2 → 0 → 1 right after the handover; built with `-Werror`; the proven rebuild is
+byte-identical (`e32538e8…`) to the deployed binary, so the only change is this block.
+
+### 2. Live result — rejected before EL3
+On the controlled boot, every call logged:
+`REQ_SECURITY: FAIL rc=-1 errno=22 (Invalid argument) req=0x40106f53`, and the kernel
+logged `cpif: bootdump_ioctl: umts_boot0: security_req is null` three times. The ioctl
+is rejected at the boot0 dispatcher: it loads a callback from io-device offset 976 and,
+finding it NULL, returns `EINVAL` without calling the handler or the SMC. The boot was
+otherwise healthy: MAIN stage transfer `result=0` (UDL MAIN DONE passed → genuine
+signed image still trusted), CP reached **ONLINE**.
+
+### 3. Root cause & why stock is identical
+The `security_request` pointer (offset 976) is written in exactly one place in the
+module — `create_link_device@0x9708`, at `0x9968` — and only when its second argument
+(`w23`) is `0` and a DT-derived link-attribute bit (`w8` bit 6) is set. Both inputs
+come from the kernel's modem/device-tree configuration, not from anything userspace
+does. On this device's modem link config the slot is left NULL. SaaiOS uses the
+**identical stock `cpif.ko`** and the device's own DT, so `create_link_device` runs
+identically under stock → stock cbd's `REQ_SECURITY` hits the same NULL handler →
+`EINVAL`, non-fatal. **REQ_SECURITY is vestigial on panther and is not the secure boot
+that matters.** The operative authentication is the CP/PBL signature check at UDL MAIN
+DONE (a one-byte MAIN patch is refused there; the stock signed MAIN passes) — which we
+already satisfy. This is neither an EL3 "security check fail" (we never reached EL3) nor
+a GSA-held-secret boundary.
+
+### 4. Registration unchanged; secure-boot hypothesis falsified
+Post-boot: CS voice `registration_raw=3` (REG_DENIED), PS data `registration_raw=0`
+(NOT_SEARCHING), `reject_raw=0` — identical to the proven boot. The secure-boot /
+`REQ_SECURITY` path is therefore **falsified** as the registration gate.
+
+### 5. Device state & next step
+Device left known-good: deployed probe restored to the proven `e32538e8…`, CP ONLINE,
+owner running; no NV/EFS write, nothing forged. The guarded `PROBE_SECURITY` source
+block is inert in normal builds (the build scripts do not pass `-DPROBE_SECURITY`) and
+is kept as the documented, reproducible characterization of the (vestigial) handshake.
+**Pinpointed next step (read-only follow-up):** extend the quarantine owner to capture
+the ~476 KB normal-NV handle-1 write-out the CP emits during init and structurally diff
+it against the fed-in `nv_normal.bin` for a registration-relevant field the CP downgrades
+at runtime (op-mode / limited-service). This needs a small owner change + one boot.
+
+---
+
 **VERDICT 8 — SECURE-BOOT path characterized. Stock cbd issues `IOCTL_REQ_SECURITY` (ioctl `0x40106f53`) THREE times (mode 2/0/1) → kernel `shmem_security_request` → `__arm_smccc_smc` to EL3/ldfw; OUR boot issues NONE of them (only the handover `0x6f57`). FEASIBILITY: the genuine handshake is LEGITIMATELY REPRODUCIBLE from SaaiOS (genuine kernel→EL3 SMC with device-fused keys; we'd supply only `mode`+layout params, not secrets) — this is the EL3/ldfw path, NOT the ADR-092 GSA-mailbox boundary. Whether EL3 ACCEPTS it in our boot context is the open question, answerable only by a live in-boot issue. No forging. NV write-out diff: CP does NOT downgrade protected-NV at init. No NV/EFS write, no reboot this session (2026-10-03):**
 
 ### 1. CP security / boot-auth state (read-only)

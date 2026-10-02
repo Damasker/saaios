@@ -1,5 +1,18 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 `IOCTL_REQ_SECURITY` FALSIFIED as the gate (live-tested):** implemented the
+GENUINE handshake (modes 2→0→1, params 0 = kernel-ignored → byte-identical SMC) as a
+guarded, self-tested, non-fatal `PROBE_SECURITY` block (proven rebuild byte-identical
+`e32538e8…`), and issued it on one controlled boot. All three returned `EINVAL`; dmesg:
+`cpif: bootdump_ioctl: umts_boot0: security_req is null` — EL3/ldfw SMC never ran. Cause:
+cpif `create_link_device@0x9708` installs the `security_request` pointer (off 976) only
+when arg2==0 and a DT link-attr bit is set; panther leaves it NULL. Identical stock
+`cpif.ko`+DT ⇒ stock cbd's `REQ_SECURITY` also `EINVAL`/non-fatal ⇒ vestigial, not the
+gate. MAIN DONE still passed, CP ONLINE, registration unchanged (CS DENIED, PS
+NOT_SEARCHING). Reverted to proven probe, CP ONLINE; no NV/EFS write, nothing forged.
+Next (RO): capture+diff the ~476 KB normal-NV write-out vs fed-in. Full writeup in
+[MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 9.
+
 **2026-10-03 secure-boot handshake characterized (`IOCTL_REQ_SECURITY` we omit):**
 Stock `cbd` (pulled RO) issues `ioctl(boot_fd, 0x40106f53, &{mode,p2,p3,0})` three times
 (mode 2 flag; mode 0 main-auth `p2=[cfg+0x260]`/`p3=[cfg+0x28c]`; mode 1); the kernel
