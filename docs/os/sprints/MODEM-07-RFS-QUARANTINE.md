@@ -6,6 +6,28 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 NV-starvation disproven — op-mode-NV FALSIFIED as the registration gate; NV write is moot.**
+Operator reframe (resolve the (c) contradiction): traced exactly how the CP gets NV at
+boot and whether our boot starves it. Finding: the probe **pushes** `NV_NORM` (TOC
+idx5, `0x80000`) + `NV_PROT` (idx6, `0x80000`) from `/data/saaios/var/efs-copy/`
+straight into the CP as SIT boot stages (like stock cbd), during `BOOTING` before the
+owner attaches — the CP does **not** read op-mode from EFS via RFS. The RO verifier
+(`verify-original-efs-readonly.sh`) **PASS**es: those pushed blobs are **byte-identical**
+to the real EFS partition **sda5** (`PARTNAME=efs`). The owner logs every RFS frame
+(incl. a post-terminal drain through the MM registration window); across boot + 42 min
+there are **zero RFS reads** — all 232 frames are NV **write-OUTs** (protected-NV 189446 B
+handle 3; normal-NV ~476 KB handle 1, repeated). So the CP is fed the exact real stock
+NV (op-mode included) that the phone registers with as stock, never reads NV via RFS,
+and still denies (voice `REG_DENIED(3)`/data `NOT_SEARCHING(0)`). Firmware is **stock B**
+(`449eeab3…`), boot completes cleanly (`COMPLETE rc=0`), SIM READY, signal present.
+**Conclusion: `SAE_UE_OPERATION_MODE` FLASH-NV is NOT the gate — the earlier (c) verdict
+is corrected and the NV-write NO-GO is moot.** Remaining non-NV divergences to chase:
+the secure-boot/authentication path (we use `HANDOVER_RAM_ONLY 0x6f57` + preamble, never
+`IOCTL_REQ_SECURITY`; stock uses GSA secure boot — cf. ADR-092), and a structural diff
+of the CP's self-written normal-NV vs the fed-in blob. No stock run, no NV/EFS write;
+device on safe owner, CP ONLINE; bearer not established. See
+[MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 7.
+
 **2026-10-03 stock-registration capture — INFEASIBLE under SaaiOS; pivotal verdict (c): the delta is FLASH-NV, not a command.**
 Operator asked to watch the stock stack register live and extract the minimal delta.
 A live stock registration is **not runnable under SaaiOS**: no `/vendor/bin`, no

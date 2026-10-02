@@ -1,5 +1,18 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 NV-starvation disproven (op-mode-NV falsified as the gate):** traced how
+the CP gets NV at boot. The probe **pushes** `NV_NORM`+`NV_PROT` (`0x80000` each) from
+`/data/saaios/var/efs-copy/` into the CP as SIT boot stages (like stock cbd), before
+the owner attaches; the CP does **not** read op-mode via RFS. The RO verifier PASSes —
+those blobs are **byte-identical to the real sda5 EFS** — and across boot + 42 min the
+CP issues **zero RFS reads** (all frames are NV write-OUTs). So the CP is fed the exact
+real stock NV (op-mode normal) and still denies, on **stock firmware** (`449eeab3…`)
+with a clean boot (SIM READY, signal present). **`SAE_UE_OPERATION_MODE` is therefore
+NOT the registration gate; the earlier (c)/NV-write conclusion is corrected and moot.**
+Next, non-NV: the secure-boot/auth path (`HANDOVER_RAM_ONLY 0x6f57`, no
+`IOCTL_REQ_SECURITY`, vs stock GSA) and a CP-written-vs-fed normal-NV diff. Full writeup
+in [MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 7. No NV/EFS write; bearer not established.
+
 **2026-10-03 stock-registration capture (feasibility + pivotal verdict):** a live
 stock-stack registration is **not feasible under SaaiOS** — no `/vendor/bin`/`rild`;
 `cbd` only boots the (already-ONLINE) CP; `rild` needs the Android telephony

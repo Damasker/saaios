@@ -1,5 +1,78 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 7 — NV-STARVATION DISPROVEN / op-mode-NV FALSIFIED as the gate. The CP is fed its NV at boot by a BOOT-IMAGE STAGE PUSH of `NV_NORM`+`NV_PROT` that is BYTE-IDENTICAL to the real `sda5` EFS (RO verifier PASS), and it issues ZERO RFS reads across boot+42 min — so it is NOT starved of real NV. We already feed the exact real stock NV (op-mode included) that this phone registers with as stock, yet it still denies. Therefore the registration gate is NOT `SAE_UE_OPERATION_MODE` in FLASH-NV; the earlier verdict (c) is corrected, and the NV-write NO-GO is moot. No NV/EFS write (2026-10-03):**
+
+Operator reframe: the (c) inference ("real NV op-mode is normally normal; our boot
+starves the CP of it") creates a contradiction — if we fed the real normal NV the CP
+would register. This session traced exactly how the CP gets NV at boot and measured
+whether it is starved. It is not.
+
+### How the CP obtains its NV / op-mode at boot — BOOT-IMAGE STAGE PUSH, not RFS
+The boot probe (`cp-boot-probe.c`, `boot-b-with-verified-nv-handover`) reads the two
+NV TOC stages from `/data/saaios/var/efs-copy/` and pushes them straight into the CP
+over the SIT boot protocol, exactly like stock cbd:
+- `NV_NORM` (TOC idx 5, `0x80000`) ← `nv_normal.bin`
+- `NV_PROT` (TOC idx 6, `0x80000`) ← `nv_protected.bin`
+These are sent via `sit_send_stage()` during `BOOTING`, **before** the owner attaches
+to `umts_rfs0`. The CP therefore has its complete NV (op-mode is a `SAE_FLASH_*`/
+SAEL3 item, which lives in these blobs) from the boot image — it does **not** read
+op-mode from EFS via RFS.
+
+### The pushed NV is byte-identical to the real EFS — RO-verified
+`verify-original-efs-readonly.sh verify-read-only` → **PASS** ("original EFS matches
+the four userdata files; EFS unmounted"). It mounts the real EFS partition **sda5**
+(`PARTNAME=efs`, f2fs) **read-only** and `cmp`s `nv_normal.bin`/`nv_protected.bin`
+against the pushed `efs-copy`. They are identical. Since we never write `sda5` and the
+CP's NV backups are quarantined (never persisted to `sda5`), `sda5` still holds the
+last stock-persisted, registering state — so the op-mode we feed is the stock-normal
+value. (The exact op-mode bytes are not isolated — the store is name-keyed, offset
+unknown — but whole-blob byte-identity to the stock-registering EFS is a strictly
+stronger proof that the fed op-mode equals stock's.)
+
+### The CP issues ZERO RFS reads — nothing to starve
+The owner logs **every** RFS frame header, including a `post_terminal_rfs_drain` that
+keeps reading through the RadioPower-ON / MM registration window. Across boot + 42 min
+(t=60 s → 2554 s) there are **98 `note=serve` + 134 `note=post_term` frames, and every
+one is a WRITE-OUT**: the CP backing up its protected-NV (handle 3, 189446 B) and its
+normal-NV (handle 1, ~476 KB) *to* the AP, repeatedly. There is **not a single READ
+request**. The CP never asks the AP for an EFS/NV file, so there is nothing our owner
+could fail to serve. The "attach too late / miss early reads" concern is also moot:
+even in the registration window (owner fully attached) there are zero reads.
+
+### Boot is stock + clean, yet denies
+Deployed firmware is **stock B** (`sha256 449eeab3…`, the non-patched accepted hash).
+The probe log shows `HANDOVER_RAM_ONLY OK`, factory preamble (`c00b/c110/c11b/c11d`),
+owner `READY`, `COMPLETE rc=0`, `PROBE END result=0`. The CP reaches ONLINE, SIM
+READY, signal present (`mask_low7=1`), and all stage-1 commands ACK — yet voice
+`REG_DENIED(3)` / data `NOT_SEARCHING(0)` / reject_cause 0.
+
+### Verdict — (c) FALSIFIED; the gate is elsewhere
+We feed the CP stock firmware + the exact real stock NV (op-mode normal), the CP never
+reads NV via RFS, and it still denies. So **`SAE_UE_OPERATION_MODE` in FLASH-NV is not
+the registration gate**, and **the operator-gated NV write (VERDICTs 5/6) would not
+have helped** — it is moot. This is a correction of the earlier (c) conclusion.
+
+### Pinpointed next step — identify the actual MM gate (NOT NV)
+The remaining divergences from a true stock boot are narrow and non-NV:
+1. **Secure-boot / authentication path (leading candidate).** We boot via
+   `HANDOVER_RAM_ONLY` (ioctl `0x6f57`) + factory preamble and **never issue
+   `IOCTL_REQ_SECURITY`**; stock boots under GSA-backed secure boot. The CP accepts
+   our handover to ONLINE/SIM-READY, but the MM layer may hold registration in a
+   restricted/unauthenticated-boot mode (analogous to the GSA authentication boundary
+   documented in ADR-092 for AoC). This is unproven and needs a dedicated trace of the
+   CP's MM state / security status (e.g., an EngMode/security-status SIT query), not an
+   NV change.
+2. **CP self-modified NV diff.** The CP writes a ~476 KB normal-NV *out* that differs
+   in size/layout from the 512 KB blob we fed in; a structural diff of the written-out
+   vs fed-in normal-NV could reveal whether the CP itself downgrades a
+   registration-relevant field during init — a read-only diagnostic, separate from the
+   NV-write boundary.
+
+No stock stack run, no NV/EFS write; device on the safe quarantine owner, CP ONLINE;
+bearer not established.
+
+---
+
 **VERDICT 6 — STOCK-REGISTRATION CAPTURE: a live stock-stack registration capture is NOT feasible under SaaiOS (no telephony framework to drive rild). But the attempt pinned the answer: our owner already has FULL command-parity with stock's known stage-1 sequence (`0x093f`→`0x0404`→`0x0800`, all ACK clean, signal present) and still denies, so the registration delta is NOT a missing/mis-ordered SIT command — it is CP-internal state seeded from FLASH-NV (`SAE_UE_OPERATION_MODE`). PIVOTAL VERDICT = (c). No stock stack run; no NV/EFS write (2026-10-03):**
 
 Operator asked to watch the stock stack register live on this phone to find the
