@@ -31,19 +31,29 @@
 #include "sit-sim-layout.h"
 
 #if (defined(SAAIOS_SCAN_ONCE) + defined(SAAIOS_SGC_ONCE) + \
-     defined(SAAIOS_SGC_EARLY_ONCE) + defined(SAAIOS_SGC_SEQ_ONCE)) > 1
-#error "late SGC, early SGC, early sequence and active scan require separate diagnostic builds"
+     defined(SAAIOS_SGC_EARLY_ONCE) + defined(SAAIOS_SGC_SEQ_ONCE) + \
+     defined(SAAIOS_SGC_CAMP_ONCE)) > 1
+#error "late SGC, early SGC, early sequence, early camp-on and active scan require separate diagnostic builds"
 #endif
 #if defined(SAAIOS_SGC_ONCE) || defined(SAAIOS_SGC_EARLY_ONCE) || \
-    defined(SAAIOS_SGC_SEQ_ONCE)
+    defined(SAAIOS_SGC_SEQ_ONCE) || defined(SAAIOS_SGC_CAMP_ONCE)
 #define SAAIOS_SGC_DIAGNOSTIC 1
 #endif
-/* Both edge-triggered variants share the radio-event observer, the early
+/* The edge-triggered variants share the radio-event observer, the early
  * dispatch gate, the ACK->DONE-with-no-post-sweep transition and the early
- * ownership/reporting. The sequence variant additionally prepends the one
- * factory SetModemsConfig (0x093f) before the SGC (0x0404), in stock order. */
-#if defined(SAAIOS_SGC_EARLY_ONCE) || defined(SAAIOS_SGC_SEQ_ONCE)
+ * ownership/reporting. The sequence and camp-on variants additionally prepend
+ * the one factory SetModemsConfig (0x093f) before the SGC (0x0404), in stock
+ * order; the camp-on variant also appends the factory TrySetRadioPower(10)
+ * carrier SET (0x0800) after the SGC. */
+#if defined(SAAIOS_SGC_EARLY_ONCE) || defined(SAAIOS_SGC_SEQ_ONCE) || \
+    defined(SAAIOS_SGC_CAMP_ONCE)
 #define SAAIOS_SGC_EDGE 1
+#endif
+#if defined(SAAIOS_SGC_SEQ_ONCE) || defined(SAAIOS_SGC_CAMP_ONCE)
+#define SAAIOS_SGC_CFG_STEP 1  /* prepends 0x093f SetModemsConfig */
+#endif
+#if defined(SAAIOS_SGC_CAMP_ONCE)
+#define SAAIOS_SGC_CAMP_STEP 1 /* appends 0x0800 TrySetRadioPower(10) */
 #endif
 
 #ifndef _WIN32
@@ -755,7 +765,7 @@ static int make_get_request(uint8_t request[12], unsigned id,
 #ifdef SAAIOS_SGC_DIAGNOSTIC
 enum { SGC_COMMAND = 0x0404, SGC_REPLY_MS = 2000,
        SGC_POST_DELAY_MS = 10000, SGC_POST_COUNT = 5 };
-#ifdef SAAIOS_SGC_SEQ_ONCE
+#ifdef SAAIOS_SGC_CFG_STEP
 /* Factory MiscService::OnRadioAvailable issues SetModemsConfig (0x093f) on
  * RIL socket 0 immediately before SendSGCValue (0x0404). On this single-SIM
  * SKU the body is a 13-byte request whose one payload byte (offset 12) is 0
@@ -763,6 +773,16 @@ enum { SGC_COMMAND = 0x0404, SGC_REPLY_MS = 2000,
  * Legacy::BuildSetModemsConfig (InitRequestHeader id=0x93f len=13; byte =
  * modem_count!=1). */
 enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13 };
+#endif
+#ifdef SAAIOS_SGC_CAMP_STEP
+/* Factory NetworkService::OnRadioAvailable issues TrySetRadioPower(10) at the
+ * radio-available edge; this flows through OnRequest(RIL_REQUEST_RADIO_POWER=
+ * 23, {1}, 4) -> NetworkService::DoRadioPower -> ProtocolNetworkBuilder::
+ * BuildRadioPower(arg1,arg2,arg3). For the single-int on request the args are
+ * (1,0,0): an 18-byte message whose power word (offset 12) = (arg1!=0)?2:1 = 2
+ * and whose two flag bytes (offsets 16/17) = arg2/arg3 = 0. Recovered byte for
+ * byte from stock TD1A libsitril; no value is guessed. */
+enum { CAMP_POWER_COMMAND = 0x0800, CAMP_POWER_LEN = 18, CAMP_POWER_ON = 2 };
 #endif
 /* Early-SGC dispatch-opportunity bounds. These are conservative SaaiOS
  * experimental limits on the factory OnRadioAvailable callback timing, not
@@ -793,7 +813,7 @@ struct live_sgc {
     int early_reported;
     int64_t radio_unavail_ms;
     int64_t radio_ready0_ms;
-#ifdef SAAIOS_SGC_SEQ_ONCE
+#ifdef SAAIOS_SGC_CFG_STEP
     /* The one factory SetModemsConfig (0x093f) sent back-to-back just before
      * the SGC, in stock order. Tracked only for its ACK log; the SGC ACK still
      * drives DONE. */
@@ -801,6 +821,15 @@ struct live_sgc {
     int seq_cfg_sent;
     int seq_cfg_acked;
     unsigned seq_cfg_error;
+#endif
+#ifdef SAAIOS_SGC_CAMP_STEP
+    /* The one factory TrySetRadioPower(10) carrier SET (0x0800) sent
+     * back-to-back just after the SGC, in stock order. Tracked only for its
+     * ACK log; the SGC ACK still drives DONE. */
+    uint32_t camp_token;
+    int camp_sent;
+    int camp_acked;
+    unsigned camp_error;
 #endif
 };
 
@@ -817,7 +846,7 @@ static void make_sgc_request(uint8_t request[24], uint32_t token) {
     put32(request + 12, 0x0101);
 }
 
-#ifdef SAAIOS_SGC_SEQ_ONCE
+#ifdef SAAIOS_SGC_CFG_STEP
 /* Exact stock SetModemsConfig for one modem: 13-byte request, single payload
  * byte (offset 12) = 0. Sent on the early radio edge immediately before the
  * SGC, matching MiscService::OnRadioAvailable's order. No CLI value, NV access,
@@ -830,6 +859,25 @@ static void make_setmodemsconfig_request(uint8_t request[SEQ_CONFIG_LEN],
     request[4] = SEQ_CONFIG_LEN;
     put32(request + 6, token);
     request[12] = 0; /* one modem */
+}
+#endif
+
+#ifdef SAAIOS_SGC_CAMP_STEP
+/* Exact stock TrySetRadioPower(10)->BuildRadioPower(1,0,0): 18-byte request,
+ * power word (offset 12) = 2 (radio ON), flag bytes (offsets 16/17) = 0. Sent
+ * on the early radio edge immediately after the SGC, matching
+ * NetworkService::OnRadioAvailable's order. No CLI value, NV access, retry or
+ * cancellation exists. */
+static void make_radiopower_request(uint8_t request[CAMP_POWER_LEN],
+                                    uint32_t token) {
+    memset(request, 0, CAMP_POWER_LEN);
+    request[2] = (uint8_t)CAMP_POWER_COMMAND;        /* 0x00 */
+    request[3] = (uint8_t)(CAMP_POWER_COMMAND >> 8); /* 0x08 */
+    request[4] = CAMP_POWER_LEN;
+    put32(request + 6, token);
+    put32(request + 12, CAMP_POWER_ON); /* arg1!=0 -> power word 2 */
+    request[16] = 0; /* arg2 */
+    request[17] = 0; /* arg3 */
 }
 #endif
 
@@ -866,10 +914,9 @@ static unsigned sgc_post_id(unsigned index) {
 static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
                       int64_t now_ms) {
     sgc_tick(sgc, now_ms); /* Deadline wins over a late success. */
-    if (sgc->phase != SGC_WAIT_ACK && sgc->phase != SGC_POST_WAIT) return 0;
-#ifdef SAAIOS_SGC_SEQ_ONCE
-    /* Consume the back-to-back SetModemsConfig ACK for a clean log; the SGC
-     * ACK below still drives DONE. */
+#ifdef SAAIOS_SGC_CFG_STEP
+    /* Consume the back-to-back SetModemsConfig ACK for a clean log, regardless
+     * of phase; the SGC ACK below still drives DONE. */
     if (sgc->seq_cfg_sent && !sgc->seq_cfg_acked && n >= 12 && n <= UINT16_MAX &&
         le16(p + 2) == SEQ_CONFIG_COMMAND && le32(p + 6) == sgc->seq_cfg_token &&
         p[0] == 1 && le16(p + 4) == n) {
@@ -878,6 +925,19 @@ static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
         return 1;
     }
 #endif
+#ifdef SAAIOS_SGC_CAMP_STEP
+    /* Consume the back-to-back TrySetRadioPower(10) ACK for a clean log. It is
+     * sent after the SGC so its reply may arrive once the SGC ACK has already
+     * moved the owner to DONE; match it in any phase. */
+    if (sgc->camp_sent && !sgc->camp_acked && n >= 12 && n <= UINT16_MAX &&
+        le16(p + 2) == CAMP_POWER_COMMAND && le32(p + 6) == sgc->camp_token &&
+        p[0] == 1 && le16(p + 4) == n) {
+        sgc->camp_acked = 1;
+        sgc->camp_error = le16(p + 10);
+        return 1;
+    }
+#endif
+    if (sgc->phase != SGC_WAIT_ACK && sgc->phase != SGC_POST_WAIT) return 0;
     unsigned id = sgc->phase == SGC_WAIT_ACK ? SGC_COMMAND :
                   sgc_post_id(sgc->post_next);
     if (n < 10 || le16(p + 2) != id || le32(p + 6) != sgc->token)
@@ -1836,7 +1896,7 @@ static int fixture_sgc(void) {
     used = 12;
     if (parse_available(CHANNEL_IPC, stream, &used, fixture_sgc_frame, &sgc) ||
         used || sgc.phase != SGC_DONE) return 178;
-#ifdef SAAIOS_SGC_SEQ_ONCE
+#ifdef SAAIOS_SGC_CFG_STEP
     /* Exact stock SetModemsConfig body: 13 bytes, one payload byte 0. */
     uint8_t cfg[SEQ_CONFIG_LEN];
     const uint8_t cfg_expected[SEQ_CONFIG_LEN] = {
@@ -1870,6 +1930,38 @@ static int fixture_sgc(void) {
     if (!sgc_match(&sgc, cfg_reply, sizeof cfg_reply, 2200) ||
         !sgc.seq_cfg_acked || sgc.seq_cfg_error != 0x8102 ||
         sgc.phase != SGC_WAIT_ACK) return 185;
+#endif
+#ifdef SAAIOS_SGC_CAMP_STEP
+    /* Exact stock TrySetRadioPower(10) body: 18 bytes, power word 2, flags 0. */
+    uint8_t camp[CAMP_POWER_LEN];
+    const uint8_t camp_expected[CAMP_POWER_LEN] = {
+        0, 0, 0x00, 0x08, 18, 0, 0x78, 0x56, 0x34, 0x12, 0, 0,
+        2, 0, 0, 0, 0, 0
+    };
+    make_radiopower_request(camp, 0x12345678);
+    if (memcmp(camp, camp_expected, sizeof camp_expected)) return 186;
+
+    /* The camp ACK is consumed even after the SGC ACK has moved to DONE
+     * (0x0800 is sent after the SGC), without disturbing the SGC phase. */
+    uint8_t camp_reply[12];
+    sgc = (struct live_sgc){.phase = SGC_DONE};
+    sgc.camp_sent = 1;
+    sgc.camp_token = 8;
+    fixture_scan_reply(camp_reply, sizeof camp_reply, CAMP_POWER_COMMAND, 8, 0);
+    if (!sgc_match(&sgc, camp_reply, sizeof camp_reply, 1400) ||
+        !sgc.camp_acked || sgc.camp_error ||
+        sgc.phase != SGC_DONE) return 187;
+    if (sgc_match(&sgc, camp_reply, sizeof camp_reply, 1401)) return 188; /* no dup */
+
+    /* A remote-error camp ACK is recorded but non-fatal. */
+    sgc = (struct live_sgc){0};
+    if (!sgc_begin(&sgc, 11, 3000)) return 189;
+    sgc.camp_sent = 1;
+    sgc.camp_token = 12;
+    fixture_scan_reply(camp_reply, sizeof camp_reply, CAMP_POWER_COMMAND, 12, 0x8102);
+    if (!sgc_match(&sgc, camp_reply, sizeof camp_reply, 3200) ||
+        !sgc.camp_acked || sgc.camp_error != 0x8102 ||
+        sgc.phase != SGC_WAIT_ACK) return 190;
 #endif
     return 0;
 }
@@ -2543,17 +2635,30 @@ static void live_sgc_reply(struct live_sgc *sgc, const uint8_t *p,
                            size_t size, int64_t now_ms) {
     enum sgc_phase phase = sgc->phase;
     unsigned index = sgc->post_next;
-#ifdef SAAIOS_SGC_SEQ_ONCE
+#ifdef SAAIOS_SGC_CFG_STEP
     int cfg_before = sgc->seq_cfg_acked;
 #endif
+#ifdef SAAIOS_SGC_CAMP_STEP
+    int camp_before = sgc->camp_acked;
+#endif
     if (!sgc_match(sgc, p, size, now_ms)) return;
-#ifdef SAAIOS_SGC_SEQ_ONCE
+#ifdef SAAIOS_SGC_CFG_STEP
     if (!cfg_before && sgc->seq_cfg_acked) {
         printf("sgc_seq_config elapsed_ms=%lld response=yes error_raw=%u"
                " status=%s\n",
                (long long)(now_ms - sgc->owner_start_ms),
                sgc->seq_cfg_error,
                sgc->seq_cfg_error ? "remote-error" : "accepted");
+        return;
+    }
+#endif
+#ifdef SAAIOS_SGC_CAMP_STEP
+    if (!camp_before && sgc->camp_acked) {
+        printf("sgc_camp_power elapsed_ms=%lld response=yes error_raw=%u"
+               " status=%s\n",
+               (long long)(now_ms - sgc->owner_start_ms),
+               sgc->camp_error,
+               sgc->camp_error ? "remote-error" : "accepted");
         return;
     }
 #endif
@@ -2633,7 +2738,7 @@ static void live_sgc_advance(struct live_sgc *sgc,
         queued = io->queued(ipc_fd, rfs_fd);
         if (queued < 0) { sgc_hold(sgc, "dispatch-poll-failed"); return; }
         if (queued || !io->online()) return;
-#ifdef SAAIOS_SGC_SEQ_ONCE
+#ifdef SAAIOS_SGC_CFG_STEP
         /* Stock MiscService::OnRadioAvailable issues SetModemsConfig (0x093f)
          * immediately before the SGC. Send it back-to-back on the same channel
          * in the same order; its ACK is logged separately, the SGC ACK drives
@@ -2668,6 +2773,27 @@ static void live_sgc_advance(struct live_sgc *sgc,
         printf("sgc_early elapsed_ms=%lld request=sent once deadline_ms=%u"
                " trigger=0x0803-0x0802-raw0 target=europen-400\n",
                (long long)(now_ms - sgc->owner_start_ms), SGC_REPLY_MS);
+#ifdef SAAIOS_SGC_CAMP_STEP
+        /* Stock NetworkService::OnRadioAvailable issues TrySetRadioPower(10)
+         * after the SGC. Send the recovered 0x0800 (power ON) back-to-back on
+         * the same channel in stock order; its ACK is logged separately, the
+         * SGC ACK still drives DONE. */
+        uint32_t camp_token = snapshot->token + 1;
+        if (!camp_token) return; /* SGC already sent; do not fail the run */
+        uint8_t camp[CAMP_POWER_LEN];
+        make_radiopower_request(camp, camp_token);
+        ssize_t camp_written = io->write_frame(ipc_fd, camp, sizeof camp);
+        if (camp_written != (ssize_t)sizeof camp) {
+            sgc_hold(sgc, "camp-write-ambiguous");
+            return;
+        }
+        sgc->camp_token = camp_token;
+        sgc->camp_sent = 1;
+        snapshot->token = camp_token;
+        printf("sgc_camp_power elapsed_ms=%lld request=sent once"
+               " trigger=0x0803-0x0802-raw0 cmd=0x0800 power=on\n",
+               (long long)(now_ms - sgc->owner_start_ms));
+#endif
         return;
 #else
         if (snapshot->aborted || refresh->disabled || refresh->factory_stopped)
@@ -2795,11 +2921,22 @@ static ssize_t fixture_sgc_write(int fd, const void *frame, size_t size) {
 static int fixture_live_sgc(void) {
     const struct sgc_io io = {fixture_sgc_queued, fixture_sgc_online,
                               fixture_sgc_exclusive, fixture_sgc_write};
-#ifdef SAAIOS_SGC_SEQ_ONCE
-    /* The sequence variant writes SetModemsConfig (0x093f) then the SGC. */
+#if defined(SAAIOS_SGC_CAMP_STEP)
+    /* The camp-on variant writes SetModemsConfig (0x093f), the SGC (0x0404),
+     * then TrySetRadioPower (0x0800); the last write is the 18-byte 0x0800. */
+    const unsigned dispatch_writes = 3;
+    const unsigned last_write_id = CAMP_POWER_COMMAND;
+    const size_t last_write_size = CAMP_POWER_LEN;
+#elif defined(SAAIOS_SGC_CFG_STEP)
+    /* The sequence variant writes SetModemsConfig (0x093f) then the SGC; the
+     * last write is the 24-byte SGC. */
     const unsigned dispatch_writes = 2;
+    const unsigned last_write_id = SGC_COMMAND;
+    const size_t last_write_size = 24;
 #else
     const unsigned dispatch_writes = 1;
+    const unsigned last_write_id = SGC_COMMAND;
+    const size_t last_write_size = 24;
 #endif
     struct scan_evidence evidence = {0}; /* unused by the early gate */
     struct channel channels[2] = {{0}, {0}};
@@ -2816,7 +2953,8 @@ static int fixture_live_sgc(void) {
     live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
                      dispatch_ms, &io);
     if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != dispatch_writes ||
-        sgc_fixture_io.id != SGC_COMMAND || sgc_fixture_io.size != 24) return 180;
+        sgc_fixture_io.id != last_write_id ||
+        sgc_fixture_io.size != last_write_size) return 180;
     fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, sgc.token, 0);
     if (!sgc_match(&sgc, reply, sizeof reply, dispatch_ms + 40) ||
         sgc.phase != SGC_DONE || sgc_owns_query_slot(&sgc)) return 181;
@@ -3606,6 +3744,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--mode")) {
 #ifdef SAAIOS_SCAN_ONCE
         puts("scan-once");
+#elif defined(SAAIOS_SGC_CAMP_ONCE)
+        puts("sgc-camp-once");
 #elif defined(SAAIOS_SGC_SEQ_ONCE)
         puts("sgc-seq-once");
 #elif defined(SAAIOS_SGC_EARLY_ONCE)
@@ -3626,6 +3766,9 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--attach-online")) {
 #ifdef SAAIOS_SCAN_ONCE
         fputs("ABORT scan-once requires a fresh guarded pre-FIN handoff\n", stderr);
+        return 64;
+#elif defined(SAAIOS_SGC_CAMP_ONCE)
+        fputs("ABORT sgc-camp-once requires a fresh guarded pre-FIN handoff\n", stderr);
         return 64;
 #elif defined(SAAIOS_SGC_SEQ_ONCE)
         fputs("ABORT sgc-seq-once requires a fresh guarded pre-FIN handoff\n", stderr);
