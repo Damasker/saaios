@@ -1,5 +1,20 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 stock-registration capture (feasibility + pivotal verdict):** a live
+stock-stack registration is **not feasible under SaaiOS** — no `/vendor/bin`/`rild`;
+`cbd` only boots the (already-ONLINE) CP; `rild` needs the Android telephony
+framework (binder/`hwservicemanager`/`system_server`, absent) to initiate
+radio-on/registration; no `cpif` kernel frame logger exists. Equivalent evidence
+pinned instead: our owner already matches stock's full known stage-1 trio
+(`0x093f`→`0x0404` europen `0x0101`→`0x0800`, all ACK `error_raw=0`, `mask_low7=1`)
+yet stays voice `REG_DENIED(3)`/data `NOT_SEARCHING(0)`. Pivotal verdict **(c)**: the
+registration delta is CP-internal state from FLASH-NV `SAE_UE_OPERATION_MODE`, not a
+missing command — (a) ruled out by command parity + exhausted surface; (b) ruled out
+because RAM op-mode SETs ACK with the target values already present yet reg is
+unchanged. Minimal delta = the operator-gated NV write (NO-GO, VERDICT 5). No stock
+run, no NV/EFS write; device on safe owner, CP ONLINE; bearer not established. Full
+writeup in [MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 6.
+
 **2026-10-02 de-risk (READ-ONLY):** characterized the `SAE_UE_OPERATION_MODE` NV
 gate and built a tested, reversible backup/revert harness; **recommendation NO-GO**,
 no NV write performed. The gate + siblings are **name-keyed** SAE-L3 flash NV items

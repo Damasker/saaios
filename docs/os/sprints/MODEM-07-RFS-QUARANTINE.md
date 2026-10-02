@@ -6,6 +6,31 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 stock-registration capture — INFEASIBLE under SaaiOS; pivotal verdict (c): the delta is FLASH-NV, not a command.**
+Operator asked to watch the stock stack register live and extract the minimal delta.
+A live stock registration is **not runnable under SaaiOS**: no `/vendor/bin`, no
+`rild` present; `cbd` (Android-dynamic, at `/data/saaios/var/vextract/cbd`) only
+boots the already-ONLINE CP; `rild`/libsitril issue radio-on/network-select SIT
+commands **only when driven by the Android telephony framework** (binder/
+`hwservicemanager`/`system_server`), which SaaiOS lacks (`servicemanager` only,
+empty `/apex`, no `/dev/socket/rild`); and the `cpif` driver exposes no
+`dynamic_debug`/ftrace frame logger (pstore empty) to capture frames without the HAL.
+Booting full stock Android would register but removes our COM13/SIT capture harness
+and a persistent cbd/rild is forbidden. Instead, the equivalent evidence was pinned:
+our owner already has **full command-parity** with stock's known stage-1 trio
+(`0x093f`→`0x0404` europen `0x0101,0,0`→`0x0800`, all ACK `error_raw=0`, signal
+present `mask_low7=1`) yet stays voice `REG_DENIED(3)` / data `NOT_SEARCHING(0)`.
+Pivotal verdict **(c)**: (a) ruled out by command parity + the exhausted command
+surface; (b) ruled out because the RAM op-mode SETs ACK and the GETs already report
+the target values (voice=3/stack=1/devsvc=1) with no registration change (the gate
+reads FLASH-NV, not the settable RAM value); (c) the delta is CP-internal state
+seeded from FLASH-NV `SAE_UE_OPERATION_MODE` — and stock registering on this phone
+confirms that value is normally "normal". Minimal delta = the single operator-gated
+NV write (VERDICT 5, NO-GO); no constraint-safe command/RAM-init substitutes. No
+stock stack run, no NV/EFS write; device on the safe quarantine owner, CP ONLINE;
+bearer not established. See [MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md)
+VERDICT 6.
+
 **2026-10-02 de-risk (READ-ONLY, no NV write) — NV gate characterized; RECOMMENDATION NO-GO; tested backup/revert harness built.**
 Per operator decision, characterized the hypothetical `SAE_UE_OPERATION_MODE` NV
 write and built a reversible safety harness, then stopped for go/no-go. Findings:

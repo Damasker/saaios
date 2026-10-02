@@ -1,5 +1,92 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 6 — STOCK-REGISTRATION CAPTURE: a live stock-stack registration capture is NOT feasible under SaaiOS (no telephony framework to drive rild). But the attempt pinned the answer: our owner already has FULL command-parity with stock's known stage-1 sequence (`0x093f`→`0x0404`→`0x0800`, all ACK clean, signal present) and still denies, so the registration delta is NOT a missing/mis-ordered SIT command — it is CP-internal state seeded from FLASH-NV (`SAE_UE_OPERATION_MODE`). PIVOTAL VERDICT = (c). No stock stack run; no NV/EFS write (2026-10-03):**
+
+Operator asked to watch the stock stack register live on this phone to find the
+minimal delta. Feasibility was assessed end-to-end and the equivalent evidence was
+obtained without running a persistent stock stack.
+
+### Can the stock stack register live on SaaiOS? — NO (evidence)
+- **No vendor userspace:** `/vendor` has only `firmware/` + `lib64/`; there is **no
+  `/vendor/bin`, no `rild`, no `cbd`** on the running FS. (A `cbd` copy exists at
+  `/data/saaios/var/vextract/cbd` — Android-37 dynamic arm64 ELF.)
+- **Vendor binaries *can* be linked/run** under SaaiOS via a minimal bionic set
+  (`/system/bin/linker64` + `libc.so` are present; proven by ADR-092 running stock
+  `aocd`). But that only gets a process started.
+- **`cbd` only boots the CP** — which is *already* ONLINE under our owner. It does
+  not perform network registration.
+- **`rild` cannot self-register:** rild/libsitril issue radio-power-on and
+  network-selection SIT commands **only when driven by the Android telephony
+  framework** (RIL_REQUEST_RADIO_POWER / network-select over binder, from
+  `system_server`/telephony via `hwservicemanager`). SaaiOS has `servicemanager`
+  only, no `hwservicemanager`, empty `/apex`, no telephony framework, no
+  `/dev/socket/rild`. So rild would link and idle, never initiating registration.
+- **No userspace-independent frame logger:** the `cpif` driver exposes **no**
+  `dynamic_debug`/ftrace IPC tracepoints (only `google_cpm` charge-pump entries
+  match); `/sys/fs/pstore` is empty. There is no in-kernel way to capture stock SIT
+  frames without the HAL running.
+- **Conclusion:** the only way to make the stock stack *register* is to boot full
+  stock Android — which removes our COM13 root shell + SIT/RFS capture harness, and
+  a persistent cbd/rild is forbidden. A literal "run stock once, capture a live
+  registration" on SaaiOS is therefore not executable.
+
+### Equivalent evidence obtained — command parity + live baseline
+Our quarantine owner (`modem-rfs-camp-combined-owner`, PID 568) already issues the
+**complete known stock stage-1 trio** on the exact `0x0803`→`0x0802`-raw-0 radio
+edge, and all three ACK clean in the live boot:
+```
+camp_ack cmd=0x0404 response=yes error_raw=0   (SGC europen 0x0101,0,0)
+camp_ack cmd=0x0800 response=yes error_raw=0   (RadioPower ON)
+camp_ack cmd=0x093f response=yes error_raw=0
+camp_probe field=signal mask_low7=1            (signal present)
+camp_probe field=voice registration_raw=3 reject_raw=0   (REG_DENIED)
+camp_probe field=data  registration_raw=0 reject_raw=0 tech_raw=2 (NOT_SEARCHING)
+```
+
+### Pivotal verdict — (c), with the evidence that rules out (a) and (b)
+- **(a) "stock issues a command we don't" — RULED OUT.** We have full parity with
+  stock's known stage-1 sequence, and the constraint-safe AP→CP command surface was
+  already exhaustively enumerated and live-tested (`0x070a` pref-net, `0x0710`
+  allow-data, `0x072B` dual-net+allow, op-mode SETs `0x091a`/`0x0933`/`0x080f`/
+  `0x0956`) — none move registration (VERDICTs 3–4).
+- **(b) "we skip a stock RAM-state init of op-mode" — RULED OUT as a replicable fix.**
+  The RAM op-mode SETs ACK `error_raw=0` **and** the GET counterparts already report
+  the *target* values (voice=3, stack=1, device_service=1) — i.e., the modem's RAM
+  op-mode is already "normal" — yet registration does not change. So the CP's
+  registration gate does **not** consult the RAM op-mode we can set; a RAM init
+  cannot fix it.
+- **(c) "stock relies on the CP already having a 'normal' op-mode in FLASH-NV" —
+  STANDING CONCLUSION.** With command parity achieved, signal present, and RAM
+  op-mode already normal, the only remaining divergence is below the AP→CP command
+  surface: CP-internal state seeded from FLASH-NV `SAE_UE_OPERATION_MODE`. That the
+  stock stack *does* register on this exact phone confirms the NV value is normally
+  "normal" — our boot path leaves/has it wrong, and there is no command to correct
+  it in RAM.
+
+### Minimal delta
+A **single FLASH-NV field** (`SAE_UE_OPERATION_MODE`) — i.e., exactly the
+operator-gated NV write characterized in VERDICT 5 (NO-GO). There is **no
+constraint-safe command or RAM-state init** that substitutes for it (proven by the
+op-mode SET no-op). Nothing constraint-safe remains to implement.
+
+### State / bearer
+No stock stack was run (nothing to stop). Device left on the safe quarantine owner,
+CP ONLINE. **Bearer NOT established** (data `NOT_SEARCHING`, no rmnet rx/tx) — goal
+correctly not marked complete.
+
+### Pinpointed next step (operator decision)
+Two mutually exclusive avenues remain, both previously flagged:
+1. **The operator-gated NV write** of `SAE_UE_OPERATION_MODE` (VERDICT 5): still
+   NO-GO as characterized (offset not statically pinnable, validator unconfirmed, no
+   proven AP-side propagation). The tested backup/revert harness is ready if the
+   unknowns are resolved.
+2. **An instrumented stock-Android boot** (outside SaaiOS) purely to *observe* the
+   CP's op-mode NV handshake during a real registration — our tooling performing no
+   NV/EFS write. This is the only way to get genuinely new live evidence, but it is
+   out of the SaaiOS bring-up scope and sacrifices our capture harness.
+
+---
+
 **VERDICT 5 — NV de-risk (READ-ONLY): the `SAE_UE_OPERATION_MODE` gate is a NAME-KEYED CP NV item with a runtime-built layout; its on-disk byte offset is NOT statically determinable, the CP integrity validator is UNCONFIRMED, and there is NO confirmed AP-side write path that propagates to the CP. A safety harness was built + tested on COPIES. RECOMMENDATION: NO-GO for any NV write. No NV/EFS write performed (2026-10-02 de-risk):**
 
 Per operator decision, this session only characterizes the hypothetical NV write
