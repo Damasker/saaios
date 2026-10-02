@@ -115,7 +115,9 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        SGC_COMMAND = 0x0404, SGC_LEN = 24,
        CAMP_POWER_COMMAND = 0x0800, CAMP_POWER_LEN = 18, CAMP_POWER_ON = 2,
        CAMP_RX_CAP = 4096, CAMP_WINDOW_MS = 30000,
-       CAMP_PAIR_GAP_MS = 1000, CAMP_DISPATCH_MS = 1000 };
+       CAMP_PAIR_GAP_MS = 1000, CAMP_DISPATCH_MS = 1000,
+       PROBE_START_MS = 2000, PROBE_REPLY_MS = 3000, PROBE_GAP_MS = 1500,
+       PROBE_SIGNAL_MIN = 210 };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -135,6 +137,19 @@ struct camp_driver {
     int cfg_sent, sgc_sent, camp_sent;
     int cfg_acked, sgc_acked, camp_acked;
     unsigned cfg_error, sgc_error, camp_error;
+    /* Active prober: drives the SIM to READY and sustains signal/registration
+     * tracing. It owns a private token namespace and a single outstanding GET.
+     * A reply timeout only backs this prober off; it never self-poisons and
+     * never stops the dispatcher or RFS quarantine. */
+    uint32_t probe_token;
+    int probe_pending;
+    unsigned probe_idx, probe_id;
+    const char *probe_name;
+    int64_t probe_deadline_ms, probe_next_ms;
+    int sim_change_pending, sim_ready;
+    unsigned probe_sent, probe_replies, probe_timeouts;
+    unsigned last_mask_low7;
+    int mask_seen;
 };
 #endif
 
@@ -1850,6 +1865,92 @@ static void camp_ack(struct camp_driver *c, const uint8_t *p, size_t n)
     }
 }
 
+/* sit-stream.so GetSignalStrength reads a 16-bit technology-presence mask at
+ * response +12; its V4 parser needs 196 bytes after the mask (210 total).
+ * Only the low-seven presence bits are extracted; never any measurement. */
+static int camp_signal_mask(const uint8_t *p, size_t n, uint32_t token,
+                            uint32_t *mask)
+{
+    if (n < PROBE_SIGNAL_MIN || p[0] != 1 || little16(p + 2) != 0x0900 ||
+        little32(p + 6) != token || little16(p + 4) != n ||
+        little16(p + 10)) return 0;
+    *mask = little16(p + 12) & 0x7fu;
+    return 1;
+}
+
+/* Prober GET rotation: SIM status, signal presence, and voice/data
+ * registration. SIM is also re-queried immediately on each 0x0210. */
+static const struct { unsigned id; const char *name; } camp_probe_gets[] = {
+    {0x0200, "sim"}, {0x0900, "signal"},
+    {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"}
+};
+enum { CAMP_PROBE_COUNT =
+           (int)(sizeof camp_probe_gets / sizeof camp_probe_gets[0]) };
+
+/* Match a prober reply or note a SIM-status-changed indication. Only scalar
+ * status fields and the public error word ever reach the log. */
+static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
+                             int64_t now)
+{
+    (void)now;
+    if (n >= 8 && p[0] == 2 && little16(p + 2) == 0x0210) {
+        if (!c->sim_ready) c->sim_change_pending = 1;
+        return;
+    }
+    if (!c->probe_pending || n < 12 || p[0] != 1 ||
+        little16(p + 4) != n || little32(p + 6) != c->probe_token ||
+        little16(p + 2) != c->probe_id)
+        return;
+    c->probe_pending = 0;
+    c->probe_replies++;
+    unsigned id = c->probe_id;
+    unsigned error = little16(p + 10);
+    if (error) {
+        printf("camp_probe field=%s response=yes error_raw=%u\n",
+               c->probe_name, error);
+        return;
+    }
+    if (id == 0x0200) {
+        if (!sit_sim_status_complete(p, n)) {
+            printf("camp_probe field=sim status=unknown_short\n");
+            return;
+        }
+        unsigned apps = p[SIT_SIM_APPS];
+        printf("camp_probe field=sim card_raw=%u apps=%u", p[SIT_SIM_CARD],
+               apps);
+        if (apps) {
+            unsigned app_state = p[SIT_SIM_APP_STATE];
+            printf(" app_state_raw=%u pin1_raw=%u", app_state,
+                   p[SIT_SIM_PIN1]);
+            if (app_state == 5 && !c->sim_ready) {
+                c->sim_ready = 1;
+                putchar('\n');
+                printf("camp_sim=ready app_state_raw=5\n");
+                return;
+            }
+        }
+        putchar('\n');
+    } else if (id == 0x0900) {
+        uint32_t mask;
+        if (camp_signal_mask(p, n, c->probe_token, &mask)) {
+            c->mask_seen = 1;
+            c->last_mask_low7 = (unsigned)mask;
+            printf("camp_probe field=signal mask_low7=%u\n", (unsigned)mask);
+        } else {
+            printf("camp_probe field=signal status=unknown_short\n");
+        }
+    } else if (n < (id == SIT_NET_DATA_REG ? 16u : 14u)) {
+        printf("camp_probe field=%s status=unknown_short\n", c->probe_name);
+    } else {
+        printf("camp_probe field=%s registration_raw=%u reject_raw=%u",
+               c->probe_name, p[SIT_NET_REG_STATE_OFFSET],
+               p[SIT_NET_REJECT_OFFSET]);
+        if (id == SIT_NET_DATA_REG)
+            printf(" tech_raw=%u", p[SIT_NET_DATA_TECH_OFFSET]);
+        putchar('\n');
+    }
+}
+
 /* Independent bounded framer, separate from the SIT observer's buffer. */
 static void camp_feed(struct camp_driver *c, const uint8_t *bytes, size_t len,
                       int64_t now)
@@ -1870,6 +1971,7 @@ static void camp_feed(struct camp_driver *c, const uint8_t *bytes, size_t len,
             if (!length) break;
             camp_observe(c, c->rx + offset, (size_t)length, now);
             camp_ack(c, c->rx + offset, (size_t)length);
+            camp_probe_match(c, c->rx + offset, (size_t)length, now);
             offset += (size_t)length;
         }
         if (c->poisoned) break;
@@ -1959,6 +2061,61 @@ static void camp_advance(struct owner *o, int64_t now)
     c->dispatched = 1;
     printf("camp_dispatch=sent elapsed_ms=%lld trigger=0x0803-0x0802-raw0"
            " seq=0x093f,0x0404,0x0800 power=on\n",
+           (long long)(now - c->owner_start_ms));
+}
+
+/* Sustained, non-self-poisoning observer. Drives the SIM to READY by re-GETting
+ * 0x0200 on every 0x0210, and keeps polling signal and voice/data registration
+ * across the whole settle window. A reply timeout or ambiguous write only backs
+ * the prober off; it never disables itself, the dispatcher, or RFS quarantine. */
+static void camp_probe_advance(struct owner *o, int64_t now)
+{
+    struct camp_driver *c = &o->camp;
+    if (c->poisoned || stop_requested) return;
+    /* A failed RFS terminal forbids further modem writes; a completed,
+     * acknowledged quarantine does not block read-only GETs. */
+    if (o->phase == TERMINAL && !o->final_ack_sent) return;
+#ifndef RFS_HOST_TEST
+    if (cp_state() != CP_ONLINE) return;
+#endif
+    if (now - c->owner_start_ms < PROBE_START_MS) return;
+    /* Let the one-shot stage-1 dispatch win the armed radio edge. */
+    if (c->radio_ready0_ms && !c->dispatched && !c->radio_invalidated) return;
+    if (c->probe_pending) {
+        if (now < c->probe_deadline_ms) return;
+        c->probe_pending = 0;
+        c->probe_timeouts++;
+        printf("camp_probe field=%s status=timeout\n", c->probe_name);
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        return;
+    }
+    if (now < c->probe_next_ms) return;
+    if (o->used || o->sit.used || c->used) return; /* avoid mid-frame writes */
+    unsigned pick;
+    const char *name;
+    if (c->sim_change_pending && !c->sim_ready) {
+        pick = 0x0200;
+        name = "sim";
+        c->sim_change_pending = 0;
+    } else {
+        pick = camp_probe_gets[c->probe_idx].id;
+        name = camp_probe_gets[c->probe_idx].name;
+        c->probe_idx = (c->probe_idx + 1u) % (unsigned)CAMP_PROBE_COUNT;
+    }
+    if (!c->probe_token)
+        c->probe_token = (uint32_t)now ^ (uint32_t)getpid() ^ 0x0b0b0000u;
+    ++c->probe_token;
+    if (sit_send_get_once(o->ipc, (uint16_t)pick, c->probe_token)) {
+        c->probe_next_ms = now + PROBE_GAP_MS; /* ambiguous write: back off */
+        return;
+    }
+    c->probe_pending = 1;
+    c->probe_id = pick;
+    c->probe_name = name;
+    c->probe_deadline_ms = now + PROBE_REPLY_MS;
+    c->probe_next_ms = now + PROBE_GAP_MS;
+    c->probe_sent++;
+    printf("camp_probe=sent field=%s elapsed_ms=%lld\n", name,
            (long long)(now - c->owner_start_ms));
 }
 #endif /* SAAIOS_RFS_CAMP */
@@ -2057,7 +2214,8 @@ static int run_owner(int ipc, int rfs, int ready)
          "responses_max=97 grants_max=95 no_promotion=1");
 #ifdef SAAIOS_RFS_CAMP
     puts("owner=rfs-camp-combined camp=armed "
-         "trigger=0x0803-0x0802-raw0 seq=0x093f,0x0404,0x0800");
+         "trigger=0x0803-0x0802-raw0 seq=0x093f,0x0404,0x0800 "
+         "probe=sim,signal,voice,data sim_drive=0x0210->0x0200");
 #endif
     sha_init(&o.received_hash);
     o.deadline_ms = started + FIRST_DEADLINE_MS;
@@ -2161,9 +2319,15 @@ static int run_owner(int ipc, int rfs, int ready)
             zero_bytes(bytes, sizeof bytes);
         }
         int64_t observed_at = monotonic_ms();
+#ifndef SAAIOS_RFS_CAMP
         if (observed_at >= 0) sit_advance(&o, observed_at);
-#ifdef SAAIOS_RFS_CAMP
+#else
+        /* Camp mode drives IPC via the active prober, not the passive SIT
+         * observer, so it never self-poisons on a settled-GET timeout. The
+         * observer definition is retained for the host self-test. */
+        (void)sit_advance;
         if (observed_at >= 0) camp_advance(&o, observed_at);
+        if (observed_at >= 0) camp_probe_advance(&o, observed_at);
 #endif
     }
     if (state != CP_OFFLINE)
@@ -3166,6 +3330,72 @@ static int test_camp_dispatch(void)
     if (o4.camp.dispatched || camp_cap_n != 0) return 118;
     return 0;
 }
+
+static int test_camp_prober(void)
+{
+    /* A signal reply shorter than the V4 minimum yields no mask. */
+    uint8_t sig_short[PROBE_SIGNAL_MIN - 1];
+    uint8_t sig[PROBE_SIGNAL_MIN];
+    uint32_t mask = 0xffffffffu;
+    host_sit_reply(sig_short, sizeof sig_short, 0x0900, 0x55u, 0);
+    if (camp_signal_mask(sig_short, sizeof sig_short, 0x55u, &mask)) return 120;
+    host_sit_reply(sig, sizeof sig, 0x0900, 0x55u, 0);
+    sig[12] = 0x45; /* low-seven presence bits 0x45; high bits ignored */
+    sig[13] = 0x80;
+    if (!camp_signal_mask(sig, sizeof sig, 0x55u, &mask) || mask != 0x45u)
+        return 121;
+    if (camp_signal_mask(sig, sizeof sig, 0x56u, &mask)) return 122; /* token */
+    host_sit_reply(sig, sizeof sig, 0x0900, 0x55u, 6);
+    if (camp_signal_mask(sig, sizeof sig, 0x55u, &mask)) return 123;  /* error */
+
+    /* The prober sends a GET once started and clears on the matching reply. */
+    struct owner o;
+    memset(&o, 0, sizeof o);
+    o.phase = TERMINAL;
+    o.final_ack_sent = 1;
+    o.ipc = 5;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, PROBE_START_MS - 1); /* too early */
+    if (camp_cap_n != 0 || o.camp.probe_pending) { host_sit_write_override = NULL; return 124; }
+    camp_probe_advance(&o, PROBE_START_MS);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || !o.camp.probe_pending ||
+        o.camp.probe_id != 0x0200 || camp_cap_len[0] != 12) return 125;
+
+    /* A SIM reply with app_state READY(5) marks the SIM ready, no poison. */
+    uint8_t sim[15 + SIT_SIM_APP_STRIDE];
+    host_sit_reply(sim, sizeof sim, 0x0200, o.camp.probe_token, 0);
+    sim[SIT_SIM_CARD] = 1;
+    sim[SIT_SIM_APPS] = 1;
+    sim[SIT_SIM_APP_STATE] = 5;
+    sim[SIT_SIM_PIN1] = 3;
+    camp_feed(&o.camp, sim, sizeof sim, PROBE_START_MS + 10);
+    if (o.camp.probe_pending || !o.camp.sim_ready || o.camp.poisoned ||
+        o.camp.probe_replies != 1) return 126;
+
+    /* A reply timeout backs the prober off without poisoning. */
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, PROBE_START_MS + 2000);     /* next GET */
+    if (camp_cap_n != 1 || !o.camp.probe_pending) { host_sit_write_override = NULL; return 127; }
+    camp_probe_advance(&o, PROBE_START_MS + 2000 + PROBE_REPLY_MS + 1);
+    host_sit_write_override = NULL;
+    if (o.camp.probe_pending || o.camp.poisoned ||
+        o.camp.probe_timeouts != 1) return 128;
+
+    /* A 0x0210 indication re-arms a SIM GET only while the SIM is not ready. */
+    struct camp_driver fresh;
+    memset(&fresh, 0, sizeof fresh);
+    uint8_t ind[8] = {2, 0, 0x10, 0x02, 8, 0, 0, 0};
+    camp_feed(&fresh, ind, sizeof ind, 100);
+    if (!fresh.sim_change_pending) return 129;
+    fresh.sim_ready = 1;
+    fresh.sim_change_pending = 0;
+    camp_feed(&fresh, ind, sizeof ind, 200);
+    if (fresh.sim_change_pending) return 130;
+    return 0;
+}
 #endif
 #endif
 
@@ -3231,7 +3461,7 @@ static int self_test(void)
 #ifdef SAAIOS_RFS_CAMP
     if (test_camp_builders() || test_camp_observer()
 #ifdef RFS_HOST_TEST
-        || test_camp_dispatch()
+        || test_camp_dispatch() || test_camp_prober()
 #endif
        )
         return 9;

@@ -1569,6 +1569,35 @@ signal-strength GET + sustained non-self-poisoning radio/registration trace and
 a SIM-readiness drive, to test whether `mask_low7` goes non-zero now that the NV
 write completes. Bearer verified: **no**.
 
+## 2026-10-02 — SIM READY + signal + NV landed, yet CS REG_DENIED (CP-config)
+
+Combined owner extended with an active, non-self-poisoning prober (drives SIM via
+`0x0210 → 0x0200`, adds `0x0900` signal + voice/data registration polling across
+the settle window). Owner `221cf0d2…`, probe `e32538e8…`, non-camp owner
+unregressed `7d4b6d6d…`; host + on-device self-test PASS, `-Werror`.
+
+Live (COM13, fresh `sysrq` boot → guarded RO-persist handoff): NV handshake
+completes + ACKed; camp `0x0404`/`0x0800` accepted; prober rode through a
++10…+49 s GET-timeout storm (old owner self-poisoned here) and captured the
+settled state:
+
+| field | settled | meaning |
+| --- | --- | --- |
+| SIM | `card_raw=1 apps=1 app_state_raw=5` (50×) | **READY** |
+| signal | `mask_low7=2` | **non-zero** (was 0) |
+| voice `0x0700` | `registration_raw=3 reject_raw=0` (49×) | **REG_DENIED**, local/internal (no NAS cause) |
+| data `0x0701` | `registration_raw=0 tech_raw=3` (49×) | **NOT_SEARCHING** (UMTS) |
+| rmnet0 | rx=0 tx=0, no IPv4 | no bearer |
+
+This **refutes** the 2026-09-30 "MM denies because `app≠READY`" hypothesis: app
+is READY(5), NV landed, signal present — and CS is still internally denied, PS
+still not searching. **Verdict: CP-config / missing real-EFS RF-cal·provisioning,
+not environmental** (signal presence rules out dead antenna/no cell; local deny
+rules out network rejection; quarantine never writes real EFS, so the CP gains no
+config). Next unmet precondition: CS/PS registration. Next action: RE the CP
+registration gate (`SIT_REG 0x20d1afa`; PresentObj `#636c +0xBF6`) — no EFS
+write, no `0x0704` spam. Bearer verified: **no**.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

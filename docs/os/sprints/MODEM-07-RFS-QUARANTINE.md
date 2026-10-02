@@ -1399,3 +1399,61 @@ is to extend the combined owner with a signal-strength GET and sustained
 (non-self-poisoning) radio/registration observation, plus the SIM-readiness
 drive, to see whether `mask_low7` becomes non-zero after the now-completed NV
 handshake. No opcodes or reply bytes were invented; EFS was never mounted RW.
+
+## Combined owner + active prober: SIM READY, signal, registration (2026-10-02)
+
+The combined owner (`SAAIOS_RFS_CAMP`) was extended with an **active prober**
+that replaces the passive SIT observer in camp mode. It drives the SIM by
+re-GETting `0x0200` on every `0x0210` (SIM status changed) and keeps a
+single-outstanding, round-robin GET over `{0x0200 sim, 0x0900 signal,
+SIT_NET_VOICE_REG, SIT_NET_DATA_REG}` across the whole settle window. A reply
+timeout or ambiguous write only backs the prober off (`field=… status=timeout`);
+it **never self-poisons**, never disables the dispatcher, and never touches RFS
+quarantine. The signal mask is parsed exactly as `sit-stream.so`'s V4 reader
+(`n>=210`, no error, `le16(buf+12)&0x7f`). The RFS quarantine machinery and the
+one-shot stage-1 dispatch are unchanged. Host + on-device self-test PASS
+(`PASS combined RFS quarantine + camp dispatch self-test`, mode
+`rfs-camp-combined`), `-Wall -Wextra -Werror -pedantic`, reproducible ARM64:
+owner `221cf0d222a70c985df4b90a072042ef3933bb4e65ab701f6b9abe0956390c96`,
+probe `e32538e86d06040aba71f120cd7002080a44a762b219b306b38c413986898c6f`; the
+non-camp full-quarantine owner is unregressed
+(`7d4b6d6d251aa7ff93f129ef87781e683fdaa7f1b1e5701dd4aefedc0f3efdf9`).
+
+**Live run (COM13, fresh `sysrq` boot → RO-persist guarded handoff).** Ordered
+observations:
+
+1. RFS protected-NV handshake **completes + ACKed** (`final_ack_sent=1`,
+   95 grants, 189446 bytes quarantined; `no_promotion=1`, EFS never mounted RW).
+2. Camp stage-1 on the `0x0803 → 0x0802-raw0` edge at +9.8 s: `0x0404` and
+   `0x0800` **accepted** (`error_raw=0`); `0x093f` silent no-op.
+3. A +10…+49 s GET-timeout storm (CP busy during radio-on/scan) — the prober
+   **rode through it** instead of self-poisoning, and then captured the settled
+   state the old self-poisoning owner never could:
+   - SIM reached **READY**: `card_raw=1 apps=1 app_state_raw=5 pin1_raw=3`,
+     held across 50 consecutive reads.
+   - Signal **non-zero**: `mask_low7=2` (was 0), held.
+   - Voice CS registration advanced to `registration_raw=3` = **REG_DENIED**,
+     `reject_raw=0` = **local/internal deny** (no NAS cause IE), held (49 reads).
+   - Data PS registration stayed `registration_raw=0` = **NOT_SEARCHING**,
+     `tech_raw=3` (UMTS), held (49 reads).
+4. Bearer: `rmnet0 rx=0 tx=0`, no IPv4. **Not attempted** — PS is not
+   registered, so `SetupDataCall` cannot succeed.
+
+**What this run newly establishes.** The 2026-09-30 open question — *does MM deny
+CS because `app≠READY`?* — is now **refuted**: with the SIM **READY(5)**, the
+NV handshake **landed**, and **signal present (mask=2)**, CS registration is
+**still** `REG_DENIED` with `reject_cause=0` and PS **still** NOT_SEARCHING. A
+`reject_cause=0` denial is the CP's MM refusing **internally**, before any
+network NAS cause — so it is not a network rejection.
+
+**Verdict: CP-config / missing protected-NV·RF-cal, not environmental.** Signal
+presence (`mask_low7=2`) argues against a dead antenna or absent serving cell;
+SIM READY removes SIM-init as the blocker; a local/internal CS deny plus PS
+never searching points at CP-side provisioning/calibration the modem normally
+reads from its **real** EFS — which the quarantine model deliberately never
+writes, so "the NV handshake landing" gives the CP no config it lacked. **Next
+unmet precondition:** successful CS/PS registration. **Constraint-safe next
+action:** reverse-engineer the CP registration gate (`SIT_REG 0x20d1afa`;
+PresentObj `#636c +0xBF6` in CP shm) to identify exactly which internal config
+the MM validates before permitting registration — not EFS writes, not `0x0704`
+spam. No opcodes or reply bytes were invented; EFS was never mounted RW.
