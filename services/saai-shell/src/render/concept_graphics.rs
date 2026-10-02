@@ -304,7 +304,7 @@ pub fn draw_resource_bar(canvas: &mut Canvas<'_>, visual: ResourceBarVisual) {
             );
         }
         None => {
-            let border = visual.bounds.height.min(3).max(1);
+            let border = visual.bounds.height.clamp(1, 3);
             canvas.fill_rect(
                 Rect::new(
                     visual.bounds.x,
