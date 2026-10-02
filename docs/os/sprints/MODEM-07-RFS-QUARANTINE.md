@@ -1331,3 +1331,71 @@ advances. The prerequisite is the factory `cmd-6`-after-state-3 success reply
 shape (which `rfs-error-probe.c` refuses to invent) recovered from the stock
 `rfsd` (SHA `58d7f885…`). No opcodes are invented; no RF-cal/NV is written to
 original EFS; EFS is never mounted RW.
+
+## Combined owner (`SAAIOS_RFS_CAMP`): reply-shape recovery + live result (2026-10-02)
+
+**Factory reply shapes recovered from `rfsd-cp2a` (SHA `58d7f885…`).** The
+protected-NV responder at `0x0f230` builds a 16-byte reply: `strh #3,[buf+0]`
+(response command = `3`), `strh seq,[buf+2]` (the request's echoed sequence,
+loaded from `[obj+64]`), `stur d0,[buf+4]` (an 8-byte `.rodata` constant =
+`{len=8, status}`), and `str [obj+8],[buf+12]` (the protected-file state = `3`).
+The success constant is `{8,0}` (len 8, status 0); the error variant at
+`0x5138` is `{8,6}`. This confirms, directly from the disassembly (no invented
+bytes), the shapes already encoded and self-tested in
+`modem-rfs-full-quarantine-owner.c`:
+
+- cmd7 unprotect / cmd3 op-status reply `status_7` = `{3,0,0,0, 8,0,0,0, 0,0,0,0, 3,0,0,0}` (seq 0).
+- **cmd6-after-state-3 success** `final_status` = `{3,0,1,0, 8,0,0,0, 0,0,0,0, 3,0,0,0}` (seq 1): response cmd `3`, echoed seq `1`, len `8`, status `0`, state `3`.
+
+**Combined owner implemented.** `modem-rfs-full-quarantine-owner.c` gains an
+opt-in `SAAIOS_RFS_CAMP` feature (mutually exclusive with the SGC owner modes):
+an isolated active camp dispatcher with its own bounded framer and token that
+arms on the exact `0x0803`→`0x0802`-raw0 radio edge and issues the stock
+stage-1 `0x093f`→`0x0404`→`0x0800` once, while the unchanged RFS machinery
+serves the `cmd 7/3/6` protected-NV sequence into the quarantine copy (fresh
+read-only original-EFS provenance gate first; original EFS never mounted RW,
+`sda5`/`nv_protected.bin` original never written). Host + on-device `self-test`
+PASS (`-Wall -Wextra -Werror`); non-camp build unregressed. Artifacts:
+`build-rfs-camp-combined-owner.sh`, `probe-rfs-camp-combined-config.h`,
+`build-probe-rfs-camp-combined.sh`, `owner-handoff-rfs-camp.sh`. Reproducible
+ARM64 SHA-256 — owner `7a88e30b9a5fbb72eb84f8482b55dde9b3dac1da4feddc8724bc1a50892e1d38`,
+probe `e32538e86d06040aba71f120cd7002080a44a762b219b306b38c413986898c6f`.
+
+**Live run — the protected-NV handshake now COMPLETES; still no registration.**
+Fresh boot → guarded RO-persist handoff → CP OFFLINE→ONLINE; on-device SHA-256,
+`--mode rfs-camp-combined`, probe `--owner-exec`/`--owner-log`, and `self-test`
+(PASS) all verified. The combined owner:
+
+- Served the CP's full protected-NV transfer to quarantine and **sent the gated
+  final success ACK**: `rfs_full_quarantine=complete_quarantined_ack
+  grants_attempted=95 chunks_stored=95 bytes_stored=189446 final_ack_sent=1
+  failure_stage=none` at +7.7 s. This is the `cmd 7/3/6` + 189446-byte write
+  handshake that was never completed before — the RFS-level blocker is cleared.
+- Dispatched the camp trio at the radio edge (+9.8 s): `0x0404` accepted
+  (`error_raw=0`) and `0x0800` radio-power-on accepted (`error_raw=0`); `0x093f`
+  stays a silent no-op on this single-SIM SKU (no ACK), as previously found.
+  (First boot the camp was blocked because the successful RFS terminal gated all
+  modem writes; the gate was corrected to forbid writes only after a *failed*
+  terminal, and a self-test case was added.)
+
+**But registration and bearer did not follow.** No `0x0700`/`0x0701`
+registration indications appeared in the observable window; `rmnet0` rx/tx =
+`0/0` with no IPv4 at +180 s. The passive SIT snapshot read `card_raw=0 apps=0`
+at +1.5 s and its settled (+60 s) SIM GET **timed out**, which self-poisons the
+observer (`sit_observer=reply_timeout no_more_gets=1`), so later radio/network
+indications are no longer traced and this owner cannot read signal strength.
+
+**Where the handshake now stalls / next action.** The protected-NV RFS write is
+no longer the stall — it completes and is ACKed. The modem accepts radio-power
+but produces no registration and no bearer, and two observability gaps block a
+definitive signal verdict: (1) this owner never issues a signal-strength GET, so
+`mask_low7` is unread; (2) its SIT observer self-poisons on a single settled-GET
+timeout, and the online-pass `card_raw=0 apps=0` suggests the card is not driven
+to READY by this passive owner (unlike `modem-channel-owner`, which performs SIM
+refresh/queries). The single most probable remaining cause is that NV-write
+completion alone is insufficient — the modem additionally needs the SIM driven
+to READY and/or a signal query to confirm RF — so the constraint-safe next step
+is to extend the combined owner with a signal-strength GET and sustained
+(non-self-poisoning) radio/registration observation, plus the SIM-readiness
+drive, to see whether `mask_low7` becomes non-zero after the now-completed NV
+handshake. No opcodes or reply bytes were invented; EFS was never mounted RW.

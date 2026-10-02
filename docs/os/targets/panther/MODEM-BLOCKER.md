@@ -1546,6 +1546,29 @@ EFS provenance check first) **and** issues `0x093f`→`0x0404`→`0x0800` on the
 edge, then watch `mask_low7`/`0x0700`. Prereq: factory `cmd-6`-after-state-3
 reply shape from stock `rfsd` (`58d7f885…`); do not invent it or write EFS.
 
+## 2026-10-02 — combined owner: NV handshake COMPLETES+ACKed; still no registration
+
+Recovered the factory reply shapes from `rfsd-cp2a` (`58d7f885…`) by
+disassembly (responder `0x0f230`): 16-byte reply `{u16 cmd=3, u16 seq_echo,
+u32 len=8, u32 status(0=ok), u32 state=3}` — confirms `status_7`/`final_status`
+with no invented bytes. Built the combined `SAAIOS_RFS_CAMP` owner (into
+`modem-rfs-full-quarantine-owner.c`): serves the `cmd 7/3/6` protected-NV
+sequence to the quarantine copy (RO EFS provenance gate, never EFS RW) **and**
+dispatches `0x093f`→`0x0404`→`0x0800` on the radio edge. Reproducible ARM64
+owner `7a88e30b…`, probe `e32538e8…`; host + on-device `self-test` PASS.
+
+**Live (fresh boot, guarded handoff, CP ONLINE):** the owner served the full
+189446-byte protected-NV transfer to quarantine and sent the gated final
+success ACK (`final_ack_sent=1`, +7.7 s) — the RFS handshake that was never
+completed before. Camp `0x0404` and `0x0800` (radio power on) accepted
+(`error_raw=0`); `0x093f` silent no-op. **But** no `0x0700`/`0x0701`
+registration, `rmnet0` rx/tx = `0/0`, no IPv4 at +180 s. The passive observer
+read `card_raw=0 apps=0` and its settled SIM GET timed out (self-poison), so
+signal strength is unread. **Next:** extend the combined owner with a
+signal-strength GET + sustained non-self-poisoning radio/registration trace and
+a SIM-readiness drive, to test whether `mask_low7` goes non-zero now that the NV
+write completes. Bearer verified: **no**.
+
 ## Constraints (unchanged)
 
 No `IOCTL_POWER_OFF`, `do_cp_crash`, EFS RW, cbd/rild.

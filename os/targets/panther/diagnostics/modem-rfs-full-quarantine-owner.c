@@ -30,6 +30,17 @@
 #include "sit-network-layout.h"
 #include "sit-sim-layout.h"
 
+/* The combined owner (SAAIOS_RFS_CAMP) adds an active IPC camp dispatcher on
+ * top of the unchanged RFS quarantine serving: on the early radio edge it
+ * issues the stock stage-1 0x093f -> 0x0404 -> 0x0800 while the RFS machinery
+ * serves the protected-NV cmd7/cmd3/cmd6 sequence into the quarantine copy.
+ * The SGC compile modes belong to the separate modem-channel-owner.c program. */
+#if defined(SAAIOS_RFS_CAMP) && (defined(SAAIOS_SCAN_ONCE) || \
+    defined(SAAIOS_SGC_ONCE) || defined(SAAIOS_SGC_EARLY_ONCE) || \
+    defined(SAAIOS_SGC_SEQ_ONCE) || defined(SAAIOS_SGC_CAMP_ONCE))
+#error "SAAIOS_RFS_CAMP is mutually exclusive with the SGC owner modes"
+#endif
+
 enum { BASELINE_BYTES = 524288, FIRST_CHUNK = 2012,
        RFS_TRANSFER_BYTES = 189446, RFS_GRANTS_MAX = 95,
        RFS_FRAME_MAX = 20 + FIRST_CHUNK, RX_CAP = 4096,
@@ -99,6 +110,34 @@ struct sit_observer {
     uint64_t event_overflow;
 };
 
+#ifdef SAAIOS_RFS_CAMP
+enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
+       SGC_COMMAND = 0x0404, SGC_LEN = 24,
+       CAMP_POWER_COMMAND = 0x0800, CAMP_POWER_LEN = 18, CAMP_POWER_ON = 2,
+       CAMP_RX_CAP = 4096, CAMP_WINDOW_MS = 30000,
+       CAMP_PAIR_GAP_MS = 1000, CAMP_DISPATCH_MS = 1000 };
+
+/* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
+ * own streaming framer and token, never a SET on the RFS channel. It arms on
+ * the exact 0x0803 -> 0x0802-raw0 radio edge and sends the stock stage-1 trio
+ * once. A malformed/oversized IPC stream only disables the dispatcher. */
+struct camp_driver {
+    uint8_t rx[CAMP_RX_CAP];
+    size_t used;
+    int poisoned;
+    int64_t owner_start_ms;
+    int radio_stage;              /* 0 none, 1 saw exact 0x0803 */
+    int radio_invalidated;
+    int64_t radio_unavail_ms, radio_ready0_ms;
+    uint32_t token;
+    int dispatched;
+    uint32_t cfg_token, sgc_token, camp_token;
+    int cfg_sent, sgc_sent, camp_sent;
+    int cfg_acked, sgc_acked, camp_acked;
+    unsigned cfg_error, sgc_error, camp_error;
+};
+#endif
+
 struct owner {
     int ipc, rfs, ready, lock;
     int source, pin_fd, source_dir, pin_dir;
@@ -127,6 +166,9 @@ struct owner {
     unsigned final_parsed_len, final_outer_payload_len, final_trailing;
     enum padding_zero final_padding_zero;
     struct sit_observer sit;
+#ifdef SAAIOS_RFS_CAMP
+    struct camp_driver camp;
+#endif
 };
 
 static volatile sig_atomic_t stop_requested;
@@ -1711,6 +1753,216 @@ static void sit_advance(struct owner *o, int64_t now)
     s->deadline_ms = now + SIT_REPLY_MS;
 }
 
+#ifdef SAAIOS_RFS_CAMP
+/* Exact stock stage-1 request builders, recovered from the vendor RIL and
+ * matching modem-channel-owner.c byte-for-byte. No CLI value or NV access. */
+static void make_setmodemsconfig_request(uint8_t request[SEQ_CONFIG_LEN],
+                                         uint32_t token)
+{
+    memset(request, 0, SEQ_CONFIG_LEN);
+    request[2] = (uint8_t)SEQ_CONFIG_COMMAND;        /* 0x3f */
+    request[3] = (uint8_t)(SEQ_CONFIG_COMMAND >> 8); /* 0x09 */
+    request[4] = SEQ_CONFIG_LEN;
+    put_little32(request + 6, token);
+    request[12] = 0; /* one modem */
+}
+
+static void make_sgc_request(uint8_t request[SGC_LEN], uint32_t token)
+{
+    memset(request, 0, SGC_LEN);
+    request[2] = 0x04;
+    request[3] = 0x04;
+    request[4] = SGC_LEN;
+    put_little32(request + 6, token);
+    put_little32(request + 12, 0x0101);
+}
+
+static void make_radiopower_request(uint8_t request[CAMP_POWER_LEN],
+                                    uint32_t token)
+{
+    memset(request, 0, CAMP_POWER_LEN);
+    request[2] = (uint8_t)CAMP_POWER_COMMAND;        /* 0x00 */
+    request[3] = (uint8_t)(CAMP_POWER_COMMAND >> 8); /* 0x08 */
+    request[4] = CAMP_POWER_LEN;
+    put_little32(request + 6, token);
+    put_little32(request + 12, CAMP_POWER_ON); /* arg1!=0 -> power word 2 */
+    request[16] = 0; /* arg2 */
+    request[17] = 0; /* arg3 */
+}
+
+/* Fed every framed IPC indication. Tracks the factory-callback trigger pair:
+ * an exact 8-byte type-2 0x0803 (UNAVAILABLE) then an exact 12-byte type-2
+ * 0x0802 with raw scalar 0. Any duplicate, reversed, malformed or superseding
+ * radio event invalidates eligibility; no later event rearms it. */
+static void camp_observe(struct camp_driver *c, const uint8_t *p, size_t n,
+                         int64_t now)
+{
+    if (c->radio_invalidated || c->radio_ready0_ms) {
+        if (n >= 8 && p[0] == 2 &&
+            (little16(p + 2) == 0x0803 || little16(p + 2) == 0x0802))
+            c->radio_invalidated = 1;
+        return;
+    }
+    if (n < 8 || p[0] != 2) return;
+    unsigned id = little16(p + 2);
+    if (id == 0x0803) {
+        if (n != 8 || little16(p + 4) != n) { c->radio_invalidated = 1; return; }
+        if (now - c->owner_start_ms > CAMP_WINDOW_MS) return;
+        if (c->radio_stage != 0) { c->radio_invalidated = 1; return; }
+        c->radio_stage = 1;
+        c->radio_unavail_ms = now;
+    } else if (id == 0x0802) {
+        int parsed = (n == 12 && little16(p + 4) == n) ? 1 : -1;
+        uint32_t raw = parsed == 1 ? little32(p + 8) : UINT32_MAX;
+        if (c->radio_stage != 1 || parsed != 1 || raw != 0 ||
+            now - c->radio_unavail_ms > CAMP_PAIR_GAP_MS ||
+            now - c->owner_start_ms > CAMP_WINDOW_MS) {
+            c->radio_invalidated = 1;
+            return;
+        }
+        c->radio_ready0_ms = now;
+    }
+}
+
+/* Match the three camp ACKs by id and echoed token. Only fixed opcodes and the
+ * public error word reach the log; never any payload. */
+static void camp_ack(struct camp_driver *c, const uint8_t *p, size_t n)
+{
+    if (n < 12 || p[0] != 1 || little16(p + 4) != n) return;
+    unsigned id = little16(p + 2);
+    uint32_t token = little32(p + 6);
+    unsigned error = little16(p + 10);
+    if (c->cfg_sent && !c->cfg_acked &&
+        id == SEQ_CONFIG_COMMAND && token == c->cfg_token) {
+        c->cfg_acked = 1;
+        c->cfg_error = error;
+        printf("camp_ack cmd=0x093f response=yes error_raw=%u\n", error);
+    } else if (c->sgc_sent && !c->sgc_acked &&
+               id == SGC_COMMAND && token == c->sgc_token) {
+        c->sgc_acked = 1;
+        c->sgc_error = error;
+        printf("camp_ack cmd=0x0404 response=yes error_raw=%u\n", error);
+    } else if (c->camp_sent && !c->camp_acked &&
+               id == CAMP_POWER_COMMAND && token == c->camp_token) {
+        c->camp_acked = 1;
+        c->camp_error = error;
+        printf("camp_ack cmd=0x0800 response=yes error_raw=%u\n", error);
+    }
+}
+
+/* Independent bounded framer, separate from the SIT observer's buffer. */
+static void camp_feed(struct camp_driver *c, const uint8_t *bytes, size_t len,
+                      int64_t now)
+{
+    if (c->poisoned) return;
+    while (len) {
+        size_t space = sizeof c->rx - c->used;
+        if (!space) { c->poisoned = 1; break; }
+        size_t take = len < space ? len : space;
+        memcpy(c->rx + c->used, bytes, take);
+        c->used += take;
+        bytes += take;
+        len -= take;
+        size_t offset = 0;
+        while (offset < c->used) {
+            int length = sit_frame_length(c->rx + offset, c->used - offset);
+            if (length < 0) { c->poisoned = 1; break; }
+            if (!length) break;
+            camp_observe(c, c->rx + offset, (size_t)length, now);
+            camp_ack(c, c->rx + offset, (size_t)length);
+            offset += (size_t)length;
+        }
+        if (c->poisoned) break;
+        if (offset) {
+            size_t remaining = c->used - offset;
+            memmove(c->rx, c->rx + offset, remaining);
+            zero_bytes(c->rx + remaining, offset);
+            c->used = remaining;
+        }
+    }
+    if (c->poisoned) { c->used = 0; zero_bytes(c->rx, sizeof c->rx); }
+}
+
+/* A short or ambiguous IPC write consumes the request; never resend it. */
+static int camp_send_once(int ipc, const uint8_t *frame, size_t len)
+{
+    sigset_t blocked, old;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGTERM);
+    sigaddset(&blocked, SIGINT);
+    if (sigprocmask(SIG_BLOCK, &blocked, &old)) return -1;
+    ssize_t written = -1;
+    if (!stop_requested) {
+#ifdef RFS_HOST_TEST
+        if (host_sit_write_override) {
+            host_sit_write_calls++;
+            written = host_sit_write_override(ipc, frame, len);
+        } else
+#endif
+        written = write(ipc, frame, len);
+    }
+    int restored = sigprocmask(SIG_SETMASK, &old, NULL);
+    return restored == 0 && written == (ssize_t)len ? 0 : -1;
+}
+
+/* Dispatch the stock stage-1 trio once, back-to-back on the radio edge. */
+static void camp_advance(struct owner *o, int64_t now)
+{
+    struct camp_driver *c = &o->camp;
+    if (c->dispatched || c->poisoned || c->radio_invalidated || stop_requested)
+        return;
+    /* A failed RFS terminal forbids further modem writes; a successful,
+     * acknowledged quarantine (final ACK sent) does not block the IPC camp. */
+    if (o->phase == TERMINAL && !o->final_ack_sent) return;
+    if (!c->radio_ready0_ms) return;       /* trigger pair not yet armed */
+    if (now - c->radio_ready0_ms > CAMP_DISPATCH_MS) {
+        c->radio_invalidated = 1;          /* missed the bounded window */
+        return;
+    }
+    if (o->used || o->sit.used || c->used || o->sit.pending)
+        return;                            /* mid-frame or GET in flight */
+#ifndef RFS_HOST_TEST
+    if (cp_state() != CP_ONLINE) return;
+#endif
+    if (!c->token)
+        c->token = (uint32_t)now ^ (uint32_t)getpid() ^ 0x0ca70000u;
+    uint32_t cfg_token = ++c->token;
+    uint8_t cfg[SEQ_CONFIG_LEN];
+    make_setmodemsconfig_request(cfg, cfg_token);
+    if (camp_send_once(o->ipc, cfg, sizeof cfg)) {
+        c->poisoned = 1;
+        puts("camp_dispatch=write_failed step=cfg");
+        return;
+    }
+    c->cfg_token = cfg_token;
+    c->cfg_sent = 1;
+    uint32_t sgc_token = ++c->token;
+    uint8_t sgc[SGC_LEN];
+    make_sgc_request(sgc, sgc_token);
+    if (camp_send_once(o->ipc, sgc, sizeof sgc)) {
+        c->dispatched = 1;
+        puts("camp_dispatch=write_failed step=sgc");
+        return;
+    }
+    c->sgc_token = sgc_token;
+    c->sgc_sent = 1;
+    uint32_t camp_token = ++c->token;
+    uint8_t power[CAMP_POWER_LEN];
+    make_radiopower_request(power, camp_token);
+    if (camp_send_once(o->ipc, power, sizeof power)) {
+        c->dispatched = 1;
+        puts("camp_dispatch=write_failed step=power");
+        return;
+    }
+    c->camp_token = camp_token;
+    c->camp_sent = 1;
+    c->dispatched = 1;
+    printf("camp_dispatch=sent elapsed_ms=%lld trigger=0x0803-0x0802-raw0"
+           " seq=0x093f,0x0404,0x0800 power=on\n",
+           (long long)(now - c->owner_start_ms));
+}
+#endif /* SAAIOS_RFS_CAMP */
+
 static void request_stop(int signal_number)
 {
     (void)signal_number;
@@ -1803,11 +2055,18 @@ static int run_owner(int ipc, int rfs, int ready)
     setvbuf(stdout, NULL, _IOLBF, 0);
     puts("owner=rfs-full-quarantine-ready payload=redacted "
          "responses_max=97 grants_max=95 no_promotion=1");
+#ifdef SAAIOS_RFS_CAMP
+    puts("owner=rfs-camp-combined camp=armed "
+         "trigger=0x0803-0x0802-raw0 seq=0x093f,0x0404,0x0800");
+#endif
     sha_init(&o.received_hash);
     o.deadline_ms = started + FIRST_DEADLINE_MS;
     o.total_deadline_ms = started + TOTAL_DEADLINE_MS;
     o.sit.ready_ms = started;
     o.sit.event_window_ms = started;
+#ifdef SAAIOS_RFS_CAMP
+    o.camp.owner_start_ms = started;
+#endif
     for (;;) {
         int64_t now = monotonic_ms();
         if (now >= 0) sit_event_trace_window(&o.sit, now);
@@ -1894,11 +2153,18 @@ static int run_owner(int ipc, int rfs, int ready)
                 int64_t received_at = monotonic_ms();
                 if (received_at < 0) sit_poison(&o.sit);
                 else sit_feed(&o.sit, bytes, (size_t)got, received_at);
+#ifdef SAAIOS_RFS_CAMP
+                if (received_at >= 0)
+                    camp_feed(&o.camp, bytes, (size_t)got, received_at);
+#endif
             }
             zero_bytes(bytes, sizeof bytes);
         }
         int64_t observed_at = monotonic_ms();
         if (observed_at >= 0) sit_advance(&o, observed_at);
+#ifdef SAAIOS_RFS_CAMP
+        if (observed_at >= 0) camp_advance(&o, observed_at);
+#endif
     }
     if (state != CP_OFFLINE)
         fputs("WARNING owner exit before CP OFFLINE may purge RX\n", stderr);
@@ -1929,6 +2195,9 @@ done:
     zero_bytes(&o.received_hash, sizeof o.received_hash);
     zero_bytes(o.rx, sizeof o.rx);
     zero_bytes(o.sit.rx, sizeof o.sit.rx);
+#ifdef SAAIOS_RFS_CAMP
+    zero_bytes(o.camp.rx, sizeof o.camp.rx);
+#endif
     return rc;
 }
 
@@ -2736,6 +3005,170 @@ done:
 }
 #endif
 
+#ifdef SAAIOS_RFS_CAMP
+static void camp_build_ind(uint8_t *buf, unsigned id, size_t len, uint32_t raw)
+{
+    memset(buf, 0, len);
+    buf[0] = 2;
+    buf[2] = (uint8_t)id;
+    buf[3] = (uint8_t)(id >> 8);
+    buf[4] = (uint8_t)len;
+    buf[5] = (uint8_t)(len >> 8);
+    if (id == 0x0802 && len >= 12) put_little32(buf + 8, raw);
+}
+
+static int test_camp_builders(void)
+{
+    uint8_t cfg[SEQ_CONFIG_LEN];
+    static const uint8_t cfg_e[SEQ_CONFIG_LEN] =
+        {0,0,0x3f,0x09,13,0,0x78,0x56,0x34,0x12,0,0,0};
+    make_setmodemsconfig_request(cfg, 0x12345678);
+    if (!same_bytes(cfg, cfg_e, sizeof cfg)) return 101;
+    uint8_t sgc[SGC_LEN];
+    static const uint8_t sgc_e[SGC_LEN] =
+        {0,0,0x04,0x04,24,0,0x78,0x56,0x34,0x12,0,0,
+         0x01,0x01,0,0,0,0,0,0,0,0,0,0};
+    make_sgc_request(sgc, 0x12345678);
+    if (!same_bytes(sgc, sgc_e, sizeof sgc)) return 102;
+    uint8_t power[CAMP_POWER_LEN];
+    static const uint8_t power_e[CAMP_POWER_LEN] =
+        {0,0,0x00,0x08,18,0,0x78,0x56,0x34,0x12,0,0,2,0,0,0,0,0};
+    make_radiopower_request(power, 0x12345678);
+    if (!same_bytes(power, power_e, sizeof power)) return 103;
+    return 0;
+}
+
+static int test_camp_observer(void)
+{
+    struct camp_driver c;
+    uint8_t e3[8], e2[12], e2n[12];
+    camp_build_ind(e3, 0x0803, 8, 0);
+    camp_build_ind(e2, 0x0802, 12, 0);
+    camp_build_ind(e2n, 0x0802, 12, 2);
+    /* A clean 0x0803 -> 0x0802 raw 0 pair arms the dispatcher. */
+    memset(&c, 0, sizeof c);
+    camp_feed(&c, e3, 8, 100);
+    camp_feed(&c, e2, 12, 200);
+    if (!c.radio_ready0_ms || c.radio_invalidated) return 104;
+    /* Reversed order invalidates. */
+    memset(&c, 0, sizeof c);
+    camp_feed(&c, e2, 12, 100);
+    if (!c.radio_invalidated || c.radio_ready0_ms) return 105;
+    /* Duplicate 0x0803 invalidates. */
+    memset(&c, 0, sizeof c);
+    camp_feed(&c, e3, 8, 100);
+    camp_feed(&c, e3, 8, 150);
+    if (!c.radio_invalidated || c.radio_ready0_ms) return 106;
+    /* Non-zero scalar after 0x0803 invalidates. */
+    memset(&c, 0, sizeof c);
+    camp_feed(&c, e3, 8, 100);
+    camp_feed(&c, e2n, 12, 200);
+    if (!c.radio_invalidated || c.radio_ready0_ms) return 107;
+    /* Second event beyond the inter-event gap invalidates. */
+    memset(&c, 0, sizeof c);
+    camp_feed(&c, e3, 8, 100);
+    camp_feed(&c, e2, 12, 100 + CAMP_PAIR_GAP_MS + 1);
+    if (!c.radio_invalidated || c.radio_ready0_ms) return 108;
+    /* A superseding radio event after a settled pair invalidates. */
+    memset(&c, 0, sizeof c);
+    camp_feed(&c, e3, 8, 100);
+    camp_feed(&c, e2, 12, 200);
+    camp_feed(&c, e3, 8, 300);
+    if (!c.radio_invalidated) return 109;
+    return 0;
+}
+
+#ifdef RFS_HOST_TEST
+static uint8_t camp_cap[3][32];
+static size_t camp_cap_len[3];
+static unsigned camp_cap_n;
+static ssize_t camp_capture_write(int fd, const void *buf, size_t len)
+{
+    (void)fd;
+    if (camp_cap_n < 3 && len <= sizeof camp_cap[0]) {
+        memcpy(camp_cap[camp_cap_n], buf, len);
+        camp_cap_len[camp_cap_n] = len;
+    }
+    camp_cap_n++;
+    return (ssize_t)len;
+}
+
+static int test_camp_dispatch(void)
+{
+    struct owner o;
+    memset(&o, 0, sizeof o);
+    o.phase = WAIT_7;
+    o.ipc = 5;
+    o.camp.owner_start_ms = 0;
+    o.camp.radio_ready0_ms = 1000;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_advance(&o, 1000);
+    host_sit_write_override = NULL;
+    if (!o.camp.dispatched || camp_cap_n != 3) return 110;
+    if (camp_cap_len[0] != SEQ_CONFIG_LEN ||
+        little16(camp_cap[0] + 2) != SEQ_CONFIG_COMMAND) return 111;
+    if (camp_cap_len[1] != SGC_LEN ||
+        little16(camp_cap[1] + 2) != SGC_COMMAND) return 112;
+    if (camp_cap_len[2] != CAMP_POWER_LEN ||
+        little16(camp_cap[2] + 2) != CAMP_POWER_COMMAND) return 113;
+    /* A second advance must not re-dispatch. */
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_advance(&o, 1000);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 0) return 114;
+    /* The matching ACK records success without re-sending. */
+    uint8_t ack[12];
+    memset(ack, 0, sizeof ack);
+    ack[0] = 1;
+    ack[2] = (uint8_t)CAMP_POWER_COMMAND;
+    ack[3] = (uint8_t)(CAMP_POWER_COMMAND >> 8);
+    ack[4] = 12;
+    put_little32(ack + 6, o.camp.camp_token);
+    camp_feed(&o.camp, ack, sizeof ack, 1100);
+    if (!o.camp.camp_acked || o.camp.camp_error) return 115;
+    /* An armed pair that misses the dispatch window invalidates, no send. */
+    struct owner o2;
+    memset(&o2, 0, sizeof o2);
+    o2.phase = WAIT_7;
+    o2.ipc = 5;
+    o2.camp.radio_ready0_ms = 1000;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_advance(&o2, 1000 + CAMP_DISPATCH_MS + 1);
+    host_sit_write_override = NULL;
+    if (o2.camp.dispatched || camp_cap_n != 0 ||
+        !o2.camp.radio_invalidated) return 116;
+    /* A successful RFS terminal (final ACK sent) still permits camp dispatch;
+     * a failed terminal (no final ACK) blocks it. */
+    struct owner o3;
+    memset(&o3, 0, sizeof o3);
+    o3.phase = TERMINAL;
+    o3.final_ack_sent = 1;
+    o3.ipc = 5;
+    o3.camp.radio_ready0_ms = 1000;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_advance(&o3, 1000);
+    host_sit_write_override = NULL;
+    if (!o3.camp.dispatched || camp_cap_n != 3) return 117;
+    struct owner o4;
+    memset(&o4, 0, sizeof o4);
+    o4.phase = TERMINAL;
+    o4.final_ack_sent = 0;
+    o4.ipc = 5;
+    o4.camp.radio_ready0_ms = 1000;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_advance(&o4, 1000);
+    host_sit_write_override = NULL;
+    if (o4.camp.dispatched || camp_cap_n != 0) return 118;
+    return 0;
+}
+#endif
+#endif
+
 static int self_test(void)
 {
     static const uint8_t abc[] = {'a', 'b', 'c'};
@@ -2795,9 +3228,21 @@ static int self_test(void)
         test_host_padded_final_refusals())
         return 8;
 #endif
+#ifdef SAAIOS_RFS_CAMP
+    if (test_camp_builders() || test_camp_observer()
+#ifdef RFS_HOST_TEST
+        || test_camp_dispatch()
+#endif
+       )
+        return 9;
+#endif
     zero_bytes(data, sizeof data);
     zero_bytes(digest, sizeof digest);
+#ifdef SAAIOS_RFS_CAMP
+    puts("PASS combined RFS quarantine + camp dispatch self-test");
+#else
     puts("PASS full-RFS quarantine, SIT observer, and SHA-256 self-test");
+#endif
     return 0;
 }
 
@@ -2805,7 +3250,11 @@ int main(int argc, char **argv)
 {
     if (argc == 2 && (!strcmp(argv[1], "--mode") ||
                       !strcmp(argv[1], "--mode=rfs-full-quarantine"))) {
+#ifdef SAAIOS_RFS_CAMP
+        puts("rfs-camp-combined");
+#else
         puts("rfs-full-quarantine");
+#endif
         return 0;
     }
     if (argc == 2 && !strcmp(argv[1], "self-test"))
