@@ -8,7 +8,13 @@ use saai_ui_core::{
     SystemSection, SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
+mod concept_graphics;
 mod orb_paint;
+pub use concept_graphics::{
+    draw_avatar, draw_object_icon, draw_orb_visual, draw_resource_bar, draw_ring_progress,
+    draw_slider, AvatarVisual, ObjectIconVisual, OrbVisual, ResourceBarVisual, RingProgressVisual,
+    SliderVisual,
+};
 pub use orb_paint::{
     draw_covered_page, draw_orb_space, draw_search_panel, orb_unit, OrbPaint, OrbPoint,
     SearchRowView, SearchView,
@@ -1530,7 +1536,13 @@ fn draw_semantic_text(
     }
 }
 
-fn draw_gallery_icon(canvas: &mut Canvas<'_>, fonts: &Fonts, icon: &Icon, left: u32, top: u32) {
+pub(super) fn draw_gallery_icon(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    icon: &Icon,
+    left: u32,
+    top: u32,
+) {
     let Some(icon_font) = fonts.icon() else {
         return;
     };
@@ -2151,6 +2163,143 @@ pub fn draw_composite_gallery(
             left,
             rows[row],
             theme_color(indicator.state.style().color),
+        );
+    }
+}
+
+/// Concept-board graphics page of the developer gallery. Values are explicitly
+/// labelled fixtures, not runtime telemetry. It proves the reusable drawing
+/// vocabulary independently of any product surface.
+pub fn draw_concept_gallery(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    height: u32,
+    fonts: Option<&Fonts>,
+) {
+    use saai_ui_core::OrbVisualState;
+
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let margin = (width / 20).max(12);
+    let content_width = width.saturating_sub(margin * 2);
+    let columns = 4_u32;
+    let cell_width = content_width / columns;
+    let orb_size = (cell_width * 2 / 3).min(height / 8).max(48);
+    let orb_start = height / 14;
+    let orb_row = height / 7;
+
+    for (index, state) in OrbVisualState::ALL.into_iter().enumerate() {
+        let column = index as u32 % columns;
+        let row = index as u32 / columns;
+        let left = margin + column * cell_width + (cell_width - orb_size) / 2;
+        let top = orb_start + row * orb_row;
+        draw_orb_visual(
+            canvas,
+            OrbVisual {
+                bounds: Rect::new(left, top, orb_size, orb_size),
+                state,
+                progress: (state == OrbVisualState::Executing).then_some(62),
+            },
+        );
+        if let Some(fonts) = fonts {
+            draw_text_centered(
+                canvas,
+                &fonts.regular,
+                state.label(),
+                role_px(TextRole::Caption),
+                left + orb_size / 2,
+                top + orb_size + physical(SpacingToken::XSmall.value()),
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+
+    let components_y = orb_start + orb_row * 2 + physical(SpacingToken::Large.value());
+    let avatar_size = physical(LogicalUnit::new(56));
+    draw_avatar(
+        canvas,
+        AvatarVisual {
+            bounds: Rect::new(margin, components_y, avatar_size, avatar_size),
+            status: Some(UniversalState::Active),
+        },
+    );
+    let ring_left = margin + avatar_size + physical(SpacingToken::Large.value());
+    draw_ring_progress(
+        canvas,
+        RingProgressVisual {
+            bounds: Rect::new(ring_left, components_y, avatar_size, avatar_size),
+            value: Some(40),
+        },
+    );
+    let controls_left = ring_left + avatar_size + physical(SpacingToken::XLarge.value());
+    let controls_width = width.saturating_sub(controls_left).saturating_sub(margin);
+    draw_slider(
+        canvas,
+        SliderVisual {
+            bounds: Rect::new(controls_left, components_y, controls_width, avatar_size / 2),
+            value: 58,
+            enabled: true,
+        },
+    );
+    draw_resource_bar(
+        canvas,
+        ResourceBarVisual {
+            bounds: Rect::new(
+                controls_left,
+                components_y + avatar_size * 2 / 3,
+                controls_width,
+                physical(LogicalUnit::new(8)),
+            ),
+            value: Some(73),
+        },
+    );
+
+    let tile_top = components_y + avatar_size + physical(SpacingToken::XLarge.value());
+    let tile_gap = physical(SpacingToken::Small.value());
+    let tile_size =
+        (content_width.saturating_sub(tile_gap * 5) / 6).min(physical(LogicalUnit::new(56)));
+    let icons = [
+        (IconGlyph::User, ColorRole::Accent),
+        (IconGlyph::FileText, ColorRole::Success),
+        (IconGlyph::Image, ColorRole::Success),
+        (IconGlyph::Video, ColorRole::Attention),
+        (IconGlyph::Clipboard, ColorRole::Attention),
+        (IconGlyph::Server, ColorRole::Elevated),
+    ];
+    for (index, (glyph, color)) in icons.into_iter().enumerate() {
+        draw_object_icon(
+            canvas,
+            fonts,
+            ObjectIconVisual {
+                bounds: Rect::new(
+                    margin + index as u32 * (tile_size + tile_gap),
+                    tile_top,
+                    tile_size,
+                    tile_size,
+                ),
+                glyph,
+                color,
+            },
+        );
+    }
+
+    if let Some(fonts) = fonts {
+        draw_text(
+            canvas,
+            &fonts.semibold,
+            "SaaiOS Concept Graphics · reference fixtures",
+            role_px(TextRole::Caption),
+            margin,
+            physical(SpacingToken::Small.value()),
+            theme_color(ColorRole::TextPrimary),
+        );
+        draw_text(
+            canvas,
+            &fonts.regular,
+            "Аватар · 40% · яркость 58% · ресурс 73%",
+            role_px(TextRole::Caption),
+            margin,
+            components_y + avatar_size + physical(SpacingToken::Small.value()),
+            theme_color(ColorRole::TextSecondary),
         );
     }
 }

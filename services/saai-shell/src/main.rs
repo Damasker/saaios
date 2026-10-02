@@ -707,8 +707,8 @@ fn calibration_requested(environment: Option<&str>, runtime_marker_exists: bool)
 /// setting).
 const UI_GALLERY_MARKER: &str = "/run/saaios/ui-gallery";
 
-fn next_gallery_page(show_composites: bool) -> bool {
-    !show_composites
+fn next_gallery_page(page: u8) -> u8 {
+    (page + 1) % 3
 }
 
 /// Development-only escape hatch: skips both the boot-time session lock
@@ -7259,7 +7259,7 @@ fn main() {
         dev_surface_open: false,
         calibration_mode,
         gallery_mode,
-        gallery_composites: false,
+        gallery_page: 0,
         selected_entities: Vec::new(),
         relationships: Vec::new(),
         system_space_entities: Vec::new(),
@@ -7631,10 +7631,10 @@ struct Shell {
     /// setting and therefore cannot accidentally become normal navigation.
     calibration_mode: bool,
     gallery_mode: bool,
-    /// VUI-05: the developer gallery has two pages — primitives (VUI-02)
-    /// and composites. Tap toggles. Default is primitives so the
+    /// The developer gallery has primitives, composites, and concept graphics
+    /// pages. Tap cycles. Default is primitives so the
     /// physically verified first page stays the first thing shown.
-    gallery_composites: bool,
+    gallery_page: u8,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -8283,7 +8283,7 @@ impl TouchHandler for Shell {
         } else if self.tab_touch_pending {
             self.tab_touch_pending = false;
             if self.gallery_mode {
-                self.gallery_composites = next_gallery_page(self.gallery_composites);
+                self.gallery_page = next_gallery_page(self.gallery_page);
                 self.draw(conn, qh);
                 return;
             }
@@ -9449,7 +9449,7 @@ impl Shell {
         let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
         let gallery_mode = self.gallery_mode;
-        let gallery_composites = self.gallery_composites;
+        let gallery_page = self.gallery_page;
 
         // GPU-native path (ADR-024 continued): paint directly into a
         // dma-buf backed buffer, skipping the wl_shm host-visible
@@ -9506,10 +9506,10 @@ impl Shell {
             }
             if gallery_mode {
                 let canvas = &mut render::Canvas::new(canvas, width, height);
-                if gallery_composites {
-                    render::draw_composite_gallery(canvas, width, height, fonts);
-                } else {
-                    render::draw_gallery(canvas, width, height, fonts);
+                match gallery_page {
+                    0 => render::draw_gallery(canvas, width, height, fonts),
+                    1 => render::draw_composite_gallery(canvas, width, height, fonts),
+                    _ => render::draw_concept_gallery(canvas, width, height, fonts),
                 }
                 return;
             }
@@ -13387,9 +13387,10 @@ mod tests {
     }
 
     #[test]
-    fn gallery_tap_toggles_between_primitive_and_composite_pages() {
-        assert!(super::next_gallery_page(false));
-        assert!(!super::next_gallery_page(true));
+    fn gallery_tap_cycles_primitives_composites_and_concept_graphics() {
+        assert_eq!(super::next_gallery_page(0), 1);
+        assert_eq!(super::next_gallery_page(1), 2);
+        assert_eq!(super::next_gallery_page(2), 0);
     }
 
     fn lifecycle_entity(space_id: &str, lifecycle: &str) -> Entity {

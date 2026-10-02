@@ -205,6 +205,23 @@ impl IconSize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconGlyph {
     Backspace,
+    Box,
+    Calendar,
+    Clipboard,
+    Cpu,
+    File,
+    FileText,
+    Folder,
+    Grid,
+    Home,
+    Image,
+    Monitor,
+    Music,
+    Search,
+    Server,
+    User,
+    Users,
+    Video,
     Wifi,
     WifiOff,
     Bluetooth,
@@ -221,6 +238,40 @@ pub enum IconGlyph {
 }
 
 impl IconGlyph {
+    pub const ALL: [Self; 31] = [
+        Self::Backspace,
+        Self::Box,
+        Self::Calendar,
+        Self::Clipboard,
+        Self::Cpu,
+        Self::File,
+        Self::FileText,
+        Self::Folder,
+        Self::Grid,
+        Self::Home,
+        Self::Image,
+        Self::Monitor,
+        Self::Music,
+        Self::Search,
+        Self::Server,
+        Self::User,
+        Self::Users,
+        Self::Video,
+        Self::Wifi,
+        Self::WifiOff,
+        Self::Bluetooth,
+        Self::Battery,
+        Self::BatteryCharging,
+        Self::Lock,
+        Self::Check,
+        Self::X,
+        Self::ChevronRight,
+        Self::ChevronLeft,
+        Self::ChevronDown,
+        Self::AlertTriangle,
+        Self::Settings,
+    ];
+
     /// The codepoint in `FeatherIcons.ttf`'s Private Use Area, taken
     /// directly from the webfont's own generated `content:` mapping (see
     /// `os/targets/panther/third_party/README.md`) -- not a SaaiOS
@@ -231,13 +282,30 @@ impl IconGlyph {
             Self::BatteryCharging => '\u{f11d}',
             Self::Battery => '\u{f11e}',
             Self::Bluetooth => '\u{f121}',
+            Self::Box => '\u{f126}',
+            Self::Calendar => '\u{f128}',
             Self::Check => '\u{f12e}',
             Self::ChevronDown => '\u{f12f}',
             Self::ChevronLeft => '\u{f130}',
             Self::ChevronRight => '\u{f131}',
+            Self::Clipboard => '\u{f139}',
+            Self::Cpu => '\u{f151}',
             Self::Backspace => '\u{f156}',
+            Self::FileText => '\u{f168}',
+            Self::File => '\u{f169}',
+            Self::Folder => '\u{f16f}',
+            Self::Grid => '\u{f17a}',
+            Self::Home => '\u{f181}',
+            Self::Image => '\u{f182}',
             Self::Lock => '\u{f190}',
+            Self::Monitor => '\u{f1a3}',
+            Self::Music => '\u{f1a9}',
+            Self::Search => '\u{f1cd}',
+            Self::Server => '\u{f1cf}',
             Self::Settings => '\u{f1d0}',
+            Self::User => '\u{f203}',
+            Self::Users => '\u{f204}',
+            Self::Video => '\u{f206}',
             Self::WifiOff => '\u{f20d}',
             Self::Wifi => '\u{f20e}',
             Self::X => '\u{f213}',
@@ -1101,24 +1169,8 @@ mod tests {
 
     #[test]
     fn every_icon_glyph_is_a_distinct_private_use_area_codepoint() {
-        let glyphs = [
-            IconGlyph::Backspace,
-            IconGlyph::Wifi,
-            IconGlyph::WifiOff,
-            IconGlyph::Bluetooth,
-            IconGlyph::Battery,
-            IconGlyph::BatteryCharging,
-            IconGlyph::Lock,
-            IconGlyph::Check,
-            IconGlyph::X,
-            IconGlyph::ChevronRight,
-            IconGlyph::ChevronLeft,
-            IconGlyph::ChevronDown,
-            IconGlyph::AlertTriangle,
-            IconGlyph::Settings,
-        ];
         let mut seen = std::collections::BTreeSet::new();
-        for glyph in glyphs {
+        for glyph in IconGlyph::ALL {
             let codepoint = glyph.codepoint();
             assert!(
                 ('\u{e000}'..='\u{f8ff}').contains(&codepoint),
