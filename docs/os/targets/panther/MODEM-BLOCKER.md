@@ -1,5 +1,91 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 5 — NV de-risk (READ-ONLY): the `SAE_UE_OPERATION_MODE` gate is a NAME-KEYED CP NV item with a runtime-built layout; its on-disk byte offset is NOT statically determinable, the CP integrity validator is UNCONFIRMED, and there is NO confirmed AP-side write path that propagates to the CP. A safety harness was built + tested on COPIES. RECOMMENDATION: NO-GO for any NV write. No NV/EFS write performed (2026-10-02 de-risk):**
+
+Per operator decision, this session only characterizes the hypothetical NV write
+and builds a tested, reversible safety harness — then stops for go/no-go. All work
+was read-only w.r.t. NV/EFS.
+
+### 1. NV record location — NAME-KEYED, offset not statically determinable
+In the live CP image (`factory-cp2a.260705.006-modem.img`) the gate and its
+siblings exist as **named** SAE-L3 flash NV items, each with three aliases:
+`!SAEL3.SAE_UE_OPERATION_MODE`, `!SAEL3_DS.SAE_UE_OPERATION_MODE`,
+`SAE_FLASH_UE_OPERATION_MODE`; siblings `SAE_FLASH_GCFMODE`,
+`SAE_FLASH_PLMN_SEL_MODE`, plus the wider family (`SAECOMM_FLASH_LTE_SET_PS_MODE_2`,
+`…INTERNET_ATTACH_ENABLED`, `…VOLTE_CAPA`, `MOBILE_CLASS_MODE`, …). The accessor
+is Thumb-2 code (≈ file offset `0x3DBF0xx`) that loads each item **by its name
+string** (`movw/movt` → name) through the SAECOMM/SAEL3 NV manager. Consequences:
+- The store is **name-keyed**; the physical slot for an item is assigned by the CP
+  NV manager at runtime. There is **no static record-id→byte-offset table** in the
+  image to validate against.
+- The on-disk protected-NV blob (the quarantine `candidate.bin`, 512 KB) contains
+  **none** of these name keys and no plaintext of the item (grep count = 0 for
+  `OPERATION_MODE`/`SAEL3`/`GCFMODE`/`PLMN_SEL`/`SAE_FLASH`). So the target bytes
+  **cannot be located** in the blob without the CP's runtime name→offset map.
+- **Current vs target value: UNRESOLVED read-only.** The value is CP-internal (read
+  via SAECOMM/SAEL3 accessors, not AP-served) and is not in plaintext in the blob.
+  The enum family (`…PS_MODE_2`, `LTE_SET_PS_MODE_2`) indicates UE-operation-mode =
+  3GPP CS/PS-mode-1|2 / PS-mode-1|2; "normal online" is a CS/PS-combined value, but
+  the exact integer mapping and the live current value were **not** confirmable
+  read-only this session.
+
+### 2. Integrity / validation — UNCONFIRMED (the dominant risk)
+The blob is **structured plaintext flash, not encrypted** (overall entropy 3.28;
+81 of 128 4 KB blocks are `0xFF` erased flash; only 1 high-entropy block). Its
+header has size-like words (`0x1e82e0` repeated at words 0 and 3) and a plausible
+checksum word (`0x847886`), but the **exact CP validator is unconfirmed** —
+algorithm, covered byte range, per-record vs per-blob, and crucially whether the
+CP **recomputes on read** or **rejects a mismatched blob** (brick vs revert-to-
+default). This logic lives inside the name-keyed NV manager and was not fully
+reverse-engineered. Without it, any edited blob risks rejection → modem brick or a
+full NV reset. **This is the single biggest blocker.**
+
+### 3. Write path — no confirmed AP-side path that reaches the CP
+The CP **writes its NV OUT** to the AP over RFS (observed); in the quarantine-owner
+setup the AP does **not** serve NV back, and prior instrumentation saw **zero CP
+read-expecting requests** in the post-write/MM-gate window. The authoritative NV is
+**CP-side**. Therefore:
+- Editing the AP-side quarantine/backup file is **not confirmed to propagate** to
+  the CP (it is a backup the CP writes, not a source it reads).
+- A real persist would require writing the CP's own NV region (the `sda5` /
+  `nv_protected` EFS partition) — which is on the hard-constraint **NEVER-write**
+  list, is not currently mounted, and has no `/dev/block` node exposed.
+- **No confirmed non-EFS-RW injection path exists.**
+
+### 4. Backup / revert / dry-run harness — BUILT + TESTED on copies only
+- Host `nv-edit-harness.py` — `selftest` **PASS**: full backup+sha, narrow byte
+  backup, dry-run (old→new without writing, source proven untouched), apply-to-copy
+  (diff shows exactly the changed byte), restore round-trip (sha matches original).
+- On-device `nv-backup.sh` — read-only full backup + sha; validated against the
+  quarantine copy: backup sha `a26462bd…` equals the source sha and the source was
+  untouched.
+- On-device `nv-revert.sh` — destructive restore, **guarded**: refuses unless
+  `SAAIOS_NV_REVERT_CONFIRM=yes` and the backup's recorded sha matches (refusal
+  verified, exit 3, no action).
+- Dry-run's checksum is a **CRC32 PLACEHOLDER** (clearly labeled) to exercise the
+  mechanism; it is NOT the CP validator and must be replaced with the recovered
+  algorithm before any write is considered. No secrets are printed by any tool.
+
+### 5. Go / No-Go
+**RECOMMENDATION: NO-GO for an NV write.** Three preconditions for a *safe,
+reversible* edit are unmet: (1) the target byte offset is not pinnable (runtime
+name-keyed layout; blob has no keys); (2) the CP integrity validator is unconfirmed
+(brick/NV-reset risk); (3) no confirmed AP-side write path reaches the CP (the
+authoritative store is CP-side; the only persist route is the forbidden modem NV
+partition). The current/target enum values were also not confirmable read-only.
+The harness is ready for the day (1)–(3) are resolved.
+
+*If ever authorized AND after resolving (1)–(3):* the minimal write would be to set
+`SAE_FLASH_UE_OPERATION_MODE` to the CS/PS-combined "normal" value (and confirm
+`SAE_FLASH_GCFMODE` is disabled), preceded by a full `nv-backup.sh` of the exact
+partition and a dry-run using the *recovered* checksum. **Awaiting explicit operator
+go/no-go — no NV write performed.**
+
+Device unchanged: CP ONLINE, SIM READY, data `NOT_SEARCHING(0)`, voice
+`REG_DENIED(3)`.
+
+---
+
 **VERDICT 4 — the LAST command-only lever (`0x072B` dual-network + allow-data) was recovered from the full `.so`, confirmed command-safe, and live-tested: it ACKs clean but is INEFFECTIVE. COMMAND-ONLY AVENUE IS NOW FULLY EXHAUSTED. The only remaining path to registration is a scoped FLASH-NV write of `SAE_UE_OPERATION_MODE` — operator-gated, NOT authorized, NOT performed (2026-10-02 final):**
 
 *Recovery (from `ProtocolNetworkBuilder::BuildSetDualNetworkAndAllowData` @ `0x2375a0`, decoded, not guessed):* `0x072B` is a **28-byte** frame — 12-byte header + **4 × int32** payload:

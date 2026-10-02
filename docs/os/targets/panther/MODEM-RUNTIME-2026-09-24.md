@@ -1,5 +1,18 @@
 # Native modem runtime: status query investigation
 
+**2026-10-02 de-risk (READ-ONLY):** characterized the `SAE_UE_OPERATION_MODE` NV
+gate and built a tested, reversible backup/revert harness; **recommendation NO-GO**,
+no NV write performed. The gate + siblings are **name-keyed** SAE-L3 flash NV items
+(accessor loads by name string @≈`0x3DBF0xx`), so the on-disk byte offset is not
+statically determinable; the 512 KB protected-NV blob is plaintext flash (entropy
+3.28, 81/128 `0xFF`) but holds **no** name keys; the CP integrity validator is
+unconfirmed; and the CP writes NV **out** without a confirmed read-back, so no AP-side
+write path is proven to reach the CP (authoritative store is CP-side `sda5`/
+`nv_protected`, forbidden). Harness: `nv-edit-harness.py` (selftest PASS),
+`nv-backup.sh` (RO, sha-verified, source untouched), `nv-revert.sh` (guarded refusal
+verified). Full go/no-go in [MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 5. Bearer not
+established.
+
 **2026-10-02 final:** recovered + live-tested the last command-only lever,
 `0x072B` (SET_DUAL_NETWORK_AND_ALLOW_DATA), from the full `libsitril.so`
 (`BuildSetDualNetworkAndAllowData` @ `0x2375a0`): a 28-byte, 4×int32 body

@@ -6,6 +6,28 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-02 de-risk (READ-ONLY, no NV write) — NV gate characterized; RECOMMENDATION NO-GO; tested backup/revert harness built.**
+Per operator decision, characterized the hypothetical `SAE_UE_OPERATION_MODE` NV
+write and built a reversible safety harness, then stopped for go/no-go. Findings:
+the gate + siblings (`SAE_FLASH_GCFMODE`, `SAE_FLASH_PLMN_SEL_MODE`) are **name-keyed**
+SAE-L3 flash NV items (aliases `!SAEL3.`/`!SAEL3_DS.`/`SAE_FLASH_`/`SAECOMM_FLASH_`);
+the CP accessor (Thumb-2 @≈`0x3DBF0xx`) loads them **by name string**, so the
+physical slot is assigned at CP runtime and there is **no static name→offset map**.
+The on-disk protected-NV blob (512 KB quarantine copy) is **plaintext/structured
+flash** (entropy 3.28, 81/128 blocks `0xFF`-erased, not encrypted) but contains
+**none** of the name keys → the target byte offset is **not determinable**. The CP
+integrity validator (checksum/coverage/recompute-vs-reject) is **unconfirmed**
+(dominant brick risk). The CP **writes NV OUT** to the AP and (prior data) never
+reads it back in the observed window → the authoritative store is **CP-side**;
+editing the AP copy is not confirmed to propagate, and a real persist would need the
+forbidden `sda5`/`nv_protected` partition write. Current/target enum **not readable**
+read-only. Built + tested on copies only: `nv-edit-harness.py` (selftest PASS:
+backup/narrow/dry-run/apply-copy/diff/restore), on-device `nv-backup.sh` (RO backup,
+sha match, source untouched) and guarded `nv-revert.sh` (refuses without
+`SAAIOS_NV_REVERT_CONFIRM=yes`). **RECOMMENDATION: NO-GO** — offset unpinned,
+validator unconfirmed, no propagating AP write path. No NV/EFS write performed; see
+[MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 5 for the full writeup.
+
 **2026-10-02 final — last command-only lever `0x072B` recovered, confirmed safe, live-tested INEFFECTIVE; command-only avenue FULLY exhausted; NV boundary is the only path left (operator-gated, NOT done).**
 Recovered `0x072B` (SET_DUAL_NETWORK_AND_ALLOW_DATA) from
 `ProtocolNetworkBuilder::BuildSetDualNetworkAndAllowData` @ `0x2375a0`: a 28-byte
