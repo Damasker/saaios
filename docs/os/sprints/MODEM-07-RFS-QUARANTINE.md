@@ -1145,3 +1145,68 @@ with evidence, are early `SetModemsConfig 0x093f` and early camp-on `0x0800`
 (`TrySetRadioPower(10)`); each needs its own guarded, mutually exclusive build
 mode built and self-tested the same way before any device run. No secrets, NV,
 APN, PIN, CardPower or EFS writes were made in this run.
+
+## Stock stage-1 RE from the vendor RIL, and the `sgc-seq-once` build
+
+**Vendor library recovery.** With root on the live phone (build
+`CP2A.260705.006`), the stock cbd was pulled read-only by loop-mounting the
+logical `vendor_a` partition inside `super` (parsed from the LP metadata;
+`losetup -r -o <offset> /dev/loop0 /dev/block/super`, `mount -t ext4 -o ro`).
+The live `/vendor/lib64` RIL/SIT libraries sit in an **unmerged Virtual-A/B COW
+overlay** (`vendor_a-cow`), so the base partition reports "Structure needs
+cleaning" on `lib64` and is not directly readable. The reverse-engineering
+therefore used this tree's complete TD1A `vendor.img`
+(`libsitril.so` SHA-256 `efcca0d5…`, identical to prior RE); the SIT command
+IDs seen in every live boot log match it, so the ordered protocol is the same.
+EFS was never mounted read-write; no secrets were logged.
+
+**The real stock ordered sequence (socket 0, radio-available).** Disassembling
+the `OnRadioAvailable` handlers:
+
+- `MiscService::OnRadioAvailable` (gated on `GetRilSocketId()==0`):
+  `SetDebugTraceOffOnBoot` (**0x090b**) → `SetModemsConfig` (**0x093f**) →
+  `SendSGCValue` (**0x0404**) → `SendSvnInfo` (**0x4605**, tail call).
+- `NetworkService::OnRadioAvailable`: `TrySetRadioPower(10)`, which issues an
+  internal `OnRequest(RIL_REQUEST_RADIO_POWER=23, …, 4)` whose downstream
+  handler builds **0x0800** (conditional on a camp-early `SystemProperty`).
+- `PsService::OnRadioAvailable`: a conditional `OnRequest(10161/0x27b1)` only
+  when a `RilContextProperty` string is non-empty.
+
+We were sending **only 0x0404**. The command that stock issues immediately
+*before* the SGC, and which we omitted, is **`SetModemsConfig` 0x093f**; the
+command stock issues *after* (at the Network stage) is the early camp-on
+**0x0800**. `0x090b` (debug-trace) and `0x4605` (SVN/version) are non-camp.
+
+**Recovered bodies.** `0x093f` = a 13-byte request
+(`InitRequestHeader(id=0x93f,len=13)`) whose single payload byte at offset 12
+is `(modem_count!=1)?1:0` = **0 on this single-SIM SKU**. `0x0800` = an 18-byte
+request with the power word at offset 12 = `(on)?2:1` and flag bytes at offsets
+16/17; its exact `arg2/arg3` come from `DoRadioPower`, not yet fully recovered,
+so `0x0800` is **not** implemented this turn (no guessed body).
+
+**`0x0706` error 2 decoded.** In `rcmErrorToString` (vaddr `0xd7b50`, codes
+0–31) and `ConvertProtocolErrorCodeToRilErrorCode` (`0xd7bd0`), code `2` is
+**`RCM_E_GENERIC_FAILURE`** → RIL error 2. It is the generic catch-all refusal,
+**not** the reg-ordering code 9 (`OP_NOT_ALLOWED_BEFORE_REG_TO_NW`) nor a
+PLMN-search-specific code — i.e. a fundamental precondition is missing, not a
+simple ordering slip.
+
+**Implementation — `sgc-seq-once`.** A fourth mutually-exclusive diagnostic
+build mode `SAAIOS_SGC_SEQ_ONCE` was added to
+`os/targets/panther/diagnostics/modem-channel-owner.c`. It reuses the early
+radio observer, the early dispatch gate, the ACK→DONE-with-no-post-sweep
+transition and the early ownership/reporting (now shared under a new
+`SAAIOS_SGC_EDGE` umbrella), and on the `0x0803`→`0x0802`-raw-0 edge it writes
+the stock pair **in order**: `make_setmodemsconfig_request` (0x093f, 13 bytes,
+payload 0) back-to-back, then the existing `0x0404` SGC. The config ACK is
+matched and logged separately (`sgc_seq_config … status=accepted`) while the
+SGC ACK still drives DONE. The build guard is now 4-way; host self-test adds
+cases 179–185 (exact 0x093f body, config-ACK consume without disturbing the SGC
+phase, no duplicate consume, remote-error config ACK) and the live fixtures
+assert the two-write dispatch. All five modes (seq, early, late, scan, passive)
+compile with `-Wall -Wextra -Werror` and pass `self-test`.
+
+Artifacts: `build-owner-sgc-seq-once.sh`, `probe-sgc-seq-once-config.h`,
+`owner-handoff-sgc-seq.sh`. ARM64-static reproducible SHA-256 — owner
+`12c07414d3f7875f97a59254a3c4534420a160788f5a87525ea940bcfd322ebb`, probe
+`651515c8887f81f86fd0b9aa7ace7a5eaf620242ccb1a6cd277a356457593f2d`.

@@ -30,11 +30,20 @@
 #include "sit-network-layout.h"
 #include "sit-sim-layout.h"
 
-#if (defined(SAAIOS_SCAN_ONCE) + defined(SAAIOS_SGC_ONCE) + defined(SAAIOS_SGC_EARLY_ONCE)) > 1
-#error "late SGC, early SGC and active scan require separate diagnostic builds"
+#if (defined(SAAIOS_SCAN_ONCE) + defined(SAAIOS_SGC_ONCE) + \
+     defined(SAAIOS_SGC_EARLY_ONCE) + defined(SAAIOS_SGC_SEQ_ONCE)) > 1
+#error "late SGC, early SGC, early sequence and active scan require separate diagnostic builds"
 #endif
-#if defined(SAAIOS_SGC_ONCE) || defined(SAAIOS_SGC_EARLY_ONCE)
+#if defined(SAAIOS_SGC_ONCE) || defined(SAAIOS_SGC_EARLY_ONCE) || \
+    defined(SAAIOS_SGC_SEQ_ONCE)
 #define SAAIOS_SGC_DIAGNOSTIC 1
+#endif
+/* Both edge-triggered variants share the radio-event observer, the early
+ * dispatch gate, the ACK->DONE-with-no-post-sweep transition and the early
+ * ownership/reporting. The sequence variant additionally prepends the one
+ * factory SetModemsConfig (0x093f) before the SGC (0x0404), in stock order. */
+#if defined(SAAIOS_SGC_EARLY_ONCE) || defined(SAAIOS_SGC_SEQ_ONCE)
+#define SAAIOS_SGC_EDGE 1
 #endif
 
 #ifndef _WIN32
@@ -746,6 +755,15 @@ static int make_get_request(uint8_t request[12], unsigned id,
 #ifdef SAAIOS_SGC_DIAGNOSTIC
 enum { SGC_COMMAND = 0x0404, SGC_REPLY_MS = 2000,
        SGC_POST_DELAY_MS = 10000, SGC_POST_COUNT = 5 };
+#ifdef SAAIOS_SGC_SEQ_ONCE
+/* Factory MiscService::OnRadioAvailable issues SetModemsConfig (0x093f) on
+ * RIL socket 0 immediately before SendSGCValue (0x0404). On this single-SIM
+ * SKU the body is a 13-byte request whose one payload byte (offset 12) is 0
+ * (one modem). Recovered from stock TD1A libsitril ProtocolRadioConfigBuilder-
+ * Legacy::BuildSetModemsConfig (InitRequestHeader id=0x93f len=13; byte =
+ * modem_count!=1). */
+enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13 };
+#endif
 /* Early-SGC dispatch-opportunity bounds. These are conservative SaaiOS
  * experimental limits on the factory OnRadioAvailable callback timing, not
  * constants recovered from the stock RIL. The factory hook fires on the
@@ -775,6 +793,15 @@ struct live_sgc {
     int early_reported;
     int64_t radio_unavail_ms;
     int64_t radio_ready0_ms;
+#ifdef SAAIOS_SGC_SEQ_ONCE
+    /* The one factory SetModemsConfig (0x093f) sent back-to-back just before
+     * the SGC, in stock order. Tracked only for its ACK log; the SGC ACK still
+     * drives DONE. */
+    uint32_t seq_cfg_token;
+    int seq_cfg_sent;
+    int seq_cfg_acked;
+    unsigned seq_cfg_error;
+#endif
 };
 
 /* Exact TD1A europen target=400 MappingSGC: 0x0101, reserved=0, reserved=0.
@@ -789,6 +816,22 @@ static void make_sgc_request(uint8_t request[24], uint32_t token) {
     put32(request + 6, token);
     put32(request + 12, 0x0101);
 }
+
+#ifdef SAAIOS_SGC_SEQ_ONCE
+/* Exact stock SetModemsConfig for one modem: 13-byte request, single payload
+ * byte (offset 12) = 0. Sent on the early radio edge immediately before the
+ * SGC, matching MiscService::OnRadioAvailable's order. No CLI value, NV access,
+ * retry or cancellation exists. */
+static void make_setmodemsconfig_request(uint8_t request[SEQ_CONFIG_LEN],
+                                         uint32_t token) {
+    memset(request, 0, SEQ_CONFIG_LEN);
+    request[2] = (uint8_t)SEQ_CONFIG_COMMAND;        /* 0x3f */
+    request[3] = (uint8_t)(SEQ_CONFIG_COMMAND >> 8); /* 0x09 */
+    request[4] = SEQ_CONFIG_LEN;
+    put32(request + 6, token);
+    request[12] = 0; /* one modem */
+}
+#endif
 
 static void sgc_hold(struct live_sgc *sgc, const char *reason) {
     if (sgc->phase == SGC_HOLD) return;
@@ -824,6 +867,17 @@ static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
                       int64_t now_ms) {
     sgc_tick(sgc, now_ms); /* Deadline wins over a late success. */
     if (sgc->phase != SGC_WAIT_ACK && sgc->phase != SGC_POST_WAIT) return 0;
+#ifdef SAAIOS_SGC_SEQ_ONCE
+    /* Consume the back-to-back SetModemsConfig ACK for a clean log; the SGC
+     * ACK below still drives DONE. */
+    if (sgc->seq_cfg_sent && !sgc->seq_cfg_acked && n >= 12 && n <= UINT16_MAX &&
+        le16(p + 2) == SEQ_CONFIG_COMMAND && le32(p + 6) == sgc->seq_cfg_token &&
+        p[0] == 1 && le16(p + 4) == n) {
+        sgc->seq_cfg_acked = 1;
+        sgc->seq_cfg_error = le16(p + 10);
+        return 1;
+    }
+#endif
     unsigned id = sgc->phase == SGC_WAIT_ACK ? SGC_COMMAND :
                   sgc_post_id(sgc->post_next);
     if (n < 10 || le16(p + 2) != id || le32(p + 6) != sgc->token)
@@ -834,8 +888,8 @@ static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
     }
     sgc->error = le16(p + 10);
     if (sgc->phase == SGC_WAIT_ACK) {
-#ifdef SAAIOS_SGC_EARLY_ONCE
-        /* No post sweep in the early variant: the matched ACK releases the
+#ifdef SAAIOS_SGC_EDGE
+        /* No post sweep in the edge variants: the matched ACK releases the
          * ordinary bounded GET schedule, preserving the owner-relative
          * +60-second SIM/radio/registration and factory GETs. */
         sgc->phase = SGC_DONE;
@@ -867,8 +921,8 @@ static int sgc_match(struct live_sgc *sgc, const uint8_t *p, size_t n,
 }
 
 static int sgc_owns_query_slot(const struct live_sgc *sgc) {
-#ifdef SAAIOS_SGC_EARLY_ONCE
-    /* The early variant only suspends the ordinary GET schedule while the one
+#ifdef SAAIOS_SGC_EDGE
+    /* The edge variants only suspend the ordinary GET schedule while the one
      * SGC request is in flight, or after an error hold. Before dispatch the
      * four initial GETs must run; after a matched ACK the normal schedule
      * resumes so the owner-relative +60-second observations are preserved. */
@@ -880,7 +934,7 @@ static int sgc_owns_query_slot(const struct live_sgc *sgc) {
 #endif
 }
 
-#ifdef SAAIOS_SGC_EARLY_ONCE
+#ifdef SAAIOS_SGC_EDGE
 /* Independent radio-event observer. Fed every framed IPC indication, it
  * tracks the factory-callback trigger pair: an exact 8-byte type-2 0x0803
  * (UNAVAILABLE), then an exact 12-byte type-2 0x0802 with raw scalar 0
@@ -1672,7 +1726,7 @@ static void fixture_sgc_frame(void *opaque, enum channel_kind kind,
     if (kind == CHANNEL_IPC) (void)sgc_match(opaque, p, (size_t)size, 1500);
 }
 
-#ifdef SAAIOS_SGC_EARLY_ONCE
+#ifdef SAAIOS_SGC_EDGE
 /* Build an exact type-2 indication: id, declared length and (for 0x0802) the
  * trailing LE32 radio-state scalar. */
 static void fixture_radio_ind(uint8_t *buf, unsigned id, size_t len,
@@ -1782,6 +1836,41 @@ static int fixture_sgc(void) {
     used = 12;
     if (parse_available(CHANNEL_IPC, stream, &used, fixture_sgc_frame, &sgc) ||
         used || sgc.phase != SGC_DONE) return 178;
+#ifdef SAAIOS_SGC_SEQ_ONCE
+    /* Exact stock SetModemsConfig body: 13 bytes, one payload byte 0. */
+    uint8_t cfg[SEQ_CONFIG_LEN];
+    const uint8_t cfg_expected[SEQ_CONFIG_LEN] = {
+        0, 0, 0x3f, 0x09, 13, 0, 0x78, 0x56, 0x34, 0x12, 0, 0, 0
+    };
+    make_setmodemsconfig_request(cfg, 0x12345678);
+    if (memcmp(cfg, cfg_expected, sizeof cfg_expected)) return 179;
+
+    /* The config ACK is consumed while the SGC ACK is pending, without
+     * disturbing the SGC phase or error. */
+    uint8_t cfg_reply[12];
+    sgc = (struct live_sgc){0};
+    if (!sgc_begin(&sgc, 7, 1000)) return 180;
+    sgc.seq_cfg_sent = 1;
+    sgc.seq_cfg_token = 5;
+    fixture_scan_reply(cfg_reply, sizeof cfg_reply, SEQ_CONFIG_COMMAND, 5, 0);
+    if (!sgc_match(&sgc, cfg_reply, sizeof cfg_reply, 1200) ||
+        !sgc.seq_cfg_acked || sgc.seq_cfg_error ||
+        sgc.phase != SGC_WAIT_ACK) return 181;
+    if (sgc_match(&sgc, cfg_reply, sizeof cfg_reply, 1201)) return 182; /* no dup */
+    fixture_scan_reply(cfg_reply, sizeof cfg_reply, SGC_COMMAND, 7, 0);
+    if (!sgc_match(&sgc, cfg_reply, sizeof cfg_reply, 1300) ||
+        sgc.phase != SGC_DONE || sgc.error) return 183;
+
+    /* A remote-error config ACK is recorded but non-fatal. */
+    sgc = (struct live_sgc){0};
+    if (!sgc_begin(&sgc, 9, 2000)) return 184;
+    sgc.seq_cfg_sent = 1;
+    sgc.seq_cfg_token = 6;
+    fixture_scan_reply(cfg_reply, sizeof cfg_reply, SEQ_CONFIG_COMMAND, 6, 0x8102);
+    if (!sgc_match(&sgc, cfg_reply, sizeof cfg_reply, 2200) ||
+        !sgc.seq_cfg_acked || sgc.seq_cfg_error != 0x8102 ||
+        sgc.phase != SGC_WAIT_ACK) return 185;
+#endif
     return 0;
 }
 #else
@@ -1861,7 +1950,7 @@ static int fixture_sgc(void) {
     if (scan_evidence_ready(&evidence, 61000)) return 143;
     return 0;
 }
-#endif  /* SAAIOS_SGC_EARLY_ONCE fixture_sgc selection */
+#endif  /* SAAIOS_SGC_EDGE fixture_sgc selection */
 #endif  /* SAAIOS_SGC_DIAGNOSTIC */
 
 #if defined(SAAIOS_SGC_DIAGNOSTIC) && !defined(_WIN32)
@@ -2454,9 +2543,22 @@ static void live_sgc_reply(struct live_sgc *sgc, const uint8_t *p,
                            size_t size, int64_t now_ms) {
     enum sgc_phase phase = sgc->phase;
     unsigned index = sgc->post_next;
+#ifdef SAAIOS_SGC_SEQ_ONCE
+    int cfg_before = sgc->seq_cfg_acked;
+#endif
     if (!sgc_match(sgc, p, size, now_ms)) return;
+#ifdef SAAIOS_SGC_SEQ_ONCE
+    if (!cfg_before && sgc->seq_cfg_acked) {
+        printf("sgc_seq_config elapsed_ms=%lld response=yes error_raw=%u"
+               " status=%s\n",
+               (long long)(now_ms - sgc->owner_start_ms),
+               sgc->seq_cfg_error,
+               sgc->seq_cfg_error ? "remote-error" : "accepted");
+        return;
+    }
+#endif
     if (phase == SGC_WAIT_ACK) {
-#ifdef SAAIOS_SGC_EARLY_ONCE
+#ifdef SAAIOS_SGC_EDGE
         printf("sgc_early elapsed_ms=%lld response=yes error_raw=%u status=%s"
                " observation=released no-retry\n",
                (long long)(now_ms - sgc->owner_start_ms),
@@ -2490,12 +2592,12 @@ static void live_sgc_advance(struct live_sgc *sgc,
                              int ipc_fd, int rfs_fd,
                              const struct channel channels[2],
                              int64_t now_ms, const struct sgc_io *io) {
-#ifdef SAAIOS_SGC_EARLY_ONCE
-    (void)evidence; /* the early gate keys off the radio observer, not scan */
+#ifdef SAAIOS_SGC_EDGE
+    (void)evidence; /* the edge gate keys off the radio observer, not scan */
 #endif
     sgc_tick(sgc, now_ms);
     if (sgc->phase == SGC_IDLE) {
-#ifdef SAAIOS_SGC_EARLY_ONCE
+#ifdef SAAIOS_SGC_EDGE
         /* Dispatch on the early factory trigger (0x0803 then 0x0802 raw 0),
          * not the settled READY/ON baseline. SIM READY, radio ON and stack
          * enabled are not early eligibility requirements. */
@@ -2531,6 +2633,27 @@ static void live_sgc_advance(struct live_sgc *sgc,
         queued = io->queued(ipc_fd, rfs_fd);
         if (queued < 0) { sgc_hold(sgc, "dispatch-poll-failed"); return; }
         if (queued || !io->online()) return;
+#ifdef SAAIOS_SGC_SEQ_ONCE
+        /* Stock MiscService::OnRadioAvailable issues SetModemsConfig (0x093f)
+         * immediately before the SGC. Send it back-to-back on the same channel
+         * in the same order; its ACK is logged separately, the SGC ACK drives
+         * DONE. */
+        uint32_t cfg_token = snapshot->token + 1;
+        if (!cfg_token) goto gate_failed;
+        uint8_t cfg[SEQ_CONFIG_LEN];
+        make_setmodemsconfig_request(cfg, cfg_token);
+        ssize_t cfg_written = io->write_frame(ipc_fd, cfg, sizeof cfg);
+        if (cfg_written != (ssize_t)sizeof cfg) {
+            sgc_hold(sgc, "write-ambiguous");
+            return;
+        }
+        sgc->seq_cfg_token = cfg_token;
+        sgc->seq_cfg_sent = 1;
+        snapshot->token = cfg_token;
+        printf("sgc_seq_config elapsed_ms=%lld request=sent once"
+               " trigger=0x0803-0x0802-raw0 cmd=0x093f modems=1\n",
+               (long long)(now_ms - sgc->owner_start_ms));
+#endif
         uint32_t token = snapshot->token + 1;
         if (!token) goto gate_failed;
         if (!sgc_begin(sgc, token, now_ms)) goto gate_failed;
@@ -2628,7 +2751,7 @@ static void live_sgc_advance(struct live_sgc *sgc,
     return;
 gate_failed:
     sgc->phase = SGC_DONE;
-#ifdef SAAIOS_SGC_EARLY_ONCE
+#ifdef SAAIOS_SGC_EDGE
     if (!sgc->early_reported) {
         puts("sgc_early request=not-sent status=not-attempted no-retry");
         sgc->early_reported = 1;
@@ -2665,13 +2788,19 @@ static ssize_t fixture_sgc_write(int fd, const void *frame, size_t size) {
     return sgc_fixture_io.short_write ? (ssize_t)size - 1 : (ssize_t)size;
 }
 
-#ifdef SAAIOS_SGC_EARLY_ONCE
+#ifdef SAAIOS_SGC_EDGE
 /* Early dispatch fires on the factory trigger pair, before the settled
  * READY/ON baseline, and takes priority over a queued-but-unsent SIM refresh.
  * A matched ACK releases the ordinary GET schedule with no post sweep. */
 static int fixture_live_sgc(void) {
     const struct sgc_io io = {fixture_sgc_queued, fixture_sgc_online,
                               fixture_sgc_exclusive, fixture_sgc_write};
+#ifdef SAAIOS_SGC_SEQ_ONCE
+    /* The sequence variant writes SetModemsConfig (0x093f) then the SGC. */
+    const unsigned dispatch_writes = 2;
+#else
+    const unsigned dispatch_writes = 1;
+#endif
     struct scan_evidence evidence = {0}; /* unused by the early gate */
     struct channel channels[2] = {{0}, {0}};
     const int64_t pair_ms = 10000, dispatch_ms = 10500;
@@ -2686,14 +2815,14 @@ static int fixture_live_sgc(void) {
     memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
     live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
                      dispatch_ms, &io);
-    if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != 1 ||
+    if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != dispatch_writes ||
         sgc_fixture_io.id != SGC_COMMAND || sgc_fixture_io.size != 24) return 180;
     fixture_scan_reply(reply, sizeof reply, SGC_COMMAND, sgc.token, 0);
     if (!sgc_match(&sgc, reply, sizeof reply, dispatch_ms + 40) ||
         sgc.phase != SGC_DONE || sgc_owns_query_slot(&sgc)) return 181;
     live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
                      dispatch_ms + 50, &io);
-    if (sgc_fixture_io.writes != 1) return 182; /* no post sweep */
+    if (sgc_fixture_io.writes != dispatch_writes) return 182; /* no post sweep */
 
     /* 2) A queued-but-unsent SIM refresh does not block the early dispatch. */
     snapshot = base_snap;
@@ -2702,7 +2831,7 @@ static int fixture_live_sgc(void) {
     memset(&sgc_fixture_io, 0, sizeof sgc_fixture_io);
     live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
                      dispatch_ms, &io);
-    if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != 1) return 183;
+    if (sgc.phase != SGC_WAIT_ACK || sgc_fixture_io.writes != dispatch_writes) return 183;
 
     /* 3) An already-sent (in-flight) refresh skips; closes as not-attempted. */
     snapshot = base_snap;
@@ -2794,7 +2923,7 @@ static int fixture_live_sgc(void) {
     if (sgc.phase != SGC_WAIT_ACK) return 194;
     live_sgc_advance(&sgc, &evidence, &snapshot, &refresh, -1, -1, channels,
                      dispatch_ms + SGC_REPLY_MS, &io);
-    if (sgc.phase != SGC_HOLD || sgc_fixture_io.writes != 1) return 195;
+    if (sgc.phase != SGC_HOLD || sgc_fixture_io.writes != dispatch_writes) return 195;
 
     /* 11) A recent RX or busy channel defers the dispatch. */
     struct channel busy[2] = {{.last_rx_ms = dispatch_ms - 100}, {0}};
@@ -2871,7 +3000,7 @@ static int fixture_live_sgc(void) {
     }
     return 0;
 }
-#endif  /* SAAIOS_SGC_EARLY_ONCE fixture_live_sgc selection */
+#endif  /* SAAIOS_SGC_EDGE fixture_live_sgc selection */
 #endif
 
 static int live_scan_active(const struct live_scan *scan) {
@@ -3095,7 +3224,7 @@ static void live_frame(void *opaque, enum channel_kind kind,
     if (kind == CHANNEL_IPC) {
         trace_cp_ind(&context->counts->cp_ind_trace, p, (size_t)size,
                      context->now_ms, context->owner_start_ms);
-#ifdef SAAIOS_SGC_EARLY_ONCE
+#ifdef SAAIOS_SGC_EDGE
         radio_observe(context->sgc, p, (size_t)size, context->now_ms);
 #endif
         trace_slot_status(context->slot_trace, p, (size_t)size,
@@ -3307,7 +3436,7 @@ static int run_owner(int ipc, int rfs, int ready, int lock, int attached) {
             continue;
         }
         if (state == CP_ONLINE) {
-#if defined(SAAIOS_SGC_EARLY_ONCE)
+#if defined(SAAIOS_SGC_EDGE)
             /* Early dispatch takes priority over a queued-but-unsent SIM
              * refresh, so evaluate it before the ordinary GET schedule. */
             live_sgc_advance(&sgc, &evidence, &snapshot, &refresh,
@@ -3477,6 +3606,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--mode")) {
 #ifdef SAAIOS_SCAN_ONCE
         puts("scan-once");
+#elif defined(SAAIOS_SGC_SEQ_ONCE)
+        puts("sgc-seq-once");
 #elif defined(SAAIOS_SGC_EARLY_ONCE)
         puts("sgc-early-once");
 #elif defined(SAAIOS_SGC_ONCE)
@@ -3495,6 +3626,9 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--attach-online")) {
 #ifdef SAAIOS_SCAN_ONCE
         fputs("ABORT scan-once requires a fresh guarded pre-FIN handoff\n", stderr);
+        return 64;
+#elif defined(SAAIOS_SGC_SEQ_ONCE)
+        fputs("ABORT sgc-seq-once requires a fresh guarded pre-FIN handoff\n", stderr);
         return 64;
 #elif defined(SAAIOS_SGC_EARLY_ONCE)
         fputs("ABORT sgc-early-once requires a fresh guarded pre-FIN handoff\n", stderr);
