@@ -6,6 +6,25 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 SET_INITIAL_ATTACH_APN recovered + replayed (accepted) but NOT the gate.**
+Recovered the stock rild→libsitril attach chain from the factory `libsitril.so` (efcca0d5):
+all builders go through `ProtocolBuilder::InitRequestHeader(hdr, opcode, len)`. Wire IDs:
+RADIO_POWER `0x0800`, SET_NETWORK_SELECTION_AUTO `0x0704`, SET_PREFERRED_NETWORK_TYPE
+`0x070a`, **SET_INITIAL_ATTACH_APN `0x0603` (250-byte `sit_pdp_set_initial_attach_apn_req`)**,
+ALLOW_DATA `0x0710`, DETACH `0x0608`, (DATA/VOICE)_REG_STATE `0x0701`/`0x0700`, GET_PS_SERVICE
+`0x0711`. The one command we were missing was `0x0603`. Body (frame-relative, from
+`BuildSetInitialAttachApn`+`FillApnInfo`): `[12]`=attach cid, `[13]`=0x0e, `[14]`=dataProfileId,
+`[15]`=apnType, `[16..115]`=APN, `[117]`/`[167]`=user/pass, `[217]`=auth, `[218]`=pdpType
+(`GetPdpType("IP")=1`), `[219]`=pcscf. Implemented `make_initial_attach_apn_request` (guarded,
+`_Static_assert`, byte-exact self-test 165–172, `-Werror`), inserted before ALLOW_DATA. One
+boot: `camp_apn=loaded len=8`; `set_initial_attach_apn response=yes error_raw=0` (ACCEPTED),
+then `allow_data error_raw=0`. Registration UNCHANGED: data `registration_raw=0` NOT_SEARCHING
+tech_raw=3, voice `registration_raw=3` REG_DENIED, `reject_raw=0`. So the attach-APN precondition
+is accepted but is not the blocker — the full accepted stock host sequence does not register the
+modem. Device known-good (CP ONLINE, owner `bb9398f2`), READ-ONLY, nothing invented. Next
+(read-only): decode the full reg-state response for the TRUE reject cause. See
+[MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 11.
+
 **2026-10-03 CP normal-NV self-downgrade FALSIFIED (read-only capture + diff).**
 Extended the quarantine owner with a guarded, self-tested, `-Werror`-clean
 `SAAIOS_RFS_NORMAL_CAPTURE` block that answers the CP's handle-1 (normal-NV)

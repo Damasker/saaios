@@ -1,5 +1,71 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 11 — SET_INITIAL_ATTACH_APN recovered + replayed (accepted) but NOT the gate; the full stock host attach sequence is now replayed and every SIT SET is accepted, yet the modem still does not register. We recovered the stock rild→libsitril attach chain from the factory `libsitril.so` (efcca0d5), implemented the one missing command (`SIT_SET_INITIAL_ATTACH_APN` = opcode `0x0603`, 250-byte body) in the owner, self-tested it byte-exact, and live-tested one boot. The modem ACKed it with `error_raw=0`, but PS data stayed `registration_raw=0` (NOT_SEARCHING, tech_raw=3/UMTS) and CS voice stayed `registration_raw=3` (REG_DENIED), `reject_raw=0` — identical to before. So the attach-APN precondition is accepted but is not the blocker. Device left known-good: CP ONLINE, self-tested owner (`bb9398f2`); READ-ONLY throughout, no NV/EFS write, nothing invented (2026-10-03):**
+
+### 1. Recovered stock attach sequence (opcode + body + order)
+From `NetworkService`/`PsService` + `ProtocolNetworkBuilder`/`ProtocolPsBuilder` in
+`libsitril.so`, every builder routes through `ProtocolBuilder::InitRequestHeader(hdr,
+opcode, len)` then `ModemData`. Wire IDs (recovered, not guessed):
+
+| RIL request | SIT opcode | len | notes |
+|---|---|---|---|
+| RADIO_POWER (on) | `0x0800` | 18 | == our camp-power; `[12]=2` on |
+| QUERY_NETWORK_SELECTION_MODE | `0x0703` | 12 | header-only |
+| SET_NETWORK_SELECTION_AUTOMATIC | `0x0704` | 12 | header-only |
+| SET_PREFERRED_NETWORK_TYPE | `0x070a` | 16 | RAT int32 @ +12 |
+| **SET_INITIAL_ATTACH_APN** | **`0x0603`** | **250** | `sit_pdp_set_initial_attach_apn_req` |
+| SET_DATA_PROFILE | `0x06xx` | var | preload (optional) |
+| ALLOW_DATA | `0x0710` | 13 | `[12]=1`; PS-attach trigger |
+| DETACH | `0x0608` | 13 | |
+| (DATA/VOICE)_REGISTRATION_STATE | `0x0701`/`0x0700` | 12 | poll |
+| GET_PS_SERVICE | `0x0711` | 12 | |
+
+`0x0603` body (frame-relative, from `BuildSetInitialAttachApn`+`FillApnInfo`): `[12]`=attach
+pdp cid, `[13]`=`0x0e` (fixed), `[14]`=dataProfileId, `[15]`=apnType, `[16..115]`=APN
+string (strlcpy 100), `[117..165]`=username, `[167..215]`=password, `[217]`=authType,
+`[218]`=pdpType, `[219]`=pcscfReqType. For a plain IP APN ("internet", no auth) every
+enum byte is a recovered constant: `GetPdpType("IP")=1`, `ConvertAuthTypeToProtocolAuthType(0)=0`,
+default profile/apnType/pcscf = 0; attach cid = `RetrieveAttachPdpContext` profile-base+1
+(base 0 ⇒ 1). Stock order: SET_INITIAL_ATTACH_APN precedes ALLOW_DATA (the attach trigger).
+
+### 2. Delta vs our owner — what was missing
+Our owner already issued stage-1 (`0x093f`/`0x0404`/`0x0800`), radio-on, auto-select
+(`0x0704`), preferred RAT (`0x070a`), and ALLOW_DATA (`0x0710`). The one missing stock
+command was **`SIT_SET_INITIAL_ATTACH_APN` (`0x0603`)** — the attach-APN precondition.
+Implemented as `make_initial_attach_apn_request` (guarded, `_Static_assert`'d, byte-exact
+self-test 165–172, `-Werror`), inserted between the preferred-RAT SET and ALLOW_DATA.
+
+### 3. Live result — accepted, but registration unchanged
+One controlled boot. `camp_apn=loaded len=8`; sequence all `error_raw=0`:
+`set_preferred_lte_wcdma` → **`set_initial_attach_apn` response=yes error_raw=0** →
+`allow_data` response=yes error_raw=0. Registration readback (unchanged from V9/V10):
+data `registration_raw=0` (NOT_SEARCHING) `tech_raw=3` `reject_raw=0`; voice
+`registration_raw=3` (REG_DENIED) `reject_raw=0`. Signal present (`mask_low7=2`), CP ONLINE.
+
+### 4. Interpretation — the gate is not a host SIT command
+The modem now accepts the COMPLETE stock bring-up (radio on → auto PLMN select →
+preferred RAT → initial-attach APN → allow data), every command ACKed without error, yet
+it does not register. **This falsifies "missing host attach command" as the blocker.** The
+operative signal is CS voice REG_DENIED(3): the modem does attempt CS registration and is
+denied; PS never leaves NOT_SEARCHING. `reject_raw=0` is read at a fixed offset and may not
+be the true EMM/GMM reject cause.
+
+### 5. Single best remaining hypothesis + honest boundary
+Every host-side SIT SET is accepted, so the blocker lives at the network-registration /
+attach-accept layer, not the host command layer. **Best next step (read-only, no new SITs,
+one boot):** decode the FULL voice/data registration-state response (`0x0700`/`0x0701`) per
+`ProtocolNetworkBuilder`/`OnVoiceRegistrationStateDone` field layout to recover the TRUE
+reject cause + detailed reg sub-state. A concrete EMM/GMM cause would decide it: a
+network-authorization denial (PLMN-not-allowed #11, illegal-ME #6, auth-failure) is the
+lawful-interop boundary and cannot be worked around constraint-safe; "no suitable cells"
+#15 / RAT would leave a band/RAT lever. **Honest assessment:** it is now likely that
+host-side SIT replay ALONE cannot force registration — the full accepted stock sequence
+does not move it — so either the denial is genuinely network-side (boundary), or it needs a
+component we can't run constraint-safe (full Android telephony/IMS stack); the reject-cause
+decode is the cheapest way to tell which.
+
+---
+
 **VERDICT 10 — CP NORMAL-NV SELF-DOWNGRADE FALSIFIED (read-only capture + structural diff). We extended the quarantine owner to capture the full ~476 KB handle-1 normal-NV write-out the CP emits during init (seq-matched grant; captured intact, 476454 bytes, `NORMAL_CAPTURE done received=476454 grants=237`) and diffed it against the fed-in `nv_normal.bin` (byte-identical to real sda5 EFS per V7). Result: the entire static NV config body is BYTE-IDENTICAL (4000 random samples across offsets ~1854→108784 and 108786→476439: zero mismatches). The only changes are write-generation bookkeeping: two header counters (off8 `07→10`, off24 `6b→6c`), one 9-byte record that grew with a CP-written timestamp/binary value (off790, before the `FKPSUZ` catalog token), a handful of single/double checksum bytes beside NV catalog strings (`GT-B3730 Ver 7.0`, `[-ALL-]`, `Specific #`), one 2-byte checksum before the `SINDX1` record (off108784 `3c19→bd0e`), and ~47 KB of trailing flash content the CP doesn't persist. NO op-mode / UE_OPERATION_MODE, service-domain, limited-service/emergency-only, PLMN-sel, RAT/band, GCFMODE, or attach field changed. The CP does NOT self-downgrade normal-NV at runtime — same as protected-NV (V7, only a +4 write-gen counter). With op-mode NV (V7), secure-boot/REQ_SECURITY (V9), and now CP NV self-downgrade (V10) all falsified, the deny is NOT a CP config/NV decision. Device left known-good: proven owner restored on disk (`90f403df`), CP ONLINE; READ-ONLY throughout (no NV/EFS write, nothing forged) (2026-10-03):**
 
 ### 1. What we did (read-only normal-NV capture)

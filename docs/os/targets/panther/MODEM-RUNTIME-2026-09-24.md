@@ -1,5 +1,17 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 SET_INITIAL_ATTACH_APN recovered + replayed (accepted) but NOT the gate:**
+recovered the stock attach chain from `libsitril.so` (efcca0d5) — the one missing command
+was `SIT_SET_INITIAL_ATTACH_APN` (opcode `0x0603`, 250-byte body; `[218]`=pdpType
+`GetPdpType("IP")=1`, APN at `[16]`, all enum bytes recovered constants). Implemented
+`make_initial_attach_apn_request` (guarded, self-tested byte-exact, `-Werror`), inserted
+before ALLOW_DATA in stock order. One boot: modem ACKed it (`error_raw=0`) but registration
+unchanged — data NOT_SEARCHING(0) tech=3, voice REG_DENIED(3), reject=0. The full accepted
+stock host sequence (radio-on→auto-select→pref-RAT→IA-APN→allow-data, all error_raw=0) does
+not register the modem ⇒ the gate is not a missing host SIT command. Device known-good (CP
+ONLINE, owner `bb9398f2`). Next (read-only): decode the full reg-state response for the true
+EMM/GMM reject cause. Full writeup in [MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 11.
+
 **2026-10-03 CP normal-NV self-downgrade FALSIFIED (read-only capture + diff):** extended
 the quarantine owner with a guarded `SAAIOS_RFS_NORMAL_CAPTURE` block to capture the CP's
 handle-1 (normal-NV) write-out into a quarantine-only file (never real EFS/nv_normal; no

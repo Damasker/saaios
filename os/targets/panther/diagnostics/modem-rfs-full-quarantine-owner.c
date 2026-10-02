@@ -121,6 +121,26 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        REG_RADIO_GET = 0x0801, REG_SEL_GET = 0x0703, REG_SEL_AUTO_SET = 0x0704,
        REG_PREF_GET = 0x070b, REG_PREF_SET = 0x070a, REG_ALLOW_DATA = 0x0710,
        REG_PREF_LEN = 16, REG_ALLOW_LEN = 13, REG_GET_MAX = 3,
+       /* SIT_SET_INITIAL_ATTACH_APN (0x0603): a 250-byte request, recovered
+        * from ProtocolPsBuilder::BuildSetInitialAttachApn + FillApnInfo
+        * <sit_pdp_set_initial_attach_apn_req> in the factory libsitril.so
+        * (efcca0d5). The modem treats this as the PS-attach precondition: the
+        * network-attach/default-bearer APN. All body bytes are recovered, none
+        * invented. Frame-relative offsets: [12]=attach pdp cid, [13]=0x0e
+        * (fixed in the builder), [14]=dataProfileId, [15]=apnType,
+        * [16..115]=APN string (strlcpy, 100), [117..165]=username (49),
+        * [167..215]=password (49), [217]=authType, [218]=pdpType,
+        * [219]=pcscfReqType. For a plain IP APN with no auth every enum byte
+        * resolves to a recovered constant (GetPdpType("IP")=1,
+        * ConvertAuthTypeToProtocolAuthType(0)=0, default profile/apnType=0,
+        * pcscfReqType=0); the attach cid is RetrieveAttachPdpContext's
+        * profile-base+1 (base 0 on the default config => 1). This is not an
+        * NV/EFS write. */
+       REG_INIT_ATTACH_APN = 0x0603, REG_IA_LEN = 250,
+       REG_IA_APN_OFF = 16, REG_IA_APN_MAX = 100,
+       REG_IA_CID = 1, REG_IA_CONST13 = 0x0e,
+       REG_IA_AUTH_OFF = 217, REG_IA_PDPTYPE_OFF = 218, REG_IA_PCSCF_OFF = 219,
+       REG_IA_PDPTYPE_IP = 1,
        RAT_LTE_ONLY = 11, RAT_LTE_WCDMA = 12, RADIO_STATE_ON = 10,
        /* Untried operational-state SETs/GETs (open sitdef.h, same SIT family as
         * the proven 0x0700/0x0800/0x0710/0x093f wire IDs; 0x091a body also
@@ -179,6 +199,11 @@ struct camp_driver {
     int sel_known, sel_mode, sel_auto_sent;
     int pref_known; unsigned preferred_raw; int pref_set_sent;
     int allow_data_sent, reg_complete;
+    /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
+     * allow-data, only when an APN is configured. apn[] is loaded at startup from
+     * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
+    int ia_apn_sent;
+    char apn[REG_IA_APN_MAX];
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -2123,6 +2148,38 @@ static void make_allowdata_request(uint8_t request[REG_ALLOW_LEN],
     request[12] = 1;
 }
 
+_Static_assert(REG_IA_LEN == 250, "SET_INITIAL_ATTACH_APN frame must be 250 bytes");
+_Static_assert(REG_IA_PCSCF_OFF < REG_IA_LEN, "pcscf offset within frame");
+
+/* Factory BuildSetInitialAttachApn (0x0603): 250-byte request. Layout and every
+ * body byte are recovered from ProtocolPsBuilder::BuildSetInitialAttachApn +
+ * FillApnInfo<sit_pdp_set_initial_attach_apn_req> in the factory libsitril.so;
+ * see the REG_IA_* enum comment. For a plain IP APN with no username/password
+ * and no auth, the enum-converted bytes are constants (pdpType=IP=1, authType=0,
+ * dataProfileId/apnType/pcscfReqType=0); the APN string is copied verbatim. No
+ * invented bytes; nothing here is an NV/EFS write. */
+static void make_initial_attach_apn_request(uint8_t request[REG_IA_LEN],
+                                            const char *apn, uint32_t token)
+{
+    memset(request, 0, REG_IA_LEN);
+    request[2] = (uint8_t)REG_INIT_ATTACH_APN;        /* 0x03 */
+    request[3] = (uint8_t)(REG_INIT_ATTACH_APN >> 8); /* 0x06 */
+    request[4] = (uint8_t)REG_IA_LEN;                 /* 250, [5]=0 => LE 250 */
+    put_little32(request + 6, token);
+    request[12] = REG_IA_CID;        /* attach pdp cid (RetrieveAttachPdpContext) */
+    request[13] = REG_IA_CONST13;    /* fixed 0x0e in BuildSetInitialAttachApn */
+    /* request[14]=dataProfileId=0, request[15]=apnType=0 (default APN) */
+    if (apn) {
+        size_t n = 0;
+        while (n < (size_t)(REG_IA_APN_MAX - 1) && apn[n]) n++;
+        memcpy(request + REG_IA_APN_OFF, apn, n);   /* NUL already from memset */
+    }
+    /* username (+117) / password (+167) left empty (zeroed) */
+    request[REG_IA_AUTH_OFF] = 0;                 /* ConvertAuthType(0)=0 */
+    request[REG_IA_PDPTYPE_OFF] = REG_IA_PDPTYPE_IP; /* GetPdpType("IP")=1 */
+    request[REG_IA_PCSCF_OFF] = 0;                /* pcscfReqType */
+}
+
 /* Operational-SET request with a 4-byte little-endian payload at +12 (matches
  * the factory sitril builders, e.g. BuildSetVoiceOperation stores int32 mode at
  * body+0 of a len-16 request). Used for 0x091a (mode 3) and 0x0933 (mode 1). */
@@ -2218,7 +2275,12 @@ static unsigned camp_reg_next(const struct camp_driver *c)
         if (!(c->pref_known && c->preferred_raw == RAT_LTE_WCDMA)) return REG_PREF_SET;
     }
 
-    /* 4. Allow PS data once. */
+    /* 4. Initial-attach APN: stock issues SET_INITIAL_ATTACH_APN (0x0603) as the
+     *    PS-attach precondition (the default-bearer/attach APN) before allowing
+     *    data. Sent once, only when an APN is configured. */
+    if (c->apn[0] && !c->ia_apn_sent) return REG_INIT_ATTACH_APN;
+
+    /* 5. Allow PS data once. */
     if (!c->allow_data_sent) return REG_ALLOW_DATA;
     return 0;
 }
@@ -2307,6 +2369,9 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
          * reg_complete gate (and the opx experiment) can actually fire. */
         c->reg_complete = 1;
         printf("camp_reg set=allow_data response=yes error_raw=%u\n", error);
+    } else if (id == REG_INIT_ATTACH_APN) {
+        printf("camp_reg set=initial_attach_apn response=yes error_raw=%u\n",
+               error);
     } else if (id == REG_SEL_AUTO_SET) {
         printf("camp_reg set=selection_auto response=yes error_raw=%u\n", error);
     } else if (id == REG_PREF_SET) {
@@ -2517,6 +2582,12 @@ static void camp_probe_advance(struct owner *o, int64_t now)
             c->allow_data_sent = 1;
             wrote = camp_send_once(o->ipc, f, sizeof f);
             rname = "allow_data";
+        } else if (reg == REG_INIT_ATTACH_APN) {
+            uint8_t f[REG_IA_LEN];
+            make_initial_attach_apn_request(f, c->apn, c->probe_token);
+            c->ia_apn_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_initial_attach_apn";
         } else {
             if (reg == REG_SEL_AUTO_SET) c->sel_auto_sent = 1;
             else if (reg == REG_RADIO_GET) c->radio_get_tries++;
@@ -2644,6 +2715,29 @@ static int read_opx_step(void)
     if (!strncmp(buf, "dual", 4)) return OPX_STEP_DUAL;
     return OPX_STEP_NONE;
 }
+
+/* Load the configured attach APN from /data/saaios/etc/apn (e.g. "internet").
+ * Trailing whitespace/newlines are stripped. Returns 1 and fills out[] on
+ * success; 0 (and out[0]=0) when absent/empty. The APN is network config, not a
+ * secret, and this is never an NV/EFS path. */
+static int read_apn(char *out, size_t cap)
+{
+    if (cap) out[0] = 0;
+    int fd = open("/data/saaios/etc/apn", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[REG_IA_APN_MAX] = {0};
+    ssize_t r = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (r <= 0) return 0;
+    size_t n = (size_t)r;
+    while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r' ||
+                 buf[n - 1] == ' ' || buf[n - 1] == '\t'))
+        n--;
+    if (!n || n >= cap) return 0;
+    memcpy(out, buf, n);
+    out[n] = 0;
+    return 1;
+}
 #endif /* SAAIOS_RFS_CAMP */
 
 static void request_stop(int signal_number)
@@ -2753,6 +2847,10 @@ static int run_owner(int ipc, int rfs, int ready)
     o.camp.owner_start_ms = started;
     o.camp.opx_step = read_opx_step();
     printf("camp_opx_step=%d\n", o.camp.opx_step);
+    if (read_apn(o.camp.apn, sizeof o.camp.apn))
+        printf("camp_apn=loaded len=%zu\n", strlen(o.camp.apn));
+    else
+        puts("camp_apn=none");
 #endif
     for (;;) {
         int64_t now = monotonic_ms();
@@ -3969,6 +4067,18 @@ static int test_camp_reg(void)
     c.allow_data_sent = 1;
     if (camp_reg_next(&c) != 0) return 140;
 
+    /* With an APN configured, SET_INITIAL_ATTACH_APN precedes allow_data. */
+    struct camp_driver iac;
+    memset(&iac, 0, sizeof iac);
+    iac.sim_ready = 1; iac.radio_on = 1;
+    iac.sel_auto_sent = 1; iac.pref_set_sent = 1;
+    memcpy(iac.apn, "internet", 9);
+    if (camp_reg_next(&iac) != REG_INIT_ATTACH_APN) return 170;
+    iac.ia_apn_sent = 1;
+    if (camp_reg_next(&iac) != REG_ALLOW_DATA) return 171;
+    iac.allow_data_sent = 1;
+    if (camp_reg_next(&iac) != 0) return 172;
+
     /* Already-auto selection skips 0x0704; already-LTE_WCDMA preferred skips
      * 0x070a; any other preferred value (e.g. raw 16) is broadened. */
     struct camp_driver d;
@@ -4076,6 +4186,18 @@ static int test_camp_reg(void)
          12,0,0,0, 12,0,0,0, 1,0,0,0, 1,0,0,0};
     make_opx_dual_request(du2, 0x12345678);
     if (!same_bytes(du2, du_e, sizeof du2)) return 164;
+    /* SET_INITIAL_ATTACH_APN (0x0603): header + recovered body bytes for a plain
+     * IP APN "internet" (no user/pass/auth). */
+    uint8_t ia[REG_IA_LEN];
+    make_initial_attach_apn_request(ia, "internet", 0x12345678);
+    if (ia[0] || ia[1] || ia[2] != 0x03 || ia[3] != 0x06 ||
+        ia[4] != 250 || ia[5]) return 165;
+    if (little32(ia + 6) != 0x12345678 || ia[10] || ia[11]) return 166;
+    if (ia[12] != REG_IA_CID || ia[13] != REG_IA_CONST13 ||
+        ia[14] || ia[15]) return 167;
+    if (memcmp(ia + REG_IA_APN_OFF, "internet", 9)) return 168; /* incl NUL */
+    if (ia[REG_IA_AUTH_OFF] || ia[REG_IA_PDPTYPE_OFF] != REG_IA_PDPTYPE_IP ||
+        ia[REG_IA_PCSCF_OFF] || ia[117] || ia[167]) return 169;
     return 0;
 }
 #endif
