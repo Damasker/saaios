@@ -51,7 +51,7 @@ enum { BASELINE_BYTES = 524288, FIRST_CHUNK = 2012,
        SIT_REPLY_MS = 10000, SIT_SETTLED_MS = 60000,
        SIT_RFS_GUARD_MS = 1000, SIT_GET_COUNT = 4,
        SIT_EVENT_WINDOW_MS = 60000, SIT_EVENT_TRACE_LIMIT = 8,
-       SIT_EVENT_QUIET_COVERAGE_MS = 300000 };
+       SIT_EVENT_QUIET_COVERAGE_MS = 300000, RFS_TRACE_MAX = 512 };
 #define IOCTL_GET_OPENED_STATUS _IOR('o', 0x59, int)
 #define SOURCE_NAME "nv_protected.bin"
 #define PIN_NAME "expected.sha256"
@@ -1375,9 +1375,77 @@ static void diagnose_waiting(struct owner *o)
         diagnose(o, STAGE_DEADLINE, REASON_TIMEOUT);
 }
 
+/* Passive early-boot RFS trace. Logs ONLY numeric protocol header fields
+ * (command, numeric file handle, offset/size counters) and the byte length;
+ * never any payload content (protected-NV bytes are secret). This RFS variant
+ * addresses files by a numeric handle, not an ASCII path, so no path string is
+ * present to leak. Bounded so a misbehaving endpoint cannot flood the log. */
+static unsigned rfs_trace_count;
+static void rfs_trace(const char *note, enum phase phase,
+                      const uint8_t *frame, size_t len, int64_t now)
+{
+    if (!frame || len < 4 || rfs_trace_count >= RFS_TRACE_MAX) return;
+    rfs_trace_count++;
+    uint32_t cmd = little32(frame);
+    uint32_t f1 = len >= 8 ? little32(frame + 4) : 0;
+    uint32_t handle = len >= 12 ? little32(frame + 8) : 0;
+    uint32_t w3 = len >= 16 ? little32(frame + 12) : 0;
+    uint32_t w4 = len >= 20 ? little32(frame + 16) : 0;
+    /* Bytes at offset 20+ are request-header fields only on short control
+     * frames (<=24 bytes); on data-carrying frames offset 20 is the start of
+     * the quarantined NV payload, which must never be logged. */
+    uint32_t w5 = len == 24 ? little32(frame + 20) : 0;
+    printf("RFS_TRACE note=%s t=%lld phase=%d len=%zu cmd=%u paylen=%u "
+           "handle=%u off=%u w4=%u w5=%u\n",
+           note, (long long)now, (int)phase, len,
+           cmd, f1, handle, w3, w4, w5);
+    fflush(stdout);
+}
+
+/* Post-completion RFS observer. After the protected-NV write-out quarantine is
+ * done (TERMINAL + final_ack_sent) the main loop normally stops reading RFS.
+ * This drain keeps reading so any RFS request the CP issues during the later
+ * RadioPower-ON / MM registration-gate window is captured. It LOGS headers
+ * only and, to keep the CP's handshake alive so subsequent requests keep
+ * flowing, replies to an exact unprotect request_7 with the known status_7.
+ * It NEVER re-runs the write sequence, serves data, stores payload, or writes
+ * any file. It invents no reply bytes (status_7 is the already-observed ack). */
+static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
+                                    size_t got, int64_t now)
+{
+    static uint8_t pt_rx[RX_CAP];
+    static size_t pt_used;
+    if (!bytes || got > sizeof pt_rx - pt_used) {
+        pt_used = 0; /* resynchronize rather than retain ambiguous bytes */
+        return;
+    }
+    memcpy(pt_rx + pt_used, bytes, got);
+    pt_used += got;
+    while (pt_used) {
+        int size = valid_frame_length(pt_rx, pt_used);
+        if (size <= 0) break;
+        rfs_trace("post_term", TERMINAL, pt_rx, (size_t)size, now);
+        if ((size_t)size == sizeof request_7 &&
+            same_bytes(pt_rx, request_7, sizeof request_7)) {
+            size_t done = 0;
+            while (done < sizeof status_7) {
+                ssize_t n = write(o->rfs, status_7 + done,
+                                  sizeof status_7 - done);
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) break;
+                done += (size_t)n;
+            }
+        }
+        memmove(pt_rx, pt_rx + size, pt_used - (size_t)size);
+        pt_used -= (size_t)size;
+    }
+    if (pt_used == sizeof pt_rx) pt_used = 0;
+}
+
 static int complete_frame(struct owner *o, const uint8_t *frame,
                           size_t len, size_t trailing, int64_t now)
 {
+    rfs_trace("serve", o->phase, frame, len, now);
     if (stop_requested || now < 0 || now >= o->deadline_ms ||
         now >= o->total_deadline_ms) {
         diagnose(o, frame_stage(o), REASON_TIMEOUT);
@@ -2413,7 +2481,8 @@ static int run_owner(int ipc, int rfs, int ready)
             continue;
         }
         struct pollfd fds[2] = {
-            {.fd = o.phase == TERMINAL ? -1 : rfs, .events = POLLIN},
+            {.fd = (o.phase == TERMINAL && !o.final_ack_sent) ? -1 : rfs,
+             .events = POLLIN},
             {.fd = o.sit.endpoint_failed ||
                    now < o.sit.backoff_until_ms ? -1 : ipc,
              .events = POLLIN}
@@ -2430,7 +2499,7 @@ static int run_owner(int ipc, int rfs, int ready)
             sit_disable(&o.sit, "rfs_terminal");
         for (size_t i = 0; i < 2; ++i) {
             if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) continue;
-            if (i == 0 && o.phase == TERMINAL) continue;
+            if (i == 0 && o.phase == TERMINAL && !o.final_ack_sent) continue;
             if (!(fds[i].revents & POLLIN)) continue;
             uint8_t bytes[RX_CAP];
             size_t cap = i == 0 ? sizeof bytes : SIT_READ_SLICE;
@@ -2450,6 +2519,13 @@ static int run_owner(int ipc, int rfs, int ready)
                 else sit_endpoint_fault(&o);
             } else if (i == 0) {
                 int64_t received_at = monotonic_ms();
+                if (o.phase == TERMINAL) {
+                    if (received_at >= 0)
+                        post_terminal_rfs_drain(&o, bytes, (size_t)got,
+                                                received_at);
+                    zero_bytes(bytes, sizeof bytes);
+                    continue;
+                }
                 if (received_at < 0 || received_at >= o.deadline_ms)
                     diagnose(&o, frame_stage(&o), REASON_TIMEOUT);
                 if (received_at < 0 || received_at >= o.deadline_ms ||

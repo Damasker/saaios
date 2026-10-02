@@ -6,6 +6,38 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-02 late — DECISIVE: gate value is CP-STORE; read-divert ruled out.**
+Instrumented the owner to log every RFS frame (header fields only) and to keep
+reading `umts_rfs0` **after** the write-out completes (the stock owner stopped
+polling RFS at TERMINAL, so the RadioPower-ON / MM-gate window had never been
+observed). Over a fresh guarded boot the CP's **entire** RFS traffic is
+OPEN(7)/STAT(3)/WRITE(6): the early-boot protected-NV write-out (handle 3, size
+`0x0002e406`=189446 bytes — the field is the transfer *size*, correcting the
+earlier "NV offset" wording) followed by four post-RadioPower-ON `cmd6` **write**
+attempts of a ~476 KB file (handle 1). **Zero read-expecting-data requests exist
+anywhere** — the CP never asks the AP for file data; it only writes its own
+NV/EFS out. Static RE agrees: `RfsRead` exists only in the USIM **PERSO** path
+(did not fire — SIM READY), while the gate parameters (`SAE_FLASH_UE_OPERATION_MODE`,
+`SAE_FLASH_GCFMODE`, `SAE_FLASH_PLMN_SEL_MODE`, `SAE_FLASH_MOBILE_CLASS_MODE`,
+RF-cal `CalDone`) are CP-internal FLASH-NV read via internal accessors.
+**Verdict: the gate value is served from the CP's own store, not the AP → no
+allowed read-divert can satisfy it; this is the real-EFS/NV boundary.** Owner
+instrumented+rebuilt (`69f9b62d…`, self-test PASS, `-Werror`), a one-time
+data-chunk payload mis-log was fixed and the on-phone log scrubbed. **Bearer? no.**
+
+Remaining constraint-compliant avenues to raise with the operator:
+- **(Allowed) live SIT operational-mode / attach-enable SET** — a *command*,
+  not a file write: if an un-issued SIT provisioning opcode can set the CP's
+  operational mode to normal at runtime (parallel to the accepted 0x0704/0x0800
+  camp SETs), the gate could flip without touching real EFS. Needs opcode
+  recovery from the vendor SIT/RIL (not yet confirmed to exist for op-mode).
+- **(Boundary — operator decision) authorize a scoped real-NV edit** of the
+  handle-1 normal-NV `SAE_FLASH_*` item(s) on a backed-up copy. This crosses the
+  standing "never write real EFS/nv" constraint and must not be done without an
+  explicit operator go-ahead; document which item and keep a reversible backup.
+- **(Allowed) factory/provisioned SIM or factory NV reprovision** via the
+  vendor path, out of scope for this quarantine-only owner.
+
 **2026-10-02 pm — MM gate narrowed; PCIe mitigation baked.** The registration
 blocker is isolated to a CP-internal **pre-PLMN local MM gate** (voice/data reg
 GET `error_raw=0`, `registration_raw=3`/`0`, `reject_cause=0`, no PLMN latched),

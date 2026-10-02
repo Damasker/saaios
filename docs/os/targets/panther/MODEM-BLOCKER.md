@@ -1,5 +1,50 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT — the MM registration-gate value is CP-STORE, not AP-served; we are at the real-EFS/NV constraint boundary (2026-10-02 late):**
+We instrumented the owner to log every RFS frame (header fields only — cmd,
+numeric file handle, offset/size counters; never payload) and, critically, kept
+reading `umts_rfs0` **after** the protected-NV write-out completes so the
+RadioPower-ON / MM-gate window is observed (the stock owner stopped polling RFS
+at that point, so this window had never been seen). Captured across a fresh
+guarded boot (owner `69f9b62d…`):
+
+- **Early boot (write-out, file handle 3):** `cmd7`(open/unprotect, handle 3) →
+  `cmd3`(stat) → `cmd6`(write, size `0x0002e406` = **189446 bytes** — note this
+  field is the transfer *size*, i.e. `RFS_TRANSFER_BYTES`, **not** an NV offset,
+  correcting the earlier "NV @0x02e406" wording) → 95 data chunks. The CP is the
+  **data source**; its very first RFS op this boot is a write-out, so it reads
+  nothing from the AP before it.
+- **Post-write / RadioPower-ON / MM-gate window (6 frames):** `cmd3`(stat
+  handle 3), `cmd7`(open handle 3), and four `cmd6`(**write**, file handle 1,
+  size ~476 KB each) attempts. The owner does not grant the handle-1 writes.
+  **Every single frame is OPEN(7)/STAT(3)/WRITE(6) — there is ZERO
+  read-expecting-data request anywhere in the entire boot→gate timeline.** The
+  CP never asks the AP to return file data; it only writes its own NV/EFS out
+  (AP is a backup *sink*, not a source the CP reads at boot).
+- Registration settled at voice `REG_DENIED(3)`/`reject_cause=0`, data
+  `NOT_SEARCHING(0)`/tech 3, with SIM READY and UMTS signal — same local deny.
+
+**Static cross-reference (CP image) confirms it:** the firmware's RFS read op
+(`RfsRead`) exists but appears **only** in the USIM **PERSO/SIM-lock** path
+(`[PERSO]Read RFS Fail!, RfsReadResult=%d`, `[PERSO]Open RFS Fail!`), which did
+not fire this boot (SIM reached READY, PIN1 enabled). The registration/
+operational-mode gate parameters are a cluster of **CP-internal FLASH-NV items**
+— `SAE_FLASH_UE_OPERATION_MODE` (`!SAEL3.SAE_UE_OPERATION_MODE`),
+`SAE_FLASH_GCFMODE`, `SAE_FLASH_PLMN_SEL_MODE`, `SAE_FLASH_MOBILE_CLASS_MODE`,
+and RF-cal `CalDone`/`RF_CAL`/`CAL.HEDGE.NV.*` — accessed through internal NV
+accessors (`NvRead`, `PlmnSimDataAcc.SimState(MMC_GET,…)`), **never via an RFS
+round-trip to the AP**.
+
+**Consequence:** no allowed read-divert can satisfy the gate, because the CP
+performs no AP-served read of the gate value — it reads it from its own in-RAM
+copy of the factory FLASH NV (the same ~476 KB handle-1 image + 189 KB handle-3
+`nv_protected` it writes out). Changing the gate value would require writing the
+CP's **real** NV/EFS (`SAE_FLASH_*` lives in handle-1 normal NV), which is
+exactly the forbidden real-EFS write. **This is the quarantine-vs-real-EFS
+boundary, and we have reached it on the read-divert axis.** Remaining ALLOWED
+avenues are live SIT provisioning SETs (operational-mode / attach-enable), not
+file diverts — see MODEM-07 for the enumerated operator options.
+
 **MM deny is a CP-internal pre-PLMN local gate, not quarantine, not forbidden-PLMN; PCIe mitigation now baked into handoff (2026-10-02 pm):**
 Static RE + live confirmation narrowed the registration blocker decisively. (1)
 `0x20d1afa` ("SIT_REG") is the **SIT command-handler registrar** — called

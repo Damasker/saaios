@@ -1,5 +1,18 @@
 # Native modem runtime: status query investigation
 
+**2026-10-02 late:** early-boot RFS READ sequence instrumented (owner logs every
+RFS header + keeps reading `umts_rfs0` past the write-out, through RadioPower-ON
+and the MM gate). Result: the CP's entire RFS traffic is OPEN/STAT/WRITE — a
+protected-NV write-out (handle 3, 189446 B) plus post-RadioPower-ON ~476 KB
+write attempts (handle 1), with **zero read-expecting-data requests**. The MM
+operational-mode/cal gate parameters (`SAE_FLASH_UE_OPERATION_MODE`,
+`SAE_FLASH_GCFMODE`, `SAE_FLASH_PLMN_SEL_MODE`, RF-cal `CalDone`) are CP-internal
+FLASH-NV, read via internal accessors, not RFS. **Verdict: gate value is
+CP-STORE, not AP-served → no allowed read-divert; real-EFS/NV boundary reached.**
+Owner `69f9b62d…` (self-test PASS); one-time data-chunk mis-log fixed + on-phone
+log scrubbed. Details in the [MODEM-BLOCKER one-pager](MODEM-BLOCKER.md).
+Bearer not established.
+
 **2026-10-02 pm:** registration blocker isolated to a CP-internal pre-PLMN local
 MM gate (reject_cause=0, no PLMN latched); not quarantine, not forbidden-PLMN.
 PCIe endpoint wedge after RadioPower-ON is now mitigated automatically in the
