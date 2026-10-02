@@ -131,10 +131,12 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        OPX_VOICE_GET = 0x091b, OPX_VOICE_SET = 0x091a, OPX_VOICE_LEN = 16,
        OPX_INTPS_SET = 0x0933, OPX_INTPS_LEN = 16,
        OPX_DEVSVC_GET = 0x0957, OPX_DEVSVC_SET = 0x0956, OPX_DEVSVC_LEN = 16,
+       OPX_DUAL_SET = 0x072b, OPX_DUAL_LEN = 28,
        OPX_VOICE_MODE = 3, OPX_INTPS_MODE = 1, OPX_STACK_MODE_ENABLE = 1,
        OPX_DEVSVC_MODE_DATA = 2,
+       OPX_DUAL_NET = 12, OPX_DUAL_ALLOW = 1,
        OPX_STEP_NONE = 0, OPX_STEP_VOICE = 1, OPX_STEP_INTPS = 2,
-       OPX_STEP_STACK = 3, OPX_STEP_DEVSVC = 4 };
+       OPX_STEP_STACK = 3, OPX_STEP_DEVSVC = 4, OPX_STEP_DUAL = 5 };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -2042,6 +2044,27 @@ static void make_opx_byte_request(uint8_t *request, uint16_t id, uint8_t len,
     request[12] = value;
 }
 
+/* SIT_SET_DUAL_NETWORK_AND_ALLOW_DATA (0x072b, len 28): 4 x int32 payload,
+ * recovered from ProtocolNetworkBuilder::BuildSetDualNetworkAndAllowData in the
+ * full libsitril.so. Layout (log "Primary(net,allow), Secondary(net,allow)"):
+ *   +12 translate(primaryNet)   +16 translate(secondaryNet)
+ *   +20 primaryAllowData        +24 secondaryAllowData
+ * translateNetworktype is the SAME table BuildSetPreferredNetworkType (0x070a)
+ * uses, and translate(12)=12, so the already-proven wire RAT 12 (LTE/WCDMA) and
+ * allow-data 1 are reused for all four fields -- no invented bytes. */
+static void make_opx_dual_request(uint8_t *request, uint32_t token)
+{
+    memset(request, 0, OPX_DUAL_LEN);
+    request[2] = (uint8_t)OPX_DUAL_SET;
+    request[3] = (uint8_t)(OPX_DUAL_SET >> 8);
+    request[4] = OPX_DUAL_LEN;
+    put_little32(request + 6, token);
+    put_little32(request + 12, OPX_DUAL_NET);   /* primary net (wire 12) */
+    put_little32(request + 16, OPX_DUAL_NET);   /* secondary net (wire 12) */
+    put_little32(request + 20, OPX_DUAL_ALLOW); /* primary allow data */
+    put_little32(request + 24, OPX_DUAL_ALLOW); /* secondary allow data */
+}
+
 /* Next post-registration operational step, or 0 when the experiment is idle or
  * complete. Reads the three operational GETs for the log, then issues the one
  * selected SET. GETs and the SET are each dispatched at most once. */
@@ -2056,6 +2079,7 @@ static unsigned camp_opx_next(const struct camp_driver *c)
         if (c->opx_step == OPX_STEP_INTPS) return OPX_INTPS_SET;
         if (c->opx_step == OPX_STEP_STACK) return OPX_STACK_SET;
         if (c->opx_step == OPX_STEP_DEVSVC) return OPX_DEVSVC_SET;
+        if (c->opx_step == OPX_STEP_DUAL) return OPX_DUAL_SET;
     }
     return 0;
 }
@@ -2168,7 +2192,8 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         else
             printf("camp_opx get=device_service status=unknown_short\n");
     } else if (id == OPX_VOICE_SET || id == OPX_INTPS_SET ||
-               id == OPX_STACK_SET || id == OPX_DEVSVC_SET) {
+               id == OPX_STACK_SET || id == OPX_DEVSVC_SET ||
+               id == OPX_DUAL_SET) {
         printf("camp_opx set=%s response=yes error_raw=%u\n", c->probe_name,
                error);
     } else if (id == REG_ALLOW_DATA) {
@@ -2440,6 +2465,12 @@ static void camp_probe_advance(struct owner *o, int64_t now)
             c->opx_set_sent = 1;
             wrote = camp_send_once(o->ipc, f, sizeof f);
             rname = "set_device_service";
+        } else if (opx == OPX_DUAL_SET) {
+            uint8_t f[OPX_DUAL_LEN];
+            make_opx_dual_request(f, c->probe_token);
+            c->opx_set_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_dual_network_allow_data";
         } else {
             if (opx == OPX_STACK_GET) c->opx_stack_get_sent = 1;
             else if (opx == OPX_VOICE_GET) c->opx_voice_get_sent = 1;
@@ -2504,6 +2535,7 @@ static int read_opx_step(void)
     if (!strncmp(buf, "intps", 5)) return OPX_STEP_INTPS;
     if (!strncmp(buf, "stack", 5)) return OPX_STEP_STACK;
     if (!strncmp(buf, "devsvc", 6)) return OPX_STEP_DEVSVC;
+    if (!strncmp(buf, "dual", 4)) return OPX_STEP_DUAL;
     return OPX_STEP_NONE;
 }
 #endif /* SAAIOS_RFS_CAMP */
@@ -3901,6 +3933,11 @@ static int test_camp_reg(void)
     dv.sim_ready = 1; dv.reg_complete = 1; dv.opx_step = OPX_STEP_DEVSVC;
     dv.opx_stack_get_sent = dv.opx_voice_get_sent = dv.opx_devsvc_get_sent = 1;
     if (camp_opx_next(&dv) != OPX_DEVSVC_SET) return 161;
+    struct camp_driver du;
+    memset(&du, 0, sizeof du);
+    du.sim_ready = 1; du.reg_complete = 1; du.opx_step = OPX_STEP_DUAL;
+    du.opx_stack_get_sent = du.opx_voice_get_sent = du.opx_devsvc_get_sent = 1;
+    if (camp_opx_next(&du) != OPX_DUAL_SET) return 163;
 
     /* Frame byte-exactness: id@+2, len@+4, token@+6, body@+12. */
     uint8_t vs[OPX_VOICE_LEN];
@@ -3927,6 +3964,12 @@ static int test_camp_reg(void)
     make_opx_u32_request(ds, OPX_DEVSVC_SET, OPX_DEVSVC_LEN, 0x12345678,
                          OPX_DEVSVC_MODE_DATA);
     if (!same_bytes(ds, ds_e, sizeof ds)) return 162;
+    uint8_t du2[OPX_DUAL_LEN];
+    static const uint8_t du_e[OPX_DUAL_LEN] =
+        {0,0,0x2b,0x07,28,0,0x78,0x56,0x34,0x12,0,0,
+         12,0,0,0, 12,0,0,0, 1,0,0,0, 1,0,0,0};
+    make_opx_dual_request(du2, 0x12345678);
+    if (!same_bytes(du2, du_e, sizeof du2)) return 164;
     return 0;
 }
 #endif

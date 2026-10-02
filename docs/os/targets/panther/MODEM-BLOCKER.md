@@ -1,5 +1,81 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 4 — the LAST command-only lever (`0x072B` dual-network + allow-data) was recovered from the full `.so`, confirmed command-safe, and live-tested: it ACKs clean but is INEFFECTIVE. COMMAND-ONLY AVENUE IS NOW FULLY EXHAUSTED. The only remaining path to registration is a scoped FLASH-NV write of `SAE_UE_OPERATION_MODE` — operator-gated, NOT authorized, NOT performed (2026-10-02 final):**
+
+*Recovery (from `ProtocolNetworkBuilder::BuildSetDualNetworkAndAllowData` @ `0x2375a0`, decoded, not guessed):* `0x072B` is a **28-byte** frame — 12-byte header + **4 × int32** payload:
+
+| offset | field | source | value sent |
+|---|---|---|---|
+| +12 | primary net type | `translateNetworktype(GetInt0)` | `12` (LTE/WCDMA wire) |
+| +16 | secondary net type | `translateNetworktype(GetInt1)` | `12` |
+| +20 | primary allow-data | `GetInt2` (raw) | `1` |
+| +24 | secondary allow-data | `GetInt3` (raw) | `1` |
+
+The caller `NetworkService::DoSetDualNetworkTypeAndAllowData` @ `0x19fe00` reads
+those 4 ints from the RIL request and its log string is literally
+`"Dual Network Type : Primary(%d,%d), Secondary(%d,%d)"`. `translateNetworktype`
+@ `0x236790` is the **identical** table `BuildSetPreferredNetworkType (0x070a)`
+uses, and `translate(12)=12`, so all four field values are **reused proven wire
+values** (net type `12` = our already-applied `0x070a`; allow-data `1` = our
+already-applied `0x0710`). There is **no GET counterpart** (no `GetDualNetwork`
+symbol exists).
+
+*Constraint-safety (confirmed):* the caller ends in
+`Service::SendRequest(ModemData, 0x7530, 0xff3, …)` @ `0x1a0080` — an IPC command
+with a 30 s timeout and response id `0xff3`. **No `NvWrite` path**; `BuildNvWriteItem`
+remains a no-op stub. So `0x072B` is operational/RAM state, **not** a FLASH-NV
+persist. Functionally it is the **union of `0x070a` + `0x0710`** across a
+primary+secondary stack — and both of those were already tried live and are
+ineffective on this single-stack device.
+
+*Live result (owner `90f403df`, step=`dual`, one guarded boot):* GETs first read
+stack_status=1, voice_operation=3, device_service=1 (unchanged from prior boots);
+`0x072B` SET **acked `error_raw=0`** (accepted, not rejected by the dual-SIM /
+stack-occupy guards). Across the settle window: voice `registration_raw=3`
+(REG_DENIED) / `reject_raw=0`; data `registration_raw=0` (NOT_SEARCHING) /
+`tech_raw=3`; `mask_low7=2` (UMTS). **No `rmnet` interface obtained an IPv4**
+(only `lo`/`wlan0`/`usb0` have addresses). No movement whatsoever.
+
+**→ COMMAND-ONLY AVENUE FULLY EXHAUSTED.** Every constraint-safe AP→CP operational
+command has now been issued live and ACKed, and the operational GETs prove the
+modem is already in the target state (voice-op on, stack on, pref RAT LTE/WCDMA,
+allow-data on, dual-network+allow-data accepted). The registration denial is a
+**CP-internal MM decision** (REG_DENIED with `reject_cause=0`, PS never searches),
+not a missing command.
+
+## Operator decision — the only remaining path is a scoped FLASH-NV write (NOT authorized)
+
+- **NV item(s):** `SAE_UE_OPERATION_MODE` is the governing gate, persisted CP-side
+  as `SAE_FLASH_UE_OPERATION_MODE`. Siblings in the same CP FLASH-NV store that
+  shape the pre-PLMN MM gate: `SAE_FLASH_GCFMODE`, `SAE_FLASH_PLMN_SEL_MODE`, and
+  the RF-cal `CalDone` flag. These are read via the CP's **internal** registry
+  accessors (`MMC_GET/SET`, `PlmnSimDataAcc`), **not** over RFS/AP — so there is
+  no AP-served read to divert and no SIT command that writes them (the RIL's
+  nominal `BuildNvWriteItem` is a no-op stub in this build, confirming the AP RIL
+  cannot write them either).
+- **Write path:** the value lives in the modem's FLASH-NV / EFS region on the CP
+  side (the `nv_protected` / modem NV area), mutated only by CP-internal MM/NV
+  code during provisioning. Reaching it from the AP means a direct, offline edit
+  of that NV region's bytes.
+- **What a scoped, reversible edit would entail (design only, NOT done):**
+  1. Identify the exact NV/EFS record + byte offset for `SAE_FLASH_UE_OPERATION_MODE`
+     in the modem NV partition.
+  2. **Back up** the full containing record (and a wider partition image) byte-for-
+     byte before any write.
+  3. Write **only** the single operation-mode value to its target.
+  4. Keep the backup to restore the exact prior bytes on revert.
+- **Risk / reversibility:** HIGH. The modem NV/EFS region also holds calibration,
+  IMEI, and security material; a wrong offset or a CRC/signature the CP recomputes
+  can brick the modem or its calibration. Reversibility depends on an exact byte
+  backup **and** the CP not re-deriving/validating the record. This is firmly
+  behind the hard-constraint NV/EFS boundary and requires **explicit operator
+  authorization** with an accepted brick risk. **No NV/EFS write was performed.**
+
+Device left unchanged: CP ONLINE, SIM READY, data `NOT_SEARCHING(0)`, voice
+`REG_DENIED(3)`; `opx-step` cleared to GET-only.
+
+---
+
 **VERDICT 3 — the full `libsitril.so` was recovered and every constraint-safe operational-mode SET was issued LIVE; all ACK clean (`error_raw=0`) but NONE move registration; command-only avenue EXHAUSTED; no NV write performed (2026-10-02 latest):**
 Supersedes the "wire ids not recoverable" blocker in VERDICT 2. The full
 `/lib64/libsitril.so` was extracted READ-ONLY from `vendor.img` via `debugfs`

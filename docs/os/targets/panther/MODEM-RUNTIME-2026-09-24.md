@@ -1,5 +1,18 @@
 # Native modem runtime: status query investigation
 
+**2026-10-02 final:** recovered + live-tested the last command-only lever,
+`0x072B` (SET_DUAL_NETWORK_AND_ALLOW_DATA), from the full `libsitril.so`
+(`BuildSetDualNetworkAndAllowData` @ `0x2375a0`): a 28-byte, 4×int32 body
+`[translate(primNet), translate(secNet), primAllow, secAllow]`, filled with proven
+wire values (net `12` = `0x070a`, allow `1` = `0x0710`); caller
+`DoSetDualNetworkTypeAndAllowData` ends in `SendRequest` (no NvWrite) → command-safe.
+Live (owner `90f403df`, step=`dual`): SET acked `error_raw=0` but registration did
+not move (voice REG_DENIED(3)/reject 0, data NOT_SEARCHING(0)/tech 3, mask UMTS(2))
+and no `rmnet` got an IPv4. **Command-only avenue is now fully exhausted** — the
+only remaining path is a scoped, operator-gated FLASH-NV write of
+`SAE_UE_OPERATION_MODE` (NOT authorized, NOT done; see
+[MODEM-BLOCKER](MODEM-BLOCKER.md) VERDICT 4). Bearer not established.
+
 **2026-10-02 latest:** issued every constraint-safe SIT operational-mode SET LIVE
 from the unified owner (one SET per guarded warm-reboot handoff, single
 `umts_ipc0` lock), after recovering their wire ids + body shapes from the full

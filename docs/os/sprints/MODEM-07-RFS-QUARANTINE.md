@@ -6,6 +6,30 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-02 final — last command-only lever `0x072B` recovered, confirmed safe, live-tested INEFFECTIVE; command-only avenue FULLY exhausted; NV boundary is the only path left (operator-gated, NOT done).**
+Recovered `0x072B` (SET_DUAL_NETWORK_AND_ALLOW_DATA) from
+`ProtocolNetworkBuilder::BuildSetDualNetworkAndAllowData` @ `0x2375a0`: a 28-byte
+frame, 4 × int32 = `[translate(primaryNet), translate(secondaryNet),
+primaryAllowData, secondaryAllowData]` (caller log string
+`"Dual Network Type : Primary(%d,%d), Secondary(%d,%d)"`). `translateNetworktype`
+@ `0x236790` is the SAME table `0x070a` uses and `translate(12)=12`, so the body
+was filled with already-proven wire values — net type `12` (= our `0x070a`
+LTE/WCDMA) and allow-data `1` (= our `0x0710`) for both stacks; nothing invented.
+No GET counterpart exists. The caller
+`NetworkService::DoSetDualNetworkTypeAndAllowData` @ `0x19fe00` ends in
+`Service::SendRequest(…,0x7530,0xff3,…)` with **no NvWrite path** → command-safe,
+not FLASH-NV; it is effectively the union of `0x070a`+`0x0710` (both already
+ineffective). Live (owner `90f403df`, step=`dual`, one guarded boot): SET acked
+`error_raw=0` (accepted) but **registration did not move** — voice REG_DENIED(3)
+/reject 0, data NOT_SEARCHING(0)/tech 3, mask UMTS(2), and **no `rmnet` IPv4**.
+→ Command-only avenue is fully exhausted; every constraint-safe AP→CP command has
+been issued and the modem is already in the target operational state. The only
+remaining lever is a scoped, backed-up, reversible **FLASH-NV write of
+`SAE_UE_OPERATION_MODE`** (persisted `SAE_FLASH_UE_OPERATION_MODE`; siblings
+`SAE_FLASH_GCFMODE`/`SAE_FLASH_PLMN_SEL_MODE`/`CalDone`), which is CP-internal NV
+behind the hard-constraint boundary — **operator-gated, high brick risk, NOT
+authorized, NOT performed.** See the [MODEM-BLOCKER one-pager](../targets/panther/MODEM-BLOCKER.md) VERDICT 4 for the full NV operator-decision writeup.
+
 **2026-10-02 latest — full `libsitril.so` recovered; all constraint-safe op-mode SETs issued LIVE; all ACK clean, NONE move registration; command-only avenue EXHAUSTED; NO NV write.**
 The prior entry's blocker (wire ids unrecoverable from the truncated carve) was
 resolved by extracting the **full** `/lib64/libsitril.so` READ-ONLY from
