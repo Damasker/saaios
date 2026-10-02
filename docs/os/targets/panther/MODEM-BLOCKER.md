@@ -1,5 +1,42 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**RAT-broaden ruled out; deny is CP-local; PCIe wedge mitigated AP-side (2026-10-02):**
+The operator cold-power-cycled the phone, but that alone did **not** clear the
+modem PCIe endpoint wedge — the same signature recurred on the cold boot (cpif
+`pcie_send_ap2cp_irq: PCI not powered on` ×9, SIM never initialized). Root
+cause is confirmed AP↔EP: after `RadioPower-ON 0x0800` the modem EP cannot
+complete the PCIe L2/L3 power-down handshake (kernel `logbuffer_pcie0: cannot
+receive L23_READY DLLP packet`, LTSSM stuck/flapping at Detect(0)); the link
+is healthy for the first ~9 s (RFS 189 KB transfer + camp `0x0404` succeed) and
+dies only after `0x0800`. **Working mitigation (AP side, no CP changes):** set
+`/sys/devices/platform/11920000.pcie/power/control`=`on` (disable RC runtime
+suspend) **and** disable EP L1.2 ASPM
+(`.../0000:01:00.0/link/l1_2_aspm`=0, `l1_2_pcipm`=0), applied **after** the EP
+enumerates — this recovers even an already-wedged link to L0 and keeps IPC
+alive through `0x0800`. With that applied the SIM reached **READY(5)** and the
+full registration sequence ran.
+
+On the live, stable link the owner's registration triggers all took and were
+read back with `simdiag-once` (ARM64 `9e3c8584…`): **preferred_rat=12**
+(LTE_WCDMA SET confirmed, not 16), selection **0 (automatic)**, radio **10
+(ON)**, AllowData sent+ACKed — yet CS voice **`registration_raw=3` REG_DENIED
+`reject_cause=0`** and PS data **`registration_raw=0` NOT_SEARCHING**,
+`mask_low7=2` (UMTS present). **Broadening the preferred RAT to LTE_WCDMA does
+not move registration.** The registration reply payloads carry
+**`reject_cause=0`**, i.e. a **local / CP-internal deny, not a network NAS
+reject** (a forbidden-PLMN / roaming-not-allowed rejection would carry a
+nonzero cause). Direct EF confirmation is blocked: `SIM_IO 0x0208` READ_RECORD
+on MF-level EFdir works (USIM AID obtained, never logged), but **READ_BINARY on
+ADF_USIM EFs (EFad 0x6FAD, EFfplmn 0x6F7B) returns `error_raw=2` across all
+four selection variants** (bare / AID-inline / ADF-path / AID+ADF-path) — this
+modem rejects READ_BINARY on ADF EFs, so the forbidden-PLMN list could not be
+read directly. **Bearer verified? no** (PS never searched, no SetupDataCall, no
+rmnet rx/tx). **Pinpointed next unmet precondition:** the CP MM
+local-registration gate (`reject_cause=0` = local deny) — RE the SIT_REG gate
+(`0x20d1afa`; PresentObj #636c +0xBF6); secondary: a two-step SIM_IO
+(SELECT 0xA4 then READ_BINARY) or manual-PLMN attempt to force a network-side
+cause. Make the PCIe mitigation durable in the handoff path.
+
 **Early-SGC live run — accepted early but no camp/registration (2026-10-02):**
 Phone shell was restored over the **USB serial console** (`COM13` root shell);
 the "server 110"/R620 key was unreachable from this host and turned out to be
