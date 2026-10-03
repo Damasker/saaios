@@ -1,5 +1,44 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 13 — TERMINAL BOUNDARY: foreign 3G PLMN + no LTE acquisition. We queried the serving operator (0x0702, read-only) and forced LTE-only (recovered RAT value), each one controlled boot. Serving PLMN = 25501 (MCC 255 Ukraine, MNC 01 = Vodafone Ukraine) on UMTS/3G. The SIM's home is lifecell (255-06, the "Life"/internet APN), so the modem is camped on a FOREIGN Ukrainian 3G network where it is CS-denied. Forcing preferred RAT = LTE-only (SIT value 0x0b, ACKed error_raw=0) did NOT make the CP acquire any LTE cell — across the whole settle window it reported tech=UMTS(3) 36x and none(0) 2x, zero LTE(14) samples — it stayed on the denied Vodafone 3G cell. So host-side SIT replay cannot reach a bearer: the home (lifecell) LTE is not acquired (its RF/band enablement lives in NV/RF-cal we must not modify, and/or there is no reachable home LTE at this location), leaving only a foreign 3G cell that denies the SIM. This is an environmental/subscription + RF-calibration reality, not a SaaiOS host-side defect. Bearer NOT achieved. Device known-good: CP ONLINE, default LTE+WCDMA restored, owner 2a4e07ed; read-only + one recovered RAT SET, no NV, nothing invented (2026-10-03):**
+
+### 1. Recovered 0x0702 (GET_OPERATOR) layout
+- Request: header-only, len 12 (`ProtocolNetworkBuilder::BuildOperator` → InitRequestHeader(0x702, 12)).
+- Response (`ProtocolNetOperatorAdapter::Init`, frame-relative): **PLMN numeric MCC/MNC = 6 ASCII bytes at payload offset 12..17** (trailing `#`/0x23 ⇒ 2-digit MNC); short name at [18..], long name at [50..]. Only the numeric PLMN is logged (names can carry branding/PII-ish text; MCC/MNC is sufficient and not a subscriber id).
+
+### 2. Recovered LTE-only RAT value
+`ProtocolNetworkBuilder::BuildSetPreferredNetworkType` maps the RIL preferred-type
+through a `.rodata` table at 0xd8c5c and writes the result at frame+12 of the 0x070a
+request. Identity in the low range: **LTE-only (RIL 11) → SIT 0x0b (11)**; LTE/WCDMA
+(RIL 12) → 0x0c (12), which confirms our prior set. Nothing guessed.
+
+### 3. Boot A — serving PLMN (default LTE+WCDMA)
+`plmn_numeric=25501#` (MCC 255 / MNC 01 = Vodafone Ukraine), frame_len=119; voice
+REG_DENIED(3), data NOT_SEARCHING(0), reject 0, tech UMTS(3), cell on LAC 36291.
+Home is lifecell (255-06) ⇒ the camped network is FOREIGN.
+
+### 4. Boot B — forced LTE-only
+`camp_pref_target=11`, `set_preferred response=yes error_raw=0`. Result: operator
+still 25501# (Vodafone UA 3G); voice REG_DENIED(3), data NOT_SEARCHING(0), reject 0;
+**tech tally over the window: UMTS(3) ×36, none(0) ×2, LTE(14) ×0.** The CP never
+acquired an LTE cell even when restricted to LTE-only; it remained on the foreign 3G
+cell. Signal present throughout (mask_low7=2).
+
+### 5. Decisive verdict — terminal boundary
+Every host-side SIT step is accepted (SIM READY, radio on, auto-select, preferred RAT
+incl. LTE-only, initial-attach APN, allow-data) yet the modem has no usable registrable
+service: it can only find a foreign Vodafone-UA 3G cell that denies the lifecell SIM,
+and cannot acquire home (lifecell) LTE. The missing piece is LTE RF/band acquisition,
+which is governed by NV/RF-cal we must not modify (and/or genuine lack of reachable home
+LTE at this location) — not a host-side defect and not forgeable constraint-safe. **No
+bearer is reachable here via host-side SIT replay.** To actually get data, the realistic
+paths are environmental/subscription, outside SaaiOS host code: (a) be in reachable
+lifecell LTE coverage, and/or (b) the CP's LTE RF/band/NV provisioning (stock-owned) be
+active. The SaaiOS host-side bring-up itself is complete and correct up to the network's
+own refusal.
+
+---
+
 **VERDICT 12 — TRUE reject-cause decoded: it is genuinely 0, and the modem is camped on UMTS/3G only. We recovered the exact stock 0x0700/0x0701 response layout from `libsitril.so` (efcca0d5) `ProtocolNet{Voice,Data}RegStateAdapter` fixed-offset accessors, extended the owner to decode every field read-only, and captured one boot. The directive's premise — that we read `reject` at the wrong offset — is FALSIFIED: the stock adapter reads reject_cause at offset 13 (byte), exactly where our owner already read it. The reject cause is genuinely 0. The new decode shows the modem DOES see and camp on a real cell, but only on UMTS (3G): RAT=UMTS(3), LAC=36291, CID=85793345 (0x051D1A41 → RNC 1309 / cell 6721), PSC=187 (a WCDMA scrambling code) — identical in both the voice and data frames. CS voice = REG_DENIED(3) on that 3G cell with NO cause; PS data = NOT_SEARCHING(0) on the same cell. This is a RAT/coverage situation, not a cause-coded auth reject. Device known-good: CP ONLINE, owner `69d3d1c2`; read-only, no NV/EFS write, nothing invented (2026-10-03):**
 
 ### 1. Decoded 0x0700 (voice/CS) / 0x0701 (data/PS) response layout (field → offset)

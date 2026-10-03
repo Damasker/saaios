@@ -6,6 +6,24 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 TERMINAL BOUNDARY: foreign 3G PLMN + no LTE acquisition (VERDICT 13).**
+Recovered 0x0702 GET_OPERATOR (header-only req len 12; response PLMN numeric MCC/MNC = 6
+ASCII at payload[12..17], '#'=2-digit MNC; short name [18], long name [50]) from
+`ProtocolNetOperatorAdapter::Init`, and the LTE-only RAT value from
+`BuildSetPreferredNetworkType` table @.rodata 0xd8c5c (RIL 11 → SIT 0x0b=11; identity low
+range). Added a read-only 0x0702 probe + a file-selectable preferred-RAT override
+(/data/saaios/etc/pref_rat; guarded, self-tested 178-183, -Werror; owner 2a4e07ed). Boot A
+(default LTE+WCDMA): serving PLMN = 25501 (MCC 255 Ukraine / MNC 01 = Vodafone Ukraine) on
+UMTS/3G — FOREIGN vs the SIM's home lifecell (255-06, "Life"/internet APN) — voice
+REG_DENIED(3), data NOT_SEARCHING(0), reject 0. Boot B (forced LTE-only, set ACKed
+error_raw=0): still camped 25501 UMTS; tech tally UMTS(3)×36, none(0)×2, LTE(14)×0 — the CP
+never acquired any LTE cell even when restricted to LTE-only. Verdict: host-side SIT replay
+cannot reach a bearer — the modem can only find a foreign 3G PLMN that denies the SIM and
+cannot acquire home (lifecell) LTE, whose RF/band enablement lives in NV/RF-cal we must not
+modify (and/or no reachable home LTE here). Environmental/subscription + RF-cal reality, not
+a SaaiOS host defect. Bearer NOT achieved. Device known-good (CP ONLINE, default restored).
+See [MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 13.
+
 **2026-10-03 TRUE reject-cause decoded = genuinely 0; modem camped on UMTS/3G only.**
 Recovered the exact 0x0700/0x0701 response layout from `libsitril.so` (efcca0d5)
 `ProtocolNet{Voice,Data}RegStateAdapter` fixed-offset accessors and extended the owner

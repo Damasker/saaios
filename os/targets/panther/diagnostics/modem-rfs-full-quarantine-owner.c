@@ -198,6 +198,10 @@ struct camp_driver {
     int radio_get_tries, sel_get_tries, pref_get_tries;
     int sel_known, sel_mode, sel_auto_sent;
     int pref_known; unsigned preferred_raw; int pref_set_sent;
+    /* Preferred-RAT target: 0 => default RAT_LTE_WCDMA (proven boot). Loaded at
+     * startup from /data/saaios/etc/pref_rat; "11" selects RAT_LTE_ONLY for the
+     * one controlled LTE-only acquisition trial. Revert = remove the file. */
+    unsigned pref_target;
     int allow_data_sent, reg_complete;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
@@ -359,6 +363,27 @@ static void sit_net_log_regstate(const char *prefix, const char *name,
     if (n > psc_off)
         printf(" psc=%u", p[psc_off]);
     printf(" frame_len=%zu\n", n);
+}
+
+/* Decode a GET_OPERATOR (0x0702) response. The serving/registered PLMN numeric
+ * (MCC+MNC ASCII) is 6 bytes at payload offset 12; a trailing '#' (0x23) marks a
+ * 2-digit MNC (3GPP TS 24.008 filler). Recovered from libsitril
+ * ProtocolNetOperatorAdapter::Init(): [12..17]=PLMN numeric, [18..]=short name,
+ * [50..]=long name. Read-only; MCC/MNC is network topology, not a subscriber id.
+ * Names are not logged (operator long/short names can embed non-numeric PII-ish
+ * branding; the numeric PLMN is sufficient for home-vs-foreign classification). */
+static void sit_net_log_operator(const char *prefix, const uint8_t *p, size_t n)
+{
+    char plmn[7];
+    size_t i;
+    if (n < 18) { printf("%s field=operator status=unknown_short frame_len=%zu\n",
+                         prefix, n); return; }
+    for (i = 0; i < 6; i++) {
+        uint8_t c = p[12 + i];
+        plmn[i] = (c >= '0' && c <= '9') ? (char)c : (c == 0x23 ? '#' : '.');
+    }
+    plmn[6] = '\0';
+    printf("%s field=operator plmn_numeric=%s frame_len=%zu\n", prefix, plmn, n);
 }
 
 static int same_bytes(const uint8_t *a, const uint8_t *b, size_t n)
@@ -2159,7 +2184,8 @@ static int camp_signal_mask(const uint8_t *p, size_t n, uint32_t token,
  * registration. SIM is also re-queried immediately on each 0x0210. */
 static const struct { unsigned id; const char *name; } camp_probe_gets[] = {
     {0x0200, "sim"}, {0x0900, "signal"},
-    {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"}
+    {SIT_NET_VOICE_REG, "voice"}, {SIT_NET_DATA_REG, "data"},
+    {SIT_NET_OPERATOR, "operator"}
 };
 enum { CAMP_PROBE_COUNT =
            (int)(sizeof camp_probe_gets / sizeof camp_probe_gets[0]) };
@@ -2291,6 +2317,11 @@ static unsigned camp_opx_next(const struct camp_driver *c)
 
 /* Next one-shot registration step given current known state, or 0 when the
  * sequence has nothing to do this tick (waiting, blocked, or complete). */
+static unsigned camp_pref_target(const struct camp_driver *c)
+{
+    return c->pref_target ? c->pref_target : (unsigned)RAT_LTE_WCDMA;
+}
+
 static unsigned camp_reg_next(const struct camp_driver *c)
 {
     if (!c->sim_ready || c->reg_complete) return 0;
@@ -2314,7 +2345,7 @@ static unsigned camp_reg_next(const struct camp_driver *c)
      *    broadened — PS sitting NOT_SEARCHING on UMTS means WCDMA is excluded. */
     if (!c->pref_set_sent) {
         if (!c->pref_known && c->pref_get_tries < REG_GET_MAX) return REG_PREF_GET;
-        if (!(c->pref_known && c->preferred_raw == RAT_LTE_WCDMA)) return REG_PREF_SET;
+        if (!(c->pref_known && c->preferred_raw == camp_pref_target(c))) return REG_PREF_SET;
     }
 
     /* 4. Initial-attach APN: stock issues SET_INITIAL_ATTACH_APN (0x0603) as the
@@ -2423,6 +2454,8 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         printf("camp_probe field=%s status=unknown_short\n", c->probe_name);
     } else if (id == SIT_NET_VOICE_REG || id == SIT_NET_DATA_REG) {
         sit_net_log_regstate("camp_probe", c->probe_name, p, n, id);
+    } else if (id == SIT_NET_OPERATOR) {
+        sit_net_log_operator("camp_probe", p, n);
     } else if (id == REG_RADIO_GET) {
         if (n >= 16) {
             c->radio_on = little32(p + 12) == RADIO_STATE_ON;
@@ -2609,7 +2642,7 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         const char *rname;
         if (reg == REG_PREF_SET) {
             uint8_t f[REG_PREF_LEN];
-            make_setpref_request(f, RAT_LTE_WCDMA, c->probe_token);
+            make_setpref_request(f, camp_pref_target(c), c->probe_token);
             c->pref_set_sent = 1;
             wrote = camp_send_once(o->ipc, f, sizeof f);
             rname = "set_preferred_lte_wcdma";
@@ -2775,6 +2808,23 @@ static int read_apn(char *out, size_t cap)
     out[n] = 0;
     return 1;
 }
+
+/* Load the preferred-RAT target override from /data/saaios/etc/pref_rat.
+ * Returns the SIT preferred value to request, or 0 (=> default RAT_LTE_WCDMA).
+ * Only the recovered values are honored: "11"=RAT_LTE_ONLY, "12"=RAT_LTE_WCDMA.
+ * This is a RAT preference (no NV), revertible by removing the file. */
+static unsigned read_pref_rat(void)
+{
+    int fd = open("/data/saaios/etc/pref_rat", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[16] = {0};
+    ssize_t r = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (r <= 0) return 0;
+    if (!strncmp(buf, "11", 2)) return RAT_LTE_ONLY;
+    if (!strncmp(buf, "12", 2)) return RAT_LTE_WCDMA;
+    return 0;
+}
 #endif /* SAAIOS_RFS_CAMP */
 
 static void request_stop(int signal_number)
@@ -2888,6 +2938,8 @@ static int run_owner(int ipc, int rfs, int ready)
         printf("camp_apn=loaded len=%zu\n", strlen(o.camp.apn));
     else
         puts("camp_apn=none");
+    o.camp.pref_target = read_pref_rat();
+    printf("camp_pref_target=%u\n", camp_pref_target(&o.camp));
 #endif
     for (;;) {
         int64_t now = monotonic_ms();
@@ -4249,6 +4301,28 @@ static int test_camp_reg(void)
     if (SIT_NET_DATA_TECH_OFFSET != 15 || SIT_NET_DATA_LAC_OFFSET != 16 ||
         SIT_NET_DATA_CID_OFFSET != 20 || SIT_NET_DATA_PSC_OFFSET != 24)
         return 177;
+    /* Preferred-RAT target override + LTE-only builder (SIT value 0x0b=11,
+     * recovered from BuildSetPreferredNetworkType table @0xd8c5c[11]). */
+    if (SIT_NET_OPERATOR != 0x0702) return 178;
+    struct camp_driver pt;
+    memset(&pt, 0, sizeof pt);
+    if (camp_pref_target(&pt) != (unsigned)RAT_LTE_WCDMA) return 179;
+    pt.pref_target = RAT_LTE_ONLY;
+    if (camp_pref_target(&pt) != 11u) return 180;
+    uint8_t lo[REG_PREF_LEN];
+    make_setpref_request(lo, RAT_LTE_ONLY, 0x12345678);
+    if (lo[2] != 0x0a || lo[3] != 0x07 || lo[4] != REG_PREF_LEN ||
+        little32(lo + 12) != 11u) return 181;
+    /* pref_target=LTE_ONLY: once radio/sel known and preferred_raw!=11, the next
+     * step is a preferred SET; after a matching readback it advances past it. */
+    struct camp_driver po;
+    memset(&po, 0, sizeof po);
+    po.sim_ready = 1; po.radio_on = 1; po.sel_known = 1; po.sel_mode = 0;
+    po.sel_auto_sent = 1; po.pref_target = RAT_LTE_ONLY;
+    po.pref_known = 1; po.preferred_raw = RAT_LTE_WCDMA; /* 12 != target 11 */
+    if (camp_reg_next(&po) != REG_PREF_SET) return 182;
+    po.preferred_raw = RAT_LTE_ONLY;
+    if (camp_reg_next(&po) != REG_ALLOW_DATA) return 183;
     return 0;
 }
 #endif

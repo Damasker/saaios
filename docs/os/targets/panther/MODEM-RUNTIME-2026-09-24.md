@@ -1,5 +1,17 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 TERMINAL BOUNDARY: foreign 3G PLMN + no LTE acquisition (VERDICT 13):**
+queried serving operator 0x0702 (read-only) and forced LTE-only (recovered SIT value 0x0b
+from BuildSetPreferredNetworkType table @0xd8c5c). Serving PLMN = 25501 (MCC 255 Ukraine /
+MNC 01 Vodafone Ukraine) on UMTS/3G — FOREIGN vs the SIM's home lifecell (255-06). Forcing
+LTE-only (set ACKed error_raw=0) never acquired any LTE cell (tech UMTS×36, none×2, LTE×0);
+stayed on the denied Vodafone 3G. So host-side SIT replay cannot reach a bearer: home
+lifecell LTE isn't acquired (RF/band in NV we won't touch, and/or no reachable home LTE
+here), only a foreign 3G cell that denies the SIM — environmental/subscription + RF-cal
+reality, not a host defect. 0x0702 layout: PLMN numeric at payload[12..17] ('#'=2-digit
+MNC). Owner 2a4e07ed, CP ONLINE, default LTE+WCDMA restored. Bearer NOT achieved. Full
+writeup in [MODEM-BLOCKER](MODEM-BLOCKER.md) V13.
+
 **2026-10-03 TRUE reject-cause decoded = 0; modem camped on UMTS/3G only (VERDICT 12):**
 recovered the exact 0x0700/0x0701 reg-state layout from `libsitril.so` (efcca0d5)
 `ProtocolNet{Voice,Data}RegStateAdapter` and extended the owner's parser (read-only,
