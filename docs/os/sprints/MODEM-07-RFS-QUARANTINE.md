@@ -6,7 +6,26 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
-**2026-10-03 MECHANISM PINNED — operator-control GENERIC_FAILURE is a nv_NORMAL (handle-1) write-stall, not a protected-NV wall (VERDICT 23, read-only analysis).**
+**2026-10-03 STILL FOREIGN-3G-ONLY IN GOOD COVERAGE; NV-COMMIT HYPOTHESIS FALSIFIED (VERDICT 24).**
+Re-tested at a better home/in-city location. Clean known-good bring-up, automatic selection, default RAT,
+~2.5-min settle: SIM READY no PIN (`card_raw=1 apps=1 app_state_raw=5 pin1_raw=3`); 18/18 operator reads =
+`25501#` (foreign Vodafone-UA), 19/19 CS `registration_raw=3` DENIED `tech_raw=3` (WCDMA), PS
+`registration_raw=0`. Foreign-3G-only camp is NOT location-specific. Then the decisive test of VERDICT 23:
+rebuilt the owner with `-DSAAIOS_RFS_NORMAL_CAPTURE` (sha16 `f1ab4b76`, self-test PASS) so the modem's
+handle-1 (nv_normal) `cmd=6` grant is answered and the write served to a QUARANTINE COPY (`normal-candidate.bin`),
+never real EFS. Capture worked (`NORMAL_CAPTURE open total=476552` → `done received=476552 grants=237`) but
+`0x074f` STILL returned `error_raw=2` — and the log order proves `NORMAL_CAPTURE done` completed BEFORE the SET
+fired, so the GENERIC_FAILURE is independent of the nv_normal flush. VERDICT 23's "quarantine blocks the commit"
+inference is FALSIFIED; the handle=1=nv_normal / handle=3=nv_protected classification stands. Manual-select
+`0x0705` to `25503` (Kyivstar) also returned `error_raw=2`; modem stayed on `25501`. Both operator-control SETs
+refused even with the nv_normal write fully served ⇒ CP-internal band/RF-cal/cell-selection, not a quarantine or
+host-encoding problem. Baseband read parses (`g5300q-260317-260505-B-15346003`). No registration ⇒ no bearer.
+Remaining host lever: modern StartNetworkScan `0x0734` (band-packing decode blocker). Device left known-good:
+CP ONLINE, config `apn`-only, proven owner `4427641b` restored, NV backup + quarantine intact; no real
+NV/EFS/RF-cal/firmware write (capture to quarantine copy only), no IOCTL_POWER_OFF, no do_cp_crash;
+volatile RAT change reverts on reboot.
+
+**2026-10-03 MECHANISM PINNED — operator-control GENERIC_FAILURE is a nv_NORMAL (handle-1) write-stall, not a protected-NV wall (VERDICT 23, read-only analysis). [PARTLY SUPERSEDED by VERDICT 24: serving the nv_normal write does NOT make the SET succeed; the failure is CP-internal.]**
 When 0x074f is sent the CP applies the bitmap to RAM (GET-after `0x3fe`) then tries to persist it via an RFS
 handle-1 (nv_NORMAL) `cmd=6` grant-request to flush its dirty nv_normal image. The owner's
 `post_terminal_rfs_drain` answers ONLY the protected-NV `request_7` (handle-3); the handle-1 nv_normal grant

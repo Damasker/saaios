@@ -1,6 +1,28 @@
 # Native modem runtime: status query investigation
 
-**2026-10-03 MECHANISM PINNED — the 0x074f GENERIC_FAILURE is a nv_NORMAL (handle-1) write-stall from our quarantine, NOT a protected-NV wall (VERDICT 23, read-only analysis; corrects V22's "protected-NV" wording):**
+**2026-10-03 STILL FOREIGN-3G-ONLY IN GOOD COVERAGE; nv_normal-capture does NOT unlock the SETs (VERDICT 24, falsifies V23's commit inference):**
+Re-tested at a better home/in-city location. Clean bring-up (automatic selection, default RAT), ~2.5-min settle:
+SIM READY, no PIN (`card_raw=1 apps=1 app_state_raw=5 pin1_raw=3`); **18/18 operator = `25501#`** (foreign
+Vodafone-UA), **CS `registration_raw=3` DENIED `tech_raw=3`** (WCDMA), **PS `registration_raw=0`**, cell
+`lac=36291 cid=85791486 psc=74`. Foreign-3G-only camp is NOT location-specific. Decisive V23 test: built owner
+with `-DSAAIOS_RFS_NORMAL_CAPTURE` (sha16 `f1ab4b76`, self-test PASS) to answer the modem's handle-1 (nv_normal)
+`cmd=6` grant and write the served chunks to a QUARANTINE COPY (`normal-candidate.bin`) only — never real EFS.
+Capture succeeded: **`NORMAL_CAPTURE open total=476552` → `done received=476552 grants=237`**. **Yet `0x074f`
+STILL returned `error_raw=2`** (`set=allowed_bitmap response=yes error_raw=2 wire=0x3fe`); log order is decisive
+(`NORMAL_CAPTURE done` line 365 BEFORE the SET line 410, SET failed line 411). ⇒ **V23's hypothesis that the
+unanswered nv_normal grant causes the SET's GENERIC_FAILURE is FALSIFIED**; the handle=1=nv_normal /
+handle=3=nv_protected classification stands, but the SET failure is CP-internal (returned independent of the
+flush; the periodic handle-1 flushes `w4=476552`→`476670` are routine NV sync). Manual-select `0x0705` to
+`25503` (Kyivstar) also `error_raw=2`; modem stayed on `25501`. Both operator-control SETs refused even with
+the nv_normal write fully served. Baseband parses (`g5300q-260317-260505-B-15346003`). No registration ⇒ no
+bearer. CONCLUSION: points back to CP-internal band/RF-cal/cell-selection (the RF/scan only finds the one
+foreign WCDMA cell and won't scan/select LTE or accept a host RAT/PLMN directive), NOT the host SET path and
+NOT the NV quarantine. Remaining host lever: modern StartNetworkScan `0x0734` (band-packing decode blocker).
+Device left known-good: CP ONLINE, config `apn`-only, proven owner `4427641b` restored, NV backup + quarantine
+intact; no real NV/EFS/RF-cal/firmware write (capture to quarantine copy only), no IOCTL_POWER_OFF,
+no do_cp_crash; 2 diagnostic reboots; volatile RAT change reverts on reboot.
+
+**2026-10-03 MECHANISM PINNED — the 0x074f GENERIC_FAILURE is a nv_NORMAL (handle-1) write-stall from our quarantine, NOT a protected-NV wall (VERDICT 23, read-only analysis; corrects V22's "protected-NV" wording). [PARTLY SUPERSEDED by VERDICT 24: serving+acking the nv_normal write does NOT make the SET succeed — the failure is CP-internal, not a quarantine artifact.]:**
 Decoded the V22 owner/RFS log (read-only) against the owner source. `rfs_trace` fields: cmd@+0 (`low16 op | seq<<16`),
 paylen@+4, handle@+8, off@+12, w4@+16, w5@+20; the `request_7/3/6` constants all carry handle=3 = nv_protected, and the
 source comment (line 1773) names handle=1 = normal-NV. V22 RFS inventory: boot quarantine = handle-3 `cmd=7/3/6` +
