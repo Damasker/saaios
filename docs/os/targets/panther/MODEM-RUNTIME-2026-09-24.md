@@ -1,5 +1,29 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 READ-ONLY CP CAPABILITY DIAGNOSTIC — LTE allowed, band-mode automatic-only; CP-internal wall (VERDICT 25):**
+New GET-only `capquery` owner mode (config `/data/saaios/etc/capquery`) skips every operator-control/registration SET
+(0x070a/0x0704/0x0710/0x074f/0x0705/0x0706/0x0734) and fires ONLY GETs; gated behind the config so the proven bring-up
+is byte-identical when absent. Build sha16 `feb634d1`, -Werror clean, on-device self-test PASS; run log confirms NO SET
+fired (`camp_capquery=armed-readonly`, `camp_reg capquery_ready`). Decoded CP replies (all `error_raw=0`):
+- **0x0750 GetAllowedNetworkTypeBitmap = `0x403fe`** → LTE=1, WCDMA=1, GSM=1, TD-SCDMA=0, NR=1. LTE (and NR) allowed;
+  rules out classification (C).
+- **0x0709 QueryAvailableBandMode = `{count=1, mode=0}`** (len 20, payload 8 B `01 00 00 00 00 00 00 00`) =
+  BAND_MODE_UNSPECIFIED (automatic) only. The modem exposes just automatic band selection and does NOT enumerate
+  per-RAT/LTE bands via this opcode — so 0x0709 yields NO evidence about which LTE RF bands are calibrated.
+- **0x0901 GET_BASEBAND_VERSION (sel 0xFF) = `g5300q-260317-260505-B-15346003`** (pipeline re-confirmed).
+- **0x070b preferred = raw 16**; selection mode = 0 (automatic); radio ON; still camped `25501` (foreign Vodafone-UA).
+CLASSIFICATION: allowed-RAT axis is (A) LTE-allowed; the band axis is INCONCLUSIVE from 0x0709 (automatic-only, not an
+enumerator). Weighed with VERDICT 24 (both operator-control SETs refused CP-internally with GENERIC_FAILURE regardless
+of byte-correctness / nv_normal serving) and the prior legacy-scan refusals (0x0706 GENERIC_FAILURE), the practical
+picture is (B): a CP-internal band/RF-cal/cell-selection wall — LTE allowed on paper, band selection self-managed, yet
+only the single foreign WCDMA cell is ever acquired and host RAT/PLMN/scan directives are rejected. RECOMMENDATION:
+decoding StartNetworkScan 0x0734 band-packing is LOW VALUE / not worth prioritizing — a band-targeted scan is itself a
+host operator-control directive and the CP refuses such directives regardless of byte-correctness, so 0x0734 would most
+likely hit the same wall (caveat: 0x0734 is a distinct dispatch path, not 100 % ruled out). The blocker is CP-internal
+(band/RF-cal/selection), not host frame encoding. Device left known-good: CP ONLINE, config `apn`-only, proven owner
+`4427641b` restored, NV backup + quarantine intact; no NV/EFS/RF-cal/firmware write, no SET of any kind, no
+IOCTL_POWER_OFF, no do_cp_crash; one diagnostic reboot (strictly needed to install the read-only binary).
+
 **2026-10-03 STILL FOREIGN-3G-ONLY IN GOOD COVERAGE; nv_normal-capture does NOT unlock the SETs (VERDICT 24, falsifies V23's commit inference):**
 Re-tested at a better home/in-city location. Clean bring-up (automatic selection, default RAT), ~2.5-min settle:
 SIM READY, no PIN (`card_raw=1 apps=1 app_state_raw=5 pin1_raw=3`); **18/18 operator = `25501#`** (foreign

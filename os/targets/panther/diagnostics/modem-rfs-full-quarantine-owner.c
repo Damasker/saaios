@@ -374,6 +374,13 @@ struct camp_driver {
     /* VERDICT 21: read-only baseband/SW-version query (config
      * /data/saaios/etc/bbver). Fires once after reg_complete. */
     int bbver_enabled, bbver_sent, bbver_done;
+    /* VERDICT 25: read-only CP capability diagnostic (config
+     * /data/saaios/etc/capquery). Skips every operator-control/registration SET
+     * (0x070a preferred, 0x0704 selection, 0x0710 allow-data, 0x074f bitmap) and
+     * fires ONLY GET opcodes: selection/preferred reads, allowed-RAT bitmap GET
+     * 0x750, available-band GET 0x709, baseband-version GET 0x901. Nothing is
+     * written and no modem state is changed. */
+    int capquery;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -2702,7 +2709,7 @@ static unsigned camp_reg_next(const struct camp_driver *c)
     if (!c->sel_auto_sent && !c->manual_sel_sent) {
         if (c->manual_plmn[0]) return REG_MANUAL_SEL;
         if (!c->sel_known && c->sel_get_tries < REG_GET_MAX) return REG_SEL_GET;
-        if (!(c->sel_known && c->sel_mode == 0)) return REG_SEL_AUTO_SET;
+        if (!c->capquery && !(c->sel_known && c->sel_mode == 0)) return REG_SEL_AUTO_SET;
     }
 
     /* 3. Preferred RAT: read (bounded), then set LTE_WCDMA once so the present
@@ -2711,16 +2718,16 @@ static unsigned camp_reg_next(const struct camp_driver *c)
      *    broadened — PS sitting NOT_SEARCHING on UMTS means WCDMA is excluded. */
     if (!c->pref_set_sent) {
         if (!c->pref_known && c->pref_get_tries < REG_GET_MAX) return REG_PREF_GET;
-        if (!(c->pref_known && c->preferred_raw == camp_pref_target(c))) return REG_PREF_SET;
+        if (!c->capquery && !(c->pref_known && c->preferred_raw == camp_pref_target(c))) return REG_PREF_SET;
     }
 
     /* 4. Initial-attach APN: stock issues SET_INITIAL_ATTACH_APN (0x0603) as the
      *    PS-attach precondition (the default-bearer/attach APN) before allowing
      *    data. Sent once, only when an APN is configured. */
-    if (c->apn[0] && !c->ia_apn_sent) return REG_INIT_ATTACH_APN;
+    if (!c->capquery && c->apn[0] && !c->ia_apn_sent) return REG_INIT_ATTACH_APN;
 
     /* 5. Allow PS data once. */
-    if (!c->allow_data_sent) return REG_ALLOW_DATA;
+    if (!c->capquery && !c->allow_data_sent) return REG_ALLOW_DATA;
     return 0;
 }
 
@@ -2934,6 +2941,7 @@ static unsigned camp_ratbm_next(const struct camp_driver *c)
     if (c->probe_pending) return 0;             /* awaiting a reply */
     if (!c->ratbm_get1_sent) return RATBM_GET;          /* before: read */
     if (!c->ratbm_band_sent) return RATBM_BANDMODE_GET; /* before: band */
+    if (c->capquery) return 0;          /* VERDICT 25: read-only, no SET/confirm */
     if (!c->ratbm_set_sent) return RATBM_SET;           /* arm LTE bitmap */
     if (!c->ratbm_get2_sent) return RATBM_GET;          /* after: confirm */
     return 0;
@@ -2961,8 +2969,17 @@ static int camp_ratbm_reply(struct camp_driver *c, const uint8_t *p, size_t n,
         return 1;
     }
     if (id == RATBM_BANDMODE_GET && c->ratbm_band_sent) {
-        printf("camp_ratbm get=band_mode response=yes error_raw=%u len=%zu\n",
-               error, n);
+        /* VERDICT 25: dump the CP's available-band payload verbatim so the band
+         * list can be decoded offline against the SIT band enum. Band IDs are
+         * radio capability, not secrets; no bytes are invented. */
+        char hex[3 * 48 + 1];
+        size_t off = n > 12 ? 12 : n, h = 0;
+        for (size_t i = off; i < n && h + 3 < sizeof hex; i++)
+            h += (size_t)snprintf(hex + h, sizeof hex - h, "%02x ", p[i]);
+        hex[h] = 0;
+        printf("camp_ratbm get=band_mode response=yes error_raw=%u len=%zu "
+               "paylen=%zu payload=%s\n", error, n, n > 12 ? n - 12 : 0, hex);
+        if (c->capquery) c->ratbm_done = 1;   /* read-only sequence complete */
         return 1;
     }
     if (id == RATBM_SET && c->ratbm_set_sent) {
@@ -3308,6 +3325,13 @@ static void camp_probe_advance(struct owner *o, int64_t now)
      * sequence before resuming round-robin observation. GETs are idempotent and
      * may retry on timeout; the three SETs are marked sent and never resent. */
     unsigned reg = camp_reg_next(c);
+    if (c->capquery && !reg && !c->reg_complete && c->radio_on) {
+        /* VERDICT 25: read-only mode reaches no allow-data SET, so declare the
+         * registration-trigger phase complete once radio is up and the
+         * selection/preferred reads are done; this gates the GET diagnostics. */
+        c->reg_complete = 1;
+        printf("camp_reg capquery_ready response=yes radio_on=1\n");
+    }
     if (reg) {
         ++c->probe_token;
         int wrote;
@@ -3729,6 +3753,17 @@ static int read_bbver(void)
     return 1;
 }
 
+/* VERDICT 25: the read-only capability diagnostic runs only when
+ * /data/saaios/etc/capquery exists. It fires GET opcodes only (no SET of any
+ * kind) and changes no modem state. Returns 1 if armed. */
+static int read_capquery(void)
+{
+    int fd = open("/data/saaios/etc/capquery", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
 /* Load a manual network-selection target (numeric MCC/MNC, e.g. "25506") from
  * /data/saaios/etc/manual_plmn. Returns 1 and fills out[] (5 or 6 digits) when a
  * plausible PLMN is present; 0 otherwise. A PLMN is network topology, not a
@@ -3919,6 +3954,16 @@ static int run_owner(int ipc, int rfs, int ready)
     printf("camp_ratbm=%s\n", o.camp.ratbm_enabled ? "armed" : "off");
     o.camp.bbver_enabled = read_bbver();
     printf("camp_bbver=%s\n", o.camp.bbver_enabled ? "armed" : "off");
+    o.camp.capquery = read_capquery();
+    if (o.camp.capquery) {
+        /* Read-only capability diagnostic: force the bitmap/band GETs and the
+         * baseband GET on, and guarantee no operator-control/registration SET
+         * can fire (camp_reg_next/camp_ratbm_next gate every SET on !capquery). */
+        o.camp.ratbm_enabled = 1;
+        o.camp.bbver_enabled = 1;
+    }
+    printf("camp_capquery=%s\n",
+           o.camp.capquery ? "armed-readonly" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else

@@ -6,6 +6,22 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 READ-ONLY CP CAPABILITY DIAGNOSTIC — LTE allowed in bitmap, band-mode is automatic-only (non-enumerating); points to CP-internal wall (VERDICT 25).**
+Added a GET-only `capquery` owner mode (config `/data/saaios/etc/capquery`): skips every operator-control/registration
+SET and fires only GETs (gated behind the config; proven path unchanged). Build sha16 `feb634d1`, -Werror clean,
+self-test PASS, on-device log confirms NO SET fired. Decoded CP replies: 0x0750 allowed-RAT = **`0x403fe`** (LTE=1,
+WCDMA=1, GSM=1, TD-SCDMA=0, NR=1) — LTE/NR allowed, rules out "bitmap excludes LTE"; 0x0709 QueryAvailableBandMode =
+**`{count=1, mode=0}`** (payload `01 00 00 00 00 00 00 00`) = BAND_MODE_UNSPECIFIED/automatic only — the modem does
+NOT enumerate per-band RF via this opcode, so it gives no LTE-band evidence either way; 0x0901 baseband =
+`g5300q-260317-260505-B-15346003`; preferred raw=16, selection=0 (auto), radio ON, still camped `25501`.
+CLASSIFICATION: allowed-RAT axis is (A) LTE-allowed; band axis inconclusive from 0x0709; combined with VERDICT 24
+(operator-control SETs refused CP-internally) and prior 0x0706 scan refusals ⇒ practically (B): a CP-internal
+band/RF-cal/cell-selection wall. RECOMMENDATION: decoding StartNetworkScan 0x0734 band-packing is LOW VALUE — a scan is
+a host operator-control directive and the CP refuses such directives regardless of byte-correctness; 0x0734 would
+likely hit the same wall (caveat: distinct dispatch path, not 100% ruled out). Device left known-good: CP ONLINE,
+config `apn`-only, proven owner `4427641b` restored, NV backup + quarantine intact; no NV/EFS/RF-cal/firmware write,
+no SET of any kind, no IOCTL_POWER_OFF, no do_cp_crash; one diagnostic reboot (to install the read-only binary).
+
 **2026-10-03 STILL FOREIGN-3G-ONLY IN GOOD COVERAGE; NV-COMMIT HYPOTHESIS FALSIFIED (VERDICT 24).**
 Re-tested at a better home/in-city location. Clean known-good bring-up, automatic selection, default RAT,
 ~2.5-min settle: SIM READY no PIN (`card_raw=1 apps=1 app_state_raw=5 pin1_raw=3`); 18/18 operator reads =
