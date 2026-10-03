@@ -187,6 +187,36 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        OPX_DUAL_NET = 12, OPX_DUAL_ALLOW = 1,
        OPX_STEP_NONE = 0, OPX_STEP_VOICE = 1, OPX_STEP_INTPS = 2,
        OPX_STEP_STACK = 3, OPX_STEP_DEVSVC = 4, OPX_STEP_DUAL = 5,
+       /* VERDICT 20: modern Android-13 RAT gate. Recovered byte-for-byte from
+        * the factory libsitril.so (efcca0d5):
+        *  - SetAllowedNetworkTypeBitmap (ProtocolNetworkBuilder::
+        *    BuildSetAllowedNetworkTypeBitmap(int) @0x238670) -> opcode 0x074f,
+        *    len 16, SIT-wire RAT bitmap int32 at payload[12]. The int arg is an
+        *    Android RadioAccessFamily (RAF) bitmap that the builder re-encodes
+        *    bit-for-bit into the wire bitmap (see raf_to_sit_ratbm, which mirrors
+        *    the builder's exact bit transform).
+        *  - GetAllowedNetworkTypeBitmap (@0x2387a0) -> opcode 0x0750, len 12
+        *    (header-only); reply carries the wire bitmap int32 at payload[12]
+        *    (confirmed in ProtocolNetGetAllowNetworkAdapter::GetRat @0x2340d0,
+        *    which checks opcode 0x750 then reads frame[+12]).
+        *  - QueryAvailableBandMode (@0x236ae0) -> opcode 0x0709, len 12
+        *    (header-only); reply is a modem-defined band-mode list.
+        * This is a revertible RAT-selection SET, not an NV/EFS/RF-cal write. */
+       RATBM_SET = 0x074f, RATBM_SET_LEN = 16, RATBM_OFF = 12,
+       RATBM_GET = 0x0750, RATBM_GET_LEN = 12,
+       RATBM_BANDMODE_GET = 0x0709, RATBM_BANDMODE_LEN = 12,
+       /* Android RadioAccessFamily bit positions (public AOSP
+        * RadioAccessFamily.java); used only to feed the recovered builder
+        * transform -- no wire bytes are invented. */
+       RAF_GPRS = 1 << 1, RAF_EDGE = 1 << 2, RAF_UMTS = 1 << 3,
+       RAF_HSDPA = 1 << 9, RAF_HSUPA = 1 << 10, RAF_HSPA = 1 << 11,
+       RAF_LTE = 1 << 14, RAF_HSPAP = 1 << 15, RAF_GSM = 1 << 16,
+       /* LTE + full WCDMA family + full GSM family (what step C arms). This RAF
+        * passed through raf_to_sit_ratbm() yields wire bitmap 0x3fe. */
+       RATBM_RAF_LTE_WCDMA_GSM = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 9) |
+                                 (1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) |
+                                 (1 << 16),
+       RATBM_WIRE_LTE_WCDMA_GSM = 0x3fe,
        /* VERDICT 16: SIM PIN1 unlock + one activation voice call. All wire
         * IDs/body offsets recovered from the factory libsitril.so (efcca0d5);
         * nothing invented. ProtocolSimBuilderLegacy::BuildSimVerifyPin(0,...)
@@ -319,6 +349,13 @@ struct camp_driver {
     int scan16_sent;       /* a len-16 scan is awaiting reply */
     int scan16_fired;      /* number of modes already fired (0..6) */
     int scan16_done, scan16_got_list;
+    /* VERDICT 20: modern RAT-gate experiment (config /data/saaios/etc/ratbm).
+     * After reg_complete: read GET 0x750 + band-mode 0x709 (diagnostic), SET
+     * 0x074f with an LTE-inclusive bitmap, then re-read 0x750 to confirm it
+     * took. Every step runs at most once. */
+    int ratbm_enabled;
+    int ratbm_get1_sent, ratbm_band_sent, ratbm_set_sent, ratbm_get2_sent;
+    int ratbm_done;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -2479,6 +2516,33 @@ static void make_hangup_request(uint8_t request[CALL_HANGUP_LEN],
 /* VERDICT 17: len-16 GET_AVAILABLE_NETWORKS (BuildQueryAvailableNetwork(int),
  * opcode 0x0706, len 16). scanType int32 at [12], clamped exactly as the stock:
  * (1<=mode<=5) ? mode : 0. Nothing invented. */
+/* VERDICT 20: replicate ProtocolNetworkBuilder::BuildSetAllowedNetworkTypeBitmap
+ * (int) @0x238670 bit-for-bit. Maps an Android RadioAccessFamily (RAF) bitmap to
+ * the SIT wire bitmap written at request payload[12]. Each line mirrors one
+ * bfi/orr in the stock builder; verified against GetRat's inverse (@0x2340d0).
+ * No wire bytes are invented -- the transform is recovered from the binary. */
+static uint32_t raf_to_sit_ratbm(uint32_t raf)
+{
+    uint32_t w = raf & 0xfu;                  /* wire[0..3] = raf[0..3]        */
+    w |= ((raf >> 9) & 1u) << 4;              /* wire4  = raf9  (HSDPA)        */
+    w |= ((raf >> 10) & 1u) << 5;             /* wire5  = raf10 (HSUPA)        */
+    w |= ((raf >> 11) & 1u) << 6;             /* wire6  = raf11 (HSPA)         */
+    w |= ((raf >> 4) & 1u) << 11;             /* wire11 = raf4  (IS95A)        */
+    w |= ((raf >> 5) & 1u) << 12;             /* wire12 = raf5  (IS95B)        */
+    w |= ((raf >> 6) & 1u) << 13;             /* wire13 = raf6  (1xRTT)        */
+    w |= ((raf >> 7) & 1u) << 14;             /* wire14 = raf7  (EVDO_0)       */
+    w |= ((raf >> 8) & 1u) << 15;             /* wire15 = raf8  (EVDO_A)       */
+    w |= ((raf >> 12) & 1u) << 16;            /* wire16 = raf12 (EVDO_B)       */
+    w |= ((raf >> 13) & 1u) << 17;            /* wire17 = raf13 (EHRPD)        */
+    if (raf & ((1u << 14) | (1u << 19)))      /* LTE or LTE_CA                 */
+        w |= 0x80u;                           /* wire7  = LTE                  */
+    w |= ((raf >> 15) & 1u) << 8;             /* wire8  = raf15 (HSPAP)        */
+    w |= ((raf >> 16) & 1u) << 9;             /* wire9  = raf16 (GSM)          */
+    w |= ((raf >> 17) & 1u) << 10;            /* wire10 = raf17 (TD-SCDMA)     */
+    w |= ((raf >> 20) & 1u) << 18;            /* wire18 = raf20 (NR)           */
+    return w;
+}
+
 static void make_scan16_request(uint8_t request[REG_SCAN16_LEN], int mode,
                                 uint32_t token)
 {
@@ -2808,6 +2872,56 @@ static int camp_scan16_reply(struct camp_driver *c, const uint8_t *p, size_t n,
     return 1;
 }
 
+/* VERDICT 20: modern RAT-gate experiment. Runs only when armed by
+ * /data/saaios/etc/ratbm and after reg_complete. Sequence (each once):
+ * GET 0x750 (diagnostic read of current allowed-RAT bitmap) -> band-mode GET
+ * 0x709 -> SET 0x074f with an LTE-inclusive bitmap -> GET 0x750 (confirm).
+ * Returns the next opcode to fire, or 0 while idle/awaiting/done. */
+static unsigned camp_ratbm_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || !c->ratbm_enabled || c->ratbm_done) return 0;
+    if (c->probe_pending) return 0;             /* awaiting a reply */
+    if (!c->ratbm_get1_sent) return RATBM_GET;          /* before: read */
+    if (!c->ratbm_band_sent) return RATBM_BANDMODE_GET; /* before: band */
+    if (!c->ratbm_set_sent) return RATBM_SET;           /* arm LTE bitmap */
+    if (!c->ratbm_get2_sent) return RATBM_GET;          /* after: confirm */
+    return 0;
+}
+
+/* Consume a RAT-gate reply (0x750 read-back, 0x709 band mode, or 0x074f SET).
+ * PLMN/RAT scalars and the public error word only. Returns 1 if handled. */
+static int camp_ratbm_reply(struct camp_driver *c, const uint8_t *p, size_t n,
+                            unsigned id, unsigned error)
+{
+    if (!c->ratbm_enabled) return 0;
+    if (id == RATBM_GET && (c->ratbm_get1_sent || c->ratbm_get2_sent)) {
+        const char *when = c->ratbm_set_sent ? "after" : "before";
+        if (!error && n >= (size_t)RATBM_OFF + 4u) {
+            uint32_t w = little32(p + RATBM_OFF);
+            printf("camp_ratbm get=allowed_bitmap when=%s wire=0x%x lte=%u "
+                   "wcdma=%u gsm=%u tdscdma=%u nr=%u error_raw=%u\n",
+                   when, w, (w >> 7) & 1u, (w >> 3) & 1u, (w >> 9) & 1u,
+                   (w >> 10) & 1u, (w >> 18) & 1u, error);
+        } else {
+            printf("camp_ratbm get=allowed_bitmap when=%s response=yes "
+                   "error_raw=%u len=%zu\n", when, error, n);
+        }
+        if (c->ratbm_get2_sent) c->ratbm_done = 1;   /* read-back complete */
+        return 1;
+    }
+    if (id == RATBM_BANDMODE_GET && c->ratbm_band_sent) {
+        printf("camp_ratbm get=band_mode response=yes error_raw=%u len=%zu\n",
+               error, n);
+        return 1;
+    }
+    if (id == RATBM_SET && c->ratbm_set_sent) {
+        printf("camp_ratbm set=allowed_bitmap response=yes error_raw=%u "
+               "wire=0x%x\n", error, (unsigned)RATBM_WIRE_LTE_WCDMA_GSM);
+        return 1;
+    }
+    return 0;
+}
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -2828,6 +2942,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     unsigned error = little16(p + 10);
     if (camp_dereg_reply(c, id, error)) return;
     if (camp_scan16_reply(c, p, n, id, error)) return;
+    if (camp_ratbm_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
     if (error) {
         printf("camp_probe field=%s response=yes error_raw=%u\n",
@@ -3247,6 +3362,40 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    /* VERDICT 20: modern RAT-gate experiment -- diagnostic reads, one SET,
+     * then a confirming read-back. Each step fires once. */
+    unsigned rbm = camp_ratbm_next(c);
+    if (rbm) {
+        ++c->probe_token;
+        int wrote;
+        const char *rname;
+        if (rbm == RATBM_SET) {
+            uint8_t f[RATBM_SET_LEN];
+            make_opx_u32_request(f, RATBM_SET, RATBM_SET_LEN, c->probe_token,
+                                 raf_to_sit_ratbm(RATBM_RAF_LTE_WCDMA_GSM));
+            c->ratbm_set_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_allowed_bitmap_lte_wcdma_gsm";
+        } else {
+            if (rbm == RATBM_BANDMODE_GET) c->ratbm_band_sent = 1;
+            else if (!c->ratbm_get1_sent) c->ratbm_get1_sent = 1;
+            else c->ratbm_get2_sent = 1;
+            wrote = sit_send_get_once(o->ipc, (uint16_t)rbm, c->probe_token);
+            rname = rbm == RATBM_BANDMODE_GET ? "get_band_mode" :
+                    c->ratbm_set_sent ? "get_allowed_bitmap_after" :
+                                        "get_allowed_bitmap_before";
+        }
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = rbm;
+        c->probe_name = rname;
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_ratbm=sent step=%s elapsed_ms=%lld\n", rname,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     /* VERDICT 17: len-16 scanType sweep (one scan per distinct mode 0..5). */
     unsigned s16 = camp_scan16_next(c);
     if (s16) {
@@ -3487,6 +3636,17 @@ static int read_scan16(void)
     return 1;
 }
 
+/* VERDICT 20: the modern RAT-gate experiment runs only when
+ * /data/saaios/etc/ratbm exists. Diagnostic GET 0x750/0x709, one revertible SET
+ * 0x074f (LTE+WCDMA+GSM), then a confirming GET 0x750. Returns 1 if armed. */
+static int read_ratbm(void)
+{
+    int fd = open("/data/saaios/etc/ratbm", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
 /* Load a manual network-selection target (numeric MCC/MNC, e.g. "25506") from
  * /data/saaios/etc/manual_plmn. Returns 1 and fills out[] (5 or 6 digits) when a
  * plausible PLMN is present; 0 otherwise. A PLMN is network topology, not a
@@ -3673,6 +3833,8 @@ static int run_owner(int ipc, int rfs, int ready)
     printf("camp_dereg=%s\n", o.camp.dereg_enabled ? "armed" : "off");
     o.camp.scan16_enabled = read_scan16();
     printf("camp_scan16=%s\n", o.camp.scan16_enabled ? "armed" : "off");
+    o.camp.ratbm_enabled = read_ratbm();
+    printf("camp_ratbm=%s\n", o.camp.ratbm_enabled ? "armed" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else
@@ -5313,6 +5475,46 @@ static int test_camp_reg(void)
         put_little32(avn + SIT_NET_AVN_LIST_OFFSET + SIT_NET_AVN_ENTRY_STATUS, 1);
         if (!camp_scan16_reply(&sg, avn, sizeof avn, REG_SCAN16, 0) ||
             !sg.scan16_got_list || !sg.scan16_done) return 235;
+    }
+    /* VERDICT 20: RAT-gate bitmap transform, frame, and dispatch sequencing. */
+    {
+        if (raf_to_sit_ratbm((uint32_t)RAF_LTE) != 0x80u) return 240;
+        if (raf_to_sit_ratbm((uint32_t)RAF_GSM) != 0x200u) return 241;
+        if (raf_to_sit_ratbm((uint32_t)RAF_UMTS) != 0x8u) return 242;
+        if (raf_to_sit_ratbm((uint32_t)RATBM_RAF_LTE_WCDMA_GSM) !=
+                (uint32_t)RATBM_WIRE_LTE_WCDMA_GSM ||
+            RATBM_WIRE_LTE_WCDMA_GSM != 0x3fe) return 243;
+
+        uint8_t rb[RATBM_SET_LEN];
+        make_opx_u32_request(rb, RATBM_SET, RATBM_SET_LEN, 0x12345678u,
+                             raf_to_sit_ratbm(RATBM_RAF_LTE_WCDMA_GSM));
+        if (rb[0] || rb[2] != 0x4f || rb[3] != 0x07 ||
+            rb[4] != RATBM_SET_LEN || rb[5]) return 244;
+        if (little32(rb + 6) != 0x12345678u) return 245;
+        if (little32(rb + RATBM_OFF) != 0x3feu) return 246;
+
+        if (RATBM_GET_LEN != 12 || RATBM_BANDMODE_LEN != 12 ||
+            RATBM_GET != 0x0750 || RATBM_BANDMODE_GET != 0x0709 ||
+            RATBM_SET != 0x074f) return 247;
+
+        struct camp_driver rr;
+        memset(&rr, 0, sizeof rr);
+        if (camp_ratbm_next(&rr) != 0) return 248;          /* not armed */
+        rr.reg_complete = 1; rr.ratbm_enabled = 1;
+        if (camp_ratbm_next(&rr) != RATBM_GET) return 248;
+        rr.ratbm_get1_sent = 1;
+        if (camp_ratbm_next(&rr) != RATBM_BANDMODE_GET) return 248;
+        rr.ratbm_band_sent = 1;
+        if (camp_ratbm_next(&rr) != RATBM_SET) return 248;
+        rr.ratbm_set_sent = 1;
+        if (camp_ratbm_next(&rr) != RATBM_GET) return 248;
+        rr.ratbm_get2_sent = 1;
+        uint8_t gr[RATBM_OFF + 4];
+        memset(gr, 0, sizeof gr);
+        put_little32(gr + RATBM_OFF, 0x3feu);
+        if (!camp_ratbm_reply(&rr, gr, sizeof gr, RATBM_GET, 0) ||
+            !rr.ratbm_done) return 249;
+        if (camp_ratbm_next(&rr) != 0) return 249;          /* done */
     }
     return 0;
 }

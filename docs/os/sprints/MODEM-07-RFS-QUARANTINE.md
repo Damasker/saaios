@@ -6,6 +6,33 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 RAT-GATE HYPOTHESIS FALSIFIED — LTE ALREADY ALLOWED; modern SetAllowedNetworkTypeBitmap refused (VERDICT 20).**
+A sibling static analysis suspected our bring-up gates LTE out by only sending the legacy
+SetPreferredNetworkType (0x070a) and never the Android-13 SetAllowedNetworkTypeBitmap (0x074f). We
+recovered the modern RAT-gate set byte-for-byte from the factory libsitril.so (efcca0d5) and read the
+gate directly on-device (Kyivstar SIM). Recovered frames: SetAllowedNetworkTypeBitmap @0x238670 ->
+opcode 0x074f, len 16, SIT-wire RAT bitmap int32 at payload[12] (bit3=WCDMA, bit7=LTE, bit9=GSM,
+bit18=NR; transform verified vs GetRat inverse @0x2340d0; LTE+WCDMA+GSM => RAF 0x1ce0e => wire 0x3fe);
+GetAllowedNetworkTypeBitmap @0x2387a0 -> opcode 0x0750, len 12 (reply bitmap at payload[12]);
+QueryAvailableBandMode @0x236ae0 -> opcode 0x0709, len 12. DIAGNOSTIC (read-only): GET 0x750 before =
+wire 0x403fe => LTE=1 WCDMA=1 GSM=1 NR=1 (LTE ALREADY allowed -- hypothesis falsified); band mode 0x709
+error 0 (list len 20); legacy preferred 0x070b=16, set_preferred_lte_wcdma 0x070a ACK error 0. SET
+0x074f with 0x3fe (LTE+WCDMA+GSM) = error_raw=2 (GENERIC_FAILURE, same refusal class as scan/manual-
+select); read-back after = 0x3fe. Despite LTE allowed+preferred, modem camped ONLY on foreign
+Vodafone-UA 25501, UMTS/3G (tech_raw=3) to ~165 s: voice REG_DENIED(3, reject 0), data not-reg(0);
+Kyivstar card READY/PIN-disabled (card_raw=1 apps=1 app_state_raw=5 pin1_raw=3). No LTE cell attempted.
+The remaining untried lever -- modern band-specified StartNetworkScan @0x2376a0 (766-byte
+RIL_RadioAccessSpecifier_V1_5 array, stride 172, band jump-tables) + SetSystemSelectionChannels
+(@0x2385f0 is a header-only 0x074e variant with no band args) -- is a DECODE BLOCKER and was NOT sent
+(no-invented-bytes rule). VERDICT: the blocker is NOT the host RAT bitmap (LTE allowed); it is the
+modem's own band/cell/PLMN selection sitting on the foreign 3G cell and refusing operator-control SETs,
+pointing at CP-internal band NV / RF-cal (off-limits) and/or the undecoded modern scan. With V19
+(working SIM reader) and the iPhone evidence (all three UA home operators present), the blocker is
+localized inside the modem's band/cell selection. Device left known-good: rebooted to reload stock NV
+(SET rejected; read-back NR delta restored by NV reload), ratbm disarmed, CP ONLINE, config clean (only
+apn), owner f41849c7 (self-test RC=0), proven backup 90f403df intact; recovered-only bytes, no
+NV/EFS/RF-cal write, no IOCTL_POWER_OFF, no do_cp_crash, no dial, no scan sent.
+
 **2026-10-03 ENVIRONMENTAL CONCLUSION FALSIFIED + SIM READER VALIDATED (VERDICT 19).**
 MAJOR CONTEXT UPDATE: an iPhone at the SAME location, manual network search, sees ALL THREE Ukrainian
 home operators with good signal — UA-KYIVSTAR (255-03), VODAFONE (255-01), lifecell (255-06). This
