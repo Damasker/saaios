@@ -6,6 +6,30 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 MECHANISM PINNED — operator-control GENERIC_FAILURE is a nv_NORMAL (handle-1) write-stall, not a protected-NV wall (VERDICT 23, read-only analysis).**
+When 0x074f is sent the CP applies the bitmap to RAM (GET-after `0x3fe`) then tries to persist it via an RFS
+handle-1 (nv_NORMAL) `cmd=6` grant-request to flush its dirty nv_normal image. The owner's
+`post_terminal_rfs_drain` answers ONLY the protected-NV `request_7` (handle-3); the handle-1 nv_normal grant
+branch is compiled out (`#ifdef SAAIOS_RFS_NORMAL_CAPTURE`, OFF in the `-DSAAIOS_RFS_CAMP` build). So the
+CP's write-grant is never returned, the commit stalls, and the CP returns `error_raw=2`. V22 RFS log proof
+(fields from `rfs_trace`; `request_7/3/6` constants carry handle=3=nv_protected; source line 1773 confirms
+handle=1=normal-NV): boot quarantine = handle-3 cmd 7/3/6 + 94× handle-0 chunks (189446 B) →
+`complete_quarantined_ack`; post-term the CP issued exactly 3 handle-1 `cmd=6` grant-requests (`off=0`,
+whole-file flush) `w4=476552→476670→476714`, the last coincident with the SET (`t=162446`, elapsed 55631 ms);
+`NORMAL_CAPTURE`=0 ⇒ none answered. (1) The record is **nv_NORMAL** (handle=1, settings), NOT nv_protected
+(handle=3, RF-cal/IMEI/security) — corrects V22's loose "protected-NV" wording. The grant is a whole-image
+flush so the exact allowed-RAT byte offset is not exposed; localizing it needs a capture+diff of two quarantine
+nv_normal images. (2) The GENERIC_FAILURE is a QUARANTINE ARTIFACT (we don't serve handle-1 writes), not a
+modem limit — and it is MOOT for LTE since V22 read LTE already ALLOWED in committed NV (`0x403fe`). Options
+(none performed): (a1) skip 0x074f — RAT gate already open; (a2) enable `SAAIOS_RFS_NORMAL_CAPTURE` to serve
+the nv_normal write to a QUARANTINE COPY (`normal-candidate.bin`) and ack locally — policy-sanctioned
+("RFS writes served to a quarantine copy only"), may let SETs ACK in-session with NO real EFS write, volatile
+(reverts on reboot); (b) FORBIDDEN real nv_normal write (whole-file ≈476714 B; NOT RF-cal/IMEI/security) — the
+only PERSISTENT unlock, a user policy decision, described not performed; (c) modern StartNetworkScan 0x0734 —
+transient query, no nv_normal commit, sidesteps the stall (band packing still a decode blocker). Device
+read-only this run; left pristine (CP OFFLINE, config only `apn`, firmware `449eeab3` + NV backup intact);
+no NV/EFS/RF-cal/firmware write, no IOCTL_POWER_OFF, no do_cp_crash.
+
 **2026-10-03 NO ENCODING DRIFT — CP2A vendor RIL builds the SAME bytes as TD1A; baseband read fixed; modem still refuses the SET (VERDICT 22, supersedes V21's drift inference).**
 Obtained the public Google factory image `panther-cp2a.260705.006` (`…-factory-ed94a24e.zip`; its
 `radio-…-g5300q-260317-260505-b-15346003.img` matches the running CP). De-sparsed `vendor.img`, read-only
