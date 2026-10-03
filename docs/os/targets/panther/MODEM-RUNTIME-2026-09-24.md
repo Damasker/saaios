@@ -1,5 +1,26 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 ENVIRONMENTAL CONCLUSION FALSIFIED + SIM READER VALIDATED (VERDICT 19):**
+MAJOR CONTEXT UPDATE — an iPhone at the SAME location, manual network search, sees ALL THREE Ukrainian
+home operators with good signal: UA-KYIVSTAR (255-03), VODAFONE (255-01), lifecell (255-06). This
+falsifies the VERDICT 13–18 "no home coverage / environmental boundary" conclusion: the home networks
+are physically present and strong here, so the real problem is in OUR Pixel modem bring-up (camps only
+on foreign Vodafone-UA 25501 3G, never acquires LTE, refuses scans), not the environment. To rule out a
+stale/phantom-card confound (across V16/V18 every inserted card read identically — READY, PIN-disabled,
+same serving cell), a control test was run with the SIM tray physically EMPTY: a full handoff boot
+(fresh CP boot OFFLINE→ONLINE, genuine card re-interrogation) then one SIM-status read. Result (no
+secrets): `card_raw=0 apps=0` ⇒ no card, no application present (so no `app_state_raw`/`pin1_raw`
+emitted). With no card the modem also does NOT camp: voice `registration_raw=0`, data
+`registration_raw=0`, `lac=0 cid=0 psc=0` — unlike every card-present run (which camps on 25501).
+VERDICT: the SIM reader is WORKING — card absence correctly detected, the fresh boot genuinely
+re-interrogates the tray, so prior card reads were real (not a frozen phantom session) and the modem
+truly saw each card; the "phantom/stale card" hypothesis for presence detection is retired (the
+identical per-card PIN-disabled app readings remain a separate open question). Combined with the iPhone
+result, the root cause moves from the environment to our bring-up/selection logic settling on a foreign
+3G cell and declining scan/selection while the home PLMNs are in range. Device left known-good: CP
+ONLINE, config clean (only `apn`), owner intact, proven backup 90f403df intact; read-only control test,
+no registration/scan/dial/bearer, no NV/EFS write, no IOCTL_POWER_OFF, no do_cp_crash. No code changed.
+
 **2026-10-03 THIRD CARD, SAME RESULT — READY/PIN-disabled, CS-denied on 25501 (VERDICT 18):**
 the user inserted a different SIM card (operator unspecified). One minimal observation run, no code
 change: bring-up, one SIM-status read, one registration observation (~2 min). Card status (no
