@@ -1,5 +1,20 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 THIRD CARD, SAME RESULT — READY/PIN-disabled, CS-denied on 25501 (VERDICT 18):**
+the user inserted a different SIM card (operator unspecified). One minimal observation run, no code
+change: bring-up, one SIM-status read, one registration observation (~2 min). Card status (no
+secrets): `card_raw=1 apps=1 app_state_raw=5 pin1_raw=3` ⇒ present, READY, PIN disabled. Modem camped
+only on foreign `25501#` (Vodafone UA, UMTS/3G, LAC 36291); CS/voice REG_DENIED(3), reject 0; PS/data
+not registered(0). Identical to VERDICTs 13–17; the environmental/firmware-state boundary now holds
+across THREE card insertions. The card's home operator is not nameable without a subscriber identifier
+(IMSI/ICCID, never logged); only the serving PLMN (25501, foreign) is observable. ANOMALY: every card
+read so far comes up PIN-disabled/READY on the identical serving cell, and a card the user said had PIN
+enabled (VERDICT 16) also read PIN-disabled — suggesting the SIM reader/tray may not be re-reading the
+physically swapped card (stale session or poor contact); worth a physical check. RF note: user
+confirmed STOCK internal Pixel 7 antenna (no external antenna/attenuator/booster), ruling out an
+external-RF explanation. Owner 3320c305, config clean, proven backup 90f403df intact. Read-only; no
+scan, no dial; docs only (no code changed).
+
 **2026-10-03 ALL SCAN FORMS REFUSED — recovered operator-control levers exhausted (VERDICT 17):**
 tested the last untried lever, the len-16 scan variant `BuildQueryAvailableNetwork(int)` (@0x236950)
 — opcode 0x0706, len 16, explicit scanType int32 at payload[12], stock-clamped to (1≤arg≤5)?arg:0 so

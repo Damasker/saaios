@@ -6,6 +6,21 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 THIRD CARD, SAME RESULT — READY/PIN-disabled, CS-denied on 25501 (VERDICT 18).**
+The user inserted a different SIM card (operator unspecified). One minimal observation run, no code
+change: bring-up, one SIM-status read, one registration observation (~2 min). Card status (no
+secrets): `card_raw=1 apps=1 app_state_raw=5 pin1_raw=3` ⇒ present, READY, PIN disabled. Modem camped
+only on foreign `25501#` (Vodafone UA, UMTS/3G, LAC 36291); CS/voice REG_DENIED(3), reject 0;
+PS/data not registered(0). Identical to VERDICTs 13–17 — environmental/firmware-state boundary now
+holds across THREE card insertions. The card's home operator is not nameable without reading a
+subscriber identifier (IMSI/ICCID, never logged); only the serving PLMN (25501, foreign) is visible.
+ANOMALY: every card read so far comes up PIN-disabled/READY on the identical serving cell, and a card
+the user said had PIN enabled (VERDICT 16) also read PIN-disabled — suggesting the SIM reader/tray may
+not be re-reading the physically swapped card (stale session or poor contact); worth a physical check.
+RF-path note: user confirmed STOCK internal Pixel 7 antenna (no external antenna/attenuator/booster),
+ruling out an external-RF explanation. Owner 3320c305, config clean, proven backup 90f403df intact.
+Read-only; no scan, no dial; no commit of code (docs only).
+
 **2026-10-03 ALL SCAN FORMS REFUSED — recovered operator-control levers exhausted (VERDICT 17).**
 Tested the last recovered-but-untried lever: the len-16 scan variant
 `ProtocolNetworkBuilder::BuildQueryAvailableNetwork(int)` (@0x236950) — same opcode 0x0706 as the
