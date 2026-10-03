@@ -1,5 +1,16 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 TERMINAL FIRMWARE-STATE BOUNDARY: scan refused even deregistered (VERDICT 15):**
+to decide whether VERDICT 14's scan refusal was merely "can't scan while camped," recovered
+RADIO_POWER (0x0800) power word from `BuildRadioPower` (payload[12]=arg1?2:1 ⇒ OFF=1/ON=2) and
+ran a one-shot deregister-then-scan: after bring-up (camped on foreign 25501 3G), cycle
+RADIO_POWER OFF→ON (both error_raw=0), confirm radio read off (radio_off_confirmed=1), then
+fire 0x0706 ~2 s after radio-ON in the pre-camp window → STILL error_raw=2
+(RIL_E_GENERIC_FAILURE). The modem honors radio control but will not service
+GET_AVAILABLE_NETWORKS in any tested state; manual-select did not fire (home PLMN never
+visible). Cycle reversible (re-camped 25501, CP ONLINE). Owner 6fe99aa6, config cleared,
+proven backup 90f403df intact. Bearer NOT achieved.
+
 **2026-10-03 TERMINAL BOUNDARY: modem refuses operator reselection — scan + manual-select both GENERIC_FAILURE (VERDICT 14):**
 recovered GET_AVAILABLE_NETWORKS (0x0706: header-only req len 12; response count@payload[12],
 14-byte per-PLMN entries @payload[16] RAT[0..3]/PLMN-ASCII[4..9]/status[10..13]) and

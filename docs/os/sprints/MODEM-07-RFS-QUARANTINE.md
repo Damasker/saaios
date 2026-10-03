@@ -6,6 +6,21 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 TERMINAL FIRMWARE-STATE BOUNDARY: scan refused even deregistered (VERDICT 15).**
+Tested whether the VERDICT-14 scan refusal was only "can't scan while camped": recovered
+RADIO_POWER (0x0800) power word from `ProtocolNetworkBuilder::BuildRadioPower` (payload[12] =
+arg1?2:1 ⇒ OFF=1/ON=2, len 18) and added a one-shot deregister-then-scan sub-sequence
+(/data/saaios/etc/dereg_scan; guarded, self-tested 195-210, -Werror; owner 6fe99aa6). After
+full bring-up (camped on foreign 25501 3G), the owner cycled RADIO_POWER OFF→ON (both ACK
+error_raw=0), CONFIRMED radio read off (radio_off_confirmed=1), and fired the scan ~2 s after
+radio-ON in the pre-camp window — yet 0x0706 STILL returned error_raw=2 (RIL_E_GENERIC_FAILURE).
+So the modem/firmware does not service GET_AVAILABLE_NETWORKS in any tested state, registered
+or deregistered; manual-select correctly did not fire (home PLMN never visible). The OFF→ON
+cycle was fully reversible (re-camped on 25501, CP ONLINE). Operator-reselection lever
+exhausted; no bearer. Device known-good: config cleared (default LTE+WCDMA, automatic
+selection), proven backup 90f403df intact; recovered-only bytes, no NV/EFS write, no
+IOCTL_POWER_OFF, no do_cp_crash.
+
 **2026-10-03 TERMINAL BOUNDARY: modem refuses operator reselection — scan + manual-select both GENERIC_FAILURE (VERDICT 14).**
 Recovered GET_AVAILABLE_NETWORKS (SIT 0x0706: header-only req len 12 via
 `BuildQueryAvailableNetwork()`; response count=int32@payload[12], 14-byte per-PLMN entries

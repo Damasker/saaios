@@ -114,6 +114,16 @@ struct sit_observer {
 enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        SGC_COMMAND = 0x0404, SGC_LEN = 24,
        CAMP_POWER_COMMAND = 0x0800, CAMP_POWER_LEN = 18, CAMP_POWER_ON = 2,
+       /* RADIO_POWER (0x0800) power word, recovered from
+        * ProtocolNetworkBuilder::BuildRadioPower(arg1,arg2,arg3): [12] = arg1 ?
+        * 2 : 1, so OFF = 1 and ON = 2; [16]=arg2, [17]=arg3 (both 0 here). A
+        * clean airplane-mode-style radio OFF -> ON cycle to force a deregistered
+        * / limited-service window. Not IOCTL_POWER_OFF, not do_cp_crash. */
+       CAMP_POWER_OFF = 1,
+       /* Deregister-then-scan sub-sequence (VERDICT 15): internal step markers
+        * (NOT wire opcodes). The scan/manual are fired from the limited-service
+        * window right after RADIO_POWER ON, before the modem re-camps. */
+       DRG_NONE = 0, DRG_OFF, DRG_OFF_GET, DRG_ON, DRG_SCAN, DRG_MANUAL,
        CAMP_RX_CAP = 4096, CAMP_WINDOW_MS = 30000,
        CAMP_PAIR_GAP_MS = 1000, CAMP_DISPATCH_MS = 1000,
        PROBE_START_MS = 2000, PROBE_REPLY_MS = 3000, PROBE_GAP_MS = 1500,
@@ -225,6 +235,19 @@ struct camp_driver {
     int scan_enabled, scan_sent;
     char manual_plmn[8];
     int manual_sel_sent;
+    /* Deregister-then-scan sub-sequence (VERDICT 15), one-shot, config-gated by
+     * /data/saaios/etc/dereg_scan. After the normal bring-up completes (modem
+     * camped on the foreign cell), cycle RADIO_POWER OFF->ON and fire the scan
+     * (and, if the home PLMN is then visible, a manual-select) from the
+     * limited-service window before re-camp. */
+    int dereg_enabled;
+    int drg_off_sent, drg_off_ack;
+    int drg_off_get_sent, drg_off_get_tries, drg_off_confirmed;
+    int drg_on_sent, drg_on_ack;
+    int drg_scan_sent, drg_scan_got;
+    int drg_target_visible;
+    int drg_manual_sent, drg_manual_ack;
+    int drg_done;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -429,9 +452,11 @@ static const char *sit_scan_status_name(unsigned status)
  * entry is reported as its numeric PLMN (MCC/MNC ASCII, network topology -- not a
  * subscriber id), availability status and RAT. Length-guarded against a truncated
  * frame. Returns the count of PLMNs parsed. */
-static int sit_net_log_available(const char *prefix, const uint8_t *p, size_t n)
+static int sit_net_log_available(const char *prefix, const uint8_t *p, size_t n,
+                                 const char *want, int *seen)
 {
     unsigned count, i;
+    if (seen) *seen = 0;
     if (n < (size_t)SIT_NET_AVN_COUNT_OFFSET + 4u) {
         printf("%s field=available_networks status=short frame_len=%zu\n",
                prefix, n);
@@ -465,6 +490,10 @@ static int sit_net_log_available(const char *prefix, const uint8_t *p, size_t n)
                "status_raw=%u status=%s rat_raw=%u rat_mapped=%u\n",
                prefix, i, plmn, status, sit_scan_status_name(status),
                rat_raw, sit_scan_rat_map(rat_raw));
+        if (seen && want && want[0]) {
+            size_t wl = strlen(want);
+            if (wl >= 5 && wl <= 6 && !strncmp(plmn, want, wl)) *seen = 1;
+        }
     }
     return (int)count;
 }
@@ -2178,14 +2207,14 @@ static void make_sgc_request(uint8_t request[SGC_LEN], uint32_t token)
 }
 
 static void make_radiopower_request(uint8_t request[CAMP_POWER_LEN],
-                                    uint32_t token)
+                                    uint32_t token, uint32_t power)
 {
     memset(request, 0, CAMP_POWER_LEN);
     request[2] = (uint8_t)CAMP_POWER_COMMAND;        /* 0x00 */
     request[3] = (uint8_t)(CAMP_POWER_COMMAND >> 8); /* 0x08 */
     request[4] = CAMP_POWER_LEN;
     put_little32(request + 6, token);
-    put_little32(request + 12, CAMP_POWER_ON); /* arg1!=0 -> power word 2 */
+    put_little32(request + 12, power); /* 2 = ON, 1 = OFF (BuildRadioPower) */
     request[16] = 0; /* arg2 */
     request[17] = 0; /* arg3 */
 }
@@ -2471,6 +2500,70 @@ static unsigned camp_reg_next(const struct camp_driver *c)
     return 0;
 }
 
+/* Deregister-then-scan sub-sequence (VERDICT 15), run only after the normal
+ * bring-up completes and only when armed by /data/saaios/etc/dereg_scan. Cycles
+ * RADIO_POWER OFF -> (confirm) -> ON, then fires ONE available-networks scan and
+ * (if the home PLMN is then visible) ONE manual-select, all from the
+ * limited-service window before the modem re-camps. Each step is dispatched at
+ * most once; a DRG_NONE return means "waiting for the pending reply" and the
+ * prober's probe_pending gate holds until it arrives. */
+static unsigned camp_dereg_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || !c->dereg_enabled || c->drg_done) return DRG_NONE;
+    if (!c->drg_off_sent) return DRG_OFF;
+    if (!c->drg_off_ack) return DRG_NONE;
+    if (!c->drg_off_confirmed && c->drg_off_get_tries < REG_GET_MAX)
+        return DRG_OFF_GET;
+    if (!c->drg_on_sent) return DRG_ON;
+    if (!c->drg_on_ack) return DRG_NONE;
+    if (!c->drg_scan_sent) return DRG_SCAN;
+    if (!c->drg_scan_got) return DRG_NONE;
+    if (c->manual_plmn[0] && c->drg_target_visible && !c->drg_manual_sent)
+        return DRG_MANUAL;
+    return DRG_NONE;
+}
+
+/* Match a prober reply or note a SIM-status-changed indication. Only scalar
+ * status fields and the public error word ever reach the log. */
+/* Advance the deregister-scan sub-sequence on a matching reply. Returns 1 when
+ * the reply was consumed here (RADIO_POWER OFF/ON acks, or a scan/manual error).
+ * Scan success is left for the REG_SCAN branch (it must parse the list); manual
+ * success is also finalized here. Keeps the sequence from stalling or respamming
+ * on an error by marking it done. */
+static int camp_dereg_reply(struct camp_driver *c, unsigned id, unsigned error)
+{
+    if (!c->dereg_enabled || c->drg_done) return 0;
+    if (id == CAMP_POWER_COMMAND) {
+        if (c->drg_off_sent && !c->drg_off_ack) {
+            c->drg_off_ack = 1;
+            printf("camp_dereg radio_off response=yes error_raw=%u\n", error);
+            if (error) c->drg_done = 1;
+            return 1;
+        }
+        if (c->drg_on_sent && !c->drg_on_ack) {
+            c->drg_on_ack = 1;
+            printf("camp_dereg radio_on response=yes error_raw=%u\n", error);
+            if (error) c->drg_done = 1;
+            return 1;
+        }
+        return 0;
+    }
+    if (id == REG_SCAN && c->drg_scan_sent && !c->drg_scan_got && error) {
+        c->drg_scan_got = 1;
+        c->drg_done = 1;
+        printf("camp_dereg scan response=yes error_raw=%u\n", error);
+        return 1;
+    }
+    if (id == REG_MANUAL_SEL && c->drg_manual_sent && !c->drg_manual_ack) {
+        c->drg_manual_ack = 1;
+        c->drg_done = 1;
+        printf("camp_dereg manual_select plmn=%s response=yes error_raw=%u\n",
+               c->manual_plmn, error);
+        return 1;
+    }
+    return 0;
+}
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -2489,6 +2582,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     c->probe_replies++;
     unsigned id = c->probe_id;
     unsigned error = little16(p + 10);
+    if (camp_dereg_reply(c, id, error)) return;
     if (error) {
         printf("camp_probe field=%s response=yes error_raw=%u\n",
                c->probe_name, error);
@@ -2573,13 +2667,27 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     } else if (id == SIT_NET_OPERATOR) {
         sit_net_log_operator("camp_probe", p, n);
     } else if (id == REG_SCAN) {
-        sit_net_log_available("camp_probe", p, n);
+        int seen = 0;
+        const char *prefix = (c->drg_scan_sent && !c->drg_scan_got)
+                                 ? "camp_dereg" : "camp_probe";
+        sit_net_log_available(prefix, p, n, c->manual_plmn, &seen);
+        if (c->drg_scan_sent && !c->drg_scan_got) {
+            c->drg_scan_got = 1;
+            c->drg_target_visible = seen;
+            if (!(c->manual_plmn[0] && seen)) c->drg_done = 1;
+            printf("camp_dereg scan_done target=%s visible=%d\n",
+                   c->manual_plmn[0] ? c->manual_plmn : "(none)", seen);
+        }
     } else if (id == REG_RADIO_GET) {
         if (n >= 16) {
             c->radio_on = little32(p + 12) == RADIO_STATE_ON;
             printf("camp_reg field=radio radio_raw=%u\n", little32(p + 12));
         } else {
             printf("camp_reg field=radio status=unknown_short\n");
+        }
+        if (c->drg_off_get_sent && !c->drg_on_sent && !c->radio_on) {
+            c->drg_off_confirmed = 1;
+            printf("camp_dereg radio_off_confirmed=1\n");
         }
     } else if (id == REG_SEL_GET) {
         if (n >= 13 && p[12] <= 1) {
@@ -2707,7 +2815,7 @@ static void camp_advance(struct owner *o, int64_t now)
     c->sgc_sent = 1;
     uint32_t camp_token = ++c->token;
     uint8_t power[CAMP_POWER_LEN];
-    make_radiopower_request(power, camp_token);
+    make_radiopower_request(power, camp_token, CAMP_POWER_ON);
     if (camp_send_once(o->ipc, power, sizeof power)) {
         c->dispatched = 1;
         puts("camp_dispatch=write_failed step=power");
@@ -2807,6 +2915,56 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_reg=sent step=%s elapsed_ms=%lld\n", rname,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    unsigned drg = camp_dereg_next(c);
+    if (drg) {
+        ++c->probe_token;
+        int wrote;
+        int long_wait = 0;
+        unsigned wire_id;
+        const char *rname;
+        if (drg == DRG_OFF) {
+            uint8_t f[CAMP_POWER_LEN];
+            make_radiopower_request(f, c->probe_token, CAMP_POWER_OFF);
+            c->drg_off_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "dereg_radio_off"; wire_id = CAMP_POWER_COMMAND;
+        } else if (drg == DRG_OFF_GET) {
+            c->drg_off_get_sent = 1;
+            c->drg_off_get_tries++;
+            wrote = sit_send_get_once(o->ipc, (uint16_t)REG_RADIO_GET,
+                                      c->probe_token);
+            rname = "dereg_radio_get"; wire_id = REG_RADIO_GET;
+        } else if (drg == DRG_ON) {
+            uint8_t f[CAMP_POWER_LEN];
+            make_radiopower_request(f, c->probe_token, CAMP_POWER_ON);
+            c->drg_on_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "dereg_radio_on"; wire_id = CAMP_POWER_COMMAND;
+        } else if (drg == DRG_SCAN) {
+            c->drg_scan_sent = 1;
+            long_wait = 1;
+            wrote = sit_send_get_once(o->ipc, (uint16_t)REG_SCAN,
+                                      c->probe_token);
+            rname = "dereg_query_available_networks"; wire_id = REG_SCAN;
+        } else { /* DRG_MANUAL */
+            uint8_t f[REG_MANUAL_LEN];
+            make_manual_select_request(f, c->manual_plmn, c->probe_token);
+            c->drg_manual_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "dereg_network_selection_manual"; wire_id = REG_MANUAL_SEL;
+        }
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = wire_id;
+        c->probe_name = rname;
+        c->probe_deadline_ms = now + (long_wait ? PROBE_SCAN_REPLY_MS
+                                                : PROBE_REPLY_MS);
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_dereg=sent step=%s elapsed_ms=%lld\n", rname,
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -2967,6 +3125,17 @@ static int read_do_scan(void)
     return 1;
 }
 
+/* The deregister-then-scan sub-sequence (VERDICT 15) runs only when
+ * /data/saaios/etc/dereg_scan exists. One deliberate RADIO_POWER OFF->ON cycle
+ * plus one scan (and at most one manual-select); never spam. Returns 1 if armed. */
+static int read_dereg_scan(void)
+{
+    int fd = open("/data/saaios/etc/dereg_scan", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
 /* Load a manual network-selection target (numeric MCC/MNC, e.g. "25506") from
  * /data/saaios/etc/manual_plmn. Returns 1 and fills out[] (5 or 6 digits) when a
  * plausible PLMN is present; 0 otherwise. A PLMN is network topology, not a
@@ -3104,6 +3273,8 @@ static int run_owner(int ipc, int rfs, int ready)
     printf("camp_pref_target=%u\n", camp_pref_target(&o.camp));
     o.camp.scan_enabled = read_do_scan();
     printf("camp_scan=%s\n", o.camp.scan_enabled ? "armed" : "off");
+    o.camp.dereg_enabled = read_dereg_scan();
+    printf("camp_dereg=%s\n", o.camp.dereg_enabled ? "armed" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else
@@ -4089,8 +4260,12 @@ static int test_camp_builders(void)
     uint8_t power[CAMP_POWER_LEN];
     static const uint8_t power_e[CAMP_POWER_LEN] =
         {0,0,0x00,0x08,18,0,0x78,0x56,0x34,0x12,0,0,2,0,0,0,0,0};
-    make_radiopower_request(power, 0x12345678);
+    make_radiopower_request(power, 0x12345678, CAMP_POWER_ON);
     if (!same_bytes(power, power_e, sizeof power)) return 103;
+    static const uint8_t power_off_e[CAMP_POWER_LEN] =
+        {0,0,0x00,0x08,18,0,0x78,0x56,0x34,0x12,0,0,1,0,0,0,0,0};
+    make_radiopower_request(power, 0x12345678, CAMP_POWER_OFF);
+    if (!same_bytes(power, power_off_e, sizeof power)) return 115;
     return 0;
 }
 
@@ -4518,7 +4693,15 @@ static int test_camp_reg(void)
         put_little32(fr + 30 + 0, 3);
         memcpy(fr + 30 + 4, "25501", 5); fr[30 + 9] = 0x23;
         put_little32(fr + 30 + 10, 1);
-        if (sit_net_log_available("selftest", fr, sizeof fr) != 2) return 187;
+        int seen = 0;
+        if (sit_net_log_available("selftest", fr, sizeof fr, "25506", &seen) != 2)
+            return 187;
+        if (!seen) return 195;
+        {
+            int seen2 = 1;
+            if (sit_net_log_available("selftest", fr, sizeof fr, "25503",
+                                      &seen2) != 2 || seen2) return 196;
+        }
     }
     /* Manual-select builder bytes: id@+2, len 22@+4, token@+6, RAT any=0@+12,
      * PLMN ASCII@+16 with '#' filler at +21 for a 5-digit PLMN. */
@@ -4550,6 +4733,50 @@ static int test_camp_reg(void)
         mn.manual_sel_sent = 1;
         mn.pref_known = 1; mn.preferred_raw = camp_pref_target(&mn);
         if (camp_reg_next(&mn) != REG_ALLOW_DATA) return 194;
+    }
+    /* Deregister-then-scan (VERDICT 15): the sub-sequence only runs post-reg and
+     * armed; it walks OFF -> confirm -> ON -> scan -> (manual if target seen). */
+    {
+        struct camp_driver dr;
+        memset(&dr, 0, sizeof dr);
+        /* Not armed: no dereg step even when reg complete. */
+        dr.reg_complete = 1;
+        if (camp_dereg_next(&dr) != DRG_NONE) return 197;
+        dr.dereg_enabled = 1;
+        if (camp_dereg_next(&dr) != DRG_OFF) return 198;
+        dr.drg_off_sent = 1;
+        if (camp_dereg_next(&dr) != DRG_NONE) return 199;  /* awaiting ack */
+        dr.drg_off_ack = 1;
+        if (camp_dereg_next(&dr) != DRG_OFF_GET) return 200;
+        dr.drg_off_confirmed = 1;
+        if (camp_dereg_next(&dr) != DRG_ON) return 201;
+        dr.drg_on_sent = 1;
+        if (camp_dereg_next(&dr) != DRG_NONE) return 202;  /* awaiting ack */
+        dr.drg_on_ack = 1;
+        if (camp_dereg_next(&dr) != DRG_SCAN) return 203;
+        dr.drg_scan_sent = 1;
+        if (camp_dereg_next(&dr) != DRG_NONE) return 204;  /* awaiting reply */
+        /* Scan parsed, target not visible, no manual PLMN -> sequence idle. */
+        dr.drg_scan_got = 1;
+        if (camp_dereg_next(&dr) != DRG_NONE) return 205;
+        /* With a visible target PLMN -> manual-select fires once. */
+        memcpy(dr.manual_plmn, "25506", 6);
+        dr.drg_target_visible = 1;
+        if (camp_dereg_next(&dr) != DRG_MANUAL) return 206;
+        dr.drg_manual_sent = 1; dr.drg_manual_ack = 1; dr.drg_done = 1;
+        if (camp_dereg_next(&dr) != DRG_NONE) return 207;
+        /* camp_dereg_reply: OFF/ON acks advance; a scan error ends the run. */
+        struct camp_driver dq;
+        memset(&dq, 0, sizeof dq);
+        dq.dereg_enabled = 1; dq.drg_off_sent = 1;
+        if (!camp_dereg_reply(&dq, CAMP_POWER_COMMAND, 0) || !dq.drg_off_ack ||
+            dq.drg_done) return 208;
+        dq.drg_on_sent = 1;
+        if (!camp_dereg_reply(&dq, CAMP_POWER_COMMAND, 0) || !dq.drg_on_ack)
+            return 209;
+        dq.drg_scan_sent = 1;
+        if (!camp_dereg_reply(&dq, REG_SCAN, 2) || !dq.drg_scan_got ||
+            !dq.drg_done) return 210;
     }
     return 0;
 }
