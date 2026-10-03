@@ -136,6 +136,18 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
         * layouts live in sit-network-layout.h. The scan triggers a real RF
         * network scan, so its reply deadline is far longer than a normal GET. */
        REG_SCAN = SIT_NET_AVAILABLE_NETWORKS, REG_SCAN_LEN = 12,
+       /* VERDICT 17: the len-16 GET_AVAILABLE_NETWORKS variant
+        * (ProtocolNetworkBuilder::BuildQueryAvailableNetwork(int), @0x236950):
+        * same opcode 0x0706 but total len 16, carrying an explicit scanType
+        * int32 at payload[12]. The stock clamps the arg: scanType =
+        * (1 <= arg <= 5) ? arg : 0 (sub w8,arg,#1; cmp #5; csel). So the
+        * distinct accepted values are 0..5; the HAL's DoQueryBplmnSearch passes
+        * 0, DoQueryAvailableNetwork passes a framework scanType (field logged as
+        * "scanType=%d"). We sweep 0..5, each once. Same wire opcode as REG_SCAN;
+        * distinguished internally by scan16_sent. */
+       REG_SCAN16 = SIT_NET_AVAILABLE_NETWORKS, REG_SCAN16_LEN = 16,
+       SCAN16_MODE_OFF = 12, SCAN16_MODE_MIN = 1, SCAN16_MODE_MAX = 5,
+       SCAN16_MODE_COUNT = 6,
        REG_MANUAL_SEL = SIT_NET_SELECTION_MANUAL,
        REG_MANUAL_LEN = SIT_NET_SEL_MANUAL_LEN,
        PROBE_SCAN_REPLY_MS = 120000,
@@ -299,6 +311,14 @@ struct camp_driver {
     int call_poll_count, call_seen_count, call_index;
     unsigned call_last_state;
     int call_hangup_sent, call_done;
+    /* VERDICT 17: len-16 scanType sweep (config /data/saaios/etc/scan16). After
+     * bring-up completes, fire BuildQueryAvailableNetwork(int) once per distinct
+     * accepted scanType 0..5, stopping early if any returns a result list. */
+    int scan16_enabled;
+    int scan16_mode;       /* scanType of the outstanding scan */
+    int scan16_sent;       /* a len-16 scan is awaiting reply */
+    int scan16_fired;      /* number of modes already fired (0..6) */
+    int scan16_done, scan16_got_list;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -2456,6 +2476,21 @@ static void make_hangup_request(uint8_t request[CALL_HANGUP_LEN],
     put_little32(request + CALL_HANGUP_FLAG_OFF, 1);
 }
 
+/* VERDICT 17: len-16 GET_AVAILABLE_NETWORKS (BuildQueryAvailableNetwork(int),
+ * opcode 0x0706, len 16). scanType int32 at [12], clamped exactly as the stock:
+ * (1<=mode<=5) ? mode : 0. Nothing invented. */
+static void make_scan16_request(uint8_t request[REG_SCAN16_LEN], int mode,
+                                uint32_t token)
+{
+    int valid = (mode >= SCAN16_MODE_MIN && mode <= SCAN16_MODE_MAX) ? mode : 0;
+    memset(request, 0, REG_SCAN16_LEN);
+    request[2] = (uint8_t)SIT_NET_AVAILABLE_NETWORKS;        /* 0x06 */
+    request[3] = (uint8_t)(SIT_NET_AVAILABLE_NETWORKS >> 8); /* 0x07 */
+    request[4] = (uint8_t)REG_SCAN16_LEN;                     /* 16 */
+    put_little32(request + 6, token);
+    put_little32(request + SCAN16_MODE_OFF, (uint32_t)valid);
+}
+
 _Static_assert(REG_IA_LEN == 250, "SET_INITIAL_ATTACH_APN frame must be 250 bytes");
 _Static_assert(REG_IA_PCSCF_OFF < REG_IA_LEN, "pcscf offset within frame");
 
@@ -2737,6 +2772,42 @@ static int camp_call_reply(struct camp_driver *c, const uint8_t *p, size_t n,
     return 0;
 }
 
+/* VERDICT 17 len-16 scanType sweep: after bring-up completes and only when armed
+ * (/data/saaios/etc/scan16), fire BuildQueryAvailableNetwork(int) once per
+ * distinct accepted scanType 0..5, stopping early if any returns a result list.
+ * Returns REG_SCAN16 to fire the next mode, or 0 while idle/awaiting/done. */
+static unsigned camp_scan16_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || !c->scan16_enabled || c->scan16_done) return 0;
+    if (c->scan16_sent) return 0;                 /* awaiting reply */
+    if (c->scan16_fired >= SCAN16_MODE_COUNT) return 0;
+    return REG_SCAN16;
+}
+
+/* Consume a len-16 scan reply (opcode 0x0706 while scan16_sent). On error, log
+ * and advance to the next scanType; on success, log every PLMN and stop the
+ * sweep. Returns 1 when consumed. */
+static int camp_scan16_reply(struct camp_driver *c, const uint8_t *p, size_t n,
+                             unsigned id, unsigned error)
+{
+    if (id != REG_SCAN16 || !c->scan16_sent) return 0;
+    c->scan16_sent = 0;
+    c->scan16_fired++;
+    if (!error) {
+        int seen = 0;
+        c->scan16_got_list = 1;
+        c->scan16_done = 1;   /* a list came back -- stop sweeping */
+        sit_net_log_available("camp_scan16", p, n, c->manual_plmn, &seen);
+        printf("camp_scan16 mode=%d result=list target_visible=%d\n",
+               c->scan16_mode, seen);
+    } else {
+        printf("camp_scan16 mode=%d response=yes error_raw=%u\n",
+               c->scan16_mode, error);
+        if (c->scan16_fired >= SCAN16_MODE_COUNT) c->scan16_done = 1;
+    }
+    return 1;
+}
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -2756,6 +2827,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     unsigned id = c->probe_id;
     unsigned error = little16(p + 10);
     if (camp_dereg_reply(c, id, error)) return;
+    if (camp_scan16_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
     if (error) {
         printf("camp_probe field=%s response=yes error_raw=%u\n",
@@ -3175,6 +3247,27 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    /* VERDICT 17: len-16 scanType sweep (one scan per distinct mode 0..5). */
+    unsigned s16 = camp_scan16_next(c);
+    if (s16) {
+        ++c->probe_token;
+        int mode = c->scan16_fired;   /* 0..5 */
+        uint8_t f[REG_SCAN16_LEN];
+        make_scan16_request(f, mode, c->probe_token);
+        c->scan16_sent = 1;
+        c->scan16_mode = mode;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = REG_SCAN16;
+        c->probe_name = "query_available_networks_v16";
+        c->probe_deadline_ms = now + PROBE_SCAN_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_scan16=sent mode=%d elapsed_ms=%lld\n", mode,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     unsigned opx = camp_opx_next(c);
     if (opx) {
         ++c->probe_token;
@@ -3383,6 +3476,17 @@ static int read_dereg_scan(void)
     return 1;
 }
 
+/* VERDICT 17: the len-16 scanType sweep runs only when /data/saaios/etc/scan16
+ * exists. One scan per distinct accepted scanType 0..5, never a spam loop.
+ * Returns 1 if armed. */
+static int read_scan16(void)
+{
+    int fd = open("/data/saaios/etc/scan16", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
 /* Load a manual network-selection target (numeric MCC/MNC, e.g. "25506") from
  * /data/saaios/etc/manual_plmn. Returns 1 and fills out[] (5 or 6 digits) when a
  * plausible PLMN is present; 0 otherwise. A PLMN is network topology, not a
@@ -3567,6 +3671,8 @@ static int run_owner(int ipc, int rfs, int ready)
     printf("camp_scan=%s\n", o.camp.scan_enabled ? "armed" : "off");
     o.camp.dereg_enabled = read_dereg_scan();
     printf("camp_dereg=%s\n", o.camp.dereg_enabled ? "armed" : "off");
+    o.camp.scan16_enabled = read_scan16();
+    printf("camp_scan16=%s\n", o.camp.scan16_enabled ? "armed" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else
@@ -5162,6 +5268,51 @@ static int test_camp_reg(void)
         if (!camp_call_reply(&cl, lst, sizeof lst, CALL_LIST, 0) ||
             cl.call_seen_count != 1 || cl.call_last_state != 3 ||
             cl.call_index != 1) return 225;
+    }
+    /* VERDICT 17: len-16 scanType sweep frame byte-exactness + sweep walk. */
+    {
+        /* scanType 2 passes through at [12]; header opcode 0x0706 len 16. */
+        uint8_t s16[REG_SCAN16_LEN];
+        static const uint8_t s16_e[REG_SCAN16_LEN] = {
+            0,0,0x06,0x07,16,0,0x78,0x56,0x34,0x12,0,0, 2,0,0,0};
+        make_scan16_request(s16, 2, 0x12345678);
+        if (!same_bytes(s16, s16_e, sizeof s16)) return 226;
+        /* Out-of-range scanType clamps to 0 (stock sub/cmp/csel). */
+        uint8_t s16b[REG_SCAN16_LEN];
+        make_scan16_request(s16b, 9, 0x12345678);
+        if (little32(s16b + SCAN16_MODE_OFF) != 0) return 227;
+        make_scan16_request(s16b, 5, 0x12345678);
+        if (little32(s16b + SCAN16_MODE_OFF) != 5) return 228;
+        /* Sweep: fires only post-reg + armed; one mode per call; stops on list. */
+        struct camp_driver sc;
+        memset(&sc, 0, sizeof sc);
+        sc.reg_complete = 1;
+        if (camp_scan16_next(&sc) != 0) return 229;      /* not armed */
+        sc.scan16_enabled = 1;
+        if (camp_scan16_next(&sc) != REG_SCAN16) return 230;
+        sc.scan16_sent = 1; sc.scan16_mode = 0;
+        if (camp_scan16_next(&sc) != 0) return 231;      /* awaiting reply */
+        /* Each error reply advances to the next mode, up to SCAN16_MODE_COUNT. */
+        int guard;
+        for (guard = 0; guard < SCAN16_MODE_COUNT; guard++) {
+            if (!camp_scan16_reply(&sc, NULL, 0, REG_SCAN16, 2)) return 232;
+            if (sc.scan16_done) break;
+            if (camp_scan16_next(&sc) != REG_SCAN16) return 233;
+            sc.scan16_sent = 1;
+        }
+        if (!sc.scan16_done || sc.scan16_got_list ||
+            sc.scan16_fired != SCAN16_MODE_COUNT) return 234;
+        /* A success reply with a list parses and ends the sweep immediately. */
+        struct camp_driver sg;
+        memset(&sg, 0, sizeof sg);
+        sg.reg_complete = 1; sg.scan16_enabled = 1; sg.scan16_sent = 1;
+        uint8_t avn[SIT_NET_AVN_LIST_OFFSET + SIT_NET_AVN_ENTRY_STRIDE];
+        memset(avn, 0, sizeof avn);
+        put_little32(avn + SIT_NET_AVN_COUNT_OFFSET, 1);
+        memcpy(avn + SIT_NET_AVN_LIST_OFFSET + SIT_NET_AVN_ENTRY_PLMN, "25503#", 6);
+        put_little32(avn + SIT_NET_AVN_LIST_OFFSET + SIT_NET_AVN_ENTRY_STATUS, 1);
+        if (!camp_scan16_reply(&sg, avn, sizeof avn, REG_SCAN16, 0) ||
+            !sg.scan16_got_list || !sg.scan16_done) return 235;
     }
     return 0;
 }

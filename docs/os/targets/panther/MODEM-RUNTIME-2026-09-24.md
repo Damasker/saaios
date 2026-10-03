@@ -1,5 +1,16 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 ALL SCAN FORMS REFUSED — recovered operator-control levers exhausted (VERDICT 17):**
+tested the last untried lever, the len-16 scan variant `BuildQueryAvailableNetwork(int)` (@0x236950)
+— opcode 0x0706, len 16, explicit scanType int32 at payload[12], stock-clamped to (1≤arg≤5)?arg:0 so
+the distinct accepted values are 0..5 (field logged as "scanType=%d"). Recovered byte-for-byte,
+implemented guarded/one-shot/self-tested (-Werror, on-device RC=0). One boot: bring-up to allow_data
+(error 0), camped `25501#` UMTS, swept all six scanType values each once → every mode returned
+`error_raw=2` (RIL_E_GENERIC_FAILURE), no result list. With VERDICT 14 (len-12 scan + manual-select
+refused camped) and VERDICT 15 (len-12 scan refused deregistered), all recovered scan forms are
+refused in all states. Conclusive terminal firmware-state + environmental boundary. Owner 3320c305,
+config cleared, proven backup 90f403df intact. No bearer, no scan, no reselection reachable.
+
 **2026-10-03 NEW-SIM TEST, CARD READY but CS-DENIED (VERDICT 16):**
 a second SIM was swapped in (intended Kyivstar 255-03, activation by one outgoing call to
 +380953444757). Recovered the stock voice/PIN set from `libsitril.so` (efcca0d5): PIN1 verify

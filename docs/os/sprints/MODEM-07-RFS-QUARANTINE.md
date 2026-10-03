@@ -6,6 +6,20 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 ALL SCAN FORMS REFUSED — recovered operator-control levers exhausted (VERDICT 17).**
+Tested the last recovered-but-untried lever: the len-16 scan variant
+`ProtocolNetworkBuilder::BuildQueryAvailableNetwork(int)` (@0x236950) — same opcode 0x0706 as the
+len-12 header-only scan but total len 16, with an explicit scanType int32 at payload[12]. The
+stock clamps the arg (`sub w8,arg,#1; cmp #5; csel` ⇒ scanType = (1≤arg≤5) ? arg : 0), so the
+distinct accepted values are 0,1,2,3,4,5 (HAL `DoQueryBplmnSearch` passes 0, `DoQueryAvailableNetwork`
+passes a framework "scanType=%d"). Recovered byte-for-byte, implemented guarded/one-shot/self-tested
+(-Werror, on-device RC=0). One boot: bring-up to allow_data (error 0), camped `25501#` UMTS, then
+swept all six scanType values, each once — every mode returned `error_raw=2` (RIL_E_GENERIC_FAILURE),
+no result list. Combined with VERDICT 14 (len-12 scan + manual-select refused camped) and VERDICT 15
+(len-12 scan refused deregistered), every recovered form of operator-controlled scan is refused in
+every state. Conclusive terminal firmware-state + environmental boundary. Owner 3320c305, config
+cleared, proven backup 90f403df intact. Bearer NOT achieved; no scan, no reselection reachable.
+
 **2026-10-03 NEW-SIM TEST, CARD READY but CS-DENIED (VERDICT 16).**
 A second SIM was swapped in (intended Kyivstar 255-03, to be activated by one outgoing voice
 call to +380953444757). Recovered the stock voice/PIN command set byte-for-byte from
