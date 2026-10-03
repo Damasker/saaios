@@ -121,6 +121,14 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        REG_RADIO_GET = 0x0801, REG_SEL_GET = 0x0703, REG_SEL_AUTO_SET = 0x0704,
        REG_PREF_GET = 0x070b, REG_PREF_SET = 0x070a, REG_ALLOW_DATA = 0x0710,
        REG_PREF_LEN = 16, REG_ALLOW_LEN = 13, REG_GET_MAX = 3,
+       /* GET_AVAILABLE_NETWORKS (0x0706, header-only len 12) and
+        * SET_NETWORK_SELECTION_MANUAL (0x0705, len 22) wire IDs; the frame
+        * layouts live in sit-network-layout.h. The scan triggers a real RF
+        * network scan, so its reply deadline is far longer than a normal GET. */
+       REG_SCAN = SIT_NET_AVAILABLE_NETWORKS, REG_SCAN_LEN = 12,
+       REG_MANUAL_SEL = SIT_NET_SELECTION_MANUAL,
+       REG_MANUAL_LEN = SIT_NET_SEL_MANUAL_LEN,
+       PROBE_SCAN_REPLY_MS = 120000,
        /* SIT_SET_INITIAL_ATTACH_APN (0x0603): a 250-byte request, recovered
         * from ProtocolPsBuilder::BuildSetInitialAttachApn + FillApnInfo
         * <sit_pdp_set_initial_attach_apn_req> in the factory libsitril.so
@@ -208,6 +216,15 @@ struct camp_driver {
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
     int ia_apn_sent;
     char apn[REG_IA_APN_MAX];
+    /* Available-networks scan (0x0706) and manual network selection (0x0705),
+     * both one-shot and config-gated. scan_enabled is set from the presence of
+     * /data/saaios/etc/do_scan; manual_plmn[] is loaded from
+     * /data/saaios/etc/manual_plmn (numeric MCC/MNC, e.g. "25506"). When
+     * manual_plmn is set, step 2 issues manual selection instead of automatic.
+     * Absent files => proven boot unchanged. */
+    int scan_enabled, scan_sent;
+    char manual_plmn[8];
+    int manual_sel_sent;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -384,6 +401,72 @@ static void sit_net_log_operator(const char *prefix, const uint8_t *p, size_t n)
     }
     plmn[6] = '\0';
     printf("%s field=operator plmn_numeric=%s frame_len=%zu\n", prefix, plmn, n);
+}
+
+/* Scan-entry access-tech -> RIL RADIO_TECH_* map, recovered byte-for-byte from
+ * libsitril.so ProtocolNetAvailableNetworkAdapter::GetNetwork(): only raw values
+ * 0x11..0x15 are remapped via the .rodata table at 0xd8ac8
+ * {0,0x11,0x0f,0x0e,0x14}; every other raw value passes through unchanged (so
+ * raw 3=UMTS, 16=GSM map directly). This differs from the reg-state RAT map. */
+static unsigned sit_scan_rat_map(unsigned raw)
+{
+    static const uint8_t table[5] = { 0, 17, 15, 14, 20 };
+    return (raw >= 0x11u && raw <= 0x15u) ? table[raw - 0x11u] : raw;
+}
+
+static const char *sit_scan_status_name(unsigned status)
+{
+    switch (status) {
+    case 1: return "available";
+    case 2: return "current";
+    case 3: return "forbidden";
+    default: return "unknown";
+    }
+}
+
+/* Decode a GET_AVAILABLE_NETWORKS (0x0706) response per the stock adapter: a
+ * count int32 at payload[12] followed by 14-byte entries at payload[16]. Each
+ * entry is reported as its numeric PLMN (MCC/MNC ASCII, network topology -- not a
+ * subscriber id), availability status and RAT. Length-guarded against a truncated
+ * frame. Returns the count of PLMNs parsed. */
+static int sit_net_log_available(const char *prefix, const uint8_t *p, size_t n)
+{
+    unsigned count, i;
+    if (n < (size_t)SIT_NET_AVN_COUNT_OFFSET + 4u) {
+        printf("%s field=available_networks status=short frame_len=%zu\n",
+               prefix, n);
+        return 0;
+    }
+    count = little32(p + SIT_NET_AVN_COUNT_OFFSET);
+    printf("%s field=available_networks count=%u frame_len=%zu\n",
+           prefix, count, n);
+    for (i = 0; i < count; i++) {
+        size_t base = (size_t)SIT_NET_AVN_LIST_OFFSET +
+                      (size_t)i * SIT_NET_AVN_ENTRY_STRIDE;
+        const uint8_t *e;
+        char plmn[7];
+        unsigned rat_raw, status;
+        size_t j;
+        if (base + SIT_NET_AVN_ENTRY_STRIDE > n) {
+            printf("%s field=available_networks status=truncated_at=%u\n",
+                   prefix, i);
+            break;
+        }
+        e = p + base;
+        rat_raw = little32(e + SIT_NET_AVN_ENTRY_RAT);
+        status = little32(e + SIT_NET_AVN_ENTRY_STATUS);
+        for (j = 0; j < 6; j++) {
+            uint8_t c = e[SIT_NET_AVN_ENTRY_PLMN + j];
+            plmn[j] = (c >= '0' && c <= '9') ? (char)c
+                                             : (c == 0x23 ? '#' : '.');
+        }
+        plmn[6] = '\0';
+        printf("%s field=available_networks idx=%u plmn_numeric=%s "
+               "status_raw=%u status=%s rat_raw=%u rat_mapped=%u\n",
+               prefix, i, plmn, status, sit_scan_status_name(status),
+               rat_raw, sit_scan_rat_map(rat_raw));
+    }
+    return (int)count;
 }
 
 static int same_bytes(const uint8_t *a, const uint8_t *b, size_t n)
@@ -2216,6 +2299,27 @@ static void make_allowdata_request(uint8_t request[REG_ALLOW_LEN],
     request[12] = 1;
 }
 
+/* Factory BuildSetNetworkSelectionManual (0x0705): 22-byte request. RAT int32 at
+ * +12 (0 = any; the builder maps an out-of-range RIL type to 0, so "any" lets the
+ * modem pick the RAT the PLMN is on). PLMN numeric ASCII copied to +16 (5 or 6
+ * chars); the stock builder presets +21 to '#' (0x23) so a 5-digit (2-digit MNC)
+ * PLMN keeps the filler. Recovered byte-for-byte; no invented bytes, no NV/EFS
+ * write -- this is a radio network-selection command, not a provisioning write. */
+static void make_manual_select_request(uint8_t request[SIT_NET_SEL_MANUAL_LEN],
+                                       const char *plmn, uint32_t token)
+{
+    size_t i;
+    memset(request, 0, SIT_NET_SEL_MANUAL_LEN);
+    request[2] = (uint8_t)SIT_NET_SELECTION_MANUAL;        /* 0x05 */
+    request[3] = (uint8_t)(SIT_NET_SELECTION_MANUAL >> 8); /* 0x07 */
+    request[4] = (uint8_t)SIT_NET_SEL_MANUAL_LEN;          /* 22 */
+    put_little32(request + 6, token);
+    /* RAT at +12 left 0 (any). */
+    request[SIT_NET_SEL_MANUAL_PLMN_OFFSET + 5] = 0x23;    /* '#' filler */
+    for (i = 0; i < (size_t)SIT_NET_SEL_MANUAL_PLMN_MAX && plmn && plmn[i]; i++)
+        request[SIT_NET_SEL_MANUAL_PLMN_OFFSET + i] = (uint8_t)plmn[i];
+}
+
 _Static_assert(REG_IA_LEN == 250, "SET_INITIAL_ATTACH_APN frame must be 250 bytes");
 _Static_assert(REG_IA_PCSCF_OFF < REG_IA_LEN, "pcscf offset within frame");
 
@@ -2331,10 +2435,19 @@ static unsigned camp_reg_next(const struct camp_driver *c)
     if (!c->radio_on)
         return c->radio_get_tries < REG_GET_MAX ? REG_RADIO_GET : 0;
 
-    /* 2. Selection mode: read (bounded), then force automatic unless the card
-     *    already reads automatic. A slow/absent 0x0703 reply must not block the
-     *    experiment, so after REG_GET_MAX reads we send 0x0704 once regardless. */
-    if (!c->sel_auto_sent) {
+    /* 1b. Available-networks scan (0x0706), one-shot, config-gated. RF is up once
+     *     radio is ON, so the scan can succeed here; issued before selection so
+     *     its result can inform a manual pick. */
+    if (c->scan_enabled && !c->scan_sent) return REG_SCAN;
+
+    /* 2. Selection mode. When a manual PLMN is configured, select it explicitly
+     *    (0x0705) instead of forcing automatic -- this is the lever a real phone
+     *    uses to leave a foreign network for its home PLMN. Otherwise read
+     *    (bounded), then force automatic unless the card already reads automatic.
+     *    A slow/absent 0x0703 reply must not block the experiment, so after
+     *    REG_GET_MAX reads we send 0x0704 once regardless. */
+    if (!c->sel_auto_sent && !c->manual_sel_sent) {
+        if (c->manual_plmn[0]) return REG_MANUAL_SEL;
         if (!c->sel_known && c->sel_get_tries < REG_GET_MAX) return REG_SEL_GET;
         if (!(c->sel_known && c->sel_mode == 0)) return REG_SEL_AUTO_SET;
     }
@@ -2447,6 +2560,9 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                error);
     } else if (id == REG_SEL_AUTO_SET) {
         printf("camp_reg set=selection_auto response=yes error_raw=%u\n", error);
+    } else if (id == REG_MANUAL_SEL) {
+        printf("camp_reg set=network_selection_manual plmn=%s response=yes "
+               "error_raw=%u\n", c->manual_plmn, error);
     } else if (id == REG_PREF_SET) {
         printf("camp_reg set=preferred_lte_wcdma response=yes error_raw=%u\n",
                error);
@@ -2456,6 +2572,8 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         sit_net_log_regstate("camp_probe", c->probe_name, p, n, id);
     } else if (id == SIT_NET_OPERATOR) {
         sit_net_log_operator("camp_probe", p, n);
+    } else if (id == REG_SCAN) {
+        sit_net_log_available("camp_probe", p, n);
     } else if (id == REG_RADIO_GET) {
         if (n >= 16) {
             c->radio_on = little32(p + 12) == RADIO_STATE_ON;
@@ -2639,6 +2757,7 @@ static void camp_probe_advance(struct owner *o, int64_t now)
     if (reg) {
         ++c->probe_token;
         int wrote;
+        int long_wait = 0;
         const char *rname;
         if (reg == REG_PREF_SET) {
             uint8_t f[REG_PREF_LEN];
@@ -2646,6 +2765,17 @@ static void camp_probe_advance(struct owner *o, int64_t now)
             c->pref_set_sent = 1;
             wrote = camp_send_once(o->ipc, f, sizeof f);
             rname = "set_preferred_lte_wcdma";
+        } else if (reg == REG_SCAN) {
+            c->scan_sent = 1;
+            long_wait = 1;
+            wrote = sit_send_get_once(o->ipc, (uint16_t)REG_SCAN, c->probe_token);
+            rname = "query_available_networks";
+        } else if (reg == REG_MANUAL_SEL) {
+            uint8_t f[REG_MANUAL_LEN];
+            make_manual_select_request(f, c->manual_plmn, c->probe_token);
+            c->manual_sel_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "set_network_selection_manual";
         } else if (reg == REG_ALLOW_DATA) {
             uint8_t f[REG_ALLOW_LEN];
             make_allowdata_request(f, c->probe_token);
@@ -2672,7 +2802,8 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_pending = 1;
         c->probe_id = reg;
         c->probe_name = rname;
-        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_deadline_ms = now + (long_wait ? PROBE_SCAN_REPLY_MS
+                                                : PROBE_REPLY_MS);
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_reg=sent step=%s elapsed_ms=%lld\n", rname,
@@ -2825,6 +2956,37 @@ static unsigned read_pref_rat(void)
     if (!strncmp(buf, "12", 2)) return RAT_LTE_WCDMA;
     return 0;
 }
+
+/* The available-networks scan (0x0706) is one deliberate, operator-armed probe:
+ * it runs only when /data/saaios/etc/do_scan exists. Returns 1 if armed. */
+static int read_do_scan(void)
+{
+    int fd = open("/data/saaios/etc/do_scan", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
+/* Load a manual network-selection target (numeric MCC/MNC, e.g. "25506") from
+ * /data/saaios/etc/manual_plmn. Returns 1 and fills out[] (5 or 6 digits) when a
+ * plausible PLMN is present; 0 otherwise. A PLMN is network topology, not a
+ * secret, and manual selection is a radio command, never an NV/EFS write. */
+static int read_manual_plmn(char *out, size_t cap)
+{
+    if (cap) out[0] = 0;
+    int fd = open("/data/saaios/etc/manual_plmn", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[16] = {0};
+    ssize_t r = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (r <= 0) return 0;
+    size_t n = 0;
+    while (n < sizeof buf && buf[n] >= '0' && buf[n] <= '9') n++;
+    if (n < 5 || n > 6 || n >= cap) return 0;
+    memcpy(out, buf, n);
+    out[n] = 0;
+    return 1;
+}
 #endif /* SAAIOS_RFS_CAMP */
 
 static void request_stop(int signal_number)
@@ -2940,6 +3102,12 @@ static int run_owner(int ipc, int rfs, int ready)
         puts("camp_apn=none");
     o.camp.pref_target = read_pref_rat();
     printf("camp_pref_target=%u\n", camp_pref_target(&o.camp));
+    o.camp.scan_enabled = read_do_scan();
+    printf("camp_scan=%s\n", o.camp.scan_enabled ? "armed" : "off");
+    if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
+        printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
+    else
+        puts("camp_manual_plmn=none");
 #endif
     for (;;) {
         int64_t now = monotonic_ms();
@@ -4323,6 +4491,66 @@ static int test_camp_reg(void)
     if (camp_reg_next(&po) != REG_PREF_SET) return 182;
     po.preferred_raw = RAT_LTE_ONLY;
     if (camp_reg_next(&po) != REG_ALLOW_DATA) return 183;
+
+    /* Available-networks scan (0x0706) + manual selection (0x0705), recovered
+     * from libsitril ProtocolNetAvailableNetworkAdapter and
+     * BuildSetNetworkSelectionManual. */
+    if (SIT_NET_AVAILABLE_NETWORKS != 0x0706 ||
+        SIT_NET_SELECTION_MANUAL != 0x0705) return 184;
+    /* Scan-RAT remap: 0x11..0x15 remapped, everything else pass-through. */
+    if (sit_scan_rat_map(0x11) != 0 || sit_scan_rat_map(0x12) != 17 ||
+        sit_scan_rat_map(0x13) != 15 || sit_scan_rat_map(0x14) != 14 ||
+        sit_scan_rat_map(0x15) != 20) return 185;
+    if (sit_scan_rat_map(3) != 3 || sit_scan_rat_map(16) != 16 ||
+        sit_scan_rat_map(0) != 0) return 186;
+    /* Parser: a 2-entry 0x0706 reply (lifecell 25506 LTE current, foreign
+     * 25501 UMTS available). count@+12, list@+16 stride 14. */
+    {
+        uint8_t fr[16 + 2 * 14] = {0};
+        fr[0] = 1; fr[2] = 0x06; fr[3] = 0x07;
+        put_little32(fr + 4, sizeof fr);
+        put_little32(fr + 12, 2);           /* count */
+        /* entry 0: RAT raw 0x14 (LTE), PLMN "25506", status 2 (current) */
+        put_little32(fr + 16 + 0, 0x14);
+        memcpy(fr + 16 + 4, "25506", 5); fr[16 + 9] = 0x23;
+        put_little32(fr + 16 + 10, 2);
+        /* entry 1: RAT raw 3 (UMTS), PLMN "25501", status 1 (available) */
+        put_little32(fr + 30 + 0, 3);
+        memcpy(fr + 30 + 4, "25501", 5); fr[30 + 9] = 0x23;
+        put_little32(fr + 30 + 10, 1);
+        if (sit_net_log_available("selftest", fr, sizeof fr) != 2) return 187;
+    }
+    /* Manual-select builder bytes: id@+2, len 22@+4, token@+6, RAT any=0@+12,
+     * PLMN ASCII@+16 with '#' filler at +21 for a 5-digit PLMN. */
+    {
+        uint8_t ms[SIT_NET_SEL_MANUAL_LEN];
+        make_manual_select_request(ms, "25506", 0x12345678);
+        if (ms[0] || ms[1] || ms[2] != 0x05 || ms[3] != 0x07 ||
+            ms[4] != SIT_NET_SEL_MANUAL_LEN || ms[5]) return 188;
+        if (little32(ms + 6) != 0x12345678 ||
+            little32(ms + SIT_NET_SEL_MANUAL_RAT_OFFSET) != 0) return 189;
+        if (memcmp(ms + SIT_NET_SEL_MANUAL_PLMN_OFFSET, "25506#", 6))
+            return 190;
+    }
+    /* camp_reg_next: scan armed after radio ON precedes selection; a manual PLMN
+     * replaces automatic selection; both are one-shot. */
+    {
+        struct camp_driver sc;
+        memset(&sc, 0, sizeof sc);
+        sc.sim_ready = 1; sc.radio_on = 1; sc.scan_enabled = 1;
+        if (camp_reg_next(&sc) != REG_SCAN) return 191;
+        sc.scan_sent = 1;
+        /* no manual PLMN, selection unknown -> falls to selection GET */
+        if (camp_reg_next(&sc) != REG_SEL_GET) return 192;
+        struct camp_driver mn;
+        memset(&mn, 0, sizeof mn);
+        mn.sim_ready = 1; mn.radio_on = 1;
+        memcpy(mn.manual_plmn, "25506", 6);
+        if (camp_reg_next(&mn) != REG_MANUAL_SEL) return 193;
+        mn.manual_sel_sent = 1;
+        mn.pref_known = 1; mn.preferred_raw = camp_pref_target(&mn);
+        if (camp_reg_next(&mn) != REG_ALLOW_DATA) return 194;
+    }
     return 0;
 }
 #endif

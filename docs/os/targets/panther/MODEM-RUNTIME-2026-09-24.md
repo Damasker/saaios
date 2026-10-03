@@ -1,5 +1,20 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 TERMINAL BOUNDARY: modem refuses operator reselection — scan + manual-select both GENERIC_FAILURE (VERDICT 14):**
+recovered GET_AVAILABLE_NETWORKS (0x0706: header-only req len 12; response count@payload[12],
+14-byte per-PLMN entries @payload[16] RAT[0..3]/PLMN-ASCII[4..9]/status[10..13]) and
+SET_NETWORK_SELECTION_MANUAL (0x0705: len 22, RAT int32@+0 [0=any], PLMN-ASCII@+4) from
+`libsitril.so` (efcca0d5). Two controlled boots: the scan was sent at 65 s while the modem
+was already camped at 57 s (voice REG_DENIED(3), UMTS, 25501 — RF ready) and returned
+`error_raw=2` (protocol 2 → RIL_E_GENERIC_FAILURE), no async result → the "RF not ready"
+premise is FALSIFIED; manual-select to home lifecell (25506) also returned `error_raw=2`
+while same-path preferred/initial_attach_apn/allow_data ACKed error_raw=0, and serving PLMN
+stayed 25501 (voice REG_DENIED(3), data NOT_SEARCHING(0), UMTS). Host command path correct;
+modem declines operator control, so lifecell (255-06) could be neither confirmed reachable
+nor selected — modem/environmental terminal boundary, not a host defect. Owner 5834fd01, CP
+ONLINE, config cleared (default LTE+WCDMA, automatic selection), proven backup 90f403df
+intact. Bearer NOT achieved.
+
 **2026-10-03 TERMINAL BOUNDARY: foreign 3G PLMN + no LTE acquisition (VERDICT 13):**
 queried serving operator 0x0702 (read-only) and forced LTE-only (recovered SIT value 0x0b
 from BuildSetPreferredNetworkType table @0xd8c5c). Serving PLMN = 25501 (MCC 255 Ukraine /

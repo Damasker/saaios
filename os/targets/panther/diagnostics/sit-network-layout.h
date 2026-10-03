@@ -9,9 +9,31 @@ enum {
     SIT_NET_OPERATOR = 0x0702,
     SIT_NET_SELECTION_MODE = 0x0703,
     SIT_NET_SELECTION_AUTO = 0x0704,
+    SIT_NET_SELECTION_MANUAL = 0x0705,
+    SIT_NET_AVAILABLE_NETWORKS = 0x0706,
     SIT_NET_PREFERRED_SET = 0x070a,
     SIT_NET_PREFERRED_GET = 0x070b,
     SIT_NET_ALLOW_DATA = 0x0710,
+    /* GET_AVAILABLE_NETWORKS (0x0706) response, recovered from libsitril.so
+     * (efcca0d5) ProtocolNetAvailableNetworkAdapter::{GetCount,GetNetwork}:
+     * count=int32 at payload[12]; the per-PLMN list starts at payload[16]
+     * with a 14-byte stride. Within each entry: [0..3]=RAT raw, [4..9]=PLMN
+     * numeric ASCII ([9]=='#' marks a 2-digit MNC), [10..13]=status
+     * (1=available, 2=current, 3=forbidden). */
+    SIT_NET_AVN_COUNT_OFFSET = 12,
+    SIT_NET_AVN_LIST_OFFSET = 16,
+    SIT_NET_AVN_ENTRY_STRIDE = 14,
+    SIT_NET_AVN_ENTRY_RAT = 0,
+    SIT_NET_AVN_ENTRY_PLMN = 4,
+    SIT_NET_AVN_ENTRY_STATUS = 10,
+    /* SET_NETWORK_SELECTION_MANUAL (0x0705), recovered from libsitril.so
+     * ProtocolNetworkBuilder::BuildSetNetworkSelectionManual(int,char const*):
+     * total frame len 22; payload[0]=RAT int32 (0=any), payload[4..9]=PLMN
+     * numeric ASCII (5 or 6 chars, trailing byte preset to '#'). */
+    SIT_NET_SEL_MANUAL_LEN = 22,
+    SIT_NET_SEL_MANUAL_RAT_OFFSET = 12,
+    SIT_NET_SEL_MANUAL_PLMN_OFFSET = 16,
+    SIT_NET_SEL_MANUAL_PLMN_MAX = 6,
     SIT_NET_REG_STATE_OFFSET = 12,
     SIT_NET_REJECT_OFFSET = 13,
     SIT_NET_DATA_TECH_OFFSET = 15,

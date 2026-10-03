@@ -6,6 +6,26 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 TERMINAL BOUNDARY: modem refuses operator reselection — scan + manual-select both GENERIC_FAILURE (VERDICT 14).**
+Recovered GET_AVAILABLE_NETWORKS (SIT 0x0706: header-only req len 12 via
+`BuildQueryAvailableNetwork()`; response count=int32@payload[12], 14-byte per-PLMN entries
+@payload[16] = RAT[0..3]/PLMN-ASCII[4..9]/status[10..13], scan-RAT remap @.rodata 0xd8ac8)
+and SET_NETWORK_SELECTION_MANUAL (SIT 0x0705: len 22, RAT int32@payload+0 [0=any],
+PLMN-ASCII@payload+4, '#' filler) from `libsitril.so` (efcca0d5)
+`ProtocolNetAvailableNetworkAdapter` + `BuildSetNetworkSelectionManual`. Added a
+read-only scan GET + parser and a file-gated manual-select (/data/saaios/etc/do_scan,
+/data/saaios/etc/manual_plmn; guarded, self-tested 184-194, -Werror; owner 5834fd01). Boot A
+(scan): modem camped at 57 s (voice REG_DENIED(3), UMTS, 25501) — i.e. RF ready — yet the
+65 s scan returned `error_raw=2` (protocol 2 → RIL_E_GENERIC_FAILURE, identity map @0xd7bd0),
+no async result; the "scan failed only because RF wasn't ready" premise is FALSIFIED. Boot B
+(manual-select to home lifecell 25506): `error_raw=2` again, while same-path
+preferred/initial_attach_apn/allow_data all ACKed error_raw=0; serving PLMN unchanged
+(25501 Vodafone UA, voice REG_DENIED(3), data NOT_SEARCHING(0), UMTS). The host command path
+is correct; the modem specifically declines operator control, so the home PLMN (lifecell
+255-06) could be neither confirmed reachable nor selected. Terminal modem/environmental
+boundary; no bearer. Device known-good: CP ONLINE, config cleared (default LTE+WCDMA,
+automatic selection), proven backup 90f403df intact; recovered-only bytes, no NV/EFS write.
+
 **2026-10-03 TERMINAL BOUNDARY: foreign 3G PLMN + no LTE acquisition (VERDICT 13).**
 Recovered 0x0702 GET_OPERATOR (header-only req len 12; response PLMN numeric MCC/MNC = 6
 ASCII at payload[12..17], '#'=2-digit MNC; short name [18], long name [50]) from
