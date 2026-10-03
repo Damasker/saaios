@@ -1,5 +1,70 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**VERDICT 12 — TRUE reject-cause decoded: it is genuinely 0, and the modem is camped on UMTS/3G only. We recovered the exact stock 0x0700/0x0701 response layout from `libsitril.so` (efcca0d5) `ProtocolNet{Voice,Data}RegStateAdapter` fixed-offset accessors, extended the owner to decode every field read-only, and captured one boot. The directive's premise — that we read `reject` at the wrong offset — is FALSIFIED: the stock adapter reads reject_cause at offset 13 (byte), exactly where our owner already read it. The reject cause is genuinely 0. The new decode shows the modem DOES see and camp on a real cell, but only on UMTS (3G): RAT=UMTS(3), LAC=36291, CID=85793345 (0x051D1A41 → RNC 1309 / cell 6721), PSC=187 (a WCDMA scrambling code) — identical in both the voice and data frames. CS voice = REG_DENIED(3) on that 3G cell with NO cause; PS data = NOT_SEARCHING(0) on the same cell. This is a RAT/coverage situation, not a cause-coded auth reject. Device known-good: CP ONLINE, owner `69d3d1c2`; read-only, no NV/EFS write, nothing invented (2026-10-03):**
+
+### 1. Decoded 0x0700 (voice/CS) / 0x0701 (data/PS) response layout (field → offset)
+Recovered from the stock fixed-offset accessors. Offsets are frame-relative (same
+base as the 12-byte SIT header; `[2..3]`=opcode). Voice and data share
+reg_state/reject; data inserts `MaxSDC` at [14], shifting the rest by one byte.
+
+| field | voice 0x0700 | data 0x0701 | width |
+|---|---|---|---|
+| reg_state | 12 | 12 | u8 |
+| **reject_cause** | **13** | **13** | **u8** |
+| MaxSDC | — | 14 | u8 |
+| radio_tech (raw; mapped via .rodata@0xd8afc, idx=raw-1) | 14 | 15 | u8 |
+| LAC | 15 | 16 | u16 |
+| cell_id | 19 | 20 | u32 |
+| PSC | 23 | 24 | u8 |
+| ECI (data) / StationLong (voice) | 52 | 33 | u32 |
+| data: CSGID/TADV/ImsVops/EmcService | — | 37/41/45/46 | u32/u32/u8/u8 |
+| voice: ConCurrent/SystemId/NetworkId/RoamingInd | 56/57/59/61 | — | u8/u16/u16/u8 |
+
+RAT map (idx = raw-1): 1→GPRS 2→EDGE **3→UMTS** … 14→LTE 16→GSM 17→TD-SCDMA 20→NR.
+Serving PLMN (MCC/MNC) is **not** in the reg-state frame — it is carried by the
+operator response (0x0702), which the owner does not currently query.
+
+### 2. Live one-boot decode (owner 69d3d1c2)
+Full stock sequence ACKed (all error_raw=0): get_radio(raw 10 on), get_selection
+(mode 0 auto), get_preferred(raw 16), set_preferred_lte_wcdma, set_initial_attach_apn,
+allow_data. Registration readback (12 cycles, stable):
+```
+field=data  registration_raw=0 reject_raw=0 tech_raw=3 rat_mapped=3 lac=36291 cid=85793345 psc=187 frame_len=86
+field=voice registration_raw=3 reject_raw=0 tech_raw=3 rat_mapped=3 lac=36291 cid=85793345 psc=187 frame_len=88
+```
+Signal present (mask_low7=2). So: CS = DENIED(3), PS = NOT_SEARCHING(0), **reject = 0
+(confirmed at the correct offset)**, camped on a single UMTS(3) cell.
+
+### 3. Decisive classification
+- **Not a misread.** reject_cause lives at offset 13; it is genuinely 0. The CP is
+  not returning any EMM/GMM cause (#3/#6/#7/#11/#13/#15 etc.).
+- **Not a "no suitable cells" / empty-scan case either.** The modem reports a real
+  serving cell (nonzero LAC/CID/PSC) on UMTS.
+- **The real signal: the modem can only find/use UMTS (3G), and CS is actively
+  denied there with no cause, while PS declines to search** — despite us setting
+  automatic selection and LTE+WCDMA preferred RAT (the modem still reports UMTS).
+  This is a RAT/coverage situation: either no permitted LTE cell is reachable for
+  this SIM in this RF environment, or the RAM-handover boot leaves the CP's LTE
+  RF/band state (which lives in NV we will not touch) unable to acquire LTE, so it
+  falls back to a 3G cell it is not authorized on.
+
+### 4. Honest boundary assessment + precise next step
+Host-side SIT replay has now driven the CP through the entire accepted stock
+bring-up and we can read the true network verdict: **camped on UMTS, CS-denied
+without cause, PS idle.** This is at or very near the lawful-interoperability
+boundary — the remaining variable is RAT/RF acquisition, and the LTE RF/band state
+the CP needs lives in NV/RF-cal which we must not modify. Two constraint-safe reads
+would make the verdict airtight (each is one read-only GET / one boot, no NV, no
+forging): (a) **query the serving operator 0x0702** (read-only) to confirm whether
+the camped PLMN is this SIM's home PLMN (home-denied ⇒ terminal auth boundary) or a
+foreign 3G PLMN (⇒ the SIM's real service is LTE we are not acquiring); (b) **set
+preferred RAT = LTE-only** (same 0x070a builder, recovered value) for one boot to
+test whether any LTE cell is reachable at all. If LTE is reachable and attaches →
+chase the bearer; if not, this is the terminal boundary for constraint-safe
+host-side bring-up.
+
+---
+
 **VERDICT 11 — SET_INITIAL_ATTACH_APN recovered + replayed (accepted) but NOT the gate; the full stock host attach sequence is now replayed and every SIT SET is accepted, yet the modem still does not register. We recovered the stock rild→libsitril attach chain from the factory `libsitril.so` (efcca0d5), implemented the one missing command (`SIT_SET_INITIAL_ATTACH_APN` = opcode `0x0603`, 250-byte body) in the owner, self-tested it byte-exact, and live-tested one boot. The modem ACKed it with `error_raw=0`, but PS data stayed `registration_raw=0` (NOT_SEARCHING, tech_raw=3/UMTS) and CS voice stayed `registration_raw=3` (REG_DENIED), `reject_raw=0` — identical to before. So the attach-APN precondition is accepted but is not the blocker. Device left known-good: CP ONLINE, self-tested owner (`bb9398f2`); READ-ONLY throughout, no NV/EFS write, nothing invented (2026-10-03):**
 
 ### 1. Recovered stock attach sequence (opcode + body + order)

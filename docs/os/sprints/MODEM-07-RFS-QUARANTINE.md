@@ -6,6 +6,25 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 TRUE reject-cause decoded = genuinely 0; modem camped on UMTS/3G only.**
+Recovered the exact 0x0700/0x0701 response layout from `libsitril.so` (efcca0d5)
+`ProtocolNet{Voice,Data}RegStateAdapter` fixed-offset accessors and extended the owner
+to decode every field read-only. Stock reads reject_cause at **offset 13** — exactly
+where our owner already read it, so the "wrong offset" premise is FALSIFIED; reject is
+genuinely 0. Field→offset (frame-relative): reg_state[12], reject[13], voice tech[14]/
+lac[15]/cid[19]/psc[23]; data MaxSDC[14]/tech[15]/lac[16]/cid[20]/psc[24]. RAT map
+(.rodata@0xd8afc, idx=raw-1): 3→UMTS, 14→LTE, 16→GSM, 20→NR. One boot (owner 69d3d1c2,
+full sequence ACKed): data `registration_raw=0 reject_raw=0 tech_raw=3 rat_mapped=3
+lac=36291 cid=85793345 psc=187`; voice `registration_raw=3 reject_raw=0 tech_raw=3
+rat_mapped=3 lac=36291 cid=85793345 psc=187`. So the modem SEES a real cell but only on
+UMTS(3) (PSC=187 is a WCDMA scrambling code): CS=DENIED(3) with no cause, PS=NOT_SEARCHING.
+Not a cause-coded auth reject and not an empty scan — it is a RAT/coverage situation
+(stuck on 3G despite LTE+WCDMA preferred; LTE RF/band lives in NV we won't touch).
+Serving PLMN (MCC/MNC) is not in the reg-state frame (it is 0x0702). Device known-good
+(CP ONLINE). Next (read-only, one boot each): query operator 0x0702 for the serving PLMN
+(home vs foreign) and/or try LTE-only preferred RAT. See
+[MODEM-BLOCKER](../targets/panther/MODEM-BLOCKER.md) VERDICT 12.
+
 **2026-10-03 SET_INITIAL_ATTACH_APN recovered + replayed (accepted) but NOT the gate.**
 Recovered the stock rild→libsitril attach chain from the factory `libsitril.so` (efcca0d5):
 all builders go through `ProtocolBuilder::InitRequestHeader(hdr, opcode, len)`. Wire IDs:

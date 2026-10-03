@@ -1,5 +1,17 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 TRUE reject-cause decoded = 0; modem camped on UMTS/3G only (VERDICT 12):**
+recovered the exact 0x0700/0x0701 reg-state layout from `libsitril.so` (efcca0d5)
+`ProtocolNet{Voice,Data}RegStateAdapter` and extended the owner's parser (read-only,
+self-tested, -Werror) to decode RAT/LAC/cell/PSC plus the true reject. Stock reads
+reject_cause at offset 13 — where our owner already read it — so reject=0 is genuine, not
+a misread. One boot: data `reg=0 reject=0 tech=3(UMTS) lac=36291 cid=85793345 psc=187`,
+voice `reg=3(DENIED) reject=0` same cell. The modem sees a real cell but only on UMTS(3);
+CS denied with no cause, PS not searching, despite LTE+WCDMA preferred. RAT/coverage
+situation (LTE RF/band is NV we won't touch), not a cause-coded reject. Serving PLMN is in
+0x0702 (not queried). Owner `69d3d1c2`, CP ONLINE. Next (read-only): operator 0x0702 for
+serving PLMN + LTE-only RAT trial. Full writeup in [MODEM-BLOCKER](MODEM-BLOCKER.md) V12.
+
 **2026-10-03 SET_INITIAL_ATTACH_APN recovered + replayed (accepted) but NOT the gate:**
 recovered the stock attach chain from `libsitril.so` (efcca0d5) — the one missing command
 was `SIT_SET_INITIAL_ATTACH_APN` (opcode `0x0603`, 250-byte body; `[218]`=pdpType

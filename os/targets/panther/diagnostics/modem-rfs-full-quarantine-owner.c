@@ -316,6 +316,51 @@ static uint32_t little32(const uint8_t *p)
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+/* CP access-tech -> RIL RADIO_TECH_* map, recovered byte-for-byte from the
+ * libsitril.so (efcca0d5) .rodata table at 0xd8afc that Get{Voice,Data}
+ * RegStateAdapter::GetRadioTech() indexes with (raw_tech - 1) after bounding
+ * (raw-1) <= 0x14. Returns 0 (unknown) for out-of-range raw, matching the
+ * stock fall-through. RIL RAT: 3=UMTS 14=LTE 16=GSM 20=NR. */
+static unsigned sit_net_rat_map(unsigned raw)
+{
+    static const uint8_t table[21] = {
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 17, 15, 14,
+        20
+    };
+    unsigned idx = raw - 1u;
+    return (raw >= 1u && idx < sizeof table) ? table[idx] : 0u;
+}
+
+/* Decode a voice (0x0700) / data (0x0701) registration-state response using the
+ * stock fixed-offset layout. Read-only; logs only RAT/LAC/cell/PSC topology,
+ * never a subscriber identifier. Each field is length-guarded so a short frame
+ * degrades gracefully. The TRUE reject cause is reject_raw (offset 13), as the
+ * stock adapter GetRejectCause() reads it -- confirmed, not a misread. */
+static void sit_net_log_regstate(const char *prefix, const char *name,
+                                 const uint8_t *p, size_t n, unsigned id)
+{
+    unsigned tech_off = id == SIT_NET_DATA_REG ? SIT_NET_DATA_TECH_OFFSET
+                                               : SIT_NET_VOICE_TECH_OFFSET;
+    unsigned lac_off = id == SIT_NET_DATA_REG ? SIT_NET_DATA_LAC_OFFSET
+                                              : SIT_NET_VOICE_LAC_OFFSET;
+    unsigned cid_off = id == SIT_NET_DATA_REG ? SIT_NET_DATA_CID_OFFSET
+                                              : SIT_NET_VOICE_CID_OFFSET;
+    unsigned psc_off = id == SIT_NET_DATA_REG ? SIT_NET_DATA_PSC_OFFSET
+                                              : SIT_NET_VOICE_PSC_OFFSET;
+    printf("%s field=%s registration_raw=%u reject_raw=%u", prefix, name,
+           p[SIT_NET_REG_STATE_OFFSET], p[SIT_NET_REJECT_OFFSET]);
+    if (n > tech_off)
+        printf(" tech_raw=%u rat_mapped=%u", p[tech_off],
+               sit_net_rat_map(p[tech_off]));
+    if (n >= (size_t)lac_off + 2u)
+        printf(" lac=%u", little16(p + lac_off));
+    if (n >= (size_t)cid_off + 4u)
+        printf(" cid=%lu", (unsigned long)little32(p + cid_off));
+    if (n > psc_off)
+        printf(" psc=%u", p[psc_off]);
+    printf(" frame_len=%zu\n", n);
+}
+
 static int same_bytes(const uint8_t *a, const uint8_t *b, size_t n)
 {
     uint8_t difference = 0;
@@ -1887,11 +1932,8 @@ static void sit_on_frame(struct sit_observer *s, const uint8_t *p, size_t len,
     } else if (len < (id == SIT_NET_DATA_REG ? 16u : 14u)) {
         puts(" status=unknown_short");
     } else {
-        printf(" registration_raw=%u reject_raw=%u",
-               p[SIT_NET_REG_STATE_OFFSET], p[SIT_NET_REJECT_OFFSET]);
-        if (id == SIT_NET_DATA_REG)
-            printf(" tech_raw=%u", p[SIT_NET_DATA_TECH_OFFSET]);
         putchar('\n');
+        sit_net_log_regstate("sit_snapshot", name, p, len, id);
     }
     s->pending = 0;
     s->next++;
@@ -2380,12 +2422,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     } else if (n < (id == SIT_NET_DATA_REG ? 16u : 14u)) {
         printf("camp_probe field=%s status=unknown_short\n", c->probe_name);
     } else if (id == SIT_NET_VOICE_REG || id == SIT_NET_DATA_REG) {
-        printf("camp_probe field=%s registration_raw=%u reject_raw=%u",
-               c->probe_name, p[SIT_NET_REG_STATE_OFFSET],
-               p[SIT_NET_REJECT_OFFSET]);
-        if (id == SIT_NET_DATA_REG)
-            printf(" tech_raw=%u", p[SIT_NET_DATA_TECH_OFFSET]);
-        putchar('\n');
+        sit_net_log_regstate("camp_probe", c->probe_name, p, n, id);
     } else if (id == REG_RADIO_GET) {
         if (n >= 16) {
             c->radio_on = little32(p + 12) == RADIO_STATE_ON;
@@ -4198,6 +4235,20 @@ static int test_camp_reg(void)
     if (memcmp(ia + REG_IA_APN_OFF, "internet", 9)) return 168; /* incl NUL */
     if (ia[REG_IA_AUTH_OFF] || ia[REG_IA_PDPTYPE_OFF] != REG_IA_PDPTYPE_IP ||
         ia[REG_IA_PCSCF_OFF] || ia[117] || ia[167]) return 169;
+    /* Reg-state decode: RAT map recovered from libsitril .rodata @0xd8afc,
+     * and the fixed field offsets for voice (0x0700) / data (0x0701). */
+    if (sit_net_rat_map(3) != 3 || sit_net_rat_map(14) != 14 ||
+        sit_net_rat_map(16) != 16 || sit_net_rat_map(1) != 1 ||
+        sit_net_rat_map(21) != 20) return 173;
+    if (sit_net_rat_map(0) != 0 || sit_net_rat_map(22) != 0) return 174;
+    if (SIT_NET_REG_STATE_OFFSET != 12 || SIT_NET_REJECT_OFFSET != 13)
+        return 175;
+    if (SIT_NET_VOICE_TECH_OFFSET != 14 || SIT_NET_VOICE_LAC_OFFSET != 15 ||
+        SIT_NET_VOICE_CID_OFFSET != 19 || SIT_NET_VOICE_PSC_OFFSET != 23)
+        return 176;
+    if (SIT_NET_DATA_TECH_OFFSET != 15 || SIT_NET_DATA_LAC_OFFSET != 16 ||
+        SIT_NET_DATA_CID_OFFSET != 20 || SIT_NET_DATA_PSC_OFFSET != 24)
+        return 177;
     return 0;
 }
 #endif
