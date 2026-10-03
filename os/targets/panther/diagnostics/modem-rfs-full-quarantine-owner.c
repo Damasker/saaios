@@ -217,6 +217,14 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
                                  (1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) |
                                  (1 << 16),
        RATBM_WIRE_LTE_WCDMA_GSM = 0x3fe,
+       /* VERDICT 21: GET_BASEBAND_VERSION (ProtocolMiscBuilder::
+        * GetBaseBandVersion(unsigned char) @0x22b020) -> opcode 0x0901, len 13,
+        * a type byte at payload[12] (0). The reply (opcode 0x0901) carries the
+        * SW version C-string at frame offset 13 (HW ver @45, RF-cal date @77 are
+        * NOT logged). The build string is a firmware id, not a secret. This is a
+        * read-only diagnostic used to confirm the running CP build. */
+       BBVER_GET = 0x0901, BBVER_LEN = 13,
+       BBVER_SWVER_OFF = 13, BBVER_SWVER_MAX = 32,
        /* VERDICT 16: SIM PIN1 unlock + one activation voice call. All wire
         * IDs/body offsets recovered from the factory libsitril.so (efcca0d5);
         * nothing invented. ProtocolSimBuilderLegacy::BuildSimVerifyPin(0,...)
@@ -356,6 +364,9 @@ struct camp_driver {
     int ratbm_enabled;
     int ratbm_get1_sent, ratbm_band_sent, ratbm_set_sent, ratbm_get2_sent;
     int ratbm_done;
+    /* VERDICT 21: read-only baseband/SW-version query (config
+     * /data/saaios/etc/bbver). Fires once after reg_complete. */
+    int bbver_enabled, bbver_sent, bbver_done;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -2872,6 +2883,39 @@ static int camp_scan16_reply(struct camp_driver *c, const uint8_t *p, size_t n,
     return 1;
 }
 
+/* VERDICT 21: read the running CP baseband/SW version once (read-only). */
+static unsigned camp_bbver_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || !c->bbver_enabled || c->bbver_done) return 0;
+    if (c->probe_pending) return 0;
+    if (!c->bbver_sent) return BBVER_GET;
+    return 0;
+}
+
+/* Consume the GET_BASEBAND_VERSION reply (opcode 0x0901). Logs the SW version
+ * build string only (a firmware id, not a secret). Returns 1 if handled. */
+static int camp_bbver_reply(struct camp_driver *c, const uint8_t *p, size_t n,
+                            unsigned id, unsigned error)
+{
+    if (id != BBVER_GET || !c->bbver_enabled || !c->bbver_sent) return 0;
+    c->bbver_done = 1;
+    if (!error && n > (size_t)BBVER_SWVER_OFF) {
+        char v[BBVER_SWVER_MAX + 1];
+        size_t i = 0;
+        for (; i < (size_t)BBVER_SWVER_MAX &&
+               (size_t)BBVER_SWVER_OFF + i < n; i++) {
+            uint8_t ch = p[BBVER_SWVER_OFF + i];
+            if (ch == 0) break;
+            v[i] = (ch >= 0x20 && ch < 0x7f) ? (char)ch : '.';
+        }
+        v[i] = 0;
+        printf("camp_bbver sw_version=%s error_raw=%u\n", v, error);
+    } else {
+        printf("camp_bbver response=yes error_raw=%u len=%zu\n", error, n);
+    }
+    return 1;
+}
+
 /* VERDICT 20: modern RAT-gate experiment. Runs only when armed by
  * /data/saaios/etc/ratbm and after reg_complete. Sequence (each once):
  * GET 0x750 (diagnostic read of current allowed-RAT bitmap) -> band-mode GET
@@ -2942,6 +2986,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     unsigned error = little16(p + 10);
     if (camp_dereg_reply(c, id, error)) return;
     if (camp_scan16_reply(c, p, n, id, error)) return;
+    if (camp_bbver_reply(c, p, n, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
     if (error) {
@@ -3362,6 +3407,25 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    /* VERDICT 21: read the running CP baseband/SW version (read-only). */
+    unsigned bbv = camp_bbver_next(c);
+    if (bbv) {
+        ++c->probe_token;
+        uint8_t f[BBVER_LEN];
+        make_opx_byte_request(f, BBVER_GET, BBVER_LEN, c->probe_token, 0);
+        c->bbver_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = BBVER_GET;
+        c->probe_name = "get_baseband_version";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_bbver=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     /* VERDICT 20: modern RAT-gate experiment -- diagnostic reads, one SET,
      * then a confirming read-back. Each step fires once. */
     unsigned rbm = camp_ratbm_next(c);
@@ -3647,6 +3711,16 @@ static int read_ratbm(void)
     return 1;
 }
 
+/* VERDICT 21: the read-only baseband-version query runs only when
+ * /data/saaios/etc/bbver exists. Returns 1 if armed. */
+static int read_bbver(void)
+{
+    int fd = open("/data/saaios/etc/bbver", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
 /* Load a manual network-selection target (numeric MCC/MNC, e.g. "25506") from
  * /data/saaios/etc/manual_plmn. Returns 1 and fills out[] (5 or 6 digits) when a
  * plausible PLMN is present; 0 otherwise. A PLMN is network topology, not a
@@ -3835,6 +3909,8 @@ static int run_owner(int ipc, int rfs, int ready)
     printf("camp_scan16=%s\n", o.camp.scan16_enabled ? "armed" : "off");
     o.camp.ratbm_enabled = read_ratbm();
     printf("camp_ratbm=%s\n", o.camp.ratbm_enabled ? "armed" : "off");
+    o.camp.bbver_enabled = read_bbver();
+    printf("camp_bbver=%s\n", o.camp.bbver_enabled ? "armed" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else
@@ -5515,6 +5591,27 @@ static int test_camp_reg(void)
         if (!camp_ratbm_reply(&rr, gr, sizeof gr, RATBM_GET, 0) ||
             !rr.ratbm_done) return 249;
         if (camp_ratbm_next(&rr) != 0) return 249;          /* done */
+    }
+    /* VERDICT 21: baseband-version GET frame + dispatch sequencing. */
+    {
+        uint8_t bf[BBVER_LEN];
+        make_opx_byte_request(bf, BBVER_GET, BBVER_LEN, 0x12345678u, 0);
+        if (bf[0] || bf[2] != 0x01 || bf[3] != 0x09 || bf[4] != BBVER_LEN ||
+            bf[5]) return 250;
+        if (little32(bf + 6) != 0x12345678u || bf[12] != 0) return 251;
+
+        struct camp_driver bb;
+        memset(&bb, 0, sizeof bb);
+        if (camp_bbver_next(&bb) != 0) return 252;          /* not armed */
+        bb.reg_complete = 1; bb.bbver_enabled = 1;
+        if (camp_bbver_next(&bb) != BBVER_GET) return 252;
+        bb.bbver_sent = 1;
+        uint8_t br[BBVER_SWVER_OFF + 8];
+        memset(br, 0, sizeof br);
+        memcpy(br + BBVER_SWVER_OFF, "g5300q", 6);
+        if (!camp_bbver_reply(&bb, br, sizeof br, BBVER_GET, 0) ||
+            !bb.bbver_done) return 253;
+        if (camp_bbver_next(&bb) != 0) return 253;          /* done */
     }
     return 0;
 }

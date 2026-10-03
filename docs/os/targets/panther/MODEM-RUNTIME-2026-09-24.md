@@ -1,5 +1,27 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 VERSION SKEW CONFIRMED BUT INVERTED — running CP (CP2A/2026) NEWER than mined TD1A libsitril (VERDICT 21):**
+hypothesis was the running CP is OLDER than libsitril efcca0d5 so modern operator-control opcodes
+(0x074f/0x0705/0x0706-modern/StartNetworkScan) are unimplemented. Read-only investigation inverts it.
+Our bring-up (owner-handoff-rfs-camp.sh) loads /data/saaios/bin/saaios-probe-b-modem.bin (98,265,168 B,
+sha 449eeab3); embedded Shannon build id = g5300q-260317-260505-B-15346003 (2026, CP2A-era; matches live
+CP2A.260705.006), TOC BOOT/MAIN/NV_NORM/NV_PROT/REPLAY/INFO -- NOT the 2022 TD1A radio image. The only
+libsitril in-repo (efcca0d5) is from factory-td1a-vendor/ => TD1A (td1a.221105.001, 2022); no CP2A vendor
+libsitril present. So the running CP is ~3.5 years NEWER than the mined RIL. SIT cross-check:
+GET_BASEBAND_VERSION recovered byte-exact (ProtocolMiscBuilder::GetBaseBandVersion(u8) @0x22b020 ->
+opcode 0x0901, len 13, type byte @payload[12]; reply SW-ver string @frame+13) and read on-device: CP
+ACCEPTED 0x0901 (error_raw=0) but the SW-version field was EMPTY at the TD1A-expected frame+13 offset ->
+reply-body layout differs from the TD1A libsitril (vintage drift marker). CONCLUSION: the refused
+operator-control family is most consistent with opcode-number/body DRIFT between the TD1A libsitril we
+mine and the running CP2A firmware; legacy opcodes (0x070a/0x0404/0x0710/0x0800) still ACK (stable across
+vintages). Fix direction (constraint-safe, host-side): extract libsitril.so from the CP2A (260705.006)
+vendor image and re-derive 0x074f/0x0705/0x0706/StartNetworkScan from THAT, then retry; repo has only
+CP2A modem/radio CP images, not the CP2A vendor partition, so obtaining that vendor libsitril is the next
+action. Residual possibility: a state/mode gate; but the 0x0901 reply-layout drift is direct evidence of
+divergence. Strictly read-only: recovered bytes only, no writes, no NV/EFS/RF-cal/firmware change, no
+IOCTL_POWER_OFF, no do_cp_crash. Device left known-good: CP ONLINE, config clean (only apn), owner
+69a8397e (self-test RC=0), proven backup 90f403df intact.
+
 **2026-10-03 RAT-GATE HYPOTHESIS FALSIFIED — LTE ALREADY ALLOWED; modern SetAllowedNetworkTypeBitmap refused (VERDICT 20):**
 a sibling static analysis suspected our bring-up gates LTE out by only sending the legacy
 SetPreferredNetworkType (0x070a) and never the Android-13 SetAllowedNetworkTypeBitmap (0x074f). We
