@@ -4,7 +4,8 @@ use chrono::Utc;
 use event_bus::EventBus;
 use protocol::{Envelope, MessageKind, ToolCallResult};
 use saai_observation::{
-    observations_from_system_metrics, MetricsOrigin, ObservationCache, WorldSnapshot,
+    observations_from_system_disk, observations_from_system_metrics, MetricsOrigin,
+    ObservationCache, WorldSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -92,6 +93,33 @@ impl TelemetrySampler {
         })
     }
 
+    /// Best effort: a missing or failing `system.disk` leaves storage
+    /// absent instead of failing the metrics sample.
+    async fn storage_rows(
+        &self,
+        observed_at: chrono::DateTime<Utc>,
+        sequence: u64,
+    ) -> Vec<saai_observation::Observation> {
+        let output = self
+            .tools
+            .execute(
+                "system.disk",
+                json!({}),
+                &ToolContext {
+                    correlation_id: Uuid::new_v4(),
+                    call_id: Uuid::new_v4(),
+                    space_id: None,
+                },
+            )
+            .await;
+        match output {
+            Ok(out) if out.ok => {
+                observations_from_system_disk(&out.value, self.origin, observed_at, sequence)
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub async fn sample_once(&self) -> Result<Envelope> {
         let correlation_id = Uuid::new_v4();
         let call_id = Uuid::new_v4();
@@ -126,12 +154,14 @@ impl TelemetrySampler {
         let sequence = self.samples.fetch_add(1, Ordering::Relaxed) + 1;
         if result.ok {
             if let Some(cache) = &self.cache {
-                let rows = observations_from_system_metrics(
+                let observed_at = Utc::now();
+                let mut rows = observations_from_system_metrics(
                     &result.output,
                     self.origin,
-                    Utc::now(),
+                    observed_at,
                     sequence,
                 );
+                rows.extend(self.storage_rows(observed_at, sequence).await);
                 cache.apply(rows);
             }
         }
@@ -199,5 +229,44 @@ mod tests {
             .iter()
             .all(|row| !row.source.source_id.is_empty()));
         assert_eq!(cache.snapshot(Utc::now()).revision, 1);
+        let keys: Vec<&str> = snap.observations.iter().map(|o| o.key.as_str()).collect();
+        for key in [
+            "system.memory.used_mb",
+            "system.memory.total_mb",
+            "system.storage.used_mb",
+            "system.storage.total_mb",
+        ] {
+            assert!(keys.contains(&key), "missing {key}: {keys:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_disk_tool_keeps_metrics_and_omits_storage() {
+        let dir = tempdir().unwrap();
+        let audit = Arc::new(AuditLog::open(dir.path().join("a.jsonl")).unwrap());
+        let mut full = ToolRegistry::new();
+        install_system_tools(&mut full, ToolsMode::Mock, system_identity(ToolsMode::Mock));
+        let mut reg = ToolRegistry::new();
+        reg.register(full.get("system.metrics").expect("metrics tool"));
+        let cache = Arc::new(ObservationCache::new());
+        let sampler = Arc::new(
+            TelemetrySampler::new(
+                Arc::new(reg),
+                EventBus::new(16),
+                audit,
+                Duration::from_secs(60),
+            )
+            .with_cache(cache.clone(), MetricsOrigin::Mock),
+        );
+        sampler.sample_once().await.unwrap();
+        let snap = cache.snapshot(Utc::now());
+        assert!(snap
+            .observations
+            .iter()
+            .any(|o| o.key == "system.cpu.usage"));
+        assert!(!snap
+            .observations
+            .iter()
+            .any(|o| o.key.starts_with("system.storage")));
     }
 }

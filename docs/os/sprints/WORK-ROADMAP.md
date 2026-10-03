@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-06 host FailureClass (ADR-288); WORK-07 host ReplanRequest (ADR-289); WORK-08 visibility on panther shell `63b8b64`.**
+Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-05 host admission order (ADR-428); WORK-06 host FailureClass (ADR-288); WORK-07 host ReplanRequest (ADR-289); WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -27,7 +27,7 @@ Planner the scheduler.
 | WORK-02 | Derived ready set + concurrency = 1 | **Done** (host + panther dispatch ADR-237) | **yes** |
 | WORK-03 | Verification lifecycle (`Verifying`) | **Done** (host, ADR-259) | no |
 | WORK-04 | Read-only bounded parallelism | Backlog | measure first |
-| WORK-05 | Priority scheduling | Backlog | no |
+| WORK-05 | Priority scheduling | **Done** (host, ADR-428) | no |
 | WORK-06 | Retry + failure taxonomy | **Done** (host, ADR-288) | no |
 | WORK-07 | Bounded ReplanRequest | **Done** (host, ADR-289) | no |
 | WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther) | **yes** |
@@ -101,6 +101,22 @@ Done from `finish_task`.
 **Threat:** none — no new network, no shell flash. Chrome that names
 `verifying` is ADR-295 (panther `4dc19018…`). Result screen is ADR-301.
 Orb Complete is ADR-302. Orb Failed is ADR-303.
+
+## WORK-05
+
+**Goal:** the first admitted Task is deterministic, and the screen names
+the same one.
+
+**Change:** `derive_ready_set` orders by `priority`, then oldest, then id
+(was: random UUID order). Optional `priority` property, unknown = normal.
+Shell «Далее» uses the same rank and the plan-confirmation rule.
+
+**Test:** host `cargo test -p saai-taskd`; `cargo test -p saai-shell`.
+
+**Rollback:** restore `ready.sort()` and store-order `next_ready_task`.
+
+**Threat:** none — no new queue, no executor; priority cannot bypass the
+cap, dependencies, or confirmation. Nothing sets `priority` yet.
 
 ## WORK-06
 

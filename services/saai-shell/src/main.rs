@@ -84,6 +84,8 @@ mod entityd_client;
 mod haptic;
 mod hardware_keyboard;
 mod intent_context;
+mod orb_space;
+use saai_orb::{Direction, NavInput, WheelAxis};
 mod osk_layer;
 mod portal_server;
 mod power_button;
@@ -492,7 +494,7 @@ use saai_ui_core::{
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
     globals::registry_queue_init,
-    protocol::{wl_buffer, wl_output, wl_seat, wl_shm, wl_surface, wl_touch},
+    protocol::{wl_buffer, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
     Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -508,12 +510,17 @@ use wayland_protocols_misc::zwp_input_method_v2::client::{
 use dmabuf_canvas::{Busy, DmabufCanvas};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_seat,
-    delegate_session_lock, delegate_shm, delegate_touch, delegate_xdg_shell, delegate_xdg_window,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_session_lock, delegate_shm, delegate_touch, delegate_xdg_shell,
+    delegate_xdg_window,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
-    seat::{touch::TouchHandler, Capability, SeatHandler, SeatState},
+    seat::{
+        pointer::{PointerEvent, PointerEventKind, PointerHandler, BTN_LEFT},
+        touch::TouchHandler,
+        Capability, SeatHandler, SeatState,
+    },
     session_lock::{
         SessionLock, SessionLockHandler, SessionLockState, SessionLockSurface,
         SessionLockSurfaceConfigure,
@@ -700,8 +707,8 @@ fn calibration_requested(environment: Option<&str>, runtime_marker_exists: bool)
 /// setting).
 const UI_GALLERY_MARKER: &str = "/run/saaios/ui-gallery";
 
-fn next_gallery_page(show_composites: bool) -> bool {
-    !show_composites
+fn next_gallery_page(page: u8) -> u8 {
+    (page + 1) % 3
 }
 
 /// Development-only escape hatch: skips both the boot-time session lock
@@ -1738,6 +1745,8 @@ fn key_fingerprint(public_key: &str) -> String {
 const INTENT_SCREEN_ID: &str = "intent-input";
 const INTENT_HEADER_ID: &str = "intent-header";
 const INTENT_FIELD_ID: &str = "intent-field";
+const ORB_SEARCH_FIELD_ID: &str = "orb-search";
+const ORB_HIT_ACTION_PREFIX: &str = "orb-hit:";
 const INTENT_ROWS_ID: &str = "intent-rows";
 const INTENT_CANCEL_ACTION: &str = "intent:cancel";
 const INTENT_MODE_TOGGLE_ACTION: &str = "intent:mode:toggle";
@@ -1853,6 +1862,25 @@ fn mode_toggle_label(mode: KeyboardMode) -> String {
         KeyboardMode::Letters => "123".to_string(),
         KeyboardMode::Symbols => "ABC".to_string(),
     }
+}
+
+/// The Intent keyboard, relabelled for what its send key does here.
+fn orb_search_keys(width: u32, height: u32, state: &orb_space::SearchState) -> Vec<(Rect, String)> {
+    if !state.keyboard.shows_panel() {
+        return Vec::new();
+    }
+    intent_keyboard_keys(width, height, state.keyboard.mode)
+        .1
+        .into_iter()
+        .map(|(rect, label)| {
+            let label = if label == "Отправить" {
+                "Найти".to_string()
+            } else {
+                label
+            };
+            (rect, label)
+        })
+        .collect()
 }
 
 struct IntentControlDef {
@@ -2384,6 +2412,23 @@ enum Frame {
     },
 }
 
+impl Frame {
+    /// The navigation strip of a page frame, which is all that stays
+    /// visible when the sphere covers the rest.
+    fn tabs(&self) -> Option<&[(Rect, NavigationItem)]> {
+        match self {
+            Frame::Root { tabs, .. }
+            | Frame::AppsGrid { tabs, .. }
+            | Frame::Inbox { tabs, .. }
+            | Frame::Spaces { tabs, .. }
+            | Frame::Search { tabs, .. }
+            | Frame::Me { tabs, .. }
+            | Frame::Now { tabs, .. } => Some(tabs),
+            _ => None,
+        }
+    }
+}
+
 fn task_confirm_view(width: u32, height: u32) -> LayoutNode {
     let buttons = Node::linear(
         TASK_CONFIRM_BUTTONS_ID,
@@ -2836,167 +2881,21 @@ fn object_view_fact_status(entity: &Entity) -> String {
     }
 }
 
-const ORB_DOT_ID: &str = "orb-dot";
-const ORB_TOGGLE_ACTION: &str = "orb:toggle";
-const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
-const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
-const ORB_MENU_BLUETOOTH_ACTION: &str = "orb-menu:bluetooth";
-fn orb_dot_size(width: u32, height: u32) -> u32 {
-    saai_ui_compiler::v2_orb_dot_size(width, height)
-}
-
-/// HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb must
-/// never occupy hit-test space the tab-bar/cards already use. Every
-/// `Frame::Root` page's cards start at `y=430` (2400-scale --
-/// `stacked_row_rect`/`now_grid_rect` both hardcode that same
-/// constant) and the tab bar sits at the very bottom of the screen;
-/// this zone's bottom edge is pinned to `y=410`, twenty px of margin
-/// short of where a card could ever start, in EVERY state including
-/// an open menu, regardless of how many rows it holds -- HIA-05 adds
-/// a variable action count (1-3 today) but keeps the exact same fixed
-/// zone bounds, just splitting the available fill-space among however
-/// many rows there are. The menu grows upward into the header box's
-/// own dead space (`draw_root`'s `SURFACE`-filled rect at
-/// `y=150..340`, which has never had a hit-test target of its own),
-/// never downward into card territory.
-fn orb_zone_rect(width: u32, height: u32, menu_action_count: usize) -> Rect {
-    saai_ui_compiler::v2_orb_zone_rect(width, height, menu_action_count)
-}
-
-/// HIA-05: which real thing a tapped Orb row does -- `Toggle` is
-/// always the dot itself (open/close), never a labeled row. The other
-/// three are `orb_menu_actions`' own vocabulary; adding a
-/// fourth someday only needs a new variant plus its `wire()`/`parse()`/
-/// `label()` arms, `orb_view`/`orb_action_at` already handle any
-/// length list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OrbAction {
-    Toggle,
-    OpenInbox,
-    OpenIntent,
-    OpenBluetooth,
-}
-
-impl OrbAction {
-    fn wire(self) -> &'static str {
-        match self {
-            OrbAction::Toggle => ORB_TOGGLE_ACTION,
-            OrbAction::OpenInbox => ORB_MENU_INBOX_ACTION,
-            OrbAction::OpenIntent => ORB_MENU_INTENT_ACTION,
-            OrbAction::OpenBluetooth => ORB_MENU_BLUETOOTH_ACTION,
-        }
-    }
-
-    fn parse(action: &str) -> Option<Self> {
-        match action {
-            ORB_TOGGLE_ACTION => Some(OrbAction::Toggle),
-            ORB_MENU_INBOX_ACTION => Some(OrbAction::OpenInbox),
-            ORB_MENU_INTENT_ACTION => Some(OrbAction::OpenIntent),
-            ORB_MENU_BLUETOOTH_ACTION => Some(OrbAction::OpenBluetooth),
-            _ => None,
-        }
-    }
-
-    /// Never called for `Toggle` -- that one's drawn as the dot
-    /// itself, not a text row (`build_orb_frame` never puts it in
-    /// `menu_rows`).
-    fn label(self) -> &'static str {
-        match self {
-            OrbAction::Toggle => "",
-            OrbAction::OpenInbox => "Входящие",
-            OrbAction::OpenIntent => "Новое намерение",
-            OrbAction::OpenBluetooth => "Bluetooth устройства",
-        }
-    }
-}
-
-/// HIA-05: the two real, already-live signals that vary this list --
-/// which space is active (`is_system_space` -- HIA-02's own
-/// ContextFrame is what decides `selected_space_id` in the first
-/// place) and whether Bluetooth has any paired device at all
-/// (`bluetooth_paired`, from `bluetooth_paired_count() > 0`, S20,
-/// real -- "paired", not necessarily "currently connected"; no live-
-/// connection-state concept exists anywhere in this codebase, an
-/// honest gap noted in `docs/os/ideas.md` rather than papered over
-/// here). `OpenInbox` is the one action every context keeps --
-/// "Входящие" always makes sense regardless of which space or device
-/// state is active. Pure, no `Shell` needed -- the two booleans are
-/// all the real-world state this decision actually depends on, same
-/// split `orb_state` already uses.
-fn orb_menu_actions(is_system_space: bool, bluetooth_paired: bool) -> Vec<OrbAction> {
-    let mut actions = vec![OrbAction::OpenInbox];
-    if !is_system_space {
-        actions.push(OrbAction::OpenIntent);
-    }
-    if bluetooth_paired {
-        actions.push(OrbAction::OpenBluetooth);
-    }
-    actions
-}
-
-/// Closed (`menu_actions` empty): the whole zone IS the dot, one
-/// leaf, nothing to stack. Open: a vertical list within the (now
-/// taller) zone -- one row per `menu_actions` entry, the dot itself
-/// last, doubling as the close control. Host tests still compare
-/// against this tree. Live paint and hits read `layout_v2()` over
-/// `orb_v2_source` (ADR-230).
-fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
-    let zone = orb_zone_rect(width, height, menu_actions.len());
-    if menu_actions.is_empty() {
-        return layout(&Node::leaf(ORB_DOT_ID).with_action(ORB_TOGGLE_ACTION), zone);
-    }
-    let mut children: Vec<Node> = menu_actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| Node::leaf(format!("orb-menu-{index}")).with_action(action.wire()))
-        .collect();
-    children.push(
-        Node::leaf(ORB_DOT_ID)
-            .with_action(ORB_TOGGLE_ACTION)
-            .with_size(Length::Fill, Length::Px(orb_dot_size(width, height))),
-    );
-    layout(&Node::linear("orb-menu", Axis::Vertical, children), zone)
-}
-
-fn orb_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    menu_actions: &[OrbAction],
-) -> Option<OrbAction> {
-    if width == 0 || height == 0 {
-        return None;
-    }
-    live_v2_hit(
-        &orb_v2_source(menu_actions),
-        "ADR-223 orb",
-        pos,
-        width,
-        height,
-    )
-    .and_then(|(_, action)| action.as_deref().and_then(OrbAction::parse))
-}
-
-/// What `draw_orb` needs, computed once per frame in `build_orb_
-/// frame` (a `Shell` method -- needs `&self` for the current space's
-/// color and notification state, which `orb_view`/`orb_state` alone
-/// can't see).
+/// Everything `render::draw_orb_space` needs for one frame, built before
+/// the canvas takes its mutable borrow of `self` (ADR-430).
 struct OrbFrame {
-    dot: Rect,
-    dot_color: render::Pixel,
-    /// HIA-16/VUI-04 (ADR-116): drives `draw_orb`'s non-color signal --
-    /// `OrbHost::mark()`'s real `StatusMark` shape, not just a hollow
-    /// ring for `Attention` alone.
-    mark: StatusMark,
-    /// Context Light attention=ring, from `OrbHost::attention_ring()`.
-    attention_ring: bool,
-    /// Context Light quantity=fill, determinate battery percent.
-    /// `None` if `read_battery` has no reading — not `0`.
-    quantity: Option<u8>,
-    /// Context Light activity=motion, ADR-170: inset on the activity
-    /// clock's visible phase. Still-frame when reduced motion.
-    activity_pulse: bool,
-    menu_rows: Vec<(Rect, &'static str)>,
+    viewport: Rect,
+    rise: f32,
+    disc: (f32, f32, f32),
+    graticule: Vec<Vec<(f32, f32)>>,
+    items: Vec<saai_orb::Item>,
+    selected: Option<String>,
+    point: render::OrbPoint,
+    trail: Vec<(f32, f32)>,
+    chip: Option<(Rect, String)>,
+    search: Option<render::SearchView>,
+    /// Keyboard keys and the strip they sit on, when the on-screen one is up.
+    search_keys: Option<(Rect, Vec<(Rect, String)>)>,
 }
 
 /// ADR-093 follow-up: what actually needs to change for `present_
@@ -4047,6 +3946,7 @@ const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
 /// Action / derived-ready Task — «Планирует»), Complete (Result whose
 /// Task is `done`, not a worker claim), Active (menu open), Idle.
 /// Слушает stays unlit: Pixel voice is hardware-blocked (ADR-092).
+#[cfg(test)]
 fn orb_visual_state(
     appd_connected: bool,
     entityd_connected: bool,
@@ -4082,6 +3982,7 @@ fn orb_visual_state_with(
     }
 }
 
+#[cfg(test)]
 fn orb_attention_from_entities(entities: &[Entity]) -> bool {
     orb_attention(entities, None)
 }
@@ -4884,14 +4785,58 @@ fn live_task_trailing(
     ))
 }
 
-/// WORK-08: «Далее» is a pending Action if one exists, otherwise the
-/// first derived-ready Task. WaitingConfirmation stays on NOW attention.
-fn next_ready_task(entities: &[Entity]) -> Option<&Entity> {
-    entities.iter().find(|entity| {
-        entity.entity_type == "saaios.task"
-            && workflow_status_of(entity) == Some(TASK_STATUS_PENDING)
-            && task_dependencies_ready(entity, entities)
+/// WORK-05 admission rank, mirroring `saai-taskd` `derive_ready_set`:
+/// high priority first, then oldest, then id. Unknown values are normal.
+fn task_admission_rank(
+    entity: &Entity,
+) -> (std::cmp::Reverse<u8>, chrono::DateTime<chrono::Utc>, Uuid) {
+    let priority = match entity.properties.get("priority").and_then(Value::as_str) {
+        Some("high") => 2u8,
+        Some("low") => 0,
+        _ => 1,
+    };
+    (std::cmp::Reverse(priority), entity.created_at, entity.id)
+}
+
+fn task_intent_id(entity: &Entity) -> Option<&str> {
+    entity.properties.get("intent_id").and_then(Value::as_str)
+}
+
+/// A plan does not bulk-allow (scheduler `plan_confirmation_blocks`): while
+/// any step of the same Intent waits for confirmation, sibling plan steps
+/// are not next.
+fn plan_confirmation_blocks_task(entity: &Entity, entities: &[Entity]) -> bool {
+    if entity
+        .properties
+        .get("proposal_id")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return false;
+    }
+    let Some(intent) = task_intent_id(entity) else {
+        return false;
+    };
+    entities.iter().any(|other| {
+        other.entity_type == "saaios.task"
+            && task_intent_id(other) == Some(intent)
+            && workflow_status_of(other) == Some(TASK_STATUS_WAITING_CONFIRMATION)
     })
+}
+
+/// WORK-08: «Далее» is a pending Action if one exists, otherwise the
+/// Task the scheduler would admit first (WORK-02 ready rule, WORK-05
+/// order). WaitingConfirmation stays on NOW attention.
+fn next_ready_task(entities: &[Entity]) -> Option<&Entity> {
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == "saaios.task"
+                && workflow_status_of(entity) == Some(TASK_STATUS_PENDING)
+                && task_dependencies_ready(entity, entities)
+                && !plan_confirmation_blocks_task(entity, entities)
+        })
+        .min_by_key(|entity| task_admission_rank(entity))
 }
 
 fn next_work(entities: &[Entity]) -> Option<&Entity> {
@@ -6183,6 +6128,43 @@ fn format_observation_value(value: &Value, unit: Option<&str>) -> Option<String>
     })
 }
 
+/// Capacity pairs the Система board shows as one readout («3.2 / 8.0 ГБ»).
+/// A pair without both halves is dropped, never shown as half a number.
+const CAPACITY_PAIRS: [CapacityPair; 2] = [
+    CapacityPair {
+        used_key: "system.memory.used_mb",
+        total_key: "system.memory.total_mb",
+        percent_key: Some("system.memory.used_percent"),
+        key: "system.memory.capacity",
+        label: "Память",
+    },
+    CapacityPair {
+        used_key: "system.storage.used_mb",
+        total_key: "system.storage.total_mb",
+        percent_key: None,
+        key: "system.storage.capacity",
+        label: "Хранилище",
+    },
+];
+
+struct CapacityPair {
+    used_key: &'static str,
+    total_key: &'static str,
+    percent_key: Option<&'static str>,
+    key: &'static str,
+    label: &'static str,
+}
+
+fn is_capacity_key(key: &str) -> bool {
+    CAPACITY_PAIRS
+        .iter()
+        .any(|pair| pair.used_key == key || pair.total_key == key)
+}
+
+fn format_gigabytes(megabytes: f64) -> String {
+    format!("{:.1}", megabytes / 1024.0)
+}
+
 fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> {
     let Some(rows) = blob
         .get("status")
@@ -6191,7 +6173,8 @@ fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> 
     else {
         return Vec::new();
     };
-    rows.iter()
+    let sourced: Vec<(&str, &Value, Option<&str>, &str)> = rows
+        .iter()
         .filter_map(|row| {
             let key = row
                 .get("key")
@@ -6202,15 +6185,65 @@ fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> 
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())?;
             let unit = row.get("unit").and_then(Value::as_str);
-            let value = format_observation_value(row.get("value")?, unit)?;
+            Some((key, row.get("value")?, unit, source))
+        })
+        .collect();
+    let number_of = |key: &str| -> Option<(f64, &str)> {
+        sourced
+            .iter()
+            .find(|(k, ..)| *k == key)
+            .and_then(|(_, value, _, source)| {
+                value
+                    .as_f64()
+                    .filter(|n| n.is_finite())
+                    .map(|n| (n, *source))
+            })
+    };
+
+    let mut folded: Vec<LiveObservationFact> = Vec::new();
+    let mut absorbed_percent: Vec<&str> = Vec::new();
+    for pair in &CAPACITY_PAIRS {
+        let (Some((used, source)), Some((total, _))) =
+            (number_of(pair.used_key), number_of(pair.total_key))
+        else {
+            continue;
+        };
+        if total <= 0.0 || used < 0.0 || used > total {
+            continue;
+        }
+        let mut value = format!(
+            "{} / {} ГБ",
+            format_gigabytes(used),
+            format_gigabytes(total)
+        );
+        if let Some(percent_key) = pair.percent_key {
+            if let Some((percent, _)) = number_of(percent_key) {
+                value.push_str(&format!(" ({percent:.0}%)"));
+                absorbed_percent.push(percent_key);
+            }
+        }
+        folded.push(LiveObservationFact {
+            key: pair.key.to_string(),
+            label: pair.label.to_string(),
+            value,
+            source: source.to_string(),
+        });
+    }
+
+    let mut facts: Vec<LiveObservationFact> = sourced
+        .iter()
+        .filter(|(key, ..)| !is_capacity_key(key) && !absorbed_percent.contains(key))
+        .filter_map(|(key, value, unit, source)| {
             Some(LiveObservationFact {
                 label: observation_row_label(key),
                 key: key.to_string(),
-                value,
+                value: format_observation_value(value, *unit)?,
                 source: source.to_string(),
             })
         })
-        .collect()
+        .collect();
+    facts.extend(folded);
+    facts
 }
 
 fn live_memory_records_from_status_json(blob: &Value) -> Vec<LiveMemoryFact> {
@@ -6869,20 +6902,6 @@ fn overlay_field_v2_source_with(screen_id: &str, field_id: &str, with_keyboard: 
     )
 }
 
-/// ADR-223: live Orb hits are a generated `OrbHost` plus `orb-menu:`
-/// Buttons. Closed omits the menu Buttons so `layout_v2` docks only
-/// the dot. Paint still uses `orb_view`.
-fn orb_v2_source(menu_actions: &[OrbAction]) -> String {
-    let mut src = String::from(
-        "sui 2\nscreen now {\n  component OrbHost {\n    a11y = Status\n    loc = \"orb:toggle\"\n  }\n",
-    );
-    for action in menu_actions {
-        src.push_str(&v2_stacked_block("Button", "Button", action.wire()));
-    }
-    src.push('}');
-    src
-}
-
 fn overlay_field_rect(screen_id: &str, field_id: &str, width: u32, height: u32) -> Rect {
     overlay_field_rect_with(screen_id, field_id, width, height, true)
 }
@@ -7137,6 +7156,8 @@ fn main() {
         output_state: OutputState::new(&globals, &qh),
         seat_state: SeatState::new(&globals, &qh),
         touch: None,
+        pointer: None,
+        orb_pointer: false,
         compositor,
         shm,
         exit: false,
@@ -7230,12 +7251,15 @@ fn main() {
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
         viewing_entity_id: None,
-        orb_menu_open: false,
+        orb: orb_space::OrbSpace::load(),
+        orb_last_tick: Instant::now(),
+        orb_touch_epoch: Instant::now(),
+        orb_touch: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
         calibration_mode,
         gallery_mode,
-        gallery_composites: false,
+        gallery_page: 0,
         selected_entities: Vec::new(),
         relationships: Vec::new(),
         system_space_entities: Vec::new(),
@@ -7308,6 +7332,9 @@ struct Shell {
     output_state: OutputState,
     seat_state: SeatState,
     touch: Option<wl_touch::WlTouch>,
+    pointer: Option<wl_pointer::WlPointer>,
+    /// A mouse button is held on the sphere.
+    orb_pointer: bool,
     compositor: CompositorState,
     shm: Shm,
 
@@ -7580,10 +7607,14 @@ struct Shell {
     /// auto-popup" shape S13 Change 2 already established, covering
     /// any entity_type "Входящие" or NOW ever names.
     viewing_entity_id: Option<Uuid>,
-    /// HIA-04b: `true` only while the Orb's own menu is showing --
-    /// `orb_state()` reports `Menu` whenever this is set, regardless
-    /// of any pending notification underneath it.
-    orb_menu_open: bool,
+    /// ADR-430: the Orb as a place — geography, camera, rise, gestures.
+    orb: orb_space::OrbSpace,
+    orb_last_tick: Instant,
+    /// Clock for gesture velocity; restarted at every first touch-down.
+    orb_touch_epoch: Instant,
+    /// True from the moment the Orb claims a touch until it ends, so no
+    /// other surface sees the same finger.
+    orb_touch: bool,
     /// HIA-20: silent, un-hinted tap counter on the build-id card
     /// (`tap_build_info`) -- the
     /// same well-known convention Android's own "tap build number"
@@ -7600,10 +7631,10 @@ struct Shell {
     /// setting and therefore cannot accidentally become normal navigation.
     calibration_mode: bool,
     gallery_mode: bool,
-    /// VUI-05: the developer gallery has two pages — primitives (VUI-02)
-    /// and composites. Tap toggles. Default is primitives so the
+    /// The developer gallery has primitives, composites, and concept graphics
+    /// pages. Tap cycles. Default is primitives so the
     /// physically verified first page stays the first thing shown.
-    gallery_composites: bool,
+    gallery_page: u8,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -7956,12 +7987,18 @@ impl SeatHandler for Shell {
         capability: Capability,
     ) {
         self.ensure_foreign_ime(&seat, qh);
-        // No pointer/keyboard handling -- this is a touchscreen-only
-        // device (ADR-012 already made the same call for saai-displayd).
         if capability == Capability::Touch && self.touch.is_none() {
             match self.seat_state.get_touch(qh, &seat) {
                 Ok(touch) => self.touch = Some(touch),
                 Err(err) => eprintln!("saai-shell: failed to get wl_touch: {err}"),
+            }
+        }
+        // A USB mouse or trackpad only ever drives the Orb (wheel, drag):
+        // the rest of the shell stays touch-first (ADR-012).
+        if capability == Capability::Pointer && self.pointer.is_none() {
+            match self.seat_state.get_pointer(qh, &seat) {
+                Ok(pointer) => self.pointer = Some(pointer),
+                Err(err) => eprintln!("saai-shell: failed to get wl_pointer: {err}"),
             }
         }
     }
@@ -7978,11 +8015,43 @@ impl SeatHandler for Shell {
                 touch.release();
             }
         }
+        if capability == Capability::Pointer {
+            if let Some(pointer) = self.pointer.take() {
+                pointer.release();
+            }
+            if self.orb_pointer {
+                self.orb_pointer = false;
+                self.orb.touch_cancel();
+            }
+        }
     }
 
     fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {
     }
 }
+
+impl PointerHandler for Shell {
+    fn pointer_frame(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _pointer: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for event in events {
+            if event.surface != *self.window.wl_surface() {
+                continue;
+            }
+            self.apply_orb_pointer(&event.kind, event.position, conn, qh);
+        }
+    }
+}
+
+/// The mouse is one more finger to the sphere: a held button is a drag and
+/// the wheel is a rotation. Only the sphere listens to it.
+const ORB_MOUSE_ID: i32 = 0x4d53;
+/// Pixels of smooth scrolling that count as one wheel notch.
+const WHEEL_PX_PER_NOTCH: f64 = 15.0;
 
 impl TouchHandler for Shell {
     fn down(
@@ -8038,6 +8107,27 @@ impl TouchHandler for Shell {
             println!("saai-shell: woke from pseudo-sleep");
             return;
         }
+        if self.orb_available() && surface == *self.window.wl_surface() {
+            let viewport = self.orb_viewport();
+            if !self.orb.is_visible() || !self.orb_touch {
+                self.orb_touch_epoch = Instant::now();
+            }
+            let claimed = self.orb.touch_down(
+                _id,
+                (position.0 as f32, position.1 as f32),
+                self.orb_touch_seconds(),
+                viewport,
+                render::orb_unit(),
+            );
+            if claimed {
+                self.orb_touch = true;
+                self.unlock_pending = false;
+                self.tab_touch_pending = false;
+                self.me_drag = None;
+                self.touch_down_action = None;
+                return;
+            }
+        }
         self.unlock_pending = self.locked
             && self
                 .lock_surfaces
@@ -8080,9 +8170,24 @@ impl TouchHandler for Shell {
         _touch: &wl_touch::WlTouch,
         _serial: u32,
         _time: u32,
-        _id: i32,
+        id: i32,
     ) {
         self.last_activity = Instant::now();
+        if self.orb_touch {
+            let viewport = self.orb_viewport();
+            let outcome =
+                self.orb
+                    .touch_up(id, self.orb_touch_seconds(), viewport, render::orb_unit());
+            if !self.orb.is_pointer_down() {
+                self.orb_touch = false;
+            }
+            match outcome {
+                orb_space::Outcome::Activate(action) => self.activate_orb(action, conn, qh),
+                orb_space::Outcome::Redraw => self.draw(conn, qh),
+                orb_space::Outcome::Nothing => {}
+            }
+            return;
+        }
         // Taken (not just read) here, once, regardless of which
         // branch below actually runs -- `down()` always sets a fresh
         // value (`Some` or `None`) on the next touch, so nothing is
@@ -8178,9 +8283,19 @@ impl TouchHandler for Shell {
         } else if self.tab_touch_pending {
             self.tab_touch_pending = false;
             if self.gallery_mode {
-                self.gallery_composites = next_gallery_page(self.gallery_composites);
+                self.gallery_page = next_gallery_page(self.gallery_page);
                 self.draw(conn, qh);
                 return;
+            }
+            if self.orb.search().is_some() {
+                let up = self.keyboard_frame_action_at(self.last_touch_pos);
+                if let Some(action) = committed_action(down_action.as_deref(), up.as_deref()) {
+                    self.handle_orb_search_action(&action, conn, qh);
+                    return;
+                }
+                if self.orb_search_under_keyboard(self.last_touch_pos) {
+                    return;
+                }
             }
             if self.pending_consent.is_some() {
                 // Modal: the consent screen owns every touch while it is
@@ -8358,35 +8473,11 @@ impl TouchHandler for Shell {
                 // that release as part of the gesture instead of switching
                 // tabs, and make sure its final position is presented.
                 self.me_scroll_dirty = true;
-            } else if let Some(action) = self
-                .settings
-                .orb_enabled
-                .then(|| {
-                    // HIA-05: only actually computes the (possibly
-                    // context-dependent) action list when the menu is
-                    // showing -- closed, an empty slice is enough to
-                    // hit-test the dot alone.
-                    let menu_actions = if self.orb_menu_open {
-                        orb_menu_actions(
-                            self.selected_space_id == SYSTEM_SPACE_ID,
-                            bluetooth_paired_count() > 0,
-                        )
-                    } else {
-                        Vec::new()
-                    };
-                    orb_action_at(self.last_touch_pos, self.width, self.height, &menu_actions)
-                })
-                .flatten()
-            {
-                // HIA-04b: only reachable once every modal above has
-                // said no -- the exact condition under which
-                // `Frame::Root` (the only frame the Orb is ever drawn
-                // on) is what's actually showing. Checked before
-                // `tab_at`/page-content below on principle, though
-                // `orb_zone_rect`'s own doc comment already guarantees
-                // their hit-test rects never overlap in practice.
-                self.handle_orb_action(action, conn, qh);
             } else if let Some(page) = tab_at(self.last_touch_pos, self.width, self.height) {
+                if self.orb.is_visible() {
+                    self.orb.dismiss();
+                    self.draw(conn, qh);
+                }
                 if page != self.current_page {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
@@ -8549,10 +8640,21 @@ impl TouchHandler for Shell {
         qh: &QueueHandle<Self>,
         _touch: &wl_touch::WlTouch,
         _time: u32,
-        _id: i32,
+        id: i32,
         position: (f64, f64),
     ) {
         self.last_touch_pos = position;
+        if self.orb_touch {
+            let viewport = self.orb_viewport();
+            self.orb.touch_motion(
+                id,
+                (position.0 as f32, position.1 as f32),
+                self.orb_touch_seconds(),
+                viewport,
+                render::orb_unit(),
+            );
+            return;
+        }
         if let Some((start_y, start_offset)) = self.me_drag {
             let (total, content_rect) = if self.dev_surface_open {
                 let total = self.dev_surface_rows().len();
@@ -8604,6 +8706,11 @@ impl TouchHandler for Shell {
     }
 
     fn cancel(&mut self, conn: &Connection, qh: &QueueHandle<Self>, _touch: &wl_touch::WlTouch) {
+        if self.orb_touch {
+            self.orb_touch = false;
+            self.orb.touch_cancel();
+            self.draw(conn, qh);
+        }
         self.unlock_pending = false;
         self.tab_touch_pending = false;
         self.me_drag = None;
@@ -8629,20 +8736,25 @@ impl Shell {
     /// compositor `frame` timestamps are not trusted.
     fn tick_motion(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
         let activity_changed = self.sync_activity_clock();
-        if self.motion_clock.is_none() && self.activity_clock.is_none() && !activity_changed {
+        let orb_changed = self.tick_orb();
+        if self.motion_clock.is_none()
+            && self.activity_clock.is_none()
+            && !activity_changed
+            && !orb_changed
+        {
             return;
         }
         let now = Instant::now();
         let dt_ms = now
             .saturating_duration_since(self.motion_last_tick)
             .as_millis() as u32;
-        if dt_ms < 8 && !activity_changed {
+        if dt_ms < 8 && !activity_changed && !orb_changed {
             return;
         }
         if dt_ms >= 8 {
             self.motion_last_tick = now;
         }
-        let mut dirty = activity_changed;
+        let mut dirty = activity_changed || orb_changed;
         if dt_ms >= 8 {
             if let Some(clock) = self.activity_clock.as_mut() {
                 let was = clock.pulse_visible();
@@ -8689,7 +8801,7 @@ impl Shell {
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
-            self.orb_menu_open,
+            self.orb.is_open(),
             read_runtime_live_facts().health.as_ref(),
         ))
         .motion()
@@ -8713,6 +8825,7 @@ impl Shell {
     fn clocks_need_frame(&self) -> bool {
         self.motion_clock.is_some_and(MotionClock::needs_frame)
             || self.activity_clock.is_some_and(MotionClock::needs_frame)
+            || self.orb.needs_frame()
     }
 
     /// ADR-172: stamp one commit into `FramePace` and refresh the last
@@ -8839,6 +8952,9 @@ impl Shell {
             Rect::new(0, 0, width, height)
         };
         self.sync_activity_clock();
+        if self.orb_available() && self.orb.is_visible() {
+            self.refresh_orb_objects();
+        }
 
         // Every `&self` read this frame needs (content cards, context
         // label, consent labels) happens here, before `buffer`/`canvas`
@@ -9304,9 +9420,7 @@ impl Shell {
         // this function's own top comment already gives for `frame`.
         // Only ever `Some` on `Frame::Root` (the only frame the Orb
         // ever draws on) and only when the Rollback setting allows it.
-        let orb_frame = (!content_only
-            && !self.calibration_mode
-            && self.settings.orb_enabled
+        let orb_frame = (self.orb_available()
             && matches!(
                 frame,
                 Frame::Root { .. }
@@ -9319,6 +9433,14 @@ impl Shell {
             ))
         .then(|| self.build_orb_frame(width, height));
 
+        // Once the sphere is opaque over the whole page window nothing of
+        // the page can show through, so it is not painted at all while the
+        // sphere is panned and zoomed. Only the navigation strip below it is.
+        let covered_tabs = orb_frame
+            .as_ref()
+            .filter(|orb| orb_space::page_is_covered(orb.rise))
+            .and_then(|_| frame.tabs().map(<[_]>::to_vec));
+
         let fonts = self.fonts.as_ref();
         let contrast_pct = self.settings.contrast_pct;
         let field_focused = field_shows_context_focus(self.motion_clock.as_ref());
@@ -9327,7 +9449,7 @@ impl Shell {
         let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
         let gallery_mode = self.gallery_mode;
-        let gallery_composites = self.gallery_composites;
+        let gallery_page = self.gallery_page;
 
         // GPU-native path (ADR-024 continued): paint directly into a
         // dma-buf backed buffer, skipping the wl_shm host-visible
@@ -9384,309 +9506,317 @@ impl Shell {
             }
             if gallery_mode {
                 let canvas = &mut render::Canvas::new(canvas, width, height);
-                if gallery_composites {
-                    render::draw_composite_gallery(canvas, width, height, fonts);
-                } else {
-                    render::draw_gallery(canvas, width, height, fonts);
+                match gallery_page {
+                    0 => render::draw_gallery(canvas, width, height, fonts),
+                    1 => render::draw_composite_gallery(canvas, width, height, fonts),
+                    _ => render::draw_concept_gallery(canvas, width, height, fonts),
                 }
                 return;
             }
-            match frame {
-                Frame::Consent {
-                    content_rect,
-                    header,
-                    rows,
-                    accept,
-                    decline,
-                } => {
-                    render::draw_consent(
-                        &mut render::Canvas::new(canvas, width, height),
+            if let Some(tabs) = &covered_tabs {
+                render::draw_covered_page(
+                    &mut render::Canvas::new(canvas, width, height),
+                    tabs,
+                    fonts,
+                );
+            } else {
+                match frame {
+                    Frame::Consent {
                         content_rect,
-                        &header,
-                        &rows,
-                        accept,
-                        decline,
-                        fonts,
-                    );
-                }
-                Frame::ObjectView {
-                    summary,
-                    related,
-                    details,
-                    decision,
-                    permission,
-                    header,
-                    actions,
-                } => {
-                    render::draw_object_view(
-                        &mut render::Canvas::new(canvas, width, height),
-                        &summary,
-                        related.as_deref(),
-                        &details,
-                        decision.as_ref(),
-                        permission.as_ref(),
                         header,
-                        &actions,
-                        fonts,
-                    );
-                }
-                Frame::RemotePairing {
-                    content_rect,
-                    header,
-                    rows,
-                    fingerprint,
-                    accept,
-                    decline,
-                } => {
-                    render::draw_remote_pair(
-                        &mut render::Canvas::new(canvas, width, height),
-                        content_rect,
-                        &header,
-                        &rows,
-                        &fingerprint,
+                        rows,
                         accept,
                         decline,
-                        fonts,
-                    );
-                }
-                Frame::IntentInput {
-                    content_rect,
-                    header,
-                    field,
-                    field_rect,
-                    keys,
-                } => {
-                    render::draw_intent_input(
-                        &mut render::Canvas::new(canvas, width, height),
+                    } => {
+                        render::draw_consent(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &rows,
+                            accept,
+                            decline,
+                            fonts,
+                        );
+                    }
+                    Frame::ObjectView {
+                        summary,
+                        related,
+                        details,
+                        decision,
+                        permission,
+                        header,
+                        actions,
+                    } => {
+                        render::draw_object_view(
+                            &mut render::Canvas::new(canvas, width, height),
+                            &summary,
+                            related.as_deref(),
+                            &details,
+                            decision.as_ref(),
+                            permission.as_ref(),
+                            header,
+                            &actions,
+                            fonts,
+                        );
+                    }
+                    Frame::RemotePairing {
                         content_rect,
-                        &header,
-                        &field,
+                        header,
+                        rows,
+                        fingerprint,
+                        accept,
+                        decline,
+                    } => {
+                        render::draw_remote_pair(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &rows,
+                            &fingerprint,
+                            accept,
+                            decline,
+                            fonts,
+                        );
+                    }
+                    Frame::IntentInput {
+                        content_rect,
+                        header,
+                        field,
                         field_rect,
-                        &keys,
-                        pressed_key.as_deref(),
-                        field_focused,
-                        fonts,
-                    );
-                }
-                Frame::PinSetup {
-                    content_rect,
-                    header,
-                    field,
-                    field_rect,
-                    keys,
-                } => {
-                    render::draw_pin_setup(
-                        &mut render::Canvas::new(canvas, width, height),
+                        keys,
+                    } => {
+                        render::draw_intent_input(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &field,
+                            field_rect,
+                            &keys,
+                            pressed_key.as_deref(),
+                            field_focused,
+                            fonts,
+                        );
+                    }
+                    Frame::PinSetup {
                         content_rect,
-                        &header,
-                        &field,
+                        header,
+                        field,
                         field_rect,
-                        &keys,
-                        pressed_key.as_deref(),
-                        field_focused,
-                        fonts,
-                    );
-                }
-                Frame::WifiPasswordInput {
-                    content_rect,
-                    header,
-                    field,
-                    field_rect,
-                    keys,
-                } => {
-                    render::draw_wifi_password(
-                        &mut render::Canvas::new(canvas, width, height),
+                        keys,
+                    } => {
+                        render::draw_pin_setup(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &field,
+                            field_rect,
+                            &keys,
+                            pressed_key.as_deref(),
+                            field_focused,
+                            fonts,
+                        );
+                    }
+                    Frame::WifiPasswordInput {
                         content_rect,
-                        &header,
-                        &field,
+                        header,
+                        field,
                         field_rect,
-                        &keys,
-                        pressed_key.as_deref(),
-                        field_focused,
-                        fonts,
-                    );
-                }
-                Frame::WifiList {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        keys,
+                    } => {
+                        render::draw_wifi_password(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &header,
+                            &field,
+                            field_rect,
+                            &keys,
+                            pressed_key.as_deref(),
+                            field_focused,
+                            fonts,
+                        );
+                    }
+                    Frame::WifiList {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::BluetoothList {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::BluetoothList {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::TrustedClients {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::TrustedClients {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::DevSurface {
-                    content_rect,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::DevSurface {
                         content_rect,
-                        &[],
-                        &header,
-                        &rows,
-                        false,
-                        fonts,
-                    );
-                }
-                Frame::Root {
-                    content_rect,
-                    tabs,
-                    content_cards,
-                    context_label,
-                    paint_navigation,
-                } => {
-                    render::draw_root(
-                        &mut render::Canvas::new(canvas, width, height),
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &[],
+                            &header,
+                            &rows,
+                            false,
+                            fonts,
+                        );
+                    }
+                    Frame::Root {
                         content_rect,
-                        &tabs,
-                        current_page_index,
-                        &context_label,
-                        fonts,
-                        &content_cards,
-                        current_page_is_now,
+                        tabs,
+                        content_cards,
+                        context_label,
                         paint_navigation,
-                    );
-                }
-                Frame::Now {
-                    content_rect,
-                    tabs,
-                    header,
-                    chrome,
-                    sections,
-                    object,
-                    footer_actions,
-                } => {
-                    render::draw_now(
-                        &mut render::Canvas::new(canvas, width, height),
+                    } => {
+                        render::draw_root(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            current_page_index,
+                            &context_label,
+                            fonts,
+                            &content_cards,
+                            current_page_is_now,
+                            paint_navigation,
+                        );
+                    }
+                    Frame::Now {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &chrome,
-                        &sections,
-                        object.as_ref(),
-                        &footer_actions,
-                        fonts,
-                    );
-                }
-                Frame::AppsGrid {
-                    content_rect,
-                    tabs,
-                    header,
-                    apps,
-                    empty_pattern,
-                } => {
-                    render::draw_apps_grid(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        chrome,
+                        sections,
+                        object,
+                        footer_actions,
+                    } => {
+                        render::draw_now(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &chrome,
+                            &sections,
+                            object.as_ref(),
+                            &footer_actions,
+                            fonts,
+                        );
+                    }
+                    Frame::AppsGrid {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &apps,
-                        empty_pattern.as_ref(),
-                        fonts,
-                    );
-                }
-                Frame::Inbox {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        apps,
+                        empty_pattern,
+                    } => {
+                        render::draw_apps_grid(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &apps,
+                            empty_pattern.as_ref(),
+                            fonts,
+                        );
+                    }
+                    Frame::Inbox {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
-                        true,
-                        fonts,
-                    );
-                }
-                Frame::Search {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            true,
+                            fonts,
+                        );
+                    }
+                    Frame::Search {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
-                        true,
-                        fonts,
-                    );
-                }
-                Frame::Spaces {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            true,
+                            fonts,
+                        );
+                    }
+                    Frame::Spaces {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
-                        true,
-                        fonts,
-                    );
-                }
-                Frame::Me {
-                    content_rect,
-                    tabs,
-                    header,
-                    rows,
-                    paint_navigation,
-                } => {
-                    render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        tabs,
+                        header,
+                        rows,
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            true,
+                            fonts,
+                        );
+                    }
+                    Frame::Me {
                         content_rect,
-                        &tabs,
-                        &header,
-                        &rows,
+                        tabs,
+                        header,
+                        rows,
                         paint_navigation,
-                        fonts,
-                    );
+                    } => {
+                        render::draw_context_row_list(
+                            &mut render::Canvas::new(canvas, width, height),
+                            content_rect,
+                            &tabs,
+                            &header,
+                            &rows,
+                            paint_navigation,
+                            fonts,
+                        );
+                    }
                 }
             }
             // HIA-04b: unconditional -- `orb_frame` is already `None`
@@ -9694,17 +9824,37 @@ impl Shell {
             // Rollback setting turned it off), computed once above before
             // this function's own mutable canvas borrow began.
             if let Some(orb) = &orb_frame {
-                render::draw_orb(
+                render::draw_orb_space(
                     &mut render::Canvas::new(canvas, width, height),
-                    orb.dot,
-                    orb.dot_color,
-                    orb.mark,
-                    orb.attention_ring,
-                    orb.quantity,
-                    orb.activity_pulse,
-                    &orb.menu_rows,
+                    &render::OrbPaint {
+                        viewport: orb.viewport,
+                        rise: orb.rise,
+                        disc: orb.disc,
+                        graticule: &orb.graticule,
+                        trail: &orb.trail,
+                        chip: orb.chip.as_ref(),
+                        items: &orb.items,
+                        selected: orb.selected.as_deref(),
+                        point: orb.point,
+                    },
                     fonts,
                 );
+                if let Some(search) = &orb.search {
+                    render::draw_search_panel(
+                        &mut render::Canvas::new(canvas, width, height),
+                        search,
+                        fonts,
+                    );
+                }
+                if let Some((area, keys)) = &orb.search_keys {
+                    render::draw_orb_search_keys(
+                        &mut render::Canvas::new(canvas, width, height),
+                        *area,
+                        keys,
+                        pressed_key.as_deref(),
+                        fonts,
+                    );
+                }
             }
             render::apply_contrast_boost(canvas, contrast_pct);
         };
@@ -10007,6 +10157,9 @@ impl Shell {
             }
             return Vec::new();
         }
+        if let Some(state) = self.orb.search() {
+            return orb_search_keys(self.width, self.height, state);
+        }
         if let Some(state) = &self.intent_input {
             if !state.keyboard.shows_panel() {
                 return Vec::new();
@@ -10042,6 +10195,16 @@ impl Shell {
                 self.osk_height,
                 self.osk_keyboard.mode,
             );
+        }
+        if let Some(state) = self.orb.search() {
+            if state.keyboard.shows_panel() {
+                if let Some(action) =
+                    intent_action_at(pos, self.width, self.height, state.keyboard.mode)
+                {
+                    return Some(action);
+                }
+            }
+            return self.orb_search_row_at(pos);
         }
         if let Some(state) = self.intent_input.as_ref() {
             if !state.keyboard.shows_panel() {
@@ -10213,10 +10376,7 @@ impl Shell {
             "toggle_orb" => {
                 self.settings.orb_enabled = !self.settings.orb_enabled;
                 if !self.settings.orb_enabled {
-                    // Turning it off mid-menu shouldn't leave a stale
-                    // open menu waiting for whenever it's turned back
-                    // on.
-                    self.orb_menu_open = false;
+                    self.orb.dismiss();
                 }
             }
             "toggle_reduced_motion" => {
@@ -10532,6 +10692,9 @@ impl Shell {
 
     fn sync_hardware_keyboard_source(&mut self) {
         let source = hardware_keyboard::detect_keyboard_source();
+        if let Some(state) = self.orb.search_mut() {
+            state.keyboard.set_source(source);
+        }
         if let Some(state) = self.intent_input.as_mut() {
             state.keyboard.set_source(source);
         }
@@ -10597,7 +10760,192 @@ impl Shell {
         }
     }
 
+    fn apply_orb_pointer(
+        &mut self,
+        kind: &PointerEventKind,
+        position: (f64, f64),
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if !self.orb_available() {
+            return;
+        }
+        let viewport = self.orb_viewport();
+        let unit = render::orb_unit();
+        let pos = (position.0 as f32, position.1 as f32);
+        match kind {
+            PointerEventKind::Press { button, .. } if *button == BTN_LEFT => {
+                if !self.orb.is_pointer_down() {
+                    self.orb_touch_epoch = Instant::now();
+                }
+                let t = self.orb_touch_seconds();
+                if self.orb.touch_down(ORB_MOUSE_ID, pos, t, viewport, unit) {
+                    self.orb_pointer = true;
+                    self.last_activity = Instant::now();
+                }
+            }
+            PointerEventKind::Motion { .. } if self.orb_pointer => {
+                let t = self.orb_touch_seconds();
+                self.orb.touch_motion(ORB_MOUSE_ID, pos, t, viewport, unit);
+            }
+            PointerEventKind::Release { button, .. } if *button == BTN_LEFT && self.orb_pointer => {
+                self.orb_pointer = false;
+                let t = self.orb_touch_seconds();
+                let outcome = self.orb.touch_up(ORB_MOUSE_ID, t, viewport, unit);
+                self.apply_orb_outcome(outcome, conn, qh);
+            }
+            PointerEventKind::Leave { .. } if self.orb_pointer => {
+                self.orb_pointer = false;
+                self.orb.touch_cancel();
+                self.draw(conn, qh);
+            }
+            PointerEventKind::Axis {
+                horizontal,
+                vertical,
+                ..
+            } => {
+                let notches = |axis: &smithay_client_toolkit::seat::pointer::AxisScroll| {
+                    if axis.discrete != 0 {
+                        f64::from(axis.discrete)
+                    } else {
+                        axis.absolute / WHEEL_PX_PER_NOTCH
+                    }
+                };
+                // Scrolling down moves the content up, like a drag upward.
+                let (h, v) = (-notches(horizontal) as f32, -notches(vertical) as f32);
+                let mut moved = false;
+                if h != 0.0 {
+                    moved |= self.orb.navigate(
+                        NavInput::Wheel {
+                            steps: h,
+                            axis: WheelAxis::Horizontal,
+                        },
+                        viewport,
+                        unit,
+                    );
+                }
+                if v != 0.0 {
+                    moved |= self.orb.navigate(
+                        NavInput::Wheel {
+                            steps: v,
+                            axis: WheelAxis::Vertical,
+                        },
+                        viewport,
+                        unit,
+                    );
+                }
+                if moved {
+                    self.last_activity = Instant::now();
+                    self.draw(conn, qh);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keys for the sphere itself. The keyboard reaches all of it: the
+    /// arrows walk the focus ring (or move the view when nothing is there),
+    /// Enter dives or opens, +/- zoom, / searches, Esc sinks it, and the
+    /// Super key raises or sinks it from anywhere.
+    fn apply_orb_key(&mut self, code: u16, conn: &Connection, qh: &QueueHandle<Self>) -> bool {
+        const KEY_ESC: u16 = 1;
+        const KEY_MINUS: u16 = 12;
+        const KEY_EQUAL: u16 = 13;
+        const KEY_ENTER: u16 = 28;
+        const KEY_SLASH: u16 = 53;
+        const KEY_KPMINUS: u16 = 74;
+        const KEY_KPPLUS: u16 = 78;
+        const KEY_KPENTER: u16 = 96;
+        const KEY_UP: u16 = 103;
+        const KEY_LEFT: u16 = 105;
+        const KEY_RIGHT: u16 = 106;
+        const KEY_DOWN: u16 = 108;
+        const KEY_DELETE: u16 = 111;
+        const KEY_LEFTMETA: u16 = 125;
+        const KEY_RIGHTMETA: u16 = 126;
+        if !self.orb_available() {
+            return false;
+        }
+        if matches!(code, KEY_LEFTMETA | KEY_RIGHTMETA) {
+            if self.orb.is_open() {
+                self.orb.dismiss();
+            } else {
+                self.orb.raise();
+            }
+            self.draw(conn, qh);
+            return true;
+        }
+        if !self.orb.is_open() {
+            return false;
+        }
+        let viewport = self.orb_viewport();
+        let unit = render::orb_unit();
+        let zoom = |steps: f32| NavInput::Wheel {
+            steps,
+            axis: WheelAxis::Zoom,
+        };
+        match code {
+            KEY_LEFT => {
+                self.orb.focus_step(Direction::Left, viewport, unit);
+            }
+            KEY_RIGHT => {
+                self.orb.focus_step(Direction::Right, viewport, unit);
+            }
+            KEY_UP => {
+                self.orb.focus_step(Direction::Up, viewport, unit);
+            }
+            KEY_DOWN => {
+                self.orb.focus_step(Direction::Down, viewport, unit);
+            }
+            KEY_ENTER | KEY_KPENTER => {
+                let outcome = self.orb.activate_focus(viewport, unit);
+                self.apply_orb_outcome(outcome, conn, qh);
+                return true;
+            }
+            KEY_EQUAL | KEY_KPPLUS => {
+                self.orb.navigate(zoom(1.0), viewport, unit);
+            }
+            KEY_MINUS | KEY_KPMINUS => {
+                self.orb.navigate(zoom(-1.0), viewport, unit);
+            }
+            KEY_SLASH => {
+                self.activate_orb(orb_space::Activation::OpenSearch, conn, qh);
+                return true;
+            }
+            KEY_DELETE => {
+                self.orb.forget_selected();
+            }
+            KEY_ESC => self.orb.dismiss(),
+            _ => return false,
+        }
+        self.draw(conn, qh);
+        true
+    }
+
     fn apply_hardware_key(&mut self, code: u16, conn: &Connection, qh: &QueueHandle<Self>) {
+        if let Some(state) = self.orb.search() {
+            const KEY_UP: u16 = 103;
+            const KEY_DOWN: u16 = 108;
+            match code {
+                KEY_UP | KEY_DOWN => {
+                    let rows = self.orb_search_panel().map_or(3, |p| p.rows.len());
+                    self.orb
+                        .step_search(if code == KEY_DOWN { 1 } else { -1 }, rows);
+                    self.draw(conn, qh);
+                }
+                _ => {
+                    if let Some(stroke) =
+                        Keyboard::keystroke_from_evdev(code, state.keyboard.layout)
+                    {
+                        self.apply_orb_search_stroke(stroke, conn, qh);
+                    }
+                }
+            }
+            return;
+        }
+        if self.apply_orb_key(code, conn, qh) {
+            return;
+        }
         if let Some(state) = self.intent_input.as_mut() {
             let Some(stroke) = Keyboard::keystroke_from_evdev(code, state.keyboard.layout) else {
                 return;
@@ -11422,60 +11770,302 @@ impl Shell {
         }
     }
 
-    /// HIA-04b: the Orb's own action handler, same "layout returns a
-    /// position/identity, the call site decides what it means" split
-    /// as `handle_object_view_action`'s own `index`. Both menu actions
-    /// reuse already-real navigation -- `RootPage::Inbox`/
-    /// `IntentInputState` are the exact paths the tab-bar and "Сейчас"
-    /// card already drive, not new placeholder behavior invented for
-    /// this menu.
-    fn handle_orb_action(&mut self, action: OrbAction, conn: &Connection, qh: &QueueHandle<Self>) {
+    /// ADR-430: what tapping an object on the sphere does. The sphere sinks
+    /// first; the destination is always an already-real surface or action,
+    /// so Orb adds a way to reach things, not new things.
+    fn activate_orb(
+        &mut self,
+        action: orb_space::Activation,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        use orb_space::Activation as A;
+        if action == A::OpenSearch {
+            self.orb
+                .open_search(live_keyboard(ORB_SEARCH_FIELD_ID, KeyboardLayout::Qwerty));
+            self.draw(conn, qh);
+            return;
+        }
+        self.orb.dismiss();
+        let show_page = |shell: &mut Shell, page: RootPage, apps: bool| {
+            shell.current_page = page;
+            shell.apps_open = apps;
+            shell.space_detail_open = false;
+        };
         match action {
-            OrbAction::Toggle => self.orb_menu_open = !self.orb_menu_open,
-            OrbAction::OpenInbox => {
-                self.orb_menu_open = false;
-                self.current_page = RootPage::Inbox;
-            }
-            OrbAction::OpenIntent => {
-                self.orb_menu_open = false;
+            A::OpenSearch => {}
+            A::OpenTasks => show_page(self, RootPage::Now, false),
+            A::OpenApps => show_page(self, RootPage::Now, true),
+            A::OpenInbox => show_page(self, RootPage::Inbox, false),
+            A::OpenSpaces => show_page(self, RootPage::Spaces, false),
+            A::OpenMe => show_page(self, RootPage::Me, false),
+            A::OpenIntent => {
                 self.intent_input = Some(open_intent_state());
                 self.begin_compose_context();
             }
-            OrbAction::OpenBluetooth => {
-                self.orb_menu_open = false;
-                // Same "open_bluetooth_list" behavior the fixed card
-                // on "Я" already triggers -- a fresh scan, not a
-                // stale one.
+            A::OpenDevices | A::OpenBluetooth => {
                 bluetooth_trigger_scan();
                 self.bluetooth_list_open = true;
+            }
+            A::LaunchApp(app_id) => self.invoke_app_launch(&app_id, conn, qh),
+            A::SelectSpace(space_id) => self.invoke_select_space(&space_id),
+            A::ViewTask(id) => {
+                if let Ok(id) = Uuid::parse_str(&id) {
+                    self.viewing_entity_id = Some(id);
+                }
             }
         }
         self.draw(conn, qh);
     }
 
-    /// `Attention`'s own fixed alert color, deliberately not one of
-    /// `SpaceColor`'s six values -- a space's own accent should never
-    /// be mistaken for "something needs you".
+    fn orb_available(&self) -> bool {
+        self.settings.orb_enabled
+            && !self.locked
+            && !self.sleeping
+            && !self.calibration_mode
+            && !self.gallery_mode
+            && !self.any_modal_open()
+    }
+
+    fn orb_nav_top(&self) -> u32 {
+        let tree = root_view(self.width, self.height);
+        saai_ui_compiler::layout_v1_find(&tree, "BottomNavigation")
+            .map_or(self.height, |nav| nav.rect.y)
+            .min(self.height)
+    }
+
+    /// The strip above the sphere while searching. With the on-screen
+    /// keyboard up the sphere gets what is left between the two.
+    fn orb_search_panel(&self) -> Option<orb_space::SearchPanel> {
+        let state = self.orb.search()?;
+        let keys = state.keyboard.shows_panel();
+        let bottom = if keys {
+            self.height
+                .saturating_sub(intent_keyboard_height(self.height))
+        } else {
+            self.orb_nav_top()
+        };
+        Some(orb_space::search_panel(
+            self.width,
+            status_layer_height(),
+            bottom,
+            if keys { 3 } else { 4 },
+            render::orb_unit(),
+        ))
+    }
+
+    /// The window the sphere is seen through: everything above the
+    /// navigation strip, which stays usable while the sphere is risen.
+    /// While searching it is what the field, the results and the keyboard
+    /// leave.
+    fn orb_viewport(&self) -> Rect {
+        if let Some(panel) = self.orb_search_panel() {
+            return panel.viewport;
+        }
+        Rect::new(0, 0, self.width, self.orb_nav_top())
+    }
+
+    fn orb_search_row_at(&self, pos: (f64, f64)) -> Option<String> {
+        let panel = self.orb_search_panel()?;
+        let hits = self.orb.search_hits();
+        panel
+            .rows
+            .iter()
+            .zip(hits.iter().skip(self.orb.search_scroll()))
+            .find(|(rect, _)| rect.contains(pos.0, pos.1))
+            .map(|(_, hit)| format!("{ORB_HIT_ACTION_PREFIX}{}", hit.id))
+    }
+
+    /// A touch that lands on the on-screen keyboard strip but not on a key
+    /// must not fall through to the navigation tabs hidden behind it.
+    fn orb_search_under_keyboard(&self, pos: (f64, f64)) -> bool {
+        self.orb
+            .search()
+            .is_some_and(|state| state.keyboard.shows_panel())
+            && pos.1
+                >= f64::from(
+                    self.height
+                        .saturating_sub(intent_keyboard_height(self.height)),
+                )
+    }
+
+    fn apply_orb_outcome(
+        &mut self,
+        outcome: orb_space::Outcome,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match outcome {
+            orb_space::Outcome::Activate(action) => self.activate_orb(action, conn, qh),
+            orb_space::Outcome::Redraw => self.draw(conn, qh),
+            orb_space::Outcome::Nothing => {}
+        }
+    }
+
+    fn handle_orb_search_action(
+        &mut self,
+        action: &str,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let Some(id) = action.strip_prefix(ORB_HIT_ACTION_PREFIX) {
+            let outcome = self.orb.choose(id);
+            self.apply_orb_outcome(outcome, conn, qh);
+            return;
+        }
+        if let Some(stroke) = Keyboard::keystroke_from_osk_action(action) {
+            self.apply_orb_search_stroke(stroke, conn, qh);
+        }
+    }
+
+    fn apply_orb_search_stroke(
+        &mut self,
+        stroke: Keystroke,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        let Some(state) = self.orb.search_mut() else {
+            return;
+        };
+        match state.keyboard.handle(stroke, &mut state.buffer) {
+            KeyboardCommand::Edited => {
+                self.orb.search_edited();
+                self.draw(conn, qh);
+            }
+            KeyboardCommand::Submit => {
+                let hits = self.orb.search_hits();
+                let id = self.orb.search_focus(&hits).map(|i| hits[i].id.clone());
+                let outcome = id.map_or(orb_space::Outcome::Nothing, |id| self.orb.choose(&id));
+                self.apply_orb_outcome(outcome, conn, qh);
+            }
+            KeyboardCommand::Cancel => {
+                self.orb.close_search();
+                self.draw(conn, qh);
+            }
+            KeyboardCommand::Ignored => {}
+        }
+    }
+
+    fn orb_search_view(&self, panel: &orb_space::SearchPanel) -> render::SearchView {
+        let state = self.orb.search();
+        let hits = self.orb.search_hits();
+        let focus = self.orb.search_focus(&hits);
+        let scroll = self.orb.search_scroll();
+        let rows: Vec<render::SearchRowView> = panel
+            .rows
+            .iter()
+            .zip(hits.iter().skip(scroll))
+            .enumerate()
+            .map(|(i, (rect, hit))| render::SearchRowView {
+                rect: *rect,
+                label: hit.label.clone(),
+                hint: orb_space::route_hint(hit),
+                primitive: hit.class.primitive(),
+                focused: focus == Some(scroll + i),
+                dim: !hit.availability.is_available() || hit.ghost,
+            })
+            .collect();
+        let empty_query = state.is_none_or(|s| s.buffer.trim().is_empty());
+        render::SearchView {
+            backdrop: panel.backdrop,
+            field: panel.field,
+            text: state.map(|s| s.buffer.clone()).unwrap_or_default(),
+            placeholder: "Что найти?".to_string(),
+            note: (hits.is_empty() && !empty_query).then(|| "Ничего не найдено".to_string()),
+            rows,
+        }
+    }
+
+    fn orb_facts(&self) -> orb_space::Facts {
+        let mut tasks: Vec<&Entity> = self
+            .selected_entities
+            .iter()
+            .filter(|entity| entity.entity_type == "saaios.task")
+            .filter(|entity| {
+                matches!(
+                    task_universal_state(entity, &self.selected_entities),
+                    UniversalState::Attention | UniversalState::Running | UniversalState::Waiting
+                )
+            })
+            .collect();
+        tasks.sort_by_key(|entity| task_visibility_rank(entity, &self.selected_entities));
+        orb_space::Facts {
+            apps: self
+                .installed_apps
+                .values()
+                .map(|app| (app.id.clone(), app.name.clone()))
+                .collect(),
+            spaces: self
+                .spaces
+                .iter()
+                .map(|space| (space.id.clone(), space.name.clone()))
+                .collect(),
+            tasks: tasks
+                .into_iter()
+                .map(|entity| (entity.id.to_string(), entity.title.clone()))
+                .collect(),
+            bluetooth: bluetooth_saved_names(),
+            selected_space: self.selected_space_id.clone(),
+            appd_connected: self.appd.is_connected(),
+            entityd_connected: self.entityd.is_connected(),
+            attention: orb_attention(&self.selected_entities, None),
+            running: !in_progress_work(&self.selected_entities).is_empty(),
+        }
+    }
+
+    fn refresh_orb_objects(&mut self) {
+        let (objects, context) = orb_space::build_objects(&self.orb_facts());
+        self.orb.refresh(&objects, &context);
+        self.orb.save_if_changed();
+    }
+
+    fn orb_touch_seconds(&self) -> f32 {
+        self.orb_touch_epoch.elapsed().as_secs_f32()
+    }
+
+    /// Advances the sphere's own animation clock; returns whether it needs
+    /// a repaint.
+    fn tick_orb(&mut self) -> bool {
+        let now = Instant::now();
+        let dt = now
+            .saturating_duration_since(self.orb_last_tick)
+            .as_secs_f32()
+            .min(0.05);
+        self.orb_last_tick = now;
+        if !self.orb_available() {
+            if self.orb.is_visible() {
+                self.orb.dismiss();
+                return true;
+            }
+            return false;
+        }
+        self.orb.set_reduced_motion(self.settings.reduced_motion);
+        if !self.orb.needs_frame() {
+            return false;
+        }
+        let viewport = self.orb_viewport();
+        self.orb.tick(dt, viewport, render::orb_unit())
+    }
+
+    /// ADR-430: the resting point and, when risen, the sphere. Built before
+    /// the canvas borrows `self`.
     fn build_orb_frame(&self, width: u32, height: u32) -> OrbFrame {
-        let menu_actions = if self.orb_menu_open {
-            orb_menu_actions(
-                self.selected_space_id == SYSTEM_SPACE_ID,
-                bluetooth_paired_count() > 0,
-            )
+        let _ = (width, height);
+        let search_panel = self.orb_search_panel();
+        let viewport = self.orb_viewport();
+        let unit = render::orb_unit();
+        let stage = self.orb.stage(viewport, unit);
+        let layout = self.orb.layout(viewport, unit);
+        let graticule = if stage.rise > 0.5 {
+            orb_space::graticule(self.orb.camera, stage)
         } else {
             Vec::new()
         };
-        let view = layout_live_v2(
-            &orb_v2_source(&menu_actions),
-            "ADR-230 orb paint",
-            width,
-            height,
-        );
         let orb_host = OrbHost::new(orb_visual_state_with(
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
-            self.orb_menu_open,
+            self.orb.is_open(),
             read_runtime_live_facts().health.as_ref(),
         ))
         .with_reduced_motion(self.settings.reduced_motion);
@@ -11484,41 +12074,54 @@ impl Shell {
         } else {
             orb_host
         };
-        // Context Light: color still means context (the selected
-        // Space's own color) for the two states that are not urgent
-        // enough to override it -- `Idle`/`Active` -- matching this
-        // grammar's own "context=color, state=shape" split (state is
-        // already fully carried by `orb_host.mark()` below,
-        // independent of this choice). Every other state is urgent
-        // enough that its own semantic color takes over, the same way
-        // `Attention` already did before this ADR.
-        let dot_color = match orb_host.state {
+        // Context Light: color still means context (the selected Space's
+        // own color) for the two states that are not urgent enough to
+        // override it; every other state takes its own semantic color.
+        let color = match orb_host.state {
             UniversalState::Idle | UniversalState::Active => {
                 space_color(&self.system_space_entities, &self.selected_space_id).pixel()
             }
             other => render::state_color(other),
         };
-        let dot = v2_named_rect(&view, ORB_TOGGLE_ACTION, "ADR-230 orb paint");
-        let menu_rows = menu_actions
-            .iter()
-            .map(|action| {
-                (
-                    v2_named_rect(&view, action.wire(), "ADR-230 orb paint"),
-                    action.label(),
-                )
-            })
-            .collect();
+        let geometry = orb_space::point_geometry(viewport, unit);
         OrbFrame {
-            dot,
-            dot_color,
-            mark: orb_host.mark(),
-            attention_ring: orb_host.attention_ring(),
-            quantity: orb_host.quantity_percent(),
-            activity_pulse: orb_shows_activity_pulse(
-                orb_host.motion() == MotionCue::ActivityPulse,
-                self.activity_clock.as_ref(),
-            ),
-            menu_rows,
+            viewport,
+            rise: stage.rise,
+            disc: layout.disc,
+            graticule,
+            items: layout.items,
+            selected: self.orb.selected.clone().or_else(|| {
+                let hits = self.orb.search_hits();
+                self.orb.search_focus(&hits).map(|i| hits[i].id.clone())
+            }),
+            trail: if self.orb.search().is_some() {
+                self.orb.trail(viewport, unit)
+            } else {
+                Vec::new()
+            },
+            chip: self.orb.forget_chip(viewport, unit),
+            search: search_panel
+                .as_ref()
+                .map(|panel| self.orb_search_view(panel)),
+            search_keys: self.orb.search().and_then(|state| {
+                let keys = orb_search_keys(self.width, self.height, state);
+                let top = self
+                    .height
+                    .saturating_sub(intent_keyboard_height(self.height));
+                (!keys.is_empty()).then(|| (Rect::new(0, top, self.width, self.height - top), keys))
+            }),
+            point: render::OrbPoint {
+                disc: geometry.disc,
+                half_angle: geometry.half_angle,
+                color,
+                mark: orb_host.mark(),
+                attention_ring: orb_host.attention_ring(),
+                quantity: orb_host.quantity_percent(),
+                activity_pulse: orb_shows_activity_pulse(
+                    orb_host.motion() == MotionCue::ActivityPulse,
+                    self.activity_clock.as_ref(),
+                ),
+            },
         }
     }
 
@@ -11704,7 +12307,10 @@ impl Shell {
     /// own pool/buffer -- called both from the layer's own `configure`
     /// (first paint) and periodically from `refresh_statusbar_if_due`.
     fn shell_owns_text_field(&self) -> bool {
-        self.intent_input.is_some() || self.wifi_password.is_some() || self.pin_setup.is_some()
+        self.intent_input.is_some()
+            || self.wifi_password.is_some()
+            || self.pin_setup.is_some()
+            || self.orb.search().is_some()
     }
 
     fn ensure_foreign_ime(&mut self, seat: &wl_seat::WlSeat, qh: &QueueHandle<Self>) {
@@ -12414,32 +13020,31 @@ mod tests {
         me_fixture_facts, me_header, me_system_sections, motion_clock_for, next_in_cycle,
         next_pending_action, now_action_at, now_object_tapped, now_workflow_sections,
         object_view_action_at, object_view_content, object_view_details,
-        object_view_permission_pattern, object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
-        orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
-        playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source,
-        retain_pressed_while_clock, search_header, search_row_at, search_rows, space_color,
-        space_color_entity, space_detail_action_at, space_detail_empty_card, space_detail_header,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
-        space_list_rows, space_member_kind_label, space_member_rows, space_relation_targets,
-        space_row_at, spaces_header, stacked_control_rect, stacked_row_fits_above,
-        stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_list_row_count,
-        trusted_client_list_rows, trusted_header, upsert_context_entry, wifi_card_from_row,
-        wifi_header, wifi_list_action_at, wifi_list_row_count, wifi_list_rows,
-        wifi_password_compose_header, wifi_password_field, AgentSummary, AppSummary,
-        BluetoothDevice, BluetoothListTap, ContextFrameEntry, ContextSource, DataRowVariant,
-        Entity, FieldKind, HealthReport, HealthState, Keyboard, KeyboardCommand, KeyboardLayout,
-        KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap, LockWakeTap, MotionClock,
-        MotionToken, ObjectSummary, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
-        SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow, TrustedClient,
-        TrustedClientTap, UniversalState, WifiListTap, WifiNetwork, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS,
-        ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
+        object_view_permission_pattern, object_view_summary, orb_attention_from_entities,
+        orb_shows_activity_pulse, orb_visual_state, pcm_volume_from_pct, pin_setup_field,
+        pin_setup_header, playback_ready_from_paths, playback_status, pressed_key_from_keys,
+        pressed_tab_from_touch, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
+        search_rows, space_color, space_color_entity, space_detail_action_at,
+        space_detail_empty_card, space_detail_header, space_display_name, space_for_wifi_ssid,
+        space_lifecycle, space_lifecycle_entity, space_list_rows, space_member_kind_label,
+        space_member_rows, space_relation_targets, space_row_at, spaces_header,
+        stacked_control_rect, stacked_row_fits_above, stacked_row_rect, stacked_trailing_rect,
+        tab_at, task_confirm_action_at, today_schedules, trusted_client_action_at,
+        trusted_client_card_from_row, trusted_client_list_row_count, trusted_client_list_rows,
+        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
+        AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
+        ContextSource, DataRowVariant, Entity, FieldKind, HealthReport, HealthState, Keyboard,
+        KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap,
+        LockWakeTap, MotionClock, MotionToken, ObjectSummary, Rect, RootPage, SafeInsets, Space,
+        SpaceColor, SpaceDetailTap, SpaceLifecycle, SurfacePattern, SystemSectionRow,
+        TrustedClient, TrustedClientTap, UniversalState, WifiListTap, WifiNetwork,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
     };
     use saai_entity_protocol::{
         ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_IN_SPACE,
@@ -12645,6 +13250,58 @@ mod tests {
     }
 
     #[test]
+    fn next_ready_task_follows_scheduler_admission_order() {
+        let pending = |title: &str, age_secs: i64, priority: Option<&str>| {
+            let mut properties = serde_json::Map::new();
+            properties.insert("status".into(), serde_json::Value::String("pending".into()));
+            if let Some(priority) = priority {
+                properties.insert("priority".into(), serde_json::json!(priority));
+            }
+            let mut entity = test_entity("saaios.task", properties);
+            entity.title = title.into();
+            entity.created_at = chrono::Utc::now() - chrono::Duration::seconds(age_secs);
+            entity
+        };
+        let oldest = pending("oldest", 300, None);
+        let newest = pending("newest", 10, None);
+        let urgent = pending("urgent", 5, Some("high"));
+        let lazy = pending("lazy", 900, Some("low"));
+        let title =
+            |list: &[Entity]| super::next_ready_task(list).map(|entity| entity.title.clone());
+        assert_eq!(
+            title(&[newest.clone(), lazy.clone(), oldest.clone()]).as_deref(),
+            Some("oldest"),
+            "store order must not decide «Далее»"
+        );
+        assert_eq!(
+            title(&[newest, lazy, oldest, urgent]).as_deref(),
+            Some("urgent")
+        );
+    }
+
+    #[test]
+    fn next_ready_task_skips_plan_steps_while_a_sibling_awaits_confirmation() {
+        let intent = uuid::Uuid::new_v4().to_string();
+        let step = |status: &str, proposal: &str| {
+            let mut properties = serde_json::Map::new();
+            properties.insert("status".into(), serde_json::json!(status));
+            properties.insert("intent_id".into(), serde_json::json!(intent));
+            properties.insert("proposal_id".into(), serde_json::json!(proposal));
+            test_entity("saaios.task", properties)
+        };
+        let waiting = step("waiting_confirmation", "a");
+        let sibling = step("pending", "b");
+        assert!(super::next_ready_task(&[waiting.clone(), sibling.clone()]).is_none());
+        let mut done = waiting;
+        done.properties
+            .insert("status".into(), serde_json::json!("done"));
+        assert_eq!(
+            super::next_ready_task(&[done, sibling.clone()]).map(|e| e.id),
+            Some(sibling.id)
+        );
+    }
+
+    #[test]
     fn next_work_prefers_a_pending_action_over_a_ready_task() {
         let mut task_properties = serde_json::Map::new();
         task_properties.insert("status".into(), serde_json::Value::String("pending".into()));
@@ -12730,9 +13387,10 @@ mod tests {
     }
 
     #[test]
-    fn gallery_tap_toggles_between_primitive_and_composite_pages() {
-        assert!(super::next_gallery_page(false));
-        assert!(!super::next_gallery_page(true));
+    fn gallery_tap_cycles_primitives_composites_and_concept_graphics() {
+        assert_eq!(super::next_gallery_page(0), 1);
+        assert_eq!(super::next_gallery_page(1), 2);
+        assert_eq!(super::next_gallery_page(2), 0);
     }
 
     fn lifecycle_entity(space_id: &str, lifecycle: &str) -> Entity {
@@ -13300,14 +13958,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn tab_at_still_finds_tabs_when_orb_menu_is_open() {
-        let tab = (135.0, 2250.0);
-        let actions = orb_menu_actions(false, true);
-        assert!(orb_action_at(tab, 1080, 2400, &actions).is_none());
-        assert_eq!(tab_at(tab, 1080, 2400), Some(RootPage::Now));
     }
 
     #[test]
@@ -14024,31 +14674,6 @@ mod tests {
     }
 
     #[test]
-    fn orb_paint_matches_layout_v2_nodes() {
-        let width = 1080;
-        let height = 2400;
-        let closed = super::layout_live_v2(&orb_v2_source(&[]), "ADR-230 orb paint", width, height);
-        assert_eq!(
-            super::v2_named_rect(&closed, "orb:toggle", "orb"),
-            orb_zone_rect(width, height, 0)
-        );
-        let actions = [OrbAction::OpenInbox, OrbAction::OpenBluetooth];
-        let open =
-            super::layout_live_v2(&orb_v2_source(&actions), "ADR-230 orb paint", width, height);
-        let old = super::orb_view(width, height, &actions);
-        assert_eq!(
-            super::v2_named_rect(&open, "orb-menu:inbox", "orb"),
-            old.children[0].rect
-        );
-        assert_eq!(
-            super::v2_named_rect(&open, "orb:toggle", "orb"),
-            old.children[2].rect
-        );
-        let main = include_str!("main.rs");
-        assert!(main.contains("ADR-230 orb paint"));
-    }
-
-    #[test]
     fn diagnostic_paint_rows_match_layout_v2_scrolled_nodes() {
         let width = 1080;
         let height = 2400;
@@ -14561,6 +15186,62 @@ mod tests {
         );
         assert_eq!(pressed_key_from_keys(&keys, center).as_deref(), Some("Q"));
         assert_eq!(pressed_key_from_keys(&keys, (540.0, 100.0)), None);
+    }
+
+    fn searching() -> crate::orb_space::SearchState {
+        let mut keyboard = saai_ui_core::Keyboard::bind(
+            crate::ORB_SEARCH_FIELD_ID,
+            saai_ui_core::KeyboardLayout::Qwerty,
+        );
+        keyboard.set_source(saai_ui_core::KeyboardSource::OnScreen);
+        crate::orb_space::SearchState::new_for_test(String::new(), keyboard)
+    }
+
+    #[test]
+    fn orb_search_keyboard_keeps_every_key_and_calls_send_find() {
+        let state = searching();
+        let (_, original) = super::intent_keyboard_keys(1080, 2400, state.keyboard.mode);
+        let relabelled = super::orb_search_keys(1080, 2400, &state);
+        assert_eq!(original.len(), relabelled.len());
+        assert!(original.iter().zip(&relabelled).all(|(a, b)| a.0 == b.0));
+        assert!(relabelled.iter().any(|(_, label)| label == "Найти"));
+        assert!(!relabelled.iter().any(|(_, label)| label == "Отправить"));
+        assert!(relabelled.iter().any(|(_, label)| label == "Отмена"));
+    }
+
+    #[test]
+    fn orb_search_hides_its_keys_for_a_hardware_keyboard() {
+        let mut state = searching();
+        state
+            .keyboard
+            .set_source(saai_ui_core::KeyboardSource::Hardware);
+        assert!(super::orb_search_keys(1080, 2400, &state).is_empty());
+    }
+
+    #[test]
+    fn the_sphere_stops_where_the_search_keyboard_starts() {
+        let (width, height) = (1080, 2400);
+        let state = searching();
+        let keys_top = super::orb_search_keys(width, height, &state)
+            .iter()
+            .map(|(rect, _)| rect.y)
+            .min()
+            .expect("keys");
+        let strip_top = height - super::intent_keyboard_height(height);
+        assert!(keys_top >= strip_top, "{keys_top} vs {strip_top}");
+        let panel = crate::orb_space::search_panel(
+            width,
+            super::status_layer_height(),
+            strip_top,
+            3,
+            crate::render::orb_unit(),
+        );
+        assert!(panel.viewport.y + panel.viewport.height <= keys_top);
+        assert!(
+            panel.viewport.height >= 160 * crate::render::orb_unit() as u32,
+            "the sphere keeps real room above the keyboard"
+        );
+        assert!(panel.field.y >= super::status_layer_height());
     }
 
     #[test]
@@ -16580,162 +17261,6 @@ mod tests {
     }
 
     #[test]
-    fn orb_zone_never_reaches_where_cards_start() {
-        // HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb
-        // must never occupy hit-test space the tab-bar/cards already
-        // use. Every Root page's cards start at y=430 (2400-scale) --
-        // confirm the zone's bottom edge always stays short of that,
-        // for every real action count HIA-05 can now produce (0-3),
-        // on a range of real panel sizes.
-        for (width, height) in [(1080, 2400), (800, 480), (1440, 3120)] {
-            let cards_start = ((430_u64 * height as u64) / 2400) as u32;
-            for menu_action_count in 0..=3 {
-                let zone = orb_zone_rect(width, height, menu_action_count);
-                assert!(
-                    zone.y + zone.height <= cards_start,
-                    "zone bottom {} exceeds cards_start {} at {width}x{height}, menu_action_count={menu_action_count}",
-                    zone.y + zone.height,
-                    cards_start
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn orb_live_source_names_orbhost_and_menu_buttons() {
-        let closed = orb_v2_source(&[]);
-        assert!(closed.contains("OrbHost"));
-        assert!(closed.contains("orb:toggle"));
-        assert!(!closed.contains("orb-menu:"));
-        let open = orb_v2_source(&[OrbAction::OpenInbox, OrbAction::OpenBluetooth]);
-        assert!(open.contains("orb-menu:inbox"));
-        assert!(open.contains("orb-menu:bluetooth"));
-        assert!(!open.contains("manage_app:"));
-    }
-
-    #[test]
-    fn orb_action_at_toggles_the_closed_dot() {
-        let dot = orb_zone_rect(1080, 2400, 0);
-        let point = (
-            (dot.x + dot.width / 2) as f64,
-            (dot.y + dot.height / 2) as f64,
-        );
-        assert_eq!(
-            orb_action_at(point, 1080, 2400, &[]),
-            Some(OrbAction::Toggle)
-        );
-    }
-
-    #[test]
-    fn orb_action_at_misses_a_normal_card_row_when_closed() {
-        // The same point a real "Пространства"/"Входящие" card would
-        // occupy (stacked_row_rect(0, ..)'s own territory) must never
-        // register as an Orb tap.
-        let first_card = stacked_row_rect(0, 1080, 2400);
-        let point = (
-            (first_card.x + first_card.width / 2) as f64,
-            (first_card.y + first_card.height / 2) as f64,
-        );
-        assert_eq!(orb_action_at(point, 1080, 2400, &[]), None);
-    }
-
-    #[test]
-    fn orb_action_at_finds_a_menu_row_and_the_close_dot_when_open() {
-        let actions = [OrbAction::OpenInbox, OrbAction::OpenIntent];
-        let view_zone = orb_zone_rect(1080, 2400, actions.len());
-        let inbox_point = (
-            (view_zone.x + view_zone.width / 2) as f64,
-            (view_zone.y + 10) as f64,
-        );
-        assert_eq!(
-            orb_action_at(inbox_point, 1080, 2400, &actions),
-            Some(OrbAction::OpenInbox)
-        );
-        let dot_point = (
-            (view_zone.x + view_zone.width / 2) as f64,
-            (view_zone.y + view_zone.height - 10) as f64,
-        );
-        assert_eq!(
-            orb_action_at(dot_point, 1080, 2400, &actions),
-            Some(OrbAction::Toggle)
-        );
-    }
-
-    #[test]
-    fn orb_action_at_finds_a_third_row_when_the_menu_has_three_actions() {
-        // HIA-05's own shape: the menu isn't fixed at two rows --
-        // confirm a real three-action list (as `Shell::orb_menu_
-        // actions` produces with a paired Bluetooth device) is fully
-        // reachable, not just the first two.
-        let actions = [
-            OrbAction::OpenInbox,
-            OrbAction::OpenIntent,
-            OrbAction::OpenBluetooth,
-        ];
-        let view_zone = orb_zone_rect(1080, 2400, actions.len());
-        let third_row_point = (
-            (view_zone.x + view_zone.width / 2) as f64,
-            (view_zone.y + view_zone.height * 2 / 3 - 10) as f64,
-        );
-        assert_eq!(
-            orb_action_at(third_row_point, 1080, 2400, &actions),
-            Some(OrbAction::OpenBluetooth)
-        );
-    }
-
-    #[test]
-    fn orb_action_wire_and_parse_round_trip_for_every_variant() {
-        for action in [
-            OrbAction::Toggle,
-            OrbAction::OpenInbox,
-            OrbAction::OpenIntent,
-            OrbAction::OpenBluetooth,
-        ] {
-            assert_eq!(OrbAction::parse(action.wire()), Some(action));
-        }
-        assert_eq!(OrbAction::parse("not-a-real-orb-action"), None);
-    }
-
-    #[test]
-    fn orb_menu_actions_differs_between_two_real_context_frames() {
-        // HIA-05's own acceptance line (HIA-ROADMAP.md): at least two
-        // different action sets for two different real ContextFrames.
-        // A user space with no paired Bluetooth device is the
-        // baseline (Входящие + Новое намерение, the same fixed pair
-        // HIA-04b shipped); the system space drops "Новое намерение"
-        // (intents don't belong there); a paired Bluetooth device
-        // adds a third action regardless of which space. All three
-        // are genuinely different lists, not the same one relabeled.
-        let home = orb_menu_actions(false, false);
-        let system_space = orb_menu_actions(true, false);
-        let home_with_bluetooth = orb_menu_actions(false, true);
-
-        assert_eq!(home, vec![OrbAction::OpenInbox, OrbAction::OpenIntent]);
-        assert_eq!(system_space, vec![OrbAction::OpenInbox]);
-        assert_eq!(
-            home_with_bluetooth,
-            vec![
-                OrbAction::OpenInbox,
-                OrbAction::OpenIntent,
-                OrbAction::OpenBluetooth
-            ]
-        );
-
-        assert_ne!(home, system_space);
-        assert_ne!(home, home_with_bluetooth);
-    }
-
-    #[test]
-    fn orb_menu_actions_always_keeps_open_inbox() {
-        for is_system_space in [false, true] {
-            for bluetooth_paired in [false, true] {
-                assert!(orb_menu_actions(is_system_space, bluetooth_paired)
-                    .contains(&OrbAction::OpenInbox));
-            }
-        }
-    }
-
-    #[test]
     fn me_system_sections_group_by_domain_and_keep_silent_build_tap() {
         let sections = me_system_sections(&me_fixture_facts());
         let titles: Vec<_> = sections
@@ -16945,6 +17470,47 @@ mod tests {
         assert_eq!(rows[1].label, "Нагрузка");
         assert_eq!(rows[1].value, "0.3");
         assert!(!rows.iter().any(|row| row.key.contains("weather")));
+    }
+
+    #[test]
+    fn capacity_observations_fold_into_one_readout_or_vanish() {
+        let row = |key: &str, value: f64, unit: &str, source: &str| serde_json::json!({ "key": key, "value": value, "unit": unit, "source": source });
+        let rows = super::live_observations_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": { "observations": [
+                row("system.cpu.usage", 24.0, "percent", "procfs.cpu"),
+                row("system.memory.used_mb", 3276.8, "megabyte", "procfs.meminfo"),
+                row("system.memory.total_mb", 8192.0, "megabyte", "procfs.meminfo"),
+                row("system.memory.used_percent", 40.0, "percent", "derived.memory_percentage"),
+                row("system.storage.used_mb", 40960.0, "megabyte", "df.mount"),
+                row("system.storage.total_mb", 131072.0, "megabyte", "df.mount"),
+            ] }
+        }));
+        let by_label = |label: &str| rows.iter().find(|r| r.label == label).expect(label);
+        assert_eq!(by_label("Процессор").value, "24%");
+        assert_eq!(by_label("Память").value, "3.2 / 8.0 ГБ (40%)");
+        assert_eq!(by_label("Память").source, "procfs.meminfo");
+        assert_eq!(by_label("Хранилище").value, "40.0 / 128.0 ГБ");
+        assert_eq!(
+            rows.len(),
+            3,
+            "raw halves and the percent row are folded away"
+        );
+
+        let half = super::live_observations_from_status_json(&serde_json::json!({
+            "ok": true,
+            "status": { "observations": [
+                row("system.storage.used_mb", 10.0, "megabyte", "df.mount"),
+                row("system.memory.total_mb", 8192.0, "megabyte", "procfs.meminfo"),
+                row("system.memory.used_mb", 9000.0, "megabyte", "procfs.meminfo"),
+                row("system.memory.used_percent", 40.0, "percent", "derived.memory_percentage"),
+            ] }
+        }));
+        assert!(!half.iter().any(|r| r.label == "Хранилище"));
+        assert!(!half.iter().any(|r| r.value.contains("ГБ")));
+        assert_eq!(half.len(), 1);
+        assert_eq!(half[0].label, "Память");
+        assert_eq!(half[0].value, "40%");
     }
 
     #[test]
@@ -17414,6 +17980,7 @@ delegate_seat!(Shell);
 delegate_session_lock!(Shell);
 delegate_shm!(Shell);
 delegate_touch!(Shell);
+delegate_pointer!(Shell);
 delegate_xdg_shell!(Shell);
 delegate_xdg_window!(Shell);
 delegate_registry!(Shell);

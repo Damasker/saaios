@@ -2,6 +2,10 @@
 
 Status: **VUI-00, VUI-01, and VUI-03 complete; VUI-02 Task List complete, Acceptance checklist complete except one item blocked by the environment (see "The sans and mono faces survive the actual Pixel boot-image asset path" below)**
 
+> **Orb (2026-10-01):** всё, что в этом roadmap описывает Orb как точку,
+> радиальное меню и Context Light на полной точке, заменено
+> [ADR-430](../../adr/ADR-430-orb-spatial-navigation.md) / [ORB-ROADMAP](ORB-ROADMAP.md).
+
 **A note on `[x]` in VUI-04 through VUI-06 below**: VUI-00 through VUI-03
 held one consistent rule -- `[x]` means confirmed on the real Pixel 7, not
 merely implemented. VUI-04/05/06's own Task List checkboxes drifted from
@@ -710,15 +714,17 @@ turning the Orb into a launcher or assistant avatar.
   `ColorRole::Pressed` plus a bottom hairline without changing icon size.
   `disabled` still has no real trigger -- no tab is actually disabled.
 - [ ] Apply Context Light grammar: context=color, state=shape,
-  activity=motion, quantity=arc/fill, attention=ring. Four of five axes
+  activity=motion, quantity=arc, attention=ring. All five axes
   live on the Orb (host): state=shape (`StatusMark`), context=color
   (Space color for `Idle`/`Active`, semantic color otherwise),
   **attention=ring** (`WaitingConfirmation` / undismissed Notifications),
-  **quantity=fill** (determinate battery `Progress`; missing reading is
+  **quantity=arc** (determinate battery `Progress`, ADR-429: clockwise
+  sweep from 12 o'clock inscribed in the Orb dot; missing reading is
   absent, not `0%`; Border token, never severity),   **activity=motion**
   (`MotionCue::ActivityPulse` only for Running and not reduced-motion;
-  ADR-170 loops the inset hairline 240 ms on / 240 ms off). A circular arc is not drawn
-  — this file has no circle primitive; fill is the honest square analogue.
+  ADR-170 loops the inset hairline 240 ms on / 240 ms off). `Canvas::arc` (ADR-429)
+  replaced the old bottom fill line, so the concept's Orb ring is real
+  on the host; it is not yet looked at on the Pixel panel.
   `Я`→`Система` is the visible tab label (VUI-06); destination content
   was accepted on Pixel before the rename.
 - [x] Integrate a restrained Orb host with quiet, active, progress, attention,

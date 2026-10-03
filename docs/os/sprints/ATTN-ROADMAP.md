@@ -1,6 +1,6 @@
 # SaaiOS Attention & Proactive Context — delivery roadmap
 
-Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит. ATTN-06 host (ADR-291 + shell wire ADR-293) + panther `4dc19018…` (ADR-308).**
+Status: **ATTN-00/01/02/03/04/05 host complete. ATTN-02/03/04 shell прошит. ATTN-06 host (ADR-291 + shell wire ADR-293) + panther `4dc19018…` (ADR-308).**
 Phone: ATTN-02/03 ride VUI-05; ATTN-04 rides VUI-04. See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-123](../../adr/ADR-123-attention-projection.md)
@@ -21,9 +21,9 @@ No second notification subsystem. No attention database.
 | ATTN-02 | NOW «Требует внимания» uses projection | **Done** (host) | **yes (VUI-05)** |
 | ATTN-03 | Inbox uses same projection | **Done** (host + panther) | **yes** |
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
-| ATTN-05 | Context relevance (no AI) | Backlog | no |
+| ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-427) | no |
 | ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
-| ATTN-07 | One OAM suggested action | Backlog | **yes** |
+| ATTN-07 | One OAM suggested action | Backlog — **not Ready** (see below) | **yes** |
 
 ## ATTN-01
 
@@ -62,6 +62,23 @@ Task/Notification filter.
 
 **Rollback:** restore the local Task-then-Notification filters.
 
+## ATTN-05
+
+**Goal:** attention is ordered by priority, actionability, then where the
+user is. No AI, no score.
+
+**Change:** `AttentionContext` + `project_in_context`. Relevance is
+`CurrentObject` / `CurrentContext` / `Global`; stable sort by priority,
+actionability, relevance. Membership never changes. `project_with_health`
+is the no-context call.
+
+**Test:** host `cargo test -p saai-attention`.
+
+**Rollback:** drop the sort and `relevance_of`.
+
+**Threat:** none — pure function, no IPC, no phone binary. Shell wiring
+waits for a cross-space feed (ADR-427).
+
 ## ATTN-06
 
 **Goal:** one Health report can become Attention. Healthy is not news.
@@ -76,3 +93,29 @@ Do not flash shell.
 **Rollback:** drop `AttentionSource::Health`.
 
 **Threat:** none — host adapter, no phone binary.
+
+## ATTN-07 readiness (2026-10-01)
+
+Not Ready under the Definition of Ready; nothing was built. Blockers found
+by reading the code, not guessed:
+
+- **No source carries an object.** Every `AttentionItem` the projection
+  builds today (`WorkflowTask`, `Notification`, `Health`) sets
+  `object: None`. An OAM action resolves *for an object*
+  (`ObjectActionRegistry::resolve_for(&Entity, ..)`), so there is nothing to
+  suggest an action on until at least one source names its object (for
+  example a notification that links an entity). That is a data-model
+  decision for the owner, not an implementation detail.
+- **ADR-123 forbids execution here.** "Attention never executes Action."
+  A suggestion would be display-only, and the tap would have to go through
+  the existing confirm + `execute_if_allowed_for` path with a Principal.
+  Which surface owns that confirmation is undecided.
+- **The shell has no `ToolRegistry`/`ObjectActionRegistry`.** Resolution
+  needs `tools.get(..)`; `saai-shell` talks to `saai-entityd`/`saai-appd`
+  only. Either the shell grows a resolver client or `saai-taskd` resolves
+  and publishes the suggestion.
+
+Ready when: one source is chosen to carry an `ObjectRef`, and the owner of
+confirmation/resolution is named. Then the slice is small: an optional
+`suggested_action` on `AttentionItem`, selected deterministically (no
+confirmation first, then `action_id`), at most one per item.

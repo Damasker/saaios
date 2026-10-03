@@ -279,6 +279,10 @@ ADR-420 host Qt 5.15 QLineEdit inner QHBoxLayout keeps v2 (no flash).
 ADR-421 host Qt 5.15 URL mouse click above WebEngine keeps v2 (no flash).
 ADR-422 host Qt 6.8 URL mouse click above WebEngine keeps v2 (no flash).
 ADR-423 host Qt 6.8 Falkon LineEdit mouse-ignore keeps v2 (no flash).
+ADR-426 Система shows RAM/storage capacity only from live Observations (host, no flash).
+ADR-427 ATTN-05 attention order: priority, actionability, deterministic context relevance (host).
+ADR-428 WORK-05 admission order: priority, oldest first; «Далее» names the same Task (host).
+ADR-429 Orb quantity is a clockwise arc (`Canvas::arc`), not a bottom line (host, no flash).
 ADR-404 packed GTK 4.14 ComboBox popup maps xdg_popup (no flash).
 ADR-277 Automation is not the local user (host).
 ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
@@ -301,6 +305,7 @@ phone sprints.
 - [ATTN-ROADMAP.md](ATTN-ROADMAP.md) / [ADR-123](../../adr/ADR-123-attention-projection.md)
 - [AUTH-ROADMAP.md](AUTH-ROADMAP.md) / [ADR-124](../../adr/ADR-124-unified-authority-model.md)
 - [MEM-ROADMAP.md](MEM-ROADMAP.md) / [ADR-125](../../adr/ADR-125-memory-learning-provenance-v1.md)
+- [ORB-ROADMAP.md](ORB-ROADMAP.md) / [ADR-430](../../adr/ADR-430-orb-spatial-navigation.md) — Orb как пространство навигации
 
 Новых фундаментальных одноустройственных моделей не добавлять.
 

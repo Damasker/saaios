@@ -13,12 +13,22 @@ use uuid::Uuid;
 pub const KEY_CPU_USAGE: &str = "system.cpu.usage";
 pub const KEY_LOAD_AVERAGE: &str = "system.load.average";
 pub const KEY_MEMORY_USED_PERCENT: &str = "system.memory.used_percent";
+pub const KEY_MEMORY_USED_MB: &str = "system.memory.used_mb";
+pub const KEY_MEMORY_TOTAL_MB: &str = "system.memory.total_mb";
+pub const KEY_STORAGE_USED_MB: &str = "system.storage.used_mb";
+pub const KEY_STORAGE_TOTAL_MB: &str = "system.storage.total_mb";
 
 /// CPU/load TTL in the 2–5s band from ADR-122. Memory uses the same until
 /// ObservationSpec exists.
 pub const METRICS_CPU_TTL: u64 = 5_000;
 pub const METRICS_LOAD_TTL: u64 = 5_000;
 pub const METRICS_MEMORY_TTL: u64 = 5_000;
+/// Storage moves slowly and `df` is a subprocess, so it outlives several
+/// telemetry ticks. A dead sampler still goes Stale after two minutes.
+pub const METRICS_STORAGE_TTL: u64 = 120_000;
+
+/// Data partition first (the user-visible capacity on a phone), then `/`.
+const STORAGE_MOUNT_PREFERENCE: [&str; 2] = ["/data", "/"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetricsOrigin {
@@ -98,7 +108,104 @@ pub fn observations_from_system_metrics(
             sequence,
         ));
     }
+    if let Some((used, total)) = used_of_total(parsed.mem_used_mb, parsed.mem_total_mb) {
+        let source_id = memory_source(origin);
+        for (key, number) in [(KEY_MEMORY_USED_MB, used), (KEY_MEMORY_TOTAL_MB, total)] {
+            out.push(observation(
+                Draft {
+                    key,
+                    number,
+                    unit: Some("megabyte"),
+                    source_id,
+                    quality: ObservationQuality::Direct,
+                    kind: ObservationSourceKind::Direct,
+                    valid_for_ms: METRICS_MEMORY_TTL,
+                },
+                observed_at,
+                sequence,
+            ));
+        }
+    }
     out
+}
+
+#[derive(Debug, Deserialize)]
+struct DiskJson {
+    #[serde(default)]
+    mounts: Vec<MountJson>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MountJson {
+    path: String,
+    used_mb: Option<f64>,
+    total_mb: Option<f64>,
+}
+
+/// Convert the existing `system.disk` tool JSON into storage Observations.
+/// One mount only: `/data` when the device has it, otherwise `/`. Missing,
+/// non-finite, or impossible numbers (used > total) yield no rows.
+pub fn observations_from_system_disk(
+    value: &Value,
+    origin: MetricsOrigin,
+    observed_at: DateTime<Utc>,
+    sequence: u64,
+) -> Vec<Observation> {
+    let parsed: DiskJson = match serde_json::from_value(value.clone()) {
+        Ok(parsed) => parsed,
+        Err(_) => return Vec::new(),
+    };
+    let Some(mount) = STORAGE_MOUNT_PREFERENCE
+        .iter()
+        .find_map(|path| parsed.mounts.iter().find(|m| m.path == *path))
+    else {
+        return Vec::new();
+    };
+    let Some((used, total)) = used_of_total(mount.used_mb, mount.total_mb) else {
+        return Vec::new();
+    };
+    let source_id = storage_source(origin);
+    [(KEY_STORAGE_USED_MB, used), (KEY_STORAGE_TOTAL_MB, total)]
+        .into_iter()
+        .map(|(key, number)| {
+            observation(
+                Draft {
+                    key,
+                    number,
+                    unit: Some("megabyte"),
+                    source_id,
+                    quality: ObservationQuality::Direct,
+                    kind: ObservationSourceKind::Direct,
+                    valid_for_ms: METRICS_STORAGE_TTL,
+                },
+                observed_at,
+                sequence,
+            )
+        })
+        .collect()
+}
+
+fn used_of_total(used: Option<f64>, total: Option<f64>) -> Option<(f64, f64)> {
+    match (finite(used), finite(total)) {
+        (Some(used), Some(total)) if total > 0.0 && (0.0..=total).contains(&used) => {
+            Some((used, total))
+        }
+        _ => None,
+    }
+}
+
+fn memory_source(origin: MetricsOrigin) -> &'static str {
+    match origin {
+        MetricsOrigin::Mock => "mock.system.metrics",
+        MetricsOrigin::Procfs => "procfs.meminfo",
+    }
+}
+
+fn storage_source(origin: MetricsOrigin) -> &'static str {
+    match origin {
+        MetricsOrigin::Mock => "mock.system.disk",
+        MetricsOrigin::Procfs => "df.mount",
+    }
 }
 
 fn cpu_source(origin: MetricsOrigin) -> &'static str {
@@ -174,7 +281,11 @@ mod tests {
     fn mock_metrics_become_observations() {
         let now = Utc::now();
         let rows = observations_from_system_metrics(&mock_metrics(), MetricsOrigin::Mock, now, 7);
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 5);
+        let used = by_key(&rows, KEY_MEMORY_USED_MB);
+        assert_eq!(used.value, json!(5200.0));
+        assert_eq!(used.unit.as_deref(), Some("megabyte"));
+        assert_eq!(by_key(&rows, KEY_MEMORY_TOTAL_MB).value, json!(8192.0));
         let cpu = by_key(&rows, KEY_CPU_USAGE);
         assert_eq!(cpu.value, json!(97.0));
         assert_eq!(cpu.unit.as_deref(), Some("percent"));
@@ -238,5 +349,85 @@ mod tests {
         assert_eq!(mem.value, json!(25.0));
         assert_eq!(mem.source.source_id, "derived.memory_percentage");
         assert_eq!(by_key(&rows, KEY_CPU_USAGE).source.source_id, "procfs.cpu");
+    }
+
+    fn disk_json() -> Value {
+        json!({
+            "source": "linux",
+            "mounts": [
+                { "path": "/", "total_mb": 1000.0, "used_mb": 900.0, "avail_mb": 100.0, "used_pct": 90.0 },
+                { "path": "/data", "total_mb": 128000.0, "used_mb": 40000.0, "avail_mb": 88000.0, "used_pct": 31.0 }
+            ],
+            "root_used_pct": 90.0
+        })
+    }
+
+    #[test]
+    fn storage_prefers_data_mount_over_root() {
+        let rows =
+            observations_from_system_disk(&disk_json(), MetricsOrigin::Procfs, Utc::now(), 3);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(by_key(&rows, KEY_STORAGE_USED_MB).value, json!(40000.0));
+        let total = by_key(&rows, KEY_STORAGE_TOTAL_MB);
+        assert_eq!(total.value, json!(128000.0));
+        assert_eq!(total.unit.as_deref(), Some("megabyte"));
+        assert_eq!(total.source.source_id, "df.mount");
+        assert_eq!(total.valid_for_ms, METRICS_STORAGE_TTL);
+    }
+
+    #[test]
+    fn storage_outlives_the_cpu_ttl_but_still_goes_stale() {
+        let t0 = Utc::now();
+        let rows = observations_from_system_disk(&disk_json(), MetricsOrigin::Procfs, t0, 1);
+        let used = by_key(&rows, KEY_STORAGE_USED_MB);
+        let after_cpu_ttl = t0 + ChronoDuration::milliseconds(METRICS_CPU_TTL as i64 + 1);
+        assert_eq!(freshness_at(used, after_cpu_ttl), Freshness::Fresh);
+        let after_storage_ttl = t0 + ChronoDuration::milliseconds(METRICS_STORAGE_TTL as i64 + 1);
+        assert_eq!(freshness_at(used, after_storage_ttl), Freshness::Stale);
+    }
+
+    #[test]
+    fn storage_falls_back_to_root_and_drops_unknown_mounts() {
+        let only_root = json!({
+            "mounts": [
+                { "path": "/tmp", "total_mb": 10.0, "used_mb": 1.0 },
+                { "path": "/", "total_mb": 32000.0, "used_mb": 22400.0 }
+            ]
+        });
+        let rows = observations_from_system_disk(&only_root, MetricsOrigin::Mock, Utc::now(), 1);
+        assert_eq!(by_key(&rows, KEY_STORAGE_USED_MB).value, json!(22400.0));
+        assert_eq!(
+            by_key(&rows, KEY_STORAGE_TOTAL_MB).source.source_id,
+            "mock.system.disk"
+        );
+        let only_tmp = json!({ "mounts": [{ "path": "/tmp", "total_mb": 10.0, "used_mb": 1.0 }] });
+        assert!(
+            observations_from_system_disk(&only_tmp, MetricsOrigin::Mock, Utc::now(), 1).is_empty()
+        );
+    }
+
+    #[test]
+    fn impossible_capacity_numbers_are_dropped_not_clamped() {
+        let now = Utc::now();
+        for (used, total) in [(9.0, 8.0), (-1.0, 8.0), (1.0, 0.0)] {
+            let disk = json!({ "mounts": [{ "path": "/", "used_mb": used, "total_mb": total }] });
+            assert!(observations_from_system_disk(&disk, MetricsOrigin::Mock, now, 1).is_empty());
+            let metrics = json!({ "mem_used_mb": used, "mem_total_mb": total });
+            assert!(
+                observations_from_system_metrics(&metrics, MetricsOrigin::Mock, now, 1)
+                    .iter()
+                    .all(|o| o.key != KEY_MEMORY_USED_MB && o.key != KEY_MEMORY_TOTAL_MB)
+            );
+        }
+        assert!(observations_from_system_disk(
+            &json!({ "error": "df unavailable", "mounts": [] }),
+            MetricsOrigin::Procfs,
+            now,
+            1
+        )
+        .is_empty());
+        assert!(
+            observations_from_system_disk(&json!("junk"), MetricsOrigin::Procfs, now, 1).is_empty()
+        );
     }
 }

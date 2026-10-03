@@ -2421,6 +2421,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "saai-orb"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "saai-ota-health"
 version = "0.1.0"
 dependencies = [
@@ -2509,6 +2517,7 @@ dependencies = [
  "saai-entity-protocol",
  "saai-entity-store",
  "saai-object-actions",
+ "saai-orb",
  "saai-portal-protocol",
  "saai-ui-compiler",
  "saai-ui-core",

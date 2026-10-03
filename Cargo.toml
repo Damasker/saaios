@@ -22,6 +22,7 @@ members = [
     "crates/intent-resolution",
     "crates/saai-observation",
     "crates/saai-attention",
+    "crates/saai-orb",
     "crates/saai-authority",
     "crates/saai-portal-protocol",
     "crates/saai-ota-manifest",
@@ -71,6 +72,7 @@ saai-object-actions = { path = "crates/saai-object-actions" }
 intent-resolution = { path = "crates/intent-resolution" }
 saai-observation = { path = "crates/saai-observation" }
 saai-attention = { path = "crates/saai-attention" }
+saai-orb = { path = "crates/saai-orb" }
 saai-authority = { path = "crates/saai-authority" }
 saai-portal-protocol = { path = "crates/saai-portal-protocol" }
 saai-ota-manifest = { path = "crates/saai-ota-manifest" }

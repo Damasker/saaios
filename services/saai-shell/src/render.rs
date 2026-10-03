@@ -8,6 +8,18 @@ use saai_ui_core::{
     SystemSection, SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
+mod concept_graphics;
+mod orb_paint;
+pub use concept_graphics::{
+    draw_avatar, draw_object_icon, draw_orb_visual, draw_resource_bar, draw_ring_progress,
+    draw_slider, AvatarVisual, ObjectIconVisual, OrbVisual, ResourceBarVisual, RingProgressVisual,
+    SliderVisual,
+};
+pub use orb_paint::{
+    draw_covered_page, draw_orb_space, draw_search_panel, orb_unit, OrbPaint, OrbPoint,
+    SearchRowView, SearchView,
+};
+
 use std::fs;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -358,6 +370,19 @@ pub fn draw_consent(
 /// ADR-161: Intent compose through `ContextHeader`. The Text `Field`
 /// sits immediately above the docked QWERTY. Keys stay the ADR-029
 /// rectangles from `intent_view()`. No Surface fill of the Fill slot.
+/// The keyboard under the sphere while searching. `area` is blanked first so
+/// the page and the navigation strip behind the gaps between keys do not show.
+pub fn draw_orb_search_keys(
+    canvas: &mut Canvas<'_>,
+    area: Rect,
+    keys: &[(Rect, String)],
+    pressed_key: Option<&str>,
+    fonts: Option<&Fonts>,
+) {
+    canvas.fill_rect(area, theme_color(ColorRole::Canvas));
+    paint_keyboard_keys(canvas, fonts, keys, pressed_key);
+}
+
 pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
     content: Rect,
@@ -623,107 +648,6 @@ pub fn draw_object_view(
             },
         );
     }
-}
-
-/// HIA-04b: drawn last, unconditionally, on top of whatever
-/// `Frame::Root` just rendered -- not a modal, coexists with the
-/// tab-bar/cards underneath it (see `orb_zone_rect`'s own doc comment
-/// in `main.rs` for why it never overlaps their hit-test space).
-/// `menu_rows` is empty in `Idle`/`Attention`; two rows in `Menu`.
-/// HIA-16: `is_attention` draws a real shape difference, not just a
-/// different fill color -- a hollow ring-square (outer `dot_color`
-/// frame, `canvas background`-colored center) instead of the solid square
-/// every other state uses. `ATTENTION`'s own color (a fixed alert
-/// red, `main.rs`'s `build_orb_frame`) already told a sighted user
-/// something needs them; this is the same signal for anyone who
-/// can't rely on color alone (HIA-ROADMAP.md's own acceptance line,
-/// document section 52) -- a colorblind user, or a photo/screen-
-/// share that's lost its color fidelity, still sees "hollow" as
-/// distinct from "solid" regardless of hue.
-/// VUI-04 (ADR-116): `mark` is the Orb's own `OrbHost::mark()` --
-/// `draw_calibration_mark` already renders a distinct shape per
-/// `StatusMark` variant (used by `StatusIndicator`'s own compact mark
-/// and the calibration fixture), so every real Orb state
-/// (Idle/Active/Running/Attention/Offline) now gets a shape of its own
-/// instead of the old binary filled-square-or-hollow-ring. Non-color by
-/// construction: `dot_color` and `mark` are computed independently by
-/// the caller, so a state is legible even for a viewer who cannot use
-/// `dot_color` at all.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_orb(
-    canvas: &mut Canvas<'_>,
-    dot_rect: Rect,
-    dot_color: Pixel,
-    mark: StatusMark,
-    attention_ring: bool,
-    quantity: Option<u8>,
-    activity_pulse: bool,
-    menu_rows: &[(Rect, &str)],
-    fonts: Option<&Fonts>,
-) {
-    for (rect, label) in menu_rows {
-        canvas.fill_rect(*rect, theme_color(ColorRole::Elevated));
-        if let Some(fonts) = fonts {
-            draw_text(
-                canvas,
-                &fonts.regular,
-                label,
-                role_px(TextRole::Caption),
-                rect.x + 24,
-                rect.y + rect.height / 2 - 16,
-                theme_color(ColorRole::TextPrimary),
-            );
-        }
-    }
-    draw_calibration_mark(canvas, dot_rect, mark, dot_color);
-    if activity_pulse {
-        // ADR-170: inset hairline is the on-phase of the activity loop.
-        let inset = physical(StrokeToken::Focus.value()).max(1);
-        if dot_rect.width > inset * 2 && dot_rect.height > inset * 2 {
-            draw_square_ring(
-                canvas,
-                Rect::new(
-                    dot_rect.x + inset,
-                    dot_rect.y + inset,
-                    dot_rect.width - inset * 2,
-                    dot_rect.height - inset * 2,
-                ),
-                physical(StrokeToken::Hairline.value()).max(1),
-                theme_color(ColorRole::TextSecondary),
-            );
-        }
-    }
-    if attention_ring {
-        draw_square_ring(
-            canvas,
-            dot_rect,
-            physical(StrokeToken::Focus.value()).max(1),
-            dot_color,
-        );
-    }
-    if let Some(percent) = quantity {
-        draw_quantity_fill(canvas, dot_rect, percent);
-    }
-}
-
-fn draw_quantity_fill(canvas: &mut Canvas<'_>, rect: Rect, percent: u8) {
-    let track_height = physical(Progress::MIN_TRACK_HEIGHT).max(1);
-    if rect.height <= track_height {
-        return;
-    }
-    let filled_width = (u64::from(rect.width) * u64::from(percent.min(100)) / 100) as u32;
-    if filled_width == 0 {
-        return;
-    }
-    canvas.fill_rect(
-        Rect::new(
-            rect.x,
-            rect.y + rect.height.saturating_sub(track_height),
-            filled_width,
-            track_height,
-        ),
-        theme_color(ColorRole::Border),
-    );
 }
 
 fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: Pixel) {
@@ -1612,7 +1536,13 @@ fn draw_semantic_text(
     }
 }
 
-fn draw_gallery_icon(canvas: &mut Canvas<'_>, fonts: &Fonts, icon: &Icon, left: u32, top: u32) {
+pub(super) fn draw_gallery_icon(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    icon: &Icon,
+    left: u32,
+    top: u32,
+) {
     let Some(icon_font) = fonts.icon() else {
         return;
     };
@@ -2233,6 +2163,143 @@ pub fn draw_composite_gallery(
             left,
             rows[row],
             theme_color(indicator.state.style().color),
+        );
+    }
+}
+
+/// Concept-board graphics page of the developer gallery. Values are explicitly
+/// labelled fixtures, not runtime telemetry. It proves the reusable drawing
+/// vocabulary independently of any product surface.
+pub fn draw_concept_gallery(
+    canvas: &mut Canvas<'_>,
+    width: u32,
+    height: u32,
+    fonts: Option<&Fonts>,
+) {
+    use saai_ui_core::OrbVisualState;
+
+    canvas.fill(theme_color(ColorRole::Canvas));
+    let margin = (width / 20).max(12);
+    let content_width = width.saturating_sub(margin * 2);
+    let columns = 4_u32;
+    let cell_width = content_width / columns;
+    let orb_size = (cell_width * 2 / 3).min(height / 8).max(48);
+    let orb_start = height / 14;
+    let orb_row = height / 7;
+
+    for (index, state) in OrbVisualState::ALL.into_iter().enumerate() {
+        let column = index as u32 % columns;
+        let row = index as u32 / columns;
+        let left = margin + column * cell_width + (cell_width - orb_size) / 2;
+        let top = orb_start + row * orb_row;
+        draw_orb_visual(
+            canvas,
+            OrbVisual {
+                bounds: Rect::new(left, top, orb_size, orb_size),
+                state,
+                progress: (state == OrbVisualState::Executing).then_some(62),
+            },
+        );
+        if let Some(fonts) = fonts {
+            draw_text_centered(
+                canvas,
+                &fonts.regular,
+                state.label(),
+                role_px(TextRole::Caption),
+                left + orb_size / 2,
+                top + orb_size + physical(SpacingToken::XSmall.value()),
+                theme_color(ColorRole::TextSecondary),
+            );
+        }
+    }
+
+    let components_y = orb_start + orb_row * 2 + physical(SpacingToken::Large.value());
+    let avatar_size = physical(LogicalUnit::new(56));
+    draw_avatar(
+        canvas,
+        AvatarVisual {
+            bounds: Rect::new(margin, components_y, avatar_size, avatar_size),
+            status: Some(UniversalState::Active),
+        },
+    );
+    let ring_left = margin + avatar_size + physical(SpacingToken::Large.value());
+    draw_ring_progress(
+        canvas,
+        RingProgressVisual {
+            bounds: Rect::new(ring_left, components_y, avatar_size, avatar_size),
+            value: Some(40),
+        },
+    );
+    let controls_left = ring_left + avatar_size + physical(SpacingToken::XLarge.value());
+    let controls_width = width.saturating_sub(controls_left).saturating_sub(margin);
+    draw_slider(
+        canvas,
+        SliderVisual {
+            bounds: Rect::new(controls_left, components_y, controls_width, avatar_size / 2),
+            value: 58,
+            enabled: true,
+        },
+    );
+    draw_resource_bar(
+        canvas,
+        ResourceBarVisual {
+            bounds: Rect::new(
+                controls_left,
+                components_y + avatar_size * 2 / 3,
+                controls_width,
+                physical(LogicalUnit::new(8)),
+            ),
+            value: Some(73),
+        },
+    );
+
+    let tile_top = components_y + avatar_size + physical(SpacingToken::XLarge.value());
+    let tile_gap = physical(SpacingToken::Small.value());
+    let tile_size =
+        (content_width.saturating_sub(tile_gap * 5) / 6).min(physical(LogicalUnit::new(56)));
+    let icons = [
+        (IconGlyph::User, ColorRole::Accent),
+        (IconGlyph::FileText, ColorRole::Success),
+        (IconGlyph::Image, ColorRole::Success),
+        (IconGlyph::Video, ColorRole::Attention),
+        (IconGlyph::Clipboard, ColorRole::Attention),
+        (IconGlyph::Server, ColorRole::Elevated),
+    ];
+    for (index, (glyph, color)) in icons.into_iter().enumerate() {
+        draw_object_icon(
+            canvas,
+            fonts,
+            ObjectIconVisual {
+                bounds: Rect::new(
+                    margin + index as u32 * (tile_size + tile_gap),
+                    tile_top,
+                    tile_size,
+                    tile_size,
+                ),
+                glyph,
+                color,
+            },
+        );
+    }
+
+    if let Some(fonts) = fonts {
+        draw_text(
+            canvas,
+            &fonts.semibold,
+            "SaaiOS Concept Graphics · reference fixtures",
+            role_px(TextRole::Caption),
+            margin,
+            physical(SpacingToken::Small.value()),
+            theme_color(ColorRole::TextPrimary),
+        );
+        draw_text(
+            canvas,
+            &fonts.regular,
+            "Аватар · 40% · яркость 58% · ресурс 73%",
+            role_px(TextRole::Caption),
+            margin,
+            components_y + avatar_size + physical(SpacingToken::Small.value()),
+            theme_color(ColorRole::TextSecondary),
         );
     }
 }
@@ -3079,10 +3146,10 @@ mod tests {
         apply_contrast_boost, composite_gallery_decision_buttons, composite_gallery_row_positions,
         context_color, draw_action_card, draw_apps_grid, draw_calibration, draw_composite_gallery,
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
-        draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
-        draw_remote_pair, draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        gallery_row_positions, now_empty_pattern, physical, physical_line_height, role_px,
-        state_color, theme_color, ActionCardView, Canvas,
+        draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_pin_setup, draw_remote_pair,
+        draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar, gallery_row_positions,
+        now_empty_pattern, physical, physical_line_height, role_px, state_color, theme_color,
+        ActionCardView, Canvas,
     };
     use saai_ui_core::{
         composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,
@@ -3304,143 +3371,6 @@ mod tests {
         assert_eq!(canvas.pixel(540, 1000), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(540, 2200), theme_color(ColorRole::Surface));
         assert_ne!(canvas.pixel(540, 2050), theme_color(ColorRole::Surface));
-    }
-
-    #[test]
-    fn orb_mark_shapes_differ_between_states() {
-        // HIA-16's own acceptance line (HIA-ROADMAP.md), now carried by
-        // VUI-04's real `StatusMark` per state (ADR-116) instead of a
-        // binary solid-square-or-hollow-ring: every state must be
-        // distinguishable by shape, not only by color. Compares whole
-        // rendered buffers rather than hand-picked pixel coordinates,
-        // since each `StatusMark` variant's exact geometry is
-        // `draw_calibration_mark`'s own concern, not this test's.
-        let render_mark = |mark: StatusMark| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            let dot_rect = Rect::new(50, 50, 100, 100);
-            draw_orb(
-                &mut canvas,
-                dot_rect,
-                theme_color(ColorRole::Accent),
-                mark,
-                false,
-                None,
-                false,
-                &[],
-                None,
-            );
-            pixels
-        };
-        let idle = render_mark(StatusMark::Outline);
-        let attention = render_mark(StatusMark::Alert);
-        let offline = render_mark(StatusMark::Offline);
-        assert_ne!(idle, attention);
-        assert_ne!(idle, offline);
-        assert_ne!(attention, offline);
-    }
-
-    #[test]
-    fn attention_ring_is_drawn_beyond_the_alert_mark() {
-        let render = |ring: bool| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                Rect::new(50, 50, 100, 100),
-                theme_color(ColorRole::Accent),
-                StatusMark::Alert,
-                ring,
-                None,
-                false,
-                &[],
-                None,
-            );
-            pixels
-        };
-        assert_ne!(render(true), render(false));
-    }
-
-    #[test]
-    fn quantity_fill_uses_border_not_severity_and_missing_stays_absent() {
-        let rect = Rect::new(50, 50, 100, 100);
-        let render = |quantity: Option<u8>| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                rect,
-                theme_color(ColorRole::Accent),
-                StatusMark::Outline,
-                false,
-                quantity,
-                false,
-                &[],
-                None,
-            );
-            pixels
-        };
-        let missing = render(None);
-        let filled = render(Some(87));
-        assert_ne!(missing, filled);
-        let mut filled_pixels = filled;
-        let canvas = Canvas::new(&mut filled_pixels, 200, 200);
-        let track_y = rect.y + rect.height - physical(Progress::MIN_TRACK_HEIGHT).max(1);
-        assert_eq!(
-            canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Border)
-        );
-        assert_ne!(
-            canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Attention)
-        );
-        assert_ne!(
-            canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Critical)
-        );
-        let mut missing_pixels = missing;
-        let missing_canvas = Canvas::new(&mut missing_pixels, 200, 200);
-        assert_ne!(
-            missing_canvas.pixel(rect.x + 10, track_y),
-            theme_color(ColorRole::Border)
-        );
-    }
-
-    #[test]
-    fn activity_pulse_inset_is_not_an_attention_ring() {
-        let render = |pulse: bool| -> Vec<u8> {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                Rect::new(50, 50, 100, 100),
-                theme_color(ColorRole::Accent),
-                StatusMark::Activity,
-                false,
-                None,
-                pulse,
-                &[],
-                None,
-            );
-            pixels
-        };
-        assert_ne!(render(true), render(false));
-        assert_ne!(render(true), {
-            let mut pixels = vec![0u8; 200 * 200 * 4];
-            let mut canvas = Canvas::new(&mut pixels, 200, 200);
-            draw_orb(
-                &mut canvas,
-                Rect::new(50, 50, 100, 100),
-                theme_color(ColorRole::Accent),
-                StatusMark::Activity,
-                true,
-                None,
-                false,
-                &[],
-                None,
-            );
-            pixels
-        });
     }
 
     #[test]

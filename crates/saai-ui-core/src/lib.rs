@@ -110,6 +110,56 @@ pub enum UniversalState {
     Offline,
 }
 
+/// The seven product phases shown by the Orb. This is deliberately narrower
+/// than [`UniversalState`]: the phase names describe workflow presentation,
+/// while `universal_state` keeps color, accessibility, and motion on the
+/// system-wide state vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrbVisualState {
+    Waiting,
+    Listening,
+    Analyzing,
+    Planning,
+    Confirmation,
+    Executing,
+    Result,
+}
+
+impl OrbVisualState {
+    pub const ALL: [Self; 7] = [
+        Self::Waiting,
+        Self::Listening,
+        Self::Analyzing,
+        Self::Planning,
+        Self::Confirmation,
+        Self::Executing,
+        Self::Result,
+    ];
+
+    pub const fn universal_state(self) -> UniversalState {
+        match self {
+            Self::Waiting => UniversalState::Idle,
+            Self::Listening | Self::Analyzing => UniversalState::Active,
+            Self::Planning => UniversalState::Waiting,
+            Self::Confirmation => UniversalState::Attention,
+            Self::Executing => UniversalState::Running,
+            Self::Result => UniversalState::Complete,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Waiting => "Ожидание",
+            Self::Listening => "Слушает",
+            Self::Analyzing => "Анализирует",
+            Self::Planning => "Планирует",
+            Self::Confirmation => "Подтвердить",
+            Self::Executing => "Выполняет",
+            Self::Result => "Результат",
+        }
+    }
+}
+
 /// Shape/icon cue paired with status color so color never carries the only
 /// meaning. VUI-02 maps these semantic marks to the selected icon family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -666,8 +716,8 @@ fn cross_size(length: Length, available: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        layout, Axis, ColorRole, ContextColor, EdgeInsets, Length, MotionCue, Node, Rect, Rgb,
-        SafeInsets, StatusMark, SurfaceScale, Theme, UniversalState,
+        layout, Axis, ColorRole, ContextColor, EdgeInsets, Length, MotionCue, Node, OrbVisualState,
+        Rect, Rgb, SafeInsets, StatusMark, SurfaceScale, Theme, UniversalState,
     };
 
     fn four_tabs() -> Node {
@@ -679,6 +729,26 @@ mod tests {
                 .map(|id| Node::leaf(id).with_action(format!("select_root:{id}")))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn orb_phases_reuse_universal_state_semantics() {
+        assert_eq!(OrbVisualState::ALL.len(), 7);
+        assert_eq!(
+            OrbVisualState::Confirmation.universal_state(),
+            UniversalState::Attention
+        );
+        assert_eq!(
+            OrbVisualState::Executing.universal_state(),
+            UniversalState::Running
+        );
+        assert_eq!(
+            OrbVisualState::Result.universal_state(),
+            UniversalState::Complete
+        );
+        assert!(OrbVisualState::ALL
+            .iter()
+            .all(|phase| !phase.label().is_empty()));
     }
 
     #[test]

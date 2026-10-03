@@ -448,7 +448,10 @@ mod tests {
 
         let error = diagnose(&addr, "hello", "home").await.unwrap_err();
         assert!(matches!(error, BridgeError::Connect { .. }));
-        assert_eq!(error.failure_class(), crate::model::FailureClass::Unreachable);
+        assert_eq!(
+            error.failure_class(),
+            crate::model::FailureClass::Unreachable
+        );
         assert!(error.is_retryable());
         assert!(!error.is_timeout());
     }
