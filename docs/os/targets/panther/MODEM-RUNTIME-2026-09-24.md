@@ -1,5 +1,21 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 NO ENCODING DRIFT — CP2A vendor RIL builds the SAME bytes as TD1A; baseband-version read fixed (selector 0xFF); modem STILL refuses 0x074f and STILL camps foreign 3G (VERDICT 22, supersedes V21):**
+Obtained public Google factory image `panther-cp2a.260705.006` (radio `g5300q-260317-260505-b-15346003` = running CP).
+De-sparsed `vendor.img`, debugfs ro dump → `libsitril.so` sha256 `b488325d…` (CP2A) + `vendor.radio.protocol.sit.stream.so`
+`cef87564…`. CP2A libsitril's `ProtocolNetworkBuilder::Build*` are UND imports; real builders live in the stream lib
+(`cef87564`). Per-frame TD1A↔CP2A diff: 0x074f (16, bitmap@12, RAF→wire transform bit-for-bit, verified vs inverse
+`GetRat@0x4bfc0`), 0x0750 (12, reply@12), 0x0709 (12), 0x0706 (12/16), and 0x0901 reply offsets (SW@+13, HW@+45,
+RfCal@+77 via `GetSwVer@0x41e90` == TD1A `@0x2268d0`) are ALL byte-identical — NO drift. The only discrepancy was ours:
+stock sends `GetBaseBandVersion(h=0xFF)` (`BasebandVersionHandler::OnRequest@0x176e5c`: `mov w1,#0xff`), a selector at
+payload[12]; V21 sent 0 ⇒ empty string. Fixed to 0xFF → `camp_bbver sw_version=g5300q-260317-260505-B-15346003
+error_raw=0`. CP2A-byte-correct 0x074f: GET-before `0x403fe` (LTE already allowed), SET `error_raw=2`, GET-after `0x3fe`
+(volatile, no NV commit). Camped `25501`, SIM READY, no home reg, no bearer. StartNetworkScan (0x0734) structurally
+decoded (`@0x75870`, stride 172→78) but not byte-exact-confident on band/channel packing ⇒ not sent. CONCLUSION: the
+refusal is protected-NV commit policy + modem band/cell selection, NOT RIL vintage. Owner `4427641b`, self-test RC=0;
+device rebooted pristine (CP OFFLINE, config only `apn`, bitmap reverted), firmware `449eeab3` + NV backup intact;
+recovered-only bytes, no writes/IOCTL_POWER_OFF/do_cp_crash/dial/modern-scan, vendor blob not committed.
+
 **2026-10-03 VERSION SKEW CONFIRMED BUT INVERTED — running CP (CP2A/2026) NEWER than mined TD1A libsitril (VERDICT 21):**
 hypothesis was the running CP is OLDER than libsitril efcca0d5 so modern operator-control opcodes
 (0x074f/0x0705/0x0706-modern/StartNetworkScan) are unimplemented. Read-only investigation inverts it.

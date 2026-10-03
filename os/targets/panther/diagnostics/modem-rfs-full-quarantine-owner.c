@@ -217,13 +217,20 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
                                  (1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) |
                                  (1 << 16),
        RATBM_WIRE_LTE_WCDMA_GSM = 0x3fe,
-       /* VERDICT 21: GET_BASEBAND_VERSION (ProtocolMiscBuilder::
-        * GetBaseBandVersion(unsigned char) @0x22b020) -> opcode 0x0901, len 13,
-        * a type byte at payload[12] (0). The reply (opcode 0x0901) carries the
-        * SW version C-string at frame offset 13 (HW ver @45, RF-cal date @77 are
-        * NOT logged). The build string is a firmware id, not a secret. This is a
-        * read-only diagnostic used to confirm the running CP build. */
-       BBVER_GET = 0x0901, BBVER_LEN = 13,
+       /* VERDICT 21/22: GET_BASEBAND_VERSION -> opcode 0x0901, len 13, a field
+        * selector byte at payload[12]. The reply (opcode 0x0901) carries the SW
+        * version C-string at frame offset 13 (HW ver @45, RF-cal date @77 are
+        * NOT logged). The build string is a firmware id, not a secret.
+        *
+        * VERDICT 22: offsets are byte-identical across TD1A libsitril (efcca0d5,
+        * GetSwVer @0x2268d0) and the CP2A vendor stream lib (cef87564,
+        * ProtocolMiscVersionAdapter::GetSwVer @0x41e90, both frame+0xd) -- NO
+        * drift. V21's empty SW-version was our bug: the selector byte must be
+        * 0xFF. The stock stack calls ProtocolDeviceInfoBuilder::GetBaseBandVersion
+        * with h=0xFF (BasebandVersionHandler::OnRequest @0x176e5c, CP2A
+        * libsitril b488325d: "mov w1,#0xff"); sending 0 makes the CP return an
+        * empty version. BBVER_MASK restores the stock selector. */
+       BBVER_GET = 0x0901, BBVER_LEN = 13, BBVER_MASK = 0xFF,
        BBVER_SWVER_OFF = 13, BBVER_SWVER_MAX = 32,
        /* VERDICT 16: SIM PIN1 unlock + one activation voice call. All wire
         * IDs/body offsets recovered from the factory libsitril.so (efcca0d5);
@@ -3412,7 +3419,8 @@ static void camp_probe_advance(struct owner *o, int64_t now)
     if (bbv) {
         ++c->probe_token;
         uint8_t f[BBVER_LEN];
-        make_opx_byte_request(f, BBVER_GET, BBVER_LEN, c->probe_token, 0);
+        make_opx_byte_request(f, BBVER_GET, BBVER_LEN, c->probe_token,
+                              BBVER_MASK);
         c->bbver_sent = 1;
         int wrote = camp_send_once(o->ipc, f, sizeof f);
         if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
@@ -5595,10 +5603,10 @@ static int test_camp_reg(void)
     /* VERDICT 21: baseband-version GET frame + dispatch sequencing. */
     {
         uint8_t bf[BBVER_LEN];
-        make_opx_byte_request(bf, BBVER_GET, BBVER_LEN, 0x12345678u, 0);
+        make_opx_byte_request(bf, BBVER_GET, BBVER_LEN, 0x12345678u, BBVER_MASK);
         if (bf[0] || bf[2] != 0x01 || bf[3] != 0x09 || bf[4] != BBVER_LEN ||
             bf[5]) return 250;
-        if (little32(bf + 6) != 0x12345678u || bf[12] != 0) return 251;
+        if (little32(bf + 6) != 0x12345678u || bf[12] != 0xFF) return 251;
 
         struct camp_driver bb;
         memset(&bb, 0, sizeof bb);

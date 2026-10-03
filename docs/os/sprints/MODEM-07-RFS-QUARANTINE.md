@@ -6,6 +6,33 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 NO ENCODING DRIFT — CP2A vendor RIL builds the SAME bytes as TD1A; baseband read fixed; modem still refuses the SET (VERDICT 22, supersedes V21's drift inference).**
+Obtained the public Google factory image `panther-cp2a.260705.006` (`…-factory-ed94a24e.zip`; its
+`radio-…-g5300q-260317-260505-b-15346003.img` matches the running CP). De-sparsed `vendor.img`, read-only
+debugfs dump → `lib64/libsitril.so` sha256 `b488325d…` (CP2A; vs in-repo TD1A `efcca0d5`) and
+`lib64/vendor.radio.protocol.sit.stream.so` `cef87564…`. In CP2A, libsitril's `ProtocolNetworkBuilder::Build*`
+are UND imports; the real builders live in the stream lib (`cef87564`, the same one referenced in V20).
+Per-frame TD1A↔CP2A diff (builders `@0x76620/0x766f0/0x74820/0x74ad0/0x74c60/0x708c0`, reply adapters
+`GetRat@0x4bfc0`, `GetSwVer@0x41e90`): 0x074f (len 16, bitmap@12, RAF→wire transform bit-for-bit, verified
+against inverse GetRat), 0x0750 (len 12, reply bitmap@12), 0x0709 (len 12), 0x0706 (void len 12 / mode len 16),
+and 0x0901 reply offsets (SW@+13, HW@+45, RfCal@+77) are ALL byte-identical — nothing drifted. The only real
+discrepancy was ours: stock calls `GetBaseBandVersion(h=0xFF)` (`BasebandVersionHandler::OnRequest@0x176e5c`,
+CP2A libsitril `mov w1,#0xff`) — a field selector at payload[12]; V21 sent 0 → empty SW string. Fixed to 0xFF:
+on-device `camp_bbver sw_version=g5300q-260317-260505-B-15346003 error_raw=0` (pipeline proven byte-correct).
+With the byte-identical CP2A 0x074f (`0x3fe`): GET-before `wire=0x403fe` (LTE+WCDMA+GSM+NR already allowed),
+SET still `error_raw=2` (GENERIC_FAILURE), GET-after `wire=0x3fe` (volatile change, no NV commit; reverted by
+reboot). Modem stayed camped foreign 25501, Kyivstar SIM READY; no home registration; no bearer attempted.
+Modern band-specified StartNetworkScan (0x0734) fully structurally decoded (`BuildStartNetworkScan@0x75870`:
+input RIL_RadioAccessSpecifier_V1_5 stride 172, SIT specifier stride 78, header payload[0..9], specifier array
+payload[10], per-RAT band jump-table + SIMD channel packing) but band/channel packing not byte-exact-confident,
+so NOT sent (no-invented-bytes rule). CONCLUSION: not RIL vintage — the blocker is the modem declining to COMMIT
+operator-control SETs under protected-NV quarantine (GENERIC_FAILURE + volatile-only RAT change) plus its own
+band/cell/PLMN selection staying on the foreign 3G cell while LTE is already allowed+preferred and home
+operators are in range (iPhone-confirmed, V19). Owner build sha16 `4427641b`, on-device self-test RC=0. Device
+left pristine: rebooted (CP OFFLINE, no owner, config only `apn`, volatile bitmap reverted), firmware `449eeab3`
+intact, proven NV backup intact; recovered-only bytes, no NV/EFS/RF-cal/firmware write, no IOCTL_POWER_OFF, no
+do_cp_crash, no dial, no modern scan sent, vendor blob NOT committed.
+
 **2026-10-03 VERSION SKEW CONFIRMED BUT INVERTED — running CP (CP2A/2026) is NEWER than the mined TD1A libsitril (VERDICT 21).**
 Hypothesis: the running CP is OLDER than libsitril efcca0d5, so the modern operator-control opcodes
 (0x074f/0x0705/0x0706-modern/StartNetworkScan) are unimplemented. Read-only investigation inverts it.
