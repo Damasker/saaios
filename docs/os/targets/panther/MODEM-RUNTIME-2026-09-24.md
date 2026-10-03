@@ -1,5 +1,18 @@
 # Native modem runtime: status query investigation
 
+**2026-10-03 NEW-SIM TEST, CARD READY but CS-DENIED (VERDICT 16):**
+a second SIM was swapped in (intended Kyivstar 255-03, activation by one outgoing call to
++380953444757). Recovered the stock voice/PIN set from `libsitril.so` (efcca0d5): PIN1 verify
+(0x0201, len 38), DIAL (0x0001, len 104), GET_CALL_LIST (0x0000, len 12; reply count@`[12]`,
+stride 327, state@entry`[0]`, index@`[1..4]`), HANGUP (0x0008, len 20); implemented
+guarded/one-shot/self-tested (-Werror, on-device RC=0). One fresh boot: card present, SIM READY
+(`app_state_raw=5`) with PIN DISABLED (`pin1_raw=3`) ⇒ PIN-verify never needed (contradicts the
+expected PIN-enabled card). Camped only on foreign `25501#` UMTS; voice REG_DENIED(3), data
+not-registered(0), stable ~234 s. CS registration never home/roaming ⇒ activation call correctly
+gated off, never dialed. Voice/PIN host stack validated but not network-exercised; same
+environmental boundary as the prior SIM. Owner 661ac0ab; secret PIN config written transiently
+then deleted (never logged); proven backup 90f403df intact. No bearer, no call.
+
 **2026-10-03 TERMINAL FIRMWARE-STATE BOUNDARY: scan refused even deregistered (VERDICT 15):**
 to decide whether VERDICT 14's scan refusal was merely "can't scan while camped," recovered
 RADIO_POWER (0x0800) power word from `BuildRadioPower` (payload[12]=arg1?2:1 ⇒ OFF=1/ON=2) and

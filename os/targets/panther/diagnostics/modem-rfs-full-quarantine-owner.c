@@ -174,7 +174,41 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        OPX_DEVSVC_MODE_DATA = 2,
        OPX_DUAL_NET = 12, OPX_DUAL_ALLOW = 1,
        OPX_STEP_NONE = 0, OPX_STEP_VOICE = 1, OPX_STEP_INTPS = 2,
-       OPX_STEP_STACK = 3, OPX_STEP_DEVSVC = 4, OPX_STEP_DUAL = 5 };
+       OPX_STEP_STACK = 3, OPX_STEP_DEVSVC = 4, OPX_STEP_DUAL = 5,
+       /* VERDICT 16: SIM PIN1 unlock + one activation voice call. All wire
+        * IDs/body offsets recovered from the factory libsitril.so (efcca0d5);
+        * nothing invented. ProtocolSimBuilderLegacy::BuildSimVerifyPin(0,...)
+        * => PIN1 opcode 0x0201, total len 38: [12]=PIN length (strlen capped 8),
+        * [13..] = PIN ASCII (AID omitted). The PIN is a secret: it is written
+        * only into the request frame and is never printed, logged, or stored
+        * anywhere else. app_state RIL enum: 2=PIN required, 5=READY. */
+       CALL_PIN_VERIFY = 0x0201, CALL_PIN_LEN = 38,
+       CALL_PIN_LEN_OFF = 12, CALL_PIN_OFF = 13, CALL_PIN_MAX = 8,
+       SIM_APP_STATE_PIN = 2, SIM_APP_STATE_READY = 5,
+       /* ProtocolCallBuilder voice MO call family:
+        *   BuildDial      opcode 0x0001, len 104
+        *   BuildGetCallList opcode 0x0000, len 12 (header-only GET)
+        *   BuildHangup    opcode 0x0008, len 20
+        * BuildDial body (frame-relative): [12]=call type (voice=0),
+        * [13]=arg5(0), [14]=number length (<=82), [15..]=number ASCII,
+        * [97]=TOA (0x10 if leading '+', else 0x20), [98]=1, [99]=clir (default
+        * 0), [103]=arg6(0). GetCallList reply: count=int32 at [12], per-call
+        * list at [16], stride 327 (v1_1); within an entry [0]=SIT call state,
+        * [1..4]=call index. BuildHangup body: [12]=call index int32, [16]=1. */
+       CALL_DIAL = 0x0001, CALL_DIAL_LEN = 104,
+       CALL_DIAL_TYPE_OFF = 12, CALL_DIAL_ARG5_OFF = 13,
+       CALL_DIAL_NUMLEN_OFF = 14, CALL_DIAL_NUM_OFF = 15, CALL_DIAL_NUM_MAX = 82,
+       CALL_DIAL_TOA_OFF = 97, CALL_DIAL_PRESENT_OFF = 98,
+       CALL_DIAL_CLIR_OFF = 99, CALL_DIAL_ARG6_OFF = 103,
+       CALL_DIAL_TOA_INTL = 0x10, CALL_DIAL_TOA_NATL = 0x20,
+       CALL_LIST = 0x0000, CALL_LIST_LEN = 12,
+       CALL_LIST_COUNT_OFF = 12, CALL_LIST_ENTRY_OFF = 16,
+       CALL_LIST_STATE_OFF = 0, CALL_LIST_INDEX_OFF = 1,
+       CALL_HANGUP = 0x0008, CALL_HANGUP_LEN = 20,
+       CALL_HANGUP_INDEX_OFF = 12, CALL_HANGUP_FLAG_OFF = 16,
+       CALL_POLL_MAX = 6, CALL_POLL_REPLY_MS = 5000,
+       /* call sub-sequence internal step markers (NOT wire opcodes) */
+       CLL_NONE = 0, CLL_DIAL, CLL_POLL, CLL_HANGUP };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -248,6 +282,23 @@ struct camp_driver {
     int drg_target_visible;
     int drg_manual_sent, drg_manual_ack;
     int drg_done;
+    /* VERDICT 16: SIM PIN1 unlock + one activation voice call. pin[] is loaded
+     * at startup from /data/saaios/etc/sim_pin and is a secret -- it is only
+     * ever written into the PIN-verify request frame, never logged or copied
+     * elsewhere. call_number[] (an ordinary dial string, not a secret) is
+     * loaded from /data/saaios/etc/call_number; call_enabled gates the one-shot
+     * activation call. voice_reg_state tracks the CS/voice registration state
+     * (1=home, 5=roaming) so the call is only placed once CS registration is
+     * achieved. Every step runs at most once. */
+    int pin_required, pin_verify_sent, pin_verified;
+    char pin[CALL_PIN_MAX + 1];
+    int voice_reg_known, voice_reg_state;
+    int call_enabled;
+    char call_number[CALL_DIAL_NUM_MAX + 1];
+    int call_dial_sent, call_dialed_ok;
+    int call_poll_count, call_seen_count, call_index;
+    unsigned call_last_state;
+    int call_hangup_sent, call_done;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -2349,6 +2400,62 @@ static void make_manual_select_request(uint8_t request[SIT_NET_SEL_MANUAL_LEN],
         request[SIT_NET_SEL_MANUAL_PLMN_OFFSET + i] = (uint8_t)plmn[i];
 }
 
+/* SIM PIN1 verify (ProtocolSimBuilderLegacy::BuildSimVerifyPin, which=0 => PIN1
+ * opcode 0x0201, len 38). [12]=PIN length (strlen capped 8), [13..]=PIN ASCII,
+ * AID omitted (NULL-AID verify of the primary application). The PIN is a secret:
+ * callers must scrub the frame after sending; it is never logged. */
+static void make_pin_verify_request(uint8_t request[CALL_PIN_LEN],
+                                    const char *pin, uint32_t token)
+{
+    size_t plen = pin ? strlen(pin) : 0;
+    if (plen > CALL_PIN_MAX) plen = CALL_PIN_MAX;
+    memset(request, 0, CALL_PIN_LEN);
+    request[2] = (uint8_t)CALL_PIN_VERIFY;        /* 0x01 */
+    request[3] = (uint8_t)(CALL_PIN_VERIFY >> 8); /* 0x02 */
+    request[4] = (uint8_t)CALL_PIN_LEN;           /* 38 */
+    put_little32(request + 6, token);
+    request[CALL_PIN_LEN_OFF] = (uint8_t)plen;
+    if (plen) memcpy(request + CALL_PIN_OFF, pin, plen);
+}
+
+/* Voice MO call (ProtocolCallBuilder::BuildDial, opcode 0x0001, len 104). Plain
+ * voice call with default call type (0) and default CLIR (0); the number is an
+ * ordinary dial string (not a secret). */
+static void make_dial_request(uint8_t request[CALL_DIAL_LEN],
+                              const char *number, uint32_t token)
+{
+    size_t nlen = number ? strlen(number) : 0;
+    if (nlen > CALL_DIAL_NUM_MAX) nlen = CALL_DIAL_NUM_MAX;
+    memset(request, 0, CALL_DIAL_LEN);
+    request[2] = (uint8_t)CALL_DIAL;        /* 0x01 */
+    request[3] = (uint8_t)(CALL_DIAL >> 8); /* 0x00 */
+    request[4] = (uint8_t)CALL_DIAL_LEN;    /* 104 */
+    put_little32(request + 6, token);
+    request[CALL_DIAL_TYPE_OFF] = 0;        /* call type: voice */
+    request[CALL_DIAL_ARG5_OFF] = 0;
+    request[CALL_DIAL_NUMLEN_OFF] = (uint8_t)nlen;
+    if (nlen) memcpy(request + CALL_DIAL_NUM_OFF, number, nlen);
+    request[CALL_DIAL_TOA_OFF] =
+        (nlen && number[0] == '+') ? CALL_DIAL_TOA_INTL : CALL_DIAL_TOA_NATL;
+    request[CALL_DIAL_PRESENT_OFF] = 1;
+    request[CALL_DIAL_CLIR_OFF] = 0;        /* CLIR default */
+    request[CALL_DIAL_ARG6_OFF] = 0;
+}
+
+/* Hang up one call by index (ProtocolCallBuilder::BuildHangup, opcode 0x0008,
+ * len 20). [12]=call index int32, [16]=1. */
+static void make_hangup_request(uint8_t request[CALL_HANGUP_LEN],
+                                int index, uint32_t token)
+{
+    memset(request, 0, CALL_HANGUP_LEN);
+    request[2] = (uint8_t)CALL_HANGUP;        /* 0x08 */
+    request[3] = (uint8_t)(CALL_HANGUP >> 8); /* 0x00 */
+    request[4] = (uint8_t)CALL_HANGUP_LEN;    /* 20 */
+    put_little32(request + 6, token);
+    put_little32(request + CALL_HANGUP_INDEX_OFF, (uint32_t)index);
+    put_little32(request + CALL_HANGUP_FLAG_OFF, 1);
+}
+
 _Static_assert(REG_IA_LEN == 250, "SET_INITIAL_ATTACH_APN frame must be 250 bytes");
 _Static_assert(REG_IA_PCSCF_OFF < REG_IA_LEN, "pcscf offset within frame");
 
@@ -2564,6 +2671,72 @@ static int camp_dereg_reply(struct camp_driver *c, unsigned id, unsigned error)
     return 0;
 }
 
+/* VERDICT 16 activation-call sub-sequence, run only after the normal bring-up
+ * completes (reg_complete), only when armed by /data/saaios/etc/call_number, and
+ * only once CS/voice registration is achieved (state 1=home or 5=roaming; never
+ * when denied/searching). Steps: DIAL once -> poll the call list a few times to
+ * observe progression -> HANGUP once. One activation attempt; never redials. A
+ * CLL_NONE return means "waiting for the pending reply". */
+static unsigned camp_call_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || !c->call_enabled || !c->call_number[0] || c->call_done)
+        return CLL_NONE;
+    if (!c->voice_reg_known) return CLL_NONE;
+    if (!(c->voice_reg_state == 1 || c->voice_reg_state == 5)) return CLL_NONE;
+    if (!c->call_dial_sent) return CLL_DIAL;
+    if (!c->call_dialed_ok) return CLL_NONE;
+    if (c->call_poll_count < CALL_POLL_MAX) return CLL_POLL;
+    if (!c->call_hangup_sent) return CLL_HANGUP;
+    return CLL_NONE;
+}
+
+/* Advance the PIN-unlock and activation-call sequences on a matching reply.
+ * Returns 1 when the reply was consumed here. The PIN never reaches the log;
+ * only the public error word, call state/index, and counts do. */
+static int camp_call_reply(struct camp_driver *c, const uint8_t *p, size_t n,
+                           unsigned id, unsigned error)
+{
+    if (id == CALL_PIN_VERIFY && c->pin_verify_sent && !c->pin_verified) {
+        c->pin_verified = 1;
+        c->pin_required = 0;
+        printf("camp_sim pin_verify response=yes error_raw=%u\n", error);
+        if (!error) c->sim_change_pending = 1; /* re-read SIM status -> READY */
+        return 1;
+    }
+    if (id == CALL_DIAL && c->call_dial_sent && !c->call_dialed_ok &&
+        !c->call_done) {
+        printf("camp_call dial response=yes error_raw=%u\n", error);
+        if (error) c->call_done = 1;
+        else c->call_dialed_ok = 1;
+        return 1;
+    }
+    if (id == CALL_HANGUP && c->call_hangup_sent && !c->call_done) {
+        c->call_done = 1;
+        printf("camp_call hangup response=yes error_raw=%u\n", error);
+        return 1;
+    }
+    if (id == CALL_LIST && c->call_dialed_ok && !c->call_done) {
+        if (!error && n >= (size_t)CALL_LIST_COUNT_OFF + 4u) {
+            unsigned cnt = little32(p + CALL_LIST_COUNT_OFF);
+            c->call_seen_count = (int)cnt;
+            if (cnt >= 1 &&
+                n >= (size_t)CALL_LIST_ENTRY_OFF + CALL_LIST_INDEX_OFF + 4u) {
+                c->call_last_state =
+                    p[CALL_LIST_ENTRY_OFF + CALL_LIST_STATE_OFF];
+                c->call_index = (int)little32(
+                    p + CALL_LIST_ENTRY_OFF + CALL_LIST_INDEX_OFF);
+            }
+            printf("camp_call list count=%u state_raw=%u index=%d "
+                   "error_raw=%u\n", cnt, c->call_last_state, c->call_index,
+                   error);
+        } else {
+            printf("camp_call list status=short_or_error error_raw=%u\n", error);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -2583,6 +2756,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     unsigned id = c->probe_id;
     unsigned error = little16(p + 10);
     if (camp_dereg_reply(c, id, error)) return;
+    if (camp_call_reply(c, p, n, id, error)) return;
     if (error) {
         printf("camp_probe field=%s response=yes error_raw=%u\n",
                c->probe_name, error);
@@ -2602,8 +2776,16 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                    p[SIT_SIM_PIN1]);
             if (app_state == 5 && !c->sim_ready) {
                 c->sim_ready = 1;
+                c->pin_required = 0;
                 putchar('\n');
                 printf("camp_sim=ready app_state_raw=5\n");
+                return;
+            }
+            if (app_state == SIM_APP_STATE_PIN && !c->sim_ready &&
+                c->pin[0] && !c->pin_verified) {
+                c->pin_required = 1;
+                putchar('\n');
+                printf("camp_sim pin_required=1 app_state_raw=2\n");
                 return;
             }
         }
@@ -2664,6 +2846,10 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         printf("camp_probe field=%s status=unknown_short\n", c->probe_name);
     } else if (id == SIT_NET_VOICE_REG || id == SIT_NET_DATA_REG) {
         sit_net_log_regstate("camp_probe", c->probe_name, p, n, id);
+        if (id == SIT_NET_VOICE_REG && n > SIT_NET_REG_STATE_OFFSET) {
+            c->voice_reg_known = 1;
+            c->voice_reg_state = p[SIT_NET_REG_STATE_OFFSET];
+        }
     } else if (id == SIT_NET_OPERATOR) {
         sit_net_log_operator("camp_probe", p, n);
     } else if (id == REG_SCAN) {
@@ -2858,6 +3044,27 @@ static void camp_probe_advance(struct owner *o, int64_t now)
     if (o->used || o->sit.used || c->used) return; /* avoid mid-frame writes */
     if (!c->probe_token)
         c->probe_token = (uint32_t)now ^ (uint32_t)getpid() ^ 0x0b0b0000u;
+    /* VERDICT 16: if the card is PIN-locked, unlock PIN1 once before anything
+     * else. The PIN lives only in the request frame and is scrubbed right after
+     * the write; it is never logged. */
+    if (c->pin_required && c->pin[0] && !c->pin_verify_sent) {
+        ++c->probe_token;
+        uint8_t f[CALL_PIN_LEN];
+        make_pin_verify_request(f, c->pin, c->probe_token);
+        c->pin_verify_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        zero_bytes(f, sizeof f);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = CALL_PIN_VERIFY;
+        c->probe_name = "verify_pin1";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_sim=sent step=verify_pin1 elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     /* Priority: once the SIM is READY, run the one-shot registration-trigger
      * sequence before resuming round-robin observation. GETs are idempotent and
      * may retry on timeout; the three SETs are marked sent and never resent. */
@@ -3030,6 +3237,46 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    /* VERDICT 16 activation call: DIAL once, poll the call list, then HANGUP. */
+    unsigned cll = camp_call_next(c);
+    if (cll) {
+        ++c->probe_token;
+        int wrote;
+        int long_wait = 0;
+        unsigned wire_id;
+        const char *rname;
+        if (cll == CLL_DIAL) {
+            uint8_t f[CALL_DIAL_LEN];
+            make_dial_request(f, c->call_number, c->probe_token);
+            c->call_dial_sent = 1;
+            long_wait = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "dial_voice"; wire_id = CALL_DIAL;
+        } else if (cll == CLL_POLL) {
+            c->call_poll_count++;
+            wrote = sit_send_get_once(o->ipc, (uint16_t)CALL_LIST,
+                                      c->probe_token);
+            rname = "get_call_list"; wire_id = CALL_LIST;
+        } else { /* CLL_HANGUP */
+            uint8_t f[CALL_HANGUP_LEN];
+            make_hangup_request(f, c->call_index ? c->call_index : 1,
+                                c->probe_token);
+            c->call_hangup_sent = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+            rname = "hangup"; wire_id = CALL_HANGUP;
+        }
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = wire_id;
+        c->probe_name = rname;
+        c->probe_deadline_ms = now + (long_wait ? CALL_POLL_REPLY_MS
+                                                : PROBE_REPLY_MS);
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_call=sent step=%s elapsed_ms=%lld\n", rname,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     unsigned pick;
     const char *name;
     if (c->sim_change_pending && !c->sim_ready) {
@@ -3152,6 +3399,51 @@ static int read_manual_plmn(char *out, size_t cap)
     size_t n = 0;
     while (n < sizeof buf && buf[n] >= '0' && buf[n] <= '9') n++;
     if (n < 5 || n > 6 || n >= cap) return 0;
+    memcpy(out, buf, n);
+    out[n] = 0;
+    return 1;
+}
+
+/* VERDICT 16: load the SIM PIN1 from /data/saaios/etc/sim_pin. The PIN is a
+ * secret -- this reader copies it into out[] for immediate use in the
+ * PIN-verify request and nothing else; it is never logged. Accepts 4..8 digit
+ * strings. Returns 1 on success. */
+static int read_sim_pin(char *out, size_t cap)
+{
+    if (cap) out[0] = 0;
+    int fd = open("/data/saaios/etc/sim_pin", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[16] = {0};
+    ssize_t r = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (r <= 0) { zero_bytes(buf, sizeof buf); return 0; }
+    size_t n = 0;
+    while (n < sizeof buf && buf[n] >= '0' && buf[n] <= '9') n++;
+    if (n < 4 || n > CALL_PIN_MAX || n >= cap) { zero_bytes(buf, sizeof buf); return 0; }
+    memcpy(out, buf, n);
+    out[n] = 0;
+    zero_bytes(buf, sizeof buf);
+    return 1;
+}
+
+/* VERDICT 16: load the one-shot activation dial string from
+ * /data/saaios/etc/call_number (an ordinary dial string, not a secret).
+ * Accepts a leading '+' followed by digits/'*'/'#', up to CALL_DIAL_NUM_MAX. */
+static int read_call_number(char *out, size_t cap)
+{
+    if (cap) out[0] = 0;
+    int fd = open("/data/saaios/etc/call_number", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[CALL_DIAL_NUM_MAX + 2] = {0};
+    ssize_t r = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (r <= 0) return 0;
+    size_t n = 0;
+    if (buf[0] == '+') n = 1;
+    while (n < sizeof buf && (( buf[n] >= '0' && buf[n] <= '9') ||
+                              buf[n] == '*' || buf[n] == '#'))
+        n++;
+    if (n < 2 || n >= cap) return 0;
     memcpy(out, buf, n);
     out[n] = 0;
     return 1;
@@ -3279,6 +3571,18 @@ static int run_owner(int ipc, int rfs, int ready)
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else
         puts("camp_manual_plmn=none");
+    /* VERDICT 16: PIN1 unlock + one-shot activation call. The PIN is loaded but
+     * never logged (only presence is reported); the dial number is config. */
+    if (read_sim_pin(o.camp.pin, sizeof o.camp.pin))
+        puts("camp_sim_pin=loaded");
+    else
+        puts("camp_sim_pin=none");
+    if (read_call_number(o.camp.call_number, sizeof o.camp.call_number)) {
+        o.camp.call_enabled = 1;
+        printf("camp_call_number=armed len=%zu\n", strlen(o.camp.call_number));
+    } else {
+        puts("camp_call_number=none");
+    }
 #endif
     for (;;) {
         int64_t now = monotonic_ms();
@@ -4777,6 +5081,87 @@ static int test_camp_reg(void)
         dq.drg_scan_sent = 1;
         if (!camp_dereg_reply(&dq, REG_SCAN, 2) || !dq.drg_scan_got ||
             !dq.drg_done) return 210;
+    }
+    /* VERDICT 16: PIN1-verify / dial / hangup frame byte-exactness and the
+     * activation-call sub-sequence walk. */
+    {
+        /* PIN verify (0x0201, len 38): [12]=len, [13..]=PIN ASCII. The test
+         * vector is an arbitrary non-secret digit string. */
+        uint8_t pv[CALL_PIN_LEN];
+        static const uint8_t pv_e[CALL_PIN_LEN] = {
+            0,0,0x01,0x02,38,0,0x78,0x56,0x34,0x12,0,0,
+            4,'4','7','2','9'};
+        make_pin_verify_request(pv, "4729", 0x12345678);
+        if (!same_bytes(pv, pv_e, sizeof pv)) return 211;
+        /* PIN longer than the 8-char cap is truncated to 8 in [12] and body. */
+        uint8_t pv2[CALL_PIN_LEN];
+        make_pin_verify_request(pv2, "123456789", 0x12345678);
+        if (pv2[CALL_PIN_LEN_OFF] != 8 || pv2[CALL_PIN_OFF + 7] != '8' ||
+            pv2[CALL_PIN_OFF + 8] != 0) return 212;
+        /* DIAL (0x0001, len 104): voice=0, numlen, number, TOA intl, present=1. */
+        uint8_t dl[CALL_DIAL_LEN];
+        make_dial_request(dl, "+380953444757", 0x12345678);
+        if (dl[0] || dl[1] || dl[2] != 0x01 || dl[3] != 0x00 ||
+            dl[4] != 104 || dl[CALL_DIAL_TYPE_OFF] != 0 ||
+            dl[CALL_DIAL_NUMLEN_OFF] != 13 ||
+            dl[CALL_DIAL_NUM_OFF] != '+' || dl[CALL_DIAL_NUM_OFF + 12] != '7' ||
+            dl[CALL_DIAL_TOA_OFF] != CALL_DIAL_TOA_INTL ||
+            dl[CALL_DIAL_PRESENT_OFF] != 1 ||
+            dl[CALL_DIAL_CLIR_OFF] != 0) return 213;
+        /* A national (no '+') number gets the national TOA. */
+        uint8_t dl2[CALL_DIAL_LEN];
+        make_dial_request(dl2, "0953444757", 0x12345678);
+        if (dl2[CALL_DIAL_TOA_OFF] != CALL_DIAL_TOA_NATL ||
+            dl2[CALL_DIAL_NUMLEN_OFF] != 10) return 214;
+        /* HANGUP (0x0008, len 20): [12]=index, [16]=1. */
+        uint8_t hu[CALL_HANGUP_LEN];
+        static const uint8_t hu_e[CALL_HANGUP_LEN] = {
+            0,0,0x08,0x00,20,0,0x78,0x56,0x34,0x12,0,0,
+            1,0,0,0, 1,0,0,0};
+        make_hangup_request(hu, 1, 0x12345678);
+        if (!same_bytes(hu, hu_e, sizeof hu)) return 215;
+        /* camp_call_next walk: gated on reg_complete + armed + CS registered. */
+        struct camp_driver cc;
+        memset(&cc, 0, sizeof cc);
+        cc.reg_complete = 1;
+        memcpy(cc.call_number, "+380953444757", 13);
+        cc.call_enabled = 1;
+        if (camp_call_next(&cc) != CLL_NONE) return 216;  /* no voice reg yet */
+        cc.voice_reg_known = 1; cc.voice_reg_state = 3;    /* denied */
+        if (camp_call_next(&cc) != CLL_NONE) return 217;
+        cc.voice_reg_state = 5;                             /* roaming */
+        if (camp_call_next(&cc) != CLL_DIAL) return 218;
+        cc.call_dial_sent = 1;
+        if (camp_call_next(&cc) != CLL_NONE) return 219;    /* awaiting dial ack */
+        cc.call_dialed_ok = 1;
+        if (camp_call_next(&cc) != CLL_POLL) return 220;
+        cc.call_poll_count = CALL_POLL_MAX;
+        if (camp_call_next(&cc) != CLL_HANGUP) return 221;
+        cc.call_hangup_sent = 1;
+        if (camp_call_next(&cc) != CLL_NONE) return 222;
+        /* camp_call_reply: PIN ok -> re-read SIM; dial error -> call done;
+         * list parse -> count/state/index; hangup ack -> done. */
+        struct camp_driver cr;
+        memset(&cr, 0, sizeof cr);
+        cr.pin_verify_sent = 1;
+        if (!camp_call_reply(&cr, NULL, 0, CALL_PIN_VERIFY, 0) ||
+            !cr.pin_verified || !cr.sim_change_pending) return 223;
+        struct camp_driver ce;
+        memset(&ce, 0, sizeof ce);
+        ce.call_dial_sent = 1;
+        if (!camp_call_reply(&ce, NULL, 0, CALL_DIAL, 2) || !ce.call_done)
+            return 224;
+        struct camp_driver cl;
+        memset(&cl, 0, sizeof cl);
+        cl.call_dial_sent = 1; cl.call_dialed_ok = 1;
+        uint8_t lst[CALL_LIST_ENTRY_OFF + 8];
+        memset(lst, 0, sizeof lst);
+        put_little32(lst + CALL_LIST_COUNT_OFF, 1);
+        lst[CALL_LIST_ENTRY_OFF + CALL_LIST_STATE_OFF] = 3;   /* dialing */
+        put_little32(lst + CALL_LIST_ENTRY_OFF + CALL_LIST_INDEX_OFF, 1);
+        if (!camp_call_reply(&cl, lst, sizeof lst, CALL_LIST, 0) ||
+            cl.call_seen_count != 1 || cl.call_last_state != 3 ||
+            cl.call_index != 1) return 225;
     }
     return 0;
 }

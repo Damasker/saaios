@@ -6,6 +6,22 @@ Registration and a cellular bearer remain absent. These are manual diagnostic
 boots, not a deployed modem service; see the dated live results below.
 Target: Pixel 7 `panther` S5300, explicit diagnostic boots only.
 
+**2026-10-03 NEW-SIM TEST, CARD READY but CS-DENIED (VERDICT 16).**
+A second SIM was swapped in (intended Kyivstar 255-03, to be activated by one outgoing voice
+call to +380953444757). Recovered the stock voice/PIN command set byte-for-byte from
+`libsitril.so` (efcca0d5): PIN1 verify (opcode 0x0201, len 38, `[12]`=PIN len/`[13..]`=PIN
+ASCII, AID omitted), DIAL (0x0001, len 104, `[12]`=type/`[14]`=numlen/`[15..]`=number/`[97]`=TOA/
+`[99]`=CLIR), GET_CALL_LIST (0x0000, len 12; reply count@`[12]`, per-call stride 327, state@entry
+`[0]`, index@`[1..4]`), HANGUP (0x0008, len 20, `[12]`=index/`[16]`=1). Implemented guarded/one-shot/
+self-tested (-Werror, on-device self-test RC=0). One fresh boot: card present (`card_raw=1
+apps=1`), SIM READY (`app_state_raw=5`) with PIN reported DISABLED (`pin1_raw=3`) ⇒ PIN-verify
+correctly never fired (contradicts the expected PIN-enabled card — physical reseat worth
+checking). Camped only on foreign `25501#` UMTS; voice REG_DENIED(3), data not-registered(0),
+stable ~234 s. CS registration never reached home/roaming, so the activation call was correctly
+gated off and never dialed (`camp_call=sent` count 0). Voice/PIN host stack validated but not
+network-exercised. Owner 661ac0ab, secret PIN config written transiently then deleted (never
+logged/committed), proven backup 90f403df intact. No bearer, no call.
+
 **2026-10-03 TERMINAL FIRMWARE-STATE BOUNDARY: scan refused even deregistered (VERDICT 15).**
 Tested whether the VERDICT-14 scan refusal was only "can't scan while camped": recovered
 RADIO_POWER (0x0800) power word from `ProtocolNetworkBuilder::BuildRadioPower` (payload[12] =
