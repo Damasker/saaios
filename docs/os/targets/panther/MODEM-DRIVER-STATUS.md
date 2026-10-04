@@ -47,7 +47,8 @@ Status legend:
 | GetPsService | `0x0711` | **impl-unverified** | one-shot probe `get-ps-service.c`, empty GET |
 | SET_NETWORK_SELECTION_MANUAL | `0x0705` | **partial** | VERDICT 14: recovered byte-exact, exercised → RIL_E_GENERIC_FAILURE |
 | GET_AVAILABLE_NETWORKS (legacy scan, len 12 + len 16 scanType) | `0x0706` / cancel `0x0707` | **partial (deprecated)** | VERDICT 14–17: both frame forms, all scanType 0–5, all radio states → GENERIC_FAILURE |
-| Modern scan: StartNetworkScan + SetSystemSelectionChannels | (to recover) | **not-impl** | builders seen in stock but RAS payload not recovered; this is the live-scan path a modern HAL uses |
+| Modern scan: StartNetworkScan | `0x0734` (result `0x0736`) | **impl (decoded + fired)** | VERDICT 26: RAS payload decoded byte-exact from `BuildStartNetworkScan` @0x75870; fired EUTRAN B1/B3/B7/B20 → **ACK error 0 (accepted)**, result `0x0736` scanStatus=2 COMPLETE with zero LTE cells |
+| Modern scan: SetSystemSelectionChannels | (to recover) | **not-impl** | companion to StartNetworkScan; not needed to prove the scan path |
 
 ### RAT / band selection
 | Request | SIT opcode | Status | Evidence |
@@ -95,8 +96,8 @@ Status legend:
 |---|---|---|
 | **DONE+verified** | 12 | `0x0200`, `0x0700`, `0x0701`, `0x0702`, `0x0703`, `0x0704`, `0x0801`, `0x0800`, `0x0603`, `0x0710`, `0x0900`, camp trio `0x093f/0x0404` |
 | **impl-unverified** | 8 | `0x0201`, `0x0711`, `0x0600`, `0x0602`, `0x0001`, `0x0000`, `0x0008`, OPX toggles |
-| **partial** | 4 | `0x024c`, `0x0705`, `0x0706/0x0707`, `0x070a/0x070b` |
-| **not-impl** | 4 | `0x074f`, modern StartNetworkScan + SetSystemSelectionChannels, SMS `0x04xx`, rmnet bearer end-goal |
+| **partial** | 5 | `0x024c`, `0x0705`, `0x0706/0x0707`, `0x070a/0x070b`, StartNetworkScan `0x0734`/`0x0736` (accepted, empty LTE result) |
+| **not-impl** | 4 | `0x074f`, SetSystemSelectionChannels, SMS `0x04xx`, rmnet bearer end-goal |
 
 The CS/PS GET+status plumbing is solid and verified; the whole voice/SMS/data
 **action** layer is either implemented-but-gated behind registration, or not yet
@@ -119,10 +120,12 @@ host-side bring-up**, and the parallel RF finding names the concrete defect:
   enablement; the legacy preferred-type is advisory/deprecated. This matches the
   observed symptom exactly — `0x070a` set LTE_ONLY was ACKed (error 0) yet the CP
   acquired zero LTE cells (VERDICT 13). We may be ACKing a no-op.
-- **Scan uses the deprecated command only.** The legacy available-networks scan
+- **Scan: legacy deprecated, modern decoded + fired.** The legacy available-networks scan
   `0x0706` is deprecated and was refused in every form/state (VERDICT 14–17). The
-  modern path is `StartNetworkScan` + `SetSystemSelectionChannels`; neither is
-  implemented, and the `StartNetworkScan` RAS payload has not been recovered.
+  modern path is `StartNetworkScan` `0x0734` (result `0x0736`): VERDICT 26 decoded its
+  RAS payload byte-exact and fired an EUTRAN B1/B3/B7/B20 scan — the CP **accepted** it
+  (error 0, unlike every operator-control SET) but the scan **completed with zero LTE
+  cells**, confirming a CP-internal RF/cell-selection wall from the scan side.
 
 Net: before declaring any boundary terminal, the driver must drive RAT and scan
 through the **modern** opcodes. Both missing commands are `not-impl` today and are
@@ -150,10 +153,12 @@ IMEI/keys.
      alongside the legacy `0x070a`, guarded + self-tested byte-exact.
    - Verify: ACK error 0, then watch `0x0700/0x0701` for a RAT change and any LTE(14)
      sample in the settle window — the thing `0x070a` never produced.
-2. **Modern StartNetworkScan + SetSystemSelectionChannels** *(not-impl)*
-   - Recover: the `StartNetworkScan` RAS/scan-request payload and
-     `SetSystemSelectionChannels` body from stock (the RAS payload is the piece
-     currently missing; `0x0706` empty-safe form is deprecated/refused).
+2. **Modern StartNetworkScan `0x0734`** *(decoded + fired, VERDICT 26)*
+   - Done: RAS/scan-request payload recovered byte-exact from `BuildStartNetworkScan`
+     @0x75870; EUTRAN B1/B3/B7/B20 scan fired → ACK error 0 (accepted), result `0x0736`
+     scanStatus=2 COMPLETE with zero LTE cells. Confirms the RF/cell-selection wall from
+     the scan side. `SetSystemSelectionChannels` remains *(not-impl)* but is not needed
+     to prove the scan path.
    - Implement: reuse the reviewed one-shot/cancel state model in
      `sit-network-scan-host.*` (already fail-closed with `0x0707` cancel) behind the
      existing explicit-opt-in RF gate.

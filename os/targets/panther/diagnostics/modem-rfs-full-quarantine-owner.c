@@ -232,6 +232,24 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
         * empty version. BBVER_MASK restores the stock selector. */
        BBVER_GET = 0x0901, BBVER_LEN = 13, BBVER_MASK = 0xFF,
        BBVER_SWVER_OFF = 13, BBVER_SWVER_MAX = 32,
+       /* VERDICT 26: StartNetworkScan, byte-exact from the stock
+        * ProtocolNetworkBuilder::BuildStartNetworkScan(int,int,int,
+        * RIL_RadioAccessSpecifier_V1_5*,int,bool,int,int,char**) @0x75870 in the
+        * CP2A SIT stream lib (cef87564). Request opcode 0x0734. Frame = 12-byte
+        * SIT header + 10-byte scan scalars + numSpecifiers*78 + numMccMncs*6.
+        * Scan scalars (relative to frame start): off12 scanType(1B),
+        * off13 interval(2B, periodic only), off15 maxSearchTime(2B),
+        * off17 incrementalResults(1B&1), off18 incrementalResultsPeriodicity
+        * (2B, stock clamps to [3,10]), off20 numSpecifiers(1B,<=8),
+        * off21 numMccMncs(1B,<=20). Each 78-byte specifier: off0 RAN(1B),
+        * off1 bands_length(4B,<=8), off5 bands[8](1B each, EutranBands=3GPP
+        * band numbers), off13 channels_length(1B,<=32), off14 channels[32]
+        * (2B each). Empty channel list => scan the whole band. Result arrives
+        * as unsolicited opcode 0x0736 (ProtocolNetScanResultAdapter, scanStatus
+        * byte at frame+8, len>=13). RadioAccessNetworks: GERAN=1,UTRAN=2,
+        * EUTRAN=3,NGRAN=4. No wire bytes invented. */
+       SCAN734_GET = 0x0734, SCAN734_RESULT = 0x0736,
+       SCAN734_LEN = 100, SCAN734_RAN_EUTRAN = 3,
        /* VERDICT 16: SIM PIN1 unlock + one activation voice call. All wire
         * IDs/body offsets recovered from the factory libsitril.so (efcca0d5);
         * nothing invented. ProtocolSimBuilderLegacy::BuildSimVerifyPin(0,...)
@@ -381,6 +399,12 @@ struct camp_driver {
      * 0x750, available-band GET 0x709, baseband-version GET 0x901. Nothing is
      * written and no modem state is changed. */
     int capquery;
+    /* VERDICT 26: one-shot StartNetworkScan (0x0734), one EUTRAN specifier
+     * with an empty band list (config /data/saaios/etc/scan734). Runs after
+     * the normal bring-up (radio on, automatic selection, preferred RAT,
+     * allow-data). Fires exactly one 0x0734 and logs 0x0736 scan-result
+     * notifications (scanStatus + bounded header hex). */
+    int scan734, scan734_sent, scan734_done;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
      * by opx_step is sent once (matched by id+token, non-poisoning). */
@@ -2580,6 +2604,39 @@ static void make_scan16_request(uint8_t request[REG_SCAN16_LEN], int mode,
     put_little32(request + SCAN16_MODE_OFF, (uint32_t)valid);
 }
 
+/* VERDICT 26: StartNetworkScan (0x0734), one EUTRAN specifier, empty band list
+ * and empty channel list. Byte-exact from TD1A
+ * ProtocolNetworkBuilder::BuildStartNetworkScan @0x2376a0 (size 0x62c):
+ *   scan scalars: [12]=scanType (0 when arg w1==0), [13]=interval u16 (0 unless
+ *   periodic), [15]=maxSearchTime u16 (60 is inside the builder's 59..3600
+ *   window), [17]=incrementalResults & 1, [18]=periodicity clamped to [3,10],
+ *   [20]=numSpecifiers (min(count,8)), [21]=numMccMncs.
+ *   specifier stride 78 at [22]: [0]=RAN byte, [1]=bands_length u32,
+ *   [5]=bands[8] bytes, [13]=channels_length. bands_length<1 skips the band
+ *   jump table; channels_length<1 skips the channel packer. Both lengths 0 is
+ *   the frame the builder emits for an empty band/channel vector (scan every
+ *   band of that RAN). RAN 3 = EUTRAN. One specifier keeps the builder's
+ *   trailing numSpecifiers clear (it zeros the count only when its RAN
+ *   accounting sum exceeds 2). Frame = 12 + 10 + 78 = 100. No NV/EFS write. */
+static void make_startscan_request(uint8_t request[SCAN734_LEN], uint32_t token)
+{
+    memset(request, 0, SCAN734_LEN);
+    request[2] = (uint8_t)SCAN734_GET;         /* 0x34 */
+    request[3] = (uint8_t)(SCAN734_GET >> 8);  /* 0x07 */
+    request[4] = (uint8_t)SCAN734_LEN;         /* 100, [5]=0 => LE 100 */
+    put_little32(request + 6, token);
+    /* scan scalars (off12..21) */
+    request[12] = 0;      /* scanType = ONE_SHOT */
+    /* [13..14] interval = 0 (one-shot) */
+    request[15] = 60;     /* maxSearchTime = 60s (LE16; [16]=0) */
+    request[17] = 0;      /* incrementalResults = false */
+    request[18] = 3;      /* incrementalResultsPeriodicity = 3 (stock minimum) */
+    request[20] = 1;      /* numSpecifiers */
+    request[21] = 0;      /* numMccMncs */
+    /* specifier[0] at off22. bands_length and channels_length stay 0. */
+    request[22] = SCAN734_RAN_EUTRAN;  /* radio_access_network = EUTRAN(3) */
+}
+
 _Static_assert(REG_IA_LEN == 250, "SET_INITIAL_ATTACH_APN frame must be 250 bytes");
 _Static_assert(REG_IA_PCSCF_OFF < REG_IA_LEN, "pcscf offset within frame");
 
@@ -2930,6 +2987,48 @@ static int camp_bbver_reply(struct camp_driver *c, const uint8_t *p, size_t n,
     return 1;
 }
 
+/* VERDICT 26: fire one StartNetworkScan (0x0734) after reg_complete and after
+ * the read-only capability GETs (bbver/ratbm) have drained. Returns the opcode
+ * to fire, or 0 while idle/awaiting/done. */
+static unsigned camp_scan734_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || !c->scan734 || c->scan734_done) return 0;
+    if (c->probe_pending) return 0;
+    if (c->bbver_enabled && !c->bbver_done) return 0;
+    if (c->ratbm_enabled && !c->ratbm_done) return 0;
+    if (!c->scan734_sent) return SCAN734_GET;
+    return 0;
+}
+
+/* Consume the 0x0734 ACK (accepted/refused). Scan results arrive separately as
+ * unsolicited 0x0736 notifications (see camp_scan734_observe). Returns 1 if
+ * handled. error_raw 0 = scan accepted; nonzero = refused (e.g. GENERIC). */
+static int camp_scan734_reply(struct camp_driver *c, unsigned id, unsigned error)
+{
+    if (id != SCAN734_GET || !c->scan734 || !c->scan734_sent) return 0;
+    c->scan734_done = 1;
+    printf("camp_scan734 ack=yes error_raw=%u\n", error);
+    return 1;
+}
+
+/* Record unsolicited 0x0736 scan-result notifications. Logs the scanStatus byte
+ * (frame+8, per ProtocolNetScanResultAdapter::GetScanStatus) and a bounded hex
+ * dump of the frame header/first cell fields so PLMN/band/EARFCN can be read
+ * back offline -- those are network identifiers, not subscriber secrets. */
+static void camp_scan734_observe(struct camp_driver *c, const uint8_t *p,
+                                 size_t n)
+{
+    if (!c->scan734 || n < 13 || p[0] != 2) return;
+    if (little16(p + 2) != SCAN734_RESULT || little16(p + 4) != n) return;
+    unsigned status = p[8];
+    size_t dump = n < 96 ? n : 96;   /* header + leading cell fields only */
+    char hex[96 * 2 + 1];
+    for (size_t i = 0; i < dump; i++)
+        snprintf(hex + i * 2, 3, "%02x", p[i]);
+    printf("camp_scan734 result=yes scan_status=%u len=%zu head=%s\n",
+           status, n, hex);
+}
+
 /* VERDICT 20: modern RAT-gate experiment. Runs only when armed by
  * /data/saaios/etc/ratbm and after reg_complete. Sequence (each once):
  * GET 0x750 (diagnostic read of current allowed-RAT bitmap) -> band-mode GET
@@ -3011,6 +3110,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_dereg_reply(c, id, error)) return;
     if (camp_scan16_reply(c, p, n, id, error)) return;
     if (camp_bbver_reply(c, p, n, id, error)) return;
+    if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
     if (error) {
@@ -3177,6 +3277,7 @@ static void camp_feed(struct camp_driver *c, const uint8_t *bytes, size_t len,
             if (length < 0) { c->poisoned = 1; break; }
             if (!length) break;
             camp_observe(c, c->rx + offset, (size_t)length, now);
+            camp_scan734_observe(c, c->rx + offset, (size_t)length);
             camp_ack(c, c->rx + offset, (size_t)length);
             camp_probe_match(c, c->rx + offset, (size_t)length, now);
             offset += (size_t)length;
@@ -3492,6 +3593,25 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    /* VERDICT 26: one-shot StartNetworkScan (0x0734) targeting EUTRAN LTE. */
+    unsigned sns = camp_scan734_next(c);
+    if (sns) {
+        ++c->probe_token;
+        uint8_t f[SCAN734_LEN];
+        make_startscan_request(f, c->probe_token);
+        c->scan734_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = SCAN734_GET;
+        c->probe_name = "start_network_scan_lte";
+        c->probe_deadline_ms = now + PROBE_SCAN_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_scan734=sent ran=eutran bands=all elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     /* VERDICT 17: len-16 scanType sweep (one scan per distinct mode 0..5). */
     unsigned s16 = camp_scan16_next(c);
     if (s16) {
@@ -3732,6 +3852,16 @@ static int read_scan16(void)
     return 1;
 }
 
+/* VERDICT 26: the one-shot StartNetworkScan (0x0734) LTE scan runs only when
+ * /data/saaios/etc/scan734 exists. Returns 1 if armed. */
+static int read_scan734(void)
+{
+    int fd = open("/data/saaios/etc/scan734", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
 /* VERDICT 20: the modern RAT-gate experiment runs only when
  * /data/saaios/etc/ratbm exists. Diagnostic GET 0x750/0x709, one revertible SET
  * 0x074f (LTE+WCDMA+GSM), then a confirming GET 0x750. Returns 1 if armed. */
@@ -3964,6 +4094,8 @@ static int run_owner(int ipc, int rfs, int ready)
     }
     printf("camp_capquery=%s\n",
            o.camp.capquery ? "armed-readonly" : "off");
+    o.camp.scan734 = read_scan734();
+    printf("camp_scan734=%s\n", o.camp.scan734 ? "armed-lte-scan" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else
@@ -5568,7 +5700,35 @@ static int test_camp_reg(void)
             0,0,0x06,0x07,16,0,0x78,0x56,0x34,0x12,0,0, 2,0,0,0};
         make_scan16_request(s16, 2, 0x12345678);
         if (!same_bytes(s16, s16_e, sizeof s16)) return 226;
-        /* Out-of-range scanType clamps to 0 (stock sub/cmp/csel). */
+        /* VERDICT 26: StartNetworkScan 0x0734, one EUTRAN specifier, empty
+         * band and channel lists (scan every EUTRAN band). 100-byte frame. */
+        uint8_t sns[SCAN734_LEN];
+        static const uint8_t sns_e[SCAN734_LEN] = {
+            0,0,0x34,0x07,100,0,0x78,0x56,0x34,0x12,0,0, /* hdr: op 0x734 len100 */
+            0,          /* +12 scanType ONE_SHOT */
+            0,0,        /* +13 interval */
+            60,0,       /* +15 maxSearchTime=60 */
+            0,          /* +17 incrementalResults */
+            3,0,        /* +18 periodicity=3 */
+            1,          /* +20 numSpecifiers */
+            0,          /* +21 numMccMncs */
+            3           /* +22 RAN=EUTRAN; bands_length and channels stay 0 */
+            /* remaining specifier bytes are zero via the initializer */ };
+        make_startscan_request(sns, 0x12345678);
+        if (!same_bytes(sns, sns_e, sizeof sns)) return 241;
+        /* Fires only post-reg + armed, after capability GETs, exactly once. */
+        struct camp_driver ss;
+        memset(&ss, 0, sizeof ss);
+        if (camp_scan734_next(&ss) != 0) return 242;       /* not armed */
+        ss.reg_complete = 1; ss.scan734 = 1;
+        if (camp_scan734_next(&ss) != SCAN734_GET) return 243;
+        ss.bbver_enabled = 1;
+        if (camp_scan734_next(&ss) != 0) return 244;       /* GETs not drained */
+        ss.bbver_done = 1; ss.scan734_sent = 1;
+        if (camp_scan734_next(&ss) != 0) return 245;       /* awaiting ack */
+        if (!camp_scan734_reply(&ss, SCAN734_GET, 2) || !ss.scan734_done)
+            return 246;
+        if (camp_scan734_next(&ss) != 0) return 247;       /* done, one-shot */        /* Out-of-range scanType clamps to 0 (stock sub/cmp/csel). */
         uint8_t s16b[REG_SCAN16_LEN];
         make_scan16_request(s16b, 9, 0x12345678);
         if (little32(s16b + SCAN16_MODE_OFF) != 0) return 227;
