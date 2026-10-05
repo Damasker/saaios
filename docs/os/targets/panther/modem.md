@@ -12,12 +12,24 @@ with **0 bytes** in RXQ. A 100 ms guard immediately before the exact third
 legacy-ring wrap did not change the stop. State **BOOTING**. `rmnet` still
 0. Not ONLINE.
 
-Firmware base: `CP2A.260705.006`. Slot A = SaaiOS. Slot B = stock Android.
+Firmware base historically `CP2A.260705.006` (SaaiOS slot A bring-up).
+Stock reverse on **2026-10-05** used baseband
+`g5300q-260317-260505-B-15346003` on slot **B** after the user flashed
+stock. Slot A remains the SaaiOS image unless the user re-flashes.
+
+**Working stock recipe (cbd + rfsd + rild + real EFS NV, LTE HOME +
+`rmnet1`):** [modem-stock-reproduction.md](modem-stock-reproduction.md).
+**Hardware next to the CP** (PCIe RCs, PMIC, GSA, GNSS, eSE):
+[hardware-risks.md](hardware-risks.md).
+Native `cp-boot` UDL below did **not** reach a bearer. Do not splice NV
+into the `modem.bin` TOC.
 
 ## Success criterion
 
 CP stably **ONLINE** (not `CRASH_EXIT`) **and** (`rmnet*` rx/tx ≠ 0 **and/or**
-IPv4 on `rmnet*`). Wi-Fi is not a substitute.
+IPv4 on `rmnet*`). Wi-Fi is not a substitute. Stock already meets this
+(2026-10-05): Kyivstar 25503 LTE CS+PS HOME, `SETUP_DATA_CALL` `NONE`
+on `rmnet1`. SaaiOS must match that recipe, not a new SIT opcode.
 
 ## Live map (read-only)
 
@@ -329,9 +341,16 @@ SPI boot is unused on this PCIE Shannon. Do not hunt an unsigned rebuild.
 ## Forbidden (still)
 
 - writes to live `efs` / `efs_backup` / `cpefs` / RADIO-class originals
+  unless the user explicitly grants a new write
 - `IOCTL_POWER_OFF` on `umts_boot0`
-- auto-start of vendor `cbd` or `rild`
-- flashing anything except `panther`; slot B stays the Android escape hatch
+- inventing SIT opcodes or splicing NV into `modem.bin` TOC
+- flashing anything except `panther`
+
+Vendor `cbd` / `rfsd` / `rild_exynos` are **required** to match stock
+cellular; see [modem-stock-reproduction.md](modem-stock-reproduction.md).
+Do not auto-start them from a half-booted `cp-boot` UDL. Slot B was
+the Android escape hatch; after the 2026-10-05 stock flash it is the
+working control image.
 
 ## NV copy LIVE (2026-09-06, one-shot ro)
 
@@ -1145,3 +1164,361 @@ No second frame. No `COMPLETE`. Log:
 
 Not yet reached: VSS, APM, NV, a successful `COMPLETE_NORMAL_BOOTUP`,
 `ONLINE`, or any `rmnet` byte. Wi-Fi is not a substitute for that.
+
+## No `POWER_RESET`, 3s settle, `0x7E8` ring-fit (log already on disk)
+
+This load was already in `/data/saaios/var/cp-boot-20260922-nreset7e8.log`
+(newest `cp-boot-*.log`, after `cp-boot-20260922-noreset.log`). It was
+not repeated. `cp-boot.c` was not changed for it.
+
+`IOCTL_POWER_ON`, no `IOCTL_POWER_RESET`. For 3s, `modem_state` stayed
+`OFFLINE` and NORM_RAW TX/RX stayed `head=tail=0`. No `BAD CFG`, so
+`START` ran.
+
+| Step | Result |
+|---|---|
+| `LOAD_CP_IMAGE` BOOT | OK |
+| `START_CP_BOOTLOADER` NORMAL | OK. `OFFLINE` → `BOOTING`. Ring still empty. |
+| MAIN START `0xA120` | ACK `0xC120`, 4 bytes |
+| MAIN BIN payload `0x7E8`, write `0x7F4`, success only on `0xC12B` | first ACK `0xC12B`, 4 bytes. One ring-fit shrink: payload `0x7E8` → `0x7D8` at TX head `0x1fc810` (wire ends on `0x1FD000`). |
+| through chunk 16633 | ACKed. `last_good=0x201a8b0`. Ring empty at that point (`TX head==tail==706560`). |
+| next frame, offset `0x201b098` | written, not ACKed. `SIT UDL timeout waiting 0x0000c12b (last read 0 bytes)`. `head=0xad000 tail=0xac800` (one `0x800` frame queued, `consumed=0`). |
+
+The log line `ACKs continued past 0x201b098 next=0x201b098` is the
+loader noticing that the next offset to send is `0x201b098`. It is the
+ACK of the frame at `0x201a8b0`, not an ACK of the frame that starts at
+`0x201b098`. That next frame is the one that timed out.
+
+`bad_cfg=0`. `modem_state` stayed `BOOTING`. The loader stopped there:
+no VSS, APM, NV, CRC, DONE, READY, FIN, or COMPLETE. The log has no
+`rmnet` line. Same wall as the `POWER_RESET` + `0x7E8` runs
+(`last_good=0x201a8b0`, unread frame at `0x201b098`). Skipping
+`POWER_RESET` did not move it.
+
+## No boot-write split knob (2026-09-23, no BIN load)
+
+The wall did not move, so the next question was whether a factory
+`write(0xC00C)` can be made into `0x800`-class EXYNOS frames without a
+new UDL opcode and without `IOCTL_POWER_OFF`.
+
+Local `s5300-src` `bootdump_write()` computes `cfg_sit` once per
+`write()`, via `exynos_build_fr_config()`. That function returns
+`EXYNOS_SINGLE` (`0xC000`) as soon as `format >= IPC_BOOT`, before it
+looks at the byte count. The later `max_tx_size` loop can cut the skb
+payload, but every fragment is headed with that same `cfg_sit`.
+`bootdump_write()` never calls `modify_next_frame()`. `max_tx_size` is
+copied once in `create_io_device()` from the DT property
+`iod,max_tx_size`. Nothing in this tree assigns it later. `link_header`
+is set once in `sipc5_init_io_device()` from `IO_ATTR_NO_LINK_HEADER`.
+
+Live DT, `cpif/iodevs/io_device_8` (cells are big-endian):
+
+| Property | Bytes | Value |
+|---|---|---|
+| `iod,name` | `75 6d 74 73 5f 62 6f 6f 74 30 00` | `umts_boot0` |
+| `iod,attrs` | `00 00 02 00` | `0x200` |
+| `iod,format` | `00 00 00 04` | `4` (`IPC_BOOT`) |
+| `iod,ch` | `00 00 00 f1` | `0xF1` |
+| `iod,max_tx_size` | absent | not in the node |
+| `mif,protocol` | `00 00 00 01` | `1` (SIT; `bootdump_write` takes the `PROTOCOL_SIT` branch) |
+
+`/lib/modules/cpif.ko` contains the string `iod,max_tx_size`, so the
+signed module still has the DT reader. After `insmod` of `shm_ipc.ko`,
+`cpif_page.ko`, `cpif.ko`, and `cp_thermal_zone.ko` the module
+parameters are only `dflags`, `ds_detect`, and `wakeup_dflags`.
+`/sys/class/cpif/umts_boot0` exposes `dev`, `power`, `subsystem`, and
+`uevent`. There is no sysfs or module parameter that sets
+`max_tx_size` or turns link-header insertion off.
+
+A nonzero `max_tx_size` would still not produce EXYNOS MULTI on this
+boot node: `IPC_BOOT` forces SINGLE, and the boot path does not update
+the fragment config between skbs. Userspace also cannot prefix its own
+MULTI header, because link-header insertion is on and cannot be
+cleared at runtime. No such frame was sent. No `cp-boot load`.
+
+Factory `cbd.dis` (`dist/panther/cbd-extract/cbd.dis`) expects that
+one userspace write and does not split it:
+
+| Site | What cbd does |
+|---|---|
+| `f2f8` / `f2fc` | chunk `0xC000`, or `0x7D00` only if the write-failure flag is set |
+| `f2bc` | `memset` of `0xC00C` |
+| `1fec0` | copy payload to `+12`, store `len = chunk+8`, one `__write_chk` of `chunk+12`; a short write is an error |
+
+cbd never mentions `max_tx_size`. It relies on kernel `bootdump_write`
+to add the EXYNOS header. With live `max_tx_size` absent (runtime 0)
+and `format=IPC_BOOT`, that `write(0xC00C)` is one EXYNOS SINGLE of
+length `0xC018`. cbd does not ask for MULTI, and this driver will not
+emit MULTI for `umts_boot0`.
+
+When this check started, cpif was not loaded (`modem_state` missing,
+uptime about 329s). After the four `insmod`s: `modem_state=OFFLINE`,
+`rmnet0` `rx_bytes=0` `tx_bytes=0`, no IPv4 address. No `POWER_ON`,
+no `IOCTL_POWER_OFF`, no vendor `cbd` / `rild`, original EFS not
+mounted.
+
+## Ring, SHM, and the 48KB frame (2026-09-24, no BIN load)
+
+Read-only. No `cp-boot load`. `modem_a` (`sda19`, 259:3) was mounted
+`ext4` `ro,noload` only long enough to read `modem.bin`, then umounted.
+Original EFS was not mounted.
+
+Live `use_mem_map_on_cp` is disabled (`cp_shmem_probe`: use DT).
+`/sys/devices/platform/cpif/legacy/region` and the probe / DT `reg`
+cells agree:
+
+| Region | Physical base | Size | Role |
+|---|---:|---:|---|
+| `cp_rmem` / IPC index 3 | `0xea400000` | `0x00800000` | IPC, cached |
+| NORM_RAW TX ring | `0xea403000` | `0x001fd000` | IPC + buffer offset `0x3000` |
+| NORM_RAW head/tail | `0xea400018` | 16 bytes | head offset `0x18` |
+| NORM_RAW RX | `0xea600000` | `0x00200000` | after the TX ring |
+| BOOT image slot | `0xea410000` | `0x16800` on the last power-on | `round_up(0x3000, 64K)` |
+| `cp_rmem_1` | `0xe8000000` | `0x02000000` | PKTPROC `0x1c00000` at `0xe8000000` plus PKTPROC_UL `0x400000` at `0xe9c00000` |
+| `cp_msi_rmem` / MSI index 11 | `0xf6200000` | `0x1000` | MSI regs, including `boot_stage` and `img_addr` |
+| `cp_aoc_rmem` / VSS_AOC index 1 | `0x197fd000` | `0x3000` | AoC |
+
+`ipc_base` in dmesg is a hashed `%pK` pointer, not a physical address.
+
+On the `0xC000` crash (`/data/saaios/var/dmesg-fit48.txt`),
+`cpif_pcie_iommu_enable_regions` identity-maps these windows
+(`iova == paddr`, all `ret:0`):
+
+| idx | Address | Size mapped |
+|---:|---:|---:|
+| 1 | `0x197fd000` | `0x3000` |
+| 3 IPC | `0xea400000` | `0x800000` (the whole IPC region, ring included) |
+| 7 PKTPROC | `0xe8000000` | `0x100000` only (`buff_rgn_offset`; the rest of the 32MB reservation is not this map) |
+| 8 PKTPROC_UL | `0xe9c00000` | `0x400000` |
+| 11 MSI | `0xf6200000` | `0x1000` |
+
+Same log: `clear_boot_stage == 0x0`, then `boot_img addr:0xEA410000 size:0x16800`, then `boot_stage == 0xFF`, then `boot_stage == 0x3FFF`. The next cpif lines are `NORM_RAW BAD CFG 0x00` (32 zero bytes) and `CP_CRASH_REQ`. There is no sysmmu, S2MPU, or IOMMU fault line on that crash. A bounded read of `logbuffer_cpif` (10:103) on this later OFFLINE boot returned no bytes. The host PCIe outbound window in that same dmesg is `MEM 0x40000000..0x40feffff` translated to `0x14e00000`; the doorbell is BAR `0x40000000` plus `0x60000`. That is the EP register window, not a buffer for MAIN.
+
+### How a boot TX address is given to the CP
+
+`xmit_to_cp()` (`link_device.c`) sends a boot channel straight to the legacy ring:
+
+```c
+if (ld->is_bootdump_ch(ch))
+    return xmit_to_legacy_link(mld, ch, skb, IPC_MAP_NORM_RAW);
+```
+
+`xmit_to_legacy_link()` (`link_device_memory_legacy.c`) `circ_write`s `skb->data` into `txq.buff`, which is `mld->base + legacy_raw_buffer_offset`. It does not pass a kernel virtual address, an `iommu` `dma_addr`, or a per-skb physical address to the CP. The CP is expected to read the bytes from the shared ring at `0xea403000`, using the head/tail words at `0xea400018`. That ring sits inside the identity-mapped IPC window, so it is not outside the inbound map.
+
+The only boot pointer written for the CP is `set_cp_rom_boot_img()` (`modem_ctrl_s5100.c`): physical `cp_shmem_get_base(SHMEM_IPC) + boot_img_offset` goes to MSI `img_addr_lo` / `img_addr_hi`, and `boot_img_size` goes to `img_size`. On the PCIe path `link_load_cp_image()` forces that offset to `round_up(legacy_raw_buffer_offset, 64K)` and copies into the IPC region only. Live values: `0xEA410000`, size `0x16800` (the BOOT slice). MAIN is `0x5917acc` bytes. Remaining IPC space after `0x10000` is `0x7f0000`, so `LOAD_CP_IMAGE` cannot hold MAIN, and `m_offset` is an offset inside that IPC window, not `0x40010000`.
+
+`bootdump_ioctl` has no other command that registers a host DMA buffer. Besides the ioctls already used, the handler also has `SILENT_RESET`, `TRIGGER_CP_CRASH`, `TRIGGER_KERNEL_PANIC`, `GET_LOG_DUMP`, `GET_CP_CRASH_REASON`, `HANDOVER_BLOCK_INFO`, `SET_SPI_BOOT_MODE`, and `GET_OPENED_STATUS`. None of them maps a MAIN buffer or changes the inbound window. There is no sysfs knob for it either. No load was run.
+
+### MAIN header at file `0x16c10`
+
+First bytes are a little-endian ARM vector table (`ldr pc, [pc, #0x88]`). The tag block at `+0x30` stores 4-character codes as big-endian constants. Values that are CP addresses were checked against the image: `VER` points at `g5300q-251202-260127-B-14784800`.
+
+| File offset | Tag | Value |
+|---:|---|---|
+| `+0x30` | `LTE` | magic `0x4c544500` |
+| `+0x34` | `VER` | `0x410eed54` → that version string |
+| `+0x3c` | `DATE` | `0x410eedb0` → `2026-01-27T03:33-08:00` |
+| `+0x44` | `MAP` | `0x40010000` (TOC `m_off`), next word `0` |
+| `+0x50` | `MEM0` | `0x1f900004`, then two zero words |
+| `+0x60` | `QVER` | `1` |
+| `+0x68` | `USER` | `0x410eedc7` (the nearby string is `BUSER`) |
+| `+0x70` | `QBID` | `0x40c2dab9` |
+| `+0x78` | `QBCL` | `0x40c2dab8` |
+| `+0x80` | `CVER` | `1` |
+| `+0x88` | `cCAT` | `0x48bc6e8c` (above the end of MAIN, `0x45927acc`) |
+
+ARM code starts at `+0xa0` (`e92d4000`). `MEM0` is the only `MEM*` tag in the header. `0x201b098` is not `0x1f900004` and not `0x2000000`.
+
+`0x201b098 = 16633 * 0x7E8 - 0x10`. The `0x7E8` log has exactly one ring-fit shrink, `0x7E8` → `0x7D8`, which is those `0x10` bytes. The stall is the next chunk cursor, not a region end. `0x2000000` is exactly the `cp_rmem_1` reservation (PKTPROC plus PKTPROC_UL). Boot TX does not write that reservation, and the stall is `0x1b098` past it.
+
+The 48KB failure is not explained as an AP DMA/IOMMU fault or as a ring outside the inbound window. The ring is inside the mapped 8MB IPC region. A `0xC000` write is copied into that ring like a `0x7E8` write. The CP then publishes zeros, and the driver raises `CP_CRASH_REQ`. There is no driver-exposed way to put MAIN, or the remainder after `0x201a8b0`, in a separate buffer the CP can DMA, and no way to change the inbound window without flashing.
+
+Left `modem_state=OFFLINE`, `/dev/umts_boot0` is `493:7`, `rmnet0` `rx_bytes=0` `tx_bytes=0`, no IPv4. No `POWER_ON`, no sysrq.
+
+## cbd vs cp-boot header, then CRC on an empty ring (2026-09-24)
+
+Byte-level comparison of factory `cbd.dis` with `cp-boot.c`. The SIT
+header already matched. Chunk size was not changed, and no `0xC000`
+frame was sent.
+
+### START
+
+`cbd` `f270`–`f294` builds one command word and calls `eb70`:
+
+```
+f270  lsl  w8, w26, #4
+f274  mov  w9, #0xa100
+f278  and  w8, w8, #0xfff0
+f27c  orr  w21, w8, w9          ; 0xA100 | ((idx<<4) & 0xFFF0)
+f280  mov  w9, #0xc100
+f284  orr  w19, w8, w9          ; expect 0xC100 | same bits
+f294  bl   eb70
+```
+
+`eb70` stores that word at `sp+4` and, when it is non-zero, `write`s
+exactly 4 bytes (`ebf8 mov w2, #4`). There is no larger START body.
+MAIN idx 2 is `0xA120` / `0xC120`. `cp-boot` `sit_req_resp` writes the
+same `uint32_t` (`sit_cmd(SIT_START, idx)`).
+
+### BIN
+
+Inside the loop, `f518` selects `min(remaining, block)` into `w21`.
+`f51c` sets the offset to `total - remaining` (`sub w23, w25, w26`),
+which is 0 on the first frame and advances by the size actually sent,
+including a short frame. `w25` is the full stage size (`f360` divides
+it by the block). It is not `m_off` `0x40010000` plus the offset.
+
+```
+f55c  strh w21, [sp, #86]       ; len = payload size
+f560  stp  w25, w23, [sp, #88]  ; total, then 0-based offset
+f568  strh w8,  [sp, #84]       ; cmd = 0xA10B | ((idx<<4) & 0xFFF0)
+f588  bl   1fec0
+```
+
+`1fec0` reads the halfword at `+2`, copies that many payload bytes to
+`+12`, rewrites `+2` to `chunk+8`, and `write`s `chunk+12`:
+
+```
+1fed4  ldrh w20, [x2, #2]
+1feec  bl   memcpy
+1fef0  add  w8, w20, #8
+1ff08  strh w8, [x21, #2]
+1ff0c  bl   __write_chk         ; length = chunk+12
+```
+
+After a good write, `f5c8 sub w26, w26, w8` subtracts that same chunk
+from the remainder, so the next offset moves by the shrunk size.
+`cp-boot.c` does the same at the BIN fill: `hdr->cmd`, `hdr->len = chunk`
+then `hdr->len = chunk + 8`, `hdr->total = size`, `hdr->offset = off`,
+and later `off += chunk`. MAIN cmd is `0xA12B`. Userspace still does
+not add the EXYNOS wrap.
+
+### CRC and ioctls before the first BIN
+
+After the BIN loop, `f700`–`f770` store `{0xA301 | bits, TOC crc}` and
+`write` 8 bytes. MAIN is `0xA321` plus TOC crc `0x68f46d27`, expect
+`0xC320` (`f780 mov w8, #0xc300`, then `eb70` with request 0).
+`cp-boot` uses that same 8-byte pair.
+
+From START's return to the first `1fec0` the disassembly is memset,
+lseek, and the header fill. No ioctl sits between
+`START_CP_BOOTLOADER` and the first MAIN BIN. `cbd` does issue
+`POWER_RESET` earlier in boot; this load kept it skipped, and
+`POWER_OFF` was not added. No other missing pre-BIN ioctl was found.
+
+### Load
+
+One load from fresh `OFFLINE`: `POWER_ON`, 3s settle, no
+`POWER_RESET`, `START`, payload `0x7E8`, ring-fit, BIN success only on
+`0xC12B`. The new path returns before writing any frame whose offset
+is `>= 0x201b098`. The live tail (the log file was not on disk after
+the later reboot):
+
+```
+UDL MAIN stop before BIN off=0x201b098 chunk=16633 last_good=0x201a8b0
+  head=0xac800 tail=0xac800 empty=1
+legacy status before-crc: TX head=706560 tail=706560
+modem_state before-crc: BOOTING
+UDL MAIN empty-ring CRC only cmd=0xa321 crc=0x68f46d27 expect=0xc320 wait=10s
+SIT UDL timeout waiting 0x0000c320 (last read 0 bytes)
+legacy status after-crc: TX head=706584 tail=706560
+modem_state after-crc: BOOTING
+bad_cfg=0
+rmnet0 rx_bytes=0 tx_bytes=0
+rmnet0 ipv4 none errno=99
+```
+
+The ring was empty (`head==tail==706560`). The 8-byte CRC was published
+(head advanced 24 bytes, the EXYNOS wrap plus the 8-byte body and
+padding) and the tail did not move. No `0xC320`. No second BIN, no
+DONE, READY, FIN, or COMPLETE. `bad_cfg=0`. State stayed `BOOTING`.
+
+AP sysrq-b afterwards. Modules reloaded (`shm_ipc`, `cpif_page`,
+`cpif`, `cp_thermal_zone`). `/dev/umts_boot0` is `493:7`.
+`modem_state=OFFLINE`, `rmnet0` rx=tx=0, no IPv4. Original EFS stayed
+unmounted.
+
+## IPC wall dump already on disk (read 2026-09-29, no new load)
+
+The descriptor check and the stop-before-`0x201b098` dump had already
+finished on 2026-09-24. This session read the phone logs and did not
+rebuild `cp-boot`, did not `POWER_ON`, and did not run another load.
+
+Logs: `/data/saaios/var/cp-boot-20260924-ipcdump.log` and
+`/data/saaios/var/cp-boot-ipc-20260924.txt`.
+
+No MAIN `m_off`/`size` word (`0x40010000` / `0x5917acc`) was written
+into the IPC header. The loader stopped before the BIN at `0x201b098`
+(`chunk=16633`, `last_good=0x201a8b0`, TX `head==tail==0xac800`, empty).
+The log line `ACKs continued past 0x201b098 next=0x201b098` is the ACK
+of the frame at `0x201a8b0`. That next frame was not sent. This run
+does not by itself prove the older stall; it stopped in front of it.
+
+`/dev/mem` failed (`No such device or address`). The 256-byte IPC
+image at `0xea400000` and the MSI block at `0xf6200000` were not read
+(`ipc=-1`, `msi=-1`). The dump file is the sysfs snapshot only.
+
+| Word | after START | at the stop |
+|---|---|---|
+| `GET_CP_STATUS` | 3 | 3 |
+| `modem_state` | `BOOTING` | `BOOTING` |
+| `bad_cfg` |  | 0 |
+| `boot_stage` in dmesg | `0`, then `0xFF`, then `0x3FFF` | no new line |
+| `ap2cp_msg` | 0 | 0 |
+| `cp2ap_msg` | 0 | `0x83` |
+| `ap2cp_united_status` | `0x4000` | `0x4000` |
+| `cp2ap_united_status` | 0 | 0 |
+| NORM_RAW TX | 0/0 | 706560/706560 |
+| NORM_RAW RX | 0/0 | 266144/266144 |
+| `rmnet0` |  | rx=0 tx=0, no IPv4 (`errno=99`) |
+
+The CP had not left the UDL loop. It was still `BOOTING`, `bad_cfg=0`,
+`boot_stage` unchanged, and the ring was empty because the next BIN
+was withheld. `cp2ap_msg` `0x83` is not a new command and not an error
+word that says the downloader has exited. The log ends at
+`modem_state bin-fail: BOOTING`. No CRC, DONE, FIN, or COMPLETE in
+this run.
+
+### Later probes already passed the wall; not repeated
+
+Separate logs from the same night, already on the phone, are a
+different loader. They are evidence, not a load from this session.
+
+| Log | What it records |
+|---|---|
+| `probe-b-preamble-20260924.log` | `UDL MAIN ACKs continued past 0x201b098 next=0x201b428 chunk=16634`, then `PROBE BOUND REACHED` at 36 MiB, `PROBE END result=2`, no CRC |
+| `probe-b-fullmain-20260924.log` | `SIT UDL ack 0x0000c320` |
+| `probe-handover-20260924.log` | `modem_state post-complete: ONLINE` ten times, then `modem_state probe-end: ONLINE`. No `rmnet` line |
+| `probe-b-complete-20260924.log` | no `rx_bytes` line |
+
+Those runs are the READY plus TOC preamble, then MAIN through CRC/DONE,
+VSS/APM, the userdata NV copies, FIN, and COMPLETE, and later the
+handover ioctl and status queries. Data registration in that note was
+raw 0. None of that is nonzero `rmnet` rx/tx or an IPv4 address.
+This session did not repeat any of them.
+
+### No load on 2026-09-29
+
+The dump does not name an untested mailbox, flag, or SIT word that
+`cp-boot` fails to set. The CP was still inside UDL, so the stop was
+not "the CP already left the loop." The preamble that later moved
+`0x201b098` is already logged through `ONLINE`, and that `ONLINE`
+session has no recorded `rmnet` byte. Repeating it would not be a new
+mechanism.
+
+The phone had rebooted before this read (uptime a few minutes).
+`cpif` is not loaded: `/sys/devices/platform/cpif/modem_state` is
+absent. `rmnet0` does not exist, so there is no rx/tx count and no
+IPv4. No `insmod`, no sysrq, no `POWER_ON`. Original EFS was not
+mounted. Vendor `cbd` and `rild` were not started.
+
+## Stock reverse (2026-10-05)
+
+User flashed stock Android and granted KernelSU `adb root`. Live
+control: LTE HOME + data on `rmnet1`. Full process list, NV sizes,
+init rc, RIL names, and SaaiOS gap table:
+[modem-stock-reproduction.md](modem-stock-reproduction.md).
+
+That capture is read-only of NV. The next SaaiOS cellular step is
+vendor `cbd`/`rfsd`/`rild_exynos` with **both** EFS NV files verified,
+not another `cp-boot` MAIN UDL geometry experiment.
