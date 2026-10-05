@@ -290,6 +290,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | Backlog | **yes** |
+| MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Ready** (host done, device-gated) | **yes** |
 
 ## MODEM-00
 
@@ -299,6 +300,21 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 provenance, A/B comparison, factory CBD disassembly, guarded live probes,
 native boot success, handover, and runtime query results. The reports are
 committed as `docs/os/targets/panther/MODEM-*.md`.
+
+**Breakthrough (2026-10-05) — reframes MODEM-06:** стоковый контроль на
+том же телефоне/SIM (слот `_b`, root) даёт CS/PS `REG_HOME`, RAT LTE,
+PLMN 25503, `SETUP_DATA_CALL cause=NONE`, `rmnet1` UP за ~1 с. Провал
+регистрации на SaaiOS — **артефакт пустого `NV_NORM` (crc 0) + RFS
+только на handle-3**, а не «PIN soft-lock / Present==2 / отсутствие CDMA
+RatMap» и не «CP-internal RF-cal стена» (VERDICT 24-26). Весь MODEM-06
+PIN/Present/CDMA/`0x2f50` разбор — исторические гипотезы, снятые этим
+фактом. Путь к связи — подать валидный dual-handle NV (оба handle из
+верифицированных копий реального EFS, read-only) и пройти стоковую
+именованную RIL-последовательность до bearer. См.
+[MODEM-10](MODEM-10-REAL-NV-DUAL-HANDLE.md),
+[modem-stock-reproduction.md](../targets/panther/modem-stock-reproduction.md),
+[hardware-risks.md](../targets/panther/hardware-risks.md). Запрет vendor
+`cbd`/`rfsd`/`rild` как сервисов сохраняется — фикс host-only.
 
 **Acceptance:** this roadmap exists and names which results are diagnostic,
 which are production candidates, and which actions remain forbidden.
