@@ -31,6 +31,13 @@ Linux ARM64 и, в перспективе, Android-приложений на э�
 без Android как основной ОС —
 [APP-COMPAT-ROADMAP.md](APP-COMPAT-ROADMAP.md).
 
+Четвёртый независимый трек — **Work Scheduler v2**
+([WORK-ROADMAP.md](WORK-ROADMAP.md), [ADR-121](../../adr/ADR-121-work-scheduler-v2.md)):
+DAG, derived ready set, Verification, bounded replan внутри существующего
+`saai-taskd`. Это **не S33** и не новый daemon. Visual Language остаётся
+единственным активным hardware-changing экспериментом; WORK-00/01 —
+документация и host-only validation.
+
 ## Текущее состояние
 
 | ID | Результат | Состояние | Зависит от |

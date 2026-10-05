@@ -1,12 +1,14 @@
 # Sprint 0 — Architecture Mapping: Cognitive Core and Work Scheduler
 
 **Status:** Docs-only deliverable (no code, no binary changes).  
-**Baseline:** `feat/pixel7-native-saaios` @ `2d65060` (S10 Done, CI green).  
+**Baseline:** `feat/som-v1` after ADR-118–121 (SOM/OAM/IRAB + WSV2 docs).
+Earlier Sprint 0 snapshot was `feat/pixel7-native-saaios` @ `2d65060`.  
 **Audience:** TL gate after S01 closed; maps the Cognitive Core / Work Scheduler
 vision onto what SaaiOS already ships and what remains backlog.
 
-This document does **not** implement anything. It records accepted TL decisions
-and binds them to current components, ADRs, and sprints S09–S11.
+This document does **not** by itself change phone binaries. WORK-00 is
+documentation. WORK-01 may add host-tested DAG validation inside
+`saai-taskd` without changing the linear S09/S10 dispatch path.
 
 ## Purpose
 
@@ -100,8 +102,9 @@ writer into the entity store (`saai-taskd`), one risk classifier (`policy-engine
 | **Planner** | `saaios-runtime` (called from `saai-taskd`) | Interpret free-text Intent → proposed tool/action under budgets (`max_tool_iters`) | Execute outside Policy; write entity store directly; declare Verification |
 | **Scheduler** (Work Scheduler) | `saai-taskd` | Create/advance Task/Action entities; schedule → Intent; choose runnable work; reboot reconcile without auto-exec of `waiting_confirmation` | Call the model itself; invent a second risk taxonomy for planner path |
 | **Supervisor** | Colocated in `saai-taskd` (+ runtime budgets) | Timeouts, cancel/confirm paths, idempotent resume, failure → `failed` | Re-plan; authorize |
-| **Worker** | Tool executors / entity mutations invoked after Policy / confirmation | Run one authorized action to completion or timeout | Parse model prose as a tool name |
+| **Worker** | Tool executors / entity mutations invoked after Policy / confirmation | Run one authorized action; disposable execution instance | Parse model prose as a tool name; persist child Tasks; claim Verification |
 | **Policy** | `policy-engine` (planner path); native dangerous-action gate (explicit Intent) | Allow / Deny / AskUser | Execute tools; call model |
+| **Verifier** | Not a separate process yet; target role after Action success | Observe expected effect (`VerificationContract`); never authorize or spawn Tasks | Declare Done from worker "ok"; rewrite the goal |
 | **UI** | `saai-shell` | Capture Intent; show state; live confirmation | Bypass TaskConfirm for dangerous work |
 
 Long-term: keep Planner probabilistic and Scheduler deterministic. Short-term
@@ -149,9 +152,10 @@ truth.
 | Durable Ready Queue | **Reject** | Dual-write → ready-set drift and crash-recovery bugs. Ready is derived. |
 | Durable Action Queue | **Reject** | Actions are records in the workflow store. The **execution frontier** is an in-memory deque (fan-out cap, default 1 mutating action). After crash, re-derive from store + audit. |
 
-DAG / fork-join / multi-worker pools remain **non-goals for MVP** until a
-linear Intent → Task → Action → Result path is proven (already true on device
-for S09/S10) and budgets demand parallelism.
+DAG / fork-join / multi-worker pools remain **non-goals for the Visual
+phone track**. They now have an explicit independent track:
+[WORK-ROADMAP.md](../sprints/WORK-ROADMAP.md) / [ADR-121](../../adr/ADR-121-work-scheduler-v2.md).
+Default mutating concurrency stays 1 until Pixel measurements say otherwise.
 
 ## Task Ledger = audit-log
 
@@ -204,7 +208,9 @@ already fixed: UDS default on device; TLS for remote TCP.
 - Explicit workflow event kinds in audit-log for every Task/Action transition
 - TLS/mTLS for remote TCP control plane; harden UDS credentials
 - Richer World Model beyond identity/metrics
-- Multi-action DAG proposals with fan-out caps
+- Multi-action DAG proposals with fan-out caps — **WORK-01+**
+  ([WORK-ROADMAP.md](../sprints/WORK-ROADMAP.md), ADR-121); host DAG
+  validation first, not S33
 - Standalone Supervisor process (only if multi-process workers prove necessary)
 - Full `Входящие` workflow catalog UI (explicitly out of S09/S10)
 - ADR-004 convergence (shared tool/policy APIs across tracks)
@@ -251,4 +257,5 @@ or protocol changes accompany this Sprint 0 mapping.
 - [sprints/README.md](../sprints/README.md) — S09–S11 roadmap
 - ADR-002 (hybrid IPC / UDS), ADR-004, ADR-006
 - ADR-030…039 — Intent/Task/Action, planner bridge, schedules, space memory
+- ADR-118–121 — SOM, OAM, IRAB, Work Scheduler v2
 - TL decisions 2026-09-06 (Planner/Scheduler split; one store; reject durable queues; audit-log = ledger; UDS/TLS)

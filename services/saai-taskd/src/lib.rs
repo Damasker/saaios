@@ -31,6 +31,7 @@
 //! their own daemons.
 
 pub mod client;
+pub mod graph;
 pub mod model;
 pub mod runtime_bridge;
 

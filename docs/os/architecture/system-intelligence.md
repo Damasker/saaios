@@ -41,11 +41,13 @@ Event              неизменяемая причинная запись
 - отличает наблюдение (`battery.read`) от изменения (`display.set_brightness`);
 - сообщает UI и planner только фактически зарегистрированные возможности.
 
-### Workflow service
+### Workflow service (`saai-taskd`)
 
-- превращает `Intent` в устойчивые `Task` и `Action`;
-- хранит состояния `proposed / awaiting_permission / running / verifying /
-  completed / failed / cancelled`;
+- превращает `Intent` / `PlanProposal` в устойчивые `Task` и `Action`;
+- хранит durable-состояния `pending / waiting_confirmation /
+  waiting_clarification / running / verifying / done / failed / cancelled`;
+- **не** хранит `ready` как status — Ready Set вычисляется из store;
+- валидирует DAG зависимостей до persistence (ADR-121);
 - обеспечивает идемпотентность и продолжение после reboot.
 
 ### Policy service
@@ -56,9 +58,17 @@ Event              неизменяемая причинная запись
 
 ### Planner
 
-- получает минимальную проекцию DeviceContext, task state и schemas tools;
-- предлагает план, но не исполняет его и не объявляет успех;
+- получает минимальную проекцию DeviceContext, task state и semantic actions;
+- предлагает `PlanProposal`, но не исполняет его и не объявляет успех;
+- не пишет в entity store и не объявляет Verification;
 - может быть локальным, удалённым или полностью отключённым.
+
+### Verifier
+
+- проверяет postcondition Action по `VerificationContract` (наблюдение,
+  не заявление Worker);
+- не авторизует, не порождает новые Task, не меняет цель;
+- VerificationFailed → Scheduler → bounded `ReplanRequest` → Planner.
 
 ### `saai-shell`
 

@@ -15,6 +15,7 @@ Product and delivery sources of truth:
 - [Quality strategy](QUALITY.md)
 - [Sprint roadmap](sprints/README.md)
 - [Visual-system delivery roadmap](sprints/VISUAL-ROADMAP.md)
+- [Work Scheduler v2 delivery roadmap](sprints/WORK-ROADMAP.md)
 
 ```text
             SaaiOS OS

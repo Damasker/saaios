@@ -156,6 +156,10 @@ Answer/Action/Clarification/Plan/Unsupported и пишет в те же
 Intent/Task/Action/Result. Добавлен `WaitingClarification`, отдельно
 от `WaitingConfirmation`.
 
+WSV2 (ADR-121) не вводит второй store и не добавляет `saaios.plan` в v1.
+Многошаговый Plan — projection Intent+Tasks+`depends_on`. Ready остаётся
+derived. `Ready` / `WaitingDependency` не становятся durable status.
+
 ## Ссылки
 
 - ADR-004 -- Platform Track vs OS Track разделение и названное (не
