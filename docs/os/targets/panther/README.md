@@ -35,6 +35,9 @@
 - Профиль домашней сети хранится только на установленном телефоне в закрытом файле `metadata`; пароль не входит в эти образы и архив.
 - STATUS показывает текущее время UTC, готовность системы, накопителя, тача, аудио, Wi-Fi и Bluetooth, карту модема (`MODEM`), IP-адрес, процент и реальное состояние батареи (`CHARGING`, `DISCHARGING` или `FULL`), а также яркость.
 - Живая карта железа рядом с модемом (два PCIe RC, Shannon `s51xx`, PMIC, GSA, GNSS, eSE): [hardware-risks.md](hardware-risks.md).
+- Камеры LWIS, UDFPS Goodix, приближение TMD3719/VL53L1, IMU/CHRE: [sensors-cameras.md](sensors-cameras.md).
+- Беспроводная зарядка P9412 / USB-C BMS: [power-charging.md](power-charging.md). Сводка доменов: [hardware-index.md](hardware-index.md).
+- Звук AoC/CS35L41/микрофоны: [audio.md](audio.md). USB-PD и термозоны: [usb-pd-thermal.md](usb-pd-thermal.md).
 - После выхода Wi-Fi в сеть часы синхронизируются напрямую по SNTP без Android; последнее корректное время сохраняется в закрытом разделе `metadata` и восстанавливается уже в начале следующей загрузки.
 - На странице STATUS кнопки громкости регулируют яркость панели. Выбранная яркость сохраняется в `metadata` и восстанавливается после холодной загрузки.
 - Раздел userdata очищен и отдан SaaiOS под обычный F2FS: доступно около 109 ГБ в `/data/saaios`.

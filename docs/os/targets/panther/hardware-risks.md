@@ -69,6 +69,8 @@ Not cellular, but they share PCIe/SPI/IOMMU and show up in the same
 - USB DWC3 / `phy_exynos_usbdrd_super` — console vs gadget; does not
   replace `rmnet`.
 
+Cameras, UDFPS, proximity, IMU: [sensors-cameras.md](sensors-cameras.md).
+
 ## Kernel modules that must stay with CPIF
 
 Observed `lsmod` edges (users of `cpif` / PCIe):

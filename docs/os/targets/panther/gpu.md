@@ -1,6 +1,6 @@
 # Pixel 7 (panther) graphics acceleration
 
-## Current state
+## Current state (SaaiOS)
 
 The verified display path is Exynos DRM/KMS scanout at 1080x2400x60 with a
 CPU-rendered XRGB8888 dumb buffer. `drm-splash` converts logical RGB to the
@@ -8,7 +8,46 @@ panel's verified BGRX byte layout. It remains the boot and recovery renderer.
 
 No GPU kernel driver, render node, Mali CSF firmware, Mesa, GBM or EGL stack is
 currently packaged by SaaiOS. Hardware acceleration is therefore **not
-claimed**. Pixel 7 uses Mali-G710 MP7. Its upstream open-driver path is Panthor;
+claimed**.
+
+## Live stock GPU (2026-10-05)
+
+Stock Android on the same panther **does** run Mali. Scanout and render are
+**different devices**.
+
+| Piece | Live |
+|---|---|
+| GPU | **Mali-G710**, **7 cores**, `r0p0`, id `0x0A080602` |
+| Kernel identify | `GPU identified as 0x2 arch 10.8.6 r0p0 status 4` |
+| DT | `/mali@28000000` `arm,malit6xx` → `28000000.mali` |
+| Kbase | `mali_kbase` **r54p3-00eac0** (UK 1.38), `mali_pixel`, probed `mali0` |
+| CSF firmware | loaded `Mali firmware 0x1050000`, git `690855d0…`, blobs `/vendor/firmware/mali_csffw-r54p0`…`r54p3.bin` (r54p3 **282624** B) plus `mali_csffw-legacy-r56p0.bin` |
+| Userspace | `ro.hardware.egl=mali`, `ro.hardware.vulkan=mali`, GLES **3.2** (`ro.opengles.version=196610`) |
+| GLES string | `ARM, Mali-G710, OpenGL ES 3.2 v1.r54p3-00eac0.1848e3b066182d5bb5a345ab256f13ee` |
+| Blobs | `libGLES_mali.so` **52 543 840** B; `vulkan.mali.so` **133 576** B (ICD, not the full GLES blob) |
+| Render nodes | `/dev/mali0` (10,88), `/dev/dri/renderD128` |
+| Scanout | `/dev/dri/card0` **exynos-drm**, connector `card0-DSI-1` (+ Writeback). **Not** a Mali display block |
+| Power domains | `18061e00.pd-g3d`, `18062000.pd-embedded_g3d` |
+| DVFS | freqs **202 / 251 / 302 / 351 / 400 / 471 / 510 / 572 / 701 / 762 / 848** MHz; max initialized 848000 kHz; governors `basic quickstep quickstep_use_mcu capacity_use_mcu` |
+| Cooling | `thermal-gpufreq-0` max 10; zone G3D; OCP IRQs `ocp_gpu` / `soft_ocp_gpu` |
+| Helpers | `mali-mgm` memory group manager, `mali-pcm` priority (DT: none configured), `mali-pma` protected allocator |
+| Protected | `vendor.mali.base_protected_max_core_count=4`, TLS max 64 MiB; RenderEngine protected context supported |
+| QoS | `bts` + `exynos_pm_qos` consumers include **mali_kbase** (same tree as cpif) |
+| Mem this capture | `total_gpu_mem` ~145 899 520; SurfaceFlinger (pid 540) ~105 MB |
+| Userspace svcs | `gpuservice`, `surfaceflinger`, `hwc3-service.pixel` (Skia/Ganesh GLES) |
+
+G710 Valhall CSF is **not** Panfrost. Upstream open driver is **Panthor**.
+Stock does **not** use Panthor; it uses proprietary **kbase r54p3** + CSF
+`mali_csffw-r54p3`. Copying those blobs into SaaiOS without the matching
+signed `mali_kbase.ko` + DT/power domains will not bind.
+
+Do **not** point Mesa at `/dev/dri/card0` expecting a Mali render node:
+that card is Exynos DSI. Render is `renderD128` / `mali0`.
+
+GXP (`25c00000.gxp`, Janeiro) is the **camera** coprocessor, not the
+3D GPU. Do not load GXP for UI acceleration.
+
+Pixel 7 uses Mali-G710 MP7. Its upstream open-driver path is Panthor;
 Panfrost is not a substitute.
 
 G710 enablement was still a Panthor patch series in 2025 and adds firmware IDs
