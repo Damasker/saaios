@@ -653,12 +653,10 @@ impl FramePace {
     fn p95_produce_ms_matching(&self, keep: impl Fn(&FrameSample) -> bool) -> Option<u32> {
         let mut values = [0u32; FRAME_PACE_CAP];
         let mut n = 0usize;
-        for slot in &self.samples {
-            if let Some(sample) = slot {
-                if keep(sample) {
-                    values[n] = sample.produce_ms;
-                    n += 1;
-                }
+        for sample in self.samples.iter().flatten() {
+            if keep(sample) {
+                values[n] = sample.produce_ms;
+                n += 1;
             }
         }
         if n == 0 {
