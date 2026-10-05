@@ -20,6 +20,10 @@ fallback.
 - `build-native-c-image.sh` — builds static programs and the init_boot image.
 - `build-wifi-vendor-boot.sh` — injects matching signed modules and firmware
   into a stock vendor_boot image.
+- `build-gpu-vendor-boot.sh` — injects Mali kbase + CSF firmware only
+  (does not start the GPU from PID 1).
+- `scripts/collect-gpu-artifacts.sh` — adb-pull the stock Mali kit into
+  `artifacts/gpu/`.
 - `artifacts.example.manifest` — expected local artifact names.
 
 Binary firmware, signed Google modules, stock boot images, per-device

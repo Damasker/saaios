@@ -11,7 +11,7 @@ This is **not** a claim that SaaiOS drives every block.
 | Cellular Shannon / CPIF / NV | [modem.md](modem.md), [modem-stock-reproduction.md](modem-stock-reproduction.md) | Not a bearer |
 | Modem-adjacent PCIe, GSA, GNSS, eSE/NFC | [hardware-risks.md](hardware-risks.md) | Partial (NFC/eSE unused) |
 | Cameras LWIS, UDFPS, prox, IMU/CHRE | [sensors-cameras.md](sensors-cameras.md) | Not claimed |
-| GPU Mali-G710 | [gpu.md](gpu.md) | Scanout only; stock kbase r54p3 + CSF not packaged |
+| GPU Mali-G710 | [gpu.md](gpu.md), [gpu-kit.sha256](gpu-kit.sha256) | Scanout only; stock kit on disk, not in PID 1 |
 | Qi / USB-C / BMS | [power-charging.md](power-charging.md) | Battery % only |
 | USB-PD PDOs + thermals | [usb-pd-thermal.md](usb-pd-thermal.md) | Not claimed |
 | AoC audio, CS35L41, 3 mics, voice | [audio.md](audio.md) | EP2 playback + haptics only |

@@ -7,8 +7,14 @@ CPU-rendered XRGB8888 dumb buffer. `drm-splash` converts logical RGB to the
 panel's verified BGRX byte layout. It remains the boot and recovery renderer.
 
 No GPU kernel driver, render node, Mali CSF firmware, Mesa, GBM or EGL stack is
-currently packaged by SaaiOS. Hardware acceleration is therefore **not
-claimed**.
+started by SaaiOS PID 1. Hardware acceleration is therefore **not claimed**.
+
+A local stock kit is extracted under
+`os/targets/panther/artifacts/gpu/` (gitignored). Hashes:
+[gpu-kit.sha256](gpu-kit.sha256). Re-pull with
+`os/targets/panther/scripts/collect-gpu-artifacts.sh`. Optional ramdisk
+pack (modules + CSF only, still no PID 1 load):
+`os/targets/panther/build-gpu-vendor-boot.sh`.
 
 ## Live stock GPU (2026-10-05)
 
@@ -40,6 +46,54 @@ G710 Valhall CSF is **not** Panfrost. Upstream open driver is **Panthor**.
 Stock does **not** use Panthor; it uses proprietary **kbase r54p3** + CSF
 `mali_csffw-r54p3`. Copying those blobs into SaaiOS without the matching
 signed `mali_kbase.ko` + DT/power domains will not bind.
+
+## Stock kit (collected 2026-10-05, not in PID 1)
+
+Pulled from live panther `google/panther/panther:17/CP2A.260705.006/15641320`.
+`vendor/lib/modules/mali_*.ko` matches `vendor_dlkm` (same SHA256).
+`/vendor/etc/mali` is **absent** on this build; `fw_name` is the module
+parameter `mali_csffw-r54p3.bin`.
+
+| Path in kit | Role | Size |
+|---|---|---|
+| `modules/mali_kbase.ko` | CSF kbase r54p3 | 2 733 424 |
+| `modules/mali_pixel.ko` | Pixel MGM/PCM/PMA | 46 616 |
+| `modules/gpu_cooling.ko` | GPU DVFS cooling | 45 888 |
+| `firmware/mali_csffw-r54p3.bin` | Live CSF image | 282 624 |
+| `firmware/mali_csffw-r54p{0,1,2}.bin` + `legacy-r56p0.bin` | Alternate CSF | ~278–286 KiB |
+| `egl/libGLES_mali.so` | Proprietary GLES 3.2 | 52 543 840 |
+| `hw/vulkan.mali.so` | Vulkan ICD | 133 576 |
+| `egl/libOpenCL.so` + `libOpenCL-pixel.so` | OpenCL | 82 808 + 14 440 |
+| `hw/mapper.pixel.so` + allocator AIDL | Android gralloc | Android-only |
+| `modules/deps/*.ko` | kbase `depends=` | SoC glue, already on vendor_dlkm |
+
+`mali_kbase` `depends=`: systrace, google_bcl, exynos-pmu-if, exynos-pd,
+itmon, cmupmucal, exynos_pm_qos, bts, gpu_cooling, mali_pixel, dss.
+
+`mali_pixel` `depends=`: pixel_stat_sysfs, pixel_stat_mm, slc_pt.
+
+`gpu_cooling` `depends=`: ect_parser, cmupmucal.
+
+`google_bcl` itself pulls the charger/MFD tree. Do **not** insmod it from
+this kit on a cold SaaiOS boot expecting GPU-only deps; it is already live
+on stock vendor_dlkm with the power stack.
+
+Manual load order (stock kernel, **not** PID 1), after those deps exist:
+
+1. `gpu_cooling.ko`
+2. `mali_pixel.ko`
+3. `mali_kbase.ko` with firmware `mali_csffw-r54p3.bin` on the firmware
+   search path
+4. Confirm `/dev/mali0` and `/dev/dri/renderD128`
+
+`libGLES_mali.so` / `vulkan.mali.so` / mapper / allocator are **Android
+Bionic + HIDL/AIDL**. They will not `dlopen` on SaaiOS musl. Userspace on
+SaaiOS still needs Mesa **Panthor** + GBM, or a non-Android EGL port — the
+kit is the matching kernel/CSF side, not a drop-in renderer.
+
+Kernel `uname` `…gbd23337e42e7-ab14791245` vs module vermagic
+`…ge4470993d947-ab15260412` is what stock actually loads (modversions).
+Do not mix these kos onto a different `ab*` kernel.
 
 Do **not** point Mesa at `/dev/dri/card0` expecting a Mali render node:
 that card is Exynos DSI. Render is `renderD128` / `mali0`.

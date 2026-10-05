@@ -43,3 +43,16 @@ saaios-test-tone.wav
 saaios-wpa_cli-arm64
 saaios-wpa_supplicant-arm64
 snd-soc-cs40l26.ko
+# GPU kit (also under artifacts/gpu/; hashes in docs/os/targets/panther/gpu-kit.sha256)
+mali_kbase.ko
+mali_pixel.ko
+gpu_cooling.ko
+mali_csffw-r54p3.bin
+mali_csffw-r54p2.bin
+mali_csffw-r54p1.bin
+mali_csffw-r54p0.bin
+mali_csffw-legacy-r56p0.bin
+libGLES_mali.so
+vulkan.mali.so
+libOpenCL.so
+libOpenCL-pixel.so
