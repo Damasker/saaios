@@ -1,0 +1,2 @@
+$cmd = 'echo INFO; ls -la /sys/devices/platform/cpif/info_region; wc -c /sys/devices/platform/cpif/info_region; hexdump -C /sys/devices/platform/cpif/info_region 2>/dev/null | head -4; echo LEGACY; ls /sys/devices/platform/cpif/legacy; echo DMESG; dmesg | grep -i Present | tail -n 5; dmesg | grep -i Pin1 | tail -n 5; echo HASH; sha256sum /data/saaios/bin/saaios-probe-b-modem.bin | cut -c1-16'
+& 'C:\Users\Admin\Projects\saaios\os\targets\panther\tools\com13.ps1' -Port COM13 -WaitSeconds 20 -Cmd $cmd

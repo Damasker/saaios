@@ -1,0 +1,2 @@
+$cmd = 'mkdir -p /dev/block /mnt/modem_ro; set -- $(cat /sys/block/sda/sda19/dev | tr : " "); echo DEV:$1:$2; mknod /dev/block/sda19 b $1 $2; mount -t ext4 -o ro,noload /dev/block/sda19 /mnt/modem_ro; ls /mnt/modem_ro/images; VER=$(ls /mnt/modem_ro/images | head -1); echo VER:$VER; sha256sum /mnt/modem_ro/images/$VER/modem.bin; umount /mnt/modem_ro; rm -f /dev/block/sda19; echo DONE'
+& 'C:\Users\Admin\Projects\saaios\os\targets\panther\tools\com13.ps1' -Port COM13 -WaitSeconds 120 -Cmd $cmd
