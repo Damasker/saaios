@@ -180,6 +180,16 @@ Windows; сборочные скрипты `.sh` вероятно требуют
 
 ## Evidence
 
+**Сборка S27 (2026-10-06, `0d8c228`, сервер, `dist/panther/s27`).**
+Host-тесты `saai-ui-core` + `saai-shell`: 319 + 82 passed.
+`init_boot` `c3210f9d…` (по INPUTS изменился только `saai-shell`
+`99f39b55…`; остальные бинарники бит-в-бит как S26). `vendor_boot`
+`6e7be35d…` и `vendor_boot-wifi-gpu` `73da3b9a…` — идентичны S26.
+`s27-data.tgz` `1e41e0b8…` теперь содержит и `saai-shell`.
+Прошит `init_boot_a`, `/data/saaios/system` обновлён; загрузка: displayd,
+shell (`99f39b55…`), appd, entityd, taskd, runtime, file-recv запущены.
+`saai-gpu-compositor` (NDK) в бандле по-прежнему нет.
+
 Заполняется при закрытии каждого воркстрима: commit, test log, image
 SHA-256, bearer-доказательство (`rmnet`/IPv4/rx-tx), render-node
 подтверждение, read-only EFS сверка, и известные ограничения. Контроли:
