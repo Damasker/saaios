@@ -13,6 +13,19 @@ Primary owner source: `os/targets/panther/diagnostics/modem-rfs-full-quarantine-
 log in `docs/os/targets/panther/MODEM-RUNTIME-2026-09-24.md` and the one-pager
 `docs/os/targets/panther/MODEM-BLOCKER.md` (VERDICT 11–19).
 
+> **VERDICT 27 (2026-10-05) — the remaining gap is NOT a missing RIL handler; it is
+> RFS/NV provisioning.** With the same SIM/location and the identical modem firmware,
+> STOCK Android reaches 25503 Kyivstar LTE + data, while our owner camps only on
+> foreign 25501 WCDMA — so the host SIT/RIL request handlers below are byte-correct
+> (stock's `SET_ALLOWED_NETWORK_TYPES_BITMAP`, = our `0x074f`, is literally the same
+> frame and SUCCEEDS at cold boot). The host-side difference is that stock `rfsd`
+> serves the modem BOTH `nv_normal.bin` and `nv_protected.bin` (read-write, 524288 B
+> each) from the live EFS, whereas our owner serves only a read-only `nv_protected`
+> quarantine copy and provides **no persistent `nv_normal` backing store**. Next
+> implementation step: add a complete quarantine `nv_normal` store served read (boot)
+> + write (runtime) to mirror stock. See `MODEM-BLOCKER.md` VERDICT 27 and
+> `os/targets/panther/diagnostics/v27-stock-coldboot-analysis.md`.
+
 Status legend:
 - **DONE+verified** — implemented and exercised live on-device (frame ACKed and/or
   response decoded in a VERDICT run).
