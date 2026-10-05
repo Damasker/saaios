@@ -789,6 +789,214 @@ static void probe_finish_at_wall(void) {
 
 static int dmesg_has_bad_cfg(void);
 
+/* IPC shared region and the MSI block the ROM uses for the BOOT image.
+ * Neither holds a MAIN m_off/size descriptor; this dump only reads them. */
+#define IPC_PHYS_BASE 0xea400000ul
+#define MSI_PHYS_BASE 0xf6200000ul
+#define IPC_DUMP_PATH "/data/saaios/var/cp-boot-ipc-20260924.txt"
+
+static uint8_t snap_ipc[256];
+static uint8_t snap_msi[32];
+static char snap_status_txt[8192];
+static char snap_info_txt[4096];
+static int snap_saved;
+static int snap_status;
+
+static int read_phys(unsigned long addr, uint8_t *buf, size_t len) {
+    int fd = open("/dev/mem", O_RDONLY | O_SYNC | O_CLOEXEC);
+    if (fd < 0) {
+        log_line("devmem open: %s", strerror(errno));
+        return -1;
+    }
+    ssize_t n = pread(fd, buf, len, (off_t)addr);
+    int saved = errno;
+    close(fd);
+    if (n != (ssize_t)len) {
+        log_line("devmem pread 0x%lx n=%zd errno=%d (%s)",
+                 addr, n, saved, n < 0 ? strerror(saved) : "short");
+        return -1;
+    }
+    return 0;
+}
+
+static void write_dump_block(FILE *out, const char *when, const char *tag,
+                             unsigned long addr, const uint8_t *buf, size_t len) {
+    fprintf(out, "%s %s phys=0x%lx len=%zu\n", when, tag, addr, len);
+    for (size_t i = 0; i < len; i += 16) {
+        fprintf(out, "%04zx", i);
+        for (size_t j = 0; j < 16 && i + j < len; ++j) {
+            fprintf(out, " %02x", buf[i + j]);
+        }
+        fputc('\n', out);
+    }
+}
+
+static void log_u32s(const char *when, const char *tag, const uint8_t *buf, int nwords) {
+    char line[256];
+    int used = snprintf(line, sizeof(line), "diag %s %s", when, tag);
+    for (int i = 0; i < nwords && used < (int)sizeof(line) - 16; ++i) {
+        uint32_t word = 0;
+        memcpy(&word, buf + (size_t)i * 4, 4);
+        used += snprintf(line + used, sizeof(line) - (size_t)used, " [%d]=0x%x", i, word);
+    }
+    log_line("%s", line);
+}
+
+static void dump_ipc_diag(const char *when) {
+    uint8_t ipc[256];
+    uint8_t msi[32];
+    memset(ipc, 0, sizeof(ipc));
+    memset(msi, 0, sizeof(msi));
+    int ipc_ok = read_phys(IPC_PHYS_BASE, ipc, sizeof(ipc));
+    int msi_ok = read_phys(MSI_PHYS_BASE, msi, sizeof(msi));
+    int status = ioctl(boot_fd, IOCTL_GET_CP_STATUS, NULL);
+    log_line("diag %s GET_CP_STATUS=%d devmem_ipc=%d devmem_msi=%d bad_cfg=%d",
+             when, status, ipc_ok, msi_ok, dmesg_has_bad_cfg());
+    print_modem_state(when);
+    print_legacy_status(when, 0, 0);
+    if (ipc_ok == 0) {
+        log_u32s(when, "ipc", ipc, 10);
+    }
+    if (msi_ok == 0) {
+        log_u32s(when, "msi", msi, 8);
+    }
+    char status_txt[8192];
+    char info_txt[4096];
+    status_txt[0] = '\0';
+    info_txt[0] = '\0';
+    FILE *status_file = fopen("/sys/devices/platform/cpif/legacy/status", "r");
+    if (!status_file) {
+        log_line("diag %s legacy status: %s", when, strerror(errno));
+    } else {
+        size_t n = fread(status_txt, 1, sizeof(status_txt) - 1, status_file);
+        status_txt[n] = '\0';
+        fclose(status_file);
+    }
+    FILE *info = fopen("/sys/devices/platform/cpif/info_region", "r");
+    if (!info) {
+        log_line("diag %s info_region: %s", when, strerror(errno));
+    } else {
+        size_t n = fread(info_txt, 1, sizeof(info_txt) - 1, info);
+        info_txt[n] = '\0';
+        fclose(info);
+        char line[256];
+        size_t pos = 0;
+        while (info_txt[pos] != '\0') {
+            size_t k = 0;
+            while (info_txt[pos] != '\0' && info_txt[pos] != '\n' && k + 1 < sizeof(line)) {
+                line[k++] = info_txt[pos++];
+            }
+            if (info_txt[pos] == '\n') {
+                pos++;
+            }
+            line[k] = '\0';
+            log_line("diag %s info %s", when, line);
+        }
+    }
+    FILE *kmsg = popen("dmesg", "r");
+    char boot_lines[1024];
+    boot_lines[0] = '\0';
+    if (!kmsg) {
+        log_line("diag %s dmesg: %s", when, strerror(errno));
+    } else {
+        char line[512];
+        while (fgets(line, sizeof(line), kmsg)) {
+            if (!strstr(line, "boot_stage") && !strstr(line, "err_report") &&
+                !strstr(line, "boot_img")) {
+                continue;
+            }
+            line[strcspn(line, "\r\n")] = '\0';
+            log_line("diag %s dmesg %s", when, line);
+            size_t used = strlen(boot_lines);
+            if (used + strlen(line) + 2 < sizeof(boot_lines)) {
+                memcpy(boot_lines + used, line, strlen(line));
+                boot_lines[used + strlen(line)] = '\n';
+                boot_lines[used + strlen(line) + 1] = '\0';
+            }
+        }
+        pclose(kmsg);
+    }
+    FILE *out = fopen(IPC_DUMP_PATH, snap_saved ? "a" : "w");
+    if (!out) {
+        log_line("diag file: %s", strerror(errno));
+    } else {
+        fprintf(out, "== %s GET_CP_STATUS=%d ipc=%d msi=%d\n",
+                when, status, ipc_ok, msi_ok);
+        fputs("--- legacy/status\n", out);
+        fputs(status_txt, out);
+        fputs("--- info_region\n", out);
+        fputs(info_txt, out);
+        fputs("--- dmesg boot\n", out);
+        fputs(boot_lines, out);
+        if (snap_saved && strcmp(status_txt, snap_status_txt) != 0) {
+            fputs("legacy/status changed since after-start\n", out);
+            log_line("diag %s legacy/status changed since after-start", when);
+        } else if (snap_saved) {
+            log_line("diag %s legacy/status unchanged since after-start", when);
+        }
+        if (snap_saved && strcmp(info_txt, snap_info_txt) != 0) {
+            fputs("info_region changed since after-start\n", out);
+            log_line("diag %s info_region changed since after-start", when);
+        } else if (snap_saved) {
+            log_line("diag %s info_region unchanged since after-start", when);
+        }
+        if (ipc_ok == 0) {
+            write_dump_block(out, when, "ipc", IPC_PHYS_BASE, ipc, sizeof(ipc));
+        }
+        if (msi_ok == 0) {
+            write_dump_block(out, when, "msi", MSI_PHYS_BASE, msi, sizeof(msi));
+        }
+        if (snap_saved && ipc_ok == 0) {
+            for (int i = 0; i < 64; ++i) {
+                uint32_t a = 0;
+                uint32_t b = 0;
+                memcpy(&a, snap_ipc + (size_t)i * 4, 4);
+                memcpy(&b, ipc + (size_t)i * 4, 4);
+                if (a != b) {
+                    fprintf(out, "ipc changed [%d] +0x%x 0x%x -> 0x%x\n",
+                            i, i * 4, a, b);
+                    log_line("diag ipc changed [%d] +0x%x 0x%x -> 0x%x",
+                             i, i * 4, a, b);
+                }
+            }
+        }
+        if (snap_saved && msi_ok == 0) {
+            for (int i = 0; i < 8; ++i) {
+                uint32_t a = 0;
+                uint32_t b = 0;
+                memcpy(&a, snap_msi + (size_t)i * 4, 4);
+                memcpy(&b, msi + (size_t)i * 4, 4);
+                if (a != b) {
+                    fprintf(out, "msi changed [%d] +0x%x 0x%x -> 0x%x\n",
+                            i, i * 4, a, b);
+                    log_line("diag msi changed [%d] +0x%x 0x%x -> 0x%x",
+                             i, i * 4, a, b);
+                }
+            }
+        }
+        if (snap_saved && status != snap_status) {
+            fprintf(out, "GET_CP_STATUS %d -> %d\n", snap_status, status);
+            log_line("diag GET_CP_STATUS %d -> %d", snap_status, status);
+        }
+        fflush(out);
+        fsync(fileno(out));
+        fclose(out);
+    }
+    if (!snap_saved) {
+        if (ipc_ok == 0) {
+            memcpy(snap_ipc, ipc, sizeof(snap_ipc));
+        }
+        if (msi_ok == 0) {
+            memcpy(snap_msi, msi, sizeof(snap_msi));
+        }
+        snap_status = status;
+        snprintf(snap_status_txt, sizeof(snap_status_txt), "%s", status_txt);
+        snprintf(snap_info_txt, sizeof(snap_info_txt), "%s", info_txt);
+        snap_saved = 1;
+    }
+    log_rmnet_bearer();
+}
+
 static int sit_send_stage(uint32_t idx, const char *name, const uint8_t *data,
                           uint32_t size, uint32_t crc) {
     uint32_t start = sit_cmd(SIT_START, idx);
@@ -822,6 +1030,20 @@ static int sit_send_stage(uint32_t idx, const char *name, const uint8_t *data,
         die("oom UDL frame");
     }
     while (off < size) {
+        /* No MAIN descriptor was missing. Stop before this offset and
+         * do not write BIN, CRC, DONE, READY, FIN, or COMPLETE. */
+        if (off >= 0x201b098u) {
+            uint32_t head = 0;
+            uint32_t tail = 0;
+            int ptrs = norm_raw_tx_ptrs(&head, &tail);
+            int empty = (ptrs == 0 && head == tail);
+            log_line("UDL %s stop before BIN off=0x%x chunk=%u last_good=0x%x head=0x%x tail=0x%x empty=%d",
+                     name, off, chunks, last_good, head, tail, empty);
+            dump_ipc_diag("at-wall");
+            log_line("UDL %s wall dump done, no CRC and no further stages", name);
+            free(frame);
+            return -1;
+        }
         uint32_t chunk = chunk_fit_ring(tx_head, size - off);
         if (chunk != SIT_CHUNK && chunk != size - off) {
             log_line("UDL %s shrink payload 0x%x -> 0x%x so wire ends at ring (head 0x%x)",
@@ -1222,6 +1444,7 @@ static int cmd_load(void) {
         free(nv_prot);
         return 1;
     }
+    dump_ipc_diag("after-start");
 
     static const char *const udl_from_bin[] = { "MAIN", "VSS", "APM", "INFO" };
     for (size_t i = 0; i < sizeof(udl_from_bin) / sizeof(udl_from_bin[0]); ++i) {
