@@ -164,8 +164,7 @@ fn topological_order(tasks: &[ProposedTask]) -> Result<Vec<String>, PlanError> {
 /// Longest path in edges (a → b is one hop). Isolated nodes have depth 0.
 fn longest_path_depth(tasks: &[ProposedTask]) -> usize {
     let mut memo: HashMap<&str, usize> = HashMap::new();
-    let by_id: HashMap<&str, &ProposedTask> =
-        tasks.iter().map(|t| (t.id.as_str(), t)).collect();
+    let by_id: HashMap<&str, &ProposedTask> = tasks.iter().map(|t| (t.id.as_str(), t)).collect();
     fn depth<'a>(
         id: &'a str,
         by_id: &HashMap<&str, &'a ProposedTask>,

@@ -30,10 +30,22 @@ Event              неизменяемая причинная запись
 
 ### `saai-deviced`
 
-- собирает идентичность и состояние hardware adapters;
-- поддерживает единый versioned snapshot;
-- публикует изменения в event bus;
-- не вызывает модель и не принимает продуктовых решений.
+Целевой native owner World Model (ADR-122). Пока сервиса нет: identity
+идёт через `system.identity`, динамика — через `system.metrics` /
+TelemetrySampler. WORLD-01 вводит typed Observation без daemon.
+
+Когда сервис появится (WORLD-03), он:
+
+- собирает identity и состояние hardware adapters;
+- поддерживает versioned snapshot;
+- публикует изменения;
+- не вызывает модель, не исполняет Action, не принимает Policy,
+  не открывает уведомления.
+
+Observation всегда имеет subject, source, timestamp и TTL.
+**Freshness (Fresh/Stale) отделена от HealthState**
+(`Healthy | Degraded | Unhealthy | Unknown`). Stale required evidence
+даёт Health `Unknown`, не `Unhealthy` и не last-known `Healthy`.
 
 ### Capability registry
 

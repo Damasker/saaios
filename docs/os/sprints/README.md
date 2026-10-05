@@ -38,6 +38,11 @@ DAG, derived ready set, Verification, bounded replan внутри существ
 единственным активным hardware-changing экспериментом; WORK-00/01 —
 документация и host-only validation.
 
+Пятый независимый трек — **World Model / Observation**
+([WORLD-ROADMAP.md](WORLD-ROADMAP.md), [ADR-122](../../adr/ADR-122-world-model-observation-layer.md)):
+typed Observation, freshness отдельно от Health, позже `saai-deviced`.
+Не ломает `system.metrics` и TelemetrySampler. WORLD-00/01 — docs и host types.
+
 ## Текущее состояние
 
 | ID | Результат | Состояние | Зависит от |

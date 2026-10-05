@@ -20,6 +20,9 @@ members = [
     "crates/saai-entity-protocol",
     "crates/saai-object-actions",
     "crates/intent-resolution",
+    "crates/saai-observation",
+    "crates/saai-attention",
+    "crates/saai-authority",
     "crates/saai-portal-protocol",
     "crates/saai-ota-manifest",
     "crates/console-tui",
@@ -65,6 +68,9 @@ saai-entity-store = { path = "crates/saai-entity-store" }
 saai-entity-protocol = { path = "crates/saai-entity-protocol" }
 saai-object-actions = { path = "crates/saai-object-actions" }
 intent-resolution = { path = "crates/intent-resolution" }
+saai-observation = { path = "crates/saai-observation" }
+saai-attention = { path = "crates/saai-attention" }
+saai-authority = { path = "crates/saai-authority" }
 saai-portal-protocol = { path = "crates/saai-portal-protocol" }
 saai-ota-manifest = { path = "crates/saai-ota-manifest" }
 console-tui = { path = "crates/console-tui" }

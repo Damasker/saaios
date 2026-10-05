@@ -17,6 +17,7 @@ Product and delivery sources of truth:
 - [Sprint roadmap](sprints/README.md)
 - [Visual-system delivery roadmap](sprints/VISUAL-ROADMAP.md)
 - [Work Scheduler v2 delivery roadmap](sprints/WORK-ROADMAP.md)
+- [World Model / Observation delivery roadmap](sprints/WORLD-ROADMAP.md)
 
 ```text
             SaaiOS OS

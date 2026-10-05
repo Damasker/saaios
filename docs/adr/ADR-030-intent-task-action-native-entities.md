@@ -160,6 +160,10 @@ WSV2 (ADR-121) не вводит второй store и не добавляет `
 Многошаговый Plan — projection Intent+Tasks+`depends_on`. Ready остаётся
 derived. `Ready` / `WaitingDependency` не становятся durable status.
 
+World Model (ADR-122) не пишет high-frequency Observation в этот store.
+SOM остаётся durable Objects/Relationships; current facts живут в
+Observation cache (`saai-deviced` later).
+
 ## Ссылки
 
 - ADR-004 -- Platform Track vs OS Track разделение и названное (не
