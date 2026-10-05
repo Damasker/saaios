@@ -32,6 +32,11 @@ fallback.
   for `/data/saaios/system`.
 - `build-wifi-vendor-boot.sh` — injects matching signed modules and firmware
   into a stock vendor_boot image.
+- `build-gpu-vendor-boot.sh` — injects Mali kbase + CSF firmware only
+  (optional ramdisk pack; does not by itself enable GPU in PID 1).
+- `scripts/collect-gpu-artifacts.sh` — adb-pull the stock Mali kit into
+  `artifacts/gpu/` (gitignored; hashes in `docs/os/targets/panther/gpu-kit.sha256`).
+- `tools/gpu-probe.c` — read-only inventory of GPU/render nodes (no insmod).
 - `artifacts.example.manifest` — expected local artifact names.
 
 Binary firmware, signed Google modules, stock boot images, per-device
@@ -50,16 +55,15 @@ through this diagnostic path. This does not yet establish cellular service,
 network registration, calls, SMS, mobile data, or long-term modem lifecycle
 handling.
 
-**Current blocker (MODEM-06, updated 2026-10-01):** SIM READY(5) has been
-observed twice; PIN→READY is no longer the active blocker. Under READY and
-radio ON, voice/data registration remains 0 with no `rmnet` RX or cellular
-IPv4. Guarded AllowData(1), RadioPower ON-only, and a reversible LTE_WCDMA
-fallback check did not initiate registration. IPC/RFS endpoints are currently
-short-lived; the kernel drops CP messages without an opener and purges the
-receive queue on the last close. The next architectural step is a single,
-continuous IPC/RFS owner with a safe boot handoff and read-only state API.
-The old tray chase and OEM experiments below are historical diagnostics, not
-current unblock instructions. See `docs/os/targets/panther/MODEM-BLOCKER.md`.
+**Current blocker (VERDICT 27 / MODEM-10, 2026-10-05):** stock Android on the
+same phone, SIM, location and modem firmware camps **25503 LTE HOME** with a
+working `rmnet` bearer. SaaiOS fails because the host RFS owner does not serve
+a persistent dual-handle NV pair (`nv_normal` + `nv_protected`) the way stock
+`rfsd` does — not because of a CP RF-cal wall. Exact stock recipe:
+[`modem-stock-reproduction.md`](../../../docs/os/targets/panther/modem-stock-reproduction.md).
+Sprint: [`MODEM-10-REAL-NV-DUAL-HANDLE.md`](../../../docs/os/sprints/MODEM-10-REAL-NV-DUAL-HANDLE.md).
+One-pager: [`MODEM-BLOCKER.md`](../../../docs/os/targets/panther/MODEM-BLOCKER.md).
+Hardware map: [`hardware-index.md`](../../../docs/os/targets/panther/hardware-index.md).
 Do not mark cellular service complete without registration and a bearer.
 
 The reusable pieces in `src/` are pure C helpers with host tests:
@@ -102,6 +106,12 @@ partitions, and never add the diagnostic probe to PID 1. A production
 `saai-modemd` still needs a separate design for lifetime, RFS, registration,
 failure recovery, and policy before the shell may present cellular service as
 available.
+
+Stock Mali inventory (modules, CSF, GLES/Vulkan blobs, SHA-256) is documented
+in [`gpu.md`](../../../docs/os/targets/panther/gpu.md) and
+[`gpu-kit.sha256`](../../../docs/os/targets/panther/gpu-kit.sha256). Re-pull
+with `scripts/collect-gpu-artifacts.sh`. Factory `mali_kbase.ko` SHA matches
+ADR-024 (`bd66de67…`).
 
 The working GPU stack is deliberately split the same way. Keep the two tested
 kernel modules on the persistent data volume:
