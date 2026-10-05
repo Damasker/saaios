@@ -77,7 +77,8 @@ use saai_app_protocol::{
 };
 use saai_entity_protocol::{
     Entity, EntitydEvent, ObjectRef, Relationship, ResponseResult as EntityResponseResult,
-    ServerMessage as EntityServerMessage, Space, RELATION_REALIZES,
+    ServerMessage as EntityServerMessage, Space, RELATION_EXECUTES, RELATION_PRODUCES,
+    RELATION_REALIZES,
 };
 
 /// HIA-01 (docs/os/sprints/HIA-ROADMAP.md): the builtin system space
@@ -450,14 +451,19 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .map(str::to_string)
 }
 use saai_attention::{
-    has_orb_attention, project_from_entities, AttentionActionability, AttentionItem,
-    AttentionProjection,
+    has_orb_attention, inbox_source_ids, project_from_entities, AttentionActionability,
+    AttentionItem, AttentionProjection, AttentionSource,
+};
+use saai_object_actions::{
+    display_inspect_spec, preflight, ActionAvailability, ActionResolution, ActionResolveContext,
+    ObjectActionRegistry,
 };
 use saai_ui_core::{
-    layout, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant, LayoutNode, Length,
-    LogicalUnit, MotionCue, NavigationItem, Node, ObjectSummary, OrbHost, Progress, Rect,
-    SafeInsets, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection,
-    SystemSectionRow, SystemStatus, UniversalState, MIN_TOUCH_TARGET,
+    layout, AgentSummary, Axis, ContextColor, ContextHeader, DataRow, DataRowVariant,
+    DecisionOverlay, IntentSummary, LayoutNode, Length, LogicalUnit, MotionCue, NavigationItem,
+    Node, ObjectSummary, OrbHost, Progress, Rect, SafeInsets, StatusIndicator,
+    StatusIndicatorVariant, StatusMark, SurfaceScale, SystemSection, SystemSectionRow,
+    SystemStatus, TaskSummary, UniversalState, MIN_TOUCH_TARGET,
 };
 use serde_json::{json, Map, Value};
 use smithay_client_toolkit::reexports::client::{
@@ -634,6 +640,10 @@ fn calibration_requested(environment: Option<&str>, runtime_marker_exists: bool)
 /// survives a reboot, and setting it can never become a persistent user
 /// setting).
 const UI_GALLERY_MARKER: &str = "/run/saaios/ui-gallery";
+
+fn next_gallery_page(show_composites: bool) -> bool {
+    !show_composites
+}
 
 /// Development-only escape hatch: skips both the boot-time session lock
 /// and `check_idle_timeout`'s own re-lock, so repeated shell restarts
@@ -1592,6 +1602,51 @@ const INTENT_MODE_TOGGLE_ACTION: &str = "intent:mode:toggle";
 const INTENT_SPACE_ACTION: &str = "intent:space";
 const INTENT_BACKSPACE_ACTION: &str = "intent:backspace";
 const INTENT_SEND_ACTION: &str = "intent:send";
+
+/// Persist needs the entity store, not a model. Empty send just
+/// closes. Offline store keeps the draft instead of pretending the
+/// intent went through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntentSubmit {
+    Persist,
+    KeepDraft,
+    CloseEmpty,
+}
+
+fn intent_submit(store_connected: bool, text: &str) -> IntentSubmit {
+    if text.trim().is_empty() {
+        IntentSubmit::CloseEmpty
+    } else if store_connected {
+        IntentSubmit::Persist
+    } else {
+        IntentSubmit::KeepDraft
+    }
+}
+
+fn intent_input_status(store_connected: bool) -> Option<&'static str> {
+    if store_connected {
+        None
+    } else {
+        Some("Нет связи")
+    }
+}
+
+fn intent_compose_status(store_connected: bool) -> &'static str {
+    if store_connected {
+        "Ввести текст намерения"
+    } else {
+        "Сервис пространств недоступен"
+    }
+}
+
+/// Confirm/dismiss write the store. Without a connection the overlay
+/// stays put instead of looking accepted. Does not probe the model
+/// (ADR-030); AI-down after a persist is already a failed-task
+/// notification (ADR-089).
+fn store_write_ready(store_connected: bool) -> bool {
+    store_connected
+}
+
 const INTENT_KEY_PREFIX: &str = "intent:key:";
 /// Same reasoning as `CONSENT_BUTTON_HEIGHT`: a plain literal, not scaled
 /// against `ROOT_TAB_HEIGHT`'s 2400-unit design space, matching how
@@ -1845,6 +1900,12 @@ const TASK_STATUS_CANCELLED: &str = "cancelled";
 /// created but not yet executed -- same no-cross-runtime-dependency
 /// convention as the three constants above.
 const TASK_STATUS_PENDING: &str = "pending";
+const TASK_STATUS_DONE: &str = "done";
+const TASK_STATUS_FAILED: &str = "failed";
+const TASK_STATUS_WAITING_CLARIFICATION: &str = "waiting_clarification";
+/// Same property `saai-taskd` WORK-01 writes. Shell reads it for
+/// visibility (WORK-08) and must not import the daemon crate.
+const DEPENDS_ON_PROPERTY: &str = "depends_on_task_ids";
 
 /// What `draw()` renders this frame, computed up front from `&self` before
 /// `buffer`/`canvas` take a mutable borrow for the rest of the function.
@@ -1858,11 +1919,16 @@ enum Frame {
     },
     /// HIA-07: replaces the old task-only `TaskConfirm` -- one
     /// variant for any entity, `actions` sized to whatever
-    /// `ObjectViewContent::actions` produced (0-2 today).
+    /// `ObjectViewContent::actions` produced (0-2 today). `state` is
+    /// the shared UniversalState mapping; `details` are the optional
+    /// activity / observation / blocker / consequence lines that
+    /// actually exist. History is omitted until entity events load.
     ObjectView {
         title: String,
+        state: UniversalState,
         status: String,
         related: Option<String>,
+        details: Vec<String>,
         header: Rect,
         actions: Vec<(Rect, &'static str)>,
     },
@@ -1875,6 +1941,7 @@ enum Frame {
     },
     IntentInput {
         buffer: String,
+        status: Option<String>,
         header: Rect,
         keys: Vec<(Rect, String)>,
     },
@@ -2024,10 +2091,23 @@ fn object_view_action_at(
 /// entity_type falls through to the `_` arm below, HIA-ROADMAP.md's
 /// own negative scenario: still a real title and a non-empty status
 /// line, never blank, never a crash, just no type-specific actions.
+/// `state` is the shared UniversalState mapping; optional facts are
+/// omitted rather than invented. Permission is OAM/policy: unavailable
+/// or deny, never an invented button. History waits for entity events.
 struct ObjectViewContent {
     title: String,
+    state: UniversalState,
     status: String,
     related: Option<String>,
+    activity: Option<String>,
+    observation: Option<String>,
+    blocker: Option<String>,
+    consequence: Option<String>,
+    permission: Option<String>,
+    decision: Option<DecisionOverlay>,
+    /// Disposable execution from a real `saaios.action`, or unassigned.
+    /// None on types that are not workflow (notifications, unknown).
+    agent: Option<AgentSummary>,
     actions: Vec<&'static str>,
 }
 
@@ -2038,29 +2118,55 @@ fn object_view_content(
 ) -> ObjectViewContent {
     match entity.entity_type.as_str() {
         "saaios.task" => {
-            let related =
-                related_object_line(entity, selected_entities, relationships).or_else(|| {
-                    entity
-                        .properties
-                        .get("intent_id")
-                        .and_then(Value::as_str)
-                        .and_then(|id| id.parse::<Uuid>().ok())
-                        .and_then(|id| {
-                            selected_entities.iter().find(|candidate| {
-                                candidate.id == id && candidate.entity_type == "saaios.intent"
-                            })
-                        })
-                        .map(|intent| format!("Из намерения: {}", intent.title))
-                });
-            ObjectViewContent {
-                title: entity.title.clone(),
-                status: "Ждёт подтверждения".to_string(),
-                related,
-                actions: vec!["Подтвердить", "Отклонить"],
-            }
+            let lineage = workflow_lineage_for(entity, selected_entities, relationships);
+            let waiting = workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION);
+            let actions = if waiting {
+                vec!["Подтвердить", "Отклонить"]
+            } else {
+                workflow_follow_actions(entity, &lineage, selected_entities)
+            };
+            finish_workflow_view(
+                entity,
+                selected_entities,
+                lineage,
+                task_universal_state(entity, selected_entities),
+                task_status_text(entity, selected_entities),
+                actions,
+            )
+        }
+        "saaios.intent" => {
+            let lineage = workflow_lineage_for(entity, selected_entities, relationships);
+            let (state, status) = match lineage.task {
+                Some(task) => (
+                    task_universal_state(task, selected_entities),
+                    task_status_text(task, selected_entities),
+                ),
+                None => (UniversalState::Idle, "Нет задачи".to_string()),
+            };
+            let actions = workflow_follow_actions(entity, &lineage, selected_entities);
+            finish_workflow_view(entity, selected_entities, lineage, state, status, actions)
+        }
+        ACTION_ENTITY_TYPE => {
+            let lineage = workflow_lineage_for(entity, selected_entities, relationships);
+            let actions = workflow_follow_actions(entity, &lineage, selected_entities);
+            finish_workflow_view(
+                entity,
+                selected_entities,
+                lineage,
+                task_universal_state(entity, selected_entities),
+                task_status_text(entity, selected_entities),
+                actions,
+            )
+        }
+        RESULT_ENTITY_TYPE => {
+            let lineage = workflow_lineage_for(entity, selected_entities, relationships);
+            let (state, status) = result_universal_facts(entity);
+            let actions = workflow_follow_actions(entity, &lineage, selected_entities);
+            finish_workflow_view(entity, selected_entities, lineage, state, status, actions)
         }
         NOTIFICATION_ENTITY_TYPE => ObjectViewContent {
             title: entity.title.clone(),
+            state: UniversalState::Attention,
             status: entity
                 .properties
                 .get("body")
@@ -2068,6 +2174,13 @@ fn object_view_content(
                 .unwrap_or_default()
                 .to_string(),
             related: related_object_line(entity, selected_entities, relationships),
+            activity: None,
+            observation: None,
+            blocker: None,
+            consequence: None,
+            permission: object_view_permission(entity),
+            decision: None,
+            agent: None,
             actions: vec!["Скрыть"],
         },
         _ => {
@@ -2083,11 +2196,106 @@ fn object_view_content(
             };
             ObjectViewContent {
                 title: entity.title.clone(),
+                state: UniversalState::Idle,
                 status,
                 related: related_object_line(entity, selected_entities, relationships),
+                activity: None,
+                observation: None,
+                blocker: None,
+                consequence: None,
+                permission: object_view_permission(entity),
+                decision: None,
+                agent: None,
                 actions: Vec::new(),
             }
         }
+    }
+}
+
+fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
+    let mut lines = content
+        .decision
+        .as_ref()
+        .map(DecisionOverlay::fact_lines)
+        .unwrap_or_default();
+    lines.extend(
+        [
+            content.agent.as_ref().map(AgentSummary::detail_line),
+            content.activity.clone(),
+            content.observation.clone(),
+            content.blocker.clone(),
+            content.consequence.clone(),
+            content.permission.clone(),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    lines
+}
+
+fn builtin_object_actions() -> ObjectActionRegistry {
+    let mut registry = ObjectActionRegistry::new();
+    let _ = registry.register(display_inspect_spec());
+    registry
+}
+
+fn object_view_permission(entity: &Entity) -> Option<String> {
+    object_view_permission_with(
+        entity,
+        &builtin_object_actions(),
+        &tool_registry::ToolRegistry::new(),
+        &policy_engine::PolicyEngine::new(),
+    )
+}
+
+fn object_view_permission_with(
+    entity: &Entity,
+    registry: &ObjectActionRegistry,
+    tools: &tool_registry::ToolRegistry,
+    policy: &policy_engine::PolicyEngine,
+) -> Option<String> {
+    let context = ActionResolveContext {
+        space_id: Some(entity.space_id.clone()),
+    };
+    let mut permission = None;
+    for resolution in registry.resolve_for(entity, &context, tools) {
+        let line = match resolution {
+            ActionResolution::Ambiguous { action_id, .. } => {
+                Some(format!("Неоднозначно: {action_id}"))
+            }
+            ActionResolution::Resolved(action) => match action.availability {
+                ActionAvailability::Unavailable { reason } => {
+                    Some(format!("{}: {}", action.title, explain_oam_reason(&reason)))
+                }
+                ActionAvailability::Available => {
+                    let decision = preflight(policy, tools, &action);
+                    match decision.verdict {
+                        protocol::PolicyVerdict::Deny => Some(format!(
+                            "{}: {}",
+                            action.title,
+                            explain_oam_reason(&decision.reason)
+                        )),
+                        protocol::PolicyVerdict::AskUser | protocol::PolicyVerdict::Allow => None,
+                    }
+                }
+            },
+        };
+        if permission.is_none() {
+            permission = line;
+        }
+    }
+    permission
+}
+
+fn explain_oam_reason(reason: &str) -> String {
+    if reason == "provider tool unavailable" {
+        "нет инструмента".to_string()
+    } else if reason.starts_with("missing object property:") {
+        "нет данных объекта".to_string()
+    } else if reason.starts_with("missing context space_id") {
+        "нет пространства".to_string()
+    } else {
+        reason.to_string()
     }
 }
 
@@ -2676,19 +2884,9 @@ fn content_action_at(
 /// S13 Change 2: "Входящие" has no `root.sui` entries at all -- unlike
 /// every other page's content, the task list's length is runtime data
 /// (however many tasks `saai-taskd` currently has waiting), not
-/// something `build.rs` can bake in from markup. These three functions
-/// are this page's own equivalent of `ROOT_CONTENT_ACTIONS`/
-/// `content_action_rect`/`content_action_at`.
-fn inbox_pending_tasks(entities: &[Entity]) -> Vec<&Entity> {
-    entities
-        .iter()
-        .filter(|entity| {
-            entity.entity_type == "saaios.task"
-                && entity.properties.get("status").and_then(Value::as_str)
-                    == Some(TASK_STATUS_WAITING_CONFIRMATION)
-        })
-        .collect()
-}
+/// something `build.rs` can bake in from markup. These functions are
+/// this page's own equivalent of `ROOT_CONTENT_ACTIONS` /
+/// `content_action_rect` / `content_action_at`.
 
 /// Same 190-tall/220-apart stacking `root.sui`'s "Пространства" cards
 /// use (`space-home` top=430, `space-work` top=650, ...), just computed
@@ -2822,20 +3020,6 @@ fn orb_attention_from_entities(entities: &[Entity]) -> bool {
     has_orb_attention(&project_from_entities(entities))
 }
 
-fn inbox_notifications(entities: &[Entity]) -> Vec<&Entity> {
-    entities
-        .iter()
-        .filter(|entity| {
-            entity.entity_type == NOTIFICATION_ENTITY_TYPE
-                && !entity
-                    .properties
-                    .get("dismissed")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-        })
-        .collect()
-}
-
 /// VUI-03: real schedule entries for the "Сегодня" `SystemSection` --
 /// enabled `saaios.schedule` triggers in the space (ADR-036), the closest
 /// real analogue this project has to a calendar/reminder entry. This
@@ -2885,6 +3069,12 @@ fn in_progress_work(entities: &[Entity]) -> Vec<&Entity> {
 /// "most recent" convention `selected_entities.first()` already uses for
 /// the current object.
 const ACTION_ENTITY_TYPE: &str = "saaios.action";
+const RESULT_ENTITY_TYPE: &str = "saaios.result";
+const OPEN_INTENT_ACTION: &str = "Открыть намерение";
+const OPEN_TASK_ACTION: &str = "Открыть задачу";
+const OPEN_ACTION_ACTION: &str = "Открыть действие";
+const OPEN_RESULT_ACTION: &str = "Открыть результат";
+const OPEN_BLOCKER_ACTION: &str = "Открыть зависимость";
 
 fn next_pending_action(entities: &[Entity]) -> Option<&Entity> {
     entities.iter().find(|entity| {
@@ -2893,7 +3083,681 @@ fn next_pending_action(entities: &[Entity]) -> Option<&Entity> {
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+fn workflow_status_of(entity: &Entity) -> Option<&str> {
+    entity.properties.get("status").and_then(Value::as_str)
+}
+
+fn depends_on_task_ids(entity: &Entity) -> Vec<Uuid> {
+    entity
+        .properties
+        .get(DEPENDS_ON_PROPERTY)
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .filter_map(|raw| raw.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn completed_task_ids(entities: &[Entity]) -> Vec<Uuid> {
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == "saaios.task"
+                && workflow_status_of(entity) == Some(TASK_STATUS_DONE)
+        })
+        .map(|entity| entity.id)
+        .collect()
+}
+
+/// Same ready rule as WORK-02 `derive_ready_set`: Pending whose hard
+/// parents are Done. Failed parents are not completed, so the child
+/// stays out of «Далее».
+fn task_dependencies_ready(entity: &Entity, entities: &[Entity]) -> bool {
+    let completed = completed_task_ids(entities);
+    depends_on_task_ids(entity)
+        .iter()
+        .all(|parent| completed.contains(parent))
+}
+
+fn task_universal_state(entity: &Entity, entities: &[Entity]) -> UniversalState {
+    match workflow_status_of(entity) {
+        Some(TASK_STATUS_WAITING_CONFIRMATION) => UniversalState::Attention,
+        Some(TASK_STATUS_RUNNING) => UniversalState::Running,
+        Some(TASK_STATUS_FAILED) => UniversalState::Failed,
+        Some(TASK_STATUS_DONE) => UniversalState::Complete,
+        Some(TASK_STATUS_WAITING_CLARIFICATION) => UniversalState::Waiting,
+        Some(TASK_STATUS_PENDING) if !task_dependencies_ready(entity, entities) => {
+            UniversalState::Blocked
+        }
+        Some(TASK_STATUS_PENDING) => UniversalState::Waiting,
+        _ => UniversalState::Idle,
+    }
+}
+
+fn task_status_text(entity: &Entity, entities: &[Entity]) -> String {
+    match (
+        workflow_status_of(entity),
+        task_universal_state(entity, entities),
+    ) {
+        (Some(TASK_STATUS_WAITING_CONFIRMATION), _) => "Ждёт подтверждения".to_string(),
+        (Some(TASK_STATUS_RUNNING), _) => "Выполняется".to_string(),
+        (Some(TASK_STATUS_FAILED), _) => "Ошибка".to_string(),
+        (Some(TASK_STATUS_DONE), _) => "Готово".to_string(),
+        (Some(TASK_STATUS_WAITING_CLARIFICATION), _) => "Нужно уточнение".to_string(),
+        (Some(TASK_STATUS_CANCELLED), _) => "Отменено".to_string(),
+        (Some(TASK_STATUS_PENDING), UniversalState::Blocked) => "Ждёт зависимости".to_string(),
+        (Some(TASK_STATUS_PENDING), _) => "Ожидает запуска".to_string(),
+        (Some(other), _) => other.to_string(),
+        (None, _) => "Нет статуса".to_string(),
+    }
+}
+
+fn related_workflow_tasks<'a>(
+    entity: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Vec<&'a Entity> {
+    let now = Utc::now();
+    entities
+        .iter()
+        .filter(|candidate| {
+            if candidate.entity_type != "saaios.task" || candidate.id == entity.id {
+                return false;
+            }
+            let by_intent = candidate
+                .properties
+                .get("intent_id")
+                .and_then(Value::as_str)
+                .and_then(|id| id.parse::<Uuid>().ok())
+                == Some(entity.id);
+            let by_rel = relationships.iter().any(|relationship| {
+                relationship.relation_type == RELATION_REALIZES
+                    && relationship.source == ObjectRef::entity(candidate.id)
+                    && relationship.target == ObjectRef::entity(entity.id)
+                    && relationship.is_active_at(now)
+            });
+            by_intent || by_rel
+        })
+        .collect()
+}
+
+fn task_visibility_rank(entity: &Entity, entities: &[Entity]) -> u8 {
+    match (
+        workflow_status_of(entity),
+        task_universal_state(entity, entities),
+    ) {
+        (Some(TASK_STATUS_WAITING_CONFIRMATION), _) => 0,
+        (Some(TASK_STATUS_RUNNING), _) => 1,
+        (Some(TASK_STATUS_WAITING_CLARIFICATION), _) => 2,
+        (Some(TASK_STATUS_PENDING), UniversalState::Blocked) => 3,
+        (Some(TASK_STATUS_PENDING), _) => 4,
+        (Some(TASK_STATUS_FAILED), _) => 5,
+        (Some(TASK_STATUS_DONE), _) => 6,
+        (Some(TASK_STATUS_CANCELLED), _) => 7,
+        _ => 8,
+    }
+}
+
+fn primary_related_task<'a>(
+    entity: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    let mut tasks = related_workflow_tasks(entity, entities, relationships);
+    tasks.sort_by_key(|task| task_visibility_rank(task, entities));
+    tasks.into_iter().next()
+}
+
+#[derive(Clone, Copy)]
+struct WorkflowLineage<'a> {
+    intent: Option<&'a Entity>,
+    task: Option<&'a Entity>,
+    action: Option<&'a Entity>,
+    result: Option<&'a Entity>,
+}
+
+fn uuid_property(entity: &Entity, key: &str) -> Option<Uuid> {
+    entity
+        .properties
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse().ok())
+}
+
+fn entity_by_id(entities: &[Entity], id: Uuid) -> Option<&Entity> {
+    entities.iter().find(|entity| entity.id == id)
+}
+
+fn related_outgoing<'a>(
+    entity: &Entity,
+    relation_type: &str,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    let now = Utc::now();
+    relationships.iter().find_map(|relationship| {
+        if relationship.relation_type != relation_type
+            || relationship.source != ObjectRef::entity(entity.id)
+            || !relationship.is_active_at(now)
+        {
+            return None;
+        }
+        match &relationship.target {
+            ObjectRef::Entity { id } => entity_by_id(entities, *id),
+            ObjectRef::Space { .. } => None,
+        }
+    })
+}
+
+fn related_incoming<'a>(
+    entity: &Entity,
+    relation_type: &str,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    let now = Utc::now();
+    relationships.iter().find_map(|relationship| {
+        if relationship.relation_type != relation_type
+            || relationship.target != ObjectRef::entity(entity.id)
+            || !relationship.is_active_at(now)
+        {
+            return None;
+        }
+        match &relationship.source {
+            ObjectRef::Entity { id } => entity_by_id(entities, *id),
+            ObjectRef::Space { .. } => None,
+        }
+    })
+}
+
+fn intent_for_task<'a>(
+    task: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    related_outgoing(task, RELATION_REALIZES, entities, relationships).or_else(|| {
+        uuid_property(task, "intent_id").and_then(|id| {
+            entities
+                .iter()
+                .find(|candidate| candidate.id == id && candidate.entity_type == "saaios.intent")
+        })
+    })
+}
+
+fn action_for_task<'a>(
+    task: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    related_incoming(task, RELATION_EXECUTES, entities, relationships).or_else(|| {
+        entities.iter().find(|candidate| {
+            candidate.entity_type == ACTION_ENTITY_TYPE
+                && uuid_property(candidate, "task_id") == Some(task.id)
+        })
+    })
+}
+
+fn result_for_action<'a>(
+    action: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    related_outgoing(action, RELATION_PRODUCES, entities, relationships).or_else(|| {
+        entities.iter().find(|candidate| {
+            candidate.entity_type == RESULT_ENTITY_TYPE
+                && uuid_property(candidate, "action_id") == Some(action.id)
+        })
+    })
+}
+
+fn result_for_task<'a>(
+    task: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    entities
+        .iter()
+        .find(|candidate| {
+            candidate.entity_type == RESULT_ENTITY_TYPE
+                && uuid_property(candidate, "task_id") == Some(task.id)
+        })
+        .or_else(|| {
+            action_for_task(task, entities, relationships)
+                .and_then(|action| result_for_action(action, entities, relationships))
+        })
+}
+
+fn task_for_action<'a>(
+    action: &Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    related_outgoing(action, RELATION_EXECUTES, entities, relationships).or_else(|| {
+        uuid_property(action, "task_id").and_then(|id| {
+            entities
+                .iter()
+                .find(|candidate| candidate.id == id && candidate.entity_type == "saaios.task")
+        })
+    })
+}
+
+fn workflow_lineage_for<'a>(
+    entity: &'a Entity,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> WorkflowLineage<'a> {
+    match entity.entity_type.as_str() {
+        "saaios.intent" => {
+            let task = primary_related_task(entity, entities, relationships);
+            let action = task.and_then(|task| action_for_task(task, entities, relationships));
+            let result = action
+                .and_then(|action| result_for_action(action, entities, relationships))
+                .or_else(|| task.and_then(|task| result_for_task(task, entities, relationships)));
+            WorkflowLineage {
+                intent: Some(entity),
+                task,
+                action,
+                result,
+            }
+        }
+        "saaios.task" => {
+            let action = action_for_task(entity, entities, relationships);
+            WorkflowLineage {
+                intent: intent_for_task(entity, entities, relationships),
+                task: Some(entity),
+                action,
+                result: action
+                    .and_then(|action| result_for_action(action, entities, relationships))
+                    .or_else(|| result_for_task(entity, entities, relationships)),
+            }
+        }
+        ACTION_ENTITY_TYPE => {
+            let task = task_for_action(entity, entities, relationships);
+            WorkflowLineage {
+                intent: task.and_then(|task| intent_for_task(task, entities, relationships)),
+                task,
+                action: Some(entity),
+                result: result_for_action(entity, entities, relationships),
+            }
+        }
+        RESULT_ENTITY_TYPE => {
+            let action = uuid_property(entity, "action_id")
+                .and_then(|id| entity_by_id(entities, id))
+                .or_else(|| related_incoming(entity, RELATION_PRODUCES, entities, relationships));
+            let task = uuid_property(entity, "task_id")
+                .and_then(|id| entity_by_id(entities, id))
+                .or_else(|| {
+                    action.and_then(|action| task_for_action(action, entities, relationships))
+                });
+            WorkflowLineage {
+                intent: task.and_then(|task| intent_for_task(task, entities, relationships)),
+                task,
+                action,
+                result: Some(entity),
+            }
+        }
+        _ => WorkflowLineage {
+            intent: None,
+            task: None,
+            action: None,
+            result: None,
+        },
+    }
+}
+
+fn workflow_path_caption(entity: &Entity, lineage: &WorkflowLineage<'_>) -> Option<String> {
+    let mut parts = Vec::new();
+    if entity.entity_type != "saaios.intent" {
+        if let Some(intent) = lineage.intent {
+            parts.push(format!("Намерение: {}", intent.title));
+        }
+    }
+    if entity.entity_type != "saaios.task" {
+        if let Some(task) = lineage.task {
+            parts.push(format!("Задача: {}", task.title));
+        }
+    }
+    if entity.entity_type != ACTION_ENTITY_TYPE {
+        if let Some(action) = lineage.action {
+            parts.push(format!("Действие: {}", action.title));
+        }
+    }
+    if entity.entity_type != RESULT_ENTITY_TYPE {
+        if let Some(result) = lineage.result {
+            parts.push(format!("Результат: {}", result.title));
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" → "))
+    }
+}
+
+fn workflow_follow_actions(
+    entity: &Entity,
+    lineage: &WorkflowLineage<'_>,
+    entities: &[Entity],
+) -> Vec<&'static str> {
+    if entity.entity_type == "saaios.task" && unfinished_parent_task(entity, entities).is_some() {
+        return vec![OPEN_BLOCKER_ACTION];
+    }
+    let label = match entity.entity_type.as_str() {
+        "saaios.intent" => lineage.task.map(|_| OPEN_TASK_ACTION),
+        "saaios.task" => lineage
+            .action
+            .map(|_| OPEN_ACTION_ACTION)
+            .or_else(|| lineage.intent.map(|_| OPEN_INTENT_ACTION)),
+        ACTION_ENTITY_TYPE => lineage
+            .result
+            .map(|_| OPEN_RESULT_ACTION)
+            .or_else(|| lineage.task.map(|_| OPEN_TASK_ACTION)),
+        RESULT_ENTITY_TYPE => lineage
+            .task
+            .map(|_| OPEN_TASK_ACTION)
+            .or_else(|| lineage.action.map(|_| OPEN_ACTION_ACTION)),
+        _ => None,
+    };
+    label.into_iter().collect()
+}
+
+fn object_view_follow_target<'a>(
+    entity: &Entity,
+    label: &str,
+    entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Option<&'a Entity> {
+    let target_id = if label == OPEN_BLOCKER_ACTION {
+        let child_id = if entity.entity_type == "saaios.task" {
+            entity.id
+        } else {
+            workflow_lineage_for(entity, entities, relationships)
+                .task
+                .map(|task| task.id)?
+        };
+        unfinished_parent_task(entity_by_id(entities, child_id)?, entities)?.id
+    } else {
+        let lineage = workflow_lineage_for(entity, entities, relationships);
+        match label {
+            OPEN_INTENT_ACTION => lineage.intent.map(|target| target.id),
+            OPEN_TASK_ACTION => lineage.task.map(|target| target.id),
+            OPEN_ACTION_ACTION => lineage.action.map(|target| target.id),
+            OPEN_RESULT_ACTION => lineage.result.map(|target| target.id),
+            _ => None,
+        }?
+    };
+    entity_by_id(entities, target_id)
+}
+
+fn finish_workflow_view(
+    entity: &Entity,
+    entities: &[Entity],
+    lineage: WorkflowLineage<'_>,
+    state: UniversalState,
+    status: String,
+    actions: Vec<&'static str>,
+) -> ObjectViewContent {
+    let (activity, observation) = workflow_activity_or_observation(entity, &lineage);
+    let decision = decision_overlay_for(entity, &lineage);
+    let consequence = if decision.is_some() {
+        None
+    } else {
+        workflow_consequence(entity, &lineage)
+    };
+    ObjectViewContent {
+        title: entity.title.clone(),
+        state,
+        status,
+        related: workflow_path_caption(entity, &lineage),
+        activity,
+        observation,
+        blocker: lineage
+            .task
+            .and_then(|task| task_blocker_caption(task, entities)),
+        consequence,
+        permission: object_view_permission(entity),
+        decision,
+        agent: Some(agent_summary_from_lineage(&lineage, entities)),
+        actions,
+    }
+}
+
+fn result_universal_facts(entity: &Entity) -> (UniversalState, String) {
+    if let Some(error) = entity
+        .properties
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        (UniversalState::Failed, error.to_string())
+    } else {
+        (UniversalState::Complete, "Готово".to_string())
+    }
+}
+
+fn result_summary_text(entity: &Entity) -> Option<String> {
+    entity
+        .properties
+        .get("summary")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn workflow_activity_or_observation(
+    entity: &Entity,
+    lineage: &WorkflowLineage<'_>,
+) -> (Option<String>, Option<String>) {
+    // Running Action is `AgentSummary`, not a second activity string.
+    if entity.entity_type == RESULT_ENTITY_TYPE {
+        return (None, result_summary_text(entity));
+    }
+    let task_running = lineage
+        .task
+        .is_some_and(|task| workflow_status_of(task) == Some(TASK_STATUS_RUNNING));
+    if task_running {
+        return (None, None);
+    }
+    (None, lineage.result.and_then(result_summary_text))
+}
+
+/// 0–1 disposable execution from a real Action entity. No Action →
+/// unassigned. Does not invent a personality or a worker count.
+fn agent_summary_from_lineage(lineage: &WorkflowLineage<'_>, entities: &[Entity]) -> AgentSummary {
+    match lineage.action {
+        Some(action) => AgentSummary::from_execution(
+            action.title.clone(),
+            task_universal_state(action, entities),
+        ),
+        None => AgentSummary::unassigned(),
+    }
+}
+
+fn unfinished_parent_task<'a>(entity: &Entity, entities: &'a [Entity]) -> Option<&'a Entity> {
+    if task_universal_state(entity, entities) != UniversalState::Blocked {
+        return None;
+    }
+    let completed = completed_task_ids(entities);
+    depends_on_task_ids(entity).into_iter().find_map(|id| {
+        entities
+            .iter()
+            .find(|candidate| candidate.id == id && !completed.contains(&id))
+    })
+}
+
+fn task_blocker_caption(entity: &Entity, entities: &[Entity]) -> Option<String> {
+    unfinished_parent_task(entity, entities).map(|parent| format!("Ждёт: {}", parent.title))
+}
+
+fn workflow_consequence(entity: &Entity, lineage: &WorkflowLineage<'_>) -> Option<String> {
+    let waiting = match entity.entity_type.as_str() {
+        "saaios.task" | ACTION_ENTITY_TYPE => {
+            workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION)
+        }
+        "saaios.intent" => lineage
+            .task
+            .is_some_and(|task| workflow_status_of(task) == Some(TASK_STATUS_WAITING_CONFIRMATION)),
+        _ => false,
+    };
+    if !waiting {
+        return None;
+    }
+    lineage
+        .action
+        .and_then(result_summary_text)
+        .or_else(|| result_summary_text(entity))
+}
+
+fn action_input_str<'a>(entity: &'a Entity, key: &str) -> Option<&'a str> {
+    entity
+        .properties
+        .get("input")
+        .and_then(Value::as_object)
+        .and_then(|input| input.get(key))
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+fn action_consequence_text(entity: &Entity) -> Option<String> {
+    action_input_str(entity, "summary")
+        .map(str::to_string)
+        .or_else(|| result_summary_text(entity))
+}
+
+fn decision_overlay_for(entity: &Entity, lineage: &WorkflowLineage<'_>) -> Option<DecisionOverlay> {
+    let waiting_task = match entity.entity_type.as_str() {
+        "saaios.task" if workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION) => {
+            Some(entity)
+        }
+        ACTION_ENTITY_TYPE
+            if workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION) =>
+        {
+            lineage.task
+        }
+        "saaios.intent" => lineage
+            .task
+            .filter(|task| workflow_status_of(task) == Some(TASK_STATUS_WAITING_CONFIRMATION)),
+        _ => None,
+    }?;
+    let mut overlay = DecisionOverlay::new(waiting_task.title.clone())
+        .with_actor("Система")
+        .with_scope(waiting_task.space_id.clone());
+    if let Some(action) = lineage.action {
+        if let Some(tool) = action_input_str(action, "tool") {
+            overlay = overlay.with_action(tool);
+        }
+        if let Some(consequence) = action_consequence_text(action) {
+            overlay = overlay.with_consequence(consequence);
+        }
+    } else if let Some(consequence) = workflow_consequence(entity, lineage) {
+        overlay = overlay.with_consequence(consequence);
+    }
+    Some(overlay)
+}
+
+fn live_task_trailing(
+    entity: &Entity,
+    entities: &[Entity],
+    relationships: &[Relationship],
+) -> Option<StatusIndicator> {
+    let task = if entity.entity_type == "saaios.task" {
+        Some(entity)
+    } else {
+        primary_related_task(entity, entities, relationships)
+    }?;
+    if entity.entity_type != "saaios.task"
+        && matches!(
+            workflow_status_of(task),
+            Some(TASK_STATUS_DONE) | Some(TASK_STATUS_CANCELLED)
+        )
+    {
+        return None;
+    }
+    Some(StatusIndicator::new(
+        task_universal_state(task, entities),
+        task_status_text(task, entities),
+    ))
+}
+
+/// WORK-08: «Далее» is a pending Action if one exists, otherwise the
+/// first derived-ready Task. WaitingConfirmation stays on NOW attention.
+fn next_ready_task(entities: &[Entity]) -> Option<&Entity> {
+    entities.iter().find(|entity| {
+        entity.entity_type == "saaios.task"
+            && workflow_status_of(entity) == Some(TASK_STATUS_PENDING)
+            && task_dependencies_ready(entity, entities)
+    })
+}
+
+fn next_work(entities: &[Entity]) -> Option<&Entity> {
+    next_pending_action(entities).or_else(|| next_ready_task(entities))
+}
+
+fn related_intent_title(
+    entity: &Entity,
+    entities: &[Entity],
+    relationships: &[Relationship],
+) -> Option<String> {
+    if let Some(line) = related_object_line(entity, entities, relationships) {
+        if let Some(rest) = line.strip_prefix("Из намерения: ") {
+            return Some(rest.to_string());
+        }
+    }
+    entity
+        .properties
+        .get("intent_id")
+        .and_then(Value::as_str)
+        .and_then(|id| id.parse::<Uuid>().ok())
+        .and_then(|id| {
+            entities
+                .iter()
+                .find(|candidate| candidate.id == id && candidate.entity_type == "saaios.intent")
+        })
+        .map(|intent| intent.title.clone())
+}
+
+fn task_summary_from_entity(
+    entity: &Entity,
+    entities: &[Entity],
+    relationships: &[Relationship],
+) -> TaskSummary {
+    let mut summary =
+        TaskSummary::new(entity.title.clone(), task_universal_state(entity, entities))
+            .with_reason(task_status_text(entity, entities));
+    if let Some(related) = related_intent_title(entity, entities, relationships) {
+        summary = summary.with_related(related);
+    }
+    summary
+}
+
+fn intent_summary_from_entity(
+    entity: &Entity,
+    entities: &[Entity],
+    relationships: &[Relationship],
+) -> IntentSummary {
+    let mut summary = IntentSummary::new(entity.title.clone());
+    if let Some(task) = primary_related_task(entity, entities, relationships) {
+        summary = summary.with_task(task_summary_from_entity(task, entities, relationships));
+    }
+    summary
+}
+
+fn next_work_row(
+    work: &Entity,
+    entities: &[Entity],
+    relationships: &[Relationship],
+) -> SystemSectionRow {
+    if work.entity_type == "saaios.task" {
+        SystemSectionRow::Task(task_summary_from_entity(work, entities, relationships))
+    } else {
+        SystemSectionRow::Data(DataRow::new(work.title.clone(), DataRowVariant::Static))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InboxRowKind {
     Task,
     Notification,
@@ -2901,24 +3765,29 @@ enum InboxRowKind {
 
 /// Tasks first, notifications after -- a task needing confirmation is
 /// more actionable than an informational notice, not sorted by
-/// recency. Shared by rendering (`inbox_content_cards`) and hit-testing
+/// recency. ATTN-03: order and membership come from
+/// `inbox_source_ids()`, the same projection NOW and Orb already use.
+/// Shared by rendering (`inbox_content_cards`) and hit-testing
 /// (`inbox_row_at`) so the two can never disagree about row order.
 fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
-    let mut rows: Vec<(InboxRowKind, &Entity)> = inbox_pending_tasks(entities)
+    let by_id: BTreeMap<_, _> = entities.iter().map(|entity| (entity.id, entity)).collect();
+    inbox_source_ids(entities)
         .into_iter()
-        .map(|entity| (InboxRowKind::Task, entity))
-        .collect();
-    rows.extend(
-        inbox_notifications(entities)
-            .into_iter()
-            .map(|entity| (InboxRowKind::Notification, entity)),
-    );
-    rows
+        .filter_map(|(source, id)| {
+            let entity = *by_id.get(&id)?;
+            let kind = match source {
+                AttentionSource::WorkflowTask { .. } => InboxRowKind::Task,
+                AttentionSource::Notification { .. } => InboxRowKind::Notification,
+            };
+            Some((kind, entity))
+        })
+        .collect()
 }
 
 /// ATTN-02 / VUI-05: NOW «Требует внимания» is the projection's
-/// `now_items()`, not a second copy of `inbox_rows`. Inbox still uses
-/// `inbox_rows` until ATTN-03. Empty stays omitted, never a placeholder.
+/// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
+/// same projection via `inbox_source_ids` (ATTN-03). Empty stays
+/// omitted, never a placeholder.
 fn now_attention_section(entities: &[Entity]) -> Option<SystemSection> {
     attention_section_from_projection(&project_from_entities(entities))
 }
@@ -3315,6 +4184,7 @@ fn main() {
         dev_surface_open: false,
         calibration_mode,
         gallery_mode,
+        gallery_composites: false,
         selected_entities: Vec::new(),
         relationships: Vec::new(),
         system_space_entities: Vec::new(),
@@ -3335,7 +4205,7 @@ fn main() {
         println!("saai-shell: VUI-01 calibration fixture enabled");
     }
     if shell.gallery_mode {
-        println!("saai-shell: VUI-02 component gallery enabled");
+        println!("saai-shell: VUI-05 component gallery enabled (tap switches pages)");
     }
     // HIA-08: logged, not read back anywhere -- see `known_surfaces`'s
     // own doc comment for why this exists at all right now.
@@ -3617,6 +4487,10 @@ struct Shell {
     /// setting and therefore cannot accidentally become normal navigation.
     calibration_mode: bool,
     gallery_mode: bool,
+    /// VUI-05: the developer gallery has two pages — primitives (VUI-02)
+    /// and composites. Tap toggles. Default is primitives so the
+    /// physically verified first page stays the first thing shown.
+    gallery_composites: bool,
     /// ADR-020 section 8 / S07 Change 7: the portal socket sandboxed apps
     /// connect to for `clipboard.read`/`clipboard.write`/`portal.open_file`.
     portal: portal_server::PortalServer,
@@ -4045,6 +4919,11 @@ impl TouchHandler for Shell {
             }
         } else if self.tab_touch_pending {
             self.tab_touch_pending = false;
+            if self.gallery_mode {
+                self.gallery_composites = next_gallery_page(self.gallery_composites);
+                self.draw(conn, qh);
+                return;
+            }
             if self.pending_consent.is_some() {
                 // Modal: the consent screen owns every touch while it is
                 // showing, not the tab bar or content cards underneath it.
@@ -4453,10 +5332,13 @@ impl Shell {
                     .map(|(label, node)| (node.rect, *label))
                     .collect()
             };
+            let details = object_view_details(&content);
             Frame::ObjectView {
                 title: content.title,
+                state: content.state,
                 status: content.status,
                 related: content.related,
+                details,
                 header,
                 actions,
             }
@@ -4478,6 +5360,7 @@ impl Shell {
             let (header, keys) = intent_keyboard_keys(width, height, state.mode);
             Frame::IntentInput {
                 buffer: state.buffer.clone(),
+                status: intent_input_status(self.entityd.is_connected()).map(str::to_string),
                 header,
                 keys,
             }
@@ -4699,6 +5582,7 @@ impl Shell {
         let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
         let gallery_mode = self.gallery_mode;
+        let gallery_composites = self.gallery_composites;
 
         // GPU-native path (ADR-024 continued): paint directly into a
         // dma-buf backed buffer, skipping the wl_shm host-visible
@@ -4754,12 +5638,12 @@ impl Shell {
                 return;
             }
             if gallery_mode {
-                render::draw_gallery(
-                    &mut render::Canvas::new(canvas, width, height),
-                    width,
-                    height,
-                    fonts,
-                );
+                let canvas = &mut render::Canvas::new(canvas, width, height);
+                if gallery_composites {
+                    render::draw_composite_gallery(canvas, width, height, fonts);
+                } else {
+                    render::draw_gallery(canvas, width, height, fonts);
+                }
                 return;
             }
             match frame {
@@ -4782,16 +5666,20 @@ impl Shell {
                 }
                 Frame::ObjectView {
                     title,
+                    state,
                     status,
                     related,
+                    details,
                     header,
                     actions,
                 } => {
                     render::draw_object_view(
                         &mut render::Canvas::new(canvas, width, height),
                         &title,
+                        state,
                         &status,
                         related.as_deref(),
+                        &details,
                         header,
                         &actions,
                         fonts,
@@ -4816,6 +5704,7 @@ impl Shell {
                 }
                 Frame::IntentInput {
                     buffer,
+                    status,
                     header,
                     keys,
                 } => {
@@ -4823,6 +5712,7 @@ impl Shell {
                         &mut render::Canvas::new(canvas, width, height),
                         "Новое намерение",
                         &buffer,
+                        status.as_deref(),
                         header,
                         &keys,
                         fonts,
@@ -4856,6 +5746,7 @@ impl Shell {
                         &mut render::Canvas::new(canvas, width, height),
                         &format!("Пароль для «{ssid}»"),
                         &masked,
+                        None,
                         header,
                         &keys,
                         fonts,
@@ -5373,26 +6264,32 @@ impl Shell {
                 .as_ref()
                 .map(|state| state.buffer.trim().to_string())
                 .unwrap_or_default();
-            self.intent_input = None;
-            if !text.is_empty() && self.entityd.is_connected() {
-                let focused = self.viewing_entity().cloned();
-                let context = intent_context::capture_intent_context(
-                    &self.selected_space_id,
-                    &self.context_frame,
-                    focused.as_ref(),
-                );
-                let properties = intent_context::build_orb_intent_properties(&text, &context);
-                // "saaios.intent" -- must match saai-taskd's own
-                // model::INTENT_TYPE (ADR-030). The two crates share
-                // no dependency by design, so this is a convention,
-                // not a compile-time guarantee.
-                self.entityd.create_entity(
-                    self.selected_space_id.clone(),
-                    "saaios.intent",
-                    &text,
-                    properties,
-                );
-                println!("saai-shell: submitted intent \"{text}\"");
+            match intent_submit(self.entityd.is_connected(), &text) {
+                IntentSubmit::Persist => {
+                    self.intent_input = None;
+                    let focused = self.viewing_entity().cloned();
+                    let context = intent_context::capture_intent_context(
+                        &self.selected_space_id,
+                        &self.context_frame,
+                        focused.as_ref(),
+                    );
+                    let properties = intent_context::build_orb_intent_properties(&text, &context);
+                    // "saaios.intent" -- must match saai-taskd's own
+                    // model::INTENT_TYPE (ADR-030). The two crates share
+                    // no dependency by design, so this is a convention,
+                    // not a compile-time guarantee.
+                    self.entityd.create_entity(
+                        self.selected_space_id.clone(),
+                        "saaios.intent",
+                        &text,
+                        properties,
+                    );
+                    println!("saai-shell: submitted intent \"{text}\"");
+                }
+                IntentSubmit::CloseEmpty => {
+                    self.intent_input = None;
+                }
+                IntentSubmit::KeepDraft => {}
             }
             self.draw(conn, qh);
             return;
@@ -6192,10 +7089,16 @@ impl Shell {
     /// string formatting.
     fn now_object_summary(&self) -> Option<ObjectSummary> {
         self.selected_entities.first().map(|entity| {
-            ObjectSummary::new(
+            let mut summary = ObjectSummary::new(
                 entity.title.clone(),
                 format!("{} · версия {}", entity.entity_type, entity.revision),
-            )
+            );
+            if let Some(status) =
+                live_task_trailing(entity, &self.selected_entities, &self.relationships)
+            {
+                summary = summary.with_status(status);
+            }
+            summary
         })
     }
 
@@ -6228,9 +7131,10 @@ impl Shell {
 
         let mut in_progress = SystemSection::new("Продолжается");
         for entity in in_progress_work(&self.selected_entities) {
-            in_progress = in_progress.with_row(SystemSectionRow::Status(StatusIndicator::new(
-                UniversalState::Running,
-                entity.title.clone(),
+            in_progress = in_progress.with_row(SystemSectionRow::Task(task_summary_from_entity(
+                entity,
+                &self.selected_entities,
+                &self.relationships,
             )));
         }
         if !in_progress.is_empty() {
@@ -6242,11 +7146,12 @@ impl Shell {
         }
 
         let mut next = SystemSection::new("Далее");
-        if let Some(action) = next_pending_action(&self.selected_entities) {
-            next = next.with_row(SystemSectionRow::Data(DataRow::new(
-                action.title.clone(),
-                DataRowVariant::Static,
-            )));
+        if let Some(work) = next_work(&self.selected_entities) {
+            next = next.with_row(next_work_row(
+                work,
+                &self.selected_entities,
+                &self.relationships,
+            ));
         }
         if !next.is_empty() {
             sections.push(next);
@@ -6276,12 +7181,11 @@ impl Shell {
             };
         }
         if action.action == "open_intent_input" {
-            let status = if self.entityd.is_connected() {
-                "Ввести текст намерения"
-            } else {
-                "Сервис пространств недоступен"
-            };
-            return render::ActionCardView::new(action.label, status, "Открыть");
+            return render::ActionCardView::new(
+                action.label,
+                intent_compose_status(self.entityd.is_connected()),
+                "Открыть",
+            );
         }
         if let Some(space_id) = action.action.strip_prefix("select_space:") {
             let selected = space_id == self.selected_space_id;
@@ -6481,14 +7385,22 @@ impl Shell {
         let Some(entity) = self.viewing_entity().cloned() else {
             return;
         };
-        // Closes Object View regardless of outcome -- same "no
-        // auto-popup, the user comes back and taps the next one
-        // themselves" reasoning S13 Change 2 already established for
-        // the task-only modal this replaces.
-        self.viewing_entity_id = None;
-        match entity.entity_type.as_str() {
-            "saaios.task" => {
-                let confirm = index == 0;
+        let content = object_view_content(&entity, &self.selected_entities, &self.relationships);
+        let Some(label) = content.actions.get(index).copied() else {
+            self.viewing_entity_id = None;
+            return;
+        };
+        match label {
+            "Подтвердить" | "Отклонить" => {
+                if workflow_status_of(&entity) != Some(TASK_STATUS_WAITING_CONFIRMATION) {
+                    self.viewing_entity_id = None;
+                    return;
+                }
+                if !store_write_ready(self.entityd.is_connected()) {
+                    return;
+                }
+                self.viewing_entity_id = None;
+                let confirm = label == "Подтвердить";
                 let mut properties = entity.properties.clone();
                 properties.insert(
                     "status".into(),
@@ -6508,8 +7420,26 @@ impl Shell {
                 );
                 self.entityd.update_entity(&entity, properties);
             }
-            NOTIFICATION_ENTITY_TYPE => self.dismiss_notification(entity.id),
-            _ => {}
+            "Скрыть" => {
+                if !store_write_ready(self.entityd.is_connected()) {
+                    return;
+                }
+                self.viewing_entity_id = None;
+                self.dismiss_notification(entity.id);
+            }
+            OPEN_INTENT_ACTION | OPEN_TASK_ACTION | OPEN_ACTION_ACTION | OPEN_RESULT_ACTION
+            | OPEN_BLOCKER_ACTION => {
+                let next = object_view_follow_target(
+                    &entity,
+                    label,
+                    &self.selected_entities,
+                    &self.relationships,
+                );
+                self.viewing_entity_id = next
+                    .filter(|target| target.id != entity.id)
+                    .map(|target| target.id);
+            }
+            _ => self.viewing_entity_id = None,
         }
     }
 
@@ -7252,16 +8182,19 @@ mod tests {
         space_color, space_color_entity, space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_lifecycle_entity, space_relation_targets, stacked_row_rect, tab_at,
         task_confirm_action_at, today_schedules, trusted_client_action_at, upsert_context_entry,
-        wifi_list_action_at, BluetoothListTap, ContextFrameEntry, ContextSource, Entity,
-        KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor, SpaceLifecycle,
-        SystemSectionRow, TrustedClientTap, UniversalState, WifiListTap, ACTION_ENTITY_TYPE,
-        INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION, MANUAL_CONFIDENCE,
-        MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS,
-        ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE, SPACE_COLOR_ENTITY_TYPE,
-        SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE, SPACE_SIGNAL_ENTITY_TYPE,
-        SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
+        wifi_list_action_at, AgentSummary, BluetoothListTap, ContextFrameEntry, ContextSource,
+        Entity, KeyboardMode, OrbAction, Rect, RootPage, SafeInsets, Space, SpaceColor,
+        SpaceLifecycle, SystemSectionRow, TrustedClientTap, UniversalState, WifiListTap,
+        ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION, INTENT_SEND_ACTION,
+        MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE, RESULT_ENTITY_TYPE,
+        ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
+        SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, WIFI_CONFIDENCE,
     };
-    use saai_entity_protocol::{ObjectRef, Provenance, Relationship, RELATION_REALIZES};
+    use saai_entity_protocol::{
+        ObjectRef, Provenance, Relationship, RELATION_EXECUTES, RELATION_PRODUCES,
+        RELATION_REALIZES,
+    };
     use saai_entity_store::SpaceKind;
     use std::time::Duration;
 
@@ -7341,11 +8274,133 @@ mod tests {
     }
 
     #[test]
+    fn next_ready_task_skips_blocked_children_and_waiting_confirmation() {
+        let parent = {
+            let mut properties = serde_json::Map::new();
+            properties.insert("status".into(), serde_json::Value::String("pending".into()));
+            let mut entity = test_entity("saaios.task", properties);
+            entity.title = "Родитель".into();
+            entity
+        };
+        let mut child_properties = serde_json::Map::new();
+        child_properties.insert("status".into(), serde_json::Value::String("pending".into()));
+        child_properties.insert(
+            "depends_on_task_ids".into(),
+            serde_json::json!([parent.id.to_string()]),
+        );
+        let mut child = test_entity("saaios.task", child_properties);
+        child.title = "Потомок".into();
+        let waiting = task_entity("Ждёт человека", None);
+        let blocked = vec![parent.clone(), child.clone(), waiting.clone()];
+        assert_eq!(
+            super::next_ready_task(&blocked).map(|entity| entity.id),
+            Some(parent.id)
+        );
+        assert_eq!(
+            super::next_work(&blocked).map(|entity| entity.id),
+            Some(parent.id)
+        );
+
+        let mut done_parent = parent.clone();
+        done_parent
+            .properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let unblocked = vec![done_parent, child.clone(), waiting];
+        assert_eq!(
+            super::next_ready_task(&unblocked).map(|entity| entity.id),
+            Some(child.id)
+        );
+    }
+
+    #[test]
+    fn next_work_prefers_a_pending_action_over_a_ready_task() {
+        let mut task_properties = serde_json::Map::new();
+        task_properties.insert("status".into(), serde_json::Value::String("pending".into()));
+        let mut task = test_entity("saaios.task", task_properties);
+        task.title = "Задача".into();
+        let mut action_properties = serde_json::Map::new();
+        action_properties.insert("status".into(), serde_json::Value::String("pending".into()));
+        let mut action = test_entity(ACTION_ENTITY_TYPE, action_properties);
+        action.title = "Действие".into();
+        let entities = vec![task, action.clone()];
+        assert_eq!(
+            super::next_work(&entities).map(|entity| entity.id),
+            Some(action.id)
+        );
+    }
+
+    #[test]
+    fn live_task_trailing_omits_finished_work_on_a_related_object() {
+        let intent = intent_entity("Намерение");
+        let mut done = task_entity("Старое", Some(intent.id));
+        done.properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        assert!(super::live_task_trailing(&intent, &[intent.clone(), done], &[]).is_none());
+
+        let waiting = task_entity("Нужно подтвердить", Some(intent.id));
+        let trailing = super::live_task_trailing(&intent, &[intent.clone(), waiting], &[]).unwrap();
+        assert_eq!(trailing.state, UniversalState::Attention);
+        assert_eq!(trailing.label, "Ждёт подтверждения");
+    }
+
+    #[test]
+    fn task_summary_from_entity_carries_running_state_and_intent_title() {
+        let intent = intent_entity("Подготовить демо");
+        let mut running = task_entity("Копирует файлы", Some(intent.id));
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let summary =
+            super::task_summary_from_entity(&running, &[intent.clone(), running.clone()], &[]);
+        assert_eq!(summary.title, "Копирует файлы");
+        assert_eq!(summary.state, UniversalState::Running);
+        assert_eq!(summary.reason.as_deref(), Some("Выполняется"));
+        assert_eq!(summary.related.as_deref(), Some("Подготовить демо"));
+    }
+
+    #[test]
+    fn intent_summary_from_entity_nests_the_related_task_or_stays_empty() {
+        let intent = intent_entity("Подготовить демо");
+        let empty = super::intent_summary_from_entity(&intent, &[intent.clone()], &[]);
+        assert!(empty.task.is_none());
+        assert!(empty.missing_task_text().is_some());
+
+        let task = task_entity("Подтвердите: демо", Some(intent.id));
+        let filled =
+            super::intent_summary_from_entity(&intent, &[intent.clone(), task.clone()], &[]);
+        assert_eq!(
+            filled.task.as_ref().map(|task| task.title.as_str()),
+            Some("Подтвердите: демо")
+        );
+    }
+
+    #[test]
+    fn next_work_row_uses_task_summary_for_a_ready_task() {
+        let mut properties = serde_json::Map::new();
+        properties.insert("status".into(), serde_json::Value::String("pending".into()));
+        let mut task = test_entity("saaios.task", properties);
+        task.title = "Следующий шаг".into();
+        match super::next_work_row(&task, &[task.clone()], &[]) {
+            SystemSectionRow::Task(summary) => {
+                assert_eq!(summary.title, "Следующий шаг");
+                assert_eq!(summary.state, UniversalState::Waiting);
+            }
+            other => panic!("expected task row, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn calibration_requires_an_explicit_environment_or_runtime_marker() {
         assert!(!calibration_requested(None, false));
         assert!(!calibration_requested(Some("0"), false));
         assert!(calibration_requested(Some("1"), false));
         assert!(calibration_requested(None, true));
+    }
+
+    #[test]
+    fn gallery_tap_toggles_between_primitive_and_composite_pages() {
+        assert!(super::next_gallery_page(false));
+        assert!(!super::next_gallery_page(true));
     }
 
     fn lifecycle_entity(space_id: &str, lifecycle: &str) -> Entity {
@@ -7423,6 +8478,39 @@ mod tests {
 
     fn intent_entity(title: &str) -> Entity {
         let mut entity = test_entity("saaios.intent", serde_json::Map::new());
+        entity.title = title.to_string();
+        entity
+    }
+
+    fn action_entity(title: &str, task_id: uuid::Uuid, status: &str) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert("status".into(), serde_json::Value::String(status.into()));
+        properties.insert(
+            "task_id".into(),
+            serde_json::Value::String(task_id.to_string()),
+        );
+        let mut entity = test_entity(ACTION_ENTITY_TYPE, properties);
+        entity.title = title.to_string();
+        entity
+    }
+
+    fn result_entity(
+        title: &str,
+        task_id: uuid::Uuid,
+        action_id: uuid::Uuid,
+        summary: &str,
+    ) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert(
+            "task_id".into(),
+            serde_json::Value::String(task_id.to_string()),
+        );
+        properties.insert(
+            "action_id".into(),
+            serde_json::Value::String(action_id.to_string()),
+        );
+        properties.insert("summary".into(), serde_json::Value::String(summary.into()));
+        let mut entity = test_entity(RESULT_ENTITY_TYPE, properties);
         entity.title = title.to_string();
         entity
     }
@@ -8120,6 +9208,61 @@ mod tests {
     }
 
     #[test]
+    fn intent_send_keeps_the_draft_when_the_store_is_offline() {
+        assert_eq!(
+            super::intent_submit(false, "купить молоко"),
+            super::IntentSubmit::KeepDraft
+        );
+        assert_eq!(
+            super::intent_submit(true, "купить молоко"),
+            super::IntentSubmit::Persist
+        );
+        assert_eq!(
+            super::intent_submit(false, "   "),
+            super::IntentSubmit::CloseEmpty
+        );
+        assert_eq!(
+            super::intent_submit(true, ""),
+            super::IntentSubmit::CloseEmpty
+        );
+    }
+
+    #[test]
+    fn intent_input_names_store_offline_instead_of_pretending_to_send() {
+        assert_eq!(super::intent_input_status(false), Some("Нет связи"));
+        assert_eq!(super::intent_input_status(true), None);
+        assert_eq!(
+            super::intent_compose_status(false),
+            "Сервис пространств недоступен"
+        );
+        assert_eq!(super::intent_compose_status(true), "Ввести текст намерения");
+    }
+
+    #[test]
+    fn confirmation_and_dismiss_wait_for_the_store() {
+        assert!(!super::store_write_ready(false));
+        assert!(super::store_write_ready(true));
+    }
+
+    #[test]
+    fn waiting_confirmation_stays_manually_decidable_without_a_model() {
+        let task = task_entity("Подтвердите: удалить объект", None);
+        let content = object_view_content(&task, &[], &[]);
+        assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+        assert!(content.decision.is_some());
+    }
+
+    #[test]
+    fn now_footer_keeps_apps_as_a_manual_path() {
+        let rows = super::now_footer_action_views(1080, 2400);
+        assert_eq!(
+            rows[0].1.action.as_deref(),
+            Some(super::NOW_FOOTER_OPEN_APPS_ACTION)
+        );
+        assert_eq!(rows[1].1.action.as_deref(), Some("open_intent_input"));
+    }
+
+    #[test]
     fn capability_label_translates_known_vocabulary_and_falls_back_for_unknown() {
         assert_eq!(capability_label("net.internet"), "Доступ в интернет");
         assert_eq!(capability_label("net.bluetooth"), "net.bluetooth");
@@ -8412,8 +9555,262 @@ mod tests {
         let task = task_entity("Подтвердите: удалить объект", None);
         let content = object_view_content(&task, &[], &[]);
         assert_eq!(content.title, "Подтвердите: удалить объект");
+        assert_eq!(content.state, UniversalState::Attention);
         assert_eq!(content.status, "Ждёт подтверждения");
         assert_eq!(content.related, None);
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation, None);
+        assert_eq!(content.blocker, None);
+        assert_eq!(content.consequence, None);
+        assert_eq!(content.permission, None);
+        assert_eq!(
+            content.agent.as_ref().map(AgentSummary::detail_line),
+            Some("Нет исполнения".into())
+        );
+        assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+    }
+
+    #[test]
+    fn object_view_content_for_a_running_task_has_no_confirm_actions() {
+        let mut task = task_entity("Копирует файлы", None);
+        task.properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let content = object_view_content(&task, &[task.clone()], &[]);
+        assert_eq!(content.state, UniversalState::Running);
+        assert_eq!(content.status, "Выполняется");
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation, None);
+        assert_eq!(
+            content.agent.as_ref().map(AgentSummary::detail_line),
+            Some("Нет исполнения".into())
+        );
+        assert!(content.decision.is_none());
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_content_for_an_intent_shows_related_task() {
+        let intent = intent_entity("Подготовить демо");
+        let task = task_entity("Подтвердите: демо", Some(intent.id));
+        let content = object_view_content(&intent, &[intent.clone(), task.clone()], &[]);
+        assert_eq!(content.status, "Ждёт подтверждения");
+        assert_eq!(
+            content.related,
+            Some("Задача: Подтвердите: демо".to_string())
+        );
+        let decision = content.decision.expect("waiting intent shows a decision");
+        assert_eq!(decision.object, "Подтвердите: демо");
+        assert_eq!(decision.actor.as_deref(), Some("Система"));
+        assert_eq!(content.actions, vec!["Открыть задачу"]);
+    }
+
+    #[test]
+    fn object_view_content_for_an_intent_without_a_task_stays_truthful() {
+        let intent = intent_entity("Пустое намерение");
+        let content = object_view_content(&intent, &[intent.clone()], &[]);
+        assert_eq!(content.state, UniversalState::Idle);
+        assert_eq!(content.status, "Нет задачи");
+        assert_eq!(content.related, None);
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation, None);
+        assert_eq!(
+            content.agent.as_ref().map(AgentSummary::detail_line),
+            Some("Нет исполнения".into())
+        );
+        assert!(content.decision.is_none());
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_content_shows_the_intent_task_action_result_path() {
+        let intent = intent_entity("Подготовить демо");
+        let mut task = task_entity("Собрать слайды", Some(intent.id));
+        task.properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let action = action_entity("Экспорт PDF", task.id, "pending");
+        let result = result_entity("PDF готов", task.id, action.id, "файл на диске");
+        let executes = related_relationship(
+            action.id,
+            ObjectRef::entity(task.id),
+            RELATION_EXECUTES,
+            Provenance::System,
+            None,
+        );
+        let produces = related_relationship(
+            action.id,
+            ObjectRef::entity(result.id),
+            RELATION_PRODUCES,
+            Provenance::System,
+            None,
+        );
+        let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
+        let relationships = vec![executes, produces];
+
+        let intent_view = object_view_content(&intent, &entities, &relationships);
+        assert_eq!(
+            intent_view.related.as_deref(),
+            Some("Задача: Собрать слайды → Действие: Экспорт PDF → Результат: PDF готов")
+        );
+        assert_eq!(intent_view.actions, vec!["Открыть задачу"]);
+
+        let task_view = object_view_content(&task, &entities, &relationships);
+        assert_eq!(
+            task_view.related.as_deref(),
+            Some("Намерение: Подготовить демо → Действие: Экспорт PDF → Результат: PDF готов")
+        );
+        assert_eq!(task_view.actions, vec!["Открыть действие"]);
+
+        let action_view = object_view_content(&action, &entities, &relationships);
+        assert_eq!(
+            action_view.related.as_deref(),
+            Some("Намерение: Подготовить демо → Задача: Собрать слайды → Результат: PDF готов")
+        );
+        assert_eq!(action_view.actions, vec!["Открыть результат"]);
+        assert_eq!(action_view.status, "Ожидает запуска");
+
+        let result_view = object_view_content(&result, &entities, &relationships);
+        assert_eq!(result_view.state, UniversalState::Complete);
+        assert_eq!(result_view.status, "Готово");
+        assert_eq!(result_view.observation.as_deref(), Some("файл на диске"));
+        assert_eq!(result_view.actions, vec!["Открыть задачу"]);
+    }
+
+    #[test]
+    fn object_view_content_omits_missing_workflow_hops() {
+        let intent = intent_entity("Только задача");
+        let mut task = task_entity("Бежит", Some(intent.id));
+        task.properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let content = object_view_content(&intent, &[intent.clone(), task.clone()], &[]);
+        assert_eq!(content.related.as_deref(), Some("Задача: Бежит"));
+        assert!(!content.related.as_deref().unwrap().contains("Действие"));
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation, None);
+    }
+
+    #[test]
+    fn object_view_content_assigns_agent_from_the_running_action() {
+        let mut task = task_entity("Собрать слайды", None);
+        task.properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let action = action_entity("Экспорт PDF", task.id, "running");
+        let entities = vec![task.clone(), action.clone()];
+        let content = object_view_content(&task, &entities, &[]);
+        assert_eq!(content.state, UniversalState::Running);
+        assert_eq!(content.activity, None);
+        assert_eq!(
+            content.agent.as_ref().map(AgentSummary::detail_line),
+            Some("Исполнение: Экспорт PDF".into())
+        );
+        assert_eq!(
+            content
+                .agent
+                .as_ref()
+                .and_then(AgentSummary::status)
+                .map(|status| status.state),
+            Some(UniversalState::Running)
+        );
+        assert_eq!(content.observation, None);
+        assert_eq!(content.blocker, None);
+        assert_eq!(content.consequence, None);
+    }
+
+    #[test]
+    fn object_view_content_shows_result_observation_when_work_is_idle() {
+        let mut task = task_entity("Собрать слайды", None);
+        task.properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let action = action_entity("Экспорт PDF", task.id, "done");
+        let result = result_entity("PDF готов", task.id, action.id, "файл на диске");
+        let entities = vec![task.clone(), action.clone(), result.clone()];
+        let content = object_view_content(&task, &entities, &[]);
+        assert_eq!(content.state, UniversalState::Complete);
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation.as_deref(), Some("файл на диске"));
+        assert_eq!(content.blocker, None);
+    }
+
+    #[test]
+    fn object_view_content_names_the_unfinished_parent_when_blocked() {
+        let mut parent = task_entity("Родитель", None);
+        parent
+            .properties
+            .insert("status".into(), serde_json::Value::String("pending".into()));
+        let mut child_properties = serde_json::Map::new();
+        child_properties.insert("status".into(), serde_json::Value::String("pending".into()));
+        child_properties.insert(
+            "depends_on_task_ids".into(),
+            serde_json::json!([parent.id.to_string()]),
+        );
+        let mut child = test_entity("saaios.task", child_properties);
+        child.title = "Потомок".into();
+        let content = object_view_content(&child, &[parent.clone(), child.clone()], &[]);
+        assert_eq!(content.state, UniversalState::Blocked);
+        assert_eq!(content.status, "Ждёт зависимости");
+        assert_eq!(content.blocker.as_deref(), Some("Ждёт: Родитель"));
+        assert_eq!(content.actions, vec!["Открыть зависимость"]);
+        let entities = vec![parent.clone(), child.clone()];
+        assert_eq!(
+            super::object_view_follow_target(&child, "Открыть зависимость", &entities, &[])
+                .map(|entity| entity.id),
+            Some(parent.id)
+        );
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation, None);
+    }
+
+    #[test]
+    fn object_view_content_shows_action_summary_as_consequence_while_waiting() {
+        let task = task_entity("Подтвердите: убить процесс", None);
+        let mut action = action_entity("process.kill_request", task.id, "pending");
+        action.properties.insert(
+            "input".into(),
+            serde_json::json!({
+                "tool": "process.kill_request",
+                "summary": "Завершить процесс 999"
+            }),
+        );
+        let content = object_view_content(&task, &[task.clone(), action.clone()], &[]);
+        assert_eq!(content.state, UniversalState::Attention);
+        assert_eq!(content.consequence, None);
+        let decision = content.decision.expect("waiting task shows a decision");
+        assert_eq!(decision.actor.as_deref(), Some("Система"));
+        assert_eq!(decision.action.as_deref(), Some("process.kill_request"));
+        assert_eq!(decision.object, "Подтвердите: убить процесс");
+        assert_eq!(decision.scope.as_deref(), Some("saaios"));
+        assert_eq!(
+            decision.consequence.as_deref(),
+            Some("Завершить процесс 999")
+        );
+        assert!(decision
+            .fact_lines()
+            .iter()
+            .any(|line| line == "Последствие: Завершить процесс 999"));
+        assert_eq!(content.permission, None);
+        assert_eq!(
+            content.agent.as_ref().map(AgentSummary::detail_line),
+            Some("Исполнение: process.kill_request".into())
+        );
+        assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+    }
+
+    #[test]
+    fn object_view_explains_unavailable_oam_without_inventing_a_button() {
+        let mut display = test_entity("saaios.display", serde_json::Map::new());
+        display.title = "Экран".to_string();
+        let content = object_view_content(&display, &[display.clone()], &[]);
+        assert_eq!(
+            content.permission.as_deref(),
+            Some("Состояние экрана: нет инструмента")
+        );
+        assert!(content.actions.is_empty());
+    }
+
+    #[test]
+    fn object_view_omits_oam_permission_when_no_spec_applies() {
+        let task = task_entity("Обычная задача", None);
+        let content = object_view_content(&task, &[task.clone()], &[]);
+        assert_eq!(content.permission, None);
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
     }
 
@@ -8425,7 +9822,7 @@ mod tests {
         let content = object_view_content(&task, &selected_entities, &[]);
         assert_eq!(
             content.related,
-            Some("Из намерения: Напомни поливать цветы".to_string())
+            Some("Намерение: Напомни поливать цветы".to_string())
         );
     }
 
@@ -8434,8 +9831,12 @@ mod tests {
         let notification = notification_entity("Маджонг: победа!", "Хорошая игра");
         let content = object_view_content(&notification, &[], &[]);
         assert_eq!(content.title, "Маджонг: победа!");
+        assert_eq!(content.state, UniversalState::Attention);
         assert_eq!(content.status, "Хорошая игра");
         assert_eq!(content.related, None);
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation, None);
+        assert!(content.agent.is_none());
         assert_eq!(content.actions, vec!["Скрыть"]);
     }
 
@@ -8458,6 +9859,12 @@ mod tests {
         assert!(!content.status.is_empty());
         assert!(content.status.contains("some_number"));
         assert!(content.status.contains("hello"));
+        assert_eq!(content.state, UniversalState::Idle);
+        assert_eq!(content.activity, None);
+        assert_eq!(content.observation, None);
+        assert_eq!(content.blocker, None);
+        assert_eq!(content.consequence, None);
+        assert!(content.agent.is_none());
         assert!(content.actions.is_empty());
     }
 
@@ -8509,7 +9916,7 @@ mod tests {
         let content = object_view_content(&task, &[intent.clone(), task.clone()], &[relationship]);
         assert_eq!(
             content.related,
-            Some("Из намерения: Подготовить демо".to_string())
+            Some("Намерение: Подготовить демо".to_string())
         );
     }
 
@@ -8670,6 +10077,34 @@ mod tests {
         projection.items[0].surfaces.now = false;
         assert!(super::attention_section_from_projection(&projection).is_none());
         assert!(super::now_attention_section(&[waiting]).is_some());
+    }
+
+    #[test]
+    fn inbox_rows_follow_the_attention_projection() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let mut running = task_entity("Работает", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let note = notification_entity("Notice", "body");
+        let mut gone = notification_entity("Gone", "old");
+        gone.properties
+            .insert("dismissed".into(), serde_json::Value::Bool(true));
+        let entities = vec![running, waiting.clone(), gone, note.clone()];
+        let rows: Vec<_> = super::inbox_rows(&entities)
+            .into_iter()
+            .map(|(kind, entity)| (kind, entity.id))
+            .collect();
+        let projected: Vec<_> = super::inbox_source_ids(&entities);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, super::InboxRowKind::Task);
+        assert_eq!(rows[0].1, waiting.id);
+        assert_eq!(rows[1].0, super::InboxRowKind::Notification);
+        assert_eq!(rows[1].1, note.id);
+        assert_eq!(
+            rows.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+            projected.iter().map(|(_, id)| *id).collect::<Vec<_>>()
+        );
     }
 
     #[test]
