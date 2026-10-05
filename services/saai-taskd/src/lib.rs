@@ -36,15 +36,22 @@ pub mod runtime_bridge;
 
 use chrono::Utc;
 use client::{ClientError, EntitydConn};
+use intent_resolution::{
+    resolve_deterministic, AllowedContext, ClarificationResolution, IntentInput, IntentSource,
+    ResolutionOutcome, ResolveAttempt, SOURCE_PROPERTY,
+};
 use model::{
     action_properties, dangerous_action_of, find_action_for_task, has_task_for_intent,
     is_schedule_due, result_properties, safe_title, schedule_every_secs, schedule_fire_count,
     schedule_properties, schedule_text, status_of, task_properties, WorkflowStatus, ACTION_TYPE,
     DELETE_ENTITY_ACTION_KIND, INTENT_TYPE, NOTIFICATION_TYPE, RESULT_TYPE, RUNTIME_ACTION_KIND,
-    SCHEDULE_TYPE, TASK_TYPE,
+    SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
-use saai_entity_protocol::{Entity, EntitydEvent};
+use saai_entity_protocol::{
+    Entity, EntitydEvent, RELATION_EXECUTES, RELATION_PRODUCES, RELATION_REALIZES,
+};
 use saai_entity_store::EventPayload;
+use saai_object_actions::{display_inspect_spec, ObjectActionRegistry};
 use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::time::Duration;
@@ -234,6 +241,10 @@ impl Daemon {
             let mut intent_properties = serde_json::Map::new();
             intent_properties.insert("text".into(), json!(text));
             intent_properties.insert("schedule_id".into(), json!(schedule.id.to_string()));
+            intent_properties.insert(
+                SOURCE_PROPERTY.into(),
+                json!(IntentSource::Schedule.as_str()),
+            );
             self.conn
                 .create_entity(
                     &self.space_id,
@@ -262,6 +273,19 @@ impl Daemon {
         }
     }
 
+    /// SOM lineage is written beside legacy `intent_id`/`task_id`
+    /// properties. A failed relation must not roll back the entity:
+    /// the two writes are sequential, not a transaction.
+    async fn record_lineage(&mut self, source: Uuid, target: Uuid, relation_type: &str) {
+        if let Err(error) = self
+            .conn
+            .create_relationship(source, target, relation_type)
+            .await
+        {
+            eprintln!("saai-taskd: lineage {relation_type} not recorded: {error}");
+        }
+    }
+
     async fn process_intent(&mut self, intent: &Entity) -> Result<(), ClientError> {
         if let Some(target) = dangerous_action_of(intent) {
             return self.process_dangerous_intent(intent, target).await;
@@ -273,7 +297,60 @@ impl Daemon {
             .and_then(Value::as_str)
             .unwrap_or(&intent.title)
             .to_string();
-        self.process_planner_intent(intent, &text).await
+        let input = IntentInput::from_entity(intent);
+        let allowed = allowed_context_for(&input);
+        log_irab_context(intent.id, &input);
+        match resolve_deterministic(&input, &allowed) {
+            ResolveAttempt::Resolved {
+                outcome: ResolutionOutcome::Action(action),
+                trace,
+            } => {
+                eprintln!(
+                    "IRAB: intent={} source={:?} focused_object={:?} deterministic=true outcome=action semantic_action={} target_source={:?} action_source={:?}",
+                    intent.id,
+                    input.source,
+                    input.context.focused_ref(),
+                    action.action_id,
+                    trace.target_source,
+                    trace.action_source
+                );
+                self.process_resolved_action(intent, &text, &action).await
+            }
+            ResolveAttempt::Resolved {
+                outcome: ResolutionOutcome::Clarification(clarification),
+                ..
+            } => {
+                eprintln!(
+                    "IRAB: intent={} outcome=clarification options={}",
+                    intent.id,
+                    clarification.options.len()
+                );
+                self.process_clarification(intent, &text, clarification)
+                    .await
+            }
+            ResolveAttempt::Resolved {
+                outcome: ResolutionOutcome::Unsupported(unsupported),
+                ..
+            } => {
+                eprintln!(
+                    "IRAB: intent={} outcome=unsupported reason={}",
+                    intent.id, unsupported.reason
+                );
+                self.process_unsupported(intent, &text, &unsupported.reason)
+                    .await
+            }
+            ResolveAttempt::NeedsModel
+            | ResolveAttempt::Resolved {
+                outcome: ResolutionOutcome::Answer(_) | ResolutionOutcome::Plan(_),
+                ..
+            } => {
+                eprintln!(
+                    "IRAB fallback: legacy_runtime_diagnose intent={}",
+                    intent.id
+                );
+                self.process_planner_intent(intent, &text).await
+            }
+        }
     }
 
     /// Creates the Task/Action pair for a dangerous intent and stops --
@@ -302,9 +379,12 @@ impl Daemon {
             )
             .await?;
         self.remember_task(task.clone());
+        self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+            .await;
 
         let input = json!({ "target_entity_id": target.to_string() });
-        self.conn
+        let action = self
+            .conn
             .create_entity(
                 &self.space_id,
                 ACTION_TYPE,
@@ -318,9 +398,137 @@ impl Daemon {
                 ),
             )
             .await?;
+        self.record_lineage(action.id, task.id, RELATION_EXECUTES)
+            .await;
 
         eprintln!("saai-taskd: task {} waiting for confirmation", task.id);
         Ok(())
+    }
+
+    async fn process_resolved_action(
+        &mut self,
+        intent: &Entity,
+        text: &str,
+        action: &intent_resolution::ActionResolution,
+    ) -> Result<(), ClientError> {
+        let task = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                TASK_TYPE,
+                &safe_title(&format!("Задача: {text}"), "Задача"),
+                task_properties(intent.id, WorkflowStatus::Pending),
+            )
+            .await?;
+        self.remember_task(task.clone());
+        self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+            .await;
+        let running_task = self
+            .conn
+            .update_entity(&task, task_properties(intent.id, WorkflowStatus::Running))
+            .await?;
+        let summary = format!(
+            "Распознано: {} → {}",
+            target_label(&action.target),
+            action.action_id
+        );
+        let action_input = json!({
+            "semantic_action_id": action.action_id,
+            "target": action.target,
+            "parameters": action.parameters,
+            "target_revision": action.target_revision,
+            "text": text,
+        });
+        let action_output = json!({ "summary": summary, "executed": false });
+        let stored_action = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                ACTION_TYPE,
+                &safe_title(&format!("Действие: {}", action.action_id), "Действие"),
+                action_properties(
+                    running_task.id,
+                    SEMANTIC_ACTION_KIND,
+                    WorkflowStatus::Done,
+                    &action_input,
+                    Some(&action_output),
+                ),
+            )
+            .await?;
+        self.record_lineage(stored_action.id, running_task.id, RELATION_EXECUTES)
+            .await;
+        let result = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                RESULT_TYPE,
+                &safe_title(&summary, "Результат"),
+                result_properties(running_task.id, stored_action.id, &summary),
+            )
+            .await?;
+        self.record_lineage(stored_action.id, result.id, RELATION_PRODUCES)
+            .await;
+        let mut done_properties = task_properties(intent.id, WorkflowStatus::Done);
+        done_properties.insert("result_id".into(), json!(result.id.to_string()));
+        let updated_task = self
+            .conn
+            .update_entity(&running_task, done_properties)
+            .await?;
+        self.remember_task(updated_task);
+        eprintln!(
+            "saai-taskd: task {} irab-resolved {} without runtime diagnose",
+            running_task.id, action.action_id
+        );
+        Ok(())
+    }
+
+    async fn process_clarification(
+        &mut self,
+        intent: &Entity,
+        text: &str,
+        clarification: ClarificationResolution,
+    ) -> Result<(), ClientError> {
+        let mut properties = task_properties(intent.id, WorkflowStatus::WaitingClarification);
+        properties.insert(
+            "clarification".into(),
+            serde_json::to_value(&clarification).unwrap_or(json!({})),
+        );
+        properties.insert("text".into(), json!(text));
+        let task = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                TASK_TYPE,
+                &safe_title(&clarification.question, "Уточнение"),
+                properties,
+            )
+            .await?;
+        self.remember_task(task.clone());
+        self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+            .await;
+        eprintln!("saai-taskd: task {} waiting for clarification", task.id);
+        Ok(())
+    }
+
+    async fn process_unsupported(
+        &mut self,
+        intent: &Entity,
+        text: &str,
+        reason: &str,
+    ) -> Result<(), ClientError> {
+        let task = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                TASK_TYPE,
+                &safe_title(&format!("Задача: {text}"), "Задача"),
+                task_properties(intent.id, WorkflowStatus::Pending),
+            )
+            .await?;
+        self.remember_task(task.clone());
+        self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+            .await;
+        self.fail_task(&task, intent.id, reason).await
     }
 
     /// S10 Change 2 (ADR-033): asks the already-running `saaios-runtime`
@@ -349,6 +557,8 @@ impl Daemon {
             )
             .await?;
         self.remember_task(task.clone());
+        self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+            .await;
 
         let response =
             match runtime_bridge::diagnose(&self.runtime_addr, text, &self.space_id).await {
@@ -373,7 +583,8 @@ impl Daemon {
                 "session_id": response.session_id.map(|id| id.to_string()),
                 "summary": pending.summary,
             });
-            self.conn
+            let action = self
+                .conn
                 .create_entity(
                     &self.space_id,
                     ACTION_TYPE,
@@ -387,6 +598,8 @@ impl Daemon {
                     ),
                 )
                 .await?;
+            self.record_lineage(action.id, task.id, RELATION_EXECUTES)
+                .await;
             let updated_task = self
                 .conn
                 .update_entity(
@@ -430,6 +643,8 @@ impl Daemon {
                 ),
             )
             .await?;
+        self.record_lineage(action.id, running_task.id, RELATION_EXECUTES)
+            .await;
 
         let result = self
             .conn
@@ -440,6 +655,8 @@ impl Daemon {
                 result_properties(running_task.id, action.id, &summary),
             )
             .await?;
+        self.record_lineage(action.id, result.id, RELATION_PRODUCES)
+            .await;
 
         let mut done_properties = task_properties(intent.id, WorkflowStatus::Done);
         done_properties.insert("result_id".into(), json!(result.id.to_string()));
@@ -794,6 +1011,8 @@ impl Daemon {
                 result_properties(task.id, action_id, summary),
             )
             .await?;
+        self.record_lineage(action_id, result.id, RELATION_PRODUCES)
+            .await;
 
         let intent_id = model::intent_id_of(task)
             .ok_or_else(|| ClientError::UnexpectedResult("task missing intent_id".into()))?;
@@ -833,4 +1052,39 @@ fn uuid_field(value: &Value, key: &str) -> Option<Uuid> {
 fn short_id(id: Uuid) -> String {
     let full = id.to_string();
     full.split('-').next().unwrap_or(&full).to_string()
+}
+
+fn builtin_oam() -> ObjectActionRegistry {
+    let mut registry = ObjectActionRegistry::new();
+    let _ = registry.register(display_inspect_spec());
+    registry
+}
+
+fn allowed_context_for(input: &IntentInput) -> AllowedContext {
+    let registry = builtin_oam();
+    let mut allowed = AllowedContext::default();
+    for summary in input
+        .context
+        .focused_object
+        .iter()
+        .chain(input.context.selected_objects.iter())
+    {
+        allowed = allowed.with_object(summary, registry.action_ids_for_type(&summary.entity_type));
+    }
+    allowed
+}
+
+fn log_irab_context(intent_id: Uuid, input: &IntentInput) {
+    eprintln!(
+        "IRAB: intent={intent_id} source={:?} focused_object={:?}",
+        input.source,
+        input.context.focused_ref()
+    );
+}
+
+fn target_label(target: &saai_entity_store::ObjectRef) -> String {
+    match target {
+        saai_entity_store::ObjectRef::Entity { id } => short_id(*id),
+        saai_entity_store::ObjectRef::Space { id } => id.clone(),
+    }
 }

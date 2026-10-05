@@ -138,6 +138,24 @@ ADR-004's конвергенция (Platform Track потребляет OS-се�
   когда-либо случится, унификация словаря -- часть той будущей задачи,
   не долг, накопленный сейчас.
 
+## Evolution
+
+Intent/Task/Action/Result остаются обычными Entity (это решение не
+меняется). ADR-118 пишет явные Relationship (`saaios.realizes` /
+`saaios.executes` / `saaios.produces`) **в параллель** с legacy
+`intent_id`/`task_id`/`action_id` в properties. Helpers вроде
+`intent_id_of()` не удаляются. Duplicated IDs можно убрать только
+отдельным ADR после стабильной миграции.
+
+OAM (ADR-119) не вводит второй persistent Action type. Semantic
+`ObjectActionSpec` резолвится в существующий `saaios.action` через
+уже существующий policy/confirmation путь.
+
+IRAB (ADR-120) не вводит второй workflow store. Он резолвит Intent в
+Answer/Action/Clarification/Plan/Unsupported и пишет в те же
+Intent/Task/Action/Result. Добавлен `WaitingClarification`, отдельно
+от `WaitingConfirmation`.
+
 ## Ссылки
 
 - ADR-004 -- Platform Track vs OS Track разделение и названное (не

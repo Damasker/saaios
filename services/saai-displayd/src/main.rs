@@ -18,8 +18,12 @@ use calloop::signals::{Signal, Signals};
 #[cfg(feature = "panther-hardware")]
 use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 
+mod data_device;
 #[cfg(feature = "panther-hardware")]
 mod hardware;
+mod hid;
+mod layer_geom;
+mod text_ime;
 #[cfg(feature = "panther-hardware")]
 mod touch;
 
@@ -32,9 +36,9 @@ use smithay::input::keyboard::Keycode;
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::{
     backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_layer_shell,
-    delegate_output, delegate_seat, delegate_session_lock, delegate_shm,
-    delegate_text_input_manager, delegate_xdg_shell,
+    delegate_compositor, delegate_dmabuf, delegate_fractional_scale, delegate_layer_shell,
+    delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter,
+    delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState},
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::{
@@ -57,24 +61,68 @@ use smithay::{
             CompositorState, SurfaceAttributes,
         },
         dmabuf::{get_dmabuf, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
-        output::OutputHandler,
-        selection::{
-            data_device::{
-                set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
-                ServerDndGrabHandler,
-            },
-            SelectionHandler,
+        fractional_scale::{
+            with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
         },
+        output::OutputHandler,
         session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
         shell::{
-            wlr_layer::{LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
+            wlr_layer::{
+                Anchor, LayerSurface, LayerSurfaceCachedState, WlrLayerShellHandler,
+                WlrLayerShellState,
+            },
             xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{with_buffer_contents, ShmHandler, ShmState},
         socket::ListeningSocketSource,
-        text_input::{TextInputHandle, TextInputManagerState},
+        viewporter::ViewporterState,
     },
 };
+
+/// Matches `Scale::Integer(1)` on the advertised output. GDK initializes
+/// its shm height from `wp_fractional_scale_v1.preferred_scale` in 120ths
+/// (1.0 → 120). Without that event the pointer stays uninitialized
+/// (ADR-025 height=1776831).
+const PREFERRED_FRACTIONAL_SCALE: f64 = 1.0;
+
+/// Laptop surface (PCE-25). Smaller than the host output; not a phone panel.
+const WINDOWED_WIDTH: i32 = 1280;
+const WINDOWED_HEIGHT: i32 = 800;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ToplevelGeometry {
+    width: i32,
+    height: i32,
+    fullscreen: bool,
+}
+
+fn output_model_for(phone_gate: bool) -> &'static str {
+    if phone_gate {
+        "panther"
+    } else {
+        "x86"
+    }
+}
+
+fn toplevel_geometry_for(
+    phone_gate: bool,
+    output_width: i32,
+    output_height: i32,
+) -> ToplevelGeometry {
+    if phone_gate {
+        ToplevelGeometry {
+            width: output_width,
+            height: output_height,
+            fullscreen: true,
+        }
+    } else {
+        ToplevelGeometry {
+            width: WINDOWED_WIDTH,
+            height: WINDOWED_HEIGHT,
+            fullscreen: false,
+        }
+    }
+}
 
 #[derive(Default)]
 struct SaaiClientState {
@@ -148,12 +196,19 @@ struct SurfaceFrame {
 fn blit_surface_frame(
     hardware: &mut hardware::HardwareOutput,
     frame: &SurfaceFrame,
+    dst_x: i32,
+    dst_y: i32,
 ) -> Result<(), String> {
     match &frame.backing {
-        FrameBacking::Pixels(pixels) => {
-            hardware.blit(pixels, frame.width, frame.height, frame.stride)
-        }
-        FrameBacking::Dmabuf(frame) => hardware.blit_dmabuf(&frame.dmabuf),
+        FrameBacking::Pixels(pixels) => hardware.blit(
+            pixels,
+            frame.width,
+            frame.height,
+            frame.stride,
+            dst_x,
+            dst_y,
+        ),
+        FrameBacking::Dmabuf(frame) => hardware.blit_dmabuf(&frame.dmabuf, dst_x, dst_y),
     }
 }
 
@@ -176,6 +231,8 @@ fn blit_if_changed(
     slot_generations: &mut [HashMap<WlSurface, u64>; 2],
     write_index: usize,
     surface: &WlSurface,
+    dst_x: i32,
+    dst_y: i32,
 ) -> Result<(), String> {
     let Some(frame) = surface_frames.get(surface) else {
         return Ok(());
@@ -183,7 +240,7 @@ fn blit_if_changed(
     if slot_generations[write_index].get(surface) == Some(&frame.generation) {
         return Ok(());
     }
-    blit_surface_frame(hw, frame)?;
+    blit_surface_frame(hw, frame, dst_x, dst_y)?;
     slot_generations[write_index].insert(surface.clone(), frame.generation);
     Ok(())
 }
@@ -228,41 +285,24 @@ struct State {
     xdg_shell_state: XdgShellState,
     seat_state: SeatState<State>,
     seat: Seat<State>,
-    /// ADR-021 (S08 Change 2): GTK4's `_gdk_wayland_display_open()`
-    /// unconditionally requires `wl_data_device_manager` alongside
-    /// `wl_compositor`/`wl_shm` -- without it, GTK4 refuses to open a
-    /// Wayland display at all, confirmed physically against this exact
-    /// compositor build (see ADR-021's Evidence). This wires up smithay's
-    /// own data-device implementation (real client-to-client clipboard/DnD,
-    /// not a protocol-level no-op) so the global exists and clients can use
-    /// it -- capability-gating clipboard reads/writes against S07's grants
-    /// is explicitly NOT done here (see `DataDeviceHandler`/`SelectionHandler`
-    /// impls below), left for a later change once the policy mechanism is
-    /// decided.
-    data_device_state: DataDeviceState,
-    /// Needed by `set_data_device_focus` in `activate_toplevel()` -- cheap
-    /// to clone, kept here rather than threading it through every call site.
-    dh: DisplayHandle,
-    /// ADR-022 (S08 Change 3): `zwp_text_input_manager_v3` only -- the
-    /// client-facing half of text-input-v3, letting GTK4/Qt apps enable a
-    /// text field and receive `enter`/`leave` without touching any keyboard
-    /// machinery at all (confirmed by reading smithay's own
-    /// `GetTextInput` handler: it only touches per-seat `TextInputHandle`/
-    /// `InputMethodHandle` user data, never `Seat::get_keyboard()`).
-    /// Deliberately NOT paired with `InputMethodManagerState` -- a spike
-    /// proved `zwp_input_method_manager_v2`'s `GetInputMethod` handler
-    /// unconditionally calls `seat.get_keyboard().unwrap()`, and a working
-    /// keymap is not obtainable on this device at all (ADR-022 supersedes
-    /// ADR-012's narrower "incomplete xkb-data" diagnosis: even a fully
-    /// self-contained from-string keymap with zero file/rule-path
-    /// dependency SIGTRAPs here). Enabling a text field currently has no
-    /// on-screen keyboard to answer it -- a real, tracked limitation, not
-    /// silently dropped -- see ADR-022.
-    /// Kept alive for the lifetime of the process -- not read again after
-    /// construction, same reasoning as `_wl_output` above: the global it
-    /// registered, and the per-object dispatch `delegate_text_input_manager!`
-    /// wires up, don't need the field's value, only its existence.
-    _text_input_manager_state: TextInputManagerState,
+    /// ADR-021: GTK4's `_gdk_wayland_display_open()` requires
+    /// `wl_data_device_manager`. ADR-294 owns the global so smithay
+    /// cannot broker native copy/paste. Portal clipboard stays the
+    /// capability-gated channel (AUTH-08).
+    _data_device_manager: data_device::SaaiDataDeviceManager,
+    /// ADR-267 (APP-03): our text-input-v3 + input-method-v2 pair, not
+    /// smithay's `InputMethodManagerState` (that path unwraps a keyboard,
+    /// ADR-022). Keep-alive for the globals, same as `_dmabuf_global`.
+    _text_input_manager_state: text_ime::SaaiTextInputManager,
+    _input_method_manager_state: text_ime::SaaiInputMethodManager,
+    /// ADR-266 (APP-02): `wp_fractional_scale_manager_v1` so GTK4/GDK
+    /// receives `preferred_scale` instead of an uninitialized `double *`
+    /// (ADR-025). Same keep-alive pattern as `_text_input_manager_state`.
+    _fractional_scale_manager_state: FractionalScaleManagerState,
+    /// Pair protocol GDK expects alongside fractional-scale. Viewport
+    /// dest size is not applied to the DRM blit path in this slice;
+    /// advertising the global is enough for the client to bind.
+    _viewporter_state: ViewporterState,
     // No keyboard capability on the real Pixel 7 build (ADR-012): this
     // device has no physical keyboard, and drm-splash.c's own on-screen
     // keyboard proves this architecture never needed wl_keyboard/xkbcommon
@@ -271,6 +311,8 @@ struct State {
     // a real KeyboardHandle and a normal host libxkbcommon works fine.
     #[cfg(not(feature = "panther-hardware"))]
     keyboard: smithay::input::keyboard::KeyboardHandle<State>,
+    #[cfg(not(feature = "panther-hardware"))]
+    pointer: smithay::input::pointer::PointerHandle<State>,
     /// Active fullscreen toplevel. A newly mapped toplevel becomes active;
     /// destroying it restores the previous live toplevel (normally the
     /// persistent system shell).
@@ -384,12 +426,9 @@ struct State {
     locked: bool,
     lock_surface: Option<LockSurface>,
     layer_shell_state: WlrLayerShellState,
-    /// Known layer surfaces (status bar / nav overlay per ADR-015) --
-    /// checked in commit()'s should_present branch so their frames reach
-    /// the panel. No spatial hit-testing wired up yet: touch routing
-    /// still only knows about `focused_surface`/`lock_surface`, so a
-    /// layer surface renders but cannot receive touch input in this
-    /// step -- known limitation, not a goal of this vertical slice.
+    /// Known layer surfaces (status bar / OSK). Placement follows the
+    /// client's size and anchor (ADR-271). Touch hits the topmost layer
+    /// under the contact, then `focused_surface`. Locked still wins.
     layer_surfaces: Vec<LayerSurface>,
 }
 
@@ -459,28 +498,9 @@ impl State {
             return;
         }
         self.focused_surface = surface.clone();
-        // Independent of keyboard availability (ADR-012's touch-only
-        // panther-hardware build included) -- clipboard/DnD focus tracks
-        // which client currently owns the selection target, not which
-        // client can receive key events.
-        set_data_device_focus(
-            &self.dh,
-            &self.seat,
-            surface.as_ref().and_then(Resource::client),
-        );
-        // ADR-022 (S08 Change 3): same reasoning -- text-input-v3 focus is
-        // "which client's field is live", not "which client gets key
-        // events". `insert_if_missing` matches smithay's own `GetTextInput`
-        // handler (text_input/mod.rs) -- a `TextInputHandle` may not exist
-        // yet for this seat if no client has ever bound text-input-v3.
-        self.seat
-            .user_data()
-            .insert_if_missing(TextInputHandle::default);
-        if let Some(text_input_handle) = self.seat.user_data().get::<TextInputHandle>().cloned() {
-            text_input_handle.leave();
-            text_input_handle.set_focus(surface.clone());
-            text_input_handle.enter();
-        }
+        // ADR-267: text-input focus is "which client's field is live", not
+        // "which client gets key events". Same seat, no keyboard required.
+        text_ime::on_focus(&self.seat, surface.clone());
         #[cfg(not(feature = "panther-hardware"))]
         {
             let serial = SERIAL_COUNTER.next_serial();
@@ -499,6 +519,80 @@ impl State {
             );
             self.request_recomposite();
         }
+    }
+
+    fn layer_client_size_anchor(
+        surface: &LayerSurface,
+        pending: bool,
+    ) -> (i32, i32, bool, bool, bool, bool) {
+        with_states(surface.wl_surface(), |states| {
+            let mut guard = states.cached_state.get::<LayerSurfaceCachedState>();
+            let cached = if pending {
+                *guard.pending()
+            } else {
+                *guard.current()
+            };
+            (
+                cached.size.w,
+                cached.size.h,
+                cached.anchor.contains(Anchor::TOP),
+                cached.anchor.contains(Anchor::BOTTOM),
+                cached.anchor.contains(Anchor::LEFT),
+                cached.anchor.contains(Anchor::RIGHT),
+            )
+        })
+    }
+
+    #[cfg_attr(not(feature = "panther-hardware"), allow(dead_code))]
+    fn layer_geom(&self, surface: &LayerSurface) -> layer_geom::LayerGeom {
+        let (requested_w, requested_h, top, bottom, left, right) =
+            Self::layer_client_size_anchor(surface, false);
+        let (width, height) = layer_geom::configure_size(
+            self.output_width,
+            self.output_height,
+            requested_w,
+            requested_h,
+        );
+        layer_geom::destination(
+            self.output_width,
+            self.output_height,
+            width,
+            height,
+            top,
+            bottom,
+            left,
+            right,
+        )
+    }
+
+    #[cfg_attr(not(feature = "panther-hardware"), allow(dead_code))]
+    fn touch_focus_at(
+        &self,
+        x: f64,
+        y: f64,
+    ) -> Option<(
+        WlSurface,
+        smithay::utils::Point<f64, smithay::utils::Logical>,
+    )> {
+        use smithay::utils::Point;
+        if self.locked {
+            return self
+                .lock_surface
+                .as_ref()
+                .map(|ls| (ls.wl_surface().clone(), Point::from((0.0, 0.0))));
+        }
+        for layer in self.layer_surfaces.iter().rev() {
+            let geom = self.layer_geom(layer);
+            if geom.contains(x, y) {
+                return Some((
+                    layer.wl_surface().clone(),
+                    Point::from((f64::from(geom.x), f64::from(geom.y))),
+                ));
+            }
+        }
+        self.focused_surface
+            .clone()
+            .map(|s| (s, Point::from((0.0, 0.0))))
     }
 }
 
@@ -607,6 +701,14 @@ impl State {
     }
 
     fn recomposite(&mut self) {
+        let layer_blits: Vec<(WlSurface, i32, i32)> = self
+            .layer_surfaces
+            .iter()
+            .map(|layer| {
+                let geom = self.layer_geom(layer);
+                (layer.wl_surface().clone(), geom.x, geom.y)
+            })
+            .collect();
         let Some(hw) = self.hardware.as_mut() else {
             return;
         };
@@ -632,6 +734,8 @@ impl State {
                     &mut self.slot_generations,
                     write_index,
                     &s,
+                    0,
+                    0,
                 ) {
                     eprintln!("saai-displayd: hardware lock blit failed: {error}");
                     std::process::exit(72);
@@ -648,6 +752,8 @@ impl State {
                     &mut self.slot_generations,
                     write_index,
                     &s,
+                    0,
+                    0,
                 ) {
                     eprintln!("saai-displayd: hardware toplevel blit failed: {error}");
                     std::process::exit(72);
@@ -656,20 +762,21 @@ impl State {
                     shown.push(s);
                 }
             }
-            for layer in &self.layer_surfaces {
-                let s = layer.wl_surface().clone();
+            for (s, dst_x, dst_y) in &layer_blits {
                 if let Err(error) = blit_if_changed(
                     hw,
                     &self.surface_frames,
                     &mut self.slot_generations,
                     write_index,
-                    &s,
+                    s,
+                    *dst_x,
+                    *dst_y,
                 ) {
                     eprintln!("saai-displayd: hardware layer blit failed: {error}");
                     std::process::exit(72);
                 }
-                if self.surface_frames.contains_key(&s) {
-                    shown.push(s);
+                if self.surface_frames.contains_key(s) {
+                    shown.push(s.clone());
                 }
             }
         }
@@ -696,6 +803,25 @@ impl CompositorHandler for State {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        if let Some(layer) = self
+            .layer_surfaces
+            .iter()
+            .find(|layer| layer.wl_surface() == surface)
+            .cloned()
+        {
+            let (requested_w, requested_h, _, _, _, _) =
+                Self::layer_client_size_anchor(&layer, false);
+            let (width, height) = layer_geom::configure_size(
+                self.output_width,
+                self.output_height,
+                requested_w,
+                requested_h,
+            );
+            layer.with_pending_state(|state| {
+                state.size = Some((width, height).into());
+            });
+            layer.send_pending_configure();
+        }
         // Frame callbacks (`wl_surface.frame`) are acknowledged after
         // the DRM VBlank for the scene submitted by recomposite(), not
         // unconditionally here on every commit
@@ -1088,56 +1214,30 @@ impl SeatHandler for State {
 }
 delegate_seat!(State);
 
-// ADR-021 (S08 Change 2): existence-only. These default-method impls give
-// working client-to-client clipboard/drag-and-drop through smithay's own
-// data-device machinery (offers and fds are brokered directly between the
-// two client connections, not routed through this compositor's own
-// storage) -- enough for `_gdk_wayland_display_open()` to stop refusing
-// GTK4 clients, and for real inter-app copy/paste to function.
-//
-// This is NOT yet gated by S07's capability grants: any two clients that
-// can both reach this compositor can already copy/paste between each
-// other today, the same as an unmodified desktop compositor. `saai-appd`'s
-// sandbox has no way to see or intercept this at all -- it is Wayland
-// protocol traffic between two already-launched client processes, entirely
-// outside the mount/seccomp boundary. Acceptable for now only because the
-// only Wayland clients that exist are `saai-shell` and the trusted demo
-// apps (same scope note as S05's "only trusted applications" and S07's
-// sandbox-probe suite) -- this must not be read as "clipboard capability
-// enforcement is done". Gating this against `Capability::ClipboardRead`/
-// `ClipboardWrite` is explicit, tracked follow-up work, not implied by
-// this Change.
-//
-// ADR-023 (S08 Change 5 attempt): that follow-up turned out not to be
-// implementable against this smithay version's public API at all.
-// `new_selection()` below is a pure FYI notification -- device.rs calls
-// it, then unconditionally applies the selection regardless of what this
-// method does, there is no way to veto a write. Reading
-// (`wl_data_offer.receive`) is handled by an internal `ObjectData` bound
-// directly to the offer object at creation time, entirely bypassing the
-// `Dispatch`/handler-trait path this file uses everywhere else -- no
-// hook exists to intercept or deny it either. Closing this gap for real
-// needs a hand-rolled data-device implementation or a patched smithay,
-// neither attempted here; see ADR-023 for the full finding and reasoning.
-impl ClientDndGrabHandler for State {}
-impl ServerDndGrabHandler for State {}
-impl SelectionHandler for State {
-    type SelectionUserData = ();
-}
-impl DataDeviceHandler for State {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
+// ADR-294: native Wayland clipboard is deny-by-default. The global still
+// exists so GTK4 can open a display (ADR-021). Smithay's data-device
+// path is not used — it cannot refuse SetSelection or Receive (ADR-023).
+delegate_saai_data_device!(State);
+
+// ADR-267 (APP-03): text-input-v3 + input-method-v2 without keymap.
+// ADR-319: also text-input-v2 so Qt 5/6 can enable IME.
+// Focus is still driven from `activate_toplevel()`.
+delegate_saai_text_ime!(State);
+
+// ADR-266 (APP-02): send preferred_scale=1.0 as soon as a client binds
+// wp_fractional_scale_v1 on a surface. Output is already Scale::Integer(1);
+// this is the client-facing event GDK actually waits for.
+impl FractionalScaleHandler for State {
+    fn new_fractional_scale(&mut self, surface: WlSurface) {
+        with_states(&surface, |states| {
+            with_fractional_scale(states, |fractional_scale| {
+                fractional_scale.set_preferred_scale(PREFERRED_FRACTIONAL_SCALE);
+            });
+        });
     }
 }
-delegate_data_device!(State);
-
-// ADR-022 (S08 Change 3): no custom handler trait needed -- smithay's own
-// GetTextInput/text-input-object request handling covers the full
-// zwp_text_input_v3 surface (enable/disable/commit/set_surrounding_text/
-// content type/cursor rectangle) without any hook back into this State.
-// Focus tracking is driven from `activate_toplevel()`, the same place
-// `set_data_device_focus` is called from.
-delegate_text_input_manager!(State);
+delegate_fractional_scale!(State);
+delegate_viewporter!(State);
 
 impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -1145,17 +1245,24 @@ impl XdgShellHandler for State {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        println!("saai-displayd: new xdg_toplevel");
-        // Was hardcoded to 800x480 (an S02 headless-test leftover, from
-        // before the real panther panel size was known) regardless of
-        // what the client actually asked for -- real bug, confirmed on
-        // hardware: saai-shell's own fullscreen request was silently
-        // overridden by this every single time, so every visual test
-        // this sprint ran against an 800x480 toplevel, not the real
-        // 1080x2400 panel.
-        let (width, height) = (self.output_width, self.output_height);
+        let geo = toplevel_geometry_for(
+            cfg!(feature = "panther-hardware"),
+            self.output_width,
+            self.output_height,
+        );
+        println!(
+            "saai-displayd: new xdg_toplevel {}x{} fullscreen={}",
+            geo.width, geo.height, geo.fullscreen
+        );
+        // Panther stays the phone panel. x86 is a window inside the host
+        // output, not a second panther (ADR-250).
+        // ADR-311: smithay serializes missing bounds as configure_bounds(0,0).
+        // GTK 4.14 then gdk_toplevel_size_init(0,0) and asks for a garbage
+        // shm height (ADR-310: 2337935) even after preferred_scale=120.
         surface.with_pending_state(|state| {
-            state.size = Some((width, height).into());
+            let size = (geo.width, geo.height).into();
+            state.size = Some(size);
+            state.bounds = Some(size);
         });
         surface.send_configure();
         self.toplevels.insert(surface.wl_surface().clone(), surface);
@@ -1242,16 +1349,15 @@ impl WlrLayerShellHandler for State {
         _layer: smithay::wayland::shell::wlr_layer::Layer,
         namespace: String,
     ) {
-        // Minimal vertical slice (S04 Change 4, second half of ADR-015):
-        // prove the protocol renders end to end, same standard as the
-        // session-lock slice above. No real status-bar content yet and
-        // no per-client anchor/size negotiation -- every layer surface
-        // gets a fixed top strip, panel width x a fixed height, exactly
-        // like `new_surface` above always overrides with the real panel
-        // size rather than trusting client hints.
+        // ADR-271: honor the client's size. 0 on an axis means the
+        // output size (status bar width, OSK width). Do not force 120px
+        // top for every layer — APP-04's keyboard is a bottom strip.
         println!("saai-displayd: new layer surface, namespace={namespace:?}");
-        let width = self.output_width;
-        let height = 120;
+        let output_w = self.output_width;
+        let output_h = self.output_height;
+        let (requested_w, requested_h, _, _, _, _) = Self::layer_client_size_anchor(&surface, true);
+        let (width, height) =
+            layer_geom::configure_size(output_w, output_h, requested_w, requested_h);
         surface.with_pending_state(|state| {
             state.size = Some((width, height).into());
         });
@@ -1303,14 +1409,19 @@ fn main() {
         ],
     );
     let xdg_shell_state = XdgShellState::new::<State>(&dh);
-    let data_device_state = DataDeviceState::new::<State>(&dh);
-    let text_input_manager_state = TextInputManagerState::new::<State>(&dh);
+    let data_device_manager = data_device::SaaiDataDeviceManager::new::<State>(&dh);
+    let text_input_manager_state = text_ime::SaaiTextInputManager::new::<State>(&dh);
+    let input_method_manager_state = text_ime::SaaiInputMethodManager::new::<State>(&dh);
+    let fractional_scale_manager_state = FractionalScaleManagerState::new::<State>(&dh);
+    let viewporter_state = ViewporterState::new::<State>(&dh);
     let mut seat_state = SeatState::<State>::new();
     let mut seat = seat_state.new_wl_seat(&dh, "seat0");
     #[cfg(not(feature = "panther-hardware"))]
     let keyboard = seat
         .add_keyboard(XkbConfig::default(), 200, 25)
         .expect("failed to add keyboard capability");
+    #[cfg(not(feature = "panther-hardware"))]
+    let pointer = seat.add_pointer();
     #[cfg(feature = "panther-hardware")]
     let touch = seat.add_touch();
 
@@ -1395,7 +1506,7 @@ fn main() {
             size: (0, 0).into(),
             subpixel: Subpixel::Unknown,
             make: "SaaiOS".into(),
-            model: "panther".into(),
+            model: output_model_for(cfg!(feature = "panther-hardware")).into(),
         },
     );
     wl_output.create_global::<State>(&dh);
@@ -1449,32 +1560,12 @@ fn main() {
                             };
                             let serial = SERIAL_COUNTER.next_serial();
                             let time = 0;
-                            // Computed once as an owned value (not a
-                            // closure over `state`): `touch.down(state, ...)`
-                            // needs `state` by mutable reference, which
-                            // would conflict with a closure still borrowing
-                            // it for this same call's other argument.
-                            //
-                            // ADR-015's security invariant enforced here, not
-                            // just in the session_lock protocol handlers:
-                            // while locked, touch goes to the lock surface
-                            // (or nowhere, if the client hasn't created one
-                            // yet) and never falls through to
-                            // `focused_surface` -- a locked screen must not
-                            // pass input to the app underneath.
-                            let focus = if state.locked {
-                                state
-                                    .lock_surface
-                                    .as_ref()
-                                    .map(|ls| (ls.wl_surface().clone(), Point::from((0.0, 0.0))))
-                            } else {
-                                state
-                                    .focused_surface
-                                    .clone()
-                                    .map(|s| (s, Point::from((0.0, 0.0))))
-                            };
+                            // ADR-015: while locked, touch goes to the lock
+                            // surface. Unlocked, ADR-271: topmost layer under
+                            // the contact, else focused_surface.
                             match update {
                                 touch::TouchUpdate::Down { x, y } => {
+                                    let focus = state.touch_focus_at(x as f64, y as f64);
                                     println!(
                                         "saai-displayd: touch down at ({x}, {y}), routed to: {:?} (locked={})",
                                         focus.as_ref().map(|(s, _)| s.id()),
@@ -1495,6 +1586,7 @@ fn main() {
                                     touch.frame(state);
                                 }
                                 touch::TouchUpdate::Motion { x, y } => {
+                                    let focus = state.touch_focus_at(x as f64, y as f64);
                                     let location = Point::from((x as f64, y as f64));
                                     touch.motion(
                                         state,
@@ -1543,11 +1635,15 @@ fn main() {
         xdg_shell_state,
         seat_state,
         seat,
-        data_device_state,
-        dh: dh.clone(),
+        _data_device_manager: data_device_manager,
         _text_input_manager_state: text_input_manager_state,
+        _input_method_manager_state: input_method_manager_state,
+        _fractional_scale_manager_state: fractional_scale_manager_state,
+        _viewporter_state: viewporter_state,
         #[cfg(not(feature = "panther-hardware"))]
         keyboard: keyboard.clone(),
+        #[cfg(not(feature = "panther-hardware"))]
+        pointer: pointer.clone(),
         focused_surface: None,
         focus_history: Vec::new(),
         toplevels: HashMap::new(),
@@ -1756,6 +1852,30 @@ fn main() {
         }
     }
 
+    #[cfg(not(feature = "panther-hardware"))]
+    {
+        let _ = &state.pointer;
+        let profile = hid::seat_input_profile(false);
+        println!(
+            "saai-displayd: x86 seat pointer={} keyboard={} touch={}",
+            profile.pointer, profile.keyboard, profile.touch
+        );
+        if let Ok(text) = std::fs::read_to_string("/proc/bus/input/devices") {
+            for device in hid::usb_hid_keyboards(&text) {
+                println!(
+                    "saai-displayd: usb hid keyboard {} ({})",
+                    device.name, device.event_node
+                );
+            }
+            for device in hid::usb_hid_pointers(&text) {
+                println!(
+                    "saai-displayd: usb hid pointer {} ({})",
+                    device.name, device.event_node
+                );
+            }
+        }
+    }
+
     println!("saai-displayd: listening on WAYLAND_DISPLAY={socket_name}");
     event_loop
         .run(None, &mut state, move |_| {
@@ -1796,5 +1916,53 @@ mod supervision_tests {
         let start = Instant::now();
         assert_eq!(budget.record_failure(start), 1);
         assert_eq!(budget.record_failure(start + SHELL_RESTART_WINDOW), 1);
+    }
+}
+
+#[cfg(test)]
+mod windowed_surface_tests {
+    use super::{
+        output_model_for, toplevel_geometry_for, ToplevelGeometry, WINDOWED_HEIGHT, WINDOWED_WIDTH,
+    };
+
+    #[test]
+    fn x86_toplevel_is_windowed_not_fullscreen() {
+        let geo = toplevel_geometry_for(false, 1920, 1080);
+        assert_eq!(
+            geo,
+            ToplevelGeometry {
+                width: WINDOWED_WIDTH,
+                height: WINDOWED_HEIGHT,
+                fullscreen: false,
+            }
+        );
+        assert!(geo.width < 1920);
+        assert!(geo.height < 1080);
+        assert_eq!(output_model_for(false), "x86");
+        assert_ne!(output_model_for(false), "panther");
+    }
+
+    #[test]
+    fn panther_toplevel_stays_panel_fullscreen() {
+        let geo = toplevel_geometry_for(true, 1080, 2400);
+        assert_eq!(
+            geo,
+            ToplevelGeometry {
+                width: 1080,
+                height: 2400,
+                fullscreen: true,
+            }
+        );
+        assert_eq!(output_model_for(true), "panther");
+    }
+
+    #[test]
+    fn bounds_are_the_toplevel_geometry_never_zero() {
+        for (phone, out_w, out_h) in [(false, 1920, 1080), (true, 1080, 2400)] {
+            let geo = toplevel_geometry_for(phone, out_w, out_h);
+            assert!(geo.width > 0);
+            assert!(geo.height > 0);
+            assert_ne!((geo.width, geo.height), (0, 0));
+        }
     }
 }

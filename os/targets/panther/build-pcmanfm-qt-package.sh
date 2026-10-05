@@ -93,6 +93,10 @@ cp -a "$alpine_sysroot/usr/share/X11/xkb" "$package_dir/share/X11/xkb"
 # platform/imageformat/sqldriver machinery, already exercised by
 # ADR-026's Kirigami package for the platforms/ subset.
 rm -f "$package_dir/plugins/platformthemes/libqgtk3.so"
+rm -f "$package_dir/plugins/platforminputcontexts/libibusplatforminputcontextplugin.so"
+rm -f "$package_dir/plugins/platforms/libqwayland-egl.so" \
+    "$package_dir/plugins/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so" \
+    "$package_dir/plugins/wayland-graphics-integration-client/libdrm-egl-server.so"
 
 if find "$package_dir/plugins" "$package_dir/share" -type l | grep -q .; then
     printf '%s\n' "package contains symlinks under plugins/share -- dereference them" >&2
@@ -106,6 +110,8 @@ export ZIG="$zig"
 "$zig" cc -target aarch64-linux-musl -static -O2 \
     -o "$package_dir/bin/launch" "$repo_root/apps/pcmanfm-demo/launch.c"
 
+mkdir -p "$package_dir/etc/fonts"
+cp "$repo_root/apps/pcmanfm-demo/fonts.conf" "$package_dir/etc/fonts/fonts.conf"
 cp "$repo_root/apps/pcmanfm-demo/manifest.toml" "$package_dir/manifest.toml"
 chmod 0755 "$package_dir/bin/launch" "$package_dir/bin/pcmanfm-qt"
 

@@ -80,6 +80,12 @@ pub fn apply(
         flags |= CloneFlags::CLONE_NEWNET;
     }
     unshare(flags).map_err(nix_to_io)?;
+    if !net_internet {
+        // Empty NEWNET has `lo` down and unaddressed. Chromium's network
+        // service (QtWebEngine) then fails even `file://` / `data:` with
+        // "Failed loading page". Loopback is not NetInternet.
+        bring_up_loopback()?;
+    }
 
     // Detach this process's mount tree from the host's before touching
     // anything else -- without this, mount namespaces created by
@@ -147,9 +153,14 @@ pub fn apply(
         reveal_file(&dbus_pin, &paths.dbus_socket)?;
     }
 
-    for path in ["/metadata", "/proc", "/sys", "/saaios"] {
+    for path in ["/metadata", "/sys", "/saaios"] {
         mask_if_present(Path::new(path))?;
     }
+    // Chromium/QtWebEngine renderers need a real procfs (maps, pid,
+    // inotify). Masking /proc with 64k tmpfs made them ProcessGone.
+    // Without CLONE_NEWPID this is still the host pid view — the same
+    // ADR-020 gap seccomp already covers.
+    mount_proc()?;
     if reveal_fonts {
         reveal_directory(&fonts_pin, Path::new("/saaios/fonts"), true)?;
     }
@@ -165,7 +176,9 @@ pub fn apply(
     mask_device_tree(&scratch_root)?;
 
     let _ = fs::remove_dir_all(&scratch_root);
-    mask_tmpfs(Path::new("/tmp"), "mode=1777,size=16m", true)?;
+    // Chromium discardable shared memory refuses to start under 64MB
+    // free in the temp dir (ADR-315). 16m/8m was enough for Kirigami.
+    mask_tmpfs(Path::new("/tmp"), "mode=1777,size=128m", true)?;
 
     make_root_read_only()?;
     drop_all_capabilities()?;
@@ -173,6 +186,51 @@ pub fn apply(
     install_seccomp_filter()?;
 
     Ok(())
+}
+
+fn bring_up_loopback() -> io::Result<()> {
+    unsafe {
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let result = (|| {
+            let mut ifr: libc::ifreq = std::mem::zeroed();
+            let name = b"lo";
+            for (i, b) in name.iter().enumerate() {
+                ifr.ifr_name[i] = *b as libc::c_char;
+            }
+
+            let mut sin: libc::sockaddr_in = std::mem::zeroed();
+            sin.sin_family = libc::AF_INET as libc::sa_family_t;
+            sin.sin_addr = libc::in_addr {
+                s_addr: u32::to_be(libc::INADDR_LOOPBACK),
+            };
+            ifr.ifr_ifru.ifru_addr = std::mem::transmute_copy(&sin);
+            if libc::ioctl(fd, libc::SIOCSIFADDR as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            sin.sin_addr = libc::in_addr {
+                s_addr: u32::to_be(0xff00_0000),
+            };
+            ifr.ifr_ifru.ifru_netmask = std::mem::transmute_copy(&sin);
+            if libc::ioctl(fd, libc::SIOCSIFNETMASK as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            if libc::ioctl(fd, libc::SIOCGIFFLAGS as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            ifr.ifr_ifru.ifru_flags |= (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
+            if libc::ioctl(fd, libc::SIOCSIFFLAGS as libc::Ioctl, &mut ifr) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        })();
+        libc::close(fd);
+        result
+    }
 }
 
 fn pin_directory(source: &Path, scratch: &Path) -> io::Result<()> {
@@ -291,7 +349,18 @@ fn mask_device_tree(scratch_root: &Path) -> io::Result<()> {
         )?;
     }
     fs::create_dir("/dev/shm")?;
-    mask_tmpfs(Path::new("/dev/shm"), "mode=1777,size=8m", false)
+    mask_tmpfs(Path::new("/dev/shm"), "mode=1777,size=128m", false)
+}
+
+fn mount_proc() -> io::Result<()> {
+    mount(
+        Some("proc"),
+        "/proc",
+        Some("proc"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
+        None::<&str>,
+    )
+    .map_err(nix_to_io)
 }
 
 fn make_root_read_only() -> io::Result<()> {

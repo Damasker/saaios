@@ -55,12 +55,15 @@ pub const DELETE_ENTITY_ACTION_KIND: &str = "delete_entity";
 /// `WaitingConfirmation` is decided purely by whether the runtime's
 /// response carries `pending` -- see `lib.rs`'s `process_planner_intent`.
 pub const RUNTIME_ACTION_KIND: &str = "saaios_runtime_tool";
+/// IRAB-resolved semantic action. Not a raw runtime tool proposal.
+pub const SEMANTIC_ACTION_KIND: &str = "saaios_semantic_action";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowStatus {
     Pending,
     Running,
     WaitingConfirmation,
+    WaitingClarification,
     Done,
     Failed,
     Cancelled,
@@ -72,6 +75,7 @@ impl WorkflowStatus {
             Self::Pending => "pending",
             Self::Running => "running",
             Self::WaitingConfirmation => "waiting_confirmation",
+            Self::WaitingClarification => "waiting_clarification",
             Self::Done => "done",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -83,6 +87,7 @@ impl WorkflowStatus {
             "pending" => Some(Self::Pending),
             "running" => Some(Self::Running),
             "waiting_confirmation" => Some(Self::WaitingConfirmation),
+            "waiting_clarification" => Some(Self::WaitingClarification),
             "done" => Some(Self::Done),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
@@ -124,10 +129,15 @@ pub fn valid_transition(from: WorkflowStatus, to: WorkflowStatus) -> bool {
             | (Running, Done)
             | (Running, Failed)
             | (Pending, WaitingConfirmation)
+            | (Pending, WaitingClarification)
             | (Pending, Failed)
             | (WaitingConfirmation, Running)
             | (WaitingConfirmation, Cancelled)
             | (WaitingConfirmation, Failed)
+            | (WaitingClarification, Pending)
+            | (WaitingClarification, Running)
+            | (WaitingClarification, Cancelled)
+            | (WaitingClarification, Failed)
     )
 }
 
@@ -373,6 +383,7 @@ mod tests {
             WorkflowStatus::Pending,
             WorkflowStatus::Running,
             WorkflowStatus::WaitingConfirmation,
+            WorkflowStatus::WaitingClarification,
             WorkflowStatus::Done,
             WorkflowStatus::Failed,
             WorkflowStatus::Cancelled,
@@ -408,6 +419,18 @@ mod tests {
         use WorkflowStatus::*;
         assert!(valid_transition(Pending, Failed));
         assert!(valid_transition(WaitingConfirmation, Failed));
+    }
+
+    #[test]
+    fn clarification_is_distinct_from_confirmation() {
+        use WorkflowStatus::*;
+        assert!(valid_transition(Pending, WaitingClarification));
+        assert!(valid_transition(WaitingClarification, Pending));
+        assert!(valid_transition(WaitingClarification, Cancelled));
+        assert!(valid_transition(WaitingClarification, Failed));
+        assert!(!valid_transition(WaitingClarification, Done));
+        assert!(!valid_transition(WaitingConfirmation, WaitingClarification));
+        assert!(!valid_transition(WaitingClarification, WaitingConfirmation));
     }
 
     #[test]

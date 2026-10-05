@@ -64,6 +64,17 @@ Object View (HIA-07) выигрывает от реального Space Graph (H
   дольше суток без активности" и негативный сценарий с `archived` и
   Intent/Task pipeline -- НЕ реализованы и не проверялись, остаются
   открытыми, если/когда к HIA-01 вернутся ещё раз).
+- **SOM (ADR-118)**: canonical future для entity↔space many-to-many —
+  `saaios.in-space` Relationship, не `Entity.space_id`. Legacy
+  `saaios.space-relation` читается как раньше. Экран «Пространства»
+  показывает union physical `list_entities` + semantic members
+  (`list_space_members`); карточка не переезжает между разделами.
+- **OAM (ADR-119)**: semantic verbs over SOM objects — `ObjectActionSpec`
+  binds to existing `ToolSpec`/`PolicyEngine`/`saaios.action`. Не
+  переиспользует слово capability. Первый crate без Object View.
+- **IRAB (ADR-120)**: Intent фиксирует focused `ObjectRef` в момент
+  submit. Orb не владеет NLU. Детерминированный resolver обходит
+  модель для explicit/pronoun inspect; `diagnose` — fallback.
 - **Goal**: пространства образуют граф (parent_of/related_to/
   contains/usually_with/exclusive_with), не плоский список; у
   каждого пространства есть lifecycle (temporary/emerging/stable/

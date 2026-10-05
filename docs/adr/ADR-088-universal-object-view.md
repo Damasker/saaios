@@ -113,6 +113,16 @@ Device: подтверждено вживую без пересборки обр
   confirm_action_at` остались, RemotePairing их по-прежнему
   использует напрямую.
 
+## Evolution
+
+Universal Object View получает related objects из SOM (ADR-118).
+До миграции fallback на `intent_id` и уже загруженный список сущностей
+остаётся. Незнакомый `entity_type` по-прежнему честный: title + status,
+related только если SOM (или legacy) реально нашёл связанный объект,
+иначе пустая related-строка, не выдуманная. Действия Object View в
+следующем срезе читаются из OAM (ADR-119); hardcoded
+Подтвердить/Отклонить/Скрыть пока остаются parallel path.
+
 ## Ссылки
 
 - `services/saai-shell/src/main.rs` -- `object_view()`,

@@ -7,6 +7,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+chrono.workspace = true
 saai-entity-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true

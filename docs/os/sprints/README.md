@@ -17,19 +17,187 @@ S00–S32 закрыли базовый трек — рабочий телефо
 ограничениями; голос заблокирован аппаратной авторизацией AoC, а PCE ждёт
 второго физического runtime-узла.
 
-Текущее направление — [Visual Language v1](../architecture/visual-language-v1.md)
-и собственная библиотека графических компонентов. Исполнение разбито в
-[Visual System delivery roadmap](VISUAL-ROADMAP.md): VUI-00 (аудит и контракт)
-и VUI-01 (семантическая, физически проверенная палитра) закрыты;
-**VUI-02 выполняется**. Этот трек не переоткрывает выполненные
-функции S00–S32: он последовательно переносит их на единую визуальную систему,
-сохраняя работающие Wayland/DRM/GPU, touch и rollback-пути.
+Текущее направление на устройство — один путь
+[PIXEL-PATH.md](PIXEL-PATH.md), не восемь параллельных `*-10` weekend'ов.
 
-Отдельно, третьим независимым треком (тоже не смешан с основной
-таблицей, свой Definition of Ready проход): запуск готовых сторонних
-Linux ARM64 и, в перспективе, Android-приложений на этом же устройстве
-без Android как основной ОС —
-[APP-COMPAT-ROADMAP.md](APP-COMPAT-ROADMAP.md).
+**Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
+([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;
+VUI-04 remainder и VUI-06 на panther; **VUI-07 закрыт** на panther
+(`693e77c7…`; Space detail deferred, MEM-08 omitted). **VUI-08 закрыт**
+на panther (`37a8014d…`; ADR-167–179):
+ADR-167 MotionClock + keyboard micro hold on panther.
+ADR-168 tab Selection hold on panther.
+ADR-169 compose Field Focus on panther.
+ADR-170 Orb ActivityPulse on panther.
+ADR-171 haptic policy on panther.
+ADR-172 FramePace commit log on panther.
+ADR-173 50 ms scroll p95 on panther.
+ADR-174 reduced motion is immediate on panther.
+ADR-175 FramePace surface traces on panther.
+ADR-176 first visible down commit on panther.
+ADR-177 idle main-surface seq on panther.
+ADR-178 dma-buf / wl_shm backend tag on panther.
+ADR-179 haptic acceptance closeout on panther.
+ADR-180 `.sui` v2 vocabulary (host; v1 root chrome unchanged).
+ADR-181 `.sui` v2 grammar (host; `compile()` stays v1).
+ADR-182 `.sui` v2 component properties (host; `root.sui` unchanged).
+ADR-183 `.sui` v1 rollback artifact (`compile()` on `root.sui`).
+ADR-184 shared v1 layout/hit-test (`layout_v1_root()`, not `compile_v2()`).
+ADR-185 public `.sui` v2 subset (`compile_v2_public()`, privileged gated).
+ADR-186 public API docs, NOW example, and stability labels.
+ADR-187 close production color literals and leftover NOW chrome.
+ADR-188 name leftover `draw_text` sizes (`role_px`).
+ADR-189 VUI-09 verification ledger (not Visual v1 sign-off).
+ADR-190 increased text 150% on panther HEAD, then restored 100%.
+ADR-191 live radio-off on panther HEAD (`wlan0` down → `Нет сети`, then up).
+ADR-192 unlocked shell restart on panther HEAD (same `e8865301…`).
+ADR-193 VUI-09 known limitations and Visual v2 backlog (not Visual v1 sign-off).
+ADR-194 `layout_v2` public NOW tab hits match v1 (host; `compile()` stays v1).
+ADR-195 `EdgeInsets::from_safe` converts logical SafeInsets (host; top stays a layer).
+ADR-196 nested `tab` ids on `BottomNavigation`; `layout_v2` does not borrow v1 (host).
+ADR-197 ActionCard/tab labels use `Label`/`Caption`, not Title (paint; flashes).
+ADR-198 status time/battery `Label`, keys `Caption` (paint; flashes).
+ADR-199 nested `row` footer ids; `layout_v2` matches `now_footer_action_rect` (host).
+ADR-200 `ObjectSummary` docks as the NOW object hit (`open_object`, host).
+ADR-201 leftover text sizes stay below Caption; apps grid on panther, no launch.
+ADR-202 `EventRow` docks as Inbox stacked hits (`open_object`, host).
+ADR-203 `SpaceRow` docks as Spaces stacked hits (`select_space:<loc>`, host).
+ADR-204 `SettingRow` docks as Me stacked hits (interned `cycle_timezone`, host).
+ADR-205 `WifiRow` docks as Wi-Fi list stacked hits (`connect_wifi`, host).
+ADR-206 `BluetoothRow` docks as Bluetooth list stacked hits (`pair_bluetooth`, host).
+ADR-207 `TrustedClientRow` docks as trusted-client stacked hits (`revoke_trusted_client`, privileged host).
+ADR-208 `CapabilityRow` docks as Me app stacked hits (no action, privileged host).
+ADR-209 lock / unlock cycle on panther HEAD (no-PIN tap-unlock; marker restored).
+ADR-210 display restart on panther HEAD (`saai-displayd` kill; native-init respawn).
+ADR-211 cold boot on panther HEAD (`reboot -f`; marker dropped then restored).
+ADR-212 7-tap gallery on panther HEAD (Диагностика then Назад).
+ADR-213 thin-tuning sprint parked last (not next Visual work).
+ADR-214 list trailing rows in `layout_v2` (`list_refresh`/`list_scan`/`list_back`, host).
+ADR-215 Me flatten/scroll in `layout_v2` (`flatten_me_rows` / `scrolled_row_rect`, host).
+ADR-216 production `compile_v2()` / `layout_v2` `root_view`.
+ADR-217 NOW content hits from compiled `now.sui`.
+ADR-218 Inbox/Spaces/list hits from generated `compile_v2()`.
+ADR-219 Me scroll hits from `layout_v2_scrolled`.
+ADR-220 apps grid hits from generated `compile_v2()` `Button` tiles.
+ADR-221 overlay Field/decision hits from `layout_v2`.
+ADR-222 privileged `Keyboard` IME bound to Field; USB HID may replace the panel.
+ADR-223 OrbHost hits from `layout_v2`; gallery page taps stay a whole-surface formula.
+ADR-224 diagnostic Назад hits from `layout_v2` `DataRow` + `row back`.
+ADR-225 NOW chrome paint from the same `now_view()` tree as hits.
+ADR-226 Inbox/Spaces/list paint from generated `layout_v2` trees.
+ADR-227 Me scroll paint from the same `layout_v2_scrolled` tree as hits.
+ADR-228 apps grid paint from generated `layout_v2` `Button` tiles.
+ADR-229 overlay Field/decision paint from generated `layout_v2`.
+ADR-230 OrbHost paint from the same generated `layout_v2` tree as hits.
+ADR-231 diagnostic paint from the same generated `layout_v2_scrolled` tree as hits.
+ADR-232 leftover formulas: Keyboard keys, gallery page, lock idle/wake.
+ADR-233 panther `saai-taskd` supervises live intents from `/data`.
+ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
+ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
+ADR-236 diagnose timeout is Failed + retryable, not Pending.
+ADR-237 WORK-02 live dispatch (derived ready, concurrency=1).
+ADR-238 IRAB Plan persists a validated DAG, not diagnose.
+ADR-239 Intent Object View shows plan → progress from related Tasks.
+ADR-240 Primary nav is Сейчас · Пространства · Поиск · Система.
+ADR-241 Сейчас leads with attention, current work, next.
+ADR-242 Object View shows existing facts, links, OAM.
+ADR-243 Space detail lists SOM members, not invented people.
+ADR-244 Orb states follow workflow, not voice.
+ADR-245 ObservationCache lives in runtime, not a daemon.
+ADR-246 runtime status lists only Fresh Observations.
+ADR-247 Система paints only live Observations.
+ADR-248 product analytics of screens stays off.
+ADR-249 PCE-25 laptop identity is x86/computer, never panther.
+ADR-250 x86 displayd configures a window, not a panther panel.
+ADR-251 x86 displayd seat is pointer+USB HID keyboard, not touch.
+ADR-252 x86 shell uses 1280×800 logical layout, panther stays 1080×2400.
+ADR-253 panther volume writes tinymix Digital PCM Volume.
+ADR-254 power button drives lock/sleep from `/dev/input/power-button`.
+ADR-255 cellular row names a live net bearer or «Нет модема».
+ADR-256 camera row names a capture node or «Нет узла захвата».
+ADR-257 playback row names tinyplay + test-tone, does not play.
+ADR-258 Bluetooth adapter presence is hci0, not bt-scan.
+ADR-259 WORK-03: Task Done only from Fresh matching Observation.
+ADR-260 PolicyEngine adapter keeps the same Allow/AskUser/Deny verdicts.
+ADR-261 session grants are scoped records, not a tool-name HashSet.
+ADR-262 MemoryRecord v2; legacy JSONL is a view; provenance is assigned.
+ADR-264 shell-legal memory read is status `memory_records`, not JSONL.
+ADR-265 Visual v1 stays unsigned; `compile_v2_public` stays Experimental.
+ADR-266 `saai-displayd` advertises `wp-fractional-scale-v1` and `wp-viewporter` (host).
+ADR-267 `saai-displayd` implements `input-method-v2` without a keyboard (host).
+ADR-268 Sistema `Записи` are Global `memory_records` from status (host).
+ADR-269 first browser candidate is Falkon on QtWebEngine (host; no launch).
+ADR-270 OSK is Keyboard keystrokes through IME `commit_string` (host; no wvkbd).
+ADR-271 layer-shell keeps the client's height; touch hits the topmost layer (host).
+ADR-272 layer blit is clipped to the client's destination, not always (0, 0) (host).
+ADR-273 foreign OSK is a bottom Keyboard layer shown on IME activate (host).
+ADR-274 Verifying Tasks settle from Fresh runtime `status` observations (host).
+ADR-275 OAM/IRAB pass Principal on AuthorityRequest (host).
+ADR-276 worker DelegationEnvelope is bound and OneShot (host).
+ADR-282 taskd confirm sends execution_id; runtime issues the worker envelope (host).
+ADR-283 memory remember/forget go through PolicyEngine (host).
+ADR-284 runtime JSON `memory_erase` rewrites one identity off disk (host).
+ADR-285 MemoryContextProjection labels kind; Restricted stays off the model (host).
+ADR-286 GDK shm size from preferred_scale=120 is identity, not height 1776831 (host).
+ADR-287 CPU sampler Health: Fresh→Healthy, Stale→Unknown, no percent threshold (host).
+ADR-288 FailureClass: timeout/unreachable retryable; mismatch is not retry (host).
+ADR-289 one Planner ReplanRequest after verification mismatch, cap 1 (host).
+ADR-290 ObservationThreshold on schedules: Fresh >= gte; Stale not due (host).
+ADR-291 Health Attention: Unhealthy lights Orb; Healthy/Unknown omitted (host).
+ADR-292 runtime status includes one Health report, not a CPU graph (host).
+ADR-293 shell Attention reads status.health; Sistema stays Observation-only (host).
+ADR-294 native Wayland clipboard is deny-by-default; portal stays the grant path (host).
+ADR-295 shell shows Verifying as in-progress, not worker Result as Done (host).
+ADR-296 Failed status names timeout vs mismatch; no Retry button (host).
+ADR-297 Intent names a bounded replan from `replan_count` (host).
+ADR-298 Sistema names the node phone/panther vs computer/x86 (host).
+ADR-299 Sistema «Узел» reads live `status.device`, not USB NCM (host).
+ADR-300 Sistema «Это устройство» prefers live `hardware_model` (host).
+ADR-301 Result is not Complete while the Task is Running/Verifying (host).
+ADR-302 Orb Complete requires the Result's Task to be Done (host).
+ADR-303 Orb Failed is the Task's class, not Result.error (host).
+ADR-304 Sistema «Записи» omits Restricted even if status leaks it (host).
+ADR-305 host GTK4 commits a shm frame on displayd; panther GTK4 4.14.4 still has no frame (ADR-310).
+ADR-306 packed Falkon commits a shm hello-frame on host displayd; panther appd is ADR-312.
+ADR-307 laptop is a USB client of the panther Space/Entity/Intent/Observation store (panther `c15c551d…` pid 6568).
+ADR-308 panther shell carries host F chrome (`4dc19018…` pid 6710; leave Сейчас).
+ADR-309 panther displayd advertises fractional-scale + IME v2 (`02c78f9f…` pid 6886).
+ADR-310 Alpine gtk4-demo gets `preferred_scale=120` then still asks for height 2337935; no frame.
+ADR-311 host `configure_bounds` is the window geometry, not smithay `(0,0)`; no displayd flash.
+ADR-312 Falkon installs and launches on panther via appd; software shm hello-frame; no browse.
+ADR-313 empty NEWNET brings up loopback (`e9b3c57c…`); Falkon file:// still white shm.
+ADR-314 pack mesa swrast/llvmpipe into Falkon; WebEngine still white, renderers die.
+ADR-315 sandbox procfs + 128MiB tmp/shm (`2503f4f5…`); renderer still ProcessGone SIGTRAP.
+ADR-316 Falkon fonts.conf → /saaios/fonts; panther paints file:// hello.html (renderer lives).
+ADR-317 WebEngine file:// field does not Activate IME; saai-shell-osk never mapped.
+ADR-318 PCManFM-Qt Filter QLineEdit on panther; tap does not Activate OSK.
+ADR-319 displayd advertises zwp_text_input_manager_v2 for Qt (host; no flash).
+ADR-277 Automation is not the local user (host).
+ADR-278 portal capabilities go through PolicyEngine; GrantStore stays (host).
+ADR-279 revoke drops GrantStore coverage and live session/envelope grants (host).
+ADR-280 Confirm Once is a OneShot grant, not AskUser fallthrough (host).
+ADR-281 Falkon package packs QtWebEngineProcess, pak/v8, system ICU (host).
+VUI-02 остаётся почти закрытым (шрифты в boot-image — единственный
+blocked item). Этот трек не переоткрывает S00–S32.
+
+**Service queue (параллельно shell):** прошивка `saaios-runtime` /
+`saai-taskd` не считается вторым DRM-экспериментом. P0 — MEM-01
+same-key Home/Work на уже существующем runtime. Attention, Task
+visibility и Memory review едут **внутри VUI-05/06**, не отдельными
+phone sprints.
+
+Архитектурные ADR остаются справочниками:
+
+- [WORK-ROADMAP.md](WORK-ROADMAP.md) / [ADR-121](../../adr/ADR-121-work-scheduler-v2.md)
+- [WORLD-ROADMAP.md](WORLD-ROADMAP.md) / [ADR-122](../../adr/ADR-122-world-model-observation-layer.md)
+- [ATTN-ROADMAP.md](ATTN-ROADMAP.md) / [ADR-123](../../adr/ADR-123-attention-projection.md)
+- [AUTH-ROADMAP.md](AUTH-ROADMAP.md) / [ADR-124](../../adr/ADR-124-unified-authority-model.md)
+- [MEM-ROADMAP.md](MEM-ROADMAP.md) / [ADR-125](../../adr/ADR-125-memory-learning-provenance-v1.md)
+
+Новых фундаментальных одноустройственных моделей не добавлять.
+
+Отдельно, не в Pixel-пути: запуск сторонних Linux ARM64 / Android-приложений —
+[APP-COMPAT-ROADMAP.md](APP-COMPAT-ROADMAP.md). Голос и PCE ждут железа.
 
 ## Текущее состояние
 
@@ -485,6 +653,10 @@ confirmation; вместо этого `space_id` явно протянут от 
 `home` факт нашёл; `memory.forget` корректно создал tombstone. Два
 независимых `saai-taskd` работали одновременно против одного
 `saaios-runtime`. Все четыре куска S10 закрыты.
+
+MLP v1 ([ADR-125](../../adr/ADR-125-memory-learning-provenance-v1.md),
+[MEM-ROADMAP.md](MEM-ROADMAP.md)) расширяет ADR-038 внутри того же
+Platform store: compact key = `(space_id, key)`. S10 не переоткрывается.
 
 **Acceptance:** модель не может обойти capability -- подтверждено, каждый
 planner-предложенный Action (включая schedule-порождённые) проходит тот же

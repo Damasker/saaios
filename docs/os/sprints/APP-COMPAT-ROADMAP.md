@@ -156,7 +156,17 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
   устранить порчу `height`/`scale` в `gdk_wayland_display_create_shm_
   surface`) в `saai-displayd`, патчить GTK4, или сознательно отказаться
   от GTK4 в пользу Qt-only на этой цели.
-- **Текущее состояние**: причина найдена (ADR-025), фикс не сделан.
+- **Текущее состояние**: compositor half done on host (ADR-266:
+  `wp-fractional-scale-v1` + `wp-viewporter`, `preferred_scale=120`).
+  Host GDK-sized shm attach ADR-286. Native clipboard is deny-by-default
+  (ADR-294) so x86 keyboard cannot open smithay's ungated path.
+  Host GTK4 4.18 glibc cairo commits a hashed shm frame (ADR-305;
+  `xdg_toplevel 1280x800`, `frame sha256=`). Panther displayd
+  `02c78f9f…` now advertises fractional-scale + viewporter (ADR-309).
+  Alpine 4.14.4 musl `gtk4-demo --run=dialog` still SIGSEGV after
+  `preferred_scale(120)` (ADR-310): `create_buffer(508, 2337935)`.
+  Remaining compositor half: smithay sent `configure_bounds(0,0)`;
+  host now sends the window size (ADR-311). No displayd flash this week.
 - **Приёмка**: либо GTK4-приложение реально рендерит кадр на железе
   тем же методом верификации, что ADR-026 использовал для Qt, либо ADR
   фиксирует осознанный отказ от GTK4 с обоснованием.
@@ -167,10 +177,11 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 - **Goal**: рабочий путь, которым любой OSK (включая будущий
   bespoke) может доставлять ТЕКСТ стороннему приложению через
   text-input-v3/input-method-v2, не касаясь `wl_keyboard`/xkbcommon.
-- **Текущее состояние**: `zwp_text_input_manager_v3` (клиентская
-  часть) есть; `zwp_input_method_manager_v2` (серверная часть)
-  сознательно не подключён из-за жёсткой зависимости smithay's
-  реализации от рабочего keymap.
+- **Текущее состояние**: compositor half on host (ADR-267:
+  `zwp_input_method_manager_v2` + owned text-input-v3, no
+  `get_keyboard()`). `commit_string` reaches an enabled field in the
+  host test. Panther displayd `02c78f9f…` advertises IME v2 (ADR-309).
+  APP-04 is the visible OSK.
 - **Приёмка**: тестовое стороннее Wayland-приложение (можно
   переиспользовать существующий demo) включает текстовое поле,
   получает `enter`, и текстовая строка, отправленная НЕ через
@@ -179,19 +190,20 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 ### APP-04: экранная клавиатура поверх APP-03
 
+- **Статус**: Host protocol Done, 2026-09-21, ADR-270. Layer geometry
+  host ADR-271. Layer blit dest host ADR-272. Shell IME layer host
+  ADR-273. Panther displayd `02c78f9f…` advertises IME v2 (ADR-309);
+  shell `4dc19018…` binds it. No Qt field was typed this slice.
 - **Goal**: тап по текстовому полю стороннего Qt-приложения показывает
   клавиатуру, ввод долетает до приложения -- APP-KEYBOARD-01 из
   исходного плана, но через путь, который реально работает на этом
   железе.
-- **Текущее состояние**: не начато, зависит от APP-03.
-- **Приёмка**: совпадает с исходной формулировкой пользователя
-  (APP-KEYBOARD-01).
-- **Открытый вопрос**: bespoke-клавиатура в духе ADR-029 (рисуется как
-  `saai-shell`'s собственная layer-shell поверхность, но теперь ШЛЁТ
-  текст через APP-03's путь вместо локальной обработки) vs
-  портирование wvkbd -- решить после APP-03, не раньше (wvkbd и
-  Squeekboard сами по себе не решают проблему keymap на стороне
-  сервера).
+- **Решение**: bespoke `Keyboard` (ADR-029/222), не wvkbd. Третьему
+  лицу текст через APP-03 `commit_string` / `delete_surrounding_text`,
+  отдельным IME-клиентом. `zwp_virtual_keyboard_v1` запрещён.
+- **Приёмка**: host `hi!` from a second client. Visible panel on
+  panther is not this slice.
+- **Открытый вопрос**: закрыт — не портируем wvkbd.
 
 ### APP-05: файловый менеджер -- PCManFM-Qt, не Nautilus, до APP-02
 
@@ -230,15 +242,17 @@ Ready (`docs/os/DEVELOPMENT_PROCESS.md`): одна цель, исходное
 
 ### APP-06: браузер -- отдельный спайк на Qt-based кандидата, затем WebKitGTK/Firefox/Chromium
 
+- **Статус**: Spike Done, 2026-09-21, ADR-269. Package tree ADR-281.
+  Host qemu shm hello-frame ADR-306 (`libpxbackend`, no wayland-egl).
+  Panther `appd` install/launch ADR-312 (chunked PUT, software
+  Chromium flags). Hello-frame is hashed shm, not a URL.
 - **Goal**: APP-BROWSER-01 из исходного плана.
-- **Изменение порядка**: прежде чем брать Epiphany/WebKitGTK
-  (заблокирован ADR-025 через GTK4) как приоритет 1, отдельным
-  коротким спайком проверить жизнеспособность Qt-based браузера под
-  ARM64/musl (например, движок на базе QtWebEngine/QtWebView, если
-  такой существует и собирается под Alpine musl для aarch64 -- это
-  открытый исследовательский вопрос, не факт). Firefox и Chromium
-  ARM64 остаются самыми тяжёлыми, наиболее рискованными по объёму
-  портирования кандидатами и не должны блокировать APP-05/APP-04.
+- **Решение**: первый кандидат — Falkon (`qt6-qtwebengine` на Alpine
+  v3.20 aarch64 musl). Angelfish тот же движок плюс Plasma QML.
+  Epiphany — GTK4, ждёт APP-02. `webkit2gtk-4.1` есть как движок, без
+  браузерного apk в v3.20. `build-falkon-package.sh` packs
+  `QtWebEngineProcess` + `.pak`/`v8` snapshot + system ICU +
+  `libpxbackend` (ADR-281/306). Panther appd hello-frame ADR-312.
 
 ## Фаза B -- Android compatibility island (низкая уверенность, требует отдельных спайков)
 
@@ -301,11 +315,11 @@ package broker → VM fallback для несовместимых приложе�
 ```text
 APP-00  musl vs glibc -- ADR-095, Done
 APP-01  Qt hello-world -- Done, переподтверждено 2026-09-17
-APP-02  GTK4 -- спайк на разблокировку или осознанный отказ
-APP-03  zwp_input_method_manager_v2 без keymap -- спайк на saai-displayd
-APP-04  экранная клавиатура поверх APP-03
+APP-02  GTK4 -- host frame ADR-305; bounds ADR-311; panther 4.14.4 still 2337935 (ADR-310)
+APP-03  zwp_input_method_manager_v2 -- panther displayd ADR-309
+APP-04  экранная клавиатура -- Keyboard→IME (ADR-270 host); IME global on panther; WebEngine field does not Activate (ADR-317); PCManFM Filter neither (ADR-318); host text-input-v2 for Qt (ADR-319; no flash)
 APP-05  PCManFM-Qt (файловый менеджер) -- ADR-098, Done
-APP-06  браузер -- Qt-спайк, затем WebKitGTK/Firefox/Chromium по факту APP-02
+APP-06  браузер -- Falkon host qemu ADR-306; panther paints file:// hello.html ADR-316 (fontconfig; no browse)
 
 ANDROID-00  разведка существующих Anbox/Waydroid-подобных подходов
 ANDROID-01  минимальный bionic+ART остров (по образцу gpu-compositor ABI firewall)

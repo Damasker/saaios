@@ -1,4 +1,9 @@
-pub use saai_entity_store::{Entity, Event, Space, SpaceSelection};
+use chrono::{DateTime, Utc};
+pub use saai_entity_store::{
+    Entity, Event, ObjectRef, Provenance, RelationDirection, Relationship, RelationshipEvent,
+    Space, SpaceSelection, RELATION_EXECUTES, RELATION_IN_SPACE, RELATION_PRODUCES,
+    RELATION_REALIZES, RELATION_RESULT_OF,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::io;
@@ -26,6 +31,11 @@ pub enum ClientRequest {
         space_id: String,
     },
     ListEntities {
+        schema: u32,
+        request_id: String,
+        space_id: String,
+    },
+    ListSpaceMembers {
         schema: u32,
         request_id: String,
         space_id: String,
@@ -61,6 +71,53 @@ pub enum ClientRequest {
         schema: u32,
         request_id: String,
     },
+    ListRelationships {
+        schema: u32,
+        request_id: String,
+        #[serde(default)]
+        object: Option<ObjectRef>,
+        #[serde(default)]
+        direction: Option<RelationDirection>,
+        #[serde(default)]
+        relation_type: Option<String>,
+    },
+    CreateRelationship {
+        schema: u32,
+        request_id: String,
+        source: ObjectRef,
+        target: ObjectRef,
+        relation_type: String,
+        provenance: Provenance,
+        #[serde(default)]
+        confidence: Option<f32>,
+        #[serde(default)]
+        valid_from: Option<DateTime<Utc>>,
+        #[serde(default)]
+        valid_until: Option<DateTime<Utc>>,
+        #[serde(default)]
+        properties: Map<String, Value>,
+    },
+    UpdateRelationship {
+        schema: u32,
+        request_id: String,
+        relationship_id: Uuid,
+        expected_revision: u64,
+        provenance: Provenance,
+        #[serde(default)]
+        confidence: Option<f32>,
+        #[serde(default)]
+        valid_from: Option<DateTime<Utc>>,
+        #[serde(default)]
+        valid_until: Option<DateTime<Utc>>,
+        #[serde(default)]
+        properties: Map<String, Value>,
+    },
+    DeleteRelationship {
+        schema: u32,
+        request_id: String,
+        relationship_id: Uuid,
+        expected_revision: u64,
+    },
 }
 
 impl ClientRequest {
@@ -70,10 +127,15 @@ impl ClientRequest {
             | Self::GetSelection { schema, .. }
             | Self::SelectSpace { schema, .. }
             | Self::ListEntities { schema, .. }
+            | Self::ListSpaceMembers { schema, .. }
             | Self::CreateEntity { schema, .. }
             | Self::UpdateEntity { schema, .. }
             | Self::DeleteEntity { schema, .. }
-            | Self::Subscribe { schema, .. } => *schema,
+            | Self::Subscribe { schema, .. }
+            | Self::ListRelationships { schema, .. }
+            | Self::CreateRelationship { schema, .. }
+            | Self::UpdateRelationship { schema, .. }
+            | Self::DeleteRelationship { schema, .. } => *schema,
         }
     }
 
@@ -83,10 +145,15 @@ impl ClientRequest {
             | Self::GetSelection { request_id, .. }
             | Self::SelectSpace { request_id, .. }
             | Self::ListEntities { request_id, .. }
+            | Self::ListSpaceMembers { request_id, .. }
             | Self::CreateEntity { request_id, .. }
             | Self::UpdateEntity { request_id, .. }
             | Self::DeleteEntity { request_id, .. }
-            | Self::Subscribe { request_id, .. } => request_id,
+            | Self::Subscribe { request_id, .. }
+            | Self::ListRelationships { request_id, .. }
+            | Self::CreateRelationship { request_id, .. }
+            | Self::UpdateRelationship { request_id, .. }
+            | Self::DeleteRelationship { request_id, .. } => request_id,
         }
     }
 }
@@ -115,6 +182,18 @@ pub enum ResponseResult {
         event: Event,
     },
     Subscribed,
+    Relationships {
+        relationships: Vec<Relationship>,
+    },
+    Relationship {
+        relationship: Relationship,
+        event: RelationshipEvent,
+    },
+    RelationshipDeleted {
+        relationship_id: Uuid,
+        revision: u64,
+        event: RelationshipEvent,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +208,7 @@ pub struct WireError {
 pub enum EntitydEvent {
     EntityChanged { record: Event },
     SelectionChanged { selection: SpaceSelection },
+    RelationshipChanged { record: RelationshipEvent },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -249,10 +329,15 @@ mod tests {
             r#"{"schema":1,"request_id":"2","command":"get_selection"}"#,
             r#"{"schema":1,"request_id":"3","command":"select_space","space_id":"home"}"#,
             r#"{"schema":1,"request_id":"4","command":"list_entities","space_id":"work"}"#,
+            r#"{"schema":1,"request_id":"4b","command":"list_space_members","space_id":"home"}"#,
             r#"{"schema":1,"request_id":"5","command":"create_entity","space_id":"home","entity_type":"task.item","title":"test"}"#,
             r#"{"schema":1,"request_id":"6","command":"update_entity","space_id":"home","entity_id":"00000000-0000-0000-0000-000000000001","expected_revision":1,"entity_type":"task.item","title":"test"}"#,
             r#"{"schema":1,"request_id":"7","command":"delete_entity","space_id":"home","entity_id":"00000000-0000-0000-0000-000000000001","expected_revision":1}"#,
             r#"{"schema":1,"request_id":"8","command":"subscribe"}"#,
+            r#"{"schema":1,"request_id":"9","command":"list_relationships"}"#,
+            r#"{"schema":1,"request_id":"10","command":"create_relationship","source":{"kind":"entity","id":"00000000-0000-0000-0000-000000000001"},"target":{"kind":"space","id":"work"},"relation_type":"saaios.in-space","provenance":{"kind":"user"}}"#,
+            r#"{"schema":1,"request_id":"11","command":"update_relationship","relationship_id":"00000000-0000-0000-0000-00000000000a","expected_revision":1,"provenance":{"kind":"user"}}"#,
+            r#"{"schema":1,"request_id":"12","command":"delete_relationship","relationship_id":"00000000-0000-0000-0000-00000000000a","expected_revision":1}"#,
         ];
         for fixture in fixtures {
             assert_eq!(decode_request(fixture.as_bytes()).unwrap().schema(), 1);
