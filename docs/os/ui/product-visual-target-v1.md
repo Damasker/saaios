@@ -15,6 +15,9 @@ is a license to invent agents, fake telemetry, voice, or Android VM.
 
 ![Surfaces: Сейчас, Пространство, Объект, Намерение, Система](references/v1-surfaces.jpg)
 
+Implementation-facing copies, SVG Orb/icons, tokens and working mockups:
+[graphic-kit/README.md](graphic-kit/README.md).
+
 ## What v1 is
 
 SaaiOS first version is an **operational environment**, not a chat home and

@@ -1,0 +1,85 @@
+{
+  "meta": {
+    "name": "SaaiOS UI v1 graphic kit tokens",
+    "source_of_truth_shipping": "docs/os/architecture/visual-language-v1.md",
+    "source_of_truth_destination": "docs/os/ui/product-visual-target-v1.md",
+    "note": "When board poster hex disagrees with visual-language tokens, shipping code uses visual-language + Pixel panel check."
+  },
+  "color": {
+    "bg": {
+      "canvas": "#071011",
+      "surface": "#0D181A",
+      "elevated": "#142326"
+    },
+    "accent": {
+      "primary": "#63D4D6",
+      "highlight": "#A1EEF0"
+    },
+    "text": {
+      "primary": "#D7E2DF",
+      "secondary": "#829796"
+    },
+    "state": {
+      "success": "#6FB79A",
+      "attention": "#D4B658",
+      "critical": "#C7514B",
+      "active": "#63D4D6",
+      "idle": "#829796",
+      "working": "#63D4D6",
+      "waiting": "#D4B658"
+    },
+    "border": {
+      "default": "#315054"
+    },
+    "grid": {
+      "subtle": "#20383A"
+    },
+    "poster_family_not_shipping": {
+      "comment": "From v1-visual-system.jpg concept board; do not hard-code over calibrated tokens.",
+      "primary_blue": "#6B8CFF",
+      "secondary_purple": "#9B6CFF",
+      "success_green": "#22C55E",
+      "warning_orange": "#F59E0B",
+      "error_red": "#EF4444"
+    }
+  },
+  "typography": {
+    "family": "Inter",
+    "fallback": ["Montserrat", "sans-serif"],
+    "roles": {
+      "h1": { "size_px": 32, "line_px": 40, "weight": 700 },
+      "h2": { "size_px": 24, "line_px": 32, "weight": 600 },
+      "h3": { "size_px": 18, "line_px": 28, "weight": 600 },
+      "body": { "size_px": 16, "line_px": 24, "weight": 400 },
+      "secondary": { "size_px": 14, "line_px": 20, "weight": 400 },
+      "caption": { "size_px": 12, "line_px": 16, "weight": 500 }
+    }
+  },
+  "spacing": {
+    "unit_px": 4,
+    "steps_px": [4, 8, 12, 16, 24, 32, 48]
+  },
+  "radius": {
+    "steps_px": [4, 8, 12, 16, 24]
+  },
+  "touch": {
+    "min_target_px": 48,
+    "design_space": { "width": 1080, "height": 2400 }
+  },
+  "navigation_v1": ["Сейчас", "Пространства", "Поиск", "Система"],
+  "orb_states": [
+    "idle",
+    "listening",
+    "analyzing",
+    "planning",
+    "needs_confirmation",
+    "executing",
+    "result",
+    "warning",
+    "error",
+    "interrupted",
+    "background",
+    "sleep"
+  ],
+  "surfaces": ["now", "space", "object", "intent", "system"]
+}
