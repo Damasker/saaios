@@ -1,0 +1,27 @@
+:root {
+  --saai-bg-canvas: #071011;
+  --saai-bg-surface: #0d181a;
+  --saai-bg-elevated: #142326;
+  --saai-accent-primary: #63d4d6;
+  --saai-accent-highlight: #a1eef0;
+  --saai-text-primary: #d7e2df;
+  --saai-text-secondary: #829796;
+  --saai-state-success: #6fb79a;
+  --saai-state-attention: #d4b658;
+  --saai-state-critical: #c7514b;
+  --saai-border-default: #315054;
+  --saai-grid-subtle: #20383a;
+  --saai-space-1: 4px;
+  --saai-space-2: 8px;
+  --saai-space-3: 12px;
+  --saai-space-4: 16px;
+  --saai-space-5: 24px;
+  --saai-space-6: 32px;
+  --saai-space-7: 48px;
+  --saai-radius-1: 4px;
+  --saai-radius-2: 8px;
+  --saai-radius-3: 12px;
+  --saai-radius-4: 16px;
+  --saai-radius-5: 24px;
+  --saai-font: Inter, Montserrat, sans-serif;
+}
