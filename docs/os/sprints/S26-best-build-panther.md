@@ -151,6 +151,33 @@ Windows; сборочные скрипты `.sh` вероятно требуют
 - слот B (сток) и ручной `fastboot` с хоста — независимый возврат при
   любом состоянии нового образа.
 
+## Консолидация веток (2026-10-06)
+
+Единая линия Pixel 7 — `pixel-7-main`. `feat/som-v1` целиком в ней.
+
+- Влито: `feat/lockscreen-policy-widgets` (ADR-424 revoke confirm +
+  protect current key, ADR-425 lock widgets).
+- Уже есть в `pixel-7-main` своими решениями: `feat/pixel7-native-saaios`
+  ADR-148 (PIN-точки) → ADR-149 lock-pin-field; ADR-152 (lock attention)
+  → ADR-148 lock-attention; `feat/vui-04-navigation` ADR-117
+  (`SystemStatus`, `pressed_tab`, `reduced_motion`); серверная
+  `fix/wayland-drm-pipeline` → `flip_pending` gating (ADR-390).
+- Не перенесено: `Frame::Root` removal (native ADR-149) — чистка
+  мёртвого кода в разошедшемся `saai-shell`; старые `saai-displayd`
+  (S01–S03, `display-supervisor.c`) — заменены текущим displayd.
+- Архив веток: `archive/feat/som-v1`, `archive/feat/pixel7-active`,
+  `archive/wip/local-pixel7-orphan`, `archive/feat/s03-pixel7-displayd`,
+  `archive/research/panther-modem-20260924`.
+- Незакоммиченное из worktree (только исходники и доки, без блобов и
+  логов): `archive/rescue/pc-*-2026-10-06`,
+  `archive/rescue/server-*-2026-10-06`, серверные stash —
+  `archive/rescue/server-stash-*`.
+- Из rescue в `pixel-7-main` взяты инструменты: `sit-hold-channels.c`,
+  `super-ro-map.c`, `rfs-peek.c`, `saaios-verify-nv-copies.sh`,
+  `rfs-nv-store.{c,h}` (MODEM-07B, не подключён к owner),
+  `tools/com13-*.ps1`, `tools/file-recv-{put,get}.ps1`,
+  `scripts/collect-panther-artifacts.sh`.
+
 ## Evidence
 
 Заполняется при закрытии каждого воркстрима: commit, test log, image

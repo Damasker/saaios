@@ -1,0 +1,13 @@
+param([string]$Local, [string]$Remote)
+$bytes = [IO.File]::ReadAllBytes($Local)
+$c = New-Object Net.Sockets.TcpClient('172.31.7.1', 7777)
+$s = $c.GetStream()
+$h = [Text.Encoding]::ASCII.GetBytes("PUT $Remote $($bytes.Length)`n")
+$s.Write($h, 0, $h.Length)
+$s.Write($bytes, 0, $bytes.Length)
+$s.Flush()
+$c.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
+$r = New-Object IO.StreamReader($s)
+$reply = $r.ReadLine()
+$c.Close()
+"$Remote -> $reply"
