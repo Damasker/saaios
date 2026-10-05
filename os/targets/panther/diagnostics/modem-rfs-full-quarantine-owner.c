@@ -165,12 +165,17 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
         * ConvertAuthTypeToProtocolAuthType(0)=0, default profile/apnType=0,
         * pcscfReqType=0); the attach cid is RetrieveAttachPdpContext's
         * profile-base+1 (base 0 on the default config => 1). This is not an
-        * NV/EFS write. */
-       REG_INIT_ATTACH_APN = 0x0603, REG_IA_LEN = 250,
+        * NV/EFS write.
+        *
+        * CP2A (the flashed build) differs: the full-body stock rild capture
+        * (2026-10-05, boot-capture-2) shows a 251-byte frame with pdpType
+        * [218]=3 (IPV4V6) and one appended byte [248]=3; every other body byte
+        * matches the layout above. The frame below is that captured layout. */
+       REG_INIT_ATTACH_APN = 0x0603, REG_IA_LEN = 251,
        REG_IA_APN_OFF = 16, REG_IA_APN_MAX = 100,
        REG_IA_CID = 1, REG_IA_CONST13 = 0x0e,
        REG_IA_AUTH_OFF = 217, REG_IA_PDPTYPE_OFF = 218, REG_IA_PCSCF_OFF = 219,
-       REG_IA_PDPTYPE_IP = 1,
+       REG_IA_PDPTYPE_IPV4V6 = 3, REG_IA_CP2A_OFF = 248, REG_IA_CP2A_VAL = 3,
        RAT_LTE_ONLY = 11, RAT_LTE_WCDMA = 12, RADIO_STATE_ON = 10,
        /* Untried operational-state SETs/GETs (open sitdef.h, same SIT family as
         * the proven 0x0700/0x0800/0x0710/0x093f wire IDs; 0x091a body also
@@ -217,6 +222,12 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
                                  (1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) |
                                  (1 << 16),
        RATBM_WIRE_LTE_WCDMA_GSM = 0x3fe,
+       /* The CP2A modem refuses 0x3fe (error 2). Stock rild sends this RAF plus
+        * NR (raf bit 20 -> wire bit 18): body fe 03 04 00 = 0x403fe, ACKed with
+        * error 0 two seconds before LTE registration (boot-capture-2). */
+       RAF_NR = 1 << 20,
+       RATBM_RAF_STOCK = RATBM_RAF_LTE_WCDMA_GSM | RAF_NR,
+       RATBM_WIRE_STOCK = 0x403fe,
        /* VERDICT 21/22: GET_BASEBAND_VERSION -> opcode 0x0901, len 13, a field
         * selector byte at payload[12]. The reply (opcode 0x0901) carries the SW
         * version C-string at frame offset 13 (HW ver @45, RF-cal date @77 are
@@ -400,10 +411,10 @@ struct camp_driver {
      * written and no modem state is changed. */
     int capquery;
     /* VERDICT 26: one-shot StartNetworkScan (0x0734), one EUTRAN specifier
-     * with an empty band list (config /data/saaios/etc/scan734). Runs after
-     * the normal bring-up (radio on, automatic selection, preferred RAT,
-     * allow-data). Fires exactly one 0x0734 and logs 0x0736 scan-result
-     * notifications (scanStatus + bounded header hex). */
+     * with an empty band list (config /data/saaios/etc/scan734). After the
+     * normal bring-up, one RADIO_POWER OFF→confirm→ON cycle, then exactly one
+     * 0x0734 in that pre-camp window. Logs 0x0736 (scanStatus + bounded header
+     * hex + elapsed_ms). Does not also send the legacy 0x0706 scan. */
     int scan734, scan734_sent, scan734_done;
     /* Post-registration one-shot operational-SET experiment. After reg_complete
      * the three GETs below are read once for the log, then the single SET named
@@ -1788,35 +1799,64 @@ static void rfs_trace(const char *note, enum phase phase,
     fflush(stdout);
 }
 
+/* Copy the immutable nv_normal baseline into a new quarantine file, then
+ * let the CP's handle-1 write overlay the front. The tail past the CP's
+ * transfer size stays the baseline. Never truncates, never writes the
+ * baseline or original EFS, never logs payload bytes. */
+static int seed_normal_candidate(struct owner *o, int *out_fd)
+{
+    uint8_t buffer[4096];
+    struct stat st;
+    int src = openat(o->source_dir, "nv_normal.bin",
+                     O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int fd = -1;
+    int rc = -1;
+    if (src < 0 || regular_exact(src, BASELINE_BYTES, 0600, &st) ||
+        o->quarantine_dir < 0)
+        goto done;
+    fd = openat(o->quarantine_dir, "normal-candidate.bin",
+                O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) goto done;
+    for (off_t off = 0; off < BASELINE_BYTES; off += (off_t)sizeof buffer) {
+        if (read_all_at(src, buffer, sizeof buffer, off) ||
+            write_all_at(fd, buffer, sizeof buffer, off))
+            goto done;
+    }
+    if (fsync(fd)) goto done;
+    *out_fd = fd;
+    fd = -1;
+    rc = 0;
+done:
+    if (fd >= 0) {
+        close(fd);
+        if (o->quarantine_dir >= 0)
+            (void)unlinkat(o->quarantine_dir, "normal-candidate.bin", 0);
+    }
+    if (src >= 0) close(src);
+    zero_bytes(buffer, sizeof buffer);
+    return rc;
+}
+
 /* Post-completion RFS observer. After the protected-NV write-out quarantine is
  * done (TERMINAL + final_ack_sent) the main loop normally stops reading RFS.
  * This drain keeps reading so any RFS request the CP issues during the later
  * RadioPower-ON / MM registration-gate window is captured. It LOGS headers
  * only and, to keep the CP's handshake alive so subsequent requests keep
  * flowing, replies to an exact unprotect request_7 with the known status_7.
- * It NEVER re-runs the write sequence, serves data, stores payload, or writes
- * any file. It invents no reply bytes (status_7 is the already-observed ack). */
+ * Handle 1 (nv_normal) is answered with the same recovered grant layout as
+ * handle 3, but only after a full 524288-byte quarantine copy of the
+ * immutable nv_normal baseline exists. It invents no reply bytes. */
 static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
                                     size_t got, int64_t now)
 {
     static uint8_t pt_rx[RX_CAP];
     static size_t pt_used;
-#ifdef SAAIOS_RFS_NORMAL_CAPTURE
-    /* Read-only diagnostic (opt-in): capture the CP's handle-1 normal-NV
-     * write-OUT into a SEPARATE quarantine file so it can be diffed offline
-     * against the fed-in nv_normal.bin. The CP repeatedly issues a handle-1
-     * grant-request (cmd=6, total size in w4) that the proven drain never
-     * answers, so the data never flows. Here we answer it with the SAME grant
-     * byte layout already proven on the handle-3 path, carrying the file id
-     * (1) the CP itself declared -- recovered protocol, no invented opcode --
-     * and write the returned chunks to the quarantine copy only. Never touches
-     * real EFS/nv_normal; never logs payload bytes. */
     static int normal_fd = -1;
     static uint32_t normal_total, normal_received;
     static unsigned normal_grants;
     static uint16_t normal_seq;
     static int normal_done;
-#endif
+    static int normal_seed_logged;
     if (!bytes || got > sizeof pt_rx - pt_used) {
         pt_used = 0; /* resynchronize rather than retain ambiguous bytes */
         return;
@@ -1838,7 +1878,6 @@ static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
                 done += (size_t)n;
             }
         }
-#ifdef SAAIOS_RFS_NORMAL_CAPTURE
         if (!normal_done && (size_t)size >= 20) {
             uint16_t cmd = little16(pt_rx);
             if (cmd == 7 && (size_t)size == 12 && little32(pt_rx + 8) == 1) {
@@ -1859,14 +1898,16 @@ static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
                 uint32_t total = little32(pt_rx + 16);
                 normal_seq = little16(pt_rx + 2);
                 if (normal_fd < 0 && total > 0 && total <= BASELINE_BYTES &&
-                    o->quarantine_dir >= 0) {
-                    normal_fd = openat(o->quarantine_dir, "normal-candidate.bin",
-                                       O_CREAT | O_RDWR | O_EXCL | O_CLOEXEC,
-                                       0600);
+                    o->quarantine_dir >= 0 && o->source_dir >= 0 &&
+                    seed_normal_candidate(o, &normal_fd) == 0) {
                     normal_total = total;
                     normal_received = 0;
-                    printf("NORMAL_CAPTURE open total=%u seq=%u fd=%d\n",
-                           total, normal_seq, normal_fd);
+                    printf("NORMAL_SEED baseline=%d total=%u seq=%u\n",
+                           BASELINE_BYTES, total, normal_seq);
+                    fflush(stdout);
+                } else if (normal_fd < 0 && !normal_seed_logged) {
+                    normal_seed_logged = 1;
+                    printf("NORMAL_SEED failed total=%u\n", total);
                     fflush(stdout);
                 }
                 if (normal_fd >= 0 && normal_received < normal_total) {
@@ -1927,7 +1968,6 @@ static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
                 }
             }
         }
-#endif
         memmove(pt_rx, pt_rx + size, pt_used - (size_t)size);
         pt_used -= (size_t)size;
     }
@@ -2637,8 +2677,8 @@ static void make_startscan_request(uint8_t request[SCAN734_LEN], uint32_t token)
     request[22] = SCAN734_RAN_EUTRAN;  /* radio_access_network = EUTRAN(3) */
 }
 
-_Static_assert(REG_IA_LEN == 250, "SET_INITIAL_ATTACH_APN frame must be 250 bytes");
-_Static_assert(REG_IA_PCSCF_OFF < REG_IA_LEN, "pcscf offset within frame");
+_Static_assert(REG_IA_LEN == 251, "CP2A SET_INITIAL_ATTACH_APN frame must be 251 bytes");
+_Static_assert(REG_IA_CP2A_OFF < REG_IA_LEN, "CP2A trailing field within frame");
 
 /* Factory BuildSetInitialAttachApn (0x0603): 250-byte request. Layout and every
  * body byte are recovered from ProtocolPsBuilder::BuildSetInitialAttachApn +
@@ -2653,7 +2693,7 @@ static void make_initial_attach_apn_request(uint8_t request[REG_IA_LEN],
     memset(request, 0, REG_IA_LEN);
     request[2] = (uint8_t)REG_INIT_ATTACH_APN;        /* 0x03 */
     request[3] = (uint8_t)(REG_INIT_ATTACH_APN >> 8); /* 0x06 */
-    request[4] = (uint8_t)REG_IA_LEN;                 /* 250, [5]=0 => LE 250 */
+    request[4] = (uint8_t)REG_IA_LEN;                 /* 251, [5]=0 => LE 251 */
     put_little32(request + 6, token);
     request[12] = REG_IA_CID;        /* attach pdp cid (RetrieveAttachPdpContext) */
     request[13] = REG_IA_CONST13;    /* fixed 0x0e in BuildSetInitialAttachApn */
@@ -2665,8 +2705,9 @@ static void make_initial_attach_apn_request(uint8_t request[REG_IA_LEN],
     }
     /* username (+117) / password (+167) left empty (zeroed) */
     request[REG_IA_AUTH_OFF] = 0;                 /* ConvertAuthType(0)=0 */
-    request[REG_IA_PDPTYPE_OFF] = REG_IA_PDPTYPE_IP; /* GetPdpType("IP")=1 */
+    request[REG_IA_PDPTYPE_OFF] = REG_IA_PDPTYPE_IPV4V6;
     request[REG_IA_PCSCF_OFF] = 0;                /* pcscfReqType */
+    request[REG_IA_CP2A_OFF] = REG_IA_CP2A_VAL;
 }
 
 /* Operational-SET request with a 4-byte little-endian payload at +12 (matches
@@ -2788,16 +2829,25 @@ static unsigned camp_reg_next(const struct camp_driver *c)
     return 0;
 }
 
+/* Radio-cycle is armed by dereg_scan (legacy 0x0706) or by scan734 (one
+ * 0x0734 in the same pre-camp window). */
+static int camp_radio_cycle_armed(const struct camp_driver *c)
+{
+    return c->dereg_enabled || c->scan734;
+}
+
 /* Deregister-then-scan sub-sequence (VERDICT 15), run only after the normal
- * bring-up completes and only when armed by /data/saaios/etc/dereg_scan. Cycles
- * RADIO_POWER OFF -> (confirm) -> ON, then fires ONE available-networks scan and
- * (if the home PLMN is then visible) ONE manual-select, all from the
- * limited-service window before the modem re-camps. Each step is dispatched at
- * most once; a DRG_NONE return means "waiting for the pending reply" and the
- * prober's probe_pending gate holds until it arrives. */
+ * bring-up completes. Cycles RADIO_POWER OFF -> (confirm) -> ON, then fires
+ * ONE scan from the limited-service window before the modem re-camps. When
+ * scan734 is armed that scan is StartNetworkScan 0x0734 and manual-select is
+ * not sent. Otherwise (dereg_scan only) it is the legacy available-networks
+ * scan and, if the home PLMN is then visible, ONE manual-select. Each step is
+ * dispatched at most once; a DRG_NONE return means "waiting for the pending
+ * reply" and the prober's probe_pending gate holds until it arrives. */
 static unsigned camp_dereg_next(const struct camp_driver *c)
 {
-    if (!c->reg_complete || !c->dereg_enabled || c->drg_done) return DRG_NONE;
+    if (!c->reg_complete || !camp_radio_cycle_armed(c) || c->drg_done)
+        return DRG_NONE;
     if (!c->drg_off_sent) return DRG_OFF;
     if (!c->drg_off_ack) return DRG_NONE;
     if (!c->drg_off_confirmed && c->drg_off_get_tries < REG_GET_MAX)
@@ -2806,6 +2856,7 @@ static unsigned camp_dereg_next(const struct camp_driver *c)
     if (!c->drg_on_ack) return DRG_NONE;
     if (!c->drg_scan_sent) return DRG_SCAN;
     if (!c->drg_scan_got) return DRG_NONE;
+    if (c->scan734) return DRG_NONE;
     if (c->manual_plmn[0] && c->drg_target_visible && !c->drg_manual_sent)
         return DRG_MANUAL;
     return DRG_NONE;
@@ -2820,7 +2871,7 @@ static unsigned camp_dereg_next(const struct camp_driver *c)
  * on an error by marking it done. */
 static int camp_dereg_reply(struct camp_driver *c, unsigned id, unsigned error)
 {
-    if (!c->dereg_enabled || c->drg_done) return 0;
+    if (!camp_radio_cycle_armed(c) || c->drg_done) return 0;
     if (id == CAMP_POWER_COMMAND) {
         if (c->drg_off_sent && !c->drg_off_ack) {
             c->drg_off_ack = 1;
@@ -2987,16 +3038,11 @@ static int camp_bbver_reply(struct camp_driver *c, const uint8_t *p, size_t n,
     return 1;
 }
 
-/* VERDICT 26: fire one StartNetworkScan (0x0734) after reg_complete and after
- * the read-only capability GETs (bbver/ratbm) have drained. Returns the opcode
- * to fire, or 0 while idle/awaiting/done. */
+/* The single 0x0734 is dispatched from the radio-cycle scan step, not from
+ * here, so a camped bring-up cannot send it early. */
 static unsigned camp_scan734_next(const struct camp_driver *c)
 {
-    if (!c->reg_complete || !c->scan734 || c->scan734_done) return 0;
-    if (c->probe_pending) return 0;
-    if (c->bbver_enabled && !c->bbver_done) return 0;
-    if (c->ratbm_enabled && !c->ratbm_done) return 0;
-    if (!c->scan734_sent) return SCAN734_GET;
+    (void)c;
     return 0;
 }
 
@@ -3007,7 +3053,11 @@ static int camp_scan734_reply(struct camp_driver *c, unsigned id, unsigned error
 {
     if (id != SCAN734_GET || !c->scan734 || !c->scan734_sent) return 0;
     c->scan734_done = 1;
-    printf("camp_scan734 ack=yes error_raw=%u\n", error);
+    if (c->drg_scan_sent && !c->drg_scan_got) {
+        c->drg_scan_got = 1;
+        c->drg_done = 1;
+    }
+    printf("camp_scan734 ack=yes error_raw=%u precamp=1\n", error);
     return 1;
 }
 
@@ -3016,7 +3066,7 @@ static int camp_scan734_reply(struct camp_driver *c, unsigned id, unsigned error
  * dump of the frame header/first cell fields so PLMN/band/EARFCN can be read
  * back offline -- those are network identifiers, not subscriber secrets. */
 static void camp_scan734_observe(struct camp_driver *c, const uint8_t *p,
-                                 size_t n)
+                                 size_t n, int64_t now)
 {
     if (!c->scan734 || n < 13 || p[0] != 2) return;
     if (little16(p + 2) != SCAN734_RESULT || little16(p + 4) != n) return;
@@ -3025,8 +3075,9 @@ static void camp_scan734_observe(struct camp_driver *c, const uint8_t *p,
     char hex[96 * 2 + 1];
     for (size_t i = 0; i < dump; i++)
         snprintf(hex + i * 2, 3, "%02x", p[i]);
-    printf("camp_scan734 result=yes scan_status=%u len=%zu head=%s\n",
-           status, n, hex);
+    printf("camp_scan734 result=yes scan_status=%u len=%zu elapsed_ms=%lld "
+           "head=%s\n",
+           status, n, (long long)(now - c->owner_start_ms), hex);
 }
 
 /* VERDICT 20: modern RAT-gate experiment. Runs only when armed by
@@ -3083,7 +3134,7 @@ static int camp_ratbm_reply(struct camp_driver *c, const uint8_t *p, size_t n,
     }
     if (id == RATBM_SET && c->ratbm_set_sent) {
         printf("camp_ratbm set=allowed_bitmap response=yes error_raw=%u "
-               "wire=0x%x\n", error, (unsigned)RATBM_WIRE_LTE_WCDMA_GSM);
+               "wire=0x%x\n", error, (unsigned)RATBM_WIRE_STOCK);
         return 1;
     }
     return 0;
@@ -3277,7 +3328,7 @@ static void camp_feed(struct camp_driver *c, const uint8_t *bytes, size_t len,
             if (length < 0) { c->poisoned = 1; break; }
             if (!length) break;
             camp_observe(c, c->rx + offset, (size_t)length, now);
-            camp_scan734_observe(c, c->rx + offset, (size_t)length);
+            camp_scan734_observe(c, c->rx + offset, (size_t)length, now);
             camp_ack(c, c->rx + offset, (size_t)length);
             camp_probe_match(c, c->rx + offset, (size_t)length, now);
             offset += (size_t)length;
@@ -3517,9 +3568,19 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         } else if (drg == DRG_SCAN) {
             c->drg_scan_sent = 1;
             long_wait = 1;
-            wrote = sit_send_get_once(o->ipc, (uint16_t)REG_SCAN,
-                                      c->probe_token);
-            rname = "dereg_query_available_networks"; wire_id = REG_SCAN;
+            if (c->scan734) {
+                uint8_t f[SCAN734_LEN];
+                make_startscan_request(f, c->probe_token);
+                c->scan734_sent = 1;
+                wrote = camp_send_once(o->ipc, f, sizeof f);
+                rname = "precamp_start_network_scan_lte";
+                wire_id = SCAN734_GET;
+            } else {
+                wrote = sit_send_get_once(o->ipc, (uint16_t)REG_SCAN,
+                                          c->probe_token);
+                rname = "dereg_query_available_networks";
+                wire_id = REG_SCAN;
+            }
         } else { /* DRG_MANUAL */
             uint8_t f[REG_MANUAL_LEN];
             make_manual_select_request(f, c->manual_plmn, c->probe_token);
@@ -3569,10 +3630,10 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         if (rbm == RATBM_SET) {
             uint8_t f[RATBM_SET_LEN];
             make_opx_u32_request(f, RATBM_SET, RATBM_SET_LEN, c->probe_token,
-                                 raf_to_sit_ratbm(RATBM_RAF_LTE_WCDMA_GSM));
+                                 raf_to_sit_ratbm(RATBM_RAF_STOCK));
             c->ratbm_set_sent = 1;
             wrote = camp_send_once(o->ipc, f, sizeof f);
-            rname = "set_allowed_bitmap_lte_wcdma_gsm";
+            rname = "set_allowed_bitmap_stock";
         } else {
             if (rbm == RATBM_BANDMODE_GET) c->ratbm_band_sent = 1;
             else if (!c->ratbm_get1_sent) c->ratbm_get1_sent = 1;
@@ -4095,7 +4156,8 @@ static int run_owner(int ipc, int rfs, int ready)
     printf("camp_capquery=%s\n",
            o.camp.capquery ? "armed-readonly" : "off");
     o.camp.scan734 = read_scan734();
-    printf("camp_scan734=%s\n", o.camp.scan734 ? "armed-lte-scan" : "off");
+    printf("camp_scan734=%s\n",
+           o.camp.scan734 ? "armed-precamp-lte-scan" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
         printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
     else
@@ -5451,18 +5513,22 @@ static int test_camp_reg(void)
          12,0,0,0, 12,0,0,0, 1,0,0,0, 1,0,0,0};
     make_opx_dual_request(du2, 0x12345678);
     if (!same_bytes(du2, du_e, sizeof du2)) return 164;
-    /* SET_INITIAL_ATTACH_APN (0x0603): header + recovered body bytes for a plain
-     * IP APN "internet" (no user/pass/auth). */
+    /* SET_INITIAL_ATTACH_APN (0x0603): the CP2A stock frame for APN "internet"
+     * has exactly these nonzero body bytes: [12]=1 [13]=0x0e APN@16 [218]=3
+     * [248]=3. */
     uint8_t ia[REG_IA_LEN];
     make_initial_attach_apn_request(ia, "internet", 0x12345678);
     if (ia[0] || ia[1] || ia[2] != 0x03 || ia[3] != 0x06 ||
-        ia[4] != 250 || ia[5]) return 165;
+        ia[4] != 251 || ia[5]) return 165;
     if (little32(ia + 6) != 0x12345678 || ia[10] || ia[11]) return 166;
     if (ia[12] != REG_IA_CID || ia[13] != REG_IA_CONST13 ||
         ia[14] || ia[15]) return 167;
     if (memcmp(ia + REG_IA_APN_OFF, "internet", 9)) return 168; /* incl NUL */
-    if (ia[REG_IA_AUTH_OFF] || ia[REG_IA_PDPTYPE_OFF] != REG_IA_PDPTYPE_IP ||
-        ia[REG_IA_PCSCF_OFF] || ia[117] || ia[167]) return 169;
+    for (unsigned i = 12; i < REG_IA_LEN; i++) {
+        unsigned expect = i == 12 ? 1 : i == 13 ? 0x0e : i == 218 || i == 248 ? 3 :
+                          i >= 16 && i < 24 ? (unsigned)(uint8_t)"internet"[i - 16] : 0;
+        if (ia[i] != expect) return 169;
+    }
     /* Reg-state decode: RAT map recovered from libsitril .rodata @0xd8afc,
      * and the fixed field offsets for voice (0x0700) / data (0x0701). */
     if (sit_net_rat_map(3) != 3 || sit_net_rat_map(14) != 14 ||
@@ -5716,19 +5782,24 @@ static int test_camp_reg(void)
             /* remaining specifier bytes are zero via the initializer */ };
         make_startscan_request(sns, 0x12345678);
         if (!same_bytes(sns, sns_e, sizeof sns)) return 241;
-        /* Fires only post-reg + armed, after capability GETs, exactly once. */
+        /* One 0x0734, only from the post-radio-on scan step. Not while camped. */
         struct camp_driver ss;
         memset(&ss, 0, sizeof ss);
-        if (camp_scan734_next(&ss) != 0) return 242;       /* not armed */
+        if (camp_scan734_next(&ss) != 0 || camp_dereg_next(&ss) != DRG_NONE)
+            return 242;
         ss.reg_complete = 1; ss.scan734 = 1;
-        if (camp_scan734_next(&ss) != SCAN734_GET) return 243;
-        ss.bbver_enabled = 1;
-        if (camp_scan734_next(&ss) != 0) return 244;       /* GETs not drained */
-        ss.bbver_done = 1; ss.scan734_sent = 1;
-        if (camp_scan734_next(&ss) != 0) return 245;       /* awaiting ack */
-        if (!camp_scan734_reply(&ss, SCAN734_GET, 2) || !ss.scan734_done)
-            return 246;
-        if (camp_scan734_next(&ss) != 0) return 247;       /* done, one-shot */        /* Out-of-range scanType clamps to 0 (stock sub/cmp/csel). */
+        if (camp_scan734_next(&ss) != 0) return 243;
+        if (camp_dereg_next(&ss) != DRG_OFF) return 244;
+        ss.drg_off_sent = 1; ss.drg_off_ack = 1; ss.drg_off_confirmed = 1;
+        if (camp_dereg_next(&ss) != DRG_ON) return 245;
+        ss.drg_on_sent = 1; ss.drg_on_ack = 1;
+        if (camp_dereg_next(&ss) != DRG_SCAN) return 246;
+        ss.drg_scan_sent = 1; ss.scan734_sent = 1;
+        if (!camp_scan734_reply(&ss, SCAN734_GET, 0) || !ss.scan734_done ||
+            !ss.drg_done) return 247;
+        if (camp_scan734_next(&ss) != 0 || camp_dereg_next(&ss) != DRG_NONE)
+            return 242;
+        /* Out-of-range scanType clamps to 0 (stock sub/cmp/csel). */
         uint8_t s16b[REG_SCAN16_LEN];
         make_scan16_request(s16b, 9, 0x12345678);
         if (little32(s16b + SCAN16_MODE_OFF) != 0) return 227;
@@ -5774,13 +5845,16 @@ static int test_camp_reg(void)
                 (uint32_t)RATBM_WIRE_LTE_WCDMA_GSM ||
             RATBM_WIRE_LTE_WCDMA_GSM != 0x3fe) return 243;
 
+        if (raf_to_sit_ratbm((uint32_t)RATBM_RAF_STOCK) != (uint32_t)RATBM_WIRE_STOCK)
+            return 243;
         uint8_t rb[RATBM_SET_LEN];
         make_opx_u32_request(rb, RATBM_SET, RATBM_SET_LEN, 0x12345678u,
-                             raf_to_sit_ratbm(RATBM_RAF_LTE_WCDMA_GSM));
+                             raf_to_sit_ratbm(RATBM_RAF_STOCK));
         if (rb[0] || rb[2] != 0x4f || rb[3] != 0x07 ||
             rb[4] != RATBM_SET_LEN || rb[5]) return 244;
         if (little32(rb + 6) != 0x12345678u) return 245;
-        if (little32(rb + RATBM_OFF) != 0x3feu) return 246;
+        static const uint8_t rb_stock[4] = { 0xfe, 0x03, 0x04, 0x00 };
+        if (!same_bytes(rb + RATBM_OFF, rb_stock, sizeof rb_stock)) return 246;
 
         if (RATBM_GET_LEN != 12 || RATBM_BANDMODE_LEN != 12 ||
             RATBM_GET != 0x0750 || RATBM_BANDMODE_GET != 0x0709 ||

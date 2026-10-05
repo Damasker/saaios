@@ -279,8 +279,26 @@ int main(int argc, char **argv) {
         if (!e || e->idx != i+5 || e->b_off != 0 || e->size != 0x80000 ||
             !nv_data[i] || n != e->size) die("invalid verified NV copy");
     }
+#ifdef PROBE_REPLAY
+    /* Stock cbd sends TOC REPLAY from modem_userdata/replay_region.bin: a tar
+     * of replay/ zero-padded to 512 KiB, START/BIN/DONE without CRC. Its TOC
+     * idx repeats NV_PROT's, so cbd bumps the stage count and numbers the
+     * stage by TOC position (7), which lies past toc[0].idx. */
+    const struct toc_entry *replay = find_toc(toc, toc[0].idx + 1, "REPLAY");
+    size_t replay_len = 0;
+    uint8_t *replay_data = read_file(REPLAY_PATH, &replay_len);
+    if (!replay || replay - toc != 7 || replay->idx != 6 || replay->b_off != 0 ||
+        replay->size != 0x80000 || !replay_data || replay_len != replay->size)
+        die("invalid REPLAY copy");
+#endif
 #endif
     if (boot_fd < 0) die("boot node: %s", strerror(errno));
+#if defined(PROBE_HANDOVER) && defined(PROBE_HANDOVER_EARLY)
+    /* Stock cbd order: HANDOVER_BLOCK_INFO before POWER_ON. */
+    int handover_rc = do_ioctl("HANDOVER_RAM_ONLY", 0x6f57, handover);
+    wipe(handover, sizeof(handover));
+    if (handover_rc < 0) die("handover failed; no POWER_ON");
+#endif
     if (do_ioctl("POWER_ON", IOCTL_POWER_ON, NULL) < 0) die("POWER_ON failed");
     sleep(3);
     read_trimmed(MODEM_STATE_PATH, state, sizeof(state));
@@ -290,7 +308,7 @@ int main(int argc, char **argv) {
     if (do_ioctl("START", IOCTL_START_CP_BOOTLOADER, &mode) < 0) die("START failed");
     read_trimmed(MODEM_STATE_PATH, state, sizeof(state));
     if (strcmp(state, "BOOTING") != 0 || dmesg_has_bad_cfg() != 0) die("not safe after START");
-#ifdef PROBE_HANDOVER
+#if defined(PROBE_HANDOVER) && !defined(PROBE_HANDOVER_EARLY)
     int handover_rc = do_ioctl("HANDOVER_RAM_ONLY", 0x6f57, handover);
     wipe(handover, sizeof(handover));
     if (handover_rc < 0) die("handover failed; no firmware stages");
@@ -339,6 +357,10 @@ int main(int argc, char **argv) {
     for (unsigned i = 0; result == 0 && i < 2; i++) {
         result = sit_send_stage(i+5, nv_names[i], nv_data[i], 0x80000, 0);
     }
+#ifdef PROBE_REPLAY
+    if (result == 0)
+        result = sit_send_stage(7, "REPLAY", replay_data, replay->size, 0);
+#endif
     if (result == 0) {
         int ipc_fd = open("/dev/umts_ipc0", O_RDWR | O_NONBLOCK | O_CLOEXEC);
         int rfs_fd = open("/dev/umts_rfs0", O_RDWR | O_NONBLOCK | O_CLOEXEC);

@@ -49,6 +49,57 @@ static int scan_pat(void __iomem *base, u32 off0, u32 len, const char *tag)
 	return hits;
 }
 
+/* Count PLMN markers in an already-mapped IPC window. Counts and offsets
+ * only; no payload bytes. */
+static void scan_plmn(void __iomem *base, u32 off0, u32 len, const char *tag)
+{
+	u32 i;
+	unsigned ascii[8];
+	unsigned bcd[8];
+	unsigned other = 0;
+	char extra[96];
+	int ei = 0;
+
+	memset(ascii, 0, sizeof ascii);
+	memset(bcd, 0, sizeof bcd);
+	extra[0] = 0;
+	for (i = 0; i + 5 < len; i++) {
+		u8 b0 = readb(base + off0 + i);
+		u8 b1 = readb(base + off0 + i + 1);
+		u8 b2 = readb(base + off0 + i + 2);
+		u8 b3 = readb(base + off0 + i + 3);
+		u8 b4 = readb(base + off0 + i + 4);
+		if (b0 == '2' && b1 == '5' && b2 == '5' &&
+		    b3 >= '0' && b3 <= '9' && b4 >= '0' && b4 <= '9') {
+			unsigned plmn = (b3 - '0') * 10u + (b4 - '0');
+			if (plmn == 1) ascii[0]++;
+			else if (plmn == 3) ascii[1]++;
+			else if (plmn == 6) ascii[2]++;
+			else {
+				other++;
+				if (ei < (int)sizeof extra - 16)
+					ei += scnprintf(extra + ei, sizeof extra - ei,
+							" 255%02u@0x%x", plmn, off0 + i);
+			}
+		}
+		if (b0 == 0x52 && b1 == 0xF5) {
+			unsigned d1 = b2 & 0x0f;
+			unsigned d2 = b2 >> 4;
+			unsigned plmn;
+			if (d1 > 9 || d2 > 9)
+				continue;
+			plmn = d1 * 10u + d2;
+			if (plmn == 1) bcd[0]++;
+			else if (plmn == 3) bcd[1]++;
+			else if (plmn == 6) bcd[2]++;
+		}
+	}
+	pr_info("saaios_shm_ro: %s ascii 25501=%u 25503=%u 25506=%u other=%u%s\n",
+		tag, ascii[0], ascii[1], ascii[2], other, extra);
+	pr_info("saaios_shm_ro: %s bcd 25501=%u 25503=%u 25506=%u\n",
+		tag, bcd[0], bcd[1], bcd[2]);
+}
+
 static int __init saaios_shm_ro_init(void)
 {
 	get_region_t get_region;
@@ -75,6 +126,9 @@ static int __init saaios_shm_ro_init(void)
 	total += scan_pat(base, 0x0000, 0x8000, "fmt+ctrl");
 	total += scan_pat(base, 0x00400000, 0x4000, "srinfo");
 	total += scan_pat(base, 0x00200000, 0x8000, "raw_rx_head");
+	scan_plmn(base, 0x0000, 0x100000, "fmt-1m");
+	scan_plmn(base, 0x00200000, 0x10000, "raw-64k");
+	scan_plmn(base, 0x00400000, 0x4000, "srinfo");
 
 	pr_info("saaios_shm_ro: TOTAL_HITS=%d — ring copies only; not PresentObj/+0xBF6; no poke\n",
 		total);

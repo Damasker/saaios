@@ -98,6 +98,7 @@ struct toc_entry {
 #define EFS_COPY_DIR "/data/saaios/var/efs-copy"
 #define NV_NORM_PATH EFS_COPY_DIR "/nv_normal.bin"
 #define NV_PROT_PATH EFS_COPY_DIR "/nv_protected.bin"
+#define REPLAY_PATH EFS_COPY_DIR "/replay_region.bin"
 #define MODEM_MNT "/mnt/modem_img"
 #define MODEM_DEV "/dev/block/sda19"
 

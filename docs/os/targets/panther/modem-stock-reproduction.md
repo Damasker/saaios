@@ -29,8 +29,10 @@ the same way as a bad SIT sequence:
 `SETUP_DATA_CALL` ran **after** CS/PS HOME. Camp is NV + CP boot +
 radio power, not the data-call opcode.
 
-SaaiOS previously: empty UDL `NV_NORM` (crc 0), RFS quarantine on
-handle 3 only, WCDMA `REG_DENIED` reject 0. That is the gap.
+SaaiOS previously: UDL `NV_NORM` sent with stage crc 0, RFS quarantine on
+handle 3 only, WCDMA `REG_DENIED` reject 0. The UDL payload itself is the
+verified `efs-copy` file, not zeros (see MODEM-10 Change 1 evidence);
+serving handle 1 at runtime did not change the result.
 
 ## Boot order (init)
 
