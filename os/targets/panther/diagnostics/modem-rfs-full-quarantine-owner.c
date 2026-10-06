@@ -342,8 +342,8 @@ struct camp_driver {
     unsigned pref_target;
     int allow_data_sent, reg_complete;
     /* Data registration HOME (raw 1). Then stock 0x0625, the internet
-     * 0x0613 profile, and one SetupDataCall 0x0600. */
-    int data_home, vonr_sent, profile_sent, setup_sent;
+     * 0x0613 profile, one SetupDataCall 0x0600, then 0x0605 fast dormancy. */
+    int data_home, vonr_sent, profile_sent, setup_sent, fd_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3619,6 +3619,10 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
+    if (id == 0x0605) {
+        printf("camp_fastdorm response=yes error_raw=%u len=%zu\n", error, n);
+        return;
+    }
     if (id == 0x0625 || id == 0x0613 || id == 0x0600) {
         const char *step = id == 0x0625 ? "vonr" :
                            id == 0x0613 ? "profile" : "setup";
@@ -4146,6 +4150,29 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_%s=sent len=%zu elapsed_ms=%lld\n", name, len,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Stock sends SetFastDormancy once the data call is up. */
+    if (c->data_home && c->reg_complete && c->setup_sent && !c->fd_sent) {
+        ++c->probe_token;
+        uint8_t f[sizeof cc_sit_0605];
+        memcpy(f, cc_sit_0605, sizeof f);
+        put_little32(f + 6, c->probe_token);
+        c->fd_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->fd_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0605;
+        c->probe_name = "fastdorm";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_fastdorm=sent len=%zu elapsed_ms=%lld\n", sizeof f,
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -5962,10 +5989,22 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != sizeof cc_sit_0605) return 150;
+    if (little16(camp_cap[0] + 2) != 0x0605) return 159;
+    if (memcmp(camp_cap[0] + 12, "\x0a\x0a\x0a\x0a", 4) != 0) return 160;
+    host_sit_reply(ack, sizeof ack, 0x0605, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.fd_sent) return 161;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
-                       little16(camp_cap[0] + 2) == 0x0613))
-        return 150;
+                       little16(camp_cap[0] + 2) == 0x0613 ||
+                       little16(camp_cap[0] + 2) == 0x0605))
+        return 162;
     {
         uint8_t fr[64];
         uint8_t got[4];

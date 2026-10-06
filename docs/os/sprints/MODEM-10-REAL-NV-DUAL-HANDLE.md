@@ -597,3 +597,18 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   route=1`. На `rmnet1` два `inet6` (link-local и назначенный).
   `ip -6 route get` для 2001:4860:4860::8888 выбирает `dev rmnet1`.
   Один ICMPv6 туда завершился с кодом 0: rx 104 → 208, tx 344 → 448.
+
+### TCP по тому же bearer — device run (2026-10-06, слот A)
+
+- Тот же owner, без новой загрузки. `busybox wget` на `http://example.com/`
+  завершился с кодом 0, тело 577 Б. Счётчики `rmnet1`: rx 208 → 1654,
+  tx 640 → 1208. Тело ответа не читалось.
+
+### `0x0605` SetFastDormancy — device run (2026-10-06, слот A)
+
+- Сразу после успешного `0x0600` сток шлёт `BuildSetFastDormancyInfo`,
+  16 Б, четыре байта из захвата. Owner повторяет этот кадр один раз
+  после назначения адресов. Тело в лог не пишется.
+- На устройстве: `camp_fastdorm=sent len=16`, ответ `error_raw=0`
+  len 12. IPv4/IPv6 на `rmnet1` остаются. `wget` на `example.com`
+  снова код 0, тело 577 Б, rx 0 → 1446, tx 192 → 760.
