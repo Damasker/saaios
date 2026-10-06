@@ -2,8 +2,12 @@
 
 ## Паспорт
 
-- Состояние: `In progress` (план зафиксирован; исполнение начато с
-  host-частей, device-проверки ждут возврата телефона на SaaiOS слот A).
+- Состояние: `In progress`. Слот A — SaaiOS и сейчас ONLINE.
+  Bearer подтверждён на одноразовом diagnostic owner (см. Evidence);
+  owner не вшит в `native-init`. Образ S27 старше модемных коммитов
+  после `0d8c228`. Пока этот owner держит модем: не перезагружать
+  Pixel, не прошивать, не трогать COM13 и текущий процесс owner.
+  Прошивка нового образа — отдельный подтверждённый шаг.
 - Зависит от: S01-S12 (`Done`), MODEM-ROADMAP (MODEM-02/03/07),
   MODEM-10 (новый, центровой), gpu.md acceptance-последовательность.
 - Архитектурные решения: собрать единый образ, сводящий три воркстрима —
@@ -28,11 +32,22 @@
 
 Проверенные факты до изменения.
 
-**Модем.** Разворот VERDICT 27: провал регистрации — артефакт пустого
-`NV_NORM` + обслуживания только handle-3, а не CP-internal RF-стена.
-Сток на том же железе встаёт в LTE HOME (25503) + rmnet1 за ~1 с.
-Host-фикс (обслуживание обоих handle из верифицированных копий)
-реализован, ждёт device-проверки. Детали:
+**Модем.** Слот A (SaaiOS) ONLINE, 2026-10-06. На том же diagnostic
+owner, без новой загрузки: LTE HOME, `rmnet1` IPv4 `/32` и IPv6 `/64`,
+IPv4 DNS, ICMP и TCP (`wget http://example.com/` код 0, тело 577 Б,
+счётчики `rmnet1` сдвинулись). Это одноразовый diagnostic, не сервис
+в `native-init`. После data call стоковая цепочка отправлена по одному
+разу до `0x070c` GetCellInfoList (ответ 2228 Б, `error 0`) и `0x0108`
+SMSC (ответ 25 Б, `error 0`); тела этих ответов в лог не пишутся.
+`ims` и `sos` дают `error_raw=2`, как в стоке. На кадрах LTE HOME
+`lac=0` и `cid=0`. IPv6 DNS не установлен. Намеренно не отправлены:
+`0x0100` (271 Б, строки из захвата), `0x075c` (в TD1A `libsitril` без
+имени, в стоке `err 6`), `0x0208` (длинный SIM status), `0x0c14`
+(опкода нет в `libsitril` и `libril_sitril`). Следующий именованный
+безопасный GET — `0x0953` GetVonrCapa; в этой записи он не
+реализуется. Разворот VERDICT 27 сохраняется: прежний провал
+регистрации был артефактом пустого `NV_NORM` и обслуживания только
+handle-3. Детали прогонов:
 [MODEM-10](MODEM-10-REAL-NV-DUAL-HANDLE.md),
 [modem-stock-reproduction.md](../targets/panther/modem-stock-reproduction.md).
 
@@ -54,9 +69,12 @@ cp_thermal_zone` **после** `pcie-exynos-gs` + `google_modemctl`; PCIe RC
 
 **Сборка.** Entry-points: `os/targets/panther/build-native-c-image.sh`,
 OTA-цепочка `build-saai-ota-stage.sh`/`-write.sh`/`-health.sh`
-(S12 `Done`), `build-gpu-vendor-boot.sh`, `deploy/package.sh`. Хост —
-Windows; сборочные скрипты `.sh` вероятно требуют Linux/WSL-тулчейна
-(подтвердить до сборки).
+(S12 `Done`), `build-gpu-vendor-boot.sh`, `deploy/package.sh`. Образ
+S27 собран на сервере с `0d8c228` и не содержит модемные коммиты после
+него, включая `7084de0` (cell-info и SMSC). `saai-gpu-compositor` в
+бандле нет: NDK для него нет. Повторная сборка образа идёт отдельно и
+в этот шаг не входит. Пока слот A ONLINE, собранный образ не
+прошивается.
 
 ## Scope
 
@@ -91,6 +109,8 @@ Windows; сборочные скрипты `.sh` вероятно требуют
    честно сообщить, что именно отсутствует.
 2. **M1 — device-проверка модема (слот A).** Прогнать dual-handle owner
    (MODEM-10 Change 1-3) до camp + bearer. Центровой результат спринта.
+   На diagnostic owner выполнен (Evidence). В `native-init` owner не
+   вшит; повторный прогон и прошивка сейчас запрещены.
 3. **G1 — vendor_boot с Mali.** `build-gpu-vendor-boot.sh` против кита
    (`C:\Users\Admin\Desktop\saaios-panther-gpu-kit`, SHA сверен), модули
    + CSF в ramdisk без автозагрузки; затем bounded ручная загрузка
@@ -178,7 +198,46 @@ Windows; сборочные скрипты `.sh` вероятно требуют
   `tools/com13-*.ps1`, `tools/file-recv-{put,get}.ps1`,
   `scripts/collect-panther-artifacts.sh`.
 
+## Host checklist (2026-10-06)
+
+Host-шаг без устройства. Телефон не перезагружался, COM13 и текущий
+owner не открывались, образ не собирался и не прошивался.
+
+Уже в дереве, на устройстве проверено тем же diagnostic owner
+(коммиты после `0d8c228`, вершина `7084de0`):
+
+- LTE HOME, `rmnet1` IPv4 `/32` и IPv6 `/64`, маршрут по умолчанию,
+  IPv4 DNS в `/run/resolv.conf`, ICMP и TCP (`example.com`, код 0,
+  тело 577 Б, счётчики `rmnet` сдвинулись).
+- После data call по одному разу: fast dormancy, профили `ims`/`sos`
+  (`error_raw=2`, как в стоке), modem activity, ENDC, SetVonrCapa,
+  RC network type, data throttling, unsolicited filter, screen state,
+  `0x070c` (ответ 2228 Б, `error 0`), `0x0108` (ответ 25 Б, `error 0`).
+  Тела `0x070c` и `0x0108` не логируются.
+
+Ещё не сделано на host и не отправляется, пока owner живой:
+
+- IPv6 DNS: `camp_write_dns` пишет только IPv4 `nameserver`.
+- Логи скаляров `lac`/`cid` на LTE HOME дают 0; тела cell-info и SMSC
+  по-прежнему не разбираются и не пишутся (SMSC в лог не попадает).
+- Не отправлять: `0x0100`, `0x075c`, `0x0208`, `0x0c14` — причины в
+  Current state. `0x0953` GetVonrCapa не реализуется в этом шаге.
+- Owner не запускается из `native-init`. Образ с этими коммитами ещё
+  не собран: S27 остаётся на `0d8c228`.
+
 ## Evidence
+
+**Bearer (2026-10-06, слот A, diagnostic owner, без новой загрузки).**
+LTE HOME. `rmnet1`: IPv4 `/32`, IPv6 `/64`, IPv4 DNS. ICMP и TCP:
+`wget http://example.com/` код 0, тело 577 Б, счётчики `rmnet1`
+сдвинулись. Последние отправленные кадры этой серии — `0x070c`
+(ответ 2228 Б, `error 0`) и `0x0108` (ответ 25 Б, `error 0`); тела не
+логируются. `ims`/`sos`: `error_raw=2`. На кадрах LTE HOME `lac=0`,
+`cid=0`. IPv6 DNS нет. Owner — одноразовый diagnostic, не
+`native-init`. Пока он держит модем, устройство не перезагружать и
+не прошивать. Прогоны:
+[MODEM-10](MODEM-10-REAL-NV-DUAL-HANDLE.md) от `0x4600` и
+carrierconfig до cell-info и SMSC.
 
 **Сборка S27 (2026-10-06, `0d8c228`, сервер, `dist/panther/s27`).**
 Host-тесты `saai-ui-core` + `saai-shell`: 319 + 82 passed.
@@ -189,6 +248,9 @@ Host-тесты `saai-ui-core` + `saai-shell`: 319 + 82 passed.
 Прошит `init_boot_a`, `/data/saaios/system` обновлён; загрузка: displayd,
 shell (`99f39b55…`), appd, entityd, taskd, runtime, file-recv запущены.
 `saai-gpu-compositor` (NDK) в бандле по-прежнему нет.
+Этот образ старше модемных коммитов `da25c4e`…`7084de0`: bearer и
+кадры после data call в S27 не входят. Пока слот A ONLINE, S27
+повторно не прошивается.
 
 Заполняется при закрытии каждого воркстрима: commit, test log, image
 SHA-256, bearer-доказательство (`rmnet`/IPv4/rx-tx), render-node
