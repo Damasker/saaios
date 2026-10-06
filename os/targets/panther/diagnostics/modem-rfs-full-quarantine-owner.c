@@ -443,6 +443,7 @@ struct owner {
     int grant_attempted;
     int chunks_stored;
     uint32_t received_bytes, expected_chunk;
+    uint16_t nv_seq;
     struct sha256 received_hash;
     uint8_t candidate_digest[32];
     int final_ack_attempted;
@@ -1305,6 +1306,15 @@ static int send_ready(int fd)
     return 0;
 }
 
+/* The CP's RFS sequence counter is shared with carrierconfig, so the NV
+ * cmd7/cmd3/cmd6 frames keep their captured shape except bytes 2..3. */
+static int same_except_seq(const uint8_t *frame, const uint8_t *proto,
+                           size_t len)
+{
+    return len >= 4 && frame[0] == proto[0] && frame[1] == proto[1] &&
+           memcmp(frame + 4, proto + 4, len - 4) == 0;
+}
+
 static enum action classify(const struct owner *o, const uint8_t *frame,
                             size_t len)
 {
@@ -1312,13 +1322,13 @@ static enum action classify(const struct owner *o, const uint8_t *frame,
     switch (o->phase) {
     case WAIT_7:
         return len == sizeof request_7 &&
-               same_bytes(frame, request_7, len) ? STATUS_7 : BAD_FRAME;
+               same_except_seq(frame, request_7, len) ? STATUS_7 : BAD_FRAME;
     case WAIT_3:
         return len == sizeof request_3 &&
-               same_bytes(frame, request_3, len) ? NO_REPLY : BAD_FRAME;
+               same_except_seq(frame, request_3, len) ? NO_REPLY : BAD_FRAME;
     case WAIT_6:
         return len == sizeof request_6 &&
-               same_bytes(frame, request_6, len) ? GRANT_1 : BAD_FRAME;
+               same_except_seq(frame, request_6, len) ? GRANT_1 : BAD_FRAME;
     case WAIT_DATA:
         return o->grant_attempted > 0 &&
                o->grant_attempted <= RFS_GRANTS_MAX &&
@@ -1334,7 +1344,7 @@ static enum action classify(const struct owner *o, const uint8_t *frame,
                  little32(frame + 4) == 332 &&
                  frame[338] == 0 && frame[339] == 0)) &&
                little16(frame) == 2 &&
-               little16(frame + 2) == 1 &&
+               little16(frame + 2) == (o->nv_seq ? o->nv_seq : 1) &&
                little32(frame + 8) == 0 &&
                little32(frame + 12) == 3 &&
                little32(frame + 16) == o->expected_chunk ?
@@ -1352,7 +1362,8 @@ static unsigned data_mismatch_mask(const struct owner *o,
     unsigned mask = 0;
     if (len != 20u + o->expected_chunk) mask |= MISMATCH_LENGTH;
     if (!frame || len < 2 || little16(frame) != 2) mask |= MISMATCH_COMMAND;
-    if (!frame || len < 4 || little16(frame + 2) != 1)
+    if (!frame || len < 4 ||
+        little16(frame + 2) != (o->nv_seq ? o->nv_seq : 1))
         mask |= MISMATCH_SEQUENCE;
     if (!frame || len < 8 ||
         little32(frame + 4) != 12u + o->expected_chunk)
@@ -1423,6 +1434,10 @@ static int send_next_grant(struct owner *o)
         return -1;
     }
     uint8_t grant[20] = {2,0,1,0, 12,0,0,0, 3,0,0,0};
+    if (o->nv_seq) {
+        grant[2] = (uint8_t)o->nv_seq;
+        grant[3] = (uint8_t)(o->nv_seq >> 8);
+    }
     put_little32(grant + 12, o->received_bytes);
     put_little32(grant + 16, length);
     /* Attempt is consumed even if the endpoint reports a short write. */
@@ -1837,6 +1852,283 @@ done:
     return rc;
 }
 
+/* Read-only carrierconfig file service, recovered from CP2A rfsd
+ * RfsService::File (not invented):
+ *   cmd 4 OPEN: payload u32 id, skip 4, path at +8 must contain
+ *     "carrierconfig/". Reply is 20 bytes: cmd 3, seq, len 8, status 0,
+ *     file id, st_size (rfsd OpenV2 success path).
+ *   cmd 6 op 1: read. Reply is cmd 1, seq, len=n+12, id, offset, n, bytes
+ *     (rfsd read sender, chunk cap 2012). op 2 (write) gets status 3,
+ *     the "Not allowed" status constant.
+ *   cmd 5 CLOSE: 16-byte status 0.
+ *   EOF / zero read: 16-byte status 8 (rfsd movi #8).
+ * Files open only under CC_ROOT, O_RDONLY|O_NOFOLLOW. No NV, no EFS.
+ * A frame whose id is not one of ours is left for the NV handlers. */
+#define CC_ROOT "/data/saaios/var/carrierconfig"
+#define CC_SLOTS 8
+#define CC_CHUNK 2012u
+static const char *cc_root_path = CC_ROOT;
+static int cc_root_fd = -1;
+static struct {
+    uint32_t id;
+    int fd;
+    int live;
+    uint32_t rd_off, rd_left;
+    uint16_t rd_seq;
+} cc_slot[CC_SLOTS];
+
+static int cc_out(int fd, const uint8_t *p, size_t n)
+{
+    size_t done = 0;
+    while (done < n) {
+        ssize_t w = write(fd, p + done, n - done);
+        if (w < 0 && errno == EINTR) continue;
+        if (w <= 0) return -1;
+        done += (size_t)w;
+    }
+    return 0;
+}
+
+static void cc_status(int fd, uint16_t seq, uint32_t id, uint32_t status)
+{
+    uint8_t f[16] = {3, 0, 0, 0, 8, 0, 0, 0};
+    f[2] = (uint8_t)seq;
+    f[3] = (uint8_t)(seq >> 8);
+    put_little32(f + 8, status);
+    put_little32(f + 12, id);
+    (void)cc_out(fd, f, sizeof f);
+}
+
+static int cc_relative(const char *path, char *out, size_t cap)
+{
+    const char *mark = strstr(path, "carrierconfig/");
+    const char *rel;
+    size_t n, i;
+    if (!mark) return -1;
+    rel = mark + strlen("carrierconfig/");
+    n = strlen(rel);
+    if (!n || n >= cap || strstr(rel, "..")) return -1;
+    for (i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)rel[i];
+        int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '/' || c == '.' ||
+                 c == '_' || c == '-';
+        if (!ok) return -1;
+    }
+    memcpy(out, rel, n + 1);
+    return 0;
+}
+
+static int cc_find(uint32_t id)
+{
+    int i;
+    for (i = 0; i < CC_SLOTS; i++)
+        if (cc_slot[i].live && cc_slot[i].id == id) return i;
+    return -1;
+}
+
+/* 1 = this frame was a carrierconfig file op (answered or refused). */
+static int cc_serve(int rfs, const uint8_t *frame, size_t size)
+{
+    uint16_t cmd, seq;
+    uint32_t id;
+    char rel[192];
+    int slot;
+    if (size < 8) return 0;
+    cmd = little16(frame);
+    seq = little16(frame + 2);
+    if (cmd == 4) {
+        const char *path;
+        struct stat st;
+        int fd, i;
+        if (size < 18 || frame[16] != '/') return 0;
+        path = (const char *)(frame + 16);
+        if (strnlen(path, size - 16) >= size - 16) return 0;
+        id = little32(frame + 8);
+        if (cc_relative(path, rel, sizeof rel)) {
+            char prefix[49];
+            size_t pi, pn = strnlen(path, 48);
+            int run = 0, safe = 1;
+            for (pi = 0; pi < pn; pi++) {
+                unsigned char c = (unsigned char)path[pi];
+                int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                         (c >= '0' && c <= '9') || c == '/' || c == '.' ||
+                         c == '_' || c == '-';
+                if (!ok) { safe = 0; break; }
+                prefix[pi] = (char)c;
+                if (c >= '0' && c <= '9') {
+                    if (++run >= 15) safe = 0;
+                } else run = 0;
+            }
+            prefix[safe ? pi : 0] = '\0';
+            if (safe && prefix[0])
+                printf("cc_open id=%u reject=path prefix=%s\n", id, prefix);
+            else
+                printf("cc_open id=%u reject=path\n", id);
+            cc_status(rfs, seq, id, 3);
+            return 1;
+        }
+        if (cc_root_fd < 0)
+            cc_root_fd = open(cc_root_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (cc_root_fd < 0) {
+            printf("cc_open id=%u reject=root\n", id);
+            cc_status(rfs, seq, id, 3);
+            return 1;
+        }
+        fd = openat(cc_root_fd, rel, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+            st.st_size < 0 || st.st_size > 0x7fffffff) {
+            if (fd >= 0) close(fd);
+            printf("cc_open id=%u rel=%s reject=open\n", id, rel);
+            cc_status(rfs, seq, id, 3);
+            return 1;
+        }
+        slot = cc_find(id);
+        if (slot < 0) {
+            for (i = 0; i < CC_SLOTS; i++)
+                if (!cc_slot[i].live) { slot = i; break; }
+        }
+        if (slot < 0) {
+            close(fd);
+            printf("cc_open id=%u rel=%s reject=slots\n", id, rel);
+            cc_status(rfs, seq, id, 6);
+            return 1;
+        }
+        if (cc_slot[slot].live && cc_slot[slot].fd >= 0)
+            close(cc_slot[slot].fd);
+        cc_slot[slot].live = 1;
+        cc_slot[slot].id = id;
+        cc_slot[slot].fd = fd;
+        {
+            uint8_t ok[20];
+            memset(ok, 0, sizeof ok);
+            ok[0] = 3;
+            ok[2] = (uint8_t)seq;
+            ok[3] = (uint8_t)(seq >> 8);
+            put_little32(ok + 4, 8);
+            put_little32(ok + 12, id);
+            put_little32(ok + 16, (uint32_t)st.st_size);
+            (void)cc_out(rfs, ok, sizeof ok);
+        }
+        printf("cc_open id=%u rel=%s size=%lld\n", id, rel,
+               (long long)st.st_size);
+        return 1;
+    }
+    /* rfsd File handler: cmd 3 with the open file id at frame+12 and a
+     * zero at frame+8 sets an internal flag and sends nothing. A reply
+     * here, or letting the NV parser call it malformed, stops the read. */
+    if (cmd == 3 && size >= 16) {
+        id = little32(frame + 12);
+        slot = cc_find(id);
+        if (slot < 0) return 0;
+        /* The cmd 3 after CLOSE still names the file id. rfsd sends
+         * nothing; this is what releases the id. */
+        if (cc_slot[slot].live == 2) cc_slot[slot].live = 0;
+        printf("cc_cmd3 id=%u\n", id);
+        return 1;
+    }
+    /* After a finished read, rfsd's cmd 1 (handler 0x9c80) sees remaining
+     * length 0 and replies with the 16-byte status 0 at rodata 0x5110. */
+    if (cmd == 1 && size >= 16) {
+        id = little32(frame + 12);
+        slot = cc_find(id);
+        if (slot < 0 || cc_slot[slot].live != 1) return 0;
+        if (cc_slot[slot].rd_left > 0) {
+            uint32_t off = cc_slot[slot].rd_off;
+            uint32_t want = cc_slot[slot].rd_left;
+            uint32_t chunk = want > CC_CHUNK ? CC_CHUNK : want;
+            uint8_t buf[20 + CC_CHUNK];
+            ssize_t n = pread(cc_slot[slot].fd, buf + 20, chunk, (off_t)off);
+            if (n <= 0) {
+                cc_slot[slot].rd_left = 0;
+                cc_status(rfs, cc_slot[slot].rd_seq, id, n < 0 ? 3 : 8);
+                return 1;
+            }
+            memset(buf, 0, 20);
+            buf[0] = 1;
+            buf[2] = (uint8_t)cc_slot[slot].rd_seq;
+            buf[3] = (uint8_t)(cc_slot[slot].rd_seq >> 8);
+            put_little32(buf + 4, (uint32_t)n + 12u);
+            put_little32(buf + 8, id);
+            put_little32(buf + 12, off);
+            put_little32(buf + 16, (uint32_t)n);
+            (void)cc_out(rfs, buf, 20u + (size_t)n);
+            cc_slot[slot].rd_off = off + (uint32_t)n;
+            cc_slot[slot].rd_left = want - (uint32_t)n;
+            printf("cc_read id=%u off=%u n=%d\n", id, off, (int)n);
+            return 1;
+        }
+        cc_status(rfs, cc_slot[slot].rd_seq, id, 0);
+        printf("cc_cmd1 id=%u\n", id);
+        return 1;
+    }
+    if (cmd != 5 && cmd != 6) return 0;
+    if (size < 12) return 0;
+    id = little32(frame + 8);
+    slot = cc_find(id);
+    if (slot < 0 || (cmd == 6 && cc_slot[slot].live != 1)) return 0;
+    if (cmd == 5) {
+        if (cc_slot[slot].live != 1) return 0;
+        close(cc_slot[slot].fd);
+        cc_slot[slot].live = 2;
+        cc_slot[slot].fd = -1;
+        cc_status(rfs, seq, id, 0);
+        printf("cc_close id=%u\n", id);
+        return 1;
+    }
+    if (size < 24) {
+        cc_status(rfs, seq, id, 6);
+        return 1;
+    }
+    {
+        uint32_t off = little32(frame + 12);
+        uint32_t len = little32(frame + 16);
+        uint32_t op = little32(frame + 20);
+        uint8_t buf[20 + CC_CHUNK];
+        ssize_t n;
+        if (op == 2) {
+            printf("cc_io id=%u reject=write\n", id);
+            cc_status(rfs, seq, id, 3);
+            return 1;
+        }
+        if (op != 1) {
+            cc_status(rfs, seq, id, 6);
+            return 1;
+        }
+        {
+            uint32_t want = len;
+            uint32_t chunk = want > CC_CHUNK ? CC_CHUNK : want;
+            n = pread(cc_slot[slot].fd, buf + 20, chunk, (off_t)off);
+            if (n < 0) {
+                cc_status(rfs, seq, id, 3);
+                return 1;
+            }
+            if (n == 0) {
+                cc_slot[slot].rd_left = 0;
+                cc_status(rfs, seq, id, 8);
+                printf("cc_read id=%u off=%u eof\n", id, off);
+                return 1;
+            }
+            memset(buf, 0, 20);
+            buf[0] = 1;
+            buf[2] = (uint8_t)seq;
+            buf[3] = (uint8_t)(seq >> 8);
+            put_little32(buf + 4, (uint32_t)n + 12u);
+            put_little32(buf + 8, id);
+            put_little32(buf + 12, off);
+            put_little32(buf + 16, (uint32_t)n);
+            (void)cc_out(rfs, buf, 20u + (size_t)n);
+            cc_slot[slot].rd_seq = seq;
+            cc_slot[slot].rd_off = off + (uint32_t)n;
+            cc_slot[slot].rd_left =
+                ((uint32_t)n < chunk || (uint32_t)n >= want) ? 0 :
+                want - (uint32_t)n;
+            printf("cc_read id=%u off=%u n=%d\n", id, off, (int)n);
+            return 1;
+        }
+    }
+}
+
 /* Post-completion RFS observer. After the protected-NV write-out quarantine is
  * done (TERMINAL + final_ack_sent) the main loop normally stops reading RFS.
  * This drain keeps reading so any RFS request the CP issues during the later
@@ -1867,6 +2159,11 @@ static void post_terminal_rfs_drain(struct owner *o, const uint8_t *bytes,
         int size = valid_frame_length(pt_rx, pt_used);
         if (size <= 0) break;
         rfs_trace("post_term", TERMINAL, pt_rx, (size_t)size, now);
+        if (cc_serve(o->rfs, pt_rx, (size_t)size)) {
+            memmove(pt_rx, pt_rx + size, pt_used - (size_t)size);
+            pt_used -= (size_t)size;
+            continue;
+        }
         if ((size_t)size == sizeof request_7 &&
             same_bytes(pt_rx, request_7, sizeof request_7)) {
             size_t done = 0;
@@ -1983,6 +2280,17 @@ static int complete_frame(struct owner *o, const uint8_t *frame,
         diagnose(o, frame_stage(o), REASON_TIMEOUT);
         return -1;
     }
+    /* File-service OPEN/READ/CLOSE can arrive before the NV cmd7 sequence.
+     * Answer them here so a carrierconfig open is not a malformed NV frame. */
+    if (cc_serve(o->rfs, frame, len)) {
+        int64_t progressed_at = monotonic_ms();
+        if (progressed_at >= 0 && progressed_at < o->total_deadline_ms) {
+            o->deadline_ms = progressed_at + STEP_DEADLINE_MS;
+            if (o->deadline_ms > o->total_deadline_ms)
+                o->deadline_ms = o->total_deadline_ms;
+        }
+        return 0;
+    }
     enum action action = classify(o, frame, len);
     if (action == BAD_FRAME) {
         if (o->phase == WAIT_DATA) {
@@ -1998,12 +2306,17 @@ static int complete_frame(struct owner *o, const uint8_t *frame,
         return -1;
     }
     if (action == STATUS_7) {
+        uint8_t st[sizeof status_7];
+        memcpy(st, status_7, sizeof st);
+        st[2] = frame[2];
+        st[3] = frame[3];
         if (reply_gate(o) ||
-            send_modem_once(o, status_7, sizeof status_7)) return -1;
+            send_modem_once(o, st, sizeof st)) return -1;
         o->phase = WAIT_3;
     } else if (action == NO_REPLY) {
         o->phase = WAIT_6;
     } else if (action == GRANT_1) {
+        o->nv_seq = little16(frame + 2);
         if (send_next_grant(o)) return -1;
     } else if (action == STORE_CHUNK) {
         int stored;
@@ -2055,7 +2368,13 @@ static int complete_frame(struct owner *o, const uint8_t *frame,
             }
 #endif
             o->final_ack_attempted = 1;
-            if (send_modem_once(o, final_status, sizeof final_status)) {
+            uint8_t fin[sizeof final_status];
+            memcpy(fin, final_status, sizeof fin);
+            if (o->nv_seq) {
+                fin[2] = (uint8_t)o->nv_seq;
+                fin[3] = (uint8_t)(o->nv_seq >> 8);
+            }
+            if (send_modem_once(o, fin, sizeof fin)) {
                 diagnose(o, STAGE_FINAL_ACK, REASON_SEND);
                 return -1;
             }
@@ -2380,6 +2699,7 @@ static void sit_advance(struct owner *o, int64_t now)
 }
 
 #ifdef SAAIOS_RFS_CAMP
+#include "cc-sit-4600.inc"
 /* Exact stock stage-1 request builders, recovered from the vendor RIL and
  * matching modem-channel-owner.c byte-for-byte. No CLI value or NV access. */
 static void make_setmodemsconfig_request(uint8_t request[SEQ_CONFIG_LEN],
@@ -3407,6 +3727,24 @@ static void camp_advance(struct owner *o, int64_t now)
     }
     c->sgc_token = sgc_token;
     c->sgc_sent = 1;
+    /* Stock sends SetCpCarrierConfig before RADIO_POWER. Two captured
+     * requests, in capture order; only the token is replaced. */
+    {
+        const uint8_t *srcs[2] = {cc_sit_0, cc_sit_1};
+        int i;
+        for (i = 0; i < 2; i++) {
+            uint8_t cc[532];
+            memcpy(cc, srcs[i], sizeof cc);
+            put_little32(cc + 6, ++c->token);
+            if (camp_send_once(o->ipc, cc, sizeof cc)) {
+                c->dispatched = 1;
+                puts("camp_dispatch=write_failed step=cc");
+                return;
+            }
+            printf("camp_cc=sent n=%d man=%02x%02x%02x%02x\n", i + 1,
+                   cc[276], cc[277], cc[278], cc[279]);
+        }
+    }
     uint32_t camp_token = ++c->token;
     uint8_t power[CAMP_POWER_LEN];
     make_radiopower_request(power, camp_token, CAMP_POWER_ON);
@@ -5205,13 +5543,13 @@ static int test_camp_observer(void)
 }
 
 #ifdef RFS_HOST_TEST
-static uint8_t camp_cap[3][32];
-static size_t camp_cap_len[3];
+static uint8_t camp_cap[8][544];
+static size_t camp_cap_len[8];
 static unsigned camp_cap_n;
 static ssize_t camp_capture_write(int fd, const void *buf, size_t len)
 {
     (void)fd;
-    if (camp_cap_n < 3 && len <= sizeof camp_cap[0]) {
+    if (camp_cap_n < 8 && len <= sizeof camp_cap[0]) {
         memcpy(camp_cap[camp_cap_n], buf, len);
         camp_cap_len[camp_cap_n] = len;
     }
@@ -5231,13 +5569,17 @@ static int test_camp_dispatch(void)
     host_sit_write_override = camp_capture_write;
     camp_advance(&o, 1000);
     host_sit_write_override = NULL;
-    if (!o.camp.dispatched || camp_cap_n != 3) return 110;
+    if (!o.camp.dispatched || camp_cap_n != 5) return 110;
     if (camp_cap_len[0] != SEQ_CONFIG_LEN ||
         little16(camp_cap[0] + 2) != SEQ_CONFIG_COMMAND) return 111;
     if (camp_cap_len[1] != SGC_LEN ||
         little16(camp_cap[1] + 2) != SGC_COMMAND) return 112;
-    if (camp_cap_len[2] != CAMP_POWER_LEN ||
-        little16(camp_cap[2] + 2) != CAMP_POWER_COMMAND) return 113;
+    if (camp_cap_len[2] != 532 || little16(camp_cap[2] + 2) != 0x4600 ||
+        memcmp(camp_cap[2] + 276, "\x29\x1d\x8c\x8f", 4) != 0) return 113;
+    if (camp_cap_len[3] != 532 || little16(camp_cap[3] + 2) != 0x4600 ||
+        memcmp(camp_cap[3] + 276, "\xd0\xc8\x11\x04", 4) != 0) return 113;
+    if (camp_cap_len[4] != CAMP_POWER_LEN ||
+        little16(camp_cap[4] + 2) != CAMP_POWER_COMMAND) return 113;
     /* A second advance must not re-dispatch. */
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
@@ -5278,7 +5620,7 @@ static int test_camp_dispatch(void)
     host_sit_write_override = camp_capture_write;
     camp_advance(&o3, 1000);
     host_sit_write_override = NULL;
-    if (!o3.camp.dispatched || camp_cap_n != 3) return 117;
+    if (!o3.camp.dispatched || camp_cap_n != 5) return 117;
     struct owner o4;
     memset(&o4, 0, sizeof o4);
     o4.phase = TERMINAL;
@@ -5904,6 +6246,122 @@ static int test_camp_reg(void)
 }
 #endif
 
+static int test_cc(void)
+{
+    char dir[] = "/tmp/cc-test-XXXXXX";
+    char path[256];
+    uint8_t open_f[128];
+    uint8_t rd[24];
+    uint8_t got[64];
+    const char *rel = "/vendor/firmware/carrierconfig/manifests/hi";
+    size_t rel_n = strlen(rel);
+    int p[2];
+    int file;
+    ssize_t n;
+    if (!mkdtemp(dir)) return 1;
+    snprintf(path, sizeof path, "%s/manifests", dir);
+    if (mkdir(path, 0700)) return 1;
+    snprintf(path, sizeof path, "%s/manifests/hi", dir);
+    file = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (file < 0 || write(file, "hello", 5) != 5) return 1;
+    close(file);
+    if (cc_root_fd >= 0) close(cc_root_fd);
+    cc_root_fd = -1;
+    memset(cc_slot, 0, sizeof cc_slot);
+    cc_root_path = dir;
+    if (pipe(p)) return 1;
+    memset(open_f, 0, sizeof open_f);
+    open_f[0] = 4;
+    open_f[2] = 7;
+    put_little32(open_f + 4, (uint32_t)(8 + rel_n + 1));
+    put_little32(open_f + 8, 9);
+    memcpy(open_f + 16, rel, rel_n + 1);
+    if (!cc_serve(p[1], open_f, 16 + rel_n + 1)) return 1;
+    n = read(p[0], got, sizeof got);
+    if (n != 20 || got[0] != 3 || little32(got + 8) != 0 ||
+        little32(got + 12) != 9 || little32(got + 16) != 5)
+        return 1;
+    memset(rd, 0, sizeof rd);
+    rd[0] = 6;
+    rd[2] = 8;
+    put_little32(rd + 4, 16);
+    put_little32(rd + 8, 9);
+    put_little32(rd + 16, 5);
+    put_little32(rd + 20, 1);
+    if (!cc_serve(p[1], rd, sizeof rd)) return 1;
+    n = read(p[0], got, sizeof got);
+    if (n != 25 || got[0] != 1 || little32(got + 16) != 5 ||
+        memcmp(got + 20, "hello", 5) != 0)
+        return 1;
+    rd[0] = 6;
+    put_little32(rd + 20, 2);
+    if (!cc_serve(p[1], rd, sizeof rd)) return 1;
+    n = read(p[0], got, 16);
+    if (n != 16 || little32(got + 8) != 3) return 1;
+    {
+        struct owner ow;
+        int64_t now = monotonic_ms();
+        memset(&ow, 0, sizeof ow);
+        ow.phase = WAIT_7;
+        ow.rfs = p[1];
+        ow.deadline_ms = ow.total_deadline_ms = now + 10000;
+        if (now < 0 || feed_rfs(&ow, open_f, 16 + rel_n + 1, now) ||
+            ow.phase != WAIT_7) return 1;
+        n = read(p[0], got, sizeof got);
+        if (n != 20 || little32(got + 8) != 0) return 1;
+        memset(open_f, 0, sizeof open_f);
+        memcpy(open_f + 16, "/config/other", 14);
+        open_f[0] = 4;
+        put_little32(open_f + 4, 8u + 14u);
+        put_little32(open_f + 8, 4);
+        now = monotonic_ms();
+        if (feed_rfs(&ow, open_f, 30, now) || ow.phase != WAIT_7) return 1;
+        n = read(p[0], got, 16);
+        if (n != 16 || little32(got + 8) != 3) return 1;
+        memset(open_f, 0, 20);
+        open_f[0] = 3;
+        put_little32(open_f + 4, 12);
+        put_little32(open_f + 12, 9);
+        now = monotonic_ms();
+        if (feed_rfs(&ow, open_f, 20, now) || ow.phase != WAIT_7) return 1;
+        if (fcntl(p[0], F_SETFL, O_NONBLOCK) < 0) return 1;
+        n = read(p[0], got, sizeof got);
+        if (n > 0) return 1;
+        memset(open_f, 0, 16);
+        open_f[0] = 1;
+        open_f[2] = 1;
+        put_little32(open_f + 4, 8);
+        put_little32(open_f + 12, 9);
+        now = monotonic_ms();
+        if (feed_rfs(&ow, open_f, 16, now) || ow.phase != WAIT_7) return 1;
+        n = read(p[0], got, 16);
+        if (n != 16 || got[0] != 3 || little32(got + 8) != 0 ||
+            little32(got + 12) != 9) return 1;
+        memset(open_f, 0, 12);
+        open_f[0] = 5;
+        put_little32(open_f + 4, 4);
+        put_little32(open_f + 8, 9);
+        now = monotonic_ms();
+        if (feed_rfs(&ow, open_f, 12, now) || ow.phase != WAIT_7) return 1;
+        n = read(p[0], got, 16);
+        if (n != 16 || little32(got + 8) != 0) return 1;
+        memset(open_f, 0, 20);
+        open_f[0] = 3;
+        put_little32(open_f + 4, 12);
+        put_little32(open_f + 12, 9);
+        now = monotonic_ms();
+        if (feed_rfs(&ow, open_f, 20, now) || ow.phase != WAIT_7) return 1;
+        n = read(p[0], got, sizeof got);
+        if (n > 0) return 1;
+    }
+    close(p[0]);
+    close(p[1]);
+    if (cc_root_fd >= 0) close(cc_root_fd);
+    cc_root_fd = -1;
+    cc_root_path = CC_ROOT;
+    return 0;
+}
+
 static int self_test(void)
 {
     static const uint8_t abc[] = {'a', 'b', 'c'};
@@ -5964,7 +6422,7 @@ static int self_test(void)
         return 8;
 #endif
 #ifdef SAAIOS_RFS_CAMP
-    if (test_camp_builders() || test_camp_observer() || test_camp_reg()
+    if (test_cc() || test_camp_builders() || test_camp_observer() || test_camp_reg()
 #ifdef RFS_HOST_TEST
         || test_camp_dispatch() || test_camp_prober()
 #endif

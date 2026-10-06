@@ -515,3 +515,23 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 Контроль для сравнения —
 [modem-stock-reproduction.md](../targets/panther/modem-stock-reproduction.md)
 (стоковый LTE HOME + rmnet1).
+
+### `0x4600` и read-only carrierconfig — device run (2026-10-06, слот A)
+
+- На телефон положена копия дерева в `/data/saaios/var/carrierconfig`.
+  Owner шлёт оба стоковых кадра `0x4600` (532 Б, token перезаписывается)
+  перед `0x0800` и отвечает на RFS File service в живом цикле, пока идёт
+  NV: OPEN cmd 4, cmd 3 без ответа, READ cmd 6 кусками по 2012, cmd 1
+  дочитывает остаток и затем статус 0, CLOSE cmd 5, завершающий cmd 3.
+  Запись в эти файлы отклоняется.
+- CP прочитал оба манифеста и набор `confseqs/` целиком, включая файлы
+  больше одного куска (до 49508 Б).
+- Счётчик последовательности RFS общий с File service, поэтому NV cmd 7
+  приходит с ненулевым seq. Ответ и grant повторяют seq кадра CP.
+  Карантин завершился: 95 grant, 189446 байт, `final_ack_sent=1`.
+  Исходный EFS не монтировался на запись.
+- После этого: SIM ready, voice и data `registration_raw=1`,
+  `reject_raw=0`, `tech_raw=14` (`rat_mapped=14`, LTE),
+  `plmn_numeric=25503#`. `0x093f` / `0x0404` / `0x0800` с `error_raw=0`.
+- rmnet0..3 rx и tx остаются 0, IPv4 на rmnet нет. Канал данных ещё
+  не подтверждён.
