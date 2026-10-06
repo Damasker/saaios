@@ -347,7 +347,7 @@ struct camp_driver {
     int activity_sent, ims_sent, sos_sent;
     int endc_sent, vonrcapa_sent, rcnet_sent;
     int throttle_sent, unsol_sent, screen_sent;
-    int cellinfo_sent, smsc_sent;
+    int cellinfo_sent, smsc_sent, vonrget_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3640,6 +3640,10 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         return;
     }
+    if (id == 0x0953) {
+        printf("camp_vonrget response=yes error_raw=%u len=%zu\n", error, n);
+        return;
+    }
     if (id == 0x090c) {
         printf("camp_activity response=yes error_raw=%u len=%zu\n", error, n);
         return;
@@ -4388,6 +4392,27 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_%s=sent elapsed_ms=%lld\n", name,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Stock later reads VoNR capability. Empty GET, reply body stays off
+     * the log. */
+    if (c->data_home && c->reg_complete && c->smsc_sent && !c->vonrget_sent) {
+        ++c->probe_token;
+        c->vonrget_sent = 1;
+        int wrote = sit_send_get_once(o->ipc, 0x0953, c->probe_token);
+        if (wrote) {
+            c->vonrget_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0953;
+        c->probe_name = "vonrget";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_vonrget=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -6339,6 +6364,17 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x0953)
+        return 192;
+    host_sit_reply(ack, sizeof ack, 0x0953, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.vonrget_sent) return 193;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -6350,7 +6386,8 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0928 ||
                        little16(camp_cap[0] + 2) == 0x0902 ||
                        little16(camp_cap[0] + 2) == 0x070c ||
-                       little16(camp_cap[0] + 2) == 0x0108))
+                       little16(camp_cap[0] + 2) == 0x0108 ||
+                       little16(camp_cap[0] + 2) == 0x0953))
         return 168;
     {
         uint8_t fr[64];

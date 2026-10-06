@@ -666,3 +666,18 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 - На устройстве: `camp_cellinfo` `error_raw=0` len 2228, `camp_smsc`
   `error_raw=0` len 25. `wget` на `example.com` код 0, тело 577 Б,
   rx 0 → 1446, tx 192 → 760.
+
+### `0x0953` GetVonrCapa — device run (2026-10-06, слот A)
+
+- Последний именованный кадр стока после SMSC: пустой GET
+  `BuildGetVonrCapa`, в захвате `err=0`, ответ 16 Б. Owner шлёт его
+  один раз. Тело ответа в лог не пишется.
+- На устройстве: `camp_vonrget` `error_raw=0` len 16. `wget` на
+  `example.com` код 0, тело 577 Б, rx 0 → 1446, tx 240 → 808.
+- Именованный хвост после data call на этом закрыт. Дальше сток только
+  повторяет регистрацию, activity и cell info. Не отправляются:
+  `0x0100` (271 Б, в захвате есть строки), `0x075c` (в TD1A
+  `libsitril` не назван, в стоке `err=6`), `0x0208` (длинный SIM
+  status), `0x0c14` (opcode в `libsitril` и `libril_sitril` не
+  находится). IPv6 DNS из ответа data call на интерфейс не ставится:
+  смещение на проводе отдельно от разбора адаптера не восстановлено.
