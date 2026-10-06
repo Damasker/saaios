@@ -654,3 +654,15 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   регистрации.
 - На устройстве все три ответа `error_raw=0` len 12. `wget` на
   `example.com` код 0, тело 577 Б, rx 0 → 1445, tx 192 → 760.
+
+### Cell info и SMSC — device run (2026-10-06, слот A)
+
+- После screen state сток читает `0x070c` GetCellInfoList (пустой GET,
+  ответ 2228 Б) и `0x0108` BuildSmscAddress (пустой GET, ответ 25 Б).
+  Оба в стоке с `err=0`. Тела ответов в лог не пишутся. `0x075c` в
+  TD1A `libsitril` не назван и в стоке получает `err=6`, поэтому не
+  шлётся. `0x0100` длиной 271 Б содержит строки из захвата и тоже не
+  шлётся.
+- На устройстве: `camp_cellinfo` `error_raw=0` len 2228, `camp_smsc`
+  `error_raw=0` len 25. `wget` на `example.com` код 0, тело 577 Б,
+  rx 0 → 1446, tx 192 → 760.
