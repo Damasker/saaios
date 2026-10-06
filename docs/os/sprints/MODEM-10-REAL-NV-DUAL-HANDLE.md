@@ -709,3 +709,16 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   двоеточием.
 - По-прежнему не шлются: `0x0100`, `0x075c`, `0x0208`, `0x0c14`,
   `0x0403` GetDevID, `0x0922` SendDeviceInfo, `0x4605` SvNumber.
+
+### Слот SIM, пороги сигнала и SMS broadcast
+
+- После preferred-data modem сток ещё читает `0x024d`
+  `BuildSimGetSlotStatus` (пустой GET, ответ 433 Б) и ставит `0x0943`
+  `BuildSetSignalReportCriteria` (67 Б: гистерезис 3000, четыре порога
+  −109/−103/−97/−89, слово доступа 1, два флага 1) и `0x0107`
+  `BuildSmsBroadcastActivation` (слово 0). Все в стоке с `err=0`.
+  Owner шлёт каждый один раз. Тело слота в лог не пишется.
+- На устройстве: `camp_slot` `error_raw=0` len 433, `camp_sigcrit`
+  `error_raw=0` len 12, `camp_smsact` `error_raw=0` len 12.
+  `wget` на `example.com` код 0, тело 577 Б, rx 0 → 1443, tx 240 → 868.
+  В `resolv.conf` четыре `nameserver`, две строки с двоеточием.

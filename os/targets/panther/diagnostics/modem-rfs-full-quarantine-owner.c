@@ -353,6 +353,9 @@ struct camp_driver {
      * 0x0903 TTY word 0, 0x0711 PS-service GET, 0x0740 preferred-data
      * modem byte 0. Each once, after the named post-setup chain. */
     int aptime_sent, dbgtrace_sent, tty_sent, pssvc_sent, prefmodem_sent;
+    /* 0x024d slot-status GET (body stays off the log), 0x0943 signal
+     * report criteria, 0x0107 SMS broadcast activation word 0. */
+    int slot_sent, sigcrit_sent, smsact_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3689,11 +3692,15 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         return;
     }
     if (id == 0x0949 || id == 0x090b || id == 0x0903 ||
-        id == 0x0711 || id == 0x0740) {
+        id == 0x0711 || id == 0x0740 || id == 0x024d ||
+        id == 0x0943 || id == 0x0107) {
         const char *step = id == 0x0949 ? "aptime" :
                            id == 0x090b ? "dbgtrace" :
                            id == 0x0903 ? "tty" :
-                           id == 0x0711 ? "pssvc" : "prefmodem";
+                           id == 0x0711 ? "pssvc" :
+                           id == 0x0740 ? "prefmodem" :
+                           id == 0x024d ? "slot" :
+                           id == 0x0943 ? "sigcrit" : "smsact";
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         return;
     }
@@ -4036,6 +4043,27 @@ static void camp_ap_time_bytes(uint8_t out[6], const struct tm *tm)
     out[3] = (uint8_t)tm->tm_hour;
     out[4] = (uint8_t)tm->tm_min;
     out[5] = (uint8_t)tm->tm_sec;
+}
+
+/* BuildSetSignalReportCriteria: two ints, a count, four int32 thresholds
+ * at +21, then the access word at +61 and two flag bytes. Values are the
+ * single stock request (hysteresis 3000, thresholds -109/-103/-97/-89). */
+static void camp_fill_signal_criteria(uint8_t *f)
+{
+    static const int32_t thresh[4] = {-109, -103, -97, -89};
+    int i;
+    memset(f, 0, 67);
+    f[2] = 0x43;
+    f[3] = 0x09;
+    f[4] = 67;
+    put_little32(f + 12, 3000);
+    put_little32(f + 16, 2);
+    f[20] = 4;
+    for (i = 0; i < 4; i++)
+        put_little32(f + 21 + 4 * i, (uint32_t)thresh[i]);
+    put_little32(f + 61, 1);
+    f[65] = 1;
+    f[66] = 1;
 }
 
 /* Sustained, non-self-poisoning observer. Drives the SIM to READY by re-GETting
@@ -4568,6 +4596,71 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         printf("camp_%s=sent len=%zu elapsed_ms=%lld\n", name, nsend,
                (long long)(now - c->owner_start_ms));
         return;
+    }
+    /* Slot status is an empty GET; the 433-byte body stays off the log.
+     * Signal criteria and SMS broadcast activation are the stock scalars. */
+    if (c->data_home && c->reg_complete && c->prefmodem_sent &&
+        (!c->slot_sent || !c->sigcrit_sent || !c->smsact_sent)) {
+        ++c->probe_token;
+        if (!c->slot_sent) {
+            c->slot_sent = 1;
+            int wrote = sit_send_get_once(o->ipc, 0x024d, c->probe_token);
+            if (wrote) {
+                c->slot_sent = 0;
+                c->probe_next_ms = now + PROBE_GAP_MS;
+                return;
+            }
+            c->probe_pending = 1;
+            c->probe_id = 0x024d;
+            c->probe_name = "slot";
+            c->probe_deadline_ms = now + PROBE_REPLY_MS;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            c->probe_sent++;
+            printf("camp_slot=sent elapsed_ms=%lld\n",
+                   (long long)(now - c->owner_start_ms));
+            return;
+        }
+        if (!c->sigcrit_sent) {
+            uint8_t f[67];
+            camp_fill_signal_criteria(f);
+            put_little32(f + 6, c->probe_token);
+            c->sigcrit_sent = 1;
+            int wrote = camp_send_once(o->ipc, f, sizeof f);
+            if (wrote) {
+                c->sigcrit_sent = 0;
+                c->probe_next_ms = now + PROBE_GAP_MS;
+                return;
+            }
+            c->probe_pending = 1;
+            c->probe_id = 0x0943;
+            c->probe_name = "sigcrit";
+            c->probe_deadline_ms = now + PROBE_REPLY_MS;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            c->probe_sent++;
+            printf("camp_sigcrit=sent len=67 elapsed_ms=%lld\n",
+                   (long long)(now - c->owner_start_ms));
+            return;
+        }
+        {
+            uint8_t f[16];
+            make_opx_u32_request(f, 0x0107, 16, c->probe_token, 0);
+            c->smsact_sent = 1;
+            int wrote = camp_send_once(o->ipc, f, sizeof f);
+            if (wrote) {
+                c->smsact_sent = 0;
+                c->probe_next_ms = now + PROBE_GAP_MS;
+                return;
+            }
+            c->probe_pending = 1;
+            c->probe_id = 0x0107;
+            c->probe_name = "smsact";
+            c->probe_deadline_ms = now + PROBE_REPLY_MS;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            c->probe_sent++;
+            printf("camp_smsact=sent len=16 elapsed_ms=%lld\n",
+                   (long long)(now - c->owner_start_ms));
+            return;
+        }
     }
     /* VERDICT 21: read the running CP baseband/SW version (read-only). */
     unsigned bbv = camp_bbver_next(c);
@@ -6597,6 +6690,45 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x024d)
+        return 223;
+    host_sit_reply(ack, sizeof ack, 0x024d, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.slot_sent) return 224;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    {
+        uint8_t expect[67];
+        camp_fill_signal_criteria(expect);
+        if (camp_cap_n != 1 || camp_cap_len[0] != 67 ||
+            little16(camp_cap[0] + 2) != 0x0943 ||
+            memcmp(camp_cap[0] + 12, expect + 12, 55) != 0)
+            return 225;
+    }
+    host_sit_reply(ack, sizeof ack, 0x0943, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.sigcrit_sent) return 226;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 16 ||
+        little16(camp_cap[0] + 2) != 0x0107 ||
+        little32(camp_cap[0] + 12) != 0)
+        return 227;
+    host_sit_reply(ack, sizeof ack, 0x0107, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.smsact_sent) return 228;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -6614,7 +6746,10 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x090b ||
                        little16(camp_cap[0] + 2) == 0x0903 ||
                        little16(camp_cap[0] + 2) == 0x0711 ||
-                       little16(camp_cap[0] + 2) == 0x0740))
+                       little16(camp_cap[0] + 2) == 0x0740 ||
+                       little16(camp_cap[0] + 2) == 0x024d ||
+                       little16(camp_cap[0] + 2) == 0x0943 ||
+                       little16(camp_cap[0] + 2) == 0x0107))
         return 168;
     {
         struct tm fixed;
