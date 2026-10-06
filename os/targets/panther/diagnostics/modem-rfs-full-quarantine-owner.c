@@ -3473,7 +3473,16 @@ static unsigned camp_ratbm_next(const struct camp_driver *c)
 static int camp_ratbm_reply(struct camp_driver *c, const uint8_t *p, size_t n,
                             unsigned id, unsigned error)
 {
-    if (!c->ratbm_enabled) return 0;
+    if (!c->ratbm_enabled) {
+        /* The stock bitmap is also sent once on the default boot, with
+         * the file gate left off. Log only the public wire constant. */
+        if (id == RATBM_SET && c->ratbm_set_sent) {
+            printf("camp_ratbm set=allowed_bitmap response=yes error_raw=%u "
+                   "wire=0x%x\n", error, (unsigned)RATBM_WIRE_STOCK);
+            return 1;
+        }
+        return 0;
+    }
     if (id == RATBM_GET && (c->ratbm_get1_sent || c->ratbm_get2_sent)) {
         const char *when = c->ratbm_set_sent ? "after" : "before";
         if (!error && n >= (size_t)RATBM_OFF + 4u) {
@@ -5110,6 +5119,34 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_xcapstop0=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Stock SetAllowedNetworkTypeBitmap. Body is the recovered wire
+     * word 0x403fe. The /data file still owns the longer GET/SET
+     * experiment; this fires only when that file is absent. */
+    if (c->data_home && c->reg_complete && c->xcapstop0_sent &&
+        !c->ratbm_enabled && !c->ratbm_set_sent) {
+        uint8_t f[RATBM_SET_LEN];
+        ++c->probe_token;
+        make_opx_u32_request(f, RATBM_SET, RATBM_SET_LEN, c->probe_token,
+                             raf_to_sit_ratbm(RATBM_RAF_STOCK));
+        c->ratbm_set_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->ratbm_set_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = RATBM_SET;
+        c->probe_name = "set_allowed_bitmap_stock";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_ratbm=sent step=set_allowed_bitmap_stock wire=0x%x "
+               "elapsed_ms=%lld\n",
+               (unsigned)raf_to_sit_ratbm(RATBM_RAF_STOCK),
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -7353,6 +7390,18 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != RATBM_SET_LEN ||
+        little16(camp_cap[0] + 2) != RATBM_SET ||
+        little32(camp_cap[0] + 12) != RATBM_WIRE_STOCK)
+        return 255;
+    host_sit_reply(ack, sizeof ack, RATBM_SET, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.ratbm_set_sent) return 256;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -7384,7 +7433,8 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0755 ||
                        little16(camp_cap[0] + 2) == 0x0d3c ||
                        little16(camp_cap[0] + 2) == 0x0d3a ||
-                       little16(camp_cap[0] + 2) == 0x0d3b))
+                       little16(camp_cap[0] + 2) == 0x0d3b ||
+                       little16(camp_cap[0] + 2) == RATBM_SET))
         return 168;
     {
         struct tm fixed;

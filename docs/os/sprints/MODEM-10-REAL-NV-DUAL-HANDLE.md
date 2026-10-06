@@ -795,6 +795,24 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 - Устройство: `camp_aimstop0` `elapsed_ms=93566` `error_raw=0` len 12,
   `camp_xcapstop0` `elapsed_ms=95088` `error_raw=0` len 12.
   wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`, tx `240→808`.
+
+### Битовая карта сетей `0x074f`
+
+- Сток шлёт `SetAllowedNetworkTypeBitmap`, 16 Б, слово `0x403fe`
+  (`fe 03 04 00`), `err=0`. Owner собирал это слово и слал его сразу
+  после регистрации, только если есть файл `/data/saaios/etc/ratbm`.
+  С файлом на устройстве ранний SET ответил `error_raw=2` при
+  `elapsed_ms=17945`; GET до и после показал уже `wire=0x403fe`
+  (LTE, WCDMA, GSM, NR), `error_raw=0`.
+- Файл убран в `archive-cc30/armed-run`, и тот же кадр уходит один
+  раз после второго AIMS stop. Если файл вернуть, длинная цепочка
+  GET/SET снова занимает этот opcode и хвост его не повторяет.
+- Устройство без файла: `camp_ratbm=off`, `camp_xcapstop0`
+  `elapsed_ms=89716` `error_raw=0` len 12,
+  `camp_ratbm=sent step=set_allowed_bitmap_stock wire=0x403fe
+  elapsed_ms=91217`, ответ `error_raw=2`. Повтор не шлётся.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1446`,
+  tx `240→808`.
 - `0x0d39` `SIT_AIMS_STACK_START_REQ` в захвате без ответа, поэтому
   не шлётся. `0x0d0b` `SIT_AIMS_SET_FRAME_TIME` несёт меняющуюся
   метку времени, её не повторяем.
