@@ -790,6 +790,11 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `camp_aimstop` `elapsed_ms=91051` `error_raw=0` len 12,
   `camp_xcapstart` `elapsed_ms=92582` `error_raw=0` len 12.
   wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`, tx `240→808`.
+- Сток потом шлёт те же stop-коды ещё раз с телом `00 01`, оба
+  с `err=0`: сначала `0x0d3a`, затем `0x0d3c`. Owner шлёт и их.
+- Устройство: `camp_aimstop0` `elapsed_ms=93566` `error_raw=0` len 12,
+  `camp_xcapstop0` `elapsed_ms=95088` `error_raw=0` len 12.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`, tx `240→808`.
 - `0x0d39` `SIT_AIMS_STACK_START_REQ` в захвате без ответа, поэтому
   не шлётся. `0x0d0b` `SIT_AIMS_SET_FRAME_TIME` несёт меняющуюся
   метку времени, её не повторяем.

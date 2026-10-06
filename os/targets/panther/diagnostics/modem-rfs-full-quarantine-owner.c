@@ -372,8 +372,10 @@ struct camp_driver {
     int gpslock_sent, gpsnfw_sent, samode_sent;
     /* First stock AIMS frames that ack with err 0 and body 01 01:
      * 0x0d3c XCAPM stop, 0x0d3a stack stop, 0x0d3b XCAPM start.
-     * 0x0d39 stack start had no reply in the capture, so it stays unsent. */
+     * 0x0d39 stack start had no reply in the capture, so it stays unsent.
+     * Stock then sends the same two stop opcodes again with body 00 01. */
     int xcapstop_sent, aimstop_sent, xcapstart_sent;
+    int aimstop0_sent, xcapstop0_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3749,9 +3751,8 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         return;
     }
     if (id == 0x0d3c || id == 0x0d3a || id == 0x0d3b) {
-        const char *step = id == 0x0d3c ? "xcapstop" :
-                           id == 0x0d3a ? "aimstop" : "xcapstart";
-        printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
+        printf("camp_%s response=yes error_raw=%u len=%zu\n",
+               c->probe_name, error, n);
         return;
     }
     if (id == 0x090c) {
@@ -5063,6 +5064,52 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_xcapstart=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Second stock SIT_AIMS_STACK_STOP_REQ. Body 00 01, err 0. */
+    if (c->data_home && c->reg_complete && c->xcapstart_sent &&
+        !c->aimstop0_sent) {
+        uint8_t f[14];
+        ++c->probe_token;
+        camp_fill_pair(f, 0x0d3a, c->probe_token, 0, 1);
+        c->aimstop0_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->aimstop0_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0d3a;
+        c->probe_name = "aimstop0";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_aimstop0=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Second stock SIT_AIMS_XCAPM_STOP_REQ. Body 00 01, err 0. */
+    if (c->data_home && c->reg_complete && c->aimstop0_sent &&
+        !c->xcapstop0_sent) {
+        uint8_t f[14];
+        ++c->probe_token;
+        camp_fill_pair(f, 0x0d3c, c->probe_token, 0, 1);
+        c->xcapstop0_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->xcapstop0_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0d3c;
+        c->probe_name = "xcapstop0";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_xcapstop0=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -7277,6 +7324,30 @@ static int test_setup_data_call(void)
     host_sit_reply(ack, sizeof ack, 0x0d3b, o.camp.probe_token, 0);
     camp_feed(&o.camp, ack, sizeof ack, t + 10);
     if (o.camp.probe_pending || !o.camp.xcapstart_sent) return 250;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 14 ||
+        little16(camp_cap[0] + 2) != 0x0d3a ||
+        camp_cap[0][12] != 0 || camp_cap[0][13] != 1)
+        return 251;
+    host_sit_reply(ack, sizeof ack, 0x0d3a, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.aimstop0_sent) return 252;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 14 ||
+        little16(camp_cap[0] + 2) != 0x0d3c ||
+        camp_cap[0][12] != 0 || camp_cap[0][13] != 1)
+        return 253;
+    host_sit_reply(ack, sizeof ack, 0x0d3c, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.xcapstop0_sent) return 254;
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
