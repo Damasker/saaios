@@ -356,6 +356,9 @@ struct camp_driver {
     /* 0x024d slot-status GET (body stays off the log), 0x0943 signal
      * report criteria, 0x0107 SMS broadcast activation word 0. */
     int slot_sent, sigcrit_sent, smsact_sent;
+    /* How many of the five stock link-capacity criteria frames have
+     * been sent. Access words are camp_link_access[]. */
+    int linkcrit_next;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3693,14 +3696,15 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     }
     if (id == 0x0949 || id == 0x090b || id == 0x0903 ||
         id == 0x0711 || id == 0x0740 || id == 0x024d ||
-        id == 0x0943 || id == 0x0107) {
+        id == 0x0943 || id == 0x0107 || id == 0x0944) {
         const char *step = id == 0x0949 ? "aptime" :
                            id == 0x090b ? "dbgtrace" :
                            id == 0x0903 ? "tty" :
                            id == 0x0711 ? "pssvc" :
                            id == 0x0740 ? "prefmodem" :
                            id == 0x024d ? "slot" :
-                           id == 0x0943 ? "sigcrit" : "smsact";
+                           id == 0x0943 ? "sigcrit" :
+                           id == 0x0107 ? "smsact" : "linkcrit";
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         return;
     }
@@ -4064,6 +4068,36 @@ static void camp_fill_signal_criteria(uint8_t *f)
     put_little32(f + 61, 1);
     f[65] = 1;
     f[66] = 1;
+}
+
+/* BuildSetLinkCapaReportCriteria. The body is the same in every stock
+ * frame; the word at +186 is the non-zero entry of the access table at
+ * libsitril 0xd8914, in table order: 1, 2, 3, 5, 4. */
+static const uint32_t camp_link_access[5] = {1, 2, 3, 5, 4};
+
+static void camp_fill_link_criteria(uint8_t *f, uint32_t access)
+{
+    static const uint32_t up[14] = {
+        100, 500, 1000, 5000, 10000, 20000, 50000,
+        75000, 100000, 200000, 500000, 1000000, 1500000, 2000000};
+    static const uint32_t down[11] = {
+        100, 500, 1000, 5000, 10000, 20000, 50000,
+        75000, 100000, 200000, 500000};
+    int i;
+    memset(f, 0, 190);
+    f[2] = 0x44;
+    f[3] = 0x09;
+    f[4] = 190;
+    put_little32(f + 12, 3000);
+    put_little32(f + 16, 50);
+    put_little32(f + 20, 50);
+    f[24] = 14;
+    for (i = 0; i < 14; i++)
+        put_little32(f + 25 + 4 * i, up[i]);
+    f[105] = 11;
+    for (i = 0; i < 11; i++)
+        put_little32(f + 106 + 4 * i, down[i]);
+    put_little32(f + 186, access);
 }
 
 /* Sustained, non-self-poisoning observer. Drives the SIM to READY by re-GETting
@@ -4661,6 +4695,33 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                    (long long)(now - c->owner_start_ms));
             return;
         }
+    }
+    /* Five stock link-capacity criteria frames, one per non-zero access
+     * table entry. Bodies stay off the log; only the access word is a
+     * small index. */
+    if (c->data_home && c->reg_complete && c->smsact_sent &&
+        c->linkcrit_next < 5) {
+        uint8_t f[190];
+        uint32_t access = camp_link_access[c->linkcrit_next];
+        ++c->probe_token;
+        camp_fill_link_criteria(f, access);
+        put_little32(f + 6, c->probe_token);
+        c->linkcrit_next++;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->linkcrit_next--;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0944;
+        c->probe_name = "linkcrit";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_linkcrit=sent len=190 access=%u elapsed_ms=%lld\n",
+               access, (long long)(now - c->owner_start_ms));
+        return;
     }
     /* VERDICT 21: read the running CP baseband/SW version (read-only). */
     unsigned bbv = camp_bbver_next(c);
@@ -6724,6 +6785,26 @@ static int test_setup_data_call(void)
     host_sit_reply(ack, sizeof ack, 0x0107, o.camp.probe_token, 0);
     camp_feed(&o.camp, ack, sizeof ack, t + 10);
     if (o.camp.probe_pending || !o.camp.smsact_sent) return 228;
+    {
+        int step;
+        for (step = 0; step < 5; step++) {
+            uint8_t expect[190];
+            t += PROBE_GAP_MS;
+            camp_cap_n = 0;
+            host_sit_write_override = camp_capture_write;
+            camp_probe_advance(&o, t);
+            host_sit_write_override = NULL;
+            camp_fill_link_criteria(expect, camp_link_access[step]);
+            if (camp_cap_n != 1 || camp_cap_len[0] != 190 ||
+                little16(camp_cap[0] + 2) != 0x0944 ||
+                memcmp(camp_cap[0] + 12, expect + 12, 178) != 0)
+                return 229;
+            host_sit_reply(ack, sizeof ack, 0x0944, o.camp.probe_token, 0);
+            camp_feed(&o.camp, ack, sizeof ack, t + 10);
+            if (o.camp.probe_pending || o.camp.linkcrit_next != step + 1)
+                return 230;
+        }
+    }
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
@@ -6749,7 +6830,8 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0740 ||
                        little16(camp_cap[0] + 2) == 0x024d ||
                        little16(camp_cap[0] + 2) == 0x0943 ||
-                       little16(camp_cap[0] + 2) == 0x0107))
+                       little16(camp_cap[0] + 2) == 0x0107 ||
+                       little16(camp_cap[0] + 2) == 0x0944))
         return 168;
     {
         struct tm fixed;
