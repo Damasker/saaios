@@ -643,3 +643,14 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `error_raw=0` len 12, `camp_rcnet` `error_raw=0` len 16. `ims` и
   `sos` снова `error_raw=2`. `wget` на `example.com` код 0, тело
   577 Б, rx 0 → 1445, tx 240 → 808.
+
+### Data throttling, unsolicited filter и screen state — device run (2026-10-06, слот A)
+
+- После `0x0718` сток ставит `0x094d` SetDataThrottling (21 Б: байт 0
+  и длительность 30000), `0x0928` SetUnsolicitedResponseFilter (слово
+  `0x7f`) и `0x0902` SetScreenState (слово 1). Все три в стоке с
+  `err=0`, ответ 12 Б. Кадр `0x0208` между ними не шлётся: это длинный
+  SIM status. Повтор `0x074f` тоже не шлётся — bitmap уже ушёл при
+  регистрации.
+- На устройстве все три ответа `error_raw=0` len 12. `wget` на
+  `example.com` код 0, тело 577 Б, rx 0 → 1445, tx 192 → 760.

@@ -346,6 +346,7 @@ struct camp_driver {
     int data_home, vonr_sent, profile_sent, setup_sent, fd_sent;
     int activity_sent, ims_sent, sos_sent;
     int endc_sent, vonrcapa_sent, rcnet_sent;
+    int throttle_sent, unsol_sent, screen_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3627,6 +3628,12 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         return;
     }
+    if (id == 0x094d || id == 0x0928 || id == 0x0902) {
+        const char *step = id == 0x094d ? "throttle" :
+                           id == 0x0928 ? "unsol" : "screen";
+        printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
+        return;
+    }
     if (id == 0x090c) {
         printf("camp_activity response=yes error_raw=%u len=%zu\n", error, n);
         return;
@@ -4287,6 +4294,60 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_%s=sent elapsed_ms=%lld\n", name,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* After RC network type, stock sets data throttling (byte 0, duration
+     * 30000), the unsolicited-response filter word 0x7f, then screen state 1.
+     * Each builder stores that scalar in a 16- or 21-byte request. */
+    if (c->data_home && c->reg_complete && c->rcnet_sent &&
+        (!c->throttle_sent || !c->unsol_sent || !c->screen_sent)) {
+        ++c->probe_token;
+        uint16_t id;
+        const char *name;
+        int wrote;
+        int *flag;
+        uint8_t f[21];
+        size_t nsend;
+        memset(f, 0, sizeof f);
+        if (!c->throttle_sent) {
+            id = 0x094d;
+            name = "throttle";
+            flag = &c->throttle_sent;
+            nsend = 21;
+            f[12] = 0;
+            put_little32(f + 13, 30000u);
+        } else if (!c->unsol_sent) {
+            id = 0x0928;
+            name = "unsol";
+            flag = &c->unsol_sent;
+            nsend = 16;
+            put_little32(f + 12, 0x7fu);
+        } else {
+            id = 0x0902;
+            name = "screen";
+            flag = &c->screen_sent;
+            nsend = 16;
+            put_little32(f + 12, 1u);
+        }
+        f[2] = (uint8_t)id;
+        f[3] = (uint8_t)(id >> 8);
+        f[4] = (uint8_t)nsend;
+        put_little32(f + 6, c->probe_token);
+        *flag = 1;
+        wrote = camp_send_once(o->ipc, f, nsend);
+        if (wrote) {
+            *flag = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = id;
+        c->probe_name = name;
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_%s=sent len=%zu elapsed_ms=%lld\n", name, nsend,
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -6179,13 +6240,53 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 21 ||
+        little16(camp_cap[0] + 2) != 0x094d)
+        return 179;
+    if (memcmp(camp_cap[0] + 12, "\x00\x30\x75\x00\x00\x00\x00\x00\x00", 9) != 0)
+        return 180;
+    host_sit_reply(ack, sizeof ack, 0x094d, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.throttle_sent) return 181;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 16 ||
+        little16(camp_cap[0] + 2) != 0x0928)
+        return 182;
+    if (little32(camp_cap[0] + 12) != 0x7fu) return 183;
+    host_sit_reply(ack, sizeof ack, 0x0928, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.unsol_sent) return 184;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 16 ||
+        little16(camp_cap[0] + 2) != 0x0902)
+        return 185;
+    if (little32(camp_cap[0] + 12) != 1u) return 186;
+    host_sit_reply(ack, sizeof ack, 0x0902, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.screen_sent) return 187;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
                        little16(camp_cap[0] + 2) == 0x0605 ||
                        little16(camp_cap[0] + 2) == 0x073e ||
                        little16(camp_cap[0] + 2) == 0x0954 ||
-                       little16(camp_cap[0] + 2) == 0x0718))
+                       little16(camp_cap[0] + 2) == 0x0718 ||
+                       little16(camp_cap[0] + 2) == 0x094d ||
+                       little16(camp_cap[0] + 2) == 0x0928 ||
+                       little16(camp_cap[0] + 2) == 0x0902))
         return 168;
     {
         uint8_t fr[64];
