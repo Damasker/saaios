@@ -575,3 +575,14 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `rmnet1` operstate `unknown`, затем один ICMP на 8.8.8.8 через
   `rmnet1` завершился с кодом 0. Счётчики `rmnet1`: rx 84 / 1 пакет,
   tx 324 / 6 пакетов. Канал данных подтверждён.
+
+### Маршрут и DNS — device run (2026-10-06, слот A)
+
+- Тот же разбор `libsitril`: семья DNS на байте 37, IPv4-серверы на
+  38 и 58, если семья 1 или 3. Owner пишет их в `/run/resolv.conf` и
+  ставит `default dev rmnetN`. Связанный маршрут usb0 не заменяется.
+  Адреса в лог не пишутся.
+- На устройстве: `route=1`, `dns=yes count=2`, в таблице
+  `default dev rmnet1` и `usb0` /24. ICMP на 8.8.8.8 без привязки к
+  интерфейсу — код 0. ICMP на имя `one.one.one.one` — код 0.
+  `rmnet1` rx 378, tx 482.

@@ -3486,6 +3486,32 @@ static int camp_data_call_v4(const uint8_t *p, size_t n,
     return 0;
 }
 
+/* DNS family is item+25. Types 1 and 3 carry IPv4 at item+26 and item+46,
+ * the same word loads as the interface address. */
+static int v4_present(const uint8_t *a)
+{
+    if ((a[0] | a[1] | a[2] | a[3]) == 0) return 0;
+    if (a[0] == 0xff && a[1] == 0xff && a[2] == 0xff && a[3] == 0xff) return 0;
+    return 1;
+}
+
+static int camp_data_call_dns(const uint8_t *p, size_t n, uint8_t dns[][4],
+                              int *ndns)
+{
+    *ndns = 0;
+    if (n < 62) return -1;
+    if (p[37] != 1 && p[37] != 3) return -1;
+    if (v4_present(p + 38)) {
+        memcpy(dns[*ndns], p + 38, 4);
+        *ndns += 1;
+    }
+    if (v4_present(p + 58)) {
+        memcpy(dns[*ndns], p + 58, 4);
+        *ndns += 1;
+    }
+    return *ndns ? 0 : -1;
+}
+
 #ifndef RFS_HOST_TEST
 static void camp_apply_v4(unsigned ifindex, const uint8_t addr[4])
 {
@@ -3496,9 +3522,26 @@ static void camp_apply_v4(unsigned ifindex, const uint8_t addr[4])
     snprintf(cmd, sizeof cmd, "ip addr add %u.%u.%u.%u/32 dev rmnet%u",
              addr[0], addr[1], addr[2], addr[3], ifindex);
     add = system(cmd);
+    snprintf(cmd, sizeof cmd, "ip route replace default dev rmnet%u", ifindex);
+    int route = system(cmd);
     zero_bytes(cmd, sizeof cmd);
-    printf("camp_setup if=rmnet%u ipv4=yes prefix=32 up=%d add=%d\n",
-           ifindex, up == 0, add == 0);
+    printf("camp_setup if=rmnet%u ipv4=yes prefix=32 up=%d add=%d route=%d\n",
+           ifindex, up == 0, add == 0, route == 0);
+}
+
+static void camp_write_dns(uint8_t dns[][4], int n)
+{
+    FILE *f = fopen("/run/resolv.conf", "w");
+    int i;
+    if (!f) {
+        printf("camp_setup dns=no\n");
+        return;
+    }
+    for (i = 0; i < n; i++)
+        fprintf(f, "nameserver %u.%u.%u.%u\n",
+                dns[i][0], dns[i][1], dns[i][2], dns[i][3]);
+    fclose(f);
+    printf("camp_setup dns=yes count=%d\n", n);
 }
 #endif
 
@@ -3534,12 +3577,18 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         if (id == 0x0600 && !error &&
             camp_data_call_v4(p, n, &ifindex, addr) == 0) {
+            uint8_t dns[2][4];
+            int ndns = 0;
 #ifndef RFS_HOST_TEST
             camp_apply_v4(ifindex, addr);
+            if (camp_data_call_dns(p, n, dns, &ndns) == 0)
+                camp_write_dns(dns, ndns);
 #else
             (void)ifindex;
+            (void)ndns;
 #endif
             zero_bytes(addr, sizeof addr);
+            zero_bytes(dns, sizeof dns);
         }
         return;
     }
@@ -5857,7 +5906,7 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0613))
         return 150;
     {
-        uint8_t fr[32];
+        uint8_t fr[64];
         uint8_t got[4];
         unsigned idx = 99;
         memset(fr, 0, sizeof fr);
@@ -5872,6 +5921,24 @@ static int test_setup_data_call(void)
             return 151;
         fr[16] = 2;
         if (camp_data_call_v4(fr, sizeof fr, &idx, got) == 0) return 152;
+        memset(fr, 0, sizeof fr);
+        fr[37] = 3;
+        fr[38] = 8;
+        fr[39] = 8;
+        fr[40] = 8;
+        fr[41] = 8;
+        fr[58] = 1;
+        fr[59] = 1;
+        fr[60] = 1;
+        fr[61] = 1;
+        {
+            uint8_t dns[2][4];
+            int ndns = 0;
+            if (camp_data_call_dns(fr, sizeof fr, dns, &ndns) || ndns != 2)
+                return 153;
+            if (memcmp(dns[0], "\x08\x08\x08\x08", 4) != 0) return 154;
+            if (memcmp(dns[1], "\x01\x01\x01\x01", 4) != 0) return 155;
+        }
     }
     return 0;
 }
