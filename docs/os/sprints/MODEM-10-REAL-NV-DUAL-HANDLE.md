@@ -631,3 +631,15 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 - На устройстве: `camp_activity=sent len=12`, ответ `error_raw=0`
   len 140. Дальше fast dormancy снова `error_raw=0`. `wget` на
   `example.com` код 0, тело 577 Б, rx 0 → 1445, tx 192 → 760.
+
+### ENDC, VoNR capability и RC network type — device run (2026-10-06, слот A)
+
+- После профилей сток читает `0x073e` GetEndcMode (пустой GET, ответ
+  14 Б), ставит `0x0954` SetVonrCapa со словом 0 (кадр 16 Б) и читает
+  `0x0718` GetRCNetworkType (пустой GET, ответ 16 Б). Все три в стоке
+  с `err=0`. Owner шлёт каждый кадр один раз; тела ответов в лог не
+  пишутся.
+- На устройстве: `camp_endc` `error_raw=0` len 14, `camp_vonrcapa`
+  `error_raw=0` len 12, `camp_rcnet` `error_raw=0` len 16. `ims` и
+  `sos` снова `error_raw=2`. `wget` на `example.com` код 0, тело
+  577 Б, rx 0 → 1445, tx 240 → 808.

@@ -345,6 +345,7 @@ struct camp_driver {
      * 0x0613 profile, one SetupDataCall 0x0600, then 0x0605 fast dormancy. */
     int data_home, vonr_sent, profile_sent, setup_sent, fd_sent;
     int activity_sent, ims_sent, sos_sent;
+    int endc_sent, vonrcapa_sent, rcnet_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3620,6 +3621,12 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
+    if (id == 0x073e || id == 0x0954 || id == 0x0718) {
+        const char *step = id == 0x073e ? "endc" :
+                           id == 0x0954 ? "vonrcapa" : "rcnet";
+        printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
+        return;
+    }
     if (id == 0x090c) {
         printf("camp_activity response=yes error_raw=%u len=%zu\n", error, n);
         return;
@@ -4235,6 +4242,51 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_%s=sent len=%zu elapsed_ms=%lld\n", name, sizeof f,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* After the profiles, stock reads ENDC mode, sets VoNR capability to the
+     * captured zero word, then reads the RC network type. */
+    if (c->data_home && c->reg_complete && c->sos_sent &&
+        (!c->endc_sent || !c->vonrcapa_sent || !c->rcnet_sent)) {
+        ++c->probe_token;
+        uint16_t id;
+        const char *name;
+        int wrote;
+        int *flag;
+        if (!c->endc_sent) {
+            id = 0x073e;
+            name = "endc";
+            flag = &c->endc_sent;
+            *flag = 1;
+            wrote = sit_send_get_once(o->ipc, id, c->probe_token);
+        } else if (!c->vonrcapa_sent) {
+            uint8_t f[16];
+            id = 0x0954;
+            name = "vonrcapa";
+            flag = &c->vonrcapa_sent;
+            make_opx_u32_request(f, id, 16, c->probe_token, 0);
+            *flag = 1;
+            wrote = camp_send_once(o->ipc, f, sizeof f);
+        } else {
+            id = 0x0718;
+            name = "rcnet";
+            flag = &c->rcnet_sent;
+            *flag = 1;
+            wrote = sit_send_get_once(o->ipc, id, c->probe_token);
+        }
+        if (wrote) {
+            *flag = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = id;
+        c->probe_name = name;
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_%s=sent elapsed_ms=%lld\n", name,
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -6092,10 +6144,48 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x073e)
+        return 172;
+    host_sit_reply(ack, sizeof ack, 0x073e, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.endc_sent) return 173;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 16 ||
+        little16(camp_cap[0] + 2) != 0x0954)
+        return 174;
+    if (camp_cap[0][12] | camp_cap[0][13] | camp_cap[0][14] | camp_cap[0][15])
+        return 175;
+    host_sit_reply(ack, sizeof ack, 0x0954, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.vonrcapa_sent) return 176;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x0718)
+        return 177;
+    host_sit_reply(ack, sizeof ack, 0x0718, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.rcnet_sent) return 178;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
-                       little16(camp_cap[0] + 2) == 0x0605))
+                       little16(camp_cap[0] + 2) == 0x0605 ||
+                       little16(camp_cap[0] + 2) == 0x073e ||
+                       little16(camp_cap[0] + 2) == 0x0954 ||
+                       little16(camp_cap[0] + 2) == 0x0718))
         return 168;
     {
         uint8_t fr[64];
