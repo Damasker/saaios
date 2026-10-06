@@ -366,6 +366,10 @@ struct camp_driver {
     /* Stock SetVoiceOperation (0x091a, int32 3) when no opx-step file
      * selected a different SET. */
     int voice_stock_sent;
+    /* Named in rcmMsgToString. Stock bytes, no identifiers:
+     * 0x0c20 GPS lock mode byte 1, 0x0c33 GPS NFW status byte 0,
+     * 0x0755 GetSaMode empty GET (reply body stays off the log). */
+    int gpslock_sent, gpsnfw_sent, samode_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3704,7 +3708,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (id == 0x0949 || id == 0x090b || id == 0x0903 ||
         id == 0x0711 || id == 0x0740 || id == 0x024d ||
         id == 0x0943 || id == 0x0107 || id == 0x0944 || id == 0x0106 ||
-        id == 0x0000) {
+        id == 0x0000 || id == 0x0c20 || id == 0x0c33 || id == 0x0755) {
         const char *step = id == 0x0949 ? "aptime" :
                            id == 0x090b ? "dbgtrace" :
                            id == 0x0903 ? "tty" :
@@ -3714,7 +3718,10 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                            id == 0x0943 ? "sigcrit" :
                            id == 0x0107 ? "smsact" :
                            id == 0x0944 ? "linkcrit" :
-                           id == 0x0106 ? "smscb" : "calllist";
+                           id == 0x0106 ? "smscb" :
+                           id == 0x0000 ? "calllist" :
+                           id == 0x0c20 ? "gpslock" :
+                           id == 0x0c33 ? "gpsnfw" : "samode";
         if (id == 0x0000 && !error && n >= 16) {
             printf("camp_calllist response=yes error_raw=0 len=%zu count=%u\n",
                    n, little32(p + 12));
@@ -4896,6 +4903,73 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_bbver=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SIT_SET_GPS_LOCK_MODE. Stock sends one byte, 1. */
+    if (c->data_home && c->reg_complete && c->bbver_sent &&
+        !c->gpslock_sent) {
+        uint8_t f[13];
+        ++c->probe_token;
+        make_opx_byte_request(f, 0x0c20, 13, c->probe_token, 1);
+        c->gpslock_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->gpslock_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0c20;
+        c->probe_name = "gpslock";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_gpslock=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SIT_SET_GPS_NFW_STATUS. Stock sends one byte, 0. */
+    if (c->data_home && c->reg_complete && c->gpslock_sent &&
+        !c->gpsnfw_sent) {
+        uint8_t f[13];
+        ++c->probe_token;
+        make_opx_byte_request(f, 0x0c33, 13, c->probe_token, 0);
+        c->gpsnfw_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->gpsnfw_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0c33;
+        c->probe_name = "gpsnfw";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_gpsnfw=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SIT_GET_SA_MODE. Empty GET. The reply string stays off the log. */
+    if (c->data_home && c->reg_complete && c->gpsnfw_sent &&
+        !c->samode_sent) {
+        ++c->probe_token;
+        c->samode_sent = 1;
+        int wrote = sit_send_get_once(o->ipc, 0x0755, c->probe_token);
+        if (wrote) {
+            c->samode_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0755;
+        c->probe_name = "samode";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_samode=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -7046,6 +7120,39 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 13 ||
+        little16(camp_cap[0] + 2) != 0x0c20 || camp_cap[0][12] != 1)
+        return 239;
+    host_sit_reply(ack, sizeof ack, 0x0c20, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.gpslock_sent) return 240;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 13 ||
+        little16(camp_cap[0] + 2) != 0x0c33 || camp_cap[0][12] != 0)
+        return 241;
+    host_sit_reply(ack, sizeof ack, 0x0c33, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.gpsnfw_sent) return 242;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x0755)
+        return 243;
+    host_sit_reply(ack, sizeof ack, 0x0755, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.samode_sent) return 244;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -7071,7 +7178,10 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0106 ||
                        little16(camp_cap[0] + 2) == 0x0000 ||
                        little16(camp_cap[0] + 2) == OPX_VOICE_SET ||
-                       little16(camp_cap[0] + 2) == BBVER_GET))
+                       little16(camp_cap[0] + 2) == BBVER_GET ||
+                       little16(camp_cap[0] + 2) == 0x0c20 ||
+                       little16(camp_cap[0] + 2) == 0x0c33 ||
+                       little16(camp_cap[0] + 2) == 0x0755))
         return 168;
     {
         struct tm fixed;

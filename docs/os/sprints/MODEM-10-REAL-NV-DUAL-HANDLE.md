@@ -767,8 +767,23 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `error_raw=0`. `camp_bbver` на `elapsed_ms=83621`,
   `sw_version=g5300q-260317-260505-B-15346003`, `error_raw=0`.
   wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1446`, tx `192→760`.
-- Дальше в захвате остаются кадры с секретами (`0x0400`, `0x0403`,
-  `0x0100`, `0x0208`, `0x0209`, `0x020f`, `0x0247`, `0x0922`,
-  `0x090d`) и безымянные либо без тела (`0x4605`, `0x020e`,
-  `0x0c14`, `0x0c20`, `0x0c33`, `0x0755`, `0x075c`, `0x0413`,
-  `0x0d0b`, `0x0d39`, `0x0d3a`, `0x0d3b`, `0x0d3c`). Их owner не шлёт.
+### GPS lock, GPS NFW и SA mode
+
+- `rcmMsgToString` в `sit-base.so` называет три кадра, которые сток
+  шлёт с коротким телом: `0x0c20` `SIT_SET_GPS_LOCK_MODE` (байт 1,
+  13 Б), `0x0c33` `SIT_SET_GPS_NFW_STATUS` (байт 0, 13 Б) и `0x0755`
+  `SIT_GET_SA_MODE` (пустой GET). В захвате все три с `err=0`.
+  Owner шлёт каждый один раз после baseband. Тело ответа SA в лог
+  не пишется.
+- Устройство: `camp_gpslock` `elapsed_ms=84709` `error_raw=0` len 12,
+  `camp_gpsnfw` `elapsed_ms=86239` `error_raw=0` len 12,
+  `camp_samode` `elapsed_ms=87765` `error_raw=0` len 25.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`, tx `240→808`.
+- По-прежнему не шлются: `0x0413` `SIT_GET_IMEI_MAPPING_INFO`,
+  `0x0c14` `SIT_SET_GPS_SUPL_NI_READY` (два байта приходят из
+  буфера вызывающего, не константа), `0x4605` `SendSvnInfo` (две
+  цифры из `ro.vendor.build.svn`, на SaaiOS этого свойства нет),
+  плюс кадры с секретами `0x0400`, `0x0403`, `0x0100`, `0x0208`,
+  `0x0209`, `0x020f`, `0x0247`, `0x0922`, `0x090d` и без имени
+  `0x020e`, `0x075c`, `0x0d0b`, `0x0d39`, `0x0d3a`, `0x0d3b`,
+  `0x0d3c`.
