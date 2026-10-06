@@ -620,4 +620,14 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   в конце. Owner шлёт каждый кадр один раз.
 - На устройстве оба ответа `error_raw=2`, len 12. Канал данных не
   сломался: `wget` на `example.com` код 0, тело 577 Б, rx 0 → 1444,
-  tx 144 → 712.
+  tx 144 → 712. В стоковом захвате эти же кадры `ims` и `sos` сразу
+  после data call тоже получают `err=2`; отказ совпадает со стоком.
+
+### `0x090c` GetModemActivityInfo — device run (2026-10-06, слот A)
+
+- `ProtocolMiscBuilder::GetModemActivityInfo` — пустой GET на 12 Б.
+  Сток шлёт его после SetupDataCall и до fast dormancy. Ответ 140 Б
+  в лог не пишется.
+- На устройстве: `camp_activity=sent len=12`, ответ `error_raw=0`
+  len 140. Дальше fast dormancy снова `error_raw=0`. `wget` на
+  `example.com` код 0, тело 577 Б, rx 0 → 1445, tx 192 → 760.

@@ -344,7 +344,7 @@ struct camp_driver {
     /* Data registration HOME (raw 1). Then stock 0x0625, the internet
      * 0x0613 profile, one SetupDataCall 0x0600, then 0x0605 fast dormancy. */
     int data_home, vonr_sent, profile_sent, setup_sent, fd_sent;
-    int ims_sent, sos_sent;
+    int activity_sent, ims_sent, sos_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3620,6 +3620,10 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
+    if (id == 0x090c) {
+        printf("camp_activity response=yes error_raw=%u len=%zu\n", error, n);
+        return;
+    }
     if (id == 0x0605) {
         printf("camp_fastdorm response=yes error_raw=%u len=%zu\n", error, n);
         return;
@@ -4154,8 +4158,29 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    /* Stock reads modem activity once the data call exists, then fast dormancy. */
+    if (c->data_home && c->reg_complete && c->setup_sent && !c->activity_sent) {
+        ++c->probe_token;
+        c->activity_sent = 1;
+        int wrote = sit_send_get_once(o->ipc, 0x090c, c->probe_token);
+        if (wrote) {
+            c->activity_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x090c;
+        c->probe_name = "activity";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_activity=sent len=12 elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     /* Stock sends SetFastDormancy once the data call is up. */
-    if (c->data_home && c->reg_complete && c->setup_sent && !c->fd_sent) {
+    if (c->data_home && c->reg_complete && c->setup_sent && c->activity_sent &&
+        !c->fd_sent) {
         ++c->probe_token;
         uint8_t f[sizeof cc_sit_0605];
         memcpy(f, cc_sit_0605, sizeof f);
@@ -6021,6 +6046,16 @@ static int test_setup_data_call(void)
     host_sit_reply(ack, sizeof ack, 0x0600, o.camp.probe_token, 0);
     camp_feed(&o.camp, ack, sizeof ack, t + 10);
     if (o.camp.probe_pending || !o.camp.setup_sent) return 149;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12) return 169;
+    if (little16(camp_cap[0] + 2) != 0x090c) return 170;
+    host_sit_reply(ack, sizeof ack, 0x090c, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.activity_sent) return 171;
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
