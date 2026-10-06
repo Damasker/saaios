@@ -586,3 +586,14 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `default dev rmnet1` и `usb0` /24. ICMP на 8.8.8.8 без привязки к
   интерфейсу — код 0. ICMP на имя `one.one.one.one` — код 0.
   `rmnet1` rx 378, tx 482.
+
+### IPv6 из того же ответа `0x0600` — device run (2026-10-06, слот A)
+
+- `SetIfAddrIpv6` в `libsitril` кладёт префикс 64 (`mov w8, #0x40`).
+  16 байт адреса лежат на смещении 21, если тип PDP 2 или 3. Owner
+  назначает их как `/64` на тот же `rmnet(cid-1)` и ставит
+  `ip -6 route replace default dev rmnetN`. Адрес в лог не пишется.
+- На устройстве: `camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1
+  route=1`. На `rmnet1` два `inet6` (link-local и назначенный).
+  `ip -6 route get` для 2001:4860:4860::8888 выбирает `dev rmnet1`.
+  Один ICMPv6 туда завершился с кодом 0: rx 104 → 208, tx 344 → 448.

@@ -3512,6 +3512,33 @@ static int camp_data_call_dns(const uint8_t *p, size_t n, uint8_t dns[][4],
     return *ndns ? 0 : -1;
 }
 
+/* IPv6 is the 16 bytes at item+9. Types 2 and 3 store it. SetIfAddrIpv6
+ * uses prefix length 64. */
+static int v6_present(const uint8_t *a)
+{
+    int i, any = 0, all = 1;
+    for (i = 0; i < 16; i++) {
+        if (a[i]) any = 1;
+        if (a[i] != 0xff) all = 0;
+    }
+    return any && !all;
+}
+
+static int camp_data_call_v6(const uint8_t *p, size_t n,
+                             unsigned *ifindex, uint8_t addr[16])
+{
+    unsigned cid, ptype;
+    if (n < 37) return -1;
+    cid = p[14];
+    ptype = p[16];
+    if (cid < 1 || cid > 16) return -1;
+    if (ptype != 2 && ptype != 3) return -1;
+    if (!v6_present(p + 21)) return -1;
+    *ifindex = cid - 1;
+    memcpy(addr, p + 21, 16);
+    return 0;
+}
+
 #ifndef RFS_HOST_TEST
 static void camp_apply_v4(unsigned ifindex, const uint8_t addr[4])
 {
@@ -3543,6 +3570,29 @@ static void camp_write_dns(uint8_t dns[][4], int n)
     fclose(f);
     printf("camp_setup dns=yes count=%d\n", n);
 }
+
+static void camp_apply_v6(unsigned ifindex, const uint8_t addr[16])
+{
+    char cmd[160];
+    int up, add, route;
+    snprintf(cmd, sizeof cmd, "ip link set rmnet%u up", ifindex);
+    up = system(cmd);
+    snprintf(cmd, sizeof cmd,
+             "ip -6 addr add "
+             "%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+             "%02x%02x:%02x%02x:%02x%02x:%02x%02x/64 dev rmnet%u",
+             addr[0], addr[1], addr[2], addr[3],
+             addr[4], addr[5], addr[6], addr[7],
+             addr[8], addr[9], addr[10], addr[11],
+             addr[12], addr[13], addr[14], addr[15], ifindex);
+    add = system(cmd);
+    snprintf(cmd, sizeof cmd, "ip -6 route replace default dev rmnet%u",
+             ifindex);
+    route = system(cmd);
+    zero_bytes(cmd, sizeof cmd);
+    printf("camp_setup if=rmnet%u ipv6=yes prefix=64 up=%d add=%d route=%d\n",
+           ifindex, up == 0, add == 0, route == 0);
+}
 #endif
 
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
@@ -3573,21 +3623,32 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         const char *step = id == 0x0625 ? "vonr" :
                            id == 0x0613 ? "profile" : "setup";
         unsigned ifindex = 0;
+        unsigned ifindex6 = 0;
         uint8_t addr[4];
+        uint8_t addr6[16];
+        int got4, got6;
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
-        if (id == 0x0600 && !error &&
-            camp_data_call_v4(p, n, &ifindex, addr) == 0) {
+        got4 = id == 0x0600 && !error &&
+               camp_data_call_v4(p, n, &ifindex, addr) == 0;
+        got6 = id == 0x0600 && !error &&
+               camp_data_call_v6(p, n, &ifindex6, addr6) == 0;
+        if (got4 || got6) {
             uint8_t dns[2][4];
             int ndns = 0;
 #ifndef RFS_HOST_TEST
-            camp_apply_v4(ifindex, addr);
-            if (camp_data_call_dns(p, n, dns, &ndns) == 0)
-                camp_write_dns(dns, ndns);
+            if (got4) {
+                camp_apply_v4(ifindex, addr);
+                if (camp_data_call_dns(p, n, dns, &ndns) == 0)
+                    camp_write_dns(dns, ndns);
+            }
+            if (got6) camp_apply_v6(ifindex6, addr6);
 #else
             (void)ifindex;
+            (void)ifindex6;
             (void)ndns;
 #endif
             zero_bytes(addr, sizeof addr);
+            zero_bytes(addr6, sizeof addr6);
             zero_bytes(dns, sizeof dns);
         }
         return;
@@ -5938,6 +5999,26 @@ static int test_setup_data_call(void)
                 return 153;
             if (memcmp(dns[0], "\x08\x08\x08\x08", 4) != 0) return 154;
             if (memcmp(dns[1], "\x01\x01\x01\x01", 4) != 0) return 155;
+        }
+        {
+            uint8_t got6[16];
+            unsigned idx6 = 99;
+            static const uint8_t expect6[16] = {
+                0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 1
+            };
+            memset(fr, 0, sizeof fr);
+            fr[14] = 2;
+            fr[16] = 3;
+            memcpy(fr + 21, expect6, 16);
+            if (camp_data_call_v6(fr, sizeof fr, &idx6, got6) || idx6 != 1 ||
+                memcmp(got6, expect6, 16) != 0)
+                return 156;
+            fr[16] = 1;
+            if (camp_data_call_v6(fr, sizeof fr, &idx6, got6) == 0) return 157;
+            memset(fr + 21, 0, 16);
+            fr[16] = 2;
+            if (camp_data_call_v6(fr, sizeof fr, &idx6, got6) == 0) return 158;
         }
     }
     return 0;
