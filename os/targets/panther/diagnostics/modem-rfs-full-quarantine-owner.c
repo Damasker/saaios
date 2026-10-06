@@ -363,6 +363,9 @@ struct camp_driver {
     int smscb_next;
     /* Stock reads the call list once at boot. Empty GET. */
     int calllist_sent;
+    /* Stock SetVoiceOperation (0x091a, int32 3) when no opx-step file
+     * selected a different SET. */
+    int voice_stock_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -4840,6 +4843,62 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    /* Stock sets voice operation to 3 once. A selected opx-step still
+     * owns that SET, so this fires only on the default GET-only boot. */
+    if (c->data_home && c->reg_complete && c->calllist_sent &&
+        c->opx_step == OPX_STEP_NONE && !c->opx_set_sent &&
+        !c->voice_stock_sent) {
+        uint8_t f[OPX_VOICE_LEN];
+        ++c->probe_token;
+        make_opx_u32_request(f, OPX_VOICE_SET, OPX_VOICE_LEN,
+                             c->probe_token, OPX_VOICE_MODE);
+        c->voice_stock_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->voice_stock_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = OPX_VOICE_SET;
+        c->probe_name = "set_voice_operation";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_voiceop=sent mode=%u elapsed_ms=%lld\n",
+               (unsigned)OPX_VOICE_MODE,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Stock reads the baseband version once (selector 0xFF). The reply
+     * logger prints the SW build string and leaves HW/RF-cal off the log.
+     * bbver_sent blocks the later file-gated path from sending it again. */
+    if (c->data_home && c->reg_complete && c->calllist_sent &&
+        (c->voice_stock_sent || c->opx_step != OPX_STEP_NONE ||
+         c->opx_set_sent) &&
+        !c->bbver_sent) {
+        uint8_t f[BBVER_LEN];
+        ++c->probe_token;
+        make_opx_byte_request(f, BBVER_GET, BBVER_LEN, c->probe_token,
+                              BBVER_MASK);
+        c->bbver_sent = 1;
+        c->bbver_enabled = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->bbver_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = BBVER_GET;
+        c->probe_name = "get_baseband_version";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_bbver=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     /* VERDICT 21: read the running CP baseband/SW version (read-only). */
     unsigned bbv = camp_bbver_next(c);
     if (bbv) {
@@ -6958,6 +7017,35 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != OPX_VOICE_LEN ||
+        little16(camp_cap[0] + 2) != OPX_VOICE_SET ||
+        little32(camp_cap[0] + 12) != OPX_VOICE_MODE)
+        return 235;
+    host_sit_reply(ack, sizeof ack, OPX_VOICE_SET, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.voice_stock_sent) return 236;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != BBVER_LEN ||
+        little16(camp_cap[0] + 2) != BBVER_GET ||
+        camp_cap[0][12] != BBVER_MASK)
+        return 237;
+    {
+        uint8_t bb[20];
+        host_sit_reply(bb, sizeof bb, BBVER_GET, o.camp.probe_token, 0);
+        memcpy(bb + BBVER_SWVER_OFF, "g5300q", 6);
+        camp_feed(&o.camp, bb, sizeof bb, t + 10);
+    }
+    if (o.camp.probe_pending || !o.camp.bbver_sent || !o.camp.bbver_done)
+        return 238;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -6981,7 +7069,9 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0107 ||
                        little16(camp_cap[0] + 2) == 0x0944 ||
                        little16(camp_cap[0] + 2) == 0x0106 ||
-                       little16(camp_cap[0] + 2) == 0x0000))
+                       little16(camp_cap[0] + 2) == 0x0000 ||
+                       little16(camp_cap[0] + 2) == OPX_VOICE_SET ||
+                       little16(camp_cap[0] + 2) == BBVER_GET))
         return 168;
     {
         struct tm fixed;
