@@ -348,6 +348,11 @@ struct camp_driver {
     int endc_sent, vonrcapa_sent, rcnet_sent;
     int throttle_sent, unsol_sent, screen_sent;
     int cellinfo_sent, smsc_sent, vonrget_sent;
+    /* Early stock frames that are named and carry no identifiers:
+     * 0x0949 AP clock from localtime, 0x090b debug-trace byte 0,
+     * 0x0903 TTY word 0, 0x0711 PS-service GET, 0x0740 preferred-data
+     * modem byte 0. Each once, after the named post-setup chain. */
+    int aptime_sent, dbgtrace_sent, tty_sent, pssvc_sent, prefmodem_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3683,6 +3688,15 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         printf("camp_vonrget response=yes error_raw=%u len=%zu\n", error, n);
         return;
     }
+    if (id == 0x0949 || id == 0x090b || id == 0x0903 ||
+        id == 0x0711 || id == 0x0740) {
+        const char *step = id == 0x0949 ? "aptime" :
+                           id == 0x090b ? "dbgtrace" :
+                           id == 0x0903 ? "tty" :
+                           id == 0x0711 ? "pssvc" : "prefmodem";
+        printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
+        return;
+    }
     if (id == 0x090c) {
         printf("camp_activity response=yes error_raw=%u len=%zu\n", error, n);
         return;
@@ -4009,6 +4023,19 @@ static void camp_advance(struct owner *o, int64_t now)
     printf("camp_dispatch=sent elapsed_ms=%lld trigger=0x0803-0x0802-raw0"
            " seq=0x093f,0x0404,0x0800 power=on\n",
            (long long)(now - c->owner_start_ms));
+}
+
+/* BuildSetApSystemTime stores localtime fields as six bytes at frame+12:
+ * tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec. tm_year is years
+ * since 1900 and fits in a byte for this century. */
+static void camp_ap_time_bytes(uint8_t out[6], const struct tm *tm)
+{
+    out[0] = (uint8_t)tm->tm_year;
+    out[1] = (uint8_t)tm->tm_mon;
+    out[2] = (uint8_t)tm->tm_mday;
+    out[3] = (uint8_t)tm->tm_hour;
+    out[4] = (uint8_t)tm->tm_min;
+    out[5] = (uint8_t)tm->tm_sec;
 }
 
 /* Sustained, non-self-poisoning observer. Drives the SIM to READY by re-GETting
@@ -4458,6 +4485,87 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_vonrget=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Named early stock frames that carry no identifiers. AP time is the
+     * current local clock, not a captured timestamp. Replies log error
+     * and length only. */
+    if (c->data_home && c->reg_complete && c->vonrget_sent &&
+        (!c->aptime_sent || !c->dbgtrace_sent || !c->tty_sent ||
+         !c->pssvc_sent || !c->prefmodem_sent)) {
+        ++c->probe_token;
+        if (!c->pssvc_sent && c->aptime_sent && c->dbgtrace_sent &&
+            c->tty_sent) {
+            c->pssvc_sent = 1;
+            int wrote = sit_send_get_once(o->ipc, 0x0711, c->probe_token);
+            if (wrote) {
+                c->pssvc_sent = 0;
+                c->probe_next_ms = now + PROBE_GAP_MS;
+                return;
+            }
+            c->probe_pending = 1;
+            c->probe_id = 0x0711;
+            c->probe_name = "pssvc";
+            c->probe_deadline_ms = now + PROBE_REPLY_MS;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            c->probe_sent++;
+            printf("camp_pssvc=sent elapsed_ms=%lld\n",
+                   (long long)(now - c->owner_start_ms));
+            return;
+        }
+        uint8_t f[18];
+        uint16_t id;
+        const char *name;
+        int *flag;
+        size_t nsend;
+        memset(f, 0, sizeof f);
+        if (!c->aptime_sent) {
+            time_t wall = time(NULL);
+            struct tm tm;
+            id = 0x0949;
+            name = "aptime";
+            flag = &c->aptime_sent;
+            nsend = 18;
+            if (!localtime_r(&wall, &tm)) {
+                c->probe_next_ms = now + PROBE_GAP_MS;
+                return;
+            }
+            camp_ap_time_bytes(f + 12, &tm);
+        } else if (!c->dbgtrace_sent) {
+            id = 0x090b;
+            name = "dbgtrace";
+            flag = &c->dbgtrace_sent;
+            nsend = 13;
+        } else if (!c->tty_sent) {
+            id = 0x0903;
+            name = "tty";
+            flag = &c->tty_sent;
+            nsend = 16;
+        } else {
+            id = 0x0740;
+            name = "prefmodem";
+            flag = &c->prefmodem_sent;
+            nsend = 13;
+        }
+        f[2] = (uint8_t)id;
+        f[3] = (uint8_t)(id >> 8);
+        f[4] = (uint8_t)nsend;
+        put_little32(f + 6, c->probe_token);
+        *flag = 1;
+        int wrote = camp_send_once(o->ipc, f, nsend);
+        if (wrote) {
+            *flag = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = id;
+        c->probe_name = name;
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_%s=sent len=%zu elapsed_ms=%lld\n", name, nsend,
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -6417,6 +6525,75 @@ static int test_setup_data_call(void)
     if (o.camp.probe_pending || !o.camp.vonrget_sent) return 193;
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
+    {
+        time_t wall = time(NULL);
+        struct tm tm;
+        uint8_t expect[6];
+        host_sit_write_override = camp_capture_write;
+        camp_probe_advance(&o, t);
+        host_sit_write_override = NULL;
+        if (camp_cap_n != 1 || camp_cap_len[0] != 18 ||
+            little16(camp_cap[0] + 2) != 0x0949)
+            return 210;
+        if (!localtime_r(&wall, &tm)) return 211;
+        camp_ap_time_bytes(expect, &tm);
+        if (memcmp(camp_cap[0] + 12, expect, 6) != 0) {
+            time_t wall2 = time(NULL);
+            if (!localtime_r(&wall2, &tm)) return 211;
+            camp_ap_time_bytes(expect, &tm);
+            if (memcmp(camp_cap[0] + 12, expect, 6) != 0) return 212;
+        }
+    }
+    host_sit_reply(ack, sizeof ack, 0x0949, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.aptime_sent) return 213;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 13 ||
+        little16(camp_cap[0] + 2) != 0x090b || camp_cap[0][12] != 0)
+        return 214;
+    host_sit_reply(ack, sizeof ack, 0x090b, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.dbgtrace_sent) return 215;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 16 ||
+        little16(camp_cap[0] + 2) != 0x0903 ||
+        little32(camp_cap[0] + 12) != 0)
+        return 216;
+    host_sit_reply(ack, sizeof ack, 0x0903, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.tty_sent) return 217;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x0711)
+        return 218;
+    host_sit_reply(ack, sizeof ack, 0x0711, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.pssvc_sent) return 219;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 13 ||
+        little16(camp_cap[0] + 2) != 0x0740 || camp_cap[0][12] != 0)
+        return 220;
+    host_sit_reply(ack, sizeof ack, 0x0740, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.prefmodem_sent) return 221;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
@@ -6432,8 +6609,26 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0902 ||
                        little16(camp_cap[0] + 2) == 0x070c ||
                        little16(camp_cap[0] + 2) == 0x0108 ||
-                       little16(camp_cap[0] + 2) == 0x0953))
+                       little16(camp_cap[0] + 2) == 0x0953 ||
+                       little16(camp_cap[0] + 2) == 0x0949 ||
+                       little16(camp_cap[0] + 2) == 0x090b ||
+                       little16(camp_cap[0] + 2) == 0x0903 ||
+                       little16(camp_cap[0] + 2) == 0x0711 ||
+                       little16(camp_cap[0] + 2) == 0x0740))
         return 168;
+    {
+        struct tm fixed;
+        uint8_t packed[6];
+        memset(&fixed, 0, sizeof fixed);
+        fixed.tm_year = 126;
+        fixed.tm_mon = 9;
+        fixed.tm_mday = 5;
+        fixed.tm_hour = 23;
+        fixed.tm_min = 59;
+        fixed.tm_sec = 58;
+        camp_ap_time_bytes(packed, &fixed);
+        if (memcmp(packed, "\x7e\x09\x05\x17\x3b\x3a", 6) != 0) return 222;
+    }
     {
         uint8_t fr[64];
         uint8_t got[4];

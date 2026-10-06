@@ -689,3 +689,23 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 - На устройстве: `dns=yes count=2`, `dns6=yes count=2`, в
   `resolv.conf` четыре `nameserver`, две строки с двоеточием.
   `wget` на `example.com` код 0, тело 577 Б, rx 0 → 1446, tx 192 → 760.
+
+### Ранние именованные кадры после VoNR GET
+
+- В захвате до data call сток ещё шлёт кадры, которых не было в хвосте.
+  Из `libsitril` названы и не содержат идентификаторов:
+  `0x0949` `BuildSetApSystemTime` (18 Б, шесть полей `localtime`:
+  год-1900, месяц, день, час, минута, секунда — на устройстве текущие,
+  не снимок из захвата), `0x090b` `SetDebugTrace` (байт 0),
+  `0x0903` `SetTtyMode` (слово 0), `0x0711` `BuildGetPsService`
+  (пустой GET), `0x0740` `BuildSetPreferredDataModem` (байт 0).
+  Все в стоке с `err=0`. Owner шлёт каждый один раз после `0x0953`.
+  Тела ответов в лог не пишутся.
+- На устройстве: `camp_aptime` `error_raw=0` len 13, `camp_dbgtrace`
+  `error_raw=0` len 12, `camp_tty` `error_raw=0` len 12, `camp_pssvc`
+  `error_raw=0` len 13, `camp_prefmodem` `error_raw=0` len 12.
+  `wget` на `example.com` код 0, тело 577 Б, rx 0 → 1457, tx 240 → 808.
+  В `resolv.conf` по-прежнему четыре `nameserver`, две строки с
+  двоеточием.
+- По-прежнему не шлются: `0x0100`, `0x075c`, `0x0208`, `0x0c14`,
+  `0x0403` GetDevID, `0x0922` SendDeviceInfo, `0x4605` SvNumber.
