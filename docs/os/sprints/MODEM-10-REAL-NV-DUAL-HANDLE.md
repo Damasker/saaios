@@ -679,5 +679,13 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `0x0100` (271 Б, в захвате есть строки), `0x075c` (в TD1A
   `libsitril` не назван, в стоке `err=6`), `0x0208` (длинный SIM
   status), `0x0c14` (opcode в `libsitril` и `libril_sitril` не
-  находится). IPv6 DNS из ответа data call на интерфейс не ставится:
-  смещение на проводе отдельно от разбора адаптера не восстановлено.
+  находится).
+
+### IPv6 DNS из ответа `0x0600` — device run (2026-10-06, слот A)
+
+- `ProtocolPsSetupDataCallAdapter::Init` при семье DNS 2 или 3 копирует
+  16 байт с item+30 и item+50. Owner дописывает их в `/run/resolv.conf`
+  после IPv4. Адреса в лог не пишутся.
+- На устройстве: `dns=yes count=2`, `dns6=yes count=2`, в
+  `resolv.conf` четыре `nameserver`, две строки с двоеточием.
+  `wget` на `example.com` код 0, тело 577 Б, rx 0 → 1446, tx 192 → 760.

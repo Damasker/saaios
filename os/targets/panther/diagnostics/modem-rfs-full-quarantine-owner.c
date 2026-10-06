@@ -3543,6 +3543,25 @@ static int camp_data_call_v6(const uint8_t *p, size_t n,
     return 0;
 }
 
+/* DNS family 2 and 3 also carry IPv6 at item+30 and item+50. Init copies
+ * those 16-byte loads only for those families. */
+static int camp_data_call_dns6(const uint8_t *p, size_t n, uint8_t dns[][16],
+                               int *ndns)
+{
+    *ndns = 0;
+    if (n < 78) return -1;
+    if (p[37] != 2 && p[37] != 3) return -1;
+    if (v6_present(p + 42)) {
+        memcpy(dns[*ndns], p + 42, 16);
+        *ndns += 1;
+    }
+    if (v6_present(p + 62)) {
+        memcpy(dns[*ndns], p + 62, 16);
+        *ndns += 1;
+    }
+    return *ndns ? 0 : -1;
+}
+
 #ifndef RFS_HOST_TEST
 static void camp_apply_v4(unsigned ifindex, const uint8_t addr[4])
 {
@@ -3573,6 +3592,26 @@ static void camp_write_dns(uint8_t dns[][4], int n)
                 dns[i][0], dns[i][1], dns[i][2], dns[i][3]);
     fclose(f);
     printf("camp_setup dns=yes count=%d\n", n);
+}
+
+static void camp_write_dns6(uint8_t dns[][16], int n)
+{
+    FILE *f = fopen("/run/resolv.conf", "a");
+    int i;
+    if (!f) {
+        printf("camp_setup dns6=no\n");
+        return;
+    }
+    for (i = 0; i < n; i++)
+        fprintf(f, "nameserver "
+                "%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                "%02x%02x:%02x%02x:%02x%02x:%02x%02x\n",
+                dns[i][0], dns[i][1], dns[i][2], dns[i][3],
+                dns[i][4], dns[i][5], dns[i][6], dns[i][7],
+                dns[i][8], dns[i][9], dns[i][10], dns[i][11],
+                dns[i][12], dns[i][13], dns[i][14], dns[i][15]);
+    fclose(f);
+    printf("camp_setup dns6=yes count=%d\n", n);
 }
 
 static void camp_apply_v6(unsigned ifindex, const uint8_t addr[16])
@@ -3667,7 +3706,9 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                camp_data_call_v6(p, n, &ifindex6, addr6) == 0;
         if (got4 || got6) {
             uint8_t dns[2][4];
+            uint8_t dns6[2][16];
             int ndns = 0;
+            int ndns6 = 0;
 #ifndef RFS_HOST_TEST
             if (got4) {
                 camp_apply_v4(ifindex, addr);
@@ -3675,14 +3716,18 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                     camp_write_dns(dns, ndns);
             }
             if (got6) camp_apply_v6(ifindex6, addr6);
+            if (camp_data_call_dns6(p, n, dns6, &ndns6) == 0)
+                camp_write_dns6(dns6, ndns6);
 #else
             (void)ifindex;
             (void)ifindex6;
             (void)ndns;
+            (void)ndns6;
 #endif
             zero_bytes(addr, sizeof addr);
             zero_bytes(addr6, sizeof addr6);
             zero_bytes(dns, sizeof dns);
+            zero_bytes(dns6, sizeof dns6);
         }
         return;
     }
@@ -6442,6 +6487,31 @@ static int test_setup_data_call(void)
             memset(fr + 21, 0, 16);
             fr[16] = 2;
             if (camp_data_call_v6(fr, sizeof fr, &idx6, got6) == 0) return 158;
+        }
+        {
+            uint8_t wide[96];
+            uint8_t dns6[2][16];
+            int ndns6 = 0;
+            static const uint8_t a[16] = {
+                0x20, 0x01, 0x48, 0x60, 0x48, 0x60, 0, 0,
+                0, 0, 0, 0, 0, 0, 0x88, 0x88
+            };
+            static const uint8_t b[16] = {
+                0x20, 0x01, 0x48, 0x60, 0x48, 0x60, 0, 0,
+                0, 0, 0, 0, 0, 0, 0x88, 0x44
+            };
+            memset(wide, 0, sizeof wide);
+            wide[37] = 3;
+            memcpy(wide + 42, a, 16);
+            memcpy(wide + 62, b, 16);
+            if (camp_data_call_dns6(wide, sizeof wide, dns6, &ndns6) ||
+                ndns6 != 2)
+                return 194;
+            if (memcmp(dns6[0], a, 16) != 0) return 195;
+            if (memcmp(dns6[1], b, 16) != 0) return 196;
+            wide[37] = 1;
+            if (camp_data_call_dns6(wide, sizeof wide, dns6, &ndns6) == 0)
+                return 197;
         }
     }
     return 0;
