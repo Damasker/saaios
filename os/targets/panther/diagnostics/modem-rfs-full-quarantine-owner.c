@@ -370,6 +370,10 @@ struct camp_driver {
      * 0x0c20 GPS lock mode byte 1, 0x0c33 GPS NFW status byte 0,
      * 0x0755 GetSaMode empty GET (reply body stays off the log). */
     int gpslock_sent, gpsnfw_sent, samode_sent;
+    /* First stock AIMS frames that ack with err 0 and body 01 01:
+     * 0x0d3c XCAPM stop, 0x0d3a stack stop, 0x0d3b XCAPM start.
+     * 0x0d39 stack start had no reply in the capture, so it stays unsent. */
+    int xcapstop_sent, aimstop_sent, xcapstart_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3088,6 +3092,20 @@ static void make_opx_byte_request(uint8_t *request, uint16_t id, uint8_t len,
     request[12] = value;
 }
 
+/* Two stock payload bytes at +12. Used for the AIMS frames whose capture
+ * body is the pair 01 01 and whose length is 14. */
+static void camp_fill_pair(uint8_t *request, uint16_t id, uint32_t token,
+                           uint8_t a, uint8_t b)
+{
+    memset(request, 0, 14);
+    request[2] = (uint8_t)id;
+    request[3] = (uint8_t)(id >> 8);
+    request[4] = 14;
+    put_little32(request + 6, token);
+    request[12] = a;
+    request[13] = b;
+}
+
 /* SIT_SET_DUAL_NETWORK_AND_ALLOW_DATA (0x072b, len 28): 4 x int32 payload,
  * recovered from ProtocolNetworkBuilder::BuildSetDualNetworkAndAllowData in the
  * full libsitril.so. Layout (log "Primary(net,allow), Secondary(net,allow)"):
@@ -3727,6 +3745,12 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                    n, little32(p + 12));
             return;
         }
+        printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
+        return;
+    }
+    if (id == 0x0d3c || id == 0x0d3a || id == 0x0d3b) {
+        const char *step = id == 0x0d3c ? "xcapstop" :
+                           id == 0x0d3a ? "aimstop" : "xcapstart";
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         return;
     }
@@ -4970,6 +4994,75 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_samode=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SIT_AIMS_XCAPM_STOP_REQ. Stock body 01 01, err 0. */
+    if (c->data_home && c->reg_complete && c->samode_sent &&
+        !c->xcapstop_sent) {
+        uint8_t f[14];
+        ++c->probe_token;
+        camp_fill_pair(f, 0x0d3c, c->probe_token, 1, 1);
+        c->xcapstop_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->xcapstop_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0d3c;
+        c->probe_name = "xcapstop";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_xcapstop=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SIT_AIMS_STACK_STOP_REQ. Stock body 01 01, err 0. */
+    if (c->data_home && c->reg_complete && c->xcapstop_sent &&
+        !c->aimstop_sent) {
+        uint8_t f[14];
+        ++c->probe_token;
+        camp_fill_pair(f, 0x0d3a, c->probe_token, 1, 1);
+        c->aimstop_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->aimstop_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0d3a;
+        c->probe_name = "aimstop";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_aimstop=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SIT_AIMS_XCAPM_START_REQ. Stock body 01 01, err 0. */
+    if (c->data_home && c->reg_complete && c->aimstop_sent &&
+        !c->xcapstart_sent) {
+        uint8_t f[14];
+        ++c->probe_token;
+        camp_fill_pair(f, 0x0d3b, c->probe_token, 1, 1);
+        c->xcapstart_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->xcapstart_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0d3b;
+        c->probe_name = "xcapstart";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_xcapstart=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -7153,6 +7246,42 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 14 ||
+        little16(camp_cap[0] + 2) != 0x0d3c ||
+        camp_cap[0][12] != 1 || camp_cap[0][13] != 1)
+        return 245;
+    host_sit_reply(ack, sizeof ack, 0x0d3c, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.xcapstop_sent) return 246;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 14 ||
+        little16(camp_cap[0] + 2) != 0x0d3a ||
+        camp_cap[0][12] != 1 || camp_cap[0][13] != 1)
+        return 247;
+    host_sit_reply(ack, sizeof ack, 0x0d3a, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.aimstop_sent) return 248;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 14 ||
+        little16(camp_cap[0] + 2) != 0x0d3b ||
+        camp_cap[0][12] != 1 || camp_cap[0][13] != 1)
+        return 249;
+    host_sit_reply(ack, sizeof ack, 0x0d3b, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.xcapstart_sent) return 250;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -7181,7 +7310,10 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == BBVER_GET ||
                        little16(camp_cap[0] + 2) == 0x0c20 ||
                        little16(camp_cap[0] + 2) == 0x0c33 ||
-                       little16(camp_cap[0] + 2) == 0x0755))
+                       little16(camp_cap[0] + 2) == 0x0755 ||
+                       little16(camp_cap[0] + 2) == 0x0d3c ||
+                       little16(camp_cap[0] + 2) == 0x0d3a ||
+                       little16(camp_cap[0] + 2) == 0x0d3b))
         return 168;
     {
         struct tm fixed;

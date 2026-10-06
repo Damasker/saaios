@@ -779,11 +779,27 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `camp_gpsnfw` `elapsed_ms=86239` `error_raw=0` len 12,
   `camp_samode` `elapsed_ms=87765` `error_raw=0` len 25.
   wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`, tx `240→808`.
+
+### AIMS: остановка XCAP, остановка стека, старт XCAP
+
+- `rcmMsgToString` называет `0x0d3c` `SIT_AIMS_XCAPM_STOP_REQ`,
+  `0x0d3a` `SIT_AIMS_STACK_STOP_REQ` и `0x0d3b`
+  `SIT_AIMS_XCAPM_START_REQ`. В захвате первый кадр каждого — 14 Б,
+  тело `01 01`, `err=0`. Owner шлёт эти три один раз после SA mode.
+- Устройство: `camp_xcapstop` `elapsed_ms=89520` `error_raw=0` len 12,
+  `camp_aimstop` `elapsed_ms=91051` `error_raw=0` len 12,
+  `camp_xcapstart` `elapsed_ms=92582` `error_raw=0` len 12.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`, tx `240→808`.
+- `0x0d39` `SIT_AIMS_STACK_START_REQ` в захвате без ответа, поэтому
+  не шлётся. `0x0d0b` `SIT_AIMS_SET_FRAME_TIME` несёт меняющуюся
+  метку времени, её не повторяем.
 - По-прежнему не шлются: `0x0413` `SIT_GET_IMEI_MAPPING_INFO`,
   `0x0c14` `SIT_SET_GPS_SUPL_NI_READY` (два байта приходят из
-  буфера вызывающего, не константа), `0x4605` `SendSvnInfo` (две
+  буфера вызывающего, не константа), `0x020e` `SIT_CLOSE_SIM_CHANNEL`
+  (тело в захвате не записано), `0x4605` `SendSvnInfo` (две
   цифры из `ro.vendor.build.svn`, на SaaiOS этого свойства нет),
   плюс кадры с секретами `0x0400`, `0x0403`, `0x0100`, `0x0208`,
-  `0x0209`, `0x020f`, `0x0247`, `0x0922`, `0x090d` и без имени
-  `0x020e`, `0x075c`, `0x0d0b`, `0x0d39`, `0x0d3a`, `0x0d3b`,
-  `0x0d3c`.
+  `0x0209`, `0x020f`, `0x0247`, `0x0922`, `0x090d`,
+  `0x096d` null-cipher, `0x097b` identifier disclosure,
+  `0x097e` security algorithms, и `0x075c` (строка в запросе,
+  в стоке `err=6`).
