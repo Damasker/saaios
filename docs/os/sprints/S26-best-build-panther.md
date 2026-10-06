@@ -222,8 +222,9 @@ owner не открывались, образ не собирался и не п
   по-прежнему не разбираются и не пишутся (SMSC в лог не попадает).
 - Не отправлять: `0x0100`, `0x075c`, `0x0208`, `0x0c14` — причины в
   Current state. `0x0953` GetVonrCapa не реализуется в этом шаге.
-- Owner не запускается из `native-init`. Образ с этими коммитами ещё
-  не собран: S27 остаётся на `0d8c228`.
+- Owner не запускается из `native-init`. Дерево `97afedf`
+  (модемные коммиты по `7084de0` включительно) собрано как S28 и не
+  прошито: слот A остаётся на S27.
 
 ## Evidence
 
@@ -251,6 +252,27 @@ shell (`99f39b55…`), appd, entityd, taskd, runtime, file-recv запущены
 Этот образ старше модемных коммитов `da25c4e`…`7084de0`: bearer и
 кадры после data call в S27 не входят. Пока слот A ONLINE, S27
 повторно не прошивается.
+
+**Сборка S28 (2026-10-06, `97afedf`, сервер, `dist/panther/s28`).**
+Тот же host-путь, что у S27 (`~/worktrees/som-best-build` на
+home-server), дерево `origin/pixel-7-main` на момент сборки.
+`97afedf` включает модемные коммиты по `7084de0`. Телефон не
+перезагружался, `fastboot` не использовался, COM13 не открывался,
+текущий modem owner не заменялся. Образ не прошит.
+Host-тесты `saai-ui-core` + `saai-shell`: 319 + 82 passed.
+`init_boot` `c3210f9d85379ac2bef72e5636c2d397582083c70c4a611ae1dda67129c661f6`
+байт-в-байт как S27. `vendor_boot`
+`6e7be35de39fca996a9836f1dcd23265a30b40c710010208355d1a070184378c`
+и `vendor_boot-wifi-gpu`
+`73da3b9a019157923f9fffd1f98a438871146ce43bd38a6bb7f27909526ba932`
+тоже как S27. `s28-data.tgz`
+`b309a3567875171dafb7b7020097059acf168e9155c2e0cd2b32326f64be44df`:
+по манифесту и INPUTS изменился только `saai-shell`
+`5778944abc07105f8b093986d2714051f8fafeedfc4580a2f138e0afc16274e3`
+(в S27 был `99f39b55…`). В shell зашит короткий id `97afedf9b1f6`.
+`saaios-runtime` и остальные входы `init_boot` бит-в-бит как S27.
+Модемный owner (`da25c4e`…`97afedf`) в `native-init` не входит и из
+образа не стартует. `saai-gpu-compositor` (NDK) в бандле нет.
 
 Заполняется при закрытии каждого воркстрима: commit, test log, image
 SHA-256, bearer-доказательство (`rmnet`/IPv4/rx-tx), render-node
