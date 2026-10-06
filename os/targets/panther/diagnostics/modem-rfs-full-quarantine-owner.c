@@ -356,6 +356,9 @@ struct camp_driver {
     /* 0x024d slot-status GET (body stays off the log), 0x0943 signal
      * report criteria, 0x0107 SMS broadcast activation word 0. */
     int slot_sent, sigcrit_sent, smsact_sent;
+    /* Initial stock 0x0943 bodies after the GERAN criteria already sent.
+     * The later capture rows are live threshold updates and stay out. */
+    int sigcrit_extra;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -4105,25 +4108,60 @@ static void camp_ap_time_bytes(uint8_t out[6], const struct tm *tm)
     out[5] = (uint8_t)tm->tm_sec;
 }
 
-/* BuildSetSignalReportCriteria: two ints, a count, four int32 thresholds
- * at +21, then the access word at +61 and two flag bytes. Values are the
- * single stock request (hysteresis 3000, thresholds -109/-103/-97/-89). */
-static void camp_fill_signal_criteria(uint8_t *f)
+/* One initial SetSignalReportCriteria body. Hysteresis 3000 and the
+ * following word 2 are the same on every stock frame. Thresholds, the
+ * access word at +61 and the two flag bytes are per row. */
+struct camp_sig_row {
+    int32_t t0, t1, t2, t3;
+    uint8_t count;
+    uint32_t access;
+    uint8_t flag;
+    uint8_t on;
+};
+
+/* The other nine bodies from the first second of the capture, in order.
+ * Rows that appear a second later differ by a single threshold and are
+ * the live update, so they are not in this table. */
+static const struct camp_sig_row camp_sig_more[] = {
+    { -114, -104, -94, -84, 4, 2, 2, 1 },
+    { -128, -118, -108, -98, 4, 3, 3, 1 },
+    { -105, -90, -75, -65, 4, 5, 1, 1 },
+    { 0, 0, 0, 0, 0, 3, 4, 0 },
+    { -3, 1, 5, 13, 4, 3, 5, 1 },
+    { -110, -90, -80, -65, 4, 4, 6, 1 },
+    { 0, 0, 0, 0, 0, 4, 7, 0 },
+    { 0, 0, 0, 0, 0, 4, 8, 0 },
+    { 0, 0, 0, 0, 0, 2, 9, 0 },
+};
+
+static void camp_fill_signal_row(uint8_t *f, const struct camp_sig_row *row)
 {
-    static const int32_t thresh[4] = {-109, -103, -97, -89};
-    int i;
     memset(f, 0, 67);
     f[2] = 0x43;
     f[3] = 0x09;
     f[4] = 67;
     put_little32(f + 12, 3000);
     put_little32(f + 16, 2);
-    f[20] = 4;
-    for (i = 0; i < 4; i++)
-        put_little32(f + 21 + 4 * i, (uint32_t)thresh[i]);
-    put_little32(f + 61, 1);
-    f[65] = 1;
-    f[66] = 1;
+    f[20] = row->count;
+    if (row->count) {
+        put_little32(f + 21, (uint32_t)row->t0);
+        put_little32(f + 25, (uint32_t)row->t1);
+        put_little32(f + 29, (uint32_t)row->t2);
+        put_little32(f + 33, (uint32_t)row->t3);
+    }
+    put_little32(f + 61, row->access);
+    f[65] = row->flag;
+    f[66] = row->on;
+}
+
+/* BuildSetSignalReportCriteria: the first stock body (access 1,
+ * thresholds -109/-103/-97/-89, flags 1,1). */
+static void camp_fill_signal_criteria(uint8_t *f)
+{
+    static const struct camp_sig_row first = {
+        -109, -103, -97, -89, 4, 1, 1, 1
+    };
+    camp_fill_signal_row(f, &first);
 }
 
 /* BuildSetLinkCapaReportCriteria. The body is the same in every stock
@@ -5147,6 +5185,34 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         printf("camp_ratbm=sent step=set_allowed_bitmap_stock wire=0x%x "
                "elapsed_ms=%lld\n",
                (unsigned)raf_to_sit_ratbm(RATBM_RAF_STOCK),
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* The other nine initial signal-criteria bodies. Each once, after
+     * the bitmap, so the first GERAN criteria stays where it already is. */
+    if (c->data_home && c->reg_complete && c->xcapstop0_sent &&
+        (c->ratbm_enabled || c->ratbm_set_sent) &&
+        c->sigcrit_extra < (int)(sizeof camp_sig_more / sizeof camp_sig_more[0])) {
+        const struct camp_sig_row *row = &camp_sig_more[c->sigcrit_extra];
+        uint8_t f[67];
+        ++c->probe_token;
+        camp_fill_signal_row(f, row);
+        put_little32(f + 6, c->probe_token);
+        c->sigcrit_extra++;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->sigcrit_extra--;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0943;
+        c->probe_name = "sigcrit";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_sigcrit=sent access=%u flag=%u on=%u elapsed_ms=%lld\n",
+               (unsigned)row->access, row->flag, row->on,
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -7397,6 +7463,26 @@ static int test_setup_data_call(void)
     host_sit_reply(ack, sizeof ack, RATBM_SET, o.camp.probe_token, 0);
     camp_feed(&o.camp, ack, sizeof ack, t + 10);
     if (o.camp.probe_pending || !o.camp.ratbm_set_sent) return 256;
+    {
+        int si;
+        for (si = 0; si < (int)(sizeof camp_sig_more / sizeof camp_sig_more[0]);
+             si++) {
+            uint8_t expect[67];
+            t += PROBE_GAP_MS;
+            camp_cap_n = 0;
+            host_sit_write_override = camp_capture_write;
+            camp_probe_advance(&o, t);
+            host_sit_write_override = NULL;
+            camp_fill_signal_row(expect, &camp_sig_more[si]);
+            if (camp_cap_n != 1 || camp_cap_len[0] != 67 ||
+                memcmp(camp_cap[0] + 12, expect + 12, 55) != 0)
+                return 257 + si;
+            host_sit_reply(ack, sizeof ack, 0x0943, o.camp.probe_token, 0);
+            camp_feed(&o.camp, ack, sizeof ack, t + 10);
+            if (o.camp.probe_pending || o.camp.sigcrit_extra != si + 1)
+                return 270 + si;
+        }
+    }
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
