@@ -341,6 +341,9 @@ struct camp_driver {
      * one controlled LTE-only acquisition trial. Revert = remove the file. */
     unsigned pref_target;
     int allow_data_sent, reg_complete;
+    /* Data registration HOME (raw 1). Then stock 0x0625, the internet
+     * 0x0613 profile, and one SetupDataCall 0x0600. */
+    int data_home, vonr_sent, profile_sent, setup_sent;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -2700,6 +2703,8 @@ static void sit_advance(struct owner *o, int64_t now)
 
 #ifdef SAAIOS_RFS_CAMP
 #include "cc-sit-4600.inc"
+#include "cc-sit-0600.inc"
+#include "cc-sit-pre0600.inc"
 /* Exact stock stage-1 request builders, recovered from the vendor RIL and
  * matching modem-channel-owner.c byte-for-byte. No CLI value or NV access. */
 static void make_setmodemsconfig_request(uint8_t request[SEQ_CONFIG_LEN],
@@ -3460,6 +3465,43 @@ static int camp_ratbm_reply(struct camp_driver *c, const uint8_t *p, size_t n,
     return 0;
 }
 
+/* sit_pdp_data_call_item in a SetupDataCall response, from
+ * ProtocolPsSetupDataCallAdapter::Init in libsitril. Payload starts at
+ * byte 12: cid at +2, PDP type at +4 (1 or 3 carries IPv4), IPv4 at +5.
+ * Stock maps cid 2 to rmnet1, so the interface is rmnet(cid-1). */
+static int camp_data_call_v4(const uint8_t *p, size_t n,
+                             unsigned *ifindex, uint8_t addr[4])
+{
+    unsigned cid, ptype;
+    if (n < 21) return -1;
+    cid = p[14];
+    ptype = p[16];
+    if (cid < 1 || cid > 16) return -1;
+    if (ptype != 1 && ptype != 3) return -1;
+    if ((p[17] | p[18] | p[19] | p[20]) == 0) return -1;
+    if (p[17] == 0xff && p[18] == 0xff && p[19] == 0xff && p[20] == 0xff)
+        return -1;
+    *ifindex = cid - 1;
+    memcpy(addr, p + 17, 4);
+    return 0;
+}
+
+#ifndef RFS_HOST_TEST
+static void camp_apply_v4(unsigned ifindex, const uint8_t addr[4])
+{
+    char cmd[96];
+    int up, add;
+    snprintf(cmd, sizeof cmd, "ip link set rmnet%u up", ifindex);
+    up = system(cmd);
+    snprintf(cmd, sizeof cmd, "ip addr add %u.%u.%u.%u/32 dev rmnet%u",
+             addr[0], addr[1], addr[2], addr[3], ifindex);
+    add = system(cmd);
+    zero_bytes(cmd, sizeof cmd);
+    printf("camp_setup if=rmnet%u ipv4=yes prefix=32 up=%d add=%d\n",
+           ifindex, up == 0, add == 0);
+}
+#endif
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -3484,6 +3526,23 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
+    if (id == 0x0625 || id == 0x0613 || id == 0x0600) {
+        const char *step = id == 0x0625 ? "vonr" :
+                           id == 0x0613 ? "profile" : "setup";
+        unsigned ifindex = 0;
+        uint8_t addr[4];
+        printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
+        if (id == 0x0600 && !error &&
+            camp_data_call_v4(p, n, &ifindex, addr) == 0) {
+#ifndef RFS_HOST_TEST
+            camp_apply_v4(ifindex, addr);
+#else
+            (void)ifindex;
+#endif
+            zero_bytes(addr, sizeof addr);
+        }
+        return;
+    }
     if (error) {
         printf("camp_probe field=%s response=yes error_raw=%u\n",
                c->probe_name, error);
@@ -3577,6 +3636,9 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
             c->voice_reg_known = 1;
             c->voice_reg_state = p[SIT_NET_REG_STATE_OFFSET];
         }
+        if (id == SIT_NET_DATA_REG && n > SIT_NET_REG_STATE_OFFSET &&
+            p[SIT_NET_REG_STATE_OFFSET] == 1)
+            c->data_home = 1;
     } else if (id == SIT_NET_OPERATOR) {
         sit_net_log_operator("camp_probe", p, n);
     } else if (id == REG_SCAN) {
@@ -3935,6 +3997,45 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_dereg=sent step=%s elapsed_ms=%lld\n", rname,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* After data HOME: stock 0x0625, then the internet data profile, then
+     * SetupDataCall. Each frame is the capture with a fresh token. */
+    if (c->data_home && c->reg_complete && !c->setup_sent) {
+        const uint8_t *src;
+        size_t len;
+        uint16_t id;
+        const char *name;
+        int *flag;
+        if (!c->vonr_sent) {
+            src = cc_sit_0625; len = sizeof cc_sit_0625; id = 0x0625;
+            name = "vonr"; flag = &c->vonr_sent;
+        } else if (!c->profile_sent) {
+            src = cc_sit_0613; len = sizeof cc_sit_0613; id = 0x0613;
+            name = "profile"; flag = &c->profile_sent;
+        } else {
+            src = cc_sit_0600; len = sizeof cc_sit_0600; id = 0x0600;
+            name = "setup"; flag = &c->setup_sent;
+        }
+        ++c->probe_token;
+        uint8_t f[sizeof cc_sit_0600];
+        memcpy(f, src, len);
+        put_little32(f + 6, c->probe_token);
+        *flag = 1;
+        int wrote = camp_send_once(o->ipc, f, len);
+        if (wrote) {
+            *flag = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = id;
+        c->probe_name = name;
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_%s=sent len=%zu elapsed_ms=%lld\n", name, len,
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -5543,7 +5644,7 @@ static int test_camp_observer(void)
 }
 
 #ifdef RFS_HOST_TEST
-static uint8_t camp_cap[8][544];
+static uint8_t camp_cap[8][1024];
 static size_t camp_cap_len[8];
 static unsigned camp_cap_n;
 static ssize_t camp_capture_write(int fd, const void *buf, size_t len)
@@ -5698,6 +5799,80 @@ static int test_camp_prober(void)
     fresh.sim_change_pending = 0;
     camp_feed(&fresh, ind, sizeof ind, 200);
     if (fresh.sim_change_pending) return 130;
+    return 0;
+}
+
+static int test_setup_data_call(void)
+{
+    struct owner o;
+    uint8_t expect[sizeof cc_sit_0600];
+    uint8_t ack[12];
+    int64_t t = PROBE_START_MS;
+    memset(&o, 0, sizeof o);
+    o.phase = TERMINAL;
+    o.final_ack_sent = 1;
+    o.ipc = 5;
+    o.camp.reg_complete = 1;
+    o.camp.data_home = 1;
+    o.camp.probe_token = 0x11;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != sizeof cc_sit_0625) return 140;
+    if (little16(camp_cap[0] + 2) != 0x0625 || camp_cap[0][12] != 1) return 141;
+    host_sit_reply(ack, sizeof ack, 0x0625, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.vonr_sent) return 142;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != sizeof cc_sit_0613) return 143;
+    if (little16(camp_cap[0] + 2) != 0x0613) return 144;
+    if (memcmp(camp_cap[0] + 16, "internet", 8) != 0) return 145;
+    host_sit_reply(ack, sizeof ack, 0x0613, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.profile_sent) return 146;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != sizeof cc_sit_0600) return 147;
+    memcpy(expect, cc_sit_0600, sizeof expect);
+    put_little32(expect + 6, o.camp.probe_token);
+    if (memcmp(camp_cap[0], expect, sizeof expect) != 0) return 148;
+    host_sit_reply(ack, sizeof ack, 0x0600, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.setup_sent) return 149;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
+                       little16(camp_cap[0] + 2) == 0x0625 ||
+                       little16(camp_cap[0] + 2) == 0x0613))
+        return 150;
+    {
+        uint8_t fr[32];
+        uint8_t got[4];
+        unsigned idx = 99;
+        memset(fr, 0, sizeof fr);
+        fr[14] = 2;
+        fr[16] = 3;
+        fr[17] = 10;
+        fr[18] = 1;
+        fr[19] = 2;
+        fr[20] = 3;
+        if (camp_data_call_v4(fr, sizeof fr, &idx, got) || idx != 1 ||
+            memcmp(got, "\x0a\x01\x02\x03", 4) != 0)
+            return 151;
+        fr[16] = 2;
+        if (camp_data_call_v4(fr, sizeof fr, &idx, got) == 0) return 152;
+    }
     return 0;
 }
 #endif
@@ -6424,7 +6599,7 @@ static int self_test(void)
 #ifdef SAAIOS_RFS_CAMP
     if (test_cc() || test_camp_builders() || test_camp_observer() || test_camp_reg()
 #ifdef RFS_HOST_TEST
-        || test_camp_dispatch() || test_camp_prober()
+        || test_camp_dispatch() || test_camp_prober() || test_setup_data_call()
 #endif
        )
         return 9;

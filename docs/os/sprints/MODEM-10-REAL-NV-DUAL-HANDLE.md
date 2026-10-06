@@ -535,3 +535,43 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `plmn_numeric=25503#`. `0x093f` / `0x0404` / `0x0800` с `error_raw=0`.
 - rmnet0..3 rx и tx остаются 0, IPv4 на rmnet нет. Канал данных ещё
   не подтверждён.
+
+### `0x0600` SetupDataCall — device run (2026-10-06, слот A)
+
+- Из захвата CP2A извлечён один кадр `0x0600` длиной 983 Б. В теле два
+  слота APN с именем `internet`, поля учётных данных пустые. Owner
+  подставляет только token в байты 6..9 и шлёт кадр один раз после
+  data `registration_raw=1`.
+- На устройстве: `camp_setup=sent len=983`, ответ `error_raw=0`.
+  Voice и data остаются HOME, LTE, `tech_raw=14`, `reject_raw=0`.
+  NV-карантин снова `final_ack_sent=1`, 95 grant, 189446 байт.
+- rmnet0..3 rx и tx остаются 0. IPv4 есть только на lo и usb0.
+  Канал данных не подтверждён. Ответ на `0x0600` в том прогоне в лог
+  не попал по длине.
+
+### Профиль `internet` перед `0x0600` — device run (2026-10-06, слот A)
+
+- В стоковом захвате до первого `0x0600` уходят `0x0625` (14 Б, байт 12
+  равен 1, ответ `error 0`) и `0x0613` с APN `internet` (246 Б, ответ
+  `error 0`). Owner шлёт их по одному разу после data HOME, затем тот
+  же `0x0600`.
+- На устройстве: `camp_vonr` `error_raw=0` len 12, `camp_profile`
+  `error_raw=0` len 12, `camp_setup` `error_raw=0` **len 304**.
+  304 Б — длина стокового успешного ответа SetupDataCall. Voice и data
+  остаются HOME, LTE, `tech_raw=14`.
+- rmnet0..3 по-прежнему `down`, rx и tx 0. Ядро само интерфейс не
+  поднимает. Канал данных не подтверждён. В ответе 304 Б адрес есть,
+  но owner его не читает и на `rmnet` не назначает.
+
+### Адрес из ответа `0x0600` на `rmnet1` — device run (2026-10-06, слот A)
+
+- Разбор `ProtocolPsSetupDataCallAdapter::Init` в `libsitril`: в ответе
+  cid на байте 14, тип PDP на 16 (1 или 3 — есть IPv4), четыре байта
+  адреса на 17. Сток при cid 2 поднимает `rmnet1`. Owner назначает
+  этот адрес как `/32` и делает `ip link set up`. Сам адрес в лог не
+  пишется. Маршрут по умолчанию не трогается.
+- На устройстве: ответ снова `error_raw=0` len 304,
+  `camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1`.
+  `rmnet1` operstate `unknown`, затем один ICMP на 8.8.8.8 через
+  `rmnet1` завершился с кодом 0. Счётчики `rmnet1`: rx 84 / 1 пакет,
+  tx 324 / 6 пакетов. Канал данных подтверждён.
