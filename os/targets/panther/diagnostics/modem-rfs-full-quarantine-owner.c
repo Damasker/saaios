@@ -359,6 +359,8 @@ struct camp_driver {
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
+    /* 0 then 1: the two stock broadcast-SMS configs. */
+    int smscb_next;
     /* Initial-attach APN (stock SET_INITIAL_ATTACH_APN 0x0603) sent once before
      * allow-data, only when an APN is configured. apn[] is loaded at startup from
      * /data/saaios/etc/apn; empty => the step is skipped (proven boot unchanged). */
@@ -3696,7 +3698,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     }
     if (id == 0x0949 || id == 0x090b || id == 0x0903 ||
         id == 0x0711 || id == 0x0740 || id == 0x024d ||
-        id == 0x0943 || id == 0x0107 || id == 0x0944) {
+        id == 0x0943 || id == 0x0107 || id == 0x0944 || id == 0x0106) {
         const char *step = id == 0x0949 ? "aptime" :
                            id == 0x090b ? "dbgtrace" :
                            id == 0x0903 ? "tty" :
@@ -3704,7 +3706,8 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                            id == 0x0740 ? "prefmodem" :
                            id == 0x024d ? "slot" :
                            id == 0x0943 ? "sigcrit" :
-                           id == 0x0107 ? "smsact" : "linkcrit";
+                           id == 0x0107 ? "smsact" :
+                           id == 0x0944 ? "linkcrit" : "smscb";
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         return;
     }
@@ -4098,6 +4101,62 @@ static void camp_fill_link_criteria(uint8_t *f, uint32_t access)
     for (i = 0; i < 11; i++)
         put_little32(f + 106 + 4 * i, down[i]);
     put_little32(f + 186, access);
+}
+
+/* BuildSetBroadcastSmsConfig writes a count byte at +12 and then 7-byte
+ * records: service-id from, to, and three trailing bytes. Both stock
+ * frames (7 records, then 9) are err 0. Service ids are the public
+ * ETWS/CMAS ranges. */
+struct camp_smscb_rec {
+    uint16_t from_id, to_id;
+    uint8_t tail0, tail1, tail2;
+};
+
+static const struct camp_smscb_rec camp_smscb_a[7] = {
+    {4352, 4354, 0, 255, 1},
+    {4355, 4355, 0, 255, 0},
+    {4356, 4356, 0, 255, 1},
+    {4370, 4379, 0, 255, 1},
+    {4380, 4382, 0, 255, 0},
+    {4383, 4392, 0, 255, 1},
+    {4393, 4395, 0, 255, 0},
+};
+
+static const struct camp_smscb_rec camp_smscb_b[9] = {
+    {4352, 4354, 0, 255, 1},
+    {4355, 4355, 0, 255, 0},
+    {4356, 4356, 0, 255, 1},
+    {4370, 4371, 0, 255, 1},
+    {4373, 4379, 0, 255, 1},
+    {4380, 4382, 0, 255, 0},
+    {4383, 4384, 0, 255, 1},
+    {4386, 4392, 0, 255, 1},
+    {4393, 4395, 0, 255, 0},
+};
+
+static size_t camp_fill_smscb(uint8_t *f, int which)
+{
+    const struct camp_smscb_rec *recs =
+        which == 0 ? camp_smscb_a : camp_smscb_b;
+    int n = which == 0 ? 7 : 9;
+    size_t len = (size_t)(13 + n * 7);
+    int i;
+    memset(f, 0, len);
+    f[2] = 0x06;
+    f[3] = 0x01;
+    f[4] = (uint8_t)len;
+    f[12] = (uint8_t)n;
+    for (i = 0; i < n; i++) {
+        size_t o = (size_t)(13 + i * 7);
+        f[o] = (uint8_t)recs[i].from_id;
+        f[o + 1] = (uint8_t)(recs[i].from_id >> 8);
+        f[o + 2] = (uint8_t)recs[i].to_id;
+        f[o + 3] = (uint8_t)(recs[i].to_id >> 8);
+        f[o + 4] = recs[i].tail0;
+        f[o + 5] = recs[i].tail1;
+        f[o + 6] = recs[i].tail2;
+    }
+    return len;
 }
 
 /* Sustained, non-self-poisoning observer. Drives the SIM to READY by re-GETting
@@ -4721,6 +4780,32 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_sent++;
         printf("camp_linkcrit=sent len=190 access=%u elapsed_ms=%lld\n",
                access, (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Two stock broadcast-SMS configs. The record list stays off the log. */
+    if (c->data_home && c->reg_complete && c->linkcrit_next >= 5 &&
+        c->smscb_next < 2) {
+        uint8_t f[76];
+        int which = c->smscb_next;
+        size_t nsend;
+        ++c->probe_token;
+        nsend = camp_fill_smscb(f, which);
+        put_little32(f + 6, c->probe_token);
+        c->smscb_next++;
+        int wrote = camp_send_once(o->ipc, f, nsend);
+        if (wrote) {
+            c->smscb_next--;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0106;
+        c->probe_name = "smscb";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_smscb=sent len=%zu count=%u elapsed_ms=%lld\n",
+               nsend, f[12], (long long)(now - c->owner_start_ms));
         return;
     }
     /* VERDICT 21: read the running CP baseband/SW version (read-only). */
@@ -6805,6 +6890,26 @@ static int test_setup_data_call(void)
                 return 230;
         }
     }
+    {
+        int which;
+        for (which = 0; which < 2; which++) {
+            uint8_t expect[76];
+            size_t nsend = camp_fill_smscb(expect, which);
+            t += PROBE_GAP_MS;
+            camp_cap_n = 0;
+            host_sit_write_override = camp_capture_write;
+            camp_probe_advance(&o, t);
+            host_sit_write_override = NULL;
+            if (camp_cap_n != 1 || camp_cap_len[0] != nsend ||
+                little16(camp_cap[0] + 2) != 0x0106 ||
+                memcmp(camp_cap[0] + 12, expect + 12, nsend - 12) != 0)
+                return 231;
+            host_sit_reply(ack, sizeof ack, 0x0106, o.camp.probe_token, 0);
+            camp_feed(&o.camp, ack, sizeof ack, t + 10);
+            if (o.camp.probe_pending || o.camp.smscb_next != which + 1)
+                return 232;
+        }
+    }
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
@@ -6831,7 +6936,8 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x024d ||
                        little16(camp_cap[0] + 2) == 0x0943 ||
                        little16(camp_cap[0] + 2) == 0x0107 ||
-                       little16(camp_cap[0] + 2) == 0x0944))
+                       little16(camp_cap[0] + 2) == 0x0944 ||
+                       little16(camp_cap[0] + 2) == 0x0106))
         return 168;
     {
         struct tm fixed;
