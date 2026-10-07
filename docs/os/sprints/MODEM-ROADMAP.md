@@ -287,7 +287,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused because the owner holds the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
-| MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
+| MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
@@ -988,6 +988,16 @@ EFS access is limited to provenance checks; synthetic tests never use it.
 **Rollback:** no RFS server.
 
 **Threat:** NV mutation or identity leakage.
+
+**Решение (2026-10-07, `1a6ca5c`, бинарник `00fe7877…`).**
+`saai-modemd rfs-policy` ничего не открывает. Файл 1 и файл 3:
+команда 7 — `open-copy`, команды 2 и 6 — `quarantine-write`,
+команда 3 — `quarantine-status`. Любой другой файл или команда —
+`deny`. Исходный EFS в этом решении не источник и не назначение.
+На этой загрузке: файл 3 команда 2 дала `quarantine-write
+file=protected`, файл 1 команда 7 дала `open-copy file=normal`,
+файл 9 команда 6 дала `deny`. Все три с `hardware_actions=none`.
+Owner остался один, CP `ONLINE`. В загрузку это не вшито.
 
 ## MODEM-08
 
