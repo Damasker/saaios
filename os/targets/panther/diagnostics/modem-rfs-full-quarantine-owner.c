@@ -394,6 +394,9 @@ struct camp_driver {
     int bar_cell, bar_count, bar_svc, bar_kind, bar_factor, bar_time, bar_barred;
     /* LTE identity inside the 0x074b prefix. Operator strings stay off. */
     int bar_ci, bar_pci, bar_tac, bar_earfcn;
+    /* Second barring record and how many records were logged. */
+    int bar_nlogged;
+    int bar2_svc, bar2_kind, bar2_factor, bar2_time, bar2_barred;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3858,15 +3861,49 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                 unsigned prefix = camp_bar_prefix(cell);
                 c->bar_cell = (int)cell;
                 if (prefix != 0 && n >= (size_t)8u + prefix + 21u) {
-                    const uint8_t *rec = p + 8 + prefix + 4;
                     int count = (int)little32(p + 8 + prefix);
                     c->bar_count = count;
                     if (count >= 1) {
-                        c->bar_svc = (int)little32(rec);
-                        c->bar_kind = (int)little32(rec + 4);
-                        c->bar_factor = (int)little32(rec + 8);
-                        c->bar_time = (int)little32(rec + 12);
-                        c->bar_barred = rec[16] != 0;
+                        char list[512];
+                        size_t used = 0;
+                        int logged = 0;
+                        int limit = count > 8 ? 8 : count;
+                        list[0] = 0;
+                        for (int i = 0; i < limit; i++) {
+                            size_t start = (size_t)8u + prefix + 4u +
+                                           (size_t)i * 17u;
+                            int svc, kind, factor, time, barred, wrote;
+                            const uint8_t *r;
+                            if (start + 17u > n) break;
+                            r = p + start;
+                            svc = (int)little32(r);
+                            kind = (int)little32(r + 4);
+                            factor = (int)little32(r + 8);
+                            time = (int)little32(r + 12);
+                            barred = r[16] != 0;
+                            if (i == 0) {
+                                c->bar_svc = svc;
+                                c->bar_kind = kind;
+                                c->bar_factor = factor;
+                                c->bar_time = time;
+                                c->bar_barred = barred;
+                            } else if (i == 1) {
+                                c->bar2_svc = svc;
+                                c->bar2_kind = kind;
+                                c->bar2_factor = factor;
+                                c->bar2_time = time;
+                                c->bar2_barred = barred;
+                            }
+                            wrote = snprintf(list + used, sizeof list - used,
+                                             "%s%d/%d/%d/%d/%d",
+                                             used ? "," : "",
+                                             svc, kind, factor, time, barred);
+                            if (wrote < 0 || (size_t)wrote >= sizeof list - used)
+                                break;
+                            used += (size_t)wrote;
+                            logged++;
+                        }
+                        c->bar_nlogged = logged;
                         if (cell == 2) {
                             const uint8_t *id = p + 9;
                             c->bar_ci = camp_lte_id(little32(id + 6), 0);
@@ -3874,18 +3911,14 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                             c->bar_tac = camp_lte_id(little32(id + 14), 2);
                             c->bar_earfcn = camp_lte_id(little32(id + 18), 3);
                             printf("camp_ind barring id=0x074b len=%zu cell=%u "
-                                   "count=%d svc=%d kind=%d factor=%d time=%d "
-                                   "barred=%d ci=%d pci=%d tac=%d earfcn=%d\n",
-                                   n, cell, count, c->bar_svc, c->bar_kind,
-                                   c->bar_factor, c->bar_time, c->bar_barred,
-                                   c->bar_ci, c->bar_pci, c->bar_tac,
-                                   c->bar_earfcn);
+                                   "count=%d ci=%d pci=%d tac=%d earfcn=%d "
+                                   "recs=%s\n",
+                                   n, cell, count, c->bar_ci, c->bar_pci,
+                                   c->bar_tac, c->bar_earfcn, list);
                         } else {
                             printf("camp_ind barring id=0x074b len=%zu cell=%u "
-                                   "count=%d svc=%d kind=%d factor=%d time=%d "
-                                   "barred=%d\n",
-                                   n, cell, count, c->bar_svc, c->bar_kind,
-                                   c->bar_factor, c->bar_time, c->bar_barred);
+                                   "count=%d recs=%s\n",
+                                   n, cell, count, list);
                         }
                     } else {
                         printf("camp_ind barring id=0x074b len=%zu cell=%u "
@@ -7951,28 +7984,32 @@ static int test_setup_data_call(void)
                     o.camp.ac_voice != 0 || o.camp.ac_video != 1)
                     return 294;
                 {
-                    uint8_t bar[311];
+                    uint8_t bar[328];
                     memset(bar, 0, sizeof bar);
                     bar[0] = 2;
                     bar[2] = 0x4b;
                     bar[3] = 0x07;
-                    bar[4] = 55;
-                    bar[5] = 1;
+                    bar[4] = 0x48;
+                    bar[5] = 0x01;
                     bar[8] = 2;
                     put_little32(bar + 15, 0x1a2b3c);
                     put_little32(bar + 19, 114);
                     put_little32(bar + 23, 100);
                     put_little32(bar + 27, 1500);
-                    put_little32(bar + 290, 1);
+                    put_little32(bar + 290, 2);
                     put_little32(bar + 294, 3);
                     put_little32(bar + 298, 1);
                     put_little32(bar + 302, 50);
                     put_little32(bar + 306, 30);
                     bar[310] = 1;
+                    put_little32(bar + 311, 1);
+                    put_little32(bar + 315, 2);
+                    put_little32(bar + 319, 10);
+                    put_little32(bar + 323, 20);
                     camp_feed(&o.camp, bar, sizeof bar, t);
                     camp_feed(&o.camp, bar, sizeof bar, t);
                     if (o.camp.ind_barring != 1 || o.camp.bar_cell != 2 ||
-                        o.camp.bar_count != 1 || o.camp.bar_svc != 3 ||
+                        o.camp.bar_count != 2 || o.camp.bar_svc != 3 ||
                         o.camp.bar_kind != 1 || o.camp.bar_factor != 50 ||
                         o.camp.bar_time != 30 || o.camp.bar_barred != 1)
                         return 295;
@@ -7983,6 +8020,10 @@ static int test_setup_data_call(void)
                         o.camp.bar_ci != 0x1a2b3c || o.camp.bar_pci != 114 ||
                         o.camp.bar_tac != 100 || o.camp.bar_earfcn != 1500)
                         return 296;
+                    if (o.camp.bar_nlogged != 2 || o.camp.bar2_svc != 1 ||
+                        o.camp.bar2_kind != 2 || o.camp.bar2_factor != 10 ||
+                        o.camp.bar2_time != 20 || o.camp.bar2_barred != 0)
+                        return 297;
                 }
             }
         }

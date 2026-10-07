@@ -916,6 +916,12 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   tac=46561 earfcn=1500`. PCI и EARFCN совпали с первой записью
   `0x0742`. wget `example.com` exit 0, тело 577 Б, rmnet1 rx
   `0→1445`, tx `240→808`.
+- Сток пишет каждую запись барринга. В лог идут все, что влезают
+  в кадр, не больше восьми: `service/type/factor/time/barred`.
+- Устройство: `recs=8/0/0/0/0,3/0/100/0/0,4/0/100/0/0,6/0/255/0/0,
+  7/0/255/0/0,1001/0/255/0/0,1002/0/255/0/0`, `ci=97947167
+  pci=258 tac=46561 earfcn=1500`. wget `example.com` exit 0,
+  тело 577 Б, rmnet1 rx `0→1446`, tx `240→808`.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
