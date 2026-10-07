@@ -346,7 +346,7 @@ struct camp_driver {
     int data_home, vonr_sent, profile_sent, setup_sent, fd_sent;
     int activity_sent, ims_sent, sos_sent;
     int endc_sent, vonrcapa_sent, rcnet_sent;
-    int throttle_sent, unsol_sent, screen_sent;
+    int throttle_sent, unsol_wide_sent, unsol_sent, screen_sent;
     int cellinfo_sent, smsc_sent, vonrget_sent;
     /* Early stock frames that are named and carry no identifiers:
      * 0x0949 AP clock from localtime, 0x090b debug-trace byte 0,
@@ -3724,7 +3724,8 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     }
     if (id == 0x094d || id == 0x0928 || id == 0x0902) {
         const char *step = id == 0x094d ? "throttle" :
-                           id == 0x0928 ? "unsol" : "screen";
+                           id == 0x0928 ? (c->probe_name ? c->probe_name : "unsol") :
+                           "screen";
         printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
         return;
     }
@@ -4592,8 +4593,9 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         return;
     }
     /* After RC network type, stock sets data throttling (byte 0, duration
-     * 30000), the unsolicited-response filter word 0x7f, then screen state 1.
-     * Each builder stores that scalar in a 16- or 21-byte request. */
+     * 30000), indication filter 0xff, then the settled filter 0x7f, then
+     * screen state 1. Each builder stores that scalar in a 16- or 21-byte
+     * request. The last filter word is 0x7f. */
     if (c->data_home && c->reg_complete && c->rcnet_sent &&
         (!c->throttle_sent || !c->unsol_sent || !c->screen_sent)) {
         ++c->probe_token;
@@ -4611,6 +4613,12 @@ static void camp_probe_advance(struct owner *o, int64_t now)
             nsend = 21;
             f[12] = 0;
             put_little32(f + 13, 30000u);
+        } else if (!c->unsol_wide_sent) {
+            id = 0x0928;
+            name = "unsolff";
+            flag = &c->unsol_wide_sent;
+            nsend = 16;
+            put_little32(f + 12, 0xffu);
         } else if (!c->unsol_sent) {
             id = 0x0928;
             name = "unsol";
@@ -7119,12 +7127,24 @@ static int test_setup_data_call(void)
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
     if (camp_cap_n != 1 || camp_cap_len[0] != 16 ||
-        little16(camp_cap[0] + 2) != 0x0928)
+        little16(camp_cap[0] + 2) != 0x0928 ||
+        little32(camp_cap[0] + 12) != 0xffu)
         return 182;
-    if (little32(camp_cap[0] + 12) != 0x7fu) return 183;
     host_sit_reply(ack, sizeof ack, 0x0928, o.camp.probe_token, 0);
     camp_feed(&o.camp, ack, sizeof ack, t + 10);
-    if (o.camp.probe_pending || !o.camp.unsol_sent) return 184;
+    if (o.camp.probe_pending || !o.camp.unsol_wide_sent) return 183;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 16 ||
+        little16(camp_cap[0] + 2) != 0x0928 ||
+        little32(camp_cap[0] + 12) != 0x7fu)
+        return 280;
+    host_sit_reply(ack, sizeof ack, 0x0928, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.unsol_sent) return 281;
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;

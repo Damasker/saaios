@@ -842,3 +842,14 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   4/флаг 7 `102658`, 4/флаг 8 `104407`, 2/флаг 9 `106157`.
   wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1446`,
   tx `240→808`.
+
+### Фильтр индикаций `0x0928`
+
+- Сток сначала шлёт `SIT_SET_IND_CMD_FILTER` со словом `0xff`
+  (`ff 00 00 00`, два раза, `err=0`), затем слово `0x7f`. Owner
+  раньше слал только `0x7f`. Теперь перед ним один раз уходит
+  `0xff`, и последним остаётся `0x7f`.
+- Устройство: `camp_unsolff` `elapsed_ms=42270` `error_raw=0` len 12,
+  `camp_unsol` `elapsed_ms=43855` `error_raw=0` len 12.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1446`,
+  tx `192→760`.
