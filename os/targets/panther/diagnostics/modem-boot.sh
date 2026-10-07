@@ -1,4 +1,4 @@
-#!/saaios/busybox sh
+#!/bin/sh
 # One camp per boot. Move the previous diagnostic logs aside so the
 # guarded handoff can run, then replace this process with it.
 set -eu
