@@ -387,6 +387,11 @@ struct camp_driver {
      * and timer words in the same frame stay off the log. */
     int ind_acbar;
     int ac_emc, ac_mosig, ac_modata, ac_voice, ac_video;
+    /* 0x074b first barring record. The cell-identity prefix stays
+     * off the log. cell is the wire type byte; prefix length comes
+     * from the stock jump table. */
+    int ind_barring;
+    int bar_cell, bar_count, bar_svc, bar_kind, bar_factor, bar_time, bar_barred;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3720,6 +3725,16 @@ static void camp_apply_v6(unsigned ifindex, const uint8_t addr[16])
 }
 #endif
 
+/* Cell-type byte -> barring prefix length. libsitril rodata 0xd8958.
+ * Parser versions 3 and 4 return the same sizes: GSM 150, CDMA 21,
+ * LTE 282, WCDMA 258, TD-SCDMA 258, NR 282. Other bytes are the
+ * stock failure path. */
+static unsigned camp_bar_prefix(unsigned cell)
+{
+    static const unsigned prefix[6] = {150, 21, 282, 258, 258, 282};
+    return cell < 6u ? prefix[cell] : 0u;
+}
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -3756,6 +3771,11 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
              * forMoData, forMmtelVoice, forMmtelVideo. */
             ind_name = "acbar";
             ind_seen = &c->ind_acbar;
+        } else if (ind == 0x074b && n >= 311) {
+            /* DecodingBarringInfos: type byte, then a cell-identity
+             * prefix, then a count word and 17-byte records. */
+            ind_name = "barring";
+            ind_seen = &c->ind_barring;
         }
         if (ind_seen && !*ind_seen) {
             *ind_seen = 1;
@@ -3819,6 +3839,34 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                        "mo_data=%d voice=%d video=%d\n",
                        n, c->ac_emc, c->ac_mosig, c->ac_modata,
                        c->ac_voice, c->ac_video);
+            } else if (ind == 0x074b) {
+                unsigned cell = p[8];
+                unsigned prefix = camp_bar_prefix(cell);
+                c->bar_cell = (int)cell;
+                if (prefix != 0 && n >= (size_t)8u + prefix + 21u) {
+                    const uint8_t *rec = p + 8 + prefix + 4;
+                    int count = (int)little32(p + 8 + prefix);
+                    c->bar_count = count;
+                    if (count >= 1) {
+                        c->bar_svc = (int)little32(rec);
+                        c->bar_kind = (int)little32(rec + 4);
+                        c->bar_factor = (int)little32(rec + 8);
+                        c->bar_time = (int)little32(rec + 12);
+                        c->bar_barred = rec[16] != 0;
+                        printf("camp_ind barring id=0x074b len=%zu cell=%u "
+                               "count=%d svc=%d kind=%d factor=%d time=%d "
+                               "barred=%d\n",
+                               n, cell, count, c->bar_svc, c->bar_kind,
+                               c->bar_factor, c->bar_time, c->bar_barred);
+                    } else {
+                        printf("camp_ind barring id=0x074b len=%zu cell=%u "
+                               "count=%d\n",
+                               n, cell, count);
+                    }
+                } else {
+                    printf("camp_ind barring id=0x074b len=%zu cell=%u\n",
+                           n, cell);
+                }
             } else {
                 printf("camp_ind %s id=0x%04x len=%zu\n", ind_name, ind, n);
             }
@@ -7873,6 +7921,29 @@ static int test_setup_data_call(void)
                     o.camp.ac_mosig != 0 || o.camp.ac_modata != 1 ||
                     o.camp.ac_voice != 0 || o.camp.ac_video != 1)
                     return 294;
+                {
+                    uint8_t bar[311];
+                    memset(bar, 0, sizeof bar);
+                    bar[0] = 2;
+                    bar[2] = 0x4b;
+                    bar[3] = 0x07;
+                    bar[4] = 55;
+                    bar[5] = 1;
+                    bar[8] = 2;
+                    put_little32(bar + 290, 1);
+                    put_little32(bar + 294, 3);
+                    put_little32(bar + 298, 1);
+                    put_little32(bar + 302, 50);
+                    put_little32(bar + 306, 30);
+                    bar[310] = 1;
+                    camp_feed(&o.camp, bar, sizeof bar, t);
+                    camp_feed(&o.camp, bar, sizeof bar, t);
+                    if (o.camp.ind_barring != 1 || o.camp.bar_cell != 2 ||
+                        o.camp.bar_count != 1 || o.camp.bar_svc != 3 ||
+                        o.camp.bar_kind != 1 || o.camp.bar_factor != 50 ||
+                        o.camp.bar_time != 30 || o.camp.bar_barred != 1)
+                        return 295;
+                }
             }
         }
     }

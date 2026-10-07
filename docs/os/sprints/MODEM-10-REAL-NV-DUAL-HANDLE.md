@@ -883,9 +883,8 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   не секрет, уже уходят по одному разу. Три тела `0x0943` в
   `21:00:02` — живые правки уже отправленных порогов, их не повторяем.
   `0x0d39` и `0x0d3a` с телом `00 02` в захвате без ответа.
-- Индикации `0x070e` `SIT_IND_NTW_STATE_CHANGED` (290 Б) и
-  `0x074b` `SIT_IND_BARRING_INFO_CHANGED` (413 Б) уже пишет трассер
-  `sit_event`. Тела не логируются.
+- Индикация `0x070e` `SIT_IND_NTW_STATE_CHANGED` (290 Б) уже пишет
+  трассер `sit_event`. Тело не логируется.
 - `0x0742` `SIT_IND_PHYSICAL_CHANNEL_CONFIG` при длине 1004 байт
   идёт в `FillPhysicalChannelConfigV1_6`. Счётчик — знаковое слово
   по смещению 8, первая запись с +12, шаг 62. В лог один раз:
@@ -903,6 +902,15 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 - Устройство: `camp_ind acbar id=0x0720 len=41 emc=0 mo_sig=100
   mo_data=0 voice=255 video=255`. wget `example.com` exit 0,
   тело 577 Б, rmnet1 rx `2551→3996`, tx `1048→1676`.
+- `0x074b` `SIT_IND_BARRING_INFO_CHANGED`. Байт типа соты по
+  смещению 8 выбирает длину префикса через таблицу `0xd8958`
+  (версии 3 и 4 дают одну длину: LTE и NR — 282). Дальше слово
+  count и записи по 17 байт: service, barring type, factor,
+  time, isBarred. В лог идёт первая запись. Тело cell identity
+  не пишется.
+- Устройство: `camp_ind barring id=0x074b len=413 cell=2 count=7
+  svc=8 kind=0 factor=0 time=0 barred=0`. wget `example.com`
+  exit 0, тело 577 Б, rmnet1 rx `720→2165`, tx `960→1528`.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
