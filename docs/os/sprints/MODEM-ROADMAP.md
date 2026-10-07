@@ -288,7 +288,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused because the owner holds the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; not a boot service) | **yes** |
-| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves) | **yes** |
+| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; owner-log facts follow the live process) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
@@ -1055,6 +1055,17 @@ CP `ONLINE`, `camp_setup` на rmnet1 `up=1 add=1 route=1`, wget
 завершился 0, тело 577 байт, счётчики `0/192` → `1446/820`. Кэш
 по-прежнему `cellular.supervisor=hold`. Края «процесс ушёл» и
 «CP ушёл» проверены на хосте.
+Факты из лога owner живут, пока процесс запущен (`39e783a`,
+`beb1944`). Регистрация, радио и SIM берутся из последних
+решающих строк всего лога, а не из хвоста в 256 КиБ.
+Кэш всегда пишет `cellular.owner=running` или `gone`. На этой
+загрузке owner не останавливался: runtime `d4a277bd…`, оболочка
+`683210bb…`, `saai-displayd` 408, один owner, CP `ONLINE`,
+`cellular.owner=running`, `cellular.registration_raw=1`,
+`cellular.radio=on`, `cellular.sim_app=present`,
+`cellular.bearer=rmnet1`, `cellular.supervisor=hold`. Путь
+`gone` проверен на хосте: лог с регистрацией без живого процесса
+даёт только `cellular.owner=gone`.
 
 ## MODEM-09
 
@@ -1103,6 +1114,11 @@ PIN в кэш не пишется. Owner один, CP `ONLINE`, `saai-displayd`
 слова между регистрацией и каналом. Для этой загрузки это
 `ONLINE · домашняя · включено · есть · rmnet1`. Оболочка
 перезапущена один раз, `saai-displayd` остался, owner остался один.
+Пока owner запущен, строка «Сотовая сеть» и «Наблюдения» читают
+те же слова. В «Наблюдениях» процесс camp — «Процесс / есть»
+(`cellular.owner=running`). Когда процесса нет, регистрация,
+радио и SIM из старого лога не публикуются. На этой загрузке
+процесс не останавливался.
 
 ## Non-goals For Now
 
