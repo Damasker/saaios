@@ -876,3 +876,23 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `camp_svn` `elapsed_ms=113084` `error_raw=0` len 12.
   wget `example.com` exit 0, тело 577 Б, rmnet1 rx `936→2381`,
   tx `720→1288`.
+
+### Индикации, которые сток не запрашивает
+
+- Именованные запросы из сырого захвата, у которых `err=0` и тело
+  не секрет, уже уходят по одному разу. Три тела `0x0943` в
+  `21:00:02` — живые правки уже отправленных порогов, их не повторяем.
+  `0x0d39` и `0x0d3a` с телом `00 02` в захвате без ответа.
+- Индикации `0x070e` `SIT_IND_NTW_STATE_CHANGED` (290 Б),
+  `0x0742` `SIT_IND_PHYSICAL_CHANNEL_CONFIG` (1004 Б),
+  `0x074b` `SIT_IND_BARRING_INFO_CHANGED` (413 Б) и
+  `0x0720` `SIT_IND_AC_BARRING_INFO` (41 Б) уже пишет трассер
+  `sit_event`. Тела не логируются.
+- Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
+  `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
+  `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Owner записывает
+  каждую один раз: имя, id и длина.
+- Устройство: `camp_ind signal id=0x0906 len=206`,
+  `camp_ind datacall id=0x0604 len=301`. `0x0945` в окне наблюдения
+  не пришла. wget `example.com` exit 0, тело 577 Б,
+  rmnet1 rx `0→1445`, tx `192→760`.

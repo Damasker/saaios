@@ -367,6 +367,9 @@ struct camp_driver {
      * SIT_GET_ATR, and one SendSvnInfo. ATR and SVN replies stay off
      * the log. */
     int xcapstop2_sent, atr_sent, svn_sent;
+    /* Named stock indications the 0x07xx/0x08xx tracer does not cover.
+     * Each is recorded once, as id and length. The body stays off the log. */
+    int ind_datacall, ind_signal, ind_linkcap;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3709,6 +3712,25 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (n >= 8 && p[0] == 2 && little16(p + 2) == 0x0210) {
         if (!c->sim_ready) c->sim_change_pending = 1;
         return;
+    }
+    if (n >= 8 && p[0] == 2) {
+        unsigned ind = little16(p + 2);
+        const char *ind_name = NULL;
+        int *ind_seen = NULL;
+        if (ind == 0x0604) {
+            ind_name = "datacall";
+            ind_seen = &c->ind_datacall;
+        } else if (ind == 0x0906) {
+            ind_name = "signal";
+            ind_seen = &c->ind_signal;
+        } else if (ind == 0x0945) {
+            ind_name = "linkcap";
+            ind_seen = &c->ind_linkcap;
+        }
+        if (ind_seen && !*ind_seen) {
+            *ind_seen = 1;
+            printf("camp_ind %s id=0x%04x len=%zu\n", ind_name, ind, n);
+        }
     }
     if (!c->probe_pending || n < 12 || p[0] != 1 ||
         little16(p + 4) != n || little32(p + 6) != c->probe_token ||
@@ -7672,6 +7694,25 @@ static int test_setup_data_call(void)
     host_sit_reply(ack, sizeof ack, 0x4605, o.camp.probe_token, 0);
     camp_feed(&o.camp, ack, sizeof ack, t + 10);
     if (o.camp.probe_pending || !o.camp.svn_sent) return 289;
+    {
+        uint8_t ind[8];
+        memset(ind, 0, sizeof ind);
+        ind[0] = 2;
+        ind[4] = 8;
+        ind[2] = 0x06;
+        ind[3] = 0x09;
+        camp_feed(&o.camp, ind, sizeof ind, t);
+        camp_feed(&o.camp, ind, sizeof ind, t);
+        if (o.camp.ind_signal != 1) return 290;
+        ind[2] = 0x04;
+        ind[3] = 0x06;
+        camp_feed(&o.camp, ind, sizeof ind, t);
+        if (o.camp.ind_datacall != 1) return 291;
+        ind[2] = 0x45;
+        ind[3] = 0x09;
+        camp_feed(&o.camp, ind, sizeof ind, t);
+        if (o.camp.ind_linkcap != 1) return 292;
+    }
     t += PROBE_GAP_MS;
     camp_cap_n = 0;
     host_sit_write_override = camp_capture_write;
