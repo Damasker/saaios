@@ -374,6 +374,9 @@ struct camp_driver {
     int ind_datacall, ind_signal, ind_linkcap;
     int ind_signal_mask;
     int link_dl, link_ul, link_dl2, link_ul2;
+    /* 0x0604: count at +8, then the same 292-byte data-call item the
+     * setup reply carries. Only cid, active and PDP type are logged. */
+    int ind_dc_count, ind_dc_cid, ind_dc_active, ind_dc_pdp;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3745,6 +3748,21 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                 printf("camp_ind linkcap id=0x0945 len=%zu dl=%d ul=%d "
                        "dl2=%d ul2=%d\n",
                        n, c->link_dl, c->link_ul, c->link_dl2, c->link_ul2);
+            } else if (ind == 0x0604 && n >= 9) {
+                unsigned count = p[8];
+                c->ind_dc_count = (int)count;
+                if (count >= 1 && count <= 16 &&
+                    (n - 9) == (size_t)count * 292u) {
+                    c->ind_dc_cid = p[11];
+                    c->ind_dc_active = p[12];
+                    c->ind_dc_pdp = p[13];
+                    printf("camp_ind datacall id=0x0604 len=%zu count=%u "
+                           "cid=%u active=%u pdp=%u\n",
+                           n, count, p[11], p[12], p[13]);
+                } else {
+                    printf("camp_ind datacall id=0x0604 len=%zu count=%u\n",
+                           n, count);
+                }
             } else {
                 printf("camp_ind %s id=0x%04x len=%zu\n", ind_name, ind, n);
             }
@@ -7724,13 +7742,24 @@ static int test_setup_data_call(void)
         camp_feed(&o.camp, ind, 12, t);
         if (o.camp.ind_signal != 1 || o.camp.ind_signal_mask != 0x45)
             return 290;
-        memset(ind, 0, sizeof ind);
-        ind[0] = 2;
-        ind[2] = 0x04;
-        ind[3] = 0x06;
-        ind[4] = 8;
-        camp_feed(&o.camp, ind, 8, t);
-        if (o.camp.ind_datacall != 1) return 291;
+        {
+            uint8_t dc[301];
+            memset(dc, 0, sizeof dc);
+            dc[0] = 2;
+            dc[2] = 0x04;
+            dc[3] = 0x06;
+            dc[4] = 0x2d;
+            dc[5] = 0x01;
+            dc[8] = 1;
+            dc[11] = 2;
+            dc[12] = 1;
+            dc[13] = 3;
+            camp_feed(&o.camp, dc, sizeof dc, t);
+            if (o.camp.ind_datacall != 1 || o.camp.ind_dc_count != 1 ||
+                o.camp.ind_dc_cid != 2 || o.camp.ind_dc_active != 1 ||
+                o.camp.ind_dc_pdp != 3)
+                return 291;
+        }
         memset(ind, 0, sizeof ind);
         ind[0] = 2;
         ind[2] = 0x45;

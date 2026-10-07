@@ -897,9 +897,10 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   и берёт младшие семь бит присутствия технологий. У `0x0945` четыре
   слова кбит/с: downlink и uplink по смещениям 8 и 12, вторичные
   по 16 и 20. Отрицательное слово сток считает отсутствующим.
-  Тело `0x0604` в лог не пишется: там адрес канала.
+  Тело `0x0604` — счётчик и тот же элемент на 292 байта, что в ответе
+  `0x0600`. В лог идут count, cid, active и тип PDP. Адрес не пишется.
 - Устройство: `camp_ind signal id=0x0906 len=206 mask_low7=4`,
-  `camp_ind datacall id=0x0604 len=301`,
-  `camp_ind linkcap id=0x0945 len=24 dl=65326 ul=4800 dl2=0 ul2=0`.
-  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`,
-  tx `240→808`.
+  `camp_ind datacall id=0x0604 len=301 count=1 cid=2 active=1 pdp=3`,
+  `camp_ind linkcap id=0x0945 len=24 dl=59454 ul=4800 dl2=0 ul2=0`.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `480→1926`,
+  tx `720→1288`.
