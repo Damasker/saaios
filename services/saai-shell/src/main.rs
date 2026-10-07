@@ -1322,8 +1322,6 @@ fn read_cp_state() -> Option<String> {
     cp_state_token(&text).map(|word| word.to_string())
 }
 
-/// RIL registration state at the byte the stock adapter reads. Names are
-/// the stock states, not a carrier.
 fn supervisor_phrase(token: &str) -> Option<&'static str> {
     match token {
         "hold" => Some("удержание"),
@@ -1335,6 +1333,24 @@ fn supervisor_phrase(token: &str) -> Option<&'static str> {
     }
 }
 
+fn radio_phrase(token: &str) -> Option<&'static str> {
+    match token {
+        "on" => Some("включено"),
+        _ => None,
+    }
+}
+
+fn sim_presence_phrase(token: &str) -> Option<&'static str> {
+    match token {
+        "ready" => Some("готово"),
+        "present" => Some("есть"),
+        "absent" => Some("нет"),
+        _ => None,
+    }
+}
+
+/// RIL registration state at the byte the stock adapter reads. Names are
+/// the stock states, not a carrier.
 fn registration_phrase(raw: u32) -> Option<&'static str> {
     match raw {
         0 => Some("нет регистрации"),
@@ -6402,6 +6418,8 @@ fn observation_row_label(key: &str) -> String {
         "cellular.registration_raw" => "Регистрация".into(),
         "cellular.bearer" => "Канал".into(),
         "cellular.supervisor" => "Дежурство".into(),
+        "cellular.radio" => "Радио".into(),
+        "cellular.sim_app" => "SIM".into(),
         other => other.to_string(),
     }
 }
@@ -6418,6 +6436,14 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.supervisor" {
         let text = value.as_str()?.trim();
         return supervisor_phrase(text).map(str::to_string);
+    }
+    if key == "cellular.radio" {
+        let text = value.as_str()?.trim();
+        return radio_phrase(text).map(str::to_string);
+    }
+    if key == "cellular.sim_app" {
+        let text = value.as_str()?.trim();
+        return sim_presence_phrase(text).map(str::to_string);
     }
     if key == "cellular.bearer" {
         let text = value.as_str()?.trim();
@@ -17437,6 +17463,21 @@ mod tests {
                         "source": "camp.supervisor"
                     },
                     {
+                        "key": "cellular.radio",
+                        "value": "on",
+                        "source": "camp.owner.radio"
+                    },
+                    {
+                        "key": "cellular.sim_app",
+                        "value": "ready",
+                        "source": "camp.owner.sim_app"
+                    },
+                    {
+                        "key": "cellular.sim_app",
+                        "value": "pin1_raw=3",
+                        "source": "camp.owner.sim_app"
+                    },
+                    {
                         "key": "cellular.supervisor",
                         "value": "10.1.2.3",
                         "source": "camp.supervisor"
@@ -17449,7 +17490,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 6);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -17457,7 +17498,12 @@ mod tests {
         assert_eq!(rows[2].value, "rmnet1");
         assert_eq!(rows[3].label, "Дежурство");
         assert_eq!(rows[3].value, "удержание");
+        assert_eq!(rows[4].label, "Радио");
+        assert_eq!(rows[4].value, "включено");
+        assert_eq!(rows[5].label, "SIM");
+        assert_eq!(rows[5].value, "готово");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
+        assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }
 
     #[test]

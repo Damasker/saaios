@@ -14,6 +14,8 @@ pub const KEY_CP_STATE: &str = "cellular.cp_state";
 pub const KEY_REGISTRATION_RAW: &str = "cellular.registration_raw";
 pub const KEY_BEARER: &str = "cellular.bearer";
 pub const KEY_SUPERVISOR: &str = "cellular.supervisor";
+pub const KEY_RADIO: &str = "cellular.radio";
+pub const KEY_SIM_APP: &str = "cellular.sim_app";
 
 /// Longer than the default 30s telemetry interval, so one missed sample
 /// does not mark the row stale.
@@ -89,6 +91,24 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = reading.owner_log.as_deref().and_then(last_radio_token) {
+        out.push(text_observation(
+            KEY_RADIO,
+            token,
+            "camp.owner.radio",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(token) = reading.owner_log.as_deref().and_then(last_sim_presence) {
+        out.push(text_observation(
+            KEY_SIM_APP,
+            token,
+            "camp.owner.sim_app",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = reading
         .supervisor_log
         .as_deref()
@@ -117,6 +137,46 @@ pub fn last_supervisor_token(log: &str) -> Option<&str> {
         )
         .then_some(token)
     })
+}
+
+fn last_radio_token(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some(rest) = line.split_once("field=radio radio_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(10) => Some("on"),
+                _ => None,
+            };
+        }
+        if line.contains("field=radio status=unknown_short") {
+            return None;
+        }
+    }
+    None
+}
+
+/// Last SIM application fact from the camp log. PIN state stays out.
+fn last_sim_presence(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if line.contains("camp_sim=ready") {
+            return Some("ready");
+        }
+        if line.contains("field=sim ") {
+            if line.contains("status=unknown_short") {
+                return None;
+            }
+            let Some(rest) = line.split_once("apps=") else {
+                return None;
+            };
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("absent"),
+                Some(n) if (1..=8).contains(&n) => Some("present"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 fn bearer_is_live(iface: &IfaceSample) -> bool {
@@ -284,5 +344,41 @@ mod tests {
             last_supervisor_token("supervise=cp-left\n"),
             Some("cp-left")
         );
+    }
+
+    #[test]
+    fn radio_on_and_sim_ready_publish_stock_words_without_pin() {
+        let reading = CellularReading {
+            cp_text: None,
+            owner_log: Some(
+                "camp_reg field=radio radio_raw=10\n\
+                 camp_reg field=radio radio_raw=1\n"
+                    .into(),
+            ),
+            supervisor_log: None,
+            ifaces: Vec::new(),
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 8);
+        assert!(rows.is_empty(), "a later radio_raw other than 10 hides the radio");
+
+        let reading = CellularReading {
+            cp_text: None,
+            owner_log: Some(
+                "camp_probe field=sim card_raw=0 apps=0\n\
+                 camp_reg field=radio radio_raw=10\n\
+                 camp_probe field=sim card_raw=1 apps=1 app_state_raw=5 pin1_raw=3\n\
+                 camp_sim=ready app_state_raw=5\n"
+                    .into(),
+            ),
+            supervisor_log: None,
+            ifaces: Vec::new(),
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 9);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, KEY_RADIO);
+        assert_eq!(rows[0].value, json!("on"));
+        assert_eq!(rows[1].key, KEY_SIM_APP);
+        assert_eq!(rows[1].value, json!("ready"));
+        assert!(rows.iter().all(|row| !row.value.to_string().contains("pin")));
     }
 }
