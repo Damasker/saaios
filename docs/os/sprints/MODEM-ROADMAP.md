@@ -287,7 +287,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused because the owner holds the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
-| MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; not a boot service) | **yes** |
+| MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision plus a separate read-only carrier-config decision; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; owner-log facts follow the live process) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
@@ -998,6 +998,13 @@ EFS access is limited to provenance checks; synthetic tests never use it.
 file=protected`, файл 1 команда 7 дала `open-copy file=normal`,
 файл 9 команда 6 дала `deny`. Все три с `hardware_actions=none`.
 Owner остался один, CP `ONLINE`. В загрузку это не вшито.
+Carrier-config на том же канале — отдельное решение (`b19b303`,
+бинарник `32f9a229…`). Команда 4 и команда 6 с операцией 1 —
+`read-copy file=carrier-config`. Команда 6 с операцией 2 и
+команда 4 на NV-файле 3 — `deny`. На этой загрузке все четыре
+строки с `hardware_actions=none`. Дежурный `saai-modemd` остался
+pid 155, owner один, CP `ONLINE`. В owner и в загрузку это не
+вшито: живой camp по-прежнему отвечает на carrier-config сам.
 
 ## MODEM-08
 
