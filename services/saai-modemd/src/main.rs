@@ -6,7 +6,7 @@ use saai_modemd::soft_lock::{
     self, SoftLockSnapshot, APP_STATE_PIN, PIN1_DISABLED, PIN1_ENABLED_VERIFIED,
     TRAY_BEARER_CHASE_CMD, TRAY_BEARER_CHASE_ON_DEVICE,
 };
-use saai_modemd::supervise::{self, FirstAction};
+use saai_modemd::supervise::{self, FirstAction, HoldNote};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -331,15 +331,18 @@ fn supervise_camp(modem_state: &Path, handoff: &Path, proc_root: &Path) -> Resul
         }
     }
     println!("supervise=hold");
-    let mut saw_owner = owner_running;
+    let cp_now = read_trimmed_optional(modem_state);
+    let owner_now = owner_is_running(proc_root).unwrap_or(owner_running);
+    let mut watch = supervise::HoldWatch::start(cp_now.as_deref(), owner_now);
     loop {
         std::thread::sleep(std::time::Duration::from_secs(30));
         let running = owner_is_running(proc_root).unwrap_or(false);
-        if saw_owner && !running {
-            println!("supervise=owner-gone");
-            saw_owner = false;
-        } else if running {
-            saw_owner = true;
+        let cp = read_trimmed_optional(modem_state);
+        for note in watch.poll(cp.as_deref(), running) {
+            match note {
+                HoldNote::OwnerGone => println!("supervise=owner-gone"),
+                HoldNote::CpLeft => println!("supervise=cp-left"),
+            }
         }
     }
 }

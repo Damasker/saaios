@@ -111,7 +111,11 @@ pub fn last_supervisor_token(log: &str) -> Option<&str> {
     log.lines().rev().find_map(|line| {
         let rest = line.trim().strip_prefix("supervise=")?;
         let token = rest.split_whitespace().next()?;
-        matches!(token, "hold" | "owner-gone" | "attend" | "launch-once").then_some(token)
+        matches!(
+            token,
+            "hold" | "owner-gone" | "cp-left" | "attend" | "launch-once"
+        )
+        .then_some(token)
     })
 }
 
@@ -276,5 +280,9 @@ mod tests {
         assert_eq!(rows[0].key, KEY_SUPERVISOR);
         assert_eq!(rows[0].value, json!("hold"));
         assert_eq!(rows[0].source.source_id, "camp.supervisor");
+        assert_eq!(
+            last_supervisor_token("supervise=cp-left\n"),
+            Some("cp-left")
+        );
     }
 }

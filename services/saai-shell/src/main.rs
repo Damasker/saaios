@@ -1328,6 +1328,7 @@ fn supervisor_phrase(token: &str) -> Option<&'static str> {
     match token {
         "hold" => Some("удержание"),
         "owner-gone" => Some("процесс ушёл"),
+        "cp-left" => Some("CP ушёл"),
         "attend" => Some("уже запущен"),
         "launch-once" => Some("запуск"),
         _ => None,
