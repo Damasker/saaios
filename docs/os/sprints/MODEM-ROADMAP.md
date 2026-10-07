@@ -284,8 +284,8 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-01 | Maintained safe boundary (`saai-modemd` status/preflight) | **Done** (host) | no |
 | MODEM-02 | Factory S5100SIT boot sequence reaches CP `ONLINE` | **Done** (diagnostic) | **yes** |
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
-| MODEM-04 | Maintained boot model library, no hardware actions | **Started** (host TOC/stage/plan/executor/failure model) | no |
-| MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
+| MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
+| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (refuses while the owner holds the endpoint; no send) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves) | **yes** |
@@ -444,6 +444,15 @@ gated diagnostic boot.
 **Rollback:** remove the command; keep `sit-sim-status.c` diagnostic.
 
 **Threat:** concurrent IPC consumers. The command must fail if a lock is held.
+
+**Допуск (2026-10-07, `cc310e1`, бинарник `5b1b8e92…`).**
+`saai-modemd query sim-status` на этой загрузке напечатал
+`query=refuse name=sim-status reason=owner` и
+`hardware_actions=none`. Owner остался один, второго handoff не
+было, CP остался `ONLINE`. Команда не открывает endpoint. Пока
+owner или `sit-sim-status` живы, отправка разобранных GET
+`0x0200` / `0x0801` / `0x0701` не начинается. Путь `query=ready
+send=no` есть только когда CP `ONLINE` и оба держателя отсутствуют.
 
 ## MODEM-06
 
