@@ -289,7 +289,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
-| MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row on device; observation bus still backlog) | **yes** |
+| MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Ready** (host done, device-gated) | **yes** |
 
 ## MODEM-00
@@ -1032,8 +1032,11 @@ subscriber identity without a live, reviewed source.
 нём есть IPv4 или оба счётчика ненулевые. На этой загрузке CP
 `ONLINE`, data `registration_raw=1`, живой `rmnet1`: строка
 `ONLINE · домашняя · rmnet1`. Оператор, RAT и адрес не пишутся.
-`saai-shell` перезапущен один раз, `saai-displayd` остался. Шина
-Observation ещё не публикует эти факты.
+`saai-shell` перезапущен один раз, `saai-displayd` остался.
+Телеметрия runtime (`92e94ae`, бинарник `da06a622…`) пишет в кэш
+`cellular.cp_state=ONLINE`, `cellular.registration_raw=1`,
+`cellular.bearer=rmnet1`. Оболочка показывает их в «Наблюдениях»
+как «Модем», «Регистрация / домашняя» и «Канал / rmnet1».
 
 ## Non-goals For Now
 
