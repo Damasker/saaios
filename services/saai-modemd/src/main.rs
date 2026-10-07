@@ -119,10 +119,16 @@ enum Cmd {
     },
     /// Say how one RFS command would be answered. Opens nothing.
     RfsPolicy {
+        /// `nv` uses `--file`. `carrier-config` is the read-only copy path.
+        #[arg(long, default_value = "nv", value_parser = ["nv", "carrier-config"])]
+        channel: String,
         #[arg(long)]
-        file: u32,
+        file: Option<u32>,
         #[arg(long)]
         cmd: u16,
+        /// Carrier-config command 6: 1 reads the copy, 2 is a write and is denied.
+        #[arg(long)]
+        op: Option<u32>,
     },
     /// Stay up for this boot. Start the existing camp handoff only when the
     /// CP is OFFLINE (or not loaded) and the owner is not already running.
@@ -359,25 +365,45 @@ fn run() -> Result<()> {
             }
             println!("hardware_actions={hardware}");
         }
-        Cmd::RfsPolicy { file, cmd } => {
-            let decision = rfs_policy::decide_rfs(file, cmd);
-            match decision {
-                rfs_policy::RfsDecision::Deny => {
+        Cmd::RfsPolicy {
+            channel,
+            file,
+            cmd,
+            op,
+        } => {
+            if channel == "carrier-config" {
+                let decision = rfs_policy::decide_carrier_config(cmd, op);
+                if decision == rfs_policy::CarrierDecision::Deny {
                     println!("rfs=deny");
-                }
-                other => {
-                    let file_name = match other {
-                        rfs_policy::RfsDecision::OpenCopy(file)
-                        | rfs_policy::RfsDecision::QuarantineWrite(file)
-                        | rfs_policy::RfsDecision::QuarantineStatus(file) => {
-                            rfs_policy::file_word(file)
-                        }
-                        rfs_policy::RfsDecision::Deny => unreachable!(),
-                    };
+                } else {
                     println!(
-                        "rfs={} file={file_name}",
-                        rfs_policy::decision_word(other)
+                        "rfs={} file=carrier-config",
+                        rfs_policy::carrier_word(decision)
                     );
+                }
+            } else {
+                let Some(file) = file else {
+                    return Err(anyhow!("nv channel needs --file"));
+                };
+                let decision = rfs_policy::decide_rfs(file, cmd);
+                match decision {
+                    rfs_policy::RfsDecision::Deny => {
+                        println!("rfs=deny");
+                    }
+                    other => {
+                        let file_name = match other {
+                            rfs_policy::RfsDecision::OpenCopy(file)
+                            | rfs_policy::RfsDecision::QuarantineWrite(file)
+                            | rfs_policy::RfsDecision::QuarantineStatus(file) => {
+                                rfs_policy::file_word(file)
+                            }
+                            rfs_policy::RfsDecision::Deny => unreachable!(),
+                        };
+                        println!(
+                            "rfs={} file={file_name}",
+                            rfs_policy::decision_word(other)
+                        );
+                    }
                 }
             }
             println!("hardware_actions=none");

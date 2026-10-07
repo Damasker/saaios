@@ -49,6 +49,38 @@ pub fn file_word(file: NvFile) -> &'static str {
     }
 }
 
+/// Carrier-config on the RFS channel, as the camp owner already answers it.
+/// Reads stay on a reviewed copy. Writes are refused. This is not an NV file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarrierDecision {
+    ReadCopy,
+    CloseCopy,
+    Release,
+    Deny,
+}
+
+pub fn decide_carrier_config(cmd: u16, op: Option<u32>) -> CarrierDecision {
+    match cmd {
+        4 | 1 if op.is_none() => CarrierDecision::ReadCopy,
+        5 if op.is_none() => CarrierDecision::CloseCopy,
+        3 if op.is_none() => CarrierDecision::Release,
+        6 => match op {
+            Some(1) => CarrierDecision::ReadCopy,
+            _ => CarrierDecision::Deny,
+        },
+        _ => CarrierDecision::Deny,
+    }
+}
+
+pub fn carrier_word(decision: CarrierDecision) -> &'static str {
+    match decision {
+        CarrierDecision::ReadCopy => "read-copy",
+        CarrierDecision::CloseCopy => "close-copy",
+        CarrierDecision::Release => "release",
+        CarrierDecision::Deny => "deny",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +107,20 @@ mod tests {
         assert_eq!(decide_rfs(3, 4), RfsDecision::Deny);
         assert_eq!(decide_rfs(3, 5), RfsDecision::Deny);
         assert_eq!(decide_rfs(9, 6), RfsDecision::Deny);
+    }
+
+    #[test]
+    fn carrier_config_stays_a_read_only_copy() {
+        assert_eq!(decide_carrier_config(4, None), CarrierDecision::ReadCopy);
+        assert_eq!(decide_carrier_config(1, None), CarrierDecision::ReadCopy);
+        assert_eq!(decide_carrier_config(6, Some(1)), CarrierDecision::ReadCopy);
+        assert_eq!(decide_carrier_config(5, None), CarrierDecision::CloseCopy);
+        assert_eq!(decide_carrier_config(3, None), CarrierDecision::Release);
+        assert_eq!(decide_carrier_config(6, Some(2)), CarrierDecision::Deny);
+        assert_eq!(decide_carrier_config(6, None), CarrierDecision::Deny);
+        assert_eq!(decide_carrier_config(4, Some(1)), CarrierDecision::Deny);
+        assert_eq!(decide_carrier_config(7, None), CarrierDecision::Deny);
+        assert_eq!(decide_rfs(1, 4), RfsDecision::Deny);
+        assert_eq!(decide_rfs(3, 4), RfsDecision::Deny);
     }
 }
