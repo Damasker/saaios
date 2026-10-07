@@ -1,6 +1,7 @@
 #!/bin/sh
-# One camp per boot. Move the previous diagnostic logs aside so the
-# guarded handoff can run, then replace this process with it.
+# One camp per boot. Archive the previous logs, then hand the boot to
+# saai-modemd. If that binary is absent, run the handoff directly so PID 1
+# still reaches the camp.
 set -eu
 export PATH=/saaios:/bin:/usr/bin
 # cpif needs the PCIe root complex and modem control. Those are loaded
@@ -31,5 +32,8 @@ for name in owner-handoff-rfs-camp.log \
 done
 if [ -e /data/saaios/var/rfs-quarantine/replay ]; then
     /saaios/busybox mv /data/saaios/var/rfs-quarantine/replay "$ARCH/replay"
+fi
+if [ -x /data/saaios/bin/saai-modemd ]; then
+    exec /data/saaios/bin/saai-modemd supervise
 fi
 exec /data/saaios/bin/owner-handoff-rfs-oemipc.sh rfs-camp-combined

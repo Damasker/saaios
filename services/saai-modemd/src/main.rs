@@ -6,6 +6,7 @@ use saai_modemd::soft_lock::{
     self, SoftLockSnapshot, APP_STATE_PIN, PIN1_DISABLED, PIN1_ENABLED_VERIFIED,
     TRAY_BEARER_CHASE_CMD, TRAY_BEARER_CHASE_ON_DEVICE,
 };
+use saai_modemd::supervise::{self, FirstAction};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -103,6 +104,17 @@ enum Cmd {
         rmnet_tx: Option<u64>,
         #[arg(long)]
         ipv4: Option<String>,
+    },
+    /// Stay up for this boot. Start the existing camp handoff only when the
+    /// CP is OFFLINE (or not loaded) and the owner is not already running.
+    /// A second launch in the same process never happens.
+    Supervise {
+        #[arg(long, default_value = DEFAULT_MODEM_STATE)]
+        modem_state: PathBuf,
+        #[arg(long, default_value = "/data/saaios/bin/owner-handoff-rfs-oemipc.sh")]
+        handoff: PathBuf,
+        #[arg(long, default_value = "/proc")]
+        proc: PathBuf,
     },
 }
 
@@ -284,8 +296,73 @@ fn run() -> Result<()> {
             println!("doc=docs/os/targets/panther/MODEM-BLOCKER.md");
             println!("hardware_actions=none");
         }
+        Cmd::Supervise {
+            modem_state,
+            handoff,
+            proc,
+        } => supervise_camp(&modem_state, &handoff, &proc)?,
     }
     Ok(())
+}
+
+fn supervise_camp(modem_state: &Path, handoff: &Path, proc_root: &Path) -> Result<()> {
+    let cp = read_trimmed_optional(modem_state);
+    let owner_running = owner_is_running(proc_root)?;
+    let action = supervise::first_action(cp.as_deref(), owner_running);
+    match action {
+        FirstAction::Attend => {
+            println!(
+                "supervise=attend cp={} owner={}",
+                cp.as_deref().unwrap_or("missing"),
+                if owner_running { "yes" } else { "no" }
+            );
+        }
+        FirstAction::LaunchOnce => {
+            println!(
+                "supervise=launch-once cp={}",
+                cp.as_deref().unwrap_or("missing")
+            );
+            let mut child = std::process::Command::new(handoff)
+                .arg("rfs-camp-combined")
+                .spawn()
+                .with_context(|| format!("starting {}", handoff.display()))?;
+            let status = child.wait().context("waiting for the camp handoff")?;
+            println!("supervise=handoff-exit code={}", status.code().unwrap_or(-1));
+        }
+    }
+    println!("supervise=hold");
+    let mut saw_owner = owner_running;
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let running = owner_is_running(proc_root).unwrap_or(false);
+        if saw_owner && !running {
+            println!("supervise=owner-gone");
+            saw_owner = false;
+        } else if running {
+            saw_owner = true;
+        }
+    }
+}
+
+fn owner_is_running(proc_root: &Path) -> Result<bool> {
+    let Ok(entries) = fs::read_dir(proc_root) else {
+        return Ok(false);
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        if supervise::owner_in_cmdline(&cmdline) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn read_trimmed(path: &Path) -> Result<String> {
