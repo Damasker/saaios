@@ -2,6 +2,7 @@
 # One camp per boot. Move the previous diagnostic logs aside so the
 # guarded handoff can run, then replace this process with it.
 set -eu
+export PATH=/saaios:/bin:/usr/bin
 # cpif needs the PCIe root complex and modem control. Those are loaded
 # later in native-init, so wait for them. One attempt, then exit.
 ready=0
