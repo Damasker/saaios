@@ -285,7 +285,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-02 | Factory S5100SIT boot sequence reaches CP `ONLINE` | **Done** (diagnostic) | **yes** |
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
-| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (refuses while the owner holds the endpoint; no send) | **yes** |
+| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused because the owner holds the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves) | **yes** |
@@ -451,8 +451,16 @@ gated diagnostic boot.
 `hardware_actions=none`. Owner остался один, второго handoff не
 было, CP остался `ONLINE`. Команда не открывает endpoint. Пока
 owner или `sit-sim-status` живы, отправка разобранных GET
-`0x0200` / `0x0801` / `0x0701` не начинается. Путь `query=ready
-send=no` есть только когда CP `ONLINE` и оба держателя отсутствуют.
+`0x0200` / `0x0801` / `0x0701` не начинается. Путь ответа
+(`3703b95`, бинарник `155573a3…`) пишет один такой GET только
+после повторной проверки, что owner и `sit-sim-status` уже нет:
+сверка major/minor `umts_ipc0`, неблокирующий lock, одна запись,
+чтение до 10 с. Строка ответа оставляет `sim=present` /
+`sim=absent`, `radio=on` и `registration_raw` 0…5. Состояние PIN
+и чужие кадры в неё не входят. На этой загрузке снова
+`query=refuse name=sim-status reason=owner` и
+`hardware_actions=none`: запись в endpoint не делалась, owner
+один, CP `ONLINE`.
 
 ## MODEM-06
 
