@@ -319,19 +319,37 @@ fn run() -> Result<()> {
             let owner_running = owner_is_running(&proc)?;
             let status_lock_busy = process_argv0_ends_with(&proc, "/sit-sim-status")?;
             let admission = runtime_model::query_admission(cp.as_deref(), owner_running, status_lock_busy);
+            let mut hardware = "none";
             match admission {
                 QueryAdmission::Refuse(reason) => {
                     println!("query=refuse name={name} reason={reason}");
                 }
                 QueryAdmission::Ready => {
-                    let spec = runtime_model::runtime_query_spec(query);
-                    println!(
-                        "query=ready name={name} id={:#06x} send=no",
-                        spec.request_id
+                    let again = runtime_model::query_admission(
+                        cp.as_deref(),
+                        owner_is_running(&proc)?,
+                        process_argv0_ends_with(&proc, "/sit-sim-status")?,
                     );
+                    match again {
+                        QueryAdmission::Refuse(reason) => {
+                            println!("query=refuse name={name} reason={reason}");
+                        }
+                        QueryAdmission::Ready => {
+                            hardware = "query";
+                            match exchange_one_query(query) {
+                                Ok(QueryExchange::Answer(line)) => {
+                                    println!("query=answer name={name} {line}");
+                                }
+                                Ok(QueryExchange::Timeout { frames }) => {
+                                    println!("query=timeout name={name} frames={frames}");
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
+                    }
                 }
             }
-            println!("hardware_actions=none");
+            println!("hardware_actions={hardware}");
         }
         Cmd::Supervise {
             modem_state,
@@ -340,6 +358,109 @@ fn run() -> Result<()> {
         } => supervise_camp(&modem_state, &handoff, &proc)?,
     }
     Ok(())
+}
+
+enum QueryExchange {
+    Answer(String),
+    Timeout { frames: u32 },
+}
+
+fn exchange_one_query(query: runtime_model::RuntimeQuery) -> Result<QueryExchange> {
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::time::{Duration, Instant};
+
+    let identity = fs::read_to_string("/sys/class/cpif/umts_ipc0/dev")
+        .context("umts_ipc0 identity")?;
+    let mut parts = identity.trim().split(':');
+    let expect_major: u64 = parts
+        .next()
+        .unwrap_or("")
+        .parse()
+        .context("umts_ipc0 major")?;
+    let expect_minor: u64 = parts
+        .next()
+        .unwrap_or("")
+        .parse()
+        .context("umts_ipc0 minor")?;
+
+    let mut lock_opts = fs::OpenOptions::new();
+    lock_opts.read(true).write(true).create(true).mode(0o600);
+    let lock = lock_opts
+        .open("/run/saaios-sit-status.lock")
+        .context("SIT lock")?;
+    let locked = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if locked != 0 {
+        return Err(anyhow!("SIT lock busy"));
+    }
+
+    let mut dev_opts = fs::OpenOptions::new();
+    dev_opts
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    let mut dev = dev_opts.open("/dev/umts_ipc0").context("umts_ipc0 open")?;
+    let meta = dev.metadata().context("umts_ipc0 stat")?;
+    let major = libc::major(meta.rdev()) as u64;
+    let minor = libc::minor(meta.rdev()) as u64;
+    if !meta.file_type().is_char_device() || major != expect_major || minor != expect_minor {
+        return Err(anyhow!("umts_ipc0 identity mismatch"));
+    }
+
+    let request = runtime_model::build_runtime_request(query);
+    dev.write_all(&request.bytes).context("one-shot write")?;
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut reader = runtime_model::RuntimeFrameReader::default();
+    let mut tmp = [0u8; 4096];
+    let mut frames = 0u32;
+    while Instant::now() < deadline && frames < 128 {
+        let mut pfd = libc::pollfd {
+            fd: dev.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .min(500) as i32;
+        let ready = unsafe { libc::poll(&mut pfd, 1, wait) };
+        if ready < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err).context("SIT poll");
+        }
+        if ready == 0 {
+            continue;
+        }
+        if pfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+            return Err(anyhow!("SIT poll event"));
+        }
+        let n = match dev.read(&mut tmp) {
+            Ok(0) => return Err(anyhow!("SIT EOF")),
+            Ok(n) => n,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::Interrupted
+                    || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                continue;
+            }
+            Err(err) => return Err(err).context("SIT read"),
+        };
+        let parsed = reader.push(&tmp[..n]).context("runtime frame")?;
+        for frame in parsed {
+            frames += 1;
+            if let Some(observation) = runtime_model::parse_matching_response(query, &frame) {
+                return Ok(QueryExchange::Answer(runtime_model::report_line(
+                    &observation,
+                )));
+            }
+        }
+    }
+    Ok(QueryExchange::Timeout { frames })
 }
 
 fn supervise_camp(modem_state: &Path, handoff: &Path, proc_root: &Path) -> Result<()> {

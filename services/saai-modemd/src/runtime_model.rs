@@ -152,6 +152,57 @@ pub fn query_admission(
     }
 }
 
+pub fn report_line(observation: &RuntimeObservation) -> String {
+    match observation {
+        RuntimeObservation::SimStatus {
+            error_raw,
+            applications,
+            ..
+        } => {
+            let sim = match applications {
+                Some(0) => " sim=absent",
+                Some(1..=8) => " sim=present",
+                _ => "",
+            };
+            format!("error_raw={error_raw}{sim}")
+        }
+        RuntimeObservation::RadioState {
+            error_raw,
+            radio_state_raw,
+            ..
+        } => {
+            let radio = if *radio_state_raw == Some(10) {
+                " radio=on"
+            } else {
+                ""
+            };
+            format!("error_raw={error_raw}{radio}")
+        }
+        RuntimeObservation::DataRegistration {
+            error_raw,
+            registration_raw,
+            ..
+        } => {
+            let registration = match registration_raw {
+                Some(raw) if *raw <= 5 => format!(" registration_raw={raw}"),
+                _ => String::new(),
+            };
+            format!("error_raw={error_raw}{registration}")
+        }
+    }
+}
+
+pub fn first_matching_observation(
+    bytes: &[u8],
+    query: RuntimeQuery,
+) -> Result<Option<RuntimeObservation>> {
+    let mut reader = RuntimeFrameReader::default();
+    let frames = reader.push(bytes)?;
+    Ok(frames
+        .into_iter()
+        .find_map(|frame| parse_matching_response(query, &frame)))
+}
+
 pub fn runtime_query_name(query: RuntimeQuery) -> &'static str {
     match query {
         RuntimeQuery::SimStatus => "sim-status",
@@ -291,6 +342,37 @@ mod tests {
             query_admission(Some("ONLINE"), false, false),
             QueryAdmission::Ready
         );
+    }
+
+    #[test]
+    fn report_keeps_presence_words_and_drops_pin_and_unrelated_frames() {
+        let mut bytes = vec![2, 0, 0x10, 0x02, 8, 0, 0, 0];
+        bytes.extend(sim_response_frame(1, 3, 1));
+        let observation = first_matching_observation(&bytes, RuntimeQuery::SimStatus)
+            .unwrap()
+            .unwrap();
+        let line = report_line(&observation);
+        assert_eq!(line, "error_raw=0 sim=present");
+        assert!(!line.contains('3'));
+
+        let radio = first_matching_observation(&radio_response_frame(10), RuntimeQuery::RadioState)
+            .unwrap()
+            .unwrap();
+        assert_eq!(report_line(&radio), "error_raw=0 radio=on");
+        let other = first_matching_observation(&radio_response_frame(1), RuntimeQuery::RadioState)
+            .unwrap()
+            .unwrap();
+        assert_eq!(report_line(&other), "error_raw=0");
+
+        let registration = first_matching_observation(
+            &registration_response_frame(1, 7, 3),
+            RuntimeQuery::DataRegistration,
+        )
+        .unwrap()
+        .unwrap();
+        let line = report_line(&registration);
+        assert_eq!(line, "error_raw=0 registration_raw=1");
+        assert!(!line.contains('7'));
     }
 
     #[test]
