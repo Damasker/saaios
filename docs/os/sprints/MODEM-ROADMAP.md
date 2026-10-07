@@ -288,7 +288,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
-| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp per boot, then hold) | **yes** |
+| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Ready** (host done, device-gated) | **yes** |
 
@@ -1018,9 +1018,16 @@ handoff второй camp не стартует. На этой загрузке 
 `supervise=launch-once cp=missing`, `handoff-exit code=0`,
 `supervise=hold`; один owner; `camp_setup` на rmnet1 `up=1 add=1
 route=1`; wget завершился 0, тело 577 байт, счётчики rmnet1
-`0/192` → `1445/760`. Падение owner, выключение CP и закрытие
-MODEM-04…07 в этот шаг не входят. PID 1 по-прежнему стартует только
-скрипт.
+`0/192` → `1445/760`. PID 1 по-прежнему стартует только
+скрипт. Уход owner или CP (`e54a9ad`, бинарник `1ad87e9f…`) даёт
+одну строку `supervise=owner-gone` или `supervise=cp-left` и больше
+ничего: возврат того же факта молчит, второй camp не стартует, CP
+не выключается. На этой загрузке ухода не было: `launch-once`,
+`handoff-exit code=0`, `hold`, один owner, один `saai-modemd`,
+CP `ONLINE`, `camp_setup` на rmnet1 `up=1 add=1 route=1`, wget
+завершился 0, тело 577 байт, счётчики `0/192` → `1446/820`. Кэш
+по-прежнему `cellular.supervisor=hold`. Края «процесс ушёл» и
+«CP ушёл» проверены на хосте.
 
 ## MODEM-09
 
