@@ -368,8 +368,12 @@ struct camp_driver {
      * the log. */
     int xcapstop2_sent, atr_sent, svn_sent;
     /* Named stock indications the 0x07xx/0x08xx tracer does not cover.
-     * Each is recorded once, as id and length. The body stays off the log. */
+     * Each is recorded once. Signal keeps the low seven bits of the
+     * signed halfword at +8. Link capacity keeps the four kbps words
+     * at +8/+12/+16/+20. Other bodies stay off the log. */
     int ind_datacall, ind_signal, ind_linkcap;
+    int ind_signal_mask;
+    int link_dl, link_ul, link_dl2, link_ul2;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3720,16 +3724,30 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         if (ind == 0x0604) {
             ind_name = "datacall";
             ind_seen = &c->ind_datacall;
-        } else if (ind == 0x0906) {
+        } else if (ind == 0x0906 && n >= 10) {
             ind_name = "signal";
             ind_seen = &c->ind_signal;
-        } else if (ind == 0x0945) {
+        } else if (ind == 0x0945 && n >= 24) {
             ind_name = "linkcap";
             ind_seen = &c->ind_linkcap;
         }
         if (ind_seen && !*ind_seen) {
             *ind_seen = 1;
-            printf("camp_ind %s id=0x%04x len=%zu\n", ind_name, ind, n);
+            if (ind == 0x0906) {
+                c->ind_signal_mask = (int)(little16(p + 8) & 0x7fu);
+                printf("camp_ind signal id=0x0906 len=%zu mask_low7=%d\n",
+                       n, c->ind_signal_mask);
+            } else if (ind == 0x0945) {
+                c->link_dl = (int)little32(p + 8);
+                c->link_ul = (int)little32(p + 12);
+                c->link_dl2 = (int)little32(p + 16);
+                c->link_ul2 = (int)little32(p + 20);
+                printf("camp_ind linkcap id=0x0945 len=%zu dl=%d ul=%d "
+                       "dl2=%d ul2=%d\n",
+                       n, c->link_dl, c->link_ul, c->link_dl2, c->link_ul2);
+            } else {
+                printf("camp_ind %s id=0x%04x len=%zu\n", ind_name, ind, n);
+            }
         }
     }
     if (!c->probe_pending || n < 12 || p[0] != 1 ||
@@ -7695,23 +7713,38 @@ static int test_setup_data_call(void)
     camp_feed(&o.camp, ack, sizeof ack, t + 10);
     if (o.camp.probe_pending || !o.camp.svn_sent) return 289;
     {
-        uint8_t ind[8];
+        uint8_t ind[24];
         memset(ind, 0, sizeof ind);
         ind[0] = 2;
-        ind[4] = 8;
         ind[2] = 0x06;
         ind[3] = 0x09;
-        camp_feed(&o.camp, ind, sizeof ind, t);
-        camp_feed(&o.camp, ind, sizeof ind, t);
-        if (o.camp.ind_signal != 1) return 290;
+        ind[4] = 12;
+        ind[8] = 0x45;
+        camp_feed(&o.camp, ind, 12, t);
+        camp_feed(&o.camp, ind, 12, t);
+        if (o.camp.ind_signal != 1 || o.camp.ind_signal_mask != 0x45)
+            return 290;
+        memset(ind, 0, sizeof ind);
+        ind[0] = 2;
         ind[2] = 0x04;
         ind[3] = 0x06;
-        camp_feed(&o.camp, ind, sizeof ind, t);
+        ind[4] = 8;
+        camp_feed(&o.camp, ind, 8, t);
         if (o.camp.ind_datacall != 1) return 291;
+        memset(ind, 0, sizeof ind);
+        ind[0] = 2;
         ind[2] = 0x45;
         ind[3] = 0x09;
-        camp_feed(&o.camp, ind, sizeof ind, t);
-        if (o.camp.ind_linkcap != 1) return 292;
+        ind[4] = 24;
+        put_little32(ind + 8, 100);
+        put_little32(ind + 12, 50);
+        put_little32(ind + 16, 0);
+        put_little32(ind + 20, 0xffffffffu);
+        camp_feed(&o.camp, ind, 24, t);
+        if (o.camp.ind_linkcap != 1 || o.camp.link_dl != 100 ||
+            o.camp.link_ul != 50 || o.camp.link_dl2 != 0 ||
+            o.camp.link_ul2 != -1)
+            return 292;
     }
     t += PROBE_GAP_MS;
     camp_cap_n = 0;

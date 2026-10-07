@@ -890,9 +890,16 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `sit_event`. Тела не логируются.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
-  `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Owner записывает
-  каждую один раз: имя, id и длина.
-- Устройство: `camp_ind signal id=0x0906 len=206`,
-  `camp_ind datacall id=0x0604 len=301`. `0x0945` в окне наблюдения
-  не пришла. wget `example.com` exit 0, тело 577 Б,
-  rmnet1 rx `0→1445`, tx `192→760`.
+  `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
+  увидела сигнал (206 Б) и список звонков данных (301 Б). Оценка
+  канала пришла позже тем же кадром, 24 Б.
+- Адаптер стока читает у `0x0906` знаковое полуслово по смещению 8
+  и берёт младшие семь бит присутствия технологий. У `0x0945` четыре
+  слова кбит/с: downlink и uplink по смещениям 8 и 12, вторичные
+  по 16 и 20. Отрицательное слово сток считает отсутствующим.
+  Тело `0x0604` в лог не пишется: там адрес канала.
+- Устройство: `camp_ind signal id=0x0906 len=206 mask_low7=4`,
+  `camp_ind datacall id=0x0604 len=301`,
+  `camp_ind linkcap id=0x0945 len=24 dl=65326 ul=4800 dl2=0 ul2=0`.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1445`,
+  tx `240→808`.
