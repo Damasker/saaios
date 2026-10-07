@@ -52,6 +52,9 @@
  * own comment already gives, just applied here two years late. */
 #define RUNTIME_PATH "/data/saaios/system/saaios-runtime"
 #define TASKD_PATH "/data/saaios/system/saai-taskd"
+/* One boot, one camp. The script archives the previous diagnostic
+ * logs and then runs the guarded handoff. It is not restarted. */
+#define MODEM_BOOT_PATH "/data/saaios/bin/modem-boot.sh"
 #define TASKD_RUNTIME_ADDR "172.31.7.1:38127"
 #define GPU_MODULE_DIR "/data/saaios/system/gpu"
 #define GPU_PIXEL_MODULE GPU_MODULE_DIR "/mali_pixel.ko"
@@ -1484,6 +1487,34 @@ static pid_t start_file_recv(void) {
     return child;
 }
 
+static pid_t start_modem_boot(void) {
+    struct stat binary;
+    if (stat(MODEM_BOOT_PATH, &binary) < 0 || !S_ISREG(binary.st_mode) ||
+        access(MODEM_BOOT_PATH, X_OK) < 0) {
+        log_message("modem boot unavailable at %s", MODEM_BOOT_PATH);
+        return -1;
+    }
+    pid_t child = fork();
+    if (child == 0) {
+        int output = open("/run/modem-boot.log",
+                          O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (output >= 0) {
+            (void)dup2(output, STDOUT_FILENO);
+            (void)dup2(output, STDERR_FILENO);
+            if (output > STDERR_FILENO) {
+                close(output);
+            }
+        }
+        execl(MODEM_BOOT_PATH, "modem-boot.sh", NULL);
+        dprintf(STDERR_FILENO, "modem boot exec failed: %s\n", strerror(errno));
+        _exit(127);
+    }
+    if (child > 0) {
+        log_message("modem boot started");
+    }
+    return child;
+}
+
 #define DROPBEAR_DIR "/saaios/dropbear"
 #define DROPBEAR_HOME "/data/saaios/var/dropbear"
 #define DROPBEAR_HOST_KEY DROPBEAR_HOME "/dropbear_ed25519_host_key"
@@ -1913,6 +1944,7 @@ int main(void) {
      * subsystem setup cannot race firmware or userspace discovery. */
     prepare_persistent_firmware();
     prepare_gpu_userspace();
+    pid_t modem_pid = start_modem_boot();
     pid_t entityd_pid = start_saai_entityd();
     pid_t appd_pid = start_saai_appd();
     pid_t file_recv_pid = start_file_recv();
@@ -2061,6 +2093,9 @@ int main(void) {
             if (file_recv_pid > 0) {
                 log_message("system service restarted: file-recv");
             }
+        } else if (modem_pid > 0 && ended == modem_pid) {
+            log_message("modem boot finished");
+            modem_pid = -1;
         } else if (dropbear_pid > 0 && ended == dropbear_pid) {
             log_message("system service exited: dropbear");
             usleep(500000);

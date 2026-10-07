@@ -1,6 +1,9 @@
 #!/bin/sh
-# Explicit, one-shot Pixel 7 modem diagnostic after an AP reboot.
-# Never install in native-init or run alongside another CP loader/IPC reader.
+# Explicit, one-shot Pixel 7 modem diagnostic.
+# native-init starts /data/saaios/bin/modem-boot.sh once per boot. That
+# wrapper archives the previous logs and then execs this script. This
+# script still refuses a second run while those logs or an ONLINE CP
+# remain. Do not run it beside another CP loader.
 #
 # rfs-camp variant: the combined owner holds BOTH umts_ipc0 and umts_rfs0. It
 # serves the modem's protected-NV cmd7/cmd3/cmd6 sequence INTO THE QUARANTINE

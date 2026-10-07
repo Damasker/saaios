@@ -922,6 +922,10 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   7/0/255/0/0,1001/0/255/0/0,1002/0/255/0/0`, `ci=97947167
   pci=258 tac=46561 earfcn=1500`. wget `example.com` exit 0,
   тело 577 Б, rmnet1 rx `0→1446`, tx `240→808`.
+- Загрузка: `native-init` один раз запускает
+  `/data/saaios/bin/modem-boot.sh`. Скрипт убирает прошлые логи и
+  replay, затем вызывает прежний handoff. Повторного старта нет.
+  SOS не шлётся.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
