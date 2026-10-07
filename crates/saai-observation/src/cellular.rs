@@ -430,7 +430,7 @@ mod tests {
     fn early_radio_line_survives_a_long_owner_log() {
         let mut log = "pad\n".repeat(80_000);
         log.push_str("camp_reg field=radio radio_raw=10\n");
-        log.push_str("pad\n".repeat(80_000));
+        log.push_str(&"pad\n".repeat(80_000));
         log.push_str("camp_reg field=data registration_raw=1 reject_raw=0\n");
         let reading = CellularReading {
             cp_text: None,
