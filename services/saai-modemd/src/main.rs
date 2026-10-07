@@ -368,7 +368,7 @@ enum QueryExchange {
 fn exchange_one_query(query: runtime_model::RuntimeQuery) -> Result<QueryExchange> {
     use std::io::{Read, Write};
     use std::os::fd::AsRawFd;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
     use std::time::{Duration, Instant};
 
     let identity = fs::read_to_string("/sys/class/cpif/umts_ipc0/dev")
