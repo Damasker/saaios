@@ -153,7 +153,7 @@ impl TelemetrySampler {
 
 fn read_cellular_reading() -> CellularReading {
     let cp_text = std::fs::read_to_string("/sys/devices/platform/cpif/modem_state").ok();
-    let owner_log = read_log_tail("/data/saaios/var/modem-rfs-camp-combined-owner.log");
+    let owner_log = read_owner_facts("/data/saaios/var/modem-rfs-camp-combined-owner.log");
     let supervisor_log = read_log_tail("/run/modem-boot.log");
     let ifaces = std::fs::read_dir("/sys/class/net")
         .ok()
@@ -199,10 +199,18 @@ fn camp_owner_running() -> bool {
     false
 }
 
+fn read_owner_facts(path: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(saai_observation::owner_fact_lines(&text))
+}
+
 fn read_log_tail(path: &str) -> Option<String> {
+    read_log_window(path, 256 * 1024)
+}
+
+fn read_log_window(path: &str, max: u64) -> Option<String> {
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
-    let max = 256 * 1024u64;
     if len > max {
         use std::io::Seek;
         file.seek(std::io::SeekFrom::End(-(max as i64))).ok()?;

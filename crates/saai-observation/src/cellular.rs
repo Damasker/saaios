@@ -161,6 +161,29 @@ pub fn last_radio_token(log: &str) -> Option<&'static str> {
     None
 }
 
+/// Last data-registration, radio, and SIM lines. Early one-shot lines stay
+/// even after the camp log grows past a tail window.
+pub fn owner_fact_lines(log: &str) -> String {
+    let mut data = None;
+    let mut radio = None;
+    let mut sim = None;
+    for line in log.lines() {
+        if line.contains("field=data registration_raw=") {
+            data = Some(line);
+        } else if line.contains("field=radio ") {
+            radio = Some(line);
+        } else if line.contains("camp_sim=") || line.contains("field=sim ") {
+            sim = Some(line);
+        }
+    }
+    let mut out = String::new();
+    for line in [data, radio, sim].into_iter().flatten() {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// Last SIM application fact from the camp log. PIN state stays out.
 pub fn last_sim_presence(log: &str) -> Option<&'static str> {
     for line in log.lines().rev() {
@@ -401,5 +424,26 @@ mod tests {
         assert_eq!(rows[1].key, KEY_SIM_APP);
         assert_eq!(rows[1].value, json!("ready"));
         assert!(rows.iter().all(|row| !row.value.to_string().contains("pin")));
+    }
+
+    #[test]
+    fn early_radio_line_survives_a_long_owner_log() {
+        let mut log = "pad\n".repeat(80_000);
+        log.push_str("camp_reg field=radio radio_raw=10\n");
+        log.push_str("pad\n".repeat(80_000));
+        log.push_str("camp_reg field=data registration_raw=1 reject_raw=0\n");
+        let reading = CellularReading {
+            cp_text: None,
+            owner_log: Some(owner_fact_lines(&log)),
+            supervisor_log: None,
+            owner_running: true,
+            ifaces: Vec::new(),
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 4);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].key, KEY_REGISTRATION_RAW);
+        assert_eq!(rows[1].key, KEY_RADIO);
+        assert_eq!(rows[1].value, json!("on"));
+        assert_eq!(rows[2].key, KEY_OWNER);
     }
 }

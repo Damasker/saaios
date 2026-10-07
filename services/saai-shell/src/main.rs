@@ -1402,18 +1402,8 @@ fn camp_owner_running() -> bool {
 }
 
 fn read_camp_owner_log() -> Option<String> {
-    let file = std::fs::File::open(CAMP_OWNER_LOG).ok()?;
-    let len = file.metadata().ok()?.len();
-    let mut file = file;
-    let max = 256 * 1024u64;
-    if len > max {
-        use std::io::Seek;
-        file.seek(std::io::SeekFrom::End(-(max as i64))).ok()?;
-    }
-    let mut text = String::new();
-    use std::io::Read;
-    file.read_to_string(&mut text).ok()?;
-    Some(text)
+    let text = std::fs::read_to_string(CAMP_OWNER_LOG).ok()?;
+    Some(saai_observation::owner_fact_lines(&text))
 }
 
 fn read_data_registration_raw() -> Option<u32> {
