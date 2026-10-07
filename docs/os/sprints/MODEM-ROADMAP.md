@@ -1050,6 +1050,12 @@ subscriber identity without a live, reviewed source.
 `cellular.cp_state=ONLINE`, `cellular.registration_raw=1`,
 `cellular.bearer=rmnet1`. Оболочка показывает их в «Наблюдениях»
 как «Модем», «Регистрация / домашняя» и «Канал / rmnet1».
+Последнее слово дежурства (`7475ff9`, runtime `e8a89c7b…`,
+оболочка `02f91cb0…`) читается из `/run/modem-boot.log`. На этой
+загрузке кэш даёт `cellular.supervisor=hold`. В «Наблюдениях» это
+«Дежурство / удержание». `handoff-exit` и прочие слова в кэш не
+попадают. Owner остался один, CP `ONLINE`, счётчики `rmnet1`
+ненулевые. Перезагрузки для этого шага не было.
 
 ## Non-goals For Now
 
