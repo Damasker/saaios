@@ -1322,6 +1322,14 @@ fn read_cp_state() -> Option<String> {
     cp_state_token(&text).map(|word| word.to_string())
 }
 
+fn owner_phrase(token: &str) -> Option<&'static str> {
+    match token {
+        "running" => Some("есть"),
+        "gone" => Some("нет"),
+        _ => None,
+    }
+}
+
 fn supervisor_phrase(token: &str) -> Option<&'static str> {
     match token {
         "hold" => Some("удержание"),
@@ -1370,6 +1378,27 @@ fn last_field_registration_raw(log: &str, field: &str) -> Option<u32> {
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         digits.parse().ok()
     })
+}
+
+fn camp_owner_running() -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        if String::from_utf8_lossy(argv0).ends_with("/modem-rfs-camp-combined-owner") {
+            return true;
+        }
+    }
+    false
 }
 
 fn read_camp_owner_log() -> Option<String> {
@@ -6442,6 +6471,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.registration_raw" => "Регистрация".into(),
         "cellular.bearer" => "Канал".into(),
         "cellular.supervisor" => "Дежурство".into(),
+        "cellular.owner" => "Процесс".into(),
         "cellular.radio" => "Радио".into(),
         "cellular.sim_app" => "SIM".into(),
         other => other.to_string(),
@@ -6456,6 +6486,10 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.cp_state" {
         let text = value.as_str()?.trim();
         return cp_state_token(text).map(str::to_string);
+    }
+    if key == "cellular.owner" {
+        let text = value.as_str()?.trim();
+        return owner_phrase(text).map(str::to_string);
     }
     if key == "cellular.supervisor" {
         let text = value.as_str()?.trim();
@@ -11318,9 +11352,9 @@ impl Shell {
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
             cellular_cp: read_cp_state(),
-            cellular_registration_raw: read_data_registration_raw(),
-            cellular_radio: read_radio_token(),
-            cellular_sim: read_sim_presence(),
+            cellular_registration_raw: camp_owner_running().then(read_data_registration_raw).flatten(),
+            cellular_radio: camp_owner_running().then(read_radio_token).flatten(),
+            cellular_sim: camp_owner_running().then(read_sim_presence).flatten(),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
@@ -17519,6 +17553,16 @@ mod tests {
                         "source": "camp.owner.sim_app"
                     },
                     {
+                        "key": "cellular.owner",
+                        "value": "running",
+                        "source": "proc.camp_owner"
+                    },
+                    {
+                        "key": "cellular.owner",
+                        "value": "pin",
+                        "source": "proc.camp_owner"
+                    },
+                    {
                         "key": "cellular.sim_app",
                         "value": "pin1_raw=3",
                         "source": "camp.owner.sim_app"
@@ -17536,7 +17580,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 7);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -17548,6 +17592,8 @@ mod tests {
         assert_eq!(rows[4].value, "включено");
         assert_eq!(rows[5].label, "SIM");
         assert_eq!(rows[5].value, "готово");
+        assert_eq!(rows[6].label, "Процесс");
+        assert_eq!(rows[6].value, "есть");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }

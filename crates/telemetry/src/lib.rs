@@ -173,8 +173,30 @@ fn read_cellular_reading() -> CellularReading {
         cp_text,
         owner_log,
         supervisor_log,
+        owner_running: camp_owner_running(),
         ifaces,
     }
+}
+
+fn camp_owner_running() -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        if String::from_utf8_lossy(argv0).ends_with("/modem-rfs-camp-combined-owner") {
+            return true;
+        }
+    }
+    false
 }
 
 fn read_log_tail(path: &str) -> Option<String> {

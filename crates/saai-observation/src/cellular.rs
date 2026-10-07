@@ -16,6 +16,7 @@ pub const KEY_BEARER: &str = "cellular.bearer";
 pub const KEY_SUPERVISOR: &str = "cellular.supervisor";
 pub const KEY_RADIO: &str = "cellular.radio";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
+pub const KEY_OWNER: &str = "cellular.owner";
 
 /// Longer than the default 30s telemetry interval, so one missed sample
 /// does not mark the row stale.
@@ -32,6 +33,7 @@ pub struct CellularReading {
     pub cp_text: Option<String>,
     pub owner_log: Option<String>,
     pub supervisor_log: Option<String>,
+    pub owner_running: bool,
     pub ifaces: Vec<IfaceSample>,
 }
 
@@ -61,11 +63,8 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
-    if let Some(raw) = reading
-        .owner_log
-        .as_deref()
-        .and_then(|log| last_data_registration_raw(log))
-    {
+    let log = reading.owner_running.then_some(reading.owner_log.as_deref()).flatten();
+    if let Some(raw) = log.and_then(last_data_registration_raw) {
         out.push(number_observation(
             KEY_REGISTRATION_RAW,
             raw,
@@ -91,7 +90,7 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
-    if let Some(token) = reading.owner_log.as_deref().and_then(last_radio_token) {
+    if let Some(token) = log.and_then(last_radio_token) {
         out.push(text_observation(
             KEY_RADIO,
             token,
@@ -100,7 +99,7 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
-    if let Some(token) = reading.owner_log.as_deref().and_then(last_sim_presence) {
+    if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
             token,
@@ -122,6 +121,13 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    out.push(text_observation(
+        KEY_OWNER,
+        if reading.owner_running { "running" } else { "gone" },
+        "proc.camp_owner",
+        observed_at,
+        sequence,
+    ));
     out
 }
 
@@ -275,6 +281,7 @@ mod tests {
                     .into(),
             ),
             supervisor_log: None,
+            owner_running: true,
             ifaces: vec![
                 sample("usb0", true, 10, 10),
                 sample("rmnet0", false, 0, 0),
@@ -283,7 +290,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -294,18 +301,24 @@ mod tests {
         assert_eq!(reg.value, json!(1));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
+        let owner = rows.iter().find(|row| row.key == KEY_OWNER).unwrap();
+        assert_eq!(owner.value, json!("running"));
         assert!(rows.iter().all(|row| row.validate().is_ok()));
     }
 
     #[test]
-    fn missing_modem_publishes_nothing() {
+    fn missing_modem_publishes_only_that_the_owner_is_gone() {
         let reading = CellularReading {
             cp_text: None,
-            owner_log: None,
+            owner_log: Some("camp_reg field=data registration_raw=1\n".into()),
             supervisor_log: None,
+            owner_running: false,
             ifaces: vec![sample("rmnet2", false, 0, 40)],
         };
-        assert!(observations_from_cellular(&reading, Utc::now(), 1).is_empty());
+        let rows = observations_from_cellular(&reading, Utc::now(), 1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, KEY_OWNER);
+        assert_eq!(rows[0].value, json!("gone"));
     }
 
     #[test]
@@ -314,11 +327,13 @@ mod tests {
             cp_text: Some("ONLINE".into()),
             owner_log: Some("camp_reg field=radio radio_raw=1\n".into()),
             supervisor_log: None,
+            owner_running: true,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 2);
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].key, KEY_CP_STATE);
+        assert_eq!(rows[1].key, KEY_OWNER);
     }
 
     #[test]
@@ -333,12 +348,15 @@ mod tests {
                  supervise=10.1.2.3\n"
                     .into(),
             ),
+            owner_running: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 3);
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].key, KEY_SUPERVISOR);
         assert_eq!(rows[0].value, json!("hold"));
+        assert_eq!(rows[1].key, KEY_OWNER);
+        assert_eq!(rows[1].value, json!("gone"));
         assert_eq!(rows[0].source.source_id, "camp.supervisor");
         assert_eq!(
             last_supervisor_token("supervise=cp-left\n"),
@@ -356,10 +374,12 @@ mod tests {
                     .into(),
             ),
             supervisor_log: None,
+            owner_running: true,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 8);
-        assert!(rows.is_empty(), "a later radio_raw other than 10 hides the radio");
+        assert!(rows.iter().all(|row| row.key != KEY_RADIO));
+        assert_eq!(rows.iter().filter(|row| row.key == KEY_OWNER).count(), 1);
 
         let reading = CellularReading {
             cp_text: None,
@@ -371,10 +391,11 @@ mod tests {
                     .into(),
             ),
             supervisor_log: None,
+            owner_running: true,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 9);
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].key, KEY_RADIO);
         assert_eq!(rows[0].value, json!("on"));
         assert_eq!(rows[1].key, KEY_SIM_APP);
