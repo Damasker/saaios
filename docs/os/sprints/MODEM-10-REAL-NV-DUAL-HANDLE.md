@@ -923,9 +923,14 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   pci=258 tac=46561 earfcn=1500`. wget `example.com` exit 0,
   тело 577 Б, rmnet1 rx `0→1446`, tx `240→808`.
 - Загрузка: `native-init` один раз запускает
-  `/data/saaios/bin/modem-boot.sh`. Скрипт убирает прошлые логи и
-  replay, затем вызывает прежний handoff. Повторного старта нет.
-  SOS не шлётся.
+  `/data/saaios/bin/modem-boot.sh`. Скрипт ждёт `pcie_exynos_gs` и
+  `google_modemctl`, убирает прошлые логи и replay, выставляет
+  `PATH=/saaios:/bin:/usr/bin` и вызывает прежний handoff.
+  Повторного старта нет. SOS не шлётся.
+  Прошит `init_boot_a`
+  `934bd2633948566c25db91114a2465b99948da3adaff3913379cced0a4fc9710`
+  (`3888d4f`). На той загрузке CP стал ONLINE и пришёл
+  `camp_ind datacall`. `ip` ещё не был в PATH, rmnet1 rx/tx остались 0.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись

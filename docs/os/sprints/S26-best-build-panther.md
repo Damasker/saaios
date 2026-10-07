@@ -274,6 +274,18 @@ Host-тесты `saai-ui-core` + `saai-shell`: 319 + 82 passed.
 Модемный owner (`da25c4e`…`97afedf`) в `native-init` не входит и из
 образа не стартует. `saai-gpu-compositor` (NDK) в бандле нет.
 
+**Прошивка autostart (2026-10-07, `init_boot` `3888d4f`).**
+`init_boot_a`
+`934bd2633948566c25db91114a2465b99948da3adaff3913379cced0a4fc9710`.
+`vendor_boot` не пересобирался и не прошивался. Слот B не трогался.
+PID 1 один раз запускает `/data/saaios/bin/modem-boot.sh`.
+На загрузке с этим образом CP дошёл до ONLINE, в логе есть
+`camp_ind datacall` (`active=1`). Команды `ip` тогда не нашли
+`/saaios/ip`, счётчики rmnet1 остались 0. Скрипт на `/data` после
+этого — `905947d`, он ждёт `pcie_exynos_gs` и `google_modemctl` и
+выставляет `PATH=/saaios:/bin:/usr/bin`. Подтверждение wget после
+этой правки ещё не снято: запись в COM13 перестала проходить.
+
 Заполняется при закрытии каждого воркстрима: commit, test log, image
 SHA-256, bearer-доказательство (`rmnet`/IPv4/rx-tx), render-node
 подтверждение, read-only EFS сверка, и известные ограничения. Контроли:
