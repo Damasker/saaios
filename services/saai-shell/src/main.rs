@@ -6387,11 +6387,34 @@ fn observation_row_label(key: &str) -> String {
         "system.cpu.usage" => "Процессор".into(),
         "system.load.average" => "Нагрузка".into(),
         "system.memory.used_percent" => "Память".into(),
+        "cellular.cp_state" => "Модем".into(),
+        "cellular.registration_raw" => "Регистрация".into(),
+        "cellular.bearer" => "Канал".into(),
         other => other.to_string(),
     }
 }
 
-fn format_observation_value(value: &Value, unit: Option<&str>) -> Option<String> {
+fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Option<String> {
+    if key == "cellular.registration_raw" {
+        let raw = value.as_u64()?;
+        return registration_phrase(u32::try_from(raw).ok()?).map(str::to_string);
+    }
+    if key == "cellular.cp_state" {
+        let text = value.as_str()?.trim();
+        return cp_state_token(text).map(str::to_string);
+    }
+    if key == "cellular.bearer" {
+        let text = value.as_str()?.trim();
+        if text.is_empty()
+            || text.len() > 64
+            || !text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ' ' || c == '·')
+        {
+            return None;
+        }
+        return Some(text.to_string());
+    }
     let number = value.as_f64().filter(|n| n.is_finite())?;
     Some(if unit == Some("percent") {
         format!("{number:.0}%")
@@ -6421,7 +6444,7 @@ fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> 
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())?;
             let unit = row.get("unit").and_then(Value::as_str);
-            let value = format_observation_value(row.get("value")?, unit)?;
+            let value = format_observation_value(key, row.get("value")?, unit)?;
             Some(LiveObservationFact {
                 label: observation_row_label(key),
                 key: key.to_string(),
@@ -17370,6 +17393,43 @@ mod tests {
         assert_eq!(rows[1].label, "Нагрузка");
         assert_eq!(rows[1].value, "0.3");
         assert!(!rows.iter().any(|row| row.key.contains("weather")));
+    }
+
+    #[test]
+    fn cellular_observations_use_stock_words_and_drop_addresses() {
+        let rows = super::live_observations_from_status_json(&serde_json::json!({
+            "status": {
+                "observations": [
+                    {
+                        "key": "cellular.cp_state",
+                        "value": "ONLINE",
+                        "source": "sysfs.cpif.modem_state"
+                    },
+                    {
+                        "key": "cellular.registration_raw",
+                        "value": 1,
+                        "source": "camp.owner.data_registration"
+                    },
+                    {
+                        "key": "cellular.bearer",
+                        "value": "rmnet1",
+                        "source": "sysfs.net.bearer"
+                    },
+                    {
+                        "key": "cellular.bearer",
+                        "value": "10.1.2.3",
+                        "source": "sysfs.net.bearer"
+                    }
+                ]
+            }
+        }));
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].label, "Модем");
+        assert_eq!(rows[0].value, "ONLINE");
+        assert_eq!(rows[1].label, "Регистрация");
+        assert_eq!(rows[1].value, "домашняя");
+        assert_eq!(rows[2].value, "rmnet1");
+        assert!(!rows.iter().any(|row| row.value.contains('.')));
     }
 
     #[test]

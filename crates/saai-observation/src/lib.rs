@@ -4,11 +4,16 @@
 //! `system.metrics` tool JSON stays the compatibility input.
 
 mod cache;
+mod cellular;
 mod health;
 mod metrics;
 mod model;
 
 pub use cache::{ObservationCache, WorldSnapshot};
+pub use cellular::{
+    is_cellular_iface, observations_from_cellular, CellularReading, IfaceSample, KEY_BEARER,
+    KEY_CP_STATE, KEY_REGISTRATION_RAW,
+};
 pub use health::{cpu_sampler_health, health_of, HealthReport, HealthState, COMPONENT_CPU_SAMPLER};
 pub use metrics::{
     observations_from_system_metrics, MetricsOrigin, KEY_CPU_USAGE, KEY_LOAD_AVERAGE,

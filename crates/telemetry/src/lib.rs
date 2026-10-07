@@ -4,7 +4,8 @@ use chrono::Utc;
 use event_bus::EventBus;
 use protocol::{Envelope, MessageKind, ToolCallResult};
 use saai_observation::{
-    observations_from_system_metrics, MetricsOrigin, ObservationCache, WorldSnapshot,
+    is_cellular_iface, observations_from_cellular, observations_from_system_metrics,
+    CellularReading, IfaceSample, MetricsOrigin, ObservationCache, WorldSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -135,9 +136,80 @@ impl TelemetrySampler {
                 cache.apply(rows);
             }
         }
+        if self.origin == MetricsOrigin::Procfs {
+            if let Some(cache) = &self.cache {
+                let sequence = self.samples.load(Ordering::Relaxed);
+                cache.apply(observations_from_cellular(
+                    &read_cellular_reading(),
+                    Utc::now(),
+                    sequence,
+                ));
+            }
+        }
         debug!(%correlation_id, "telemetry sample published");
         Ok(env)
     }
+}
+
+fn read_cellular_reading() -> CellularReading {
+    let cp_text = std::fs::read_to_string("/sys/devices/platform/cpif/modem_state").ok();
+    let owner_log = read_log_tail("/data/saaios/var/modem-rfs-camp-combined-owner.log");
+    let ifaces = std::fs::read_dir("/sys/class/net")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| is_cellular_iface(name))
+        .map(|name| IfaceSample {
+            has_ipv4: iface_has_ipv4(&name),
+            rx: iface_counter(&name, "rx_bytes"),
+            tx: iface_counter(&name, "tx_bytes"),
+            name,
+        })
+        .collect();
+    CellularReading {
+        cp_text,
+        owner_log,
+        ifaces,
+    }
+}
+
+fn read_log_tail(path: &str) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let max = 256 * 1024u64;
+    if len > max {
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::End(-(max as i64))).ok()?;
+    }
+    let mut text = String::new();
+    use std::io::Read;
+    file.read_to_string(&mut text).ok()?;
+    Some(text)
+}
+
+fn iface_counter(name: &str, which: &str) -> u64 {
+    if name.contains('/') {
+        return 0;
+    }
+    std::fs::read_to_string(format!("/sys/class/net/{name}/statistics/{which}"))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn iface_has_ipv4(name: &str) -> bool {
+    if name.contains('/') {
+        return false;
+    }
+    let Ok(out) = std::process::Command::new("/saaios/ip")
+        .args(["-4", "-o", "addr", "show", "dev", name])
+        .output()
+    else {
+        return false;
+    };
+    out.status.success() && out.stdout.windows(5).any(|window| window == b"inet ")
 }
 
 #[cfg(test)]
