@@ -289,7 +289,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
-| MODEM-09 | World/Observation + Shell cellular facts | Backlog | **yes** |
+| MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row on device; observation bus still backlog) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Ready** (host done, device-gated) | **yes** |
 
 ## MODEM-00
@@ -1025,6 +1025,15 @@ registration does not show carrier/data; bearer row appears only from live
 
 **Threat:** invented UX confidence. Never show operator, bars, dBm, IMEI, or
 subscriber identity without a live, reviewed source.
+
+**Shell row (2026-10-07, `1725fa0`, бинарник `bc7df64c…` на `/data`).**
+«Сотовая сеть» читает слово CP из `modem_state`, последнюю
+`field=data registration_raw` из лога camp и имя iface только если на
+нём есть IPv4 или оба счётчика ненулевые. На этой загрузке CP
+`ONLINE`, data `registration_raw=1`, живой `rmnet1`: строка
+`ONLINE · домашняя · rmnet1`. Оператор, RAT и адрес не пишутся.
+`saai-shell` перезапущен один раз, `saai-displayd` остался. Шина
+Observation ещё не публикует эти факты.
 
 ## Non-goals For Now
 
