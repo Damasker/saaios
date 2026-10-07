@@ -1324,6 +1324,16 @@ fn read_cp_state() -> Option<String> {
 
 /// RIL registration state at the byte the stock adapter reads. Names are
 /// the stock states, not a carrier.
+fn supervisor_phrase(token: &str) -> Option<&'static str> {
+    match token {
+        "hold" => Some("удержание"),
+        "owner-gone" => Some("процесс ушёл"),
+        "attend" => Some("уже запущен"),
+        "launch-once" => Some("запуск"),
+        _ => None,
+    }
+}
+
 fn registration_phrase(raw: u32) -> Option<&'static str> {
     match raw {
         0 => Some("нет регистрации"),
@@ -6390,6 +6400,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.cp_state" => "Модем".into(),
         "cellular.registration_raw" => "Регистрация".into(),
         "cellular.bearer" => "Канал".into(),
+        "cellular.supervisor" => "Дежурство".into(),
         other => other.to_string(),
     }
 }
@@ -6402,6 +6413,10 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.cp_state" {
         let text = value.as_str()?.trim();
         return cp_state_token(text).map(str::to_string);
+    }
+    if key == "cellular.supervisor" {
+        let text = value.as_str()?.trim();
+        return supervisor_phrase(text).map(str::to_string);
     }
     if key == "cellular.bearer" {
         let text = value.as_str()?.trim();
@@ -17416,6 +17431,16 @@ mod tests {
                         "source": "sysfs.net.bearer"
                     },
                     {
+                        "key": "cellular.supervisor",
+                        "value": "hold",
+                        "source": "camp.supervisor"
+                    },
+                    {
+                        "key": "cellular.supervisor",
+                        "value": "10.1.2.3",
+                        "source": "camp.supervisor"
+                    },
+                    {
                         "key": "cellular.bearer",
                         "value": "10.1.2.3",
                         "source": "sysfs.net.bearer"
@@ -17423,12 +17448,14 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
         assert_eq!(rows[1].value, "домашняя");
         assert_eq!(rows[2].value, "rmnet1");
+        assert_eq!(rows[3].label, "Дежурство");
+        assert_eq!(rows[3].value, "удержание");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
     }
 

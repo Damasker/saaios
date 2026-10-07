@@ -13,6 +13,7 @@ use uuid::Uuid;
 pub const KEY_CP_STATE: &str = "cellular.cp_state";
 pub const KEY_REGISTRATION_RAW: &str = "cellular.registration_raw";
 pub const KEY_BEARER: &str = "cellular.bearer";
+pub const KEY_SUPERVISOR: &str = "cellular.supervisor";
 
 /// Longer than the default 30s telemetry interval, so one missed sample
 /// does not mark the row stale.
@@ -28,6 +29,7 @@ pub struct IfaceSample {
 pub struct CellularReading {
     pub cp_text: Option<String>,
     pub owner_log: Option<String>,
+    pub supervisor_log: Option<String>,
     pub ifaces: Vec<IfaceSample>,
 }
 
@@ -87,7 +89,30 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = reading
+        .supervisor_log
+        .as_deref()
+        .and_then(last_supervisor_token)
+    {
+        out.push(text_observation(
+            KEY_SUPERVISOR,
+            token,
+            "camp.supervisor",
+            observed_at,
+            sequence,
+        ));
+    }
     out
+}
+
+/// Last `supervise=` word the boot supervisor actually prints.
+/// `handoff-exit` and anything else stay out of the cache.
+pub fn last_supervisor_token(log: &str) -> Option<&str> {
+    log.lines().rev().find_map(|line| {
+        let rest = line.trim().strip_prefix("supervise=")?;
+        let token = rest.split_whitespace().next()?;
+        matches!(token, "hold" | "owner-gone" | "attend" | "launch-once").then_some(token)
+    })
 }
 
 fn bearer_is_live(iface: &IfaceSample) -> bool {
@@ -185,6 +210,7 @@ mod tests {
                  camp_reg field=data registration_raw=1 reject_raw=0 lac=0\n"
                     .into(),
             ),
+            supervisor_log: None,
             ifaces: vec![
                 sample("usb0", true, 10, 10),
                 sample("rmnet0", false, 0, 0),
@@ -212,6 +238,7 @@ mod tests {
         let reading = CellularReading {
             cp_text: None,
             owner_log: None,
+            supervisor_log: None,
             ifaces: vec![sample("rmnet2", false, 0, 40)],
         };
         assert!(observations_from_cellular(&reading, Utc::now(), 1).is_empty());
@@ -222,10 +249,32 @@ mod tests {
         let reading = CellularReading {
             cp_text: Some("ONLINE".into()),
             owner_log: Some("camp_reg field=radio radio_raw=1\n".into()),
+            supervisor_log: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 2);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].key, KEY_CP_STATE);
+    }
+
+    #[test]
+    fn supervisor_publishes_the_last_known_word_only() {
+        let reading = CellularReading {
+            cp_text: None,
+            owner_log: None,
+            supervisor_log: Some(
+                "supervise=launch-once cp=missing\n\
+                 supervise=handoff-exit code=0\n\
+                 supervise=hold\n\
+                 supervise=10.1.2.3\n"
+                    .into(),
+            ),
+            ifaces: Vec::new(),
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 3);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, KEY_SUPERVISOR);
+        assert_eq!(rows[0].value, json!("hold"));
+        assert_eq!(rows[0].source.source_id, "camp.supervisor");
     }
 }

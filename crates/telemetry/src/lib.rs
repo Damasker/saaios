@@ -154,6 +154,7 @@ impl TelemetrySampler {
 fn read_cellular_reading() -> CellularReading {
     let cp_text = std::fs::read_to_string("/sys/devices/platform/cpif/modem_state").ok();
     let owner_log = read_log_tail("/data/saaios/var/modem-rfs-camp-combined-owner.log");
+    let supervisor_log = read_log_tail("/run/modem-boot.log");
     let ifaces = std::fs::read_dir("/sys/class/net")
         .ok()
         .into_iter()
@@ -171,6 +172,7 @@ fn read_cellular_reading() -> CellularReading {
     CellularReading {
         cp_text,
         owner_log,
+        supervisor_log,
         ifaces,
     }
 }
