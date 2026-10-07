@@ -392,6 +392,8 @@ struct camp_driver {
      * from the stock jump table. */
     int ind_barring;
     int bar_cell, bar_count, bar_svc, bar_kind, bar_factor, bar_time, bar_barred;
+    /* LTE identity inside the 0x074b prefix. Operator strings stay off. */
+    int bar_ci, bar_pci, bar_tac, bar_earfcn;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3735,6 +3737,18 @@ static unsigned camp_bar_prefix(unsigned cell)
     return cell < 6u ? prefix[cell] : 0u;
 }
 
+/* FillCellIdentityLte keeps a word only when it passes the stock
+ * bound, and stores 0x7fffffff otherwise. which: 0 CI (28 bits),
+ * 1 PCI (<=503), 2 TAC (16 bits), 3 EARFCN (18 bits). */
+static int camp_lte_id(uint32_t word, int which)
+{
+    int ok = which == 0 ? (word >> 28) == 0 :
+             which == 1 ? word <= 0x1f7u :
+             which == 2 ? (word >> 16) == 0 :
+                          (word >> 18) == 0;
+    return ok ? (int)word : 0x7fffffff;
+}
+
 /* Match a prober reply or note a SIM-status-changed indication. Only scalar
  * status fields and the public error word ever reach the log. */
 static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
@@ -3853,11 +3867,26 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                         c->bar_factor = (int)little32(rec + 8);
                         c->bar_time = (int)little32(rec + 12);
                         c->bar_barred = rec[16] != 0;
-                        printf("camp_ind barring id=0x074b len=%zu cell=%u "
-                               "count=%d svc=%d kind=%d factor=%d time=%d "
-                               "barred=%d\n",
-                               n, cell, count, c->bar_svc, c->bar_kind,
-                               c->bar_factor, c->bar_time, c->bar_barred);
+                        if (cell == 2) {
+                            const uint8_t *id = p + 9;
+                            c->bar_ci = camp_lte_id(little32(id + 6), 0);
+                            c->bar_pci = camp_lte_id(little32(id + 10), 1);
+                            c->bar_tac = camp_lte_id(little32(id + 14), 2);
+                            c->bar_earfcn = camp_lte_id(little32(id + 18), 3);
+                            printf("camp_ind barring id=0x074b len=%zu cell=%u "
+                                   "count=%d svc=%d kind=%d factor=%d time=%d "
+                                   "barred=%d ci=%d pci=%d tac=%d earfcn=%d\n",
+                                   n, cell, count, c->bar_svc, c->bar_kind,
+                                   c->bar_factor, c->bar_time, c->bar_barred,
+                                   c->bar_ci, c->bar_pci, c->bar_tac,
+                                   c->bar_earfcn);
+                        } else {
+                            printf("camp_ind barring id=0x074b len=%zu cell=%u "
+                                   "count=%d svc=%d kind=%d factor=%d time=%d "
+                                   "barred=%d\n",
+                                   n, cell, count, c->bar_svc, c->bar_kind,
+                                   c->bar_factor, c->bar_time, c->bar_barred);
+                        }
                     } else {
                         printf("camp_ind barring id=0x074b len=%zu cell=%u "
                                "count=%d\n",
@@ -7930,6 +7959,10 @@ static int test_setup_data_call(void)
                     bar[4] = 55;
                     bar[5] = 1;
                     bar[8] = 2;
+                    put_little32(bar + 15, 0x1a2b3c);
+                    put_little32(bar + 19, 114);
+                    put_little32(bar + 23, 100);
+                    put_little32(bar + 27, 1500);
                     put_little32(bar + 290, 1);
                     put_little32(bar + 294, 3);
                     put_little32(bar + 298, 1);
@@ -7943,6 +7976,13 @@ static int test_setup_data_call(void)
                         o.camp.bar_kind != 1 || o.camp.bar_factor != 50 ||
                         o.camp.bar_time != 30 || o.camp.bar_barred != 1)
                         return 295;
+                    if (camp_lte_id(0x10000000u, 0) != 0x7fffffff ||
+                        camp_lte_id(504, 1) != 0x7fffffff ||
+                        camp_lte_id(0x10000u, 2) != 0x7fffffff ||
+                        camp_lte_id(0x40000u, 3) != 0x7fffffff ||
+                        o.camp.bar_ci != 0x1a2b3c || o.camp.bar_pci != 114 ||
+                        o.camp.bar_tac != 100 || o.camp.bar_earfcn != 1500)
+                        return 296;
                 }
             }
         }

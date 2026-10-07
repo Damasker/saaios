@@ -906,11 +906,16 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   смещению 8 выбирает длину префикса через таблицу `0xd8958`
   (версии 3 и 4 дают одну длину: LTE и NR — 282). Дальше слово
   count и записи по 17 байт: service, barring type, factor,
-  time, isBarred. В лог идёт первая запись. Тело cell identity
-  не пишется.
+  time, isBarred. В лог идёт первая запись. Для LTE
+  `FillCellIdentityLte` читает из тела после байта типа четыре
+  слова: CI (28 бит, смещение 6), PCI (не больше 503, смещение 10),
+  TAC (16 бит, смещение 14), EARFCN (18 бит, смещение 18).
+  Вне диапазона сток ставит `0x7fffffff`. Строки оператора не пишутся.
 - Устройство: `camp_ind barring id=0x074b len=413 cell=2 count=7
-  svc=8 kind=0 factor=0 time=0 barred=0`. wget `example.com`
-  exit 0, тело 577 Б, rmnet1 rx `720→2165`, tx `960→1528`.
+  svc=8 kind=0 factor=0 time=0 barred=0 ci=97945887 pci=114
+  tac=46561 earfcn=1500`. PCI и EARFCN совпали с первой записью
+  `0x0742`. wget `example.com` exit 0, тело 577 Б, rmnet1 rx
+  `0→1445`, tx `240→808`.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
