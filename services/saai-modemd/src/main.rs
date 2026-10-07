@@ -7,6 +7,7 @@ use saai_modemd::soft_lock::{
     TRAY_BEARER_CHASE_CMD, TRAY_BEARER_CHASE_ON_DEVICE,
 };
 use saai_modemd::runtime_model::{self, QueryAdmission};
+use saai_modemd::supervise::{self, FirstAction, HoldNote};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
