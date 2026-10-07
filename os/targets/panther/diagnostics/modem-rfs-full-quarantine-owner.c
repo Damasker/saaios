@@ -383,6 +383,10 @@ struct camp_driver {
     int ind_phy_count, ind_phy_status, ind_phy_rat;
     int ind_phy_dl_ch, ind_phy_ul_ch, ind_phy_dl_bw, ind_phy_ul_bw;
     int ind_phy_pci, ind_phy_band;
+    /* 0x0720: the five flags OnAcBarringInfo forwards. The factor
+     * and timer words in the same frame stay off the log. */
+    int ind_acbar;
+    int ac_emc, ac_mosig, ac_modata, ac_voice, ac_video;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3747,6 +3751,11 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
              * physical cell id and band. */
             ind_name = "phy";
             ind_seen = &c->ind_phy;
+        } else if (ind == 0x0720 && n >= 41) {
+            /* OnAcBarringInfo logs five bytes: forEmc, forMoSig,
+             * forMoData, forMmtelVoice, forMmtelVideo. */
+            ind_name = "acbar";
+            ind_seen = &c->ind_acbar;
         }
         if (ind_seen && !*ind_seen) {
             *ind_seen = 1;
@@ -3800,6 +3809,16 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                     printf("camp_ind phy id=0x0742 len=%zu count=%d\n",
                            n, count);
                 }
+            } else if (ind == 0x0720) {
+                c->ac_emc = p[8];
+                c->ac_mosig = p[9];
+                c->ac_modata = p[17];
+                c->ac_voice = p[25];
+                c->ac_video = p[33];
+                printf("camp_ind acbar id=0x0720 len=%zu emc=%d mo_sig=%d "
+                       "mo_data=%d voice=%d video=%d\n",
+                       n, c->ac_emc, c->ac_mosig, c->ac_modata,
+                       c->ac_voice, c->ac_video);
             } else {
                 printf("camp_ind %s id=0x%04x len=%zu\n", ind_name, ind, n);
             }
@@ -7836,6 +7855,25 @@ static int test_setup_data_call(void)
                 o.camp.ind_phy_ul_ch != 5678 || o.camp.ind_phy_ul_bw != 10000 ||
                 o.camp.ind_phy_pci != 100 || o.camp.ind_phy_band != -2)
                 return 293;
+            {
+                uint8_t ac[41];
+                memset(ac, 0, sizeof ac);
+                ac[0] = 2;
+                ac[2] = 0x20;
+                ac[3] = 0x07;
+                ac[4] = 41;
+                ac[8] = 1;
+                ac[9] = 0;
+                ac[17] = 1;
+                ac[25] = 0;
+                ac[33] = 1;
+                camp_feed(&o.camp, ac, sizeof ac, t);
+                camp_feed(&o.camp, ac, sizeof ac, t);
+                if (o.camp.ind_acbar != 1 || o.camp.ac_emc != 1 ||
+                    o.camp.ac_mosig != 0 || o.camp.ac_modata != 1 ||
+                    o.camp.ac_voice != 0 || o.camp.ac_video != 1)
+                    return 294;
+            }
         }
     }
     t += PROBE_GAP_MS;

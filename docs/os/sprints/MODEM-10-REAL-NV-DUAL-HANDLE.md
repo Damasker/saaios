@@ -883,9 +883,8 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   не секрет, уже уходят по одному разу. Три тела `0x0943` в
   `21:00:02` — живые правки уже отправленных порогов, их не повторяем.
   `0x0d39` и `0x0d3a` с телом `00 02` в захвате без ответа.
-- Индикации `0x070e` `SIT_IND_NTW_STATE_CHANGED` (290 Б),
-  `0x074b` `SIT_IND_BARRING_INFO_CHANGED` (413 Б) и
-  `0x0720` `SIT_IND_AC_BARRING_INFO` (41 Б) уже пишет трассер
+- Индикации `0x070e` `SIT_IND_NTW_STATE_CHANGED` (290 Б) и
+  `0x074b` `SIT_IND_BARRING_INFO_CHANGED` (413 Б) уже пишет трассер
   `sit_event`. Тела не логируются.
 - `0x0742` `SIT_IND_PHYSICAL_CHANNEL_CONFIG` при длине 1004 байт
   идёт в `FillPhysicalChannelConfigV1_6`. Счётчик — знаковое слово
@@ -896,6 +895,14 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   rat=14 dl_ch=1500 ul_ch=19500 dl_bw=20000 ul_bw=20000 pci=114
   band=3`. wget `example.com` exit 0, тело 577 Б, rmnet1 rx
   `0→1445`, tx `240→808`.
+- `0x0720` `SIT_IND_AC_BARRING_INFO`, кадр 41 байт.
+  `OnAcBarringInfo` отдаёт пять байт: `forEmc` по смещению 8,
+  `forMoSig` по 9, `forMoData` по 17, `forMmtelVoice` по 25,
+  `forMmtelVideo` по 33. Слова factor/timer из той же записи
+  в лог не пишутся.
+- Устройство: `camp_ind acbar id=0x0720 len=41 emc=0 mo_sig=100
+  mo_data=0 voice=255 video=255`. wget `example.com` exit 0,
+  тело 577 Б, rmnet1 rx `2551→3996`, tx `1048→1676`.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
