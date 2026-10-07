@@ -1294,9 +1294,124 @@ fn cellular_ifaces() -> Vec<String> {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| cellular_iface_name(name))
+        .filter(|name| iface_bearer_live(name))
         .collect();
     names.sort();
     names
+}
+
+const CP_STATE_PATH: &str = "/sys/devices/platform/cpif/modem_state";
+const CAMP_OWNER_LOG: &str = "/data/saaios/var/modem-rfs-camp-combined-owner.log";
+
+/// Kernel CP word. Anything else stays off the row.
+fn cp_state_token(text: &str) -> Option<&str> {
+    let word = text.trim();
+    if word.is_empty()
+        || word.len() > 16
+        || !word
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return None;
+    }
+    Some(word)
+}
+
+fn read_cp_state() -> Option<String> {
+    let text = std::fs::read_to_string(CP_STATE_PATH).ok()?;
+    cp_state_token(&text).map(|word| word.to_string())
+}
+
+/// RIL registration state at the byte the stock adapter reads. Names are
+/// the stock states, not a carrier.
+fn registration_phrase(raw: u32) -> Option<&'static str> {
+    match raw {
+        0 => Some("нет регистрации"),
+        1 => Some("домашняя"),
+        2 => Some("поиск"),
+        3 => Some("отказ"),
+        4 => Some("неизвестно"),
+        5 => Some("роуминг"),
+        _ => None,
+    }
+}
+
+fn last_field_registration_raw(log: &str, field: &str) -> Option<u32> {
+    let needle = format!("field={field} registration_raw=");
+    log.lines().rev().find_map(|line| {
+        let rest = line.split_once(&needle)?.1;
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().ok()
+    })
+}
+
+fn read_data_registration_raw() -> Option<u32> {
+    let file = std::fs::File::open(CAMP_OWNER_LOG).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut file = file;
+    let max = 256 * 1024u64;
+    if len > max {
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::End(-(max as i64))).ok()?;
+    }
+    let mut text = String::new();
+    use std::io::Read;
+    file.read_to_string(&mut text).ok()?;
+    last_field_registration_raw(&text, "data")
+}
+
+fn iface_counter(name: &str, which: &str) -> u64 {
+    if name.contains('/') {
+        return 0;
+    }
+    std::fs::read_to_string(format!("/sys/class/net/{name}/statistics/{which}"))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn iface_has_ipv4(name: &str) -> bool {
+    if name.contains('/') {
+        return false;
+    }
+    let Ok(out) = std::process::Command::new("/saaios/ip")
+        .args(["-4", "-o", "addr", "show", "dev", name])
+        .output()
+    else {
+        return false;
+    };
+    out.status.success() && out.stdout.windows(5).any(|window| window == b"inet ")
+}
+
+/// Same gate as the camp: an address on the iface, or both directions moved.
+fn bearer_is_live(has_ipv4: bool, rx: u64, tx: u64) -> bool {
+    has_ipv4 || (rx > 0 && tx > 0)
+}
+
+fn iface_bearer_live(name: &str) -> bool {
+    bearer_is_live(
+        iface_has_ipv4(name),
+        iface_counter(name, "rx_bytes"),
+        iface_counter(name, "tx_bytes"),
+    )
+}
+
+fn cellular_row_status(cp: Option<&str>, registration_raw: Option<u32>, live: &[String]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(state) = cp.and_then(cp_state_token) {
+        parts.push(state.to_string());
+    }
+    if let Some(phrase) = registration_raw.and_then(registration_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if !live.is_empty() {
+        parts.push(live.join(" · "));
+    }
+    if parts.is_empty() {
+        "Нет модема".to_string()
+    } else {
+        parts.join(" · ")
+    }
 }
 
 /// Capture nodes in `video4linux`. `v4l-touch*` is the panel, not a
@@ -6567,6 +6682,8 @@ struct MeFacts {
     bluetooth_paired: usize,
     bluetooth_present: bool,
     cellular_ifaces: Vec<String>,
+    cellular_cp: Option<String>,
+    cellular_registration_raw: Option<u32>,
     camera_nodes: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
@@ -6742,11 +6859,15 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 } else {
                     SettingRow::readout("Bluetooth", "Нет адаптера").row
                 },
-                if facts.cellular_ifaces.is_empty() {
-                    SettingRow::readout("Сотовая сеть", "Нет модема").row
-                } else {
-                    SettingRow::readout("Сотовая сеть", facts.cellular_ifaces.join(" · ")).row
-                },
+                SettingRow::readout(
+                    "Сотовая сеть",
+                    cellular_row_status(
+                        facts.cellular_cp.as_deref(),
+                        facts.cellular_registration_raw,
+                        &facts.cellular_ifaces,
+                    ),
+                )
+                .row,
                 SettingRow::cycle(
                     "Удалённый доступ (SSH)",
                     remote_status,
@@ -7052,6 +7173,8 @@ fn me_fixture_facts() -> MeFacts {
         bluetooth_paired: 0,
         bluetooth_present: true,
         cellular_ifaces: Vec::new(),
+        cellular_cp: None,
+        cellular_registration_raw: None,
         camera_nodes: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
@@ -11099,6 +11222,8 @@ impl Shell {
             bluetooth_paired: bluetooth_paired_count(),
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
+            cellular_cp: read_cp_state(),
+            cellular_registration_raw: read_data_registration_raw(),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
@@ -12543,7 +12668,8 @@ mod tests {
         bluetooth_list_action_at, bluetooth_list_pattern, bluetooth_list_row_count,
         bluetooth_list_rows, bluetooth_pair_error_from, bluetooth_scan_pattern,
         calibration_requested, capability_label, capture_nodes_from_v4l_listing,
-        cellular_ifaces_from_net_listing, consent_action_at, consent_content_cards, consent_header,
+        cellular_ifaces_from_net_listing, cellular_row_status, bearer_is_live, cp_state_token,
+        last_field_registration_raw, consent_action_at, consent_content_cards, consent_header,
         content_action_at, dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header,
         diagnostic_row, diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space,
         ensure_me_row_cache, field_shows_context_focus, flatten_me_rows, format_utc_offset,
@@ -14487,6 +14613,36 @@ mod tests {
         assert!(cellular.dispatch.is_none());
         assert!(!cellular.card.status.contains("LTE"));
         assert!(!cellular.card.status.contains("dBm"));
+    }
+
+    #[test]
+    fn cellular_row_shows_cp_registration_and_live_bearer_only() {
+        assert_eq!(cellular_row_status(None, None, &[]), "Нет модема");
+        assert_eq!(
+            cellular_row_status(Some("ONLINE"), Some(0), &[]),
+            "ONLINE · нет регистрации"
+        );
+        let online = cellular_row_status(Some("ONLINE"), Some(0), &[]);
+        assert!(!online.contains("LTE"));
+        assert!(!online.contains("Kyivstar"));
+        assert_eq!(
+            cellular_row_status(Some("ONLINE"), Some(1), &["rmnet1".into()]),
+            "ONLINE · домашняя · rmnet1"
+        );
+        assert_eq!(cp_state_token("ONLINE\n"), Some("ONLINE"));
+        assert_eq!(cp_state_token("offline"), None);
+        assert_eq!(
+            last_field_registration_raw(
+                "camp_reg field=voice registration_raw=3 reject_raw=0\n\
+                 camp_reg field=data registration_raw=1 reject_raw=0 lac=0\n",
+                "data"
+            ),
+            Some(1)
+        );
+        assert!(bearer_is_live(true, 0, 0));
+        assert!(bearer_is_live(false, 10, 4));
+        assert!(!bearer_is_live(false, 0, 336));
+        assert!(!bearer_is_live(false, 0, 0));
     }
 
     #[test]
