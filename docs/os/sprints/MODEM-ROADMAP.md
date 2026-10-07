@@ -286,11 +286,11 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Started** (host TOC/stage/plan/executor/failure model) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
-| MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
+| MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
-| MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Ready** (host done, device-gated) | **yes** |
+| MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
 ## MODEM-00
 
@@ -1063,6 +1063,15 @@ subscriber identity without a live, reviewed source.
 «Дежурство / удержание». `handoff-exit` и прочие слова в кэш не
 попадают. Owner остался один, CP `ONLINE`, счётчики `rmnet1`
 ненулевые. Перезагрузки для этого шага не было.
+Радио и присутствие SIM (`29092e3`, runtime `7904ac65…`, оболочка
+`9ff8d8fb…`) читаются из того же лога camp. В кэш попадают только
+`radio_raw=10` как `cellular.radio=on` и последнее состояние
+приложения: `ready`, `present` или `absent`. На этой загрузке кэш
+даёт `cellular.radio=on` и `cellular.sim_app=present` (последняя
+строка `apps=1`; более ранняя `camp_sim=ready` остаётся в логе).
+В «Наблюдениях» это «Радио / включено» и «SIM / есть». Состояние
+PIN в кэш не пишется. Owner один, CP `ONLINE`, `saai-displayd`
+остался.
 
 ## Non-goals For Now
 
