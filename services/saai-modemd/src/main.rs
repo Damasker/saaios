@@ -6,6 +6,7 @@ use saai_modemd::soft_lock::{
     self, SoftLockSnapshot, APP_STATE_PIN, PIN1_DISABLED, PIN1_ENABLED_VERIFIED,
     TRAY_BEARER_CHASE_CMD, TRAY_BEARER_CHASE_ON_DEVICE,
 };
+use saai_modemd::rfs_policy;
 use saai_modemd::runtime_model::{self, QueryAdmission};
 use saai_modemd::supervise::{self, FirstAction, HoldNote};
 use sha2::{Digest, Sha256};
@@ -115,6 +116,13 @@ enum Cmd {
         modem_state: PathBuf,
         #[arg(long, default_value = "/proc")]
         proc: PathBuf,
+    },
+    /// Say how one RFS command would be answered. Opens nothing.
+    RfsPolicy {
+        #[arg(long)]
+        file: u32,
+        #[arg(long)]
+        cmd: u16,
     },
     /// Stay up for this boot. Start the existing camp handoff only when the
     /// CP is OFFLINE (or not loaded) and the owner is not already running.
@@ -350,6 +358,29 @@ fn run() -> Result<()> {
                 }
             }
             println!("hardware_actions={hardware}");
+        }
+        Cmd::RfsPolicy { file, cmd } => {
+            let decision = rfs_policy::decide_rfs(file, cmd);
+            match decision {
+                rfs_policy::RfsDecision::Deny => {
+                    println!("rfs=deny");
+                }
+                other => {
+                    let file_name = match other {
+                        rfs_policy::RfsDecision::OpenCopy(file)
+                        | rfs_policy::RfsDecision::QuarantineWrite(file)
+                        | rfs_policy::RfsDecision::QuarantineStatus(file) => {
+                            rfs_policy::file_word(file)
+                        }
+                        rfs_policy::RfsDecision::Deny => unreachable!(),
+                    };
+                    println!(
+                        "rfs={} file={file_name}",
+                        rfs_policy::decision_word(other)
+                    );
+                }
+            }
+            println!("hardware_actions=none");
         }
         Cmd::Supervise {
             modem_state,
