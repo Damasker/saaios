@@ -288,7 +288,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | Backlog | gated |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (READY observed; camp and bearer unresolved) | gated |
 | MODEM-07 | RFS design and refusal policy | **In progress** (manual full quarantine exchange complete; production service pending) | diagnostic only |
-| MODEM-08 | Long-running `saai-modemd` lifecycle | Backlog | **yes** |
+| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp per boot, then hold) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Ready** (host done, device-gated) | **yes** |
 
@@ -1008,6 +1008,19 @@ query, controlled exit, and no residual mounted sensitive partitions.
 
 **Threat:** hard-to-debug boot regressions. PID 1 must remain bootable without
 `saai-modemd`.
+
+**Один запуск на загрузку (2026-10-07, `083c29c`).** `modem-boot.sh`
+(`d7e0eb70…`) ждёт PCIe, убирает прошлые логи и делает exec
+`saai-modemd supervise` (`889e0dc1…`). Если бинарника нет, скрипт
+запускает тот же handoff. CP отсутствует или `OFFLINE`, и owner не
+запущен: один handoff. Иначе процесс только остаётся. После выхода
+handoff второй camp не стартует. На этой загрузке лог:
+`supervise=launch-once cp=missing`, `handoff-exit code=0`,
+`supervise=hold`; один owner; `camp_setup` на rmnet1 `up=1 add=1
+route=1`; wget завершился 0, тело 577 байт, счётчики rmnet1
+`0/192` → `1445/760`. Падение owner, выключение CP и закрытие
+MODEM-04…07 в этот шаг не входят. PID 1 по-прежнему стартует только
+скрипт.
 
 ## MODEM-09
 
