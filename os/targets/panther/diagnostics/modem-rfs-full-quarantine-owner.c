@@ -377,6 +377,12 @@ struct camp_driver {
     /* 0x0604: count at +8, then the same 292-byte data-call item the
      * setup reply carries. Only cid, active and PDP type are logged. */
     int ind_dc_count, ind_dc_cid, ind_dc_active, ind_dc_pdp;
+    /* 0x0742 V1.6 first record. Count is the signed word at +8.
+     * Context ids stay off the log. */
+    int ind_phy;
+    int ind_phy_count, ind_phy_status, ind_phy_rat;
+    int ind_phy_dl_ch, ind_phy_ul_ch, ind_phy_dl_bw, ind_phy_ul_bw;
+    int ind_phy_pci, ind_phy_band;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3733,6 +3739,14 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         } else if (ind == 0x0945 && n >= 24) {
             ind_name = "linkcap";
             ind_seen = &c->ind_linkcap;
+        } else if (ind == 0x0742 && n >= 74) {
+            /* FillPhysicalChannelConfigV1_6: length 1004 takes this
+             * path. Record stride is 62, the first record starts at
+             * +12. Build (HAL > 0x15) names the words status, rat,
+             * downlink/uplink channel, downlink/uplink bandwidth,
+             * physical cell id and band. */
+            ind_name = "phy";
+            ind_seen = &c->ind_phy;
         }
         if (ind_seen && !*ind_seen) {
             *ind_seen = 1;
@@ -3761,6 +3775,29 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                            n, count, p[11], p[12], p[13]);
                 } else {
                     printf("camp_ind datacall id=0x0604 len=%zu count=%u\n",
+                           n, count);
+                }
+            } else if (ind == 0x0742) {
+                int count = (int)little32(p + 8);
+                c->ind_phy_count = count;
+                if (count >= 1) {
+                    c->ind_phy_status = p[12];
+                    c->ind_phy_rat = (int)sit_net_rat_map(p[17]);
+                    c->ind_phy_dl_bw = (int)little32(p + 13);
+                    c->ind_phy_dl_ch = (int)little32(p + 19);
+                    c->ind_phy_pci = (int)little32(p + 60);
+                    c->ind_phy_ul_ch = (int)little32(p + 64);
+                    c->ind_phy_ul_bw = (int)little32(p + 68);
+                    c->ind_phy_band = (int)(int16_t)little16(p + 72);
+                    printf("camp_ind phy id=0x0742 len=%zu count=%d "
+                           "status=%d rat=%d dl_ch=%d ul_ch=%d dl_bw=%d "
+                           "ul_bw=%d pci=%d band=%d\n",
+                           n, count, c->ind_phy_status, c->ind_phy_rat,
+                           c->ind_phy_dl_ch, c->ind_phy_ul_ch,
+                           c->ind_phy_dl_bw, c->ind_phy_ul_bw,
+                           c->ind_phy_pci, c->ind_phy_band);
+                } else {
+                    printf("camp_ind phy id=0x0742 len=%zu count=%d\n",
                            n, count);
                 }
             } else {
@@ -7774,6 +7811,32 @@ static int test_setup_data_call(void)
             o.camp.link_ul != 50 || o.camp.link_dl2 != 0 ||
             o.camp.link_ul2 != -1)
             return 292;
+        {
+            uint8_t phy[74];
+            memset(phy, 0, sizeof phy);
+            phy[0] = 2;
+            phy[2] = 0x42;
+            phy[3] = 0x07;
+            phy[4] = 74;
+            put_little32(phy + 8, 1);
+            phy[12] = 1;
+            put_little32(phy + 13, 20000);
+            phy[17] = 20;
+            put_little32(phy + 19, 1234);
+            put_little32(phy + 60, 100);
+            put_little32(phy + 64, 5678);
+            put_little32(phy + 68, 10000);
+            phy[72] = 0xfe;
+            phy[73] = 0xff;
+            camp_feed(&o.camp, phy, sizeof phy, t);
+            camp_feed(&o.camp, phy, sizeof phy, t);
+            if (o.camp.ind_phy != 1 || o.camp.ind_phy_count != 1 ||
+                o.camp.ind_phy_status != 1 || o.camp.ind_phy_rat != 14 ||
+                o.camp.ind_phy_dl_bw != 20000 || o.camp.ind_phy_dl_ch != 1234 ||
+                o.camp.ind_phy_ul_ch != 5678 || o.camp.ind_phy_ul_bw != 10000 ||
+                o.camp.ind_phy_pci != 100 || o.camp.ind_phy_band != -2)
+                return 293;
+        }
     }
     t += PROBE_GAP_MS;
     camp_cap_n = 0;

@@ -884,10 +884,18 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `21:00:02` — живые правки уже отправленных порогов, их не повторяем.
   `0x0d39` и `0x0d3a` с телом `00 02` в захвате без ответа.
 - Индикации `0x070e` `SIT_IND_NTW_STATE_CHANGED` (290 Б),
-  `0x0742` `SIT_IND_PHYSICAL_CHANNEL_CONFIG` (1004 Б),
   `0x074b` `SIT_IND_BARRING_INFO_CHANGED` (413 Б) и
   `0x0720` `SIT_IND_AC_BARRING_INFO` (41 Б) уже пишет трассер
   `sit_event`. Тела не логируются.
+- `0x0742` `SIT_IND_PHYSICAL_CHANNEL_CONFIG` при длине 1004 байт
+  идёт в `FillPhysicalChannelConfigV1_6`. Счётчик — знаковое слово
+  по смещению 8, первая запись с +12, шаг 62. В лог один раз:
+  status, RAT через таблицу `0xd8afc`, номера каналов, ширина
+  downlink/uplink, PCI и band. Список context id не пишется.
+- Устройство: `camp_ind phy id=0x0742 len=1004 count=1 status=1
+  rat=14 dl_ch=1500 ul_ch=19500 dl_bw=20000 ul_bw=20000 pci=114
+  band=3`. wget `example.com` exit 0, тело 577 Б, rmnet1 rx
+  `0→1445`, tx `240→808`.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
