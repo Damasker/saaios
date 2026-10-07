@@ -853,3 +853,13 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   `camp_unsol` `elapsed_ms=43855` `error_raw=0` len 12.
   wget `example.com` exit 0, тело 577 Б, rmnet1 rx `0→1446`,
   tx `192→760`.
+
+### Возможности телефона `0x0615`
+
+- Сток дважды читает `SIT_GET_PHONE_CAPABILITY`. Запрос — 12 байт,
+  поле длины в заголовке остаётся 0 (у остальных пустых GET там 12).
+  Ответ 16 байт, `err=0`, четыре счётчика `2,1,1,2`. Owner шлёт
+  этот запрос один раз после остальных порогов сигнала.
+- Устройство: `camp_phonecap` `elapsed_ms=108343` `error_raw=0`
+  len 16, `pay=2,1,1,2`. wget `example.com` exit 0, тело 577 Б,
+  rmnet1 rx `0→1445`, tx `240→808`.

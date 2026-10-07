@@ -359,6 +359,9 @@ struct camp_driver {
     /* Initial stock 0x0943 bodies after the GERAN criteria already sent.
      * The later capture rows are live threshold updates and stay out. */
     int sigcrit_extra;
+    /* Stock SIT_GET_PHONE_CAPABILITY. The 12-byte header keeps a zero
+     * length field; every other empty GET in the capture stores 12. */
+    int phonecap_sent;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3738,6 +3741,16 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
         printf("camp_vonrget response=yes error_raw=%u len=%zu\n", error, n);
         return;
     }
+    if (id == 0x0615) {
+        if (!error && n >= 16)
+            printf("camp_phonecap response=yes error_raw=0 len=%zu "
+                   "pay=%u,%u,%u,%u\n",
+                   n, p[12], p[13], p[14], p[15]);
+        else
+            printf("camp_phonecap response=yes error_raw=%u len=%zu\n",
+                   error, n);
+        return;
+    }
     if (id == 0x0949 || id == 0x090b || id == 0x0903 ||
         id == 0x0711 || id == 0x0740 || id == 0x024d ||
         id == 0x0943 || id == 0x0107 || id == 0x0944 || id == 0x0106 ||
@@ -5221,6 +5234,35 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_sent++;
         printf("camp_sigcrit=sent access=%u flag=%u on=%u elapsed_ms=%lld\n",
                (unsigned)row->access, row->flag, row->on,
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Stock reads the phone capability twice with the same 12-byte
+     * header. The length field stays 0. Reply is four small counts. */
+    if (c->data_home && c->reg_complete && c->xcapstop0_sent &&
+        (c->ratbm_enabled || c->ratbm_set_sent) &&
+        c->sigcrit_extra >= (int)(sizeof camp_sig_more / sizeof camp_sig_more[0]) &&
+        !c->phonecap_sent) {
+        uint8_t f[12];
+        ++c->probe_token;
+        memset(f, 0, sizeof f);
+        f[2] = 0x15;
+        f[3] = 0x06;
+        put_little32(f + 6, c->probe_token);
+        c->phonecap_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->phonecap_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0615;
+        c->probe_name = "phonecap";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_phonecap=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -7508,6 +7550,18 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x0615 ||
+        camp_cap[0][4] != 0 || camp_cap[0][5] != 0)
+        return 282;
+    host_sit_reply(ack, sizeof ack, 0x0615, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.phonecap_sent) return 283;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -7528,6 +7582,7 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x0740 ||
                        little16(camp_cap[0] + 2) == 0x024d ||
                        little16(camp_cap[0] + 2) == 0x0943 ||
+                       little16(camp_cap[0] + 2) == 0x0615 ||
                        little16(camp_cap[0] + 2) == 0x0107 ||
                        little16(camp_cap[0] + 2) == 0x0944 ||
                        little16(camp_cap[0] + 2) == 0x0106 ||
