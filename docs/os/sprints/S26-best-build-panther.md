@@ -279,12 +279,11 @@ Host-тесты `saai-ui-core` + `saai-shell`: 319 + 82 passed.
 `934bd2633948566c25db91114a2465b99948da3adaff3913379cced0a4fc9710`.
 `vendor_boot` не пересобирался и не прошивался. Слот B не трогался.
 PID 1 один раз запускает `/data/saaios/bin/modem-boot.sh`.
-На загрузке с этим образом CP дошёл до ONLINE, в логе есть
-`camp_ind datacall` (`active=1`). Команды `ip` тогда не нашли
-`/saaios/ip`, счётчики rmnet1 остались 0. Скрипт на `/data` после
-этого — `905947d`, он ждёт `pcie_exynos_gs` и `google_modemctl` и
-выставляет `PATH=/saaios:/bin:/usr/bin`. Подтверждение wget после
-этой правки ещё не снято: запись в COM13 перестала проходить.
+Скрипт на `/data` — `905947d`: ждёт `pcie_exynos_gs` и
+`google_modemctl`, затем выставляет `PATH=/saaios:/bin:/usr/bin`.
+Загрузка с этим скриптом: CP ONLINE, `camp_setup` rmnet1
+`up=1 add=1 route=1` для IPv4 и IPv6. wget `example.com` код 0,
+тело 577 Б, rmnet1 rx `0→1445`, tx `432→1000`.
 
 Заполняется при закрытии каждого воркстрима: commit, test log, image
 SHA-256, bearer-доказательство (`rmnet`/IPv4/rx-tx), render-node

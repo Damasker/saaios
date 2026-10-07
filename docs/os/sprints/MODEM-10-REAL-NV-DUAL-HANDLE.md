@@ -929,8 +929,9 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
   Повторного старта нет. SOS не шлётся.
   Прошит `init_boot_a`
   `934bd2633948566c25db91114a2465b99948da3adaff3913379cced0a4fc9710`
-  (`3888d4f`). На той загрузке CP стал ONLINE и пришёл
-  `camp_ind datacall`. `ip` ещё не был в PATH, rmnet1 rx/tx остались 0.
+  (`3888d4f`), скрипт на `/data` — `905947d`. Загрузка: CP ONLINE,
+  `camp_setup` rmnet1 `up=1 add=1 route=1`. wget `example.com`
+  код 0, тело 577 Б, rmnet1 rx `0→1445`, tx `432→1000`.
 - Вне этой маски сток ещё шлёт `0x0906` `SIT_IND_SIGNAL_STRENGTH`,
   `0x0604` `SIT_IND_DATA_CALL_LIST_CHANGED` и
   `0x0945` `SIT_IND_CURRENT_LINK_CAPACITY_ESTIMATE`. Первая запись
