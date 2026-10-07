@@ -1372,7 +1372,7 @@ fn last_field_registration_raw(log: &str, field: &str) -> Option<u32> {
     })
 }
 
-fn read_data_registration_raw() -> Option<u32> {
+fn read_camp_owner_log() -> Option<String> {
     let file = std::fs::File::open(CAMP_OWNER_LOG).ok()?;
     let len = file.metadata().ok()?.len();
     let mut file = file;
@@ -1384,7 +1384,19 @@ fn read_data_registration_raw() -> Option<u32> {
     let mut text = String::new();
     use std::io::Read;
     file.read_to_string(&mut text).ok()?;
-    last_field_registration_raw(&text, "data")
+    Some(text)
+}
+
+fn read_data_registration_raw() -> Option<u32> {
+    last_field_registration_raw(&read_camp_owner_log()?, "data")
+}
+
+fn read_radio_token() -> Option<String> {
+    saai_observation::last_radio_token(&read_camp_owner_log()?).map(str::to_string)
+}
+
+fn read_sim_presence() -> Option<String> {
+    saai_observation::last_sim_presence(&read_camp_owner_log()?).map(str::to_string)
 }
 
 fn iface_counter(name: &str, which: &str) -> u64 {
@@ -1423,12 +1435,24 @@ fn iface_bearer_live(name: &str) -> bool {
     )
 }
 
-fn cellular_row_status(cp: Option<&str>, registration_raw: Option<u32>, live: &[String]) -> String {
+fn cellular_row_status(
+    cp: Option<&str>,
+    registration_raw: Option<u32>,
+    radio: Option<&str>,
+    sim: Option<&str>,
+    live: &[String],
+) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(state) = cp.and_then(cp_state_token) {
         parts.push(state.to_string());
     }
     if let Some(phrase) = registration_raw.and_then(registration_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = radio.and_then(radio_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = sim.and_then(sim_presence_phrase) {
         parts.push(phrase.to_string());
     }
     if !live.is_empty() {
@@ -6749,6 +6773,8 @@ struct MeFacts {
     cellular_ifaces: Vec<String>,
     cellular_cp: Option<String>,
     cellular_registration_raw: Option<u32>,
+    cellular_radio: Option<String>,
+    cellular_sim: Option<String>,
     camera_nodes: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
@@ -6929,6 +6955,8 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                     cellular_row_status(
                         facts.cellular_cp.as_deref(),
                         facts.cellular_registration_raw,
+                        facts.cellular_radio.as_deref(),
+                        facts.cellular_sim.as_deref(),
                         &facts.cellular_ifaces,
                     ),
                 )
@@ -7240,6 +7268,8 @@ fn me_fixture_facts() -> MeFacts {
         cellular_ifaces: Vec::new(),
         cellular_cp: None,
         cellular_registration_raw: None,
+        cellular_radio: None,
+        cellular_sim: None,
         camera_nodes: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
@@ -11289,6 +11319,8 @@ impl Shell {
             cellular_ifaces: cellular_ifaces(),
             cellular_cp: read_cp_state(),
             cellular_registration_raw: read_data_registration_raw(),
+            cellular_radio: read_radio_token(),
+            cellular_sim: read_sim_presence(),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
@@ -14682,17 +14714,31 @@ mod tests {
 
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
-        assert_eq!(cellular_row_status(None, None, &[]), "Нет модема");
+        assert_eq!(cellular_row_status(None, None, None, None, &[]), "Нет модема");
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), &[]),
+            cellular_row_status(Some("ONLINE"), Some(0), None, None, &[]),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), &[]);
+        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, &[]);
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(1), &["rmnet1".into()]),
+            cellular_row_status(Some("ONLINE"), Some(1), None, None, &["rmnet1".into()]),
             "ONLINE · домашняя · rmnet1"
+        );
+        assert_eq!(
+            cellular_row_status(
+                Some("ONLINE"),
+                Some(1),
+                Some("on"),
+                Some("present"),
+                &["rmnet1".into()]
+            ),
+            "ONLINE · домашняя · включено · есть · rmnet1"
+        );
+        assert_eq!(
+            cellular_row_status(Some("ONLINE"), Some(1), Some("pin"), Some("pin1"), &[]),
+            "ONLINE · домашняя"
         );
         assert_eq!(cp_state_token("ONLINE\n"), Some("ONLINE"));
         assert_eq!(cp_state_token("offline"), None);

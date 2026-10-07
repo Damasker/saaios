@@ -139,7 +139,7 @@ pub fn last_supervisor_token(log: &str) -> Option<&str> {
     })
 }
 
-fn last_radio_token(log: &str) -> Option<&'static str> {
+pub fn last_radio_token(log: &str) -> Option<&'static str> {
     for line in log.lines().rev() {
         if let Some(rest) = line.split_once("field=radio radio_raw=") {
             let digits: String = rest.1.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -156,7 +156,7 @@ fn last_radio_token(log: &str) -> Option<&'static str> {
 }
 
 /// Last SIM application fact from the camp log. PIN state stays out.
-fn last_sim_presence(log: &str) -> Option<&'static str> {
+pub fn last_sim_presence(log: &str) -> Option<&'static str> {
     for line in log.lines().rev() {
         if line.contains("camp_sim=ready") {
             return Some("ready");

@@ -11,8 +11,8 @@ mod model;
 
 pub use cache::{ObservationCache, WorldSnapshot};
 pub use cellular::{
-    is_cellular_iface, observations_from_cellular, CellularReading, IfaceSample, KEY_BEARER,
-    KEY_CP_STATE, KEY_REGISTRATION_RAW,
+    is_cellular_iface, last_radio_token, last_sim_presence, observations_from_cellular,
+    CellularReading, IfaceSample, KEY_BEARER, KEY_CP_STATE, KEY_REGISTRATION_RAW,
 };
 pub use health::{cpu_sampler_health, health_of, HealthReport, HealthState, COMPONENT_CPU_SAMPLER};
 pub use metrics::{
