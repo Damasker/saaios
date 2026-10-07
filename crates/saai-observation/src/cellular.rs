@@ -142,7 +142,7 @@ pub fn last_supervisor_token(log: &str) -> Option<&str> {
 fn last_radio_token(log: &str) -> Option<&'static str> {
     for line in log.lines().rev() {
         if let Some(rest) = line.split_once("field=radio radio_raw=") {
-            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = rest.1.chars().take_while(|c| c.is_ascii_digit()).collect();
             return match digits.parse::<u32>().ok() {
                 Some(10) => Some("on"),
                 _ => None,
@@ -168,7 +168,7 @@ fn last_sim_presence(log: &str) -> Option<&'static str> {
             let Some(rest) = line.split_once("apps=") else {
                 return None;
             };
-            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = rest.1.chars().take_while(|c| c.is_ascii_digit()).collect();
             return match digits.parse::<u32>().ok() {
                 Some(0) => Some("absent"),
                 Some(n) if (1..=8).contains(&n) => Some("present"),
