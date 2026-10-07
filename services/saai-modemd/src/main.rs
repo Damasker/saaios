@@ -6,7 +6,7 @@ use saai_modemd::soft_lock::{
     self, SoftLockSnapshot, APP_STATE_PIN, PIN1_DISABLED, PIN1_ENABLED_VERIFIED,
     TRAY_BEARER_CHASE_CMD, TRAY_BEARER_CHASE_ON_DEVICE,
 };
-use saai_modemd::supervise::{self, FirstAction, HoldNote};
+use saai_modemd::runtime_model::{self, QueryAdmission};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -104,6 +104,16 @@ enum Cmd {
         rmnet_tx: Option<u64>,
         #[arg(long)]
         ipv4: Option<String>,
+    },
+    /// Decide whether one reviewed GET may run. This command does not open
+    /// the modem endpoint. A running owner or the status tool is busy.
+    Query {
+        #[arg(value_parser = ["sim-status", "radio-state", "data-registration"])]
+        name: String,
+        #[arg(long, default_value = DEFAULT_MODEM_STATE)]
+        modem_state: PathBuf,
+        #[arg(long, default_value = "/proc")]
+        proc: PathBuf,
     },
     /// Stay up for this boot. Start the existing camp handoff only when the
     /// CP is OFFLINE (or not loaded) and the owner is not already running.
@@ -296,6 +306,32 @@ fn run() -> Result<()> {
             println!("doc=docs/os/targets/panther/MODEM-BLOCKER.md");
             println!("hardware_actions=none");
         }
+        Cmd::Query {
+            name,
+            modem_state,
+            proc,
+        } => {
+            let Some(query) = runtime_model::runtime_query_from_name(&name) else {
+                return Err(anyhow!("unknown query {name}"));
+            };
+            let cp = read_trimmed_optional(&modem_state);
+            let owner_running = owner_is_running(&proc)?;
+            let status_lock_busy = process_argv0_ends_with(&proc, "/sit-sim-status")?;
+            let admission = runtime_model::query_admission(cp.as_deref(), owner_running, status_lock_busy);
+            match admission {
+                QueryAdmission::Refuse(reason) => {
+                    println!("query=refuse name={name} reason={reason}");
+                }
+                QueryAdmission::Ready => {
+                    let spec = runtime_model::runtime_query_spec(query);
+                    println!(
+                        "query=ready name={name} id={:#06x} send=no",
+                        spec.request_id
+                    );
+                }
+            }
+            println!("hardware_actions=none");
+        }
         Cmd::Supervise {
             modem_state,
             handoff,
@@ -348,6 +384,10 @@ fn supervise_camp(modem_state: &Path, handoff: &Path, proc_root: &Path) -> Resul
 }
 
 fn owner_is_running(proc_root: &Path) -> Result<bool> {
+    process_argv0_ends_with(proc_root, "/modem-rfs-camp-combined-owner")
+}
+
+fn process_argv0_ends_with(proc_root: &Path, suffix: &str) -> Result<bool> {
     let Ok(entries) = fs::read_dir(proc_root) else {
         return Ok(false);
     };
@@ -361,7 +401,9 @@ fn owner_is_running(proc_root: &Path) -> Result<bool> {
             continue;
         }
         let cmdline = fs::read(entry.path().join("cmdline")).unwrap_or_default();
-        if supervise::owner_in_cmdline(&cmdline) {
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        let text = String::from_utf8_lossy(argv0);
+        if text.ends_with(suffix) {
             return Ok(true);
         }
     }

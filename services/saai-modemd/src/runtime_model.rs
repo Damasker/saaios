@@ -118,6 +118,40 @@ pub fn runtime_query_spec(query: RuntimeQuery) -> RuntimeQuerySpec {
     }
 }
 
+pub fn runtime_query_from_name(name: &str) -> Option<RuntimeQuery> {
+    match name {
+        "sim-status" => Some(RuntimeQuery::SimStatus),
+        "radio-state" => Some(RuntimeQuery::RadioState),
+        "data-registration" => Some(RuntimeQuery::DataRegistration),
+        _ => None,
+    }
+}
+
+/// Whether a one-shot query may open the modem endpoint.
+/// `Ready` still does not send by itself. The owner and the status lock
+/// both mean someone else already holds the channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryAdmission {
+    Ready,
+    Refuse(&'static str),
+}
+
+pub fn query_admission(
+    cp_state: Option<&str>,
+    owner_running: bool,
+    status_lock_busy: bool,
+) -> QueryAdmission {
+    if owner_running {
+        QueryAdmission::Refuse("owner")
+    } else if status_lock_busy {
+        QueryAdmission::Refuse("lock")
+    } else if cp_state.map(str::trim) != Some("ONLINE") {
+        QueryAdmission::Refuse("cp")
+    } else {
+        QueryAdmission::Ready
+    }
+}
+
 pub fn runtime_query_name(query: RuntimeQuery) -> &'static str {
     match query {
         RuntimeQuery::SimStatus => "sim-status",
@@ -237,6 +271,27 @@ fn le_u32(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_admission_refuses_a_busy_endpoint_and_an_offline_cp() {
+        assert_eq!(
+            query_admission(Some("ONLINE"), true, false),
+            QueryAdmission::Refuse("owner")
+        );
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, true),
+            QueryAdmission::Refuse("lock")
+        );
+        assert_eq!(
+            query_admission(Some("OFFLINE"), false, false),
+            QueryAdmission::Refuse("cp")
+        );
+        assert_eq!(query_admission(None, false, false), QueryAdmission::Refuse("cp"));
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, false),
+            QueryAdmission::Ready
+        );
+    }
 
     #[test]
     fn request_builders_match_reviewed_diagnostic() {
