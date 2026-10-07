@@ -819,8 +819,7 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 - По-прежнему не шлются: `0x0413` `SIT_GET_IMEI_MAPPING_INFO`,
   `0x0c14` `SIT_SET_GPS_SUPL_NI_READY` (два байта приходят из
   буфера вызывающего, не константа), `0x020e` `SIT_CLOSE_SIM_CHANNEL`
-  (тело в захвате не записано), `0x4605` `SendSvnInfo` (две
-  цифры из `ro.vendor.build.svn`, на SaaiOS этого свойства нет),
+  (в сыром захвате тела `u32` 1 и 2, кадр закрывает SIM-канал),
   плюс кадры с секретами `0x0400`, `0x0403`, `0x0100`, `0x0208`,
   `0x0209`, `0x020f`, `0x0247`, `0x0922`, `0x090d`,
   `0x096d` null-cipher, `0x097b` identifier disclosure,
@@ -863,3 +862,17 @@ strace `-s 65536 -P /dev/umts_ipc0 -P /dev/umts_ipc1`, полные тела
 - Устройство: `camp_phonecap` `elapsed_ms=108343` `error_raw=0`
   len 16, `pay=2,1,1,2`. wget `example.com` exit 0, тело 577 Б,
   rmnet1 rx `0→1445`, tx `240→808`.
+
+### Третий AIMS stop, ATR и SVN
+
+- Сток шлёт `0x0d3c` ещё раз с телом `00 02`, ответ `err=0` len 12.
+  Парная запись `0x0d3a` с тем же телом в захвате без ответа,
+  поэтому не шлётся. Дальше пустой `SIT_GET_ATR` `0x0212`
+  (12 байт, поле длины 12, в стоке `err=0`, ответ 47 байт) и
+  `SendSvnInfo` `0x4605` (14 байт, две цифры из захвата,
+  `err=0`, ответ 12 байт). Тело ATR и цифры SVN в лог не пишутся.
+- Устройство: `camp_xcapstop2` `elapsed_ms=110035` `error_raw=0`
+  len 12, `camp_atr` `elapsed_ms=111574` `error_raw=0` len 47,
+  `camp_svn` `elapsed_ms=113084` `error_raw=0` len 12.
+  wget `example.com` exit 0, тело 577 Б, rmnet1 rx `936→2381`,
+  tx `720→1288`.

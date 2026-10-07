@@ -362,6 +362,11 @@ struct camp_driver {
     /* Stock SIT_GET_PHONE_CAPABILITY. The 12-byte header keeps a zero
      * length field; every other empty GET in the capture stores 12. */
     int phonecap_sent;
+    /* After the phone-capability read: one more XCAPM stop whose body
+     * is 00 02 (the 0x0d3a twin has no paired reply), one empty
+     * SIT_GET_ATR, and one SendSvnInfo. ATR and SVN replies stay off
+     * the log. */
+    int xcapstop2_sent, atr_sent, svn_sent;
     /* How many of the five stock link-capacity criteria frames have
      * been sent. Access words are camp_link_access[]. */
     int linkcrit_next;
@@ -3751,6 +3756,11 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
                    error, n);
         return;
     }
+    if (id == 0x0212 || id == 0x4605) {
+        const char *step = id == 0x0212 ? "atr" : "svn";
+        printf("camp_%s response=yes error_raw=%u len=%zu\n", step, error, n);
+        return;
+    }
     if (id == 0x0949 || id == 0x090b || id == 0x0903 ||
         id == 0x0711 || id == 0x0740 || id == 0x024d ||
         id == 0x0943 || id == 0x0107 || id == 0x0944 || id == 0x0106 ||
@@ -5263,6 +5273,75 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_phonecap=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* Stock sends 0x0d3c a third time, body 00 02, err 0. The matching
+     * 0x0d3a write has no paired reply, so it stays unsent. */
+    if (c->data_home && c->reg_complete && c->phonecap_sent &&
+        !c->xcapstop2_sent) {
+        uint8_t f[14];
+        ++c->probe_token;
+        camp_fill_pair(f, 0x0d3c, c->probe_token, 0, 2);
+        c->xcapstop2_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->xcapstop2_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0d3c;
+        c->probe_name = "xcapstop2";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_xcapstop2=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SIT_GET_ATR. Empty GET, length field 12. The 47-byte reply can
+     * carry card bytes, so the log keeps error and length only. */
+    if (c->data_home && c->reg_complete && c->xcapstop2_sent &&
+        !c->atr_sent) {
+        ++c->probe_token;
+        c->atr_sent = 1;
+        int wrote = sit_send_get_once(o->ipc, 0x0212, c->probe_token);
+        if (wrote) {
+            c->atr_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x0212;
+        c->probe_name = "atr";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_atr=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    /* SendSvnInfo. Stock writes the two vendor-build digits. They are
+     * version metadata; the log records error and length only. */
+    if (c->data_home && c->reg_complete && c->atr_sent && !c->svn_sent) {
+        uint8_t f[14];
+        ++c->probe_token;
+        camp_fill_pair(f, 0x4605, c->probe_token, 0x39, 0x34);
+        c->svn_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) {
+            c->svn_sent = 0;
+            c->probe_next_ms = now + PROBE_GAP_MS;
+            return;
+        }
+        c->probe_pending = 1;
+        c->probe_id = 0x4605;
+        c->probe_name = "svn";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_svn=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -7562,6 +7641,42 @@ static int test_setup_data_call(void)
     host_sit_write_override = camp_capture_write;
     camp_probe_advance(&o, t);
     host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 14 ||
+        little16(camp_cap[0] + 2) != 0x0d3c ||
+        camp_cap[0][12] != 0 || camp_cap[0][13] != 2)
+        return 284;
+    host_sit_reply(ack, sizeof ack, 0x0d3c, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.xcapstop2_sent) return 285;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 12 ||
+        little16(camp_cap[0] + 2) != 0x0212 ||
+        camp_cap[0][4] != 12)
+        return 286;
+    host_sit_reply(ack, sizeof ack, 0x0212, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.atr_sent) return 287;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
+    if (camp_cap_n != 1 || camp_cap_len[0] != 14 ||
+        little16(camp_cap[0] + 2) != 0x4605 ||
+        camp_cap[0][12] != 0x39 || camp_cap[0][13] != 0x34)
+        return 288;
+    host_sit_reply(ack, sizeof ack, 0x4605, o.camp.probe_token, 0);
+    camp_feed(&o.camp, ack, sizeof ack, t + 10);
+    if (o.camp.probe_pending || !o.camp.svn_sent) return 289;
+    t += PROBE_GAP_MS;
+    camp_cap_n = 0;
+    host_sit_write_override = camp_capture_write;
+    camp_probe_advance(&o, t);
+    host_sit_write_override = NULL;
     if (camp_cap_n && (little16(camp_cap[0] + 2) == 0x0600 ||
                        little16(camp_cap[0] + 2) == 0x0625 ||
                        little16(camp_cap[0] + 2) == 0x0613 ||
@@ -7583,6 +7698,8 @@ static int test_setup_data_call(void)
                        little16(camp_cap[0] + 2) == 0x024d ||
                        little16(camp_cap[0] + 2) == 0x0943 ||
                        little16(camp_cap[0] + 2) == 0x0615 ||
+                       little16(camp_cap[0] + 2) == 0x0212 ||
+                       little16(camp_cap[0] + 2) == 0x4605 ||
                        little16(camp_cap[0] + 2) == 0x0107 ||
                        little16(camp_cap[0] + 2) == 0x0944 ||
                        little16(camp_cap[0] + 2) == 0x0106 ||
