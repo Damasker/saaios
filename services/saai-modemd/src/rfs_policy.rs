@@ -122,7 +122,7 @@ impl RfsSession {
                 return None;
             }
             let id = u32_at(frame, 8)?;
-            if !self.remember_open(id) {
+            if !carrier_path_ok(frame) || !self.remember_open(id) {
                 return Some(CarrierDecision::Deny);
             }
             return Some(CarrierDecision::ReadCopy);
@@ -144,7 +144,7 @@ impl RfsSession {
             }
             return None;
         }
-        if cmd != 5 && cmd != 6 || frame.len() < 12 {
+        if (cmd != 5 && cmd != 6) || frame.len() < 12 {
             return None;
         }
         let id = u32_at(frame, 8)?;
@@ -222,26 +222,51 @@ fn nv_decision(frame: &[u8]) -> RfsDecision {
 pub fn reviewed_dispatch() -> Vec<ChannelDecision> {
     let mut session = RfsSession::default();
     let mut frames = Vec::new();
-    frames.push(header(4, 18, 8, 4, None, true));
-    frames.push(header(6, 24, 8, 4, Some(1), false));
-    frames.push(header(6, 24, 8, 4, Some(2), false));
-    frames.push(header(6, 24, 8, 1, Some(2), false));
-    frames.push(header(3, 20, 12, 3, None, false));
-    frames.push(header(7, 12, 8, 3, None, false));
-    frames.push(header(5, 12, 8, 4, None, false));
-    frames.push(header(6, 24, 8, 4, Some(1), false));
+    frames.push(carrier_open(4));
+    frames.push(header(6, 24, 8, 4, Some(1)));
+    frames.push(header(6, 24, 8, 4, Some(2)));
+    frames.push(header(6, 24, 8, 1, Some(2)));
+    frames.push(header(3, 20, 12, 3, None));
+    frames.push(header(7, 12, 8, 3, None));
+    frames.push(header(5, 12, 8, 4, None));
+    frames.push(header(6, 24, 8, 4, Some(1)));
     frames.iter().map(|frame| session.push(frame)).collect()
 }
 
-fn header(cmd: u16, len: usize, id_at: usize, id: u32, op: Option<u32>, slash: bool) -> Vec<u8> {
+fn carrier_path_ok(frame: &[u8]) -> bool {
+    let rest = &frame[16..];
+    let Some(end) = rest.iter().position(|byte| *byte == 0) else {
+        return false;
+    };
+    let path = &rest[..end];
+    let marker = b"carrierconfig/";
+    let Some(at) = path.windows(marker.len()).position(|window| window == marker) else {
+        return false;
+    };
+    let rel = &path[at + marker.len()..];
+    !rel.is_empty()
+        && rel.len() < 192
+        && !rel.windows(2).any(|window| window == b"..")
+        && rel.iter().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'.' | b'_' | b'-')
+        })
+}
+
+fn carrier_open(id: u32) -> Vec<u8> {
+    let path = b"/carrierconfig/a\0";
+    let mut frame = vec![0u8; 16 + path.len()];
+    frame[0] = 4;
+    frame[8..12].copy_from_slice(&id.to_le_bytes());
+    frame[16..].copy_from_slice(path);
+    frame
+}
+
+fn header(cmd: u16, len: usize, id_at: usize, id: u32, op: Option<u32>) -> Vec<u8> {
     let mut frame = vec![0u8; len];
     frame[0..2].copy_from_slice(&cmd.to_le_bytes());
     frame[id_at..id_at + 4].copy_from_slice(&id.to_le_bytes());
     if let Some(op) = op {
         frame[20..24].copy_from_slice(&op.to_le_bytes());
-    }
-    if slash {
-        frame[16] = b'/';
     }
     frame
 }
@@ -292,22 +317,22 @@ mod tests {
     #[test]
     fn an_open_carrier_id_is_not_an_nv_write() {
         let mut session = RfsSession::default();
-        let open = header(4, 18, 8, 4, None, true);
+        let open = carrier_open(4);
         assert_eq!(
             session.push(&open),
             ChannelDecision::Carrier(CarrierDecision::ReadCopy)
         );
-        let read = header(6, 24, 8, 4, Some(1), false);
+        let read = header(6, 24, 8, 4, Some(1));
         assert_eq!(
             session.push(&read),
             ChannelDecision::Carrier(CarrierDecision::ReadCopy)
         );
-        let write = header(6, 24, 8, 4, Some(2), false);
+        let write = header(6, 24, 8, 4, Some(2));
         assert_eq!(
             session.push(&write),
             ChannelDecision::Carrier(CarrierDecision::Deny)
         );
-        let nv = header(6, 24, 8, 1, Some(2), false);
+        let nv = header(6, 24, 8, 1, Some(2));
         assert_eq!(
             session.push(&nv),
             ChannelDecision::Nv(RfsDecision::QuarantineWrite(NvFile::Normal))
@@ -319,7 +344,7 @@ mod tests {
             session.push(&chunk),
             ChannelDecision::Nv(RfsDecision::QuarantineWrite(NvFile::Protected))
         );
-        let short = header(6, 12, 8, 4, None, false);
+        let short = header(6, 12, 8, 4, None);
         assert_eq!(
             session.push(&short),
             ChannelDecision::Carrier(CarrierDecision::Deny)
@@ -344,18 +369,29 @@ mod tests {
         let mut session = RfsSession::default();
         for id in 10..18 {
             assert_eq!(
-                session.push(&header(4, 18, 8, id, None, true)),
+                session.push(&carrier_open(id)),
                 ChannelDecision::Carrier(CarrierDecision::ReadCopy)
             );
         }
         assert_eq!(
-            session.push(&header(4, 18, 8, 18, None, true)),
+            session.push(&carrier_open(18)),
             ChannelDecision::Carrier(CarrierDecision::Deny)
         );
-        let mut bare = header(4, 18, 8, 3, None, false);
+        let mut bare = header(4, 18, 8, 3, None);
         bare[16] = 0;
         assert_eq!(
             session.push(&bare),
+            ChannelDecision::Nv(RfsDecision::Deny)
+        );
+        let mut rejected = header(4, 20, 8, 9, None);
+        rejected[16] = b'/';
+        rejected[17] = b'a';
+        assert_eq!(
+            session.push(&rejected),
+            ChannelDecision::Carrier(CarrierDecision::Deny)
+        );
+        assert_eq!(
+            session.push(&header(6, 24, 8, 9, Some(1))),
             ChannelDecision::Nv(RfsDecision::Deny)
         );
     }
