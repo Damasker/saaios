@@ -182,11 +182,8 @@ fn run() -> Result<()> {
         } => {
             let state = read_trimmed_optional(&modem_state).unwrap_or_else(|| "missing".into());
             let bearers = cellular_ifaces(&net_class)?;
-            println!("modem_state={state}");
-            if bearers.is_empty() {
-                println!("cellular_bearers=none");
-            } else {
-                println!("cellular_bearers={}", bearers.join(","));
+            for line in status_lines(&state, &bearers, endpoint_holder_at(Path::new("/proc"))) {
+                println!("{line}");
             }
         }
         Cmd::Preflight {
@@ -688,6 +685,20 @@ fn mounts_include_original_efs(mounts: &str) -> bool {
     })
 }
 
+fn status_lines(state: &str, bearers: &[String], holder: Option<&str>) -> Vec<String> {
+    let mut lines = vec![format!("modem_state={state}")];
+    if bearers.is_empty() {
+        lines.push("cellular_bearers=none".to_string());
+    } else {
+        lines.push(format!("cellular_bearers={}", bearers.join(",")));
+    }
+    if let Some(holder) = endpoint_suffix(holder).strip_prefix(' ') {
+        lines.push(holder.to_string());
+    }
+    lines.push("hardware_actions=none".to_string());
+    lines
+}
+
 fn endpoint_suffix(holder: Option<&str>) -> String {
     match holder {
         Some(holder @ ("owner" | "modemd" | "shared")) => format!(" endpoint={holder}"),
@@ -756,6 +767,30 @@ fn assert_sha256(path: &Path, expected_hex: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_names_the_endpoint_holder_without_a_hardware_action() {
+        let lines = status_lines("ONLINE", &["rmnet1".into()], Some("owner"));
+        assert_eq!(
+            lines,
+            vec![
+                "modem_state=ONLINE".to_string(),
+                "cellular_bearers=rmnet1".to_string(),
+                "endpoint=owner".to_string(),
+                "hardware_actions=none".to_string(),
+            ]
+        );
+        let absent = status_lines("missing", &[], None);
+        assert_eq!(
+            absent,
+            vec![
+                "modem_state=missing".to_string(),
+                "cellular_bearers=none".to_string(),
+                "hardware_actions=none".to_string(),
+            ]
+        );
+        assert!(!absent.iter().any(|line| line.contains("endpoint=")));
+    }
 
     #[test]
     fn endpoint_suffix_names_only_the_holder_words() {
