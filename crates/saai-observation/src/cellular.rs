@@ -18,6 +18,7 @@ pub const KEY_RADIO: &str = "cellular.radio";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
+pub const KEY_ENDPOINT: &str = "cellular.endpoint";
 
 /// Longer than the default 30s telemetry interval, so one missed sample
 /// does not mark the row stale.
@@ -36,6 +37,8 @@ pub struct CellularReading {
     pub supervisor_log: Option<String>,
     pub owner_running: bool,
     pub boot_epoch: Option<u64>,
+    /// Who has `umts_ipc0` or `umts_rfs0` open: `owner`, `modemd`, or `shared`.
+    pub endpoint: Option<&'static str>,
     pub ifaces: Vec<IfaceSample>,
 }
 
@@ -142,7 +145,31 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(holder) = reading.endpoint {
+        out.push(text_observation(
+            KEY_ENDPOINT,
+            holder,
+            "proc.fd.modem_endpoint",
+            observed_at,
+            sequence,
+        ));
+    }
     out
+}
+
+/// `owner` holds the modem endpoint, `modemd` holds it, or both do.
+/// Neither means the key stays absent.
+pub fn endpoint_holder(owner_has: bool, modemd_has: bool) -> Option<&'static str> {
+    match (owner_has, modemd_has) {
+        (true, false) => Some("owner"),
+        (false, true) => Some("modemd"),
+        (true, true) => Some("shared"),
+        (false, false) => None,
+    }
+}
+
+pub fn link_is_modem_endpoint(target: &str) -> bool {
+    target.ends_with("/umts_ipc0") || target.ends_with("/umts_rfs0")
 }
 
 /// Newest all-digit name. Other names are ignored.
@@ -332,6 +359,7 @@ mod tests {
             supervisor_log: None,
             owner_running: true,
             boot_epoch: None,
+            endpoint: None,
             ifaces: vec![
                 sample("usb0", true, 10, 10),
                 sample("rmnet0", false, 0, 0),
@@ -364,6 +392,7 @@ mod tests {
             supervisor_log: None,
             owner_running: false,
             boot_epoch: None,
+            endpoint: None,
             ifaces: vec![sample("rmnet2", false, 0, 40)],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 1);
@@ -380,6 +409,7 @@ mod tests {
             supervisor_log: None,
             owner_running: true,
             boot_epoch: None,
+            endpoint: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 2);
@@ -402,6 +432,7 @@ mod tests {
             ),
             owner_running: false,
             boot_epoch: None,
+            endpoint: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 3);
@@ -429,6 +460,7 @@ mod tests {
             supervisor_log: None,
             owner_running: true,
             boot_epoch: None,
+            endpoint: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 8);
@@ -447,6 +479,7 @@ mod tests {
             supervisor_log: None,
             owner_running: true,
             boot_epoch: None,
+            endpoint: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 9);
@@ -471,6 +504,7 @@ mod tests {
             supervisor_log: None,
             owner_running: true,
             boot_epoch: None,
+            endpoint: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
@@ -495,6 +529,7 @@ mod tests {
             supervisor_log: Some("supervise=hold\n".into()),
             owner_running: true,
             boot_epoch: None,
+            endpoint: None,
             ifaces: vec![sample("rmnet1", true, 4, 4)],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 5);
@@ -521,6 +556,7 @@ mod tests {
             supervisor_log: None,
             owner_running: true,
             boot_epoch: Some(250),
+            endpoint: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 6);
@@ -530,5 +566,31 @@ mod tests {
         assert_eq!(rows[2].key, KEY_BOOT_EPOCH);
         assert_eq!(rows[2].value, json!(250));
         assert!(rows.iter().all(|row| row.key != KEY_REGISTRATION_RAW));
+    }
+
+    #[test]
+    fn endpoint_word_names_who_holds_the_modem_device() {
+        assert_eq!(endpoint_holder(true, false), Some("owner"));
+        assert_eq!(endpoint_holder(false, true), Some("modemd"));
+        assert_eq!(endpoint_holder(true, true), Some("shared"));
+        assert_eq!(endpoint_holder(false, false), None);
+        assert!(link_is_modem_endpoint("/dev/umts_ipc0"));
+        assert!(link_is_modem_endpoint("/dev/umts_rfs0"));
+        assert!(!link_is_modem_endpoint("/dev/umts_ipc0.bak"));
+        assert!(!link_is_modem_endpoint("umts_ipc0"));
+        let reading = CellularReading {
+            cp_text: None,
+            owner_log: None,
+            supervisor_log: None,
+            owner_running: true,
+            boot_epoch: None,
+            endpoint: Some("owner"),
+            ifaces: Vec::new(),
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 7);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].key, KEY_OWNER);
+        assert_eq!(rows[1].key, KEY_ENDPOINT);
+        assert_eq!(rows[1].value, json!("owner"));
     }
 }

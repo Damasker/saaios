@@ -175,6 +175,7 @@ fn read_cellular_reading() -> CellularReading {
         supervisor_log,
         owner_running: camp_owner_running(),
         boot_epoch: read_boot_epoch(),
+        endpoint: read_endpoint_holder(),
         ifaces,
     }
 }
@@ -198,6 +199,49 @@ fn camp_owner_running() -> bool {
         }
     }
     false
+}
+
+fn read_endpoint_holder() -> Option<&'static str> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return None;
+    };
+    let mut owner_has = false;
+    let mut modemd_has = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        let argv0 = String::from_utf8_lossy(argv0);
+        let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
+            "owner"
+        } else if argv0.ends_with("/saai-modemd") {
+            "modemd"
+        } else {
+            continue;
+        };
+        let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+        let holds = fds.flatten().any(|fd| {
+            std::fs::read_link(fd.path())
+                .ok()
+                .and_then(|target| target.to_str().map(str::to_string))
+                .is_some_and(|target| saai_observation::link_is_modem_endpoint(&target))
+        });
+        if holds {
+            match kind {
+                "owner" => owner_has = true,
+                _ => modemd_has = true,
+            }
+        }
+    }
+    saai_observation::endpoint_holder(owner_has, modemd_has)
 }
 
 fn read_boot_epoch() -> Option<u64> {

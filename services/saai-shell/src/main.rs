@@ -6473,6 +6473,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.supervisor" => "Дежурство".into(),
         "cellular.owner" => "Процесс".into(),
         "cellular.boot_epoch" => "Загрузка".into(),
+        "cellular.endpoint" => "Дескриптор".into(),
         "cellular.radio" => "Радио".into(),
         "cellular.sim_app" => "SIM".into(),
         other => other.to_string(),
@@ -6495,6 +6496,14 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.boot_epoch" {
         let epoch = value.as_u64()?;
         return Some(epoch.to_string());
+    }
+    if key == "cellular.endpoint" {
+        return match value.as_str()?.trim() {
+            "owner" => Some("camp".to_string()),
+            "modemd" => Some("служба".to_string()),
+            "shared" => Some("оба".to_string()),
+            _ => None,
+        };
     }
     if key == "cellular.supervisor" {
         let text = value.as_str()?.trim();
@@ -17588,6 +17597,16 @@ mod tests {
                         "source": "boot.archive"
                     },
                     {
+                        "key": "cellular.endpoint",
+                        "value": "owner",
+                        "source": "proc.fd.modem_endpoint"
+                    },
+                    {
+                        "key": "cellular.endpoint",
+                        "value": "pin",
+                        "source": "proc.fd.modem_endpoint"
+                    },
+                    {
                         "key": "cellular.boot_epoch",
                         "value": "notes",
                         "source": "boot.archive"
@@ -17615,7 +17634,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 8);
+        assert_eq!(rows.len(), 9);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -17631,6 +17650,8 @@ mod tests {
         assert_eq!(rows[6].value, "есть");
         assert_eq!(rows[7].label, "Загрузка");
         assert_eq!(rows[7].value, "250");
+        assert_eq!(rows[8].label, "Дескриптор");
+        assert_eq!(rows[8].value, "camp");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }
