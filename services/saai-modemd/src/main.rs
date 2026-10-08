@@ -362,11 +362,12 @@ fn run() -> Result<()> {
                 Some(epoch) => format!(" epoch={epoch}"),
                 None => String::new(),
             };
+            let endpoint_suffix = endpoint_suffix(endpoint_holder_at(Path::new("/proc")));
             let mut hardware = "none";
             match admission {
                 QueryAdmission::Refuse(reason) => {
                     println!(
-                        "query=refuse name={name} reason={reason} token={}{epoch_suffix}",
+                        "query=refuse name={name} reason={reason} token={}{epoch_suffix}{endpoint_suffix}",
                         runtime_model::query_token(query)
                     );
                 }
@@ -379,7 +380,7 @@ fn run() -> Result<()> {
                     match again {
                         QueryAdmission::Refuse(reason) => {
                             println!(
-                                "query=refuse name={name} reason={reason} token={}{epoch_suffix}",
+                                "query=refuse name={name} reason={reason} token={}{epoch_suffix}{endpoint_suffix}",
                                 runtime_model::query_token(query)
                             );
                         }
@@ -387,11 +388,11 @@ fn run() -> Result<()> {
                             hardware = "query";
                             match exchange_one_query(query) {
                                 Ok(QueryExchange::Answer(line)) => {
-                                    println!("query=answer name={name} {line}{epoch_suffix}");
+                                    println!("query=answer name={name} {line}{epoch_suffix}{endpoint_suffix}");
                                 }
                                 Ok(QueryExchange::Timeout { frames }) => {
                                     println!(
-                                        "query=timeout name={name} token={} deadline_s={} frames={frames}{epoch_suffix}",
+                                        "query=timeout name={name} token={} deadline_s={} frames={frames}{epoch_suffix}{endpoint_suffix}",
                                         runtime_model::query_token(query),
                                         runtime_model::QUERY_DEADLINE_SECS
                                     );
@@ -687,6 +688,58 @@ fn mounts_include_original_efs(mounts: &str) -> bool {
     })
 }
 
+fn endpoint_suffix(holder: Option<&str>) -> String {
+    match holder {
+        Some(holder @ ("owner" | "modemd" | "shared")) => format!(" endpoint={holder}"),
+        _ => String::new(),
+    }
+}
+
+/// Who holds `umts_ipc0` or `umts_rfs0`, from directory symlinks. The
+/// devices themselves stay closed.
+fn endpoint_holder_at(proc_root: &Path) -> Option<&'static str> {
+    let Ok(entries) = fs::read_dir(proc_root) else {
+        return None;
+    };
+    let mut owner_has = false;
+    let mut modemd_has = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        let argv0 = String::from_utf8_lossy(argv0);
+        let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
+            "owner"
+        } else if argv0.ends_with("/saai-modemd") {
+            "modemd"
+        } else {
+            continue;
+        };
+        let Ok(fds) = fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+        let holds = fds.flatten().any(|fd| {
+            fs::read_link(fd.path())
+                .ok()
+                .and_then(|target| target.to_str().map(str::to_string))
+                .is_some_and(|target| saai_observation::link_is_modem_endpoint(&target))
+        });
+        if holds {
+            match kind {
+                "owner" => owner_has = true,
+                _ => modemd_has = true,
+            }
+        }
+    }
+    saai_observation::endpoint_holder(owner_has, modemd_has)
+}
+
 fn assert_sha256(path: &Path, expected_hex: &str) -> Result<()> {
     let expected = hex::decode(expected_hex).context("expected digest is not hex")?;
     let data = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
@@ -703,6 +756,38 @@ fn assert_sha256(path: &Path, expected_hex: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_suffix_names_only_the_holder_words() {
+        assert_eq!(endpoint_suffix(Some("owner")), " endpoint=owner");
+        assert_eq!(endpoint_suffix(Some("modemd")), " endpoint=modemd");
+        assert_eq!(endpoint_suffix(Some("shared")), " endpoint=shared");
+        assert_eq!(endpoint_suffix(Some("pin")), "");
+        assert_eq!(endpoint_suffix(None), "");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn endpoint_holder_reads_symlinks_and_does_not_need_the_device() {
+        let root = std::env::temp_dir().join(format!("saai-endpoint-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("42/fd")).unwrap();
+        fs::write(
+            root.join("42/cmdline"),
+            b"/data/saaios/bin/modem-rfs-camp-combined-owner\0",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("7/fd")).unwrap();
+        fs::write(root.join("7/cmdline"), b"/data/saaios/bin/saai-modemd\0").unwrap();
+        fs::create_dir_all(root.join("notes")).unwrap();
+        std::os::unix::fs::symlink("/dev/umts_ipc0.bak", root.join("42/fd/3")).unwrap();
+        assert_eq!(endpoint_holder_at(&root), None);
+        std::os::unix::fs::symlink("/dev/umts_ipc0", root.join("42/fd/4")).unwrap();
+        assert_eq!(endpoint_holder_at(&root), Some("owner"));
+        std::os::unix::fs::symlink("/dev/umts_rfs0", root.join("7/fd/5")).unwrap();
+        assert_eq!(endpoint_holder_at(&root), Some("shared"));
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn bearer_filter_is_live_iface_only() {

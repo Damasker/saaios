@@ -2388,6 +2388,7 @@ dependencies = [
  "clap",
  "hex",
  "libc",
+ "saai-observation",
  "sha2",
 ]
 

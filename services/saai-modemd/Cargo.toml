@@ -11,3 +11,4 @@ clap.workspace = true
 hex.workspace = true
 sha2.workspace = true
 libc = "0.2"
+saai-observation.workspace = true
