@@ -174,6 +174,7 @@ fn read_cellular_reading() -> CellularReading {
         owner_log,
         supervisor_log,
         owner_running: camp_owner_running(),
+        boot_epoch: read_boot_epoch(),
         ifaces,
     }
 }
@@ -197,6 +198,15 @@ fn camp_owner_running() -> bool {
         }
     }
     false
+}
+
+fn read_boot_epoch() -> Option<u64> {
+    let entries = std::fs::read_dir("/data/saaios/var/boot-archive").ok()?;
+    let names: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    saai_observation::latest_numeric_epoch(names.iter().map(String::as_str))
 }
 
 fn read_owner_facts(path: &str) -> Option<String> {

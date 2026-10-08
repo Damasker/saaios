@@ -6472,6 +6472,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.bearer" => "Канал".into(),
         "cellular.supervisor" => "Дежурство".into(),
         "cellular.owner" => "Процесс".into(),
+        "cellular.boot_epoch" => "Загрузка".into(),
         "cellular.radio" => "Радио".into(),
         "cellular.sim_app" => "SIM".into(),
         other => other.to_string(),
@@ -6490,6 +6491,10 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.owner" {
         let text = value.as_str()?.trim();
         return owner_phrase(text).map(str::to_string);
+    }
+    if key == "cellular.boot_epoch" {
+        let epoch = value.as_u64()?;
+        return Some(epoch.to_string());
     }
     if key == "cellular.supervisor" {
         let text = value.as_str()?.trim();
@@ -17578,6 +17583,16 @@ mod tests {
                         "source": "proc.camp_owner"
                     },
                     {
+                        "key": "cellular.boot_epoch",
+                        "value": 250,
+                        "source": "boot.archive"
+                    },
+                    {
+                        "key": "cellular.boot_epoch",
+                        "value": "notes",
+                        "source": "boot.archive"
+                    },
+                    {
                         "key": "cellular.owner",
                         "value": "pin",
                         "source": "proc.camp_owner"
@@ -17600,7 +17615,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 7);
+        assert_eq!(rows.len(), 8);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -17614,6 +17629,8 @@ mod tests {
         assert_eq!(rows[5].value, "готово");
         assert_eq!(rows[6].label, "Процесс");
         assert_eq!(rows[6].value, "есть");
+        assert_eq!(rows[7].label, "Загрузка");
+        assert_eq!(rows[7].value, "250");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }

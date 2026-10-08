@@ -17,6 +17,7 @@ pub const KEY_SUPERVISOR: &str = "cellular.supervisor";
 pub const KEY_RADIO: &str = "cellular.radio";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
+pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
 
 /// Longer than the default 30s telemetry interval, so one missed sample
 /// does not mark the row stale.
@@ -34,6 +35,7 @@ pub struct CellularReading {
     pub owner_log: Option<String>,
     pub supervisor_log: Option<String>,
     pub owner_running: bool,
+    pub boot_epoch: Option<u64>,
     pub ifaces: Vec<IfaceSample>,
 }
 
@@ -131,7 +133,28 @@ pub fn observations_from_cellular(
         observed_at,
         sequence,
     ));
+    if let Some(epoch) = reading.boot_epoch {
+        out.push(observation(
+            KEY_BOOT_EPOCH,
+            Value::from(epoch),
+            "boot.archive",
+            observed_at,
+            sequence,
+        ));
+    }
     out
+}
+
+/// Newest all-digit name. Other names are ignored.
+pub fn latest_numeric_epoch<'a, I>(names: I) -> Option<u64>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    names
+        .into_iter()
+        .filter(|name| !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit()))
+        .filter_map(|name| name.parse().ok())
+        .max()
 }
 
 /// Last `supervise=` word the boot supervisor actually prints.
@@ -308,6 +331,7 @@ mod tests {
             ),
             supervisor_log: None,
             owner_running: true,
+            boot_epoch: None,
             ifaces: vec![
                 sample("usb0", true, 10, 10),
                 sample("rmnet0", false, 0, 0),
@@ -339,6 +363,7 @@ mod tests {
             owner_log: Some("camp_reg field=data registration_raw=1\n".into()),
             supervisor_log: None,
             owner_running: false,
+            boot_epoch: None,
             ifaces: vec![sample("rmnet2", false, 0, 40)],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 1);
@@ -354,6 +379,7 @@ mod tests {
             owner_log: Some("camp_reg field=radio radio_raw=1\n".into()),
             supervisor_log: None,
             owner_running: true,
+            boot_epoch: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 2);
@@ -375,6 +401,7 @@ mod tests {
                     .into(),
             ),
             owner_running: false,
+            boot_epoch: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 3);
@@ -401,6 +428,7 @@ mod tests {
             ),
             supervisor_log: None,
             owner_running: true,
+            boot_epoch: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 8);
@@ -418,6 +446,7 @@ mod tests {
             ),
             supervisor_log: None,
             owner_running: true,
+            boot_epoch: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 9);
@@ -441,6 +470,7 @@ mod tests {
             owner_log: Some(owner_fact_lines(&log)),
             supervisor_log: None,
             owner_running: true,
+            boot_epoch: None,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
@@ -464,6 +494,7 @@ mod tests {
             ),
             supervisor_log: Some("supervise=hold\n".into()),
             owner_running: true,
+            boot_epoch: None,
             ifaces: vec![sample("rmnet1", true, 4, 4)],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 5);
@@ -478,5 +509,26 @@ mod tests {
         assert!(rows.iter().all(|row| row.key != KEY_REGISTRATION_RAW));
         assert!(rows.iter().all(|row| row.key != KEY_RADIO));
         assert!(rows.iter().all(|row| row.key != KEY_SIM_APP));
+    }
+
+    #[test]
+    fn boot_epoch_is_the_newest_numeric_archive_name() {
+        assert_eq!(latest_numeric_epoch(["notes", "100", "250"]), Some(250));
+        assert_eq!(latest_numeric_epoch(std::iter::empty()), None);
+        let reading = CellularReading {
+            cp_text: Some("OFFLINE".into()),
+            owner_log: Some("camp_reg field=data registration_raw=1\n".into()),
+            supervisor_log: None,
+            owner_running: true,
+            boot_epoch: Some(250),
+            ifaces: Vec::new(),
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 6);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].key, KEY_CP_STATE);
+        assert_eq!(rows[1].key, KEY_OWNER);
+        assert_eq!(rows[2].key, KEY_BOOT_EPOCH);
+        assert_eq!(rows[2].value, json!(250));
+        assert!(rows.iter().all(|row| row.key != KEY_REGISTRATION_RAW));
     }
 }
