@@ -117,6 +117,8 @@ enum Cmd {
         #[arg(long, default_value = "/proc")]
         proc: PathBuf,
     },
+    /// Replay eight reviewed headers and print the channel for each. Opens nothing.
+    RfsDispatch,
     /// Say how one RFS command would be answered. Opens nothing.
     RfsPolicy {
         /// `nv` uses `--file`. `carrier-config` is the read-only copy path.
@@ -147,6 +149,27 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("saai-modemd: {error:#}");
         std::process::exit(1);
+    }
+}
+
+fn print_channel(decision: rfs_policy::ChannelDecision) {
+    match decision {
+        rfs_policy::ChannelDecision::Carrier(rfs_policy::CarrierDecision::Deny)
+        | rfs_policy::ChannelDecision::Nv(rfs_policy::RfsDecision::Deny) => {
+            println!("rfs=deny");
+        }
+        rfs_policy::ChannelDecision::Carrier(other) => {
+            println!("rfs={} file=carrier-config", rfs_policy::carrier_word(other));
+        }
+        rfs_policy::ChannelDecision::Nv(other) => {
+            let file_name = match other {
+                rfs_policy::RfsDecision::OpenCopy(file)
+                | rfs_policy::RfsDecision::QuarantineWrite(file)
+                | rfs_policy::RfsDecision::QuarantineStatus(file) => rfs_policy::file_word(file),
+                rfs_policy::RfsDecision::Deny => unreachable!(),
+            };
+            println!("rfs={} file={file_name}", rfs_policy::decision_word(other));
+        }
     }
 }
 
@@ -364,6 +387,12 @@ fn run() -> Result<()> {
                 }
             }
             println!("hardware_actions={hardware}");
+        }
+        Cmd::RfsDispatch => {
+            for decision in rfs_policy::reviewed_dispatch() {
+                print_channel(decision);
+            }
+            println!("hardware_actions=none");
         }
         Cmd::RfsPolicy {
             channel,
