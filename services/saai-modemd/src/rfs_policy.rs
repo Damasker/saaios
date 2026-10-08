@@ -132,7 +132,7 @@ impl RfsSession {
             if self.contains(&self.open, id) {
                 return Some(CarrierDecision::Release);
             }
-            if self.take(&mut self.closing, id) {
+            if Self::take_id(&mut self.closing, id) {
                 return Some(CarrierDecision::Release);
             }
             return None;
@@ -152,7 +152,7 @@ impl RfsSession {
             return None;
         }
         if cmd == 5 {
-            self.take(&mut self.open, id);
+            Self::take_id(&mut self.open, id);
             self.remember_closing(id);
             return Some(CarrierDecision::CloseCopy);
         }
@@ -191,7 +191,7 @@ impl RfsSession {
         slots.iter().any(|slot| *slot == Some(id))
     }
 
-    fn take(&mut self, slots: &mut [Option<u32>; 8], id: u32) -> bool {
+    fn take_id(slots: &mut [Option<u32>; 8], id: u32) -> bool {
         if let Some(slot) = slots.iter_mut().find(|slot| **slot == Some(id)) {
             *slot = None;
             true
