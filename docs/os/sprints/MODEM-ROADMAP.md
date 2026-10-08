@@ -380,6 +380,12 @@ pid 408, owner один.
 `bearer=rmnet1`, `hardware_actions=none`. Дежурный
 `saai-modemd` остался pid 155, `saai-displayd` остался pid 408,
 owner один.
+Тот же статус называет радио (`47b1546`, бинарник `18f3c95b…`):
+`radio=on`. Это stock-значение `radio_raw=10`, и строка есть,
+пока owner запущен и CP `ONLINE`. Состояние PIN в вывод не
+попадает. Рядом `registration_raw=1`, `hardware_actions=none`.
+Дежурный `saai-modemd` остался pid 155, `saai-displayd` остался
+pid 408, owner один.
 
 ## MODEM-02
 
