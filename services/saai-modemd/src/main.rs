@@ -195,12 +195,14 @@ fn run() -> Result<()> {
             .ok();
             let registration = camp_registration(&state, owner_running, owner_log.as_deref());
             let radio = camp_radio(&state, owner_running, owner_log.as_deref());
+            let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
                 &bearers,
                 &live,
                 registration,
                 radio,
+                sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
                 supervisor,
@@ -771,6 +773,7 @@ fn status_lines(
     live: &[String],
     registration: Option<u32>,
     radio: Option<&str>,
+    sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
     supervisor: Option<&str>,
@@ -791,6 +794,9 @@ fn status_lines(
     if radio == Some("on") {
         lines.push("radio=on".to_string());
     }
+    if let Some(token) = sim_word(sim) {
+        lines.push(format!("sim={token}"));
+    }
     if let Some(epoch) = epoch {
         lines.push(format!("epoch={epoch}"));
     }
@@ -806,6 +812,21 @@ fn status_lines(
     ));
     lines.push("hardware_actions=none".to_string());
     lines
+}
+
+fn camp_sim(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_sim_presence(&facts)
+}
+
+fn sim_word(token: Option<&str>) -> Option<&str> {
+    match token {
+        Some(token @ ("ready" | "present" | "absent")) => Some(token),
+        _ => None,
+    }
 }
 
 fn camp_radio(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -908,6 +929,7 @@ mod tests {
             &["rmnet1".into()],
             Some(1),
             Some("on"),
+            Some("present"),
             Some(250),
             Some("owner"),
             Some("hold"),
@@ -921,6 +943,7 @@ mod tests {
                 "bearer=rmnet1".to_string(),
                 "registration_raw=1".to_string(),
                 "radio=on".to_string(),
+                "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
                 "supervisor=hold".to_string(),
@@ -934,6 +957,7 @@ mod tests {
             &[],
             None,
             Some("pin"),
+            Some("pin1"),
             None,
             None,
             Some("handoff-exit"),
@@ -954,7 +978,24 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("supervisor=")));
         assert!(!absent.iter().any(|line| line.starts_with("registration_raw=")));
         assert!(!absent.iter().any(|line| line.starts_with("radio=")));
+        assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
+    }
+
+    #[test]
+    fn camp_sim_names_presence_and_keeps_pin_out() {
+        let later = "camp_sim=ready\nfield=sim apps=1 pin1_raw=1\n";
+        assert_eq!(camp_sim("ONLINE", true, Some(later)), Some("present"));
+        assert_eq!(camp_sim("OFFLINE", true, Some(later)), None);
+        assert_eq!(camp_sim("ONLINE", false, Some(later)), None);
+        assert_eq!(
+            camp_sim("ONLINE", true, Some("field=sim status=unknown_short apps=1\n")),
+            None
+        );
+        assert_eq!(
+            camp_sim("ONLINE", true, Some("field=sim apps=0\n")),
+            Some("absent")
+        );
     }
 
     #[test]
