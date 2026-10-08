@@ -359,7 +359,10 @@ fn run() -> Result<()> {
             let mut hardware = "none";
             match admission {
                 QueryAdmission::Refuse(reason) => {
-                    println!("query=refuse name={name} reason={reason}");
+                    println!(
+                        "query=refuse name={name} reason={reason} token={}",
+                        runtime_model::query_token(query)
+                    );
                 }
                 QueryAdmission::Ready => {
                     let again = runtime_model::query_admission(
@@ -369,7 +372,10 @@ fn run() -> Result<()> {
                     );
                     match again {
                         QueryAdmission::Refuse(reason) => {
-                            println!("query=refuse name={name} reason={reason}");
+                            println!(
+                                "query=refuse name={name} reason={reason} token={}",
+                                runtime_model::query_token(query)
+                            );
                         }
                         QueryAdmission::Ready => {
                             hardware = "query";
@@ -378,7 +384,11 @@ fn run() -> Result<()> {
                                     println!("query=answer name={name} {line}");
                                 }
                                 Ok(QueryExchange::Timeout { frames }) => {
-                                    println!("query=timeout name={name} frames={frames}");
+                                    println!(
+                                        "query=timeout name={name} token={} deadline_s={} frames={frames}",
+                                        runtime_model::query_token(query),
+                                        runtime_model::QUERY_DEADLINE_SECS
+                                    );
                                 }
                                 Err(error) => return Err(error),
                             }
@@ -497,7 +507,7 @@ fn exchange_one_query(query: runtime_model::RuntimeQuery) -> Result<QueryExchang
     let request = runtime_model::build_runtime_request(query);
     dev.write_all(&request.bytes).context("one-shot write")?;
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(runtime_model::QUERY_DEADLINE_SECS);
     let mut reader = runtime_model::RuntimeFrameReader::default();
     let mut tmp = [0u8; 4096];
     let mut frames = 0u32;
@@ -541,6 +551,7 @@ fn exchange_one_query(query: runtime_model::RuntimeQuery) -> Result<QueryExchang
             frames += 1;
             if let Some(observation) = runtime_model::parse_matching_response(query, &frame) {
                 return Ok(QueryExchange::Answer(runtime_model::report_line(
+                    query,
                     &observation,
                 )));
             }

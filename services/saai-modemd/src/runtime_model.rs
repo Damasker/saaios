@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 
 pub const RUNTIME_REQUEST_LEN: u16 = 12;
 pub const MAX_RUNTIME_FRAME: usize = 65536;
+pub const QUERY_DEADLINE_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeQuery {
@@ -152,8 +153,13 @@ pub fn query_admission(
     }
 }
 
-pub fn report_line(observation: &RuntimeObservation) -> String {
-    match observation {
+pub fn query_token(query: RuntimeQuery) -> u32 {
+    runtime_query_spec(query).token
+}
+
+pub fn report_line(query: RuntimeQuery, observation: &RuntimeObservation) -> String {
+    let token = query_token(query);
+    let rest = match observation {
         RuntimeObservation::SimStatus {
             error_raw,
             applications,
@@ -189,7 +195,8 @@ pub fn report_line(observation: &RuntimeObservation) -> String {
             };
             format!("error_raw={error_raw}{registration}")
         }
-    }
+    };
+    format!("token={token} {rest}")
 }
 
 pub fn first_matching_observation(
@@ -351,18 +358,24 @@ mod tests {
         let observation = first_matching_observation(&bytes, RuntimeQuery::SimStatus)
             .unwrap()
             .unwrap();
-        let line = report_line(&observation);
-        assert_eq!(line, "error_raw=0 sim=present");
+        let line = report_line(RuntimeQuery::SimStatus, &observation);
+        assert_eq!(line, "token=1 error_raw=0 sim=present");
         assert!(!line.contains('3'));
 
         let radio = first_matching_observation(&radio_response_frame(10), RuntimeQuery::RadioState)
             .unwrap()
             .unwrap();
-        assert_eq!(report_line(&radio), "error_raw=0 radio=on");
+        assert_eq!(
+            report_line(RuntimeQuery::RadioState, &radio),
+            "token=2 error_raw=0 radio=on"
+        );
         let other = first_matching_observation(&radio_response_frame(1), RuntimeQuery::RadioState)
             .unwrap()
             .unwrap();
-        assert_eq!(report_line(&other), "error_raw=0");
+        assert_eq!(
+            report_line(RuntimeQuery::RadioState, &other),
+            "token=2 error_raw=0"
+        );
 
         let registration = first_matching_observation(
             &registration_response_frame(1, 7, 3),
@@ -370,8 +383,8 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        let line = report_line(&registration);
-        assert_eq!(line, "error_raw=0 registration_raw=1");
+        let line = report_line(RuntimeQuery::DataRegistration, &registration);
+        assert_eq!(line, "token=3 error_raw=0 registration_raw=1");
         assert!(!line.contains('7'));
     }
 
