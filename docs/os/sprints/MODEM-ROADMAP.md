@@ -356,6 +356,12 @@ owner один.
 `boot-archive`. Устройства не открывались. Дежурный
 `saai-modemd` остался pid 155, `saai-displayd` остался pid 408,
 owner один.
+Тот же статус называет живой канал (`66e4c6c`, бинарник
+`c6afd110…`): `bearer=rmnet1`. Полный список имён `rmnet` остаётся
+отдельной строкой. Адрес в вывод не попадает. Рядом
+`epoch=1791379663`, `endpoint=owner`, `hardware_actions=none`.
+Дежурный `saai-modemd` остался pid 155, `saai-displayd` остался
+pid 408, owner один.
 
 ## MODEM-02
 
