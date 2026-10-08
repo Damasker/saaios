@@ -184,12 +184,14 @@ fn run() -> Result<()> {
             let bearers = cellular_ifaces(&net_class)?;
             let live = live_bearers(&net_class, &bearers);
             let epoch = supervise::latest_boot_epoch(Path::new(DEFAULT_BOOT_ARCHIVE));
+            let owner_running = owner_is_running(Path::new("/proc")).unwrap_or(false);
             for line in status_lines(
                 &state,
                 &bearers,
                 &live,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
+                owner_running,
             ) {
                 println!("{line}");
             }
@@ -743,6 +745,7 @@ fn status_lines(
     live: &[String],
     epoch: Option<u64>,
     holder: Option<&str>,
+    owner_running: bool,
 ) -> Vec<String> {
     let mut lines = vec![format!("modem_state={state}")];
     if bearers.is_empty() {
@@ -759,6 +762,10 @@ fn status_lines(
     if let Some(holder) = endpoint_suffix(holder).strip_prefix(' ') {
         lines.push(holder.to_string());
     }
+    lines.push(format!(
+        "owner={}",
+        if owner_running { "running" } else { "gone" }
+    ));
     lines.push("hardware_actions=none".to_string());
     lines
 }
@@ -840,6 +847,7 @@ mod tests {
             &["rmnet1".into()],
             Some(250),
             Some("owner"),
+            true,
         );
         assert_eq!(
             lines,
@@ -849,15 +857,17 @@ mod tests {
                 "bearer=rmnet1".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
+                "owner=running".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
-        let absent = status_lines("missing", &[], &[], None, None);
+        let absent = status_lines("missing", &[], &[], None, None, false);
         assert_eq!(
             absent,
             vec![
                 "modem_state=missing".to_string(),
                 "cellular_bearers=none".to_string(),
+                "owner=gone".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
