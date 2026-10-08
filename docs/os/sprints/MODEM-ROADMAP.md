@@ -386,6 +386,12 @@ owner один.
 попадает. Рядом `registration_raw=1`, `hardware_actions=none`.
 Дежурный `saai-modemd` остался pid 155, `saai-displayd` остался
 pid 408, owner один.
+Тот же статус называет присутствие SIM (`555b5ef`, бинарник
+`93eb3005…`): `sim=present`. Это последнее решающее слово из лога
+camp, пока owner запущен и CP `ONLINE`. Состояние PIN в вывод не
+попадает. Рядом `radio=on`, `registration_raw=1`,
+`hardware_actions=none`. Дежурный `saai-modemd` остался pid 155,
+`saai-displayd` остался pid 408, owner один.
 
 ## MODEM-02
 
