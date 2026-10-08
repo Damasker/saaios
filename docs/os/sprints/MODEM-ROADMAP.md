@@ -1184,6 +1184,16 @@ Runtime `3d8eae15…` (pid 30644), status-бинарник `e1ef0919…`.
 pid 408, owner один. Путь `launch-once` при отсутствующем CP
 проверен на хосте. Второй camp не стартует, устройства не
 открываются.
+То же правило допуска (`37f290f`) пишет в кэш `cellular.open=owner`
+и в status `open=refuse reason=owner`. На этой загрузке рядом
+остаются `action=attend`, `modem_state=ONLINE`, `bearer=rmnet1`,
+`registration_raw=1`, `radio=on`, `sim=present`,
+`epoch=1791379663`, `endpoint=owner`, `supervisor=hold`,
+`owner=running`, `hardware_actions=none`. Runtime `8fd05843…`
+(pid 32113), status-бинарник `5077cc83…`. Дежурный `saai-modemd`
+остался pid 155, `saai-displayd` остался pid 408, owner один.
+Путь `open=refuse reason=lock`, когда занят `sit-sim-status`, и
+путь `open=ready` проверены на хосте. Устройства не открываются.
 
 ## MODEM-09
 
@@ -1283,6 +1293,16 @@ owner один, CP `ONLINE`. Перезагрузки не было.
 `ONLINE · домашняя · включено · есть · процесс · camp · удержание · уже запущен · rmnet1`.
 Кадр экрана не снимался. Оболочка перезапущена один раз
 (pid 30653), `saai-displayd` остался pid 408, `saai-modemd`
+supervise остался pid 155, owner один, CP `ONLINE`. Перезагрузки
+не было.
+Строка «Сотовая сеть» и «Наблюдения» (`37f290f`, runtime
+`8fd05843…`, оболочка `72b8a6b7…`) называют тот же отказ.
+В «Наблюдениях» это «Открытие / отказ процесса»
+(`cellular.open=owner`). Для этой загрузки, по проверенной
+функции и живым словам кэша, строка
+`ONLINE · домашняя · включено · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1`.
+Кадр экрана не снимался. Оболочка перезапущена один раз
+(pid 32122), `saai-displayd` остался pid 408, `saai-modemd`
 supervise остался pid 155, owner один, CP `ONLINE`. Перезагрузки
 не было.
 
