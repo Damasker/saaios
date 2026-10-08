@@ -182,7 +182,13 @@ fn run() -> Result<()> {
         } => {
             let state = read_trimmed_optional(&modem_state).unwrap_or_else(|| "missing".into());
             let bearers = cellular_ifaces(&net_class)?;
-            for line in status_lines(&state, &bearers, endpoint_holder_at(Path::new("/proc"))) {
+            let epoch = supervise::latest_boot_epoch(Path::new(DEFAULT_BOOT_ARCHIVE));
+            for line in status_lines(
+                &state,
+                &bearers,
+                epoch,
+                endpoint_holder_at(Path::new("/proc")),
+            ) {
                 println!("{line}");
             }
         }
@@ -685,12 +691,20 @@ fn mounts_include_original_efs(mounts: &str) -> bool {
     })
 }
 
-fn status_lines(state: &str, bearers: &[String], holder: Option<&str>) -> Vec<String> {
+fn status_lines(
+    state: &str,
+    bearers: &[String],
+    epoch: Option<u64>,
+    holder: Option<&str>,
+) -> Vec<String> {
     let mut lines = vec![format!("modem_state={state}")];
     if bearers.is_empty() {
         lines.push("cellular_bearers=none".to_string());
     } else {
         lines.push(format!("cellular_bearers={}", bearers.join(",")));
+    }
+    if let Some(epoch) = epoch {
+        lines.push(format!("epoch={epoch}"));
     }
     if let Some(holder) = endpoint_suffix(holder).strip_prefix(' ') {
         lines.push(holder.to_string());
@@ -770,17 +784,18 @@ mod tests {
 
     #[test]
     fn status_names_the_endpoint_holder_without_a_hardware_action() {
-        let lines = status_lines("ONLINE", &["rmnet1".into()], Some("owner"));
+        let lines = status_lines("ONLINE", &["rmnet1".into()], Some(250), Some("owner"));
         assert_eq!(
             lines,
             vec![
                 "modem_state=ONLINE".to_string(),
                 "cellular_bearers=rmnet1".to_string(),
+                "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
-        let absent = status_lines("missing", &[], None);
+        let absent = status_lines("missing", &[], None, None);
         assert_eq!(
             absent,
             vec![
@@ -790,6 +805,7 @@ mod tests {
             ]
         );
         assert!(!absent.iter().any(|line| line.contains("endpoint=")));
+        assert!(!absent.iter().any(|line| line.contains("epoch=")));
     }
 
     #[test]
