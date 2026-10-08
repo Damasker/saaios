@@ -287,7 +287,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused because the owner holds the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
-| MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision plus a separate read-only carrier-config decision; not a boot service) | **yes** |
+| MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; owner-log facts follow the live process) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
@@ -1005,6 +1005,16 @@ Carrier-config на том же канале — отдельное решени
 строки с `hardware_actions=none`. Дежурный `saai-modemd` остался
 pid 155, owner один, CP `ONLINE`. В owner и в загрузку это не
 вшито: живой camp по-прежнему отвечает на carrier-config сам.
+Один и тот же номер команды разбирается по открытому id
+(`890523f`, бинарник `dabede8f…`). `rfs-dispatch` прогоняет
+восемь фиксированных заголовков и ничего не открывает: открытый
+carrier-config даёт `read-copy`, запись того же id — `deny`,
+команда 6 для NV-файла 1 — `quarantine-write file=normal`,
+команда 3 для файла 3 — `quarantine-status file=protected`,
+команда 7 для файла 3 — `open-copy file=protected`, закрытие —
+`close-copy`, после закрытия тот же id — `deny`. В конце
+`hardware_actions=none`. Дежурный `saai-modemd` остался pid 155,
+owner один, CP `ONLINE`. В owner и в загрузку это не вшито.
 
 ## MODEM-08
 
