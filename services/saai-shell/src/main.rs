@@ -1463,6 +1463,7 @@ fn cellular_row_status(
     registration_raw: Option<u32>,
     radio: Option<&str>,
     sim: Option<&str>,
+    owner: Option<&str>,
     live: &[String],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -1477,6 +1478,11 @@ fn cellular_row_status(
     }
     if let Some(phrase) = sim.and_then(sim_presence_phrase) {
         parts.push(phrase.to_string());
+    }
+    match owner {
+        Some("running") => parts.push("процесс".to_string()),
+        Some("gone") if !parts.is_empty() => parts.push("без процесса".to_string()),
+        _ => {}
     }
     if !live.is_empty() {
         parts.push(live.join(" · "));
@@ -6803,6 +6809,7 @@ struct MeFacts {
     cellular_registration_raw: Option<u32>,
     cellular_radio: Option<String>,
     cellular_sim: Option<String>,
+    cellular_owner: Option<String>,
     camera_nodes: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
@@ -6985,6 +6992,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                         facts.cellular_registration_raw,
                         facts.cellular_radio.as_deref(),
                         facts.cellular_sim.as_deref(),
+                        facts.cellular_owner.as_deref(),
                         &facts.cellular_ifaces,
                     ),
                 )
@@ -7298,6 +7306,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_registration_raw: None,
         cellular_radio: None,
         cellular_sim: None,
+        cellular_owner: None,
         camera_nodes: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
@@ -11349,6 +11358,14 @@ impl Shell {
             cellular_registration_raw: camp_log_is_current().then(read_data_registration_raw).flatten(),
             cellular_radio: camp_log_is_current().then(read_radio_token).flatten(),
             cellular_sim: camp_log_is_current().then(read_sim_presence).flatten(),
+            cellular_owner: Some(
+                if camp_owner_running() {
+                    "running"
+                } else {
+                    "gone"
+                }
+                .to_string(),
+            ),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
@@ -14742,16 +14759,24 @@ mod tests {
 
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
-        assert_eq!(cellular_row_status(None, None, None, None, &[]), "Нет модема");
+        assert_eq!(cellular_row_status(None, None, None, None, None, &[]), "Нет модема");
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), None, None, &[]),
+            cellular_row_status(None, None, None, None, Some("gone"), &[]),
+            "Нет модема"
+        );
+        assert_eq!(
+            cellular_row_status(None, None, None, None, Some("running"), &[]),
+            "процесс"
+        );
+        assert_eq!(
+            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, &[]),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, &[]);
+        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, &[]);
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(1), None, None, &["rmnet1".into()]),
+            cellular_row_status(Some("ONLINE"), Some(1), None, None, None, &["rmnet1".into()]),
             "ONLINE · домашняя · rmnet1"
         );
         assert_eq!(
@@ -14760,13 +14785,14 @@ mod tests {
                 Some(1),
                 Some("on"),
                 Some("present"),
+                Some("running"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · включено · есть · rmnet1"
+            "ONLINE · домашняя · включено · есть · процесс · rmnet1"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(1), Some("pin"), Some("pin1"), &[]),
-            "ONLINE · домашняя"
+            cellular_row_status(Some("ONLINE"), Some(1), Some("pin"), Some("pin1"), Some("gone"), &[]),
+            "ONLINE · домашняя · без процесса"
         );
         assert_eq!(cp_state_token("ONLINE\n"), Some("ONLINE"));
         assert_eq!(cp_state_token("offline"), None);
