@@ -344,6 +344,13 @@ state is not `OFFLINE`, original EFS appears mounted, or hashes mismatch.
 **Threat:** false confidence. The command must continue to print
 `hardware_actions=none` for preflight success.
 
+**Status на этой загрузке (`d5d9b02`, бинарник `1eda45df…`).**
+`saai-modemd status` печатает `modem_state=ONLINE`,
+`endpoint=owner` и `hardware_actions=none`. Список имён каналов
+включает `rmnet1`. Устройства не открывались. Дежурный
+`saai-modemd` остался pid 155, `saai-displayd` остался pid 408,
+owner один.
+
 ## MODEM-02
 
 **Goal:** prove native CP boot, still as a diagnostic.
