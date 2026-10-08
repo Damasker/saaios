@@ -288,7 +288,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused because the owner holds the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
-| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; owner-log facts follow the live process) | **yes** |
+| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; camp-log facts need the live process and CP ONLINE) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
@@ -1083,6 +1083,15 @@ CP `ONLINE`, `camp_setup` на rmnet1 `up=1 add=1 route=1`, wget
 `cellular.bearer=rmnet1`, `cellular.supervisor=hold`. Путь
 `gone` проверен на хосте: лог с регистрацией без живого процесса
 даёт только `cellular.owner=gone`.
+Те же факты требуют ещё и CP `ONLINE` (`c820b7b`, runtime
+`64e9e2e0…`, оболочка `6ffb511a…`). На этой загрузке CP
+`ONLINE`, поэтому кэш по-прежнему `cellular.owner=running`,
+`cellular.registration_raw=1`, `cellular.radio=on`,
+`cellular.sim_app=present`, `cellular.bearer=rmnet1`,
+`cellular.supervisor=hold`. `saai-displayd` остался 408, owner
+один. Путь CP `OFFLINE` проверен на хосте: регистрация, радио и
+SIM из лога пропадают, живой `rmnet1`, слово CP, дежурство и
+`cellular.owner=running` остаются.
 
 ## MODEM-09
 
