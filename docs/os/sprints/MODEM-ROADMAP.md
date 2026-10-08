@@ -289,7 +289,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; camp-log facts need the live process and CP ONLINE) | **yes** |
-| MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row and observation cache on device) | **yes** |
+| MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row includes the camp process; observation cache on device) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
 ## MODEM-00
@@ -1157,6 +1157,13 @@ PIN в кэш не пишется. Owner один, CP `ONLINE`, `saai-displayd`
 (`cellular.owner=running`). Когда процесса нет, регистрация,
 радио и SIM из старого лога не публикуются. На этой загрузке
 процесс не останавливался.
+Строка «Сотовая сеть» (`5025648`, оболочка `09bdbfa3…`) ставит
+слово процесса перед каналом. Для этой загрузки это
+`ONLINE · домашняя · включено · есть · процесс · rmnet1`.
+«есть» остаётся за SIM. Если процесс ушёл, а слово CP уже есть,
+строка добавляет «без процесса»; пустой набор по-прежнему
+«Нет модема». Оболочка перезапущена один раз, `saai-displayd`
+остался pid 408, owner один, CP `ONLINE`.
 
 ## Non-goals For Now
 
