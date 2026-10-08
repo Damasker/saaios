@@ -373,6 +373,13 @@ pid 408, owner один.
 `epoch=1791379663`, `endpoint=owner`, `hardware_actions=none`.
 Устройства не открывались. Дежурный `saai-modemd` остался pid 155,
 `saai-displayd` остался pid 408, owner один.
+Тот же статус называет регистрацию данных (`b0a22b2`, бинарник
+`fe58fff2…`): `registration_raw=1`. Строка есть, пока owner
+запущен и CP `ONLINE`. Отказ и идентификатор соты в вывод не
+попадают. Рядом `supervisor=hold`, `owner=running`,
+`bearer=rmnet1`, `hardware_actions=none`. Дежурный
+`saai-modemd` остался pid 155, `saai-displayd` остался pid 408,
+owner один.
 
 ## MODEM-02
 
