@@ -285,7 +285,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-02 | Factory S5100SIT boot sequence reaches CP `ONLINE` | **Done** (diagnostic) | **yes** |
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
-| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused because the owner holds the endpoint) | **yes** |
+| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused with its request token because the owner holds the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; camp-log facts need the live process and CP ONLINE) | **yes** |
@@ -461,6 +461,13 @@ owner или `sit-sim-status` живы, отправка разобранных 
 `query=refuse name=sim-status reason=owner` и
 `hardware_actions=none`: запись в endpoint не делалась, owner
 один, CP `ONLINE`.
+Отказ называет токен запроса (`7fb4027`, бинарник `c25976e6…`).
+На этой загрузке: `sim-status` — `token=1`, `radio-state` —
+`token=2`, `data-registration` — `token=3`. У всех трёх
+`reason=owner` и `hardware_actions=none`. Дежурный `saai-modemd`
+остался pid 155, owner один, CP `ONLINE`. Срок 10 с в этой
+загрузке не начинался: запись в endpoint не делалась. Строка
+ответа, когда она будет, начинается с того же токена.
 
 ## MODEM-06
 
