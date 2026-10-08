@@ -63,7 +63,10 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
-    let log = reading.owner_running.then_some(reading.owner_log.as_deref()).flatten();
+    let cp_online = reading.cp_text.as_deref().and_then(cp_state_token) == Some("ONLINE");
+    let log = (reading.owner_running && cp_online)
+        .then_some(reading.owner_log.as_deref())
+        .flatten();
     if let Some(raw) = log.and_then(last_data_registration_raw) {
         out.push(number_observation(
             KEY_REGISTRATION_RAW,
@@ -405,7 +408,7 @@ mod tests {
         assert_eq!(rows.iter().filter(|row| row.key == KEY_OWNER).count(), 1);
 
         let reading = CellularReading {
-            cp_text: None,
+            cp_text: Some("ONLINE".into()),
             owner_log: Some(
                 "camp_probe field=sim card_raw=0 apps=0\n\
                  camp_reg field=radio radio_raw=10\n\
@@ -418,11 +421,12 @@ mod tests {
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 9);
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].key, KEY_RADIO);
-        assert_eq!(rows[0].value, json!("on"));
-        assert_eq!(rows[1].key, KEY_SIM_APP);
-        assert_eq!(rows[1].value, json!("ready"));
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].key, KEY_CP_STATE);
+        assert_eq!(rows[1].key, KEY_RADIO);
+        assert_eq!(rows[1].value, json!("on"));
+        assert_eq!(rows[2].key, KEY_SIM_APP);
+        assert_eq!(rows[2].value, json!("ready"));
         assert!(rows.iter().all(|row| !row.value.to_string().contains("pin")));
     }
 
@@ -433,17 +437,46 @@ mod tests {
         log.push_str(&"pad\n".repeat(80_000));
         log.push_str("camp_reg field=data registration_raw=1 reject_raw=0\n");
         let reading = CellularReading {
-            cp_text: None,
+            cp_text: Some("ONLINE".into()),
             owner_log: Some(owner_fact_lines(&log)),
             supervisor_log: None,
             owner_running: true,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].key, KEY_REGISTRATION_RAW);
-        assert_eq!(rows[1].key, KEY_RADIO);
-        assert_eq!(rows[1].value, json!("on"));
-        assert_eq!(rows[2].key, KEY_OWNER);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].key, KEY_CP_STATE);
+        assert_eq!(rows[1].key, KEY_REGISTRATION_RAW);
+        assert_eq!(rows[2].key, KEY_RADIO);
+        assert_eq!(rows[2].value, json!("on"));
+        assert_eq!(rows[3].key, KEY_OWNER);
+    }
+
+    #[test]
+    fn offline_cp_drops_owner_log_facts_and_keeps_a_live_bearer() {
+        let reading = CellularReading {
+            cp_text: Some("OFFLINE\n".into()),
+            owner_log: Some(
+                "camp_reg field=data registration_raw=1\n\
+                 camp_reg field=radio radio_raw=10\n\
+                 camp_sim=ready\n"
+                    .into(),
+            ),
+            supervisor_log: Some("supervise=hold\n".into()),
+            owner_running: true,
+            ifaces: vec![sample("rmnet1", true, 4, 4)],
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 5);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].key, KEY_CP_STATE);
+        assert_eq!(rows[0].value, json!("OFFLINE"));
+        assert_eq!(rows[1].key, KEY_BEARER);
+        assert_eq!(rows[1].value, json!("rmnet1"));
+        assert_eq!(rows[2].key, KEY_SUPERVISOR);
+        assert_eq!(rows[3].key, KEY_OWNER);
+        assert_eq!(rows[3].value, json!("running"));
+        assert!(rows.iter().all(|row| row.key != KEY_REGISTRATION_RAW));
+        assert!(rows.iter().all(|row| row.key != KEY_RADIO));
+        assert!(rows.iter().all(|row| row.key != KEY_SIM_APP));
     }
 }

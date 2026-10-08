@@ -1380,6 +1380,10 @@ fn last_field_registration_raw(log: &str, field: &str) -> Option<u32> {
     })
 }
 
+fn camp_log_is_current() -> bool {
+    camp_owner_running() && read_cp_state().as_deref() == Some("ONLINE")
+}
+
 fn camp_owner_running() -> bool {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return false;
@@ -11342,9 +11346,9 @@ impl Shell {
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
             cellular_cp: read_cp_state(),
-            cellular_registration_raw: camp_owner_running().then(read_data_registration_raw).flatten(),
-            cellular_radio: camp_owner_running().then(read_radio_token).flatten(),
-            cellular_sim: camp_owner_running().then(read_sim_presence).flatten(),
+            cellular_registration_raw: camp_log_is_current().then(read_data_registration_raw).flatten(),
+            cellular_radio: camp_log_is_current().then(read_radio_token).flatten(),
+            cellular_sim: camp_log_is_current().then(read_sim_presence).flatten(),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
