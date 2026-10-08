@@ -1173,6 +1173,17 @@ SIM из лога пропадают, живой `rmnet1`, слово CP, деж
 `open=refuse reason=endpoint`, когда дескриптор держит `saai-modemd`
 без argv camp, проверены на хосте. Дежурный `saai-modemd` остался
 pid 155, `saai-displayd` остался pid 408, owner один.
+Одно правило `camp_action` (`b19f783`) пишет то же решение в кэш и
+в status. На этой загрузке кэш даёт `cellular.action=attend`,
+одноразовый status — `action=attend`. Рядом остаются
+`modem_state=ONLINE`, `bearer=rmnet1`, `registration_raw=1`,
+`radio=on`, `sim=present`, `epoch=1791379663`, `endpoint=owner`,
+`supervisor=hold`, `owner=running`, `hardware_actions=none`.
+Runtime `3d8eae15…` (pid 30644), status-бинарник `e1ef0919…`.
+Дежурный `saai-modemd` остался pid 155, `saai-displayd` остался
+pid 408, owner один. Путь `launch-once` при отсутствующем CP
+проверен на хосте. Второй camp не стартует, устройства не
+открываются.
 
 ## MODEM-09
 
@@ -1264,6 +1275,16 @@ owner один, CP `ONLINE`. Перезагрузки не было.
 Оболочка перезапущена один раз, `saai-displayd` остался pid 408,
 `saai-modemd` supervise остался pid 155, runtime не перезапускался,
 owner один, CP `ONLINE`. Перезагрузки не было.
+Строка «Сотовая сеть» и «Наблюдения» (`b19f783`, runtime
+`3d8eae15…`, оболочка `bc131609…`) называют то же решение. В
+«Наблюдениях» это «Решение / уже запущен»
+(`cellular.action=attend`). Для этой загрузки, по проверенной
+функции и живым словам кэша, строка
+`ONLINE · домашняя · включено · есть · процесс · camp · удержание · уже запущен · rmnet1`.
+Кадр экрана не снимался. Оболочка перезапущена один раз
+(pid 30653), `saai-displayd` остался pid 408, `saai-modemd`
+supervise остался pid 155, owner один, CP `ONLINE`. Перезагрузки
+не было.
 
 ## Non-goals For Now
 
