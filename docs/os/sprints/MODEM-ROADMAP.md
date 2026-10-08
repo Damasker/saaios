@@ -350,6 +350,12 @@ state is not `OFFLINE`, original EFS appears mounted, or hashes mismatch.
 включает `rmnet1`. Устройства не открывались. Дежурный
 `saai-modemd` остался pid 155, `saai-displayd` остался pid 408,
 owner один.
+Тот же статус называет каталог архива (`a103187`, бинарник
+`179f1d10…`): `epoch=1791379663`, рядом `endpoint=owner` и
+`hardware_actions=none`. Это имя числового каталога в
+`boot-archive`. Устройства не открывались. Дежурный
+`saai-modemd` остался pid 155, `saai-displayd` остался pid 408,
+owner один.
 
 ## MODEM-02
 
