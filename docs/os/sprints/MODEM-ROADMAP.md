@@ -1194,6 +1194,11 @@ pid 408, owner один. Путь `launch-once` при отсутствующе�
 остался pid 155, `saai-displayd` остался pid 408, owner один.
 Путь `open=refuse reason=lock`, когда занят `sit-sim-status`, и
 путь `open=ready` проверены на хосте. Устройства не открываются.
+Голосовая регистрация пишется отдельно от data (`ce974bc`).
+На этой загрузке обе равны `1`. В кэш это
+`cellular.voice_registration_raw=1`, в status —
+`voice_registration_raw=1`. Reject, LAC и CID в строку не попадают.
+Сырое значение вне `0..=5` на хосте отбрасывается.
 
 ## MODEM-09
 
@@ -1305,6 +1310,17 @@ supervise остался pid 155, owner один, CP `ONLINE`. Перезагр�
 (pid 32122), `saai-displayd` остался pid 408, `saai-modemd`
 supervise остался pid 155, owner один, CP `ONLINE`. Перезагрузки
 не было.
+Голосовая регистрация (`ce974bc`, runtime `b7db7698…`, оболочка
+`5dd3c0de…`) стоит рядом с data и называется отдельно. На этой
+загрузке кэш даёт `cellular.registration_raw=1` и
+`cellular.voice_registration_raw=1`. В «Наблюдениях» это
+«Регистрация / домашняя» и «Голос / домашняя». Для этой загрузки,
+по проверенной функции и живым словам кэша, строка
+`ONLINE · домашняя · голос домашняя · включено · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1`.
+Кадр экрана не снимался. Оболочка перезапущена один раз
+(pid 2129), runtime pid 2120, `saai-displayd` остался pid 408,
+`saai-modemd` supervise остался pid 155, status-бинарник
+`bfc9360c…`, owner один, CP `ONLINE`. Перезагрузки не было.
 
 ## Non-goals For Now
 
