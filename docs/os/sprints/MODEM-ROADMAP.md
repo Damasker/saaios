@@ -285,7 +285,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-02 | Factory S5100SIT boot sequence reaches CP `ONLINE` | **Done** (diagnostic) | **yes** |
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
-| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot refused with its request token and boot archive; the owner holds the endpoint) | **yes** |
+| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot's refusal names the endpoint holder) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; camp-log facts need the live process and CP ONLINE) | **yes** |
@@ -473,6 +473,11 @@ owner или `sit-sim-status` живы, отправка разобранных 
 token=1 epoch=1791379663`, `hardware_actions=none`. Это имя
 числового каталога в `boot-archive`, не новый camp. Дежурный
 `saai-modemd` остался pid 155, owner один, CP `ONLINE`.
+Отказ называет держателя по symlink из `/proc` (`489043b`,
+бинарник `56708059…`): `query=refuse name=sim-status reason=owner
+token=1 epoch=1791379663 endpoint=owner`, `hardware_actions=none`.
+Устройства не открывались. Дежурный `saai-modemd` остался pid 155,
+`saai-displayd` остался pid 408, owner один.
 
 ## MODEM-06
 
