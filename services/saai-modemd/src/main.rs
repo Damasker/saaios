@@ -14,6 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_MODEM_STATE: &str = "/sys/devices/platform/cpif/modem_state";
+const DEFAULT_BOOT_ARCHIVE: &str = "/data/saaios/var/boot-archive";
 const DEFAULT_NET_CLASS: &str = "/sys/class/net";
 const DEFAULT_MOUNTS: &str = "/proc/mounts";
 const REVIEWED_CPIF_SHA256: &str =
@@ -356,11 +357,16 @@ fn run() -> Result<()> {
             let owner_running = owner_is_running(&proc)?;
             let status_lock_busy = process_argv0_ends_with(&proc, "/sit-sim-status")?;
             let admission = runtime_model::query_admission(cp.as_deref(), owner_running, status_lock_busy);
+            let epoch = supervise::latest_boot_epoch(std::path::Path::new(DEFAULT_BOOT_ARCHIVE));
+            let epoch_suffix = match epoch {
+                Some(epoch) => format!(" epoch={epoch}"),
+                None => String::new(),
+            };
             let mut hardware = "none";
             match admission {
                 QueryAdmission::Refuse(reason) => {
                     println!(
-                        "query=refuse name={name} reason={reason} token={}",
+                        "query=refuse name={name} reason={reason} token={}{epoch_suffix}",
                         runtime_model::query_token(query)
                     );
                 }
@@ -373,7 +379,7 @@ fn run() -> Result<()> {
                     match again {
                         QueryAdmission::Refuse(reason) => {
                             println!(
-                                "query=refuse name={name} reason={reason} token={}",
+                                "query=refuse name={name} reason={reason} token={}{epoch_suffix}",
                                 runtime_model::query_token(query)
                             );
                         }
@@ -381,11 +387,11 @@ fn run() -> Result<()> {
                             hardware = "query";
                             match exchange_one_query(query) {
                                 Ok(QueryExchange::Answer(line)) => {
-                                    println!("query=answer name={name} {line}");
+                                    println!("query=answer name={name} {line}{epoch_suffix}");
                                 }
                                 Ok(QueryExchange::Timeout { frames }) => {
                                     println!(
-                                        "query=timeout name={name} token={} deadline_s={} frames={frames}",
+                                        "query=timeout name={name} token={} deadline_s={} frames={frames}{epoch_suffix}",
                                         runtime_model::query_token(query),
                                         runtime_model::QUERY_DEADLINE_SECS
                                     );

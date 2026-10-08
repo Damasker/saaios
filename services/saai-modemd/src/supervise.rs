@@ -73,6 +73,22 @@ pub fn owner_in_cmdline(bytes: &[u8]) -> bool {
     text.ends_with("/modem-rfs-camp-combined-owner")
 }
 
+/// Newest numeric directory under the boot archive. Other names are ignored.
+pub fn latest_boot_epoch(root: &std::path::Path) -> Option<u64> {
+    std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            name.parse().ok()
+        })
+        .max()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +115,18 @@ mod tests {
         ));
         assert!(!owner_in_cmdline(b"/data/saaios/bin/saai-modemd\0supervise\0"));
         assert!(!owner_in_cmdline(b"grep\0modem-rfs-camp-combined-owner\0"));
+    }
+
+    #[test]
+    fn latest_numeric_archive_is_the_boot_epoch() {
+        let root = std::env::temp_dir().join(format!("saai-boot-epoch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("100")).unwrap();
+        std::fs::create_dir_all(root.join("250")).unwrap();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        assert_eq!(latest_boot_epoch(&root), Some(250));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(latest_boot_epoch(&root), None);
     }
 
     #[test]
