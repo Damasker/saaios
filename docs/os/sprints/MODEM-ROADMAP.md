@@ -289,7 +289,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; camp-log facts need the live process and CP ONLINE) | **yes** |
-| MODEM-09 | World/Observation + Shell cellular facts | **Started** (shell row includes the camp process; observation cache on device) | **yes** |
+| MODEM-09 | World/Observation + Shell cellular facts | **Started** (observation cache names who holds the modem endpoint) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
 ## MODEM-00
@@ -1169,6 +1169,16 @@ PIN в кэш не пишется. Owner один, CP `ONLINE`, `saai-displayd`
 «Наблюдениях» это «Загрузка / 1791379663». Нечисловое имя каталога
 в кэш не попадает. `saai-displayd` остался pid 408, owner один,
 CP `ONLINE`.
+Кэш называет держателя `umts_ipc0` / `umts_rfs0` по symlink из
+`/proc` (`60cb9da`, runtime `f5283197…`, оболочка `79424bc4…`).
+Устройства не открываются. На этой загрузке `cellular.endpoint=owner`.
+В «Наблюдениях» это «Дескриптор / camp». Рядом остаются
+`cellular.cp_state=ONLINE`, `cellular.registration_raw=1`,
+`cellular.radio=on`, `cellular.sim_app=present`,
+`cellular.bearer=rmnet1`, `cellular.supervisor=hold`,
+`cellular.owner=running`, `cellular.boot_epoch=1791379663`.
+`saai-displayd` остался pid 408, `saai-modemd` supervise остался
+pid 155, owner один, CP `ONLINE`. Перезагрузки не было.
 
 ## Non-goals For Now
 
