@@ -1330,6 +1330,15 @@ fn owner_phrase(token: &str) -> Option<&'static str> {
     }
 }
 
+fn endpoint_phrase(token: &str) -> Option<&'static str> {
+    match token {
+        "owner" => Some("camp"),
+        "modemd" => Some("служба"),
+        "shared" => Some("оба"),
+        _ => None,
+    }
+}
+
 fn supervisor_phrase(token: &str) -> Option<&'static str> {
     match token {
         "hold" => Some("удержание"),
@@ -1405,6 +1414,51 @@ fn camp_owner_running() -> bool {
     false
 }
 
+/// Who holds `umts_ipc0` or `umts_rfs0`, from `/proc` symlinks. The
+/// devices themselves stay closed.
+fn read_endpoint_holder() -> Option<&'static str> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return None;
+    };
+    let mut owner_has = false;
+    let mut modemd_has = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        let argv0 = String::from_utf8_lossy(argv0);
+        let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
+            "owner"
+        } else if argv0.ends_with("/saai-modemd") {
+            "modemd"
+        } else {
+            continue;
+        };
+        let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+        let holds = fds.flatten().any(|fd| {
+            std::fs::read_link(fd.path())
+                .ok()
+                .and_then(|target| target.to_str().map(str::to_string))
+                .is_some_and(|target| saai_observation::link_is_modem_endpoint(&target))
+        });
+        if holds {
+            match kind {
+                "owner" => owner_has = true,
+                _ => modemd_has = true,
+            }
+        }
+    }
+    saai_observation::endpoint_holder(owner_has, modemd_has)
+}
+
 fn read_camp_owner_log() -> Option<String> {
     let text = std::fs::read_to_string(CAMP_OWNER_LOG).ok()?;
     Some(saai_observation::owner_fact_lines(&text))
@@ -1464,6 +1518,7 @@ fn cellular_row_status(
     radio: Option<&str>,
     sim: Option<&str>,
     owner: Option<&str>,
+    endpoint: Option<&str>,
     live: &[String],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -1483,6 +1538,9 @@ fn cellular_row_status(
         Some("running") => parts.push("процесс".to_string()),
         Some("gone") if !parts.is_empty() => parts.push("без процесса".to_string()),
         _ => {}
+    }
+    if let Some(phrase) = endpoint.and_then(endpoint_phrase) {
+        parts.push(phrase.to_string());
     }
     if !live.is_empty() {
         parts.push(live.join(" · "));
@@ -6498,12 +6556,7 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
         return Some(epoch.to_string());
     }
     if key == "cellular.endpoint" {
-        return match value.as_str()?.trim() {
-            "owner" => Some("camp".to_string()),
-            "modemd" => Some("служба".to_string()),
-            "shared" => Some("оба".to_string()),
-            _ => None,
-        };
+        return endpoint_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.supervisor" {
         let text = value.as_str()?.trim();
@@ -6824,6 +6877,7 @@ struct MeFacts {
     cellular_radio: Option<String>,
     cellular_sim: Option<String>,
     cellular_owner: Option<String>,
+    cellular_endpoint: Option<String>,
     camera_nodes: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
@@ -7007,6 +7061,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                         facts.cellular_radio.as_deref(),
                         facts.cellular_sim.as_deref(),
                         facts.cellular_owner.as_deref(),
+                        facts.cellular_endpoint.as_deref(),
                         &facts.cellular_ifaces,
                     ),
                 )
@@ -7321,6 +7376,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_radio: None,
         cellular_sim: None,
         cellular_owner: None,
+        cellular_endpoint: None,
         camera_nodes: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
@@ -11380,6 +11436,7 @@ impl Shell {
                 }
                 .to_string(),
             ),
+            cellular_endpoint: read_endpoint_holder().map(str::to_string),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
@@ -14773,24 +14830,39 @@ mod tests {
 
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
-        assert_eq!(cellular_row_status(None, None, None, None, None, &[]), "Нет модема");
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("gone"), &[]),
+            cellular_row_status(None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("running"), &[]),
+            cellular_row_status(None, None, None, None, Some("gone"), None, &[]),
+            "Нет модема"
+        );
+        assert_eq!(
+            cellular_row_status(None, None, None, None, Some("running"), None, &[]),
             "процесс"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, Some("owner"), &[]),
+            "camp"
+        );
+        assert_eq!(
+            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, &[]),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, &[]);
+        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, &[]);
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(1), None, None, None, &["rmnet1".into()]),
+            cellular_row_status(
+                Some("ONLINE"),
+                Some(1),
+                None,
+                None,
+                None,
+                None,
+                &["rmnet1".into()]
+            ),
             "ONLINE · домашняя · rmnet1"
         );
         assert_eq!(
@@ -14800,12 +14872,21 @@ mod tests {
                 Some("on"),
                 Some("present"),
                 Some("running"),
+                Some("owner"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · включено · есть · процесс · rmnet1"
+            "ONLINE · домашняя · включено · есть · процесс · camp · rmnet1"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(1), Some("pin"), Some("pin1"), Some("gone"), &[]),
+            cellular_row_status(
+                Some("ONLINE"),
+                Some(1),
+                Some("pin"),
+                Some("pin1"),
+                Some("gone"),
+                Some("pin"),
+                &[]
+            ),
             "ONLINE · домашняя · без процесса"
         );
         assert_eq!(cp_state_token("ONLINE\n"), Some("ONLINE"));
