@@ -10,12 +10,9 @@ pub enum FirstAction {
 }
 
 pub fn first_action(cp_state: Option<&str>, owner_running: bool) -> FirstAction {
-    if owner_running {
-        return FirstAction::Attend;
-    }
-    match cp_state.map(str::trim) {
-        None | Some("OFFLINE") => FirstAction::LaunchOnce,
-        Some(_) => FirstAction::Attend,
+    match saai_observation::camp_action(cp_state, owner_running) {
+        "launch-once" => FirstAction::LaunchOnce,
+        _ => FirstAction::Attend,
     }
 }
 

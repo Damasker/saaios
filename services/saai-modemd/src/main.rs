@@ -834,6 +834,11 @@ fn status_lines(
         "owner={}",
         if owner_running { "running" } else { "gone" }
     ));
+    let cp = if state == "missing" { None } else { Some(state) };
+    lines.push(format!(
+        "action={}",
+        saai_observation::camp_action(cp, owner_running)
+    ));
     lines.push("hardware_actions=none".to_string());
     lines
 }
@@ -1043,6 +1048,7 @@ mod tests {
                 "endpoint=owner".to_string(),
                 "supervisor=hold".to_string(),
                 "owner=running".to_string(),
+                "action=attend".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
@@ -1064,6 +1070,7 @@ mod tests {
                 "modem_state=missing".to_string(),
                 "cellular_bearers=none".to_string(),
                 "owner=gone".to_string(),
+                "action=launch-once".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
