@@ -194,11 +194,13 @@ fn run() -> Result<()> {
             )
             .ok();
             let registration = camp_registration(&state, owner_running, owner_log.as_deref());
+            let radio = camp_radio(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
                 &bearers,
                 &live,
                 registration,
+                radio,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
                 supervisor,
@@ -768,6 +770,7 @@ fn status_lines(
     bearers: &[String],
     live: &[String],
     registration: Option<u32>,
+    radio: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
     supervisor: Option<&str>,
@@ -785,6 +788,9 @@ fn status_lines(
     if let Some(raw) = registration {
         lines.push(format!("registration_raw={raw}"));
     }
+    if radio == Some("on") {
+        lines.push("radio=on".to_string());
+    }
     if let Some(epoch) = epoch {
         lines.push(format!("epoch={epoch}"));
     }
@@ -800,6 +806,14 @@ fn status_lines(
     ));
     lines.push("hardware_actions=none".to_string());
     lines
+}
+
+fn camp_radio(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_radio_token(&facts)
 }
 
 fn camp_registration(state: &str, owner_running: bool, log: Option<&str>) -> Option<u32> {
@@ -893,6 +907,7 @@ mod tests {
             &["rmnet0".into(), "rmnet1".into()],
             &["rmnet1".into()],
             Some(1),
+            Some("on"),
             Some(250),
             Some("owner"),
             Some("hold"),
@@ -905,6 +920,7 @@ mod tests {
                 "cellular_bearers=rmnet0,rmnet1".to_string(),
                 "bearer=rmnet1".to_string(),
                 "registration_raw=1".to_string(),
+                "radio=on".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
                 "supervisor=hold".to_string(),
@@ -917,6 +933,7 @@ mod tests {
             &[],
             &[],
             None,
+            Some("pin"),
             None,
             None,
             Some("handoff-exit"),
@@ -936,6 +953,20 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("bearer=")));
         assert!(!absent.iter().any(|line| line.starts_with("supervisor=")));
         assert!(!absent.iter().any(|line| line.starts_with("registration_raw=")));
+        assert!(!absent.iter().any(|line| line.starts_with("radio=")));
+        assert!(!absent.iter().any(|line| line.contains("pin")));
+    }
+
+    #[test]
+    fn camp_radio_is_on_only_for_the_stock_raw_value() {
+        let on = "camp_reg field=radio radio_raw=10\n";
+        assert_eq!(camp_radio("ONLINE", true, Some(on)), Some("on"));
+        assert_eq!(camp_radio("OFFLINE", true, Some(on)), None);
+        assert_eq!(camp_radio("ONLINE", false, Some(on)), None);
+        assert_eq!(
+            camp_radio("ONLINE", true, Some("camp_reg field=radio radio_raw=1\n")),
+            None
+        );
     }
 
     #[test]
