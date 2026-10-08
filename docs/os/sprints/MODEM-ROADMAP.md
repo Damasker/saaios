@@ -1199,6 +1199,11 @@ pid 408, owner один. Путь `launch-once` при отсутствующе�
 `cellular.voice_registration_raw=1`, в status —
 `voice_registration_raw=1`. Reject, LAC и CID в строку не попадают.
 Сырое значение вне `0..=5` на хосте отбрасывается.
+Режим выбора сети (`5bb0d60`) читается из той же строки camp:
+`0` — automatic, `1` — manual. На этой загрузке status даёт
+`selection=automatic`, кэш — `cellular.selection=automatic`.
+Неизвестное сырое значение и `unknown_short` в кэш не попадают.
+Оператор не выбирается и не пишется.
 
 ## MODEM-09
 
@@ -1321,6 +1326,16 @@ supervise остался pid 155, owner один, CP `ONLINE`. Перезагр�
 (pid 2129), runtime pid 2120, `saai-displayd` остался pid 408,
 `saai-modemd` supervise остался pid 155, status-бинарник
 `bfc9360c…`, owner один, CP `ONLINE`. Перезагрузки не было.
+Режим выбора сети (`5bb0d60`, runtime `de0a102e…`, оболочка
+`2f05f5cc…`) стоит после радио. На этой загрузке кэш даёт
+`cellular.selection=automatic`. В «Наблюдениях» это «Выбор / авто».
+Для этой загрузки, по проверенной функции и живым словам кэша,
+строка
+`ONLINE · домашняя · голос домашняя · включено · авто · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1`.
+Кадр экрана не снимался. Оболочка перезапущена один раз
+(pid 3290), runtime pid 3281, `saai-displayd` остался pid 408,
+`saai-modemd` supervise остался pid 155, status-бинарник
+`e61fe46f…`, owner один, CP `ONLINE`. Перезагрузки не было.
 
 ## Non-goals For Now
 
