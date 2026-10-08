@@ -189,10 +189,16 @@ fn run() -> Result<()> {
             let supervisor = boot_log
                 .as_deref()
                 .and_then(saai_observation::last_supervisor_token);
+            let owner_log = fs::read_to_string(
+                "/data/saaios/var/modem-rfs-camp-combined-owner.log",
+            )
+            .ok();
+            let registration = camp_registration(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
                 &bearers,
                 &live,
+                registration,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
                 supervisor,
@@ -761,6 +767,7 @@ fn status_lines(
     state: &str,
     bearers: &[String],
     live: &[String],
+    registration: Option<u32>,
     epoch: Option<u64>,
     holder: Option<&str>,
     supervisor: Option<&str>,
@@ -774,6 +781,9 @@ fn status_lines(
     }
     if !live.is_empty() {
         lines.push(format!("bearer={}", live.join(",")));
+    }
+    if let Some(raw) = registration {
+        lines.push(format!("registration_raw={raw}"));
     }
     if let Some(epoch) = epoch {
         lines.push(format!("epoch={epoch}"));
@@ -790,6 +800,14 @@ fn status_lines(
     ));
     lines.push("hardware_actions=none".to_string());
     lines
+}
+
+fn camp_registration(state: &str, owner_running: bool, log: Option<&str>) -> Option<u32> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_data_registration_raw(&facts)
 }
 
 fn supervisor_word(token: Option<&str>) -> Option<&str> {
@@ -874,6 +892,7 @@ mod tests {
             "ONLINE",
             &["rmnet0".into(), "rmnet1".into()],
             &["rmnet1".into()],
+            Some(1),
             Some(250),
             Some("owner"),
             Some("hold"),
@@ -885,6 +904,7 @@ mod tests {
                 "modem_state=ONLINE".to_string(),
                 "cellular_bearers=rmnet0,rmnet1".to_string(),
                 "bearer=rmnet1".to_string(),
+                "registration_raw=1".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
                 "supervisor=hold".to_string(),
@@ -892,7 +912,16 @@ mod tests {
                 "hardware_actions=none".to_string(),
             ]
         );
-        let absent = status_lines("missing", &[], &[], None, None, Some("handoff-exit"), false);
+        let absent = status_lines(
+            "missing",
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            Some("handoff-exit"),
+            false,
+        );
         assert_eq!(
             absent,
             vec![
@@ -906,6 +935,26 @@ mod tests {
         assert!(!absent.iter().any(|line| line.contains("epoch=")));
         assert!(!absent.iter().any(|line| line.starts_with("bearer=")));
         assert!(!absent.iter().any(|line| line.starts_with("supervisor=")));
+        assert!(!absent.iter().any(|line| line.starts_with("registration_raw=")));
+    }
+
+    #[test]
+    fn camp_registration_needs_a_live_owner_and_an_online_cp() {
+        let log = "camp_reg field=voice registration_raw=3\n\
+                   camp_reg field=data registration_raw=1 reject_raw=0 lac=0\n";
+        assert_eq!(camp_registration("ONLINE", true, Some(log)), Some(1));
+        assert_eq!(camp_registration("OFFLINE", true, Some(log)), None);
+        assert_eq!(camp_registration("ONLINE", false, Some(log)), None);
+        assert_eq!(
+            camp_registration("ONLINE", true, Some("field=data registration_raw=9\n")),
+            None
+        );
+        let line = format!(
+            "registration_raw={}",
+            camp_registration("ONLINE", true, Some(log)).unwrap()
+        );
+        assert!(!line.contains("lac"));
+        assert!(!line.contains("reject"));
     }
 
     #[test]

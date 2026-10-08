@@ -284,7 +284,8 @@ fn cp_state_token(text: &str) -> Option<&str> {
     Some(word)
 }
 
-fn last_data_registration_raw(log: &str) -> Option<u32> {
+/// Last data `registration_raw` in 0..=5. Reject, LAC, and CID stay out.
+pub fn last_data_registration_raw(log: &str) -> Option<u32> {
     const NEEDLE: &str = "field=data registration_raw=";
     log.lines().rev().find_map(|line| {
         let rest = line.split_once(NEEDLE)?.1;
