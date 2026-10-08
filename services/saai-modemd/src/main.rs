@@ -215,6 +215,7 @@ fn run() -> Result<()> {
                 endpoint_holder_at(Path::new("/proc")),
                 supervisor,
                 owner_running,
+                process_argv0_ends_with(Path::new("/proc"), "/sit-sim-status").unwrap_or(false),
             ) {
                 println!("{line}");
             }
@@ -802,6 +803,7 @@ fn status_lines(
     holder: Option<&str>,
     supervisor: Option<&str>,
     owner_running: bool,
+    lock_busy: bool,
 ) -> Vec<String> {
     let mut lines = vec![format!("modem_state={state}")];
     if bearers.is_empty() {
@@ -839,6 +841,12 @@ fn status_lines(
         "action={}",
         saai_observation::camp_action(cp, owner_running)
     ));
+    let open = saai_observation::camp_open(cp, owner_running, holder, lock_busy);
+    lines.push(if open == "ready" {
+        "open=ready".to_string()
+    } else {
+        format!("open=refuse reason={open}")
+    });
     lines.push("hardware_actions=none".to_string());
     lines
 }
@@ -1034,6 +1042,7 @@ mod tests {
             Some("owner"),
             Some("hold"),
             true,
+            false,
         );
         assert_eq!(
             lines,
@@ -1049,6 +1058,7 @@ mod tests {
                 "supervisor=hold".to_string(),
                 "owner=running".to_string(),
                 "action=attend".to_string(),
+                "open=refuse reason=owner".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
@@ -1063,6 +1073,7 @@ mod tests {
             None,
             Some("handoff-exit"),
             false,
+            true,
         );
         assert_eq!(
             absent,
@@ -1071,6 +1082,7 @@ mod tests {
                 "cellular_bearers=none".to_string(),
                 "owner=gone".to_string(),
                 "action=launch-once".to_string(),
+                "open=refuse reason=lock".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );

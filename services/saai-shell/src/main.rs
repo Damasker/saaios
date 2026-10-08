@@ -1339,6 +1339,17 @@ fn action_phrase(token: &str) -> Option<&'static str> {
     }
 }
 
+fn open_phrase(token: &str) -> Option<&'static str> {
+    match token {
+        "ready" => Some("допуск"),
+        "owner" => Some("отказ процесса"),
+        "endpoint" => Some("отказ дескриптора"),
+        "lock" => Some("отказ статуса"),
+        "cp" => Some("отказ модема"),
+        _ => None,
+    }
+}
+
 fn endpoint_phrase(token: &str) -> Option<&'static str> {
     match token {
         "owner" => Some("camp"),
@@ -1400,6 +1411,27 @@ fn last_field_registration_raw(log: &str, field: &str) -> Option<u32> {
 
 fn camp_log_is_current() -> bool {
     camp_owner_running() && read_cp_state().as_deref() == Some("ONLINE")
+}
+
+fn status_query_running() -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        if String::from_utf8_lossy(argv0).ends_with("/sit-sim-status") {
+            return true;
+        }
+    }
+    false
 }
 
 fn camp_owner_running() -> bool {
@@ -1548,6 +1580,7 @@ fn cellular_row_status(
     endpoint: Option<&str>,
     supervisor: Option<&str>,
     action: Option<&str>,
+    open: Option<&str>,
     live: &[String],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -1575,6 +1608,9 @@ fn cellular_row_status(
         parts.push(phrase.to_string());
     }
     if let Some(phrase) = action.and_then(action_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = open.and_then(open_phrase) {
         parts.push(phrase.to_string());
     }
     if !live.is_empty() {
@@ -6568,6 +6604,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.boot_epoch" => "Загрузка".into(),
         "cellular.endpoint" => "Дескриптор".into(),
         "cellular.action" => "Решение".into(),
+        "cellular.open" => "Открытие".into(),
         "cellular.radio" => "Радио".into(),
         "cellular.sim_app" => "SIM".into(),
         other => other.to_string(),
@@ -6596,6 +6633,9 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     }
     if key == "cellular.action" {
         return action_phrase(value.as_str()?.trim()).map(str::to_string);
+    }
+    if key == "cellular.open" {
+        return open_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.supervisor" {
         let text = value.as_str()?.trim();
@@ -6919,6 +6959,7 @@ struct MeFacts {
     cellular_endpoint: Option<String>,
     cellular_supervisor: Option<String>,
     cellular_action: Option<String>,
+    cellular_open: Option<String>,
     camera_nodes: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
@@ -7105,6 +7146,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                         facts.cellular_endpoint.as_deref(),
                         facts.cellular_supervisor.as_deref(),
                         facts.cellular_action.as_deref(),
+                        facts.cellular_open.as_deref(),
                         &facts.cellular_ifaces,
                     ),
                 )
@@ -7422,6 +7464,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_endpoint: None,
         cellular_supervisor: None,
         cellular_action: None,
+        cellular_open: None,
         camera_nodes: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
@@ -11490,6 +11533,15 @@ impl Shell {
                 )
                 .to_string(),
             ),
+            cellular_open: Some(
+                saai_observation::camp_open(
+                    read_cp_state().as_deref(),
+                    camp_owner_running(),
+                    read_endpoint_holder(),
+                    status_query_running(),
+                )
+                .to_string(),
+            ),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
@@ -14884,44 +14936,49 @@ mod tests {
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("gone"), None, None, None, &[]),
+            cellular_row_status(None, None, None, None, Some("gone"), None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("running"), None, None, None, &[]),
+            cellular_row_status(None, None, None, None, Some("running"), None, None, None, None, &[]),
             "процесс"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, Some("owner"), None, None, &[]),
+            cellular_row_status(None, None, None, None, None, Some("owner"), None, None, None, &[]),
             "camp"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("hold"), None, &[]),
+            cellular_row_status(None, None, None, None, None, None, Some("hold"), None, None, &[]),
             "удержание"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, Some("attend"), &[]),
+            cellular_row_status(None, None, None, None, None, None, None, Some("attend"), None, &[]),
             "уже запущен"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), Some("pin"), &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, Some("owner"), &[]),
+            "отказ процесса"
+        );
+        assert_eq!(
+            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), Some("pin"), Some("pin"), &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, &[]),
+            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, &[]),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, &[]);
+        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, &[]);
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
             cellular_row_status(
                 Some("ONLINE"),
                 Some(1),
+                None,
                 None,
                 None,
                 None,
@@ -14942,9 +14999,10 @@ mod tests {
                 Some("owner"),
                 Some("hold"),
                 Some("attend"),
+                Some("owner"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · включено · есть · процесс · camp · удержание · уже запущен · rmnet1"
+            "ONLINE · домашняя · включено · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -14953,6 +15011,7 @@ mod tests {
                 Some("pin"),
                 Some("pin1"),
                 Some("gone"),
+                Some("pin"),
                 Some("pin"),
                 Some("pin"),
                 Some("pin"),
@@ -17764,6 +17823,16 @@ mod tests {
                         "source": "camp.lifecycle"
                     },
                     {
+                        "key": "cellular.open",
+                        "value": "owner",
+                        "source": "camp.lifecycle"
+                    },
+                    {
+                        "key": "cellular.open",
+                        "value": "pin",
+                        "source": "camp.lifecycle"
+                    },
+                    {
                         "key": "cellular.endpoint",
                         "value": "pin",
                         "source": "proc.fd.modem_endpoint"
@@ -17796,7 +17865,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 10);
+        assert_eq!(rows.len(), 11);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -17816,6 +17885,8 @@ mod tests {
         assert_eq!(rows[8].value, "camp");
         assert_eq!(rows[9].label, "Решение");
         assert_eq!(rows[9].value, "уже запущен");
+        assert_eq!(rows[10].label, "Открытие");
+        assert_eq!(rows[10].value, "отказ процесса");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }

@@ -176,8 +176,30 @@ fn read_cellular_reading() -> CellularReading {
         owner_running: camp_owner_running(),
         boot_epoch: read_boot_epoch(),
         endpoint: read_endpoint_holder(),
+        status_lock_busy: status_query_running(),
         ifaces,
     }
+}
+
+fn status_query_running() -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        if String::from_utf8_lossy(argv0).ends_with("/sit-sim-status") {
+            return true;
+        }
+    }
+    false
 }
 
 fn camp_owner_running() -> bool {

@@ -143,16 +143,14 @@ pub fn query_admission(
     status_lock_busy: bool,
     endpoint_holder: Option<&str>,
 ) -> QueryAdmission {
-    if owner_running {
-        QueryAdmission::Refuse("owner")
-    } else if matches!(endpoint_holder, Some("owner" | "modemd" | "shared")) {
-        QueryAdmission::Refuse("endpoint")
-    } else if status_lock_busy {
-        QueryAdmission::Refuse("lock")
-    } else if cp_state.map(str::trim) != Some("ONLINE") {
-        QueryAdmission::Refuse("cp")
-    } else {
-        QueryAdmission::Ready
+    match saai_observation::camp_open(
+        cp_state,
+        owner_running,
+        endpoint_holder,
+        status_lock_busy,
+    ) {
+        "ready" => QueryAdmission::Ready,
+        reason => QueryAdmission::Refuse(reason),
     }
 }
 

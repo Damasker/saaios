@@ -20,6 +20,7 @@ pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
 pub const KEY_ENDPOINT: &str = "cellular.endpoint";
 pub const KEY_ACTION: &str = "cellular.action";
+pub const KEY_OPEN: &str = "cellular.open";
 
 /// Longer than the default 30s telemetry interval, so one missed sample
 /// does not mark the row stale.
@@ -40,6 +41,8 @@ pub struct CellularReading {
     pub boot_epoch: Option<u64>,
     /// Who has `umts_ipc0` or `umts_rfs0` open: `owner`, `modemd`, or `shared`.
     pub endpoint: Option<&'static str>,
+    /// A `sit-sim-status` process is already running.
+    pub status_lock_busy: bool,
     pub ifaces: Vec<IfaceSample>,
 }
 
@@ -162,6 +165,18 @@ pub fn observations_from_cellular(
         observed_at,
         sequence,
     ));
+    out.push(text_observation(
+        KEY_OPEN,
+        camp_open(
+            reading.cp_text.as_deref(),
+            reading.owner_running,
+            reading.endpoint,
+            reading.status_lock_busy,
+        ),
+        "camp.lifecycle",
+        observed_at,
+        sequence,
+    ));
     out
 }
 
@@ -174,6 +189,27 @@ pub fn camp_action(cp_state: Option<&str>, owner_running: bool) -> &'static str 
     match cp_state.map(str::trim) {
         None | Some("OFFLINE") => "launch-once",
         Some(_) => "attend",
+    }
+}
+
+/// Whether a query may open the modem endpoint. `ready` is the only
+/// admission. Every other word is the first reason to refuse.
+pub fn camp_open(
+    cp_state: Option<&str>,
+    owner_running: bool,
+    endpoint_holder: Option<&str>,
+    status_lock_busy: bool,
+) -> &'static str {
+    if owner_running {
+        "owner"
+    } else if matches!(endpoint_holder, Some("owner" | "modemd" | "shared")) {
+        "endpoint"
+    } else if status_lock_busy {
+        "lock"
+    } else if cp_state.map(str::trim) != Some("ONLINE") {
+        "cp"
+    } else {
+        "ready"
     }
 }
 
@@ -395,6 +431,7 @@ mod tests {
             owner_running: true,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: vec![
                 sample("usb0", true, 10, 10),
                 sample("rmnet0", false, 0, 0),
@@ -403,7 +440,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 6);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -428,14 +465,17 @@ mod tests {
             owner_running: false,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: vec![sample("rmnet2", false, 0, 40)],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 1);
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].key, KEY_OWNER);
         assert_eq!(rows[0].value, json!("gone"));
         assert_eq!(rows[1].key, KEY_ACTION);
         assert_eq!(rows[1].value, json!("launch-once"));
+        assert_eq!(rows[2].key, KEY_OPEN);
+        assert_eq!(rows[2].value, json!("cp"));
     }
 
     #[test]
@@ -447,14 +487,17 @@ mod tests {
             owner_running: true,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 2);
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].key, KEY_CP_STATE);
         assert_eq!(rows[1].key, KEY_OWNER);
         assert_eq!(rows[2].key, KEY_ACTION);
         assert_eq!(rows[2].value, json!("attend"));
+        assert_eq!(rows[3].key, KEY_OPEN);
+        assert_eq!(rows[3].value, json!("owner"));
     }
 
     #[test]
@@ -472,10 +515,11 @@ mod tests {
             owner_running: false,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 3);
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].key, KEY_SUPERVISOR);
         assert_eq!(rows[0].value, json!("hold"));
         assert_eq!(rows[1].key, KEY_OWNER);
@@ -500,6 +544,7 @@ mod tests {
             owner_running: true,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 8);
@@ -519,10 +564,11 @@ mod tests {
             owner_running: true,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 9);
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 6);
         assert_eq!(rows[0].key, KEY_CP_STATE);
         assert_eq!(rows[1].key, KEY_RADIO);
         assert_eq!(rows[1].value, json!("on"));
@@ -544,10 +590,11 @@ mod tests {
             owner_running: true,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 6);
         assert_eq!(rows[0].key, KEY_CP_STATE);
         assert_eq!(rows[1].key, KEY_REGISTRATION_RAW);
         assert_eq!(rows[2].key, KEY_RADIO);
@@ -569,10 +616,11 @@ mod tests {
             owner_running: true,
             boot_epoch: None,
             endpoint: None,
+            status_lock_busy: false,
             ifaces: vec![sample("rmnet1", true, 4, 4)],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 5);
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 6);
         assert_eq!(rows[0].key, KEY_CP_STATE);
         assert_eq!(rows[0].value, json!("OFFLINE"));
         assert_eq!(rows[1].key, KEY_BEARER);
@@ -596,10 +644,11 @@ mod tests {
             owner_running: true,
             boot_epoch: Some(250),
             endpoint: None,
+            status_lock_busy: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 6);
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 5);
         assert_eq!(rows[0].key, KEY_CP_STATE);
         assert_eq!(rows[1].key, KEY_OWNER);
         assert_eq!(rows[2].key, KEY_BOOT_EPOCH);
@@ -624,16 +673,24 @@ mod tests {
             owner_running: true,
             boot_epoch: None,
             endpoint: Some("owner"),
+            status_lock_busy: false,
             ifaces: Vec::new(),
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 7);
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].key, KEY_OWNER);
         assert_eq!(rows[1].key, KEY_ENDPOINT);
         assert_eq!(rows[1].value, json!("owner"));
         assert_eq!(rows[2].key, KEY_ACTION);
         assert_eq!(rows[2].value, json!("attend"));
+        assert_eq!(rows[3].key, KEY_OPEN);
+        assert_eq!(rows[3].value, json!("owner"));
         assert_eq!(camp_action(Some("OFFLINE"), false), "launch-once");
+        assert_eq!(camp_open(Some("ONLINE"), true, Some("shared"), false), "owner");
+        assert_eq!(camp_open(Some("ONLINE"), false, Some("modemd"), false), "endpoint");
+        assert_eq!(camp_open(Some("ONLINE"), false, Some("pin"), true), "lock");
+        assert_eq!(camp_open(Some("OFFLINE"), false, None, false), "cp");
+        assert_eq!(camp_open(Some("ONLINE"), false, None, false), "ready");
         assert_eq!(camp_action(Some("ONLINE"), false), "attend");
         assert_eq!(camp_action(None, true), "attend");
     }
