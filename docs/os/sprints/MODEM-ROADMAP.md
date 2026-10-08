@@ -367,6 +367,12 @@ pid 408, owner один.
 `epoch=1791379663`, `endpoint=owner`, `hardware_actions=none`.
 Устройства не открывались. Дежурный `saai-modemd` остался pid 155,
 `saai-displayd` остался pid 408, owner один.
+Тот же статус называет слово дежурства (`a10a956`, бинарник
+`bdfc23c5…`): `supervisor=hold`. Это последнее `supervise=` из
+`/run/modem-boot.log`. Рядом `owner=running`, `bearer=rmnet1`,
+`epoch=1791379663`, `endpoint=owner`, `hardware_actions=none`.
+Устройства не открывались. Дежурный `saai-modemd` остался pid 155,
+`saai-displayd` остался pid 408, owner один.
 
 ## MODEM-02
 
