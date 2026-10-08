@@ -289,7 +289,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; camp-log facts need the live process and CP ONLINE) | **yes** |
-| MODEM-09 | World/Observation + Shell cellular facts | **Started** (observation cache names who holds the modem endpoint) | **yes** |
+| MODEM-09 | World/Observation + Shell cellular facts | **Started** (cellular row names who holds the modem endpoint) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
 ## MODEM-00
@@ -1179,6 +1179,14 @@ CP `ONLINE`.
 `cellular.owner=running`, `cellular.boot_epoch=1791379663`.
 `saai-displayd` остался pid 408, `saai-modemd` supervise остался
 pid 155, owner один, CP `ONLINE`. Перезагрузки не было.
+Строка «Сотовая сеть» (`9852057`, оболочка `4eed7d65…`) ставит
+то же слово держателя перед каналом. Для этой загрузки, по
+проверенной функции и живым словам кэша, это
+`ONLINE · домашняя · включено · есть · процесс · camp · rmnet1`.
+Чужое слово в строку не попадает. Кадр экрана не снимался.
+Оболочка перезапущена один раз, `saai-displayd` остался pid 408,
+`saai-modemd` supervise остался pid 155, runtime не перезапускался,
+owner один, CP `ONLINE`. Перезагрузки не было.
 
 ## Non-goals For Now
 
