@@ -108,8 +108,16 @@ enum Cmd {
         #[arg(long)]
         ipv4: Option<String>,
     },
+    /// Say whether this boot may start a camp or open the modem endpoint.
+    /// Opens nothing and does not start a second camp.
+    Lifecycle {
+        #[arg(long, default_value = DEFAULT_MODEM_STATE)]
+        modem_state: PathBuf,
+        #[arg(long, default_value = "/proc")]
+        proc: PathBuf,
+    },
     /// Decide whether one reviewed GET may run. This command does not open
-    /// the modem endpoint. A running owner or the status tool is busy.
+    /// the modem endpoint. A running owner, a held endpoint, or the status tool is busy.
     Query {
         #[arg(value_parser = ["sim-status", "radio-state", "data-registration"])]
         name: String,
@@ -367,6 +375,15 @@ fn run() -> Result<()> {
             println!("doc=docs/os/targets/panther/MODEM-BLOCKER.md");
             println!("hardware_actions=none");
         }
+        Cmd::Lifecycle { modem_state, proc } => {
+            let state = read_trimmed_optional(&modem_state).unwrap_or_else(|| "missing".into());
+            let owner_running = owner_is_running(&proc).unwrap_or(false);
+            let lock_busy = process_argv0_ends_with(&proc, "/sit-sim-status").unwrap_or(false);
+            let holder = endpoint_holder_at(&proc);
+            for line in lifecycle_lines(&state, owner_running, lock_busy, holder) {
+                println!("{line}");
+            }
+        }
         Cmd::Query {
             name,
             modem_state,
@@ -378,13 +395,19 @@ fn run() -> Result<()> {
             let cp = read_trimmed_optional(&modem_state);
             let owner_running = owner_is_running(&proc)?;
             let status_lock_busy = process_argv0_ends_with(&proc, "/sit-sim-status")?;
-            let admission = runtime_model::query_admission(cp.as_deref(), owner_running, status_lock_busy);
+            let holder = endpoint_holder_at(&proc);
+            let admission = runtime_model::query_admission(
+                cp.as_deref(),
+                owner_running,
+                status_lock_busy,
+                holder,
+            );
             let epoch = supervise::latest_boot_epoch(std::path::Path::new(DEFAULT_BOOT_ARCHIVE));
             let epoch_suffix = match epoch {
                 Some(epoch) => format!(" epoch={epoch}"),
                 None => String::new(),
             };
-            let endpoint_suffix = endpoint_suffix(endpoint_holder_at(Path::new("/proc")));
+            let endpoint_suffix = endpoint_suffix(holder);
             let mut hardware = "none";
             match admission {
                 QueryAdmission::Refuse(reason) => {
@@ -398,6 +421,7 @@ fn run() -> Result<()> {
                         cp.as_deref(),
                         owner_is_running(&proc)?,
                         process_argv0_ends_with(&proc, "/sit-sim-status")?,
+                        endpoint_holder_at(&proc),
                     );
                     match again {
                         QueryAdmission::Refuse(reason) => {
@@ -814,6 +838,34 @@ fn status_lines(
     lines
 }
 
+fn lifecycle_lines(
+    state: &str,
+    owner_running: bool,
+    lock_busy: bool,
+    holder: Option<&str>,
+) -> Vec<String> {
+    let cp = if state == "missing" { None } else { Some(state) };
+    let action = match supervise::first_action(cp, owner_running) {
+        FirstAction::LaunchOnce => "launch-once",
+        FirstAction::Attend => "attend",
+    };
+    let open = match runtime_model::query_admission(cp, owner_running, lock_busy, holder) {
+        QueryAdmission::Ready => "open=ready".to_string(),
+        QueryAdmission::Refuse(reason) => format!("open=refuse reason={reason}"),
+    };
+    let mut lines = vec![format!("action={action}"), open];
+    if let Some(holder) = endpoint_suffix(holder).strip_prefix(' ') {
+        lines.push(holder.to_string());
+    }
+    lines.push(format!(
+        "owner={}",
+        if owner_running { "running" } else { "gone" }
+    ));
+    lines.push(format!("cp={state}"));
+    lines.push("hardware_actions=none".to_string());
+    lines
+}
+
 fn camp_sim(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
     if !owner_running || state.trim() != "ONLINE" {
         return None;
@@ -920,6 +972,49 @@ fn assert_sha256(path: &Path, expected_hex: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_attends_a_live_camp_and_refuses_to_open() {
+        assert_eq!(
+            lifecycle_lines("ONLINE", true, false, Some("owner")),
+            vec![
+                "action=attend".to_string(),
+                "open=refuse reason=owner".to_string(),
+                "endpoint=owner".to_string(),
+                "owner=running".to_string(),
+                "cp=ONLINE".to_string(),
+                "hardware_actions=none".to_string(),
+            ]
+        );
+        assert_eq!(
+            lifecycle_lines("OFFLINE", false, false, None),
+            vec![
+                "action=launch-once".to_string(),
+                "open=refuse reason=cp".to_string(),
+                "owner=gone".to_string(),
+                "cp=OFFLINE".to_string(),
+                "hardware_actions=none".to_string(),
+            ]
+        );
+        assert_eq!(
+            lifecycle_lines("ONLINE", false, false, Some("modemd")),
+            vec![
+                "action=attend".to_string(),
+                "open=refuse reason=endpoint".to_string(),
+                "endpoint=modemd".to_string(),
+                "owner=gone".to_string(),
+                "cp=ONLINE".to_string(),
+                "hardware_actions=none".to_string(),
+            ]
+        );
+        let ready = lifecycle_lines("ONLINE", false, false, None);
+        assert_eq!(ready[0], "action=attend");
+        assert_eq!(ready[1], "open=ready");
+        assert_eq!(ready.last().map(String::as_str), Some("hardware_actions=none"));
+        let missing = lifecycle_lines("missing", false, false, None);
+        assert_eq!(missing[0], "action=launch-once");
+        assert_eq!(missing[1], "open=refuse reason=cp");
+    }
 
     #[test]
     fn status_names_the_endpoint_holder_without_a_hardware_action() {

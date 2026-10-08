@@ -141,9 +141,12 @@ pub fn query_admission(
     cp_state: Option<&str>,
     owner_running: bool,
     status_lock_busy: bool,
+    endpoint_holder: Option<&str>,
 ) -> QueryAdmission {
     if owner_running {
         QueryAdmission::Refuse("owner")
+    } else if matches!(endpoint_holder, Some("owner" | "modemd" | "shared")) {
+        QueryAdmission::Refuse("endpoint")
     } else if status_lock_busy {
         QueryAdmission::Refuse("lock")
     } else if cp_state.map(str::trim) != Some("ONLINE") {
@@ -333,20 +336,43 @@ mod tests {
     #[test]
     fn query_admission_refuses_a_busy_endpoint_and_an_offline_cp() {
         assert_eq!(
-            query_admission(Some("ONLINE"), true, false),
+            query_admission(Some("ONLINE"), true, false, None),
             QueryAdmission::Refuse("owner")
         );
         assert_eq!(
-            query_admission(Some("ONLINE"), false, true),
+            query_admission(Some("ONLINE"), true, false, Some("shared")),
+            QueryAdmission::Refuse("owner")
+        );
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, false, Some("modemd")),
+            QueryAdmission::Refuse("endpoint")
+        );
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, false, Some("owner")),
+            QueryAdmission::Refuse("endpoint")
+        );
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, false, Some("shared")),
+            QueryAdmission::Refuse("endpoint")
+        );
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, true, None),
             QueryAdmission::Refuse("lock")
         );
         assert_eq!(
-            query_admission(Some("OFFLINE"), false, false),
+            query_admission(Some("OFFLINE"), false, false, None),
             QueryAdmission::Refuse("cp")
         );
-        assert_eq!(query_admission(None, false, false), QueryAdmission::Refuse("cp"));
         assert_eq!(
-            query_admission(Some("ONLINE"), false, false),
+            query_admission(None, false, false, None),
+            QueryAdmission::Refuse("cp")
+        );
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, false, None),
+            QueryAdmission::Ready
+        );
+        assert_eq!(
+            query_admission(Some("ONLINE"), false, false, Some("pin")),
             QueryAdmission::Ready
         );
     }
