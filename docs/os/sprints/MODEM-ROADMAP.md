@@ -285,10 +285,10 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-02 | Factory S5100SIT boot sequence reaches CP `ONLINE` | **Done** (diagnostic) | **yes** |
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
-| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (one GET is wired; this boot's refusal names the endpoint holder) | **yes** |
+| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (a held endpoint refuses the GET even without the camp argv) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
-| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (one camp, then one note if the owner or CP leaves; camp-log facts need the live process and CP ONLINE) | **yes** |
+| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (this boot attends the live camp and refuses to open the endpoint) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Started** (cellular row names the supervisor word) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
@@ -527,6 +527,13 @@ token=1 epoch=1791379663`, `hardware_actions=none`. Это имя
 token=1 epoch=1791379663 endpoint=owner`, `hardware_actions=none`.
 Устройства не открывались. Дежурный `saai-modemd` остался pid 155,
 `saai-displayd` остался pid 408, owner один.
+Занятый дескриптор сам по себе отказывает GET (`c51f657`,
+бинарник `c10d9712…`), даже если argv camp не совпал. На этой
+загрузке процесс camp запущен, поэтому причина остаётся
+`reason=owner`: `query=refuse name=sim-status reason=owner token=1
+epoch=1791379663 endpoint=owner`, `hardware_actions=none`.
+Запись в endpoint не делалась. Дежурный `saai-modemd` остался
+pid 155, `saai-displayd` остался pid 408, owner один.
 
 ## MODEM-06
 
@@ -1158,6 +1165,14 @@ CP `ONLINE`, `camp_setup` на rmnet1 `up=1 add=1 route=1`, wget
 один. Путь CP `OFFLINE` проверен на хосте: регистрация, радио и
 SIM из лога пропадают, живой `rmnet1`, слово CP, дежурство и
 `cellular.owner=running` остаются.
+Команда `lifecycle` называет решение этой загрузки (`c51f657`,
+бинарник `c10d9712…`): `action=attend`, `open=refuse reason=owner`,
+`endpoint=owner`, `owner=running`, `cp=ONLINE`,
+`hardware_actions=none`. Второй camp не стартует, устройства не
+открываются. Путь `launch-once` при отсутствующем CP и путь
+`open=refuse reason=endpoint`, когда дескриптор держит `saai-modemd`
+без argv camp, проверены на хосте. Дежурный `saai-modemd` остался
+pid 155, `saai-displayd` остался pid 408, owner один.
 
 ## MODEM-09
 
