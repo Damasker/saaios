@@ -185,12 +185,17 @@ fn run() -> Result<()> {
             let live = live_bearers(&net_class, &bearers);
             let epoch = supervise::latest_boot_epoch(Path::new(DEFAULT_BOOT_ARCHIVE));
             let owner_running = owner_is_running(Path::new("/proc")).unwrap_or(false);
+            let boot_log = read_log_tail(Path::new("/run/modem-boot.log"), 256 * 1024);
+            let supervisor = boot_log
+                .as_deref()
+                .and_then(saai_observation::last_supervisor_token);
             for line in status_lines(
                 &state,
                 &bearers,
                 &live,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
+                supervisor,
                 owner_running,
             ) {
                 println!("{line}");
@@ -732,6 +737,19 @@ fn iface_has_ipv4(name: &str) -> bool {
     out.status.success() && out.stdout.windows(5).any(|window| window == b"inet ")
 }
 
+fn read_log_tail(path: &Path, max: u64) -> Option<String> {
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > max {
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::End(-(max as i64))).ok()?;
+    }
+    let mut text = String::new();
+    use std::io::Read;
+    file.read_to_string(&mut text).ok()?;
+    Some(text)
+}
+
 fn iface_name_ok(name: &str) -> bool {
     !name.is_empty()
         && !name.contains('/')
@@ -745,6 +763,7 @@ fn status_lines(
     live: &[String],
     epoch: Option<u64>,
     holder: Option<&str>,
+    supervisor: Option<&str>,
     owner_running: bool,
 ) -> Vec<String> {
     let mut lines = vec![format!("modem_state={state}")];
@@ -762,12 +781,22 @@ fn status_lines(
     if let Some(holder) = endpoint_suffix(holder).strip_prefix(' ') {
         lines.push(holder.to_string());
     }
+    if let Some(token) = supervisor_word(supervisor) {
+        lines.push(format!("supervisor={token}"));
+    }
     lines.push(format!(
         "owner={}",
         if owner_running { "running" } else { "gone" }
     ));
     lines.push("hardware_actions=none".to_string());
     lines
+}
+
+fn supervisor_word(token: Option<&str>) -> Option<&str> {
+    match token {
+        Some(token @ ("hold" | "owner-gone" | "cp-left" | "attend" | "launch-once")) => Some(token),
+        _ => None,
+    }
 }
 
 fn endpoint_suffix(holder: Option<&str>) -> String {
@@ -847,6 +876,7 @@ mod tests {
             &["rmnet1".into()],
             Some(250),
             Some("owner"),
+            Some("hold"),
             true,
         );
         assert_eq!(
@@ -857,11 +887,12 @@ mod tests {
                 "bearer=rmnet1".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
+                "supervisor=hold".to_string(),
                 "owner=running".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
-        let absent = status_lines("missing", &[], &[], None, None, false);
+        let absent = status_lines("missing", &[], &[], None, None, Some("handoff-exit"), false);
         assert_eq!(
             absent,
             vec![
@@ -874,6 +905,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.contains("endpoint=")));
         assert!(!absent.iter().any(|line| line.contains("epoch=")));
         assert!(!absent.iter().any(|line| line.starts_with("bearer=")));
+        assert!(!absent.iter().any(|line| line.starts_with("supervisor=")));
     }
 
     #[test]
