@@ -1302,6 +1302,7 @@ fn cellular_ifaces() -> Vec<String> {
 
 const CP_STATE_PATH: &str = "/sys/devices/platform/cpif/modem_state";
 const CAMP_OWNER_LOG: &str = "/data/saaios/var/modem-rfs-camp-combined-owner.log";
+const MODEM_BOOT_LOG: &str = "/run/modem-boot.log";
 
 /// Kernel CP word. Anything else stays off the row.
 fn cp_state_token(text: &str) -> Option<&str> {
@@ -1459,6 +1460,24 @@ fn read_endpoint_holder() -> Option<&'static str> {
     saai_observation::endpoint_holder(owner_has, modemd_has)
 }
 
+fn read_supervisor_token() -> Option<String> {
+    let text = read_log_tail(MODEM_BOOT_LOG, 256 * 1024)?;
+    saai_observation::last_supervisor_token(&text).map(str::to_string)
+}
+
+fn read_log_tail(path: &str, max: u64) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > max {
+        use std::io::{Read, Seek};
+        file.seek(std::io::SeekFrom::End(-(max as i64))).ok()?;
+        let mut text = String::new();
+        file.read_to_string(&mut text).ok()?;
+        return Some(text);
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 fn read_camp_owner_log() -> Option<String> {
     let text = std::fs::read_to_string(CAMP_OWNER_LOG).ok()?;
     Some(saai_observation::owner_fact_lines(&text))
@@ -1519,6 +1538,7 @@ fn cellular_row_status(
     sim: Option<&str>,
     owner: Option<&str>,
     endpoint: Option<&str>,
+    supervisor: Option<&str>,
     live: &[String],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -1540,6 +1560,9 @@ fn cellular_row_status(
         _ => {}
     }
     if let Some(phrase) = endpoint.and_then(endpoint_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = supervisor.and_then(supervisor_phrase) {
         parts.push(phrase.to_string());
     }
     if !live.is_empty() {
@@ -6878,6 +6901,7 @@ struct MeFacts {
     cellular_sim: Option<String>,
     cellular_owner: Option<String>,
     cellular_endpoint: Option<String>,
+    cellular_supervisor: Option<String>,
     camera_nodes: Vec<String>,
     pin_set: bool,
     text_scale_pct: u8,
@@ -7062,6 +7086,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                         facts.cellular_sim.as_deref(),
                         facts.cellular_owner.as_deref(),
                         facts.cellular_endpoint.as_deref(),
+                        facts.cellular_supervisor.as_deref(),
                         &facts.cellular_ifaces,
                     ),
                 )
@@ -7377,6 +7402,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_sim: None,
         cellular_owner: None,
         cellular_endpoint: None,
+        cellular_supervisor: None,
         camera_nodes: Vec::new(),
         pin_set: false,
         text_scale_pct: 100,
@@ -11437,6 +11463,7 @@ impl Shell {
                 .to_string(),
             ),
             cellular_endpoint: read_endpoint_holder().map(str::to_string),
+            cellular_supervisor: read_supervisor_token(),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
             text_scale_pct: self.settings.text_scale_pct,
@@ -14831,32 +14858,41 @@ mod tests {
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("gone"), None, &[]),
+            cellular_row_status(None, None, None, None, Some("gone"), None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("running"), None, &[]),
+            cellular_row_status(None, None, None, None, Some("running"), None, None, &[]),
             "процесс"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, Some("owner"), &[]),
+            cellular_row_status(None, None, None, None, None, Some("owner"), None, &[]),
             "camp"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, Some("hold"), &[]),
+            "удержание"
+        );
+        assert_eq!(
+            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), &[]),
+            "Нет модема"
+        );
+        assert_eq!(
+            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, &[]),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, &[]);
+        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, &[]);
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
             cellular_row_status(
                 Some("ONLINE"),
                 Some(1),
+                None,
                 None,
                 None,
                 None,
@@ -14873,9 +14909,10 @@ mod tests {
                 Some("present"),
                 Some("running"),
                 Some("owner"),
+                Some("hold"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · включено · есть · процесс · camp · rmnet1"
+            "ONLINE · домашняя · включено · есть · процесс · camp · удержание · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -14884,6 +14921,7 @@ mod tests {
                 Some("pin"),
                 Some("pin1"),
                 Some("gone"),
+                Some("pin"),
                 Some("pin"),
                 &[]
             ),
