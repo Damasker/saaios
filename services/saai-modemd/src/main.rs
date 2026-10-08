@@ -205,6 +205,7 @@ fn run() -> Result<()> {
             let voice = camp_voice(&state, owner_running, owner_log.as_deref());
             let radio = camp_radio(&state, owner_running, owner_log.as_deref());
             let selection = camp_selection(&state, owner_running, owner_log.as_deref());
+            let stack = camp_stack(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -214,6 +215,7 @@ fn run() -> Result<()> {
                 voice,
                 radio,
                 selection,
+                stack,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -804,6 +806,7 @@ fn status_lines(
     voice: Option<u32>,
     radio: Option<&str>,
     selection: Option<&str>,
+    stack: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -831,6 +834,9 @@ fn status_lines(
     }
     if let Some(token) = selection_word(selection) {
         lines.push(format!("selection={token}"));
+    }
+    if let Some(token) = stack_word(stack) {
+        lines.push(format!("stack={token}"));
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -920,6 +926,21 @@ fn camp_registration(state: &str, owner_running: bool, log: Option<&str>) -> Opt
     }
     let facts = saai_observation::owner_fact_lines(log?);
     saai_observation::last_data_registration_raw(&facts)
+}
+
+fn stack_word(token: Option<&str>) -> Option<&str> {
+    match token {
+        Some("enabled" | "disabled") => token,
+        _ => None,
+    }
+}
+
+fn camp_stack(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_stack_mode(&facts)
 }
 
 fn selection_word(token: Option<&str>) -> Option<&str> {
@@ -1074,6 +1095,7 @@ mod tests {
             Some(1),
             Some("on"),
             Some("automatic"),
+            Some("enabled"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1091,6 +1113,7 @@ mod tests {
                 "voice_registration_raw=1".to_string(),
                 "radio=on".to_string(),
                 "selection=automatic".to_string(),
+                "stack=enabled".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1107,6 +1130,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin1"),
@@ -1135,6 +1159,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("voice_registration_raw=")));
         assert!(!absent.iter().any(|line| line.starts_with("radio=")));
         assert!(!absent.iter().any(|line| line.starts_with("selection=")));
+        assert!(!absent.iter().any(|line| line.starts_with("stack=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1186,6 +1211,18 @@ mod tests {
             Some("automatic")
         );
         assert_eq!(camp_selection("OFFLINE", true, Some("field=selection mode_raw=0\n")), None);
+        assert_eq!(
+            camp_stack("ONLINE", true, Some("camp_opx get=stack_status mode_raw=1\n")),
+            Some("enabled")
+        );
+        assert_eq!(
+            camp_stack("ONLINE", false, Some("camp_opx get=stack_status mode_raw=1\n")),
+            None
+        );
+        assert_eq!(
+            camp_stack("OFFLINE", true, Some("camp_opx get=stack_status mode_raw=1\n")),
+            None
+        );
         assert_eq!(camp_voice("OFFLINE", true, Some(log)), None);
         assert_eq!(camp_voice("ONLINE", false, Some(log)), None);
         assert_eq!(

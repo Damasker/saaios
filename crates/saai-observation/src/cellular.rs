@@ -17,6 +17,7 @@ pub const KEY_BEARER: &str = "cellular.bearer";
 pub const KEY_SUPERVISOR: &str = "cellular.supervisor";
 pub const KEY_RADIO: &str = "cellular.radio";
 pub const KEY_SELECTION: &str = "cellular.selection";
+pub const KEY_STACK: &str = "cellular.stack";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -127,6 +128,15 @@ pub fn observations_from_cellular(
             KEY_SELECTION,
             token,
             "camp.owner.selection",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(token) = log.and_then(last_stack_mode) {
+        out.push(text_observation(
+            KEY_STACK,
+            token,
+            "camp.owner.stack",
             observed_at,
             sequence,
         ));
@@ -297,6 +307,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut voice = None;
     let mut radio = None;
     let mut selection = None;
+    let mut stack = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -307,12 +318,14 @@ pub fn owner_fact_lines(log: &str) -> String {
             radio = Some(line);
         } else if line.contains("field=selection ") {
             selection = Some(line);
+        } else if line.contains("get=stack_status ") {
+            stack = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
     }
     let mut out = String::new();
-    for line in [data, voice, radio, selection, sim].into_iter().flatten() {
+    for line in [data, voice, radio, selection, stack, sim].into_iter().flatten() {
         out.push_str(line);
         out.push('\n');
     }
@@ -364,6 +377,24 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last logical-stack mode. Stock reads byte +12: `0` is disabled, `1` is enabled.
+pub fn last_stack_mode(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some(rest) = line.split_once("get=stack_status mode_raw=") {
+            let digits: String = rest.1.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("disabled"),
+                Some(1) => Some("enabled"),
+                _ => None,
+            };
+        }
+        if line.contains("get=stack_status status=unknown_short") {
+            return None;
+        }
+    }
+    None
 }
 
 /// Last selection mode. `0` is automatic, `1` is manual. Anything else stays out.
@@ -477,7 +508,8 @@ mod tests {
             owner_log: Some(
                 "camp_reg field=voice registration_raw=3 reject_raw=0\n\
                  camp_reg field=data registration_raw=1 reject_raw=0 lac=0\n\
-                 camp_reg field=selection mode_raw=0\n"
+                 camp_reg field=selection mode_raw=0\n\
+                 camp_opx get=stack_status mode_raw=1\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -493,7 +525,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 8);
+        assert_eq!(rows.len(), 9);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -510,6 +542,9 @@ mod tests {
         assert_eq!(voice.source.source_id, "camp.owner.voice_registration");
         let selection = rows.iter().find(|row| row.key == KEY_SELECTION).unwrap();
         assert_eq!(selection.value, json!("automatic"));
+        let stack = rows.iter().find(|row| row.key == KEY_STACK).unwrap();
+        assert_eq!(stack.value, json!("enabled"));
+        assert_eq!(stack.source.source_id, "camp.owner.stack");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -763,6 +798,19 @@ mod tests {
         );
         assert_eq!(last_selection_mode("field=selection mode_raw=2\n"), None);
         assert_eq!(last_selection_mode("field=selection mode_raw=1\n"), Some("manual"));
+        assert_eq!(
+            last_stack_mode("camp_opx get=stack_status mode_raw=0\n"),
+            Some("disabled")
+        );
+        assert_eq!(
+            last_stack_mode("camp_opx get=stack_status mode_raw=1\n"),
+            Some("enabled")
+        );
+        assert_eq!(last_stack_mode("camp_opx get=stack_status mode_raw=2\n"), None);
+        assert_eq!(
+            last_stack_mode("camp_opx get=stack_status mode_raw=1\nget=stack_status status=unknown_short\n"),
+            None
+        );
         assert_eq!(camp_action(Some("ONLINE"), false), "attend");
         assert_eq!(camp_action(None, true), "attend");
     }
