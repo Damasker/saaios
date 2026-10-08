@@ -362,6 +362,11 @@ owner один.
 `epoch=1791379663`, `endpoint=owner`, `hardware_actions=none`.
 Дежурный `saai-modemd` остался pid 155, `saai-displayd` остался
 pid 408, owner один.
+Тот же статус называет процесс camp (`1854f79`, бинарник
+`12b97366…`): `owner=running`. Рядом `bearer=rmnet1`,
+`epoch=1791379663`, `endpoint=owner`, `hardware_actions=none`.
+Устройства не открывались. Дежурный `saai-modemd` остался pid 155,
+`saai-displayd` остался pid 408, owner один.
 
 ## MODEM-02
 
