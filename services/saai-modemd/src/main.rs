@@ -202,6 +202,7 @@ fn run() -> Result<()> {
             )
             .ok();
             let registration = camp_registration(&state, owner_running, owner_log.as_deref());
+            let voice = camp_voice(&state, owner_running, owner_log.as_deref());
             let radio = camp_radio(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
@@ -209,6 +210,7 @@ fn run() -> Result<()> {
                 &bearers,
                 &live,
                 registration,
+                voice,
                 radio,
                 sim,
                 epoch,
@@ -797,6 +799,7 @@ fn status_lines(
     bearers: &[String],
     live: &[String],
     registration: Option<u32>,
+    voice: Option<u32>,
     radio: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
@@ -816,6 +819,9 @@ fn status_lines(
     }
     if let Some(raw) = registration {
         lines.push(format!("registration_raw={raw}"));
+    }
+    if let Some(raw) = voice {
+        lines.push(format!("voice_registration_raw={raw}"));
     }
     if radio == Some("on") {
         lines.push("radio=on".to_string());
@@ -908,6 +914,14 @@ fn camp_registration(state: &str, owner_running: bool, log: Option<&str>) -> Opt
     }
     let facts = saai_observation::owner_fact_lines(log?);
     saai_observation::last_data_registration_raw(&facts)
+}
+
+fn camp_voice(state: &str, owner_running: bool, log: Option<&str>) -> Option<u32> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_voice_registration_raw(&facts)
 }
 
 fn supervisor_word(token: Option<&str>) -> Option<&str> {
@@ -1036,6 +1050,7 @@ mod tests {
             &["rmnet0".into(), "rmnet1".into()],
             &["rmnet1".into()],
             Some(1),
+            Some(1),
             Some("on"),
             Some("present"),
             Some(250),
@@ -1051,6 +1066,7 @@ mod tests {
                 "cellular_bearers=rmnet0,rmnet1".to_string(),
                 "bearer=rmnet1".to_string(),
                 "registration_raw=1".to_string(),
+                "voice_registration_raw=1".to_string(),
                 "radio=on".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
@@ -1066,6 +1082,7 @@ mod tests {
             "missing",
             &[],
             &[],
+            None,
             None,
             Some("pin"),
             Some("pin1"),
@@ -1091,6 +1108,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("bearer=")));
         assert!(!absent.iter().any(|line| line.starts_with("supervisor=")));
         assert!(!absent.iter().any(|line| line.starts_with("registration_raw=")));
+        assert!(!absent.iter().any(|line| line.starts_with("voice_registration_raw=")));
         assert!(!absent.iter().any(|line| line.starts_with("radio=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
@@ -1129,6 +1147,13 @@ mod tests {
         let log = "camp_reg field=voice registration_raw=3\n\
                    camp_reg field=data registration_raw=1 reject_raw=0 lac=0\n";
         assert_eq!(camp_registration("ONLINE", true, Some(log)), Some(1));
+        assert_eq!(camp_voice("ONLINE", true, Some(log)), Some(3));
+        assert_eq!(camp_voice("OFFLINE", true, Some(log)), None);
+        assert_eq!(camp_voice("ONLINE", false, Some(log)), None);
+        assert_eq!(
+            camp_voice("ONLINE", true, Some("field=voice registration_raw=9\n")),
+            None
+        );
         assert_eq!(camp_registration("OFFLINE", true, Some(log)), None);
         assert_eq!(camp_registration("ONLINE", false, Some(log)), None);
         assert_eq!(

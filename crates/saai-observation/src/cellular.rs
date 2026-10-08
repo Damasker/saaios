@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 pub const KEY_CP_STATE: &str = "cellular.cp_state";
 pub const KEY_REGISTRATION_RAW: &str = "cellular.registration_raw";
+pub const KEY_VOICE_REGISTRATION_RAW: &str = "cellular.voice_registration_raw";
 pub const KEY_BEARER: &str = "cellular.bearer";
 pub const KEY_SUPERVISOR: &str = "cellular.supervisor";
 pub const KEY_RADIO: &str = "cellular.radio";
@@ -81,6 +82,15 @@ pub fn observations_from_cellular(
             KEY_REGISTRATION_RAW,
             raw,
             "camp.owner.data_registration",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(raw) = log.and_then(last_voice_registration_raw) {
+        out.push(number_observation(
+            KEY_VOICE_REGISTRATION_RAW,
+            raw,
+            "camp.owner.voice_registration",
             observed_at,
             sequence,
         ));
@@ -274,11 +284,14 @@ pub fn last_radio_token(log: &str) -> Option<&'static str> {
 /// even after the camp log grows past a tail window.
 pub fn owner_fact_lines(log: &str) -> String {
     let mut data = None;
+    let mut voice = None;
     let mut radio = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
             data = Some(line);
+        } else if line.contains("field=voice registration_raw=") {
+            voice = Some(line);
         } else if line.contains("field=radio ") {
             radio = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
@@ -286,7 +299,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         }
     }
     let mut out = String::new();
-    for line in [data, radio, sim].into_iter().flatten() {
+    for line in [data, voice, radio, sim].into_iter().flatten() {
         out.push_str(line);
         out.push('\n');
     }
@@ -342,9 +355,17 @@ fn cp_state_token(text: &str) -> Option<&str> {
 
 /// Last data `registration_raw` in 0..=5. Reject, LAC, and CID stay out.
 pub fn last_data_registration_raw(log: &str) -> Option<u32> {
-    const NEEDLE: &str = "field=data registration_raw=";
+    last_named_registration_raw(log, "field=data registration_raw=")
+}
+
+/// Last voice `registration_raw` in 0..=5. Reject, LAC, and CID stay out.
+pub fn last_voice_registration_raw(log: &str) -> Option<u32> {
+    last_named_registration_raw(log, "field=voice registration_raw=")
+}
+
+fn last_named_registration_raw(log: &str, needle: &str) -> Option<u32> {
     log.lines().rev().find_map(|line| {
-        let rest = line.split_once(NEEDLE)?.1;
+        let rest = line.split_once(needle)?.1;
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         let raw: u32 = digits.parse().ok()?;
         (raw <= 5).then_some(raw)
@@ -440,7 +461,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 7);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -449,6 +470,12 @@ mod tests {
             .find(|row| row.key == KEY_REGISTRATION_RAW)
             .unwrap();
         assert_eq!(reg.value, json!(1));
+        let voice = rows
+            .iter()
+            .find(|row| row.key == KEY_VOICE_REGISTRATION_RAW)
+            .unwrap();
+        assert_eq!(voice.value, json!(3));
+        assert_eq!(voice.source.source_id, "camp.owner.voice_registration");
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
         let owner = rows.iter().find(|row| row.key == KEY_OWNER).unwrap();
