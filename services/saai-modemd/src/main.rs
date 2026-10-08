@@ -182,10 +182,12 @@ fn run() -> Result<()> {
         } => {
             let state = read_trimmed_optional(&modem_state).unwrap_or_else(|| "missing".into());
             let bearers = cellular_ifaces(&net_class)?;
+            let live = live_bearers(&net_class, &bearers);
             let epoch = supervise::latest_boot_epoch(Path::new(DEFAULT_BOOT_ARCHIVE));
             for line in status_lines(
                 &state,
                 &bearers,
+                &live,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
             ) {
@@ -691,9 +693,54 @@ fn mounts_include_original_efs(mounts: &str) -> bool {
     })
 }
 
+fn live_bearers(net_class: &Path, names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| {
+            saai_observation::bearer_is_live(
+                iface_has_ipv4(name),
+                iface_counter(net_class, name, "rx_bytes"),
+                iface_counter(net_class, name, "tx_bytes"),
+            )
+        })
+        .cloned()
+        .collect()
+}
+
+fn iface_counter(net_class: &Path, name: &str, which: &str) -> u64 {
+    if !iface_name_ok(name) {
+        return 0;
+    }
+    fs::read_to_string(net_class.join(name).join("statistics").join(which))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn iface_has_ipv4(name: &str) -> bool {
+    if !iface_name_ok(name) {
+        return false;
+    }
+    let Ok(out) = std::process::Command::new("/saaios/ip")
+        .args(["-4", "-o", "addr", "show", "dev", name])
+        .output()
+    else {
+        return false;
+    };
+    out.status.success() && out.stdout.windows(5).any(|window| window == b"inet ")
+}
+
+fn iface_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 fn status_lines(
     state: &str,
     bearers: &[String],
+    live: &[String],
     epoch: Option<u64>,
     holder: Option<&str>,
 ) -> Vec<String> {
@@ -702,6 +749,9 @@ fn status_lines(
         lines.push("cellular_bearers=none".to_string());
     } else {
         lines.push(format!("cellular_bearers={}", bearers.join(",")));
+    }
+    if !live.is_empty() {
+        lines.push(format!("bearer={}", live.join(",")));
     }
     if let Some(epoch) = epoch {
         lines.push(format!("epoch={epoch}"));
@@ -784,18 +834,25 @@ mod tests {
 
     #[test]
     fn status_names_the_endpoint_holder_without_a_hardware_action() {
-        let lines = status_lines("ONLINE", &["rmnet1".into()], Some(250), Some("owner"));
+        let lines = status_lines(
+            "ONLINE",
+            &["rmnet0".into(), "rmnet1".into()],
+            &["rmnet1".into()],
+            Some(250),
+            Some("owner"),
+        );
         assert_eq!(
             lines,
             vec![
                 "modem_state=ONLINE".to_string(),
-                "cellular_bearers=rmnet1".to_string(),
+                "cellular_bearers=rmnet0,rmnet1".to_string(),
+                "bearer=rmnet1".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
                 "hardware_actions=none".to_string(),
             ]
         );
-        let absent = status_lines("missing", &[], None, None);
+        let absent = status_lines("missing", &[], &[], None, None);
         assert_eq!(
             absent,
             vec![
@@ -806,6 +863,25 @@ mod tests {
         );
         assert!(!absent.iter().any(|line| line.contains("endpoint=")));
         assert!(!absent.iter().any(|line| line.contains("epoch=")));
+        assert!(!absent.iter().any(|line| line.starts_with("bearer=")));
+    }
+
+    #[test]
+    fn live_bearer_uses_both_directions_and_skips_a_bad_name() {
+        assert!(saai_observation::bearer_is_live(true, 0, 0));
+        assert!(saai_observation::bearer_is_live(false, 4, 4));
+        assert!(!saai_observation::bearer_is_live(false, 0, 4));
+        let root = std::env::temp_dir().join(format!("saai-bearer-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (name, rx, tx) in [("rmnet0", "0", "10"), ("rmnet1", "4", "4")] {
+            let stats = root.join(name).join("statistics");
+            fs::create_dir_all(&stats).unwrap();
+            fs::write(stats.join("rx_bytes"), rx).unwrap();
+            fs::write(stats.join("tx_bytes"), tx).unwrap();
+        }
+        let names = vec!["rmnet0".into(), "rmnet1".into(), "../rmnet1".into()];
+        assert_eq!(live_bearers(&root, &names), vec!["rmnet1".to_string()]);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

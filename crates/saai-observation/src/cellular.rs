@@ -84,7 +84,7 @@ pub fn observations_from_cellular(
     let mut live: Vec<&str> = reading
         .ifaces
         .iter()
-        .filter(|iface| is_cellular_iface(&iface.name) && bearer_is_live(iface))
+        .filter(|iface| is_cellular_iface(&iface.name) && sample_is_live(iface))
         .map(|iface| iface.name.as_str())
         .collect();
     live.sort();
@@ -261,8 +261,14 @@ pub fn last_sim_presence(log: &str) -> Option<&'static str> {
     None
 }
 
-fn bearer_is_live(iface: &IfaceSample) -> bool {
-    iface.has_ipv4 || (iface.rx > 0 && iface.tx > 0)
+/// An address on the iface, or both directions moved. The address itself
+/// stays with the caller.
+pub fn bearer_is_live(has_ipv4: bool, rx: u64, tx: u64) -> bool {
+    has_ipv4 || (rx > 0 && tx > 0)
+}
+
+fn sample_is_live(iface: &IfaceSample) -> bool {
+    bearer_is_live(iface.has_ipv4, iface.rx, iface.tx)
 }
 
 fn cp_state_token(text: &str) -> Option<&str> {
@@ -345,6 +351,14 @@ mod tests {
             rx,
             tx,
         }
+    }
+
+    #[test]
+    fn a_live_bearer_is_an_address_or_both_directions() {
+        assert!(bearer_is_live(true, 0, 0));
+        assert!(bearer_is_live(false, 1, 1));
+        assert!(!bearer_is_live(false, 0, 1));
+        assert!(!bearer_is_live(false, 1, 0));
     }
 
     #[test]

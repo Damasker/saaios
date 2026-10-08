@@ -11,7 +11,7 @@ mod model;
 
 pub use cache::{ObservationCache, WorldSnapshot};
 pub use cellular::{
-    is_cellular_iface, last_radio_token, last_sim_presence, latest_numeric_epoch,
+    bearer_is_live, is_cellular_iface, last_radio_token, last_sim_presence, latest_numeric_epoch,
     link_is_modem_endpoint, observations_from_cellular, owner_fact_lines, endpoint_holder,
     CellularReading, IfaceSample, KEY_BEARER, KEY_CP_STATE, KEY_REGISTRATION_RAW,
 };
