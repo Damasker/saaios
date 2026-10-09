@@ -229,6 +229,7 @@ fn run() -> Result<()> {
             let screen = camp_screen(&state, owner_running, owner_log.as_deref());
             let cellinfo = camp_cellinfo(&state, owner_running, owner_log.as_deref());
             let smsc = camp_smsc(&state, owner_running, owner_log.as_deref());
+            let vonrget = camp_vonrget(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -262,6 +263,7 @@ fn run() -> Result<()> {
                 screen,
                 cellinfo,
                 smsc,
+                vonrget,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -876,6 +878,7 @@ fn status_lines(
     screen: Option<&str>,
     cellinfo: Option<&str>,
     smsc: Option<&str>,
+    vonrget: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -976,6 +979,9 @@ fn status_lines(
     if smsc == Some("accepted") {
         lines.push("smsc=accepted".to_string());
     }
+    if vonrget == Some("accepted") {
+        lines.push("vonrget=accepted".to_string());
+    }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
     }
@@ -1071,6 +1077,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_vonrget(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_vonrget(&facts)
 }
 
 fn camp_smsc(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1483,6 +1497,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1524,6 +1539,7 @@ mod tests {
                 "screen=accepted".to_string(),
                 "cellinfo=accepted".to_string(),
                 "smsc=accepted".to_string(),
+                "vonrget=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1540,6 +1556,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1616,6 +1633,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("screen=")));
         assert!(!absent.iter().any(|line| line.starts_with("cellinfo=")));
         assert!(!absent.iter().any(|line| line.starts_with("smsc=")));
+        assert!(!absent.iter().any(|line| line.starts_with("vonrget=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -2316,6 +2334,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_smsc response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_vonrget(
+                "ONLINE",
+                true,
+                Some("camp_vonrget response=yes error_raw=0 len=16\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_vonrget(
+                "ONLINE",
+                true,
+                Some("camp_vonrget response=yes error_raw=2 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_vonrget(
+                "ONLINE",
+                true,
+                Some("camp_vonrcapa response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_vonrget(
+                "OFFLINE",
+                true,
+                Some("camp_vonrget response=yes error_raw=0 len=16\n")
             ),
             None
         );
