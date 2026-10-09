@@ -500,6 +500,20 @@ pub fn observations_from_cellular(
     out
 }
 
+/// The diagnostic camp binary, or `saai-modemd` started with the inherited
+/// `--ipc-fd` handoff. `saai-modemd supervise` is not an owner.
+pub fn cmdline_is_camp_owner(bytes: &[u8]) -> bool {
+    let mut parts = bytes.split(|byte| *byte == 0).filter(|part| !part.is_empty());
+    let Some(argv0) = parts.next() else {
+        return false;
+    };
+    let argv0 = String::from_utf8_lossy(argv0);
+    if argv0.ends_with("/modem-rfs-camp-combined-owner") {
+        return true;
+    }
+    argv0.ends_with("/saai-modemd") && parts.any(|part| part == b"--ipc-fd")
+}
+
 /// Whether a new camp may start. A running owner, or any CP state other
 /// than missing/`OFFLINE`, stays on the camp that is already up.
 pub fn camp_action(cp_state: Option<&str>, owner_running: bool) -> &'static str {
@@ -2467,5 +2481,21 @@ mod tests {
         );
         assert_eq!(camp_action(Some("ONLINE"), false), "attend");
         assert_eq!(camp_action(None, true), "attend");
+    }
+
+    #[test]
+    fn inherited_modemd_handoff_is_the_camp_owner() {
+        assert!(cmdline_is_camp_owner(
+            b"/data/saaios/bin/modem-rfs-camp-combined-owner\0--ipc-fd\05\0"
+        ));
+        assert!(cmdline_is_camp_owner(
+            b"/data/saaios/bin/saai-modemd\0--ipc-fd\05\0--rfs-fd\06\0--ready-fd\07\0"
+        ));
+        assert!(!cmdline_is_camp_owner(
+            b"/data/saaios/bin/saai-modemd\0supervise\0"
+        ));
+        assert!(!cmdline_is_camp_owner(
+            b"grep\0--ipc-fd\0"
+        ));
     }
 }

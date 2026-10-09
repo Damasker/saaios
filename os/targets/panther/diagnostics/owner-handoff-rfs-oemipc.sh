@@ -21,7 +21,7 @@ awk() { /saaios/busybox awk "$@"; }
 case "$#:$*" in
     '1:rfs-camp-combined')
         PROBE=/data/saaios/bin/probe-handover-rfs-camp-replay
-        OWNER=/data/saaios/bin/modem-rfs-camp-combined-owner
+        OWNER=/data/saaios/bin/saai-modemd
         OWNER_MODE=rfs-camp-combined
         LOG=/data/saaios/var/owner-handoff-rfs-camp.log
         OWNER_LOG=/data/saaios/var/modem-rfs-camp-combined-owner.log

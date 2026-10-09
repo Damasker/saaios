@@ -8904,6 +8904,12 @@ static int self_test(void)
     return 0;
 }
 
+int saaios_run_camp_owner(int ipc, int rfs, int ready)
+{
+    return run_owner(ipc, rfs, ready);
+}
+
+#ifndef SAAIOS_EMBEDDED_OWNER
 int main(int argc, char **argv)
 {
     if (argc == 2 && (!strcmp(argv[1], "--mode") ||
@@ -8925,3 +8931,4 @@ int main(int argc, char **argv)
     }
     return run_owner(ipc, rfs, ready);
 }
+#endif

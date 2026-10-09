@@ -111,9 +111,7 @@ fn sensitive_mounts(mountinfo: &str) -> Vec<&'static str> {
 }
 
 pub fn owner_in_cmdline(bytes: &[u8]) -> bool {
-    let argv0 = bytes.split(|byte| *byte == 0).next().unwrap_or(b"");
-    let text = String::from_utf8_lossy(argv0);
-    text.ends_with("/modem-rfs-camp-combined-owner")
+    saai_observation::cmdline_is_camp_owner(bytes)
 }
 
 /// Newest numeric directory under the boot archive. Other names are ignored.
@@ -155,6 +153,9 @@ mod tests {
     fn cmdline_matches_the_owner_binary_only() {
         assert!(owner_in_cmdline(
             b"/data/saaios/bin/modem-rfs-camp-combined-owner\0--ipc-fd\0"
+        ));
+        assert!(owner_in_cmdline(
+            b"/data/saaios/bin/saai-modemd\0--ipc-fd\05\0--rfs-fd\06\0"
         ));
         assert!(!owner_in_cmdline(b"/data/saaios/bin/saai-modemd\0supervise\0"));
         assert!(!owner_in_cmdline(b"grep\0modem-rfs-camp-combined-owner\0"));

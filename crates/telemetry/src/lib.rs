@@ -215,8 +215,7 @@ fn camp_owner_running() -> bool {
             continue;
         }
         let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
-        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
-        if String::from_utf8_lossy(argv0).ends_with("/modem-rfs-camp-combined-owner") {
+        if saai_observation::cmdline_is_camp_owner(&cmdline) {
             return true;
         }
     }

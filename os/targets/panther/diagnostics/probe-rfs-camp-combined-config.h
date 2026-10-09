@@ -8,7 +8,7 @@
 #ifdef PROBE_QUERY_SIM
 #error "RFS probe cannot run a competing SIM reader"
 #endif
-#define PROBE_OWNER_EXEC "/data/saaios/bin/modem-rfs-camp-combined-owner"
+#define PROBE_OWNER_EXEC "/data/saaios/bin/saai-modemd"
 #define PROBE_OWNER_LOG "/data/saaios/var/modem-rfs-camp-combined-owner.log"
 /* Candidate clone/fsync/source reread precede READY, not the frame run. */
 #define PROBE_OWNER_READY_TIMEOUT_MS 15000

@@ -163,10 +163,53 @@ enum Cmd {
 }
 
 fn main() {
+    if let Some(code) = inherited_camp_owner() {
+        std::process::exit(code);
+    }
     if let Err(error) = run() {
         eprintln!("saai-modemd: {error:#}");
         std::process::exit(1);
     }
+}
+
+/// The probe keeps the reviewed argv: `--ipc-fd`, `--rfs-fd`, `--ready-fd`.
+/// This process then runs the same camp owner, so the descriptors stay here.
+fn inherited_camp_owner() -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 && (args[1] == "--mode" || args[1] == "--mode=rfs-full-quarantine") {
+        println!("rfs-camp-combined");
+        return Some(0);
+    }
+    if args.len() != 7 || args[1] != "--ipc-fd" || args[3] != "--rfs-fd" || args[5] != "--ready-fd"
+    {
+        return None;
+    }
+    let Ok(ipc) = args[2].parse::<i32>() else {
+        return Some(64);
+    };
+    let Ok(rfs) = args[4].parse::<i32>() else {
+        return Some(64);
+    };
+    let Ok(ready) = args[6].parse::<i32>() else {
+        return Some(64);
+    };
+    if ipc < 3 || rfs < 3 || ready < 3 || ipc == rfs || ipc == ready || rfs == ready {
+        return Some(64);
+    }
+    Some(run_inherited_owner(ipc, rfs, ready))
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+fn run_inherited_owner(ipc: i32, rfs: i32, ready: i32) -> i32 {
+    extern "C" {
+        fn saaios_run_camp_owner(ipc: i32, rfs: i32, ready: i32) -> i32;
+    }
+    unsafe { saaios_run_camp_owner(ipc, rfs, ready) }
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+fn run_inherited_owner(_ipc: i32, _rfs: i32, _ready: i32) -> i32 {
+    64
 }
 
 fn print_channel(decision: rfs_policy::ChannelDecision) {
@@ -735,7 +778,24 @@ fn supervise_camp(modem_state: &Path, handoff: &Path, proc_root: &Path) -> Resul
 }
 
 fn owner_is_running(proc_root: &Path) -> Result<bool> {
-    process_argv0_ends_with(proc_root, "/modem-rfs-camp-combined-owner")
+    let Ok(entries) = fs::read_dir(proc_root) else {
+        return Ok(false);
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        if saai_observation::cmdline_is_camp_owner(&cmdline) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn process_argv0_ends_with(proc_root: &Path, suffix: &str) -> Result<bool> {
