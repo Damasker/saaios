@@ -285,10 +285,10 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-02 | Factory S5100SIT boot sequence reaches CP `ONLINE` | **Done** (diagnostic) | **yes** |
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
-| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (a held endpoint refuses the GET even without the camp argv) | **yes** |
+| MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Done** (one SIM GET answered after the camp released the endpoint) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **Done** (home registration and a live bearer; the registration=0 wall is withdrawn) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Done** (quarantine and carrier-config policy; not a boot service) | **yes** |
-| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (this boot's camp is `saai-modemd`; the controlled exit was not performed) | **yes** |
+| MODEM-08 | Long-running `saai-modemd` lifecycle | **Done** (fresh boot, one query, one SIGTERM, CP stayed ONLINE, sensitive mounts clear) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Done** (this boot's `saai-modemd` holds the descriptors; `rmnet1` has ipv4) | **yes** |
 
@@ -534,6 +534,11 @@ token=1 epoch=1791379663 endpoint=owner`, `hardware_actions=none`.
 epoch=1791379663 endpoint=owner`, `hardware_actions=none`.
 Запись в endpoint не делалась. Дежурный `saai-modemd` остался
 pid 155, `saai-displayd` остался pid 408, owner один.
+После `stop-owner` на загрузке с pid camp 559 дескриптор
+освободился, CP остался `ONLINE`. Один GET ответил
+`query=answer name=sim-status token=1 error_raw=0 sim=present
+epoch=1791380016` и `hardware_actions=query`. До этого на той же
+загрузке канал был `bearer=rmnet1`, `ipv4=yes`, `endpoint=modemd`.
 
 ## MODEM-06
 
@@ -1385,6 +1390,13 @@ Stock называет `error_raw=0` принятым. На этой загру�
 `cellular.prefmodem=accepted`. Тело ответа в строку не попадает.
 Ответы `camp_pssvc` и `camp_slot` этим фактом не считаются.
 Повторная команда не отправлялась.
+Контролируемый выход этой загрузки: `saai-modemd stop-owner`
+напечатал `exit=signaled signal=term-once power_off=no performed=yes`.
+Процесс camp 559 завершился, дежурный 153 остался, лог дал
+`supervise=owner-gone`, CP остался `ONLINE`. Следом один
+`query sim-status` получил ответ. `/mnt/vendor/persist` и
+`/mnt/vendor/efs` не смонтированы. PID 1 по-прежнему запускает
+только скрипт загрузки.
 
 ## MODEM-09
 
