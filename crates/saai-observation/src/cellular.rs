@@ -32,6 +32,7 @@ pub const KEY_IPV4: &str = "cellular.ipv4";
 pub const KEY_IPV6: &str = "cellular.ipv6";
 pub const KEY_SETUP: &str = "cellular.setup";
 pub const KEY_PROFILE: &str = "cellular.profile";
+pub const KEY_ACTIVITY: &str = "cellular.activity";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -281,6 +282,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_activity) {
+        out.push(text_observation(
+            KEY_ACTIVITY,
+            token,
+            "camp.owner.activity",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -462,6 +472,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut ipv6 = None;
     let mut setup = None;
     let mut profile = None;
+    let mut activity = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -502,6 +513,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             setup = Some(line);
         } else if line.contains("camp_profile response=yes ") {
             profile = Some(line);
+        } else if line.contains("camp_activity response=yes ") {
+            activity = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -527,6 +540,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         ipv6,
         setup,
         profile,
+        activity,
         sim,
     ]
         .into_iter()
@@ -583,6 +597,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last modem-activity acknowledgement. Stock error `0` is accepted.
+/// The reply length stays out. Profile and fast-dormancy are different facts.
+pub fn last_activity(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_activity response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last internet data-profile acknowledgement. Stock error `0` is accepted.
@@ -957,7 +986,8 @@ mod tests {
                  camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n\
                  camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n\
                  camp_setup response=yes error_raw=0 len=100\n\
-                 camp_profile response=yes error_raw=0 len=40\n"
+                 camp_profile response=yes error_raw=0 len=40\n\
+                 camp_activity response=yes error_raw=0 len=16\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -973,7 +1003,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 23);
+        assert_eq!(rows.len(), 24);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1035,6 +1065,9 @@ mod tests {
         let profile = rows.iter().find(|row| row.key == KEY_PROFILE).unwrap();
         assert_eq!(profile.value, json!("accepted"));
         assert_eq!(profile.source.source_id, "camp.owner.profile");
+        let activity = rows.iter().find(|row| row.key == KEY_ACTIVITY).unwrap();
+        assert_eq!(activity.value, json!("accepted"));
+        assert_eq!(activity.source.source_id, "camp.owner.activity");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1560,6 +1593,29 @@ mod tests {
             last_data_profile(
                 "camp_profile response=yes error_raw=0 len=40\n\
                  camp_profile response=yes error_raw=2 len=40\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_activity("camp_activity response=yes error_raw=0 len=16\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_activity("camp_activity response=yes error_raw=2 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_activity("camp_profile response=yes error_raw=0 len=40\n"),
+            None
+        );
+        assert_eq!(
+            last_activity("camp_fastdorm response=yes error_raw=0 len=12\n"),
+            None
+        );
+        assert_eq!(
+            last_activity(
+                "camp_activity response=yes error_raw=0 len=16\n\
+                 camp_activity response=yes error_raw=2 len=16\n"
             ),
             None
         );

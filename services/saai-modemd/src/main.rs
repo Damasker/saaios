@@ -220,6 +220,7 @@ fn run() -> Result<()> {
             let ipv6 = camp_ipv6(&state, owner_running, owner_log.as_deref());
             let setup = camp_data_setup(&state, owner_running, owner_log.as_deref());
             let profile = camp_data_profile(&state, owner_running, owner_log.as_deref());
+            let activity = camp_activity(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -244,6 +245,7 @@ fn run() -> Result<()> {
                 ipv6,
                 setup,
                 profile,
+                activity,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -849,6 +851,7 @@ fn status_lines(
     ipv6: Option<&str>,
     setup: Option<&str>,
     profile: Option<&str>,
+    activity: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -921,6 +924,9 @@ fn status_lines(
     }
     if profile == Some("accepted") {
         lines.push("profile=accepted".to_string());
+    }
+    if activity == Some("accepted") {
+        lines.push("activity=accepted".to_string());
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -1017,6 +1023,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_activity(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_activity(&facts)
 }
 
 fn camp_data_profile(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1348,6 +1362,7 @@ mod tests {
             Some("yes"),
             Some("accepted"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1380,6 +1395,7 @@ mod tests {
                 "ipv6=yes".to_string(),
                 "setup=accepted".to_string(),
                 "profile=accepted".to_string(),
+                "activity=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1396,6 +1412,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1454,6 +1471,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("ipv6=")));
         assert!(!absent.iter().any(|line| line.starts_with("setup=")));
         assert!(!absent.iter().any(|line| line.starts_with("profile=")));
+        assert!(!absent.iter().any(|line| line.starts_with("activity=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1866,6 +1884,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_profile response=yes error_raw=0 len=40\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_activity(
+                "ONLINE",
+                true,
+                Some("camp_activity response=yes error_raw=0 len=16\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_activity(
+                "ONLINE",
+                true,
+                Some("camp_activity response=yes error_raw=2 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_activity(
+                "ONLINE",
+                true,
+                Some("camp_fastdorm response=yes error_raw=0 len=12\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_activity(
+                "OFFLINE",
+                true,
+                Some("camp_activity response=yes error_raw=0 len=16\n")
             ),
             None
         );
