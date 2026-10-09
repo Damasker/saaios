@@ -1571,6 +1571,10 @@ fn read_sgc() -> Option<String> {
     saai_observation::last_sgc(&read_camp_owner_log()?).map(str::to_string)
 }
 
+fn read_radio_power() -> Option<String> {
+    saai_observation::last_radio_power(&read_camp_owner_log()?).map(str::to_string)
+}
+
 fn selection_phrase(token: &str) -> Option<&'static str> {
     match token {
         "automatic" => Some("авто"),
@@ -1696,6 +1700,7 @@ fn cellular_row_status(
     dns6: Option<&str>,
     config: Option<&str>,
     sgc: Option<&str>,
+    power: Option<&str>,
     live: &[String],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -1740,6 +1745,9 @@ fn cellular_row_status(
     }
     if let Some(phrase) = sgc.and_then(config_phrase) {
         parts.push(format!("sgc {phrase}"));
+    }
+    if let Some(phrase) = power.and_then(config_phrase) {
+        parts.push(format!("питание {phrase}"));
     }
     if let Some(phrase) = sim.and_then(sim_presence_phrase) {
         parts.push(phrase.to_string());
@@ -6765,6 +6773,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.dns6" => "DNS6".into(),
         "cellular.config" => "Конфиг".into(),
         "cellular.sgc" => "SGC".into(),
+        "cellular.power" => "Питание".into(),
         "cellular.sim_app" => "SIM".into(),
         other => other.to_string(),
     }
@@ -6825,7 +6834,7 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.dns" || key == "cellular.dns6" {
         return dns_phrase(value.as_str()?.trim()).map(str::to_string);
     }
-    if key == "cellular.config" || key == "cellular.sgc" {
+    if key == "cellular.config" || key == "cellular.sgc" || key == "cellular.power" {
         return config_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.sim_app" {
@@ -7148,6 +7157,7 @@ struct MeFacts {
     cellular_dns6: Option<String>,
     cellular_config: Option<String>,
     cellular_sgc: Option<String>,
+    cellular_power: Option<String>,
     cellular_sim: Option<String>,
     cellular_owner: Option<String>,
     cellular_endpoint: Option<String>,
@@ -7352,6 +7362,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                         facts.cellular_dns6.as_deref(),
                         facts.cellular_config.as_deref(),
                         facts.cellular_sgc.as_deref(),
+                        facts.cellular_power.as_deref(),
                         &facts.cellular_ifaces,
                     ),
                 )
@@ -7675,6 +7686,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_dns6: None,
         cellular_config: None,
         cellular_sgc: None,
+        cellular_power: None,
         cellular_sim: None,
         cellular_owner: None,
         cellular_endpoint: None,
@@ -11742,6 +11754,7 @@ impl Shell {
             cellular_dns6: camp_log_is_current().then(read_dns6).flatten(),
             cellular_config: camp_log_is_current().then(read_modem_config).flatten(),
             cellular_sgc: camp_log_is_current().then(read_sgc).flatten(),
+            cellular_power: camp_log_is_current().then(read_radio_power).flatten(),
             cellular_sim: camp_log_is_current().then(read_sim_presence).flatten(),
             cellular_owner: Some(
                 if camp_owner_running() {
@@ -15163,86 +15176,90 @@ mod tests {
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("gone"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, Some("gone"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("running"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, Some("running"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "процесс"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "camp"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("hold"), None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, Some("hold"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "удержание"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, Some("attend"), None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, Some("attend"), None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "уже запущен"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "отказ процесса"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, Some(1), None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, Some(1), None, None, None, None, None, None, None, None, None, None, None, &[]),
             "голос домашняя"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, Some("automatic"), None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, Some("automatic"), None, None, None, None, None, None, None, None, None, None, &[]),
             "авто"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, None, &[]),
             "стек"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, Some("voice-centric"), None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, Some("voice-centric"), None, None, None, None, None, None, None, None, &[]),
             "служба голосовая"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, &[]),
             "операция включена"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, &[]),
             "разрешение дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, &[]),
             "присоединение дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, &[]),
             "dns есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, &[]),
             "dns6 есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, &[]),
             "конфиг дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, &[]),
             "sgc дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), Some("pin"), Some("pin"), Some(9), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), &[]),
+            "питание дано"
+        );
+        assert_eq!(
+            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), Some("pin"), Some("pin"), Some(9), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]);
+        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]);
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
@@ -15260,7 +15277,7 @@ mod tests {
                 None,
                 None,
                 None,
-                None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None,
                 &["rmnet1".into()]
             ),
             "ONLINE · домашняя · rmnet1"
@@ -15287,9 +15304,10 @@ mod tests {
                 Some("yes"),
                 Some("accepted"),
                 Some("accepted"),
+                Some("accepted"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · sgc дано · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1"
+            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · sgc дано · питание дано · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -15311,7 +15329,7 @@ mod tests {
                 Some("pin"),
                 Some("pin"),
                 Some("pin"),
-                Some("pin"), None,
+                Some("pin"), None, None,
                 &[]
             ),
             "ONLINE · домашняя · без процесса"
@@ -18180,6 +18198,16 @@ mod tests {
                         "source": "camp.owner.sgc"
                     },
                     {
+                        "key": "cellular.power",
+                        "value": "accepted",
+                        "source": "camp.owner.power"
+                    },
+                    {
+                        "key": "cellular.power",
+                        "value": "pin",
+                        "source": "camp.owner.power"
+                    },
+                    {
                         "key": "cellular.sgc",
                         "value": "pin",
                         "source": "camp.owner.sgc"
@@ -18272,7 +18300,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 22);
+        assert_eq!(rows.len(), 23);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -18316,6 +18344,8 @@ mod tests {
         assert_eq!(rows[20].value, "дано");
         assert_eq!(rows[21].label, "SGC");
         assert_eq!(rows[21].value, "дано");
+        assert_eq!(rows[22].label, "Питание");
+        assert_eq!(rows[22].value, "дано");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }
